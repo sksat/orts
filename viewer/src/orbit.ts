@@ -107,3 +107,40 @@ export function createOrbitVisualization(
 
   return { orbitLine, satelliteMarker };
 }
+
+/**
+ * Update the satellite marker position to reflect a given orbit point.
+ *
+ * @param marker - The satellite mesh to reposition
+ * @param point  - The orbit state to move to (position in km)
+ */
+export function updateSatellitePosition(
+  marker: THREE.Mesh,
+  point: OrbitPoint
+): void {
+  marker.position.set(
+    point.x / EARTH_RADIUS_KM,
+    point.y / EARTH_RADIUS_KM,
+    point.z / EARTH_RADIUS_KM
+  );
+}
+
+/**
+ * Update the orbit line's draw range so that only the trail up to (and
+ * including) `visibleCount` vertices is rendered.
+ *
+ * Call with `visibleCount = points.length` to show the full orbit, or a
+ * smaller value for a progressive trail effect during playback.
+ *
+ * @param line         - The THREE.Line whose geometry to update
+ * @param visibleCount - Number of vertices to render (clamped to valid range)
+ * @param totalCount   - Total number of vertices in the geometry
+ */
+export function updateOrbitTrail(
+  line: THREE.Line,
+  visibleCount: number,
+  totalCount: number
+): void {
+  const clamped = Math.max(0, Math.min(visibleCount, totalCount));
+  line.geometry.setDrawRange(0, clamped);
+}
