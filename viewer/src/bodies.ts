@@ -16,7 +16,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   earth: {
     id: "earth",
     name: "Earth",
-    texturePath: "/textures/earth_blue_marble.jpg",
+    texturePath: null,
     fallbackColor: 0x2255aa,
     emissiveColor: 0x112244,
     isSelfLuminous: false,
