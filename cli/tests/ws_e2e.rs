@@ -119,6 +119,15 @@ async fn test_websocket_info_and_state_messages() {
         assert!(info["altitude"].is_f64(), "info.altitude must be a number");
         assert!(info["period"].is_f64(), "info.period must be a number");
         assert!(info["dt"].is_f64(), "info.dt must be a number");
+        assert!(
+            info["output_interval"].is_f64(),
+            "info.output_interval must be a number"
+        );
+        assert_eq!(info["central_body"], "earth");
+        assert!(
+            info["central_body_radius"].is_f64(),
+            "info.central_body_radius must be a number"
+        );
 
         // Sanity-check default values (altitude=400, dt=10).
         let altitude = info["altitude"].as_f64().unwrap();
@@ -130,6 +139,12 @@ async fn test_websocket_info_and_state_messages() {
         assert!(
             (dt - 10.0).abs() < f64::EPSILON,
             "expected default dt 10, got {dt}"
+        );
+        // output_interval defaults to dt when not specified.
+        let output_interval = info["output_interval"].as_f64().unwrap();
+        assert!(
+            (output_interval - dt).abs() < f64::EPSILON,
+            "expected default output_interval to equal dt ({dt}), got {output_interval}"
         );
 
         // --- Subsequent messages: must be "state" ---

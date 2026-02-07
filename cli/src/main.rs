@@ -4,7 +4,7 @@ use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
 use nalgebra::vector;
 use orts_integrator::{Rk4, State};
-use orts_orbits::{constants, two_body::TwoBodySystem};
+use orts_orbits::{body::KnownBody, two_body::TwoBodySystem};
 use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -25,34 +25,48 @@ struct Args {
     #[arg(long, default_value_t = 400.0)]
     altitude: f64,
 
+    /// Central body name (e.g. earth, moon, mars)
+    #[arg(long, default_value = "earth")]
+    body: String,
+
     /// Integration time step in seconds
     #[arg(long, default_value_t = 10.0)]
     dt: f64,
+
+    /// Output interval in seconds (defaults to dt if not specified)
+    #[arg(long)]
+    output_interval: Option<f64>,
 }
 
 /// Simulation parameters derived from CLI arguments.
 struct SimParams {
+    body: KnownBody,
     mu: f64,
     r0: f64,
     v0: f64,
     period: f64,
     dt: f64,
     altitude: f64,
+    output_interval: f64,
 }
 
 impl SimParams {
     fn from_args(args: &Args) -> Self {
-        let mu = constants::MU_EARTH;
-        let r0 = constants::R_EARTH + args.altitude;
+        let body = parse_body(&args.body);
+        let props = body.properties();
+        let mu = props.mu;
+        let r0 = props.radius + args.altitude;
         let v0 = (mu / r0).sqrt();
         let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
         Self {
+            body,
             mu,
             r0,
             v0,
             period,
             dt: args.dt,
             altitude: args.altitude,
+            output_interval: args.output_interval.unwrap_or(args.dt),
         }
     }
 
@@ -75,6 +89,9 @@ enum WsMessage {
         altitude: f64,
         period: f64,
         dt: f64,
+        output_interval: f64,
+        central_body: String,
+        central_body_radius: f64,
     },
     /// A single simulation state snapshot.
     #[serde(rename = "state")]
@@ -83,6 +100,22 @@ enum WsMessage {
         position: [f64; 3],
         velocity: [f64; 3],
     },
+}
+
+fn parse_body(s: &str) -> KnownBody {
+    match s {
+        "sun" => KnownBody::Sun,
+        "mercury" => KnownBody::Mercury,
+        "venus" => KnownBody::Venus,
+        "earth" => KnownBody::Earth,
+        "moon" => KnownBody::Moon,
+        "mars" => KnownBody::Mars,
+        "jupiter" => KnownBody::Jupiter,
+        "saturn" => KnownBody::Saturn,
+        "uranus" => KnownBody::Uranus,
+        "neptune" => KnownBody::Neptune,
+        _ => panic!("Unknown body: {s}"),
+    }
 }
 
 fn main() {
@@ -116,10 +149,22 @@ fn run_csv(args: Args) {
     // Print initial state
     print_state(0.0, &initial);
 
-    // Propagate for one full period
-    Rk4::integrate(&system, initial, 0.0, params.period, params.dt, |t, state| {
-        print_state(t, state);
-    });
+    // Propagate for one full period, emitting output at the configured interval.
+    let mut next_output_t = params.output_interval;
+    let mut last_output_t = 0.0_f64;
+    let final_state =
+        Rk4::integrate(&system, initial, 0.0, params.period, params.dt, |t, state| {
+            if t >= next_output_t - 1e-9 {
+                print_state(t, state);
+                last_output_t = t;
+                next_output_t += params.output_interval;
+            }
+        });
+
+    // Always emit the final state so the output covers the full period.
+    if (params.period - last_output_t) > 1e-9 {
+        print_state(params.period, &final_state);
+    }
 }
 
 fn run_server(args: Args) {
@@ -192,11 +237,24 @@ async fn simulation_loop(params: Arc<SimParams>, tx: broadcast::Sender<String>) 
         }
         tokio::time::sleep(sleep_duration).await;
 
-        // Propagate one full period, collecting states so we can stream them.
+        // Propagate one full period, collecting only states at the output interval.
         let mut states: Vec<(f64, State)> = Vec::new();
-        Rk4::integrate(&system, initial, 0.0, params.period, dt, |t, state| {
-            states.push((t, state.clone()));
-        });
+        let mut next_output_t = params.output_interval;
+        let mut last_output_t = 0.0_f64;
+        let output_interval = params.output_interval;
+        let final_state =
+            Rk4::integrate(&system, initial, 0.0, params.period, dt, |t, state| {
+                if t >= next_output_t - 1e-9 {
+                    states.push((t, state.clone()));
+                    last_output_t = t;
+                    next_output_t += output_interval;
+                }
+            });
+
+        // Always include the final state so the output covers the full period.
+        if (params.period - last_output_t) > 1e-9 {
+            states.push((params.period, final_state));
+        }
 
         for (t, state) in &states {
             let msg = state_message(*t, state);
@@ -232,6 +290,13 @@ async fn handle_connection(
         altitude: params.altitude,
         period: params.period,
         dt: params.dt,
+        output_interval: params.output_interval,
+        central_body: serde_json::to_value(&params.body)
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string(),
+        central_body_radius: params.body.properties().radius,
     };
     let info_json = serde_json::to_string(&info).expect("failed to serialize info message");
     if ws_sender
