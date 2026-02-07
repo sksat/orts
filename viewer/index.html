@@ -43,6 +43,106 @@
         border-radius: 4px;
         display: none;
       }
+
+      /* --- Playback controls --- */
+      #playback-bar {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 10;
+        display: none;
+        flex-direction: column;
+        gap: 4px;
+        padding: 10px 16px 12px;
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(6px);
+        border-top: 1px solid rgba(68, 136, 204, 0.3);
+        color: #ccd;
+        font-size: 13px;
+      }
+      #playback-bar.visible {
+        display: flex;
+      }
+
+      /* Slider row */
+      #playback-slider-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #time-slider {
+        flex: 1;
+        height: 6px;
+        -webkit-appearance: none;
+        appearance: none;
+        background: rgba(68, 136, 204, 0.3);
+        border-radius: 3px;
+        outline: none;
+        cursor: pointer;
+      }
+      #time-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #4488cc;
+        cursor: pointer;
+      }
+      #time-slider::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #4488cc;
+        border: none;
+        cursor: pointer;
+      }
+
+      /* Controls row */
+      #playback-controls-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      #play-pause-btn {
+        padding: 4px 14px;
+        background: rgba(34, 85, 170, 0.85);
+        color: #fff;
+        border: 1px solid rgba(68, 136, 204, 0.6);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        min-width: 60px;
+      }
+      #play-pause-btn:hover {
+        background: rgba(34, 85, 170, 1.0);
+      }
+      #speed-select {
+        padding: 4px 8px;
+        background: rgba(20, 20, 40, 0.85);
+        color: #ccd;
+        border: 1px solid rgba(68, 136, 204, 0.4);
+        border-radius: 4px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      #time-display {
+        color: #8af;
+        font-family: monospace;
+        font-size: 13px;
+        min-width: 180px;
+      }
+      #mode-indicator {
+        margin-left: auto;
+        padding: 2px 10px;
+        background: rgba(0, 180, 100, 0.25);
+        border: 1px solid rgba(0, 180, 100, 0.5);
+        border-radius: 3px;
+        color: #0b4;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
     </style>
   </head>
   <body>
@@ -51,6 +151,26 @@
       <div id="orbit-info"></div>
     </div>
     <input type="file" id="csv-file-input" accept=".csv,.txt" style="display: none" />
+
+    <!-- Playback controls bar -->
+    <div id="playback-bar">
+      <div id="playback-slider-row">
+        <input type="range" id="time-slider" min="0" max="1000" value="0" step="1" />
+      </div>
+      <div id="playback-controls-row">
+        <button id="play-pause-btn">Play</button>
+        <select id="speed-select">
+          <option value="1">1x</option>
+          <option value="2">2x</option>
+          <option value="5">5x</option>
+          <option value="10">10x</option>
+          <option value="100">100x</option>
+        </select>
+        <span id="time-display">T+0.0 s</span>
+        <span id="mode-indicator">Replay</span>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
