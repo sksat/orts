@@ -1,5 +1,10 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import {
+  parseOrbitCSV,
+  createOrbitVisualization,
+  OrbitVisualization,
+} from "./orbit.js";
 
 // --- Scene setup ---
 const scene = new THREE.Scene();
@@ -64,6 +69,69 @@ scene.add(wireframe);
 // --- Axes helper (X=red, Y=green, Z=blue, length = 2 Earth radii) ---
 const axesHelper = new THREE.AxesHelper(2);
 scene.add(axesHelper);
+
+// --- Orbit visualization state ---
+let currentOrbit: OrbitVisualization | null = null;
+
+function clearOrbit(): void {
+  if (currentOrbit) {
+    scene.remove(currentOrbit.orbitLine);
+    scene.remove(currentOrbit.satelliteMarker);
+    currentOrbit.orbitLine.geometry.dispose();
+    (currentOrbit.orbitLine.material as THREE.Material).dispose();
+    currentOrbit.satelliteMarker.geometry.dispose();
+    (currentOrbit.satelliteMarker.material as THREE.Material).dispose();
+    currentOrbit = null;
+  }
+}
+
+// --- CSV file loading ---
+const loadBtn = document.getElementById("load-csv-btn") as HTMLButtonElement;
+const fileInput = document.getElementById(
+  "csv-file-input"
+) as HTMLInputElement;
+const orbitInfo = document.getElementById("orbit-info") as HTMLDivElement;
+
+loadBtn.addEventListener("click", () => {
+  fileInput.click();
+});
+
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files?.[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const text = reader.result as string;
+    const points = parseOrbitCSV(text);
+
+    if (points.length === 0) {
+      orbitInfo.style.display = "block";
+      orbitInfo.textContent = "No valid orbit data found in file.";
+      return;
+    }
+
+    // Remove previous orbit
+    clearOrbit();
+
+    // Create and add new orbit visualization
+    currentOrbit = createOrbitVisualization(points);
+    scene.add(currentOrbit.orbitLine);
+    scene.add(currentOrbit.satelliteMarker);
+
+    // Show orbit info
+    const duration = points[points.length - 1].t - points[0].t;
+    orbitInfo.style.display = "block";
+    orbitInfo.textContent =
+      `Loaded: ${file.name} | ${points.length} points | ` +
+      `Duration: ${duration.toFixed(1)} s`;
+  };
+
+  reader.readAsText(file);
+
+  // Reset file input so the same file can be re-loaded
+  fileInput.value = "";
+});
 
 // --- Animation loop ---
 function animate(): void {
