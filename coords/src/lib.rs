@@ -42,6 +42,66 @@ impl Ecef {
             v.z,
         ))
     }
+
+    /// Convert ECEF position to geodetic coordinates using iterative Bowring method (WGS84).
+    pub fn to_geodetic(&self) -> Geodetic {
+        let v = &self.0;
+        let p = (v.x * v.x + v.y * v.y).sqrt();
+        let longitude = v.y.atan2(v.x);
+
+        // Initial estimate using Bowring's method
+        let mut lat = v.z.atan2(p * (1.0 - WGS84_E2));
+        let mut alt;
+
+        // Iterative refinement
+        for _ in 0..10 {
+            let sin_lat = lat.sin();
+            let cos_lat = lat.cos();
+            let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
+            alt = p / cos_lat - n;
+            lat = (v.z / p * (1.0 - WGS84_E2 * n / (n + alt)).powi(-1)).atan();
+        }
+
+        let sin_lat = lat.sin();
+        let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
+        alt = p / lat.cos() - n;
+
+        Geodetic {
+            latitude: lat,
+            longitude,
+            altitude: alt,
+        }
+    }
+}
+
+/// WGS84 semi-major axis (km)
+pub const WGS84_A: f64 = 6378.137;
+
+/// WGS84 flattening
+pub const WGS84_F: f64 = 1.0 / 298.257223563;
+
+/// WGS84 semi-minor axis (km)
+pub const WGS84_B: f64 = WGS84_A * (1.0 - WGS84_F);
+
+/// WGS84 first eccentricity squared
+pub const WGS84_E2: f64 = 1.0 - (1.0 - WGS84_F) * (1.0 - WGS84_F);
+
+impl Geodetic {
+    /// Convert geodetic coordinates to ECEF position (WGS84).
+    pub fn to_ecef(&self) -> Ecef {
+        let sin_lat = self.latitude.sin();
+        let cos_lat = self.latitude.cos();
+        let sin_lon = self.longitude.sin();
+        let cos_lon = self.longitude.cos();
+
+        let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
+
+        Ecef(Vector3::new(
+            (n + self.altitude) * cos_lat * cos_lon,
+            (n + self.altitude) * cos_lat * sin_lon,
+            (n * (1.0 - WGS84_E2) + self.altitude) * sin_lat,
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -183,5 +243,100 @@ mod tests {
         let ecef = eci.to_ecef(gmst);
         let eps = 1e-10;
         assert!((eci.0.norm() - ecef.0.norm()).abs() < eps);
+    }
+
+    // Geodetic <-> ECEF conversion tests
+
+    #[test]
+    fn test_equator_prime_meridian() {
+        let geo = Geodetic {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: 0.0,
+        };
+        let ecef = geo.to_ecef();
+        let eps = 1e-10;
+        assert!((ecef.0.x - WGS84_A).abs() < eps);
+        assert!(ecef.0.y.abs() < eps);
+        assert!(ecef.0.z.abs() < eps);
+    }
+
+    #[test]
+    fn test_equator_90east() {
+        let geo = Geodetic {
+            latitude: 0.0,
+            longitude: std::f64::consts::FRAC_PI_2,
+            altitude: 0.0,
+        };
+        let ecef = geo.to_ecef();
+        let eps = 1e-10;
+        assert!(ecef.0.x.abs() < eps);
+        assert!((ecef.0.y - WGS84_A).abs() < eps);
+        assert!(ecef.0.z.abs() < eps);
+    }
+
+    #[test]
+    fn test_north_pole() {
+        let geo = Geodetic {
+            latitude: std::f64::consts::FRAC_PI_2,
+            longitude: 0.0,
+            altitude: 0.0,
+        };
+        let ecef = geo.to_ecef();
+        let eps = 1e-6;
+        assert!(ecef.0.x.abs() < eps);
+        assert!(ecef.0.y.abs() < eps);
+        assert!((ecef.0.z - WGS84_B).abs() < eps);
+    }
+
+    #[test]
+    fn test_roundtrip_geodetic() {
+        let original = Geodetic {
+            latitude: 0.7,  // ~40 degrees
+            longitude: 2.1, // ~120 degrees
+            altitude: 350.0,
+        };
+        let roundtrip = original.to_ecef().to_geodetic();
+        let eps = 1e-10;
+        assert!(
+            (roundtrip.latitude - original.latitude).abs() < eps,
+            "latitude: expected {}, got {}",
+            original.latitude,
+            roundtrip.latitude,
+        );
+        assert!(
+            (roundtrip.longitude - original.longitude).abs() < eps,
+            "longitude: expected {}, got {}",
+            original.longitude,
+            roundtrip.longitude,
+        );
+        assert!(
+            (roundtrip.altitude - original.altitude).abs() < eps,
+            "altitude: expected {}, got {}",
+            original.altitude,
+            roundtrip.altitude,
+        );
+    }
+
+    #[test]
+    fn test_with_altitude() {
+        let alt = 500.0; // km
+        let geo_surface = Geodetic {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: 0.0,
+        };
+        let geo_alt = Geodetic {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: alt,
+        };
+        let ecef_surface = geo_surface.to_ecef();
+        let ecef_alt = geo_alt.to_ecef();
+        let eps = 1e-10;
+        // At equator/prime meridian, altitude adds directly to x
+        assert!((ecef_alt.0.x - ecef_surface.0.x - alt).abs() < eps);
+        assert!(ecef_alt.0.y.abs() < eps);
+        assert!(ecef_alt.0.z.abs() < eps);
     }
 }
