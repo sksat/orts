@@ -148,6 +148,7 @@ export function App() {
     realtimePointsRef,
     realtimeVersion,
     mu: simInfo?.mu,
+    bodyRadius: simInfo?.central_body_radius,
   });
 
   // --- Determine what the 3D scene should display ---

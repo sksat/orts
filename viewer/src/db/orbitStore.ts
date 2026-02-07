@@ -10,8 +10,6 @@ export type ChartData = [
   Float64Array,
 ];
 
-const R_EARTH = 6378.137;
-
 export async function createOrbitTable(
   conn: AsyncDuckDBConnection
 ): Promise<void> {
@@ -48,12 +46,13 @@ export async function clearTable(
 
 export async function queryDerivedQuantities(
   conn: AsyncDuckDBConnection,
-  mu: number
+  mu: number,
+  bodyRadius = 6378.137
 ): Promise<ChartData> {
   const result = await conn.query(`
     SELECT
       t,
-      sqrt(x*x + y*y + z*z) - ${R_EARTH} AS altitude,
+      sqrt(x*x + y*y + z*z) - ${bodyRadius} AS altitude,
       (vx*vx + vy*vy + vz*vz)/2.0 - ${mu} / sqrt(x*x + y*y + z*z) AS energy,
       sqrt(
         power(y*vz - z*vy, 2) +

@@ -17,6 +17,7 @@ interface UseOrbitChartsOptions {
   realtimePointsRef: React.RefObject<OrbitPoint[]>;
   realtimeVersion: number;
   mu?: number;
+  bodyRadius?: number;
 }
 
 export interface UseOrbitChartsReturn {
@@ -34,6 +35,7 @@ export function useOrbitCharts(
     realtimePointsRef,
     realtimeVersion,
     mu = MU_EARTH,
+    bodyRadius = 6378.137,
   } = options;
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -51,7 +53,7 @@ export function useOrbitCharts(
       insertedCountRef.current = 0;
       await insertPoints(conn, replayPoints);
       insertedCountRef.current = replayPoints.length;
-      const data = await queryDerivedQuantities(conn, mu);
+      const data = await queryDerivedQuantities(conn, mu, bodyRadius);
       if (!cancelled) {
         setChartData(data);
         setIsLoading(false);
@@ -61,7 +63,7 @@ export function useOrbitCharts(
     return () => {
       cancelled = true;
     };
-  }, [conn, mode, replayPoints, mu]);
+  }, [conn, mode, replayPoints, mu, bodyRadius]);
 
   // Realtime mode: incremental insert + periodic query
   useEffect(() => {
@@ -77,16 +79,20 @@ export function useOrbitCharts(
     const QUERY_INTERVAL = 500;
 
     const tick = async () => {
-      const allPoints = realtimePointsRef.current!;
-      const newCount = allPoints.length;
-      const inserted = insertedCountRef.current;
+      try {
+        const allPoints = realtimePointsRef.current!;
+        const newCount = allPoints.length;
+        const inserted = insertedCountRef.current;
 
-      if (newCount > inserted) {
-        const newPoints = allPoints.slice(inserted);
-        await insertPoints(conn, newPoints);
-        insertedCountRef.current = newCount;
-        const data = await queryDerivedQuantities(conn, mu);
-        setChartData(data);
+        if (newCount > inserted) {
+          const newPoints = allPoints.slice(inserted);
+          await insertPoints(conn, newPoints);
+          insertedCountRef.current = newCount;
+          const data = await queryDerivedQuantities(conn, mu, bodyRadius);
+          setChartData(data);
+        }
+      } catch (e) {
+        console.warn("useOrbitCharts tick error:", e);
       }
 
       queryTimerRef.current = window.setTimeout(tick, QUERY_INTERVAL);
@@ -99,7 +105,7 @@ export function useOrbitCharts(
     };
     // realtimeVersion is intentionally omitted — we poll on a timer instead
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn, mode, mu]);
+  }, [conn, mode, mu, bodyRadius]);
 
   return { chartData, isLoading };
 }
