@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Scene } from "./components/Scene.js";
 import { PlaybackBar } from "./components/PlaybackBar.js";
 import { usePlayback } from "./hooks/usePlayback.js";
@@ -30,13 +30,24 @@ export function App() {
 
   // --- Realtime mode state ---
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
-  const [realtimePoints, setRealtimePoints] = useState<OrbitPoint[]>([]);
   const [simInfo, setSimInfo] = useState<SimInfo | null>(null);
   const realtimePointsRef = useRef<OrbitPoint[]>([]);
+  const rafScheduledRef = useRef(false);
+  // Version counter triggers React re-renders at RAF rate without
+  // creating a new array copy on every WebSocket message.
+  const [realtimeVersion, setRealtimeVersion] = useState(0);
 
   const handleState = useCallback((point: OrbitPoint) => {
-    realtimePointsRef.current = [...realtimePointsRef.current, point];
-    setRealtimePoints(realtimePointsRef.current);
+    realtimePointsRef.current.push(point);
+    // Batch state updates to at most once per animation frame to avoid
+    // overwhelming React with re-renders (messages arrive every ~100ms).
+    if (!rafScheduledRef.current) {
+      rafScheduledRef.current = true;
+      requestAnimationFrame(() => {
+        rafScheduledRef.current = false;
+        setRealtimeVersion((v) => v + 1);
+      });
+    }
   }, []);
 
   const handleInfo = useCallback((info: SimInfo) => {
@@ -90,7 +101,7 @@ export function App() {
   const handleConnect = useCallback(() => {
     // Clear previous realtime data when starting a new connection
     realtimePointsRef.current = [];
-    setRealtimePoints([]);
+    setRealtimeVersion(0);
     setSimInfo(null);
     connect();
   }, [connect]);
@@ -98,6 +109,15 @@ export function App() {
   const handleDisconnect = useCallback(() => {
     disconnect();
   }, [disconnect]);
+
+  // --- Auto-connect in realtime mode ---
+  useEffect(() => {
+    if (mode === "realtime" && !isConnected) {
+      handleConnect();
+    }
+    // Only run when mode changes, not on every isConnected change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   // --- Mode switching ---
   const handleModeChange = useCallback(
@@ -118,16 +138,19 @@ export function App() {
   // In replay mode: use replay points with playback snapshot
   // In realtime mode: use accumulated realtime points, always showing
   //   the latest position with the full trail.
+  // `realtimeVersion` is read to ensure React re-renders when new points arrive.
+  const rtPoints = realtimePointsRef.current;
+  void realtimeVersion; // consumed for reactivity
   const scenePoints =
-    mode === "replay" ? replayPoints : realtimePoints.length > 0 ? realtimePoints : null;
+    mode === "replay" ? replayPoints : rtPoints.length > 0 ? rtPoints : null;
   const satellitePosition =
     mode === "replay"
       ? snapshot.satellitePosition
-      : realtimePoints.length > 0
-        ? realtimePoints[realtimePoints.length - 1]
+      : rtPoints.length > 0
+        ? rtPoints[rtPoints.length - 1]
         : null;
   const trailVisibleCount =
-    mode === "replay" ? snapshot.trailVisibleCount : realtimePoints.length;
+    mode === "replay" ? snapshot.trailVisibleCount : rtPoints.length;
 
   return (
     <>
@@ -206,10 +229,10 @@ export function App() {
             )}
 
             {/* Realtime data stats */}
-            {realtimePoints.length > 0 && (
+            {rtPoints.length > 0 && (
               <div className="orbit-info">
-                {realtimePoints.length} points |
-                T+{(realtimePoints[realtimePoints.length - 1].t - realtimePoints[0].t).toFixed(1)} s
+                {rtPoints.length} points |
+                T+{(rtPoints[rtPoints.length - 1].t - rtPoints[0].t).toFixed(1)} s
               </div>
             )}
           </div>
