@@ -244,6 +244,67 @@
         color: #8899bb;
         font-size: 12px;
       }
+
+      /* --- Graph panel (right side) --- */
+      .graph-panel {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 360px;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        background: rgba(0, 0, 10, 0.85);
+        backdrop-filter: blur(6px);
+        border-left: 1px solid rgba(68, 136, 204, 0.3);
+        overflow-y: auto;
+        transition: width 0.2s ease;
+      }
+      .graph-panel.collapsed {
+        width: 40px;
+        overflow: hidden;
+      }
+      .graph-panel-toggle {
+        padding: 8px;
+        background: rgba(34, 85, 170, 0.6);
+        color: #fff;
+        border: none;
+        border-bottom: 1px solid rgba(68, 136, 204, 0.3);
+        cursor: pointer;
+        font-size: 12px;
+        text-align: center;
+      }
+      .graph-panel-toggle:hover {
+        background: rgba(34, 85, 170, 0.85);
+      }
+      .graph-panel-content {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px;
+      }
+      .graph-loading {
+        color: #8899bb;
+        font-size: 12px;
+        text-align: center;
+        padding: 12px;
+      }
+
+      /* --- uPlot dark theme overrides --- */
+      .u-wrap {
+        background: transparent !important;
+      }
+      .u-title {
+        color: #aac !important;
+        font-size: 11px !important;
+      }
+      .u-legend {
+        display: none;
+      }
+      .u-select {
+        background: rgba(68, 136, 204, 0.15) !important;
+      }
     </style>
   </head>
   <body>
