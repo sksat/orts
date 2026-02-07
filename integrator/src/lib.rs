@@ -236,4 +236,92 @@ mod tests {
             (state.velocity.x - expected_vx).abs()
         );
     }
+
+    // --- dt precision / convergence tests ---
+
+    /// Helper: integrate harmonic oscillator for a given number of steps and return position error.
+    /// Uses a fixed number of steps so that the total integration time is exactly steps * dt.
+    /// We compare against the analytical solution at the actual end time.
+    fn harmonic_oscillator_error_with_steps(dt: f64, steps: usize) -> f64 {
+        let system = HarmonicOscillator;
+        let mut state = State {
+            position: vector![1.0, 0.0, 0.0],
+            velocity: vector![0.0, 0.0, 0.0],
+        };
+        let mut t = 0.0;
+        for _ in 0..steps {
+            state = Rk4::step(&system, t, &state, dt);
+            t += dt;
+        }
+        // Compare against analytical solution at t: x(t) = cos(t), v(t) = -sin(t)
+        let x_error = (state.position.x - t.cos()).abs();
+        let v_error = (state.velocity.x + t.sin()).abs();
+        x_error.max(v_error)
+    }
+
+    #[test]
+    fn test_rk4_order_of_accuracy() {
+        // RK4 is 4th order: halving dt should reduce the global error by ~2^4 = 16.
+        // Integrate to the same end time with dt and dt/2 (doubling steps).
+        // Use 100 steps at dt=0.1 (t_end=10.0) and 200 steps at dt=0.05 (t_end=10.0).
+        let error_coarse = harmonic_oscillator_error_with_steps(0.1, 100);
+        let error_fine = harmonic_oscillator_error_with_steps(0.05, 200);
+
+        let ratio = error_coarse / error_fine;
+
+        // For a 4th order method, expected ratio ~16.
+        // Allow some tolerance due to finite precision and higher-order terms.
+        assert!(
+            ratio > 12.0 && ratio < 20.0,
+            "Error ratio should be approximately 16 for 4th-order method, got {ratio:.2} \
+             (errors: coarse={error_coarse:.2e}, fine={error_fine:.2e})"
+        );
+    }
+
+    #[test]
+    fn test_rk4_convergence() {
+        // Verify error decreases as O(dt^4) across multiple dt values.
+        // All integrate to the same end time t=10.0.
+        let base_steps = 50;
+        let refinements = [1, 2, 4, 8]; // multipliers for step count
+        let dts_and_steps: Vec<(f64, usize)> = refinements
+            .iter()
+            .map(|&m| {
+                let steps = base_steps * m;
+                let dt = 10.0 / steps as f64;
+                (dt, steps)
+            })
+            .collect();
+
+        let errors: Vec<f64> = dts_and_steps
+            .iter()
+            .map(|&(dt, steps)| harmonic_oscillator_error_with_steps(dt, steps))
+            .collect();
+
+        // Check that each successive halving of dt gives ~16x error reduction
+        for i in 0..errors.len() - 1 {
+            let ratio = errors[i] / errors[i + 1];
+            assert!(
+                ratio > 12.0 && ratio < 20.0,
+                "Convergence ratio at dt={:.4} -> dt={:.4} should be ~16, got {ratio:.2} \
+                 (errors: {:.2e} -> {:.2e})",
+                dts_and_steps[i].0,
+                dts_and_steps[i + 1].0,
+                errors[i],
+                errors[i + 1]
+            );
+        }
+
+        // Also verify the error actually decreases monotonically
+        for i in 0..errors.len() - 1 {
+            assert!(
+                errors[i] > errors[i + 1],
+                "Error should decrease with smaller dt: error[dt={:.4}]={:.2e} > error[dt={:.4}]={:.2e}",
+                dts_and_steps[i].0,
+                errors[i],
+                dts_and_steps[i + 1].0,
+                errors[i + 1]
+            );
+        }
+    }
 }
