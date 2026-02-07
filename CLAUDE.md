@@ -15,9 +15,20 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 
 ## Build Commands
 
-No build system is configured yet (no Cargo.toml or package.json). As the project is bootstrapped, update this section with:
-- `cargo build` / `cargo test` / `cargo clippy` for Rust
-- Package manager commands for the TypeScript viewer
+### Rust (Cargo workspace)
+- `cargo build --workspace` — build all crates
+- `cargo test --workspace` — run all tests (50 tests across 4 crates)
+- `cargo clippy --workspace` — lint all crates
+- `cargo run --bin orts-cli` — run the CLI simulator (outputs CSV)
+- `cargo test -p orts-integrator` — test only the integrator crate
+- `cargo test -p orts-orbits` — test only the orbits crate
+- `cargo test -p orts-coords` — test only the coords crate
+- `cargo test -p orts-cli` — run CLI E2E tests
+
+### Viewer (TypeScript)
+- `cd viewer && pnpm install` — install dependencies
+- `cd viewer && pnpm dev` — start dev server
+- `cd viewer && pnpm build` — production build
 
 ## Development Methodology
 
