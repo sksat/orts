@@ -16,7 +16,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   earth: {
     id: "earth",
     name: "Earth",
-    texturePath: null,
+    texturePath: "/textures/earth.jpg",
     fallbackColor: 0x2255aa,
     emissiveColor: 0x112244,
     isSelfLuminous: false,
@@ -24,7 +24,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   moon: {
     id: "moon",
     name: "Moon",
-    texturePath: null,
+    texturePath: "/textures/moon.jpg",
     fallbackColor: 0x888888,
     emissiveColor: 0x222222,
     isSelfLuminous: false,
@@ -32,7 +32,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   sun: {
     id: "sun",
     name: "Sun",
-    texturePath: null,
+    texturePath: "/textures/sun.jpg",
     fallbackColor: 0xffcc00,
     emissiveColor: 0xffaa00,
     isSelfLuminous: true,
@@ -40,7 +40,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   mars: {
     id: "mars",
     name: "Mars",
-    texturePath: null,
+    texturePath: "/textures/mars.jpg",
     fallbackColor: 0xcc6633,
     emissiveColor: 0x331100,
     isSelfLuminous: false,
