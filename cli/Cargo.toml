@@ -1,0 +1,9 @@
+[package]
+name = "orts-cli"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nalgebra.workspace = true
+orts-integrator.workspace = true
+orts-orbits.workspace = true

@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "integrator",
+    "orbits",
+    "coords",
+    "cli",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+
+[workspace.dependencies]
+orts-integrator = { path = "integrator" }
+orts-orbits = { path = "orbits" }
+orts-coords = { path = "coords" }
+nalgebra = "0.34"

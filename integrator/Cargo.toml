@@ -1,0 +1,7 @@
+[package]
+name = "orts-integrator"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nalgebra.workspace = true
