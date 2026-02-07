@@ -64,6 +64,37 @@ impl Rk4 {
                         + k4.acceleration),
         }
     }
+    /// Integrate a dynamical system from t0 to t_end using fixed step size dt.
+    ///
+    /// Calls `callback(t, &state)` after each step, allowing the caller to
+    /// record intermediate states (e.g., for energy monitoring or trajectory output).
+    ///
+    /// Returns the final state at t_end.
+    pub fn integrate<S, F>(
+        system: &S,
+        initial: State,
+        t0: f64,
+        t_end: f64,
+        dt: f64,
+        mut callback: F,
+    ) -> State
+    where
+        S: DynamicalSystem,
+        F: FnMut(f64, &State),
+    {
+        let mut state = initial;
+        let mut t = t0;
+
+        while t < t_end {
+            // Adjust the last step to land exactly on t_end
+            let h = dt.min(t_end - t);
+            state = Self::step(system, t, &state, h);
+            t += h;
+            callback(t, &state);
+        }
+
+        state
+    }
 }
 
 #[cfg(test)]
@@ -323,5 +354,69 @@ mod tests {
                 errors[i + 1]
             );
         }
+    }
+
+    // --- Multi-step integration tests ---
+
+    #[test]
+    fn test_rk4_integrate_harmonic_oscillator() {
+        // Integrate harmonic oscillator for one full period (2*pi).
+        // Should return close to the initial state.
+        let system = HarmonicOscillator;
+        let initial = State {
+            position: vector![1.0, 0.0, 0.0],
+            velocity: vector![0.0, 0.0, 0.0],
+        };
+
+        let t_end = 2.0 * std::f64::consts::PI;
+        let dt = 0.001;
+
+        let final_state = Rk4::integrate(&system, initial, 0.0, t_end, dt, |_t, _state| {});
+
+        let eps = 1e-8;
+        assert!(
+            (final_state.position.x - 1.0).abs() < eps,
+            "After one period, x should return to 1.0, got {} (error: {:.2e})",
+            final_state.position.x,
+            (final_state.position.x - 1.0).abs()
+        );
+        assert!(
+            final_state.velocity.x.abs() < eps,
+            "After one period, vx should return to 0.0, got {} (error: {:.2e})",
+            final_state.velocity.x,
+            final_state.velocity.x.abs()
+        );
+    }
+
+    #[test]
+    fn test_rk4_energy_conservation() {
+        // For harmonic oscillator, total energy E = 0.5*(|v|^2 + |x|^2) is conserved.
+        // Track energy at each step and verify max drift is below threshold.
+        let system = HarmonicOscillator;
+        let initial = State {
+            position: vector![1.0, 0.0, 0.0],
+            velocity: vector![0.0, 0.0, 0.0],
+        };
+
+        let initial_energy =
+            0.5 * (initial.velocity.norm_squared() + initial.position.norm_squared());
+
+        let mut max_energy_drift: f64 = 0.0;
+
+        let t_end = 2.0 * std::f64::consts::PI;
+        let dt = 0.01;
+
+        Rk4::integrate(&system, initial, 0.0, t_end, dt, |_t, state| {
+            let energy = 0.5 * (state.velocity.norm_squared() + state.position.norm_squared());
+            let drift = (energy - initial_energy).abs();
+            max_energy_drift = max_energy_drift.max(drift);
+        });
+
+        // With dt=0.01, energy drift should be very small for RK4
+        let threshold = 1e-8;
+        assert!(
+            max_energy_drift < threshold,
+            "Energy drift {max_energy_drift:.2e} exceeds threshold {threshold:.2e}"
+        );
     }
 }
