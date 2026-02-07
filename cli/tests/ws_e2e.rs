@@ -214,3 +214,70 @@ async fn test_websocket_info_and_state_messages() {
     // Propagate timeout or assertion failures.
     result.expect("test timed out after 30 seconds");
 }
+
+#[tokio::test]
+async fn test_websocket_multiple_clients() {
+    let port = test_port() + 1;
+    let mut server = Server::spawn(port);
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}");
+
+        // Connect first client.
+        let (ws1, _) = connect_async(&url)
+            .await
+            .expect("client 1 failed to connect");
+        let (_write1, mut read1) = ws1.split();
+
+        // First client should receive info message.
+        let msg1 = read1
+            .next()
+            .await
+            .expect("client 1: expected info message")
+            .expect("client 1: error reading info");
+        let info1: serde_json::Value =
+            serde_json::from_str(&msg1.into_text().unwrap()).unwrap();
+        assert_eq!(info1["type"], "info", "client 1 must get info message");
+
+        // Connect second client while the first is still connected.
+        let (ws2, _) = connect_async(&url)
+            .await
+            .expect("client 2 failed to connect");
+        let (_write2, mut read2) = ws2.split();
+
+        // Second client should also receive its own info message.
+        let msg2 = read2
+            .next()
+            .await
+            .expect("client 2: expected info message")
+            .expect("client 2: error reading info");
+        let info2: serde_json::Value =
+            serde_json::from_str(&msg2.into_text().unwrap()).unwrap();
+        assert_eq!(info2["type"], "info", "client 2 must get info message");
+
+        // Both clients should receive state messages.
+        let state1 = read1
+            .next()
+            .await
+            .expect("client 1: expected state message")
+            .expect("client 1: error reading state");
+        let s1: serde_json::Value =
+            serde_json::from_str(&state1.into_text().unwrap()).unwrap();
+        assert_eq!(s1["type"], "state", "client 1 must get state message");
+
+        let state2 = read2
+            .next()
+            .await
+            .expect("client 2: expected state message")
+            .expect("client 2: error reading state");
+        let s2: serde_json::Value =
+            serde_json::from_str(&state2.into_text().unwrap()).unwrap();
+        assert_eq!(s2["type"], "state", "client 2 must get state message");
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
