@@ -9,7 +9,7 @@ Orts is a numerical computation and optimization platform primarily for orbital 
 ## Languages and Structure
 
 - **Rust**: Core simulation platform — coordinate transformations, numerical integration, orbital mechanics solvers, CLI interface
-- **TypeScript**: Web-based real-time viewer for simulation visualization
+- **TypeScript/React**: Web-based real-time viewer for simulation visualization (React + @react-three/fiber + Vite)
 
 Rust libraries are split by responsibility (e.g., coordinate transforms, numerical integration) with independent test suites per module.
 
@@ -17,17 +17,19 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 
 ### Rust (Cargo workspace)
 - `cargo build --workspace` — build all crates
-- `cargo test --workspace` — run all tests (50 tests across 4 crates)
+- `cargo test --workspace` — run all tests (54 tests across 4 crates)
 - `cargo clippy --workspace` — lint all crates
 - `cargo run --bin orts-cli` — run the CLI simulator (outputs CSV)
+- `cargo run --bin orts-cli -- --serve` — start WebSocket server (port 9001)
+- `cargo run --bin orts-cli -- --serve --altitude 800 --dt 5` — custom parameters
 - `cargo test -p orts-integrator` — test only the integrator crate
 - `cargo test -p orts-orbits` — test only the orbits crate
 - `cargo test -p orts-coords` — test only the coords crate
 - `cargo test -p orts-cli` — run CLI E2E tests
 
-### Viewer (TypeScript)
+### Viewer (React + TypeScript)
 - `cd viewer && pnpm install` — install dependencies
-- `cd viewer && pnpm dev` — start dev server
+- `cd viewer && pnpm dev` — start dev server (hot reload)
 - `cd viewer && pnpm build` — production build
 
 ## Development Methodology
