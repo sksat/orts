@@ -139,6 +139,111 @@
         text-transform: uppercase;
         letter-spacing: 0.5px;
       }
+
+      /* --- Mode toggle (Replay / Realtime) --- */
+      .mode-toggle {
+        display: flex;
+        gap: 0;
+        border-radius: 4px;
+        overflow: hidden;
+        border: 1px solid rgba(68, 136, 204, 0.5);
+      }
+      .mode-toggle-btn {
+        padding: 6px 16px;
+        background: rgba(20, 20, 40, 0.85);
+        color: #8899bb;
+        border: none;
+        cursor: pointer;
+        font-size: 13px;
+        transition: background 0.15s, color 0.15s;
+      }
+      .mode-toggle-btn:hover {
+        background: rgba(34, 55, 100, 0.85);
+        color: #bbc;
+      }
+      .mode-toggle-btn.active {
+        background: rgba(34, 85, 170, 0.85);
+        color: #fff;
+      }
+
+      /* --- Realtime WebSocket controls --- */
+      .realtime-controls {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .ws-url-row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .ws-url-input {
+        flex: 1;
+        padding: 6px 10px;
+        background: rgba(20, 20, 40, 0.85);
+        color: #ccd;
+        border: 1px solid rgba(68, 136, 204, 0.4);
+        border-radius: 4px;
+        font-size: 13px;
+        font-family: monospace;
+        min-width: 200px;
+      }
+      .ws-url-input:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      .ws-url-input:focus {
+        outline: none;
+        border-color: rgba(68, 136, 204, 0.8);
+      }
+      .ws-btn {
+        padding: 6px 14px;
+        border: 1px solid;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .ws-connect-btn {
+        background: rgba(0, 140, 80, 0.85);
+        color: #fff;
+        border-color: rgba(0, 180, 100, 0.6);
+      }
+      .ws-connect-btn:hover {
+        background: rgba(0, 160, 90, 1.0);
+      }
+      .ws-disconnect-btn {
+        background: rgba(170, 50, 50, 0.85);
+        color: #fff;
+        border-color: rgba(200, 60, 60, 0.6);
+      }
+      .ws-disconnect-btn:hover {
+        background: rgba(190, 60, 60, 1.0);
+      }
+
+      /* --- WebSocket connection status --- */
+      .ws-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .ws-status-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+      .ws-status-dot.connected {
+        background: #0c6;
+        box-shadow: 0 0 4px #0c6;
+      }
+      .ws-status-dot.disconnected {
+        background: #666;
+      }
+      .ws-status-text {
+        color: #8899bb;
+        font-size: 12px;
+      }
     </style>
   </head>
   <body>
