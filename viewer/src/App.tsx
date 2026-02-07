@@ -20,7 +20,7 @@ const DEFAULT_WS_URL = "ws://localhost:9001";
  */
 export function App() {
   // --- Mode toggle ---
-  const [mode, setMode] = useState<ViewerMode>("replay");
+  const [mode, setMode] = useState<ViewerMode>("realtime");
 
   // --- Replay mode state ---
   const [replayPoints, setReplayPoints] = useState<OrbitPoint[] | null>(null);

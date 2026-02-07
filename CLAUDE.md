@@ -17,7 +17,7 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 
 ### Rust (Cargo workspace)
 - `cargo build --workspace` — build all crates
-- `cargo test --workspace` — run all tests (54 tests across 4 crates)
+- `cargo test --workspace` — run all tests (55 tests across 4 crates)
 - `cargo clippy --workspace` — lint all crates
 - `cargo run --bin orts-cli` — run the CLI simulator (outputs CSV)
 - `cargo run --bin orts-cli -- --serve` — start WebSocket server (port 9001)
