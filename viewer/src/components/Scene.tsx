@@ -1,6 +1,6 @@
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { Earth } from "./Earth.js";
+import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { Satellite } from "./Satellite.js";
 import { OrbitPoint } from "../orbit.js";
@@ -9,16 +9,20 @@ interface SceneProps {
   points: OrbitPoint[] | null;
   satellitePosition: OrbitPoint | null;
   trailVisibleCount: number;
+  centralBody: string;
+  centralBodyRadius: number;
 }
 
 /**
  * Main Three.js scene component using @react-three/fiber Canvas.
- * Contains camera, controls, lights, Earth, orbit trail, and satellite.
+ * Contains camera, controls, lights, central body, orbit trail, and satellite.
  */
 export function Scene({
   points,
   satellitePosition,
   trailVisibleCount,
+  centralBody,
+  centralBodyRadius,
 }: SceneProps) {
   return (
     <Canvas
@@ -37,17 +41,17 @@ export function Scene({
       <ambientLight intensity={1.0} color={0x404040} />
       <directionalLight intensity={2.0} position={[5, 3, 5]} />
 
-      {/* Earth */}
-      <Earth />
+      {/* Central body */}
+      <CelestialBody bodyId={centralBody} />
 
-      {/* Axes helper (X=red, Y=green, Z=blue, length = 2 Earth radii) */}
+      {/* Axes helper (X=red, Y=green, Z=blue, length = 2 radii) */}
       <axesHelper args={[2]} />
 
       {/* Orbit trail and satellite (only when data is loaded) */}
       {points && points.length > 0 && (
-        <OrbitTrail points={points} visibleCount={trailVisibleCount} />
+        <OrbitTrail points={points} visibleCount={trailVisibleCount} scaleRadius={centralBodyRadius} />
       )}
-      {satellitePosition && <Satellite position={satellitePosition} />}
+      {satellitePosition && <Satellite position={satellitePosition} scaleRadius={centralBodyRadius} />}
     </Canvas>
   );
 }

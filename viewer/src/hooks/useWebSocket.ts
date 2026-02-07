@@ -12,6 +12,9 @@ export interface SimInfo {
   altitude: number;
   period: number;
   dt: number;
+  output_interval: number;
+  central_body: string;
+  central_body_radius: number;
 }
 
 /**
@@ -32,6 +35,9 @@ interface InfoMessage {
   altitude: number;
   period: number;
   dt: number;
+  output_interval: number;
+  central_body?: string;
+  central_body_radius?: number;
 }
 
 type ServerMessage = StateMessage | InfoMessage;
@@ -130,6 +136,9 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
             altitude: infoMsg.altitude,
             period: infoMsg.period,
             dt: infoMsg.dt,
+            output_interval: infoMsg.output_interval,
+            central_body: infoMsg.central_body ?? "earth",
+            central_body_radius: infoMsg.central_body_radius ?? 6378.137,
           });
         }
       } catch {

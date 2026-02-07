@@ -1,24 +1,23 @@
 import { OrbitPoint } from "../orbit.js";
 
-/** Earth radius in km -- same scale factor as orbit.ts. */
-const EARTH_RADIUS_KM = 6378.137;
-
 interface SatelliteProps {
   /** Current interpolated orbit state (position in km). */
   position: OrbitPoint;
+  /** Central body radius in km, used as the scale factor. */
+  scaleRadius: number;
 }
 
 /**
  * Satellite marker component: a small red sphere at the current
  * interpolated orbit position.
  */
-export function Satellite({ position }: SatelliteProps) {
+export function Satellite({ position, scaleRadius }: SatelliteProps) {
   return (
     <mesh
       position={[
-        position.x / EARTH_RADIUS_KM,
-        position.y / EARTH_RADIUS_KM,
-        position.z / EARTH_RADIUS_KM,
+        position.x / scaleRadius,
+        position.y / scaleRadius,
+        position.z / scaleRadius,
       ]}
     >
       <sphereGeometry args={[0.03, 16, 16]} />

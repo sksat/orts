@@ -1,8 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { Scene } from "./components/Scene.js";
 import { PlaybackBar } from "./components/PlaybackBar.js";
+import { GraphPanel } from "./components/GraphPanel.js";
 import { usePlayback } from "./hooks/usePlayback.js";
 import { useWebSocket, SimInfo } from "./hooks/useWebSocket.js";
+import { useDuckDB } from "./hooks/useDuckDB.js";
+import { useOrbitCharts } from "./hooks/useOrbitCharts.js";
 import { parseOrbitCSV, OrbitPoint } from "./orbit.js";
 
 /** The two viewer modes. */
@@ -27,6 +30,9 @@ export function App() {
   const [orbitInfo, setOrbitInfo] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { controller, snapshot } = usePlayback(replayPoints);
+
+  // --- DuckDB + Charts ---
+  const { conn, isReady: dbReady } = useDuckDB();
 
   // --- Realtime mode state ---
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
@@ -134,6 +140,16 @@ export function App() {
     [mode, isConnected, disconnect]
   );
 
+  // --- Charts ---
+  const { chartData, isLoading: chartsLoading } = useOrbitCharts({
+    conn,
+    mode,
+    replayPoints,
+    realtimePointsRef,
+    realtimeVersion,
+    mu: simInfo?.mu,
+  });
+
   // --- Determine what the 3D scene should display ---
   // In replay mode: use replay points with playback snapshot
   // In realtime mode: use accumulated realtime points, always showing
@@ -152,6 +168,9 @@ export function App() {
   const trailVisibleCount =
     mode === "replay" ? snapshot.trailVisibleCount : rtPoints.length;
 
+  const centralBody = simInfo?.central_body ?? "earth";
+  const centralBodyRadius = simInfo?.central_body_radius ?? 6378.137;
+
   return (
     <>
       {/* 3D Scene */}
@@ -159,6 +178,8 @@ export function App() {
         points={scenePoints}
         satellitePosition={satellitePosition}
         trailVisibleCount={trailVisibleCount}
+        centralBody={centralBody}
+        centralBodyRadius={centralBodyRadius}
       />
 
       {/* UI overlay */}
@@ -247,6 +268,11 @@ export function App() {
         style={{ display: "none" }}
         onChange={handleFileChange}
       />
+
+      {/* Graph panel (right side) */}
+      {dbReady && (
+        <GraphPanel chartData={chartData} isLoading={chartsLoading} />
+      )}
 
       {/* Playback bar (only shown in replay mode when data is loaded) */}
       {mode === "replay" && controller && (

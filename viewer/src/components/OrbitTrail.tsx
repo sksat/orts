@@ -3,9 +3,6 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { OrbitPoint } from "../orbit.js";
 
-/** Earth radius in km -- same scale factor as orbit.ts. */
-const EARTH_RADIUS_KM = 6378.137;
-
 /** Initial capacity for the streaming vertex buffer. Grows as needed. */
 const INITIAL_CAPACITY = 2048;
 
@@ -13,6 +10,8 @@ interface OrbitTrailProps {
   points: OrbitPoint[];
   /** Number of vertices to render (for progressive trail during playback). */
   visibleCount: number;
+  /** Central body radius in km, used as the scale factor. */
+  scaleRadius: number;
 }
 
 /**
@@ -22,7 +21,7 @@ interface OrbitTrailProps {
  * can be appended cheaply during realtime streaming (via `useFrame`),
  * instead of recreating the entire geometry on every React render.
  */
-export function OrbitTrail({ points, visibleCount }: OrbitTrailProps) {
+export function OrbitTrail({ points, visibleCount, scaleRadius }: OrbitTrailProps) {
   const writtenCountRef = useRef(0);
   const capacityRef = useRef(INITIAL_CAPACITY);
   const bufferRef = useRef(new Float32Array(INITIAL_CAPACITY * 3));
@@ -80,9 +79,9 @@ export function OrbitTrail({ points, visibleCount }: OrbitTrailProps) {
       for (let i = written; i < totalPoints; i++) {
         const p = points[i];
         const off = i * 3;
-        buf[off] = p.x / EARTH_RADIUS_KM;
-        buf[off + 1] = p.y / EARTH_RADIUS_KM;
-        buf[off + 2] = p.z / EARTH_RADIUS_KM;
+        buf[off] = p.x / scaleRadius;
+        buf[off + 1] = p.y / scaleRadius;
+        buf[off + 2] = p.z / scaleRadius;
       }
 
       writtenCountRef.current = totalPoints;
