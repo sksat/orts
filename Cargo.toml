@@ -16,3 +16,4 @@ orts-integrator = { path = "integrator" }
 orts-orbits = { path = "orbits" }
 orts-coords = { path = "coords" }
 nalgebra = "0.34"
+clap = { version = "4", features = ["derive"] }

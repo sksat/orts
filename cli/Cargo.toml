@@ -7,3 +7,4 @@ edition.workspace = true
 nalgebra.workspace = true
 orts-integrator.workspace = true
 orts-orbits.workspace = true
+clap.workspace = true

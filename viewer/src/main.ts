@@ -3,8 +3,12 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import {
   parseOrbitCSV,
   createOrbitVisualization,
+  updateSatellitePosition,
+  updateOrbitTrail,
   OrbitVisualization,
+  OrbitPoint,
 } from "./orbit.js";
+import { PlaybackController } from "./playback.js";
 
 // --- Scene setup ---
 const scene = new THREE.Scene();
@@ -72,6 +76,7 @@ scene.add(axesHelper);
 
 // --- Orbit visualization state ---
 let currentOrbit: OrbitVisualization | null = null;
+let currentPoints: OrbitPoint[] = [];
 
 function clearOrbit(): void {
   if (currentOrbit) {
@@ -83,7 +88,22 @@ function clearOrbit(): void {
     (currentOrbit.satelliteMarker.material as THREE.Material).dispose();
     currentOrbit = null;
   }
+  currentPoints = [];
 }
+
+// --- Playback state ---
+let playback: PlaybackController | null = null;
+
+// --- Playback UI elements ---
+const playbackBar = document.getElementById("playback-bar") as HTMLDivElement;
+const playPauseBtn = document.getElementById(
+  "play-pause-btn"
+) as HTMLButtonElement;
+const speedSelect = document.getElementById(
+  "speed-select"
+) as HTMLSelectElement;
+const timeSlider = document.getElementById("time-slider") as HTMLInputElement;
+const timeDisplay = document.getElementById("time-display") as HTMLSpanElement;
 
 // --- CSV file loading ---
 const loadBtn = document.getElementById("load-csv-btn") as HTMLButtonElement;
@@ -114,6 +134,9 @@ fileInput.addEventListener("change", () => {
     // Remove previous orbit
     clearOrbit();
 
+    // Store points for playback
+    currentPoints = points;
+
     // Create and add new orbit visualization
     currentOrbit = createOrbitVisualization(points);
     scene.add(currentOrbit.orbitLine);
@@ -125,6 +148,23 @@ fileInput.addEventListener("change", () => {
     orbitInfo.textContent =
       `Loaded: ${file.name} | ${points.length} points | ` +
       `Duration: ${duration.toFixed(1)} s`;
+
+    // Initialize playback controller
+    playback = new PlaybackController(points);
+    playback.onChange = syncPlaybackUI;
+
+    // Show playback bar and set initial state
+    playbackBar.classList.add("visible");
+    syncPlaybackUI();
+
+    // Move satellite to starting position and hide full trail
+    if (currentOrbit) {
+      updateSatellitePosition(
+        currentOrbit.satelliteMarker,
+        playback.getCurrentState()
+      );
+      updateOrbitTrail(currentOrbit.orbitLine, 1, currentPoints.length);
+    }
   };
 
   reader.readAsText(file);
@@ -133,9 +173,95 @@ fileInput.addEventListener("change", () => {
   fileInput.value = "";
 });
 
+// --- Playback UI wiring ---
+
+playPauseBtn.addEventListener("click", () => {
+  if (playback) {
+    playback.togglePlayPause();
+  }
+});
+
+speedSelect.addEventListener("change", () => {
+  if (playback) {
+    playback.setSpeed(Number(speedSelect.value));
+  }
+});
+
+let isScrubbing = false;
+
+timeSlider.addEventListener("input", () => {
+  if (playback) {
+    isScrubbing = true;
+    const fraction = Number(timeSlider.value) / 1000;
+    playback.seekToFraction(fraction);
+  }
+});
+
+timeSlider.addEventListener("change", () => {
+  isScrubbing = false;
+});
+
+/**
+ * Format a time value in seconds to a human-readable string.
+ * Shows minutes and seconds when >= 60s, otherwise just seconds.
+ */
+function formatTime(seconds: number): string {
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)} s`;
+  }
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}m ${secs.toFixed(1)}s`;
+}
+
+/**
+ * Synchronise all playback UI elements with the current controller state.
+ */
+function syncPlaybackUI(): void {
+  if (!playback) return;
+
+  // Play/Pause button label
+  playPauseBtn.textContent = playback.isPlaying ? "Pause" : "Play";
+
+  // Time slider (update only when user is not dragging)
+  if (!isScrubbing) {
+    timeSlider.value = String(Math.round(playback.fraction * 1000));
+  }
+
+  // Time display
+  timeDisplay.textContent =
+    `T+${formatTime(playback.elapsedTime)} / ${formatTime(playback.totalDuration)}`;
+}
+
 // --- Animation loop ---
+const clock = new THREE.Clock();
+
 function animate(): void {
+  const dt = clock.getDelta();
   controls.update();
+
+  // Advance playback if active
+  if (playback && currentOrbit) {
+    const changed = playback.update(dt);
+    if (changed || isScrubbing) {
+      // Update satellite position via interpolation
+      const state = playback.getCurrentState();
+      updateSatellitePosition(currentOrbit.satelliteMarker, state);
+
+      // Update visible trail: show points up to current time + 1
+      // (+1 so at least the first vertex is always shown)
+      const trailIndex = playback.getCurrentTrailIndex();
+      updateOrbitTrail(
+        currentOrbit.orbitLine,
+        trailIndex + 2, // +2: index is 0-based, and we want one past
+        currentPoints.length
+      );
+
+      // Sync UI every frame during active playback
+      syncPlaybackUI();
+    }
+  }
+
   renderer.render(scene, camera);
 }
 renderer.setAnimationLoop(animate);
