@@ -181,7 +181,37 @@ export function App() {
     [mode, isConnected, send]
   );
 
-  // --- Replay: CSV loading ---
+  // --- Replay: file loading (shared by file input and D&D) ---
+  const loadCSVFile = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = reader.result as string;
+      const { points: parsed, metadata } = parseOrbitCSVWithMetadata(text);
+
+      if (parsed.length === 0) {
+        setOrbitInfo("No valid orbit data found in file.");
+        setReplayPoints(null);
+        setCsvMetadata(null);
+        return;
+      }
+
+      setReplayPoints(parsed);
+      setCsvMetadata(metadata);
+
+      // Switch to replay mode
+      if (mode === "realtime" && isConnected) {
+        disconnect();
+      }
+      setMode("replay");
+
+      const duration = parsed[parsed.length - 1].t - parsed[0].t;
+      setOrbitInfo(
+        `Loaded: ${file.name} | ${parsed.length} points | Duration: ${duration.toFixed(1)} s`
+      );
+    };
+    reader.readAsText(file);
+  }, [mode, isConnected, disconnect]);
+
   const handleLoadClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
@@ -190,35 +220,38 @@ export function App() {
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-
-      const reader = new FileReader();
-      reader.onload = () => {
-        const text = reader.result as string;
-        const { points: parsed, metadata } = parseOrbitCSVWithMetadata(text);
-
-        if (parsed.length === 0) {
-          setOrbitInfo("No valid orbit data found in file.");
-          setReplayPoints(null);
-          setCsvMetadata(null);
-          return;
-        }
-
-        setReplayPoints(parsed);
-        setCsvMetadata(metadata);
-
-        const duration = parsed[parsed.length - 1].t - parsed[0].t;
-        setOrbitInfo(
-          `Loaded: ${file.name} | ${parsed.length} points | Duration: ${duration.toFixed(1)} s`
-        );
-      };
-
-      reader.readAsText(file);
-
+      loadCSVFile(file);
       // Reset file input so the same file can be re-loaded
       e.target.value = "";
     },
-    []
+    [loadCSVFile]
   );
+
+  // --- Drag & Drop ---
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      loadCSVFile(file);
+    }
+  }, [loadCSVFile]);
 
   // --- Realtime: connect / disconnect ---
   const handleConnect = useCallback(() => {
@@ -287,7 +320,19 @@ export function App() {
       : (csvMetadata?.centralBodyRadius ?? 6378.137);
 
   return (
-    <>
+    <div
+      className="app-root"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Drop overlay */}
+      {isDragOver && (
+        <div className="drop-overlay">
+          <div className="drop-overlay-text">Drop CSV file to load</div>
+        </div>
+      )}
+
       {/* 3D Scene */}
       <Scene
         points={mode === "replay" ? replayPoints : undefined}
@@ -415,6 +460,6 @@ export function App() {
           totalDuration={snapshot.totalDuration}
         />
       )}
-    </>
+    </div>
   );
 }

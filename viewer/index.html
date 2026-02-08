@@ -329,6 +329,33 @@
       .u-select {
         background: rgba(68, 136, 204, 0.15) !important;
       }
+
+      /* --- App root (D&D container) --- */
+      .app-root {
+        width: 100vw;
+        height: 100vh;
+        position: relative;
+      }
+
+      /* --- Drop overlay --- */
+      .drop-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: rgba(34, 85, 170, 0.3);
+        border: 3px dashed rgba(68, 136, 204, 0.8);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+      .drop-overlay-text {
+        color: #fff;
+        font-size: 24px;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 16px 32px;
+        border-radius: 8px;
+      }
     </style>
   </head>
   <body>
