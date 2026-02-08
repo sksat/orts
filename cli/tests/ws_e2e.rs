@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::connect_async;
 
 /// Pick a port unlikely to collide with other processes.
@@ -442,6 +442,79 @@ async fn test_websocket_overview_arrives_fast() {
             "overview should arrive within 500ms, took {}ms",
             elapsed.as_millis()
         );
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+#[tokio::test]
+async fn test_websocket_query_range() {
+    let port = test_port() + 6;
+    let mut server = Server::spawn(port);
+
+    // Wait for data to accumulate
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}");
+        let (ws, _) = connect_async(&url)
+            .await
+            .expect("failed to connect");
+        let (mut write, mut read) = ws.split();
+
+        // info → history
+        let info = next_json(&mut read).await;
+        assert_eq!(info["type"], "info");
+        let history = next_json(&mut read).await;
+        assert_eq!(history["type"], "history");
+        let history_states = history["states"].as_array().unwrap();
+        assert!(!history_states.is_empty(), "need accumulated history");
+
+        // Determine a valid time range from the history
+        let first_t = history_states[0]["t"].as_f64().unwrap();
+        let last_t = history_states[history_states.len() - 1]["t"].as_f64().unwrap();
+
+        // Send query_range request
+        let query = serde_json::json!({
+            "type": "query_range",
+            "t_min": first_t,
+            "t_max": last_t,
+            "max_points": 50
+        });
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                query.to_string().into(),
+            ))
+            .await
+            .expect("failed to send query_range");
+
+        // Read messages until we get the query_range_response
+        let (response, _) = read_until_type(&mut read, "query_range_response", 100).await;
+        assert_eq!(response["type"], "query_range_response");
+        assert!(response["t_min"].is_f64());
+        assert!(response["t_max"].is_f64());
+
+        let resp_states = response["states"].as_array().unwrap();
+        assert!(
+            !resp_states.is_empty(),
+            "query_range_response should have states"
+        );
+        assert!(
+            resp_states.len() <= 50,
+            "should respect max_points limit, got {}",
+            resp_states.len()
+        );
+
+        // Verify all returned states are within the requested range
+        for state in resp_states {
+            let t = state["t"].as_f64().unwrap();
+            assert!(
+                t >= first_t - 1e-9 && t <= last_t + 1e-9,
+                "state t={t} is outside range [{first_t}, {last_t}]"
+            );
+        }
     })
     .await;
 

@@ -12,7 +12,7 @@ use orts_datamodel::recording::Recording;
 use orts_datamodel::timeline::TimePoint;
 use orts_integrator::{Rk4, State};
 use orts_orbits::{body::KnownBody, two_body::TwoBodySystem};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
@@ -232,6 +232,19 @@ impl HistoryBuffer {
         all
     }
 
+    /// Query states within a time range, optionally downsampled.
+    fn query_range(&self, t_min: f64, t_max: f64, max_points: Option<usize>) -> Vec<HistoryState> {
+        let all = self.load_all();
+        let filtered: Vec<HistoryState> = all
+            .into_iter()
+            .filter(|s| s.t >= t_min && s.t <= t_max)
+            .collect();
+        match max_points {
+            Some(mp) => Self::downsample(&filtered, mp),
+            None => filtered,
+        }
+    }
+
     /// Downsample a list of states to at most `max_points`, always preserving first and last.
     fn downsample(states: &[HistoryState], max_points: usize) -> Vec<HistoryState> {
         let n = states.len();
@@ -252,6 +265,18 @@ impl HistoryBuffer {
         result.push(states[n - 1].clone());
         result
     }
+}
+
+/// Client-to-server WebSocket message.
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type")]
+enum ClientMessage {
+    #[serde(rename = "query_range")]
+    QueryRange {
+        t_min: f64,
+        t_max: f64,
+        max_points: Option<usize>,
+    },
 }
 
 /// Server-to-client WebSocket message.
@@ -285,6 +310,13 @@ enum WsMessage {
     /// Marker indicating all detail chunks have been sent.
     #[serde(rename = "history_detail_complete")]
     HistoryDetailComplete,
+    /// Response to a client query_range request.
+    #[serde(rename = "query_range_response")]
+    QueryRangeResponse {
+        t_min: f64,
+        t_max: f64,
+        states: Vec<HistoryState>,
+    },
 }
 
 fn parse_body(s: &str) -> KnownBody {
@@ -701,6 +733,25 @@ async fn handle_connection(
             }
             ws_msg = ws_receiver.next() => {
                 match ws_msg {
+                    Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                        if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
+                            match client_msg {
+                                ClientMessage::QueryRange { t_min, t_max, max_points } => {
+                                    let states = history.read().await.query_range(t_min, t_max, max_points);
+                                    let resp = WsMessage::QueryRangeResponse { t_min, t_max, states };
+                                    let json = serde_json::to_string(&resp)
+                                        .expect("failed to serialize query_range_response");
+                                    if ws_sender
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(json.into()))
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Some(Ok(_)) => {}
                     Some(Err(_)) | None => {
                         break;
@@ -957,5 +1008,105 @@ mod tests {
         assert_eq!(v["type"], "history_detail_complete");
         // Should not have a "states" field
         assert!(v.get("states").is_none());
+    }
+
+    // --- ClientMessage tests ---
+
+    #[test]
+    fn client_message_query_range_deserialize() {
+        let json = r#"{"type":"query_range","t_min":10.0,"t_max":50.0,"max_points":100}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::QueryRange {
+                t_min,
+                t_max,
+                max_points,
+            } => {
+                assert!((t_min - 10.0).abs() < 1e-9);
+                assert!((t_max - 50.0).abs() < 1e-9);
+                assert_eq!(max_points, Some(100));
+            }
+        }
+    }
+
+    #[test]
+    fn client_message_query_range_without_max_points() {
+        let json = r#"{"type":"query_range","t_min":0.0,"t_max":100.0}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            ClientMessage::QueryRange { max_points, .. } => {
+                assert_eq!(max_points, None);
+            }
+        }
+    }
+
+    // --- QueryRangeResponse serialization ---
+
+    #[test]
+    fn query_range_response_serialization() {
+        let msg = WsMessage::QueryRangeResponse {
+            t_min: 10.0,
+            t_max: 50.0,
+            states: vec![make_state(20.0), make_state(30.0)],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "query_range_response");
+        assert_eq!(v["t_min"], 10.0);
+        assert_eq!(v["t_max"], 50.0);
+        assert_eq!(v["states"].as_array().unwrap().len(), 2);
+    }
+
+    // --- query_range tests ---
+
+    #[test]
+    fn query_range_filters_by_time() {
+        let dir = temp_data_dir("qr-filter");
+        let mut buf = HistoryBuffer::new(100, dir.clone());
+
+        for i in 0..10 {
+            buf.push(make_state(i as f64 * 10.0));
+        }
+
+        let result = buf.query_range(20.0, 60.0, None);
+        assert!(result.len() >= 4, "should include t=20,30,40,50,60");
+        for s in &result {
+            assert!(s.t >= 20.0 && s.t <= 60.0, "t={} out of range", s.t);
+        }
+
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn query_range_with_downsample() {
+        let dir = temp_data_dir("qr-ds");
+        let mut buf = HistoryBuffer::new(200, dir.clone());
+
+        for i in 0..100 {
+            buf.push(make_state(i as f64));
+        }
+
+        let result = buf.query_range(0.0, 99.0, Some(10));
+        assert_eq!(result.len(), 10);
+        // First and last preserved
+        assert!((result[0].t - 0.0).abs() < 1e-9);
+        assert!((result[9].t - 99.0).abs() < 1e-9);
+
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn query_range_empty_range() {
+        let dir = temp_data_dir("qr-empty");
+        let mut buf = HistoryBuffer::new(100, dir.clone());
+
+        for i in 0..10 {
+            buf.push(make_state(i as f64 * 10.0));
+        }
+
+        let result = buf.query_range(200.0, 300.0, None);
+        assert!(result.is_empty());
+
+        cleanup_dir(&dir);
     }
 }
