@@ -168,10 +168,10 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                     for row_idx in 0..n {
                         let batch = chunk
                             .component_batch::<rerun::components::Scalar>(comp_id, row_idx);
-                        if let Some(Ok(scalar_vec)) = batch {
-                            if let Some(s) = scalar_vec.first() {
-                                meta_scalars.insert(entity_path.clone(), s.0 .0);
-                            }
+                        if let Some(Ok(scalar_vec)) = batch
+                            && let Some(s) = scalar_vec.first()
+                        {
+                            meta_scalars.insert(entity_path.clone(), s.0 .0);
                         }
                     }
                 }
@@ -179,10 +179,10 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                     for row_idx in 0..n {
                         let batch = chunk
                             .component_batch::<rerun::components::Text>(comp_id, row_idx);
-                        if let Some(Ok(text_vec)) = batch {
-                            if let Some(t) = text_vec.first() {
-                                meta_texts.insert(entity_path.clone(), t.to_string());
-                            }
+                        if let Some(Ok(text_vec)) = batch
+                            && let Some(t) = text_vec.first()
+                        {
+                            meta_texts.insert(entity_path.clone(), t.to_string());
                         }
                     }
                 }
