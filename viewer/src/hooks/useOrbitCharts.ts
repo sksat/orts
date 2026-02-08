@@ -15,6 +15,15 @@ const MU_EARTH = 398600.4418;
 /** Time range for chart display: null = all history, number = last N seconds. */
 export type TimeRange = number | null;
 
+/** Compute the minimum t value for a chart query given a time range window. */
+export function computeTMin(
+  timeRange: TimeRange,
+  latestT: number
+): number | undefined {
+  if (timeRange == null) return undefined;
+  return latestT - timeRange;
+}
+
 interface UseOrbitChartsOptions {
   conn: AsyncDuckDBConnection | null;
   mode: "replay" | "realtime";
@@ -47,8 +56,11 @@ export function useOrbitCharts(
   const [isLoading, setIsLoading] = useState(false);
   const queryTimerRef = useRef<number>(0);
   const hasDataRef = useRef(false);
+  // Ref to avoid stale closure in realtime queryTick
+  const timeRangeRef = useRef(timeRange);
+  timeRangeRef.current = timeRange;
 
-  // Replay mode: batch insert all points when CSV changes
+  // Replay mode: batch insert all points when data or timeRange changes
   useEffect(() => {
     if (mode !== "replay" || !conn || !replayPoints) return;
 
@@ -57,7 +69,12 @@ export function useOrbitCharts(
       setIsLoading(true);
       await clearTable(conn);
       await insertPoints(conn, replayPoints);
-      const data = await queryDerivedQuantities(conn, mu, bodyRadius);
+      const latestT =
+        replayPoints.length > 0
+          ? replayPoints[replayPoints.length - 1].t
+          : 0;
+      const tMin = computeTMin(timeRange, latestT);
+      const data = await queryDerivedQuantities(conn, mu, bodyRadius, tMin);
       if (!cancelled) {
         setChartData(data);
         setIsLoading(false);
@@ -67,7 +84,7 @@ export function useOrbitCharts(
     return () => {
       cancelled = true;
     };
-  }, [conn, mode, replayPoints, mu, bodyRadius]);
+  }, [conn, mode, replayPoints, mu, bodyRadius, timeRange]);
 
   // Realtime mode: drain IngestBuffer + periodic query
   useEffect(() => {
@@ -118,9 +135,10 @@ export function useOrbitCharts(
           }
 
           if (hasDataRef.current) {
-            const tMin = timeRange != null
-              ? ingestBufferRef.current.latestT - timeRange
-              : undefined;
+            const tMin = computeTMin(
+              timeRangeRef.current,
+              ingestBufferRef.current.latestT
+            );
             const data = await queryDerivedQuantities(conn, mu, bodyRadius, tMin);
             if (!cancelled) setChartData(data);
           }
