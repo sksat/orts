@@ -474,6 +474,19 @@ fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
         params.period,
         params.period / 60.0
     );
+    if let Some(epoch) = params.epoch {
+        println!("# epoch_jd = {}", epoch.jd());
+        let (y, mo, d, h, mi, s) = epoch.to_gregorian();
+        println!("# epoch = {:04}-{:02}-{:02}T{:02}:{:02}:{:02.0}Z", y, mo, d, h, mi, s);
+    }
+    println!(
+        "# central_body = {}",
+        params.body.properties().name.to_lowercase()
+    );
+    println!(
+        "# central_body_radius = {} km",
+        params.body.properties().radius
+    );
     println!("# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s]");
 
     let sat_path = EntityPath::parse("/world/sat/default");
@@ -514,7 +527,7 @@ fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
 fn run_convert(input: &str, format: OutputFormat, output: Option<&str>) {
     match format {
         OutputFormat::Csv => {
-            let rows = orts_datamodel::rerun_export::load_from_rrd(input)
+            let data = orts_datamodel::rerun_export::load_rrd_data(input)
                 .unwrap_or_else(|e| {
                     eprintln!("Error reading {input}: {e}");
                     std::process::exit(1);
@@ -522,8 +535,21 @@ fn run_convert(input: &str, format: OutputFormat, output: Option<&str>) {
 
             let write_csv = |w: &mut dyn std::io::Write| -> std::io::Result<()> {
                 writeln!(w, "# Converted from {input}")?;
+                let meta = &data.metadata;
+                if let Some(mu) = meta.mu {
+                    writeln!(w, "# mu = {} km^3/s^2", mu)?;
+                }
+                if let Some(epoch_jd) = meta.epoch_jd {
+                    writeln!(w, "# epoch_jd = {}", epoch_jd)?;
+                }
+                if let Some(ref name) = meta.body_name {
+                    writeln!(w, "# central_body = {}", name.to_lowercase())?;
+                }
+                if let Some(radius) = meta.body_radius {
+                    writeln!(w, "# central_body_radius = {} km", radius)?;
+                }
                 writeln!(w, "# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s]")?;
-                for row in &rows {
+                for row in &data.rows {
                     writeln!(
                         w,
                         "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
