@@ -9,6 +9,8 @@ interface TimeSeriesChartProps {
   data: [Float64Array, Float64Array] | null;
   height?: number;
   color?: string;
+  /** Called when the user zooms into a time range via drag. */
+  onZoom?: (tMin: number, tMax: number) => void;
 }
 
 export function TimeSeriesChart({
@@ -17,9 +19,12 @@ export function TimeSeriesChart({
   data,
   height = 140,
   color = "#0f0",
+  onZoom,
 }: TimeSeriesChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<uPlot | null>(null);
+  const onZoomRef = useRef(onZoom);
+  onZoomRef.current = onZoom;
 
   // Create chart on mount
   useEffect(() => {
@@ -57,6 +62,19 @@ export function TimeSeriesChart({
         drag: { x: true, y: false },
       },
       legend: { show: false },
+      hooks: {
+        setScale: [
+          (u: uPlot, scaleKey: string) => {
+            if (scaleKey === "x") {
+              const min = u.scales.x.min;
+              const max = u.scales.x.max;
+              if (min != null && max != null && onZoomRef.current) {
+                onZoomRef.current(min, max);
+              }
+            }
+          },
+        ],
+      },
     };
 
     const emptyData: uPlot.AlignedData = [[], []];

@@ -112,3 +112,18 @@ export async function downsampleOldRows(
     )
   `);
 }
+
+/**
+ * Replace data in a time range with higher-resolution points.
+ * Used when the viewer zooms into a chart and fetches full-resolution
+ * data from the server via query_range.
+ */
+export async function replaceRange(
+  conn: AsyncDuckDBConnection,
+  tMin: number,
+  tMax: number,
+  points: OrbitPoint[]
+): Promise<void> {
+  await conn.query(`DELETE FROM orbit_points WHERE t >= ${tMin} AND t <= ${tMax}`);
+  await insertPoints(conn, points);
+}

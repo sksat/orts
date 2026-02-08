@@ -15,6 +15,8 @@ interface GraphPanelProps {
   isLoading: boolean;
   timeRange: TimeRange;
   onTimeRangeChange: (range: TimeRange) => void;
+  /** Called when the user drag-zooms into a time range on any chart. */
+  onZoom?: (tMin: number, tMax: number) => void;
 }
 
 export function GraphPanel({
@@ -22,6 +24,7 @@ export function GraphPanel({
   isLoading,
   timeRange,
   onTimeRangeChange,
+  onZoom,
 }: GraphPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -81,24 +84,28 @@ export function GraphPanel({
             yLabel="km"
             data={altitudeData}
             color="#4af"
+            onZoom={onZoom}
           />
           <TimeSeriesChart
             title="Specific Orbital Energy"
             yLabel="km\u00B2/s\u00B2"
             data={energyData}
             color="#f84"
+            onZoom={onZoom}
           />
           <TimeSeriesChart
             title="Angular Momentum"
             yLabel="km\u00B2/s"
             data={angMomData}
             color="#8f4"
+            onZoom={onZoom}
           />
           <TimeSeriesChart
             title="Velocity"
             yLabel="km/s"
             data={velocityData}
             color="#f4f"
+            onZoom={onZoom}
           />
         </div>
       )}

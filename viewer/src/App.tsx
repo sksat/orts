@@ -3,11 +3,12 @@ import { Scene } from "./components/Scene.js";
 import { PlaybackBar } from "./components/PlaybackBar.js";
 import { GraphPanel } from "./components/GraphPanel.js";
 import { usePlayback } from "./hooks/usePlayback.js";
-import { useWebSocket, SimInfo } from "./hooks/useWebSocket.js";
+import { useWebSocket, SimInfo, QueryRangeResponse } from "./hooks/useWebSocket.js";
 import { useDuckDB } from "./hooks/useDuckDB.js";
 import { useOrbitCharts, TimeRange } from "./hooks/useOrbitCharts.js";
 import { IngestBuffer } from "./db/IngestBuffer.js";
 import { TrailBuffer } from "./utils/TrailBuffer.js";
+import { replaceRange } from "./db/orbitStore.js";
 import { parseOrbitCSV, OrbitPoint } from "./orbit.js";
 
 /** The two viewer modes. */
@@ -146,14 +147,37 @@ export function App() {
     scheduleRerender();
   }, [scheduleRerender]);
 
-  const { connect, disconnect, isConnected } = useWebSocket({
+  const handleQueryRangeResponse = useCallback(
+    async (response: QueryRangeResponse) => {
+      if (!conn) return;
+      await replaceRange(conn, response.tMin, response.tMax, response.points);
+      // Chart update will happen via next useOrbitCharts tick
+    },
+    [conn]
+  );
+
+  const { connect, disconnect, isConnected, send } = useWebSocket({
     url: wsUrl,
     onState: handleState,
     onInfo: handleInfo,
     onHistory: handleHistory,
     onHistoryDetail: handleHistoryDetail,
     onHistoryDetailComplete: handleHistoryDetailComplete,
+    onQueryRangeResponse: handleQueryRangeResponse,
   });
+
+  const handleChartZoom = useCallback(
+    (tMin: number, tMax: number) => {
+      if (mode !== "realtime" || !isConnected) return;
+      send({
+        type: "query_range",
+        t_min: tMin,
+        t_max: tMax,
+        max_points: 5000,
+      });
+    },
+    [mode, isConnected, send]
+  );
 
   // --- Replay: CSV loading ---
   const handleLoadClick = useCallback(() => {
@@ -358,6 +382,7 @@ export function App() {
           isLoading={chartsLoading}
           timeRange={timeRange}
           onTimeRangeChange={setTimeRange}
+          onZoom={handleChartZoom}
         />
       )}
 

@@ -54,7 +54,21 @@ interface HistoryDetailCompleteMessage {
   type: "history_detail_complete";
 }
 
-type ServerMessage = StateMessage | InfoMessage | HistoryMessage | HistoryDetailMessage | HistoryDetailCompleteMessage;
+interface QueryRangeResponseMessage {
+  type: "query_range_response";
+  t_min: number;
+  t_max: number;
+  states: Array<{ t: number; position: [number, number, number]; velocity: [number, number, number] }>;
+}
+
+type ServerMessage = StateMessage | InfoMessage | HistoryMessage | HistoryDetailMessage | HistoryDetailCompleteMessage | QueryRangeResponseMessage;
+
+/** Response data from a query_range request. */
+export interface QueryRangeResponse {
+  tMin: number;
+  tMax: number;
+  points: OrbitPoint[];
+}
 
 export interface UseWebSocketOptions {
   /** WebSocket server URL, e.g. "ws://localhost:9001". */
@@ -66,6 +80,8 @@ export interface UseWebSocketOptions {
   onHistory: (points: OrbitPoint[]) => void;
   onHistoryDetail: (points: OrbitPoint[]) => void;
   onHistoryDetailComplete: () => void;
+  /** Called when the server responds to a query_range request. */
+  onQueryRangeResponse?: (response: QueryRangeResponse) => void;
 }
 
 export interface UseWebSocketReturn {
@@ -75,6 +91,8 @@ export interface UseWebSocketReturn {
   disconnect: () => void;
   /** Whether a WebSocket connection is currently open. */
   isConnected: boolean;
+  /** Send a JSON message to the server. */
+  send: (msg: Record<string, unknown>) => void;
 }
 
 /**
@@ -97,9 +115,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   const onHistoryRef = useRef(options.onHistory);
   const onHistoryDetailRef = useRef(options.onHistoryDetail);
   const onHistoryDetailCompleteRef = useRef(options.onHistoryDetailComplete);
+  const onQueryRangeResponseRef = useRef(options.onQueryRangeResponse);
   onHistoryRef.current = options.onHistory;
   onHistoryDetailRef.current = options.onHistoryDetail;
   onHistoryDetailCompleteRef.current = options.onHistoryDetailComplete;
+  onQueryRangeResponseRef.current = options.onQueryRangeResponse;
 
   const urlRef = useRef(options.url);
   urlRef.current = options.url;
@@ -181,11 +201,33 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           }
         } else if (msg.type === "history_detail_complete") {
           onHistoryDetailCompleteRef.current();
+        } else if (msg.type === "query_range_response") {
+          const qrMsg = msg as QueryRangeResponseMessage;
+          const points: OrbitPoint[] = qrMsg.states.map((s) => ({
+            t: s.t,
+            x: s.position[0],
+            y: s.position[1],
+            z: s.position[2],
+            vx: s.velocity[0],
+            vy: s.velocity[1],
+            vz: s.velocity[2],
+          }));
+          onQueryRangeResponseRef.current?.({
+            tMin: qrMsg.t_min,
+            tMax: qrMsg.t_max,
+            points,
+          });
         }
       } catch {
         // Silently ignore malformed messages
       }
     });
+  }, []);
+
+  const send = useCallback((msg: Record<string, unknown>) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(msg));
+    }
   }, []);
 
   // Clean up on unmount
@@ -198,5 +240,5 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     };
   }, []);
 
-  return { connect, disconnect, isConnected };
+  return { connect, disconnect, isConnected, send };
 }
