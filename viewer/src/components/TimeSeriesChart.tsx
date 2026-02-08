@@ -70,9 +70,9 @@ export function TimeSeriesChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update data
+  // Update data (need at least 2 points for uPlot axis calculations)
   useEffect(() => {
-    if (!chartRef.current || !data) return;
+    if (!chartRef.current || !data || data[0].length < 2) return;
     chartRef.current.setData(data);
   }, [data]);
 

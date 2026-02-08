@@ -69,38 +69,52 @@ export function useOrbitCharts(
   useEffect(() => {
     if (mode !== "realtime" || !conn) return;
 
-    // Reset on mode switch
-    (async () => {
-      await clearTable(conn);
-      insertedCountRef.current = 0;
-      setChartData(null);
-    })();
-
+    let cancelled = false;
     const QUERY_INTERVAL = 500;
 
-    const tick = async () => {
+    const startPolling = async () => {
+      // Reset table before starting the polling loop so the timer
+      // never fires against a half-cleared table.
       try {
-        const allPoints = realtimePointsRef.current!;
-        const newCount = allPoints.length;
-        const inserted = insertedCountRef.current;
-
-        if (newCount > inserted) {
-          const newPoints = allPoints.slice(inserted);
-          await insertPoints(conn, newPoints);
-          insertedCountRef.current = newCount;
-          const data = await queryDerivedQuantities(conn, mu, bodyRadius);
-          setChartData(data);
-        }
+        await clearTable(conn);
+        insertedCountRef.current = 0;
+        setChartData(null);
       } catch (e) {
-        console.warn("useOrbitCharts tick error:", e);
+        console.warn("useOrbitCharts: failed to reset table:", e);
       }
+
+      if (cancelled) return;
+
+      const tick = async () => {
+        if (cancelled) return;
+        try {
+          const allPoints = realtimePointsRef.current!;
+          const newCount = allPoints.length;
+          const inserted = insertedCountRef.current;
+
+          if (newCount > inserted) {
+            const newPoints = allPoints.slice(inserted);
+            await insertPoints(conn, newPoints);
+            insertedCountRef.current = newCount;
+            const data = await queryDerivedQuantities(conn, mu, bodyRadius);
+            if (!cancelled) setChartData(data);
+          }
+        } catch (e) {
+          console.warn("useOrbitCharts tick error:", e);
+        }
+
+        if (!cancelled) {
+          queryTimerRef.current = window.setTimeout(tick, QUERY_INTERVAL);
+        }
+      };
 
       queryTimerRef.current = window.setTimeout(tick, QUERY_INTERVAL);
     };
 
-    queryTimerRef.current = window.setTimeout(tick, QUERY_INTERVAL);
+    startPolling();
 
     return () => {
+      cancelled = true;
       clearTimeout(queryTimerRef.current);
     };
     // realtimeVersion is intentionally omitted — we poll on a timer instead

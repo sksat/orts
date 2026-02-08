@@ -117,13 +117,13 @@ export function App() {
   }, [disconnect]);
 
   // --- Auto-connect in realtime mode ---
+  // Deps include isConnected so we reconnect after HMR or unexpected drops.
+  // No infinite loop: failed connects don't toggle isConnected again.
   useEffect(() => {
     if (mode === "realtime" && !isConnected) {
       handleConnect();
     }
-    // Only run when mode changes, not on every isConnected change
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, isConnected, handleConnect]);
 
   // --- Mode switching ---
   const handleModeChange = useCallback(
