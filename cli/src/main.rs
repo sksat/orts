@@ -305,9 +305,47 @@ fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
 }
 
 fn run_convert(input: &str, format: OutputFormat, output: Option<&str>) {
-    let _ = (input, format, output);
-    eprintln!("TODO: convert command not yet implemented");
-    std::process::exit(1);
+    match format {
+        OutputFormat::Csv => {
+            let rows = orts_datamodel::rerun_export::load_from_rrd(input)
+                .unwrap_or_else(|e| {
+                    eprintln!("Error reading {input}: {e}");
+                    std::process::exit(1);
+                });
+
+            let write_csv = |w: &mut dyn std::io::Write| -> std::io::Result<()> {
+                writeln!(w, "# Converted from {input}")?;
+                writeln!(w, "# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s]")?;
+                for row in &rows {
+                    writeln!(
+                        w,
+                        "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+                        row.t, row.x, row.y, row.z, row.vx, row.vy, row.vz,
+                    )?;
+                }
+                Ok(())
+            };
+
+            match output {
+                Some(path) => {
+                    let mut file = std::fs::File::create(path).unwrap_or_else(|e| {
+                        eprintln!("Error creating {path}: {e}");
+                        std::process::exit(1);
+                    });
+                    write_csv(&mut file).unwrap();
+                    eprintln!("Converted {input} -> {path}");
+                }
+                None => {
+                    let mut stdout = std::io::stdout().lock();
+                    write_csv(&mut stdout).unwrap();
+                }
+            }
+        }
+        OutputFormat::Rrd => {
+            eprintln!("Error: cannot convert to .rrd format (input is already .rrd)");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn run_server(sim: &SimArgs, port: u16) {
