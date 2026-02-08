@@ -32,3 +32,57 @@ Playwright を用いて viewer の E2E テスト環境も用意する。
 開発にあたっては、責務の分離を徹底することで並列での開発を可能にすること。
 
 また、シミュレータは CLI で実行可能にしておく事でシンプルな E2E テストを可能にする。
+
+## データモデル
+
+Rerun (https://rerun.io/) のデータフォーマット設計を参考に、ECS (Entity-Component-System) ベースのデータモデルを採用する。
+
+### Entity-Component-Archetype
+
+- **Entity**: 階層パスで識別されるオブジェクト（例: `/world/earth`, `/world/sat/iss`）
+- **Component**: データの最小単位。`Position3D`, `Velocity3D`, `GravitationalParameter` など
+- **Archetype**: Component のバンドル。`OrbitalState`（position + velocity）、`CelestialBody`（mu + radius）など
+
+### タイムライン
+
+1つのデータに複数のタイムラインを紐付け可能:
+- シミュレーション時刻（秒）
+- ステップ番号（シーケンス）
+- 壁時計（オプション）
+- カスタムタイムライン
+
+Static Data（天体パラメータなど）はタイムラインを持たず、全時刻で有効。
+
+### Recording
+
+シミュレーション結果は `Recording` に蓄積される。Recording は Entity ごとに static データと temporal データ（列指向 SoA レイアウト）を保持する。
+
+### ファイルフォーマット
+
+デフォルトの保存形式は Rerun の `.rrd` フォーマット（Apache Arrow IPC ベース、MIT/Apache 2.0 デュアルライセンス）。
+Rerun SDK を logging-only モードで使用し、Rerun Viewer からの再解析やクエリも可能。
+
+## CLI
+
+CLI はサブコマンド構造を持つ:
+
+```
+orts-cli run [OPTIONS]                           # シミュレーション実行 → .rrd 保存（デフォルト）
+orts-cli run --output stdout --format csv        # CSV を stdout に出力
+orts-cli serve [OPTIONS]                         # WebSocket サーバー
+orts-cli convert <input> --format csv            # フォーマット変換（rrd → csv）
+```
+
+### run オプション
+- `--altitude <km>` (default: 400) — 軌道高度
+- `--body <name>` (default: earth) — 中心天体
+- `--dt <seconds>` (default: 10) — 積分時間刻み
+- `--output-interval <seconds>` — 出力間隔（dt と独立）
+- `--output <path|stdout>` (default: output.rrd) — 出力先
+- `--format <rrd|csv>` (default: rrd) — 出力フォーマット
+
+### serve
+WebSocket サーバーモード。将来的には Web クライアントからシミュレーション条件を指定して実行する機能を持つ。
+
+### convert
+フォーマット変換。rrd → csv などをサポート。
