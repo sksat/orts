@@ -65,15 +65,21 @@ pub fn save_as_rrd(
                     rec.set_time_sequence("step", *s as i64);
                 }
 
-                // Log position as 3D point
                 let pos = pos_col.get_row(i).unwrap();
+                let vel = vel_col.get_row(i).unwrap();
+
+                // Points3D for 3D visualization in Rerun Viewer (f32 precision)
                 rec.log(
                     rr_path.clone(),
                     &rerun::Points3D::new([[pos[0], pos[1], pos[2]]]),
                 )?;
 
-                // Log velocity as individual scalars
-                let vel = vel_col.get_row(i).unwrap();
+                // Position as f64 Scalars for data preservation
+                rec.log(format!("{rr_path}/x"), &rerun::Scalars::new([pos[0]]))?;
+                rec.log(format!("{rr_path}/y"), &rerun::Scalars::new([pos[1]]))?;
+                rec.log(format!("{rr_path}/z"), &rerun::Scalars::new([pos[2]]))?;
+
+                // Velocity as f64 Scalars
                 rec.log(format!("{rr_path}/vx"), &rerun::Scalars::new([vel[0]]))?;
                 rec.log(format!("{rr_path}/vy"), &rerun::Scalars::new([vel[1]]))?;
                 rec.log(format!("{rr_path}/vz"), &rerun::Scalars::new([vel[2]]))?;
@@ -99,8 +105,7 @@ pub struct RrdRow {
 
 /// Load orbital data from an .rrd file and return rows sorted by time.
 ///
-/// Note: Position data is stored as f32 in Rerun's Points3D component,
-/// so precision is reduced compared to the original f64 values.
+/// Position and velocity are read from f64 Scalar components (x, y, z, vx, vy, vz).
 pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Error>> {
     use rerun::external::re_log_encoding::DecoderApp;
     use rerun::external::re_log_types::LogMsg;
@@ -109,9 +114,7 @@ pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Erro
     let file = std::fs::File::open(path)?;
     let reader = std::io::BufReader::new(file);
 
-    // Collect position data: entity_path -> Vec<(time_ns, [f32; 3])>
-    let mut positions: BTreeMap<String, Vec<(i64, [f32; 3])>> = BTreeMap::new();
-    // Collect velocity scalars: entity_path -> Vec<(time_ns, f64)>
+    // Collect f64 scalars: entity_path -> Vec<(time_ns, f64)>
     let mut scalars: BTreeMap<String, Vec<(i64, f64)>> = BTreeMap::new();
 
     for msg in DecoderApp::decode_lazy(reader) {
@@ -122,47 +125,29 @@ pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Erro
         let chunk = Chunk::from_arrow_msg(&arrow_msg)?;
         let entity_path = chunk.entity_path().to_string();
         let n = chunk.num_rows();
-        // Find the sim_time timeline
-        let sim_time_col = chunk.timelines().iter().find(|(name, _)| {
-            name.as_str() == "sim_time"
-        });
+
+        let sim_time_col = chunk
+            .timelines()
+            .iter()
+            .find(|(name, _)| name.as_str() == "sim_time");
         let times: Vec<i64> = if let Some((_, col)) = sim_time_col {
             col.times_raw().to_vec()
         } else {
             vec![0; n]
         };
 
-        // Check for Position3D component (from Points3D archetype)
         for comp_id in chunk.components_identifiers() {
             let comp_name = comp_id.as_str();
-            if comp_name.contains("Position3D") || comp_name.contains("positions") {
+            if comp_name.contains("Scalar") || comp_name.contains("scalars") {
                 for (row_idx, &t) in times.iter().enumerate() {
-                    let batch = chunk.component_batch::<rerun::components::Position3D>(
-                        comp_id,
-                        row_idx,
-                    );
-                    if let Some(Ok(positions_vec)) = batch {
-                        for pos in positions_vec {
-                            let v = pos.0;
-                            positions
-                                .entry(entity_path.clone())
-                                .or_default()
-                                .push((t, [v.0[0], v.0[1], v.0[2]]));
-                        }
-                    }
-                }
-            } else if comp_name.contains("Scalar") || comp_name.contains("scalars") {
-                for (row_idx, &t) in times.iter().enumerate() {
-                    let batch = chunk.component_batch::<rerun::components::Scalar>(
-                        comp_id,
-                        row_idx,
-                    );
+                    let batch = chunk
+                        .component_batch::<rerun::components::Scalar>(comp_id, row_idx);
                     if let Some(Ok(scalar_vec)) = batch {
                         for s in scalar_vec {
                             scalars
                                 .entry(entity_path.clone())
                                 .or_default()
-                                .push((t, s.0.0));
+                                .push((t, s.0 .0));
                         }
                     }
                 }
@@ -170,24 +155,39 @@ pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Erro
         }
     }
 
-    // Match position data with velocity scalars
+    // Find base entity paths that have x/y/z/vx/vy/vz sub-entities.
+    // e.g., /world/sat/default/x → base = /world/sat/default
+    let base_paths: std::collections::BTreeSet<String> = scalars
+        .keys()
+        .filter_map(|p| {
+            let suffix = p.rsplit('/').next()?;
+            if matches!(suffix, "x" | "y" | "z" | "vx" | "vy" | "vz") {
+                Some(p.rsplit_once('/').unwrap().0.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
     let mut rows: Vec<RrdRow> = Vec::new();
-    for (entity_path, pos_data) in &positions {
-        let vx_path = format!("{entity_path}/vx");
-        let vy_path = format!("{entity_path}/vy");
-        let vz_path = format!("{entity_path}/vz");
+    for base in &base_paths {
+        let x_data = scalars.get(&format!("{base}/x"));
+        let y_data = scalars.get(&format!("{base}/y"));
+        let z_data = scalars.get(&format!("{base}/z"));
+        let vx_data = scalars.get(&format!("{base}/vx"));
+        let vy_data = scalars.get(&format!("{base}/vy"));
+        let vz_data = scalars.get(&format!("{base}/vz"));
 
-        let vx_data = scalars.get(&vx_path);
-        let vy_data = scalars.get(&vy_path);
-        let vz_data = scalars.get(&vz_path);
+        // Use x as the reference for row count and time
+        let Some(x_data) = x_data else { continue };
 
-        for (i, (t_ns, pos)) in pos_data.iter().enumerate() {
+        for (i, (t_ns, x)) in x_data.iter().enumerate() {
             let t_sec = *t_ns as f64 / 1e9;
             rows.push(RrdRow {
                 t: t_sec,
-                x: pos[0] as f64,
-                y: pos[1] as f64,
-                z: pos[2] as f64,
+                x: *x,
+                y: y_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
+                z: z_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
                 vx: vx_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
                 vy: vy_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
                 vz: vz_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
@@ -284,16 +284,15 @@ mod tests {
         assert_eq!(rows.len(), 5, "expected 5 rows, got {}", rows.len());
 
         // Check first row: t=0, position=(r0, 0, 0), velocity=(0, v0, 0)
+        // All values are f64 (stored as Scalar), so full precision is preserved.
         let row0 = &rows[0];
         assert!((row0.t - 0.0).abs() < 1e-6, "t[0] = {}", row0.t);
-        // Position is f32 in Rerun, so tolerance ~1 km
-        assert!((row0.x - r0).abs() < 1.0, "x[0] = {}", row0.x);
-        assert!(row0.y.abs() < 1.0, "y[0] = {}", row0.y);
-        assert!(row0.z.abs() < 1.0, "z[0] = {}", row0.z);
-        // Velocity is f64 (stored as Scalar), so higher precision
-        assert!(row0.vx.abs() < 1e-6, "vx[0] = {}", row0.vx);
-        assert!((row0.vy - v0).abs() < 1e-6, "vy[0] = {}", row0.vy);
-        assert!(row0.vz.abs() < 1e-6, "vz[0] = {}", row0.vz);
+        assert!((row0.x - r0).abs() < 1e-9, "x[0] = {}", row0.x);
+        assert!(row0.y.abs() < 1e-9, "y[0] = {}", row0.y);
+        assert!(row0.z.abs() < 1e-9, "z[0] = {}", row0.z);
+        assert!(row0.vx.abs() < 1e-9, "vx[0] = {}", row0.vx);
+        assert!((row0.vy - v0).abs() < 1e-9, "vy[0] = {}", row0.vy);
+        assert!(row0.vz.abs() < 1e-9, "vz[0] = {}", row0.vz);
 
         // Check times are ordered
         for i in 1..rows.len() {
