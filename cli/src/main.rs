@@ -445,6 +445,15 @@ fn run_simulation(params: &SimParams) -> Recording {
         record_state(&mut rec, params.period, step, &final_state);
     }
 
+    rec.metadata = orts_datamodel::recording::SimMetadata {
+        epoch_jd: params.epoch.map(|e| e.jd()),
+        mu: Some(params.mu),
+        body_radius: Some(params.body.properties().radius),
+        body_name: Some(params.body.properties().name.to_string()),
+        altitude: Some(params.altitude),
+        period: Some(params.period),
+    };
+
     rec
 }
 

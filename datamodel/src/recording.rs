@@ -59,16 +59,29 @@ pub struct EntityStore {
     pub num_rows: usize,
 }
 
+/// Simulation metadata that can be embedded in a Recording.
+#[derive(Debug, Clone, Default)]
+pub struct SimMetadata {
+    pub epoch_jd: Option<f64>,
+    pub mu: Option<f64>,
+    pub body_radius: Option<f64>,
+    pub body_name: Option<String>,
+    pub altitude: Option<f64>,
+    pub period: Option<f64>,
+}
+
 /// The top-level simulation recording. Holds all entities and their data.
 #[derive(Debug, Default)]
 pub struct Recording {
     entities: HashMap<EntityPath, EntityStore>,
+    pub metadata: SimMetadata,
 }
 
 impl Recording {
     pub fn new() -> Self {
         Recording {
             entities: HashMap::new(),
+            metadata: SimMetadata::default(),
         }
     }
 

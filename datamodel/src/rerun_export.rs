@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::component::Component;
 use crate::components::{BodyRadius, GravitationalParameter, Position3D, Velocity3D};
 use crate::entity_path::EntityPath;
-use crate::recording::Recording;
+use crate::recording::{Recording, SimMetadata};
 use crate::timeline::{TimeIndex, TimelineName};
 
 /// Save a Recording to a .rrd file using the Rerun SDK.
@@ -87,6 +87,27 @@ pub fn save_as_rrd(
         }
     }
 
+    // Log simulation metadata as static data under meta/sim/
+    let meta = &recording.metadata;
+    if let Some(epoch_jd) = meta.epoch_jd {
+        rec.log_static("meta/sim/epoch_jd", &rerun::Scalars::new([epoch_jd]))?;
+    }
+    if let Some(mu) = meta.mu {
+        rec.log_static("meta/sim/mu", &rerun::Scalars::new([mu]))?;
+    }
+    if let Some(body_radius) = meta.body_radius {
+        rec.log_static("meta/sim/body_radius", &rerun::Scalars::new([body_radius]))?;
+    }
+    if let Some(altitude) = meta.altitude {
+        rec.log_static("meta/sim/altitude", &rerun::Scalars::new([altitude]))?;
+    }
+    if let Some(period) = meta.period {
+        rec.log_static("meta/sim/period", &rerun::Scalars::new([period]))?;
+    }
+    if let Some(ref name) = meta.body_name {
+        rec.log_static("meta/sim/body_name", &rerun::TextDocument::new(name.as_str()))?;
+    }
+
     rec.flush_blocking()?;
     Ok(())
 }
@@ -103,10 +124,15 @@ pub struct RrdRow {
     pub vz: f64,
 }
 
-/// Load orbital data from an .rrd file and return rows sorted by time.
-///
-/// Position and velocity are read from f64 Scalar components (x, y, z, vx, vy, vz).
-pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Error>> {
+/// Full data loaded from an .rrd file: trajectory rows + simulation metadata.
+#[derive(Debug, Clone)]
+pub struct RrdData {
+    pub rows: Vec<RrdRow>,
+    pub metadata: SimMetadata,
+}
+
+/// Load orbital data and metadata from an .rrd file.
+pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> {
     use rerun::external::re_log_encoding::DecoderApp;
     use rerun::external::re_log_types::LogMsg;
     use rerun::log::Chunk;
@@ -116,6 +142,10 @@ pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Erro
 
     // Collect f64 scalars: entity_path -> Vec<(time_ns, f64)>
     let mut scalars: BTreeMap<String, Vec<(i64, f64)>> = BTreeMap::new();
+    // Collect metadata scalars: entity_path -> f64 (static/timeless)
+    let mut meta_scalars: BTreeMap<String, f64> = BTreeMap::new();
+    // Collect text metadata
+    let mut meta_texts: BTreeMap<String, String> = BTreeMap::new();
 
     for msg in DecoderApp::decode_lazy(reader) {
         let msg = msg?;
@@ -125,6 +155,40 @@ pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Erro
         let chunk = Chunk::from_arrow_msg(&arrow_msg)?;
         let entity_path = chunk.entity_path().to_string();
         let n = chunk.num_rows();
+
+        // Check for metadata entities under meta/sim/
+        // Rerun entity paths may or may not have a leading /
+        let normalized_path = entity_path.strip_prefix('/').unwrap_or(&entity_path);
+        if normalized_path.starts_with("meta/sim/") {
+            let entity_path = normalized_path.to_string();
+            // Try to extract scalar value
+            for comp_id in chunk.components_identifiers() {
+                let comp_name = comp_id.as_str();
+                if comp_name.contains("Scalar") || comp_name.contains("scalars") {
+                    for row_idx in 0..n {
+                        let batch = chunk
+                            .component_batch::<rerun::components::Scalar>(comp_id, row_idx);
+                        if let Some(Ok(scalar_vec)) = batch {
+                            if let Some(s) = scalar_vec.first() {
+                                meta_scalars.insert(entity_path.clone(), s.0 .0);
+                            }
+                        }
+                    }
+                }
+                if comp_name.contains("Text") || comp_name.contains("text") {
+                    for row_idx in 0..n {
+                        let batch = chunk
+                            .component_batch::<rerun::components::Text>(comp_id, row_idx);
+                        if let Some(Ok(text_vec)) = batch {
+                            if let Some(t) = text_vec.first() {
+                                meta_texts.insert(entity_path.clone(), t.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
 
         let sim_time_col = chunk
             .timelines()
@@ -154,6 +218,16 @@ pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Erro
             }
         }
     }
+
+    // Build metadata from extracted values
+    let metadata = SimMetadata {
+        epoch_jd: meta_scalars.get("meta/sim/epoch_jd").copied(),
+        mu: meta_scalars.get("meta/sim/mu").copied(),
+        body_radius: meta_scalars.get("meta/sim/body_radius").copied(),
+        altitude: meta_scalars.get("meta/sim/altitude").copied(),
+        period: meta_scalars.get("meta/sim/period").copied(),
+        body_name: meta_texts.get("meta/sim/body_name").cloned(),
+    };
 
     // Find base entity paths that have x/y/z/vx/vy/vz sub-entities.
     // e.g., /world/sat/default/x → base = /world/sat/default
@@ -196,7 +270,14 @@ pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Erro
     }
 
     rows.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
-    Ok(rows)
+    Ok(RrdData { rows, metadata })
+}
+
+/// Load orbital data from an .rrd file and return rows sorted by time.
+///
+/// Position and velocity are read from f64 Scalar components (x, y, z, vx, vy, vz).
+pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Error>> {
+    Ok(load_rrd_data(path)?.rows)
 }
 
 fn to_rerun_path(path: &EntityPath) -> String {
@@ -305,6 +386,81 @@ mod tests {
                 rows[i - 1].t
             );
         }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn roundtrip_metadata() {
+        let mut rec = Recording::new();
+        let body = EntityPath::parse("/world/earth");
+        let sat = EntityPath::parse("/world/sat/default");
+
+        rec.log_static(&body, &GravitationalParameter(398600.4418));
+        rec.log_static(&body, &BodyRadius(6378.137));
+
+        rec.metadata = SimMetadata {
+            epoch_jd: Some(2460390.0),
+            mu: Some(398600.4418),
+            body_radius: Some(6378.137),
+            body_name: Some("Earth".to_string()),
+            altitude: Some(400.0),
+            period: Some(5554.0),
+        };
+
+        let r0 = 6778.137;
+        let v0 = (398600.4418_f64 / r0).sqrt();
+        for i in 0..3u64 {
+            let tp = TimePoint::new()
+                .with_sim_time(i as f64 * 10.0)
+                .with_step(i);
+            let os = OrbitalState::new(
+                Vector3::new(r0, 0.0, 0.0),
+                Vector3::new(0.0, v0, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+        }
+
+        let path = std::env::temp_dir().join("test_orts_metadata.rrd");
+        let path_str = path.to_str().unwrap();
+
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let data = load_rrd_data(path_str).expect("failed to load .rrd");
+        assert_eq!(data.rows.len(), 3);
+
+        let meta = &data.metadata;
+        assert!(
+            (meta.epoch_jd.unwrap() - 2460390.0).abs() < 1e-6,
+            "epoch_jd = {:?}",
+            meta.epoch_jd
+        );
+        assert!(
+            (meta.mu.unwrap() - 398600.4418).abs() < 1e-6,
+            "mu = {:?}",
+            meta.mu
+        );
+        assert!(
+            (meta.body_radius.unwrap() - 6378.137).abs() < 1e-6,
+            "body_radius = {:?}",
+            meta.body_radius
+        );
+        assert!(
+            (meta.altitude.unwrap() - 400.0).abs() < 1e-6,
+            "altitude = {:?}",
+            meta.altitude
+        );
+        assert!(
+            (meta.period.unwrap() - 5554.0).abs() < 1e-6,
+            "period = {:?}",
+            meta.period
+        );
+        assert_eq!(
+            meta.body_name.as_deref(),
+            Some("Earth"),
+            "body_name = {:?}",
+            meta.body_name
+        );
 
         let _ = std::fs::remove_file(&path);
     }
