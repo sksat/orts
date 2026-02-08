@@ -10,6 +10,7 @@ import { IngestBuffer } from "./db/IngestBuffer.js";
 import { TrailBuffer } from "./utils/TrailBuffer.js";
 import { replaceRange } from "./db/orbitStore.js";
 import { parseOrbitCSV, OrbitPoint } from "./orbit.js";
+import { jdToUTCString } from "./astro.js";
 
 /** The two viewer modes. */
 type ViewerMode = "replay" | "realtime";
@@ -356,11 +357,14 @@ export function App() {
               </div>
             )}
 
-            {/* Realtime data stats */}
+            {/* Realtime data stats: epoch | elapsed time | points */}
             {trailBufferRef.current.length > 0 && (
               <div className="orbit-info">
-                {trailBufferRef.current.length} points |
-                T+{((trailBufferRef.current.latest?.t ?? 0) - (trailBufferRef.current.getAll()[0]?.t ?? 0)).toFixed(1)} s
+                {simInfo?.epoch_jd != null && (
+                  <>{jdToUTCString(simInfo.epoch_jd, trailBufferRef.current.latest?.t ?? 0)} | </>
+                )}
+                T+{((trailBufferRef.current.latest?.t ?? 0) - (trailBufferRef.current.getAll()[0]?.t ?? 0)).toFixed(1)} s |
+                {" "}{trailBufferRef.current.length} points
               </div>
             )}
           </div>

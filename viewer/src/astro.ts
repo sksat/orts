@@ -5,7 +5,20 @@
  */
 
 const J2000_JD = 2451545.0;
+const UNIX_EPOCH_JD = 2440587.5;
 const DEG_TO_RAD = Math.PI / 180;
+
+/**
+ * Convert Julian Date + elapsed sim time to a UTC date/time string.
+ *
+ * @returns  ISO 8601 string like "2024-03-20T12:34:56Z"
+ */
+export function jdToUTCString(epochJd: number, simTimeSec: number): string {
+  const jd = epochJd + simTimeSec / 86400;
+  const unixMs = Math.round((jd - UNIX_EPOCH_JD) * 86400 * 1000);
+  const d = new Date(unixMs);
+  return d.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
 
 /**
  * Compute the approximate sun direction (unit vector) in ECI (J2000) frame.
