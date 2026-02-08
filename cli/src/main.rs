@@ -476,8 +476,7 @@ fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
     );
     if let Some(epoch) = params.epoch {
         println!("# epoch_jd = {}", epoch.jd());
-        let (y, mo, d, h, mi, s) = epoch.to_gregorian();
-        println!("# epoch = {:04}-{:02}-{:02}T{:02}:{:02}:{:02.0}Z", y, mo, d, h, mi, s);
+        println!("# epoch = {}", epoch.to_datetime());
     }
     println!(
         "# central_body = {}",

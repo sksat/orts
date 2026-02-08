@@ -9,6 +9,33 @@ const MJD_OFFSET: f64 = 2400000.5;
 /// Julian century in days.
 const JULIAN_CENTURY: f64 = 36525.0;
 
+/// A Gregorian calendar date and time (UTC).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DateTime {
+    pub year: i32,
+    pub month: u32,
+    pub day: u32,
+    pub hour: u32,
+    pub min: u32,
+    pub sec: f64,
+}
+
+impl DateTime {
+    pub fn new(year: i32, month: u32, day: u32, hour: u32, min: u32, sec: f64) -> Self {
+        DateTime { year, month, day, hour, min, sec }
+    }
+}
+
+impl std::fmt::Display for DateTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02.0}Z",
+            self.year, self.month, self.day, self.hour, self.min, self.sec
+        )
+    }
+}
+
 /// An astronomical epoch represented as Julian Date (JD).
 ///
 /// Provides conversions between JD, MJD, Gregorian calendar, and ISO 8601,
@@ -34,6 +61,11 @@ impl Epoch {
     /// The J2000.0 epoch (2000-01-01 12:00:00 TT).
     pub fn j2000() -> Self {
         Epoch { jd: J2000_JD }
+    }
+
+    /// Create an epoch from a [`DateTime`] value.
+    pub fn from_datetime(dt: &DateTime) -> Self {
+        Self::from_gregorian(dt.year, dt.month, dt.day, dt.hour, dt.min, dt.sec)
     }
 
     /// Create an epoch from Gregorian calendar date and time (UTC).
@@ -139,9 +171,7 @@ impl Epoch {
     }
 
     /// Convert to Gregorian calendar date and time (UTC).
-    ///
-    /// Returns `(year, month, day, hour, minute, second)`.
-    pub fn to_gregorian(&self) -> (i32, u32, u32, u32, u32, f64) {
+    pub fn to_datetime(&self) -> DateTime {
         // Meeus, "Astronomical Algorithms", Chapter 7
         let jd = self.jd + 0.5;
         let z = jd.floor() as i64;
@@ -169,7 +199,7 @@ impl Epoch {
         let min = mins_total.floor() as u32;
         let sec = (mins_total - min as f64) * 60.0;
 
-        (year, month, day, hour, min, sec)
+        DateTime { year, month, day, hour, min, sec }
     }
 
     /// Greenwich Mean Sidereal Time (GMST) in radians.
@@ -248,35 +278,54 @@ mod tests {
     #[test]
     fn gregorian_roundtrip() {
         let original = Epoch::from_gregorian(2024, 6, 21, 15, 30, 45.0);
-        let (year, month, day, hour, min, sec) = original.to_gregorian();
-        assert_eq!(year, 2024);
-        assert_eq!(month, 6);
-        assert_eq!(day, 21);
-        assert_eq!(hour, 15);
-        assert_eq!(min, 30);
-        assert!((sec - 45.0).abs() < 0.01, "sec: expected 45.0, got {sec}");
+        let dt = original.to_datetime();
+        assert_eq!(dt.year, 2024);
+        assert_eq!(dt.month, 6);
+        assert_eq!(dt.day, 21);
+        assert_eq!(dt.hour, 15);
+        assert_eq!(dt.min, 30);
+        assert!((dt.sec - 45.0).abs() < 0.01, "sec: expected 45.0, got {}", dt.sec);
     }
 
     #[test]
     fn gregorian_roundtrip_january() {
         // Jan and Feb use different month adjustment in JD algorithm
         let original = Epoch::from_gregorian(2024, 1, 15, 0, 0, 0.0);
-        let (year, month, day, hour, min, _sec) = original.to_gregorian();
-        assert_eq!(year, 2024);
-        assert_eq!(month, 1);
-        assert_eq!(day, 15);
-        assert_eq!(hour, 0);
-        assert_eq!(min, 0);
+        let dt = original.to_datetime();
+        assert_eq!(dt.year, 2024);
+        assert_eq!(dt.month, 1);
+        assert_eq!(dt.day, 15);
+        assert_eq!(dt.hour, 0);
+        assert_eq!(dt.min, 0);
     }
 
     #[test]
     fn gregorian_roundtrip_february() {
         let original = Epoch::from_gregorian(2024, 2, 29, 6, 0, 0.0);
-        let (year, month, day, hour, _, _) = original.to_gregorian();
-        assert_eq!(year, 2024);
-        assert_eq!(month, 2);
-        assert_eq!(day, 29);
-        assert_eq!(hour, 6);
+        let dt = original.to_datetime();
+        assert_eq!(dt.year, 2024);
+        assert_eq!(dt.month, 2);
+        assert_eq!(dt.day, 29);
+        assert_eq!(dt.hour, 6);
+    }
+
+    #[test]
+    fn datetime_display() {
+        let dt = DateTime::new(2024, 3, 20, 12, 0, 0.0);
+        assert_eq!(dt.to_string(), "2024-03-20T12:00:00Z");
+    }
+
+    #[test]
+    fn from_datetime_roundtrip() {
+        let dt = DateTime::new(2024, 6, 21, 15, 30, 45.0);
+        let epoch = Epoch::from_datetime(&dt);
+        let rt = epoch.to_datetime();
+        assert_eq!(rt.year, dt.year);
+        assert_eq!(rt.month, dt.month);
+        assert_eq!(rt.day, dt.day);
+        assert_eq!(rt.hour, dt.hour);
+        assert_eq!(rt.min, dt.min);
+        assert!((rt.sec - dt.sec).abs() < 0.01);
     }
 
     // --- add_seconds ---
@@ -303,12 +352,12 @@ mod tests {
             "Epoch::now() JD {} is outside 2025–2030 range",
             epoch.jd()
         );
-        // Verify to_gregorian year is plausible
-        let (year, _, _, _, _, _) = epoch.to_gregorian();
+        // Verify to_datetime year is plausible
+        let dt = epoch.to_datetime();
         assert!(
-            year >= 2025 && year <= 2030,
+            dt.year >= 2025 && dt.year <= 2030,
             "Epoch::now() year {} is outside expected range",
-            year
+            dt.year
         );
     }
 
