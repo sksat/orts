@@ -86,6 +86,10 @@ struct SimArgs {
     /// Output interval in seconds (defaults to dt if not specified)
     #[arg(long)]
     output_interval: Option<f64>,
+
+    /// WebSocket streaming interval in seconds (defaults to output-interval)
+    #[arg(long)]
+    stream_interval: Option<f64>,
 }
 
 /// Simulation parameters derived from CLI arguments.
@@ -98,6 +102,7 @@ struct SimParams {
     dt: f64,
     altitude: f64,
     output_interval: f64,
+    stream_interval: f64,
 }
 
 impl SimParams {
@@ -108,6 +113,11 @@ impl SimParams {
         let r0 = props.radius + args.altitude;
         let v0 = (mu / r0).sqrt();
         let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
+        let output_interval = args.output_interval.unwrap_or(args.dt);
+        let stream_interval = args
+            .stream_interval
+            .unwrap_or(output_interval)
+            .clamp(args.dt, output_interval);
         Self {
             body,
             mu,
@@ -116,7 +126,8 @@ impl SimParams {
             period,
             dt: args.dt,
             altitude: args.altitude,
-            output_interval: args.output_interval.unwrap_or(args.dt),
+            output_interval,
+            stream_interval,
         }
     }
 
@@ -291,6 +302,7 @@ enum WsMessage {
         period: f64,
         dt: f64,
         output_interval: f64,
+        stream_interval: f64,
         central_body: String,
         central_body_radius: f64,
     },
@@ -572,11 +584,22 @@ async fn simulation_loop(
 ) {
     let system = TwoBodySystem { mu: params.mu };
     let dt = params.dt;
-    let sleep_duration = std::time::Duration::from_secs_f64((dt / 100.0).max(0.01));
+
+    // Batch N stream intervals into a single compute chunk.
+    // stream_interval controls WebSocket send cadence (fine, latency-sensitive).
+    // output_interval controls history save cadence (coarse, throughput-sensitive).
+    const OUTPUTS_PER_CHUNK: usize = 10;
+    let chunk_sim_time = params.stream_interval * OUTPUTS_PER_CHUNK as f64;
+
+    // Wall-clock pacing: target sim speed ratio.
+    let wall_per_sim_sec = ((dt / 100.0).max(0.01)) / params.stream_interval;
+    let chunk_wall_time =
+        std::time::Duration::from_secs_f64(chunk_sim_time * wall_per_sim_sec);
 
     loop {
         let initial = params.initial_state();
 
+        // Emit t=0 state
         let hs = HistoryState {
             t: 0.0,
             position: [initial.position.x, initial.position.y, initial.position.z],
@@ -589,39 +612,74 @@ async fn simulation_loop(
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             continue;
         }
-        tokio::time::sleep(sleep_duration).await;
 
-        // Step-by-step integration: send each output state immediately
-        // instead of batching (avoids blocking the async runtime during integration).
         let mut state = initial;
         let mut t = 0.0;
-        let mut next_output_t = params.output_interval;
-        let mut last_output_t = 0.0_f64;
+        let mut next_stream_t = params.stream_interval;
+        let mut next_save_t = params.output_interval;
 
         while t < params.period {
-            let h = dt.min(params.period - t);
-            state = Rk4::step(&system, t, &state, h);
-            t += h;
+            let chunk_start = tokio::time::Instant::now();
+            let chunk_end = (t + chunk_sim_time).min(params.period);
 
-            if t >= next_output_t - 1e-9 {
-                let hs = HistoryState {
-                    t,
-                    position: [state.position.x, state.position.y, state.position.z],
-                    velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
-                };
-                history.write().await.push(hs);
+            // Pure computation: collect outputs at stream_interval cadence
+            let (outputs, new_state, new_t) = compute_output_chunk(
+                &system,
+                state,
+                t,
+                chunk_end,
+                dt,
+                params.stream_interval,
+                &mut next_stream_t,
+            );
 
-                let msg = state_message(t, &state);
-                let _ = tx.send(msg);
-                tokio::time::sleep(sleep_duration).await;
+            state = new_state;
+            t = new_t;
 
-                last_output_t = t;
-                next_output_t += params.output_interval;
+            // Save only output_interval-aligned states to history (coarse).
+            // Broadcast all stream outputs to WebSocket clients (fine).
+            if !outputs.is_empty() {
+                {
+                    let mut h = history.write().await;
+                    for out in &outputs {
+                        if out.t >= next_save_t - 1e-9 {
+                            h.push(out.clone());
+                            next_save_t += params.output_interval;
+                        }
+                    }
+                }
+
+                let send_interval = chunk_wall_time / outputs.len() as u32;
+                for out in &outputs {
+                    let send_start = tokio::time::Instant::now();
+                    let msg = serde_json::to_string(&WsMessage::State {
+                        t: out.t,
+                        position: out.position,
+                        velocity: out.velocity,
+                    })
+                    .expect("failed to serialize state");
+                    let _ = tx.send(msg);
+
+                    let send_elapsed = send_start.elapsed();
+                    if send_elapsed < send_interval {
+                        tokio::time::sleep(send_interval - send_elapsed).await;
+                    }
+                }
+            } else {
+                let elapsed = chunk_start.elapsed();
+                if elapsed < chunk_wall_time {
+                    tokio::time::sleep(chunk_wall_time - elapsed).await;
+                }
             }
         }
 
-        // Emit final state if not already emitted
-        if (params.period - last_output_t) > 1e-9 {
+        // Emit final state if the last output didn't land on period end
+        let last_output_t = if let Some(last) = history.read().await.states.back() {
+            last.t
+        } else {
+            0.0
+        };
+        if (params.period - last_output_t).abs() > 1e-9 {
             let hs = HistoryState {
                 t: params.period,
                 position: [state.position.x, state.position.y, state.position.z],
@@ -631,7 +689,6 @@ async fn simulation_loop(
 
             let msg = state_message(params.period, &state);
             let _ = tx.send(msg);
-            tokio::time::sleep(sleep_duration).await;
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -661,6 +718,7 @@ async fn handle_connection(
         period: params.period,
         dt: params.dt,
         output_interval: params.output_interval,
+        stream_interval: params.stream_interval,
         central_body: serde_json::to_value(&params.body)
             .unwrap()
             .as_str()
@@ -775,6 +833,40 @@ async fn handle_connection(
     }
 
     eprintln!("Client disconnected");
+}
+
+/// Compute RK4 integration from t_start to chunk_end, collecting output states
+/// at output_interval boundaries. Pure computation with no IO.
+///
+/// Returns (output_states, final_state, final_t).
+fn compute_output_chunk(
+    system: &TwoBodySystem,
+    mut state: State,
+    t_start: f64,
+    chunk_end: f64,
+    dt: f64,
+    output_interval: f64,
+    next_output_t: &mut f64,
+) -> (Vec<HistoryState>, State, f64) {
+    let mut outputs = Vec::new();
+    let mut t = t_start;
+
+    while t < chunk_end {
+        let h = dt.min(chunk_end - t);
+        state = Rk4::step(system, t, &state, h);
+        t += h;
+
+        if t >= *next_output_t - 1e-9 {
+            outputs.push(HistoryState {
+                t,
+                position: [state.position.x, state.position.y, state.position.z],
+                velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
+            });
+            *next_output_t += output_interval;
+        }
+    }
+
+    (outputs, state, t)
 }
 
 fn state_message(t: f64, state: &State) -> String {
@@ -1121,5 +1213,246 @@ mod tests {
         assert!(result.is_empty());
 
         cleanup_dir(&dir);
+    }
+
+    // --- SimParams tests ---
+
+    #[test]
+    fn sim_params_stream_interval_defaults_to_output_interval() {
+        let args = SimArgs {
+            altitude: 400.0,
+            body: "earth".to_string(),
+            dt: 10.0,
+            output_interval: None,
+            stream_interval: None,
+        };
+        let params = SimParams::from_sim_args(&args);
+        assert!((params.output_interval - 10.0).abs() < 1e-9);
+        assert!((params.stream_interval - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sim_params_explicit_stream_interval() {
+        let args = SimArgs {
+            altitude: 400.0,
+            body: "earth".to_string(),
+            dt: 1.0,
+            output_interval: Some(10.0),
+            stream_interval: Some(2.0),
+        };
+        let params = SimParams::from_sim_args(&args);
+        assert!((params.dt - 1.0).abs() < 1e-9);
+        assert!((params.output_interval - 10.0).abs() < 1e-9);
+        assert!((params.stream_interval - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sim_params_stream_interval_clamped() {
+        // stream_interval < dt → clamped to dt
+        let args = SimArgs {
+            altitude: 400.0,
+            body: "earth".to_string(),
+            dt: 5.0,
+            output_interval: Some(10.0),
+            stream_interval: Some(1.0),
+        };
+        let params = SimParams::from_sim_args(&args);
+        assert!((params.stream_interval - 5.0).abs() < 1e-9);
+
+        // stream_interval > output_interval → clamped to output_interval
+        let args2 = SimArgs {
+            altitude: 400.0,
+            body: "earth".to_string(),
+            dt: 1.0,
+            output_interval: Some(10.0),
+            stream_interval: Some(20.0),
+        };
+        let params2 = SimParams::from_sim_args(&args2);
+        assert!((params2.stream_interval - 10.0).abs() < 1e-9);
+    }
+
+    // --- compute_output_chunk tests ---
+
+    #[test]
+    fn chunk_output_count_matches_interval() {
+        // dt=10, output_interval=10, chunk=100s → expect 10 outputs
+        let mu: f64 = 398600.4418;
+        let r0: f64 = 6778.137;
+        let v0 = (mu / r0).sqrt();
+        let system = TwoBodySystem { mu };
+        let initial = State {
+            position: vector![r0, 0.0, 0.0],
+            velocity: vector![0.0, v0, 0.0],
+        };
+
+        let mut next_output = 10.0;
+        let (outputs, _final_state, final_t) =
+            compute_output_chunk(&system, initial, 0.0, 100.0, 10.0, 10.0, &mut next_output);
+
+        assert_eq!(outputs.len(), 10);
+        assert!((final_t - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn chunk_fine_dt_batches_steps() {
+        // dt=1, output_interval=10, chunk=100s → still 10 outputs but 100 RK4 steps
+        let mu: f64 = 398600.4418;
+        let r0: f64 = 6778.137;
+        let v0 = (mu / r0).sqrt();
+        let system = TwoBodySystem { mu };
+        let initial = State {
+            position: vector![r0, 0.0, 0.0],
+            velocity: vector![0.0, v0, 0.0],
+        };
+
+        let mut next_output = 10.0;
+        let (outputs, _, _) =
+            compute_output_chunk(&system, initial, 0.0, 100.0, 1.0, 10.0, &mut next_output);
+
+        assert_eq!(outputs.len(), 10);
+        // Verify output times are at 10s intervals
+        for (i, out) in outputs.iter().enumerate() {
+            let expected_t = (i + 1) as f64 * 10.0;
+            assert!(
+                (out.t - expected_t).abs() < 0.1,
+                "output[{i}].t = {}, expected {expected_t}",
+                out.t
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_energy_conservation() {
+        let mu: f64 = 398600.4418;
+        let r0: f64 = 6778.137;
+        let v0 = (mu / r0).sqrt();
+        let system = TwoBodySystem { mu };
+        let initial = State {
+            position: vector![r0, 0.0, 0.0],
+            velocity: vector![0.0, v0, 0.0],
+        };
+        let initial_energy = v0 * v0 / 2.0 - mu / r0;
+
+        let mut next_output = 10.0;
+        let (outputs, _, _) =
+            compute_output_chunk(&system, initial, 0.0, 500.0, 10.0, 10.0, &mut next_output);
+
+        for out in &outputs {
+            let r = (out.position[0].powi(2) + out.position[1].powi(2) + out.position[2].powi(2))
+                .sqrt();
+            let v = (out.velocity[0].powi(2) + out.velocity[1].powi(2) + out.velocity[2].powi(2))
+                .sqrt();
+            let energy = v * v / 2.0 - mu / r;
+            assert!(
+                (energy - initial_energy).abs() < 1e-6,
+                "energy drift at t={}: {:.2e}",
+                out.t,
+                (energy - initial_energy).abs()
+            );
+        }
+    }
+
+    #[test]
+    fn chunk_partial_end() {
+        // chunk_end doesn't align perfectly with output_interval
+        let mu: f64 = 398600.4418;
+        let r0: f64 = 6778.137;
+        let v0 = (mu / r0).sqrt();
+        let system = TwoBodySystem { mu };
+        let initial = State {
+            position: vector![r0, 0.0, 0.0],
+            velocity: vector![0.0, v0, 0.0],
+        };
+
+        let mut next_output = 10.0;
+        // chunk_end=55 with output_interval=10 → outputs at 10,20,30,40,50 (5 outputs)
+        let (outputs, _, final_t) =
+            compute_output_chunk(&system, initial, 0.0, 55.0, 10.0, 10.0, &mut next_output);
+
+        assert_eq!(outputs.len(), 5);
+        assert!((final_t - 55.0).abs() < 1e-9);
+        // next_output should be 60.0 now
+        assert!((next_output - 60.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn chunk_dual_intervals() {
+        // stream_interval=2, output_interval=10, dt=1, chunk=20s
+        // → 10 stream outputs, of which 2 are at save boundaries (t=10, t=20)
+        let mu: f64 = 398600.4418;
+        let r0: f64 = 6778.137;
+        let v0 = (mu / r0).sqrt();
+        let system = TwoBodySystem { mu };
+        let initial = State {
+            position: vector![r0, 0.0, 0.0],
+            velocity: vector![0.0, v0, 0.0],
+        };
+
+        let stream_interval = 2.0;
+        let output_interval = 10.0;
+        let mut next_stream = stream_interval;
+
+        let (outputs, _, _) =
+            compute_output_chunk(&system, initial, 0.0, 20.0, 1.0, stream_interval, &mut next_stream);
+
+        assert_eq!(outputs.len(), 10); // 20s / 2s = 10 stream outputs
+
+        // Filter for save boundaries (same logic as simulation_loop will use)
+        let mut next_save = output_interval;
+        let mut save_count = 0;
+        for out in &outputs {
+            if out.t >= next_save - 1e-9 {
+                save_count += 1;
+                next_save += output_interval;
+            }
+        }
+        assert_eq!(save_count, 2); // t=10 and t=20
+    }
+
+    #[test]
+    fn chunk_matches_step_by_step() {
+        // Verify that chunked computation gives identical results to step-by-step
+        let mu: f64 = 398600.4418;
+        let r0: f64 = 6778.137;
+        let v0 = (mu / r0).sqrt();
+        let system = TwoBodySystem { mu };
+        let initial = State {
+            position: vector![r0, 0.0, 0.0],
+            velocity: vector![0.0, v0, 0.0],
+        };
+
+        // Step-by-step (original approach)
+        let mut state_ss = initial.clone();
+        let mut t = 0.0;
+        let dt = 10.0;
+        let mut step_outputs = Vec::new();
+        for _ in 0..10 {
+            state_ss = Rk4::step(&system, t, &state_ss, dt);
+            t += dt;
+            step_outputs.push(HistoryState {
+                t,
+                position: [state_ss.position.x, state_ss.position.y, state_ss.position.z],
+                velocity: [state_ss.velocity.x, state_ss.velocity.y, state_ss.velocity.z],
+            });
+        }
+
+        // Chunked
+        let mut next_output = 10.0;
+        let (chunk_outputs, _, _) =
+            compute_output_chunk(&system, initial, 0.0, 100.0, 10.0, 10.0, &mut next_output);
+
+        assert_eq!(chunk_outputs.len(), step_outputs.len());
+        for (c, s) in chunk_outputs.iter().zip(step_outputs.iter()) {
+            assert!((c.t - s.t).abs() < 1e-12, "t mismatch: {} vs {}", c.t, s.t);
+            for i in 0..3 {
+                assert!(
+                    (c.position[i] - s.position[i]).abs() < 1e-12,
+                    "position[{i}] mismatch at t={}: {} vs {}",
+                    c.t,
+                    c.position[i],
+                    s.position[i]
+                );
+            }
+        }
     }
 }

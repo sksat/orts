@@ -351,7 +351,7 @@ export function App() {
             {simInfo && (
               <div className="orbit-info">
                 mu={simInfo.mu.toFixed(2)} km^3/s^2 | alt={simInfo.altitude.toFixed(1)} km |
-                T={simInfo.period.toFixed(1)} s | dt={simInfo.dt.toFixed(1)} s
+                T={simInfo.period.toFixed(1)} s | dt={simInfo.dt.toFixed(1)} s | stream={simInfo.stream_interval.toFixed(1)} s
               </div>
             )}
 
