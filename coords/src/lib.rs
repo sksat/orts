@@ -1,3 +1,6 @@
+pub mod epoch;
+pub mod sun;
+
 use nalgebra::Vector3;
 
 /// Earth-Centered Inertial (ECI/J2000) frame position

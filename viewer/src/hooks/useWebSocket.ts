@@ -16,6 +16,8 @@ export interface SimInfo {
   stream_interval: number;
   central_body: string;
   central_body_radius: number;
+  /** Julian Date of the simulation epoch, or null if not set. */
+  epoch_jd: number | null;
 }
 
 /**
@@ -40,6 +42,7 @@ interface InfoMessage {
   stream_interval?: number;
   central_body?: string;
   central_body_radius?: number;
+  epoch_jd?: number | null;
 }
 
 interface HistoryMessage {
@@ -185,6 +188,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
             stream_interval: infoMsg.stream_interval ?? infoMsg.output_interval,
             central_body: infoMsg.central_body ?? "earth",
             central_body_radius: infoMsg.central_body_radius ?? 6378.137,
+            epoch_jd: infoMsg.epoch_jd ?? null,
           });
         } else if (msg.type === "history" || msg.type === "history_detail") {
           const histMsg = msg as HistoryMessage | HistoryDetailMessage;

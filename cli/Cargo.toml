@@ -7,6 +7,7 @@ edition.workspace = true
 nalgebra.workspace = true
 orts-integrator.workspace = true
 orts-orbits.workspace = true
+orts-coords.workspace = true
 orts-datamodel.workspace = true
 clap.workspace = true
 tokio.workspace = true

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useRef } from "react";
 import { useTexture } from "@react-three/drei";
 import * as THREE from "three";
 import {
@@ -20,9 +20,11 @@ export function EarthBody({
   nightTexturePath,
 }: EarthBodyProps) {
   const [dayMap, nightMap] = useTexture([dayTexturePath, nightTexturePath]);
+  const materialRef = useRef<THREE.ShaderMaterial | null>(null);
 
-  const material = useMemo(() => {
-    return new THREE.ShaderMaterial({
+  // Create material once when textures load
+  if (!materialRef.current) {
+    materialRef.current = new THREE.ShaderMaterial({
       uniforms: {
         dayMap: { value: dayMap },
         nightMap: { value: nightMap },
@@ -31,11 +33,20 @@ export function EarthBody({
       vertexShader: earthDayNightVert,
       fragmentShader: earthDayNightFrag,
     });
-  }, [dayMap, nightMap, sunDirection]);
+  }
+
+  // Update sun direction uniform reactively (no material recreation)
+  useEffect(() => {
+    if (materialRef.current) {
+      materialRef.current.uniforms.sunDirection.value
+        .copy(sunDirection)
+        .normalize();
+    }
+  }, [sunDirection]);
 
   return (
     <group>
-      <mesh material={material}>
+      <mesh material={materialRef.current}>
         <sphereGeometry args={[radius, 64, 64]} />
       </mesh>
       <mesh>

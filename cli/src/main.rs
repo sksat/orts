@@ -10,6 +10,7 @@ use orts_datamodel::components::{BodyRadius, GravitationalParameter};
 use orts_datamodel::entity_path::EntityPath;
 use orts_datamodel::recording::Recording;
 use orts_datamodel::timeline::TimePoint;
+use orts_coords::epoch::Epoch;
 use orts_integrator::{Rk4, State};
 use orts_orbits::{body::KnownBody, two_body::TwoBodySystem};
 use serde::{Deserialize, Serialize};
@@ -90,6 +91,10 @@ struct SimArgs {
     /// WebSocket streaming interval in seconds (defaults to output-interval)
     #[arg(long)]
     stream_interval: Option<f64>,
+
+    /// Simulation epoch in ISO 8601 format (e.g. "2024-03-20T12:00:00Z")
+    #[arg(long)]
+    epoch: Option<String>,
 }
 
 /// Simulation parameters derived from CLI arguments.
@@ -103,6 +108,7 @@ struct SimParams {
     altitude: f64,
     output_interval: f64,
     stream_interval: f64,
+    epoch: Option<Epoch>,
 }
 
 impl SimParams {
@@ -118,6 +124,10 @@ impl SimParams {
             .stream_interval
             .unwrap_or(output_interval)
             .clamp(args.dt, output_interval);
+        let epoch = args.epoch.as_ref().map(|s| {
+            Epoch::from_iso8601(s)
+                .unwrap_or_else(|| panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)"))
+        });
         Self {
             body,
             mu,
@@ -128,6 +138,7 @@ impl SimParams {
             altitude: args.altitude,
             output_interval,
             stream_interval,
+            epoch,
         }
     }
 
@@ -305,6 +316,8 @@ enum WsMessage {
         stream_interval: f64,
         central_body: String,
         central_body_radius: f64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        epoch_jd: Option<f64>,
     },
     /// A single simulation state snapshot.
     #[serde(rename = "state")]
@@ -725,6 +738,7 @@ async fn handle_connection(
             .unwrap()
             .to_string(),
         central_body_radius: params.body.properties().radius,
+        epoch_jd: params.epoch.map(|e| e.jd()),
     };
     let info_json = serde_json::to_string(&info).expect("failed to serialize info message");
     if ws_sender
@@ -1225,10 +1239,12 @@ mod tests {
             dt: 10.0,
             output_interval: None,
             stream_interval: None,
+            epoch: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
         assert!((params.stream_interval - 10.0).abs() < 1e-9);
+        assert!(params.epoch.is_none());
     }
 
     #[test]
@@ -1239,6 +1255,7 @@ mod tests {
             dt: 1.0,
             output_interval: Some(10.0),
             stream_interval: Some(2.0),
+            epoch: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!((params.dt - 1.0).abs() < 1e-9);
@@ -1255,6 +1272,7 @@ mod tests {
             dt: 5.0,
             output_interval: Some(10.0),
             stream_interval: Some(1.0),
+            epoch: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!((params.stream_interval - 5.0).abs() < 1e-9);
@@ -1266,9 +1284,66 @@ mod tests {
             dt: 1.0,
             output_interval: Some(10.0),
             stream_interval: Some(20.0),
+            epoch: None,
         };
         let params2 = SimParams::from_sim_args(&args2);
         assert!((params2.stream_interval - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sim_params_with_epoch() {
+        let args = SimArgs {
+            altitude: 400.0,
+            body: "earth".to_string(),
+            dt: 10.0,
+            output_interval: None,
+            stream_interval: None,
+            epoch: Some("2024-03-20T12:00:00Z".to_string()),
+        };
+        let params = SimParams::from_sim_args(&args);
+        assert!(params.epoch.is_some());
+        let epoch = params.epoch.unwrap();
+        // 2024-03-20 12:00:00 UTC
+        assert!((epoch.jd() - 2460390.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn info_message_with_epoch() {
+        let msg = WsMessage::Info {
+            mu: 398600.4418,
+            altitude: 400.0,
+            period: 5554.0,
+            dt: 10.0,
+            output_interval: 10.0,
+            stream_interval: 10.0,
+            central_body: "earth".to_string(),
+            central_body_radius: 6378.137,
+            epoch_jd: Some(2460390.0),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "info");
+        assert_eq!(v["epoch_jd"], 2460390.0);
+    }
+
+    #[test]
+    fn info_message_without_epoch() {
+        let msg = WsMessage::Info {
+            mu: 398600.4418,
+            altitude: 400.0,
+            period: 5554.0,
+            dt: 10.0,
+            output_interval: 10.0,
+            stream_interval: 10.0,
+            central_body: "earth".to_string(),
+            central_body_radius: 6378.137,
+            epoch_jd: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "info");
+        // epoch_jd should be absent (skip_serializing_if)
+        assert!(v.get("epoch_jd").is_none());
     }
 
     // --- compute_output_chunk tests ---

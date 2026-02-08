@@ -286,6 +286,7 @@ export function App() {
         trailBuffer={mode === "realtime" ? trailBufferRef.current : undefined}
         centralBody={centralBody}
         centralBodyRadius={centralBodyRadius}
+        epochJd={simInfo?.epoch_jd}
       />
 
       {/* UI overlay */}
