@@ -74,10 +74,11 @@ export function useOrbitCharts(
     if (mode !== "realtime" || !conn) return;
 
     let cancelled = false;
-    const QUERY_INTERVAL = 500;
+    const INSERT_INTERVAL = 500;  // drain buffer → DuckDB (lightweight)
+    const QUERY_INTERVAL = 2000;  // derived quantity query (heavy)
     const RETENTION_MAX_ROWS = 100_000;
-    const RETENTION_INTERVAL = 10; // run retention every N ticks
-    let tickCount = 0;
+    const RETENTION_INTERVAL = 5; // run retention every N query ticks
+    let queryTickCount = 0;
 
     const startPolling = async () => {
       try {
@@ -90,19 +91,29 @@ export function useOrbitCharts(
 
       if (cancelled) return;
 
-      const tick = async () => {
+      // Lightweight insert tick: drain buffer into DuckDB
+      const insertTick = async () => {
         if (cancelled) return;
         try {
           const newPoints = ingestBufferRef.current.drain();
-
           if (newPoints.length > 0) {
             await insertPoints(conn, newPoints);
             hasDataRef.current = true;
           }
+        } catch (e) {
+          console.warn("useOrbitCharts insert error:", e);
+        }
+        if (!cancelled) {
+          window.setTimeout(insertTick, INSERT_INTERVAL);
+        }
+      };
 
-          // Periodic retention: downsample old rows to keep query latency stable
-          tickCount++;
-          if (hasDataRef.current && tickCount % RETENTION_INTERVAL === 0) {
+      // Heavy query tick: compute derived quantities for charts
+      const queryTick = async () => {
+        if (cancelled) return;
+        try {
+          queryTickCount++;
+          if (hasDataRef.current && queryTickCount % RETENTION_INTERVAL === 0) {
             await downsampleOldRows(conn, RETENTION_MAX_ROWS);
           }
 
@@ -114,15 +125,15 @@ export function useOrbitCharts(
             if (!cancelled) setChartData(data);
           }
         } catch (e) {
-          console.warn("useOrbitCharts tick error:", e);
+          console.warn("useOrbitCharts query error:", e);
         }
-
         if (!cancelled) {
-          queryTimerRef.current = window.setTimeout(tick, QUERY_INTERVAL);
+          queryTimerRef.current = window.setTimeout(queryTick, QUERY_INTERVAL);
         }
       };
 
-      queryTimerRef.current = window.setTimeout(tick, QUERY_INTERVAL);
+      window.setTimeout(insertTick, INSERT_INTERVAL);
+      queryTimerRef.current = window.setTimeout(queryTick, QUERY_INTERVAL);
     };
 
     startPolling();

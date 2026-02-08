@@ -591,32 +591,45 @@ async fn simulation_loop(
         }
         tokio::time::sleep(sleep_duration).await;
 
-        let mut states: Vec<(f64, State)> = Vec::new();
+        // Step-by-step integration: send each output state immediately
+        // instead of batching (avoids blocking the async runtime during integration).
+        let mut state = initial;
+        let mut t = 0.0;
         let mut next_output_t = params.output_interval;
         let mut last_output_t = 0.0_f64;
-        let output_interval = params.output_interval;
-        let final_state =
-            Rk4::integrate(&system, initial, 0.0, params.period, dt, |t, state| {
-                if t >= next_output_t - 1e-9 {
-                    states.push((t, state.clone()));
-                    last_output_t = t;
-                    next_output_t += output_interval;
-                }
-            });
 
-        if (params.period - last_output_t) > 1e-9 {
-            states.push((params.period, final_state));
+        while t < params.period {
+            let h = dt.min(params.period - t);
+            state = Rk4::step(&system, t, &state, h);
+            t += h;
+
+            if t >= next_output_t - 1e-9 {
+                let hs = HistoryState {
+                    t,
+                    position: [state.position.x, state.position.y, state.position.z],
+                    velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
+                };
+                history.write().await.push(hs);
+
+                let msg = state_message(t, &state);
+                let _ = tx.send(msg);
+                tokio::time::sleep(sleep_duration).await;
+
+                last_output_t = t;
+                next_output_t += params.output_interval;
+            }
         }
 
-        for (t, state) in &states {
+        // Emit final state if not already emitted
+        if (params.period - last_output_t) > 1e-9 {
             let hs = HistoryState {
-                t: *t,
+                t: params.period,
                 position: [state.position.x, state.position.y, state.position.z],
                 velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
             };
             history.write().await.push(hs);
 
-            let msg = state_message(*t, state);
+            let msg = state_message(params.period, &state);
             let _ = tx.send(msg);
             tokio::time::sleep(sleep_duration).await;
         }
