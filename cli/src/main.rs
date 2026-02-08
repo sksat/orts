@@ -199,10 +199,12 @@ fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
             std::process::exit(1);
         }
         (path, OutputFormat::Rrd) => {
-            // TODO: .rrd output (Step 3)
-            eprintln!("TODO: save .rrd to {path}");
-            // For now, print CSV as fallback
-            print_recording_as_csv(&rec, &params);
+            orts_datamodel::rerun_export::save_as_rrd(&rec, "orts", path)
+                .unwrap_or_else(|e| {
+                    eprintln!("Error saving .rrd: {e}");
+                    std::process::exit(1);
+                });
+            eprintln!("Saved to {path}");
         }
     }
 }
