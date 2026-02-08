@@ -6,6 +6,7 @@ import {
   insertPoints,
   clearTable,
   queryDerivedQuantities,
+  downsampleOldRows,
   ChartData,
 } from "../db/orbitStore.js";
 
@@ -74,6 +75,9 @@ export function useOrbitCharts(
 
     let cancelled = false;
     const QUERY_INTERVAL = 500;
+    const RETENTION_MAX_ROWS = 100_000;
+    const RETENTION_INTERVAL = 10; // run retention every N ticks
+    let tickCount = 0;
 
     const startPolling = async () => {
       try {
@@ -94,6 +98,12 @@ export function useOrbitCharts(
           if (newPoints.length > 0) {
             await insertPoints(conn, newPoints);
             hasDataRef.current = true;
+          }
+
+          // Periodic retention: downsample old rows to keep query latency stable
+          tickCount++;
+          if (hasDataRef.current && tickCount % RETENTION_INTERVAL === 0) {
+            await downsampleOldRows(conn, RETENTION_MAX_ROWS);
           }
 
           if (hasDataRef.current) {

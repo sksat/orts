@@ -1,5 +1,6 @@
 import type { AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
 import { OrbitPoint } from "../orbit.js";
+import { computeRetention } from "./RetentionPolicy.js";
 
 /** Columnar chart data: [t, altitude, energy, angularMomentum, velocity] */
 export type ChartData = [
@@ -74,4 +75,40 @@ export async function queryDerivedQuantities(
   const vel = result.getChildAt(4)!.toArray() as Float64Array;
 
   return [t, alt, energy, angMom, vel];
+}
+
+/**
+ * Downsample older rows when the table exceeds maxRows.
+ * Keeps every Nth row in the older half of the data.
+ */
+export async function downsampleOldRows(
+  conn: AsyncDuckDBConnection,
+  maxRows: number
+): Promise<void> {
+  const countResult = await conn.query("SELECT COUNT(*)::INTEGER AS cnt FROM orbit_points");
+  const totalRows = countResult.getChildAt(0)!.get(0) as number;
+
+  const { shouldDownsample, keepEveryN } = computeRetention(totalRows, maxRows);
+  if (!shouldDownsample) return;
+
+  // Find the midpoint time: rows older than this are candidates for downsampling
+  const midResult = await conn.query(`
+    SELECT t FROM (
+      SELECT t, ROW_NUMBER() OVER (ORDER BY t) AS rn,
+             COUNT(*) OVER () AS total
+      FROM orbit_points
+    ) WHERE rn = total / 2
+  `);
+  const midT = midResult.getChildAt(0)!.get(0) as number;
+
+  // Delete rows in the older half where ROW_NUMBER % keepEveryN != 1
+  await conn.query(`
+    DELETE FROM orbit_points WHERE t IN (
+      SELECT t FROM (
+        SELECT t, ROW_NUMBER() OVER (ORDER BY t) AS rn
+        FROM orbit_points
+        WHERE t <= ${midT}
+      ) WHERE rn % ${keepEveryN} != 1
+    )
+  `);
 }
