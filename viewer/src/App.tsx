@@ -42,14 +42,15 @@ export function App() {
   // --- Realtime mode state ---
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
   const [simInfo, setSimInfo] = useState<SimInfo | null>(null);
-  const realtimePointsRef = useRef<OrbitPoint[]>([]);
   const rafScheduledRef = useRef(false);
   // Cumulative time offset: when the server loops t back to 0,
   // add the previous max t so charts show monotonically increasing time.
   const tOffsetRef = useRef(0);
   const lastRawTRef = useRef(-1);
-  const overviewEndIndexRef = useRef(0);
   const detailBufferRef = useRef<OrbitPoint[]>([]);
+  // Count of points received as streaming (after history overview).
+  // Used to track how many trailing points to preserve on detail complete.
+  const streamingCountRef = useRef(0);
   // Version counter triggers React re-renders at RAF rate without
   // creating a new array copy on every WebSocket message.
   const [realtimeVersion, setRealtimeVersion] = useState(0);
@@ -60,19 +61,7 @@ export function App() {
   // --- TrailBuffer for 3D rendering (bounded) ---
   const trailBufferRef = useRef(new TrailBuffer(50000));
 
-  const handleState = useCallback((point: OrbitPoint) => {
-    // Detect orbit restart: server loops t back to 0 after one period.
-    if (point.t < lastRawTRef.current) {
-      tOffsetRef.current += lastRawTRef.current;
-    }
-    lastRawTRef.current = point.t;
-
-    const adjusted = { ...point, t: point.t + tOffsetRef.current };
-    realtimePointsRef.current.push(adjusted);
-    ingestBufferRef.current.push(adjusted);
-    trailBufferRef.current.push(adjusted);
-    // Batch state updates to at most once per animation frame to avoid
-    // overwhelming React with re-renders (messages arrive every ~100ms).
+  const scheduleRerender = useCallback(() => {
     if (!rafScheduledRef.current) {
       rafScheduledRef.current = true;
       requestAnimationFrame(() => {
@@ -81,6 +70,20 @@ export function App() {
       });
     }
   }, []);
+
+  const handleState = useCallback((point: OrbitPoint) => {
+    // Detect orbit restart: server loops t back to 0 after one period.
+    if (point.t < lastRawTRef.current) {
+      tOffsetRef.current += lastRawTRef.current;
+    }
+    lastRawTRef.current = point.t;
+
+    const adjusted = { ...point, t: point.t + tOffsetRef.current };
+    ingestBufferRef.current.push(adjusted);
+    trailBufferRef.current.push(adjusted);
+    streamingCountRef.current++;
+    scheduleRerender();
+  }, [scheduleRerender]);
 
   const handleInfo = useCallback((info: SimInfo) => {
     setSimInfo(info);
@@ -93,25 +96,15 @@ export function App() {
         tOffsetRef.current += lastRawTRef.current;
       }
       lastRawTRef.current = point.t;
-      const p = { ...point, t: point.t + tOffsetRef.current };
-      realtimePointsRef.current.push(p);
-      adjusted.push(p);
+      adjusted.push({ ...point, t: point.t + tOffsetRef.current });
     }
     ingestBufferRef.current.pushMany(adjusted);
     trailBufferRef.current.pushMany(adjusted);
-    overviewEndIndexRef.current = realtimePointsRef.current.length;
-    // Trigger single re-render for entire batch
-    if (!rafScheduledRef.current) {
-      rafScheduledRef.current = true;
-      requestAnimationFrame(() => {
-        rafScheduledRef.current = false;
-        setRealtimeVersion((v) => v + 1);
-      });
-    }
-  }, []);
+    streamingCountRef.current = 0;
+    scheduleRerender();
+  }, [scheduleRerender]);
 
   const handleHistoryDetail = useCallback((points: OrbitPoint[]) => {
-    // Accumulate detail points with t-offset processing
     for (const point of points) {
       detailBufferRef.current.push(point);
     }
@@ -136,10 +129,11 @@ export function App() {
     }
     detailBufferRef.current = [];
 
-    // Replace overview portion with detail, keep streaming portion
-    const streamingPoints = realtimePointsRef.current.slice(overviewEndIndexRef.current);
-    realtimePointsRef.current = [...detailPoints, ...streamingPoints];
-    overviewEndIndexRef.current = detailPoints.length;
+    // Get streaming points that arrived after the overview
+    const allTrailPoints = trailBufferRef.current.getAll();
+    const streamingPoints = allTrailPoints.slice(
+      allTrailPoints.length - streamingCountRef.current
+    );
 
     // Rebuild TrailBuffer with detail + streaming
     trailBufferRef.current.clear();
@@ -149,15 +143,8 @@ export function App() {
     ingestBufferRef.current = new IngestBuffer();
     ingestBufferRef.current.pushMany([...detailPoints, ...streamingPoints]);
 
-    // Trigger re-render
-    if (!rafScheduledRef.current) {
-      rafScheduledRef.current = true;
-      requestAnimationFrame(() => {
-        rafScheduledRef.current = false;
-        setRealtimeVersion((v) => v + 1);
-      });
-    }
-  }, []);
+    scheduleRerender();
+  }, [scheduleRerender]);
 
   const { connect, disconnect, isConnected } = useWebSocket({
     url: wsUrl,
@@ -208,11 +195,10 @@ export function App() {
   // --- Realtime: connect / disconnect ---
   const handleConnect = useCallback(() => {
     // Clear previous realtime data when starting a new connection
-    realtimePointsRef.current = [];
     tOffsetRef.current = 0;
     lastRawTRef.current = -1;
-    overviewEndIndexRef.current = 0;
     detailBufferRef.current = [];
+    streamingCountRef.current = 0;
     ingestBufferRef.current = new IngestBuffer();
     trailBufferRef.current.clear();
     setRealtimeVersion(0);
@@ -225,8 +211,6 @@ export function App() {
   }, [disconnect]);
 
   // --- Auto-connect in realtime mode ---
-  // Deps include isConnected so we reconnect after HMR or unexpected drops.
-  // No infinite loop: failed connects don't toggle isConnected again.
   useEffect(() => {
     if (mode === "realtime" && !isConnected) {
       handleConnect();
@@ -238,7 +222,6 @@ export function App() {
     (newMode: ViewerMode) => {
       if (newMode === mode) return;
 
-      // Disconnect WebSocket when leaving realtime mode
       if (mode === "realtime" && isConnected) {
         disconnect();
       }
@@ -259,13 +242,8 @@ export function App() {
     timeRange,
   });
 
-  // --- Determine what the 3D scene should display ---
-  // In replay mode: use replay points with playback snapshot
-  // In realtime mode: use accumulated realtime points, always showing
-  //   the latest position with the full trail.
   // `realtimeVersion` is read to ensure React re-renders when new points arrive.
-  const rtPoints = realtimePointsRef.current;
-  void realtimeVersion; // consumed for reactivity
+  void realtimeVersion;
   const satellitePosition =
     mode === "replay"
       ? snapshot.satellitePosition
