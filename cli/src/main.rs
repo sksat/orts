@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use clap::Parser;
+use clap::{Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
 use nalgebra::vector;
 use orts_datamodel::archetypes::OrbitalState;
@@ -15,17 +15,60 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
 /// Orts CLI — orbital mechanics simulation tool
-#[derive(Parser, Debug, Clone)]
+#[derive(Parser, Debug)]
 #[command(name = "orts-cli")]
-struct Args {
-    /// Start WebSocket server mode
-    #[arg(long)]
-    serve: bool,
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    /// WebSocket server port
-    #[arg(long, default_value_t = 9001)]
-    port: u16,
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Run a simulation and save results
+    Run {
+        #[command(flatten)]
+        sim: SimArgs,
 
+        /// Output path (use "stdout" to write to standard output)
+        #[arg(long, default_value = "output.rrd")]
+        output: String,
+
+        /// Output format
+        #[arg(long, default_value = "rrd")]
+        format: OutputFormat,
+    },
+    /// Start WebSocket server for real-time streaming
+    Serve {
+        #[command(flatten)]
+        sim: SimArgs,
+
+        /// WebSocket server port
+        #[arg(long, default_value_t = 9001)]
+        port: u16,
+    },
+    /// Convert between data formats
+    Convert {
+        /// Input file path
+        input: String,
+
+        /// Output format
+        #[arg(long)]
+        format: OutputFormat,
+
+        /// Output path (default: stdout)
+        #[arg(long)]
+        output: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Rrd,
+    Csv,
+}
+
+#[derive(Parser, Debug, Clone)]
+struct SimArgs {
     /// Orbit altitude in km
     #[arg(long, default_value_t = 400.0)]
     altitude: f64,
@@ -56,7 +99,7 @@ struct SimParams {
 }
 
 impl SimParams {
-    fn from_args(args: &Args) -> Self {
+    fn from_sim_args(args: &SimArgs) -> Self {
         let body = parse_body(&args.body);
         let props = body.properties();
         let mu = props.mu;
@@ -124,21 +167,51 @@ fn parse_body(s: &str) -> KnownBody {
 }
 
 fn main() {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
-    if args.serve {
-        run_server(args);
-    } else {
-        run_csv(args);
+    match cli.command {
+        Commands::Run {
+            sim,
+            output,
+            format,
+        } => run_simulation_cmd(&sim, &output, format),
+        Commands::Serve { sim, port } => run_server(&sim, port),
+        Commands::Convert {
+            input,
+            format,
+            output,
+        } => run_convert(&input, format, output.as_deref()),
     }
 }
 
-fn run_csv(args: Args) {
-    let params = SimParams::from_args(&args);
+fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
+    let params = SimParams::from_sim_args(sim);
+
+    // Determine effective format: stdout defaults to csv if format not explicitly set.
+    let rec = run_simulation(&params);
+
+    match (output, format) {
+        ("stdout", OutputFormat::Csv) | (_, OutputFormat::Csv) => {
+            print_recording_as_csv(&rec, &params);
+        }
+        ("stdout", OutputFormat::Rrd) => {
+            eprintln!("Error: cannot write .rrd format to stdout. Use --format csv or specify a file path.");
+            std::process::exit(1);
+        }
+        (path, OutputFormat::Rrd) => {
+            // TODO: .rrd output (Step 3)
+            eprintln!("TODO: save .rrd to {path}");
+            // For now, print CSV as fallback
+            print_recording_as_csv(&rec, &params);
+        }
+    }
+}
+
+/// Run the simulation and return a Recording.
+fn run_simulation(params: &SimParams) -> Recording {
     let system = TwoBodySystem { mu: params.mu };
     let initial = params.initial_state();
 
-    // Build a Recording alongside CSV output.
     let mut rec = Recording::new();
     let body_path = EntityPath::parse(&format!("/world/{}", params.body.properties().name));
     let sat_path = EntityPath::parse("/world/sat/default");
@@ -153,6 +226,34 @@ fn run_csv(args: Args) {
         rec.log_orbital_state(&sat_path, &tp, &os);
     };
 
+    record_state(&mut rec, 0.0, step, &initial);
+    step += 1;
+
+    let mut next_output_t = params.output_interval;
+    let mut last_output_t = 0.0_f64;
+    let final_state =
+        Rk4::integrate(&system, initial, 0.0, params.period, params.dt, |t, state| {
+            if t >= next_output_t - 1e-9 {
+                record_state(&mut rec, t, step, state);
+                step += 1;
+                last_output_t = t;
+                next_output_t += params.output_interval;
+            }
+        });
+
+    if (params.period - last_output_t) > 1e-9 {
+        record_state(&mut rec, params.period, step, &final_state);
+    }
+
+    rec
+}
+
+/// Print a Recording as CSV to stdout.
+fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
+    use orts_datamodel::component::Component;
+    use orts_datamodel::components::{Position3D, Velocity3D};
+    use orts_datamodel::timeline::TimelineName;
+
     println!("# Orts 2-body orbit propagation");
     println!("# mu = {} km^3/s^2", params.mu);
     println!(
@@ -166,67 +267,69 @@ fn run_csv(args: Args) {
     );
     println!("# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s]");
 
-    // Print initial state
-    print_state(0.0, &initial);
-    record_state(&mut rec, 0.0, step, &initial);
-    step += 1;
+    let sat_path = EntityPath::parse("/world/sat/default");
+    let store = match rec.entity(&sat_path) {
+        Some(s) => s,
+        None => return,
+    };
 
-    // Propagate for one full period, emitting output at the configured interval.
-    let mut next_output_t = params.output_interval;
-    let mut last_output_t = 0.0_f64;
-    let final_state =
-        Rk4::integrate(&system, initial, 0.0, params.period, params.dt, |t, state| {
-            if t >= next_output_t - 1e-9 {
-                print_state(t, state);
-                record_state(&mut rec, t, step, state);
-                step += 1;
-                last_output_t = t;
-                next_output_t += params.output_interval;
-            }
-        });
+    let pos_col = match store.columns.get(&Position3D::component_name()) {
+        Some(c) => c,
+        None => return,
+    };
+    let vel_col = match store.columns.get(&Velocity3D::component_name()) {
+        Some(c) => c,
+        None => return,
+    };
+    let sim_times = match store.timelines.get(&TimelineName::SimTime) {
+        Some(t) => t,
+        None => return,
+    };
 
-    // Always emit the final state so the output covers the full period.
-    if (params.period - last_output_t) > 1e-9 {
-        print_state(params.period, &final_state);
-        record_state(&mut rec, params.period, step, &final_state);
+    // Each temporal row was logged twice (once for Position3D, once for Velocity3D),
+    // so sim_times has 2x the rows. We take every other entry.
+    for i in 0..pos_col.num_rows() {
+        let t = match sim_times.get(i * 2) {
+            Some(orts_datamodel::timeline::TimeIndex::Seconds(s)) => *s,
+            _ => 0.0,
+        };
+        let pos = pos_col.get_row(i).unwrap();
+        let vel = vel_col.get_row(i).unwrap();
+        println!(
+            "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+            t, pos[0], pos[1], pos[2], vel[0], vel[1], vel[2],
+        );
     }
-
-    eprintln!(
-        "Recording: {} entities, {} data points for satellite",
-        rec.entity_paths().count(),
-        rec.entity(&sat_path).map_or(0, |s| s.num_rows),
-    );
 }
 
-fn run_server(args: Args) {
+fn run_convert(input: &str, format: OutputFormat, output: Option<&str>) {
+    let _ = (input, format, output);
+    eprintln!("TODO: convert command not yet implemented");
+    std::process::exit(1);
+}
+
+fn run_server(sim: &SimArgs, port: u16) {
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    rt.block_on(async_server(args));
+    rt.block_on(async_server(sim, port));
 }
 
-async fn async_server(args: Args) {
-    let params = Arc::new(SimParams::from_args(&args));
-    let addr = format!("0.0.0.0:{}", args.port);
+async fn async_server(sim: &SimArgs, port: u16) {
+    let params = Arc::new(SimParams::from_sim_args(sim));
+    let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| panic!("failed to bind to {addr}: {e}"));
 
-    eprintln!(
-        "WebSocket server listening on ws://localhost:{}",
-        args.port
-    );
+    eprintln!("WebSocket server listening on ws://localhost:{port}");
 
-    // Broadcast channel for simulation state messages.
-    // The capacity is generous enough to avoid dropping frames under normal conditions.
     let (tx, _rx) = broadcast::channel::<String>(256);
 
-    // Spawn the simulation loop that produces messages.
     let sim_tx = tx.clone();
     let sim_params = Arc::clone(&params);
     tokio::spawn(async move {
         simulation_loop(sim_params, sim_tx).await;
     });
 
-    // Accept incoming WebSocket connections.
     loop {
         let (stream, peer) = match listener.accept().await {
             Ok(v) => v,
@@ -247,28 +350,21 @@ async fn async_server(args: Args) {
     }
 }
 
-/// Run the simulation in an infinite loop, broadcasting each state to all
-/// connected clients via the broadcast channel.
 async fn simulation_loop(params: Arc<SimParams>, tx: broadcast::Sender<String>) {
     let system = TwoBodySystem { mu: params.mu };
     let dt = params.dt;
-    // Compute a sleep duration proportional to the integration step.
-    // We use dt / 100 as the real-time factor so a 10s step takes 100ms of wall time.
     let sleep_duration = std::time::Duration::from_secs_f64((dt / 100.0).max(0.01));
 
     loop {
         let initial = params.initial_state();
 
-        // Send the initial state (t = 0).
         let msg = state_message(0.0, &initial);
         if tx.send(msg).is_err() {
-            // No receivers; wait a bit and retry.
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             continue;
         }
         tokio::time::sleep(sleep_duration).await;
 
-        // Propagate one full period, collecting only states at the output interval.
         let mut states: Vec<(f64, State)> = Vec::new();
         let mut next_output_t = params.output_interval;
         let mut last_output_t = 0.0_f64;
@@ -282,24 +378,20 @@ async fn simulation_loop(params: Arc<SimParams>, tx: broadcast::Sender<String>) 
                 }
             });
 
-        // Always include the final state so the output covers the full period.
         if (params.period - last_output_t) > 1e-9 {
             states.push((params.period, final_state));
         }
 
         for (t, state) in &states {
             let msg = state_message(*t, state);
-            // If no receivers are left, just continue; new clients may arrive.
             let _ = tx.send(msg);
             tokio::time::sleep(sleep_duration).await;
         }
 
-        // Brief pause before restarting the orbit.
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 }
 
-/// Handle a single WebSocket client connection.
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     mut rx: broadcast::Receiver<String>,
@@ -315,7 +407,6 @@ async fn handle_connection(
 
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
-    // Send the info message first.
     let info = WsMessage::Info {
         mu: params.mu,
         altitude: params.altitude,
@@ -338,8 +429,6 @@ async fn handle_connection(
         return;
     }
 
-    // Forward broadcast messages to this client, while also listening for
-    // incoming messages (to detect disconnection).
     loop {
         tokio::select! {
             msg = rx.recv() => {
@@ -350,24 +439,22 @@ async fn handle_connection(
                             .await
                             .is_err()
                         {
-                            break; // Client disconnected.
+                            break;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         eprintln!("Client lagged, skipped {n} messages");
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        break; // Broadcast channel closed.
+                        break;
                     }
                 }
             }
             ws_msg = ws_receiver.next() => {
                 match ws_msg {
-                    Some(Ok(_)) => {
-                        // Ignore client messages for now (future: control protocol).
-                    }
+                    Some(Ok(_)) => {}
                     Some(Err(_)) | None => {
-                        break; // Client disconnected.
+                        break;
                     }
                 }
             }
@@ -377,7 +464,6 @@ async fn handle_connection(
     eprintln!("Client disconnected");
 }
 
-/// Build a JSON string for a state message.
 fn state_message(t: f64, state: &State) -> String {
     let msg = WsMessage::State {
         t,
@@ -385,17 +471,4 @@ fn state_message(t: f64, state: &State) -> String {
         velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
     };
     serde_json::to_string(&msg).expect("failed to serialize state message")
-}
-
-fn print_state(t: f64, state: &State) {
-    println!(
-        "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
-        t,
-        state.position.x,
-        state.position.y,
-        state.position.z,
-        state.velocity.x,
-        state.velocity.y,
-        state.velocity.z,
-    );
 }

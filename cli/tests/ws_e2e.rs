@@ -25,7 +25,7 @@ impl Server {
     fn spawn(port: u16) -> Self {
         let binary = env!("CARGO_BIN_EXE_orts-cli");
         let mut child = Command::new(binary)
-            .args(["--serve", "--port", &port.to_string()])
+            .args(["serve", "--port", &port.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()

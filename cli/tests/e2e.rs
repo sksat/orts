@@ -1,15 +1,16 @@
 use std::process::Command;
 
-fn run_cli() -> std::process::Output {
+fn run_cli_csv() -> std::process::Output {
     let binary = env!("CARGO_BIN_EXE_orts-cli");
     Command::new(binary)
+        .args(["run", "--output", "stdout", "--format", "csv"])
         .output()
         .expect("failed to execute orts-cli")
 }
 
 #[test]
 fn test_cli_runs_successfully() {
-    let output = run_cli();
+    let output = run_cli_csv();
     assert!(
         output.status.success(),
         "CLI exited with non-zero status: {:?}",
@@ -19,7 +20,7 @@ fn test_cli_runs_successfully() {
 
 #[test]
 fn test_cli_output_has_header() {
-    let output = run_cli();
+    let output = run_cli_csv();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("# Orts 2-body orbit propagation"));
     assert!(stdout.contains("# mu ="));
@@ -28,7 +29,7 @@ fn test_cli_output_has_header() {
 
 #[test]
 fn test_cli_output_is_csv() {
-    let output = run_cli();
+    let output = run_cli_csv();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let data_lines: Vec<&str> = stdout
@@ -63,7 +64,7 @@ fn test_cli_output_is_csv() {
 
 #[test]
 fn test_cli_orbit_closes() {
-    let output = run_cli();
+    let output = run_cli_csv();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     let data_lines: Vec<&str> = stdout
