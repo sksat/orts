@@ -1,0 +1,10 @@
+[package]
+name = "orts-datamodel"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+nalgebra.workspace = true
+
+[features]
+default = []

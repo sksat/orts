@@ -539,6 +539,7 @@ dependencies = [
  "clap",
  "futures-util",
  "nalgebra",
+ "orts-datamodel",
  "orts-integrator",
  "orts-orbits",
  "serde",
@@ -549,6 +550,13 @@ dependencies = [
 
 [[package]]
 name = "orts-coords"
+version = "0.0.0"
+dependencies = [
+ "nalgebra",
+]
+
+[[package]]
+name = "orts-datamodel"
 version = "0.0.0"
 dependencies = [
  "nalgebra",

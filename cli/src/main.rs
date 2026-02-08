@@ -3,6 +3,11 @@ use std::sync::Arc;
 use clap::Parser;
 use futures_util::{SinkExt, StreamExt};
 use nalgebra::vector;
+use orts_datamodel::archetypes::OrbitalState;
+use orts_datamodel::components::{BodyRadius, GravitationalParameter};
+use orts_datamodel::entity_path::EntityPath;
+use orts_datamodel::recording::Recording;
+use orts_datamodel::timeline::TimePoint;
 use orts_integrator::{Rk4, State};
 use orts_orbits::{body::KnownBody, two_body::TwoBodySystem};
 use serde::Serialize;
@@ -133,6 +138,21 @@ fn run_csv(args: Args) {
     let system = TwoBodySystem { mu: params.mu };
     let initial = params.initial_state();
 
+    // Build a Recording alongside CSV output.
+    let mut rec = Recording::new();
+    let body_path = EntityPath::parse(&format!("/world/{}", params.body.properties().name));
+    let sat_path = EntityPath::parse("/world/sat/default");
+
+    rec.log_static(&body_path, &GravitationalParameter(params.mu));
+    rec.log_static(&body_path, &BodyRadius(params.body.properties().radius));
+
+    let mut step: u64 = 0;
+    let record_state = |rec: &mut Recording, t: f64, step: u64, state: &State| {
+        let tp = TimePoint::new().with_sim_time(t).with_step(step);
+        let os = OrbitalState::new(state.position, state.velocity);
+        rec.log_orbital_state(&sat_path, &tp, &os);
+    };
+
     println!("# Orts 2-body orbit propagation");
     println!("# mu = {} km^3/s^2", params.mu);
     println!(
@@ -148,6 +168,8 @@ fn run_csv(args: Args) {
 
     // Print initial state
     print_state(0.0, &initial);
+    record_state(&mut rec, 0.0, step, &initial);
+    step += 1;
 
     // Propagate for one full period, emitting output at the configured interval.
     let mut next_output_t = params.output_interval;
@@ -156,6 +178,8 @@ fn run_csv(args: Args) {
         Rk4::integrate(&system, initial, 0.0, params.period, params.dt, |t, state| {
             if t >= next_output_t - 1e-9 {
                 print_state(t, state);
+                record_state(&mut rec, t, step, state);
+                step += 1;
                 last_output_t = t;
                 next_output_t += params.output_interval;
             }
@@ -164,7 +188,14 @@ fn run_csv(args: Args) {
     // Always emit the final state so the output covers the full period.
     if (params.period - last_output_t) > 1e-9 {
         print_state(params.period, &final_state);
+        record_state(&mut rec, params.period, step, &final_state);
     }
+
+    eprintln!(
+        "Recording: {} entities, {} data points for satellite",
+        rec.entity_paths().count(),
+        rec.entity(&sat_path).map_or(0, |s| s.num_rows),
+    );
 }
 
 fn run_server(args: Args) {
