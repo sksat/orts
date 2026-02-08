@@ -1,12 +1,20 @@
 import { useCallback, useState } from "react";
-import type { PlaybackController } from "../playback.js";
+import { jdToUTCString } from "../astro.js";
 
 interface PlaybackBarProps {
-  playback: PlaybackController;
   isPlaying: boolean;
   fraction: number;
   elapsedTime: number;
   totalDuration: number;
+  onTogglePlayPause: () => void;
+  onSeekFraction: (fraction: number) => void;
+  onSpeedChange: (speed: number) => void;
+  /** Whether the viewer is following live data (realtime mode only). */
+  isLive?: boolean;
+  /** Jump to latest data and follow (realtime mode only). */
+  onGoLive?: () => void;
+  /** Julian Date of the simulation epoch for absolute time display. */
+  epochJd?: number | null;
 }
 
 const SPEED_OPTIONS = [1, 2, 5, 10, 100];
@@ -27,34 +35,42 @@ function formatTime(seconds: number): string {
 /**
  * Playback controls bar component: play/pause button, speed selector,
  * time slider (scrubber), time display, and mode indicator.
+ *
+ * Works in both Replay and Realtime modes via callback props.
+ * In Realtime mode, shows a "Live" button to resume following live data.
  */
 export function PlaybackBar({
-  playback,
   isPlaying,
   fraction,
   elapsedTime,
   totalDuration,
+  onTogglePlayPause,
+  onSeekFraction,
+  onSpeedChange,
+  isLive,
+  onGoLive,
+  epochJd,
 }: PlaybackBarProps) {
   const [isScrubbing, setIsScrubbing] = useState(false);
 
   const handlePlayPause = useCallback(() => {
-    playback.togglePlayPause();
-  }, [playback]);
+    onTogglePlayPause();
+  }, [onTogglePlayPause]);
 
   const handleSpeedChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
-      playback.setSpeed(Number(e.target.value));
+      onSpeedChange(Number(e.target.value));
     },
-    [playback]
+    [onSpeedChange]
   );
 
   const handleSliderInput = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       setIsScrubbing(true);
       const f = Number(e.target.value) / 1000;
-      playback.seekToFraction(f);
+      onSeekFraction(f);
     },
-    [playback]
+    [onSeekFraction]
   );
 
   const handleSliderChange = useCallback(() => {
@@ -62,6 +78,11 @@ export function PlaybackBar({
   }, []);
 
   const sliderValue = isScrubbing ? undefined : Math.round(fraction * 1000);
+
+  const isRealtimeMode = onGoLive != null;
+  const modeLabel = isRealtimeMode
+    ? (isLive ? "Live" : (isPlaying ? "Playing" : "Paused"))
+    : "Replay";
 
   return (
     <div className="playback-bar visible">
@@ -80,7 +101,7 @@ export function PlaybackBar({
       </div>
       <div className="playback-controls-row">
         <button className="play-pause-btn" onClick={handlePlayPause}>
-          {isPlaying ? "Pause" : "Play"}
+          {(isPlaying || isLive) ? "Pause" : "Play"}
         </button>
         <select
           className="speed-select"
@@ -94,9 +115,21 @@ export function PlaybackBar({
           ))}
         </select>
         <span className="time-display">
+          {epochJd != null && <>{jdToUTCString(epochJd, elapsedTime)} | </>}
           T+{formatTime(elapsedTime)} / {formatTime(totalDuration)}
         </span>
-        <span className="mode-indicator">Replay</span>
+        {isRealtimeMode && (
+          <button
+            className={`live-btn ${isLive ? "active" : ""}`}
+            onClick={onGoLive}
+            disabled={isLive}
+          >
+            Live
+          </button>
+        )}
+        <span className={`mode-indicator ${isLive ? "live" : ""}`}>
+          {modeLabel}
+        </span>
       </div>
     </div>
   );

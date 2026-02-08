@@ -108,3 +108,112 @@ describe("TrailBuffer", () => {
     expect(buf.latest!.t).toBe(10);
   });
 });
+
+describe("TrailBuffer.interpolateAt", () => {
+  it("returns null on empty buffer", () => {
+    const buf = new TrailBuffer(100);
+    expect(buf.interpolateAt(5)).toBeNull();
+  });
+
+  it("returns the single point for a one-element buffer", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(10));
+    const result = buf.interpolateAt(10)!;
+    expect(result.t).toBe(10);
+    expect(result.x).toBe(makePoint(10).x);
+  });
+
+  it("returns first point when t is before first", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(10));
+    buf.push(makePoint(20));
+    const result = buf.interpolateAt(5)!;
+    expect(result.t).toBe(10);
+    expect(result.x).toBe(makePoint(10).x);
+  });
+
+  it("returns last point when t is after last", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(10));
+    buf.push(makePoint(20));
+    const result = buf.interpolateAt(25)!;
+    expect(result.t).toBe(20);
+    expect(result.x).toBe(makePoint(20).x);
+  });
+
+  it("returns exact point when t matches", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(0));
+    buf.push(makePoint(10));
+    buf.push(makePoint(20));
+    const result = buf.interpolateAt(10)!;
+    expect(result.t).toBe(10);
+    expect(result.x).toBe(makePoint(10).x);
+  });
+
+  it("interpolates between two points", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(0));
+    buf.push(makePoint(10));
+    // makePoint: x = 6778 + t, y = t * 0.1
+    // At t=5: x = (6778+0)*0.5 + (6778+10)*0.5 = 6783
+    const result = buf.interpolateAt(5)!;
+    expect(result.t).toBeCloseTo(5);
+    expect(result.x).toBeCloseTo(6783);
+    expect(result.y).toBeCloseTo(0.5);
+  });
+
+  it("interpolates at 25% between points", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(0));
+    buf.push(makePoint(20));
+    // At t=5 (25% of [0,20]): x = 6778 * 0.75 + 6798 * 0.25 = 6783
+    const result = buf.interpolateAt(5)!;
+    expect(result.t).toBeCloseTo(5);
+    expect(result.x).toBeCloseTo(6783);
+  });
+});
+
+describe("TrailBuffer.indexBefore", () => {
+  it("returns -1 on empty buffer", () => {
+    const buf = new TrailBuffer(100);
+    expect(buf.indexBefore(5)).toBe(-1);
+  });
+
+  it("returns -1 when t is before all points", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(10));
+    buf.push(makePoint(20));
+    expect(buf.indexBefore(5)).toBe(-1);
+  });
+
+  it("returns last index when t is after all points", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(10));
+    buf.push(makePoint(20));
+    expect(buf.indexBefore(25)).toBe(1);
+  });
+
+  it("returns correct index for exact match", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(0));
+    buf.push(makePoint(10));
+    buf.push(makePoint(20));
+    expect(buf.indexBefore(10)).toBe(1);
+  });
+
+  it("returns index of point just before t", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(0));
+    buf.push(makePoint(10));
+    buf.push(makePoint(20));
+    expect(buf.indexBefore(15)).toBe(1);
+  });
+
+  it("returns 0 for t equal to first point", () => {
+    const buf = new TrailBuffer(100);
+    buf.push(makePoint(0));
+    buf.push(makePoint(10));
+    expect(buf.indexBefore(0)).toBe(0);
+  });
+});

@@ -69,12 +69,9 @@ export function useOrbitCharts(
       setIsLoading(true);
       await clearTable(conn);
       await insertPoints(conn, replayPoints);
-      const latestT =
-        replayPoints.length > 0
-          ? replayPoints[replayPoints.length - 1].t
-          : 0;
-      const tMin = computeTMin(timeRange, latestT);
-      const data = await queryDerivedQuantities(conn, mu, bodyRadius, tMin);
+      // In replay mode, always query all data. Viewport slicing
+      // (based on currentTime and timeRange) is handled downstream.
+      const data = await queryDerivedQuantities(conn, mu, bodyRadius);
       if (!cancelled) {
         setChartData(data);
         setIsLoading(false);
@@ -84,7 +81,8 @@ export function useOrbitCharts(
     return () => {
       cancelled = true;
     };
-  }, [conn, mode, replayPoints, mu, bodyRadius, timeRange]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conn, mode, replayPoints, mu, bodyRadius]);
 
   // Realtime mode: drain IngestBuffer + periodic query
   useEffect(() => {

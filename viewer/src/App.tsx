@@ -1,16 +1,17 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { Scene } from "./components/Scene.js";
 import { PlaybackBar } from "./components/PlaybackBar.js";
 import { GraphPanel } from "./components/GraphPanel.js";
 import { usePlayback } from "./hooks/usePlayback.js";
+import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
 import { useWebSocket, SimInfo, QueryRangeResponse } from "./hooks/useWebSocket.js";
 import { useDuckDB } from "./hooks/useDuckDB.js";
 import { useOrbitCharts, TimeRange } from "./hooks/useOrbitCharts.js";
 import { IngestBuffer } from "./db/IngestBuffer.js";
 import { TrailBuffer } from "./utils/TrailBuffer.js";
+import { sliceChartData, quantizeChartTime } from "./utils/chartViewport.js";
 import { replaceRange } from "./db/orbitStore.js";
 import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";
-import { jdToUTCString } from "./astro.js";
 
 /** The two viewer modes. */
 type ViewerMode = "replay" | "realtime";
@@ -23,7 +24,9 @@ const DEFAULT_WS_URL = "ws://localhost:9001";
  * Supports two modes:
  *   - "Replay": Load CSV orbit data and play it back with time controls.
  *   - "Realtime": Connect to a WebSocket server and display orbit data
- *     as it streams in from a running simulation.
+ *     as it streams in from a running simulation, with history scrubbing.
+ *
+ * Both modes share a unified PlaybackBar for timeline control.
  */
 export function App() {
   // --- Mode toggle ---
@@ -34,7 +37,7 @@ export function App() {
   const [csvMetadata, setCsvMetadata] = useState<CSVMetadata | null>(null);
   const [orbitInfo, setOrbitInfo] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { controller, snapshot } = usePlayback(replayPoints);
+  const { snapshot, togglePlayPause, setSpeed, seekToFraction } = usePlayback(replayPoints);
 
   // --- DuckDB + Charts ---
   const { conn, isReady: dbReady } = useDuckDB();
@@ -45,7 +48,6 @@ export function App() {
   // --- Realtime mode state ---
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
   const [simInfo, setSimInfo] = useState<SimInfo | null>(null);
-  const rafScheduledRef = useRef(false);
   // Cumulative time offset: when the server loops t back to 0,
   // add the previous max t so charts show monotonically increasing time.
   const tOffsetRef = useRef(0);
@@ -54,9 +56,6 @@ export function App() {
   // Count of points received as streaming (after history overview).
   // Used to track how many trailing points to preserve on detail complete.
   const streamingCountRef = useRef(0);
-  // Version counter triggers React re-renders at RAF rate without
-  // creating a new array copy on every WebSocket message.
-  const [realtimeVersion, setRealtimeVersion] = useState(0);
 
   // --- IngestBuffer for DuckDB (drain pattern) ---
   const ingestBufferRef = useRef(new IngestBuffer());
@@ -64,15 +63,8 @@ export function App() {
   // --- TrailBuffer for 3D rendering (bounded) ---
   const trailBufferRef = useRef(new TrailBuffer(50000));
 
-  const scheduleRerender = useCallback(() => {
-    if (!rafScheduledRef.current) {
-      rafScheduledRef.current = true;
-      requestAnimationFrame(() => {
-        rafScheduledRef.current = false;
-        setRealtimeVersion((v) => v + 1);
-      });
-    }
-  }, []);
+  // --- Realtime playback (history scrubbing) ---
+  const realtimePlayback = useRealtimePlayback(trailBufferRef.current);
 
   const handleState = useCallback((point: OrbitPoint) => {
     // Detect orbit restart: server loops t back to 0 after one period.
@@ -85,8 +77,7 @@ export function App() {
     ingestBufferRef.current.push(adjusted);
     trailBufferRef.current.push(adjusted);
     streamingCountRef.current++;
-    scheduleRerender();
-  }, [scheduleRerender]);
+  }, []);
 
   const handleInfo = useCallback((info: SimInfo) => {
     setSimInfo(info);
@@ -104,8 +95,7 @@ export function App() {
     ingestBufferRef.current.pushMany(adjusted);
     trailBufferRef.current.pushMany(adjusted);
     streamingCountRef.current = 0;
-    scheduleRerender();
-  }, [scheduleRerender]);
+  }, []);
 
   const handleHistoryDetail = useCallback((points: OrbitPoint[]) => {
     for (const point of points) {
@@ -145,9 +135,7 @@ export function App() {
     // Re-ingest all data into DuckDB (detail replaced overview)
     ingestBufferRef.current = new IngestBuffer();
     ingestBufferRef.current.pushMany([...detailPoints, ...streamingPoints]);
-
-    scheduleRerender();
-  }, [scheduleRerender]);
+  }, []);
 
   const handleQueryRangeResponse = useCallback(
     async (response: QueryRangeResponse) => {
@@ -262,10 +250,10 @@ export function App() {
     streamingCountRef.current = 0;
     ingestBufferRef.current = new IngestBuffer();
     trailBufferRef.current.clear();
-    setRealtimeVersion(0);
     setSimInfo(null);
+    realtimePlayback.goLive();
     connect();
-  }, [connect]);
+  }, [connect, realtimePlayback]);
 
   const handleDisconnect = useCallback(() => {
     disconnect();
@@ -303,12 +291,26 @@ export function App() {
     timeRange,
   });
 
-  // `realtimeVersion` is read to ensure React re-renders when new points arrive.
-  void realtimeVersion;
+  // --- Chart viewport slicing: right edge follows current playback time ---
+  const chartCurrentTime = useMemo(() => {
+    if (mode === "replay") {
+      if (!replayPoints || replayPoints.length === 0) return undefined;
+      return quantizeChartTime(replayPoints[0].t + snapshot.elapsedTime);
+    }
+    if (realtimePlayback.snapshot.isLive) return undefined;
+    return quantizeChartTime(realtimePlayback.snapshot.currentTime);
+  }, [mode, replayPoints, snapshot.elapsedTime, realtimePlayback.snapshot.isLive, realtimePlayback.snapshot.currentTime]);
+
+  const visibleChartData = useMemo(
+    () => sliceChartData(chartData, chartCurrentTime, timeRange),
+    [chartData, chartCurrentTime, timeRange],
+  );
+
+  // --- Derived values ---
   const satellitePosition =
     mode === "replay"
       ? snapshot.satellitePosition
-      : trailBufferRef.current.latest;
+      : realtimePlayback.snapshot.satellitePosition;
 
   const centralBody =
     mode === "realtime"
@@ -318,6 +320,23 @@ export function App() {
     mode === "realtime"
       ? (simInfo?.central_body_radius ?? 6378.137)
       : (csvMetadata?.centralBodyRadius ?? 6378.137);
+
+  const epochJd =
+    mode === "realtime"
+      ? (simInfo?.epoch_jd ?? undefined)
+      : (csvMetadata?.epochJd ?? undefined);
+
+  // TrailVisibleCount: in live mode show all, in scrub mode show up to scrubbed time
+  const trailVisibleCount =
+    mode === "replay"
+      ? snapshot.trailVisibleCount
+      : (realtimePlayback.snapshot.isLive ? undefined : realtimePlayback.snapshot.trailVisibleCount);
+
+  // Determine if PlaybackBar should be shown
+  const showPlaybackBar =
+    mode === "realtime"
+      ? trailBufferRef.current.length > 0
+      : replayPoints != null && replayPoints.length > 0;
 
   return (
     <div
@@ -337,11 +356,11 @@ export function App() {
       <Scene
         points={mode === "replay" ? replayPoints : undefined}
         satellitePosition={satellitePosition}
-        trailVisibleCount={mode === "replay" ? snapshot.trailVisibleCount : undefined}
+        trailVisibleCount={trailVisibleCount}
         trailBuffer={mode === "realtime" ? trailBufferRef.current : undefined}
         centralBody={centralBody}
         centralBodyRadius={centralBodyRadius}
-        epochJd={mode === "realtime" ? simInfo?.epoch_jd : (csvMetadata?.epochJd ?? undefined)}
+        epochJd={epochJd ?? null}
       />
 
       {/* UI overlay */}
@@ -369,11 +388,6 @@ export function App() {
               Load Orbit CSV
             </button>
             {orbitInfo && <div className="orbit-info">{orbitInfo}</div>}
-            {replayPoints && csvMetadata?.epochJd != null && (
-              <div className="orbit-info">
-                {jdToUTCString(csvMetadata.epochJd, snapshot.elapsedTime)}
-              </div>
-            )}
           </>
         )}
 
@@ -416,14 +430,10 @@ export function App() {
               </div>
             )}
 
-            {/* Realtime data stats: epoch | elapsed time | points */}
+            {/* Points count */}
             {trailBufferRef.current.length > 0 && (
               <div className="orbit-info">
-                {simInfo?.epoch_jd != null && (
-                  <>{jdToUTCString(simInfo.epoch_jd, trailBufferRef.current.latest?.t ?? 0)} | </>
-                )}
-                T+{((trailBufferRef.current.latest?.t ?? 0) - (trailBufferRef.current.getAll()[0]?.t ?? 0)).toFixed(1)} s |
-                {" "}{trailBufferRef.current.length} points
+                {trailBufferRef.current.length} points
               </div>
             )}
           </div>
@@ -442,7 +452,7 @@ export function App() {
       {/* Graph panel (right side) */}
       {dbReady && (
         <GraphPanel
-          chartData={chartData}
+          chartData={visibleChartData}
           isLoading={chartsLoading}
           timeRange={timeRange}
           onTimeRangeChange={setTimeRange}
@@ -450,15 +460,33 @@ export function App() {
         />
       )}
 
-      {/* Playback bar (only shown in replay mode when data is loaded) */}
-      {mode === "replay" && controller && (
-        <PlaybackBar
-          playback={controller}
-          isPlaying={snapshot.isPlaying}
-          fraction={snapshot.fraction}
-          elapsedTime={snapshot.elapsedTime}
-          totalDuration={snapshot.totalDuration}
-        />
+      {/* Unified PlaybackBar (shown in both modes when data is available) */}
+      {showPlaybackBar && (
+        mode === "realtime" ? (
+          <PlaybackBar
+            isPlaying={realtimePlayback.snapshot.isPlaying}
+            fraction={realtimePlayback.snapshot.fraction}
+            elapsedTime={realtimePlayback.snapshot.elapsedTime}
+            totalDuration={realtimePlayback.snapshot.totalDuration}
+            onTogglePlayPause={realtimePlayback.togglePlayPause}
+            onSeekFraction={realtimePlayback.seekToFraction}
+            onSpeedChange={realtimePlayback.setSpeed}
+            isLive={realtimePlayback.snapshot.isLive}
+            onGoLive={realtimePlayback.goLive}
+            epochJd={epochJd}
+          />
+        ) : (
+          <PlaybackBar
+            isPlaying={snapshot.isPlaying}
+            fraction={snapshot.fraction}
+            elapsedTime={snapshot.elapsedTime}
+            totalDuration={snapshot.totalDuration}
+            onTogglePlayPause={togglePlayPause}
+            onSeekFraction={seekToFraction}
+            onSpeedChange={setSpeed}
+            epochJd={epochJd}
+          />
+        )
       )}
     </div>
   );

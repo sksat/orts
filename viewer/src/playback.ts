@@ -13,7 +13,7 @@ export interface PlaybackState {
  * Linearly interpolate between two OrbitPoints at the given fraction (0..1)
  * between them.
  */
-function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoint {
+export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoint {
   const inv = 1 - frac;
   return {
     t: a.t * inv + b.t * frac,

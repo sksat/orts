@@ -1,4 +1,5 @@
 import type { OrbitPoint } from "../orbit.js";
+import { lerpPoint } from "../playback.js";
 
 /**
  * Bounded buffer for orbit trail rendering.
@@ -60,6 +61,58 @@ export class TrailBuffer {
   clear(): void {
     this.points = [];
     this._generation++;
+  }
+
+  /**
+   * Interpolate the orbit state at an arbitrary time value.
+   * Uses binary search + linear interpolation between bracketing points.
+   * Returns null if the buffer is empty.
+   * Clamps to first/last point if t is outside the data range.
+   */
+  interpolateAt(t: number): OrbitPoint | null {
+    const pts = this.points;
+    if (pts.length === 0) return null;
+    if (pts.length === 1 || t <= pts[0].t) return { ...pts[0] };
+    if (t >= pts[pts.length - 1].t) return { ...pts[pts.length - 1] };
+
+    // Binary search for the bracketing interval
+    let lo = 0;
+    let hi = pts.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >>> 1;
+      if (pts[mid].t <= t) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+
+    const dt = pts[hi].t - pts[lo].t;
+    const frac = dt > 0 ? (t - pts[lo].t) / dt : 0;
+    return lerpPoint(pts[lo], pts[hi], frac);
+  }
+
+  /**
+   * Return the index of the last point whose time is <= t.
+   * Returns -1 if the buffer is empty or all points are after t.
+   */
+  indexBefore(t: number): number {
+    const pts = this.points;
+    if (pts.length === 0) return -1;
+    if (t < pts[0].t) return -1;
+    if (t >= pts[pts.length - 1].t) return pts.length - 1;
+
+    let lo = 0;
+    let hi = pts.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >>> 1;
+      if (pts[mid].t <= t) {
+        lo = mid;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
   }
 
   private trimIfNeeded(): void {

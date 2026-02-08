@@ -89,7 +89,8 @@ export function OrbitTrail({ points, visibleCount, trailBuffer, scaleRadius }: O
         appendPoints(allPoints, writtenCountRef.current, totalPoints);
       }
 
-      geometry.setDrawRange(0, totalPoints);
+      const vc = visibleCount != null ? Math.min(visibleCount, totalPoints) : totalPoints;
+      geometry.setDrawRange(0, vc);
     } else if (points) {
       // --- Legacy points mode (replay) ---
       const totalPoints = points.length;

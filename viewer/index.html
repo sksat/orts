@@ -129,7 +129,6 @@
         min-width: 180px;
       }
       .mode-indicator {
-        margin-left: auto;
         padding: 2px 10px;
         background: rgba(0, 180, 100, 0.25);
         border: 1px solid rgba(0, 180, 100, 0.5);
@@ -138,6 +137,42 @@
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: 0.5px;
+      }
+      .mode-indicator.live {
+        background: rgba(0, 200, 100, 0.35);
+        border-color: rgba(0, 220, 110, 0.7);
+        color: #0d6;
+        box-shadow: 0 0 6px rgba(0, 200, 100, 0.3);
+      }
+
+      /* --- Live button (realtime mode) --- */
+      .live-btn {
+        margin-left: auto;
+        padding: 4px 14px;
+        background: rgba(60, 60, 80, 0.85);
+        color: #8899bb;
+        border: 1px solid rgba(100, 100, 140, 0.5);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .live-btn:hover:not(:disabled) {
+        background: rgba(0, 140, 80, 0.6);
+        color: #fff;
+        border-color: rgba(0, 180, 100, 0.6);
+      }
+      .live-btn.active {
+        background: rgba(0, 160, 80, 0.85);
+        color: #fff;
+        border-color: rgba(0, 200, 100, 0.7);
+        box-shadow: 0 0 8px rgba(0, 200, 100, 0.4);
+        cursor: default;
+      }
+      .live-btn:disabled {
+        opacity: 0.7;
       }
 
       /* --- Mode toggle (Replay / Realtime) --- */

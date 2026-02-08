@@ -86,7 +86,7 @@ export function Scene({
       {/* Orbit trail and satellite (only when data is loaded) */}
       {hasTrailData && (
         trailBuffer ? (
-          <OrbitTrail trailBuffer={trailBuffer} scaleRadius={centralBodyRadius} />
+          <OrbitTrail trailBuffer={trailBuffer} visibleCount={trailVisibleCount} scaleRadius={centralBodyRadius} />
         ) : (
           <OrbitTrail
             points={points!}
