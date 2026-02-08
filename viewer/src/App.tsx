@@ -9,7 +9,7 @@ import { useOrbitCharts, TimeRange } from "./hooks/useOrbitCharts.js";
 import { IngestBuffer } from "./db/IngestBuffer.js";
 import { TrailBuffer } from "./utils/TrailBuffer.js";
 import { replaceRange } from "./db/orbitStore.js";
-import { parseOrbitCSV, OrbitPoint } from "./orbit.js";
+import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";
 import { jdToUTCString } from "./astro.js";
 
 /** The two viewer modes. */
@@ -31,6 +31,7 @@ export function App() {
 
   // --- Replay mode state ---
   const [replayPoints, setReplayPoints] = useState<OrbitPoint[] | null>(null);
+  const [csvMetadata, setCsvMetadata] = useState<CSVMetadata | null>(null);
   const [orbitInfo, setOrbitInfo] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { controller, snapshot } = usePlayback(replayPoints);
@@ -193,15 +194,17 @@ export function App() {
       const reader = new FileReader();
       reader.onload = () => {
         const text = reader.result as string;
-        const parsed = parseOrbitCSV(text);
+        const { points: parsed, metadata } = parseOrbitCSVWithMetadata(text);
 
         if (parsed.length === 0) {
           setOrbitInfo("No valid orbit data found in file.");
           setReplayPoints(null);
+          setCsvMetadata(null);
           return;
         }
 
         setReplayPoints(parsed);
+        setCsvMetadata(metadata);
 
         const duration = parsed[parsed.length - 1].t - parsed[0].t;
         setOrbitInfo(
@@ -262,8 +265,8 @@ export function App() {
     mode,
     replayPoints,
     ingestBufferRef,
-    mu: simInfo?.mu,
-    bodyRadius: simInfo?.central_body_radius,
+    mu: mode === "realtime" ? simInfo?.mu : (csvMetadata?.mu ?? undefined),
+    bodyRadius: mode === "realtime" ? simInfo?.central_body_radius : (csvMetadata?.centralBodyRadius ?? undefined),
     timeRange,
   });
 
@@ -274,8 +277,14 @@ export function App() {
       ? snapshot.satellitePosition
       : trailBufferRef.current.latest;
 
-  const centralBody = simInfo?.central_body ?? "earth";
-  const centralBodyRadius = simInfo?.central_body_radius ?? 6378.137;
+  const centralBody =
+    mode === "realtime"
+      ? (simInfo?.central_body ?? "earth")
+      : (csvMetadata?.centralBody ?? "earth");
+  const centralBodyRadius =
+    mode === "realtime"
+      ? (simInfo?.central_body_radius ?? 6378.137)
+      : (csvMetadata?.centralBodyRadius ?? 6378.137);
 
   return (
     <>
@@ -287,7 +296,7 @@ export function App() {
         trailBuffer={mode === "realtime" ? trailBufferRef.current : undefined}
         centralBody={centralBody}
         centralBodyRadius={centralBodyRadius}
-        epochJd={simInfo?.epoch_jd}
+        epochJd={mode === "realtime" ? simInfo?.epoch_jd : (csvMetadata?.epochJd ?? undefined)}
       />
 
       {/* UI overlay */}
@@ -315,6 +324,11 @@ export function App() {
               Load Orbit CSV
             </button>
             {orbitInfo && <div className="orbit-info">{orbitInfo}</div>}
+            {replayPoints && csvMetadata?.epochJd != null && (
+              <div className="orbit-info">
+                {jdToUTCString(csvMetadata.epochJd, snapshot.elapsedTime)}
+              </div>
+            )}
           </>
         )}
 

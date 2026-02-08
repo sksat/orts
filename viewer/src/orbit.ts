@@ -17,20 +17,62 @@ export interface OrbitPoint {
   vz: number;
 }
 
+/** Metadata parsed from CSV comment headers. */
+export interface CSVMetadata {
+  epochJd: number | null;
+  mu: number | null;
+  centralBody: string | null;
+  centralBodyRadius: number | null;
+}
+
+/** Result of parsing a CSV file: points + optional metadata. */
+export interface ParsedCSV {
+  points: OrbitPoint[];
+  metadata: CSVMetadata;
+}
+
 /**
- * Parse CSV orbit data.
+ * Parse CSV orbit data with metadata extraction from comment headers.
  *
  * Format:
- *   - Lines starting with '#' are comments and are skipped.
+ *   - Lines starting with '#' are comments; `# key = value` lines are parsed as metadata.
  *   - Blank lines are skipped.
  *   - Data lines: t,x,y,z,vx,vy,vz  (all numbers, positions in km, velocities in km/s)
  */
-export function parseOrbitCSV(text: string): OrbitPoint[] {
+export function parseOrbitCSVWithMetadata(text: string): ParsedCSV {
   const points: OrbitPoint[] = [];
+  const metadata: CSVMetadata = {
+    epochJd: null,
+    mu: null,
+    centralBody: null,
+    centralBodyRadius: null,
+  };
 
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
-    if (line === "" || line.startsWith("#")) continue;
+    if (line === "") continue;
+
+    if (line.startsWith("#")) {
+      const match = line.match(/^#\s*(\w+)\s*=\s*(.+)/);
+      if (match) {
+        const [, key, value] = match;
+        switch (key) {
+          case "epoch_jd":
+            metadata.epochJd = Number(value.trim());
+            break;
+          case "mu":
+            metadata.mu = Number(value.trim().split(/\s/)[0]);
+            break;
+          case "central_body":
+            metadata.centralBody = value.trim();
+            break;
+          case "central_body_radius":
+            metadata.centralBodyRadius = Number(value.trim().split(/\s/)[0]);
+            break;
+        }
+      }
+      continue;
+    }
 
     const parts = line.split(",").map((s) => s.trim());
     if (parts.length < 7) continue;
@@ -49,7 +91,14 @@ export function parseOrbitCSV(text: string): OrbitPoint[] {
     });
   }
 
-  return points;
+  return { points, metadata };
+}
+
+/**
+ * Parse CSV orbit data (legacy wrapper, ignores metadata).
+ */
+export function parseOrbitCSV(text: string): OrbitPoint[] {
+  return parseOrbitCSVWithMetadata(text).points;
 }
 
 /**

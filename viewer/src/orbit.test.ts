@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseOrbitCSV } from "./orbit.js";
+import { parseOrbitCSV, parseOrbitCSVWithMetadata } from "./orbit.js";
 
 describe("parseOrbitCSV", () => {
   it("parses valid CSV lines into OrbitPoints", () => {
@@ -60,5 +60,45 @@ describe("parseOrbitCSV", () => {
   it("returns empty array for empty input", () => {
     expect(parseOrbitCSV("")).toHaveLength(0);
     expect(parseOrbitCSV("# only comments\n# here")).toHaveLength(0);
+  });
+});
+
+describe("parseOrbitCSVWithMetadata", () => {
+  it("extracts metadata from comment headers", () => {
+    const csv = [
+      "# Orts 2-body orbit propagation",
+      "# mu = 398600.4418 km^3/s^2",
+      "# epoch_jd = 2460390.0",
+      "# central_body = earth",
+      "# central_body_radius = 6378.137 km",
+      "# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s]",
+      "0.0,6778.137,0.0,0.0,0.0,7.669,0.0",
+    ].join("\n");
+    const { points, metadata } = parseOrbitCSVWithMetadata(csv);
+    expect(points).toHaveLength(1);
+    expect(metadata.epochJd).toBeCloseTo(2460390.0);
+    expect(metadata.mu).toBeCloseTo(398600.4418);
+    expect(metadata.centralBody).toBe("earth");
+    expect(metadata.centralBodyRadius).toBeCloseTo(6378.137);
+  });
+
+  it("returns null metadata for CSV without metadata comments", () => {
+    const csv = "0.0,6778.137,0.0,0.0,0.0,7.669,0.0";
+    const { points, metadata } = parseOrbitCSVWithMetadata(csv);
+    expect(points).toHaveLength(1);
+    expect(metadata.epochJd).toBeNull();
+    expect(metadata.mu).toBeNull();
+    expect(metadata.centralBody).toBeNull();
+    expect(metadata.centralBodyRadius).toBeNull();
+  });
+
+  it("handles partial metadata", () => {
+    const csv = [
+      "# epoch_jd = 2460390.0",
+      "0.0,6778.137,0.0,0.0,0.0,7.669,0.0",
+    ].join("\n");
+    const { metadata } = parseOrbitCSVWithMetadata(csv);
+    expect(metadata.epochJd).toBeCloseTo(2460390.0);
+    expect(metadata.mu).toBeNull();
   });
 });
