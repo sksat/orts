@@ -1,13 +1,28 @@
 import { useState, useMemo } from "react";
 import { TimeSeriesChart } from "./TimeSeriesChart.js";
 import type { ChartData } from "../db/orbitStore.js";
+import type { TimeRange } from "../hooks/useOrbitCharts.js";
+
+const TIME_RANGE_OPTIONS: { label: string; value: TimeRange }[] = [
+  { label: "All", value: null },
+  { label: "5 min", value: 300 },
+  { label: "30 min", value: 1800 },
+  { label: "1 h", value: 3600 },
+];
 
 interface GraphPanelProps {
   chartData: ChartData | null;
   isLoading: boolean;
+  timeRange: TimeRange;
+  onTimeRangeChange: (range: TimeRange) => void;
 }
 
-export function GraphPanel({ chartData, isLoading }: GraphPanelProps) {
+export function GraphPanel({
+  chartData,
+  isLoading,
+  timeRange,
+  onTimeRangeChange,
+}: GraphPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
 
   const altitudeData = useMemo(
@@ -50,6 +65,17 @@ export function GraphPanel({ chartData, isLoading }: GraphPanelProps) {
       {!collapsed && (
         <div className="graph-panel-content">
           {isLoading && <div className="graph-loading">Loading DuckDB...</div>}
+          <div className="time-range-selector">
+            {TIME_RANGE_OPTIONS.map((opt) => (
+              <button
+                key={opt.label}
+                className={`time-range-btn ${timeRange === opt.value ? "active" : ""}`}
+                onClick={() => onTimeRangeChange(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <TimeSeriesChart
             title="Altitude"
             yLabel="km"

@@ -5,7 +5,7 @@ import { GraphPanel } from "./components/GraphPanel.js";
 import { usePlayback } from "./hooks/usePlayback.js";
 import { useWebSocket, SimInfo } from "./hooks/useWebSocket.js";
 import { useDuckDB } from "./hooks/useDuckDB.js";
-import { useOrbitCharts } from "./hooks/useOrbitCharts.js";
+import { useOrbitCharts, TimeRange } from "./hooks/useOrbitCharts.js";
 import { parseOrbitCSV, OrbitPoint } from "./orbit.js";
 
 /** The two viewer modes. */
@@ -34,17 +34,33 @@ export function App() {
   // --- DuckDB + Charts ---
   const { conn, isReady: dbReady } = useDuckDB();
 
+  // --- Chart time range ---
+  const [timeRange, setTimeRange] = useState<TimeRange>(null);
+
   // --- Realtime mode state ---
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
   const [simInfo, setSimInfo] = useState<SimInfo | null>(null);
   const realtimePointsRef = useRef<OrbitPoint[]>([]);
   const rafScheduledRef = useRef(false);
+  // Cumulative time offset: when the server loops t back to 0,
+  // add the previous max t so charts show monotonically increasing time.
+  const tOffsetRef = useRef(0);
+  const lastRawTRef = useRef(-1);
   // Version counter triggers React re-renders at RAF rate without
   // creating a new array copy on every WebSocket message.
   const [realtimeVersion, setRealtimeVersion] = useState(0);
 
   const handleState = useCallback((point: OrbitPoint) => {
-    realtimePointsRef.current.push(point);
+    // Detect orbit restart: server loops t back to 0 after one period.
+    if (point.t < lastRawTRef.current) {
+      tOffsetRef.current += lastRawTRef.current;
+    }
+    lastRawTRef.current = point.t;
+
+    realtimePointsRef.current.push({
+      ...point,
+      t: point.t + tOffsetRef.current,
+    });
     // Batch state updates to at most once per animation frame to avoid
     // overwhelming React with re-renders (messages arrive every ~100ms).
     if (!rafScheduledRef.current) {
@@ -107,6 +123,8 @@ export function App() {
   const handleConnect = useCallback(() => {
     // Clear previous realtime data when starting a new connection
     realtimePointsRef.current = [];
+    tOffsetRef.current = 0;
+    lastRawTRef.current = -1;
     setRealtimeVersion(0);
     setSimInfo(null);
     connect();
@@ -149,6 +167,7 @@ export function App() {
     realtimeVersion,
     mu: simInfo?.mu,
     bodyRadius: simInfo?.central_body_radius,
+    timeRange,
   });
 
   // --- Determine what the 3D scene should display ---
@@ -272,7 +291,12 @@ export function App() {
 
       {/* Graph panel (right side) */}
       {dbReady && (
-        <GraphPanel chartData={chartData} isLoading={chartsLoading} />
+        <GraphPanel
+          chartData={chartData}
+          isLoading={chartsLoading}
+          timeRange={timeRange}
+          onTimeRangeChange={setTimeRange}
+        />
       )}
 
       {/* Playback bar (only shown in replay mode when data is loaded) */}

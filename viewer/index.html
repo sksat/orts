@@ -290,6 +290,30 @@
         text-align: center;
         padding: 12px;
       }
+      .time-range-selector {
+        display: flex;
+        gap: 4px;
+        padding: 0 0 4px;
+      }
+      .time-range-btn {
+        flex: 1;
+        padding: 3px 0;
+        font-size: 11px;
+        background: rgba(255, 255, 255, 0.08);
+        color: #aaa;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .time-range-btn.active {
+        background: rgba(34, 85, 170, 0.6);
+        color: #fff;
+        border-color: rgba(68, 136, 204, 0.6);
+      }
+      .time-range-btn:hover {
+        background: rgba(34, 85, 170, 0.4);
+        color: #ddd;
+      }
 
       /* --- uPlot dark theme overrides --- */
       .u-wrap {

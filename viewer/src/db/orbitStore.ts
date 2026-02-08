@@ -47,8 +47,10 @@ export async function clearTable(
 export async function queryDerivedQuantities(
   conn: AsyncDuckDBConnection,
   mu: number,
-  bodyRadius = 6378.137
+  bodyRadius = 6378.137,
+  tMin?: number
 ): Promise<ChartData> {
+  const whereClause = tMin != null ? `WHERE t >= ${tMin}` : "";
   const result = await conn.query(`
     SELECT
       t,
@@ -61,6 +63,7 @@ export async function queryDerivedQuantities(
       ) AS angular_momentum,
       sqrt(vx*vx + vy*vy + vz*vz) AS velocity
     FROM orbit_points
+    ${whereClause}
     ORDER BY t
   `);
 

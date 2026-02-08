@@ -10,6 +10,9 @@ import {
 
 const MU_EARTH = 398600.4418;
 
+/** Time range for chart display: null = all history, number = last N seconds. */
+export type TimeRange = number | null;
+
 interface UseOrbitChartsOptions {
   conn: AsyncDuckDBConnection | null;
   mode: "replay" | "realtime";
@@ -18,6 +21,8 @@ interface UseOrbitChartsOptions {
   realtimeVersion: number;
   mu?: number;
   bodyRadius?: number;
+  /** Show only last N seconds of data, or null for all history. */
+  timeRange?: TimeRange;
 }
 
 export interface UseOrbitChartsReturn {
@@ -36,6 +41,7 @@ export function useOrbitCharts(
     realtimeVersion,
     mu = MU_EARTH,
     bodyRadius = 6378.137,
+    timeRange = null,
   } = options;
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -92,11 +98,24 @@ export function useOrbitCharts(
           const newCount = allPoints.length;
           const inserted = insertedCountRef.current;
 
+          // Detect reconnect: App resets realtimePointsRef to [],
+          // so newCount drops below inserted.
+          if (newCount < inserted) {
+            await clearTable(conn);
+            insertedCountRef.current = 0;
+          }
+
           if (newCount > inserted) {
             const newPoints = allPoints.slice(inserted);
             await insertPoints(conn, newPoints);
             insertedCountRef.current = newCount;
-            const data = await queryDerivedQuantities(conn, mu, bodyRadius);
+          }
+
+          if (newCount > 0) {
+            const tMin = timeRange != null
+              ? allPoints[allPoints.length - 1].t - timeRange
+              : undefined;
+            const data = await queryDerivedQuantities(conn, mu, bodyRadius, tMin);
             if (!cancelled) setChartData(data);
           }
         } catch (e) {

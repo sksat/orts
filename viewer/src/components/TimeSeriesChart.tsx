@@ -73,7 +73,13 @@ export function TimeSeriesChart({
   // Update data (need at least 2 points for uPlot axis calculations)
   useEffect(() => {
     if (!chartRef.current || !data || data[0].length < 2) return;
-    chartRef.current.setData(data);
+    try {
+      chartRef.current.setData(data);
+    } catch {
+      // uPlot throws RangeError when y-range is near-zero (e.g. constant
+      // energy in a circular orbit). Safe to ignore — next update with
+      // more data will succeed.
+    }
   }, [data]);
 
   // Handle resize
