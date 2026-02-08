@@ -6,6 +6,7 @@ import { usePlayback } from "./hooks/usePlayback.js";
 import { useWebSocket, SimInfo } from "./hooks/useWebSocket.js";
 import { useDuckDB } from "./hooks/useDuckDB.js";
 import { useOrbitCharts, TimeRange } from "./hooks/useOrbitCharts.js";
+import { IngestBuffer } from "./db/IngestBuffer.js";
 import { parseOrbitCSV, OrbitPoint } from "./orbit.js";
 
 /** The two viewer modes. */
@@ -52,6 +53,9 @@ export function App() {
   // creating a new array copy on every WebSocket message.
   const [realtimeVersion, setRealtimeVersion] = useState(0);
 
+  // --- IngestBuffer for DuckDB (drain pattern) ---
+  const ingestBufferRef = useRef(new IngestBuffer());
+
   const handleState = useCallback((point: OrbitPoint) => {
     // Detect orbit restart: server loops t back to 0 after one period.
     if (point.t < lastRawTRef.current) {
@@ -59,10 +63,9 @@ export function App() {
     }
     lastRawTRef.current = point.t;
 
-    realtimePointsRef.current.push({
-      ...point,
-      t: point.t + tOffsetRef.current,
-    });
+    const adjusted = { ...point, t: point.t + tOffsetRef.current };
+    realtimePointsRef.current.push(adjusted);
+    ingestBufferRef.current.push(adjusted);
     // Batch state updates to at most once per animation frame to avoid
     // overwhelming React with re-renders (messages arrive every ~100ms).
     if (!rafScheduledRef.current) {
@@ -79,16 +82,17 @@ export function App() {
   }, []);
 
   const handleHistory = useCallback((points: OrbitPoint[]) => {
+    const adjusted: OrbitPoint[] = [];
     for (const point of points) {
       if (point.t < lastRawTRef.current) {
         tOffsetRef.current += lastRawTRef.current;
       }
       lastRawTRef.current = point.t;
-      realtimePointsRef.current.push({
-        ...point,
-        t: point.t + tOffsetRef.current,
-      });
+      const p = { ...point, t: point.t + tOffsetRef.current };
+      realtimePointsRef.current.push(p);
+      adjusted.push(p);
     }
+    ingestBufferRef.current.pushMany(adjusted);
     overviewEndIndexRef.current = realtimePointsRef.current.length;
     // Trigger single re-render for entire batch
     if (!rafScheduledRef.current) {
@@ -130,6 +134,10 @@ export function App() {
     const streamingPoints = realtimePointsRef.current.slice(overviewEndIndexRef.current);
     realtimePointsRef.current = [...detailPoints, ...streamingPoints];
     overviewEndIndexRef.current = detailPoints.length;
+
+    // Re-ingest all data into DuckDB (detail replaced overview)
+    ingestBufferRef.current = new IngestBuffer();
+    ingestBufferRef.current.pushMany([...detailPoints, ...streamingPoints]);
 
     // Trigger re-render
     if (!rafScheduledRef.current) {
@@ -195,6 +203,7 @@ export function App() {
     lastRawTRef.current = -1;
     overviewEndIndexRef.current = 0;
     detailBufferRef.current = [];
+    ingestBufferRef.current = new IngestBuffer();
     setRealtimeVersion(0);
     setSimInfo(null);
     connect();
@@ -233,8 +242,7 @@ export function App() {
     conn,
     mode,
     replayPoints,
-    realtimePointsRef,
-    realtimeVersion,
+    ingestBufferRef,
     mu: simInfo?.mu,
     bodyRadius: simInfo?.central_body_radius,
     timeRange,
