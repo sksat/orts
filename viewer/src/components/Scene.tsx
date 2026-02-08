@@ -4,11 +4,16 @@ import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { Satellite } from "./Satellite.js";
 import { OrbitPoint } from "../orbit.js";
+import { TrailBuffer } from "../utils/TrailBuffer.js";
 
 interface SceneProps {
-  points: OrbitPoint[] | null;
+  /** Points array for replay mode. */
+  points?: OrbitPoint[] | null;
   satellitePosition: OrbitPoint | null;
-  trailVisibleCount: number;
+  /** Visible count for replay mode progressive trail. */
+  trailVisibleCount?: number;
+  /** TrailBuffer for realtime mode. */
+  trailBuffer?: TrailBuffer;
   centralBody: string;
   centralBodyRadius: number;
 }
@@ -21,9 +26,14 @@ export function Scene({
   points,
   satellitePosition,
   trailVisibleCount,
+  trailBuffer,
   centralBody,
   centralBodyRadius,
 }: SceneProps) {
+  const hasTrailData = trailBuffer
+    ? trailBuffer.length > 0
+    : points != null && points.length > 0;
+
   return (
     <Canvas
       camera={{ position: [0, 2, 5], fov: 60, near: 0.01, far: 1000 }}
@@ -48,8 +58,16 @@ export function Scene({
       <axesHelper args={[2]} />
 
       {/* Orbit trail and satellite (only when data is loaded) */}
-      {points && points.length > 0 && (
-        <OrbitTrail points={points} visibleCount={trailVisibleCount} scaleRadius={centralBodyRadius} />
+      {hasTrailData && (
+        trailBuffer ? (
+          <OrbitTrail trailBuffer={trailBuffer} scaleRadius={centralBodyRadius} />
+        ) : (
+          <OrbitTrail
+            points={points!}
+            visibleCount={trailVisibleCount ?? points!.length}
+            scaleRadius={centralBodyRadius}
+          />
+        )
       )}
       {satellitePosition && <Satellite position={satellitePosition} scaleRadius={centralBodyRadius} />}
     </Canvas>

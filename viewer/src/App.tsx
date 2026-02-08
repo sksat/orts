@@ -7,6 +7,7 @@ import { useWebSocket, SimInfo } from "./hooks/useWebSocket.js";
 import { useDuckDB } from "./hooks/useDuckDB.js";
 import { useOrbitCharts, TimeRange } from "./hooks/useOrbitCharts.js";
 import { IngestBuffer } from "./db/IngestBuffer.js";
+import { TrailBuffer } from "./utils/TrailBuffer.js";
 import { parseOrbitCSV, OrbitPoint } from "./orbit.js";
 
 /** The two viewer modes. */
@@ -56,6 +57,9 @@ export function App() {
   // --- IngestBuffer for DuckDB (drain pattern) ---
   const ingestBufferRef = useRef(new IngestBuffer());
 
+  // --- TrailBuffer for 3D rendering (bounded) ---
+  const trailBufferRef = useRef(new TrailBuffer(50000));
+
   const handleState = useCallback((point: OrbitPoint) => {
     // Detect orbit restart: server loops t back to 0 after one period.
     if (point.t < lastRawTRef.current) {
@@ -66,6 +70,7 @@ export function App() {
     const adjusted = { ...point, t: point.t + tOffsetRef.current };
     realtimePointsRef.current.push(adjusted);
     ingestBufferRef.current.push(adjusted);
+    trailBufferRef.current.push(adjusted);
     // Batch state updates to at most once per animation frame to avoid
     // overwhelming React with re-renders (messages arrive every ~100ms).
     if (!rafScheduledRef.current) {
@@ -93,6 +98,7 @@ export function App() {
       adjusted.push(p);
     }
     ingestBufferRef.current.pushMany(adjusted);
+    trailBufferRef.current.pushMany(adjusted);
     overviewEndIndexRef.current = realtimePointsRef.current.length;
     // Trigger single re-render for entire batch
     if (!rafScheduledRef.current) {
@@ -134,6 +140,10 @@ export function App() {
     const streamingPoints = realtimePointsRef.current.slice(overviewEndIndexRef.current);
     realtimePointsRef.current = [...detailPoints, ...streamingPoints];
     overviewEndIndexRef.current = detailPoints.length;
+
+    // Rebuild TrailBuffer with detail + streaming
+    trailBufferRef.current.clear();
+    trailBufferRef.current.pushMany([...detailPoints, ...streamingPoints]);
 
     // Re-ingest all data into DuckDB (detail replaced overview)
     ingestBufferRef.current = new IngestBuffer();
@@ -204,6 +214,7 @@ export function App() {
     overviewEndIndexRef.current = 0;
     detailBufferRef.current = [];
     ingestBufferRef.current = new IngestBuffer();
+    trailBufferRef.current.clear();
     setRealtimeVersion(0);
     setSimInfo(null);
     connect();
@@ -255,16 +266,10 @@ export function App() {
   // `realtimeVersion` is read to ensure React re-renders when new points arrive.
   const rtPoints = realtimePointsRef.current;
   void realtimeVersion; // consumed for reactivity
-  const scenePoints =
-    mode === "replay" ? replayPoints : rtPoints.length > 0 ? rtPoints : null;
   const satellitePosition =
     mode === "replay"
       ? snapshot.satellitePosition
-      : rtPoints.length > 0
-        ? rtPoints[rtPoints.length - 1]
-        : null;
-  const trailVisibleCount =
-    mode === "replay" ? snapshot.trailVisibleCount : rtPoints.length;
+      : trailBufferRef.current.latest;
 
   const centralBody = simInfo?.central_body ?? "earth";
   const centralBodyRadius = simInfo?.central_body_radius ?? 6378.137;
@@ -273,9 +278,10 @@ export function App() {
     <>
       {/* 3D Scene */}
       <Scene
-        points={scenePoints}
+        points={mode === "replay" ? replayPoints : undefined}
         satellitePosition={satellitePosition}
-        trailVisibleCount={trailVisibleCount}
+        trailVisibleCount={mode === "replay" ? snapshot.trailVisibleCount : undefined}
+        trailBuffer={mode === "realtime" ? trailBufferRef.current : undefined}
         centralBody={centralBody}
         centralBodyRadius={centralBodyRadius}
       />
@@ -348,10 +354,10 @@ export function App() {
             )}
 
             {/* Realtime data stats */}
-            {rtPoints.length > 0 && (
+            {trailBufferRef.current.length > 0 && (
               <div className="orbit-info">
-                {rtPoints.length} points |
-                T+{(rtPoints[rtPoints.length - 1].t - rtPoints[0].t).toFixed(1)} s
+                {trailBufferRef.current.length} points |
+                T+{((trailBufferRef.current.latest?.t ?? 0) - (trailBufferRef.current.getAll()[0]?.t ?? 0)).toFixed(1)} s
               </div>
             )}
           </div>
