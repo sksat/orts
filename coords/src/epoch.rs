@@ -103,6 +103,19 @@ impl Epoch {
         Some(Self::from_gregorian(year, month, day, hour, min, sec))
     }
 
+    /// Create an epoch from the current system time (UTC).
+    pub fn now() -> Self {
+        // Unix epoch (1970-01-01 00:00:00 UTC) = JD 2440587.5
+        const UNIX_EPOCH_JD: f64 = 2440587.5;
+        let unix_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before Unix epoch")
+            .as_secs_f64();
+        Epoch {
+            jd: UNIX_EPOCH_JD + unix_secs / 86400.0,
+        }
+    }
+
     /// Return the Julian Date value.
     pub fn jd(&self) -> f64 {
         self.jd
@@ -277,6 +290,25 @@ mod tests {
             "add 86400s: expected JD {}, got {}",
             J2000_JD + 1.0,
             next_day.jd()
+        );
+    }
+
+    #[test]
+    fn now_returns_reasonable_jd() {
+        let epoch = Epoch::now();
+        // JD for 2025-01-01 ≈ 2460676, for 2030-01-01 ≈ 2462502
+        // Any reasonable current date should be in this range
+        assert!(
+            epoch.jd() > 2460676.0 && epoch.jd() < 2462502.0,
+            "Epoch::now() JD {} is outside 2025–2030 range",
+            epoch.jd()
+        );
+        // Verify to_gregorian year is plausible
+        let (year, _, _, _, _, _) = epoch.to_gregorian();
+        assert!(
+            year >= 2025 && year <= 2030,
+            "Epoch::now() year {} is outside expected range",
+            year
         );
     }
 

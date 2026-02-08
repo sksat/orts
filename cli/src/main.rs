@@ -124,10 +124,14 @@ impl SimParams {
             .stream_interval
             .unwrap_or(output_interval)
             .clamp(args.dt, output_interval);
-        let epoch = args.epoch.as_ref().map(|s| {
-            Epoch::from_iso8601(s)
-                .unwrap_or_else(|| panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)"))
-        });
+        let epoch = match &args.epoch {
+            Some(s) => Some(
+                Epoch::from_iso8601(s)
+                    .unwrap_or_else(|| panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)"))
+            ),
+            // Default to current time for known solar-system bodies
+            None => Some(Epoch::now()),
+        };
         Self {
             body,
             mu,
@@ -1244,7 +1248,8 @@ mod tests {
         let params = SimParams::from_sim_args(&args);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
         assert!((params.stream_interval - 10.0).abs() < 1e-9);
-        assert!(params.epoch.is_none());
+        // Defaults to Epoch::now() for known bodies
+        assert!(params.epoch.is_some());
     }
 
     #[test]
