@@ -1,12 +1,16 @@
 import { Suspense } from "react";
+import * as THREE from "three";
 import { useTexture } from "@react-three/drei";
 import { getBodyRenderInfo, BodyRenderInfo } from "../bodies.js";
+import { EarthBody } from "./EarthBody.js";
 
 interface CelestialBodyProps {
   /** Body identifier from the server (e.g., "earth"). */
   bodyId: string;
   /** Radius in scene units (default 1). */
   radius?: number;
+  /** Normalized sun direction in world space (ECI). */
+  sunDirection?: THREE.Vector3;
 }
 
 function TexturedBody({
@@ -76,8 +80,23 @@ function FallbackBody({
  * Renders a celestial body sphere with texture if available,
  * falling back to a colored Phong sphere.
  */
-export function CelestialBody({ bodyId, radius = 1 }: CelestialBodyProps) {
+export function CelestialBody({ bodyId, radius = 1, sunDirection }: CelestialBodyProps) {
   const renderInfo = getBodyRenderInfo(bodyId);
+
+  if (renderInfo.nightTexturePath && renderInfo.texturePath && sunDirection) {
+    return (
+      <Suspense
+        fallback={<FallbackBody renderInfo={renderInfo} radius={radius} />}
+      >
+        <EarthBody
+          radius={radius}
+          sunDirection={sunDirection}
+          dayTexturePath={renderInfo.texturePath}
+          nightTexturePath={renderInfo.nightTexturePath}
+        />
+      </Suspense>
+    );
+  }
 
   if (renderInfo.texturePath) {
     return (

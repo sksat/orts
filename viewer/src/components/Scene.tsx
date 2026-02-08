@@ -1,10 +1,15 @@
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
+import * as THREE from "three";
 import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { Satellite } from "./Satellite.js";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
+
+// Sun direction in ECI J2000: +X = vernal equinox.
+// Static for now; will become dynamic when epoch support is added.
+const SUN_DIRECTION = new THREE.Vector3(1, 0, 0);
 
 interface SceneProps {
   /** Points array for replay mode. */
@@ -47,12 +52,12 @@ export function Scene({
         maxDistance={100}
       />
 
-      {/* Lighting */}
-      <ambientLight intensity={1.0} color={0x404040} />
-      <directionalLight intensity={2.0} position={[5, 3, 5]} />
+      {/* Lighting — sun direction aligned with ECI +X (vernal equinox) */}
+      <ambientLight intensity={0.5} color={0x404040} />
+      <directionalLight intensity={2.0} position={[10, 0, 0]} />
 
       {/* Central body */}
-      <CelestialBody bodyId={centralBody} />
+      <CelestialBody bodyId={centralBody} sunDirection={SUN_DIRECTION} />
 
       {/* Axes helper (X=red, Y=green, Z=blue, length = 2 radii) */}
       <axesHelper args={[2]} />

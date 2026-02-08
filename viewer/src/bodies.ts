@@ -4,6 +4,8 @@ export interface BodyRenderInfo {
   name: string;
   /** Path to texture image (relative to public/), or null for fallback color. */
   texturePath: string | null;
+  /** Path to night-side texture (city lights), or null if not applicable. */
+  nightTexturePath: string | null;
   /** Fallback solid color (hex) when no texture is available/loaded. */
   fallbackColor: number;
   /** Emissive color for lit materials. */
@@ -17,6 +19,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
     id: "earth",
     name: "Earth",
     texturePath: "/textures/earth.jpg",
+    nightTexturePath: "/textures/earth_night.jpg",
     fallbackColor: 0x2255aa,
     emissiveColor: 0x112244,
     isSelfLuminous: false,
@@ -25,6 +28,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
     id: "moon",
     name: "Moon",
     texturePath: "/textures/moon.jpg",
+    nightTexturePath: null,
     fallbackColor: 0x888888,
     emissiveColor: 0x222222,
     isSelfLuminous: false,
@@ -33,6 +37,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
     id: "sun",
     name: "Sun",
     texturePath: "/textures/sun.jpg",
+    nightTexturePath: null,
     fallbackColor: 0xffcc00,
     emissiveColor: 0xffaa00,
     isSelfLuminous: true,
@@ -41,6 +46,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
     id: "mars",
     name: "Mars",
     texturePath: "/textures/mars.jpg",
+    nightTexturePath: null,
     fallbackColor: 0xcc6633,
     emissiveColor: 0x331100,
     isSelfLuminous: false,
@@ -51,6 +57,7 @@ const UNKNOWN_BODY: BodyRenderInfo = {
   id: "unknown",
   name: "Unknown Body",
   texturePath: null,
+  nightTexturePath: null,
   fallbackColor: 0x666666,
   emissiveColor: 0x222222,
   isSelfLuminous: false,
