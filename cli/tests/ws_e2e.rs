@@ -70,20 +70,55 @@ impl Server {
     }
 }
 
+/// Read the next WebSocket message as parsed JSON.
+async fn next_json(
+    read: &mut futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    >,
+) -> serde_json::Value {
+    let msg = read
+        .next()
+        .await
+        .expect("expected message, got end of stream")
+        .expect("error reading message");
+    let text = msg.into_text().expect("message is not text");
+    serde_json::from_str(&text).expect("message is not valid JSON")
+}
+
+/// Read messages until we find one with the given type, returning it.
+/// Collects intermediate messages in a Vec.
+async fn read_until_type(
+    read: &mut futures_util::stream::SplitStream<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    >,
+    msg_type: &str,
+    max_messages: usize,
+) -> (serde_json::Value, Vec<serde_json::Value>) {
+    let mut others = Vec::new();
+    for _ in 0..max_messages {
+        let msg = next_json(read).await;
+        if msg["type"] == msg_type {
+            return (msg, others);
+        }
+        others.push(msg);
+    }
+    panic!("did not receive message type '{msg_type}' within {max_messages} messages");
+}
+
 #[tokio::test]
 async fn test_websocket_info_and_state_messages() {
     let port = test_port();
     let mut server = Server::spawn(port);
 
-    // Give the server a moment to fully enter its accept loop after printing the
-    // ready message.
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // Wrap the actual test logic in a timeout so it cannot hang forever.
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}");
 
-        // Retry connection a few times to handle any residual startup race.
         let mut ws_stream = None;
         for attempt in 0..20 {
             match connect_async(&url).await {
@@ -100,20 +135,10 @@ async fn test_websocket_info_and_state_messages() {
             }
         }
         let ws_stream = ws_stream.unwrap();
-
         let (_write, mut read) = ws_stream.split();
 
         // --- First message: must be "info" ---
-        let msg = read
-            .next()
-            .await
-            .expect("expected info message, got end of stream")
-            .expect("error reading info message");
-
-        let info_text = msg.into_text().expect("info message is not text");
-        let info: serde_json::Value =
-            serde_json::from_str(&info_text).expect("info message is not valid JSON");
-
+        let info = next_json(&mut read).await;
         assert_eq!(info["type"], "info", "first message type must be 'info'");
         assert!(info["mu"].is_f64(), "info.mu must be a number");
         assert!(info["altitude"].is_f64(), "info.altitude must be a number");
@@ -129,7 +154,6 @@ async fn test_websocket_info_and_state_messages() {
             "info.central_body_radius must be a number"
         );
 
-        // Sanity-check default values (altitude=400, dt=10).
         let altitude = info["altitude"].as_f64().unwrap();
         assert!(
             (altitude - 400.0).abs() < f64::EPSILON,
@@ -140,78 +164,48 @@ async fn test_websocket_info_and_state_messages() {
             (dt - 10.0).abs() < f64::EPSILON,
             "expected default dt 10, got {dt}"
         );
-        // output_interval defaults to dt when not specified.
         let output_interval = info["output_interval"].as_f64().unwrap();
         assert!(
             (output_interval - dt).abs() < f64::EPSILON,
             "expected default output_interval to equal dt ({dt}), got {output_interval}"
         );
 
-        // --- Subsequent messages: must be "state" ---
-        let required_state_count = 3;
-        for i in 0..required_state_count {
-            let msg = read
-                .next()
-                .await
-                .unwrap_or_else(|| panic!("expected state message #{i}, got end of stream"))
-                .unwrap_or_else(|e| panic!("error reading state message #{i}: {e}"));
+        // --- Second message: must be "history" ---
+        let history = next_json(&mut read).await;
+        assert_eq!(
+            history["type"], "history",
+            "second message must be 'history'"
+        );
+        assert!(
+            history["states"].is_array(),
+            "history must have 'states' array"
+        );
 
-            let text = msg.into_text().expect("state message is not text");
-            let state: serde_json::Value =
-                serde_json::from_str(&text).expect("state message is not valid JSON");
+        // --- Subsequent messages: must include "state" messages ---
+        // (may also include history_detail interleaved)
+        let (first_state, _) = read_until_type(&mut read, "state", 50).await;
+        assert!(first_state["t"].is_f64(), "state.t must be a number");
+        let position = first_state["position"].as_array().unwrap();
+        assert_eq!(position.len(), 3);
+        let velocity = first_state["velocity"].as_array().unwrap();
+        assert_eq!(velocity.len(), 3);
 
-            assert_eq!(
-                state["type"], "state",
-                "message #{i} type must be 'state'"
-            );
-            assert!(state["t"].is_f64(), "state.t must be a number");
+        let pos: Vec<f64> = position.iter().map(|v| v.as_f64().unwrap()).collect();
+        let r = (pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]).sqrt();
+        assert!(
+            r > 6000.0 && r < 7500.0,
+            "position magnitude {r:.1} km is out of expected range [6000, 7500]"
+        );
 
-            // position and velocity must be arrays of 3 numbers
-            let position = state["position"]
-                .as_array()
-                .unwrap_or_else(|| panic!("state #{i}: position must be an array"));
-            assert_eq!(
-                position.len(),
-                3,
-                "state #{i}: position must have 3 elements"
-            );
-            for (j, val) in position.iter().enumerate() {
-                assert!(
-                    val.is_f64(),
-                    "state #{i}: position[{j}] must be a number"
-                );
-            }
-
-            let velocity = state["velocity"]
-                .as_array()
-                .unwrap_or_else(|| panic!("state #{i}: velocity must be an array"));
-            assert_eq!(
-                velocity.len(),
-                3,
-                "state #{i}: velocity must have 3 elements"
-            );
-            for (j, val) in velocity.iter().enumerate() {
-                assert!(
-                    val.is_f64(),
-                    "state #{i}: velocity[{j}] must be a number"
-                );
-            }
-
-            // The position magnitude should be roughly Earth radius + 400 km = ~6771 km.
-            let pos: Vec<f64> = position.iter().map(|v| v.as_f64().unwrap()).collect();
-            let r = (pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]).sqrt();
-            assert!(
-                r > 6000.0 && r < 7500.0,
-                "state #{i}: position magnitude {r:.1} km is out of expected range [6000, 7500]"
-            );
+        // Read 2 more state messages
+        for _ in 0..2 {
+            let (state, _) = read_until_type(&mut read, "state", 50).await;
+            assert_eq!(state["type"], "state");
         }
     })
     .await;
 
-    // Kill the server process regardless of test outcome.
     server.kill();
-
-    // Propagate timeout or assertion failures.
     result.expect("test timed out after 30 seconds");
 }
 
@@ -231,15 +225,11 @@ async fn test_websocket_multiple_clients() {
             .expect("client 1 failed to connect");
         let (_write1, mut read1) = ws1.split();
 
-        // First client should receive info message.
-        let msg1 = read1
-            .next()
-            .await
-            .expect("client 1: expected info message")
-            .expect("client 1: error reading info");
-        let info1: serde_json::Value =
-            serde_json::from_str(&msg1.into_text().unwrap()).unwrap();
+        // Client 1: info → history
+        let info1 = next_json(&mut read1).await;
         assert_eq!(info1["type"], "info", "client 1 must get info message");
+        let hist1 = next_json(&mut read1).await;
+        assert_eq!(hist1["type"], "history", "client 1 must get history message");
 
         // Connect second client while the first is still connected.
         let (ws2, _) = connect_async(&url)
@@ -247,34 +237,211 @@ async fn test_websocket_multiple_clients() {
             .expect("client 2 failed to connect");
         let (_write2, mut read2) = ws2.split();
 
-        // Second client should also receive its own info message.
-        let msg2 = read2
-            .next()
-            .await
-            .expect("client 2: expected info message")
-            .expect("client 2: error reading info");
-        let info2: serde_json::Value =
-            serde_json::from_str(&msg2.into_text().unwrap()).unwrap();
+        // Client 2: info → history
+        let info2 = next_json(&mut read2).await;
         assert_eq!(info2["type"], "info", "client 2 must get info message");
+        let hist2 = next_json(&mut read2).await;
+        assert_eq!(hist2["type"], "history", "client 2 must get history message");
 
-        // Both clients should receive state messages.
-        let state1 = read1
-            .next()
-            .await
-            .expect("client 1: expected state message")
-            .expect("client 1: error reading state");
-        let s1: serde_json::Value =
-            serde_json::from_str(&state1.into_text().unwrap()).unwrap();
+        // Both clients should receive state messages
+        let (s1, _) = read_until_type(&mut read1, "state", 50).await;
         assert_eq!(s1["type"], "state", "client 1 must get state message");
 
-        let state2 = read2
-            .next()
-            .await
-            .expect("client 2: expected state message")
-            .expect("client 2: error reading state");
-        let s2: serde_json::Value =
-            serde_json::from_str(&state2.into_text().unwrap()).unwrap();
+        let (s2, _) = read_until_type(&mut read2, "state", 50).await;
         assert_eq!(s2["type"], "state", "client 2 must get state message");
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+#[tokio::test]
+async fn test_websocket_history_on_connect() {
+    let port = test_port() + 2;
+    let mut server = Server::spawn(port);
+
+    // Wait for simulation to accumulate some states
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}");
+        let (ws, _) = connect_async(&url)
+            .await
+            .expect("failed to connect");
+        let (_write, mut read) = ws.split();
+
+        // info → history → state
+        let info = next_json(&mut read).await;
+        assert_eq!(info["type"], "info");
+
+        let history = next_json(&mut read).await;
+        assert_eq!(history["type"], "history");
+        let states = history["states"].as_array().unwrap();
+        assert!(
+            !states.is_empty(),
+            "history should have accumulated states after 3 seconds"
+        );
+
+        // Verify each history state has required fields
+        for (i, state) in states.iter().enumerate() {
+            assert!(state["t"].is_f64(), "history state {i}: t must be a number");
+            assert_eq!(
+                state["position"].as_array().unwrap().len(),
+                3,
+                "history state {i}: position must have 3 elements"
+            );
+            assert_eq!(
+                state["velocity"].as_array().unwrap().len(),
+                3,
+                "history state {i}: velocity must have 3 elements"
+            );
+        }
+
+        // State messages should follow
+        let (state, _) = read_until_type(&mut read, "state", 50).await;
+        assert_eq!(state["type"], "state");
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+#[tokio::test]
+async fn test_websocket_history_grows_over_time() {
+    let port = test_port() + 3;
+    let mut server = Server::spawn(port);
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}");
+
+        // Connect client A immediately
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let (ws_a, _) = connect_async(&url)
+            .await
+            .expect("client A failed to connect");
+        let (_write_a, mut read_a) = ws_a.split();
+
+        let _info_a = next_json(&mut read_a).await;
+        let hist_a = next_json(&mut read_a).await;
+        let len_a = hist_a["states"].as_array().unwrap().len();
+
+        // Wait for more data to accumulate
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Connect client B
+        let (ws_b, _) = connect_async(&url)
+            .await
+            .expect("client B failed to connect");
+        let (_write_b, mut read_b) = ws_b.split();
+
+        let _info_b = next_json(&mut read_b).await;
+        let hist_b = next_json(&mut read_b).await;
+        let len_b = hist_b["states"].as_array().unwrap().len();
+
+        assert!(
+            len_b > len_a,
+            "history should grow over time: len_a={len_a}, len_b={len_b}"
+        );
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+#[tokio::test]
+async fn test_websocket_history_detail_follows() {
+    let port = test_port() + 4;
+    let mut server = Server::spawn(port);
+
+    // Wait for data to accumulate
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}");
+        let (ws, _) = connect_async(&url)
+            .await
+            .expect("failed to connect");
+        let (_write, mut read) = ws.split();
+
+        // info → history
+        let info = next_json(&mut read).await;
+        assert_eq!(info["type"], "info");
+        let history = next_json(&mut read).await;
+        assert_eq!(history["type"], "history");
+
+        // Read messages until we find history_detail_complete
+        let mut found_detail = false;
+        let mut found_complete = false;
+        let mut found_state = false;
+        for _ in 0..200 {
+            let msg = next_json(&mut read).await;
+            match msg["type"].as_str().unwrap() {
+                "history_detail" => {
+                    found_detail = true;
+                    let states = msg["states"].as_array().unwrap();
+                    assert!(!states.is_empty(), "detail chunk should not be empty");
+                }
+                "history_detail_complete" => {
+                    found_complete = true;
+                    if found_state {
+                        break;
+                    }
+                    // Continue to collect state messages after detail complete
+                }
+                "state" => {
+                    found_state = true;
+                    if found_complete {
+                        break;
+                    }
+                }
+                other => {
+                    panic!("unexpected message type: {other}");
+                }
+            }
+        }
+
+        assert!(found_detail, "should receive at least one history_detail");
+        assert!(found_complete, "should receive history_detail_complete");
+        assert!(
+            found_state,
+            "should receive state messages (before or after detail)"
+        );
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+#[tokio::test]
+async fn test_websocket_overview_arrives_fast() {
+    let port = test_port() + 5;
+    let mut server = Server::spawn(port);
+
+    // Wait for substantial data accumulation
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}");
+        let (ws, _) = connect_async(&url)
+            .await
+            .expect("failed to connect");
+        let (_write, mut read) = ws.split();
+
+        let _info = next_json(&mut read).await;
+        let start = std::time::Instant::now();
+        let history = next_json(&mut read).await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(history["type"], "history");
+        assert!(
+            elapsed.as_millis() < 500,
+            "overview should arrive within 500ms, took {}ms",
+            elapsed.as_millis()
+        );
     })
     .await;
 

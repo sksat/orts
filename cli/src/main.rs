@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -126,7 +128,133 @@ impl SimParams {
     }
 }
 
-/// Server-to-client message: simulation info (sent once on connect).
+/// A single state snapshot used in history messages.
+#[derive(Serialize, Clone, Debug)]
+struct HistoryState {
+    t: f64,
+    position: [f64; 3],
+    velocity: [f64; 3],
+}
+
+/// Bounded buffer that accumulates history states and periodically flushes to .rrd segments.
+struct HistoryBuffer {
+    /// Recent states kept in memory.
+    states: VecDeque<HistoryState>,
+    /// Maximum number of states to keep in memory before flushing.
+    capacity: usize,
+    /// Directory for .rrd segment files.
+    data_dir: PathBuf,
+    /// Number of segment files written so far.
+    segment_count: u32,
+}
+
+impl HistoryBuffer {
+    fn new(capacity: usize, data_dir: PathBuf) -> Self {
+        std::fs::create_dir_all(&data_dir).ok();
+        HistoryBuffer {
+            states: VecDeque::new(),
+            capacity,
+            data_dir,
+            segment_count: 0,
+        }
+    }
+
+    /// Push a state into the buffer. Flushes to .rrd if capacity is exceeded.
+    fn push(&mut self, state: HistoryState) {
+        self.states.push_back(state);
+        if self.states.len() > self.capacity {
+            self.flush();
+        }
+    }
+
+    /// Flush the oldest half of the buffer to a .rrd segment file.
+    fn flush(&mut self) {
+        let flush_count = self.states.len() / 2;
+        if flush_count == 0 {
+            return;
+        }
+
+        let to_flush: Vec<HistoryState> = self.states.drain(..flush_count).collect();
+
+        let mut rec = Recording::new();
+        let sat_path = EntityPath::parse("/world/sat/default");
+
+        for (i, hs) in to_flush.iter().enumerate() {
+            let tp = TimePoint::new()
+                .with_sim_time(hs.t)
+                .with_step(i as u64);
+            let os = OrbitalState::new(
+                nalgebra::Vector3::new(hs.position[0], hs.position[1], hs.position[2]),
+                nalgebra::Vector3::new(hs.velocity[0], hs.velocity[1], hs.velocity[2]),
+            );
+            rec.log_orbital_state(&sat_path, &tp, &os);
+        }
+
+        let seg_path = self
+            .data_dir
+            .join(format!("seg_{:04}.rrd", self.segment_count));
+        if let Err(e) =
+            orts_datamodel::rerun_export::save_as_rrd(&rec, "orts", seg_path.to_str().unwrap())
+        {
+            eprintln!("Warning: failed to flush segment: {e}");
+            return;
+        }
+
+        self.segment_count += 1;
+    }
+
+    /// Load all data: .rrd segments + in-memory buffer, sorted by time.
+    fn load_all(&self) -> Vec<HistoryState> {
+        let mut all = Vec::new();
+
+        // Read .rrd segment files in order
+        for i in 0..self.segment_count {
+            let seg_path = self.data_dir.join(format!("seg_{i:04}.rrd"));
+            match orts_datamodel::rerun_export::load_from_rrd(seg_path.to_str().unwrap()) {
+                Ok(rows) => {
+                    for row in rows {
+                        all.push(HistoryState {
+                            t: row.t,
+                            position: [row.x, row.y, row.z],
+                            velocity: [row.vx, row.vy, row.vz],
+                        });
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: failed to read segment {i}: {e}");
+                }
+            }
+        }
+
+        // Append in-memory buffer
+        all.extend(self.states.iter().cloned());
+
+        all
+    }
+
+    /// Downsample a list of states to at most `max_points`, always preserving first and last.
+    fn downsample(states: &[HistoryState], max_points: usize) -> Vec<HistoryState> {
+        let n = states.len();
+        if n <= max_points || max_points < 2 {
+            return states.to_vec();
+        }
+
+        let mut result = Vec::with_capacity(max_points);
+        result.push(states[0].clone());
+
+        // Distribute remaining (max_points - 2) samples evenly across the interior
+        let interior = max_points - 2;
+        for i in 1..=interior {
+            let idx = i * (n - 1) / (interior + 1);
+            result.push(states[idx].clone());
+        }
+
+        result.push(states[n - 1].clone());
+        result
+    }
+}
+
+/// Server-to-client WebSocket message.
 #[derive(Serialize, Clone, Debug)]
 #[serde(tag = "type")]
 enum WsMessage {
@@ -148,6 +276,15 @@ enum WsMessage {
         position: [f64; 3],
         velocity: [f64; 3],
     },
+    /// Downsampled history overview sent on connect.
+    #[serde(rename = "history")]
+    History { states: Vec<HistoryState> },
+    /// Full-resolution history chunk sent in background.
+    #[serde(rename = "history_detail")]
+    HistoryDetail { states: Vec<HistoryState> },
+    /// Marker indicating all detail chunks have been sent.
+    #[serde(rename = "history_detail_complete")]
+    HistoryDetailComplete,
 }
 
 fn parse_body(s: &str) -> KnownBody {
@@ -362,12 +499,16 @@ async fn async_server(sim: &SimArgs, port: u16) {
 
     eprintln!("WebSocket server listening on ws://localhost:{port}");
 
+    let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
+    let history = Arc::new(tokio::sync::RwLock::new(HistoryBuffer::new(5000, data_dir)));
+
     let (tx, _rx) = broadcast::channel::<String>(256);
 
     let sim_tx = tx.clone();
     let sim_params = Arc::clone(&params);
+    let sim_history = Arc::clone(&history);
     tokio::spawn(async move {
-        simulation_loop(sim_params, sim_tx).await;
+        simulation_loop(sim_params, sim_tx, sim_history).await;
     });
 
     loop {
@@ -381,22 +522,35 @@ async fn async_server(sim: &SimArgs, port: u16) {
 
         eprintln!("New connection from {peer}");
 
+        // Subscribe before spawning handler (no lost messages)
         let rx = tx.subscribe();
         let client_params = Arc::clone(&params);
+        let client_history = Arc::clone(&history);
 
         tokio::spawn(async move {
-            handle_connection(stream, rx, client_params).await;
+            handle_connection(stream, rx, client_params, client_history).await;
         });
     }
 }
 
-async fn simulation_loop(params: Arc<SimParams>, tx: broadcast::Sender<String>) {
+async fn simulation_loop(
+    params: Arc<SimParams>,
+    tx: broadcast::Sender<String>,
+    history: Arc<tokio::sync::RwLock<HistoryBuffer>>,
+) {
     let system = TwoBodySystem { mu: params.mu };
     let dt = params.dt;
     let sleep_duration = std::time::Duration::from_secs_f64((dt / 100.0).max(0.01));
 
     loop {
         let initial = params.initial_state();
+
+        let hs = HistoryState {
+            t: 0.0,
+            position: [initial.position.x, initial.position.y, initial.position.z],
+            velocity: [initial.velocity.x, initial.velocity.y, initial.velocity.z],
+        };
+        history.write().await.push(hs);
 
         let msg = state_message(0.0, &initial);
         if tx.send(msg).is_err() {
@@ -423,6 +577,13 @@ async fn simulation_loop(params: Arc<SimParams>, tx: broadcast::Sender<String>) 
         }
 
         for (t, state) in &states {
+            let hs = HistoryState {
+                t: *t,
+                position: [state.position.x, state.position.y, state.position.z],
+                velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
+            };
+            history.write().await.push(hs);
+
             let msg = state_message(*t, state);
             let _ = tx.send(msg);
             tokio::time::sleep(sleep_duration).await;
@@ -436,6 +597,7 @@ async fn handle_connection(
     stream: tokio::net::TcpStream,
     mut rx: broadcast::Receiver<String>,
     params: Arc<SimParams>,
+    history: Arc<tokio::sync::RwLock<HistoryBuffer>>,
 ) {
     let ws_stream = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
@@ -447,6 +609,7 @@ async fn handle_connection(
 
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 
+    // 1. Send info message
     let info = WsMessage::Info {
         mu: params.mu,
         altitude: params.altitude,
@@ -469,6 +632,41 @@ async fn handle_connection(
         return;
     }
 
+    // 2. Send overview history (downsampled)
+    let all_states = history.read().await.load_all();
+    let overview = HistoryBuffer::downsample(&all_states, 1000);
+    let history_msg = WsMessage::History { states: overview };
+    let history_json =
+        serde_json::to_string(&history_msg).expect("failed to serialize history message");
+    if ws_sender
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            history_json.into(),
+        ))
+        .await
+        .is_err()
+    {
+        return;
+    }
+
+    // 3. Spawn background detail sender
+    let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel::<String>(16);
+    tokio::spawn(async move {
+        let chunk_size = 1000;
+        for chunk in all_states.chunks(chunk_size) {
+            let msg = WsMessage::HistoryDetail {
+                states: chunk.to_vec(),
+            };
+            let json = serde_json::to_string(&msg).expect("failed to serialize detail chunk");
+            if detail_tx.send(json).await.is_err() {
+                return; // Client disconnected
+            }
+        }
+        let complete = serde_json::to_string(&WsMessage::HistoryDetailComplete)
+            .expect("failed to serialize detail complete");
+        let _ = detail_tx.send(complete).await;
+    });
+
+    // 4. Main loop: multiplex broadcast (real-time) + detail (background) + client messages
     loop {
         tokio::select! {
             msg = rx.recv() => {
@@ -489,6 +687,17 @@ async fn handle_connection(
                         break;
                     }
                 }
+            }
+            detail = detail_rx.recv() => {
+                if let Some(json) = detail
+                    && ws_sender
+                        .send(tokio_tungstenite::tungstenite::Message::Text(json.into()))
+                        .await
+                        .is_err()
+                {
+                    break;
+                }
+                // None means detail sender finished — just continue with broadcast only
             }
             ws_msg = ws_receiver.next() => {
                 match ws_msg {
@@ -511,4 +720,242 @@ fn state_message(t: f64, state: &State) -> String {
         velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
     };
     serde_json::to_string(&msg).expect("failed to serialize state message")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_state(t: f64) -> HistoryState {
+        HistoryState {
+            t,
+            position: [6778.0 + t, t * 0.1, 0.0],
+            velocity: [0.0, 7.669, 0.0],
+        }
+    }
+
+    fn temp_data_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("orts-test-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).ok();
+        dir
+    }
+
+    fn cleanup_dir(dir: &PathBuf) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // --- HistoryBuffer tests ---
+
+    #[test]
+    fn buffer_push_and_read() {
+        let dir = temp_data_dir("push-read");
+        let mut buf = HistoryBuffer::new(100, dir.clone());
+
+        buf.push(make_state(0.0));
+        buf.push(make_state(10.0));
+        buf.push(make_state(20.0));
+
+        let all = buf.load_all();
+        assert_eq!(all.len(), 3);
+        assert!((all[0].t - 0.0).abs() < 1e-9);
+        assert!((all[1].t - 10.0).abs() < 1e-9);
+        assert!((all[2].t - 20.0).abs() < 1e-9);
+
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn buffer_flush_creates_segment() {
+        let dir = temp_data_dir("flush-seg");
+        let mut buf = HistoryBuffer::new(4, dir.clone());
+
+        // Push 5 states → exceeds capacity of 4 → triggers flush
+        for i in 0..5 {
+            buf.push(make_state(i as f64 * 10.0));
+        }
+
+        assert_eq!(buf.segment_count, 1);
+        assert!(dir.join("seg_0000.rrd").exists());
+        // After flushing half (2), buffer should have 3 states
+        assert_eq!(buf.states.len(), 3);
+
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn buffer_load_all_includes_flushed_and_buffered() {
+        let dir = temp_data_dir("load-all");
+        let mut buf = HistoryBuffer::new(4, dir.clone());
+
+        for i in 0..8 {
+            buf.push(make_state(i as f64 * 10.0));
+        }
+
+        // Should have flushed some segments
+        assert!(buf.segment_count > 0);
+
+        let all = buf.load_all();
+        assert_eq!(all.len(), 8);
+
+        // Verify all times are present (order may differ slightly due to .rrd roundtrip)
+        let mut times: Vec<f64> = all.iter().map(|s| s.t).collect();
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        for i in 0..8 {
+            assert!(
+                (times[i] - i as f64 * 10.0).abs() < 0.01,
+                "times[{i}] = {}, expected {}",
+                times[i],
+                i as f64 * 10.0
+            );
+        }
+
+        cleanup_dir(&dir);
+    }
+
+    // --- Downsample tests ---
+
+    #[test]
+    fn downsample_correctness() {
+        let states: Vec<HistoryState> = (0..100).map(|i| make_state(i as f64)).collect();
+        let ds = HistoryBuffer::downsample(&states, 10);
+
+        assert_eq!(ds.len(), 10);
+        // First and last are preserved
+        assert!((ds[0].t - 0.0).abs() < 1e-9);
+        assert!((ds[9].t - 99.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn downsample_preserves_all_when_small() {
+        let states: Vec<HistoryState> = (0..5).map(|i| make_state(i as f64)).collect();
+        let ds = HistoryBuffer::downsample(&states, 10);
+        assert_eq!(ds.len(), 5);
+    }
+
+    #[test]
+    fn downsample_performance() {
+        let states: Vec<HistoryState> = (0..100_000).map(|i| make_state(i as f64)).collect();
+        let start = std::time::Instant::now();
+        let ds = HistoryBuffer::downsample(&states, 1000);
+        let elapsed = start.elapsed();
+
+        assert_eq!(ds.len(), 1000);
+        assert!(
+            elapsed.as_millis() < 10,
+            "downsample took {}ms, expected <10ms",
+            elapsed.as_millis()
+        );
+    }
+
+    // --- Performance tests ---
+
+    #[test]
+    fn flush_performance() {
+        let dir = temp_data_dir("flush-perf");
+        let mut buf = HistoryBuffer::new(10_000, dir.clone());
+
+        for i in 0..5000 {
+            buf.states.push_back(make_state(i as f64));
+        }
+
+        let start = std::time::Instant::now();
+        buf.flush();
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed.as_millis() < 1000,
+            "flush took {}ms, expected <1000ms",
+            elapsed.as_millis()
+        );
+        assert_eq!(buf.segment_count, 1);
+
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn load_all_performance() {
+        let dir = temp_data_dir("load-perf");
+        let mut buf = HistoryBuffer::new(2000, dir.clone());
+
+        // Insert 10000 points, which will create multiple segments
+        for i in 0..10_000 {
+            buf.push(make_state(i as f64));
+        }
+
+        let start = std::time::Instant::now();
+        let all = buf.load_all();
+        let elapsed = start.elapsed();
+
+        assert_eq!(all.len(), 10_000);
+        assert!(
+            elapsed.as_millis() < 2000,
+            "load_all took {}ms, expected <2000ms",
+            elapsed.as_millis()
+        );
+
+        cleanup_dir(&dir);
+    }
+
+    // --- WsMessage serialization tests ---
+
+    #[test]
+    fn history_message_serialization() {
+        let msg = WsMessage::History {
+            states: vec![
+                HistoryState {
+                    t: 0.0,
+                    position: [6778.137, 0.0, 0.0],
+                    velocity: [0.0, 7.669, 0.0],
+                },
+                HistoryState {
+                    t: 10.0,
+                    position: [6777.0, 76.0, 0.0],
+                    velocity: [-0.086, 7.668, 0.0],
+                },
+            ],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "history");
+        let states = v["states"].as_array().unwrap();
+        assert_eq!(states.len(), 2);
+        assert_eq!(states[0]["t"], 0.0);
+        assert_eq!(states[0]["position"].as_array().unwrap().len(), 3);
+        assert_eq!(states[0]["velocity"].as_array().unwrap().len(), 3);
+        assert_eq!(states[1]["t"], 10.0);
+    }
+
+    #[test]
+    fn history_message_empty_states() {
+        let msg = WsMessage::History { states: vec![] };
+        let json = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "history");
+        assert_eq!(v["states"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn history_detail_message_serialization() {
+        let msg = WsMessage::HistoryDetail {
+            states: vec![HistoryState {
+                t: 5.0,
+                position: [1.0, 2.0, 3.0],
+                velocity: [4.0, 5.0, 6.0],
+            }],
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "history_detail");
+        assert_eq!(v["states"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn history_detail_complete_serialization() {
+        let msg = WsMessage::HistoryDetailComplete;
+        let json = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "history_detail_complete");
+        // Should not have a "states" field
+        assert!(v.get("states").is_none());
+    }
 }

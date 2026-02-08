@@ -65,3 +65,48 @@ test("realtime mode auto-connects and streams orbit data", async ({ page }) => {
 
   expect(overlayCount, "UI overlay should still exist (React did not crash)").toBe(1);
 });
+
+test("history message arrives after info before state", async ({ page }) => {
+  await page.goto(VIEWER_URL);
+
+  const messageTypes = await page.evaluate(async (url) => {
+    return new Promise<string[]>((resolve) => {
+      const ws = new WebSocket(url);
+      const types: string[] = [];
+
+      ws.addEventListener("message", (e) => {
+        try {
+          const msg = JSON.parse(e.data as string);
+          types.push(msg.type);
+          // Collect until we see at least info + history + one state
+          if (
+            types.includes("info") &&
+            types.includes("history") &&
+            types.filter((t) => t === "state").length >= 1
+          ) {
+            ws.close();
+          }
+        } catch {
+          // ignore
+        }
+      });
+
+      ws.addEventListener("close", () => resolve(types));
+      ws.addEventListener("error", () => resolve(types));
+
+      setTimeout(() => {
+        ws.close();
+        resolve(types);
+      }, 10000);
+    });
+  }, WS_URL);
+
+  console.log("Message types:", messageTypes);
+
+  // First message must be info
+  expect(messageTypes[0]).toBe("info");
+  // Second message must be history
+  expect(messageTypes[1]).toBe("history");
+  // After that, should have state (possibly with history_detail interleaved)
+  expect(messageTypes.some((t) => t === "state")).toBe(true);
+});

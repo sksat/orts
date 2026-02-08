@@ -40,7 +40,21 @@ interface InfoMessage {
   central_body_radius?: number;
 }
 
-type ServerMessage = StateMessage | InfoMessage;
+interface HistoryMessage {
+  type: "history";
+  states: Array<{ t: number; position: [number, number, number]; velocity: [number, number, number] }>;
+}
+
+interface HistoryDetailMessage {
+  type: "history_detail";
+  states: Array<{ t: number; position: [number, number, number]; velocity: [number, number, number] }>;
+}
+
+interface HistoryDetailCompleteMessage {
+  type: "history_detail_complete";
+}
+
+type ServerMessage = StateMessage | InfoMessage | HistoryMessage | HistoryDetailMessage | HistoryDetailCompleteMessage;
 
 export interface UseWebSocketOptions {
   /** WebSocket server URL, e.g. "ws://localhost:9001". */
@@ -49,6 +63,9 @@ export interface UseWebSocketOptions {
   onState: (state: OrbitPoint) => void;
   /** Called when the server sends simulation metadata (on connect). */
   onInfo: (info: SimInfo) => void;
+  onHistory: (points: OrbitPoint[]) => void;
+  onHistoryDetail: (points: OrbitPoint[]) => void;
+  onHistoryDetailComplete: () => void;
 }
 
 export interface UseWebSocketReturn {
@@ -77,6 +94,12 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   const onInfoRef = useRef(options.onInfo);
   onStateRef.current = options.onState;
   onInfoRef.current = options.onInfo;
+  const onHistoryRef = useRef(options.onHistory);
+  const onHistoryDetailRef = useRef(options.onHistoryDetail);
+  const onHistoryDetailCompleteRef = useRef(options.onHistoryDetailComplete);
+  onHistoryRef.current = options.onHistory;
+  onHistoryDetailRef.current = options.onHistoryDetail;
+  onHistoryDetailCompleteRef.current = options.onHistoryDetailComplete;
 
   const urlRef = useRef(options.url);
   urlRef.current = options.url;
@@ -140,6 +163,24 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
             central_body: infoMsg.central_body ?? "earth",
             central_body_radius: infoMsg.central_body_radius ?? 6378.137,
           });
+        } else if (msg.type === "history" || msg.type === "history_detail") {
+          const histMsg = msg as HistoryMessage | HistoryDetailMessage;
+          const points: OrbitPoint[] = histMsg.states.map((s) => ({
+            t: s.t,
+            x: s.position[0],
+            y: s.position[1],
+            z: s.position[2],
+            vx: s.velocity[0],
+            vy: s.velocity[1],
+            vz: s.velocity[2],
+          }));
+          if (msg.type === "history") {
+            onHistoryRef.current(points);
+          } else {
+            onHistoryDetailRef.current(points);
+          }
+        } else if (msg.type === "history_detail_complete") {
+          onHistoryDetailCompleteRef.current();
         }
       } catch {
         // Silently ignore malformed messages

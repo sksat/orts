@@ -46,6 +46,8 @@ export function App() {
   // add the previous max t so charts show monotonically increasing time.
   const tOffsetRef = useRef(0);
   const lastRawTRef = useRef(-1);
+  const overviewEndIndexRef = useRef(0);
+  const detailBufferRef = useRef<OrbitPoint[]>([]);
   // Version counter triggers React re-renders at RAF rate without
   // creating a new array copy on every WebSocket message.
   const [realtimeVersion, setRealtimeVersion] = useState(0);
@@ -76,10 +78,76 @@ export function App() {
     setSimInfo(info);
   }, []);
 
+  const handleHistory = useCallback((points: OrbitPoint[]) => {
+    for (const point of points) {
+      if (point.t < lastRawTRef.current) {
+        tOffsetRef.current += lastRawTRef.current;
+      }
+      lastRawTRef.current = point.t;
+      realtimePointsRef.current.push({
+        ...point,
+        t: point.t + tOffsetRef.current,
+      });
+    }
+    overviewEndIndexRef.current = realtimePointsRef.current.length;
+    // Trigger single re-render for entire batch
+    if (!rafScheduledRef.current) {
+      rafScheduledRef.current = true;
+      requestAnimationFrame(() => {
+        rafScheduledRef.current = false;
+        setRealtimeVersion((v) => v + 1);
+      });
+    }
+  }, []);
+
+  const handleHistoryDetail = useCallback((points: OrbitPoint[]) => {
+    // Accumulate detail points with t-offset processing
+    for (const point of points) {
+      detailBufferRef.current.push(point);
+    }
+  }, []);
+
+  const handleHistoryDetailComplete = useCallback(() => {
+    if (detailBufferRef.current.length === 0) return;
+
+    // Process detail buffer through t-offset logic independently
+    const detailPoints: OrbitPoint[] = [];
+    let detailOffset = 0;
+    let detailLastRawT = -1;
+    for (const point of detailBufferRef.current) {
+      if (point.t < detailLastRawT) {
+        detailOffset += detailLastRawT;
+      }
+      detailLastRawT = point.t;
+      detailPoints.push({
+        ...point,
+        t: point.t + detailOffset,
+      });
+    }
+    detailBufferRef.current = [];
+
+    // Replace overview portion with detail, keep streaming portion
+    const streamingPoints = realtimePointsRef.current.slice(overviewEndIndexRef.current);
+    realtimePointsRef.current = [...detailPoints, ...streamingPoints];
+    overviewEndIndexRef.current = detailPoints.length;
+
+    // Trigger re-render
+    if (!rafScheduledRef.current) {
+      rafScheduledRef.current = true;
+      requestAnimationFrame(() => {
+        rafScheduledRef.current = false;
+        setRealtimeVersion((v) => v + 1);
+      });
+    }
+  }, []);
+
   const { connect, disconnect, isConnected } = useWebSocket({
     url: wsUrl,
     onState: handleState,
     onInfo: handleInfo,
+    onHistory: handleHistory,
+    onHistoryDetail: handleHistoryDetail,
+    onHistoryDetailComplete: handleHistoryDetailComplete,
   });
 
   // --- Replay: CSV loading ---
@@ -125,6 +193,8 @@ export function App() {
     realtimePointsRef.current = [];
     tOffsetRef.current = 0;
     lastRawTRef.current = -1;
+    overviewEndIndexRef.current = 0;
+    detailBufferRef.current = [];
     setRealtimeVersion(0);
     setSimInfo(null);
     connect();
