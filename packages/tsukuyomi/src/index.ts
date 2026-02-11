@@ -1,5 +1,6 @@
 // @orts/tsukuyomi - DuckDB + uPlot time-series charting library
 export { IngestBuffer } from "./db/IngestBuffer.js";
+export { TimeSeriesChart } from "./components/TimeSeriesChart.js";
 export type {
   TimePoint,
   ColumnDef,
