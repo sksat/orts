@@ -60,17 +60,16 @@ export function buildDerivedQuery(
     return `SELECT ${selectColumns} FROM ${schema.tableName} ${whereClause} ORDER BY t`;
   }
 
-  // Time-bucket downsampling: divide time range into maxPoints equal-duration
-  // buckets and pick the first point (by t) in each bucket. This distributes
-  // the display budget evenly across time, not across row count.
+  // Row-count based downsampling: NTILE divides all rows into maxPoints
+  // equal-count groups, then we pick the first row from each group.
+  // This guarantees ~maxPoints output rows regardless of temporal distribution,
+  // avoiding the problem where time-bucket downsampling produces very few points
+  // when data density is uneven (e.g., dense history + sparse streaming).
   return (
     `WITH filtered AS (SELECT ${baseCols} FROM ${schema.tableName} ${whereClause}), ` +
-    `stats AS (SELECT MIN(t) AS t_lo, MAX(t) AS t_hi, COUNT(*) AS total FROM filtered), ` +
-    `bucketed AS (SELECT f.*, ` +
-    `CASE WHEN s.t_hi = s.t_lo THEN 0 ` +
-    `ELSE LEAST(CAST(FLOOR((f.t - s.t_lo) / (s.t_hi - s.t_lo) * ${maxPts}) AS INTEGER), ${maxPts} - 1) ` +
-    `END AS bucket, s.total ` +
-    `FROM filtered f, stats s), ` +
+    `counted AS (SELECT COUNT(*) AS total FROM filtered), ` +
+    `bucketed AS (SELECT f.*, NTILE(${maxPts}) OVER (ORDER BY t) AS bucket, c.total ` +
+    `FROM filtered f, counted c), ` +
     `ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY t) AS rn FROM bucketed) ` +
     `SELECT ${selectColumns} FROM ranked WHERE total <= ${maxPts} OR rn = 1 ORDER BY t`
   );
