@@ -1,0 +1,233 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v5.0.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Build CLI (release)
+        run: cargo build --release --bin orts-cli
+
+      - name: Upload CLI binary
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: orts-cli
+          path: target/release/orts-cli
+          retention-days: 1
+
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.2.0
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4.2.0
+        with:
+          version: 10
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "store-path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5.0.3
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store-path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build tsukuyomi
+        run: pnpm --filter @orts/tsukuyomi build
+
+      - name: Build viewer
+        run: pnpm --filter orts-viewer build
+
+      - name: Test tsukuyomi
+        run: pnpm --filter @orts/tsukuyomi test
+
+      - name: Test viewer
+        run: pnpm --filter orts-viewer test
+
+  tsukuyomi-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.2.0
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4.2.0
+        with:
+          version: 10
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "store-path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5.0.3
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store-path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build tsukuyomi
+        run: pnpm --filter @orts/tsukuyomi build
+
+      - name: Install Playwright browsers
+        working-directory: packages/tsukuyomi
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright E2E
+        working-directory: packages/tsukuyomi
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: tsukuyomi-playwright-report
+          path: packages/tsukuyomi/test-results/
+          retention-days: 7
+
+  viewer-e2e:
+    runs-on: ubuntu-latest
+    needs: [rust]
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.2.0
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4.2.0
+        with:
+          version: 10
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "store-path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5.0.3
+        with:
+          path: ${{ steps.pnpm-cache.outputs.store-path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build tsukuyomi
+        run: pnpm --filter @orts/tsukuyomi build
+
+      - name: Install Playwright browsers
+        working-directory: viewer
+        run: npx playwright install --with-deps chromium
+
+      - name: Download CLI binary
+        uses: actions/download-artifact@v7.0.0
+        with:
+          name: orts-cli
+          path: ./bin
+
+      - name: Make CLI binary executable
+        run: chmod +x ./bin/orts-cli
+
+      - name: Start WebSocket server
+        run: ./bin/orts-cli serve --dt 1 --output-interval 10 &
+
+      - name: Wait for WebSocket server
+        run: |
+          for _ in $(seq 1 30); do
+            if nc -z localhost 9001 2>/dev/null; then
+              echo "WebSocket server ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "WebSocket server failed to start"
+          exit 1
+
+      - name: Start Vite dev server
+        run: pnpm --filter orts-viewer dev &
+
+      - name: Wait for Vite server
+        run: |
+          for _ in $(seq 1 30); do
+            if nc -z localhost 5173 2>/dev/null; then
+              echo "Vite server ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Vite server failed to start"
+          exit 1
+
+      - name: Run Playwright E2E
+        working-directory: viewer
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: viewer-playwright-report
+          path: viewer/test-results/
+          retention-days: 7
