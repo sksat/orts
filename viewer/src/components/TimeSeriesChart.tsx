@@ -25,6 +25,8 @@ export function TimeSeriesChart({
   const chartRef = useRef<uPlot | null>(null);
   const onZoomRef = useRef(onZoom);
   onZoomRef.current = onZoom;
+  // Guard: suppress setScale callback during programmatic setData calls
+  const isSettingDataRef = useRef(false);
 
   // Create chart on mount
   useEffect(() => {
@@ -65,6 +67,9 @@ export function TimeSeriesChart({
       hooks: {
         setScale: [
           (u: uPlot, scaleKey: string) => {
+            // Skip scale changes triggered by programmatic setData calls —
+            // only fire onZoom for user-initiated drag-zoom interactions.
+            if (isSettingDataRef.current) return;
             if (scaleKey === "x") {
               const min = u.scales.x.min;
               const max = u.scales.x.max;
@@ -91,6 +96,7 @@ export function TimeSeriesChart({
   // Update data (need at least 2 points for uPlot axis calculations)
   useEffect(() => {
     if (!chartRef.current || !data || data[0].length < 2) return;
+    isSettingDataRef.current = true;
     try {
       chartRef.current.setData(data);
     } catch {
@@ -98,6 +104,7 @@ export function TimeSeriesChart({
       // energy in a circular orbit). Safe to ignore — next update with
       // more data will succeed.
     }
+    isSettingDataRef.current = false;
   }, [data]);
 
   // Handle resize

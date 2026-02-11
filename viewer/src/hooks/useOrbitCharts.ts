@@ -5,7 +5,6 @@ import { IngestBuffer } from "../db/IngestBuffer.js";
 import {
   insertPoints,
   clearTable,
-  replaceRange,
   queryDerivedQuantities,
   ChartData,
 } from "../db/orbitStore.js";
@@ -97,8 +96,9 @@ export function useOrbitCharts(
     if (mode !== "realtime" || !conn) return;
 
     let cancelled = false;
-    const INSERT_INTERVAL = 500;  // drain buffer → DuckDB (lightweight)
-    const QUERY_INTERVAL = 2000;  // derived quantity query (heavy)
+    const TICK_INTERVAL = 500;
+    const QUERY_EVERY_N = 4; // run chart query every 4th tick (2000ms)
+    let tickCount = 0;
 
     const startPolling = async () => {
       try {
@@ -111,34 +111,22 @@ export function useOrbitCharts(
 
       if (cancelled) return;
 
-      // Lightweight insert tick: drain buffer into DuckDB
-      const insertTick = async () => {
+      // Single sequential tick: insert then (periodically) query.
+      // Using one loop avoids concurrent DuckDB access that caused
+      // data loss when insertTick and queryTick overlapped.
+      const tick = async () => {
         if (cancelled) return;
         try {
-          const buf = ingestBufferRef.current;
-          const range = buf.replaceRange;
-          if (range) {
-            await replaceRange(conn, range.tMin, range.tMax, []);
-            buf.replaceRange = null;
-          }
-          const newPoints = buf.drain();
+          // 1. Drain buffer → DuckDB insert (lightweight)
+          const newPoints = ingestBufferRef.current.drain();
           if (newPoints.length > 0) {
             await insertPoints(conn, newPoints);
             hasDataRef.current = true;
           }
-        } catch (e) {
-          console.warn("useOrbitCharts insert error:", e);
-        }
-        if (!cancelled) {
-          window.setTimeout(insertTick, INSERT_INTERVAL);
-        }
-      };
 
-      // Heavy query tick: compute derived quantities for charts
-      const queryTick = async () => {
-        if (cancelled) return;
-        try {
-          if (hasDataRef.current) {
+          // 2. Periodically compute derived quantities for charts (heavy)
+          tickCount++;
+          if (hasDataRef.current && tickCount % QUERY_EVERY_N === 0) {
             const tMin = computeTMin(
               timeRangeRef.current,
               ingestBufferRef.current.latestT
@@ -149,15 +137,14 @@ export function useOrbitCharts(
             if (!cancelled) setChartData(data);
           }
         } catch (e) {
-          console.warn("useOrbitCharts query error:", e);
+          console.warn("useOrbitCharts tick error:", e);
         }
         if (!cancelled) {
-          queryTimerRef.current = window.setTimeout(queryTick, QUERY_INTERVAL);
+          queryTimerRef.current = window.setTimeout(tick, TICK_INTERVAL);
         }
       };
 
-      window.setTimeout(insertTick, INSERT_INTERVAL);
-      queryTimerRef.current = window.setTimeout(queryTick, QUERY_INTERVAL);
+      queryTimerRef.current = window.setTimeout(tick, TICK_INTERVAL);
     };
 
     startPolling();

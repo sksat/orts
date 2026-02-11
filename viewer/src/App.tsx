@@ -128,17 +128,13 @@ export function App() {
       allTrailPoints.length - streamingCountRef.current
     );
 
-    // Rebuild TrailBuffer with detail + streaming
+    // Rebuild TrailBuffer with detail + streaming for 3D rendering.
+    // DuckDB keeps overview + streaming data. Query-time downsampling
+    // handles the display budget, so replacing overview with detail is
+    // unnecessary and would cause t-offset divergence (mainOffset vs
+    // independently-computed detailOffset) corrupting chart data.
     trailBufferRef.current.clear();
     trailBufferRef.current.pushMany([...detailPoints, ...streamingPoints]);
-
-    // Re-ingest detail into DuckDB, replacing only the overview time range.
-    // Streaming data outside this range is preserved in DuckDB.
-    const tMin = detailPoints[0].t;
-    const tMax = detailPoints[detailPoints.length - 1].t;
-    ingestBufferRef.current = new IngestBuffer();
-    ingestBufferRef.current.replaceRange = { tMin, tMax };
-    ingestBufferRef.current.pushMany(detailPoints);
   }, []);
 
   const handleQueryRangeResponse = useCallback(

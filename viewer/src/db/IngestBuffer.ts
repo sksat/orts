@@ -11,12 +11,6 @@ import type { OrbitPoint } from "../orbit.js";
 export class IngestBuffer {
   private pending: OrbitPoint[] = [];
   private _latestT = -Infinity;
-  /**
-   * When set, the consumer should call replaceRange(tMin, tMax) on DuckDB
-   * before inserting. This replaces only the specified time range, preserving
-   * streaming data outside that range.
-   */
-  replaceRange: { tMin: number; tMax: number } | null = null;
 
   /** Push a single point. */
   push(point: OrbitPoint): void {

@@ -77,32 +77,4 @@ describe("IngestBuffer", () => {
     expect(buf.pendingCount).toBe(0);
   });
 
-  describe("replaceRange", () => {
-    it("defaults to no replacement", () => {
-      const buf = new IngestBuffer();
-      expect(buf.replaceRange).toBeNull();
-    });
-
-    it("stores tMin/tMax for range replacement", () => {
-      const buf = new IngestBuffer();
-      buf.replaceRange = { tMin: 0, tMax: 5600 };
-      expect(buf.replaceRange).toEqual({ tMin: 0, tMax: 5600 });
-    });
-
-    it("drain does not reset replaceRange", () => {
-      const buf = new IngestBuffer();
-      buf.replaceRange = { tMin: 0, tMax: 100 };
-      buf.push(makePoint(50));
-      buf.drain();
-      expect(buf.replaceRange).toEqual({ tMin: 0, tMax: 100 });
-    });
-
-    it("consumer can clear replaceRange after processing", () => {
-      const buf = new IngestBuffer();
-      buf.replaceRange = { tMin: 0, tMax: 100 };
-      // simulate consumer clearing the flag
-      buf.replaceRange = null;
-      expect(buf.replaceRange).toBeNull();
-    });
-  });
 });
