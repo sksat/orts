@@ -5,12 +5,18 @@ import { GraphPanel } from "./components/GraphPanel.js";
 import { usePlayback } from "./hooks/usePlayback.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
 import { useWebSocket, SimInfo, QueryRangeResponse } from "./hooks/useWebSocket.js";
-import { useDuckDB } from "./hooks/useDuckDB.js";
-import { useOrbitCharts, TimeRange } from "./hooks/useOrbitCharts.js";
-import { IngestBuffer } from "./db/IngestBuffer.js";
+import {
+  useDuckDB,
+  useTimeSeriesStore,
+  IngestBuffer,
+  sliceArrays,
+  quantizeChartTime,
+  replaceRange,
+  type TimeRange,
+  type ChartDataMap,
+} from "@orts/tsukuyomi";
+import { createOrbitSchema } from "./db/orbitSchema.js";
 import { TrailBuffer } from "./utils/TrailBuffer.js";
-import { sliceChartData, quantizeChartTime } from "./utils/chartViewport.js";
-import { replaceRange } from "./db/orbitStore.js";
 import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";
 
 /** The two viewer modes. */
@@ -39,15 +45,18 @@ export function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { snapshot, togglePlayPause, setSpeed, seekToFraction } = usePlayback(replayPoints);
 
-  // --- DuckDB + Charts ---
-  const { conn, isReady: dbReady } = useDuckDB();
-
   // --- Chart time range ---
   const [timeRange, setTimeRange] = useState<TimeRange>(null);
 
   // --- Realtime mode state ---
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
   const [simInfo, setSimInfo] = useState<SimInfo | null>(null);
+
+  // --- DuckDB + Charts ---
+  const mu = mode === "realtime" ? simInfo?.mu : (csvMetadata?.mu ?? undefined);
+  const bodyRadius = mode === "realtime" ? simInfo?.central_body_radius : (csvMetadata?.centralBodyRadius ?? undefined);
+  const orbitSchema = useMemo(() => createOrbitSchema(mu ?? 398600.4418, bodyRadius ?? 6378.137), [mu, bodyRadius]);
+  const { conn, isReady: dbReady } = useDuckDB(orbitSchema);
   // Cumulative time offset: when the server loops t back to 0,
   // add the previous max t so charts show monotonically increasing time.
   const tOffsetRef = useRef(0);
@@ -58,7 +67,7 @@ export function App() {
   const streamingCountRef = useRef(0);
 
   // --- IngestBuffer for DuckDB (drain pattern) ---
-  const ingestBufferRef = useRef(new IngestBuffer());
+  const ingestBufferRef = useRef(new IngestBuffer<OrbitPoint>());
 
   // --- TrailBuffer for 3D rendering (bounded) ---
   const trailBufferRef = useRef(new TrailBuffer(50000));
@@ -140,10 +149,10 @@ export function App() {
   const handleQueryRangeResponse = useCallback(
     async (response: QueryRangeResponse) => {
       if (!conn) return;
-      await replaceRange(conn, response.tMin, response.tMax, response.points);
-      // Chart update will happen via next useOrbitCharts tick
+      await replaceRange(conn, orbitSchema, response.tMin, response.tMax, response.points);
+      // Chart update will happen via next useTimeSeriesStore tick
     },
-    [conn]
+    [conn, orbitSchema]
   );
 
   const { connect, disconnect, isConnected, send } = useWebSocket({
@@ -248,7 +257,7 @@ export function App() {
     lastRawTRef.current = -1;
     detailBufferRef.current = [];
     streamingCountRef.current = 0;
-    ingestBufferRef.current = new IngestBuffer();
+    ingestBufferRef.current = new IngestBuffer<OrbitPoint>();
     trailBufferRef.current.clear();
     setSimInfo(null);
     realtimePlayback.goLive();
@@ -281,13 +290,12 @@ export function App() {
   );
 
   // --- Charts ---
-  const { chartData, isLoading: chartsLoading } = useOrbitCharts({
+  const { data: chartData, isLoading: chartsLoading } = useTimeSeriesStore({
     conn,
+    schema: orbitSchema,
     mode,
     replayPoints,
     ingestBufferRef,
-    mu: mode === "realtime" ? simInfo?.mu : (csvMetadata?.mu ?? undefined),
-    bodyRadius: mode === "realtime" ? simInfo?.central_body_radius : (csvMetadata?.centralBodyRadius ?? undefined),
     timeRange,
   });
 
@@ -301,10 +309,26 @@ export function App() {
     return quantizeChartTime(realtimePlayback.snapshot.currentTime);
   }, [mode, replayPoints, snapshot.elapsedTime, realtimePlayback.snapshot.isLive, realtimePlayback.snapshot.currentTime]);
 
-  const visibleChartData = useMemo(
-    () => sliceChartData(chartData, chartCurrentTime, timeRange),
-    [chartData, chartCurrentTime, timeRange],
+  const chartArrays = useMemo(() => {
+    if (!chartData) return null;
+    return [chartData.t, chartData.altitude, chartData.energy, chartData.angular_momentum, chartData.velocity];
+  }, [chartData]);
+
+  const visibleArrays = useMemo(
+    () => sliceArrays(chartArrays, chartCurrentTime, timeRange),
+    [chartArrays, chartCurrentTime, timeRange],
   );
+
+  const visibleChartData = useMemo((): ChartDataMap | null => {
+    if (!visibleArrays) return null;
+    return {
+      t: visibleArrays[0],
+      altitude: visibleArrays[1],
+      energy: visibleArrays[2],
+      angular_momentum: visibleArrays[3],
+      velocity: visibleArrays[4],
+    };
+  }, [visibleArrays]);
 
   // --- Derived values ---
   const satellitePosition =

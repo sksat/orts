@@ -1,7 +1,5 @@
 import { useState, useMemo } from "react";
-import { TimeSeriesChart } from "./TimeSeriesChart.js";
-import type { ChartData } from "../db/orbitStore.js";
-import type { TimeRange } from "../hooks/useOrbitCharts.js";
+import { TimeSeriesChart, type TimeRange, type ChartDataMap } from "@orts/tsukuyomi";
 
 const TIME_RANGE_OPTIONS: { label: string; value: TimeRange }[] = [
   { label: "All", value: null },
@@ -11,7 +9,7 @@ const TIME_RANGE_OPTIONS: { label: string; value: TimeRange }[] = [
 ];
 
 interface GraphPanelProps {
-  chartData: ChartData | null;
+  chartData: ChartDataMap | null;
   isLoading: boolean;
   timeRange: TimeRange;
   onTimeRangeChange: (range: TimeRange) => void;
@@ -31,28 +29,28 @@ export function GraphPanel({
   const altitudeData = useMemo(
     () =>
       chartData
-        ? ([chartData[0], chartData[1]] as [Float64Array, Float64Array])
+        ? ([chartData.t, chartData.altitude] as [Float64Array, Float64Array])
         : null,
     [chartData]
   );
   const energyData = useMemo(
     () =>
       chartData
-        ? ([chartData[0], chartData[2]] as [Float64Array, Float64Array])
+        ? ([chartData.t, chartData.energy] as [Float64Array, Float64Array])
         : null,
     [chartData]
   );
   const angMomData = useMemo(
     () =>
       chartData
-        ? ([chartData[0], chartData[3]] as [Float64Array, Float64Array])
+        ? ([chartData.t, chartData.angular_momentum] as [Float64Array, Float64Array])
         : null,
     [chartData]
   );
   const velocityData = useMemo(
     () =>
       chartData
-        ? ([chartData[0], chartData[4]] as [Float64Array, Float64Array])
+        ? ([chartData.t, chartData.velocity] as [Float64Array, Float64Array])
         : null,
     [chartData]
   );
