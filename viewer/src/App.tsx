@@ -11,7 +11,6 @@ import {
   IngestBuffer,
   sliceArrays,
   quantizeChartTime,
-  replaceRange,
   type TimeRange,
   type ChartDataMap,
 } from "@orts/tsukuyomi";
@@ -131,29 +130,35 @@ export function App() {
     }
     detailBufferRef.current = [];
 
-    // Get streaming points that arrived after the overview
+    // Get streaming points that arrived after the overview.
+    // Clamp streamingCountRef to avoid referencing evicted TrailBuffer entries.
     const allTrailPoints = trailBufferRef.current.getAll();
+    const safeStreamingCount = Math.min(
+      streamingCountRef.current,
+      allTrailPoints.length,
+    );
     const streamingPoints = allTrailPoints.slice(
-      allTrailPoints.length - streamingCountRef.current
+      allTrailPoints.length - safeStreamingCount,
     );
 
+    const combined = [...detailPoints, ...streamingPoints];
+
     // Rebuild TrailBuffer with detail + streaming for 3D rendering.
-    // DuckDB keeps overview + streaming data. Query-time downsampling
-    // handles the display budget, so replacing overview with detail is
-    // unnecessary and would cause t-offset divergence (mainOffset vs
-    // independently-computed detailOffset) corrupting chart data.
     trailBufferRef.current.clear();
-    trailBufferRef.current.pushMany([...detailPoints, ...streamingPoints]);
+    trailBufferRef.current.pushMany(combined);
+
+    // Rebuild DuckDB via IngestBuffer (tick loop will clear + insert).
+    // This replaces the overview data with full-resolution detail.
+    ingestBufferRef.current.markRebuild(combined);
   }, []);
 
-  const handleQueryRangeResponse = useCallback(
-    async (response: QueryRangeResponse) => {
-      if (!conn) return;
-      await replaceRange(conn, orbitSchema, response.tMin, response.tMax, response.points);
-      // Chart update will happen via next useTimeSeriesStore tick
-    },
-    [conn, orbitSchema]
-  );
+  // query_range is disabled: t-offset mismatch (viewer sends adjusted t,
+  // server uses raw periodic t) makes responses incorrect for multi-orbit data.
+  // Also, replaceRange outside the tick loop causes concurrent DuckDB access.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleQueryRangeResponse = useCallback((_response: QueryRangeResponse) => {
+    // noop until server supports monotonic t values
+  }, []);
 
   const { connect, disconnect, isConnected, send } = useWebSocket({
     url: wsUrl,
@@ -165,18 +170,11 @@ export function App() {
     onQueryRangeResponse: handleQueryRangeResponse,
   });
 
-  const handleChartZoom = useCallback(
-    (tMin: number, tMax: number) => {
-      if (mode !== "realtime" || !isConnected) return;
-      send({
-        type: "query_range",
-        t_min: tMin,
-        t_max: tMax,
-        max_points: 5000,
-      });
-    },
-    [mode, isConnected, send]
-  );
+  // Chart zoom -> query_range is disabled until t-offset mismatch is fixed.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const handleChartZoom = useCallback((_tMin: number, _tMax: number) => {
+    // noop: query_range sends adjusted t but server uses raw periodic t
+  }, []);
 
   // --- Replay: file loading (shared by file input and D&D) ---
   const loadCSVFile = useCallback((file: File) => {
