@@ -2,6 +2,42 @@ import { useRef, useEffect } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 
+/**
+ * Custom y-axis range function that prevents uPlot's axis split function
+ * from crashing with near-constant data.
+ *
+ * When all y-values are nearly identical, the default range calculation
+ * produces such a tiny axis range that the tick generation loop tries to
+ * create an impossibly large array (RangeError: Invalid array length).
+ *
+ * Enforces a minimum visible range proportional to the data's magnitude.
+ */
+export function safeYRange(
+  _u: uPlot,
+  dataMin: number,
+  dataMax: number,
+  _scaleKey: string,
+): uPlot.Range.MinMax {
+  let min = dataMin;
+  let max = dataMax;
+  const delta = max - min;
+  const magnitude = Math.max(Math.abs(min), Math.abs(max));
+  // Guard: expand near-zero deltas to prevent uPlot's axis tick generator
+  // from creating impossibly large arrays (RangeError).
+  const minDelta = Math.max(magnitude * 1e-4, 1e-9);
+
+  if (delta < minDelta) {
+    const center = (min + max) / 2;
+    const pad = minDelta / 2;
+    min = center - pad;
+    max = center + pad;
+  }
+
+  // Delegate to uPlot's built-in range calculation for nice-number rounding.
+  // false = no soft limits at 0; axis tightly wraps the data.
+  return uPlot.rangeNum(min, max, 0.1, false);
+}
+
 interface TimeSeriesChartProps {
   title: string;
   yLabel: string;
@@ -17,7 +53,7 @@ export function TimeSeriesChart({
   title,
   yLabel,
   data,
-  height = 140,
+  height = 200,
   color = "#0f0",
   onZoom,
 }: TimeSeriesChartProps) {
@@ -29,16 +65,15 @@ export function TimeSeriesChart({
   // Only user-initiated drag-zoom should trigger onZoom.
   const isProgrammaticRef = useRef(false);
 
-  // Create chart on mount
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    const opts: uPlot.Options = {
+  /** Build uPlot options. Extracted so chart can be recreated on error recovery. */
+  function buildOpts(container: HTMLDivElement): uPlot.Options {
+    return {
       title,
-      width: containerRef.current.clientWidth,
+      width: container.clientWidth,
       height,
       scales: {
         x: { time: false },
+        y: { range: safeYRange },
       },
       axes: [
         {
@@ -64,7 +99,7 @@ export function TimeSeriesChart({
         show: true,
         drag: { x: true, y: false },
       },
-      legend: { show: false },
+      legend: { show: true, live: true },
       hooks: {
         setScale: [
           (u: uPlot, scaleKey: string) => {
@@ -82,9 +117,18 @@ export function TimeSeriesChart({
         ],
       },
     };
+  }
+
+  // Create chart on mount
+  useEffect(() => {
+    if (!containerRef.current) return;
 
     const emptyData: uPlot.AlignedData = [[], []];
-    const chart = new uPlot(opts, data ?? emptyData, containerRef.current);
+    const chart = new uPlot(
+      buildOpts(containerRef.current),
+      data ?? emptyData,
+      containerRef.current,
+    );
     chartRef.current = chart;
 
     return () => {
@@ -101,9 +145,13 @@ export function TimeSeriesChart({
     try {
       chartRef.current.setData(data);
     } catch {
-      // uPlot throws RangeError when y-range is near-zero (e.g. constant
-      // energy in a circular orbit). Safe to ignore — next update with
-      // more data will succeed.
+      // uPlot's internal state is corrupted after a partial setData failure.
+      // Destroy the broken instance and create a fresh one with the current data.
+      const container = containerRef.current;
+      if (container) {
+        chartRef.current!.destroy();
+        chartRef.current = new uPlot(buildOpts(container), data, container);
+      }
     }
     isProgrammaticRef.current = false;
   }, [data]);
@@ -120,7 +168,17 @@ export function TimeSeriesChart({
           try {
             chartRef.current.setSize({ width, height });
           } catch {
-            // uPlot may throw during axis recalculation with edge-case data
+            // setSize can also trigger axis recalculation; recover if it fails
+            const container = containerRef.current;
+            const currentData = chartRef.current!.data;
+            if (container) {
+              chartRef.current!.destroy();
+              chartRef.current = new uPlot(
+                buildOpts(container),
+                currentData,
+                container,
+              );
+            }
           }
           isProgrammaticRef.current = false;
         }

@@ -39,7 +39,7 @@ export type {
 } from "./hooks/useTimeSeriesStore.js";
 
 // Components
-export { TimeSeriesChart } from "./components/TimeSeriesChart.js";
+export { TimeSeriesChart, safeYRange } from "./components/TimeSeriesChart.js";
 
 // Utilities
 export {
