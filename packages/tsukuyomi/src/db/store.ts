@@ -76,6 +76,43 @@ export function buildDerivedQuery(
 }
 
 // ---------------------------------------------------------------------------
+// Compaction SQL builders
+// ---------------------------------------------------------------------------
+
+/**
+ * Build SQL to create a temp table of "keeper" t values from old data.
+ * Uses NTILE to divide old rows into equal-count buckets, keeping the
+ * earliest t (MIN) from each bucket as the representative point.
+ */
+export function buildCompactKeepersSQL(
+  tableName: string,
+  cutoffT: number,
+  targetOldRows: number,
+): string {
+  return (
+    `CREATE TEMP TABLE IF NOT EXISTS _compact_keepers AS ` +
+    `WITH old_data AS (` +
+    `SELECT t, NTILE(${targetOldRows}) OVER (ORDER BY t) AS bucket ` +
+    `FROM ${tableName} WHERE t < ${cutoffT}) ` +
+    `SELECT MIN(t) AS t FROM old_data GROUP BY bucket`
+  );
+}
+
+/**
+ * Build SQL to delete non-keeper old rows (those older than cutoff
+ * and not in the keepers temp table).
+ */
+export function buildCompactDeleteSQL(
+  tableName: string,
+  cutoffT: number,
+): string {
+  return (
+    `DELETE FROM ${tableName} ` +
+    `WHERE t < ${cutoffT} AND t NOT IN (SELECT t FROM _compact_keepers)`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Async DuckDB operations
 // ---------------------------------------------------------------------------
 

@@ -3,6 +3,8 @@ import {
   buildCreateTableSQL,
   buildInsertSQL,
   buildDerivedQuery,
+  buildCompactKeepersSQL,
+  buildCompactDeleteSQL,
 } from "./store.js";
 import type { TableSchema } from "../types.js";
 
@@ -168,5 +170,49 @@ describe("buildDerivedQuery", () => {
   it("bypasses downsampling when total <= maxPoints", () => {
     const sql = buildDerivedQuery(testSchema, undefined, 2000);
     expect(sql).toContain("total <= 2000");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildCompactKeepersSQL
+// ---------------------------------------------------------------------------
+
+describe("buildCompactKeepersSQL", () => {
+  it("generates CREATE TEMP TABLE with NTILE bucketing", () => {
+    const sql = buildCompactKeepersSQL("orbit_points", 5000, 1000);
+    expect(sql).toContain("CREATE TEMP TABLE IF NOT EXISTS _compact_keepers");
+    expect(sql).toContain("NTILE(1000)");
+    expect(sql).toContain("WHERE t < 5000");
+    expect(sql).toContain("GROUP BY bucket");
+    expect(sql).toContain("MIN(t)");
+  });
+
+  it("uses the correct table name", () => {
+    const sql = buildCompactKeepersSQL("custom_table", 100, 50);
+    expect(sql).toContain("FROM custom_table");
+  });
+
+  it("uses the provided cutoff value", () => {
+    const sql = buildCompactKeepersSQL("data", 42.5, 200);
+    expect(sql).toContain("WHERE t < 42.5");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildCompactDeleteSQL
+// ---------------------------------------------------------------------------
+
+describe("buildCompactDeleteSQL", () => {
+  it("generates DELETE with NOT IN keepers subquery", () => {
+    const sql = buildCompactDeleteSQL("orbit_points", 5000);
+    expect(sql).toContain("DELETE FROM orbit_points");
+    expect(sql).toContain("WHERE t < 5000");
+    expect(sql).toContain("NOT IN");
+    expect(sql).toContain("_compact_keepers");
+  });
+
+  it("uses the correct cutoff value", () => {
+    const sql = buildCompactDeleteSQL("data", 99.9);
+    expect(sql).toContain("WHERE t < 99.9");
   });
 });
