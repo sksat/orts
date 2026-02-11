@@ -108,7 +108,11 @@ export function TimeSeriesChart({
       for (const entry of entries) {
         const width = entry.contentRect.width;
         if (chartRef.current && width > 0) {
-          chartRef.current.setSize({ width, height });
+          try {
+            chartRef.current.setSize({ width, height });
+          } catch {
+            // uPlot may throw during axis recalculation with edge-case data
+          }
         }
       }
     });

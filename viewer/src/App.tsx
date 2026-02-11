@@ -132,9 +132,13 @@ export function App() {
     trailBufferRef.current.clear();
     trailBufferRef.current.pushMany([...detailPoints, ...streamingPoints]);
 
-    // Re-ingest all data into DuckDB (detail replaced overview)
+    // Re-ingest detail into DuckDB, replacing only the overview time range.
+    // Streaming data outside this range is preserved in DuckDB.
+    const tMin = detailPoints[0].t;
+    const tMax = detailPoints[detailPoints.length - 1].t;
     ingestBufferRef.current = new IngestBuffer();
-    ingestBufferRef.current.pushMany([...detailPoints, ...streamingPoints]);
+    ingestBufferRef.current.replaceRange = { tMin, tMax };
+    ingestBufferRef.current.pushMany(detailPoints);
   }, []);
 
   const handleQueryRangeResponse = useCallback(
@@ -253,7 +257,7 @@ export function App() {
     setSimInfo(null);
     realtimePlayback.goLive();
     connect();
-  }, [connect, realtimePlayback]);
+  }, [connect, realtimePlayback.goLive]);
 
   const handleDisconnect = useCallback(() => {
     disconnect();

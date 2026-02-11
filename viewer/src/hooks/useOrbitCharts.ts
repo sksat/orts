@@ -5,6 +5,7 @@ import { IngestBuffer } from "../db/IngestBuffer.js";
 import {
   insertPoints,
   clearTable,
+  replaceRange,
   queryDerivedQuantities,
   downsampleOldRows,
   ChartData,
@@ -56,9 +57,13 @@ export function useOrbitCharts(
   const [isLoading, setIsLoading] = useState(false);
   const queryTimerRef = useRef<number>(0);
   const hasDataRef = useRef(false);
-  // Ref to avoid stale closure in realtime queryTick
+  // Refs to avoid stale closures in realtime queryTick
   const timeRangeRef = useRef(timeRange);
   timeRangeRef.current = timeRange;
+  const muRef = useRef(mu);
+  muRef.current = mu;
+  const bodyRadiusRef = useRef(bodyRadius);
+  bodyRadiusRef.current = bodyRadius;
 
   // Replay mode: batch insert all points when data or timeRange changes
   useEffect(() => {
@@ -110,7 +115,13 @@ export function useOrbitCharts(
       const insertTick = async () => {
         if (cancelled) return;
         try {
-          const newPoints = ingestBufferRef.current.drain();
+          const buf = ingestBufferRef.current;
+          const range = buf.replaceRange;
+          if (range) {
+            await replaceRange(conn, range.tMin, range.tMax, []);
+            buf.replaceRange = null;
+          }
+          const newPoints = buf.drain();
           if (newPoints.length > 0) {
             await insertPoints(conn, newPoints);
             hasDataRef.current = true;
@@ -137,7 +148,7 @@ export function useOrbitCharts(
               timeRangeRef.current,
               ingestBufferRef.current.latestT
             );
-            const data = await queryDerivedQuantities(conn, mu, bodyRadius, tMin);
+            const data = await queryDerivedQuantities(conn, muRef.current, bodyRadiusRef.current, tMin);
             if (!cancelled) setChartData(data);
           }
         } catch (e) {
@@ -158,7 +169,8 @@ export function useOrbitCharts(
       cancelled = true;
       clearTimeout(queryTimerRef.current);
     };
-  }, [conn, mode, mu, bodyRadius]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conn, mode]);
 
   return { chartData, isLoading };
 }
