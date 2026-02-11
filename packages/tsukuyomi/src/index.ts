@@ -19,10 +19,15 @@ export {
   clearTable,
   queryDerived,
   replaceRange,
+  compactTable,
+  COMPACT_DEFAULTS,
   buildCreateTableSQL,
   buildInsertSQL,
   buildDerivedQuery,
+  buildCompactKeepersSQL,
+  buildCompactDeleteSQL,
 } from "./db/store.js";
+export type { CompactOptions } from "./db/store.js";
 
 // Hooks
 export { useDuckDB } from "./hooks/useDuckDB.js";

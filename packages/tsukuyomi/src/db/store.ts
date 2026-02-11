@@ -177,6 +177,65 @@ export async function queryDerived(
   return map;
 }
 
+/** Configuration for periodic DuckDB compaction. */
+export interface CompactOptions {
+  /** Compact when total rows exceed this threshold. */
+  maxRows: number;
+  /** Keep this many recent rows at full resolution. */
+  keepRecentRows: number;
+  /** Downsample old data to this many representative rows. */
+  targetOldRows: number;
+}
+
+/** Default compaction thresholds (see plan for rationale). */
+export const COMPACT_DEFAULTS: CompactOptions = {
+  maxRows: 50_000,
+  keepRecentRows: 10_000,
+  targetOldRows: 5_000,
+};
+
+/**
+ * Compact old data in DuckDB to control memory usage.
+ *
+ * Keeps the most recent `keepRecentRows` at full resolution and
+ * downsamples older rows to `targetOldRows` using NTILE bucketing.
+ * Returns true if compaction was performed.
+ *
+ * Assumes t values are unique (one per simulation step).
+ */
+export async function compactTable(
+  conn: AsyncDuckDBConnection,
+  schema: TableSchema,
+  opts: CompactOptions = COMPACT_DEFAULTS,
+): Promise<boolean> {
+  // 1. Check row count
+  const countRes = await conn.query(
+    `SELECT COUNT(*) AS total FROM ${schema.tableName}`,
+  );
+  const total = Number(countRes.getChildAt(0)!.get(0));
+  if (total <= opts.maxRows) return false;
+
+  // 2. Find cutoff t (boundary between old and recent)
+  if (opts.keepRecentRows >= total) return false;
+  const cutoffRes = await conn.query(
+    `SELECT t FROM (SELECT t, ROW_NUMBER() OVER (ORDER BY t DESC) AS rn ` +
+    `FROM ${schema.tableName}) sub WHERE rn = ${opts.keepRecentRows} LIMIT 1`,
+  );
+  const cutoffT = Number(cutoffRes.getChildAt(0)!.get(0));
+
+  // 3. Create temp table of keeper t values, delete non-keepers, cleanup
+  try {
+    await conn.query(
+      buildCompactKeepersSQL(schema.tableName, cutoffT, opts.targetOldRows),
+    );
+    await conn.query(buildCompactDeleteSQL(schema.tableName, cutoffT));
+  } finally {
+    await conn.query(`DROP TABLE IF EXISTS _compact_keepers`);
+  }
+
+  return true;
+}
+
 /**
  * Replace data in a time range with higher-resolution points.
  * Deletes existing rows in [tMin, tMax] then inserts the new points.
