@@ -39,14 +39,11 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-      - name: Build CLI (release)
-        run: cargo build --release --bin orts-cli
-
       - name: Upload CLI binary
         uses: actions/upload-artifact@v6.0.0
         with:
           name: orts-cli
-          path: target/release/orts-cli
+          path: target/debug/orts-cli
           retention-days: 1
 
   typescript:
