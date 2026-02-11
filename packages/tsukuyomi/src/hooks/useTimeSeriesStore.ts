@@ -2,7 +2,14 @@ import { useState, useEffect, useRef } from "react";
 import type { AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
 import type { TimePoint, TableSchema, ChartDataMap } from "../types.js";
 import type { IngestBuffer } from "../db/IngestBuffer.js";
-import { insertPoints, clearTable, queryDerived } from "../db/store.js";
+import {
+  insertPoints,
+  clearTable,
+  queryDerived,
+  compactTable,
+  COMPACT_DEFAULTS,
+} from "../db/store.js";
+import type { CompactOptions } from "../db/store.js";
 
 /** Maximum number of points to display in charts. Query-time downsampling
  *  keeps chart rendering fast regardless of total data in DuckDB. */
@@ -34,6 +41,10 @@ export interface UseTimeSeriesStoreOptions<T extends TimePoint> {
   tickInterval?: number;
   /** Run chart query every Nth tick (default: 4, i.e. every 2000ms at 500ms tick). */
   queryEveryN?: number;
+  /** Run compaction check every Nth query tick (default: 20, i.e. every ~40s). */
+  compactEveryN?: number;
+  /** Compaction configuration (default: COMPACT_DEFAULTS). */
+  compactOptions?: CompactOptions;
 }
 
 export interface UseTimeSeriesStoreReturn {
@@ -54,6 +65,8 @@ export function useTimeSeriesStore<T extends TimePoint>(
     maxPoints = DISPLAY_MAX_POINTS,
     tickInterval = 500,
     queryEveryN = 4,
+    compactEveryN = 20,
+    compactOptions = COMPACT_DEFAULTS,
   } = options;
 
   const [data, setData] = useState<ChartDataMap | null>(null);
@@ -99,6 +112,11 @@ export function useTimeSeriesStore<T extends TimePoint>(
 
     let cancelled = false;
     let tickCount = 0;
+    let queryCount = 0;
+    /** Cooldown: skip compaction checks after a rebuild to avoid
+     *  immediately deleting newly inserted detail data. */
+    const COMPACT_COOLDOWN_AFTER_REBUILD = 5;
+    let compactCooldown = 0;
 
     const startPolling = async () => {
       try {
@@ -117,11 +135,20 @@ export function useTimeSeriesStore<T extends TimePoint>(
       const tick = async () => {
         if (cancelled) return;
         try {
-          // 1. Drain buffer -> DuckDB insert (lightweight)
-          const newPoints = ingestBufferRef.current.drain();
-          if (newPoints.length > 0) {
-            await insertPoints(conn, schemaRef.current, newPoints);
-            hasDataRef.current = true;
+          // 0. Check for rebuild signal (from history_detail_complete)
+          const rebuildData = ingestBufferRef.current.consumeRebuild();
+          if (rebuildData !== null) {
+            await clearTable(conn, schemaRef.current);
+            await insertPoints(conn, schemaRef.current, rebuildData);
+            hasDataRef.current = rebuildData.length > 0;
+            compactCooldown = COMPACT_COOLDOWN_AFTER_REBUILD;
+          } else {
+            // 1. Normal drain buffer -> DuckDB insert (lightweight)
+            const newPoints = ingestBufferRef.current.drain();
+            if (newPoints.length > 0) {
+              await insertPoints(conn, schemaRef.current, newPoints);
+              hasDataRef.current = true;
+            }
           }
 
           // 2. Periodically compute derived quantities for charts (heavy)
@@ -138,6 +165,14 @@ export function useTimeSeriesStore<T extends TimePoint>(
               maxPointsRef.current,
             );
             if (!cancelled) setData(result);
+
+            // 3. Periodically compact old data to control memory
+            queryCount++;
+            if (compactCooldown > 0) {
+              compactCooldown--;
+            } else if (queryCount % compactEveryN === 0) {
+              await compactTable(conn, schemaRef.current, compactOptions);
+            }
           }
         } catch (e) {
           console.warn("useTimeSeriesStore tick error:", e);
