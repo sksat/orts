@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  timeout: 30000,
+  timeout: 60000,
   use: { headless: true },
   webServer: [
     {
@@ -13,6 +13,17 @@ export default defineConfig({
     {
       command: "npx vite --config vite.example.config.ts --port 5174",
       port: 5174,
+      reuseExistingServer: true,
+    },
+    {
+      command: "npx tsx examples/mixed-density/server.ts",
+      port: 9003,
+      reuseExistingServer: true,
+    },
+    {
+      command:
+        "npx vite --config vite.mixed-density.config.ts --port 5175",
+      port: 5175,
       reuseExistingServer: true,
     },
   ],

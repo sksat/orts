@@ -30,11 +30,13 @@ export function buildInsertSQL<T extends TimePoint>(
 
 /**
  * Build a SELECT query for derived quantities with optional query-time
- * downsampling via ROW_NUMBER().
+ * downsampling via time-bucket partitioning.
  *
- * When maxPoints is specified and > 0, wraps the query in a CTE that uses
- * ROW_NUMBER() to evenly sample rows while always preserving the first and
- * last points. This matches the pattern from the viewer's orbitStore.ts.
+ * When maxPoints is specified and > 0, divides the time range into
+ * maxPoints equal-duration buckets and picks the first point in each
+ * bucket. This ensures even *temporal* coverage regardless of data
+ * density — critical when sparse overview data and dense streaming
+ * data coexist in the same table.
  */
 export function buildDerivedQuery(
   schema: TableSchema,
@@ -58,8 +60,20 @@ export function buildDerivedQuery(
     return `SELECT ${selectColumns} FROM ${schema.tableName} ${whereClause} ORDER BY t`;
   }
 
-  // Query-time downsampling via ROW_NUMBER window function
-  return `WITH filtered AS (SELECT ${baseCols} FROM ${schema.tableName} ${whereClause}), numbered AS (SELECT *, ROW_NUMBER() OVER (ORDER BY t) AS rn, COUNT(*) OVER () AS total FROM filtered) SELECT ${selectColumns} FROM numbered WHERE total <= ${maxPts} OR rn = 1 OR rn = total OR (rn - 1) % GREATEST(1, CAST(CEIL(total::DOUBLE / ${maxPts}) AS INTEGER)) = 0 ORDER BY t`;
+  // Time-bucket downsampling: divide time range into maxPoints equal-duration
+  // buckets and pick the first point (by t) in each bucket. This distributes
+  // the display budget evenly across time, not across row count.
+  return (
+    `WITH filtered AS (SELECT ${baseCols} FROM ${schema.tableName} ${whereClause}), ` +
+    `stats AS (SELECT MIN(t) AS t_lo, MAX(t) AS t_hi, COUNT(*) AS total FROM filtered), ` +
+    `bucketed AS (SELECT f.*, ` +
+    `CASE WHEN s.t_hi = s.t_lo THEN 0 ` +
+    `ELSE LEAST(CAST(FLOOR((f.t - s.t_lo) / (s.t_hi - s.t_lo) * ${maxPts}) AS INTEGER), ${maxPts} - 1) ` +
+    `END AS bucket, s.total ` +
+    `FROM filtered f, stats s), ` +
+    `ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY t) AS rn FROM bucketed) ` +
+    `SELECT ${selectColumns} FROM ranked WHERE total <= ${maxPts} OR rn = 1 ORDER BY t`
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -25,8 +25,9 @@ export function TimeSeriesChart({
   const chartRef = useRef<uPlot | null>(null);
   const onZoomRef = useRef(onZoom);
   onZoomRef.current = onZoom;
-  // Guard: suppress setScale callback during programmatic setData calls
-  const isSettingDataRef = useRef(false);
+  // Guard: suppress setScale callback during programmatic updates (setData / setSize).
+  // Only user-initiated drag-zoom should trigger onZoom.
+  const isProgrammaticRef = useRef(false);
 
   // Create chart on mount
   useEffect(() => {
@@ -69,7 +70,7 @@ export function TimeSeriesChart({
           (u: uPlot, scaleKey: string) => {
             // Skip scale changes triggered by programmatic setData calls —
             // only fire onZoom for user-initiated drag-zoom interactions.
-            if (isSettingDataRef.current) return;
+            if (isProgrammaticRef.current) return;
             if (scaleKey === "x") {
               const min = u.scales.x.min;
               const max = u.scales.x.max;
@@ -96,7 +97,7 @@ export function TimeSeriesChart({
   // Update data (need at least 2 points for uPlot axis calculations)
   useEffect(() => {
     if (!chartRef.current || !data || data[0].length < 2) return;
-    isSettingDataRef.current = true;
+    isProgrammaticRef.current = true;
     try {
       chartRef.current.setData(data);
     } catch {
@@ -104,7 +105,7 @@ export function TimeSeriesChart({
       // energy in a circular orbit). Safe to ignore — next update with
       // more data will succeed.
     }
-    isSettingDataRef.current = false;
+    isProgrammaticRef.current = false;
   }, [data]);
 
   // Handle resize
@@ -115,11 +116,13 @@ export function TimeSeriesChart({
       for (const entry of entries) {
         const width = entry.contentRect.width;
         if (chartRef.current && width > 0) {
+          isProgrammaticRef.current = true;
           try {
             chartRef.current.setSize({ width, height });
           } catch {
             // uPlot may throw during axis recalculation with edge-case data
           }
+          isProgrammaticRef.current = false;
         }
       }
     });

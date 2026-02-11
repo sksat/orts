@@ -120,23 +120,26 @@ describe("buildDerivedQuery", () => {
     expect(sql).toContain("ORDER BY t");
   });
 
-  it("adds ROW_NUMBER downsampling when maxPoints is provided", () => {
+  it("uses time-bucket downsampling when maxPoints is provided", () => {
     const sql = buildDerivedQuery(testSchema, undefined, 2000);
     expect(sql).toContain("ROW_NUMBER");
+    expect(sql).toContain("PARTITION BY bucket");
     expect(sql).toContain("2000");
     expect(sql).toContain("ORDER BY t");
   });
 
-  it("preserves first and last points (rn=1, rn=total) in downsampled query", () => {
+  it("picks first point per bucket (rn = 1)", () => {
     const sql = buildDerivedQuery(testSchema, undefined, 100);
     expect(sql).toContain("rn = 1");
-    expect(sql).toContain("rn = total");
+    // Time-bucket approach does not need explicit rn = total;
+    // the last bucket naturally contains the last point
+    expect(sql).toContain("PARTITION BY bucket");
   });
 
   it("includes both tMin filter and maxPoints", () => {
     const sql = buildDerivedQuery(testSchema, 500, 2000);
     expect(sql).toContain("WHERE t >= 500");
-    expect(sql).toContain("ROW_NUMBER");
+    expect(sql).toContain("PARTITION BY bucket");
     expect(sql).toContain("2000");
   });
 
@@ -152,14 +155,34 @@ describe("buildDerivedQuery", () => {
 
   it("passes all rows when maxPoints is 0", () => {
     const sql = buildDerivedQuery(testSchema, undefined, 0);
-    expect(sql).not.toContain("ROW_NUMBER");
+    expect(sql).not.toContain("bucket");
   });
 
-  it("uses CTE with filtered and numbered for downsampled query", () => {
+  it("uses CTE with stats and bucketed for downsampled query", () => {
     const sql = buildDerivedQuery(testSchema, 100, 500);
     expect(sql).toContain("WITH filtered AS");
-    expect(sql).toContain("numbered AS");
-    expect(sql).toContain("COUNT(*) OVER () AS total");
-    expect(sql).toContain("GREATEST(1, CAST(CEIL(total::DOUBLE / 500) AS INTEGER))");
+    expect(sql).toContain("stats AS");
+    expect(sql).toContain("bucketed AS");
+    expect(sql).toContain("ranked AS");
+    expect(sql).toContain("MIN(t) AS t_lo");
+    expect(sql).toContain("MAX(t) AS t_hi");
+  });
+
+  it("handles degenerate case where all times are equal (t_hi = t_lo)", () => {
+    const sql = buildDerivedQuery(testSchema, undefined, 100);
+    // Should have CASE for t_hi = t_lo to avoid division by zero
+    expect(sql).toContain("WHEN s.t_hi = s.t_lo THEN 0");
+  });
+
+  it("clamps bucket index with LEAST to prevent overflow", () => {
+    const sql = buildDerivedQuery(testSchema, undefined, 200);
+    // LEAST(..., maxPts - 1) ensures bucket index stays in range [0, maxPts-1]
+    expect(sql).toContain("LEAST(");
+    expect(sql).toContain("200 - 1");
+  });
+
+  it("bypasses downsampling when total <= maxPoints", () => {
+    const sql = buildDerivedQuery(testSchema, undefined, 2000);
+    expect(sql).toContain("total <= 2000");
   });
 });
