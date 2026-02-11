@@ -521,3 +521,74 @@ async fn test_websocket_query_range() {
     server.kill();
     result.expect("test timed out after 30 seconds");
 }
+
+/// Verify that state `t` values are monotonically increasing across orbit boundaries.
+/// The server must NOT reset t to 0 at the start of each orbit period.
+#[tokio::test]
+async fn test_websocket_monotonic_time_across_orbits() {
+    let port = test_port() + 7;
+    let mut server = Server::spawn(port);
+
+    // Wait long enough for more than one full orbit (~55s wall time at default params).
+    // 65 seconds ensures the second orbit has started and t resets would be visible.
+    tokio::time::sleep(Duration::from_secs(65)).await;
+
+    let result = tokio::time::timeout(Duration::from_secs(60), async {
+        let url = format!("ws://localhost:{port}");
+        let (ws, _) = connect_async(&url)
+            .await
+            .expect("failed to connect");
+        let (_write, mut read) = ws.split();
+
+        // info → history
+        let info = next_json(&mut read).await;
+        assert_eq!(info["type"], "info");
+        let _period = info["period"].as_f64().unwrap();
+
+        let history = next_json(&mut read).await;
+        assert_eq!(history["type"], "history");
+        let states = history["states"].as_array().unwrap();
+
+        // With enough wait time, history should contain data beyond one orbit.
+        // After the monotonic-time fix, max_t > period. Before the fix,
+        // t resets to 0, so max_t == period but monotonicity fails below.
+        assert!(
+            !states.is_empty(),
+            "history should have accumulated states after waiting"
+        );
+
+        // Verify all history t values are monotonically increasing.
+        // This is the core assertion: if the server resets t at orbit boundaries,
+        // we'll see t jump from ~period back to ~0.
+        let mut prev_t = f64::NEG_INFINITY;
+        for (i, state) in states.iter().enumerate() {
+            let t = state["t"].as_f64().unwrap();
+            assert!(
+                t >= prev_t,
+                "history t values must be monotonically increasing: \
+                 state[{i}].t={t} < state[{}].t={prev_t}",
+                i - 1
+            );
+            prev_t = t;
+        }
+
+        // Collect live state messages and verify monotonicity among them.
+        // Note: the first live state may overlap with the history tail due to
+        // subscribe-before-snapshot timing, so we don't compare against history max_t.
+        let mut last_state_t = f64::NEG_INFINITY;
+        for i in 0..10 {
+            let (state, _) = read_until_type(&mut read, "state", 50).await;
+            let t = state["t"].as_f64().unwrap();
+            assert!(
+                t >= last_state_t,
+                "live state t values must be monotonically increasing: \
+                 state[{i}].t={t} < previous {last_state_t}"
+            );
+            last_state_t = t;
+        }
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 60 seconds");
+}

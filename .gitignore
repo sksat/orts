@@ -3,3 +3,7 @@ node_modules/
 dist/
 test-results/
 .playwright-mcp/
+
+# Prevent debug screenshots from accumulating in repo root
+/*.png
+/*.jpeg

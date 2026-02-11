@@ -18,7 +18,6 @@ export {
   insertPoints,
   clearTable,
   queryDerived,
-  replaceRange,
   compactTable,
   COMPACT_DEFAULTS,
   buildCreateTableSQL,

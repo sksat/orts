@@ -134,26 +134,37 @@ export function useTimeSeriesStore<T extends TimePoint>(
       // data loss when insertTick and queryTick overlapped.
       const tick = async () => {
         if (cancelled) return;
-        try {
-          // 0. Check for rebuild signal (from history_detail_complete)
-          const rebuildData = ingestBufferRef.current.consumeRebuild();
-          if (rebuildData !== null) {
+
+        // 0. Check for rebuild signal (from history_detail_complete)
+        const rebuildData = ingestBufferRef.current.consumeRebuild();
+        if (rebuildData !== null) {
+          try {
             await clearTable(conn, schemaRef.current);
             await insertPoints(conn, schemaRef.current, rebuildData);
             hasDataRef.current = rebuildData.length > 0;
             compactCooldown = COMPACT_COOLDOWN_AFTER_REBUILD;
-          } else {
-            // 1. Normal drain buffer -> DuckDB insert (lightweight)
-            const newPoints = ingestBufferRef.current.drain();
-            if (newPoints.length > 0) {
+          } catch (e) {
+            console.warn("useTimeSeriesStore: rebuild failed, re-queuing:", e);
+            ingestBufferRef.current.markRebuild(rebuildData);
+          }
+        } else {
+          // 1. Normal drain buffer -> DuckDB insert (lightweight)
+          const newPoints = ingestBufferRef.current.drain();
+          if (newPoints.length > 0) {
+            try {
               await insertPoints(conn, schemaRef.current, newPoints);
               hasDataRef.current = true;
+            } catch (e) {
+              console.warn("useTimeSeriesStore: insert failed, re-queuing", newPoints.length, "points:", e);
+              ingestBufferRef.current.pushMany(newPoints);
             }
           }
+        }
 
-          // 2. Periodically compute derived quantities for charts (heavy)
-          tickCount++;
-          if (hasDataRef.current && tickCount % queryEveryN === 0) {
+        // 2. Periodically compute derived quantities for charts (heavy)
+        tickCount++;
+        if (hasDataRef.current && tickCount % queryEveryN === 0) {
+          try {
             const tMin = computeTMin(
               timeRangeRef.current,
               ingestBufferRef.current.latestT,
@@ -173,9 +184,9 @@ export function useTimeSeriesStore<T extends TimePoint>(
             } else if (queryCount % compactEveryN === 0) {
               await compactTable(conn, schemaRef.current, compactOptions);
             }
+          } catch (e) {
+            console.warn("useTimeSeriesStore: query/compact failed:", e);
           }
-        } catch (e) {
-          console.warn("useTimeSeriesStore tick error:", e);
         }
         if (!cancelled) {
           queryTimerRef.current = window.setTimeout(

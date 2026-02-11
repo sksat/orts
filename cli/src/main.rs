@@ -647,31 +647,38 @@ async fn simulation_loop(
     let chunk_wall_time =
         std::time::Duration::from_secs_f64(chunk_sim_time * wall_per_sim_sec);
 
+    // Time is monotonically increasing across orbit boundaries.
+    // The ODE is autonomous (independent of t), so absolute time has no effect on physics.
+    let mut t: f64 = 0.0;
+
     loop {
         let initial = params.initial_state();
+        let orbit_end_t = t + params.period;
 
-        // Emit t=0 state
-        let hs = HistoryState {
-            t: 0.0,
-            position: [initial.position.x, initial.position.y, initial.position.z],
-            velocity: [initial.velocity.x, initial.velocity.y, initial.velocity.z],
-        };
-        history.write().await.push(hs);
+        // Emit start-of-orbit state (skip on subsequent orbits to avoid
+        // duplicate point at the orbit boundary).
+        if t == 0.0 {
+            let hs = HistoryState {
+                t,
+                position: [initial.position.x, initial.position.y, initial.position.z],
+                velocity: [initial.velocity.x, initial.velocity.y, initial.velocity.z],
+            };
+            history.write().await.push(hs);
+        }
 
-        let msg = state_message(0.0, &initial);
+        let msg = state_message(t, &initial);
         if tx.send(msg).is_err() {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             continue;
         }
 
         let mut state = initial;
-        let mut t = 0.0;
-        let mut next_stream_t = params.stream_interval;
-        let mut next_save_t = params.output_interval;
+        let mut next_stream_t = t + params.stream_interval;
+        let mut next_save_t = t + params.output_interval;
 
-        while t < params.period {
+        while t < orbit_end_t {
             let chunk_start = tokio::time::Instant::now();
-            let chunk_end = (t + chunk_sim_time).min(params.period);
+            let chunk_end = (t + chunk_sim_time).min(orbit_end_t);
 
             // Pure computation: collect outputs at stream_interval cadence
             let (outputs, new_state, new_t) = compute_output_chunk(
@@ -724,21 +731,21 @@ async fn simulation_loop(
             }
         }
 
-        // Emit final state if the last output didn't land on period end
+        // Emit final state if the last output didn't land on orbit end
         let last_output_t = if let Some(last) = history.read().await.states.back() {
             last.t
         } else {
             0.0
         };
-        if (params.period - last_output_t).abs() > 1e-9 {
+        if (orbit_end_t - last_output_t).abs() > 1e-9 {
             let hs = HistoryState {
-                t: params.period,
+                t: orbit_end_t,
                 position: [state.position.x, state.position.y, state.position.z],
                 velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
             };
             history.write().await.push(hs);
 
-            let msg = state_message(params.period, &state);
+            let msg = state_message(orbit_end_t, &state);
             let _ = tx.send(msg);
         }
 

@@ -236,19 +236,3 @@ export async function compactTable(
   return true;
 }
 
-/**
- * Replace data in a time range with higher-resolution points.
- * Deletes existing rows in [tMin, tMax] then inserts the new points.
- */
-export async function replaceRange<T extends TimePoint>(
-  conn: AsyncDuckDBConnection,
-  schema: TableSchema<T>,
-  tMin: number,
-  tMax: number,
-  points: T[],
-): Promise<void> {
-  await conn.query(
-    `DELETE FROM ${schema.tableName} WHERE t >= ${tMin} AND t <= ${tMax}`,
-  );
-  await insertPoints(conn, schema, points);
-}

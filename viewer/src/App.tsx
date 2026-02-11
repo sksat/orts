@@ -56,10 +56,6 @@ export function App() {
   const bodyRadius = mode === "realtime" ? simInfo?.central_body_radius : (csvMetadata?.centralBodyRadius ?? undefined);
   const orbitSchema = useMemo(() => createOrbitSchema(mu ?? 398600.4418, bodyRadius ?? 6378.137), [mu, bodyRadius]);
   const { conn, isReady: dbReady } = useDuckDB(orbitSchema);
-  // Cumulative time offset: when the server loops t back to 0,
-  // add the previous max t so charts show monotonically increasing time.
-  const tOffsetRef = useRef(0);
-  const lastRawTRef = useRef(-1);
   const detailBufferRef = useRef<OrbitPoint[]>([]);
   // Count of points received as streaming (after history overview).
   // Used to track how many trailing points to preserve on detail complete.
@@ -75,15 +71,8 @@ export function App() {
   const realtimePlayback = useRealtimePlayback(trailBufferRef.current);
 
   const handleState = useCallback((point: OrbitPoint) => {
-    // Detect orbit restart: server loops t back to 0 after one period.
-    if (point.t < lastRawTRef.current) {
-      tOffsetRef.current += lastRawTRef.current;
-    }
-    lastRawTRef.current = point.t;
-
-    const adjusted = { ...point, t: point.t + tOffsetRef.current };
-    ingestBufferRef.current.push(adjusted);
-    trailBufferRef.current.push(adjusted);
+    ingestBufferRef.current.push(point);
+    trailBufferRef.current.push(point);
     streamingCountRef.current++;
   }, []);
 
@@ -92,16 +81,8 @@ export function App() {
   }, []);
 
   const handleHistory = useCallback((points: OrbitPoint[]) => {
-    const adjusted: OrbitPoint[] = [];
-    for (const point of points) {
-      if (point.t < lastRawTRef.current) {
-        tOffsetRef.current += lastRawTRef.current;
-      }
-      lastRawTRef.current = point.t;
-      adjusted.push({ ...point, t: point.t + tOffsetRef.current });
-    }
-    ingestBufferRef.current.pushMany(adjusted);
-    trailBufferRef.current.pushMany(adjusted);
+    ingestBufferRef.current.pushMany(points);
+    trailBufferRef.current.pushMany(points);
     streamingCountRef.current = 0;
   }, []);
 
@@ -114,20 +95,8 @@ export function App() {
   const handleHistoryDetailComplete = useCallback(() => {
     if (detailBufferRef.current.length === 0) return;
 
-    // Process detail buffer through t-offset logic independently
-    const detailPoints: OrbitPoint[] = [];
-    let detailOffset = 0;
-    let detailLastRawT = -1;
-    for (const point of detailBufferRef.current) {
-      if (point.t < detailLastRawT) {
-        detailOffset += detailLastRawT;
-      }
-      detailLastRawT = point.t;
-      detailPoints.push({
-        ...point,
-        t: point.t + detailOffset,
-      });
-    }
+    // Server sends monotonically increasing t, so detail points are ready as-is.
+    const detailPoints = detailBufferRef.current;
     detailBufferRef.current = [];
 
     // Get streaming points that arrived after the overview.
@@ -152,12 +121,12 @@ export function App() {
     ingestBufferRef.current.markRebuild(combined);
   }, []);
 
-  // query_range is disabled: t-offset mismatch (viewer sends adjusted t,
-  // server uses raw periodic t) makes responses incorrect for multi-orbit data.
-  // Also, replaceRange outside the tick loop causes concurrent DuckDB access.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleQueryRangeResponse = useCallback((_response: QueryRangeResponse) => {
-    // noop until server supports monotonic t values
+  const handleQueryRangeResponse = useCallback((response: QueryRangeResponse) => {
+    // Server now sends monotonic t, so query_range responses are correct.
+    // Use markRebuild to safely update DuckDB through the tick loop.
+    ingestBufferRef.current.markRebuild(response.points);
+    trailBufferRef.current.clear();
+    trailBufferRef.current.pushMany(response.points);
   }, []);
 
   const { connect, disconnect, isConnected, send } = useWebSocket({
@@ -171,10 +140,9 @@ export function App() {
   });
 
   // Chart zoom -> query_range is disabled until t-offset mismatch is fixed.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleChartZoom = useCallback((_tMin: number, _tMax: number) => {
-    // noop: query_range sends adjusted t but server uses raw periodic t
-  }, []);
+  const handleChartZoom = useCallback((tMin: number, tMax: number) => {
+    send({ type: "query_range", t_min: tMin, t_max: tMax, max_points: 2000 });
+  }, [send]);
 
   // --- Replay: file loading (shared by file input and D&D) ---
   const loadCSVFile = useCallback((file: File) => {
@@ -251,8 +219,6 @@ export function App() {
   // --- Realtime: connect / disconnect ---
   const handleConnect = useCallback(() => {
     // Clear previous realtime data when starting a new connection
-    tOffsetRef.current = 0;
-    lastRawTRef.current = -1;
     detailBufferRef.current = [];
     streamingCountRef.current = 0;
     ingestBufferRef.current = new IngestBuffer<OrbitPoint>();
