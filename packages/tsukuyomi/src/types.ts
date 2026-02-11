@@ -1,7 +1,6 @@
 /** Minimum requirement for a data point: must have a time field. */
 export interface TimePoint {
-  t: number;
-  [key: string]: number;
+  readonly t: number;
 }
 
 /** SQL column type supported by DuckDB. */
