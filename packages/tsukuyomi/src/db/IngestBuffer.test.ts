@@ -100,6 +100,119 @@ describe("IngestBuffer", () => {
     expect(buf.latestT).toBe(99);
   });
 
+  // --- markRebuild / consumeRebuild ---
+
+  it("consumeRebuild returns null when no rebuild is pending", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    expect(buf.consumeRebuild()).toBeNull();
+  });
+
+  it("markRebuild + consumeRebuild returns the rebuild data", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    const data = [makePoint(0), makePoint(10), makePoint(20)];
+    buf.markRebuild(data);
+
+    const result = buf.consumeRebuild();
+    expect(result).toHaveLength(3);
+    expect(result![0].t).toBe(0);
+    expect(result![2].t).toBe(20);
+  });
+
+  it("consumeRebuild returns null on second call (consumed)", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    buf.markRebuild([makePoint(0)]);
+    buf.consumeRebuild();
+
+    expect(buf.consumeRebuild()).toBeNull();
+  });
+
+  it("markRebuild clears stale pending to avoid duplicates", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    buf.push(makePoint(100)); // stale pending
+    buf.push(makePoint(200)); // stale pending
+
+    buf.markRebuild([makePoint(0), makePoint(100), makePoint(200)]);
+
+    const result = buf.consumeRebuild()!;
+    // Only rebuild data, no duplicates from stale pending
+    expect(result).toHaveLength(3);
+    expect(result[0].t).toBe(0);
+    expect(result[1].t).toBe(100);
+    expect(result[2].t).toBe(200);
+  });
+
+  it("points pushed after markRebuild are included in consumeRebuild", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    buf.markRebuild([makePoint(0), makePoint(10)]);
+
+    // Simulate new streaming points arriving after rebuild signal
+    buf.push(makePoint(20));
+    buf.push(makePoint(30));
+
+    const result = buf.consumeRebuild()!;
+    expect(result).toHaveLength(4);
+    expect(result[0].t).toBe(0);  // rebuild data
+    expect(result[1].t).toBe(10); // rebuild data
+    expect(result[2].t).toBe(20); // new point
+    expect(result[3].t).toBe(30); // new point
+  });
+
+  it("second markRebuild overwrites the first", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    buf.markRebuild([makePoint(0), makePoint(10)]);
+    buf.push(makePoint(20)); // pending after first markRebuild
+
+    buf.markRebuild([makePoint(100), makePoint(200)]);
+    // Second markRebuild clears pending again
+
+    const result = buf.consumeRebuild()!;
+    expect(result).toHaveLength(2);
+    expect(result[0].t).toBe(100);
+    expect(result[1].t).toBe(200);
+  });
+
+  it("drain works independently of rebuild", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    buf.push(makePoint(0));
+    buf.push(makePoint(10));
+
+    // No rebuild pending — drain works normally
+    const drained = buf.drain();
+    expect(drained).toHaveLength(2);
+    expect(buf.consumeRebuild()).toBeNull();
+  });
+
+  it("drain returns empty when rebuild is pending (pending cleared by markRebuild)", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    buf.push(makePoint(0)); // in pending
+    buf.markRebuild([makePoint(100)]); // clears pending
+
+    // drain returns empty because pending was cleared by markRebuild
+    const drained = buf.drain();
+    expect(drained).toHaveLength(0);
+
+    // consumeRebuild still has the rebuild data
+    const result = buf.consumeRebuild()!;
+    expect(result).toHaveLength(1);
+    expect(result[0].t).toBe(100);
+  });
+
+  it("latestT is updated by markRebuild data", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    buf.push(makePoint(10));
+    expect(buf.latestT).toBe(10);
+
+    buf.markRebuild([makePoint(50), makePoint(100)]);
+    expect(buf.latestT).toBe(100);
+  });
+
+  it("latestT from rebuild persists after consumeRebuild", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    buf.markRebuild([makePoint(500)]);
+    buf.consumeRebuild();
+    expect(buf.latestT).toBe(500);
+  });
+
   it("works with complex multi-field types", () => {
     interface SensorPoint extends TimePoint {
       t: number;

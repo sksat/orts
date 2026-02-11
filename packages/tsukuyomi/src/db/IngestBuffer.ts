@@ -11,6 +11,7 @@ import type { TimePoint } from "../types.js";
 export class IngestBuffer<T extends TimePoint = TimePoint> {
   private pending: T[] = [];
   private _latestT = -Infinity;
+  private _rebuildData: T[] | null = null;
 
   /** Push a single point. */
   push(point: T): void {
@@ -37,6 +38,37 @@ export class IngestBuffer<T extends TimePoint = TimePoint> {
   drain(): T[] {
     if (this.pending.length === 0) return [];
     const result = this.pending;
+    this.pending = [];
+    return result;
+  }
+
+  /**
+   * Signal a full table rebuild. The tick loop should clear the DuckDB table
+   * and insert the returned data from `consumeRebuild()`.
+   *
+   * Clears any stale pending points to prevent duplicates (fullData is
+   * the complete replacement dataset). Points pushed after this call
+   * are treated as genuinely new and will be included by consumeRebuild().
+   */
+  markRebuild(fullData: T[]): void {
+    this._rebuildData = fullData;
+    this.pending = [];
+    for (const p of fullData) {
+      if (p.t > this._latestT) {
+        this._latestT = p.t;
+      }
+    }
+  }
+
+  /**
+   * Consume a pending rebuild signal. Returns the rebuild data merged
+   * with any points pushed since markRebuild(), or null if no rebuild
+   * is pending. The rebuild flag and pending buffer are both cleared.
+   */
+  consumeRebuild(): T[] | null {
+    if (this._rebuildData === null) return null;
+    const result = [...this._rebuildData, ...this.pending];
+    this._rebuildData = null;
     this.pending = [];
     return result;
   }
