@@ -7,11 +7,14 @@ import {
   clearTable,
   replaceRange,
   queryDerivedQuantities,
-  downsampleOldRows,
   ChartData,
 } from "../db/orbitStore.js";
 
 const MU_EARTH = 398600.4418;
+
+/** Maximum number of points to display in charts. Query-time downsampling
+ *  keeps chart rendering fast regardless of total data in DuckDB. */
+export const DISPLAY_MAX_POINTS = 2000;
 
 /** Time range for chart display: null = all history, number = last N seconds. */
 export type TimeRange = number | null;
@@ -76,7 +79,7 @@ export function useOrbitCharts(
       await insertPoints(conn, replayPoints);
       // In replay mode, always query all data. Viewport slicing
       // (based on currentTime and timeRange) is handled downstream.
-      const data = await queryDerivedQuantities(conn, mu, bodyRadius);
+      const data = await queryDerivedQuantities(conn, mu, bodyRadius, undefined, DISPLAY_MAX_POINTS);
       if (!cancelled) {
         setChartData(data);
         setIsLoading(false);
@@ -96,9 +99,6 @@ export function useOrbitCharts(
     let cancelled = false;
     const INSERT_INTERVAL = 500;  // drain buffer → DuckDB (lightweight)
     const QUERY_INTERVAL = 2000;  // derived quantity query (heavy)
-    const RETENTION_MAX_ROWS = 100_000;
-    const RETENTION_INTERVAL = 5; // run retention every N query ticks
-    let queryTickCount = 0;
 
     const startPolling = async () => {
       try {
@@ -138,17 +138,14 @@ export function useOrbitCharts(
       const queryTick = async () => {
         if (cancelled) return;
         try {
-          queryTickCount++;
-          if (hasDataRef.current && queryTickCount % RETENTION_INTERVAL === 0) {
-            await downsampleOldRows(conn, RETENTION_MAX_ROWS);
-          }
-
           if (hasDataRef.current) {
             const tMin = computeTMin(
               timeRangeRef.current,
               ingestBufferRef.current.latestT
             );
-            const data = await queryDerivedQuantities(conn, muRef.current, bodyRadiusRef.current, tMin);
+            const data = await queryDerivedQuantities(
+              conn, muRef.current, bodyRadiusRef.current, tMin, DISPLAY_MAX_POINTS
+            );
             if (!cancelled) setChartData(data);
           }
         } catch (e) {

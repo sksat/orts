@@ -1,6 +1,5 @@
 import type { AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
 import { OrbitPoint } from "../orbit.js";
-import { computeRetention } from "./RetentionPolicy.js";
 
 /** Columnar chart data: [t, altitude, energy, angularMomentum, velocity] */
 export type ChartData = [
@@ -45,28 +44,69 @@ export async function clearTable(
   await conn.query("DELETE FROM orbit_points");
 }
 
+/**
+ * Build SQL for derived orbital quantities with optional query-time downsampling.
+ *
+ * When maxPoints is specified and the filtered row count exceeds it, uses
+ * ROW_NUMBER() to evenly sample rows while preserving first and last points.
+ * This matches the server-side downsample pattern (cli/src/main.rs:275).
+ */
+export function buildDerivedQuery(
+  mu: number,
+  bodyRadius: number,
+  tMin?: number,
+  maxPoints?: number,
+): string {
+  const whereClause = tMin != null ? `WHERE t >= ${tMin}` : "";
+  const maxPts = maxPoints ?? 0;
+
+  const derivedColumns = `
+    t,
+    sqrt(x*x + y*y + z*z) - ${bodyRadius} AS altitude,
+    (vx*vx + vy*vy + vz*vz)/2.0 - ${mu} / sqrt(x*x + y*y + z*z) AS energy,
+    sqrt(
+      power(y*vz - z*vy, 2) +
+      power(z*vx - x*vz, 2) +
+      power(x*vy - y*vx, 2)
+    ) AS angular_momentum,
+    sqrt(vx*vx + vy*vy + vz*vz) AS velocity`;
+
+  // No downsampling: simple query
+  if (maxPts <= 0) {
+    return `SELECT ${derivedColumns} FROM orbit_points ${whereClause} ORDER BY t`;
+  }
+
+  // Query-time downsampling via ROW_NUMBER window function
+  return `
+    WITH filtered AS (
+      SELECT t, x, y, z, vx, vy, vz
+      FROM orbit_points
+      ${whereClause}
+    ),
+    numbered AS (
+      SELECT *,
+        ROW_NUMBER() OVER (ORDER BY t) AS rn,
+        COUNT(*) OVER () AS total
+      FROM filtered
+    )
+    SELECT ${derivedColumns}
+    FROM numbered
+    WHERE total <= ${maxPts}
+       OR rn = 1
+       OR rn = total
+       OR (rn - 1) % GREATEST(1, CAST(CEIL(total::DOUBLE / ${maxPts}) AS INTEGER)) = 0
+    ORDER BY t`;
+}
+
 export async function queryDerivedQuantities(
   conn: AsyncDuckDBConnection,
   mu: number,
   bodyRadius = 6378.137,
-  tMin?: number
+  tMin?: number,
+  maxPoints?: number,
 ): Promise<ChartData> {
-  const whereClause = tMin != null ? `WHERE t >= ${tMin}` : "";
-  const result = await conn.query(`
-    SELECT
-      t,
-      sqrt(x*x + y*y + z*z) - ${bodyRadius} AS altitude,
-      (vx*vx + vy*vy + vz*vz)/2.0 - ${mu} / sqrt(x*x + y*y + z*z) AS energy,
-      sqrt(
-        power(y*vz - z*vy, 2) +
-        power(z*vx - x*vz, 2) +
-        power(x*vy - y*vx, 2)
-      ) AS angular_momentum,
-      sqrt(vx*vx + vy*vy + vz*vz) AS velocity
-    FROM orbit_points
-    ${whereClause}
-    ORDER BY t
-  `);
+  const sql = buildDerivedQuery(mu, bodyRadius, tMin, maxPoints);
+  const result = await conn.query(sql);
 
   const t = result.getChildAt(0)!.toArray() as Float64Array;
   const alt = result.getChildAt(1)!.toArray() as Float64Array;
@@ -75,42 +115,6 @@ export async function queryDerivedQuantities(
   const vel = result.getChildAt(4)!.toArray() as Float64Array;
 
   return [t, alt, energy, angMom, vel];
-}
-
-/**
- * Downsample older rows when the table exceeds maxRows.
- * Keeps every Nth row in the older half of the data.
- */
-export async function downsampleOldRows(
-  conn: AsyncDuckDBConnection,
-  maxRows: number
-): Promise<void> {
-  const countResult = await conn.query("SELECT COUNT(*)::INTEGER AS cnt FROM orbit_points");
-  const totalRows = countResult.getChildAt(0)!.get(0) as number;
-
-  const { shouldDownsample, keepEveryN } = computeRetention(totalRows, maxRows);
-  if (!shouldDownsample) return;
-
-  // Find the midpoint time: rows older than this are candidates for downsampling
-  const midResult = await conn.query(`
-    SELECT t FROM (
-      SELECT t, ROW_NUMBER() OVER (ORDER BY t) AS rn,
-             COUNT(*) OVER () AS total
-      FROM orbit_points
-    ) WHERE rn = total / 2
-  `);
-  const midT = midResult.getChildAt(0)!.get(0) as number;
-
-  // Delete rows in the older half where ROW_NUMBER % keepEveryN != 1
-  await conn.query(`
-    DELETE FROM orbit_points WHERE t IN (
-      SELECT t FROM (
-        SELECT t, ROW_NUMBER() OVER (ORDER BY t) AS rn
-        FROM orbit_points
-        WHERE t <= ${midT}
-      ) WHERE rn % ${keepEveryN} != 1
-    )
-  `);
 }
 
 /**

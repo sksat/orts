@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeTMin, type TimeRange } from "./useOrbitCharts.js";
+import { computeTMin, DISPLAY_MAX_POINTS, type TimeRange } from "./useOrbitCharts.js";
 
 describe("computeTMin", () => {
   it("returns undefined when timeRange is null (show all)", () => {
@@ -23,5 +23,12 @@ describe("computeTMin", () => {
 
   it("handles -Infinity latestT (no data yet)", () => {
     expect(computeTMin(300, -Infinity)).toBe(-Infinity);
+  });
+});
+
+describe("DISPLAY_MAX_POINTS", () => {
+  it("is a reasonable display budget for charts", () => {
+    expect(DISPLAY_MAX_POINTS).toBeGreaterThanOrEqual(500);
+    expect(DISPLAY_MAX_POINTS).toBeLessThanOrEqual(5000);
   });
 });
