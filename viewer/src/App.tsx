@@ -275,7 +275,10 @@ export function App() {
 
   const chartArrays = useMemo(() => {
     if (!chartData) return null;
-    return [chartData.t, chartData.altitude, chartData.energy, chartData.angular_momentum, chartData.velocity];
+    return [
+      chartData.t, chartData.altitude, chartData.energy, chartData.angular_momentum, chartData.velocity,
+      chartData.a, chartData.e, chartData.inc_deg, chartData.raan_deg,
+    ];
   }, [chartData]);
 
   const visibleArrays = useMemo(
@@ -291,6 +294,10 @@ export function App() {
       energy: visibleArrays[2],
       angular_momentum: visibleArrays[3],
       velocity: visibleArrays[4],
+      a: visibleArrays[5],
+      e: visibleArrays[6],
+      inc_deg: visibleArrays[7],
+      raan_deg: visibleArrays[8],
     };
   }, [visibleArrays]);
 
