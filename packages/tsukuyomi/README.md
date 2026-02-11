@@ -25,11 +25,7 @@ pnpm test:e2e    # Playwright E2E tests (5 tests)
 Basic real-time sine/cosine visualization.
 
 ```bash
-# Terminal 1: WebSocket server (port 9002)
-npx tsx examples/sine-wave/server.ts
-
-# Terminal 2: Vite dev server (port 5174)
-npx vite --config vite.example.config.ts --port 5174
+pnpm example:sine-wave
 ```
 
 Open http://localhost:5174
@@ -39,11 +35,7 @@ Open http://localhost:5174
 Mixed-density data test: sparse overview (100 points over 5000s) + dense streaming (100 msg/sec). Used for E2E testing of the time-bucket downsampling algorithm.
 
 ```bash
-# Terminal 1: WebSocket server (port 9003)
-npx tsx examples/mixed-density/server.ts
-
-# Terminal 2: Vite dev server (port 5175)
-npx vite --config vite.mixed-density.config.ts --port 5175
+pnpm example:mixed-density
 ```
 
 Open http://localhost:5175

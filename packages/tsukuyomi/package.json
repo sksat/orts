@@ -17,7 +17,9 @@
     "build": "vite build && tsc --emitDeclarationOnly",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "example:sine-wave": "npx tsx examples/sine-wave/server.ts & npx vite --config vite.example.config.ts --port 5174",
+    "example:mixed-density": "npx tsx examples/mixed-density/server.ts & npx vite --config vite.mixed-density.config.ts --port 5175"
   },
   "peerDependencies": {
     "react": ">=18.0.0",
