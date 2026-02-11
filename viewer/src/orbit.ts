@@ -6,7 +6,7 @@ import * as THREE from "three";
  */
 const EARTH_RADIUS_KM = 6378.137;
 
-/** A single orbit state point from CSV. */
+/** A single orbit state point from CSV or WebSocket. */
 export interface OrbitPoint {
   t: number;
   x: number;
@@ -15,6 +15,18 @@ export interface OrbitPoint {
   vx: number;
   vy: number;
   vz: number;
+  /** Semi-major axis [km] */
+  a: number;
+  /** Eccentricity [-] */
+  e: number;
+  /** Inclination [rad] */
+  inc: number;
+  /** Right ascension of ascending node [rad] */
+  raan: number;
+  /** Argument of periapsis [rad] */
+  omega: number;
+  /** True anomaly [rad] */
+  nu: number;
 }
 
 /** Metadata parsed from CSV comment headers. */
@@ -88,6 +100,12 @@ export function parseOrbitCSVWithMetadata(text: string): ParsedCSV {
       vx: nums[4],
       vy: nums[5],
       vz: nums[6],
+      a: nums[7] ?? 0,
+      e: nums[8] ?? 0,
+      inc: nums[9] ?? 0,
+      raan: nums[10] ?? 0,
+      omega: nums[11] ?? 0,
+      nu: nums[12] ?? 0,
     });
   }
 

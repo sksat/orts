@@ -197,6 +197,62 @@ async fn test_websocket_info_and_state_messages() {
             "position magnitude {r:.1} km is out of expected range [6000, 7500]"
         );
 
+        // Verify Keplerian elements are present in state messages
+        assert!(
+            first_state["semi_major_axis"].is_f64(),
+            "state must include semi_major_axis"
+        );
+        assert!(
+            first_state["eccentricity"].is_f64(),
+            "state must include eccentricity"
+        );
+        assert!(
+            first_state["inclination"].is_f64(),
+            "state must include inclination"
+        );
+        assert!(
+            first_state["raan"].is_f64(),
+            "state must include raan"
+        );
+        assert!(
+            first_state["argument_of_periapsis"].is_f64(),
+            "state must include argument_of_periapsis"
+        );
+        assert!(
+            first_state["true_anomaly"].is_f64(),
+            "state must include true_anomaly"
+        );
+
+        // Sanity check: semi-major axis should be near orbit radius for circular orbit
+        let sma = first_state["semi_major_axis"].as_f64().unwrap();
+        assert!(
+            sma > 6000.0 && sma < 7500.0,
+            "semi_major_axis {sma:.1} km out of expected range"
+        );
+        let ecc = first_state["eccentricity"].as_f64().unwrap();
+        assert!(
+            ecc < 0.01,
+            "eccentricity {ecc} should be near zero for circular orbit"
+        );
+
+        // Verify Keplerian elements are present in history states too
+        let history_states = history["states"].as_array().unwrap();
+        if !history_states.is_empty() {
+            let first_hist = &history_states[0];
+            assert!(
+                first_hist["semi_major_axis"].is_f64(),
+                "history state must include semi_major_axis"
+            );
+            assert!(
+                first_hist["eccentricity"].is_f64(),
+                "history state must include eccentricity"
+            );
+            assert!(
+                first_hist["inclination"].is_f64(),
+                "history state must include inclination"
+            );
+        }
+
         // Read 2 more state messages
         for _ in 0..2 {
             let (state, _) = read_until_type(&mut read, "state", 50).await;

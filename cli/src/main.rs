@@ -12,7 +12,7 @@ use orts_datamodel::recording::Recording;
 use orts_datamodel::timeline::TimePoint;
 use orts_coords::epoch::Epoch;
 use orts_integrator::{Rk4, State};
-use orts_orbits::{body::KnownBody, two_body::TwoBodySystem};
+use orts_orbits::{body::KnownBody, kepler::KeplerianElements, tle::Tle, two_body::TwoBodySystem};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -95,61 +95,149 @@ struct SimArgs {
     /// Simulation epoch in ISO 8601 format (e.g. "2024-03-20T12:00:00Z")
     #[arg(long)]
     epoch: Option<String>,
+
+    /// TLE file path (2-line or 3-line format), use "-" for stdin
+    #[arg(long)]
+    tle: Option<String>,
+
+    /// TLE line 1 (direct input, use with --tle-line2)
+    #[arg(long)]
+    tle_line1: Option<String>,
+
+    /// TLE line 2 (direct input, use with --tle-line1)
+    #[arg(long)]
+    tle_line2: Option<String>,
+}
+
+/// How the orbit was specified on the command line.
+enum OrbitSpec {
+    /// Circular orbit from --altitude.
+    Circular { altitude: f64, r0: f64, v0: f64 },
+    /// From a TLE (parsed into Keplerian elements).
+    Tle { tle_data: Tle, elements: KeplerianElements },
 }
 
 /// Simulation parameters derived from CLI arguments.
 struct SimParams {
     body: KnownBody,
     mu: f64,
-    r0: f64,
-    v0: f64,
     period: f64,
     dt: f64,
-    altitude: f64,
     output_interval: f64,
     stream_interval: f64,
     epoch: Option<Epoch>,
+    orbit_spec: OrbitSpec,
 }
 
 impl SimParams {
     fn from_sim_args(args: &SimArgs) -> Self {
-        let body = parse_body(&args.body);
-        let props = body.properties();
-        let mu = props.mu;
-        let r0 = props.radius + args.altitude;
-        let v0 = (mu / r0).sqrt();
-        let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
+        // Parse TLE if provided
+        let tle_opt = Self::parse_tle_from_args(args);
+
+        let (body, mu, orbit_spec, epoch) = if let Some(tle) = tle_opt {
+            // TLE mode: Earth is implied
+            let body = KnownBody::Earth;
+            let mu = body.properties().mu;
+            let elements = tle.to_keplerian_elements(mu);
+            let epoch = match &args.epoch {
+                Some(s) => Some(
+                    Epoch::from_iso8601(s)
+                        .unwrap_or_else(|| panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)"))
+                ),
+                None => Some(tle.epoch()),
+            };
+            (body, mu, OrbitSpec::Tle { tle_data: tle, elements }, epoch)
+        } else {
+            // Circular orbit mode
+            let body = parse_body(&args.body);
+            let props = body.properties();
+            let mu = props.mu;
+            let r0 = props.radius + args.altitude;
+            let v0 = (mu / r0).sqrt();
+            let epoch = match &args.epoch {
+                Some(s) => Some(
+                    Epoch::from_iso8601(s)
+                        .unwrap_or_else(|| panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)"))
+                ),
+                None => Some(Epoch::now()),
+            };
+            (body, mu, OrbitSpec::Circular { altitude: args.altitude, r0, v0 }, epoch)
+        };
+
+        let period = match &orbit_spec {
+            OrbitSpec::Circular { r0, .. } => {
+                2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt()
+            }
+            OrbitSpec::Tle { elements, .. } => elements.period(mu),
+        };
+
         let output_interval = args.output_interval.unwrap_or(args.dt);
         let stream_interval = args
             .stream_interval
             .unwrap_or(output_interval)
             .clamp(args.dt, output_interval);
-        let epoch = match &args.epoch {
-            Some(s) => Some(
-                Epoch::from_iso8601(s)
-                    .unwrap_or_else(|| panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)"))
-            ),
-            // Default to current time for known solar-system bodies
-            None => Some(Epoch::now()),
-        };
+
         Self {
             body,
             mu,
-            r0,
-            v0,
             period,
             dt: args.dt,
-            altitude: args.altitude,
             output_interval,
             stream_interval,
             epoch,
+            orbit_spec,
+        }
+    }
+
+    fn parse_tle_from_args(args: &SimArgs) -> Option<Tle> {
+        if let Some(path) = &args.tle {
+            let text = if path == "-" {
+                use std::io::Read;
+                let mut buf = String::new();
+                std::io::stdin()
+                    .read_to_string(&mut buf)
+                    .unwrap_or_else(|e| panic!("Failed to read TLE from stdin: {e}"));
+                buf
+            } else {
+                std::fs::read_to_string(path)
+                    .unwrap_or_else(|e| panic!("Failed to read TLE file '{path}': {e}"))
+            };
+            Some(Tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE: {e}")))
+        } else if let (Some(line1), Some(line2)) = (&args.tle_line1, &args.tle_line2) {
+            let text = format!("{line1}\n{line2}");
+            Some(Tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE: {e}")))
+        } else if args.tle_line1.is_some() || args.tle_line2.is_some() {
+            panic!("Both --tle-line1 and --tle-line2 must be specified together");
+        } else {
+            None
         }
     }
 
     fn initial_state(&self) -> State {
-        State {
-            position: vector![self.r0, 0.0, 0.0],
-            velocity: vector![0.0, self.v0, 0.0],
+        match &self.orbit_spec {
+            OrbitSpec::Circular { r0, v0, .. } => State {
+                position: vector![*r0, 0.0, 0.0],
+                velocity: vector![0.0, *v0, 0.0],
+            },
+            OrbitSpec::Tle { elements, .. } => {
+                let (pos, vel) = elements.to_state_vector(self.mu);
+                State {
+                    position: pos,
+                    velocity: vel,
+                }
+            }
+        }
+    }
+
+    /// Altitude for display purposes. For circular orbits, this is the specified altitude.
+    /// For TLE orbits, compute perigee altitude.
+    fn altitude(&self) -> f64 {
+        match &self.orbit_spec {
+            OrbitSpec::Circular { altitude, .. } => *altitude,
+            OrbitSpec::Tle { elements, .. } => {
+                let perigee_r = elements.semi_major_axis * (1.0 - elements.eccentricity);
+                perigee_r - self.body.properties().radius
+            }
         }
     }
 }
@@ -160,6 +248,28 @@ struct HistoryState {
     t: f64,
     position: [f64; 3],
     velocity: [f64; 3],
+    semi_major_axis: f64,
+    eccentricity: f64,
+    inclination: f64,
+    raan: f64,
+    argument_of_periapsis: f64,
+    true_anomaly: f64,
+}
+
+/// Create a HistoryState from position/velocity, computing Keplerian elements.
+fn make_history_state(t: f64, pos: &nalgebra::Vector3<f64>, vel: &nalgebra::Vector3<f64>, mu: f64) -> HistoryState {
+    let elements = KeplerianElements::from_state_vector(pos, vel, mu);
+    HistoryState {
+        t,
+        position: [pos.x, pos.y, pos.z],
+        velocity: [vel.x, vel.y, vel.z],
+        semi_major_axis: elements.semi_major_axis,
+        eccentricity: elements.eccentricity,
+        inclination: elements.inclination,
+        raan: elements.raan,
+        argument_of_periapsis: elements.argument_of_periapsis,
+        true_anomaly: elements.true_anomaly,
+    }
 }
 
 /// Bounded buffer that accumulates history states and periodically flushes to .rrd segments.
@@ -172,16 +282,19 @@ struct HistoryBuffer {
     data_dir: PathBuf,
     /// Number of segment files written so far.
     segment_count: u32,
+    /// Gravitational parameter (for computing Keplerian elements from loaded data).
+    mu: f64,
 }
 
 impl HistoryBuffer {
-    fn new(capacity: usize, data_dir: PathBuf) -> Self {
+    fn new(capacity: usize, data_dir: PathBuf, mu: f64) -> Self {
         std::fs::create_dir_all(&data_dir).ok();
         HistoryBuffer {
             states: VecDeque::new(),
             capacity,
             data_dir,
             segment_count: 0,
+            mu,
         }
     }
 
@@ -239,11 +352,9 @@ impl HistoryBuffer {
             match orts_datamodel::rerun_export::load_from_rrd(seg_path.to_str().unwrap()) {
                 Ok(rows) => {
                     for row in rows {
-                        all.push(HistoryState {
-                            t: row.t,
-                            position: [row.x, row.y, row.z],
-                            velocity: [row.vx, row.vy, row.vz],
-                        });
+                        let pos = nalgebra::Vector3::new(row.x, row.y, row.z);
+                        let vel = nalgebra::Vector3::new(row.vx, row.vy, row.vz);
+                        all.push(make_history_state(row.t, &pos, &vel, self.mu));
                     }
                 }
                 Err(e) => {
@@ -329,6 +440,12 @@ enum WsMessage {
         t: f64,
         position: [f64; 3],
         velocity: [f64; 3],
+        semi_major_axis: f64,
+        eccentricity: f64,
+        inclination: f64,
+        raan: f64,
+        argument_of_periapsis: f64,
+        true_anomaly: f64,
     },
     /// Downsampled history overview sent on connect.
     #[serde(rename = "history")]
@@ -450,7 +567,7 @@ fn run_simulation(params: &SimParams) -> Recording {
         mu: Some(params.mu),
         body_radius: Some(params.body.properties().radius),
         body_name: Some(params.body.properties().name.to_string()),
-        altitude: Some(params.altitude),
+        altitude: Some(params.altitude()),
         period: Some(params.period),
     };
 
@@ -465,10 +582,25 @@ fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
 
     println!("# Orts 2-body orbit propagation");
     println!("# mu = {} km^3/s^2", params.mu);
-    println!(
-        "# Initial orbit: circular at {} km altitude (r = {} km)",
-        params.altitude, params.r0
-    );
+    match &params.orbit_spec {
+        OrbitSpec::Circular { altitude, r0, .. } => {
+            println!(
+                "# Initial orbit: circular at {} km altitude (r = {} km)",
+                altitude, r0
+            );
+        }
+        OrbitSpec::Tle { tle_data, elements } => {
+            println!(
+                "# Initial orbit: from TLE (a = {:.1} km, e = {:.6}, i = {:.2}°)",
+                elements.semi_major_axis,
+                elements.eccentricity,
+                elements.inclination.to_degrees()
+            );
+            if let Some(name) = &tle_data.name {
+                println!("# satellite = {name}");
+            }
+        }
+    }
     println!(
         "# Period = {:.1} s ({:.1} min)",
         params.period,
@@ -486,7 +618,7 @@ fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
         "# central_body_radius = {} km",
         params.body.properties().radius
     );
-    println!("# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s]");
+    println!("# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s],a[km],e[-],i[rad],raan[rad],omega[rad],nu[rad]");
 
     let sat_path = EntityPath::parse("/world/sat/default");
     let store = match rec.entity(&sat_path) {
@@ -516,9 +648,15 @@ fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
         };
         let pos = pos_col.get_row(i).unwrap();
         let vel = vel_col.get_row(i).unwrap();
+        let pos_vec = nalgebra::Vector3::new(pos[0], pos[1], pos[2]);
+        let vel_vec = nalgebra::Vector3::new(vel[0], vel[1], vel[2]);
+        let elements = KeplerianElements::from_state_vector(&pos_vec, &vel_vec, params.mu);
         println!(
-            "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+            "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.3},{:.10},{:.10},{:.10},{:.10},{:.10}",
             t, pos[0], pos[1], pos[2], vel[0], vel[1], vel[2],
+            elements.semi_major_axis, elements.eccentricity,
+            elements.inclination, elements.raan,
+            elements.argument_of_periapsis, elements.true_anomaly,
         );
     }
 }
@@ -595,7 +733,7 @@ async fn async_server(sim: &SimArgs, port: u16) {
     eprintln!("WebSocket server listening on ws://localhost:{port}");
 
     let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
-    let history = Arc::new(tokio::sync::RwLock::new(HistoryBuffer::new(5000, data_dir)));
+    let history = Arc::new(tokio::sync::RwLock::new(HistoryBuffer::new(5000, data_dir, params.mu)));
 
     let (tx, _rx) = broadcast::channel::<String>(256);
 
@@ -658,15 +796,11 @@ async fn simulation_loop(
         // Emit start-of-orbit state (skip on subsequent orbits to avoid
         // duplicate point at the orbit boundary).
         if t == 0.0 {
-            let hs = HistoryState {
-                t,
-                position: [initial.position.x, initial.position.y, initial.position.z],
-                velocity: [initial.velocity.x, initial.velocity.y, initial.velocity.z],
-            };
+            let hs = make_history_state(t, &initial.position, &initial.velocity, params.mu);
             history.write().await.push(hs);
         }
 
-        let msg = state_message(t, &initial);
+        let msg = state_message(t, &initial, params.mu);
         if tx.send(msg).is_err() {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             continue;
@@ -714,6 +848,12 @@ async fn simulation_loop(
                         t: out.t,
                         position: out.position,
                         velocity: out.velocity,
+                        semi_major_axis: out.semi_major_axis,
+                        eccentricity: out.eccentricity,
+                        inclination: out.inclination,
+                        raan: out.raan,
+                        argument_of_periapsis: out.argument_of_periapsis,
+                        true_anomaly: out.true_anomaly,
                     })
                     .expect("failed to serialize state");
                     let _ = tx.send(msg);
@@ -738,14 +878,10 @@ async fn simulation_loop(
             0.0
         };
         if (orbit_end_t - last_output_t).abs() > 1e-9 {
-            let hs = HistoryState {
-                t: orbit_end_t,
-                position: [state.position.x, state.position.y, state.position.z],
-                velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
-            };
+            let hs = make_history_state(orbit_end_t, &state.position, &state.velocity, params.mu);
             history.write().await.push(hs);
 
-            let msg = state_message(orbit_end_t, &state);
+            let msg = state_message(orbit_end_t, &state, params.mu);
             let _ = tx.send(msg);
         }
 
@@ -772,7 +908,7 @@ async fn handle_connection(
     // 1. Send info message
     let info = WsMessage::Info {
         mu: params.mu,
-        altitude: params.altitude,
+        altitude: params.altitude(),
         period: params.period,
         dt: params.dt,
         output_interval: params.output_interval,
@@ -907,6 +1043,7 @@ fn compute_output_chunk(
     output_interval: f64,
     next_output_t: &mut f64,
 ) -> (Vec<HistoryState>, State, f64) {
+    let mu = system.mu;
     let mut outputs = Vec::new();
     let mut t = t_start;
 
@@ -916,11 +1053,7 @@ fn compute_output_chunk(
         t += h;
 
         if t >= *next_output_t - 1e-9 {
-            outputs.push(HistoryState {
-                t,
-                position: [state.position.x, state.position.y, state.position.z],
-                velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
-            });
+            outputs.push(make_history_state(t, &state.position, &state.velocity, mu));
             *next_output_t += output_interval;
         }
     }
@@ -928,11 +1061,18 @@ fn compute_output_chunk(
     (outputs, state, t)
 }
 
-fn state_message(t: f64, state: &State) -> String {
+fn state_message(t: f64, state: &State, mu: f64) -> String {
+    let elements = KeplerianElements::from_state_vector(&state.position, &state.velocity, mu);
     let msg = WsMessage::State {
         t,
         position: [state.position.x, state.position.y, state.position.z],
         velocity: [state.velocity.x, state.velocity.y, state.velocity.z],
+        semi_major_axis: elements.semi_major_axis,
+        eccentricity: elements.eccentricity,
+        inclination: elements.inclination,
+        raan: elements.raan,
+        argument_of_periapsis: elements.argument_of_periapsis,
+        true_anomaly: elements.true_anomaly,
     };
     serde_json::to_string(&msg).expect("failed to serialize state message")
 }
@@ -941,12 +1081,12 @@ fn state_message(t: f64, state: &State) -> String {
 mod tests {
     use super::*;
 
+    const TEST_MU: f64 = 398600.4418;
+
     fn make_state(t: f64) -> HistoryState {
-        HistoryState {
-            t,
-            position: [6778.0 + t, t * 0.1, 0.0],
-            velocity: [0.0, 7.669, 0.0],
-        }
+        let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
+        let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
+        make_history_state(t, &pos, &vel, TEST_MU)
     }
 
     fn temp_data_dir(name: &str) -> PathBuf {
@@ -964,7 +1104,7 @@ mod tests {
     #[test]
     fn buffer_push_and_read() {
         let dir = temp_data_dir("push-read");
-        let mut buf = HistoryBuffer::new(100, dir.clone());
+        let mut buf = HistoryBuffer::new(100, dir.clone(), TEST_MU);
 
         buf.push(make_state(0.0));
         buf.push(make_state(10.0));
@@ -982,7 +1122,7 @@ mod tests {
     #[test]
     fn buffer_flush_creates_segment() {
         let dir = temp_data_dir("flush-seg");
-        let mut buf = HistoryBuffer::new(4, dir.clone());
+        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU);
 
         // Push 5 states → exceeds capacity of 4 → triggers flush
         for i in 0..5 {
@@ -1000,7 +1140,7 @@ mod tests {
     #[test]
     fn buffer_load_all_includes_flushed_and_buffered() {
         let dir = temp_data_dir("load-all");
-        let mut buf = HistoryBuffer::new(4, dir.clone());
+        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU);
 
         for i in 0..8 {
             buf.push(make_state(i as f64 * 10.0));
@@ -1067,7 +1207,7 @@ mod tests {
     #[test]
     fn flush_performance() {
         let dir = temp_data_dir("flush-perf");
-        let mut buf = HistoryBuffer::new(10_000, dir.clone());
+        let mut buf = HistoryBuffer::new(10_000, dir.clone(), TEST_MU);
 
         for i in 0..5000 {
             buf.states.push_back(make_state(i as f64));
@@ -1090,7 +1230,7 @@ mod tests {
     #[test]
     fn load_all_performance() {
         let dir = temp_data_dir("load-perf");
-        let mut buf = HistoryBuffer::new(2000, dir.clone());
+        let mut buf = HistoryBuffer::new(2000, dir.clone(), TEST_MU);
 
         // Insert 10000 points, which will create multiple segments
         for i in 0..10_000 {
@@ -1116,18 +1256,7 @@ mod tests {
     #[test]
     fn history_message_serialization() {
         let msg = WsMessage::History {
-            states: vec![
-                HistoryState {
-                    t: 0.0,
-                    position: [6778.137, 0.0, 0.0],
-                    velocity: [0.0, 7.669, 0.0],
-                },
-                HistoryState {
-                    t: 10.0,
-                    position: [6777.0, 76.0, 0.0],
-                    velocity: [-0.086, 7.668, 0.0],
-                },
-            ],
+            states: vec![make_state(0.0), make_state(10.0)],
         };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1152,11 +1281,7 @@ mod tests {
     #[test]
     fn history_detail_message_serialization() {
         let msg = WsMessage::HistoryDetail {
-            states: vec![HistoryState {
-                t: 5.0,
-                position: [1.0, 2.0, 3.0],
-                velocity: [4.0, 5.0, 6.0],
-            }],
+            states: vec![make_state(5.0)],
         };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -1226,7 +1351,7 @@ mod tests {
     #[test]
     fn query_range_filters_by_time() {
         let dir = temp_data_dir("qr-filter");
-        let mut buf = HistoryBuffer::new(100, dir.clone());
+        let mut buf = HistoryBuffer::new(100, dir.clone(), TEST_MU);
 
         for i in 0..10 {
             buf.push(make_state(i as f64 * 10.0));
@@ -1244,7 +1369,7 @@ mod tests {
     #[test]
     fn query_range_with_downsample() {
         let dir = temp_data_dir("qr-ds");
-        let mut buf = HistoryBuffer::new(200, dir.clone());
+        let mut buf = HistoryBuffer::new(200, dir.clone(), TEST_MU);
 
         for i in 0..100 {
             buf.push(make_state(i as f64));
@@ -1262,7 +1387,7 @@ mod tests {
     #[test]
     fn query_range_empty_range() {
         let dir = temp_data_dir("qr-empty");
-        let mut buf = HistoryBuffer::new(100, dir.clone());
+        let mut buf = HistoryBuffer::new(100, dir.clone(), TEST_MU);
 
         for i in 0..10 {
             buf.push(make_state(i as f64 * 10.0));
@@ -1285,6 +1410,9 @@ mod tests {
             output_interval: None,
             stream_interval: None,
             epoch: None,
+            tle: None,
+            tle_line1: None,
+            tle_line2: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
@@ -1302,6 +1430,9 @@ mod tests {
             output_interval: Some(10.0),
             stream_interval: Some(2.0),
             epoch: None,
+            tle: None,
+            tle_line1: None,
+            tle_line2: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!((params.dt - 1.0).abs() < 1e-9);
@@ -1319,6 +1450,9 @@ mod tests {
             output_interval: Some(10.0),
             stream_interval: Some(1.0),
             epoch: None,
+            tle: None,
+            tle_line1: None,
+            tle_line2: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!((params.stream_interval - 5.0).abs() < 1e-9);
@@ -1331,6 +1465,9 @@ mod tests {
             output_interval: Some(10.0),
             stream_interval: Some(20.0),
             epoch: None,
+            tle: None,
+            tle_line1: None,
+            tle_line2: None,
         };
         let params2 = SimParams::from_sim_args(&args2);
         assert!((params2.stream_interval - 10.0).abs() < 1e-9);
@@ -1345,6 +1482,9 @@ mod tests {
             output_interval: None,
             stream_interval: None,
             epoch: Some("2024-03-20T12:00:00Z".to_string()),
+            tle: None,
+            tle_line1: None,
+            tle_line2: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!(params.epoch.is_some());
@@ -1550,11 +1690,7 @@ mod tests {
         for _ in 0..10 {
             state_ss = Rk4::step(&system, t, &state_ss, dt);
             t += dt;
-            step_outputs.push(HistoryState {
-                t,
-                position: [state_ss.position.x, state_ss.position.y, state_ss.position.z],
-                velocity: [state_ss.velocity.x, state_ss.velocity.y, state_ss.velocity.z],
-            });
+            step_outputs.push(make_history_state(t, &state_ss.position, &state_ss.velocity, mu));
         }
 
         // Chunked
@@ -1575,5 +1711,120 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- TLE input tests ---
+
+    #[test]
+    fn sim_params_from_tle_lines() {
+        let args = SimArgs {
+            altitude: 400.0,
+            body: "earth".to_string(),
+            dt: 10.0,
+            output_interval: None,
+            stream_interval: None,
+            epoch: None,
+            tle: None,
+            tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
+            tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+        };
+        let params = SimParams::from_sim_args(&args);
+
+        // Should be in TLE mode
+        assert!(matches!(params.orbit_spec, OrbitSpec::Tle { .. }));
+
+        // Altitude should be ~400 km
+        assert!(
+            (params.altitude() - 400.0).abs() < 30.0,
+            "ISS altitude: {:.1} km",
+            params.altitude()
+        );
+
+        // Period should be ~92 minutes
+        assert!(
+            (params.period / 60.0 - 92.0).abs() < 2.0,
+            "ISS period: {:.1} min",
+            params.period / 60.0
+        );
+
+        // Epoch should be from TLE (2024 day 79.5)
+        let epoch = params.epoch.unwrap();
+        let dt = epoch.to_datetime();
+        assert_eq!(dt.year, 2024);
+        assert_eq!(dt.month, 3);
+    }
+
+    #[test]
+    fn sim_params_tle_initial_state_plausible() {
+        let args = SimArgs {
+            altitude: 400.0,
+            body: "earth".to_string(),
+            dt: 10.0,
+            output_interval: None,
+            stream_interval: None,
+            epoch: None,
+            tle: None,
+            tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
+            tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+        };
+        let params = SimParams::from_sim_args(&args);
+        let state = params.initial_state();
+
+        let r = state.position.magnitude();
+        let v = state.velocity.magnitude();
+        let altitude = r - 6378.137;
+
+        // ISS altitude ~400 km
+        assert!(
+            (altitude - 400.0).abs() < 30.0,
+            "ISS altitude from state: {altitude:.1} km"
+        );
+        // ISS velocity ~7.66 km/s
+        assert!(
+            (v - 7.66).abs() < 0.2,
+            "ISS velocity: {v:.3} km/s"
+        );
+    }
+
+    #[test]
+    fn sim_params_circular_mode_still_works() {
+        let args = SimArgs {
+            altitude: 400.0,
+            body: "earth".to_string(),
+            dt: 10.0,
+            output_interval: None,
+            stream_interval: None,
+            epoch: None,
+            tle: None,
+            tle_line1: None,
+            tle_line2: None,
+        };
+        let params = SimParams::from_sim_args(&args);
+
+        assert!(matches!(params.orbit_spec, OrbitSpec::Circular { .. }));
+        assert!((params.altitude() - 400.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn sim_params_tle_epoch_overridable() {
+        let args = SimArgs {
+            altitude: 400.0,
+            body: "earth".to_string(),
+            dt: 10.0,
+            output_interval: None,
+            stream_interval: None,
+            epoch: Some("2025-01-01T00:00:00Z".to_string()),
+            tle: None,
+            tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
+            tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+        };
+        let params = SimParams::from_sim_args(&args);
+
+        // Epoch should be overridden to 2025-01-01
+        let epoch = params.epoch.unwrap();
+        let dt = epoch.to_datetime();
+        assert_eq!(dt.year, 2025);
+        assert_eq!(dt.month, 1);
+        assert_eq!(dt.day, 1);
     }
 }

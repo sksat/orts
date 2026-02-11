@@ -202,6 +202,23 @@ impl Epoch {
         DateTime { year, month, day, hour, min, sec }
     }
 
+    /// Create an epoch from a TLE epoch (2-digit year + fractional day of year).
+    ///
+    /// 2-digit year convention (NORAD): 57-99 → 1957-1999, 00-56 → 2000-2056.
+    pub fn from_tle_epoch(year_2digit: u32, day_of_year: f64) -> Self {
+        let year = if year_2digit >= 57 {
+            1900 + year_2digit as i32
+        } else {
+            2000 + year_2digit as i32
+        };
+        // JD of January 0.0 of that year = JD of Dec 31 of previous year at 0h
+        let jan1 = Self::from_gregorian(year, 1, 1, 0, 0, 0.0);
+        // day_of_year: 1.0 = Jan 1 00:00, 1.5 = Jan 1 12:00, etc.
+        Epoch {
+            jd: jan1.jd + (day_of_year - 1.0),
+        }
+    }
+
     /// Greenwich Mean Sidereal Time (GMST) in radians.
     ///
     /// Uses the Earth Rotation Angle (ERA) formula from IERS 2003.
@@ -463,6 +480,71 @@ mod tests {
                 "GMST at +{days} days: {gmst} not in [0, 2π)"
             );
         }
+    }
+
+    // --- TLE epoch ---
+
+    #[test]
+    fn tle_epoch_iss_2024() {
+        // ISS TLE epoch: 24079.50000000 → 2024 day 79.5 → 2024-03-19 12:00:00 UTC
+        let epoch = Epoch::from_tle_epoch(24, 79.5);
+        let dt = epoch.to_datetime();
+        assert_eq!(dt.year, 2024);
+        assert_eq!(dt.month, 3);
+        assert_eq!(dt.day, 19);
+        assert_eq!(dt.hour, 12);
+    }
+
+    #[test]
+    fn tle_epoch_year_2000() {
+        // Year 00 → 2000, day 1.0 → 2000-01-01 00:00:00
+        let epoch = Epoch::from_tle_epoch(0, 1.0);
+        let dt = epoch.to_datetime();
+        assert_eq!(dt.year, 2000);
+        assert_eq!(dt.month, 1);
+        assert_eq!(dt.day, 1);
+        assert_eq!(dt.hour, 0);
+    }
+
+    #[test]
+    fn tle_epoch_year_1999() {
+        // Year 99 → 1999, day 365.0 → 1999-12-31 00:00:00
+        let epoch = Epoch::from_tle_epoch(99, 365.0);
+        let dt = epoch.to_datetime();
+        assert_eq!(dt.year, 1999);
+        assert_eq!(dt.month, 12);
+        assert_eq!(dt.day, 31);
+    }
+
+    #[test]
+    fn tle_epoch_year_57() {
+        // Year 57 → 1957 (Sputnik era)
+        let epoch = Epoch::from_tle_epoch(57, 1.0);
+        let dt = epoch.to_datetime();
+        assert_eq!(dt.year, 1957);
+        assert_eq!(dt.month, 1);
+        assert_eq!(dt.day, 1);
+    }
+
+    #[test]
+    fn tle_epoch_year_56() {
+        // Year 56 → 2056
+        let epoch = Epoch::from_tle_epoch(56, 1.0);
+        let dt = epoch.to_datetime();
+        assert_eq!(dt.year, 2056);
+    }
+
+    #[test]
+    fn tle_epoch_matches_iso8601() {
+        // TLE epoch 24001.50000000 → 2024-01-01 12:00:00 UTC
+        let tle_epoch = Epoch::from_tle_epoch(24, 1.5);
+        let iso_epoch = Epoch::from_iso8601("2024-01-01T12:00:00Z").unwrap();
+        assert!(
+            (tle_epoch.jd() - iso_epoch.jd()).abs() < 1e-6,
+            "TLE epoch {} vs ISO epoch {}",
+            tle_epoch.jd(),
+            iso_epoch.jd()
+        );
     }
 
     #[test]

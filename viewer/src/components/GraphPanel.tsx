@@ -54,6 +54,34 @@ export function GraphPanel({
         : null,
     [chartData]
   );
+  const smaData = useMemo(
+    () =>
+      chartData
+        ? ([chartData.t, chartData.a] as [Float64Array, Float64Array])
+        : null,
+    [chartData]
+  );
+  const eccData = useMemo(
+    () =>
+      chartData
+        ? ([chartData.t, chartData.e] as [Float64Array, Float64Array])
+        : null,
+    [chartData]
+  );
+  const incData = useMemo(
+    () =>
+      chartData
+        ? ([chartData.t, chartData.inc_deg] as [Float64Array, Float64Array])
+        : null,
+    [chartData]
+  );
+  const raanData = useMemo(
+    () =>
+      chartData
+        ? ([chartData.t, chartData.raan_deg] as [Float64Array, Float64Array])
+        : null,
+    [chartData]
+  );
 
   return (
     <div className={`graph-panel ${collapsed ? "collapsed" : ""}`}>
@@ -103,6 +131,34 @@ export function GraphPanel({
             yLabel="km/s"
             data={velocityData}
             color="#f4f"
+            onZoom={onZoom}
+          />
+          <TimeSeriesChart
+            title="Semi-major Axis"
+            yLabel="km"
+            data={smaData}
+            color="#4ff"
+            onZoom={onZoom}
+          />
+          <TimeSeriesChart
+            title="Eccentricity"
+            yLabel="-"
+            data={eccData}
+            color="#ff4"
+            onZoom={onZoom}
+          />
+          <TimeSeriesChart
+            title="Inclination"
+            yLabel="deg"
+            data={incData}
+            color="#f48"
+            onZoom={onZoom}
+          />
+          <TimeSeriesChart
+            title="RAAN"
+            yLabel="deg"
+            data={raanData}
+            color="#84f"
             onZoom={onZoom}
           />
         </div>

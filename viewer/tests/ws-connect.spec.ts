@@ -56,7 +56,7 @@ test("realtime mode auto-connects and streams orbit data", async ({ page }) => {
   console.log("HTML after streaming:", html);
   console.log("Console logs:", consoleLogs);
 
-  await page.screenshot({ path: "/tmp/claude-1000/-home-sksat-prog-orts/d2b40273-c290-43a8-8982-658581609b13/scratchpad/viewer-connected.png" });
+  await page.screenshot({ path: "/tmp/viewer-connected.png" });
 
   // Check if the page crashed (UI overlay gone)
   const uiOverlay = page.locator(".ui-overlay");
@@ -64,6 +64,108 @@ test("realtime mode auto-connects and streams orbit data", async ({ page }) => {
   console.log("UI overlay elements:", overlayCount);
 
   expect(overlayCount, "UI overlay should still exist (React did not crash)").toBe(1);
+});
+
+test("charts render with data after streaming starts", async ({ page }) => {
+  const consoleLogs: string[] = [];
+  page.on("console", (msg) => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
+
+  await page.goto(VIEWER_URL);
+
+  // Wait for WebSocket connection
+  const statusText = page.locator(".ws-status-text");
+  await expect(statusText).toHaveText("Connected", { timeout: 10000 });
+
+  // Wait for data to stream and charts to render
+  await page.waitForTimeout(5000);
+
+  // All chart containers should have a canvas element (uPlot renders to canvas)
+  const charts = page.locator('[data-testid="time-series-chart"]');
+  const chartCount = await charts.count();
+  expect(chartCount).toBeGreaterThanOrEqual(4);
+
+  // Each chart should contain a uPlot canvas (indicates data was rendered)
+  for (let i = 0; i < chartCount; i++) {
+    const canvas = charts.nth(i).locator("canvas");
+    await expect(canvas).toBeVisible({ timeout: 5000 });
+  }
+
+  // Verify uPlot instances actually have data points (not just empty canvases).
+  // uPlot attaches itself to the container's first child div.u-wrap.
+  // We can check for non-empty canvas pixel data or the uPlot instance's data length.
+  const chartDataLengths = await page.evaluate(() => {
+    const containers = document.querySelectorAll('[data-testid="time-series-chart"]');
+    return Array.from(containers).map((container) => {
+      // uPlot sets `u-wrap` as direct child, with canvas inside
+      const canvas = container.querySelector("canvas") as HTMLCanvasElement | null;
+      if (!canvas) return { hasCanvas: false, width: 0, height: 0, hasPixels: false };
+      // Check if canvas has been drawn to by sampling a few pixels
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return { hasCanvas: true, width: canvas.width, height: canvas.height, hasPixels: false };
+      // Sample the center area of the canvas for non-transparent pixels
+      const w = canvas.width;
+      const h = canvas.height;
+      const imageData = ctx.getImageData(0, 0, w, h);
+      let nonTransparentPixels = 0;
+      for (let i = 3; i < imageData.data.length; i += 4) {
+        if (imageData.data[i] > 0) nonTransparentPixels++;
+      }
+      return { hasCanvas: true, width: w, height: h, hasPixels: nonTransparentPixels > 100 };
+    });
+  });
+
+  console.log("Chart data:", chartDataLengths);
+
+  // At least the first 4 charts (altitude, energy, angular_momentum, velocity) should have drawn pixels
+  for (let i = 0; i < Math.min(4, chartDataLengths.length); i++) {
+    expect(chartDataLengths[i].hasCanvas, `chart ${i} should have canvas`).toBe(true);
+    expect(chartDataLengths[i].hasPixels, `chart ${i} should have rendered pixel data`).toBe(true);
+  }
+
+  // Verify no critical errors occurred (e.g., DuckDB insert failures from undefined values)
+  const criticalErrors = consoleLogs.filter((l) =>
+    l.includes("undefined") && (l.includes("INSERT") || l.includes("DuckDB"))
+  );
+  expect(criticalErrors, `Critical errors found: ${criticalErrors.join(", ")}`).toHaveLength(0);
+});
+
+test("state messages include Keplerian elements", async ({ page }) => {
+  await page.goto(VIEWER_URL);
+
+  const keplerian = await page.evaluate(async (url) => {
+    return new Promise<Record<string, boolean>>((resolve) => {
+      const ws = new WebSocket(url);
+      ws.addEventListener("message", (e) => {
+        try {
+          const msg = JSON.parse(e.data as string);
+          if (msg.type === "state") {
+            ws.close();
+            resolve({
+              has_semi_major_axis: typeof msg.semi_major_axis === "number",
+              has_eccentricity: typeof msg.eccentricity === "number",
+              has_inclination: typeof msg.inclination === "number",
+              has_raan: typeof msg.raan === "number",
+              has_argument_of_periapsis: typeof msg.argument_of_periapsis === "number",
+              has_true_anomaly: typeof msg.true_anomaly === "number",
+            });
+          }
+        } catch {
+          // ignore
+        }
+      });
+      setTimeout(() => {
+        ws.close();
+        resolve({});
+      }, 10000);
+    });
+  }, WS_URL);
+
+  expect(keplerian.has_semi_major_axis, "state must include semi_major_axis").toBe(true);
+  expect(keplerian.has_eccentricity, "state must include eccentricity").toBe(true);
+  expect(keplerian.has_inclination, "state must include inclination").toBe(true);
+  expect(keplerian.has_raan, "state must include raan").toBe(true);
+  expect(keplerian.has_argument_of_periapsis, "state must include argument_of_periapsis").toBe(true);
+  expect(keplerian.has_true_anomaly, "state must include true_anomaly").toBe(true);
 });
 
 test("history message arrives after info before state", async ({ page }) => {

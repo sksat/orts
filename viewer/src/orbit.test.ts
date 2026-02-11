@@ -15,6 +15,12 @@ describe("parseOrbitCSV", () => {
       vx: 0.0,
       vy: 7.669,
       vz: 0.0,
+      a: 0,
+      e: 0,
+      inc: 0,
+      raan: 0,
+      omega: 0,
+      nu: 0,
     });
     expect(points[1].t).toBe(10.0);
   });

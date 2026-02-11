@@ -1,6 +1,70 @@
 use nalgebra::Vector3;
 use std::f64::consts::PI;
 
+/// Solve Kepler's equation `M = E - e·sin(E)` for eccentric anomaly E
+/// using Newton-Raphson iteration.
+///
+/// # Arguments
+/// * `mean_anomaly` - Mean anomaly M [rad]
+/// * `eccentricity` - Orbital eccentricity (0 ≤ e < 1)
+///
+/// # Returns
+/// Eccentric anomaly E [rad]
+pub fn solve_kepler_equation(mean_anomaly: f64, eccentricity: f64) -> f64 {
+    let m = mean_anomaly % (2.0 * PI);
+    let mut e_anom = m; // initial guess
+    for _ in 0..50 {
+        let f = e_anom - eccentricity * e_anom.sin() - m;
+        let f_prime = 1.0 - eccentricity * e_anom.cos();
+        let delta = f / f_prime;
+        e_anom -= delta;
+        if delta.abs() < 1e-14 {
+            break;
+        }
+    }
+    e_anom
+}
+
+/// Convert eccentric anomaly to true anomaly.
+///
+/// Uses the relation: `tan(ν/2) = √((1+e)/(1-e)) · tan(E/2)`
+pub fn eccentric_to_true_anomaly(eccentric_anomaly: f64, eccentricity: f64) -> f64 {
+    let half_e = eccentric_anomaly / 2.0;
+    let factor = ((1.0 + eccentricity) / (1.0 - eccentricity)).sqrt();
+    2.0 * (factor * half_e.tan()).atan()
+}
+
+/// Convert mean anomaly to true anomaly (convenience wrapper).
+///
+/// Solves Kepler's equation for E, then converts E → ν.
+pub fn mean_to_true_anomaly(mean_anomaly: f64, eccentricity: f64) -> f64 {
+    let e_anom = solve_kepler_equation(mean_anomaly, eccentricity);
+    let nu = eccentric_to_true_anomaly(e_anom, eccentricity);
+    // Normalize to [0, 2π)
+    let nu = nu % (2.0 * PI);
+    if nu < 0.0 { nu + 2.0 * PI } else { nu }
+}
+
+/// Convert true anomaly to eccentric anomaly.
+///
+/// Uses the relation: `tan(E/2) = √((1-e)/(1+e)) · tan(ν/2)`
+pub fn true_to_eccentric_anomaly(true_anomaly: f64, eccentricity: f64) -> f64 {
+    let half_nu = true_anomaly / 2.0;
+    let factor = ((1.0 - eccentricity) / (1.0 + eccentricity)).sqrt();
+    2.0 * (factor * half_nu.tan()).atan()
+}
+
+/// Convert eccentric anomaly to mean anomaly using Kepler's equation: `M = E - e·sin(E)`
+pub fn eccentric_to_mean_anomaly(eccentric_anomaly: f64, eccentricity: f64) -> f64 {
+    eccentric_anomaly - eccentricity * eccentric_anomaly.sin()
+}
+
+/// Convert true anomaly to mean anomaly (convenience wrapper).
+pub fn true_to_mean_anomaly(true_anomaly: f64, eccentricity: f64) -> f64 {
+    let e_anom = true_to_eccentric_anomaly(true_anomaly, eccentricity);
+    eccentric_to_mean_anomaly(e_anom, eccentricity)
+}
+
 /// Classical Keplerian orbital elements.
 #[derive(Debug, Clone, PartialEq)]
 pub struct KeplerianElements {
@@ -169,6 +233,28 @@ impl KeplerianElements {
         );
 
         (pos, vel)
+    }
+
+    /// Create Keplerian elements from mean anomaly (converting to true anomaly internally).
+    ///
+    /// This is useful when working with TLE data which provides mean anomaly.
+    pub fn from_mean_anomaly(
+        semi_major_axis: f64,
+        eccentricity: f64,
+        inclination: f64,
+        raan: f64,
+        argument_of_periapsis: f64,
+        mean_anomaly: f64,
+    ) -> Self {
+        let true_anomaly = mean_to_true_anomaly(mean_anomaly, eccentricity);
+        Self {
+            semi_major_axis,
+            eccentricity,
+            inclination,
+            raan,
+            argument_of_periapsis,
+            true_anomaly,
+        }
     }
 
     /// Orbital period [s]: T = 2π√(a³/μ)
@@ -357,5 +443,149 @@ mod tests {
         );
         // Energy should be negative for bound orbit
         assert!(energy < 0.0, "bound orbit energy should be negative");
+    }
+
+    // --- Kepler equation solver tests ---
+
+    #[test]
+    fn test_kepler_equation_circular() {
+        // For e=0, M = E = ν
+        let m = 1.0_f64; // 1 radian
+        let e_anom = solve_kepler_equation(m, 0.0);
+        assert!(
+            (e_anom - m).abs() < 1e-14,
+            "For e=0, E should equal M: E={e_anom}, M={m}"
+        );
+    }
+
+    #[test]
+    fn test_kepler_equation_known_values() {
+        // For M=π, any eccentricity: E=π (by symmetry of Kepler's equation)
+        let e_anom = solve_kepler_equation(PI, 0.5);
+        assert!(
+            (e_anom - PI).abs() < 1e-12,
+            "For M=π, E should be π: E={e_anom}"
+        );
+    }
+
+    #[test]
+    fn test_kepler_equation_roundtrip() {
+        // Verify: given E, compute M = E - e·sin(E), then solve back to get E
+        let eccentricities = [0.0, 0.1, 0.5, 0.9];
+        let eccentric_anomalies = [0.0, 0.5, 1.0, PI / 2.0, PI, 2.0 * PI - 0.5];
+        for &e in &eccentricities {
+            for &e_orig in &eccentric_anomalies {
+                let m = eccentric_to_mean_anomaly(e_orig, e);
+                let e_solved = solve_kepler_equation(m, e);
+                let m_check = eccentric_to_mean_anomaly(e_solved, e);
+                assert!(
+                    (m - m_check).abs() < 1e-12,
+                    "Roundtrip failed: e={e}, E_orig={e_orig}, M={m}, E_solved={e_solved}, M_check={m_check}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_kepler_equation_high_eccentricity() {
+        // High eccentricity convergence test (e=0.99)
+        let e = 0.99;
+        let m = 1.0;
+        let e_anom = solve_kepler_equation(m, e);
+        let m_check = e_anom - e * e_anom.sin();
+        assert!(
+            (m - m_check).abs() < 1e-12,
+            "High-e convergence: M={m}, E={e_anom}, M_check={m_check}"
+        );
+    }
+
+    #[test]
+    fn test_eccentric_to_true_anomaly_circular() {
+        // For e=0, E = ν
+        let e_anom = 1.5;
+        let nu = eccentric_to_true_anomaly(e_anom, 0.0);
+        assert!(
+            (nu - e_anom).abs() < 1e-14,
+            "For e=0, ν should equal E: ν={nu}, E={e_anom}"
+        );
+    }
+
+    #[test]
+    fn test_eccentric_to_true_anomaly_at_periapsis() {
+        // At periapsis: E=0 → ν=0
+        let nu = eccentric_to_true_anomaly(0.0, 0.5);
+        assert!(
+            nu.abs() < 1e-14,
+            "At periapsis, ν should be 0: ν={nu}"
+        );
+    }
+
+    #[test]
+    fn test_eccentric_to_true_anomaly_at_apoapsis() {
+        // At apoapsis: E=π → ν=π
+        let nu = eccentric_to_true_anomaly(PI, 0.5);
+        assert!(
+            (nu - PI).abs() < 1e-12,
+            "At apoapsis, ν should be π: ν={nu}"
+        );
+    }
+
+    #[test]
+    fn test_mean_to_true_anomaly_roundtrip() {
+        // ν → M → ν roundtrip for various eccentricities
+        let eccentricities = [0.0, 0.1, 0.3, 0.7];
+        let true_anomalies = [0.0, 0.5, 1.0, PI / 2.0, PI, 3.0 * PI / 2.0, 5.5];
+        for &e in &eccentricities {
+            for &nu_orig in &true_anomalies {
+                let m = true_to_mean_anomaly(nu_orig, e);
+                let nu_solved = mean_to_true_anomaly(m, e);
+                // Compare via state vector to avoid angle wrapping issues
+                assert!(
+                    (nu_orig.cos() - nu_solved.cos()).abs() < 1e-10
+                        && (nu_orig.sin() - nu_solved.sin()).abs() < 1e-10,
+                    "Roundtrip failed: e={e}, ν_orig={nu_orig}, M={m}, ν_solved={nu_solved}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_from_mean_anomaly_circular() {
+        // For circular orbit, mean anomaly = true anomaly
+        let m = 1.0;
+        let elements = KeplerianElements::from_mean_anomaly(7000.0, 0.0, 0.0, 0.0, 0.0, m);
+        assert!(
+            (elements.true_anomaly - m).abs() < 1e-12,
+            "For e=0, true_anomaly should equal mean_anomaly: ν={}, M={m}",
+            elements.true_anomaly
+        );
+    }
+
+    #[test]
+    fn test_from_mean_anomaly_elliptical() {
+        // Verify that from_mean_anomaly produces a state vector
+        // whose energy matches the expected value for the given semi-major axis
+        let a = 10000.0;
+        let e = 0.2;
+        let m = 1.5; // radians
+        let elements = KeplerianElements::from_mean_anomaly(
+            a,
+            e,
+            30.0_f64.to_radians(),
+            45.0_f64.to_radians(),
+            60.0_f64.to_radians(),
+            m,
+        );
+        let (pos, vel) = elements.to_state_vector(MU_EARTH);
+
+        // Check energy: ε = v²/2 - μ/r = -μ/(2a)
+        let r = pos.magnitude();
+        let v = vel.magnitude();
+        let energy = v * v / 2.0 - MU_EARTH / r;
+        let expected_energy = -MU_EARTH / (2.0 * a);
+        assert!(
+            (energy - expected_energy).abs() / expected_energy.abs() < 1e-10,
+            "Energy mismatch: got={energy}, expected={expected_energy}"
+        );
     }
 }

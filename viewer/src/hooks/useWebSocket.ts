@@ -29,6 +29,12 @@ interface StateMessage {
   t: number;
   position: [number, number, number];
   velocity: [number, number, number];
+  semi_major_axis: number;
+  eccentricity: number;
+  inclination: number;
+  raan: number;
+  argument_of_periapsis: number;
+  true_anomaly: number;
 }
 
 /** Raw info message received over the WebSocket. */
@@ -45,14 +51,26 @@ interface InfoMessage {
   epoch_jd?: number | null;
 }
 
+interface HistoryStateMsg {
+  t: number;
+  position: [number, number, number];
+  velocity: [number, number, number];
+  semi_major_axis: number;
+  eccentricity: number;
+  inclination: number;
+  raan: number;
+  argument_of_periapsis: number;
+  true_anomaly: number;
+}
+
 interface HistoryMessage {
   type: "history";
-  states: Array<{ t: number; position: [number, number, number]; velocity: [number, number, number] }>;
+  states: HistoryStateMsg[];
 }
 
 interface HistoryDetailMessage {
   type: "history_detail";
-  states: Array<{ t: number; position: [number, number, number]; velocity: [number, number, number] }>;
+  states: HistoryStateMsg[];
 }
 
 interface HistoryDetailCompleteMessage {
@@ -63,7 +81,7 @@ interface QueryRangeResponseMessage {
   type: "query_range_response";
   t_min: number;
   t_max: number;
-  states: Array<{ t: number; position: [number, number, number]; velocity: [number, number, number] }>;
+  states: HistoryStateMsg[];
 }
 
 type ServerMessage = StateMessage | InfoMessage | HistoryMessage | HistoryDetailMessage | HistoryDetailCompleteMessage | QueryRangeResponseMessage;
@@ -175,6 +193,12 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
             vx: stateMsg.velocity[0],
             vy: stateMsg.velocity[1],
             vz: stateMsg.velocity[2],
+            a: stateMsg.semi_major_axis,
+            e: stateMsg.eccentricity,
+            inc: stateMsg.inclination,
+            raan: stateMsg.raan,
+            omega: stateMsg.argument_of_periapsis,
+            nu: stateMsg.true_anomaly,
           };
           onStateRef.current(point);
         } else if (msg.type === "info") {
@@ -200,6 +224,12 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
             vx: s.velocity[0],
             vy: s.velocity[1],
             vz: s.velocity[2],
+            a: s.semi_major_axis,
+            e: s.eccentricity,
+            inc: s.inclination,
+            raan: s.raan,
+            omega: s.argument_of_periapsis,
+            nu: s.true_anomaly,
           }));
           if (msg.type === "history") {
             onHistoryRef.current(points);
@@ -218,6 +248,12 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
             vx: s.velocity[0],
             vy: s.velocity[1],
             vz: s.velocity[2],
+            a: s.semi_major_axis,
+            e: s.eccentricity,
+            inc: s.inclination,
+            raan: s.raan,
+            omega: s.argument_of_periapsis,
+            nu: s.true_anomaly,
           }));
           onQueryRangeResponseRef.current?.({
             tMin: qrMsg.t_min,

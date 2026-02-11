@@ -23,6 +23,12 @@ export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoin
     vx: a.vx * inv + b.vx * frac,
     vy: a.vy * inv + b.vy * frac,
     vz: a.vz * inv + b.vz * frac,
+    a: a.a * inv + b.a * frac,
+    e: a.e * inv + b.e * frac,
+    inc: a.inc * inv + b.inc * frac,
+    raan: a.raan * inv + b.raan * frac,
+    omega: a.omega * inv + b.omega * frac,
+    nu: a.nu * inv + b.nu * frac,
   };
 }
 

@@ -171,6 +171,27 @@ describe("buildDerivedQuery", () => {
     const sql = buildDerivedQuery(testSchema, undefined, 2000);
     expect(sql).toContain("total <= 2000");
   });
+
+  it("includes pass-through derived columns that reference base columns", () => {
+    // When a base column (like 'value') should appear in chart output,
+    // a pass-through derived entry { name: "value", sql: "value" } must exist.
+    const schemaWithPassthrough: TableSchema<TestPoint> = {
+      tableName: "passthrough_data",
+      columns: [
+        { name: "t", type: "DOUBLE" },
+        { name: "value", type: "DOUBLE" },
+        { name: "extra", type: "DOUBLE" },
+      ],
+      derived: [
+        { name: "doubled", sql: "value * 2" },
+        { name: "raw_value", sql: "value" }, // pass-through
+      ],
+      toRow: (p) => [p.t, p.value, p.extra],
+    };
+    const sql = buildDerivedQuery(schemaWithPassthrough);
+    expect(sql).toContain("value AS raw_value");
+    expect(sql).toContain("value * 2 AS doubled");
+  });
 });
 
 // ---------------------------------------------------------------------------
