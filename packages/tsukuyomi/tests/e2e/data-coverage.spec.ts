@@ -18,7 +18,7 @@ import { test, expect } from "@playwright/test";
 
 const MIXED_DENSITY_URL = "http://localhost:5175";
 
-test.skip("mixed-density: sparse region has proportional chart coverage", async ({
+test("mixed-density: sparse region has proportional chart coverage", async ({
   page,
 }) => {
   test.setTimeout(50000);

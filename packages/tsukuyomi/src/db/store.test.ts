@@ -122,10 +122,14 @@ describe("buildDerivedQuery", () => {
     expect(sql).toContain("ORDER BY t");
   });
 
-  it("uses row-count based (NTILE) downsampling when maxPoints is provided", () => {
+  it("uses time-bucket downsampling when maxPoints is provided", () => {
     const sql = buildDerivedQuery(testSchema, undefined, 2000);
-    // Should use NTILE for even row-count distribution, not time-bucket
-    expect(sql).toContain("NTILE(2000)");
+    // Should use equal-duration time buckets for temporal coverage
+    expect(sql).toContain("bounds AS");
+    expect(sql).toContain("MIN(t) AS t_lo");
+    expect(sql).toContain("MAX(t) AS t_hi");
+    expect(sql).toContain("FLOOR");
+    expect(sql).toContain("2000.0");
     expect(sql).toContain("ROW_NUMBER");
     expect(sql).toContain("PARTITION BY bucket");
     expect(sql).toContain("ORDER BY t");
@@ -134,14 +138,14 @@ describe("buildDerivedQuery", () => {
   it("picks first point per bucket (rn = 1)", () => {
     const sql = buildDerivedQuery(testSchema, undefined, 100);
     expect(sql).toContain("rn = 1");
-    expect(sql).toContain("NTILE(100)");
+    expect(sql).toContain("100.0");
     expect(sql).toContain("PARTITION BY bucket");
   });
 
   it("includes both tMin filter and maxPoints", () => {
     const sql = buildDerivedQuery(testSchema, 500, 2000);
     expect(sql).toContain("WHERE t >= 500");
-    expect(sql).toContain("NTILE(2000)");
+    expect(sql).toContain("2000.0");
   });
 
   it("handles case with no derived columns (just SELECT t)", () => {
@@ -159,17 +163,25 @@ describe("buildDerivedQuery", () => {
     expect(sql).not.toContain("bucket");
   });
 
-  it("uses CTE with filtered, bucketed, and ranked for downsampled query", () => {
+  it("uses CTE with filtered, bounds, bucketed, and ranked for downsampled query", () => {
     const sql = buildDerivedQuery(testSchema, 100, 500);
     expect(sql).toContain("WITH filtered AS");
+    expect(sql).toContain("bounds AS");
     expect(sql).toContain("bucketed AS");
     expect(sql).toContain("ranked AS");
-    expect(sql).toContain("NTILE(500)");
+    expect(sql).toContain("500.0");
   });
 
   it("bypasses downsampling when total <= maxPoints", () => {
     const sql = buildDerivedQuery(testSchema, undefined, 2000);
     expect(sql).toContain("total <= 2000");
+  });
+
+  it("handles t_hi == t_lo edge case with CASE WHEN and clamps with LEAST/GREATEST", () => {
+    const sql = buildDerivedQuery(testSchema, undefined, 100);
+    expect(sql).toContain("CASE WHEN b.t_hi = b.t_lo THEN 0");
+    expect(sql).toContain("LEAST(");
+    expect(sql).toContain("GREATEST(");
   });
 
   it("includes pass-through derived columns that reference base columns", () => {
