@@ -14,12 +14,14 @@ export interface BodyRenderInfo {
   isSelfLuminous: boolean;
 }
 
+const base = import.meta.env.BASE_URL;
+
 const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   earth: {
     id: "earth",
     name: "Earth",
-    texturePath: "/textures/earth.jpg",
-    nightTexturePath: "/textures/earth_night.jpg",
+    texturePath: `${base}textures/earth.jpg`,
+    nightTexturePath: `${base}textures/earth_night.jpg`,
     fallbackColor: 0x2255aa,
     emissiveColor: 0x112244,
     isSelfLuminous: false,
@@ -27,7 +29,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   moon: {
     id: "moon",
     name: "Moon",
-    texturePath: "/textures/moon.jpg",
+    texturePath: `${base}textures/moon.jpg`,
     nightTexturePath: null,
     fallbackColor: 0x888888,
     emissiveColor: 0x222222,
@@ -36,7 +38,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   sun: {
     id: "sun",
     name: "Sun",
-    texturePath: "/textures/sun.jpg",
+    texturePath: `${base}textures/sun.jpg`,
     nightTexturePath: null,
     fallbackColor: 0xffcc00,
     emissiveColor: 0xffaa00,
@@ -45,7 +47,7 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   mars: {
     id: "mars",
     name: "Mars",
-    texturePath: "/textures/mars.jpg",
+    texturePath: `${base}textures/mars.jpg`,
     nightTexturePath: null,
     fallbackColor: 0xcc6633,
     emissiveColor: 0x331100,
