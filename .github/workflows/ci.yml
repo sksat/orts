@@ -22,16 +22,10 @@ jobs:
           toolchain: stable
           components: clippy
 
-      - name: Cache Cargo registry and target
-        uses: actions/cache@v5.0.3
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2.8.2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: rust-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            rust-${{ runner.os }}-
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
@@ -51,28 +45,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6.2.0
-        with:
-          node-version: "22"
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4.2.0
         with:
           version: 10
 
-      - name: Get pnpm store directory
-        id: pnpm-cache
-        shell: bash
-        run: echo "store-path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5.0.3
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.2.0
         with:
-          path: ${{ steps.pnpm-cache.outputs.store-path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
+          node-version: "22"
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -94,28 +76,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6.2.0
-        with:
-          node-version: "22"
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4.2.0
         with:
           version: 10
 
-      - name: Get pnpm store directory
-        id: pnpm-cache
-        shell: bash
-        run: echo "store-path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5.0.3
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.2.0
         with:
-          path: ${{ steps.pnpm-cache.outputs.store-path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
+          node-version: "22"
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -123,9 +93,22 @@ jobs:
       - name: Build tsukuyomi
         run: pnpm --filter @orts/tsukuyomi build
 
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v5.0.3
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: packages/tsukuyomi
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright OS dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: packages/tsukuyomi
+        run: npx playwright install-deps chromium
 
       - name: Run Playwright E2E
         working-directory: packages/tsukuyomi
@@ -145,28 +128,16 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v6.2.0
-        with:
-          node-version: "22"
-
       - name: Setup pnpm
         uses: pnpm/action-setup@v4.2.0
         with:
           version: 10
 
-      - name: Get pnpm store directory
-        id: pnpm-cache
-        shell: bash
-        run: echo "store-path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5.0.3
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.2.0
         with:
-          path: ${{ steps.pnpm-cache.outputs.store-path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-${{ runner.os }}-
+          node-version: "22"
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -174,9 +145,22 @@ jobs:
       - name: Build tsukuyomi
         run: pnpm --filter @orts/tsukuyomi build
 
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v5.0.3
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: viewer
         run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright OS dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: viewer
+        run: npx playwright install-deps chromium
 
       - name: Download CLI binary
         uses: actions/download-artifact@v7.0.0
