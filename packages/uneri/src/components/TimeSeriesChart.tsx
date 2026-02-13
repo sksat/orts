@@ -38,12 +38,46 @@ export function safeYRange(
   return uPlot.rangeNum(min, max, 0.1, false);
 }
 
+/** Configuration for a single series in a multi-series chart. */
+export interface SeriesConfig {
+  label: string;
+  color: string;
+}
+
+/** Multi-series data: shared x-axis + multiple y arrays. */
+export interface MultiSeriesData {
+  /** Shared time axis. */
+  t: Float64Array;
+  /** One Float64Array per series (NaN for gaps). */
+  values: Float64Array[];
+  /** Config for each series (same order as values[]). */
+  series: SeriesConfig[];
+}
+
+/** Build uPlot series config array from SeriesConfig[]. */
+export function buildMultiSeriesConfig(
+  configs: SeriesConfig[],
+): uPlot.Series[] {
+  const result: uPlot.Series[] = [{}]; // x-axis placeholder
+  for (const cfg of configs) {
+    result.push({
+      label: cfg.label,
+      stroke: cfg.color,
+      width: 1.5,
+    });
+  }
+  return result;
+}
+
 interface TimeSeriesChartProps {
   title: string;
   yLabel: string;
-  /** uPlot-format data: [xValues, yValues] */
-  data: [Float64Array, Float64Array] | null;
+  /** Single-series data: [xValues, yValues]. */
+  data?: [Float64Array, Float64Array] | null;
+  /** Multi-series data (takes precedence over `data`). */
+  multiData?: MultiSeriesData | null;
   height?: number;
+  /** Color for single-series mode. Ignored when multiData is used. */
   color?: string;
   /** Called when the user zooms into a time range via drag. */
   onZoom?: (tMin: number, tMax: number) => void;
@@ -53,6 +87,7 @@ export function TimeSeriesChart({
   title,
   yLabel,
   data,
+  multiData,
   height = 200,
   color = "#0f0",
   onZoom,
@@ -64,9 +99,37 @@ export function TimeSeriesChart({
   // Guard: suppress setScale callback during programmatic updates (setData / setSize).
   // Only user-initiated drag-zoom should trigger onZoom.
   const isProgrammaticRef = useRef(false);
+  // Track series count to detect when chart needs recreation.
+  const seriesCountRef = useRef(0);
 
-  /** Build uPlot options. Extracted so chart can be recreated on error recovery. */
-  function buildOpts(container: HTMLDivElement): uPlot.Options {
+  /** Resolve the effective data and series config. */
+  function resolveData(): {
+    plotData: uPlot.AlignedData;
+    seriesConfig: uPlot.Series[];
+  } | null {
+    if (multiData && multiData.series.length > 0 && multiData.t.length >= 2) {
+      return {
+        plotData: [multiData.t, ...multiData.values] as uPlot.AlignedData,
+        seriesConfig: buildMultiSeriesConfig(multiData.series),
+      };
+    }
+    if (data && data[0].length >= 2) {
+      return {
+        plotData: data,
+        seriesConfig: [
+          {},
+          { label: yLabel, stroke: color, width: 1.5 },
+        ],
+      };
+    }
+    return null;
+  }
+
+  /** Build uPlot options. */
+  function buildOpts(
+    container: HTMLDivElement,
+    seriesConfig: uPlot.Series[],
+  ): uPlot.Options {
     return {
       title,
       width: container.clientWidth,
@@ -87,14 +150,7 @@ export function TimeSeriesChart({
           grid: { stroke: "rgba(255,255,255,0.05)" },
         },
       ],
-      series: [
-        {},
-        {
-          label: yLabel,
-          stroke: color,
-          width: 1.5,
-        },
-      ],
+      series: seriesConfig,
       cursor: {
         show: true,
         drag: { x: true, y: false },
@@ -103,8 +159,6 @@ export function TimeSeriesChart({
       hooks: {
         setScale: [
           (u: uPlot, scaleKey: string) => {
-            // Skip scale changes triggered by programmatic setData calls —
-            // only fire onZoom for user-initiated drag-zoom interactions.
             if (isProgrammaticRef.current) return;
             if (scaleKey === "x") {
               const min = u.scales.x.min;
@@ -119,42 +173,75 @@ export function TimeSeriesChart({
     };
   }
 
+  /** Create or recreate the chart. */
+  function createChart(
+    container: HTMLDivElement,
+    plotData: uPlot.AlignedData,
+    seriesConfig: uPlot.Series[],
+  ): uPlot {
+    const chart = new uPlot(
+      buildOpts(container, seriesConfig),
+      plotData,
+      container,
+    );
+    seriesCountRef.current = seriesConfig.length;
+    return chart;
+  }
+
   // Create chart on mount
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const emptyData: uPlot.AlignedData = [[], []];
-    const chart = new uPlot(
-      buildOpts(containerRef.current),
-      data ?? emptyData,
-      containerRef.current,
-    );
-    chartRef.current = chart;
+    const resolved = resolveData();
+    const seriesConfig = resolved?.seriesConfig ?? [
+      {},
+      { label: yLabel, stroke: color, width: 1.5 },
+    ];
+    const plotData = resolved?.plotData ?? ([[], []] as uPlot.AlignedData);
+
+    chartRef.current = createChart(containerRef.current, plotData, seriesConfig);
 
     return () => {
-      chart.destroy();
+      chartRef.current?.destroy();
       chartRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update data (need at least 2 points for uPlot axis calculations)
+  // Update data
   useEffect(() => {
-    if (!chartRef.current || !data || data[0].length < 2) return;
+    if (!chartRef.current || !containerRef.current) return;
+
+    const resolved = resolveData();
+    if (!resolved) return;
+
+    const { plotData, seriesConfig } = resolved;
+
+    // If series count changed, recreate the chart (uPlot series are fixed at construction).
+    if (seriesConfig.length !== seriesCountRef.current) {
+      chartRef.current.destroy();
+      chartRef.current = createChart(
+        containerRef.current,
+        plotData,
+        seriesConfig,
+      );
+      return;
+    }
+
     isProgrammaticRef.current = true;
     try {
-      chartRef.current.setData(data);
+      chartRef.current.setData(plotData);
     } catch {
-      // uPlot's internal state is corrupted after a partial setData failure.
-      // Destroy the broken instance and create a fresh one with the current data.
-      const container = containerRef.current;
-      if (container) {
-        chartRef.current!.destroy();
-        chartRef.current = new uPlot(buildOpts(container), data, container);
-      }
+      chartRef.current!.destroy();
+      chartRef.current = createChart(
+        containerRef.current,
+        plotData,
+        seriesConfig,
+      );
     }
     isProgrammaticRef.current = false;
-  }, [data]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, multiData]);
 
   // Handle resize
   useEffect(() => {
@@ -168,16 +255,16 @@ export function TimeSeriesChart({
           try {
             chartRef.current.setSize({ width, height });
           } catch {
-            // setSize can also trigger axis recalculation; recover if it fails
             const container = containerRef.current;
             const currentData = chartRef.current!.data;
+            const resolved = resolveData();
+            const seriesConfig = resolved?.seriesConfig ?? [
+              {},
+              { label: yLabel, stroke: color, width: 1.5 },
+            ];
             if (container) {
               chartRef.current!.destroy();
-              chartRef.current = new uPlot(
-                buildOpts(container),
-                currentData,
-                container,
-              );
+              chartRef.current = createChart(container, currentData, seriesConfig);
             }
           }
           isProgrammaticRef.current = false;

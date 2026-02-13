@@ -19,11 +19,21 @@ import { TrailBuffer } from "./utils/TrailBuffer.js";
 import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";
 import { mergeQueryRangePoints } from "./utils/mergeQueryRange.js";
 import { jdToUTCString } from "./astro.js";
+import { useMultiSatelliteStore, type SatelliteConfig } from "./hooks/useMultiSatelliteStore.js";
 
 /** The two viewer modes. */
 type ViewerMode = "replay" | "realtime";
 
 const DEFAULT_WS_URL = "ws://localhost:9001";
+
+/** Chart color palette matching the 3D scene SATELLITE_COLORS. */
+const SATELLITE_CHART_COLORS = ["#00ff88", "#ff4488", "#44aaff", "#ffaa44", "#aa44ff"];
+
+/** Derived metric names for multi-satellite alignment. */
+const METRIC_NAMES = [
+  "altitude", "energy", "angular_momentum", "velocity",
+  "a", "e", "inc_deg", "raan_deg",
+];
 
 /** Helper: get or create a TrailBuffer in a Map. */
 function getOrCreateTrailBuffer(map: Map<string, TrailBuffer>, id: string): TrailBuffer {
@@ -63,9 +73,6 @@ export function App() {
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
   const [simInfo, setSimInfo] = useState<SimInfo | null>(null);
 
-  // --- Active satellite for charts ---
-  const [activeSatelliteId, setActiveSatelliteId] = useState<string | null>(null);
-
   // --- DuckDB + Charts ---
   const mu = mode === "realtime" ? simInfo?.mu : (csvMetadata?.mu ?? undefined);
   const bodyRadius = mode === "realtime" ? simInfo?.central_body_radius : (csvMetadata?.centralBodyRadius ?? undefined);
@@ -78,22 +85,31 @@ export function App() {
   const trailBuffersRef = useRef(new Map<string, TrailBuffer>());
   const ingestBuffersRef = useRef(new Map<string, IngestBuffer<OrbitPoint>>());
 
-  // --- Active satellite IngestBuffer ref (for useTimeSeriesStore) ---
-  const activeIngestBufferRef = useRef(new IngestBuffer<OrbitPoint>());
+  // --- Single-satellite IngestBuffer ref (for replay / single-sat mode) ---
+  const singleIngestBufferRef = useRef(new IngestBuffer<OrbitPoint>());
 
-  // Update activeIngestBufferRef when active satellite changes
-  useEffect(() => {
-    if (activeSatelliteId) {
-      activeIngestBufferRef.current = getOrCreateIngestBuffer(ingestBuffersRef.current, activeSatelliteId);
-    }
-  }, [activeSatelliteId]);
+  // --- Multi-satellite detection ---
+  const isMultiSatellite = mode === "realtime" && simInfo != null && simInfo.satellites.length > 1;
 
-  // Set default active satellite from simInfo
+  // Keep singleIngestBufferRef pointing to the first satellite's buffer for single-sat mode
   useEffect(() => {
-    if (simInfo?.satellites.length && !activeSatelliteId) {
-      setActiveSatelliteId(simInfo.satellites[0].id);
+    if (simInfo?.satellites.length === 1) {
+      singleIngestBufferRef.current = getOrCreateIngestBuffer(
+        ingestBuffersRef.current,
+        simInfo.satellites[0].id,
+      );
     }
-  }, [simInfo, activeSatelliteId]);
+  }, [simInfo]);
+
+  // --- Satellite configs for multi-store ---
+  const satelliteConfigs = useMemo((): SatelliteConfig[] => {
+    if (!simInfo) return [];
+    return simInfo.satellites.map((sat: SatelliteInfo, i: number) => ({
+      id: sat.id,
+      label: sat.name ?? sat.id,
+      color: SATELLITE_CHART_COLORS[i % SATELLITE_CHART_COLORS.length],
+    }));
+  }, [simInfo]);
 
   // --- Realtime playback (history scrubbing) ---
   const realtimePlayback = useRealtimePlayback(trailBuffersRef.current);
@@ -110,7 +126,6 @@ export function App() {
   }, []);
 
   const handleHistory = useCallback((points: OrbitPoint[]) => {
-    // Split by satellite and push to respective buffers
     for (const point of points) {
       const id = point.satelliteId ?? "default";
       getOrCreateIngestBuffer(ingestBuffersRef.current, id).push(point);
@@ -131,7 +146,6 @@ export function App() {
     const detailPoints = detailBufferRef.current;
     detailBufferRef.current = [];
 
-    // Collect streaming points from all trail buffers
     const streamingPoints: OrbitPoint[] = [];
     for (const buf of trailBuffersRef.current.values()) {
       const allPts = buf.getAll();
@@ -142,7 +156,6 @@ export function App() {
     const combined = [...detailPoints, ...streamingPoints];
     combined.sort((a, b) => a.t - b.t);
 
-    // Split by satellite and rebuild each buffer
     const bySatellite = new Map<string, OrbitPoint[]>();
     for (const p of combined) {
       const id = p.satelliteId ?? "default";
@@ -159,15 +172,14 @@ export function App() {
   }, []);
 
   const handleQueryRangeResponse = useCallback((response: QueryRangeResponse) => {
-    // For now, apply to active satellite's buffer
-    if (!activeSatelliteId) return;
-    const allTrailPoints = getOrCreateTrailBuffer(trailBuffersRef.current, activeSatelliteId).getAll();
+    const satId = simInfo?.satellites[0]?.id ?? "default";
+    const allTrailPoints = getOrCreateTrailBuffer(trailBuffersRef.current, satId).getAll();
     const combined = mergeQueryRangePoints(response.points, allTrailPoints);
 
-    getOrCreateIngestBuffer(ingestBuffersRef.current, activeSatelliteId).markRebuild(combined);
-    getOrCreateTrailBuffer(trailBuffersRef.current, activeSatelliteId).clear();
-    getOrCreateTrailBuffer(trailBuffersRef.current, activeSatelliteId).pushMany(combined);
-  }, [activeSatelliteId]);
+    getOrCreateIngestBuffer(ingestBuffersRef.current, satId).markRebuild(combined);
+    getOrCreateTrailBuffer(trailBuffersRef.current, satId).clear();
+    getOrCreateTrailBuffer(trailBuffersRef.current, satId).pushMany(combined);
+  }, [simInfo]);
 
   const { connect, disconnect, isConnected, send } = useWebSocket({
     url: wsUrl,
@@ -180,8 +192,11 @@ export function App() {
   });
 
   const handleChartZoom = useCallback((tMin: number, tMax: number) => {
-    send({ type: "query_range", t_min: tMin, t_max: tMax, max_points: 2000, satellite_id: activeSatelliteId });
-  }, [send, activeSatelliteId]);
+    if (!isMultiSatellite) {
+      const satId = simInfo?.satellites[0]?.id ?? "default";
+      send({ type: "query_range", t_min: tMin, t_max: tMax, max_points: 2000, satellite_id: satId });
+    }
+  }, [send, isMultiSatellite, simInfo]);
 
   // --- Replay: file loading ---
   const loadCSVFile = useCallback((file: File) => {
@@ -254,17 +269,11 @@ export function App() {
   const handleConnect = useCallback(() => {
     detailBufferRef.current = [];
     streamingCountRef.current = 0;
-    // Clear all per-satellite buffers
     for (const buf of trailBuffersRef.current.values()) buf.clear();
     trailBuffersRef.current.clear();
-    for (const [, buf] of ingestBuffersRef.current) {
-      // IngestBuffer has no clear; just replace
-      void buf;
-    }
     ingestBuffersRef.current.clear();
-    activeIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
+    singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
     setSimInfo(null);
-    setActiveSatelliteId(null);
     realtimePlayback.goLive();
     connect();
   }, [connect, realtimePlayback.goLive]);
@@ -290,25 +299,27 @@ export function App() {
     [mode, isConnected, disconnect]
   );
 
-  // --- Satellite selector change ---
-  const handleSatelliteChange = useCallback((satId: string) => {
-    setActiveSatelliteId(satId);
-    // Rebuild charts with new satellite's data
-    const buf = ingestBuffersRef.current.get(satId);
-    if (buf) {
-      activeIngestBufferRef.current = buf;
-    }
-  }, []);
-
-  // --- Charts ---
-  const { data: chartData, isLoading: chartsLoading } = useTimeSeriesStore({
+  // --- Charts: single-satellite mode (replay or single satellite) ---
+  const { data: singleChartData, isLoading: singleChartsLoading } = useTimeSeriesStore({
     conn,
     schema: orbitSchema,
-    mode,
-    replayPoints,
-    ingestBufferRef: activeIngestBufferRef,
+    mode: isMultiSatellite ? "replay" : mode, // disable realtime tick loop when multi-sat
+    replayPoints: isMultiSatellite ? null : replayPoints,
+    ingestBufferRef: singleIngestBufferRef,
     timeRange,
   });
+
+  // --- Charts: multi-satellite mode ---
+  const { data: multiChartData, isLoading: multiChartsLoading } = useMultiSatelliteStore({
+    conn: isMultiSatellite ? conn : null, // only active in multi-sat mode
+    baseSchema: orbitSchema,
+    satelliteConfigs,
+    ingestBuffers: ingestBuffersRef.current,
+    metricNames: METRIC_NAMES,
+    timeRange,
+  });
+
+  const chartsLoading = isMultiSatellite ? multiChartsLoading : singleChartsLoading;
 
   const chartCurrentTime = useMemo(() => {
     if (mode === "replay") {
@@ -319,13 +330,15 @@ export function App() {
     return quantizeChartTime(realtimePlayback.snapshot.currentTime);
   }, [mode, replayPoints, snapshot.elapsedTime, realtimePlayback.snapshot.isLive, realtimePlayback.snapshot.currentTime]);
 
+  // Single-satellite chart data slicing (replay / single sat)
   const chartArrays = useMemo(() => {
-    if (!chartData) return null;
+    if (isMultiSatellite || !singleChartData) return null;
     return [
-      chartData.t, chartData.altitude, chartData.energy, chartData.angular_momentum, chartData.velocity,
-      chartData.a, chartData.e, chartData.inc_deg, chartData.raan_deg,
+      singleChartData.t, singleChartData.altitude, singleChartData.energy,
+      singleChartData.angular_momentum, singleChartData.velocity,
+      singleChartData.a, singleChartData.e, singleChartData.inc_deg, singleChartData.raan_deg,
     ];
-  }, [chartData]);
+  }, [isMultiSatellite, singleChartData]);
 
   const visibleArrays = useMemo(
     () => sliceArrays(chartArrays, chartCurrentTime, timeRange),
@@ -377,7 +390,7 @@ export function App() {
     let count = 0;
     for (const buf of trailBuffersRef.current.values()) count += buf.length;
     return count;
-  }, [realtimePlayback.snapshot.currentTime]); // re-compute as data arrives
+  }, [realtimePlayback.snapshot.currentTime]);
 
   const showPlaybackBar =
     mode === "realtime"
@@ -483,24 +496,6 @@ export function App() {
               </div>
             )}
 
-            {/* Satellite selector for charts */}
-            {simInfo && simInfo.satellites.length > 1 && (
-              <div className="orbit-info">
-                <label>
-                  Chart:&nbsp;
-                  <select
-                    value={activeSatelliteId ?? ""}
-                    onChange={(e) => handleSatelliteChange(e.target.value)}
-                    style={{ background: "#333", color: "#fff", border: "1px solid #555", borderRadius: 4, padding: "2px 4px" }}
-                  >
-                    {simInfo.satellites.map((sat: SatelliteInfo) => (
-                      <option key={sat.id} value={sat.id}>{sat.name ?? sat.id}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            )}
-
             {totalPoints > 0 && (
               <div className="orbit-info">
                 {totalPoints} points
@@ -520,7 +515,8 @@ export function App() {
 
       {dbReady && (
         <GraphPanel
-          chartData={visibleChartData}
+          chartData={isMultiSatellite ? undefined : visibleChartData}
+          multiChartData={isMultiSatellite ? multiChartData : undefined}
           isLoading={chartsLoading}
           timeRange={timeRange}
           onTimeRangeChange={setTimeRange}

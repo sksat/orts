@@ -43,7 +43,15 @@ export type {
 } from "./hooks/useTimeSeriesStore.js";
 
 // Components
-export { TimeSeriesChart, safeYRange } from "./components/TimeSeriesChart.js";
+export {
+  TimeSeriesChart,
+  safeYRange,
+  buildMultiSeriesConfig,
+} from "./components/TimeSeriesChart.js";
+export type {
+  SeriesConfig,
+  MultiSeriesData,
+} from "./components/TimeSeriesChart.js";
 
 // Utilities
 export {
@@ -52,3 +60,8 @@ export {
   lowerBound,
   upperBound,
 } from "./utils/chartViewport.js";
+export { alignTimeSeries } from "./utils/alignTimeSeries.js";
+export type {
+  NamedTimeSeries,
+  AlignedMultiSeries,
+} from "./utils/alignTimeSeries.js";

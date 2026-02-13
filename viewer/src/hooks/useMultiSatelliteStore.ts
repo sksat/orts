@@ -1,0 +1,228 @@
+import { useState, useEffect, useRef } from "react";
+import type { AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
+import {
+  type TimePoint,
+  type TableSchema,
+  type ChartDataMap,
+  type TimeRange,
+  type CompactOptions,
+  insertPoints,
+  clearTable,
+  createTable,
+  queryDerived,
+  compactTable,
+  computeTMin,
+  DISPLAY_MAX_POINTS,
+  COMPACT_DEFAULTS,
+  IngestBuffer,
+} from "@orts/uneri";
+import { buildMultiChartData, type SatelliteConfig, type MultiChartDataMap } from "./buildMultiChartData.js";
+
+export type { SatelliteConfig, MultiChartDataMap } from "./buildMultiChartData.js";
+export { buildMultiChartData } from "./buildMultiChartData.js";
+
+export interface UseMultiSatelliteStoreOptions<T extends TimePoint> {
+  conn: AsyncDuckDBConnection | null;
+  /** Base schema (used to create per-satellite tables with different names). */
+  baseSchema: TableSchema<T>;
+  satelliteConfigs: SatelliteConfig[];
+  ingestBuffers: Map<string, IngestBuffer<T>>;
+  /** Derived metric names to include in the output. */
+  metricNames: string[];
+  timeRange?: TimeRange;
+  maxPoints?: number;
+  tickInterval?: number;
+  queryEveryN?: number;
+  compactEveryN?: number;
+  compactOptions?: CompactOptions;
+}
+
+export interface UseMultiSatelliteStoreReturn {
+  data: MultiChartDataMap | null;
+  isLoading: boolean;
+}
+
+/** Create a per-satellite schema with a unique table name. */
+function makeSatelliteSchema<T extends TimePoint>(
+  baseSchema: TableSchema<T>,
+  satelliteId: string,
+): TableSchema<T> {
+  const safeName = satelliteId.replace(/[^a-zA-Z0-9_]/g, "_");
+  return { ...baseSchema, tableName: `orbit_${safeName}` };
+}
+
+/**
+ * Hook that manages N DuckDB tables (one per satellite) and produces
+ * aligned MultiChartDataMap for multi-series chart rendering.
+ */
+export function useMultiSatelliteStore<T extends TimePoint>(
+  options: UseMultiSatelliteStoreOptions<T>,
+): UseMultiSatelliteStoreReturn {
+  const {
+    conn,
+    baseSchema,
+    satelliteConfigs,
+    ingestBuffers,
+    metricNames,
+    timeRange = null,
+    maxPoints = DISPLAY_MAX_POINTS,
+    tickInterval = 500,
+    queryEveryN = 4,
+    compactEveryN = 20,
+    compactOptions = COMPACT_DEFAULTS,
+  } = options;
+
+  const [data, setData] = useState<MultiChartDataMap | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Refs for stable access in tick loop
+  const timeRangeRef = useRef(timeRange);
+  timeRangeRef.current = timeRange;
+  const maxPointsRef = useRef(maxPoints);
+  maxPointsRef.current = maxPoints;
+  const configsRef = useRef(satelliteConfigs);
+  configsRef.current = satelliteConfigs;
+  const buffersRef = useRef(ingestBuffers);
+  buffersRef.current = ingestBuffers;
+  const metricNamesRef = useRef(metricNames);
+  metricNamesRef.current = metricNames;
+  const baseSchemaRef = useRef(baseSchema);
+  baseSchemaRef.current = baseSchema;
+
+  useEffect(() => {
+    if (!conn) return;
+
+    let cancelled = false;
+    const timerRef = { current: 0 };
+    let tickCount = 0;
+    let queryCount = 0;
+    const COMPACT_COOLDOWN_AFTER_REBUILD = 5;
+    const compactCooldowns = new Map<string, number>();
+    const createdTables = new Set<string>();
+    const hasData = new Set<string>();
+
+    const ensureTable = async (satId: string) => {
+      if (createdTables.has(satId)) return;
+      const schema = makeSatelliteSchema(baseSchemaRef.current, satId);
+      await createTable(conn, schema);
+      createdTables.add(satId);
+    };
+
+    const startPolling = async () => {
+      for (const cfg of configsRef.current) {
+        try {
+          await ensureTable(cfg.id);
+        } catch (e) {
+          console.warn(`useMultiSatelliteStore: failed to create table for ${cfg.id}:`, e);
+        }
+      }
+      if (cancelled) return;
+      setIsLoading(false);
+
+      const tick = async () => {
+        if (cancelled) return;
+
+        for (const cfg of configsRef.current) {
+          const buf = buffersRef.current.get(cfg.id);
+          if (!buf) continue;
+
+          try {
+            await ensureTable(cfg.id);
+          } catch { continue; }
+
+          const schema = makeSatelliteSchema(baseSchemaRef.current, cfg.id);
+
+          const rebuildData = buf.consumeRebuild();
+          if (rebuildData !== null) {
+            try {
+              await clearTable(conn, schema);
+              await insertPoints(conn, schema, rebuildData);
+              if (rebuildData.length > 0) hasData.add(cfg.id);
+              compactCooldowns.set(cfg.id, COMPACT_COOLDOWN_AFTER_REBUILD);
+            } catch (e) {
+              console.warn(`useMultiSatelliteStore: rebuild failed for ${cfg.id}:`, e);
+              buf.markRebuild(rebuildData);
+            }
+          } else {
+            const newPoints = buf.drain();
+            if (newPoints.length > 0) {
+              try {
+                await insertPoints(conn, schema, newPoints);
+                hasData.add(cfg.id);
+              } catch (e) {
+                console.warn(`useMultiSatelliteStore: insert failed for ${cfg.id}:`, e);
+                buf.pushMany(newPoints);
+              }
+            }
+          }
+        }
+
+        tickCount++;
+        if (hasData.size > 0 && tickCount % queryEveryN === 0) {
+          try {
+            const perSatData = new Map<string, ChartDataMap>();
+
+            for (const cfg of configsRef.current) {
+              if (!hasData.has(cfg.id)) continue;
+              const schema = makeSatelliteSchema(baseSchemaRef.current, cfg.id);
+              const buf = buffersRef.current.get(cfg.id);
+              const tMin = buf
+                ? computeTMin(timeRangeRef.current, buf.latestT)
+                : undefined;
+              const result = await queryDerived(conn, schema, tMin, maxPointsRef.current);
+              if (result.t.length > 0) {
+                perSatData.set(cfg.id, result);
+              }
+            }
+
+            if (!cancelled && perSatData.size > 0) {
+              const multiData = buildMultiChartData(
+                perSatData,
+                metricNamesRef.current,
+                configsRef.current,
+              );
+              setData(multiData);
+            }
+
+            queryCount++;
+            if (queryCount % compactEveryN === 0) {
+              for (const cfg of configsRef.current) {
+                if (!hasData.has(cfg.id)) continue;
+                const cd = compactCooldowns.get(cfg.id) ?? 0;
+                if (cd > 0) {
+                  compactCooldowns.set(cfg.id, cd - 1);
+                  continue;
+                }
+                const schema = makeSatelliteSchema(baseSchemaRef.current, cfg.id);
+                try {
+                  await compactTable(conn, schema, compactOptions);
+                } catch (e) {
+                  console.warn(`useMultiSatelliteStore: compact failed for ${cfg.id}:`, e);
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("useMultiSatelliteStore: query failed:", e);
+          }
+        }
+
+        if (!cancelled) {
+          timerRef.current = window.setTimeout(tick, tickInterval) as unknown as number;
+        }
+      };
+
+      timerRef.current = window.setTimeout(tick, tickInterval) as unknown as number;
+    };
+
+    setIsLoading(true);
+    startPolling();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conn]);
+
+  return { data, isLoading };
+}

@@ -15,7 +15,8 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
-    "./style.css": "./dist/index.css"
+    "./style.css": "./dist/index.css",
+    "./align": "./src/utils/alignTimeSeries.ts"
   },
   "files": [
     "dist"

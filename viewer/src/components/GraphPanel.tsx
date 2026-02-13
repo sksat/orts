@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { TimeSeriesChart, type TimeRange, type ChartDataMap } from "@orts/uneri";
+import type { MultiChartDataMap } from "../hooks/buildMultiChartData.js";
 
 const TIME_RANGE_OPTIONS: { label: string; value: TimeRange }[] = [
   { label: "All", value: null },
@@ -8,8 +9,23 @@ const TIME_RANGE_OPTIONS: { label: string; value: TimeRange }[] = [
   { label: "1 h", value: 3600 },
 ];
 
+/** Chart definitions: metric name → display config. */
+const CHART_DEFS: { metric: string; title: string; yLabel: string; color: string }[] = [
+  { metric: "altitude", title: "Altitude", yLabel: "km", color: "#4af" },
+  { metric: "energy", title: "Specific Orbital Energy", yLabel: "km\u00B2/s\u00B2", color: "#f84" },
+  { metric: "angular_momentum", title: "Angular Momentum", yLabel: "km\u00B2/s", color: "#8f4" },
+  { metric: "velocity", title: "Velocity", yLabel: "km/s", color: "#f4f" },
+  { metric: "a", title: "Semi-major Axis", yLabel: "km", color: "#4ff" },
+  { metric: "e", title: "Eccentricity", yLabel: "-", color: "#ff4" },
+  { metric: "inc_deg", title: "Inclination", yLabel: "deg", color: "#f48" },
+  { metric: "raan_deg", title: "RAAN", yLabel: "deg", color: "#84f" },
+];
+
 interface GraphPanelProps {
-  chartData: ChartDataMap | null;
+  /** Single-satellite chart data (replay mode / single sat). */
+  chartData?: ChartDataMap | null;
+  /** Multi-satellite chart data (comparison mode). */
+  multiChartData?: MultiChartDataMap | null;
   isLoading: boolean;
   timeRange: TimeRange;
   onTimeRangeChange: (range: TimeRange) => void;
@@ -19,6 +35,7 @@ interface GraphPanelProps {
 
 export function GraphPanel({
   chartData,
+  multiChartData,
   isLoading,
   timeRange,
   onTimeRangeChange,
@@ -26,62 +43,17 @@ export function GraphPanel({
 }: GraphPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
 
-  const altitudeData = useMemo(
-    () =>
-      chartData
-        ? ([chartData.t, chartData.altitude] as [Float64Array, Float64Array])
-        : null,
-    [chartData]
-  );
-  const energyData = useMemo(
-    () =>
-      chartData
-        ? ([chartData.t, chartData.energy] as [Float64Array, Float64Array])
-        : null,
-    [chartData]
-  );
-  const angMomData = useMemo(
-    () =>
-      chartData
-        ? ([chartData.t, chartData.angular_momentum] as [Float64Array, Float64Array])
-        : null,
-    [chartData]
-  );
-  const velocityData = useMemo(
-    () =>
-      chartData
-        ? ([chartData.t, chartData.velocity] as [Float64Array, Float64Array])
-        : null,
-    [chartData]
-  );
-  const smaData = useMemo(
-    () =>
-      chartData
-        ? ([chartData.t, chartData.a] as [Float64Array, Float64Array])
-        : null,
-    [chartData]
-  );
-  const eccData = useMemo(
-    () =>
-      chartData
-        ? ([chartData.t, chartData.e] as [Float64Array, Float64Array])
-        : null,
-    [chartData]
-  );
-  const incData = useMemo(
-    () =>
-      chartData
-        ? ([chartData.t, chartData.inc_deg] as [Float64Array, Float64Array])
-        : null,
-    [chartData]
-  );
-  const raanData = useMemo(
-    () =>
-      chartData
-        ? ([chartData.t, chartData.raan_deg] as [Float64Array, Float64Array])
-        : null,
-    [chartData]
-  );
+  // Single-series data extraction (for backward compat / single satellite)
+  const singleSeriesData = useMemo(() => {
+    if (!chartData) return null;
+    const result: Record<string, [Float64Array, Float64Array] | null> = {};
+    for (const def of CHART_DEFS) {
+      result[def.metric] = chartData[def.metric]
+        ? [chartData.t, chartData[def.metric]] as [Float64Array, Float64Array]
+        : null;
+    }
+    return result;
+  }, [chartData]);
 
   return (
     <div className={`graph-panel ${collapsed ? "collapsed" : ""}`}>
@@ -105,62 +77,17 @@ export function GraphPanel({
               </button>
             ))}
           </div>
-          <TimeSeriesChart
-            title="Altitude"
-            yLabel="km"
-            data={altitudeData}
-            color="#4af"
-            onZoom={onZoom}
-          />
-          <TimeSeriesChart
-            title="Specific Orbital Energy"
-            yLabel="km\u00B2/s\u00B2"
-            data={energyData}
-            color="#f84"
-            onZoom={onZoom}
-          />
-          <TimeSeriesChart
-            title="Angular Momentum"
-            yLabel="km\u00B2/s"
-            data={angMomData}
-            color="#8f4"
-            onZoom={onZoom}
-          />
-          <TimeSeriesChart
-            title="Velocity"
-            yLabel="km/s"
-            data={velocityData}
-            color="#f4f"
-            onZoom={onZoom}
-          />
-          <TimeSeriesChart
-            title="Semi-major Axis"
-            yLabel="km"
-            data={smaData}
-            color="#4ff"
-            onZoom={onZoom}
-          />
-          <TimeSeriesChart
-            title="Eccentricity"
-            yLabel="-"
-            data={eccData}
-            color="#ff4"
-            onZoom={onZoom}
-          />
-          <TimeSeriesChart
-            title="Inclination"
-            yLabel="deg"
-            data={incData}
-            color="#f48"
-            onZoom={onZoom}
-          />
-          <TimeSeriesChart
-            title="RAAN"
-            yLabel="deg"
-            data={raanData}
-            color="#84f"
-            onZoom={onZoom}
-          />
+          {CHART_DEFS.map((def) => (
+            <TimeSeriesChart
+              key={def.metric}
+              title={def.title}
+              yLabel={def.yLabel}
+              data={multiChartData ? null : (singleSeriesData?.[def.metric] ?? null)}
+              multiData={multiChartData?.[def.metric]}
+              color={def.color}
+              onZoom={onZoom}
+            />
+          ))}
         </div>
       )}
     </div>
