@@ -27,3 +27,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 futures-util = "0.3"
 rerun = { version = "0.29", default-features = false, features = ["sdk"] }
+ureq = "3"

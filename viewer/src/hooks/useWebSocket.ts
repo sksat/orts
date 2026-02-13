@@ -18,6 +18,8 @@ export interface SimInfo {
   central_body_radius: number;
   /** Julian Date of the simulation epoch, or null if not set. */
   epoch_jd: number | null;
+  /** Satellite name from TLE, or null if not from TLE. */
+  satellite_name: string | null;
 }
 
 /**
@@ -49,6 +51,7 @@ interface InfoMessage {
   central_body?: string;
   central_body_radius?: number;
   epoch_jd?: number | null;
+  satellite_name?: string | null;
 }
 
 interface HistoryStateMsg {
@@ -213,6 +216,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
             central_body: infoMsg.central_body ?? "earth",
             central_body_radius: infoMsg.central_body_radius ?? 6378.137,
             epoch_jd: infoMsg.epoch_jd ?? null,
+            satellite_name: infoMsg.satellite_name ?? null,
           });
         } else if (msg.type === "history" || msg.type === "history_detail") {
           const histMsg = msg as HistoryMessage | HistoryDetailMessage;

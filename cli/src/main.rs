@@ -107,6 +107,10 @@ struct SimArgs {
     /// TLE line 2 (direct input, use with --tle-line1)
     #[arg(long)]
     tle_line2: Option<String>,
+
+    /// NORAD catalog number to fetch TLE from CelesTrak
+    #[arg(long)]
+    norad_id: Option<u32>,
 }
 
 /// How the orbit was specified on the command line.
@@ -127,6 +131,8 @@ struct SimParams {
     stream_interval: f64,
     epoch: Option<Epoch>,
     orbit_spec: OrbitSpec,
+    /// Satellite name from TLE line 0 (if available).
+    satellite_name: Option<String>,
 }
 
 impl SimParams {
@@ -134,11 +140,12 @@ impl SimParams {
         // Parse TLE if provided
         let tle_opt = Self::parse_tle_from_args(args);
 
-        let (body, mu, orbit_spec, epoch) = if let Some(tle) = tle_opt {
+        let (body, mu, orbit_spec, epoch, satellite_name) = if let Some(tle) = tle_opt {
             // TLE mode: Earth is implied
             let body = KnownBody::Earth;
             let mu = body.properties().mu;
             let elements = tle.to_keplerian_elements(mu);
+            let sat_name = tle.name.clone();
             let epoch = match &args.epoch {
                 Some(s) => Some(
                     Epoch::from_iso8601(s)
@@ -146,7 +153,7 @@ impl SimParams {
                 ),
                 None => Some(tle.epoch()),
             };
-            (body, mu, OrbitSpec::Tle { tle_data: tle, elements }, epoch)
+            (body, mu, OrbitSpec::Tle { tle_data: tle, elements }, epoch, sat_name)
         } else {
             // Circular orbit mode
             let body = parse_body(&args.body);
@@ -161,7 +168,7 @@ impl SimParams {
                 ),
                 None => Some(Epoch::now()),
             };
-            (body, mu, OrbitSpec::Circular { altitude: args.altitude, r0, v0 }, epoch)
+            (body, mu, OrbitSpec::Circular { altitude: args.altitude, r0, v0 }, epoch, None)
         };
 
         let period = match &orbit_spec {
@@ -186,10 +193,19 @@ impl SimParams {
             stream_interval,
             epoch,
             orbit_spec,
+            satellite_name,
         }
     }
 
     fn parse_tle_from_args(args: &SimArgs) -> Option<Tle> {
+        // --norad-id: fetch from CelesTrak
+        if let Some(norad_id) = args.norad_id {
+            if args.tle.is_some() || args.tle_line1.is_some() {
+                panic!("Cannot specify both --norad-id and --tle/--tle-line1/--tle-line2");
+            }
+            return Some(fetch_tle_by_norad_id(norad_id));
+        }
+
         if let Some(path) = &args.tle {
             let text = if path == "-" {
                 use std::io::Read;
@@ -433,6 +449,8 @@ enum WsMessage {
         central_body_radius: f64,
         #[serde(skip_serializing_if = "Option::is_none")]
         epoch_jd: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        satellite_name: Option<String>,
     },
     /// A single simulation state snapshot.
     #[serde(rename = "state")]
@@ -463,6 +481,27 @@ enum WsMessage {
         t_max: f64,
         states: Vec<HistoryState>,
     },
+}
+
+/// Fetch a TLE from CelesTrak by NORAD catalog number.
+fn fetch_tle_by_norad_id(norad_id: u32) -> Tle {
+    let url = format!(
+        "https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=3LE"
+    );
+    eprintln!("Fetching TLE for NORAD ID {norad_id} from CelesTrak...");
+    let body = ureq::get(&url)
+        .call()
+        .unwrap_or_else(|e| panic!("Failed to fetch TLE from CelesTrak: {e}"))
+        .body_mut()
+        .read_to_string()
+        .unwrap_or_else(|e| panic!("Failed to read TLE response body: {e}"));
+
+    if body.trim().is_empty() {
+        panic!("No TLE data found for NORAD ID {norad_id}. Check the catalog number.");
+    }
+
+    Tle::parse(&body)
+        .unwrap_or_else(|e| panic!("Failed to parse TLE for NORAD ID {norad_id}: {e}"))
 }
 
 fn parse_body(s: &str) -> KnownBody {
@@ -920,6 +959,7 @@ async fn handle_connection(
             .to_string(),
         central_body_radius: params.body.properties().radius,
         epoch_jd: params.epoch.map(|e| e.jd()),
+        satellite_name: params.satellite_name.clone(),
     };
     let info_json = serde_json::to_string(&info).expect("failed to serialize info message");
     if ws_sender
@@ -1413,6 +1453,7 @@ mod tests {
             tle: None,
             tle_line1: None,
             tle_line2: None,
+            norad_id: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
@@ -1433,6 +1474,7 @@ mod tests {
             tle: None,
             tle_line1: None,
             tle_line2: None,
+            norad_id: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!((params.dt - 1.0).abs() < 1e-9);
@@ -1453,6 +1495,7 @@ mod tests {
             tle: None,
             tle_line1: None,
             tle_line2: None,
+            norad_id: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!((params.stream_interval - 5.0).abs() < 1e-9);
@@ -1468,6 +1511,7 @@ mod tests {
             tle: None,
             tle_line1: None,
             tle_line2: None,
+            norad_id: None,
         };
         let params2 = SimParams::from_sim_args(&args2);
         assert!((params2.stream_interval - 10.0).abs() < 1e-9);
@@ -1485,6 +1529,7 @@ mod tests {
             tle: None,
             tle_line1: None,
             tle_line2: None,
+            norad_id: None,
         };
         let params = SimParams::from_sim_args(&args);
         assert!(params.epoch.is_some());
@@ -1505,11 +1550,13 @@ mod tests {
             central_body: "earth".to_string(),
             central_body_radius: 6378.137,
             epoch_jd: Some(2460390.0),
+            satellite_name: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["type"], "info");
         assert_eq!(v["epoch_jd"], 2460390.0);
+        assert!(v.get("satellite_name").is_none());
     }
 
     #[test]
@@ -1524,12 +1571,60 @@ mod tests {
             central_body: "earth".to_string(),
             central_body_radius: 6378.137,
             epoch_jd: None,
+            satellite_name: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["type"], "info");
         // epoch_jd should be absent (skip_serializing_if)
         assert!(v.get("epoch_jd").is_none());
+    }
+
+    #[test]
+    fn info_message_with_satellite_name() {
+        let msg = WsMessage::Info {
+            mu: 398600.4418,
+            altitude: 400.0,
+            period: 5554.0,
+            dt: 10.0,
+            output_interval: 10.0,
+            stream_interval: 10.0,
+            central_body: "earth".to_string(),
+            central_body_radius: 6378.137,
+            epoch_jd: Some(2460390.0),
+            satellite_name: Some("ISS (ZARYA)".to_string()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["satellite_name"], "ISS (ZARYA)");
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot specify both")]
+    fn sim_params_norad_id_conflicts_with_tle() {
+        let args = SimArgs {
+            altitude: 400.0,
+            body: "earth".to_string(),
+            dt: 10.0,
+            output_interval: None,
+            stream_interval: None,
+            epoch: None,
+            tle: None,
+            tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
+            tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+            norad_id: Some(25544),
+        };
+        SimParams::from_sim_args(&args);
+    }
+
+    #[test]
+    #[ignore] // Requires network access to CelesTrak
+    fn fetch_iss_tle_from_celestrak() {
+        let tle = fetch_tle_by_norad_id(25544);
+        assert!(tle.name.is_some(), "ISS TLE should have a name");
+        assert_eq!(tle.satellite_number, 25544);
+        // Sanity: ISS inclination ~51.6 degrees
+        assert!((tle.inclination.to_degrees() - 51.6).abs() < 1.0);
     }
 
     // --- compute_output_chunk tests ---
@@ -1727,6 +1822,7 @@ mod tests {
             tle: None,
             tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
             tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+            norad_id: None,
         };
         let params = SimParams::from_sim_args(&args);
 
@@ -1766,6 +1862,7 @@ mod tests {
             tle: None,
             tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
             tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+            norad_id: None,
         };
         let params = SimParams::from_sim_args(&args);
         let state = params.initial_state();
@@ -1798,6 +1895,7 @@ mod tests {
             tle: None,
             tle_line1: None,
             tle_line2: None,
+            norad_id: None,
         };
         let params = SimParams::from_sim_args(&args);
 
@@ -1817,6 +1915,7 @@ mod tests {
             tle: None,
             tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
             tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+            norad_id: None,
         };
         let params = SimParams::from_sim_args(&args);
 

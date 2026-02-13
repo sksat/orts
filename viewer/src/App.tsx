@@ -18,6 +18,7 @@ import { createOrbitSchema } from "./db/orbitSchema.js";
 import { TrailBuffer } from "./utils/TrailBuffer.js";
 import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";
 import { mergeQueryRangePoints } from "./utils/mergeQueryRange.js";
+import { jdToUTCString } from "./astro.js";
 
 /** The two viewer modes. */
 type ViewerMode = "replay" | "realtime";
@@ -427,6 +428,8 @@ export function App() {
             {/* Sim info (shown after server sends info message) */}
             {simInfo && (
               <div className="orbit-info">
+                {simInfo.satellite_name && <><strong>{simInfo.satellite_name}</strong> | </>}
+                {simInfo.epoch_jd != null && <>{jdToUTCString(simInfo.epoch_jd, 0)} | </>}
                 mu={simInfo.mu.toFixed(2)} km^3/s^2 | alt={simInfo.altitude.toFixed(1)} km |
                 T={simInfo.period.toFixed(1)} s | dt={simInfo.dt.toFixed(1)} s | stream={simInfo.stream_interval.toFixed(1)} s
               </div>
