@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { TimeSeriesChart, type TimeRange, type ChartDataMap } from "@orts/tsukuyomi";
+import { TimeSeriesChart, type TimeRange, type ChartDataMap } from "@orts/uneri";
 
 const TIME_RANGE_OPTIONS: { label: string; value: TimeRange }[] = [
   { label: "All", value: null },

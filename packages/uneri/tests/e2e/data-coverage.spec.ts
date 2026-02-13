@@ -32,7 +32,7 @@ test("mixed-density: sparse region has proportional chart coverage", async ({
   // triggers ROW_NUMBER downsampling with DISPLAY_MAX_POINTS=2000)
   await page.waitForFunction(
     () => {
-      const debug = (window as any).__tsukuyomiDebug;
+      const debug = (window as any).__uneriDebug;
       return debug?.chartData?.t?.length > 0;
     },
     { timeout: 30000 },
@@ -44,7 +44,7 @@ test("mixed-density: sparse region has proportional chart coverage", async ({
 
   // Analyze the chart data distribution
   const result = await page.evaluate(async () => {
-    const debug = (window as any).__tsukuyomiDebug;
+    const debug = (window as any).__uneriDebug;
     if (!debug?.chartData?.t) return null;
 
     const t = debug.chartData.t;
@@ -110,7 +110,7 @@ test("mixed-density: DuckDB row count is monotonically increasing (no data loss)
   for (let i = 0; i < 5; i++) {
     await page.waitForTimeout(3000);
     const count = await page.evaluate(async () => {
-      const debug = (window as any).__tsukuyomiDebug;
+      const debug = (window as any).__uneriDebug;
       if (!debug?.queryRowCount) return 0;
       return debug.queryRowCount();
     });

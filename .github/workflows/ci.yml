@@ -59,19 +59,19 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build tsukuyomi
-        run: pnpm --filter @orts/tsukuyomi build
+      - name: Build uneri
+        run: pnpm --filter @orts/uneri build
 
       - name: Build viewer
         run: pnpm --filter orts-viewer build
 
-      - name: Test tsukuyomi
-        run: pnpm --filter @orts/tsukuyomi test
+      - name: Test uneri
+        run: pnpm --filter @orts/uneri test
 
       - name: Test viewer
         run: pnpm --filter orts-viewer test
 
-  tsukuyomi-e2e:
+  uneri-e2e:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
@@ -90,8 +90,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build tsukuyomi
-        run: pnpm --filter @orts/tsukuyomi build
+      - name: Build uneri
+        run: pnpm --filter @orts/uneri build
 
       - name: Cache Playwright browsers
         id: playwright-cache
@@ -102,24 +102,24 @@ jobs:
 
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        working-directory: packages/tsukuyomi
+        working-directory: packages/uneri
         run: npx playwright install --with-deps chromium
 
       - name: Install Playwright OS dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        working-directory: packages/tsukuyomi
+        working-directory: packages/uneri
         run: npx playwright install-deps chromium
 
       - name: Run Playwright E2E
-        working-directory: packages/tsukuyomi
+        working-directory: packages/uneri
         run: pnpm test:e2e
 
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: tsukuyomi-playwright-report
-          path: packages/tsukuyomi/test-results/
+          name: uneri-playwright-report
+          path: packages/uneri/test-results/
           retention-days: 7
 
   viewer-e2e:
@@ -142,8 +142,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build tsukuyomi
-        run: pnpm --filter @orts/tsukuyomi build
+      - name: Build uneri
+        run: pnpm --filter @orts/uneri build
 
       - name: Cache Playwright browsers
         id: playwright-cache

@@ -35,7 +35,7 @@ const mixedSchema: TableSchema<MixedPoint> = {
 
 declare global {
   interface Window {
-    __tsukuyomiDebug: {
+    __uneriDebug: {
       chartData: Record<string, Float64Array> | null;
       rowCount: number;
       queryRowCount: () => Promise<number>;
@@ -90,7 +90,7 @@ export function App() {
   }, [conn]);
 
   useEffect(() => {
-    window.__tsukuyomiDebug = {
+    window.__uneriDebug = {
       chartData: data,
       rowCount: pointsReceived,
       queryRowCount,
@@ -125,7 +125,7 @@ export function App() {
         minHeight: "100vh",
       }}
     >
-      <h1>@orts/tsukuyomi: Mixed-Density Test</h1>
+      <h1>@orts/uneri: Mixed-Density Test</h1>
       <p data-testid="points-received">
         Points received: {pointsReceived} | Chart points:{" "}
         {data?.t?.length ?? 0} | Buffer latestT:{" "}

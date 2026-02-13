@@ -1,8 +1,8 @@
-# @orts/tsukuyomi
+# @orts/uneri
 
 DuckDB-wasm + uPlot time-series charting library for real-time streaming data.
 
-Generic schema-driven design: define columns and derived SQL expressions, and tsukuyomi handles DuckDB ingestion, query-time downsampling, and chart rendering.
+Generic schema-driven design: define columns and derived SQL expressions, and uneri handles DuckDB ingestion, query-time downsampling, and chart rendering.
 
 ## Build
 

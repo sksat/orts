@@ -95,7 +95,7 @@ export function App() {
         minHeight: "100vh",
       }}
     >
-      <h1>@orts/tsukuyomi Example: Sine Wave</h1>
+      <h1>@orts/uneri Example: Sine Wave</h1>
       <div style={{ marginBottom: "1rem" }}>
         <button onClick={() => setTimeRange(null)}>All</button>
         <button onClick={() => setTimeRange(30)}>30s</button>
