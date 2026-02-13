@@ -1,6 +1,12 @@
 {
   "name": "@orts/uneri",
   "version": "0.0.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sksat/orts",
+    "directory": "packages/uneri"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

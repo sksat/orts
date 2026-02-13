@@ -2,6 +2,12 @@
   "name": "orts-viewer",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sksat/orts",
+    "directory": "viewer"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
