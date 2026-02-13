@@ -16,6 +16,8 @@ interface OrbitTrailProps {
   trailBuffer?: TrailBuffer;
   /** Central body radius in km, used as the scale factor. */
   scaleRadius: number;
+  /** Trail color (default: 0x00ff88). */
+  color?: number;
 }
 
 /**
@@ -25,7 +27,7 @@ interface OrbitTrailProps {
  *   - `points` + `visibleCount`: replay mode (progressive trail)
  *   - `trailBuffer`: realtime mode (bounded, generation-based GPU invalidation)
  */
-export function OrbitTrail({ points, visibleCount, trailBuffer, scaleRadius }: OrbitTrailProps) {
+export function OrbitTrail({ points, visibleCount, trailBuffer, scaleRadius, color = 0x00ff88 }: OrbitTrailProps) {
   const writtenCountRef = useRef(0);
   const capacityRef = useRef(INITIAL_CAPACITY);
   const bufferRef = useRef(new Float32Array(INITIAL_CAPACITY * 3));
@@ -49,8 +51,8 @@ export function OrbitTrail({ points, visibleCount, trailBuffer, scaleRadius }: O
   }, [sourceIdentity]);
 
   const material = useMemo(
-    () => new THREE.LineBasicMaterial({ color: 0x00ff88, linewidth: 1 }),
-    []
+    () => new THREE.LineBasicMaterial({ color, linewidth: 1 }),
+    [color]
   );
   const lineObject = useMemo(() => new THREE.Line(geometry, material), [geometry, material]);
 

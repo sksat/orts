@@ -12,19 +12,26 @@ export interface RealtimePlaybackSnapshot {
   elapsedTime: number;
   totalDuration: number;
   speed: number;
+  /** Per-satellite positions (multi-satellite mode). */
+  satellitePositions: Map<string, OrbitPoint | null>;
+  /** Per-satellite trail visible counts (multi-satellite mode). */
+  trailVisibleCounts: Map<string, number>;
+  /** First satellite position for backward compat. */
   satellitePosition: OrbitPoint | null;
+  /** First satellite trail visible count for backward compat. */
   trailVisibleCount: number;
 }
 
 /**
  * React hook for realtime playback with history scrubbing.
+ * Supports multiple TrailBuffers (one per satellite).
  *
  * State machine:
  *   Live ──pause/seek──→ Paused ──play──→ Playing ──catches up──→ Live
  *                        Paused ←──pause── Playing
  *                        Live   ←──goLive── Paused | Playing
  */
-export function useRealtimePlayback(trailBuffer: TrailBuffer) {
+export function useRealtimePlayback(trailBuffers: Map<string, TrailBuffer>) {
   const modeRef = useRef<RealtimeMode>("live");
   const currentTimeRef = useRef(0);
   const speedRef = useRef(1);
@@ -39,35 +46,67 @@ export function useRealtimePlayback(trailBuffer: TrailBuffer) {
     elapsedTime: 0,
     totalDuration: 0,
     speed: 1,
+    satellitePositions: new Map(),
+    trailVisibleCounts: new Map(),
     satellitePosition: null,
     trailVisibleCount: 0,
   });
 
   const syncState = useCallback(() => {
-    const pts = trailBuffer.getAll();
-    const tMin = pts.length > 0 ? pts[0].t : 0;
-    const tMax = trailBuffer.latest?.t ?? 0;
+    // Compute unified timeline across all satellite buffers
+    let tMin = Infinity;
+    let tMax = -Infinity;
+    let totalLength = 0;
+
+    for (const buf of trailBuffers.values()) {
+      if (buf.length === 0) continue;
+      const pts = buf.getAll();
+      if (pts.length > 0) {
+        tMin = Math.min(tMin, pts[0].t);
+      }
+      if (buf.latest) {
+        tMax = Math.max(tMax, buf.latest.t);
+      }
+      totalLength += buf.length;
+    }
+
+    if (totalLength === 0) return;
+    if (tMin === Infinity) tMin = 0;
+    if (tMax === -Infinity) tMax = 0;
+
     const duration = tMax - tMin;
     const mode = modeRef.current;
 
     let currentTime: number;
-    let position: OrbitPoint | null;
-    let visibleCount: number;
-
     if (mode === "live") {
       currentTime = tMax;
-      position = trailBuffer.latest;
-      visibleCount = pts.length;
     } else {
       currentTime = currentTimeRef.current;
-      position = trailBuffer.interpolateAt(currentTime);
-      const idx = trailBuffer.indexBefore(currentTime);
-      visibleCount = idx + 2; // +2 matches replay mode convention
     }
 
     const fraction = duration > 0
       ? Math.min(1, Math.max(0, (currentTime - tMin) / duration))
       : 1;
+
+    // Compute per-satellite positions and visible counts
+    const positions = new Map<string, OrbitPoint | null>();
+    const visibleCounts = new Map<string, number>();
+
+    for (const [satId, buf] of trailBuffers) {
+      if (mode === "live") {
+        positions.set(satId, buf.latest);
+        visibleCounts.set(satId, buf.length);
+      } else {
+        positions.set(satId, buf.interpolateAt(currentTime));
+        const idx = buf.indexBefore(currentTime);
+        visibleCounts.set(satId, idx + 2);
+      }
+    }
+
+    // Backward compat: first satellite
+    const firstId = trailBuffers.keys().next().value;
+    const firstPos = firstId != null ? (positions.get(firstId) ?? null) : null;
+    const firstVc = firstId != null ? (visibleCounts.get(firstId) ?? 0) : 0;
 
     setSnapshot({
       isLive: mode === "live",
@@ -77,10 +116,12 @@ export function useRealtimePlayback(trailBuffer: TrailBuffer) {
       elapsedTime: currentTime - tMin,
       totalDuration: duration,
       speed: speedRef.current,
-      satellitePosition: position,
-      trailVisibleCount: visibleCount,
+      satellitePositions: positions,
+      trailVisibleCounts: visibleCounts,
+      satellitePosition: firstPos,
+      trailVisibleCount: firstVc,
     });
-  }, [trailBuffer]);
+  }, [trailBuffers]);
 
   // Animation loop
   useEffect(() => {
@@ -89,19 +130,25 @@ export function useRealtimePlayback(trailBuffer: TrailBuffer) {
       prevTimeRef.current = time;
 
       if (modeRef.current === "playing") {
-        const tMax = trailBuffer.latest?.t ?? 0;
-        currentTimeRef.current += dt * speedRef.current;
+        let tMax = -Infinity;
+        for (const buf of trailBuffers.values()) {
+          if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
+        }
+        if (tMax === -Infinity) tMax = 0;
 
-        // Auto-transition to live when catching up
+        currentTimeRef.current += dt * speedRef.current;
         if (currentTimeRef.current >= tMax) {
           currentTimeRef.current = tMax;
           modeRef.current = "live";
         }
       }
 
-      // Always sync state in RAF to keep slider/position updated
-      // (in live mode, tMax grows as new data arrives)
-      if (trailBuffer.length > 0) {
+      // Always sync in RAF to keep slider/position updated
+      let totalLength = 0;
+      for (const buf of trailBuffers.values()) {
+        totalLength += buf.length;
+      }
+      if (totalLength > 0) {
         syncState();
       }
 
@@ -110,22 +157,25 @@ export function useRealtimePlayback(trailBuffer: TrailBuffer) {
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [trailBuffer, syncState]);
+  }, [trailBuffers, syncState]);
 
   const togglePlayPause = useCallback(() => {
     const mode = modeRef.current;
     if (mode === "live") {
-      // Pause at current (latest) time
-      currentTimeRef.current = trailBuffer.latest?.t ?? 0;
+      // Find max t across all buffers
+      let tMax = 0;
+      for (const buf of trailBuffers.values()) {
+        if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
+      }
+      currentTimeRef.current = tMax;
       modeRef.current = "paused";
     } else if (mode === "paused") {
       modeRef.current = "playing";
     } else {
-      // playing → paused
       modeRef.current = "paused";
     }
     syncState();
-  }, [trailBuffer, syncState]);
+  }, [trailBuffers, syncState]);
 
   const goLive = useCallback(() => {
     modeRef.current = "live";
@@ -133,19 +183,24 @@ export function useRealtimePlayback(trailBuffer: TrailBuffer) {
   }, [syncState]);
 
   const seekToFraction = useCallback((fraction: number) => {
-    const pts = trailBuffer.getAll();
-    const tMin = pts.length > 0 ? pts[0].t : 0;
-    const tMax = trailBuffer.latest?.t ?? 0;
+    let tMin = Infinity;
+    let tMax = -Infinity;
+    for (const buf of trailBuffers.values()) {
+      const pts = buf.getAll();
+      if (pts.length > 0) tMin = Math.min(tMin, pts[0].t);
+      if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
+    }
+    if (tMin === Infinity) tMin = 0;
+    if (tMax === -Infinity) tMax = 0;
     const duration = tMax - tMin;
 
     currentTimeRef.current = tMin + fraction * duration;
 
-    // Seeking always pauses (breaks out of live/playing)
     if (modeRef.current === "live" || modeRef.current === "playing") {
       modeRef.current = "paused";
     }
     syncState();
-  }, [trailBuffer, syncState]);
+  }, [trailBuffers, syncState]);
 
   const setSpeed = useCallback((speed: number) => {
     speedRef.current = Math.max(0.1, speed);

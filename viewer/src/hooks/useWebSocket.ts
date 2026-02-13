@@ -1,6 +1,14 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { OrbitPoint } from "../orbit.js";
 
+/** Per-satellite info from the server. */
+export interface SatelliteInfo {
+  id: string;
+  name: string | null;
+  altitude: number;
+  period: number;
+}
+
 /**
  * Simulation metadata sent by the server on initial connection.
  *
@@ -9,8 +17,6 @@ import { OrbitPoint } from "../orbit.js";
  */
 export interface SimInfo {
   mu: number;
-  altitude: number;
-  period: number;
   dt: number;
   output_interval: number;
   stream_interval: number;
@@ -18,8 +24,8 @@ export interface SimInfo {
   central_body_radius: number;
   /** Julian Date of the simulation epoch, or null if not set. */
   epoch_jd: number | null;
-  /** Satellite name from TLE, or null if not from TLE. */
-  satellite_name: string | null;
+  /** List of satellites in the simulation. */
+  satellites: SatelliteInfo[];
 }
 
 /**
@@ -28,6 +34,7 @@ export interface SimInfo {
  */
 interface StateMessage {
   type: "state";
+  satellite_id: string;
   t: number;
   position: [number, number, number];
   velocity: [number, number, number];
@@ -43,18 +50,24 @@ interface StateMessage {
 interface InfoMessage {
   type: "info";
   mu: number;
-  altitude: number;
-  period: number;
   dt: number;
   output_interval: number;
   stream_interval?: number;
   central_body?: string;
   central_body_radius?: number;
   epoch_jd?: number | null;
-  satellite_name?: string | null;
+  satellites?: SatelliteInfoMsg[];
+}
+
+interface SatelliteInfoMsg {
+  id: string;
+  name?: string | null;
+  altitude: number;
+  period: number;
 }
 
 interface HistoryStateMsg {
+  satellite_id?: string;
   t: number;
   position: [number, number, number];
   velocity: [number, number, number];
@@ -189,6 +202,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         if (msg.type === "state") {
           const stateMsg = msg as StateMessage;
           const point: OrbitPoint = {
+            satelliteId: stateMsg.satellite_id,
             t: stateMsg.t,
             x: stateMsg.position[0],
             y: stateMsg.position[1],
@@ -206,21 +220,26 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
           onStateRef.current(point);
         } else if (msg.type === "info") {
           const infoMsg = msg as InfoMessage;
+          const satellites: SatelliteInfo[] = (infoMsg.satellites ?? []).map((s) => ({
+            id: s.id,
+            name: s.name ?? null,
+            altitude: s.altitude,
+            period: s.period,
+          }));
           onInfoRef.current({
             mu: infoMsg.mu,
-            altitude: infoMsg.altitude,
-            period: infoMsg.period,
             dt: infoMsg.dt,
             output_interval: infoMsg.output_interval,
             stream_interval: infoMsg.stream_interval ?? infoMsg.output_interval,
             central_body: infoMsg.central_body ?? "earth",
             central_body_radius: infoMsg.central_body_radius ?? 6378.137,
             epoch_jd: infoMsg.epoch_jd ?? null,
-            satellite_name: infoMsg.satellite_name ?? null,
+            satellites,
           });
         } else if (msg.type === "history" || msg.type === "history_detail") {
           const histMsg = msg as HistoryMessage | HistoryDetailMessage;
           const points: OrbitPoint[] = histMsg.states.map((s) => ({
+            satelliteId: s.satellite_id,
             t: s.t,
             x: s.position[0],
             y: s.position[1],
@@ -245,6 +264,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
         } else if (msg.type === "query_range_response") {
           const qrMsg = msg as QueryRangeResponseMessage;
           const points: OrbitPoint[] = qrMsg.states.map((s) => ({
+            satelliteId: s.satellite_id,
             t: s.t,
             x: s.position[0],
             y: s.position[1],

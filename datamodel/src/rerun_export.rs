@@ -122,6 +122,8 @@ pub struct RrdRow {
     pub vx: f64,
     pub vy: f64,
     pub vz: f64,
+    /// Entity path this row belongs to (e.g., "world/sat/iss").
+    pub entity_path: Option<String>,
 }
 
 /// Full data loaded from an .rrd file: trajectory rows + simulation metadata.
@@ -265,6 +267,7 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                 vx: vx_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
                 vy: vy_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
                 vz: vz_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
+                entity_path: Some(base.clone()),
             });
         }
     }

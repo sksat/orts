@@ -22,10 +22,17 @@ struct Server {
 impl Server {
     /// Spawn the CLI binary in WebSocket server mode.
     /// Blocks until the server prints its "listening" message to stderr.
+    /// Uses explicit `--sat` args to avoid CelesTrak network dependency.
     fn spawn(port: u16) -> Self {
         let binary = env!("CARGO_BIN_EXE_orts");
         let mut child = Command::new(binary)
-            .args(["serve", "--port", &port.to_string()])
+            .args([
+                "serve",
+                "--port",
+                &port.to_string(),
+                "--sat",
+                "altitude=400,id=test",
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -141,8 +148,6 @@ async fn test_websocket_info_and_state_messages() {
         let info = next_json(&mut read).await;
         assert_eq!(info["type"], "info", "first message type must be 'info'");
         assert!(info["mu"].is_f64(), "info.mu must be a number");
-        assert!(info["altitude"].is_f64(), "info.altitude must be a number");
-        assert!(info["period"].is_f64(), "info.period must be a number");
         assert!(info["dt"].is_f64(), "info.dt must be a number");
         assert!(
             info["output_interval"].is_f64(),
@@ -153,12 +158,15 @@ async fn test_websocket_info_and_state_messages() {
             info["central_body_radius"].is_f64(),
             "info.central_body_radius must be a number"
         );
+        // New protocol: satellites array
+        let satellites = info["satellites"].as_array().expect("info must have satellites array");
+        assert!(!satellites.is_empty(), "satellites array must not be empty");
+        // At least the SSO satellite should be present
+        let first_sat = &satellites[0];
+        assert!(first_sat["altitude"].is_f64(), "satellite must have altitude");
+        assert!(first_sat["period"].is_f64(), "satellite must have period");
+        assert!(first_sat["id"].is_string(), "satellite must have id");
 
-        let altitude = info["altitude"].as_f64().unwrap();
-        assert!(
-            (altitude - 400.0).abs() < f64::EPSILON,
-            "expected default altitude 400, got {altitude}"
-        );
         let dt = info["dt"].as_f64().unwrap();
         assert!(
             (dt - 10.0).abs() < f64::EPSILON,
@@ -185,6 +193,7 @@ async fn test_websocket_info_and_state_messages() {
         // (may also include history_detail interleaved)
         let (first_state, _) = read_until_type(&mut read, "state", 50).await;
         assert!(first_state["t"].is_f64(), "state.t must be a number");
+        assert!(first_state["satellite_id"].is_string(), "state must have satellite_id");
         let position = first_state["position"].as_array().unwrap();
         assert_eq!(position.len(), 3);
         let velocity = first_state["velocity"].as_array().unwrap();
@@ -599,7 +608,7 @@ async fn test_websocket_monotonic_time_across_orbits() {
         // info → history
         let info = next_json(&mut read).await;
         assert_eq!(info["type"], "info");
-        let _period = info["period"].as_f64().unwrap();
+        let _period = info["satellites"][0]["period"].as_f64().unwrap();
 
         let history = next_json(&mut read).await;
         assert_eq!(history["type"], "history");
@@ -628,19 +637,26 @@ async fn test_websocket_monotonic_time_across_orbits() {
             prev_t = t;
         }
 
-        // Collect live state messages and verify monotonicity among them.
-        // Note: the first live state may overlap with the history tail due to
-        // subscribe-before-snapshot timing, so we don't compare against history max_t.
-        let mut last_state_t = f64::NEG_INFINITY;
+        // Collect live state messages and verify per-satellite monotonicity.
+        // With multi-satellite, states from different satellites are interleaved,
+        // so we track last_t per satellite_id.
+        let mut last_t_per_sat: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
         for i in 0..10 {
             let (state, _) = read_until_type(&mut read, "state", 50).await;
             let t = state["t"].as_f64().unwrap();
+            let sid = state["satellite_id"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string();
+            let prev = last_t_per_sat.entry(sid.clone()).or_insert(f64::NEG_INFINITY);
             assert!(
-                t >= last_state_t,
-                "live state t values must be monotonically increasing: \
-                 state[{i}].t={t} < previous {last_state_t}"
+                t >= *prev,
+                "live state t for {sid} must be monotonically increasing: \
+                 state[{i}].t={t} < previous {}",
+                *prev
             );
-            last_state_t = t;
+            *prev = t;
         }
     })
     .await;

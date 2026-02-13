@@ -8,6 +8,8 @@ const EARTH_RADIUS_KM = 6378.137;
 
 /** A single orbit state point from CSV or WebSocket. */
 export interface OrbitPoint {
+  /** Satellite identifier (from WebSocket protocol). */
+  satelliteId?: string;
   t: number;
   x: number;
   y: number;

@@ -212,3 +212,48 @@ test("history message arrives after info before state", async ({ page }) => {
   // After that, should have state (possibly with history_detail interleaved)
   expect(messageTypes.some((t) => t === "state")).toBe(true);
 });
+
+test("3D scene renders orbit trails and satellite markers", async ({ page }) => {
+  const consoleLogs: string[] = [];
+  page.on("console", (msg) => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
+
+  await page.goto(VIEWER_URL);
+
+  // Wait for WebSocket connection
+  const statusText = page.locator(".ws-status-text");
+  await expect(statusText).toHaveText("Connected", { timeout: 10000 });
+
+  // Wait for enough data to stream so trails are visible
+  await page.waitForTimeout(4000);
+
+  // Inspect the Three.js scene graph via R3F's internal state on the canvas element.
+  // This catches bugs where data flows correctly but the scene components are not mounted
+  // (e.g. stale useMemo on a Map reference that never changes).
+  const sceneInfo = await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    if (!canvas) return { found: false, lines: 0, meshes: 0 };
+
+    // R3F attaches its fiber root to the canvas element as __r3f
+    const root = (canvas as unknown as Record<string, unknown>).__r3f as
+      | { store?: { getState?: () => { scene?: { traverse: (cb: (obj: { type: string }) => void) => void } } } }
+      | undefined;
+    const scene = root?.store?.getState?.()?.scene;
+    if (!scene) return { found: false, lines: 0, meshes: 0 };
+
+    let lines = 0;
+    let meshes = 0;
+    scene.traverse((obj: { type: string }) => {
+      if (obj.type === "Line") lines++;
+      if (obj.type === "Mesh") meshes++;
+    });
+    return { found: true, lines, meshes };
+  });
+
+  console.log("Scene info:", sceneInfo);
+
+  expect(sceneInfo.found, "R3F scene should be accessible").toBe(true);
+  // At least 1 orbit trail Line (one per satellite)
+  expect(sceneInfo.lines, "scene should contain orbit trail Line objects").toBeGreaterThanOrEqual(1);
+  // At least 2 Meshes: central body sphere + at least 1 satellite marker
+  expect(sceneInfo.meshes, "scene should contain central body + satellite Mesh objects").toBeGreaterThanOrEqual(2);
+});
