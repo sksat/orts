@@ -74,7 +74,11 @@ export function buildDerivedQuery(
     `* ${maxPts}.0 / (CAST(b.t_hi AS DOUBLE) - CAST(b.t_lo AS DOUBLE))) AS INTEGER), 0), ${maxPts} - 1) ` +
     `END AS bucket, b.total FROM filtered f, bounds b), ` +
     `ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY t) AS rn FROM bucketed) ` +
-    `SELECT ${selectColumns} FROM ranked WHERE total <= ${maxPts} OR rn = 1 ORDER BY t`
+    `SELECT ${selectColumns} FROM (` +
+    `SELECT * FROM ranked WHERE total <= ${maxPts} OR rn = 1 ` +
+    `UNION ` +
+    `SELECT * FROM ranked WHERE t = (SELECT MAX(t) FROM filtered)` +
+    `) sub ORDER BY t`
   );
 }
 

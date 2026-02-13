@@ -17,6 +17,7 @@ import {
 import { createOrbitSchema } from "./db/orbitSchema.js";
 import { TrailBuffer } from "./utils/TrailBuffer.js";
 import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";
+import { mergeQueryRangePoints } from "./utils/mergeQueryRange.js";
 
 /** The two viewer modes. */
 type ViewerMode = "replay" | "realtime";
@@ -111,6 +112,9 @@ export function App() {
     );
 
     const combined = [...detailPoints, ...streamingPoints];
+    // Guard: ensure monotonic time order even if streamingCountRef drifted
+    // (e.g., due to TrailBuffer trimming). Out-of-order data breaks interpolateAt.
+    combined.sort((a, b) => a.t - b.t);
 
     // Rebuild TrailBuffer with detail + streaming for 3D rendering.
     trailBufferRef.current.clear();
@@ -122,11 +126,14 @@ export function App() {
   }, []);
 
   const handleQueryRangeResponse = useCallback((response: QueryRangeResponse) => {
-    // Server now sends monotonic t, so query_range responses are correct.
-    // Use markRebuild to safely update DuckDB through the tick loop.
-    ingestBufferRef.current.markRebuild(response.points);
+    // Merge response with any streaming points newer than the response range
+    // to prevent the 3D satellite position from rewinding on chart zoom.
+    const allTrailPoints = trailBufferRef.current.getAll();
+    const combined = mergeQueryRangePoints(response.points, allTrailPoints);
+
+    ingestBufferRef.current.markRebuild(combined);
     trailBufferRef.current.clear();
-    trailBufferRef.current.pushMany(response.points);
+    trailBufferRef.current.pushMany(combined);
   }, []);
 
   const { connect, disconnect, isConnected, send } = useWebSocket({

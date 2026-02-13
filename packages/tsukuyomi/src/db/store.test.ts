@@ -184,6 +184,25 @@ describe("buildDerivedQuery", () => {
     expect(sql).toContain("GREATEST(");
   });
 
+  it("downsampled query includes MAX(t) boundary", () => {
+    const sql = buildDerivedQuery(testSchema, undefined, 100);
+    // The query must guarantee that the actual latest row (MAX(t)) is included
+    // in the output, even when rn=1 picks the earliest per bucket.
+    // Without this, the chart rightmost point lags behind the true latest.
+    expect(sql).toMatch(/UNION[\s\S]*MAX\(t\)/);
+  });
+
+  it("downsampled query with tMin filter includes MAX(t) boundary", () => {
+    const sql = buildDerivedQuery(testSchema, 500, 100);
+    expect(sql).toContain("WHERE t >= 500");
+    expect(sql).toMatch(/UNION[\s\S]*MAX\(t\)/);
+  });
+
+  it("no-downsampling path does not include UNION or MAX(t) boundary (regression)", () => {
+    const sql = buildDerivedQuery(testSchema);
+    expect(sql).not.toContain("UNION");
+  });
+
   it("includes pass-through derived columns that reference base columns", () => {
     // When a base column (like 'value') should appear in chart output,
     // a pass-through derived entry { name: "value", sql: "value" } must exist.
