@@ -1,5 +1,5 @@
 [package]
-name = "orts-cli"
+name = "orts"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

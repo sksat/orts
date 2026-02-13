@@ -5,7 +5,7 @@ import { OrbitPoint } from "../orbit.js";
  * Simulation metadata sent by the server on initial connection.
  *
  * Corresponds to the `{"type":"info",...}` message from
- * `orts-cli --serve`.
+ * `orts serve`.
  */
 export interface SimInfo {
   mu: number;

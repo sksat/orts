@@ -19,7 +19,7 @@ use tokio::sync::broadcast;
 
 /// Orts CLI — orbital mechanics simulation tool
 #[derive(Parser, Debug)]
-#[command(name = "orts-cli")]
+#[command(name = "orts")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

@@ -24,7 +24,7 @@ Rust core for simulation with a React-based real-time 3D viewer connected via We
 | `orts-coords` | Coordinate systems, epoch, sun position |
 | `orts-orbits` | Orbital mechanics (two-body, Keplerian elements) |
 | `orts-datamodel` | ECS-inspired data model with Rerun SDK integration |
-| `orts-cli` | CLI interface (run, serve, convert) |
+| `orts` | CLI interface (run, serve, convert) |
 
 ### TypeScript Packages
 
@@ -42,20 +42,20 @@ cargo build --workspace
 cargo test --workspace
 
 # Run simulation and save as .rrd
-cargo run --bin orts-cli -- run
+cargo run --bin orts -- run
 
 # Output CSV to stdout
-cargo run --bin orts-cli -- run --output stdout --format csv
+cargo run --bin orts -- run --output stdout --format csv
 
 # Custom orbit parameters
-cargo run --bin orts-cli -- run --body earth --altitude 800 --dt 5
+cargo run --bin orts -- run --body earth --altitude 800 --dt 5
 ```
 
 ### WebSocket Server + Viewer
 
 ```bash
 # Terminal 1: Start simulation server
-cargo run --bin orts-cli -- serve --altitude 400 --dt 10
+cargo run --bin orts -- serve --altitude 400 --dt 10
 
 # Terminal 2: Start viewer dev server
 cd viewer && pnpm install && pnpm dev

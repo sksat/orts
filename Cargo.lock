@@ -3009,7 +3009,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
-name = "orts-cli"
+name = "orts"
 version = "0.0.0"
 dependencies = [
  "clap",

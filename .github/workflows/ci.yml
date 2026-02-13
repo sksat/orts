@@ -36,8 +36,8 @@ jobs:
       - name: Upload CLI binary
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: orts-cli
-          path: target/debug/orts-cli
+          name: orts
+          path: target/debug/orts
           retention-days: 1
 
   typescript:
@@ -165,14 +165,14 @@ jobs:
       - name: Download CLI binary
         uses: actions/download-artifact@v7.0.0
         with:
-          name: orts-cli
+          name: orts
           path: ./bin
 
       - name: Make CLI binary executable
-        run: chmod +x ./bin/orts-cli
+        run: chmod +x ./bin/orts
 
       - name: Start WebSocket server
-        run: ./bin/orts-cli serve --dt 1 --output-interval 10 &
+        run: ./bin/orts serve --dt 1 --output-interval 10 &
 
       - name: Wait for WebSocket server
         run: |

@@ -1,11 +1,11 @@
 use std::process::{Command, Stdio};
 
 fn run_cli_csv() -> std::process::Output {
-    let binary = env!("CARGO_BIN_EXE_orts-cli");
+    let binary = env!("CARGO_BIN_EXE_orts");
     Command::new(binary)
         .args(["run", "--output", "stdout", "--format", "csv"])
         .output()
-        .expect("failed to execute orts-cli")
+        .expect("failed to execute orts")
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn parse_csv_line(line: &str) -> (f64, f64, f64, f64, f64, f64, f64) {
 
 #[test]
 fn test_cli_tle_from_stdin() {
-    let binary = env!("CARGO_BIN_EXE_orts-cli");
+    let binary = env!("CARGO_BIN_EXE_orts");
     let tle_text = "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993\n\
                     2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000\n";
 
@@ -110,7 +110,7 @@ fn test_cli_tle_from_stdin() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("failed to spawn orts-cli");
+        .expect("failed to spawn orts");
 
     child
         .stdin

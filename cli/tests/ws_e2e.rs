@@ -23,13 +23,13 @@ impl Server {
     /// Spawn the CLI binary in WebSocket server mode.
     /// Blocks until the server prints its "listening" message to stderr.
     fn spawn(port: u16) -> Self {
-        let binary = env!("CARGO_BIN_EXE_orts-cli");
+        let binary = env!("CARGO_BIN_EXE_orts");
         let mut child = Command::new(binary)
             .args(["serve", "--port", &port.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("failed to spawn orts-cli");
+            .expect("failed to spawn orts");
 
         let stderr = child.stderr.take().expect("failed to capture stderr");
         let (tx, rx) = mpsc::channel::<()>();

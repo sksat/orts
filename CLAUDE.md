@@ -19,14 +19,14 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 - `cargo build --workspace` — build all crates
 - `cargo test --workspace` — run all tests (55 tests across 4 crates)
 - `cargo clippy --workspace` — lint all crates
-- `cargo run --bin orts-cli` — run the CLI simulator (outputs CSV)
-- `cargo run --bin orts-cli -- --serve` — start WebSocket server (port 9001)
-- `cargo run --bin orts-cli -- --serve --altitude 800 --dt 5` — custom parameters
-- `cargo run --bin orts-cli -- --serve --dt 1 --output-interval 10` — fine dt with decimated output
+- `cargo run --bin orts` — run the CLI simulator (outputs CSV)
+- `cargo run --bin orts -- --serve` — start WebSocket server (port 9001)
+- `cargo run --bin orts -- --serve --altitude 800 --dt 5` — custom parameters
+- `cargo run --bin orts -- --serve --dt 1 --output-interval 10` — fine dt with decimated output
 - `cargo test -p orts-integrator` — test only the integrator crate
 - `cargo test -p orts-orbits` — test only the orbits crate
 - `cargo test -p orts-coords` — test only the coords crate
-- `cargo test -p orts-cli` — run CLI E2E tests
+- `cargo test -p orts` — run CLI E2E tests
 
 ### Viewer (React + TypeScript)
 - `cd viewer && pnpm install` — install dependencies
