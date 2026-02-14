@@ -54,6 +54,36 @@ export interface MultiSeriesData {
   series: SeriesConfig[];
 }
 
+/**
+ * Compute Grafana-style legend isolation visibility.
+ *
+ * Click a series → isolate (show only that series).
+ * Click the already-isolated series → show all.
+ *
+ * @param clickedIndex 1-based uPlot series index (0 = x-axis, ignored)
+ * @param currentShow  Current visibility, indexed 0..N where 0 is x-axis
+ * @returns New visibility array (same length as currentShow)
+ */
+export function computeLegendIsolation(
+  clickedIndex: number,
+  currentShow: boolean[],
+): boolean[] {
+  if (clickedIndex < 1 || clickedIndex >= currentShow.length) return currentShow;
+
+  // Is the clicked series currently the only visible y-series?
+  const isAlreadyIsolated = currentShow.every(
+    (show, i) => i === 0 || (i === clickedIndex ? show : !show),
+  );
+
+  if (isAlreadyIsolated) {
+    // Un-isolate: show all
+    return currentShow.map(() => true);
+  }
+
+  // Isolate: show only clicked, hide others
+  return currentShow.map((_, i) => i === 0 || i === clickedIndex);
+}
+
 /** Build uPlot series config array from SeriesConfig[]. */
 export function buildMultiSeriesConfig(
   configs: SeriesConfig[],
@@ -67,6 +97,42 @@ export function buildMultiSeriesConfig(
     });
   }
   return result;
+}
+
+/**
+ * Attach Grafana-style legend click behavior to a uPlot chart.
+ * Intercepts clicks on legend entries in the capture phase to prevent
+ * uPlot's default toggle, then applies isolation logic.
+ */
+function attachLegendIsolation(chart: uPlot): void {
+  const legend = chart.root.querySelector(".u-legend");
+  if (!legend) return;
+
+  legend.addEventListener(
+    "click",
+    (e) => {
+      const target = (e.target as HTMLElement).closest(".u-series");
+      if (!target) return;
+
+      const entries = Array.from(legend.querySelectorAll(".u-series"));
+      const clickedIdx = entries.indexOf(target as Element);
+      // Ignore x-axis (index 0) or not found
+      if (clickedIdx < 1) return;
+
+      // Prevent uPlot's default series toggle
+      e.stopPropagation();
+
+      const currentShow = chart.series.map((s) => s.show !== false);
+      const newShow = computeLegendIsolation(clickedIdx, currentShow);
+
+      for (let i = 1; i < chart.series.length; i++) {
+        if (currentShow[i] !== newShow[i]) {
+          chart.setSeries(i, { show: newShow[i] });
+        }
+      }
+    },
+    { capture: true },
+  );
 }
 
 interface TimeSeriesChartProps {
@@ -185,6 +251,12 @@ export function TimeSeriesChart({
       container,
     );
     seriesCountRef.current = seriesConfig.length;
+
+    // Attach Grafana-style legend isolation for multi-series charts (2+ y-series)
+    if (seriesConfig.length > 2) {
+      attachLegendIsolation(chart);
+    }
+
     return chart;
   }
 

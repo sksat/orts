@@ -27,3 +27,45 @@ test("uPlot legend shows both series labels", async ({ page }) => {
   expect(legendText).toContain("slow");
   expect(legendText).toContain("fast");
 });
+
+test("legend click isolates a series (Grafana-style)", async ({ page }) => {
+  await page.goto("http://localhost:5176");
+  await page.waitForTimeout(3000);
+
+  const legendEntries = page.locator(".u-legend .u-series");
+  // entries: [0]=x-axis, [1]=slow, [2]=fast
+  const slowEntry = legendEntries.nth(1);
+  const fastEntry = legendEntries.nth(2);
+
+  // Initially both y-series should be visible (no u-off class)
+  await expect(slowEntry).not.toHaveClass(/u-off/);
+  await expect(fastEntry).not.toHaveClass(/u-off/);
+
+  // Click "slow" → isolate it (fast should get u-off)
+  await slowEntry.click();
+  await expect(slowEntry).not.toHaveClass(/u-off/);
+  await expect(fastEntry).toHaveClass(/u-off/);
+
+  // Click "slow" again → un-isolate (show all)
+  await slowEntry.click();
+  await expect(slowEntry).not.toHaveClass(/u-off/);
+  await expect(fastEntry).not.toHaveClass(/u-off/);
+});
+
+test("legend click on hidden series isolates it", async ({ page }) => {
+  await page.goto("http://localhost:5176");
+  await page.waitForTimeout(3000);
+
+  const legendEntries = page.locator(".u-legend .u-series");
+  const slowEntry = legendEntries.nth(1);
+  const fastEntry = legendEntries.nth(2);
+
+  // Click "slow" → isolate it
+  await slowEntry.click();
+  await expect(fastEntry).toHaveClass(/u-off/);
+
+  // Click "fast" (currently hidden) → isolate fast instead
+  await fastEntry.click();
+  await expect(fastEntry).not.toHaveClass(/u-off/);
+  await expect(slowEntry).toHaveClass(/u-off/);
+});

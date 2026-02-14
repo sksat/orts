@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { safeYRange, buildMultiSeriesConfig } from "./TimeSeriesChart.js";
+import { safeYRange, buildMultiSeriesConfig, computeLegendIsolation } from "./TimeSeriesChart.js";
 
 const mockU = {} as any;
 
@@ -91,5 +91,56 @@ describe("buildMultiSeriesConfig", () => {
     ]);
     expect(result[1].label).toBe("ISS (ZARYA)");
     expect(result[1].stroke).toBe("rgba(255,0,0,0.8)");
+  });
+});
+
+describe("computeLegendIsolation", () => {
+  // currentShow is indexed like uPlot series: [0]=x-axis (always true), [1..N]=y-series
+
+  it("isolates clicked series when all are visible", () => {
+    // 3 y-series, all visible, click series 2
+    const result = computeLegendIsolation(2, [true, true, true, true]);
+    expect(result).toEqual([true, false, true, false]);
+  });
+
+  it("shows all when clicking the already-isolated series", () => {
+    // Only series 2 visible → click series 2 → un-isolate (show all)
+    const result = computeLegendIsolation(2, [true, false, true, false]);
+    expect(result).toEqual([true, true, true, true]);
+  });
+
+  it("isolates clicked series when some others are hidden", () => {
+    // Series 3 hidden, click series 1 → isolate series 1
+    const result = computeLegendIsolation(1, [true, true, true, false]);
+    expect(result).toEqual([true, true, false, false]);
+  });
+
+  it("isolates a currently-hidden series when clicked", () => {
+    // Series 2 hidden, click series 2 → isolate it (show only series 2)
+    const result = computeLegendIsolation(2, [true, true, false, true]);
+    expect(result).toEqual([true, false, true, false]);
+  });
+
+  it("toggles back to all visible for single y-series", () => {
+    // 1 y-series, it's already the only one → click → show all (no change)
+    const result = computeLegendIsolation(1, [true, true]);
+    expect(result).toEqual([true, true]);
+  });
+
+  it("isolates with two y-series", () => {
+    const result = computeLegendIsolation(1, [true, true, true]);
+    expect(result).toEqual([true, true, false]);
+  });
+
+  it("un-isolates with two y-series", () => {
+    const result = computeLegendIsolation(1, [true, true, false]);
+    expect(result).toEqual([true, true, true]);
+  });
+
+  it("returns unchanged for out-of-range index", () => {
+    const input = [true, true, true];
+    expect(computeLegendIsolation(0, input)).toEqual(input);
+    expect(computeLegendIsolation(3, input)).toEqual(input);
+    expect(computeLegendIsolation(-1, input)).toEqual(input);
   });
 });
