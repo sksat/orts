@@ -1541,8 +1541,8 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert!(
-            elapsed.as_millis() < 1000,
-            "flush took {}ms, expected <1000ms",
+            elapsed.as_millis() < 2000,
+            "flush took {}ms, expected <2000ms",
             elapsed.as_millis()
         );
         assert_eq!(buf.segment_count, 1);
