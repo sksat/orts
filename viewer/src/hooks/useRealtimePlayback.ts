@@ -79,7 +79,14 @@ export function useRealtimePlayback(trailBuffers: Map<string, TrailBuffer>) {
 
     let currentTime: number;
     if (mode === "live") {
-      currentTime = tMax;
+      // Synchronize: use min of all satellites' latest t.
+      // This is the newest time where ALL satellites have data,
+      // ensuring all satellite positions are shown at the same sim time.
+      let syncTime = Infinity;
+      for (const buf of trailBuffers.values()) {
+        if (buf.latest) syncTime = Math.min(syncTime, buf.latest.t);
+      }
+      currentTime = syncTime === Infinity ? tMax : syncTime;
     } else {
       currentTime = currentTimeRef.current;
     }
@@ -93,11 +100,10 @@ export function useRealtimePlayback(trailBuffers: Map<string, TrailBuffer>) {
     const visibleCounts = new Map<string, number>();
 
     for (const [satId, buf] of trailBuffers) {
+      positions.set(satId, buf.interpolateAt(currentTime));
       if (mode === "live") {
-        positions.set(satId, buf.latest);
         visibleCounts.set(satId, buf.length);
       } else {
-        positions.set(satId, buf.interpolateAt(currentTime));
         const idx = buf.indexBefore(currentTime);
         visibleCounts.set(satId, idx + 2);
       }

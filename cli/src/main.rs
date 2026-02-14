@@ -1099,40 +1099,46 @@ async fn simulation_loop(
         let mut all_outputs: Vec<HistoryState> = Vec::new();
 
         for ss in &mut sat_states {
-            // Check orbit boundary → reset
-            if ss.t >= ss.orbit_end_t - 1e-9 {
-                ss.state = ss.spec.initial_state(params.mu);
-                ss.orbit_end_t = ss.t + ss.spec.period;
-            }
+            // Each satellite advances by exactly chunk_sim_time, handling
+            // orbit boundaries within the loop so all satellites stay in sync.
+            let target_t = ss.t + chunk_sim_time;
 
-            let chunk_end = (ss.t + chunk_sim_time).min(ss.orbit_end_t);
+            while ss.t < target_t - 1e-9 {
+                // Check orbit boundary → reset
+                if ss.t >= ss.orbit_end_t - 1e-9 {
+                    ss.state = ss.spec.initial_state(params.mu);
+                    ss.orbit_end_t = ss.t + ss.spec.period;
+                }
 
-            let (outputs, new_state, new_t) = compute_output_chunk(
-                &ss.spec.id,
-                &ss.system,
-                ss.state.clone(),
-                ss.t,
-                chunk_end,
-                dt,
-                params.stream_interval,
-                &mut ss.next_stream_t,
-            );
+                let sub_end = target_t.min(ss.orbit_end_t);
 
-            ss.state = new_state;
-            ss.t = new_t;
+                let (outputs, new_state, new_t) = compute_output_chunk(
+                    &ss.spec.id,
+                    &ss.system,
+                    ss.state.clone(),
+                    ss.t,
+                    sub_end,
+                    dt,
+                    params.stream_interval,
+                    &mut ss.next_stream_t,
+                );
 
-            // Save output_interval-aligned states to history
-            {
-                let mut h = history.write().await;
-                for out in &outputs {
-                    if out.t >= ss.next_save_t - 1e-9 {
-                        h.push(out.clone());
-                        ss.next_save_t += params.output_interval;
+                ss.state = new_state;
+                ss.t = new_t;
+
+                // Save output_interval-aligned states to history
+                {
+                    let mut h = history.write().await;
+                    for out in &outputs {
+                        if out.t >= ss.next_save_t - 1e-9 {
+                            h.push(out.clone());
+                            ss.next_save_t += params.output_interval;
+                        }
                     }
                 }
-            }
 
-            all_outputs.extend(outputs);
+                all_outputs.extend(outputs);
+            }
         }
 
         // Sort all outputs by time for interleaved sending
