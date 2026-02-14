@@ -11,7 +11,7 @@ use orts_datamodel::recording::Recording;
 use orts_datamodel::timeline::TimePoint;
 use orts_coords::epoch::Epoch;
 use orts_integrator::{Rk4, State};
-use orts_orbits::{body::KnownBody, kepler::KeplerianElements, tle::Tle, two_body::TwoBodySystem};
+use orts_orbits::{body::KnownBody, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, tle::Tle};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -796,6 +796,19 @@ fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
     }
 }
 
+/// Build an OrbitalSystem for the given body, using ZonalHarmonics (J2) if available.
+fn build_orbital_system(body: &KnownBody, mu: f64) -> OrbitalSystem {
+    let props = body.properties();
+    let gravity_field: Box<dyn gravity::GravityField> = match props.j2 {
+        Some(j2) => Box::new(gravity::ZonalHarmonics {
+            r_body: props.radius,
+            j2,
+        }),
+        None => Box::new(gravity::PointMass),
+    };
+    OrbitalSystem::new(mu, gravity_field)
+}
+
 /// Run the simulation and return a Recording.
 fn run_simulation(params: &SimParams) -> Recording {
     let mut rec = Recording::new();
@@ -805,7 +818,7 @@ fn run_simulation(params: &SimParams) -> Recording {
     rec.log_static(&body_path, &BodyRadius(params.body.properties().radius));
 
     for sat in &params.satellites {
-        let system = TwoBodySystem { mu: params.mu };
+        let system = build_orbital_system(&params.body, params.mu);
         let initial = sat.initial_state(params.mu);
         let sat_path = sat.entity_path();
 
@@ -1066,7 +1079,7 @@ async fn async_server(sim: &SimArgs, port: u16) {
 /// Per-satellite simulation state tracked across loop iterations.
 struct SatSimState {
     spec: SatelliteSpec,
-    system: TwoBodySystem,
+    system: OrbitalSystem,
     state: State,
     t: f64,
     orbit_end_t: f64,
@@ -1095,7 +1108,7 @@ async fn simulation_loop(
         let initial = spec.initial_state(params.mu);
         SatSimState {
             spec: spec.clone(),
-            system: TwoBodySystem { mu: params.mu },
+            system: build_orbital_system(&params.body, params.mu),
             state: initial,
             t: 0.0,
             orbit_end_t: spec.period,
@@ -1124,14 +1137,23 @@ async fn simulation_loop(
             // orbit boundaries within the loop so all satellites stay in sync.
             let target_t = ss.t + chunk_sim_time;
 
+            // Skip orbit boundary reset when perturbations are active
+            // (orbit is no longer periodic with J2)
+            let has_perturbations = params.body.properties().j2.is_some();
+
             while ss.t < target_t - 1e-9 {
-                // Check orbit boundary → reset
-                if ss.t >= ss.orbit_end_t - 1e-9 {
+                // Check orbit boundary → reset (only for unperturbed 2-body)
+                if !has_perturbations && ss.t >= ss.orbit_end_t - 1e-9 {
                     ss.state = ss.spec.initial_state(params.mu);
                     ss.orbit_end_t = ss.t + ss.spec.period;
                 }
 
-                let sub_end = target_t.min(ss.orbit_end_t);
+                // With perturbations, orbit is not periodic; propagate continuously
+                let sub_end = if has_perturbations {
+                    target_t
+                } else {
+                    target_t.min(ss.orbit_end_t)
+                };
 
                 let (outputs, new_state, new_t) = compute_output_chunk(
                     &ss.spec.id,
@@ -1356,7 +1378,7 @@ async fn handle_connection(
 #[allow(clippy::too_many_arguments)]
 fn compute_output_chunk(
     satellite_id: &str,
-    system: &TwoBodySystem,
+    system: &OrbitalSystem,
     mut state: State,
     t_start: f64,
     chunk_end: f64,
@@ -1952,7 +1974,7 @@ mod tests {
         let mu: f64 = 398600.4418;
         let r0: f64 = 6778.137;
         let v0 = (mu / r0).sqrt();
-        let system = TwoBodySystem { mu };
+        let system = OrbitalSystem::new(mu, Box::new(gravity::PointMass));
         let initial = State {
             position: vector![r0, 0.0, 0.0],
             velocity: vector![0.0, v0, 0.0],
@@ -1972,7 +1994,7 @@ mod tests {
         let mu: f64 = 398600.4418;
         let r0: f64 = 6778.137;
         let v0 = (mu / r0).sqrt();
-        let system = TwoBodySystem { mu };
+        let system = OrbitalSystem::new(mu, Box::new(gravity::PointMass));
         let initial = State {
             position: vector![r0, 0.0, 0.0],
             velocity: vector![0.0, v0, 0.0],
@@ -1999,7 +2021,7 @@ mod tests {
         let mu: f64 = 398600.4418;
         let r0: f64 = 6778.137;
         let v0 = (mu / r0).sqrt();
-        let system = TwoBodySystem { mu };
+        let system = OrbitalSystem::new(mu, Box::new(gravity::PointMass));
         let initial = State {
             position: vector![r0, 0.0, 0.0],
             velocity: vector![0.0, v0, 0.0],
@@ -2031,7 +2053,7 @@ mod tests {
         let mu: f64 = 398600.4418;
         let r0: f64 = 6778.137;
         let v0 = (mu / r0).sqrt();
-        let system = TwoBodySystem { mu };
+        let system = OrbitalSystem::new(mu, Box::new(gravity::PointMass));
         let initial = State {
             position: vector![r0, 0.0, 0.0],
             velocity: vector![0.0, v0, 0.0],
@@ -2055,7 +2077,7 @@ mod tests {
         let mu: f64 = 398600.4418;
         let r0: f64 = 6778.137;
         let v0 = (mu / r0).sqrt();
-        let system = TwoBodySystem { mu };
+        let system = OrbitalSystem::new(mu, Box::new(gravity::PointMass));
         let initial = State {
             position: vector![r0, 0.0, 0.0],
             velocity: vector![0.0, v0, 0.0],
@@ -2088,7 +2110,7 @@ mod tests {
         let mu: f64 = 398600.4418;
         let r0: f64 = 6778.137;
         let v0 = (mu / r0).sqrt();
-        let system = TwoBodySystem { mu };
+        let system = OrbitalSystem::new(mu, Box::new(gravity::PointMass));
         let initial = State {
             position: vector![r0, 0.0, 0.0],
             velocity: vector![0.0, v0, 0.0],

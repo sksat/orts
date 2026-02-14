@@ -7,6 +7,9 @@ pub const MU_SUN: f64 = 132712440018.0;
 /// Earth equatorial radius (km, WGS84)
 pub const R_EARTH: f64 = 6378.137;
 
+/// Earth J2 zonal harmonic coefficient (WGS84/EGM96)
+pub const J2_EARTH: f64 = 1.08263e-3;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,5 +54,15 @@ mod tests {
         // g ≈ μ/R² ≈ 9.798e-3 km/s² ≈ 9.798 m/s²
         let g = MU_EARTH / (R_EARTH * R_EARTH);
         assert!((g - 9.798e-3).abs() < 0.01e-3);
+    }
+
+    #[test]
+    fn j2_earth_value() {
+        assert!((J2_EARTH - 1.08263e-3).abs() < 1e-8);
+    }
+
+    #[test]
+    fn j2_earth_is_positive() {
+        assert!(J2_EARTH > 0.0);
     }
 }

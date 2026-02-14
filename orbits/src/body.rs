@@ -26,6 +26,8 @@ pub struct BodyProperties {
     pub radius: f64,
     /// Display name
     pub name: &'static str,
+    /// J2 zonal harmonic coefficient (None for bodies without known oblateness)
+    pub j2: Option<f64>,
 }
 
 impl KnownBody {
@@ -36,51 +38,61 @@ impl KnownBody {
                 mu: constants::MU_SUN,
                 radius: 695700.0,
                 name: "Sun",
+                j2: None,
             },
             KnownBody::Mercury => BodyProperties {
                 mu: 22031.868551,
                 radius: 2439.7,
                 name: "Mercury",
+                j2: None,
             },
             KnownBody::Venus => BodyProperties {
                 mu: 324858.592000,
                 radius: 6051.8,
                 name: "Venus",
+                j2: None,
             },
             KnownBody::Earth => BodyProperties {
                 mu: constants::MU_EARTH,
                 radius: constants::R_EARTH,
                 name: "Earth",
+                j2: Some(constants::J2_EARTH),
             },
             KnownBody::Moon => BodyProperties {
                 mu: 4902.800066,
                 radius: 1737.4,
                 name: "Moon",
+                j2: Some(2.033e-4),
             },
             KnownBody::Mars => BodyProperties {
                 mu: 42828.375214,
                 radius: 3396.2,
                 name: "Mars",
+                j2: Some(1.9555e-3),
             },
             KnownBody::Jupiter => BodyProperties {
                 mu: 126686534.921800,
                 radius: 71492.0,
                 name: "Jupiter",
+                j2: Some(1.4736e-2),
             },
             KnownBody::Saturn => BodyProperties {
                 mu: 37931206.159000,
                 radius: 60268.0,
                 name: "Saturn",
+                j2: Some(1.6298e-2),
             },
             KnownBody::Uranus => BodyProperties {
                 mu: 5793951.256000,
                 radius: 25559.0,
                 name: "Uranus",
+                j2: None,
             },
             KnownBody::Neptune => BodyProperties {
                 mu: 6835099.975400,
                 radius: 24764.0,
                 name: "Neptune",
+                j2: None,
             },
         }
     }
@@ -165,5 +177,57 @@ mod tests {
         assert_eq!(json, "\"celestial_body\"");
         let json = serde_json::to_string(&ObjectCategory::Satellite).unwrap();
         assert_eq!(json, "\"satellite\"");
+    }
+
+    #[test]
+    fn earth_j2_matches_constant() {
+        assert_eq!(KnownBody::Earth.properties().j2, Some(constants::J2_EARTH));
+    }
+
+    #[test]
+    fn oblate_bodies_have_j2() {
+        let oblate = [
+            KnownBody::Earth,
+            KnownBody::Moon,
+            KnownBody::Mars,
+            KnownBody::Jupiter,
+            KnownBody::Saturn,
+        ];
+        for body in &oblate {
+            assert!(
+                body.properties().j2.is_some(),
+                "{:?} should have J2 value",
+                body
+            );
+        }
+    }
+
+    #[test]
+    fn spherical_bodies_have_no_j2() {
+        let spherical = [
+            KnownBody::Sun,
+            KnownBody::Mercury,
+            KnownBody::Venus,
+            KnownBody::Uranus,
+            KnownBody::Neptune,
+        ];
+        for body in &spherical {
+            assert!(
+                body.properties().j2.is_none(),
+                "{:?} should not have J2 value",
+                body
+            );
+        }
+    }
+
+    #[test]
+    fn jupiter_j2_largest_among_planets() {
+        // Gas giants have the largest J2 values due to rapid rotation
+        let j2_earth = KnownBody::Earth.properties().j2.unwrap();
+        let j2_jupiter = KnownBody::Jupiter.properties().j2.unwrap();
+        assert!(
+            j2_jupiter > j2_earth,
+            "Jupiter J2 ({j2_jupiter}) should be larger than Earth J2 ({j2_earth})"
+        );
     }
 }

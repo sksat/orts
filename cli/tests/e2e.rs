@@ -8,6 +8,14 @@ fn run_cli_csv() -> std::process::Output {
         .expect("failed to execute orts")
 }
 
+fn run_cli_csv_with_body(body: &str) -> std::process::Output {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    Command::new(binary)
+        .args(["run", "--body", body, "--output", "stdout", "--format", "csv"])
+        .output()
+        .expect("failed to execute orts")
+}
+
 #[test]
 fn test_cli_runs_successfully() {
     let output = run_cli_csv();
@@ -64,7 +72,36 @@ fn test_cli_output_is_csv() {
 }
 
 #[test]
-fn test_cli_orbit_closes() {
+fn test_cli_point_mass_orbit_closes() {
+    // Use Sun as central body (no J2) → pure point-mass → orbit should close
+    let output = run_cli_csv_with_body("sun");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let data_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+
+    let first = parse_csv_line(data_lines[0]);
+    let last = parse_csv_line(data_lines[data_lines.len() - 1]);
+
+    let dx = first.1 - last.1;
+    let dy = first.2 - last.2;
+    let dz = first.3 - last.3;
+    let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+
+    // For point-mass, orbit should close within numerical precision
+    let r_first = (first.1 * first.1 + first.2 * first.2 + first.3 * first.3).sqrt();
+    let rel_distance = distance / r_first;
+    assert!(
+        rel_distance < 1e-3,
+        "Point-mass orbit did not close: distance = {distance:.6} km (rel = {rel_distance:.2e})"
+    );
+}
+
+#[test]
+fn test_cli_j2_orbit_drifts() {
+    // Earth has J2 enabled by default → orbit should not close exactly
     let output = run_cli_csv();
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -76,16 +113,28 @@ fn test_cli_orbit_closes() {
     let first = parse_csv_line(data_lines[0]);
     let last = parse_csv_line(data_lines[data_lines.len() - 1]);
 
-    // Position should return close to initial after one period
     let dx = first.1 - last.1;
     let dy = first.2 - last.2;
     let dz = first.3 - last.3;
     let distance = (dx * dx + dy * dy + dz * dz).sqrt();
 
+    // J2 causes measurable drift (~100-200 km per orbit at ISS altitude)
     assert!(
-        distance < 1.0, // less than 1 km after one full orbit
-        "Orbit did not close: distance between first and last position = {:.6} km",
-        distance
+        distance > 1.0,
+        "J2 should cause measurable orbit drift, but distance = {distance:.6} km"
+    );
+    assert!(
+        distance < 300.0,
+        "Orbit drifted too far: distance = {distance:.6} km"
+    );
+
+    // Altitude should be roughly preserved (J2 is conservative)
+    let r_first = (first.1 * first.1 + first.2 * first.2 + first.3 * first.3).sqrt();
+    let r_last = (last.1 * last.1 + last.2 * last.2 + last.3 * last.3).sqrt();
+    let r_diff = (r_first - r_last).abs();
+    assert!(
+        r_diff < 10.0,
+        "Orbital radius changed too much: |r_first - r_last| = {r_diff:.6} km"
     );
 }
 
