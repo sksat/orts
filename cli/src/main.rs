@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use futures_util::{SinkExt, StreamExt};
-use nalgebra::vector;
 use orts_datamodel::archetypes::OrbitalState;
 use orts_datamodel::components::{BodyRadius, GravitationalParameter};
 use orts_datamodel::entity_path::EntityPath;
@@ -125,7 +124,6 @@ enum OrbitSpec {
     Circular {
         altitude: f64,
         r0: f64,
-        v0: f64,
         /// Orbital inclination in radians (0 = equatorial).
         inclination: f64,
         /// Right Ascension of Ascending Node in radians.
@@ -254,12 +252,11 @@ impl SimParams {
             } else {
                 // Single circular orbit
                 let r0 = body.properties().radius + args.altitude;
-                let v0 = (mu / r0).sqrt();
                 let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
                 vec![SatelliteSpec {
                     id: "default".to_string(),
                     name: None,
-                    orbit: OrbitSpec::Circular { altitude: args.altitude, r0, v0, inclination: 0.0, raan: 0.0 },
+                    orbit: OrbitSpec::Circular { altitude: args.altitude, r0, inclination: 0.0, raan: 0.0 },
                     period,
                 }]
             }
@@ -288,13 +285,12 @@ impl SimParams {
 
         // SSO at 800 km (always available, no network needed)
         let r0 = body.properties().radius + 800.0;
-        let v0 = (mu / r0).sqrt();
         let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
         sats.push(SatelliteSpec {
             id: "sso".to_string(),
             name: Some("SSO 800km".to_string()),
             orbit: OrbitSpec::Circular {
-                altitude: 800.0, r0, v0,
+                altitude: 800.0, r0,
                 inclination: 98.6_f64.to_radians(),
                 raan: 0.0,
             },
@@ -403,11 +399,10 @@ fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
     } else {
         let alt = altitude.unwrap_or(400.0);
         let r0 = body.properties().radius + alt;
-        let v0 = (mu / r0).sqrt();
         let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
         let inc = inclination.unwrap_or(0.0).to_radians();
         let ra = raan.unwrap_or(0.0).to_radians();
-        (OrbitSpec::Circular { altitude: alt, r0, v0, inclination: inc, raan: ra }, period, None)
+        (OrbitSpec::Circular { altitude: alt, r0, inclination: inc, raan: ra }, period, None)
     };
 
     if id.is_empty() {
@@ -1407,6 +1402,7 @@ fn state_message(satellite_id: &str, t: f64, state: &State, mu: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nalgebra::vector;
 
     const TEST_MU: f64 = 398600.4418;
 
