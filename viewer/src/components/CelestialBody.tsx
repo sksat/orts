@@ -11,6 +11,8 @@ interface CelestialBodyProps {
   radius?: number;
   /** Normalized sun direction in world space (ECI). */
   sunDirection?: THREE.Vector3;
+  /** Earth Rotation Angle in radians (for Earth self-rotation in ECI). */
+  rotationAngle?: number;
 }
 
 function TexturedBody({
@@ -80,7 +82,7 @@ function FallbackBody({
  * Renders a celestial body sphere with texture if available,
  * falling back to a colored Phong sphere.
  */
-export function CelestialBody({ bodyId, radius = 1, sunDirection }: CelestialBodyProps) {
+export function CelestialBody({ bodyId, radius = 1, sunDirection, rotationAngle }: CelestialBodyProps) {
   const renderInfo = getBodyRenderInfo(bodyId);
 
   if (renderInfo.nightTexturePath && renderInfo.texturePath && sunDirection) {
@@ -93,6 +95,7 @@ export function CelestialBody({ bodyId, radius = 1, sunDirection }: CelestialBod
           sunDirection={sunDirection}
           dayTexturePath={renderInfo.texturePath}
           nightTexturePath={renderInfo.nightTexturePath}
+          rotationAngle={rotationAngle}
         />
       </Suspense>
     );

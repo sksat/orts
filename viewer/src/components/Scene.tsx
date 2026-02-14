@@ -7,7 +7,12 @@ import { OrbitTrail } from "./OrbitTrail.js";
 import { Satellite } from "./Satellite.js";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
-import { sunDirectionECI } from "../astro.js";
+import { earthRotationAngle, sunDirectionECI } from "../astro.js";
+import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "../sceneFrame.js";
+
+// Set scene up vector before any Three.js objects are created
+// so that Camera, OrbitControls, and all scene objects use the correct convention.
+THREE.Object3D.DEFAULT_UP.set(...SCENE_UP);
 
 // Default sun direction when no epoch is provided: ECI +X (vernal equinox).
 const DEFAULT_SUN_DIRECTION = new THREE.Vector3(1, 0, 0);
@@ -68,6 +73,12 @@ export function Scene({
     return [sunDirection.x * 10, sunDirection.y * 10, sunDirection.z * 10];
   }, [sunDirection]);
 
+  // Earth rotation angle (ERA) — updates every frame via simTime (not quantized)
+  const era = useMemo(() => {
+    if (epochJd == null) return undefined;
+    return earthRotationAngle(epochJd, simTime);
+  }, [epochJd, simTime]);
+
   // No useMemo: the trailBuffers Map reference (from useRef) never changes,
   // but Scene re-renders each frame via satellitePositions, so reading entries
   // inline picks up newly-added satellites.
@@ -82,7 +93,7 @@ export function Scene({
 
   return (
     <Canvas
-      camera={{ position: [0, 2, 5], fov: 60, near: 0.01, far: 1000 }}
+      camera={{ position: DEFAULT_CAMERA_POSITION, fov: 60, near: 0.01, far: 1000 }}
       style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
     >
       <OrbitControls
@@ -95,7 +106,7 @@ export function Scene({
       <ambientLight intensity={0.5} color={0x404040} />
       <directionalLight intensity={2.0} position={lightPosition} />
 
-      <CelestialBody bodyId={centralBody} sunDirection={sunDirection} />
+      <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={era} />
       <axesHelper args={[2]} />
 
       {/* Multi-satellite mode */}
