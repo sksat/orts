@@ -3,6 +3,8 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
+import { eciToEcef, type DisplayFrame } from "../frameTransform.js";
+import { earthRotationAngle } from "../astro.js";
 
 /** Initial capacity for the streaming vertex buffer. Grows as needed. */
 const INITIAL_CAPACITY = 2048;
@@ -18,6 +20,10 @@ interface OrbitTrailProps {
   scaleRadius: number;
   /** Trail color (default: 0x00ff88). */
   color?: number;
+  /** Display coordinate frame (default: "eci"). */
+  displayFrame?: DisplayFrame;
+  /** Julian Date of the simulation epoch (needed for ECEF transform). */
+  epochJd?: number | null;
 }
 
 /**
@@ -27,11 +33,15 @@ interface OrbitTrailProps {
  *   - `points` + `visibleCount`: replay mode (progressive trail)
  *   - `trailBuffer`: realtime mode (bounded, generation-based GPU invalidation)
  */
-export function OrbitTrail({ points, visibleCount, trailBuffer, scaleRadius, color = 0x00ff88 }: OrbitTrailProps) {
+export function OrbitTrail({
+  points, visibleCount, trailBuffer, scaleRadius, color = 0x00ff88,
+  displayFrame = "eci", epochJd,
+}: OrbitTrailProps) {
   const writtenCountRef = useRef(0);
   const capacityRef = useRef(INITIAL_CAPACITY);
   const bufferRef = useRef(new Float32Array(INITIAL_CAPACITY * 3));
   const generationRef = useRef(-1);
+  const prevFrameRef = useRef<DisplayFrame>(displayFrame);
 
   // Determine data source identity for geometry recreation
   const sourceIdentity = trailBuffer ?? points;
@@ -62,25 +72,40 @@ export function OrbitTrail({ points, visibleCount, trailBuffer, scaleRadius, col
     };
   }, [geometry]);
 
+  /** Write a single point to the GPU buffer at index `i`. */
+  function writePoint(buf: Float32Array, i: number, p: OrbitPoint): void {
+    let px = p.x, py = p.y, pz = p.z;
+    if (displayFrame === "ecef" && epochJd != null) {
+      const era = earthRotationAngle(epochJd, p.t);
+      [px, py, pz] = eciToEcef(px, py, pz, era);
+    }
+    const off = i * 3;
+    buf[off] = px / scaleRadius;
+    buf[off + 1] = py / scaleRadius;
+    buf[off + 2] = pz / scaleRadius;
+  }
+
   useFrame(() => {
+    // Detect display frame change → force full rewrite
+    if (displayFrame !== prevFrameRef.current) {
+      prevFrameRef.current = displayFrame;
+      writtenCountRef.current = 0;
+    }
+
     if (trailBuffer) {
       // --- TrailBuffer mode (realtime) ---
       const currentGen = trailBuffer.generation;
       const allPoints = trailBuffer.getAll();
       const totalPoints = allPoints.length;
 
-      if (currentGen !== generationRef.current) {
-        // Generation changed (trim or clear) — full rewrite
+      if (currentGen !== generationRef.current || writtenCountRef.current === 0) {
+        // Generation changed or frame switch — full rewrite
         generationRef.current = currentGen;
         ensureCapacity(totalPoints);
 
         const buf = bufferRef.current;
         for (let i = 0; i < totalPoints; i++) {
-          const p = allPoints[i];
-          const off = i * 3;
-          buf[off] = p.x / scaleRadius;
-          buf[off + 1] = p.y / scaleRadius;
-          buf[off + 2] = p.z / scaleRadius;
+          writePoint(buf, i, allPoints[i]);
         }
         writtenCountRef.current = totalPoints;
 
@@ -124,11 +149,7 @@ export function OrbitTrail({ points, visibleCount, trailBuffer, scaleRadius, col
     ensureCapacity(to);
     const buf = bufferRef.current;
     for (let i = from; i < to; i++) {
-      const p = src[i];
-      const off = i * 3;
-      buf[off] = p.x / scaleRadius;
-      buf[off + 1] = p.y / scaleRadius;
-      buf[off + 2] = p.z / scaleRadius;
+      writePoint(buf, i, src[i]);
     }
     writtenCountRef.current = to;
 

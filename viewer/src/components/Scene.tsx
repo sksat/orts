@@ -9,6 +9,7 @@ import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import { earthRotationAngle, sunDirectionECI } from "../astro.js";
 import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "../sceneFrame.js";
+import { rotateZ, type DisplayFrame } from "../frameTransform.js";
 
 // Set scene up vector before any Three.js objects are created
 // so that Camera, OrbitControls, and all scene objects use the correct convention.
@@ -39,6 +40,8 @@ interface SceneProps {
   centralBodyRadius: number;
   /** Julian Date of the simulation epoch, or null if not set. */
   epochJd?: number | null;
+  /** Display coordinate frame (default: "eci"). */
+  displayFrame?: DisplayFrame;
 }
 
 /**
@@ -56,28 +59,43 @@ export function Scene({
   centralBody,
   centralBodyRadius,
   epochJd,
+  displayFrame = "eci",
 }: SceneProps) {
+  const isEcef = displayFrame === "ecef";
+
   // Determine sim time for sun direction from first available satellite position
   const firstPosition = satellitePosition
     ?? (satellitePositions ? Array.from(satellitePositions.values()).find((p) => p != null) ?? null : null);
   const simTime = firstPosition?.t ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
-  const sunDirection = useMemo(() => {
+  // Sun direction in ECI
+  const sunDirectionEci = useMemo(() => {
     if (epochJd == null) return DEFAULT_SUN_DIRECTION;
     const [x, y, z] = sunDirectionECI(epochJd, quantizedSimTime);
     return new THREE.Vector3(x, y, z);
   }, [epochJd, quantizedSimTime]);
-
-  const lightPosition = useMemo<[number, number, number]>(() => {
-    return [sunDirection.x * 10, sunDirection.y * 10, sunDirection.z * 10];
-  }, [sunDirection]);
 
   // Earth rotation angle (ERA) — updates every frame via simTime (not quantized)
   const era = useMemo(() => {
     if (epochJd == null) return undefined;
     return earthRotationAngle(epochJd, simTime);
   }, [epochJd, simTime]);
+
+  // Sun direction in the display frame
+  const sunDirection = useMemo(() => {
+    if (!isEcef || era == null) return sunDirectionEci;
+    // ECEF: rotate sun direction by -ERA to match Earth-fixed frame
+    const [sx, sy, sz] = rotateZ(sunDirectionEci.x, sunDirectionEci.y, sunDirectionEci.z, -era);
+    return new THREE.Vector3(sx, sy, sz);
+  }, [sunDirectionEci, isEcef, era]);
+
+  const lightPosition = useMemo<[number, number, number]>(() => {
+    return [sunDirection.x * 10, sunDirection.y * 10, sunDirection.z * 10];
+  }, [sunDirection]);
+
+  // Earth rotation angle for the mesh: ERA in ECI, 0 in ECEF (Earth is static)
+  const earthRotation = isEcef ? 0 : era;
 
   // No useMemo: the trailBuffers Map reference (from useRef) never changes,
   // but Scene re-renders each frame via satellitePositions, so reading entries
@@ -106,7 +124,7 @@ export function Scene({
       <ambientLight intensity={0.5} color={0x404040} />
       <directionalLight intensity={2.0} position={lightPosition} />
 
-      <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={era} />
+      <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={earthRotation} />
       <axesHelper args={[2]} />
 
       {/* Multi-satellite mode */}
@@ -121,8 +139,18 @@ export function Scene({
               visibleCount={vc}
               scaleRadius={centralBodyRadius}
               color={color}
+              displayFrame={displayFrame}
+              epochJd={epochJd}
             />
-            {pos && <Satellite position={pos} scaleRadius={centralBodyRadius} color={color} />}
+            {pos && (
+              <Satellite
+                position={pos}
+                scaleRadius={centralBodyRadius}
+                color={color}
+                displayFrame={displayFrame}
+                era={era}
+              />
+            )}
           </group>
         );
       })}
@@ -130,17 +158,30 @@ export function Scene({
       {/* Single-satellite fallback (replay mode or legacy) */}
       {!multiSatEntries && hasTrailData && (
         trailBuffer ? (
-          <OrbitTrail trailBuffer={trailBuffer} visibleCount={trailVisibleCount} scaleRadius={centralBodyRadius} />
+          <OrbitTrail
+            trailBuffer={trailBuffer}
+            visibleCount={trailVisibleCount}
+            scaleRadius={centralBodyRadius}
+            displayFrame={displayFrame}
+            epochJd={epochJd}
+          />
         ) : (
           <OrbitTrail
             points={points!}
             visibleCount={trailVisibleCount ?? points!.length}
             scaleRadius={centralBodyRadius}
+            displayFrame={displayFrame}
+            epochJd={epochJd}
           />
         )
       )}
       {!multiSatEntries && satellitePosition && (
-        <Satellite position={satellitePosition} scaleRadius={centralBodyRadius} />
+        <Satellite
+          position={satellitePosition}
+          scaleRadius={centralBodyRadius}
+          displayFrame={displayFrame}
+          era={era}
+        />
       )}
     </Canvas>
   );

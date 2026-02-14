@@ -20,6 +20,7 @@ import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";
 import { mergeQueryRangePoints } from "./utils/mergeQueryRange.js";
 import { jdToUTCString } from "./astro.js";
 import { useMultiSatelliteStore, type SatelliteConfig } from "./hooks/useMultiSatelliteStore.js";
+import { type DisplayFrame } from "./frameTransform.js";
 
 /** The two viewer modes. */
 type ViewerMode = "replay" | "realtime";
@@ -58,6 +59,9 @@ function getOrCreateIngestBuffer(map: Map<string, IngestBuffer<OrbitPoint>>, id:
 export function App() {
   // --- Mode toggle ---
   const [mode, setMode] = useState<ViewerMode>("realtime");
+
+  // --- Display frame ---
+  const [displayFrame, setDisplayFrame] = useState<DisplayFrame>("eci");
 
   // --- Replay mode state ---
   const [replayPoints, setReplayPoints] = useState<OrbitPoint[] | null>(null);
@@ -431,6 +435,7 @@ export function App() {
         centralBody={centralBody}
         centralBodyRadius={centralBodyRadius}
         epochJd={epochJd ?? null}
+        displayFrame={displayFrame}
       />
 
       {/* UI overlay */}
@@ -447,6 +452,21 @@ export function App() {
             onClick={() => handleModeChange("realtime")}
           >
             Realtime
+          </button>
+        </div>
+
+        <div className="mode-toggle" style={{ marginTop: "4px" }}>
+          <button
+            className={`mode-toggle-btn ${displayFrame === "eci" ? "active" : ""}`}
+            onClick={() => setDisplayFrame("eci")}
+          >
+            ECI
+          </button>
+          <button
+            className={`mode-toggle-btn ${displayFrame === "ecef" ? "active" : ""}`}
+            onClick={() => setDisplayFrame("ecef")}
+          >
+            ECEF
           </button>
         </div>
 
