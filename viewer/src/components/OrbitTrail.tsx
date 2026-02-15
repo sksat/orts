@@ -24,6 +24,8 @@ interface OrbitTrailProps {
   displayFrame?: DisplayFrame;
   /** Julian Date of the simulation epoch (needed for ECEF transform). */
   epochJd?: number | null;
+  /** Starting vertex index for the draw range (default 0). */
+  drawStart?: number;
 }
 
 /**
@@ -35,7 +37,7 @@ interface OrbitTrailProps {
  */
 export function OrbitTrail({
   points, visibleCount, trailBuffer, scaleRadius, color = 0x00ff88,
-  displayFrame = "eci", epochJd,
+  displayFrame = "eci", epochJd, drawStart = 0,
 }: OrbitTrailProps) {
   const writtenCountRef = useRef(0);
   const capacityRef = useRef(INITIAL_CAPACITY);
@@ -117,7 +119,8 @@ export function OrbitTrail({
       }
 
       const vc = visibleCount != null ? Math.min(visibleCount, totalPoints) : totalPoints;
-      geometry.setDrawRange(0, vc);
+      const start = Math.min(drawStart, vc);
+      geometry.setDrawRange(start, vc - start);
     } else if (points) {
       // --- Legacy points mode (replay) ---
       const totalPoints = points.length;
@@ -125,8 +128,9 @@ export function OrbitTrail({
         appendPoints(points, writtenCountRef.current, totalPoints);
       }
 
-      const vc = visibleCount ?? totalPoints;
-      geometry.setDrawRange(0, Math.max(0, Math.min(vc, totalPoints)));
+      const clampedVc = Math.max(0, Math.min(visibleCount ?? totalPoints, totalPoints));
+      const start = Math.min(drawStart, clampedVc);
+      geometry.setDrawRange(start, clampedVc - start);
     }
   });
 

@@ -18,6 +18,7 @@ import { createOrbitSchema } from "./db/orbitSchema.js";
 import { TrailBuffer } from "./utils/TrailBuffer.js";
 import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";
 import { mergeQueryRangePoints } from "./utils/mergeQueryRange.js";
+import { computeReplayDrawStart } from "./utils/trailDrawStart.js";
 import { jdToUTCString } from "./astro.js";
 import { useMultiSatelliteStore, type SatelliteConfig } from "./hooks/useMultiSatelliteStore.js";
 import { type DisplayFrame } from "./frameTransform.js";
@@ -130,7 +131,7 @@ export function App() {
   }, [simInfo]);
 
   // --- Realtime playback (history scrubbing) ---
-  const realtimePlayback = useRealtimePlayback(trailBuffersRef.current, terminatedSatellites);
+  const realtimePlayback = useRealtimePlayback(trailBuffersRef.current, terminatedSatellites, timeRange);
 
   const handleState = useCallback((point: OrbitPoint) => {
     const id = point.satelliteId ?? "default";
@@ -431,6 +432,13 @@ export function App() {
       ? snapshot.trailVisibleCount
       : (realtimePlayback.snapshot.isLive ? undefined : realtimePlayback.snapshot.trailVisibleCount);
 
+  // Draw start for replay mode time-range clipping
+  const replayTrailDrawStart = useMemo(() => {
+    if (mode !== "replay" || !replayPoints || replayPoints.length === 0) return 0;
+    const currentT = replayPoints[0].t + snapshot.elapsedTime;
+    return computeReplayDrawStart(replayPoints, currentT, timeRange);
+  }, [mode, timeRange, replayPoints, snapshot.elapsedTime]);
+
   // Total points across all satellite buffers
   const totalPoints = useMemo(() => {
     let count = 0;
@@ -471,9 +479,11 @@ export function App() {
         points={mode === "replay" ? replayPoints : undefined}
         satellitePosition={mode === "replay" ? satellitePosition : undefined}
         trailVisibleCount={mode === "replay" ? trailVisibleCount : undefined}
+        trailDrawStart={mode === "replay" ? replayTrailDrawStart : undefined}
         trailBuffers={mode === "realtime" ? trailBuffersRef.current : undefined}
         satellitePositions={mode === "realtime" ? realtimePlayback.snapshot.satellitePositions : undefined}
         trailVisibleCounts={mode === "realtime" && !realtimePlayback.snapshot.isLive ? realtimePlayback.snapshot.trailVisibleCounts : undefined}
+        trailDrawStarts={mode === "realtime" && timeRange != null ? realtimePlayback.snapshot.trailDrawStarts : undefined}
         centralBody={centralBody}
         centralBodyRadius={centralBodyRadius}
         epochJd={epochJd ?? null}

@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import type { OrbitPoint } from "../orbit.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
+import type { TimeRange } from "@orts/uneri";
 
 type RealtimeMode = "live" | "paused" | "playing";
 
@@ -21,6 +22,30 @@ export function computeLiveSyncTime(
   return syncTime;
 }
 
+/**
+ * Compute per-satellite draw start indices for time-range clipping.
+ * Returns a Map from satellite ID to the index at which the trail should start drawing.
+ * When timeRange is null, all starts are 0 (no clipping).
+ */
+export function computeTrailDrawStarts(
+  trailBuffers: Map<string, TrailBuffer>,
+  currentTime: number,
+  timeRange: TimeRange,
+): Map<string, number> {
+  const starts = new Map<string, number>();
+  for (const [satId, buf] of trailBuffers) {
+    if (timeRange == null) {
+      starts.set(satId, 0);
+    } else {
+      const startT = currentTime - timeRange;
+      const idx = buf.indexBefore(startT);
+      // indexBefore returns -1 when all points are after startT
+      starts.set(satId, Math.max(0, idx));
+    }
+  }
+  return starts;
+}
+
 export interface RealtimePlaybackSnapshot {
   isLive: boolean;
   isPlaying: boolean;
@@ -33,6 +58,8 @@ export interface RealtimePlaybackSnapshot {
   satellitePositions: Map<string, OrbitPoint | null>;
   /** Per-satellite trail visible counts (multi-satellite mode). */
   trailVisibleCounts: Map<string, number>;
+  /** Per-satellite draw start indices for time-range clipping. */
+  trailDrawStarts: Map<string, number>;
   /** First satellite position for backward compat. */
   satellitePosition: OrbitPoint | null;
   /** First satellite trail visible count for backward compat. */
@@ -51,6 +78,7 @@ export interface RealtimePlaybackSnapshot {
 export function useRealtimePlayback(
   trailBuffers: Map<string, TrailBuffer>,
   terminatedSatellites: Set<string> = new Set(),
+  timeRange: TimeRange = null,
 ) {
   const modeRef = useRef<RealtimeMode>("live");
   const currentTimeRef = useRef(0);
@@ -68,6 +96,7 @@ export function useRealtimePlayback(
     speed: 1,
     satellitePositions: new Map(),
     trailVisibleCounts: new Map(),
+    trailDrawStarts: new Map(),
     satellitePosition: null,
     trailVisibleCount: 0,
   });
@@ -125,6 +154,9 @@ export function useRealtimePlayback(
       }
     }
 
+    // Compute per-satellite draw start indices for time-range clipping
+    const drawStarts = computeTrailDrawStarts(trailBuffers, currentTime, timeRange);
+
     // Backward compat: first satellite
     const firstId = trailBuffers.keys().next().value;
     const firstPos = firstId != null ? (positions.get(firstId) ?? null) : null;
@@ -140,10 +172,11 @@ export function useRealtimePlayback(
       speed: speedRef.current,
       satellitePositions: positions,
       trailVisibleCounts: visibleCounts,
+      trailDrawStarts: drawStarts,
       satellitePosition: firstPos,
       trailVisibleCount: firstVc,
     });
-  }, [trailBuffers, terminatedSatellites]);
+  }, [trailBuffers, terminatedSatellites, timeRange]);
 
   // Animation loop
   useEffect(() => {

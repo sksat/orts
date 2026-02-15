@@ -37,6 +37,10 @@ interface SceneProps {
   satellitePositions?: Map<string, OrbitPoint | null>;
   /** Per-satellite visible counts for multi-satellite mode. */
   trailVisibleCounts?: Map<string, number>;
+  /** Per-satellite draw start indices for time-range clipping. */
+  trailDrawStarts?: Map<string, number>;
+  /** Draw start index for single-satellite replay mode. */
+  trailDrawStart?: number;
   centralBody: string;
   centralBodyRadius: number;
   /** Julian Date of the simulation epoch, or null if not set. */
@@ -59,6 +63,8 @@ export function Scene({
   trailBuffers,
   satellitePositions,
   trailVisibleCounts,
+  trailDrawStarts,
+  trailDrawStart,
   centralBody,
   centralBodyRadius,
   epochJd,
@@ -142,6 +148,7 @@ export function Scene({
             <OrbitTrail
               trailBuffer={buf}
               visibleCount={vc}
+              drawStart={trailDrawStarts?.get(satId)}
               scaleRadius={centralBodyRadius}
               color={color}
               displayFrame={displayFrame}
@@ -168,6 +175,7 @@ export function Scene({
           <OrbitTrail
             trailBuffer={trailBuffer}
             visibleCount={trailVisibleCount}
+            drawStart={trailDrawStart}
             scaleRadius={centralBodyRadius}
             displayFrame={displayFrame}
             epochJd={epochJd}
@@ -176,6 +184,7 @@ export function Scene({
           <OrbitTrail
             points={points!}
             visibleCount={trailVisibleCount ?? points!.length}
+            drawStart={trailDrawStart}
             scaleRadius={centralBodyRadius}
             displayFrame={displayFrame}
             epochJd={epochJd}

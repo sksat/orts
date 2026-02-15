@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
-import { computeLiveSyncTime } from "./useRealtimePlayback.js";
+import { computeLiveSyncTime, computeTrailDrawStarts } from "./useRealtimePlayback.js";
 import type { OrbitPoint } from "../orbit.js";
 
 function makePoint(t: number, satelliteId?: string): OrbitPoint {
@@ -75,5 +75,92 @@ describe("computeLiveSyncTime", () => {
 
     const syncTime = computeLiveSyncTime(buffers, new Set());
     expect(syncTime).toBe(50);
+  });
+});
+
+describe("computeTrailDrawStarts", () => {
+  it("returns all zeros when timeRange is null", () => {
+    const buffers = new Map<string, TrailBuffer>();
+    const buf = new TrailBuffer(1000);
+    for (let t = 0; t <= 100; t += 10) buf.push(makePoint(t));
+    buffers.set("sat-a", buf);
+
+    const starts = computeTrailDrawStarts(buffers, 100, null);
+    expect(starts.get("sat-a")).toBe(0);
+  });
+
+  it("returns 0 when timeRange covers entire buffer", () => {
+    const buffers = new Map<string, TrailBuffer>();
+    const buf = new TrailBuffer(1000);
+    for (let t = 0; t <= 100; t += 10) buf.push(makePoint(t));
+    buffers.set("sat-a", buf);
+
+    // timeRange=200 > total duration 100
+    const starts = computeTrailDrawStarts(buffers, 100, 200);
+    expect(starts.get("sat-a")).toBe(0);
+  });
+
+  it("clips start for timeRange shorter than buffer duration", () => {
+    const buffers = new Map<string, TrailBuffer>();
+    const buf = new TrailBuffer(1000);
+    // Points at t=0,10,20,...,100
+    for (let t = 0; t <= 100; t += 10) buf.push(makePoint(t));
+    buffers.set("sat-a", buf);
+
+    // currentTime=100, timeRange=30 → startT=70 → indexBefore(70)=7
+    const starts = computeTrailDrawStarts(buffers, 100, 30);
+    expect(starts.get("sat-a")).toBe(7); // point at t=70
+  });
+
+  it("clips start when paused in the middle", () => {
+    const buffers = new Map<string, TrailBuffer>();
+    const buf = new TrailBuffer(1000);
+    for (let t = 0; t <= 100; t += 10) buf.push(makePoint(t));
+    buffers.set("sat-a", buf);
+
+    // Paused at currentTime=50, timeRange=20 → startT=30 → indexBefore(30)=3
+    const starts = computeTrailDrawStarts(buffers, 50, 20);
+    expect(starts.get("sat-a")).toBe(3); // point at t=30
+  });
+
+  it("handles multiple satellites independently", () => {
+    const buffers = new Map<string, TrailBuffer>();
+    const bufA = new TrailBuffer(1000);
+    const bufB = new TrailBuffer(1000);
+
+    // sat-a: t=0,10,...,100
+    for (let t = 0; t <= 100; t += 10) bufA.push(makePoint(t, "sat-a"));
+    // sat-b: t=50,60,...,100
+    for (let t = 50; t <= 100; t += 10) bufB.push(makePoint(t, "sat-b"));
+
+    buffers.set("sat-a", bufA);
+    buffers.set("sat-b", bufB);
+
+    // currentTime=100, timeRange=30 → startT=70
+    const starts = computeTrailDrawStarts(buffers, 100, 30);
+    // sat-a: indexBefore(70)=7 (t=70)
+    expect(starts.get("sat-a")).toBe(7);
+    // sat-b: has [50,60,70,80,90,100], indexBefore(70)=2 (t=70)
+    expect(starts.get("sat-b")).toBe(2);
+  });
+
+  it("returns 0 for empty buffers", () => {
+    const buffers = new Map<string, TrailBuffer>();
+    const buf = new TrailBuffer(1000);
+    buffers.set("sat-a", buf);
+
+    const starts = computeTrailDrawStarts(buffers, 100, 30);
+    expect(starts.get("sat-a")).toBe(0);
+  });
+
+  it("returns 0 when startT is before all points", () => {
+    const buffers = new Map<string, TrailBuffer>();
+    const buf = new TrailBuffer(1000);
+    for (let t = 50; t <= 100; t += 10) buf.push(makePoint(t));
+    buffers.set("sat-a", buf);
+
+    // currentTime=60, timeRange=30 → startT=30, which is before t=50
+    const starts = computeTrailDrawStarts(buffers, 60, 30);
+    expect(starts.get("sat-a")).toBe(0);
   });
 });
