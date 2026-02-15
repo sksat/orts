@@ -32,6 +32,11 @@ pub struct BodyProperties {
     pub j3: Option<f64>,
     /// J4 zonal harmonic coefficient (None if unknown)
     pub j4: Option<f64>,
+    /// Effective atmosphere altitude for reentry detection [km].
+    /// When a satellite descends below this altitude, it is considered
+    /// to have entered the atmosphere and the simulation terminates.
+    /// None for bodies without a significant atmosphere.
+    pub atmosphere_altitude: Option<f64>,
 }
 
 impl KnownBody {
@@ -45,6 +50,7 @@ impl KnownBody {
                 j2: None,
                 j3: None,
                 j4: None,
+                atmosphere_altitude: None,
             },
             KnownBody::Mercury => BodyProperties {
                 mu: 22031.868551,
@@ -53,6 +59,7 @@ impl KnownBody {
                 j2: None,
                 j3: None,
                 j4: None,
+                atmosphere_altitude: None,
             },
             KnownBody::Venus => BodyProperties {
                 mu: 324858.592000,
@@ -61,6 +68,7 @@ impl KnownBody {
                 j2: None,
                 j3: None,
                 j4: None,
+                atmosphere_altitude: Some(250.0),
             },
             KnownBody::Earth => BodyProperties {
                 mu: constants::MU_EARTH,
@@ -69,6 +77,7 @@ impl KnownBody {
                 j2: Some(constants::J2_EARTH),
                 j3: Some(constants::J3_EARTH),
                 j4: Some(constants::J4_EARTH),
+                atmosphere_altitude: Some(100.0), // Kármán line
             },
             KnownBody::Moon => BodyProperties {
                 mu: 4902.800066,
@@ -77,6 +86,7 @@ impl KnownBody {
                 j2: Some(2.033e-4),
                 j3: None,
                 j4: None,
+                atmosphere_altitude: None,
             },
             KnownBody::Mars => BodyProperties {
                 mu: 42828.375214,
@@ -85,6 +95,7 @@ impl KnownBody {
                 j2: Some(1.9555e-3),
                 j3: None,
                 j4: None,
+                atmosphere_altitude: Some(125.0),
             },
             KnownBody::Jupiter => BodyProperties {
                 mu: 126686534.921800,
@@ -93,6 +104,7 @@ impl KnownBody {
                 j2: Some(1.4736e-2),
                 j3: None,
                 j4: None,
+                atmosphere_altitude: None,
             },
             KnownBody::Saturn => BodyProperties {
                 mu: 37931206.159000,
@@ -101,6 +113,7 @@ impl KnownBody {
                 j2: Some(1.6298e-2),
                 j3: None,
                 j4: None,
+                atmosphere_altitude: None,
             },
             KnownBody::Uranus => BodyProperties {
                 mu: 5793951.256000,
@@ -109,6 +122,7 @@ impl KnownBody {
                 j2: None,
                 j3: None,
                 j4: None,
+                atmosphere_altitude: None,
             },
             KnownBody::Neptune => BodyProperties {
                 mu: 6835099.975400,
@@ -117,6 +131,7 @@ impl KnownBody {
                 j2: None,
                 j3: None,
                 j4: None,
+                atmosphere_altitude: None,
             },
         }
     }

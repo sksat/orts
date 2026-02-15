@@ -912,8 +912,9 @@ fn run_simulation(params: &SimParams) -> Recording {
 
         let mut next_output_t = params.output_interval;
         let mut last_output_t = 0.0_f64;
-        let body_radius = params.body.properties().radius;
-        let event_checker = events::collision_check(body_radius);
+        let props = params.body.properties();
+        let body_radius = props.radius;
+        let event_checker = events::collision_check(body_radius, props.atmosphere_altitude);
 
         let outcome: IntegrationOutcome<SimulationEvent> = match params.integrator {
             IntegratorChoice::Rk4 => {
@@ -1344,6 +1345,7 @@ async fn simulation_loop(
                     target_t.min(ss.orbit_end_t)
                 };
 
+                let atm_alt = params.body.properties().atmosphere_altitude;
                 let (outputs, new_state, new_t, termination) = match params.integrator {
                     IntegratorChoice::Rk4 => compute_output_chunk(
                         &ss.spec.id,
@@ -1354,6 +1356,7 @@ async fn simulation_loop(
                         dt,
                         params.stream_interval,
                         &mut ss.next_stream_t,
+                        atm_alt,
                     ),
                     IntegratorChoice::Dp45 => compute_output_chunk_adaptive(
                         &ss.spec.id,
@@ -1365,6 +1368,7 @@ async fn simulation_loop(
                         &params.tolerances,
                         params.stream_interval,
                         &mut ss.next_stream_t,
+                        atm_alt,
                     ),
                 };
 
@@ -1594,6 +1598,7 @@ async fn handle_connection(
 #[derive(Debug)]
 enum TerminationReason {
     Collision { altitude_km: f64 },
+    AtmosphericEntry { altitude_km: f64 },
     NonFiniteState,
 }
 
@@ -1602,6 +1607,9 @@ impl std::fmt::Display for TerminationReason {
         match self {
             Self::Collision { altitude_km } => {
                 write!(f, "collision at altitude {altitude_km:.1} km")
+            }
+            Self::AtmosphericEntry { altitude_km } => {
+                write!(f, "atmospheric entry at altitude {altitude_km:.1} km")
             }
             Self::NonFiniteState => write!(f, "numerical divergence (NaN/Inf)"),
         }
@@ -1622,6 +1630,7 @@ fn compute_output_chunk(
     dt: f64,
     output_interval: f64,
     next_output_t: &mut f64,
+    atmosphere_altitude: Option<f64>,
 ) -> (Vec<HistoryState>, State, f64, Option<TerminationReason>) {
     let mu = system.mu;
     let body_radius = system.body_radius;
@@ -1643,7 +1652,7 @@ fn compute_output_chunk(
             return (outputs, state, t, Some(TerminationReason::NonFiniteState));
         }
 
-        // Check for collision
+        // Check for collision and atmospheric entry
         if let Some(r_body) = body_radius {
             let r = state.position.magnitude();
             if r < r_body {
@@ -1652,6 +1661,18 @@ fn compute_output_chunk(
                     state,
                     t,
                     Some(TerminationReason::Collision {
+                        altitude_km: r - r_body,
+                    }),
+                );
+            }
+            if let Some(atm_alt) = atmosphere_altitude
+                && r < r_body + atm_alt
+            {
+                return (
+                    outputs,
+                    state,
+                    t,
+                    Some(TerminationReason::AtmosphericEntry {
                         altitude_km: r - r_body,
                     }),
                 );
@@ -1681,6 +1702,7 @@ fn compute_output_chunk_adaptive(
     tol: &Tolerances,
     output_interval: f64,
     next_output_t: &mut f64,
+    atmosphere_altitude: Option<f64>,
 ) -> (Vec<HistoryState>, State, f64, Option<TerminationReason>) {
     let mu = system.mu;
     let body_radius = system.body_radius;
@@ -1720,7 +1742,7 @@ fn compute_output_chunk_adaptive(
             t += h;
             k1 = k7;
 
-            // Check for collision
+            // Check for collision and atmospheric entry
             if let Some(r_body) = body_radius {
                 let r = state.position.magnitude();
                 if r < r_body {
@@ -1729,6 +1751,18 @@ fn compute_output_chunk_adaptive(
                         state,
                         t,
                         Some(TerminationReason::Collision {
+                            altitude_km: r - r_body,
+                        }),
+                    );
+                }
+                if let Some(atm_alt) = atmosphere_altitude
+                    && r < r_body + atm_alt
+                {
+                    return (
+                        outputs,
+                        state,
+                        t,
+                        Some(TerminationReason::AtmosphericEntry {
                             altitude_km: r - r_body,
                         }),
                     );
@@ -2372,7 +2406,7 @@ mod tests {
 
         let mut next_output = 10.0;
         let (outputs, _final_state, final_t, _term) =
-            compute_output_chunk("test", &system, initial, 0.0, 100.0, 10.0, 10.0, &mut next_output);
+            compute_output_chunk("test", &system, initial, 0.0, 100.0, 10.0, 10.0, &mut next_output, None);
 
         assert_eq!(outputs.len(), 10);
         assert!((final_t - 100.0).abs() < 1e-9);
@@ -2392,7 +2426,7 @@ mod tests {
 
         let mut next_output = 10.0;
         let (outputs, _, _, _) =
-            compute_output_chunk("test", &system, initial, 0.0, 100.0, 1.0, 10.0, &mut next_output);
+            compute_output_chunk("test", &system, initial, 0.0, 100.0, 1.0, 10.0, &mut next_output, None);
 
         assert_eq!(outputs.len(), 10);
         // Verify output times are at 10s intervals
@@ -2420,7 +2454,7 @@ mod tests {
 
         let mut next_output = 10.0;
         let (outputs, _, _, _) =
-            compute_output_chunk("test", &system, initial, 0.0, 500.0, 10.0, 10.0, &mut next_output);
+            compute_output_chunk("test", &system, initial, 0.0, 500.0, 10.0, 10.0, &mut next_output, None);
 
         for out in &outputs {
             let r = (out.position[0].powi(2) + out.position[1].powi(2) + out.position[2].powi(2))
@@ -2452,7 +2486,7 @@ mod tests {
         let mut next_output = 10.0;
         // chunk_end=55 with output_interval=10 → outputs at 10,20,30,40,50 (5 outputs)
         let (outputs, _, final_t, _) =
-            compute_output_chunk("test", &system, initial, 0.0, 55.0, 10.0, 10.0, &mut next_output);
+            compute_output_chunk("test", &system, initial, 0.0, 55.0, 10.0, 10.0, &mut next_output, None);
 
         assert_eq!(outputs.len(), 5);
         assert!((final_t - 55.0).abs() < 1e-9);
@@ -2478,7 +2512,7 @@ mod tests {
         let mut next_stream = stream_interval;
 
         let (outputs, _, _, _) =
-            compute_output_chunk("test", &system, initial, 0.0, 20.0, 1.0, stream_interval, &mut next_stream);
+            compute_output_chunk("test", &system, initial, 0.0, 20.0, 1.0, stream_interval, &mut next_stream, None);
 
         assert_eq!(outputs.len(), 10); // 20s / 2s = 10 stream outputs
 
@@ -2520,7 +2554,7 @@ mod tests {
         // Chunked
         let mut next_output = 10.0;
         let (chunk_outputs, _, _, _) =
-            compute_output_chunk("test", &system, initial, 0.0, 100.0, 10.0, 10.0, &mut next_output);
+            compute_output_chunk("test", &system, initial, 0.0, 100.0, 10.0, 10.0, &mut next_output, None);
 
         assert_eq!(chunk_outputs.len(), step_outputs.len());
         for (c, s) in chunk_outputs.iter().zip(step_outputs.iter()) {
