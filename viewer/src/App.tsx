@@ -19,6 +19,7 @@ import { TrailBuffer } from "./utils/TrailBuffer.js";
 import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";
 import { mergeQueryRangePoints } from "./utils/mergeQueryRange.js";
 import { computeReplayDrawStart } from "./utils/trailDrawStart.js";
+import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
 import { jdToUTCString } from "./astro.js";
 import { useMultiSatelliteStore, type SatelliteConfig } from "./hooks/useMultiSatelliteStore.js";
 import { type DisplayFrame } from "./frameTransform.js";
@@ -77,7 +78,12 @@ export function App() {
   const { snapshot, togglePlayPause, setSpeed, seekToFraction } = usePlayback(replayPoints);
 
   // --- Chart time range ---
-  const [timeRange, setTimeRange] = useState<TimeRange>(null);
+  const [timeRange, setTimeRange] = useState<TimeRange>(() => readTimeRangeParam());
+
+  // Sync timeRange to URL query parameter
+  useEffect(() => {
+    writeTimeRangeParam(timeRange);
+  }, [timeRange]);
 
   // --- Realtime mode state ---
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
