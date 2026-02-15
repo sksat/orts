@@ -382,7 +382,7 @@ fn drag_monotonic_sma_decay() {
     system.perturbations.push(Box::new(AtmosphericDrag {
         body_radius: R_EARTH,
         omega_body: orts_orbits::drag::OMEGA_EARTH,
-        ballistic_coeff: 0.02, // typical ISS value
+        ballistic_coeff: 0.005, // physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
     }));
 
     let initial = State {
@@ -420,16 +420,13 @@ fn drag_monotonic_sma_decay() {
     }
 
     // Verify total decay is physically reasonable
-    // At 400 km with B=0.02 m²/kg: expected da/dt ≈ -2*B*ρ*sqrt(μ*a)
-    // ρ ≈ 3.7e-12 kg/m³, sqrt(μ*a) ≈ sqrt(398600*6778) ≈ 51970 km/s^(1/2)
-    // But we need consistent units. In km and seconds:
-    // B = 0.02 m²/kg = 0.02e-6 km²/kg
-    // da/dt ≈ -2 * 0.02e-6 * 3.7e-12 * (398600*6778)^(0.5) ... this is tiny
-    // Better to just check order of magnitude: total decay should be 0.01-10 km over 10 orbits
+    // At 400 km with B=0.005 m²/kg (physical ISS):
+    // ρ ≈ 3.7e-12 kg/m³, v ≈ 7.66 km/s
+    // 10 orbits ≈ 0.63 days → expect ~0.05 km decay at ~0.085 km/day
     let total_decay = sma_values[0] - sma_values.last().unwrap();
     assert!(
-        total_decay > 1e-4 && total_decay < 10.0,
-        "Total SMA decay over 10 orbits should be 0.0001-10 km, got {total_decay:.6} km"
+        total_decay > 1e-4 && total_decay < 2.0,
+        "Total SMA decay over 10 orbits should be 0.0001-2 km, got {total_decay:.6} km"
     );
 }
 
@@ -486,8 +483,8 @@ fn drag_scaling_with_ballistic_coefficient() {
         a - final_elems.semi_major_axis // positive = decay
     };
 
-    let decay_b1 = run_with_b(0.02);
-    let decay_b2 = run_with_b(0.04); // 2x ballistic coefficient
+    let decay_b1 = run_with_b(0.005); // physical ISS
+    let decay_b2 = run_with_b(0.01); // 2x ISS ballistic coefficient
 
     // Decay ratio should be approximately 2.0
     let ratio = decay_b2 / decay_b1;
@@ -1541,10 +1538,14 @@ fn drag_decay_200_orbits() {
             j4: None,
         }),
     );
+    // Use DEFAULT_BALLISTIC_COEFF (0.01) — this test needs enough decay
+    // to observe acceleration (positive feedback from exponential atmosphere).
+    // ISS physical B=0.005 decays too slowly over 200 orbits (~1 km) relative
+    // to the 58 km scale height for the effect to be measurable.
     system.perturbations.push(Box::new(AtmosphericDrag {
         body_radius: R_EARTH,
         omega_body: orts_orbits::drag::OMEGA_EARTH,
-        ballistic_coeff: 0.02,
+        ballistic_coeff: orts_orbits::drag::DEFAULT_BALLISTIC_COEFF,
     }));
 
     let initial = State {
@@ -1583,11 +1584,12 @@ fn drag_decay_200_orbits() {
     }
 
     // 2. Total decay in reasonable range
+    // 200 orbits ≈ 12.6 days with B=0.01, expect ~2 km decay
     let total_decay = sma_values[0] - sma_values.last().unwrap();
     println!("Drag 200 orbits: total SMA decay = {total_decay:.4} km");
     assert!(
-        total_decay > 0.001 && total_decay < 50.0,
-        "Total SMA decay over 200 orbits should be 0.001–50 km, got {total_decay:.6} km"
+        total_decay > 0.001 && total_decay < 15.0,
+        "Total SMA decay over 200 orbits should be 0.001–15 km, got {total_decay:.6} km"
     );
 
     // 3. Decay accelerates: last 50 orbits decay faster than first 50 orbits
