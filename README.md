@@ -16,22 +16,15 @@ Rust core for simulation with a React-based real-time 3D viewer connected via We
 
 ## Project Structure
 
-### Rust Crates
-
-| Crate | Description |
-|-------|-------------|
-| `orts-integrator` | Numerical integrators (RK4) |
-| `kaname` | Coordinate systems, epoch, sun position |
-| `orts-orbits` | Orbital mechanics (two-body, Keplerian elements) |
-| `orts-datamodel` | ECS-inspired data model with Rerun SDK integration |
-| `orts` | CLI interface (run, serve, convert) |
-
-### TypeScript Packages
-
 | Package | Description |
 |---------|-------------|
-| `uneri` | DuckDB-wasm + uPlot time-series charting library |
+| `orts` | CLI interface (run, serve, convert) |
+| `orts-integrator` | Numerical integrators (RK4) |
+| `orts-orbits` | Orbital mechanics (two-body, Keplerian elements) |
+| `orts-datamodel` | ECS-inspired data model with Rerun SDK integration |
 | `orts-viewer` | Real-time 3D orbit viewer (React + R3F) |
+| `kaname` | Coordinate systems, epoch, sun position |
+| `uneri` | DuckDB-wasm + uPlot time-series charting library |
 
 ## Quick Start
 
