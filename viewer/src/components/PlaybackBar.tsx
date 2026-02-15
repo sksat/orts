@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { jdToUTCString } from "../astro.js";
+import { jd_to_utc_string } from "../wasm/kanameInit.js";
 
 interface PlaybackBarProps {
   isPlaying: boolean;
@@ -115,7 +115,7 @@ export function PlaybackBar({
           ))}
         </select>
         <span className="time-display">
-          {epochJd != null && <>{jdToUTCString(epochJd, elapsedTime)} | </>}
+          {epochJd != null && <>{jd_to_utc_string(epochJd, elapsedTime)} | </>}
           T+{formatTime(elapsedTime)} / {formatTime(totalDuration)}
         </span>
         {isRealtimeMode && (

@@ -30,6 +30,20 @@ export function eci_to_ecef(x: number, y: number, z: number, epoch_jd: number, t
  */
 export function eci_to_ecef_batch(positions: Float32Array, times: Float32Array, epoch_jd: number): Float32Array;
 
+/**
+ * Convert Julian Date + elapsed sim time to a UTC date/time string.
+ *
+ * Returns ISO 8601 string like "2024-03-20T12:00:00Z".
+ */
+export function jd_to_utc_string(epoch_jd: number, t: number): string;
+
+/**
+ * Approximate sun direction (unit vector) in ECI frame.
+ *
+ * Returns `[x, y, z]` (3 floats).
+ */
+export function sun_direction_eci(epoch_jd: number, t: number): Float32Array;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -37,6 +51,8 @@ export interface InitOutput {
     readonly eci_to_ecef_batch: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly eci_to_ecef: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly earth_rotation_angle: (a: number, b: number) => number;
+    readonly sun_direction_eci: (a: number, b: number) => [number, number];
+    readonly jd_to_utc_string: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

@@ -1,6 +1,7 @@
 use wasm_bindgen::prelude::*;
 
 use crate::epoch::Epoch;
+use crate::sun;
 use crate::Eci;
 use nalgebra::Vector3;
 
@@ -61,4 +62,23 @@ pub fn eci_to_ecef(x: f32, y: f32, z: f32, epoch_jd: f64, t: f32) -> Vec<f32> {
 pub fn earth_rotation_angle(epoch_jd: f64, t: f64) -> f64 {
     let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
     epoch.gmst()
+}
+
+/// Approximate sun direction (unit vector) in ECI frame.
+///
+/// Returns `[x, y, z]` (3 floats).
+#[wasm_bindgen]
+pub fn sun_direction_eci(epoch_jd: f64, t: f64) -> Vec<f32> {
+    let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
+    let dir = sun::sun_direction_eci(&epoch);
+    vec![dir.x as f32, dir.y as f32, dir.z as f32]
+}
+
+/// Convert Julian Date + elapsed sim time to a UTC date/time string.
+///
+/// Returns ISO 8601 string like "2024-03-20T12:00:00Z".
+#[wasm_bindgen]
+pub fn jd_to_utc_string(epoch_jd: f64, t: f64) -> String {
+    let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
+    epoch.to_datetime().to_string()
 }

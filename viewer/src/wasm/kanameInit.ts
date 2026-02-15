@@ -13,12 +13,16 @@ type EciToEcef = (
 ) => Float32Array;
 
 type EarthRotationAngle = (epoch_jd: number, t: number) => number;
+type SunDirectionEci = (epoch_jd: number, t: number) => Float32Array;
+type JdToUtcString = (epoch_jd: number, t: number) => string;
 
 let initialized = false;
 let initPromise: Promise<void> | undefined;
 let wasmBatch: EciToEcefBatch | undefined;
 let wasmSingle: EciToEcef | undefined;
 let wasmEra: EarthRotationAngle | undefined;
+let wasmSunDir: SunDirectionEci | undefined;
+let wasmJdToUtc: JdToUtcString | undefined;
 
 /** Initialize the kaname WASM module. Safe to call multiple times. Rejects on failure. */
 export function initKaname(): Promise<void> {
@@ -30,6 +34,8 @@ export function initKaname(): Promise<void> {
     wasmBatch = mod.eci_to_ecef_batch;
     wasmSingle = mod.eci_to_ecef;
     wasmEra = mod.earth_rotation_angle;
+    wasmSunDir = mod.sun_direction_eci;
+    wasmJdToUtc = mod.jd_to_utc_string;
     initialized = true;
   });
   initPromise = p;
@@ -64,4 +70,14 @@ export function eci_to_ecef(
 /** Compute Earth Rotation Angle (GMST) in radians via WASM. */
 export function earth_rotation_angle(epoch_jd: number, t: number): number {
   return wasmEra!(epoch_jd, t);
+}
+
+/** Approximate sun direction (unit vector) in ECI frame via WASM. Returns [x, y, z]. */
+export function sun_direction_eci(epoch_jd: number, t: number): Float32Array {
+  return wasmSunDir!(epoch_jd, t);
+}
+
+/** Convert Julian Date + elapsed sim time to ISO 8601 UTC string via WASM. */
+export function jd_to_utc_string(epoch_jd: number, t: number): string {
+  return wasmJdToUtc!(epoch_jd, t);
 }

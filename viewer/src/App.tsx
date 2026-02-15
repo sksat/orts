@@ -24,7 +24,7 @@ import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";
 import { mergeQueryRangePoints } from "./utils/mergeQueryRange.js";
 import { computeReplayDrawStart } from "./utils/trailDrawStart.js";
 import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
-import { jdToUTCString } from "./astro.js";
+import { jd_to_utc_string } from "./wasm/kanameInit.js";
 import { useMultiSatelliteStore, type SatelliteConfig } from "./hooks/useMultiSatelliteStore.js";
 import { type DisplayFrame } from "./frameTransform.js";
 
@@ -580,7 +580,7 @@ export function App() {
             {simInfo && (
               <div className="orbit-info">
                 {satInfoText && <><strong>{satInfoText}</strong> | </>}
-                {simInfo.epoch_jd != null && <>{jdToUTCString(simInfo.epoch_jd, 0)} | </>}
+                {simInfo.epoch_jd != null && <>{jd_to_utc_string(simInfo.epoch_jd, 0)} | </>}
                 mu={simInfo.mu.toFixed(2)} km^3/s^2 | dt={simInfo.dt.toFixed(1)} s | stream={simInfo.stream_interval.toFixed(1)} s
               </div>
             )}

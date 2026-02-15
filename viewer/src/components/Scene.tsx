@@ -8,10 +8,9 @@ import { Satellite } from "./Satellite.js";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import type { SatelliteInfo } from "../hooks/useWebSocket.js";
-import { sunDirectionECI } from "../astro.js";
 import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "../sceneFrame.js";
 import { rotateZ, type DisplayFrame } from "../frameTransform.js";
-import { earth_rotation_angle } from "../wasm/kanameInit.js";
+import { earth_rotation_angle, sun_direction_eci } from "../wasm/kanameInit.js";
 
 // Set scene up vector before any Three.js objects are created
 // so that Camera, OrbitControls, and all scene objects use the correct convention.
@@ -80,11 +79,11 @@ export function Scene({
   const simTime = firstPosition?.t ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
-  // Sun direction in ECI
+  // Sun direction in ECI (via WASM)
   const sunDirectionEci = useMemo(() => {
     if (epochJd == null) return DEFAULT_SUN_DIRECTION;
-    const [x, y, z] = sunDirectionECI(epochJd, quantizedSimTime);
-    return new THREE.Vector3(x, y, z);
+    const dir = sun_direction_eci(epochJd, quantizedSimTime);
+    return new THREE.Vector3(dir[0], dir[1], dir[2]);
   }, [epochJd, quantizedSimTime]);
 
   // Earth rotation angle (ERA) via WASM — updates every frame via simTime (not quantized)
