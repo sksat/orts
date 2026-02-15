@@ -76,11 +76,9 @@ test("charts render with data after streaming starts", async ({ page }) => {
   const statusText = page.locator(".ws-status-text");
   await expect(statusText).toHaveText("Connected", { timeout: 10000 });
 
-  // Wait for data to stream and charts to render
-  await page.waitForTimeout(5000);
-
-  // All chart containers should have a canvas element (uPlot renders to canvas)
+  // Wait for DuckDB to initialize and charts to render (may be slow in CI)
   const charts = page.locator('[data-testid="time-series-chart"]');
+  await expect(charts.first()).toBeVisible({ timeout: 30000 });
   const chartCount = await charts.count();
   expect(chartCount).toBeGreaterThanOrEqual(4);
 
