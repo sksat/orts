@@ -121,6 +121,14 @@ export function App() {
     }));
   }, [simInfo]);
 
+  // --- Satellite name map for 3D model lookup ---
+  const satelliteNames = useMemo(() => {
+    if (!simInfo) return undefined;
+    const m = new Map<string, string | null>();
+    for (const sat of simInfo.satellites) m.set(sat.id, sat.name);
+    return m;
+  }, [simInfo]);
+
   // --- Realtime playback (history scrubbing) ---
   const realtimePlayback = useRealtimePlayback(trailBuffersRef.current, terminatedSatellites);
 
@@ -470,6 +478,7 @@ export function App() {
         centralBodyRadius={centralBodyRadius}
         epochJd={epochJd ?? null}
         displayFrame={displayFrame}
+        satelliteNames={satelliteNames}
       />
 
       {/* UI overlay */}

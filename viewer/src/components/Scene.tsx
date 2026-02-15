@@ -7,6 +7,7 @@ import { OrbitTrail } from "./OrbitTrail.js";
 import { Satellite } from "./Satellite.js";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
+import type { SatelliteInfo } from "../hooks/useWebSocket.js";
 import { earthRotationAngle, sunDirectionECI } from "../astro.js";
 import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "../sceneFrame.js";
 import { rotateZ, type DisplayFrame } from "../frameTransform.js";
@@ -42,6 +43,8 @@ interface SceneProps {
   epochJd?: number | null;
   /** Display coordinate frame (default: "eci"). */
   displayFrame?: DisplayFrame;
+  /** Per-satellite metadata for model lookup. */
+  satelliteNames?: Map<string, string | null>;
 }
 
 /**
@@ -60,6 +63,7 @@ export function Scene({
   centralBodyRadius,
   epochJd,
   displayFrame = "eci",
+  satelliteNames,
 }: SceneProps) {
   const isEcef = displayFrame === "ecef";
 
@@ -121,8 +125,9 @@ export function Scene({
         maxDistance={100}
       />
 
-      <ambientLight intensity={0.5} color={0x404040} />
+      <ambientLight intensity={1.0} />
       <directionalLight intensity={2.0} position={lightPosition} />
+      <hemisphereLight args={[0xffffff, 0x444466, 0.4]} />
 
       <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={earthRotation} />
       <axesHelper args={[2]} />
@@ -149,6 +154,8 @@ export function Scene({
                 color={color}
                 displayFrame={displayFrame}
                 era={era}
+                satId={satId}
+                satName={satelliteNames?.get(satId)}
               />
             )}
           </group>
