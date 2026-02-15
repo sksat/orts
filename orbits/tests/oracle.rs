@@ -1738,3 +1738,73 @@ fn lz_conservation_500_orbits() {
     );
 }
 
+// ============================================================================
+// Test 23: ISS 30-Day Survival with Physical Ballistic Coefficient
+//
+// Oracle: ISS at ~400 km with physical B = Cd*A/(2m) ≈ 0.005 m²/kg
+// should survive at least 30 days without reboost. Expected decay rate
+// is 0.05-0.8 km/day (solar-activity-dependent).
+//
+// Our atmosphere model uses US Standard 1976 (solar-minimum-like ρ ≈ 3.7e-12
+// at 400 km), so expect the lower end of the decay range.
+// ============================================================================
+
+#[test]
+fn iss_drag_30day_survival() {
+    let a = R_EARTH + 400.0;
+    let v = (MU_EARTH / a).sqrt();
+
+    let mut system = earth_j2_system();
+    system.perturbations.push(Box::new(AtmosphericDrag {
+        body_radius: R_EARTH,
+        omega_body: orts_orbits::drag::OMEGA_EARTH,
+        ballistic_coeff: 0.005, // Physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
+    }));
+
+    let initial = State {
+        position: vector![a, 0.0, 0.0],
+        velocity: vector![0.0, v, 0.0],
+    };
+
+    let duration = 30.0 * 86400.0; // 30 days in seconds
+    let dt = 30.0;
+
+    let mut min_altitude = f64::MAX;
+    let final_state = Rk4::integrate(&system, initial, 0.0, duration, dt, |_, state| {
+        let alt = state.position.magnitude() - R_EARTH;
+        min_altitude = min_altitude.min(alt);
+    });
+
+    let final_alt = final_state.position.magnitude() - R_EARTH;
+    let final_elems =
+        KeplerianElements::from_state_vector(&final_state.position, &final_state.velocity, MU_EARTH);
+    let sma_decay = a - final_elems.semi_major_axis;
+    let decay_per_day = sma_decay / 30.0;
+
+    println!("ISS 30-day drag: min_alt={min_altitude:.2} km, final_alt={final_alt:.2} km");
+    println!("ISS 30-day drag: SMA decay={sma_decay:.4} km, rate={decay_per_day:.4} km/day");
+
+    // Satellite must survive (altitude > Kármán line)
+    assert!(
+        min_altitude > 100.0,
+        "ISS should survive 30 days, min altitude was {min_altitude:.1} km"
+    );
+    assert!(
+        final_alt > 300.0,
+        "ISS final altitude after 30 days should be > 300 km, got {final_alt:.1} km"
+    );
+
+    // SMA decay should be physically plausible: 0.5-20 km over 30 days
+    // (ISS actual without reboost: ~2-5 km/month at solar minimum)
+    assert!(
+        sma_decay > 0.5 && sma_decay < 20.0,
+        "ISS SMA decay over 30 days should be 0.5-20 km, got {sma_decay:.4} km"
+    );
+
+    // Decay rate: 0.01-1.0 km/day
+    assert!(
+        decay_per_day > 0.01 && decay_per_day < 1.0,
+        "ISS decay rate should be 0.01-1.0 km/day, got {decay_per_day:.4} km/day"
+    );
+}
+

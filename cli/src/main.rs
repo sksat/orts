@@ -169,6 +169,8 @@ struct SatelliteSpec {
     orbit: OrbitSpec,
     /// Orbital period for this satellite.
     period: f64,
+    /// Explicit ballistic coefficient Cd*A/(2m) [m²/kg] for drag.
+    ballistic_coeff: Option<f64>,
 }
 
 impl SatelliteSpec {
@@ -272,6 +274,7 @@ impl SimParams {
                     name: sat_name,
                     orbit: OrbitSpec::Tle { tle_data: tle, elements },
                     period,
+                    ballistic_coeff: None,
                 }]
             } else if is_serve && args.altitude == 400.0 && args.tle.is_none() && args.tle_line1.is_none() && args.norad_id.is_none() {
                 // serve with no explicit orbit → SSO + ISS default
@@ -285,6 +288,7 @@ impl SimParams {
                     name: None,
                     orbit: OrbitSpec::Circular { altitude: args.altitude, r0, inclination: 0.0, raan: 0.0 },
                     period,
+                    ballistic_coeff: None,
                 }]
             }
         };
@@ -331,6 +335,7 @@ impl SimParams {
                 raan: 0.0,
             },
             period,
+            ballistic_coeff: None,
         });
 
         // ISS: try online sources, fall back to embedded TLE
@@ -352,6 +357,7 @@ impl SimParams {
             name: sat_name,
             orbit: OrbitSpec::Tle { tle_data: iss_tle, elements },
             period,
+            ballistic_coeff: None,
         });
 
         sats
@@ -401,6 +407,7 @@ fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
     let mut norad_id: Option<u32> = None;
     let mut tle_line1: Option<String> = None;
     let mut tle_line2: Option<String> = None;
+    let mut ballistic_coeff: Option<f64> = None;
 
     for part in s.split(',') {
         if let Some((key, value)) = part.split_once('=') {
@@ -413,6 +420,7 @@ fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
                 "norad-id" => norad_id = Some(value.trim().parse().unwrap_or_else(|_| panic!("Invalid norad-id: {value}"))),
                 "tle-line1" => tle_line1 = Some(value.trim().to_string()),
                 "tle-line2" => tle_line2 = Some(value.trim().to_string()),
+                "ballistic-coeff" => ballistic_coeff = Some(value.trim().parse().unwrap_or_else(|_| panic!("Invalid ballistic-coeff: {value}"))),
                 k => panic!("Unknown satellite spec key: {k}"),
             }
         }
@@ -450,6 +458,7 @@ fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         name: name.or(derived_name),
         orbit,
         period,
+        ballistic_coeff,
     }
 }
 
@@ -874,14 +883,15 @@ fn build_orbital_system(
         }
     }
 
-    // Atmospheric drag from TLE B* (Earth only)
-    if *body == KnownBody::Earth
-        && let OrbitSpec::Tle { tle_data, .. } = &sat.orbit
-        && tle_data.bstar.abs() > 1e-15
-    {
-        system = system.with_perturbation(Box::new(
-            AtmosphericDrag::from_bstar(tle_data.bstar, props.radius),
-        ));
+    // Atmospheric drag (Earth only)
+    // Enable when: TLE has non-zero B* (implies drag-relevant orbit), or user provides ballistic-coeff
+    if *body == KnownBody::Earth {
+        let has_tle_drag = matches!(&sat.orbit, OrbitSpec::Tle { tle_data, .. } if tle_data.bstar.abs() > 1e-15);
+        if has_tle_drag || sat.ballistic_coeff.is_some() {
+            system = system.with_perturbation(Box::new(
+                AtmosphericDrag::for_earth(sat.ballistic_coeff),
+            ));
+        }
     }
 
     system

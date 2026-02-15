@@ -3,15 +3,24 @@ use orts_coords::epoch::Epoch;
 use orts_integrator::State;
 
 use crate::atmosphere;
+use crate::constants::R_EARTH;
 use crate::perturbations::ForceModel;
 
 /// Earth rotation rate [rad/s] (IERS 2010)
 pub const OMEGA_EARTH: f64 = 7.2921159e-5;
 
+/// Default ballistic coefficient for LEO satellites \[m²/kg\].
+///
+/// Typical ranges:
+/// - ISS (high-mass, large area): B ≈ 0.005 m²/kg
+/// - Compact satellite: B ≈ 0.01-0.02 m²/kg
+/// - CubeSat (low-mass, high area/mass): B ≈ 0.05-0.1 m²/kg
+pub const DEFAULT_BALLISTIC_COEFF: f64 = 0.01;
+
 /// Atmospheric drag perturbation.
 ///
 /// Uses a piecewise exponential atmosphere model and computes drag
-/// acceleration based on the ballistic coefficient B = Cd*A/(2*m).
+/// acceleration based on the ballistic coefficient B = Cd*A/(2*m) \[m²/kg\].
 pub struct AtmosphericDrag {
     /// Central body equatorial radius [km]
     pub body_radius: f64,
@@ -22,17 +31,32 @@ pub struct AtmosphericDrag {
 }
 
 impl AtmosphericDrag {
+    /// Create drag model for Earth orbit with an optional explicit ballistic coefficient.
+    ///
+    /// When `ballistic_coeff` is `None`, uses [`DEFAULT_BALLISTIC_COEFF`] (0.01 m²/kg).
+    pub fn for_earth(ballistic_coeff: Option<f64>) -> Self {
+        Self {
+            body_radius: R_EARTH,
+            omega_body: OMEGA_EARTH,
+            ballistic_coeff: ballistic_coeff.unwrap_or(DEFAULT_BALLISTIC_COEFF),
+        }
+    }
+
     /// Create drag model for Earth orbit from B* (TLE drag term).
     ///
-    /// B* is in units of [1/R_e]. Conversion:
-    /// ballistic_coeff = B* / (ρ₀ * R_e)
-    /// where ρ₀ = 2.461e-5 [kg/m²/R_e] is the SGP4 reference density parameter.
+    /// **Deprecated**: B* is an SGP4 fitting parameter tied to SGP4's internal
+    /// analytical density model. It cannot be meaningfully converted to a physical
+    /// ballistic coefficient for use with a different atmospheric model.
+    /// The resulting ballistic coefficient is typically ~1000x too large,
+    /// causing unrealistically fast orbital decay.
+    ///
+    /// Use [`AtmosphericDrag::for_earth`] with a physical ballistic coefficient instead.
+    #[deprecated(
+        since = "0.1.0",
+        note = "B* cannot be converted to physical ballistic coefficient. Use AtmosphericDrag::for_earth() instead."
+    )]
     pub fn from_bstar(bstar: f64, body_radius: f64) -> Self {
-        // SGP4 reference: ρ₀ = 2.461e-5 kg/m²/R_e (from Vallado)
-        // B* = ρ₀ * B / 2 in [1/R_e], so B = B* / ρ₀ (in R_e units)
-        // Convert to m²/kg: B [m²/kg] = B* / (ρ₀ [kg/m³ scaled])
-        // In SGP4: B* = ρ₀_ref * Cd * A / (2m), where ρ₀_ref ≈ 2.461e-5 kg/m²/R_e
-        let rho0 = 2.461e-5; // kg/m²/R_e
+        let rho0 = 2.461e-5;
         let ballistic_coeff = bstar / rho0;
         Self {
             body_radius,
@@ -179,15 +203,23 @@ mod tests {
     }
 
     #[test]
-    fn from_bstar_iss() {
-        // ISS B* ≈ 3.0e-5 [1/R_e]
-        let drag = AtmosphericDrag::from_bstar(3.0e-5, R_EARTH);
-
-        // Check that ballistic coefficient is reasonable
-        // B = B* / ρ₀ ≈ 3.0e-5 / 2.461e-5 ≈ 1.22 m²/kg
+    fn for_earth_default_ballistic_coeff() {
+        let drag = AtmosphericDrag::for_earth(None);
         assert!(
-            drag.ballistic_coeff > 0.5 && drag.ballistic_coeff < 5.0,
-            "ISS ballistic coeff from B* should be ~1-2, got {}",
+            (drag.ballistic_coeff - DEFAULT_BALLISTIC_COEFF).abs() < 1e-15,
+            "Default should be {DEFAULT_BALLISTIC_COEFF}, got {}",
+            drag.ballistic_coeff
+        );
+        assert!((drag.body_radius - R_EARTH).abs() < 1e-10);
+        assert!((drag.omega_body - OMEGA_EARTH).abs() < 1e-15);
+    }
+
+    #[test]
+    fn for_earth_explicit_ballistic_coeff() {
+        let drag = AtmosphericDrag::for_earth(Some(0.005));
+        assert!(
+            (drag.ballistic_coeff - 0.005).abs() < 1e-15,
+            "Explicit B should be 0.005, got {}",
             drag.ballistic_coeff
         );
     }
