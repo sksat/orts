@@ -1,5 +1,5 @@
 use nalgebra::Vector3;
-use orts_kaname::epoch::Epoch;
+use kaname::epoch::Epoch;
 use orts_integrator::State;
 
 use crate::atmosphere;

@@ -1,7 +1,7 @@
 /**
  * Low-precision astronomical computations for visualization.
  *
- * Mirrors the Rust implementations in orts-kaname for use in the viewer.
+ * Mirrors the Rust implementations in kaname for use in the viewer.
  */
 
 const J2000_JD = 2451545.0;
@@ -33,7 +33,7 @@ export function jdToUTCString(epochJd: number, simTimeSec: number): string {
  * Compute the Earth Rotation Angle (ERA) in radians.
  *
  * Uses the IERS 2003 formula, matching the Rust implementation in
- * orts-kaname Epoch::gmst(). Result is normalized to [0, 2π).
+ * kaname Epoch::gmst(). Result is normalized to [0, 2π).
  *
  * @param epochJd   Julian Date of the simulation start epoch
  * @param simTimeSec  Elapsed simulation time in seconds

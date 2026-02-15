@@ -17,7 +17,7 @@ repository = "https://github.com/sksat/orts"
 [workspace.dependencies]
 orts-integrator = { path = "integrator" }
 orts-orbits = { path = "orbits" }
-orts-kaname = { path = "kaname" }
+kaname = { path = "kaname" }
 orts-datamodel = { path = "datamodel" }
 nalgebra = "0.34"
 clap = { version = "4", features = ["derive"] }

@@ -1,4 +1,4 @@
-use orts_kaname::epoch::Epoch;
+use kaname::epoch::Epoch;
 use orts_integrator::{DynamicalSystem, State, StateDerivative};
 
 use crate::gravity::GravityField;
