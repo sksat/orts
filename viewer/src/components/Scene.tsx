@@ -24,12 +24,12 @@ const DEFAULT_SUN_DIRECTION = new THREE.Vector3(1, 0, 0);
 const SATELLITE_COLORS = [0x00ff88, 0xff4488, 0x44aaff, 0xffaa44, 0xaa44ff];
 
 /**
- * Smoothing speed for LVLH quaternion tracking.
+ * Smoothing speed for exponential-decay tracking (both orientation and position).
  * Higher = faster response (less smooth), lower = smoother (more lag).
  * Uses frame-rate-independent exponential decay: alpha = 1 - e^(-speed * dt).
  * At 60fps (dt≈0.017s) with speed=6: alpha≈0.10 per frame.
  */
-const LVLH_SMOOTHING_SPEED = 6;
+const SMOOTHING_SPEED = 6;
 
 /**
  * Tracks the LVLH frame and co-rotates the camera so that user-set
@@ -86,7 +86,7 @@ function CameraLvlhTracker({ originPosition, originVelocity }: {
     const targetQuat = new THREE.Quaternion().setFromRotationMatrix(basisMat);
 
     // Frame-rate-independent smoothing: slerp toward target
-    const alpha = 1 - Math.exp(-LVLH_SMOOTHING_SPEED * delta);
+    const alpha = 1 - Math.exp(-SMOOTHING_SPEED * delta);
     const prevQuat = prevQuatRef.current;
     let smoothedQuat: THREE.Quaternion;
 
@@ -108,6 +108,48 @@ function CameraLvlhTracker({ originPosition, originVelocity }: {
   }, -1); // Priority -1: run before OrbitControls (priority 0)
 
   return null;
+}
+
+/**
+ * Wraps scene content in a group whose position smoothly tracks a target.
+ *
+ * Used for satellite-centered view: instead of subtracting the satellite's
+ * position from every trail point / satellite / central body each frame,
+ * the children render in central-body-relative coordinates and this group
+ * smoothly translates them by -originPosition/scaleRadius.
+ *
+ * Snaps instantly when the target jumps by more than 1 scene unit (e.g.,
+ * switching from central-body to satellite-centered mode).
+ */
+function SmoothOriginGroup({ children, targetPosition }: {
+  children: React.ReactNode;
+  targetPosition: [number, number, number];
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  useFrame((_state, delta) => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    const [tx, ty, tz] = targetPosition;
+    const dx = tx - group.position.x;
+    const dy = ty - group.position.y;
+    const dz = tz - group.position.z;
+    const dist2 = dx * dx + dy * dy + dz * dz;
+
+    // Snap for large jumps (mode switch); smooth for small updates (server data)
+    if (dist2 > 1.0) {
+      group.position.set(tx, ty, tz);
+      return;
+    }
+
+    const alpha = 1 - Math.exp(-SMOOTHING_SPEED * delta);
+    group.position.x += dx * alpha;
+    group.position.y += dy * alpha;
+    group.position.z += dz * alpha;
+  });
+
+  return <group ref={groupRef}>{children}</group>;
 }
 
 interface SceneProps {
@@ -223,8 +265,9 @@ export function Scene({
   // Earth rotation angle for the mesh: ERA in ECI, 0 in ECEF (Earth is static)
   const earthRotation = isEcef ? 0 : era;
 
-  // Central body position in scene units (offset when satellite-centered)
-  const centralBodyPosition = useMemo<[number, number, number]>(() => {
+  // Target offset for SmoothOriginGroup: -originPosition/R when satellite-centered, [0,0,0] otherwise.
+  // The group smoothly interpolates toward this target each frame.
+  const originOffset = useMemo<[number, number, number]>(() => {
     if (originPosition == null) return [0, 0, 0];
     return [
       -originPosition[0] / centralBodyRadius,
@@ -262,81 +305,111 @@ export function Scene({
       <directionalLight intensity={2.0} position={lightPosition} />
       <hemisphereLight args={[0xffffff, 0x444466, 0.4]} />
 
-      <group position={centralBodyPosition}>
-        <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={earthRotation} />
-      </group>
-      <axesHelper args={[2]} />
-
-      {/* Multi-satellite mode */}
-      {multiSatEntries && multiSatEntries.map(([satId, buf], index) => {
-        const color = SATELLITE_COLORS[index % SATELLITE_COLORS.length];
-        const vc = trailVisibleCounts?.get(satId);
-        const pos = satellitePositions?.get(satId);
-        // Skip rendering the centered satellite's marker at origin (it would overlap axes)
-        const isCenteredSat = satId === centeredSatId;
+      {/* Centered satellite: rendered outside the smoothed group with direct
+          origin subtraction so it is always exactly at world origin (0,0,0).
+          Using the smoothed group would cause it to lag behind its own position. */}
+      {centeredSatId != null && multiSatEntries && (() => {
+        const idx = multiSatEntries.findIndex(([id]) => id === centeredSatId);
+        if (idx < 0) return null;
+        const pos = satellitePositions?.get(centeredSatId);
+        if (!pos) return null;
         return (
-          <group key={satId}>
-            <OrbitTrail
-              trailBuffer={buf}
-              visibleCount={vc}
-              drawStart={trailDrawStarts?.get(satId)}
-              scaleRadius={centralBodyRadius}
-              color={color}
-              referenceFrame={referenceFrame}
-              epochJd={epochJd}
-              originPosition={originPosition}
-            />
-            {pos && (
-              <Satellite
-                position={pos}
-                scaleRadius={centralBodyRadius}
-                color={color}
-                referenceFrame={referenceFrame}
-                epochJd={epochJd ?? undefined}
-                satId={satId}
-                satName={satelliteNames?.get(satId)}
-                originPosition={originPosition}
-                hideSphereFallback={isCenteredSat}
-              />
-            )}
-          </group>
+          <Satellite
+            position={pos}
+            scaleRadius={centralBodyRadius}
+            color={SATELLITE_COLORS[idx % SATELLITE_COLORS.length]}
+            referenceFrame={referenceFrame}
+            epochJd={epochJd ?? undefined}
+            satId={centeredSatId}
+            satName={satelliteNames?.get(centeredSatId)}
+            originPosition={originPosition}
+            hideSphereFallback
+          />
         );
-      })}
-
-      {/* Single-satellite fallback (replay mode or legacy) */}
-      {!multiSatEntries && hasTrailData && (
-        trailBuffer ? (
-          <OrbitTrail
-            trailBuffer={trailBuffer}
-            visibleCount={trailVisibleCount}
-            drawStart={trailDrawStart}
-            scaleRadius={centralBodyRadius}
-            referenceFrame={referenceFrame}
-            epochJd={epochJd}
-            originPosition={originPosition}
-          />
-        ) : (
-          <OrbitTrail
-            points={points!}
-            visibleCount={trailVisibleCount ?? points!.length}
-            drawStart={trailDrawStart}
-            scaleRadius={centralBodyRadius}
-            referenceFrame={referenceFrame}
-            epochJd={epochJd}
-            originPosition={originPosition}
-          />
-        )
-      )}
-      {!multiSatEntries && satellitePosition && (
+      })()}
+      {!multiSatEntries && isSatCentered && satellitePosition && (
         <Satellite
           position={satellitePosition}
           scaleRadius={centralBodyRadius}
           referenceFrame={referenceFrame}
           epochJd={epochJd ?? undefined}
           originPosition={originPosition}
-          hideSphereFallback={isSatCentered}
+          hideSphereFallback
         />
       )}
+
+      {/* Scene content group: smoothly translates for satellite-centered view.
+          Children render in central-body-relative coordinates; the group
+          handles the -originPosition/R offset with per-frame smoothing. */}
+      <SmoothOriginGroup targetPosition={originOffset}>
+        <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={earthRotation} />
+
+        {/* Multi-satellite mode */}
+        {multiSatEntries && multiSatEntries.map(([satId, buf], index) => {
+          const color = SATELLITE_COLORS[index % SATELLITE_COLORS.length];
+          const vc = trailVisibleCounts?.get(satId);
+          const pos = satellitePositions?.get(satId);
+          const isCenteredSat = satId === centeredSatId;
+          return (
+            <group key={satId}>
+              <OrbitTrail
+                trailBuffer={buf}
+                visibleCount={vc}
+                drawStart={trailDrawStarts?.get(satId)}
+                scaleRadius={centralBodyRadius}
+                color={color}
+                referenceFrame={referenceFrame}
+                epochJd={epochJd}
+              />
+              {pos && !isCenteredSat && (
+                <Satellite
+                  position={pos}
+                  scaleRadius={centralBodyRadius}
+                  color={color}
+                  referenceFrame={referenceFrame}
+                  epochJd={epochJd ?? undefined}
+                  satId={satId}
+                  satName={satelliteNames?.get(satId)}
+                />
+              )}
+            </group>
+          );
+        })}
+
+        {/* Single-satellite fallback (replay mode or legacy) */}
+        {!multiSatEntries && hasTrailData && (
+          trailBuffer ? (
+            <OrbitTrail
+              trailBuffer={trailBuffer}
+              visibleCount={trailVisibleCount}
+              drawStart={trailDrawStart}
+              scaleRadius={centralBodyRadius}
+              referenceFrame={referenceFrame}
+              epochJd={epochJd}
+            />
+          ) : (
+            <OrbitTrail
+              points={points!}
+              visibleCount={trailVisibleCount ?? points!.length}
+              drawStart={trailDrawStart}
+              scaleRadius={centralBodyRadius}
+              referenceFrame={referenceFrame}
+              epochJd={epochJd}
+            />
+          )
+        )}
+        {!multiSatEntries && satellitePosition && !isSatCentered && (
+          <Satellite
+            position={satellitePosition}
+            scaleRadius={centralBodyRadius}
+            referenceFrame={referenceFrame}
+            epochJd={epochJd ?? undefined}
+          />
+        )}
+      </SmoothOriginGroup>
+
+      {/* Axes at world origin (= satellite position when satellite-centered) */}
+      <axesHelper args={[2]} />
     </Canvas>
   );
 }
