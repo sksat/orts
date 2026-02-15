@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { Canvas } from "@react-three/fiber";
+import { useMemo, useRef } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { CelestialBody } from "./CelestialBody.js";
@@ -8,7 +8,7 @@ import { Satellite } from "./Satellite.js";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import type { SatelliteInfo } from "../hooks/useWebSocket.js";
-import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "../sceneFrame.js";
+import { DEFAULT_CAMERA_POSITION, SCENE_UP, computeCameraUp, computeLvlhAxes } from "../sceneFrame.js";
 import { rotateZ } from "../frameTransform.js";
 import { type ReferenceFrame, isLegacyEcef, isDefaultEci, DEFAULT_FRAME } from "../referenceFrame.js";
 import { earth_rotation_angle, sun_direction_eci } from "../wasm/kanameInit.js";
@@ -22,6 +22,72 @@ const DEFAULT_SUN_DIRECTION = new THREE.Vector3(1, 0, 0);
 
 /** Color palette for multiple satellites. */
 const SATELLITE_COLORS = [0x00ff88, 0xff4488, 0x44aaff, 0xffaa44, 0xaa44ff];
+
+/**
+ * Tracks the LVLH frame and co-rotates the camera so that user-set
+ * orientation (e.g. "Earth below, velocity right") is maintained as
+ * the satellite orbits.
+ *
+ * Runs at useFrame priority -1 (before OrbitControls at priority 0).
+ * Each frame:
+ *   1. Compute current LVLH quaternion from position + velocity
+ *   2. Compute delta from previous LVLH quaternion
+ *   3. Apply delta to camera.position (rotate around origin)
+ *   4. Set camera.up to radial direction
+ *
+ * OrbitControls re-derives its spherical state from camera.position
+ * each frame, so user drags are always relative to the current LVLH frame.
+ *
+ * Falls back to radial-only tracking when velocity is unavailable.
+ */
+function CameraLvlhTracker({ originPosition, originVelocity }: {
+  originPosition: [number, number, number] | null;
+  originVelocity: [number, number, number] | null;
+}) {
+  const { camera } = useThree();
+  const prevQuatRef = useRef<THREE.Quaternion | null>(null);
+
+  useFrame(() => {
+    // Non-satellite-centered: restore default up, clear state
+    if (originPosition == null) {
+      camera.up.set(...SCENE_UP);
+      prevQuatRef.current = null;
+      return;
+    }
+
+    const axes = computeLvlhAxes(originPosition, originVelocity);
+
+    if (!axes) {
+      // Fallback: radial-only tracking (no velocity available)
+      const up = computeCameraUp(originPosition);
+      camera.up.set(up[0], up[1], up[2]);
+      prevQuatRef.current = null;
+      return;
+    }
+
+    // LVLH basis: columns = [inTrack, crossTrack, radial] maps LVLH→ECI
+    const basisMat = new THREE.Matrix4().makeBasis(
+      new THREE.Vector3(...axes.inTrack),
+      new THREE.Vector3(...axes.crossTrack),
+      new THREE.Vector3(...axes.radial),
+    );
+    const currentQuat = new THREE.Quaternion().setFromRotationMatrix(basisMat);
+
+    const prevQuat = prevQuatRef.current;
+    if (prevQuat) {
+      // Delta: rotation from previous LVLH to current LVLH in world space
+      // delta * prevQuat = currentQuat → delta = currentQuat * prevQuat⁻¹
+      const delta = currentQuat.clone().multiply(prevQuat.clone().invert());
+      camera.position.applyQuaternion(delta);
+    }
+
+    // Set camera up to current radial direction
+    camera.up.set(...axes.radial);
+    prevQuatRef.current = currentQuat;
+  }, -1); // Priority -1: run before OrbitControls (priority 0)
+
+  return null;
+}
 
 interface SceneProps {
   /** Points array for replay mode. */
@@ -86,6 +152,18 @@ export function Scene({
 
     // Fall back to single satellite (replay mode)
     if (satellitePosition) return [satellitePosition.x, satellitePosition.y, satellitePosition.z];
+
+    return null;
+  }, [isSatCentered, centeredSatId, satellitePositions, satellitePosition]);
+
+  // Compute origin velocity for LVLH axes
+  const originVelocity: [number, number, number] | null = useMemo(() => {
+    if (!isSatCentered || centeredSatId == null) return null;
+
+    const satPos = satellitePositions?.get(centeredSatId);
+    if (satPos) return [satPos.vx, satPos.vy, satPos.vz];
+
+    if (satellitePosition) return [satellitePosition.vx, satellitePosition.vy, satellitePosition.vz];
 
     return null;
   }, [isSatCentered, centeredSatId, satellitePositions, satellitePosition]);
@@ -157,6 +235,7 @@ export function Scene({
         minDistance={isSatCentered ? 0.01 : 1.5}
         maxDistance={100}
       />
+      <CameraLvlhTracker originPosition={originPosition} originVelocity={originVelocity} />
 
       <ambientLight intensity={1.0} />
       <directionalLight intensity={2.0} position={lightPosition} />
