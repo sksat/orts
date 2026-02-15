@@ -11,3 +11,6 @@ test-results/
 # High-resolution textures (downloaded via tools/fetch-textures.sh)
 viewer/public/textures/*_4k.*
 viewer/public/textures/*_8k.*
+
+# Claude Code local settings (not shared)
+.claude/settings.local.json
