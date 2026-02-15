@@ -291,7 +291,11 @@ export function App() {
   const goLiveRef = useRef(realtimePlayback.goLive);
   goLiveRef.current = realtimePlayback.goLive;
 
+  // Track explicit user disconnect to suppress auto-reconnect.
+  const manualDisconnectRef = useRef(false);
+
   const handleConnect = useCallback(() => {
+    manualDisconnectRef.current = false;
     detailBufferRef.current = [];
     streamingCountRef.current = 0;
     for (const buf of trailBuffersRef.current.values()) buf.clear();
@@ -305,6 +309,7 @@ export function App() {
   }, [connect]);
 
   const handleDisconnect = useCallback(() => {
+    manualDisconnectRef.current = true;
     disconnect();
   }, [disconnect]);
 
@@ -315,7 +320,7 @@ export function App() {
   handleConnectRef.current = handleConnect;
 
   useEffect(() => {
-    if (mode === "realtime" && !isConnected) {
+    if (mode === "realtime" && !isConnected && !manualDisconnectRef.current) {
       handleConnectRef.current();
     }
   }, [mode, isConnected]);
@@ -325,6 +330,8 @@ export function App() {
     (newMode: ViewerMode) => {
       if (newMode === mode) return;
       if (mode === "realtime" && isConnected) disconnect();
+      // Reset manual disconnect flag so auto-connect works when switching back to realtime.
+      if (newMode === "realtime") manualDisconnectRef.current = false;
       setMode(newMode);
     },
     [mode, isConnected, disconnect]
