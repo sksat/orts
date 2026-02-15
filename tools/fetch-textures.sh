@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Downloads and prepares high-resolution Earth textures from NASA public domain imagery.
 #
-# Day:   NASA SVS 3615 Blue Marble (with clouds), 8192x4096
+# Day:   NASA Blue Marble Next Generation w/ Topography and Bathymetry (cloud-free)
 # Night: NASA Black Marble 2016 color maps
 #
 # Prerequisites: curl, imagemagick (convert or magick)
-# Usage: ./tools/fetch-textures.sh [--resolution 4k|8k|all] [--force]
+# Usage: ./tools/fetch-textures.sh [--resolution 2k|4k|8k|16k|all] [--force]
 
 set -euo pipefail
 
@@ -16,8 +16,10 @@ trap 'rm -rf "$TEMP_DIR"' EXIT
 
 # --- NASA source URLs (public domain) ---
 
-# Blue Marble flat equirectangular with clouds (SVS 3615)
-DAY_8K_URL="https://svs.gsfc.nasa.gov/vis/a000000/a003600/a003615/flat_earth_Largest_still.0330.jpg"
+# Blue Marble Next Generation w/ Topography and Bathymetry – cloud-free (Visible Earth 73909)
+# December 2004, 21600x10800 equirectangular
+# Source: https://visibleearth.nasa.gov/images/73909
+DAY_SOURCE_URL="https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73909/world.topo.bathy.200412.3x21600x10800.jpg"  # 21600x10800
 
 # Black Marble 2016 color maps
 NIGHT_LOW_URL="https://assets.science.nasa.gov/content/dam/science/esd/eo/images/imagerecords/144000/144898/BlackMarble_2016_01deg.jpg"   # 3600x1800
@@ -33,13 +35,13 @@ while [[ $# -gt 0 ]]; do
     --resolution) RESOLUTION="$2"; shift 2 ;;
     --force)      FORCE=true; shift ;;
     -h|--help)
-      echo "Usage: $0 [--resolution 4k|8k|all] [--force]"
+      echo "Usage: $0 [--resolution 2k|4k|8k|16k|all] [--force]"
       echo ""
       echo "Downloads NASA Earth textures and resizes to power-of-two dimensions."
-      echo "Output: viewer/public/textures/earth_{4k,8k}.jpg, earth_night_{4k,8k}.jpg"
+      echo "Output: viewer/public/textures/earth_{2k,4k,8k,16k}.jpg, earth_night_{4k,8k,16k}.jpg"
       echo ""
       echo "Options:"
-      echo "  --resolution  Which resolutions to download: 4k, 8k, or all (default: all)"
+      echo "  --resolution  Which resolutions to download: 2k, 4k, 8k, 16k, or all (default: all)"
       echo "  --force       Re-download even if files already exist"
       exit 0
       ;;
@@ -92,35 +94,45 @@ should_process() {
 
 mkdir -p "$TEXTURE_DIR"
 
-# Day textures (from 8K source)
+# Day textures (from 21600x10800 cloud-free source)
 process_day() {
-  local src_8k="$TEMP_DIR/day_source_8k.jpg"
+  local src="$TEMP_DIR/day_source.jpg"
 
   # Download source only if we need it
   local need_download=false
-  if [[ "$RESOLUTION" == "4k" || "$RESOLUTION" == "all" ]] && should_process "$TEXTURE_DIR/earth_4k.jpg"; then
-    need_download=true
-  fi
-  if [[ "$RESOLUTION" == "8k" || "$RESOLUTION" == "all" ]] && should_process "$TEXTURE_DIR/earth_8k.jpg"; then
-    need_download=true
-  fi
+  for res in 2k 4k 8k 16k; do
+    if [[ "$RESOLUTION" == "$res" || "$RESOLUTION" == "all" ]] && should_process "$TEXTURE_DIR/earth_${res}.jpg"; then
+      need_download=true
+    fi
+  done
 
   if [[ "$need_download" == false ]]; then return; fi
 
-  echo "==> Fetching Blue Marble day texture (8192x4096)..."
-  download "$DAY_8K_URL" "$src_8k"
+  echo "==> Fetching Blue Marble cloud-free day texture (21600x10800)..."
+  download "$DAY_SOURCE_URL" "$src"
+
+  if [[ "$RESOLUTION" == "16k" || "$RESOLUTION" == "all" ]] && should_process "$TEXTURE_DIR/earth_16k.jpg"; then
+    echo "==> Creating earth_16k.jpg..."
+    resize_jpeg "$src" "$TEXTURE_DIR/earth_16k.jpg" 16384 8192
+    echo "  Done: $(du -h "$TEXTURE_DIR/earth_16k.jpg" | cut -f1)"
+  fi
 
   if [[ "$RESOLUTION" == "8k" || "$RESOLUTION" == "all" ]] && should_process "$TEXTURE_DIR/earth_8k.jpg"; then
     echo "==> Creating earth_8k.jpg..."
-    # Source is already 8192x4096, just optimize
-    $MAGICK_CMD "$src_8k" -quality 90 "$TEXTURE_DIR/earth_8k.jpg"
+    resize_jpeg "$src" "$TEXTURE_DIR/earth_8k.jpg" 8192 4096
     echo "  Done: $(du -h "$TEXTURE_DIR/earth_8k.jpg" | cut -f1)"
   fi
 
   if [[ "$RESOLUTION" == "4k" || "$RESOLUTION" == "all" ]] && should_process "$TEXTURE_DIR/earth_4k.jpg"; then
     echo "==> Creating earth_4k.jpg..."
-    resize_jpeg "$src_8k" "$TEXTURE_DIR/earth_4k.jpg" 4096 2048
+    resize_jpeg "$src" "$TEXTURE_DIR/earth_4k.jpg" 4096 2048
     echo "  Done: $(du -h "$TEXTURE_DIR/earth_4k.jpg" | cut -f1)"
+  fi
+
+  if [[ "$RESOLUTION" == "2k" || "$RESOLUTION" == "all" ]] && should_process "$TEXTURE_DIR/earth_2k.jpg"; then
+    echo "==> Creating earth_2k.jpg..."
+    resize_jpeg "$src" "$TEXTURE_DIR/earth_2k.jpg" 2048 1024
+    echo "  Done: $(du -h "$TEXTURE_DIR/earth_2k.jpg" | cut -f1)"
   fi
 }
 
@@ -135,13 +147,29 @@ process_night() {
     echo "  Done: $(du -h "$TEXTURE_DIR/earth_night_4k.jpg" | cut -f1)"
   fi
 
-  if [[ "$RESOLUTION" == "8k" || "$RESOLUTION" == "all" ]] && should_process "$TEXTURE_DIR/earth_night_8k.jpg"; then
-    echo "==> Fetching Black Marble night texture (13500x6750)..."
+  if [[ "$RESOLUTION" == "8k" || "$RESOLUTION" == "16k" || "$RESOLUTION" == "all" ]]; then
     local src_high="$TEMP_DIR/night_source_high.jpg"
-    download "$NIGHT_HIGH_URL" "$src_high"
-    echo "==> Creating earth_night_8k.jpg..."
-    resize_jpeg "$src_high" "$TEXTURE_DIR/earth_night_8k.jpg" 8192 4096
-    echo "  Done: $(du -h "$TEXTURE_DIR/earth_night_8k.jpg" | cut -f1)"
+    local need_high=false
+
+    if should_process "$TEXTURE_DIR/earth_night_8k.jpg" 2>/dev/null; then need_high=true; fi
+    if should_process "$TEXTURE_DIR/earth_night_16k.jpg" 2>/dev/null; then need_high=true; fi
+
+    if [[ "$need_high" == true ]]; then
+      echo "==> Fetching Black Marble night texture (13500x6750)..."
+      download "$NIGHT_HIGH_URL" "$src_high"
+
+      if [[ "$RESOLUTION" == "16k" || "$RESOLUTION" == "all" ]] && should_process "$TEXTURE_DIR/earth_night_16k.jpg"; then
+        echo "==> Creating earth_night_16k.jpg..."
+        resize_jpeg "$src_high" "$TEXTURE_DIR/earth_night_16k.jpg" 16384 8192
+        echo "  Done: $(du -h "$TEXTURE_DIR/earth_night_16k.jpg" | cut -f1)"
+      fi
+
+      if [[ "$RESOLUTION" == "8k" || "$RESOLUTION" == "all" ]] && should_process "$TEXTURE_DIR/earth_night_8k.jpg"; then
+        echo "==> Creating earth_night_8k.jpg..."
+        resize_jpeg "$src_high" "$TEXTURE_DIR/earth_night_8k.jpg" 8192 4096
+        echo "  Done: $(du -h "$TEXTURE_DIR/earth_night_8k.jpg" | cut -f1)"
+      fi
+    fi
   fi
 }
 

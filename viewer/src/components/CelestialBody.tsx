@@ -92,7 +92,8 @@ export function CelestialBody({
   lvlhPosition = null, lvlhQuaternion = null,
 }: CelestialBodyProps) {
   const renderInfo = getBodyRenderInfo(bodyId);
-  const targetResolution = useTextureResolution();
+  const isSatelliteCentered = lvlhPosition != null;
+  const targetResolution = useTextureResolution(isSatelliteCentered);
 
   let body: React.ReactNode;
 

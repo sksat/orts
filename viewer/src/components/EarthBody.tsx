@@ -20,7 +20,7 @@ export const POLE_ALIGNMENT_ROTATION: [number, number, number] = [
 ];
 
 /** Resolution fallback chain: try highest first, then step down. */
-const FALLBACK_CHAIN: TextureResolution[] = ["8k", "4k"];
+const FALLBACK_CHAIN: TextureResolution[] = ["16k", "8k", "4k"];
 
 interface EarthBodyProps {
   radius: number;
