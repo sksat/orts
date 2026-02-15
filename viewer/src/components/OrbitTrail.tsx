@@ -4,7 +4,8 @@ import * as THREE from "three";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import { type ReferenceFrame, isLegacyEcef, frameCenterEquals } from "../referenceFrame.js";
-import { batchEciToEcef, batchTransformWithOffset } from "../coordTransform.js";
+import { batchEciToEcef, batchTransformWithOffset, batchTransformToLvlh } from "../coordTransform.js";
+import type { LvlhAxes } from "../sceneFrame.js";
 
 /** Initial capacity for the streaming vertex buffer. Grows as needed. */
 const INITIAL_CAPACITY = 2048;
@@ -28,6 +29,9 @@ interface OrbitTrailProps {
   drawStart?: number;
   /** Origin position in ECI [km] for the current frame center, or null for central body. */
   originPosition?: [number, number, number] | null;
+  /** LVLH axes for satellite body-frame transform. When provided with originPosition,
+   *  trail points are transformed into the satellite's LVLH frame for better f32 precision. */
+  lvlhAxes?: LvlhAxes | null;
 }
 
 const DEFAULT_REF_FRAME: ReferenceFrame = { center: { type: "central_body" }, orientation: "inertial" };
@@ -42,7 +46,7 @@ const DEFAULT_REF_FRAME: ReferenceFrame = { center: { type: "central_body" }, or
 export function OrbitTrail({
   points, visibleCount, trailBuffer, scaleRadius, color = 0x00ff88,
   referenceFrame = DEFAULT_REF_FRAME, epochJd, drawStart = 0,
-  originPosition = null,
+  originPosition = null, lvlhAxes = null,
 }: OrbitTrailProps) {
   const writtenCountRef = useRef(0);
   const capacityRef = useRef(INITIAL_CAPACITY);
@@ -84,6 +88,9 @@ export function OrbitTrail({
     if (isLegacyEcef(referenceFrame) && epochJd != null) {
       // WASM fast path for central-body ECEF
       batchEciToEcef(src, from, to, epochJd, buf, from, scaleRadius);
+    } else if (originPosition != null && lvlhAxes != null) {
+      // Satellite body-frame: full LVLH rotation + translation in f64
+      batchTransformToLvlh(src, from, to, originPosition, lvlhAxes, buf, from, scaleRadius);
     } else {
       // Generic path: subtract origin offset + scale
       batchTransformWithOffset(src, from, to, originPosition, buf, from, scaleRadius);

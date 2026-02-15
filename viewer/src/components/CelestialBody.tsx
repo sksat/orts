@@ -14,6 +14,10 @@ interface CelestialBodyProps {
   sunDirection?: THREE.Vector3;
   /** Earth Rotation Angle in radians (for Earth self-rotation in ECI). */
   rotationAngle?: number;
+  /** Position in LVLH frame (scene units). When set, body is placed here instead of origin. */
+  lvlhPosition?: [number, number, number] | null;
+  /** Quaternion [x,y,z,w] for body orientation in LVLH frame. Replaces ERA-based euler. */
+  lvlhQuaternion?: [number, number, number, number] | null;
 }
 
 function TexturedBody({
@@ -83,12 +87,17 @@ function FallbackBody({
  * Renders a celestial body sphere with texture if available,
  * falling back to a colored Phong sphere.
  */
-export function CelestialBody({ bodyId, radius = 1, sunDirection, rotationAngle }: CelestialBodyProps) {
+export function CelestialBody({
+  bodyId, radius = 1, sunDirection, rotationAngle,
+  lvlhPosition = null, lvlhQuaternion = null,
+}: CelestialBodyProps) {
   const renderInfo = getBodyRenderInfo(bodyId);
   const targetResolution = useTextureResolution();
 
+  let body: React.ReactNode;
+
   if (renderInfo.nightTexturePath && renderInfo.texturePath && sunDirection) {
-    return (
+    body = (
       <Suspense
         fallback={<FallbackBody renderInfo={renderInfo} radius={radius} />}
       >
@@ -97,24 +106,36 @@ export function CelestialBody({ bodyId, radius = 1, sunDirection, rotationAngle 
           sunDirection={sunDirection}
           dayTexturePath={renderInfo.texturePath}
           nightTexturePath={renderInfo.nightTexturePath}
-          rotationAngle={rotationAngle}
+          rotationAngle={lvlhQuaternion != null ? undefined : rotationAngle}
           targetResolution={targetResolution}
           textureBaseName={renderInfo.textureBaseName}
           nightTextureBaseName={renderInfo.nightTextureBaseName}
         />
       </Suspense>
     );
-  }
-
-  if (renderInfo.texturePath) {
-    return (
+  } else if (renderInfo.texturePath) {
+    body = (
       <Suspense
         fallback={<FallbackBody renderInfo={renderInfo} radius={radius} />}
       >
         <TexturedBody renderInfo={renderInfo} radius={radius} />
       </Suspense>
     );
+  } else {
+    body = <FallbackBody renderInfo={renderInfo} radius={radius} />;
   }
 
-  return <FallbackBody renderInfo={renderInfo} radius={radius} />;
+  // In LVLH mode: position and orient the body via an outer group
+  if (lvlhPosition != null || lvlhQuaternion != null) {
+    const quat = lvlhQuaternion
+      ? new THREE.Quaternion(lvlhQuaternion[0], lvlhQuaternion[1], lvlhQuaternion[2], lvlhQuaternion[3])
+      : undefined;
+    return (
+      <group position={lvlhPosition ?? undefined} quaternion={quat}>
+        {body}
+      </group>
+    );
+  }
+
+  return <>{body}</>;
 }

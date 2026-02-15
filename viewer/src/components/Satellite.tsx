@@ -2,6 +2,8 @@ import { Suspense } from "react";
 import { OrbitPoint } from "../orbit.js";
 import { type ReferenceFrame, isLegacyEcef } from "../referenceFrame.js";
 import { eci_to_ecef } from "../wasm/kanameInit.js";
+import { transformToLvlh } from "../coordTransform.js";
+import type { LvlhAxes } from "../sceneFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { SatelliteModel } from "./SatelliteModel.js";
 
@@ -25,6 +27,8 @@ interface SatelliteProps {
   satName?: string | null;
   /** Origin position in ECI [km] for the current frame center, or null for central body. */
   originPosition?: [number, number, number] | null;
+  /** LVLH axes for satellite body-frame transform. */
+  lvlhAxes?: LvlhAxes | null;
   /** When true, suppress the sphere fallback (used for centered satellite at origin). */
   hideSphereFallback?: boolean;
 }
@@ -53,26 +57,28 @@ export function Satellite({
   satId,
   satName,
   originPosition = null,
+  lvlhAxes = null,
   hideSphereFallback = false,
 }: SatelliteProps) {
-  let px = position.x, py = position.y, pz = position.z;
+  let scenePos: [number, number, number];
 
   if (isLegacyEcef(referenceFrame) && epochJd != null) {
     // WASM fast path for ECEF
-    const ecef = eci_to_ecef(px, py, pz, epochJd, position.t);
-    px = ecef[0]; py = ecef[1]; pz = ecef[2];
+    const ecef = eci_to_ecef(position.x, position.y, position.z, epochJd, position.t);
+    scenePos = [ecef[0] / scaleRadius, ecef[1] / scaleRadius, ecef[2] / scaleRadius];
+  } else if (originPosition != null && lvlhAxes != null) {
+    // LVLH body-frame transform (f64 precision)
+    scenePos = transformToLvlh(position.x, position.y, position.z, originPosition, lvlhAxes, scaleRadius);
   } else if (originPosition != null) {
-    // Subtract origin for satellite-centered (or future Moon/Sun-centered) view
-    px -= originPosition[0];
-    py -= originPosition[1];
-    pz -= originPosition[2];
+    // Simple offset subtraction fallback
+    scenePos = [
+      (position.x - originPosition[0]) / scaleRadius,
+      (position.y - originPosition[1]) / scaleRadius,
+      (position.z - originPosition[2]) / scaleRadius,
+    ];
+  } else {
+    scenePos = [position.x / scaleRadius, position.y / scaleRadius, position.z / scaleRadius];
   }
-
-  const scenePos: [number, number, number] = [
-    px / scaleRadius,
-    py / scaleRadius,
-    pz / scaleRadius,
-  ];
 
   const modelConfig = satId ? getSatelliteModelConfig(satId, satName) : null;
 

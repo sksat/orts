@@ -8,10 +8,11 @@ import { Satellite } from "./Satellite.js";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import type { SatelliteInfo } from "../hooks/useWebSocket.js";
-import { DEFAULT_CAMERA_POSITION, SCENE_UP, computeCameraUp, computeLvlhAxes } from "../sceneFrame.js";
+import { DEFAULT_CAMERA_POSITION, SCENE_UP, computeCameraUp, computeLvlhAxes, type LvlhAxes } from "../sceneFrame.js";
 import { rotateZ } from "../frameTransform.js";
 import { type ReferenceFrame, isLegacyEcef, isDefaultEci, DEFAULT_FRAME } from "../referenceFrame.js";
 import { earth_rotation_angle, sun_direction_eci } from "../wasm/kanameInit.js";
+import { transformToLvlh } from "../coordTransform.js";
 
 // Set scene up vector before any Three.js objects are created
 // so that Camera, OrbitControls, and all scene objects use the correct convention.
@@ -52,16 +53,18 @@ const SMOOTHING_SPEED = 6;
  *
  * Falls back to radial-only tracking when velocity is unavailable.
  */
-function CameraLvlhTracker({ originPosition, originVelocity }: {
+function CameraLvlhTracker({ originPosition, originVelocity, lvlhActive }: {
   originPosition: [number, number, number] | null;
   originVelocity: [number, number, number] | null;
+  /** When true, LVLH rotation is handled by the coordinate data, not the camera. */
+  lvlhActive: boolean;
 }) {
   const { camera } = useThree();
   const prevQuatRef = useRef<THREE.Quaternion | null>(null);
 
   useFrame((_state, delta) => {
-    // Non-satellite-centered: restore default up, clear state
-    if (originPosition == null) {
+    // Non-satellite-centered or LVLH body-frame mode: Z=radial is natural up
+    if (originPosition == null || lvlhActive) {
       camera.up.set(...SCENE_UP);
       prevQuatRef.current = null;
       return;
@@ -231,6 +234,15 @@ export function Scene({
     return null;
   }, [isSatCentered, centeredSatId, satellitePositions, satellitePosition]);
 
+  // Compute LVLH axes for body-frame transformation
+  const lvlhAxes: LvlhAxes | null = useMemo(
+    () => computeLvlhAxes(originPosition, originVelocity),
+    [originPosition, originVelocity],
+  );
+
+  // LVLH body-frame mode: active when satellite-centered with valid axes
+  const lvlhActive = isSatCentered && lvlhAxes != null && originPosition != null;
+
   // Determine sim time for sun direction from first available satellite position
   const firstPosition = satellitePosition
     ?? (satellitePositions ? Array.from(satellitePositions.values()).find((p) => p != null) ?? null : null);
@@ -252,11 +264,21 @@ export function Scene({
 
   // Sun direction in the display frame
   const sunDirection = useMemo(() => {
+    if (lvlhActive) {
+      // LVLH: rotate sun direction into satellite body frame
+      const s = sunDirectionEci;
+      const ax = lvlhAxes!;
+      return new THREE.Vector3(
+        ax.inTrack[0] * s.x + ax.inTrack[1] * s.y + ax.inTrack[2] * s.z,
+        ax.crossTrack[0] * s.x + ax.crossTrack[1] * s.y + ax.crossTrack[2] * s.z,
+        ax.radial[0] * s.x + ax.radial[1] * s.y + ax.radial[2] * s.z,
+      );
+    }
     if (!isEcef || era == null) return sunDirectionEci;
     // ECEF: rotate sun direction by -ERA to match Earth-fixed frame
     const [sx, sy, sz] = rotateZ(sunDirectionEci.x, sunDirectionEci.y, sunDirectionEci.z, -era);
     return new THREE.Vector3(sx, sy, sz);
-  }, [sunDirectionEci, isEcef, era]);
+  }, [sunDirectionEci, isEcef, era, lvlhActive, lvlhAxes]);
 
   const lightPosition = useMemo<[number, number, number]>(() => {
     return [sunDirection.x * 10, sunDirection.y * 10, sunDirection.z * 10];
@@ -265,16 +287,39 @@ export function Scene({
   // Earth rotation angle for the mesh: ERA in ECI, 0 in ECEF (Earth is static)
   const earthRotation = isEcef ? 0 : era;
 
-  // Target offset for SmoothOriginGroup: -originPosition/R when satellite-centered, [0,0,0] otherwise.
-  // The group smoothly interpolates toward this target each frame.
+  // Central body position and orientation in LVLH frame
+  const bodyLvlhPosition = useMemo<[number, number, number] | null>(() => {
+    if (!lvlhActive || originPosition == null || lvlhAxes == null) return null;
+    return transformToLvlh(0, 0, 0, originPosition, lvlhAxes, centralBodyRadius);
+  }, [lvlhActive, originPosition, lvlhAxes, centralBodyRadius]);
+
+  const bodyLvlhQuaternion = useMemo<[number, number, number, number] | null>(() => {
+    if (!lvlhActive || lvlhAxes == null) return null;
+    // R_lvlh: basis matrix [inTrack, crossTrack, radial] maps LVLH→ECI
+    const lvlhMat = new THREE.Matrix4().makeBasis(
+      new THREE.Vector3(...lvlhAxes.inTrack),
+      new THREE.Vector3(...lvlhAxes.crossTrack),
+      new THREE.Vector3(...lvlhAxes.radial),
+    );
+    const lvlhQuat = new THREE.Quaternion().setFromRotationMatrix(lvlhMat);
+    // R_z(ERA) rotation
+    const eraQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, era ?? 0));
+    // R_x(π/2) pole alignment
+    const poleQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+    // Body orientation in LVLH: R_lvlh^T * R_z(ERA) * R_x(π/2)
+    const bodyQuat = lvlhQuat.clone().conjugate().multiply(eraQuat).multiply(poleQuat);
+    return [bodyQuat.x, bodyQuat.y, bodyQuat.z, bodyQuat.w];
+  }, [lvlhActive, lvlhAxes, era]);
+
+  // Target offset for SmoothOriginGroup (non-LVLH satellite-centered fallback)
   const originOffset = useMemo<[number, number, number]>(() => {
-    if (originPosition == null) return [0, 0, 0];
+    if (originPosition == null || lvlhActive) return [0, 0, 0];
     return [
       -originPosition[0] / centralBodyRadius,
       -originPosition[1] / centralBodyRadius,
       -originPosition[2] / centralBodyRadius,
     ];
-  }, [originPosition, centralBodyRadius]);
+  }, [originPosition, centralBodyRadius, lvlhActive]);
 
   // No useMemo: the trailBuffers Map reference (from useRef) never changes,
   // but Scene re-renders each frame via satellitePositions, so reading entries
@@ -299,15 +344,13 @@ export function Scene({
         minDistance={isSatCentered ? 0.01 : 1.5}
         maxDistance={100}
       />
-      <CameraLvlhTracker originPosition={originPosition} originVelocity={originVelocity} />
+      <CameraLvlhTracker originPosition={originPosition} originVelocity={originVelocity} lvlhActive={lvlhActive} />
 
       <ambientLight intensity={1.0} />
       <directionalLight intensity={2.0} position={lightPosition} />
       <hemisphereLight args={[0xffffff, 0x444466, 0.4]} />
 
-      {/* Centered satellite: rendered outside the smoothed group with direct
-          origin subtraction so it is always exactly at world origin (0,0,0).
-          Using the smoothed group would cause it to lag behind its own position. */}
+      {/* Centered satellite: always exactly at world origin (0,0,0). */}
       {centeredSatId != null && multiSatEntries && (() => {
         const idx = multiSatEntries.findIndex(([id]) => id === centeredSatId);
         if (idx < 0) return null;
@@ -323,6 +366,7 @@ export function Scene({
             satId={centeredSatId}
             satName={satelliteNames?.get(centeredSatId)}
             originPosition={originPosition}
+            lvlhAxes={lvlhAxes}
             hideSphereFallback
           />
         );
@@ -334,79 +378,155 @@ export function Scene({
           referenceFrame={referenceFrame}
           epochJd={epochJd ?? undefined}
           originPosition={originPosition}
+          lvlhAxes={lvlhAxes}
           hideSphereFallback
         />
       )}
 
-      {/* Scene content group: smoothly translates for satellite-centered view.
-          Children render in central-body-relative coordinates; the group
-          handles the -originPosition/R offset with per-frame smoothing. */}
-      <SmoothOriginGroup targetPosition={originOffset}>
-        <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={earthRotation} />
+      {/* LVLH body-frame mode: all children render in satellite-centered LVLH
+          coordinates. No SmoothOriginGroup needed — data is already transformed. */}
+      {lvlhActive ? (
+        <>
+          <CelestialBody
+            bodyId={centralBody}
+            sunDirection={sunDirection}
+            rotationAngle={earthRotation}
+            lvlhPosition={bodyLvlhPosition}
+            lvlhQuaternion={bodyLvlhQuaternion}
+          />
 
-        {/* Multi-satellite mode */}
-        {multiSatEntries && multiSatEntries.map(([satId, buf], index) => {
-          const color = SATELLITE_COLORS[index % SATELLITE_COLORS.length];
-          const vc = trailVisibleCounts?.get(satId);
-          const pos = satellitePositions?.get(satId);
-          const isCenteredSat = satId === centeredSatId;
-          return (
-            <group key={satId}>
-              <OrbitTrail
-                trailBuffer={buf}
-                visibleCount={vc}
-                drawStart={trailDrawStarts?.get(satId)}
-                scaleRadius={centralBodyRadius}
-                color={color}
-                referenceFrame={referenceFrame}
-                epochJd={epochJd}
-              />
-              {pos && !isCenteredSat && (
-                <Satellite
-                  position={pos}
+          {/* Multi-satellite mode */}
+          {multiSatEntries && multiSatEntries.map(([satId, buf], index) => {
+            const color = SATELLITE_COLORS[index % SATELLITE_COLORS.length];
+            const vc = trailVisibleCounts?.get(satId);
+            const pos = satellitePositions?.get(satId);
+            const isCenteredSat = satId === centeredSatId;
+            return (
+              <group key={satId}>
+                <OrbitTrail
+                  trailBuffer={buf}
+                  visibleCount={vc}
+                  drawStart={trailDrawStarts?.get(satId)}
                   scaleRadius={centralBodyRadius}
                   color={color}
                   referenceFrame={referenceFrame}
-                  epochJd={epochJd ?? undefined}
-                  satId={satId}
-                  satName={satelliteNames?.get(satId)}
+                  epochJd={epochJd}
+                  originPosition={originPosition}
+                  lvlhAxes={lvlhAxes}
                 />
-              )}
-            </group>
-          );
-        })}
+                {pos && !isCenteredSat && (
+                  <Satellite
+                    position={pos}
+                    scaleRadius={centralBodyRadius}
+                    color={color}
+                    referenceFrame={referenceFrame}
+                    epochJd={epochJd ?? undefined}
+                    satId={satId}
+                    satName={satelliteNames?.get(satId)}
+                    originPosition={originPosition}
+                    lvlhAxes={lvlhAxes}
+                  />
+                )}
+              </group>
+            );
+          })}
 
-        {/* Single-satellite fallback (replay mode or legacy) */}
-        {!multiSatEntries && hasTrailData && (
-          trailBuffer ? (
-            <OrbitTrail
-              trailBuffer={trailBuffer}
-              visibleCount={trailVisibleCount}
-              drawStart={trailDrawStart}
+          {/* Single-satellite fallback (replay mode or legacy) */}
+          {!multiSatEntries && hasTrailData && (
+            trailBuffer ? (
+              <OrbitTrail
+                trailBuffer={trailBuffer}
+                visibleCount={trailVisibleCount}
+                drawStart={trailDrawStart}
+                scaleRadius={centralBodyRadius}
+                referenceFrame={referenceFrame}
+                epochJd={epochJd}
+                originPosition={originPosition}
+                lvlhAxes={lvlhAxes}
+              />
+            ) : (
+              <OrbitTrail
+                points={points!}
+                visibleCount={trailVisibleCount ?? points!.length}
+                drawStart={trailDrawStart}
+                scaleRadius={centralBodyRadius}
+                referenceFrame={referenceFrame}
+                epochJd={epochJd}
+                originPosition={originPosition}
+                lvlhAxes={lvlhAxes}
+              />
+            )
+          )}
+        </>
+      ) : (
+        /* Non-LVLH mode: SmoothOriginGroup handles satellite-centered offset. */
+        <SmoothOriginGroup targetPosition={originOffset}>
+          <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={earthRotation} />
+
+          {/* Multi-satellite mode */}
+          {multiSatEntries && multiSatEntries.map(([satId, buf], index) => {
+            const color = SATELLITE_COLORS[index % SATELLITE_COLORS.length];
+            const vc = trailVisibleCounts?.get(satId);
+            const pos = satellitePositions?.get(satId);
+            const isCenteredSat = satId === centeredSatId;
+            return (
+              <group key={satId}>
+                <OrbitTrail
+                  trailBuffer={buf}
+                  visibleCount={vc}
+                  drawStart={trailDrawStarts?.get(satId)}
+                  scaleRadius={centralBodyRadius}
+                  color={color}
+                  referenceFrame={referenceFrame}
+                  epochJd={epochJd}
+                />
+                {pos && !isCenteredSat && (
+                  <Satellite
+                    position={pos}
+                    scaleRadius={centralBodyRadius}
+                    color={color}
+                    referenceFrame={referenceFrame}
+                    epochJd={epochJd ?? undefined}
+                    satId={satId}
+                    satName={satelliteNames?.get(satId)}
+                  />
+                )}
+              </group>
+            );
+          })}
+
+          {/* Single-satellite fallback (replay mode or legacy) */}
+          {!multiSatEntries && hasTrailData && (
+            trailBuffer ? (
+              <OrbitTrail
+                trailBuffer={trailBuffer}
+                visibleCount={trailVisibleCount}
+                drawStart={trailDrawStart}
+                scaleRadius={centralBodyRadius}
+                referenceFrame={referenceFrame}
+                epochJd={epochJd}
+              />
+            ) : (
+              <OrbitTrail
+                points={points!}
+                visibleCount={trailVisibleCount ?? points!.length}
+                drawStart={trailDrawStart}
+                scaleRadius={centralBodyRadius}
+                referenceFrame={referenceFrame}
+                epochJd={epochJd}
+              />
+            )
+          )}
+          {!multiSatEntries && satellitePosition && !isSatCentered && (
+            <Satellite
+              position={satellitePosition}
               scaleRadius={centralBodyRadius}
               referenceFrame={referenceFrame}
-              epochJd={epochJd}
+              epochJd={epochJd ?? undefined}
             />
-          ) : (
-            <OrbitTrail
-              points={points!}
-              visibleCount={trailVisibleCount ?? points!.length}
-              drawStart={trailDrawStart}
-              scaleRadius={centralBodyRadius}
-              referenceFrame={referenceFrame}
-              epochJd={epochJd}
-            />
-          )
-        )}
-        {!multiSatEntries && satellitePosition && !isSatCentered && (
-          <Satellite
-            position={satellitePosition}
-            scaleRadius={centralBodyRadius}
-            referenceFrame={referenceFrame}
-            epochJd={epochJd ?? undefined}
-          />
-        )}
-      </SmoothOriginGroup>
+          )}
+        </SmoothOriginGroup>
+      )}
 
       {/* Axes at world origin (= satellite position when satellite-centered) */}
       <axesHelper args={[2]} />
