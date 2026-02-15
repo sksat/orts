@@ -69,8 +69,9 @@ const SATELLITE_CENTERED_PROFILE: DisplayScaleProfile = {
   minDistance: 0.005,
   maxDistance: 2000,
   defaultCameraDistance: 0.15,
-  // Camera behind satellite, looking along velocity (+X = inTrack)
-  defaultCameraDirection: [-1, 0, 0],
+  // Camera behind, slightly to the side, and slightly above satellite
+  // ~17° downward tilt toward Earth, ~17° cross-track offset
+  defaultCameraDirection: [-1, 0.3, 0.3],
 };
 
 /**

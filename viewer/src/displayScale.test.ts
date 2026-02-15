@@ -25,9 +25,12 @@ describe("getDisplayScaleProfile", () => {
     expect(profile.name).toBe("satellite-centered");
   });
 
-  it("satellite-centered profile has default camera direction along -X (behind satellite)", () => {
+  it("satellite-centered profile has default camera direction behind and above satellite", () => {
     const profile = getDisplayScaleProfile({ type: "satellite", id: "iss" });
-    expect(profile.defaultCameraDirection).toEqual([-1, 0, 0]);
+    const [dx, , dz] = profile.defaultCameraDirection!;
+    // Behind satellite (-X) with slight upward tilt (+Z radial)
+    expect(dx).toBeLessThan(0);
+    expect(dz).toBeGreaterThan(0);
   });
 
   it("body-centered profile has no default camera direction", () => {
