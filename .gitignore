@@ -12,5 +12,10 @@ test-results/
 viewer/public/textures/*_4k.*
 viewer/public/textures/*_8k.*
 
+# kaname WASM build artifacts (wasm-pack generates .gitignore; .d.ts is force-tracked)
+viewer/src/wasm/kaname/*.js
+viewer/src/wasm/kaname/*.wasm
+viewer/src/wasm/kaname/package.json
+
 # Claude Code local settings (not shared)
 .claude/settings.local.json

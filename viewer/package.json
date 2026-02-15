@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "vite",
     "build:wasm": "wasm-pack build ../kaname --target web --out-dir ../viewer/src/wasm/kaname --out-name kaname -- --features wasm",
-    "build": "tsc && vite build",
+    "build": "pnpm run build:wasm && tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
