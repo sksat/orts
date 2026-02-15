@@ -3,8 +3,8 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
-import { eciToEcef, type DisplayFrame } from "../frameTransform.js";
-import { earthRotationAngle } from "../astro.js";
+import { type DisplayFrame } from "../frameTransform.js";
+import { batchEciToEcef } from "../coordTransform.js";
 
 /** Initial capacity for the streaming vertex buffer. Grows as needed. */
 const INITIAL_CAPACITY = 2048;
@@ -74,17 +74,20 @@ export function OrbitTrail({
     };
   }, [geometry]);
 
-  /** Write a single point to the GPU buffer at index `i`. */
-  function writePoint(buf: Float32Array, i: number, p: OrbitPoint): void {
-    let px = p.x, py = p.y, pz = p.z;
+  /** Write points[from..to) into the GPU buffer (batch, WASM-accelerated for ECEF). */
+  function writePoints(buf: Float32Array, src: OrbitPoint[], from: number, to: number): void {
     if (displayFrame === "ecef" && epochJd != null) {
-      const era = earthRotationAngle(epochJd, p.t);
-      [px, py, pz] = eciToEcef(px, py, pz, era);
+      batchEciToEcef(src, from, to, epochJd, buf, from, scaleRadius);
+    } else {
+      const invScale = 1 / scaleRadius;
+      for (let i = from; i < to; i++) {
+        const p = src[i];
+        const off = i * 3;
+        buf[off] = p.x * invScale;
+        buf[off + 1] = p.y * invScale;
+        buf[off + 2] = p.z * invScale;
+      }
     }
-    const off = i * 3;
-    buf[off] = px / scaleRadius;
-    buf[off + 1] = py / scaleRadius;
-    buf[off + 2] = pz / scaleRadius;
   }
 
   useFrame(() => {
@@ -105,10 +108,7 @@ export function OrbitTrail({
         generationRef.current = currentGen;
         ensureCapacity(totalPoints);
 
-        const buf = bufferRef.current;
-        for (let i = 0; i < totalPoints; i++) {
-          writePoint(buf, i, allPoints[i]);
-        }
+        writePoints(bufferRef.current, allPoints, 0, totalPoints);
         writtenCountRef.current = totalPoints;
 
         const attr = geometry.getAttribute("position") as THREE.BufferAttribute;
@@ -151,10 +151,7 @@ export function OrbitTrail({
   /** Append points[from..to) to the GPU buffer. */
   function appendPoints(src: OrbitPoint[], from: number, to: number): void {
     ensureCapacity(to);
-    const buf = bufferRef.current;
-    for (let i = from; i < to; i++) {
-      writePoint(buf, i, src[i]);
-    }
+    writePoints(bufferRef.current, src, from, to);
     writtenCountRef.current = to;
 
     const attr = geometry.getAttribute("position") as THREE.BufferAttribute;

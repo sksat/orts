@@ -1,5 +1,10 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { initKaname } from "./wasm/kanameInit.js";
 import { Scene } from "./components/Scene.js";
+
+// Start loading kaname WASM module immediately (non-blocking).
+// The coordinate transform fallback handles the case where WASM isn't ready yet.
+initKaname().catch(console.error);
 import { PlaybackBar } from "./components/PlaybackBar.js";
 import { GraphPanel } from "./components/GraphPanel.js";
 import { usePlayback } from "./hooks/usePlayback.js";
