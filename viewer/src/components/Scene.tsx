@@ -9,7 +9,8 @@ import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import type { SatelliteInfo } from "../hooks/useWebSocket.js";
 import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "../sceneFrame.js";
-import { rotateZ, type DisplayFrame } from "../frameTransform.js";
+import { rotateZ } from "../frameTransform.js";
+import { type ReferenceFrame, isLegacyEcef, isDefaultEci, DEFAULT_FRAME } from "../referenceFrame.js";
 import { earth_rotation_angle, sun_direction_eci } from "../wasm/kanameInit.js";
 
 // Set scene up vector before any Three.js objects are created
@@ -45,8 +46,8 @@ interface SceneProps {
   centralBodyRadius: number;
   /** Julian Date of the simulation epoch, or null if not set. */
   epochJd?: number | null;
-  /** Display coordinate frame (default: "eci"). */
-  displayFrame?: DisplayFrame;
+  /** Reference frame for display (default: central-body inertial). */
+  referenceFrame?: ReferenceFrame;
   /** Per-satellite metadata for model lookup. */
   satelliteNames?: Map<string, string | null>;
 }
@@ -68,10 +69,26 @@ export function Scene({
   centralBody,
   centralBodyRadius,
   epochJd,
-  displayFrame = "eci",
+  referenceFrame = DEFAULT_FRAME,
   satelliteNames,
 }: SceneProps) {
-  const isEcef = displayFrame === "ecef";
+  const isEcef = isLegacyEcef(referenceFrame);
+  const isSatCentered = referenceFrame.center.type === "satellite";
+  const centeredSatId = referenceFrame.center.type === "satellite" ? referenceFrame.center.id : null;
+
+  // Compute origin position for satellite-centered view
+  const originPosition: [number, number, number] | null = useMemo(() => {
+    if (!isSatCentered || centeredSatId == null) return null;
+
+    // Try multi-satellite mode first
+    const satPos = satellitePositions?.get(centeredSatId);
+    if (satPos) return [satPos.x, satPos.y, satPos.z];
+
+    // Fall back to single satellite (replay mode)
+    if (satellitePosition) return [satellitePosition.x, satellitePosition.y, satellitePosition.z];
+
+    return null;
+  }, [isSatCentered, centeredSatId, satellitePositions, satellitePosition]);
 
   // Determine sim time for sun direction from first available satellite position
   const firstPosition = satellitePosition
@@ -107,6 +124,16 @@ export function Scene({
   // Earth rotation angle for the mesh: ERA in ECI, 0 in ECEF (Earth is static)
   const earthRotation = isEcef ? 0 : era;
 
+  // Central body position in scene units (offset when satellite-centered)
+  const centralBodyPosition = useMemo<[number, number, number]>(() => {
+    if (originPosition == null) return [0, 0, 0];
+    return [
+      -originPosition[0] / centralBodyRadius,
+      -originPosition[1] / centralBodyRadius,
+      -originPosition[2] / centralBodyRadius,
+    ];
+  }, [originPosition, centralBodyRadius]);
+
   // No useMemo: the trailBuffers Map reference (from useRef) never changes,
   // but Scene re-renders each frame via satellitePositions, so reading entries
   // inline picks up newly-added satellites.
@@ -127,7 +154,7 @@ export function Scene({
       <OrbitControls
         enableDamping
         dampingFactor={0.1}
-        minDistance={1.5}
+        minDistance={isSatCentered ? 0.01 : 1.5}
         maxDistance={100}
       />
 
@@ -135,7 +162,9 @@ export function Scene({
       <directionalLight intensity={2.0} position={lightPosition} />
       <hemisphereLight args={[0xffffff, 0x444466, 0.4]} />
 
-      <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={earthRotation} />
+      <group position={centralBodyPosition}>
+        <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={earthRotation} />
+      </group>
       <axesHelper args={[2]} />
 
       {/* Multi-satellite mode */}
@@ -143,6 +172,8 @@ export function Scene({
         const color = SATELLITE_COLORS[index % SATELLITE_COLORS.length];
         const vc = trailVisibleCounts?.get(satId);
         const pos = satellitePositions?.get(satId);
+        // Skip rendering the centered satellite's marker at origin (it would overlap axes)
+        const isCenteredSat = satId === centeredSatId;
         return (
           <group key={satId}>
             <OrbitTrail
@@ -151,18 +182,20 @@ export function Scene({
               drawStart={trailDrawStarts?.get(satId)}
               scaleRadius={centralBodyRadius}
               color={color}
-              displayFrame={displayFrame}
+              referenceFrame={referenceFrame}
               epochJd={epochJd}
+              originPosition={originPosition}
             />
-            {pos && (
+            {pos && !isCenteredSat && (
               <Satellite
                 position={pos}
                 scaleRadius={centralBodyRadius}
                 color={color}
-                displayFrame={displayFrame}
+                referenceFrame={referenceFrame}
                 epochJd={epochJd ?? undefined}
                 satId={satId}
                 satName={satelliteNames?.get(satId)}
+                originPosition={originPosition}
               />
             )}
           </group>
@@ -177,8 +210,9 @@ export function Scene({
             visibleCount={trailVisibleCount}
             drawStart={trailDrawStart}
             scaleRadius={centralBodyRadius}
-            displayFrame={displayFrame}
+            referenceFrame={referenceFrame}
             epochJd={epochJd}
+            originPosition={originPosition}
           />
         ) : (
           <OrbitTrail
@@ -186,17 +220,19 @@ export function Scene({
             visibleCount={trailVisibleCount ?? points!.length}
             drawStart={trailDrawStart}
             scaleRadius={centralBodyRadius}
-            displayFrame={displayFrame}
+            referenceFrame={referenceFrame}
             epochJd={epochJd}
+            originPosition={originPosition}
           />
         )
       )}
-      {!multiSatEntries && satellitePosition && (
+      {!multiSatEntries && satellitePosition && !isSatCentered && (
         <Satellite
           position={satellitePosition}
           scaleRadius={centralBodyRadius}
-          displayFrame={displayFrame}
+          referenceFrame={referenceFrame}
           epochJd={epochJd ?? undefined}
+          originPosition={originPosition}
         />
       )}
     </Canvas>

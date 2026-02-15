@@ -36,3 +36,34 @@ export function batchEciToEcef(
     outBuf[outOff + 2] = ecef[i * 3 + 2] * invScale;
   }
 }
+
+/**
+ * Batch-transform orbit points by subtracting an origin offset and scaling.
+ *
+ * Used for satellite-centered (and future Moon/Sun-centered) views where
+ * the origin is shifted from the central body to another object.
+ *
+ * @param origin  Position of the new origin in ECI [km], or null for no offset.
+ */
+export function batchTransformWithOffset(
+  points: OrbitPoint[],
+  from: number,
+  to: number,
+  origin: [number, number, number] | null,
+  outBuf: Float32Array,
+  outOffset: number,
+  scaleRadius: number,
+): void {
+  const invScale = 1 / scaleRadius;
+  const ox = origin?.[0] ?? 0;
+  const oy = origin?.[1] ?? 0;
+  const oz = origin?.[2] ?? 0;
+
+  for (let i = from; i < to; i++) {
+    const p = points[i];
+    const outOff = (outOffset + i - from) * 3;
+    outBuf[outOff] = (p.x - ox) * invScale;
+    outBuf[outOff + 1] = (p.y - oy) * invScale;
+    outBuf[outOff + 2] = (p.z - oz) * invScale;
+  }
+}

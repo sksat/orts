@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { OrbitPoint } from "../orbit.js";
-import { type DisplayFrame } from "../frameTransform.js";
+import { type ReferenceFrame, isLegacyEcef } from "../referenceFrame.js";
 import { eci_to_ecef } from "../wasm/kanameInit.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { SatelliteModel } from "./SatelliteModel.js";
@@ -15,15 +15,19 @@ interface SatelliteProps {
   scaleRadius: number;
   /** Marker color (default: 0xff4444). */
   color?: number;
-  /** Display coordinate frame (default: "eci"). */
-  displayFrame?: DisplayFrame;
+  /** Reference frame for display (default: central-body inertial). */
+  referenceFrame?: ReferenceFrame;
   /** Julian Date of the simulation epoch (needed for ECEF transform). */
   epochJd?: number;
   /** Satellite identifier for model lookup. */
   satId?: string;
   /** Satellite display name for model lookup fallback. */
   satName?: string | null;
+  /** Origin position in ECI [km] for the current frame center, or null for central body. */
+  originPosition?: [number, number, number] | null;
 }
+
+const DEFAULT_REF_FRAME: ReferenceFrame = { center: { type: "central_body" }, orientation: "inertial" };
 
 function SphereMarker({ position, color }: { position: [number, number, number]; color: number }) {
   return (
@@ -42,15 +46,23 @@ export function Satellite({
   position,
   scaleRadius,
   color = 0xff4444,
-  displayFrame = "eci",
+  referenceFrame = DEFAULT_REF_FRAME,
   epochJd,
   satId,
   satName,
+  originPosition = null,
 }: SatelliteProps) {
   let px = position.x, py = position.y, pz = position.z;
-  if (displayFrame === "ecef" && epochJd != null) {
+
+  if (isLegacyEcef(referenceFrame) && epochJd != null) {
+    // WASM fast path for ECEF
     const ecef = eci_to_ecef(px, py, pz, epochJd, position.t);
     px = ecef[0]; py = ecef[1]; pz = ecef[2];
+  } else if (originPosition != null) {
+    // Subtract origin for satellite-centered (or future Moon/Sun-centered) view
+    px -= originPosition[0];
+    py -= originPosition[1];
+    pz -= originPosition[2];
   }
 
   const scenePos: [number, number, number] = [

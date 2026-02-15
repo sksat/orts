@@ -350,6 +350,41 @@
         color: #ddd;
       }
 
+      /* --- Frame selector --- */
+      .frame-selector {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .frame-selector-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .frame-selector-label {
+        color: #8899bb;
+        font-size: 12px;
+        min-width: 42px;
+      }
+      .frame-selector-select {
+        flex: 1;
+        padding: 5px 8px;
+        background: rgba(20, 20, 40, 0.85);
+        color: #ccd;
+        border: 1px solid rgba(68, 136, 204, 0.4);
+        border-radius: 4px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .frame-selector-select:focus {
+        outline: none;
+        border-color: rgba(68, 136, 204, 0.8);
+      }
+      .mode-toggle-btn:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+
       /* --- uPlot dark theme overrides --- */
       .u-wrap {
         background: transparent !important;

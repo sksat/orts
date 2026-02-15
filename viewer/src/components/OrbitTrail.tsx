@@ -3,8 +3,8 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
-import { type DisplayFrame } from "../frameTransform.js";
-import { batchEciToEcef } from "../coordTransform.js";
+import { type ReferenceFrame, isLegacyEcef, frameCenterEquals } from "../referenceFrame.js";
+import { batchEciToEcef, batchTransformWithOffset } from "../coordTransform.js";
 
 /** Initial capacity for the streaming vertex buffer. Grows as needed. */
 const INITIAL_CAPACITY = 2048;
@@ -20,13 +20,17 @@ interface OrbitTrailProps {
   scaleRadius: number;
   /** Trail color (default: 0x00ff88). */
   color?: number;
-  /** Display coordinate frame (default: "eci"). */
-  displayFrame?: DisplayFrame;
+  /** Reference frame for display (default: central-body inertial). */
+  referenceFrame?: ReferenceFrame;
   /** Julian Date of the simulation epoch (needed for ECEF transform). */
   epochJd?: number | null;
   /** Starting vertex index for the draw range (default 0). */
   drawStart?: number;
+  /** Origin position in ECI [km] for the current frame center, or null for central body. */
+  originPosition?: [number, number, number] | null;
 }
+
+const DEFAULT_REF_FRAME: ReferenceFrame = { center: { type: "central_body" }, orientation: "inertial" };
 
 /**
  * Orbit trajectory line component.
@@ -37,13 +41,14 @@ interface OrbitTrailProps {
  */
 export function OrbitTrail({
   points, visibleCount, trailBuffer, scaleRadius, color = 0x00ff88,
-  displayFrame = "eci", epochJd, drawStart = 0,
+  referenceFrame = DEFAULT_REF_FRAME, epochJd, drawStart = 0,
+  originPosition = null,
 }: OrbitTrailProps) {
   const writtenCountRef = useRef(0);
   const capacityRef = useRef(INITIAL_CAPACITY);
   const bufferRef = useRef(new Float32Array(INITIAL_CAPACITY * 3));
   const generationRef = useRef(-1);
-  const prevFrameRef = useRef<DisplayFrame>(displayFrame);
+  const prevFrameRef = useRef<ReferenceFrame>(referenceFrame);
 
   // Determine data source identity for geometry recreation
   const sourceIdentity = trailBuffer ?? points;
@@ -74,26 +79,24 @@ export function OrbitTrail({
     };
   }, [geometry]);
 
-  /** Write points[from..to) into the GPU buffer (batch, WASM-accelerated for ECEF). */
+  /** Write points[from..to) into the GPU buffer. */
   function writePoints(buf: Float32Array, src: OrbitPoint[], from: number, to: number): void {
-    if (displayFrame === "ecef" && epochJd != null) {
+    if (isLegacyEcef(referenceFrame) && epochJd != null) {
+      // WASM fast path for central-body ECEF
       batchEciToEcef(src, from, to, epochJd, buf, from, scaleRadius);
     } else {
-      const invScale = 1 / scaleRadius;
-      for (let i = from; i < to; i++) {
-        const p = src[i];
-        const off = i * 3;
-        buf[off] = p.x * invScale;
-        buf[off + 1] = p.y * invScale;
-        buf[off + 2] = p.z * invScale;
-      }
+      // Generic path: subtract origin offset + scale
+      batchTransformWithOffset(src, from, to, originPosition, buf, from, scaleRadius);
     }
   }
 
   useFrame(() => {
-    // Detect display frame change → force full rewrite
-    if (displayFrame !== prevFrameRef.current) {
-      prevFrameRef.current = displayFrame;
+    // Detect reference frame change → force full rewrite
+    const frameChanged =
+      referenceFrame.orientation !== prevFrameRef.current.orientation
+      || !frameCenterEquals(referenceFrame.center, prevFrameRef.current.center);
+    if (frameChanged) {
+      prevFrameRef.current = referenceFrame;
       writtenCountRef.current = 0;
     }
 
@@ -103,8 +106,13 @@ export function OrbitTrail({
       const allPoints = trailBuffer.getAll();
       const totalPoints = allPoints.length;
 
-      if (currentGen !== generationRef.current || writtenCountRef.current === 0) {
-        // Generation changed or frame switch — full rewrite
+      const needsFullRewrite =
+        currentGen !== generationRef.current
+        || writtenCountRef.current === 0
+        // For satellite-centered, origin moves every frame → always full rewrite
+        || originPosition != null;
+
+      if (needsFullRewrite) {
         generationRef.current = currentGen;
         ensureCapacity(totalPoints);
 
@@ -124,7 +132,15 @@ export function OrbitTrail({
     } else if (points) {
       // --- Legacy points mode (replay) ---
       const totalPoints = points.length;
-      if (totalPoints > writtenCountRef.current) {
+
+      if (originPosition != null) {
+        // Satellite-centered: rewrite every frame (origin moves)
+        ensureCapacity(totalPoints);
+        writePoints(bufferRef.current, points, 0, totalPoints);
+        writtenCountRef.current = totalPoints;
+        const attr = geometry.getAttribute("position") as THREE.BufferAttribute;
+        attr.needsUpdate = true;
+      } else if (totalPoints > writtenCountRef.current) {
         appendPoints(points, writtenCountRef.current, totalPoints);
       }
 

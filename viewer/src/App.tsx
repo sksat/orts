@@ -26,7 +26,8 @@ import { computeReplayDrawStart } from "./utils/trailDrawStart.js";
 import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
 import { jd_to_utc_string } from "./wasm/kanameInit.js";
 import { useMultiSatelliteStore, type SatelliteConfig } from "./hooks/useMultiSatelliteStore.js";
-import { type DisplayFrame } from "./frameTransform.js";
+import { type ReferenceFrame, DEFAULT_FRAME } from "./referenceFrame.js";
+import { FrameSelector } from "./components/FrameSelector.js";
 
 /** The two viewer modes. */
 type ViewerMode = "replay" | "realtime";
@@ -75,8 +76,8 @@ export function App() {
   // --- Mode toggle ---
   const [mode, setMode] = useState<ViewerMode>("realtime");
 
-  // --- Display frame ---
-  const [displayFrame, setDisplayFrame] = useState<DisplayFrame>("eci");
+  // --- Reference frame ---
+  const [referenceFrame, setReferenceFrame] = useState<ReferenceFrame>(DEFAULT_FRAME);
 
   // --- Replay mode state ---
   const [replayPoints, setReplayPoints] = useState<OrbitPoint[] | null>(null);
@@ -503,7 +504,7 @@ export function App() {
         centralBody={centralBody}
         centralBodyRadius={centralBodyRadius}
         epochJd={epochJd ?? null}
-        displayFrame={displayFrame}
+        referenceFrame={referenceFrame}
         satelliteNames={satelliteNames}
       />
 
@@ -524,20 +525,12 @@ export function App() {
           </button>
         </div>
 
-        <div className="mode-toggle" style={{ marginTop: "4px" }}>
-          <button
-            className={`mode-toggle-btn ${displayFrame === "eci" ? "active" : ""}`}
-            onClick={() => setDisplayFrame("eci")}
-          >
-            ECI
-          </button>
-          <button
-            className={`mode-toggle-btn ${displayFrame === "ecef" ? "active" : ""}`}
-            onClick={() => setDisplayFrame("ecef")}
-          >
-            ECEF
-          </button>
-        </div>
+        <FrameSelector
+          referenceFrame={referenceFrame}
+          onChange={setReferenceFrame}
+          satellites={simInfo?.satellites}
+          hasEpoch={epochJd != null}
+        />
 
         {mode === "replay" && (
           <>

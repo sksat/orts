@@ -1,11 +1,9 @@
 /**
- * Coordinate frame types and general rotation utilities.
+ * General rotation utilities for coordinate frame transforms.
  *
+ * Frame type definitions are in referenceFrame.ts.
  * ECI→ECEF coordinate transforms are handled by the kaname WASM module.
  */
-
-/** Display coordinate frame for the 3D scene. */
-export type DisplayFrame = "eci" | "ecef";
 
 /**
  * Rotate a 3D vector around the Z axis.
