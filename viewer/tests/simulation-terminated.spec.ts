@@ -95,15 +95,20 @@ test.describe("simulation_terminated handling", () => {
     // Navigate and set WS URL to mock server
     await page.goto(VIEWER_URL);
 
-    // Change the WS URL input to our mock server
+    // Disconnect from auto-connected default server if needed
+    // (auto-connect may have connected to ws://localhost:9001)
+    const disconnectBtn = page.locator(".ws-disconnect-btn");
+    try {
+      await disconnectBtn.waitFor({ state: "visible", timeout: 5000 });
+      await disconnectBtn.click();
+    } catch {
+      // Not connected; continue
+    }
+
+    // URL input is now enabled; point to mock server
     const urlInput = page.locator(".ws-url-input");
     await urlInput.fill(`ws://localhost:${MOCK_WS_PORT}`);
 
-    // Click disconnect (if connected to default) then connect
-    const disconnectBtn = page.locator(".ws-disconnect-btn");
-    if (await disconnectBtn.isVisible()) {
-      await disconnectBtn.click();
-    }
     const connectBtn = page.locator(".ws-connect-btn");
     await connectBtn.click();
 
