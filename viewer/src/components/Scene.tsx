@@ -24,16 +24,28 @@ const DEFAULT_SUN_DIRECTION = new THREE.Vector3(1, 0, 0);
 const SATELLITE_COLORS = [0x00ff88, 0xff4488, 0x44aaff, 0xffaa44, 0xaa44ff];
 
 /**
+ * Smoothing speed for LVLH quaternion tracking.
+ * Higher = faster response (less smooth), lower = smoother (more lag).
+ * Uses frame-rate-independent exponential decay: alpha = 1 - e^(-speed * dt).
+ * At 60fps (dt≈0.017s) with speed=6: alpha≈0.10 per frame.
+ */
+const LVLH_SMOOTHING_SPEED = 6;
+
+/**
  * Tracks the LVLH frame and co-rotates the camera so that user-set
  * orientation (e.g. "Earth below, velocity right") is maintained as
  * the satellite orbits.
  *
+ * The raw LVLH quaternion is smoothed via slerp to avoid jitter from
+ * discrete velocity updates and perturbation oscillations.
+ *
  * Runs at useFrame priority -1 (before OrbitControls at priority 0).
  * Each frame:
- *   1. Compute current LVLH quaternion from position + velocity
- *   2. Compute delta from previous LVLH quaternion
- *   3. Apply delta to camera.position (rotate around origin)
- *   4. Set camera.up to radial direction
+ *   1. Compute target LVLH quaternion from position + velocity
+ *   2. Slerp smoothed quaternion toward target (exponential decay)
+ *   3. Compute delta from previous smoothed quaternion
+ *   4. Apply delta to camera.position (rotate around origin)
+ *   5. Set camera.up to smoothed radial direction
  *
  * OrbitControls re-derives its spherical state from camera.position
  * each frame, so user drags are always relative to the current LVLH frame.
@@ -47,7 +59,7 @@ function CameraLvlhTracker({ originPosition, originVelocity }: {
   const { camera } = useThree();
   const prevQuatRef = useRef<THREE.Quaternion | null>(null);
 
-  useFrame(() => {
+  useFrame((_state, delta) => {
     // Non-satellite-centered: restore default up, clear state
     if (originPosition == null) {
       camera.up.set(...SCENE_UP);
@@ -71,19 +83,28 @@ function CameraLvlhTracker({ originPosition, originVelocity }: {
       new THREE.Vector3(...axes.crossTrack),
       new THREE.Vector3(...axes.radial),
     );
-    const currentQuat = new THREE.Quaternion().setFromRotationMatrix(basisMat);
+    const targetQuat = new THREE.Quaternion().setFromRotationMatrix(basisMat);
 
+    // Frame-rate-independent smoothing: slerp toward target
+    const alpha = 1 - Math.exp(-LVLH_SMOOTHING_SPEED * delta);
     const prevQuat = prevQuatRef.current;
+    let smoothedQuat: THREE.Quaternion;
+
     if (prevQuat) {
-      // Delta: rotation from previous LVLH to current LVLH in world space
-      // delta * prevQuat = currentQuat → delta = currentQuat * prevQuat⁻¹
-      const delta = currentQuat.clone().multiply(prevQuat.clone().invert());
-      camera.position.applyQuaternion(delta);
+      smoothedQuat = prevQuat.clone().slerp(targetQuat, alpha);
+      // Delta: rotation from previous smoothed to current smoothed
+      const deltaQuat = smoothedQuat.clone().multiply(prevQuat.clone().invert());
+      camera.position.applyQuaternion(deltaQuat);
+    } else {
+      smoothedQuat = targetQuat;
     }
 
-    // Set camera up to current radial direction
-    camera.up.set(...axes.radial);
-    prevQuatRef.current = currentQuat;
+    // Extract smoothed radial direction (3rd column of smoothed rotation matrix)
+    const m = new THREE.Matrix4().makeRotationFromQuaternion(smoothedQuat);
+    const e = m.elements;
+    camera.up.set(e[8], e[9], e[10]);
+
+    prevQuatRef.current = smoothedQuat;
   }, -1); // Priority -1: run before OrbitControls (priority 0)
 
   return null;
