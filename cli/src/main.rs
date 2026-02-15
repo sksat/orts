@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -10,8 +11,8 @@ use orts_datamodel::entity_path::EntityPath;
 use orts_datamodel::recording::Recording;
 use orts_datamodel::timeline::TimePoint;
 use orts_coords::epoch::Epoch;
-use orts_integrator::{DormandPrince, DynamicalSystem, IntegrationOutcome, Rk4, State, Tolerances};
-use orts_orbits::{body::KnownBody, drag::AtmosphericDrag, events, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, third_body::ThirdBodyGravity, tle::Tle};
+use orts_integrator::{DormandPrince, DynamicalSystem, IntegrationError, IntegrationOutcome, Rk4, State, Tolerances};
+use orts_orbits::{body::KnownBody, drag::AtmosphericDrag, events, events::SimulationEvent, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, third_body::ThirdBodyGravity, tle::Tle};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -913,34 +914,100 @@ fn run_simulation(params: &SimParams) -> Recording {
         let mut last_output_t = 0.0_f64;
         let body_radius = params.body.properties().radius;
         let event_checker = events::collision_check(body_radius);
-        let callback = |t: f64, state: &State| {
-            if t >= next_output_t - 1e-9 {
-                record_state(&mut rec, t, step, state);
-                step += 1;
-                last_output_t = t;
-                next_output_t += params.output_interval;
+
+        let outcome: IntegrationOutcome<SimulationEvent> = match params.integrator {
+            IntegratorChoice::Rk4 => {
+                let callback = |t: f64, state: &State| {
+                    if t >= next_output_t - 1e-9 {
+                        record_state(&mut rec, t, step, state);
+                        step += 1;
+                        last_output_t = t;
+                        next_output_t += params.output_interval;
+                    }
+                };
+                Rk4::integrate_with_events(
+                    &system,
+                    initial,
+                    0.0,
+                    sat.period,
+                    params.dt,
+                    callback,
+                    &event_checker,
+                )
             }
-        };
-        let outcome = match params.integrator {
-            IntegratorChoice::Rk4 => Rk4::integrate_with_events(
-                &system,
-                initial,
-                0.0,
-                sat.period,
-                params.dt,
-                callback,
-                &event_checker,
-            ),
-            IntegratorChoice::Dp45 => DormandPrince::integrate_adaptive_with_events(
-                &system,
-                initial,
-                0.0,
-                sat.period,
-                params.dt,
-                &params.tolerances,
-                callback,
-                &event_checker,
-            ),
+            IntegratorChoice::Dp45 => {
+                // Custom adaptive loop that clamps steps to output boundaries
+                // for exact output-interval alignment.
+                let t_end = sat.period;
+                let mut state = initial;
+                let mut t = 0.0;
+                let mut dt = params.dt.min(t_end);
+                let dt_min = 1e-12 * t_end.abs().max(1.0);
+                let mut k1 = system.derivatives(t, &state);
+                let tol = &params.tolerances;
+
+                let mut final_outcome: IntegrationOutcome<SimulationEvent> =
+                    IntegrationOutcome::Completed(state.clone());
+
+                'outer: while t < t_end {
+                    // Clamp to both t_end and next output boundary
+                    let h = dt.min(t_end - t).min(next_output_t - t).max(1e-15);
+
+                    let (y5, err_pos, err_vel, k7) =
+                        DormandPrince::step_with_k1(&system, t, &state, h, &k1);
+
+                    // NaN/Inf check
+                    if !y5.position.iter().chain(y5.velocity.iter()).all(|v| v.is_finite()) {
+                        final_outcome = IntegrationOutcome::Error(
+                            IntegrationError::NonFiniteState { t: t + h },
+                        );
+                        break;
+                    }
+
+                    let err = orts_integrator::error_norm(&state, &y5, &err_pos, &err_vel, tol);
+
+                    if err <= 1.0 {
+                        state = y5;
+                        t += h;
+                        k1 = k7;
+
+                        // Record at output boundaries
+                        if t >= next_output_t - 1e-9 {
+                            record_state(&mut rec, t, step, &state);
+                            step += 1;
+                            last_output_t = t;
+                            next_output_t += params.output_interval;
+                        }
+
+                        // Event check
+                        if let ControlFlow::Break(reason) = event_checker(t, &state) {
+                            final_outcome = IntegrationOutcome::Terminated { state, t, reason };
+                            break 'outer;
+                        }
+
+                        final_outcome = IntegrationOutcome::Completed(state.clone());
+
+                        let factor = if err < 1e-15 {
+                            5.0
+                        } else {
+                            (0.9 * err.powf(-0.2)).clamp(0.2, 5.0)
+                        };
+                        dt = h * factor;
+                    } else {
+                        let factor = (0.9 * err.powf(-0.2)).clamp(0.2, 1.0);
+                        dt = h * factor;
+
+                        if dt < dt_min {
+                            final_outcome = IntegrationOutcome::Error(
+                                IntegrationError::StepSizeTooSmall { t, dt },
+                            );
+                            break;
+                        }
+                    }
+                }
+
+                final_outcome
+            }
         };
 
         match &outcome {
@@ -958,7 +1025,7 @@ fn run_simulation(params: &SimParams) -> Recording {
             }
             IntegrationOutcome::Error(err) => {
                 eprintln!(
-                    "Simulation error at for {}: {err:?}",
+                    "Simulation error for {}: {err:?}",
                     sat.id
                 );
             }
