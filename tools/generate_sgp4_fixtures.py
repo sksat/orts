@@ -110,6 +110,36 @@ def main() -> None:
         generate_fixture("Molniya-1-93", mol_line1, mol_line2, duration_minutes=720.0, step_minutes=1.0)
     )
 
+    # =================================================================
+    # Extended fixtures for long-period tests
+    # Same TLEs as above, longer propagation durations, coarser steps.
+    # =================================================================
+
+    # --- ISS 1 day (~16 orbits) ---
+    fixtures.append(
+        generate_fixture("ISS-1day", iss_line1, iss_line2, duration_minutes=1440.0, step_minutes=2.0)
+    )
+
+    # --- ISS 7 days (~112 orbits) ---
+    fixtures.append(
+        generate_fixture("ISS-7day", iss_line1, iss_line2, duration_minutes=10080.0, step_minutes=5.0)
+    )
+
+    # --- SSO Sentinel-2A 3 days (~43 orbits) ---
+    fixtures.append(
+        generate_fixture("SSO-Sentinel2A-3day", sso_line1, sso_line2, duration_minutes=4320.0, step_minutes=2.0)
+    )
+
+    # --- GPS BIIR-2 7 days (~14 orbits) ---
+    fixtures.append(
+        generate_fixture("GPS-BIIR2-7day", gps_line1, gps_line2, duration_minutes=10080.0, step_minutes=10.0)
+    )
+
+    # --- Molniya 3 orbits (~36 hours) ---
+    fixtures.append(
+        generate_fixture("Molniya-1-93-3orbit", mol_line1, mol_line2, duration_minutes=2160.0, step_minutes=2.0)
+    )
+
     output = {
         "generator": "tools/generate_sgp4_fixtures.py",
         "sgp4_model": "WGS72",

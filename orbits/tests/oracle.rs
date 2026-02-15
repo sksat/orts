@@ -1121,3 +1121,620 @@ fn sgp4_smoke_molniya_heo() {
     );
 }
 
+// ============================================================================
+// Tests 15–19: Extended SGP4 Tests — Long-Period Error Growth
+//
+// These tests extend the SGP4 comparison to longer propagation durations
+// (1–7 days for LEO/MEO, 3 orbits for HEO) to verify that error growth
+// remains within expected bounds and no catastrophic divergence occurs.
+//
+// Error sources grow over time:
+// - Drag difference (ISS BSTAR vs our J2-only): ~0.5–2 km/day along-track
+// - Analytical vs numerical J2 treatment: slow secular drift
+// - SDP4 luni-solar terms (GPS, Molniya): accumulated phase offset
+//
+// Additional sanity checks: altitude stays in physical range, verifying
+// no sign errors or integration blow-up.
+// ============================================================================
+
+/// Compare with SGP4 and additionally verify altitude stays in expected band.
+fn compare_with_sgp4_checking_altitude(
+    fixture: &sgp4_fixture::Fixture,
+    system: &OrbitalSystem,
+    dt: f64,
+    min_alt_km: f64,
+    max_alt_km: f64,
+) -> Sgp4Comparison {
+    let initial = State {
+        position: vector![
+            fixture.initial_position_km[0],
+            fixture.initial_position_km[1],
+            fixture.initial_position_km[2]
+        ],
+        velocity: vector![
+            fixture.initial_velocity_km_s[0],
+            fixture.initial_velocity_km_s[1],
+            fixture.initial_velocity_km_s[2]
+        ],
+    };
+
+    let mut max_pos_err = 0.0_f64;
+    let mut max_vel_err = 0.0_f64;
+    let mut max_ang_err = 0.0_f64;
+    let mut state = initial;
+    let mut t = 0.0;
+
+    for point in &fixture.trajectory {
+        let target_t = point.t_seconds;
+        if target_t <= t {
+            continue;
+        }
+        while t < target_t - 1e-6 {
+            let h = dt.min(target_t - t);
+            state = Rk4::step(system, t, &state, h);
+            t += h;
+        }
+
+        // Check altitude at each comparison point
+        let alt = state.position.magnitude() - R_EARTH;
+        assert!(
+            alt >= min_alt_km && alt <= max_alt_km,
+            "Altitude {alt:.1} km outside expected range [{min_alt_km}, {max_alt_km}] at t={t:.0}s"
+        );
+
+        let sgp4_pos =
+            vector![point.position_km[0], point.position_km[1], point.position_km[2]];
+        let sgp4_vel = vector![
+            point.velocity_km_s[0],
+            point.velocity_km_s[1],
+            point.velocity_km_s[2]
+        ];
+
+        let pos_err = (state.position - sgp4_pos).magnitude();
+        let vel_err = (state.velocity - sgp4_vel).magnitude();
+
+        let cos_angle = state
+            .position
+            .normalize()
+            .dot(&sgp4_pos.normalize())
+            .clamp(-1.0, 1.0);
+        let ang_err_deg = cos_angle.acos().to_degrees();
+
+        max_pos_err = max_pos_err.max(pos_err);
+        max_vel_err = max_vel_err.max(vel_err);
+        max_ang_err = max_ang_err.max(ang_err_deg);
+    }
+
+    Sgp4Comparison {
+        max_pos_err_km: max_pos_err,
+        max_vel_err_km_s: max_vel_err,
+        max_angular_err_deg: max_ang_err,
+    }
+}
+
+// ============================================================================
+// Test 15: ISS — 1 day (~16 orbits)
+//
+// Over 1 day, the drag-induced divergence (ISS has BSTAR, our J2-only ignores
+// it) causes significant along-track phase error. Combined with J2 analytical
+// vs numerical treatment differences, expect < 10 km total.
+// Measured: ~7.7 km / 0.065° / 0.008 km/s
+// ============================================================================
+
+#[test]
+fn sgp4_extended_iss_1day() {
+    let fixtures = load_sgp4_fixtures();
+    let fixture = fixtures
+        .fixtures
+        .iter()
+        .find(|f| f.name == "ISS-1day")
+        .expect("ISS-1day fixture not found");
+
+    let system = earth_j2_system();
+    let dt = 5.0;
+
+    let result = compare_with_sgp4_checking_altitude(fixture, &system, dt, 380.0, 440.0);
+
+    println!(
+        "ISS 1-day: pos_err={:.2} km, vel_err={:.4} km/s, ang_err={:.4}°",
+        result.max_pos_err_km, result.max_vel_err_km_s, result.max_angular_err_deg
+    );
+    // Measured: ~7.68 km (drag difference accumulates ~0.5 km/orbit)
+    assert!(
+        result.max_pos_err_km < 15.0,
+        "ISS 1-day position error should be < 15 km, got {:.2} km",
+        result.max_pos_err_km
+    );
+    assert!(
+        result.max_vel_err_km_s < 0.02,
+        "ISS 1-day velocity error should be < 0.02 km/s, got {:.4} km/s",
+        result.max_vel_err_km_s
+    );
+    assert!(
+        result.max_angular_err_deg < 0.15,
+        "ISS 1-day angular error should be < 0.15°, got {:.4}°",
+        result.max_angular_err_deg
+    );
+}
+
+// ============================================================================
+// Test 16: ISS — 7 days (~112 orbits)
+//
+// Over 7 days, the ISS BSTAR drag term causes major along-track divergence.
+// Our J2-only model ignores drag entirely, so the period mismatch accumulates
+// ~50 km/day along-track. Expect ~350 km position error dominated by phase.
+// This test primarily verifies no blow-up; the error is expected and large.
+// Measured: ~361 km / 3.0° / 0.40 km/s
+// ============================================================================
+
+#[test]
+fn sgp4_extended_iss_7day() {
+    let fixtures = load_sgp4_fixtures();
+    let fixture = fixtures
+        .fixtures
+        .iter()
+        .find(|f| f.name == "ISS-7day")
+        .expect("ISS-7day fixture not found");
+
+    let system = earth_j2_system();
+    let dt = 5.0;
+
+    let result = compare_with_sgp4_checking_altitude(fixture, &system, dt, 350.0, 450.0);
+
+    println!(
+        "ISS 7-day: pos_err={:.2} km, vel_err={:.4} km/s, ang_err={:.4}°",
+        result.max_pos_err_km, result.max_vel_err_km_s, result.max_angular_err_deg
+    );
+    // Error is dominated by along-track phase drift from ignoring drag.
+    // Measured: ~361 km. Threshold generous for regression detection.
+    assert!(
+        result.max_pos_err_km < 600.0,
+        "ISS 7-day position error should be < 600 km, got {:.2} km",
+        result.max_pos_err_km
+    );
+    assert!(
+        result.max_vel_err_km_s < 0.7,
+        "ISS 7-day velocity error should be < 0.7 km/s, got {:.4} km/s",
+        result.max_vel_err_km_s
+    );
+    assert!(
+        result.max_angular_err_deg < 5.0,
+        "ISS 7-day angular error should be < 5°, got {:.4}°",
+        result.max_angular_err_deg
+    );
+}
+
+// ============================================================================
+// Test 17: Sentinel-2A SSO — 3 days (~43 orbits)
+//
+// SSO at 700 km with negligible BSTAR drag. The error growth is dominated
+// by analytical (Brouwer) vs numerical J2 treatment differences. Expect
+// relatively slow growth: < 10 km over 3 days.
+// ============================================================================
+
+#[test]
+fn sgp4_extended_sso_3day() {
+    let fixtures = load_sgp4_fixtures();
+    let fixture = fixtures
+        .fixtures
+        .iter()
+        .find(|f| f.name == "SSO-Sentinel2A-3day")
+        .expect("SSO-3day fixture not found");
+
+    let system = earth_j2_system();
+    let dt = 5.0;
+
+    // SSO Sentinel-2A actual altitude ~788 km (from TLE mean motion 14.308 rev/day)
+    let result = compare_with_sgp4_checking_altitude(fixture, &system, dt, 770.0, 810.0);
+
+    println!(
+        "SSO 3-day: pos_err={:.2} km, vel_err={:.4} km/s, ang_err={:.4}°",
+        result.max_pos_err_km, result.max_vel_err_km_s, result.max_angular_err_deg
+    );
+    // Measured: ~11.0 km / 0.088° / 0.010 km/s
+    assert!(
+        result.max_pos_err_km < 20.0,
+        "SSO 3-day position error should be < 20 km, got {:.2} km",
+        result.max_pos_err_km
+    );
+    assert!(
+        result.max_vel_err_km_s < 0.02,
+        "SSO 3-day velocity error should be < 0.02 km/s, got {:.4} km/s",
+        result.max_vel_err_km_s
+    );
+    assert!(
+        result.max_angular_err_deg < 0.2,
+        "SSO 3-day angular error should be < 0.2°, got {:.4}°",
+        result.max_angular_err_deg
+    );
+}
+
+// ============================================================================
+// Test 18: GPS BIIR-2 — 7 days (~14 orbits)
+//
+// GPS at MEO (20200 km) uses SDP4 deep-space mode in SGP4. Our J2-only
+// model lacks luni-solar terms that SDP4 includes. However, for near-
+// circular MEO the error grows slowly: expect < 30 km over 7 days.
+// ============================================================================
+
+#[test]
+fn sgp4_extended_gps_7day() {
+    let fixtures = load_sgp4_fixtures();
+    let fixture = fixtures
+        .fixtures
+        .iter()
+        .find(|f| f.name == "GPS-BIIR2-7day")
+        .expect("GPS-7day fixture not found");
+
+    let system = earth_j2_system();
+    let dt = 10.0;
+
+    let result = compare_with_sgp4_checking_altitude(fixture, &system, dt, 20000.0, 20500.0);
+
+    println!(
+        "GPS 7-day: pos_err={:.2} km, vel_err={:.4} km/s, ang_err={:.4}°",
+        result.max_pos_err_km, result.max_vel_err_km_s, result.max_angular_err_deg
+    );
+    assert!(
+        result.max_pos_err_km < 30.0,
+        "GPS 7-day position error should be < 30 km, got {:.2} km",
+        result.max_pos_err_km
+    );
+    assert!(
+        result.max_vel_err_km_s < 0.005,
+        "GPS 7-day velocity error should be < 0.005 km/s, got {:.4} km/s",
+        result.max_vel_err_km_s
+    );
+    assert!(
+        result.max_angular_err_deg < 0.05,
+        "GPS 7-day angular error should be < 0.05°, got {:.4}°",
+        result.max_angular_err_deg
+    );
+}
+
+// ============================================================================
+// Test 19: Molniya — 3 orbits (~36 hours)
+//
+// High-eccentricity orbit amplifies along-track phase error. Over 3 orbits,
+// expect the position error to grow roughly linearly from the 1-orbit value
+// (~245 km). Angular error is the more meaningful metric.
+//
+// Altitude sanity: perigee ~500 km, apogee ~39000 km (Molniya class).
+// ============================================================================
+
+#[test]
+fn sgp4_extended_molniya_3orbit() {
+    let fixtures = load_sgp4_fixtures();
+    let fixture = fixtures
+        .fixtures
+        .iter()
+        .find(|f| f.name == "Molniya-1-93-3orbit")
+        .expect("Molniya-3orbit fixture not found");
+
+    let system = earth_j2_system();
+    let dt = 5.0;
+
+    // Molniya: perigee ~500 km, apogee ~39000 km
+    let result = compare_with_sgp4_checking_altitude(fixture, &system, dt, 200.0, 50000.0);
+
+    println!(
+        "Molniya 3-orbit: pos_err={:.2} km, vel_err={:.4} km/s, ang_err={:.4}°",
+        result.max_pos_err_km, result.max_vel_err_km_s, result.max_angular_err_deg
+    );
+    assert!(
+        result.max_pos_err_km < 1500.0,
+        "Molniya 3-orbit position error should be < 1500 km, got {:.2} km",
+        result.max_pos_err_km
+    );
+    assert!(
+        result.max_angular_err_deg < 10.0,
+        "Molniya 3-orbit angular error should be < 10°, got {:.4}°",
+        result.max_angular_err_deg
+    );
+    assert!(
+        result.max_vel_err_km_s < 1.0,
+        "Molniya 3-orbit velocity error should be < 1.0 km/s, got {:.4} km/s",
+        result.max_vel_err_km_s
+    );
+}
+
+// ============================================================================
+// Tests 20–23: Long-Period Analytical Oracle Tests
+//
+// These tests verify the numerical integrator over hundreds of orbits,
+// checking that:
+// - Secular rates match analytical predictions over long baselines
+// - Conservation laws hold (error growth is bounded and predictable)
+// - Dissipative forces accumulate correctly
+// ============================================================================
+
+// ============================================================================
+// Test 20: RAAN Precession over 200 Orbits
+//
+// The J2 secular RAAN precession rate is:
+//   Ω̇ = -(3/2) n J2 (R_e/p)² cos(i)
+//
+// Over 200 orbits (~13 days at LEO), the total RAAN change is ~65°.
+// With a long averaging baseline, the orbit-averaged secular rate should
+// match the analytical formula more closely than the 15-orbit test.
+//
+// Oracle: Lagrange planetary equations (first-order J2 secular RAAN rate).
+// ============================================================================
+
+#[test]
+fn raan_precession_200_orbits() {
+    let a = R_EARTH + 800.0;
+    let e = 0.001;
+    let i = 51.6_f64.to_radians();
+
+    // Analytical prediction
+    let p = a * (1.0 - e * e);
+    let n = (MU_EARTH / a.powi(3)).sqrt();
+    let expected_rate = -1.5 * n * J2_EARTH * (R_EARTH / p).powi(2) * i.cos();
+    let expected_deg_per_day = expected_rate.to_degrees() * 86400.0;
+
+    let elements = KeplerianElements {
+        semi_major_axis: a,
+        eccentricity: e,
+        inclination: i,
+        raan: 0.0,
+        argument_of_periapsis: 0.0,
+        true_anomaly: 0.0,
+    };
+
+    let system = earth_j2_system();
+    let n_orbits = 200;
+    let dt = 10.0;
+
+    let (orbit_elems, _) = propagate_collecting_elements(&system, &elements, n_orbits, dt);
+
+    let raan_initial = elements.raan;
+    let raan_values: Vec<f64> = orbit_elems
+        .iter()
+        .map(|e| unwrap_angle(e.raan, raan_initial))
+        .collect();
+
+    // Use first-half / second-half orbit-averaged comparison
+    let n_half = raan_values.len() / 2;
+    let mean_first: f64 = raan_values[..n_half].iter().sum::<f64>() / n_half as f64;
+    let mean_second: f64 =
+        raan_values[n_half..].iter().sum::<f64>() / (raan_values.len() - n_half) as f64;
+
+    let period = elements.period(MU_EARTH);
+    let dt_halves = (n_orbits as f64 / 2.0) * period;
+    let actual_deg_per_day = ((mean_second - mean_first) / dt_halves).to_degrees() * 86400.0;
+
+    let error = (actual_deg_per_day - expected_deg_per_day).abs();
+    println!(
+        "RAAN 200 orbits: expected={expected_deg_per_day:.3} deg/day, \
+         actual={actual_deg_per_day:.3} deg/day, error={error:.4} deg/day"
+    );
+    // With 200 orbits of averaging, expect tighter agreement than the 15-orbit test
+    assert!(
+        error < 0.2,
+        "RAAN precession rate over 200 orbits: expected≈{expected_deg_per_day:.3} deg/day, \
+         got={actual_deg_per_day:.3} deg/day, error={error:.4} deg/day (should be < 0.2)"
+    );
+}
+
+// ============================================================================
+// Test 21: Drag — SMA Decay over 200 Orbits
+//
+// Over 200 orbits at 400 km with B=0.02 m²/kg, atmospheric drag causes
+// measurable SMA decrease. As altitude drops, density increases, causing
+// the decay rate to accelerate (positive feedback).
+//
+// Oracle: Energy dissipation theorem + exponential atmosphere model.
+// ============================================================================
+
+#[test]
+fn drag_decay_200_orbits() {
+    let a = R_EARTH + 400.0;
+    let v = (MU_EARTH / a).sqrt();
+
+    let mut system = OrbitalSystem::new(
+        MU_EARTH,
+        Box::new(ZonalHarmonics {
+            r_body: R_EARTH,
+            j2: J2_EARTH,
+            j3: None,
+            j4: None,
+        }),
+    );
+    system.perturbations.push(Box::new(AtmosphericDrag {
+        body_radius: R_EARTH,
+        omega_body: orts_orbits::drag::OMEGA_EARTH,
+        ballistic_coeff: 0.02,
+    }));
+
+    let initial = State {
+        position: vector![a, 0.0, 0.0],
+        velocity: vector![0.0, v, 0.0],
+    };
+
+    let period = 2.0 * PI * (a.powi(3) / MU_EARTH).sqrt();
+    let n_orbits = 200;
+    let dt = 10.0;
+
+    let mut sma_values = vec![a];
+    let mut current = initial;
+    let mut t = 0.0;
+
+    for _ in 0..n_orbits {
+        let t_end = t + period;
+        current = Rk4::integrate(&system, current, t, t_end, dt, |_, _| {});
+        t = t_end;
+        let elems =
+            KeplerianElements::from_state_vector(&current.position, &current.velocity, MU_EARTH);
+        sma_values.push(elems.semi_major_axis);
+    }
+
+    // 1. Monotonic decrease over all 200 orbits
+    for i in 0..sma_values.len() - 1 {
+        assert!(
+            sma_values[i + 1] < sma_values[i],
+            "SMA should decrease monotonically at orbit {}: a[{}]={:.4} >= a[{}]={:.4}",
+            i,
+            i,
+            sma_values[i],
+            i + 1,
+            sma_values[i + 1]
+        );
+    }
+
+    // 2. Total decay in reasonable range
+    let total_decay = sma_values[0] - sma_values.last().unwrap();
+    println!("Drag 200 orbits: total SMA decay = {total_decay:.4} km");
+    assert!(
+        total_decay > 0.001 && total_decay < 50.0,
+        "Total SMA decay over 200 orbits should be 0.001–50 km, got {total_decay:.6} km"
+    );
+
+    // 3. Decay accelerates: last 50 orbits decay faster than first 50 orbits
+    let decay_first_50 = sma_values[0] - sma_values[50];
+    let decay_last_50 = sma_values[150] - sma_values[200];
+    println!(
+        "Drag 200 orbits: first 50 decay = {decay_first_50:.6} km, \
+         last 50 decay = {decay_last_50:.6} km"
+    );
+    assert!(
+        decay_last_50 > decay_first_50,
+        "Decay should accelerate: last 50 orbits ({decay_last_50:.6} km) \
+         should exceed first 50 ({decay_first_50:.6} km)"
+    );
+}
+
+// ============================================================================
+// Test 22: Orbit-Averaged SMA Stability over 500 Orbits (Conservative System)
+//
+// For conservative zonal harmonics (J2+J3+J4, no drag), the orbit-averaged
+// semi-major axis should remain nearly constant. RK4 is not symplectic and
+// introduces secular energy drift — the SMA drifts by ~0.01 km/orbit
+// (~5.6 km over 500 orbits for dt=5s). This is bounded and linear.
+//
+// The test verifies:
+// 1. Total drift stays bounded (no catastrophic blow-up)
+// 2. Drift grows linearly, not exponentially (no instability)
+//
+// Oracle: RK4 secular energy error is O(T*dt^4), linear in propagation time.
+// ============================================================================
+
+#[test]
+fn sma_stability_500_orbits() {
+    let a = R_EARTH + 600.0;
+    let elements = KeplerianElements {
+        semi_major_axis: a,
+        eccentricity: 0.05,
+        inclination: 65.0_f64.to_radians(),
+        raan: 30.0_f64.to_radians(),
+        argument_of_periapsis: 45.0_f64.to_radians(),
+        true_anomaly: 0.0,
+    };
+
+    let system = earth_j2_j3_j4_system();
+    let n_orbits = 500;
+    let dt = 5.0;
+
+    let (orbit_elems, _) = propagate_collecting_elements(&system, &elements, n_orbits, dt);
+    let sma_values: Vec<f64> = orbit_elems.iter().map(|e| e.semi_major_axis).collect();
+
+    // 1. No orbit should deviate catastrophically (catches blow-up)
+    for (i, &sma) in sma_values.iter().enumerate() {
+        let deviation = (sma - a).abs();
+        assert!(
+            deviation < 20.0,
+            "SMA deviates by {deviation:.2} km at orbit {} (catastrophic drift)", i + 1
+        );
+    }
+
+    // 2. Total drift is bounded: orbit-averaged SMA of first vs last 50 orbits
+    let mean_first_50: f64 = sma_values[..50].iter().sum::<f64>() / 50.0;
+    let mean_last_50: f64 = sma_values[450..].iter().sum::<f64>() / 50.0;
+    let total_drift = (mean_last_50 - mean_first_50).abs();
+
+    println!(
+        "SMA stability 500 orbits: mean_first_50={mean_first_50:.4} km, \
+         mean_last_50={mean_last_50:.4} km, total_drift={total_drift:.4} km"
+    );
+
+    // Measured: ~5.6 km. RK4 non-symplectic drift is expected; bound at 15 km.
+    assert!(
+        total_drift < 15.0,
+        "SMA drift over 500 orbits should be bounded: {total_drift:.4} km (expected < 15 km)"
+    );
+
+    // 3. Linear growth check: compare drift rate in first vs second half.
+    // If the drift is linear, the rate should be similar. If exponential, the
+    // second half would be much larger.
+    let mean_mid: f64 = sma_values[225..275].iter().sum::<f64>() / 50.0;
+    let drift_first_half = (mean_mid - mean_first_50).abs();
+    let drift_second_half = (mean_last_50 - mean_mid).abs();
+
+    println!(
+        "SMA drift first half={drift_first_half:.4} km, second half={drift_second_half:.4} km"
+    );
+
+    // Second half should not be more than 3x the first half (linear ≈ 1x, exponential >> 1x)
+    if drift_first_half > 0.01 {
+        let ratio = drift_second_half / drift_first_half;
+        assert!(
+            ratio < 3.0,
+            "SMA drift should grow linearly, not exponentially: \
+             ratio = {ratio:.2} (expected < 3.0)"
+        );
+    }
+}
+
+// ============================================================================
+// Test 23: Lz Conservation over 500 Orbits
+//
+// z-angular momentum Lz = (r × v)·ẑ is conserved for axially symmetric
+// gravity (zonal harmonics). This extends the 10-orbit test (Test 3) to
+// 500 orbits to verify integration error accumulates as √N (random walk)
+// rather than linearly or exponentially.
+//
+// Oracle: Noether's theorem (axial symmetry → Lz conservation).
+// ============================================================================
+
+#[test]
+fn lz_conservation_500_orbits() {
+    let a = R_EARTH + 600.0;
+    let elements = KeplerianElements {
+        semi_major_axis: a,
+        eccentricity: 0.1,
+        inclination: 65.0_f64.to_radians(),
+        raan: 30.0_f64.to_radians(),
+        argument_of_periapsis: 45.0_f64.to_radians(),
+        true_anomaly: 0.0,
+    };
+
+    let system = earth_j2_j3_j4_system();
+    let (pos, vel) = elements.to_state_vector(MU_EARTH);
+    let initial = State {
+        position: pos,
+        velocity: vel,
+    };
+
+    let initial_lz = initial.position.cross(&initial.velocity).z;
+    let mut max_lz_drift: f64 = 0.0;
+
+    let period = elements.period(MU_EARTH);
+    let total_time = 500.0 * period;
+    let dt = 5.0;
+
+    Rk4::integrate(&system, initial, 0.0, total_time, dt, |_, state| {
+        let lz = state.position.cross(&state.velocity).z;
+        let drift = (lz - initial_lz).abs() / initial_lz.abs();
+        max_lz_drift = max_lz_drift.max(drift);
+    });
+
+    println!("Lz conservation 500 orbits: max relative drift = {max_lz_drift:.6e}");
+
+    // 10 orbits gave < 1e-7. Over 500 orbits, expect √50 ≈ 7x more error
+    // if growth is random-walk, so < 1e-6 is conservative.
+    assert!(
+        max_lz_drift < 1e-6,
+        "Lz conservation over 500 orbits: max relative drift = {max_lz_drift:.6e} (expected < 1e-6)"
+    );
+}
+
