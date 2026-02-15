@@ -76,6 +76,7 @@ export function App() {
   // --- Realtime mode state ---
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
   const [simInfo, setSimInfo] = useState<SimInfo | null>(null);
+  const [terminatedSatellites, setTerminatedSatellites] = useState<Set<string>>(new Set());
 
   // --- DuckDB + Charts ---
   const mu = mode === "realtime" ? simInfo?.mu : (csvMetadata?.mu ?? undefined);
@@ -116,7 +117,7 @@ export function App() {
   }, [simInfo]);
 
   // --- Realtime playback (history scrubbing) ---
-  const realtimePlayback = useRealtimePlayback(trailBuffersRef.current);
+  const realtimePlayback = useRealtimePlayback(trailBuffersRef.current, terminatedSatellites);
 
   const handleState = useCallback((point: OrbitPoint) => {
     const id = point.satelliteId ?? "default";
@@ -127,6 +128,15 @@ export function App() {
 
   const handleInfo = useCallback((info: SimInfo) => {
     setSimInfo(info);
+  }, []);
+
+  const handleSimulationTerminated = useCallback((satelliteId: string, t: number, reason: string) => {
+    console.log(`Satellite ${satelliteId} terminated at t=${t.toFixed(2)}s: ${reason}`);
+    setTerminatedSatellites((prev) => {
+      const next = new Set(prev);
+      next.add(satelliteId);
+      return next;
+    });
   }, []);
 
   const handleHistory = useCallback((points: OrbitPoint[]) => {
@@ -193,6 +203,7 @@ export function App() {
     onHistoryDetail: handleHistoryDetail,
     onHistoryDetailComplete: handleHistoryDetailComplete,
     onQueryRangeResponse: handleQueryRangeResponse,
+    onSimulationTerminated: handleSimulationTerminated,
   });
 
   const handleChartZoom = useCallback((tMin: number, tMax: number) => {
@@ -278,6 +289,7 @@ export function App() {
     ingestBuffersRef.current.clear();
     singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
     setSimInfo(null);
+    setTerminatedSatellites(new Set());
     realtimePlayback.goLive();
     connect();
   }, [connect, realtimePlayback.goLive]);

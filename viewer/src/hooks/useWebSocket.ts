@@ -100,7 +100,14 @@ interface QueryRangeResponseMessage {
   states: HistoryStateMsg[];
 }
 
-type ServerMessage = StateMessage | InfoMessage | HistoryMessage | HistoryDetailMessage | HistoryDetailCompleteMessage | QueryRangeResponseMessage;
+interface SimulationTerminatedMessage {
+  type: "simulation_terminated";
+  satellite_id: string;
+  t: number;
+  reason: string;
+}
+
+export type ServerMessage = StateMessage | InfoMessage | HistoryMessage | HistoryDetailMessage | HistoryDetailCompleteMessage | QueryRangeResponseMessage | SimulationTerminatedMessage;
 
 /** Response data from a query_range request. */
 export interface QueryRangeResponse {
@@ -121,6 +128,106 @@ export interface UseWebSocketOptions {
   onHistoryDetailComplete: () => void;
   /** Called when the server responds to a query_range request. */
   onQueryRangeResponse?: (response: QueryRangeResponse) => void;
+  /** Called when a satellite's simulation terminates (collision, atmospheric entry, etc.). */
+  onSimulationTerminated?: (satelliteId: string, t: number, reason: string) => void;
+}
+
+/** Callbacks for message dispatch (subset of UseWebSocketOptions used by dispatchServerMessage). */
+export interface DispatchCallbacks {
+  onState: (state: OrbitPoint) => void;
+  onInfo?: (info: SimInfo) => void;
+  onHistory?: (points: OrbitPoint[]) => void;
+  onHistoryDetail?: (points: OrbitPoint[]) => void;
+  onHistoryDetailComplete?: () => void;
+  onQueryRangeResponse?: (response: QueryRangeResponse) => void;
+  onSimulationTerminated?: (satelliteId: string, t: number, reason: string) => void;
+}
+
+function parseHistoryPoints(states: HistoryStateMsg[]): OrbitPoint[] {
+  return states.map((s) => ({
+    satelliteId: s.satellite_id,
+    t: s.t,
+    x: s.position[0],
+    y: s.position[1],
+    z: s.position[2],
+    vx: s.velocity[0],
+    vy: s.velocity[1],
+    vz: s.velocity[2],
+    a: s.semi_major_axis,
+    e: s.eccentricity,
+    inc: s.inclination,
+    raan: s.raan,
+    omega: s.argument_of_periapsis,
+    nu: s.true_anomaly,
+  }));
+}
+
+/**
+ * Dispatch a parsed server message to the appropriate callback.
+ * Extracted as a pure function for testability.
+ */
+export function dispatchServerMessage(
+  msg: ServerMessage,
+  callbacks: DispatchCallbacks,
+): void {
+  if (msg.type === "state") {
+    const stateMsg = msg as StateMessage;
+    callbacks.onState({
+      satelliteId: stateMsg.satellite_id,
+      t: stateMsg.t,
+      x: stateMsg.position[0],
+      y: stateMsg.position[1],
+      z: stateMsg.position[2],
+      vx: stateMsg.velocity[0],
+      vy: stateMsg.velocity[1],
+      vz: stateMsg.velocity[2],
+      a: stateMsg.semi_major_axis,
+      e: stateMsg.eccentricity,
+      inc: stateMsg.inclination,
+      raan: stateMsg.raan,
+      omega: stateMsg.argument_of_periapsis,
+      nu: stateMsg.true_anomaly,
+    });
+  } else if (msg.type === "info") {
+    const infoMsg = msg as InfoMessage;
+    const satellites: SatelliteInfo[] = (infoMsg.satellites ?? []).map((s) => ({
+      id: s.id,
+      name: s.name ?? null,
+      altitude: s.altitude,
+      period: s.period,
+    }));
+    callbacks.onInfo?.({
+      mu: infoMsg.mu,
+      dt: infoMsg.dt,
+      output_interval: infoMsg.output_interval,
+      stream_interval: infoMsg.stream_interval ?? infoMsg.output_interval,
+      central_body: infoMsg.central_body ?? "earth",
+      central_body_radius: infoMsg.central_body_radius ?? 6378.137,
+      epoch_jd: infoMsg.epoch_jd ?? null,
+      satellites,
+    });
+  } else if (msg.type === "history" || msg.type === "history_detail") {
+    const histMsg = msg as HistoryMessage | HistoryDetailMessage;
+    const points = parseHistoryPoints(histMsg.states);
+    if (msg.type === "history") {
+      callbacks.onHistory?.(points);
+    } else {
+      callbacks.onHistoryDetail?.(points);
+    }
+  } else if (msg.type === "history_detail_complete") {
+    callbacks.onHistoryDetailComplete?.();
+  } else if (msg.type === "query_range_response") {
+    const qrMsg = msg as QueryRangeResponseMessage;
+    const points = parseHistoryPoints(qrMsg.states);
+    callbacks.onQueryRangeResponse?.({
+      tMin: qrMsg.t_min,
+      tMax: qrMsg.t_max,
+      points,
+    });
+  } else if (msg.type === "simulation_terminated") {
+    const termMsg = msg as SimulationTerminatedMessage;
+    callbacks.onSimulationTerminated?.(termMsg.satellite_id, termMsg.t, termMsg.reason);
+  }
 }
 
 export interface UseWebSocketReturn {
@@ -147,18 +254,24 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
   const wsRef = useRef<WebSocket | null>(null);
 
   // Keep callbacks in refs so we don't need to reconnect when they change.
-  const onStateRef = useRef(options.onState);
-  const onInfoRef = useRef(options.onInfo);
-  onStateRef.current = options.onState;
-  onInfoRef.current = options.onInfo;
-  const onHistoryRef = useRef(options.onHistory);
-  const onHistoryDetailRef = useRef(options.onHistoryDetail);
-  const onHistoryDetailCompleteRef = useRef(options.onHistoryDetailComplete);
-  const onQueryRangeResponseRef = useRef(options.onQueryRangeResponse);
-  onHistoryRef.current = options.onHistory;
-  onHistoryDetailRef.current = options.onHistoryDetail;
-  onHistoryDetailCompleteRef.current = options.onHistoryDetailComplete;
-  onQueryRangeResponseRef.current = options.onQueryRangeResponse;
+  const callbacksRef = useRef<DispatchCallbacks>({
+    onState: options.onState,
+    onInfo: options.onInfo,
+    onHistory: options.onHistory,
+    onHistoryDetail: options.onHistoryDetail,
+    onHistoryDetailComplete: options.onHistoryDetailComplete,
+    onQueryRangeResponse: options.onQueryRangeResponse,
+    onSimulationTerminated: options.onSimulationTerminated,
+  });
+  callbacksRef.current = {
+    onState: options.onState,
+    onInfo: options.onInfo,
+    onHistory: options.onHistory,
+    onHistoryDetail: options.onHistoryDetail,
+    onHistoryDetailComplete: options.onHistoryDetailComplete,
+    onQueryRangeResponse: options.onQueryRangeResponse,
+    onSimulationTerminated: options.onSimulationTerminated,
+  };
 
   const urlRef = useRef(options.url);
   urlRef.current = options.url;
@@ -198,93 +311,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     ws.addEventListener("message", (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data as string) as ServerMessage;
-
-        if (msg.type === "state") {
-          const stateMsg = msg as StateMessage;
-          const point: OrbitPoint = {
-            satelliteId: stateMsg.satellite_id,
-            t: stateMsg.t,
-            x: stateMsg.position[0],
-            y: stateMsg.position[1],
-            z: stateMsg.position[2],
-            vx: stateMsg.velocity[0],
-            vy: stateMsg.velocity[1],
-            vz: stateMsg.velocity[2],
-            a: stateMsg.semi_major_axis,
-            e: stateMsg.eccentricity,
-            inc: stateMsg.inclination,
-            raan: stateMsg.raan,
-            omega: stateMsg.argument_of_periapsis,
-            nu: stateMsg.true_anomaly,
-          };
-          onStateRef.current(point);
-        } else if (msg.type === "info") {
-          const infoMsg = msg as InfoMessage;
-          const satellites: SatelliteInfo[] = (infoMsg.satellites ?? []).map((s) => ({
-            id: s.id,
-            name: s.name ?? null,
-            altitude: s.altitude,
-            period: s.period,
-          }));
-          onInfoRef.current({
-            mu: infoMsg.mu,
-            dt: infoMsg.dt,
-            output_interval: infoMsg.output_interval,
-            stream_interval: infoMsg.stream_interval ?? infoMsg.output_interval,
-            central_body: infoMsg.central_body ?? "earth",
-            central_body_radius: infoMsg.central_body_radius ?? 6378.137,
-            epoch_jd: infoMsg.epoch_jd ?? null,
-            satellites,
-          });
-        } else if (msg.type === "history" || msg.type === "history_detail") {
-          const histMsg = msg as HistoryMessage | HistoryDetailMessage;
-          const points: OrbitPoint[] = histMsg.states.map((s) => ({
-            satelliteId: s.satellite_id,
-            t: s.t,
-            x: s.position[0],
-            y: s.position[1],
-            z: s.position[2],
-            vx: s.velocity[0],
-            vy: s.velocity[1],
-            vz: s.velocity[2],
-            a: s.semi_major_axis,
-            e: s.eccentricity,
-            inc: s.inclination,
-            raan: s.raan,
-            omega: s.argument_of_periapsis,
-            nu: s.true_anomaly,
-          }));
-          if (msg.type === "history") {
-            onHistoryRef.current(points);
-          } else {
-            onHistoryDetailRef.current(points);
-          }
-        } else if (msg.type === "history_detail_complete") {
-          onHistoryDetailCompleteRef.current();
-        } else if (msg.type === "query_range_response") {
-          const qrMsg = msg as QueryRangeResponseMessage;
-          const points: OrbitPoint[] = qrMsg.states.map((s) => ({
-            satelliteId: s.satellite_id,
-            t: s.t,
-            x: s.position[0],
-            y: s.position[1],
-            z: s.position[2],
-            vx: s.velocity[0],
-            vy: s.velocity[1],
-            vz: s.velocity[2],
-            a: s.semi_major_axis,
-            e: s.eccentricity,
-            inc: s.inclination,
-            raan: s.raan,
-            omega: s.argument_of_periapsis,
-            nu: s.true_anomaly,
-          }));
-          onQueryRangeResponseRef.current?.({
-            tMin: qrMsg.t_min,
-            tMax: qrMsg.t_max,
-            points,
-          });
-        }
+        dispatchServerMessage(msg, callbacksRef.current);
       } catch {
         // Silently ignore malformed messages
       }

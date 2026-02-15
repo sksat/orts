@@ -4,6 +4,23 @@ import type { TrailBuffer } from "../utils/TrailBuffer.js";
 
 type RealtimeMode = "live" | "paused" | "playing";
 
+/**
+ * Compute the synchronization time for live mode.
+ * Returns the minimum `latest.t` across all non-terminated satellite buffers,
+ * so surviving satellites drive the time forward when a peer terminates.
+ */
+export function computeLiveSyncTime(
+  trailBuffers: Map<string, TrailBuffer>,
+  terminatedSatellites: Set<string>,
+): number {
+  let syncTime = Infinity;
+  for (const [satId, buf] of trailBuffers) {
+    if (terminatedSatellites.has(satId)) continue;
+    if (buf.latest) syncTime = Math.min(syncTime, buf.latest.t);
+  }
+  return syncTime;
+}
+
 export interface RealtimePlaybackSnapshot {
   isLive: boolean;
   isPlaying: boolean;
@@ -31,7 +48,10 @@ export interface RealtimePlaybackSnapshot {
  *                        Paused ←──pause── Playing
  *                        Live   ←──goLive── Paused | Playing
  */
-export function useRealtimePlayback(trailBuffers: Map<string, TrailBuffer>) {
+export function useRealtimePlayback(
+  trailBuffers: Map<string, TrailBuffer>,
+  terminatedSatellites: Set<string> = new Set(),
+) {
   const modeRef = useRef<RealtimeMode>("live");
   const currentTimeRef = useRef(0);
   const speedRef = useRef(1);
@@ -79,13 +99,9 @@ export function useRealtimePlayback(trailBuffers: Map<string, TrailBuffer>) {
 
     let currentTime: number;
     if (mode === "live") {
-      // Synchronize: use min of all satellites' latest t.
-      // This is the newest time where ALL satellites have data,
-      // ensuring all satellite positions are shown at the same sim time.
-      let syncTime = Infinity;
-      for (const buf of trailBuffers.values()) {
-        if (buf.latest) syncTime = Math.min(syncTime, buf.latest.t);
-      }
+      // Synchronize: use min of all active (non-terminated) satellites' latest t.
+      // Terminated satellites are excluded so the surviving ones keep advancing.
+      const syncTime = computeLiveSyncTime(trailBuffers, terminatedSatellites);
       currentTime = syncTime === Infinity ? tMax : syncTime;
     } else {
       currentTime = currentTimeRef.current;
@@ -127,7 +143,7 @@ export function useRealtimePlayback(trailBuffers: Map<string, TrailBuffer>) {
       satellitePosition: firstPos,
       trailVisibleCount: firstVc,
     });
-  }, [trailBuffers]);
+  }, [trailBuffers, terminatedSatellites]);
 
   // Animation loop
   useEffect(() => {
