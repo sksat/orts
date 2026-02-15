@@ -24,15 +24,23 @@ impl Server {
     /// Blocks until the server prints its "listening" message to stderr.
     /// Uses explicit `--sat` args to avoid CelesTrak network dependency.
     fn spawn(port: u16) -> Self {
+        Self::spawn_with_sats(port, &["altitude=400,id=test"])
+    }
+
+    /// Spawn the CLI binary with custom satellite configurations.
+    fn spawn_with_sats(port: u16, sats: &[&str]) -> Self {
         let binary = env!("CARGO_BIN_EXE_orts");
+        let mut args = vec![
+            "serve".to_string(),
+            "--port".to_string(),
+            port.to_string(),
+        ];
+        for sat in sats {
+            args.push("--sat".to_string());
+            args.push(sat.to_string());
+        }
         let mut child = Command::new(binary)
-            .args([
-                "serve",
-                "--port",
-                &port.to_string(),
-                "--sat",
-                "altitude=400,id=test",
-            ])
+            .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
@@ -663,4 +671,62 @@ async fn test_websocket_monotonic_time_across_orbits() {
 
     server.kill();
     result.expect("test timed out after 60 seconds");
+}
+
+/// Verify that a late-connecting client receives `simulation_terminated` events
+/// for satellites that terminated before the client connected.
+#[tokio::test]
+async fn test_websocket_terminated_replay_on_late_connect() {
+    let port = test_port() + 8;
+    // altitude=50 is below Earth's atmosphere (100 km Kármán line)
+    // → immediate atmospheric entry termination
+    let mut server =
+        Server::spawn_with_sats(port, &["altitude=50,id=low", "altitude=800,id=high"]);
+
+    // Wait for the low satellite to terminate (should be nearly instant)
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}");
+        let (ws, _) = connect_async(&url)
+            .await
+            .expect("failed to connect");
+        let (_write, mut read) = ws.split();
+
+        // First message: info
+        let info = next_json(&mut read).await;
+        assert_eq!(info["type"], "info");
+        let sats = info["satellites"].as_array().unwrap();
+        assert_eq!(sats.len(), 2, "should have two satellites");
+
+        // Should receive simulation_terminated for "low" among early messages
+        // (after info, before or interleaved with history/state)
+        let (terminated, _) =
+            read_until_type(&mut read, "simulation_terminated", 50).await;
+        assert_eq!(
+            terminated["satellite_id"], "low",
+            "should receive termination for 'low' satellite"
+        );
+        assert!(
+            terminated["reason"]
+                .as_str()
+                .unwrap()
+                .contains("atmospheric"),
+            "reason should mention atmospheric entry: {}",
+            terminated["reason"]
+        );
+
+        // Subsequent state messages should only be for "high" satellite
+        for _ in 0..5 {
+            let (state, _) = read_until_type(&mut read, "state", 50).await;
+            assert_eq!(
+                state["satellite_id"], "high",
+                "only 'high' satellite should still stream state messages"
+            );
+        }
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
 }

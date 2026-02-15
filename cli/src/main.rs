@@ -1231,11 +1231,18 @@ async fn async_server(sim: &SimArgs, port: u16) {
 
     let (tx, _rx) = broadcast::channel::<String>(256);
 
+    // Shared list of serialized simulation_terminated JSON messages.
+    // The simulation loop appends here when a satellite terminates;
+    // handle_connection replays them to late-connecting clients.
+    let terminated_events: Arc<tokio::sync::RwLock<Vec<String>>> =
+        Arc::new(tokio::sync::RwLock::new(Vec::new()));
+
     let sim_tx = tx.clone();
     let sim_params = Arc::clone(&params);
     let sim_history = Arc::clone(&history);
+    let sim_terminated = Arc::clone(&terminated_events);
     tokio::spawn(async move {
-        simulation_loop(sim_params, sim_tx, sim_history).await;
+        simulation_loop(sim_params, sim_tx, sim_history, sim_terminated).await;
     });
 
     loop {
@@ -1253,9 +1260,10 @@ async fn async_server(sim: &SimArgs, port: u16) {
         let rx = tx.subscribe();
         let client_params = Arc::clone(&params);
         let client_history = Arc::clone(&history);
+        let client_terminated = Arc::clone(&terminated_events);
 
         tokio::spawn(async move {
-            handle_connection(stream, rx, client_params, client_history).await;
+            handle_connection(stream, rx, client_params, client_history, client_terminated).await;
         });
     }
 }
@@ -1276,6 +1284,7 @@ async fn simulation_loop(
     params: Arc<SimParams>,
     tx: broadcast::Sender<String>,
     history: Arc<tokio::sync::RwLock<HistoryBuffer>>,
+    terminated_events: Arc<tokio::sync::RwLock<Vec<String>>>,
 ) {
     let dt = params.dt;
 
@@ -1400,7 +1409,8 @@ async fn simulation_loop(
                         reason: reason.to_string(),
                     })
                     .expect("failed to serialize termination message");
-                    let _ = tx.send(msg);
+                    let _ = tx.send(msg.clone());
+                    terminated_events.write().await.push(msg);
                     ss.terminated = true;
                     break;
                 }
@@ -1448,6 +1458,7 @@ async fn handle_connection(
     mut rx: broadcast::Receiver<String>,
     params: Arc<SimParams>,
     history: Arc<tokio::sync::RwLock<HistoryBuffer>>,
+    terminated_events: Arc<tokio::sync::RwLock<Vec<String>>>,
 ) {
     let ws_stream = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
@@ -1489,6 +1500,22 @@ async fn handle_connection(
         .is_err()
     {
         return;
+    }
+
+    // 1b. Replay termination events for satellites that terminated before this client connected
+    {
+        let terminated = terminated_events.read().await;
+        for event_json in terminated.iter() {
+            if ws_sender
+                .send(tokio_tungstenite::tungstenite::Message::Text(
+                    event_json.clone().into(),
+                ))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
     }
 
     // 2. Send overview history (downsampled)
