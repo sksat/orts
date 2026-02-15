@@ -6,7 +6,7 @@ settings:
 
 importers:
 
-  packages/uneri:
+  uneri:
     dependencies:
       '@duckdb/duckdb-wasm':
         specifier: 1.33.1-dev18.0
@@ -80,7 +80,7 @@ importers:
         version: 0.170.0
       uneri:
         specifier: workspace:*
-        version: link:../packages/uneri
+        version: link:../uneri
       uplot:
         specifier: ^1.6.32
         version: 1.6.32

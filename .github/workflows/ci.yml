@@ -98,16 +98,16 @@ jobs:
 
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        working-directory: packages/uneri
+        working-directory: uneri
         run: npx playwright install --with-deps chromium
 
       - name: Install Playwright OS dependencies
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        working-directory: packages/uneri
+        working-directory: uneri
         run: npx playwright install-deps chromium
 
       - name: Run Playwright E2E
-        working-directory: packages/uneri
+        working-directory: uneri
         run: pnpm test:e2e
 
       - name: Upload Playwright report
@@ -115,7 +115,7 @@ jobs:
         uses: actions/upload-artifact@v6.0.0
         with:
           name: uneri-playwright-report
-          path: packages/uneri/test-results/
+          path: uneri/test-results/
           retention-days: 7
 
   viewer-e2e:
