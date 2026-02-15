@@ -176,7 +176,8 @@ function CameraConfigurator({ profile }: { profile: DisplayScaleProfile }) {
 }
 
 /**
- * Snaps camera distance when transitioning between display scale profiles.
+ * Snaps camera position when transitioning between display scale profiles.
+ * Uses the profile's default direction if specified, otherwise keeps current direction.
  * Runs at useFrame priority -2 (before CameraLvlhTracker at -1).
  */
 function CameraDistanceTransition({ profile }: { profile: DisplayScaleProfile }) {
@@ -186,10 +187,15 @@ function CameraDistanceTransition({ profile }: { profile: DisplayScaleProfile })
   useFrame(() => {
     if (profile.name !== prevProfileRef.current) {
       prevProfileRef.current = profile.name;
-      // Snap camera to profile's default distance, keeping current direction
-      const dir = camera.position.clone().normalize();
-      if (dir.length() > 0) {
-        camera.position.copy(dir.multiplyScalar(profile.defaultCameraDistance));
+      const d = profile.defaultCameraDistance;
+      if (profile.defaultCameraDirection) {
+        const [dx, dy, dz] = profile.defaultCameraDirection;
+        camera.position.set(dx * d, dy * d, dz * d);
+      } else {
+        const dir = camera.position.clone().normalize();
+        if (dir.length() > 0) {
+          camera.position.copy(dir.multiplyScalar(d));
+        }
       }
     }
   }, -2);

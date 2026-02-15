@@ -33,6 +33,13 @@ export interface DisplayScaleProfile {
 
   /** Default camera distance from origin when entering this profile. */
   defaultCameraDistance: number;
+
+  /**
+   * Default camera direction when entering this profile.
+   * If null, keeps the current camera direction (only adjusts distance).
+   * In LVLH frame: X=inTrack, Y=crossTrack, Z=radial.
+   */
+  defaultCameraDirection: [number, number, number] | null;
 }
 
 /** Default physical size for unknown satellites (10 m). */
@@ -47,6 +54,7 @@ const BODY_CENTERED_PROFILE: DisplayScaleProfile = {
   minDistance: 1.5,
   maxDistance: 100,
   defaultCameraDistance: 5.4,
+  defaultCameraDirection: null,
 };
 
 /**
@@ -61,6 +69,8 @@ const SATELLITE_CENTERED_PROFILE: DisplayScaleProfile = {
   minDistance: 0.005,
   maxDistance: 2000,
   defaultCameraDistance: 0.15,
+  // Camera behind satellite, looking along velocity (+X = inTrack)
+  defaultCameraDirection: [-1, 0, 0],
 };
 
 /**
