@@ -7,3 +7,7 @@ test-results/
 # Prevent debug screenshots from accumulating in repo root
 /*.png
 /*.jpeg
+
+# High-resolution textures (downloaded via tools/fetch-textures.sh)
+viewer/public/textures/*_4k.*
+viewer/public/textures/*_8k.*

@@ -6,6 +6,10 @@ export interface BodyRenderInfo {
   texturePath: string | null;
   /** Path to night-side texture (city lights), or null if not applicable. */
   nightTexturePath: string | null;
+  /** Base name for multi-resolution textures (e.g., "earth" → earth_2k.jpg, earth_4k.jpg). */
+  textureBaseName?: string;
+  /** Base name for multi-resolution night textures. */
+  nightTextureBaseName?: string;
   /** Fallback solid color (hex) when no texture is available/loaded. */
   fallbackColor: number;
   /** Emissive color for lit materials. */
@@ -20,8 +24,10 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   earth: {
     id: "earth",
     name: "Earth",
-    texturePath: `${base}textures/earth.jpg`,
-    nightTexturePath: `${base}textures/earth_night.jpg`,
+    texturePath: `${base}textures/earth_2k.jpg`,
+    nightTexturePath: `${base}textures/earth_night_2k.jpg`,
+    textureBaseName: "earth",
+    nightTextureBaseName: "earth_night",
     fallbackColor: 0x2255aa,
     emissiveColor: 0x112244,
     isSelfLuminous: false,

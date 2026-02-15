@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { useTexture } from "@react-three/drei";
 import { getBodyRenderInfo, BodyRenderInfo } from "../bodies.js";
 import { EarthBody } from "./EarthBody.js";
+import { useTextureResolution } from "../hooks/useTextureResolution.js";
 
 interface CelestialBodyProps {
   /** Body identifier from the server (e.g., "earth"). */
@@ -84,6 +85,7 @@ function FallbackBody({
  */
 export function CelestialBody({ bodyId, radius = 1, sunDirection, rotationAngle }: CelestialBodyProps) {
   const renderInfo = getBodyRenderInfo(bodyId);
+  const targetResolution = useTextureResolution();
 
   if (renderInfo.nightTexturePath && renderInfo.texturePath && sunDirection) {
     return (
@@ -96,6 +98,9 @@ export function CelestialBody({ bodyId, radius = 1, sunDirection, rotationAngle 
           dayTexturePath={renderInfo.texturePath}
           nightTexturePath={renderInfo.nightTexturePath}
           rotationAngle={rotationAngle}
+          targetResolution={targetResolution}
+          textureBaseName={renderInfo.textureBaseName}
+          nightTextureBaseName={renderInfo.nightTextureBaseName}
         />
       </Suspense>
     );
