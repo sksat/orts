@@ -28,6 +28,10 @@ pub struct ZonalHarmonics {
     pub r_body: f64,
     /// J2 coefficient (dimensionless)
     pub j2: f64,
+    /// J3 coefficient (dimensionless, optional)
+    pub j3: Option<f64>,
+    /// J4 coefficient (dimensionless, optional)
+    pub j4: Option<f64>,
 }
 
 impl GravityField for ZonalHarmonics {
@@ -39,21 +43,48 @@ impl GravityField for ZonalHarmonics {
         // Point-mass term
         let a_pm = -mu / (r_mag * r2) * position;
 
-        // J2 perturbation
         let x = position.x;
         let y = position.y;
         let z = position.z;
-        let re2 = self.r_body * self.r_body;
-        let z2_over_r2 = (z * z) / r2;
-        let coeff = 1.5 * self.j2 * mu * re2 / r5;
+        let re = self.r_body;
+        let re2 = re * re;
+        let s2 = (z * z) / r2; // (z/r)²
 
+        // J2 perturbation
+        let coeff2 = 1.5 * self.j2 * mu * re2 / r5;
         let a_j2 = Vector3::new(
-            coeff * x * (5.0 * z2_over_r2 - 1.0),
-            coeff * y * (5.0 * z2_over_r2 - 1.0),
-            coeff * z * (5.0 * z2_over_r2 - 3.0),
+            coeff2 * x * (5.0 * s2 - 1.0),
+            coeff2 * y * (5.0 * s2 - 1.0),
+            coeff2 * z * (5.0 * s2 - 3.0),
         );
 
-        a_pm + a_j2
+        let mut accel = a_pm + a_j2;
+
+        // J3 perturbation (pear-shaped asymmetry)
+        if let Some(j3) = self.j3 {
+            let re3 = re2 * re;
+            let r7 = r5 * r2;
+            let coeff3 = 0.5 * j3 * mu * re3;
+            accel += Vector3::new(
+                coeff3 * 5.0 * x * z / r7 * (3.0 - 7.0 * s2),
+                coeff3 * 5.0 * y * z / r7 * (3.0 - 7.0 * s2),
+                coeff3 / r5 * (3.0 - 30.0 * s2 + 35.0 * s2 * s2),
+            );
+        }
+
+        // J4 perturbation
+        if let Some(j4) = self.j4 {
+            let re4 = re2 * re2;
+            let r7 = r5 * r2;
+            let s4 = s2 * s2;
+            accel += Vector3::new(
+                (15.0 / 8.0) * j4 * mu * re4 * x / r7 * (1.0 - 14.0 * s2 + 21.0 * s4),
+                (15.0 / 8.0) * j4 * mu * re4 * y / r7 * (1.0 - 14.0 * s2 + 21.0 * s4),
+                (5.0 / 8.0) * j4 * mu * re4 * z / r7 * (15.0 - 70.0 * s2 + 63.0 * s4),
+            );
+        }
+
+        accel
     }
 }
 
@@ -134,6 +165,8 @@ mod tests {
         ZonalHarmonics {
             r_body: R_EARTH,
             j2: J2_EARTH,
+            j3: None,
+            j4: None,
         }
     }
 
@@ -142,6 +175,8 @@ mod tests {
         let zonal = ZonalHarmonics {
             r_body: R_EARTH,
             j2: 0.0,
+            j3: None,
+            j4: None,
         };
         let r = Vector3::new(6778.137, 1000.0, 500.0);
 
@@ -239,6 +274,216 @@ mod tests {
         assert!(
             (ratio - 16.0).abs() < 0.5,
             "J2 ratio for 2x distance should be ~16, got {ratio:.2}"
+        );
+    }
+
+    // --- J3 tests ---
+
+    use crate::constants::{J3_EARTH, J4_EARTH};
+
+    fn earth_j2_j3_j4() -> ZonalHarmonics {
+        ZonalHarmonics {
+            r_body: R_EARTH,
+            j2: J2_EARTH,
+            j3: Some(J3_EARTH),
+            j4: Some(J4_EARTH),
+        }
+    }
+
+    #[test]
+    fn j3_j4_zero_matches_j2_only() {
+        let j2_only = earth_j2();
+        let j2_j3_j4 = ZonalHarmonics {
+            r_body: R_EARTH,
+            j2: J2_EARTH,
+            j3: Some(0.0),
+            j4: Some(0.0),
+        };
+        let r = Vector3::new(6778.137, 1000.0, 500.0);
+
+        let a1 = j2_only.acceleration(MU_EARTH, &r);
+        let a2 = j2_j3_j4.acceleration(MU_EARTH, &r);
+
+        assert!(
+            (a1 - a2).magnitude() < 1e-15,
+            "J3=0, J4=0 should match J2-only"
+        );
+    }
+
+    #[test]
+    fn j3_equatorial_z_force() {
+        // J3 creates a z-force even on the equatorial plane (pear-shape effect)
+        let grav = ZonalHarmonics {
+            r_body: R_EARTH,
+            j2: 0.0,
+            j3: Some(J3_EARTH),
+            j4: None,
+        };
+        let pos = Vector3::new(7000.0, 0.0, 0.0);
+
+        let a_total = grav.acceleration(MU_EARTH, &pos);
+        let a_pm = PointMass.acceleration(MU_EARTH, &pos);
+        let a_j3 = a_total - a_pm;
+
+        // On equator (z=0), J3 z-component should be non-zero
+        // a_J3_z = (1/2)*J3*μ*R³/r⁵ * (3 - 0 + 0) = (3/2)*J3*μ*R³/r⁵
+        let expected_z = 1.5 * J3_EARTH * MU_EARTH * R_EARTH.powi(3) / 7000.0_f64.powi(5);
+        assert!(
+            (a_j3.z - expected_z).abs() / expected_z.abs() < 1e-10,
+            "J3 z-force at equator: expected={expected_z:.6e}, got={:.6e}",
+            a_j3.z
+        );
+
+        // J3 x,y components should be zero on equator (since z=0)
+        assert!(
+            a_j3.x.abs() < 1e-20,
+            "J3 x-component should be zero on equator, got {}",
+            a_j3.x
+        );
+        assert!(
+            a_j3.y.abs() < 1e-20,
+            "J3 y-component should be zero on equator, got {}",
+            a_j3.y
+        );
+    }
+
+    #[test]
+    fn j3_r_inverse_fifth_dependence() {
+        // J3 perturbation scales as r^(-5) for same direction
+        let grav = ZonalHarmonics {
+            r_body: R_EARTH,
+            j2: 0.0,
+            j3: Some(J3_EARTH),
+            j4: None,
+        };
+        let pos1 = Vector3::new(7000.0, 0.0, 500.0);
+        let pos2 = Vector3::new(14000.0, 0.0, 1000.0);
+
+        let j3_1 = (grav.acceleration(MU_EARTH, &pos1) - PointMass.acceleration(MU_EARTH, &pos1)).magnitude();
+        let j3_2 = (grav.acceleration(MU_EARTH, &pos2) - PointMass.acceleration(MU_EARTH, &pos2)).magnitude();
+
+        // For same direction, J3 ~ r^(-5), so ratio should be 2^5 = 32
+        let ratio = j3_1 / j3_2;
+        assert!(
+            (ratio - 32.0).abs() < 1.0,
+            "J3 ratio for 2x distance should be ~32, got {ratio:.2}"
+        );
+    }
+
+    #[test]
+    fn j3_is_much_smaller_than_j2() {
+        // |J3 perturbation| << |J2 perturbation| at ISS altitude
+        let grav_j2 = earth_j2();
+        let grav_j3 = ZonalHarmonics {
+            r_body: R_EARTH,
+            j2: 0.0,
+            j3: Some(J3_EARTH),
+            j4: None,
+        };
+        let pos = Vector3::new(6778.0, 0.0, 3000.0); // off-equator for nonzero J3
+
+        let a_j2 = (grav_j2.acceleration(MU_EARTH, &pos) - PointMass.acceleration(MU_EARTH, &pos)).magnitude();
+        let a_j3 = (grav_j3.acceleration(MU_EARTH, &pos) - PointMass.acceleration(MU_EARTH, &pos)).magnitude();
+
+        // J3 should be ~1000x smaller than J2 (J3/J2 ~ 2.3e-3)
+        assert!(
+            a_j3 < a_j2 * 0.01,
+            "J3 ({a_j3:.6e}) should be much smaller than J2 ({a_j2:.6e})"
+        );
+    }
+
+    // --- J4 tests ---
+
+    #[test]
+    fn j4_equatorial_symmetric() {
+        // J4 is even zonal harmonic: z-component should be zero on equator
+        let grav = ZonalHarmonics {
+            r_body: R_EARTH,
+            j2: 0.0,
+            j3: None,
+            j4: Some(J4_EARTH),
+        };
+        let pos = Vector3::new(7000.0, 0.0, 0.0);
+
+        let a_total = grav.acceleration(MU_EARTH, &pos);
+        let a_pm = PointMass.acceleration(MU_EARTH, &pos);
+        let a_j4 = a_total - a_pm;
+
+        assert!(
+            a_j4.z.abs() < 1e-20,
+            "J4 z-component should be zero on equatorial plane, got {}",
+            a_j4.z
+        );
+    }
+
+    #[test]
+    fn j4_r_inverse_sixth_dependence() {
+        // J4 perturbation scales as r^(-6) for same direction
+        let grav = ZonalHarmonics {
+            r_body: R_EARTH,
+            j2: 0.0,
+            j3: None,
+            j4: Some(J4_EARTH),
+        };
+        let pos1 = Vector3::new(7000.0, 0.0, 500.0);
+        let pos2 = Vector3::new(14000.0, 0.0, 1000.0);
+
+        let j4_1 = (grav.acceleration(MU_EARTH, &pos1) - PointMass.acceleration(MU_EARTH, &pos1)).magnitude();
+        let j4_2 = (grav.acceleration(MU_EARTH, &pos2) - PointMass.acceleration(MU_EARTH, &pos2)).magnitude();
+
+        // For same direction, J4 ~ r^(-6), so ratio should be 2^6 = 64
+        let ratio = j4_1 / j4_2;
+        assert!(
+            (ratio - 64.0).abs() < 2.0,
+            "J4 ratio for 2x distance should be ~64, got {ratio:.2}"
+        );
+    }
+
+    #[test]
+    fn j4_magnitude_at_iss() {
+        // J4 equatorial acceleration magnitude at ISS altitude
+        // a_J4_x = (15/8)*J4*μ*R⁴*x/r⁷ * (1 - 0 + 0) = (15/8)*J4*μ*R⁴/r⁶
+        let grav = ZonalHarmonics {
+            r_body: R_EARTH,
+            j2: 0.0,
+            j3: None,
+            j4: Some(J4_EARTH),
+        };
+        let r = R_EARTH + 400.0;
+        let pos = Vector3::new(r, 0.0, 0.0);
+
+        let a_j4 = grav.acceleration(MU_EARTH, &pos) - PointMass.acceleration(MU_EARTH, &pos);
+        let expected_mag = (15.0 / 8.0) * J4_EARTH.abs() * MU_EARTH * R_EARTH.powi(4) / r.powi(6);
+        let actual_mag = a_j4.magnitude();
+
+        let rel_err = (actual_mag - expected_mag).abs() / expected_mag;
+        assert!(
+            rel_err < 0.01,
+            "J4 magnitude at ISS: expected≈{expected_mag:.6e}, actual={actual_mag:.6e}, rel_err={rel_err:.4e}"
+        );
+    }
+
+    #[test]
+    fn j2_j3_j4_combined_at_iss() {
+        // Full J2+J3+J4 model should differ from J2-only but not dramatically
+        let grav_j2 = earth_j2();
+        let grav_full = earth_j2_j3_j4();
+        let pos = Vector3::new(6778.0, 0.0, 3000.0);
+
+        let a_j2_only = grav_j2.acceleration(MU_EARTH, &pos);
+        let a_full = grav_full.acceleration(MU_EARTH, &pos);
+        let diff = (a_full - a_j2_only).magnitude();
+        let a_j2_mag = (a_j2_only - PointMass.acceleration(MU_EARTH, &pos)).magnitude();
+
+        // J3+J4 correction should be small relative to J2
+        assert!(
+            diff < a_j2_mag * 0.01,
+            "J3+J4 correction ({diff:.6e}) should be <1% of J2 ({a_j2_mag:.6e})"
+        );
+        // But should be non-zero
+        assert!(
+            diff > 0.0,
+            "J3+J4 correction should be non-zero"
         );
     }
 }

@@ -10,6 +10,18 @@ pub const R_EARTH: f64 = 6378.137;
 /// Earth J2 zonal harmonic coefficient (WGS84/EGM96)
 pub const J2_EARTH: f64 = 1.08263e-3;
 
+/// Earth J3 zonal harmonic coefficient (WGS84/EGM96)
+pub const J3_EARTH: f64 = -2.5356e-6;
+
+/// Earth J4 zonal harmonic coefficient (WGS84/EGM96)
+pub const J4_EARTH: f64 = -1.6199e-6;
+
+/// Moon gravitational parameter (km^3/s^2)
+pub const MU_MOON: f64 = 4902.8;
+
+/// Earth rotation rate (rad/s, IERS 2010)
+pub const OMEGA_EARTH: f64 = 7.2921159e-5;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,5 +76,33 @@ mod tests {
     #[test]
     fn j2_earth_is_positive() {
         assert!(J2_EARTH > 0.0);
+    }
+
+    #[test]
+    fn j3_earth_value() {
+        assert!((J3_EARTH - (-2.5356e-6)).abs() < 1e-11);
+    }
+
+    #[test]
+    fn j3_earth_is_negative() {
+        // J3 is negative (pear-shaped asymmetry)
+        assert!(J3_EARTH < 0.0);
+    }
+
+    #[test]
+    fn j4_earth_value() {
+        assert!((J4_EARTH - (-1.6199e-6)).abs() < 1e-11);
+    }
+
+    #[test]
+    fn j4_earth_is_negative() {
+        assert!(J4_EARTH < 0.0);
+    }
+
+    #[test]
+    fn j2_dominates_higher_harmonics() {
+        // J2 >> |J3| >> |J4| (roughly)
+        assert!(J2_EARTH > J3_EARTH.abs());
+        assert!(J3_EARTH.abs() > J4_EARTH.abs());
     }
 }

@@ -1,3 +1,4 @@
+use orts_coords::epoch::Epoch;
 use orts_integrator::{DynamicalSystem, State, StateDerivative};
 
 use crate::gravity::GravityField;
@@ -8,6 +9,9 @@ pub struct OrbitalSystem {
     pub mu: f64,
     pub gravity: Box<dyn GravityField>,
     pub perturbations: Vec<Box<dyn ForceModel>>,
+    /// Initial epoch corresponding to integration time t=0.
+    /// Used to compute absolute epoch for time-dependent perturbations (e.g., third-body).
+    pub epoch_0: Option<Epoch>,
 }
 
 impl OrbitalSystem {
@@ -16,6 +20,7 @@ impl OrbitalSystem {
             mu,
             gravity,
             perturbations: Vec::new(),
+            epoch_0: None,
         }
     }
 
@@ -23,13 +28,19 @@ impl OrbitalSystem {
         self.perturbations.push(p);
         self
     }
+
+    pub fn with_epoch(mut self, epoch: Epoch) -> Self {
+        self.epoch_0 = Some(epoch);
+        self
+    }
 }
 
 impl DynamicalSystem for OrbitalSystem {
     fn derivatives(&self, t: f64, state: &State) -> StateDerivative {
+        let epoch = self.epoch_0.map(|e| e.add_seconds(t));
         let mut accel = self.gravity.acceleration(self.mu, &state.position);
         for p in &self.perturbations {
-            accel += p.acceleration(t, state);
+            accel += p.acceleration(t, state, epoch.as_ref());
         }
         StateDerivative {
             velocity: state.velocity,
@@ -95,6 +106,8 @@ mod tests {
             Box::new(ZonalHarmonics {
                 r_body: R_EARTH,
                 j2: J2_EARTH,
+                j3: None,
+                j4: None,
             }),
         )
     }
@@ -240,6 +253,89 @@ mod tests {
         assert!(
             ratio > 10.0 && ratio < 25.0,
             "J2 dt convergence ratio = {ratio:.2}, expected ~16 for 4th-order (err_coarse={err_coarse:.2e}, err_fine={err_fine:.2e})"
+        );
+    }
+
+    fn earth_j2_j3_j4_system() -> OrbitalSystem {
+        OrbitalSystem::new(
+            MU_EARTH,
+            Box::new(ZonalHarmonics {
+                r_body: R_EARTH,
+                j2: J2_EARTH,
+                j3: Some(crate::constants::J3_EARTH),
+                j4: Some(crate::constants::J4_EARTH),
+            }),
+        )
+    }
+
+    #[test]
+    fn j2_j3_j4_dt_convergence() {
+        // Verify RK4 4th-order convergence is maintained with J2+J3+J4
+        let system = earth_j2_j3_j4_system();
+        let a = R_EARTH + 400.0;
+        let i = 51.6_f64.to_radians();
+        let elements = KeplerianElements {
+            semi_major_axis: a,
+            eccentricity: 0.0001,
+            inclination: i,
+            raan: 0.0,
+            argument_of_periapsis: 0.0,
+            true_anomaly: 0.0,
+        };
+        let (pos, vel) = elements.to_state_vector(MU_EARTH);
+        let initial = State {
+            position: pos,
+            velocity: vel,
+        };
+
+        let duration = 1000.0;
+        let dt_coarse = 4.0;
+        let dt_fine = 2.0;
+        let dt_finest = 1.0;
+
+        let final_coarse = Rk4::integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
+        let final_fine = Rk4::integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
+        let final_finest = Rk4::integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
+
+        let err_coarse = (final_coarse.position - final_finest.position).magnitude();
+        let err_fine = (final_fine.position - final_finest.position).magnitude();
+
+        let ratio = err_coarse / err_fine;
+        assert!(
+            ratio > 10.0 && ratio < 25.0,
+            "J2+J3+J4 dt convergence ratio = {ratio:.2}, expected ~16 for 4th-order"
+        );
+    }
+
+    #[test]
+    fn j2_j3_j4_raan_closer_to_analytical() {
+        // J2+J3+J4 RAAN precession should be measurably different from J2-only
+        let a = R_EARTH + 400.0;
+        let i = 51.6_f64.to_radians();
+        let elements = KeplerianElements {
+            semi_major_axis: a,
+            eccentricity: 0.0001,
+            inclination: i,
+            raan: 0.0,
+            argument_of_periapsis: 0.0,
+            true_anomaly: 0.0,
+        };
+
+        let duration = 86400.0;
+        let dt = 5.0;
+
+        let raan_j2 = propagate_raan(&earth_j2_system(), &elements, dt, duration);
+        let raan_j2_j3_j4 = propagate_raan(&earth_j2_j3_j4_system(), &elements, dt, duration);
+
+        // They should differ, but not by a lot (J3+J4 is small correction)
+        let diff_deg = (raan_j2 - raan_j2_j3_j4).to_degrees().abs();
+        assert!(
+            diff_deg > 1e-4,
+            "J2+J3+J4 should differ from J2-only, diff={diff_deg:.6} deg"
+        );
+        assert!(
+            diff_deg < 1.0,
+            "J3+J4 correction should be small, diff={diff_deg:.6} deg"
         );
     }
 }

@@ -56,6 +56,8 @@ pub struct Tle {
     pub mean_anomaly: f64,
     /// Mean motion \[rad/s\].
     pub mean_motion: f64,
+    /// B* drag term \[1/R_e\].
+    pub bstar: f64,
 }
 
 impl Tle {
@@ -104,6 +106,10 @@ impl Tle {
             2000 + epoch_year_2digit
         };
 
+        // Parse B* drag term (columns 53-61, assumed decimal point notation)
+        // Format: " NNNNN±E" where value = 0.NNNNN * 10^(±E)
+        let bstar = Self::parse_assumed_decimal(line1, 53, 61, 1, "bstar")?;
+
         // Parse line 2
         let inclination_deg = Self::parse_field::<f64>(line2, 8, 16, 2, "inclination")?;
         let raan_deg = Self::parse_field::<f64>(line2, 17, 25, 2, "raan")?;
@@ -137,6 +143,7 @@ impl Tle {
             argument_of_perigee: arg_perigee_deg.to_radians(),
             mean_anomaly: mean_anomaly_deg.to_radians(),
             mean_motion: mean_motion_rev_day * 2.0 * PI / 86400.0, // rev/day → rad/s
+            bstar,
         })
     }
 
@@ -158,6 +165,64 @@ impl Tle {
             field,
             value: s.to_string(),
         })
+    }
+
+    /// Parse a field in "assumed decimal point" notation (e.g., "30000-4" → 0.30000e-4).
+    ///
+    /// TLE uses this format for B* and second derivative of mean motion.
+    /// Format: " NNNNN±E" or "+NNNNN±E" or "-NNNNN±E"
+    fn parse_assumed_decimal(
+        line: &str,
+        start: usize,
+        end: usize,
+        line_num: u8,
+        field: &'static str,
+    ) -> Result<f64, TleParseError> {
+        let s = line.get(start..end).ok_or(TleParseError::InvalidField {
+            line: line_num,
+            field,
+            value: String::new(),
+        })?;
+        let s = s.trim();
+
+        if s == "00000-0" || s == "00000+0" || s.is_empty() {
+            return Ok(0.0);
+        }
+
+        // Find the exponent sign (last '+' or '-' that isn't the leading sign)
+        let (mantissa_str, exp_str) = if let Some(pos) = s[1..].rfind(['+', '-']) {
+            let pos = pos + 1; // adjust for the [1..] offset
+            (&s[..pos], &s[pos..])
+        } else {
+            return Err(TleParseError::InvalidField {
+                line: line_num,
+                field,
+                value: s.to_string(),
+            });
+        };
+
+        // Prepend "0." to mantissa to get the assumed decimal
+        let mantissa: f64 = format!("0.{}", mantissa_str.trim_start_matches(['+', '-', ' ']))
+            .parse()
+            .map_err(|_| TleParseError::InvalidField {
+                line: line_num,
+                field,
+                value: s.to_string(),
+            })?;
+
+        let exp: i32 = exp_str.parse().map_err(|_| TleParseError::InvalidField {
+            line: line_num,
+            field,
+            value: s.to_string(),
+        })?;
+
+        let sign = if mantissa_str.starts_with('-') {
+            -1.0
+        } else {
+            1.0
+        };
+
+        Ok(sign * mantissa * 10.0_f64.powi(exp))
     }
 
     /// Compute the TLE epoch as an [`Epoch`] (Julian Date).
@@ -359,5 +424,23 @@ ISS (ZARYA)
         assert!((tle3.raan - tle2.raan).abs() < 1e-15);
         assert!((tle3.eccentricity - tle2.eccentricity).abs() < 1e-15);
         assert!((tle3.mean_motion - tle2.mean_motion).abs() < 1e-15);
+    }
+
+    #[test]
+    fn iss_bstar() {
+        // ISS TLE has "30000-4" → 0.30000e-4 = 3.0e-5
+        let tle = Tle::parse(ISS_TLE).unwrap();
+        assert!(
+            (tle.bstar - 3.0e-5).abs() < 1e-10,
+            "ISS B* should be 3.0e-5, got {:.6e}",
+            tle.bstar
+        );
+    }
+
+    #[test]
+    fn geo_bstar_zero() {
+        // GEO TLE has "00000+0" → 0.0
+        let tle = Tle::parse(GEO_TLE).unwrap();
+        assert_eq!(tle.bstar, 0.0, "GEO B* should be 0.0, got {}", tle.bstar);
     }
 }

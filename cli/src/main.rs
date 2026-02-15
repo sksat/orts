@@ -11,7 +11,7 @@ use orts_datamodel::recording::Recording;
 use orts_datamodel::timeline::TimePoint;
 use orts_coords::epoch::Epoch;
 use orts_integrator::{Rk4, State};
-use orts_orbits::{body::KnownBody, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, tle::Tle};
+use orts_orbits::{body::KnownBody, drag::AtmosphericDrag, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, third_body::ThirdBodyGravity, tle::Tle};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -796,17 +796,51 @@ fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
     }
 }
 
-/// Build an OrbitalSystem for the given body, using ZonalHarmonics (J2) if available.
-fn build_orbital_system(body: &KnownBody, mu: f64) -> OrbitalSystem {
+/// Build an OrbitalSystem for the given body, using ZonalHarmonics if available.
+///
+/// When `epoch` is provided, epoch-dependent perturbations (third-body gravity)
+/// are automatically enabled. When the satellite has a TLE with non-zero B*,
+/// atmospheric drag is added (Earth only).
+fn build_orbital_system(
+    body: &KnownBody,
+    mu: f64,
+    epoch: Option<Epoch>,
+    sat: &SatelliteSpec,
+) -> OrbitalSystem {
     let props = body.properties();
     let gravity_field: Box<dyn gravity::GravityField> = match props.j2 {
         Some(j2) => Box::new(gravity::ZonalHarmonics {
             r_body: props.radius,
             j2,
+            j3: props.j3,
+            j4: props.j4,
         }),
         None => Box::new(gravity::PointMass),
     };
-    OrbitalSystem::new(mu, gravity_field)
+    let mut system = OrbitalSystem::new(mu, gravity_field);
+
+    // Set epoch for time-dependent perturbations
+    if let Some(epoch) = epoch {
+        system = system.with_epoch(epoch);
+
+        // Third-body gravity: Sun (always), Moon (Earth only)
+        system = system.with_perturbation(Box::new(ThirdBodyGravity::sun()));
+        if *body == KnownBody::Earth {
+            system = system.with_perturbation(Box::new(ThirdBodyGravity::moon()));
+        }
+    }
+
+    // Atmospheric drag from TLE B* (Earth only)
+    if *body == KnownBody::Earth
+        && let OrbitSpec::Tle { tle_data, .. } = &sat.orbit
+        && tle_data.bstar.abs() > 1e-15
+    {
+        system = system.with_perturbation(Box::new(
+            AtmosphericDrag::from_bstar(tle_data.bstar, props.radius),
+        ));
+    }
+
+    system
 }
 
 /// Run the simulation and return a Recording.
@@ -818,7 +852,7 @@ fn run_simulation(params: &SimParams) -> Recording {
     rec.log_static(&body_path, &BodyRadius(params.body.properties().radius));
 
     for sat in &params.satellites {
-        let system = build_orbital_system(&params.body, params.mu);
+        let system = build_orbital_system(&params.body, params.mu, params.epoch, sat);
         let initial = sat.initial_state(params.mu);
         let sat_path = sat.entity_path();
 
@@ -1108,7 +1142,7 @@ async fn simulation_loop(
         let initial = spec.initial_state(params.mu);
         SatSimState {
             spec: spec.clone(),
-            system: build_orbital_system(&params.body, params.mu),
+            system: build_orbital_system(&params.body, params.mu, params.epoch, spec),
             state: initial,
             t: 0.0,
             orbit_end_t: spec.period,
