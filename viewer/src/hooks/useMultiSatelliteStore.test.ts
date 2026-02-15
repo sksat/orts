@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildMultiChartData } from "./buildMultiChartData.js";
-import { computeGlobalLatestT } from "./computeGlobalLatestT.js";
+import { computeGlobalLatestT, computeUnifiedTMin } from "./computeGlobalLatestT.js";
 
 /** Minimal ChartDataMap for testing. */
 type ChartDataMap = { t: Float64Array; [key: string]: Float64Array };
@@ -137,5 +137,41 @@ describe("computeGlobalLatestT", () => {
   it("handles single buffer", () => {
     const buffers = new Map([["only", mockBuf(500)]]);
     expect(computeGlobalLatestT(buffers)).toBe(500);
+  });
+});
+
+describe("computeUnifiedTMin", () => {
+  it("returns undefined for All mode (timeRange=null) regardless of buffers", () => {
+    const buffers = new Map([
+      ["sat-a", mockBuf(90000)],
+      ["sat-b", mockBuf(80000)],
+    ]);
+    expect(computeUnifiedTMin(null, buffers)).toBeUndefined();
+  });
+
+  it("returns undefined for All mode even with empty buffers", () => {
+    const buffers = new Map<string, { latestT: number }>();
+    expect(computeUnifiedTMin(null, buffers)).toBeUndefined();
+  });
+
+  it("returns globalLatest - timeRange for windowed mode with data", () => {
+    const buffers = new Map([
+      ["alive", mockBuf(90000)],
+      ["terminated", mockBuf(80000)],
+    ]);
+    // globalLatest=90000, timeRange=300 → tMin=89700
+    expect(computeUnifiedTMin(300, buffers)).toBe(89700);
+  });
+
+  it("returns undefined when no buffers exist and timeRange is set", () => {
+    // globalLatest=-Infinity → should NOT produce -Infinity tMin
+    const buffers = new Map<string, { latestT: number }>();
+    expect(computeUnifiedTMin(300, buffers)).toBeUndefined();
+  });
+
+  it("returns undefined when all buffers are empty and timeRange is set", () => {
+    // All buffers have latestT=-Infinity → should NOT produce -Infinity tMin
+    const buffers = new Map([["empty", mockBuf(-Infinity)]]);
+    expect(computeUnifiedTMin(300, buffers)).toBeUndefined();
   });
 });

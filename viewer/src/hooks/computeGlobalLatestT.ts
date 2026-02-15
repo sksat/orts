@@ -15,3 +15,26 @@ export function computeGlobalLatestT(
   }
   return max;
 }
+
+/** Time range for chart display: null = all history, number = last N seconds. */
+type TimeRange = number | null;
+
+/**
+ * Compute a unified tMin for multi-satellite DuckDB queries.
+ *
+ * Returns `undefined` (= no WHERE clause, show all) when:
+ * - timeRange is null ("All" mode)
+ * - no buffers have valid data (globalLatest is -Infinity)
+ *
+ * Otherwise returns `globalLatest - timeRange` so all satellites
+ * share the same time window.
+ */
+export function computeUnifiedTMin(
+  timeRange: TimeRange,
+  buffers: Map<string, { latestT: number }>,
+): number | undefined {
+  if (timeRange == null) return undefined;
+  const globalLatest = computeGlobalLatestT(buffers);
+  if (!isFinite(globalLatest)) return undefined;
+  return globalLatest - timeRange;
+}
