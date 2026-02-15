@@ -1,21 +1,16 @@
 import { useMemo, useEffect } from "react";
 import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
-import { computeTrueModelScale, type SatelliteModelConfig } from "../satelliteModels.js";
-import type { DisplayScaleProfile } from "../displayScale.js";
+import type { SatelliteModelConfig } from "../satelliteModels.js";
 
 interface SatelliteModelProps {
   /** Position in scene units (already divided by scaleRadius). */
   position: [number, number, number];
   /** Model configuration from the registry. */
   config: SatelliteModelConfig;
-  /** Active display scale profile. */
-  displayProfile?: DisplayScaleProfile;
-  /** Central body radius in km (needed for true-scale computation). */
-  centralBodyRadius?: number;
 }
 
-export function SatelliteModel({ position, config, displayProfile, centralBodyRadius }: SatelliteModelProps) {
+export function SatelliteModel({ position, config }: SatelliteModelProps) {
   const { scene } = useGLTF(config.modelUrl);
   const cloned = useMemo(() => scene.clone(true), [scene]);
 
@@ -34,19 +29,11 @@ export function SatelliteModel({ position, config, displayProfile, centralBodyRa
     }
   }, [scene, config]);
 
-  const effectiveScale = useMemo(() => {
-    if (displayProfile?.trueScale && centralBodyRadius) {
-      const trueScale = computeTrueModelScale(config, centralBodyRadius);
-      if (trueScale != null) return trueScale;
-    }
-    return config.scale;
-  }, [config, displayProfile?.trueScale, centralBodyRadius]);
-
   return (
     <group position={position}>
       <primitive
         object={cloned}
-        scale={effectiveScale}
+        scale={config.scale}
         rotation={config.rotation}
       />
     </group>

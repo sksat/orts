@@ -6,9 +6,8 @@ import { transformToLvlh } from "../coordTransform.js";
 import type { LvlhAxes } from "../sceneFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { SatelliteModel } from "./SatelliteModel.js";
-import type { DisplayScaleProfile } from "../displayScale.js";
 
-/** Default radius of the sphere fallback marker in scene units (body-centered). */
+/** Default radius of the sphere fallback marker in scene units. */
 const DEFAULT_SPHERE_RADIUS = 0.005;
 
 interface SatelliteProps {
@@ -32,8 +31,6 @@ interface SatelliteProps {
   lvlhAxes?: LvlhAxes | null;
   /** When true, suppress the sphere fallback (used for centered satellite at origin). */
   hideSphereFallback?: boolean;
-  /** Active display scale profile. */
-  displayProfile?: DisplayScaleProfile;
 }
 
 const DEFAULT_REF_FRAME: ReferenceFrame = { center: { type: "central_body" }, orientation: "inertial" };
@@ -66,7 +63,6 @@ export function Satellite({
   originPosition = null,
   lvlhAxes = null,
   hideSphereFallback = false,
-  displayProfile,
 }: SatelliteProps) {
   let scenePos: [number, number, number];
 
@@ -89,21 +85,18 @@ export function Satellite({
   }
 
   const modelConfig = satId ? getSatelliteModelConfig(satId, satName) : null;
-  const sphereRadius = displayProfile?.sphereFallbackRadius ?? DEFAULT_SPHERE_RADIUS;
 
   if (modelConfig) {
     return (
-      <Suspense fallback={<SphereMarker position={scenePos} color={color} radius={sphereRadius} />}>
+      <Suspense fallback={<SphereMarker position={scenePos} color={color} />}>
         <SatelliteModel
           position={scenePos}
           config={modelConfig}
-          displayProfile={displayProfile}
-          centralBodyRadius={scaleRadius}
         />
       </Suspense>
     );
   }
 
   if (hideSphereFallback) return null;
-  return <SphereMarker position={scenePos} color={color} radius={sphereRadius} />;
+  return <SphereMarker position={scenePos} color={color} />;
 }

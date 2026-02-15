@@ -22,7 +22,7 @@ const MODEL_REGISTRY: Record<string, SatelliteModelConfig> = {
     scale: 0.0003,
     rotation: [0, 0, 0],
     physicalSpanKm: 0.109, // ~109 m
-    // nativeSpanUnits: set after measuring GLB bounding box
+    nativeSpanUnits: 111.99,
   },
 };
 

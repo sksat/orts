@@ -13,7 +13,8 @@ import { rotateZ } from "../frameTransform.js";
 import { type ReferenceFrame, isLegacyEcef, isDefaultEci, DEFAULT_FRAME } from "../referenceFrame.js";
 import { earth_rotation_angle, sun_direction_eci } from "../wasm/kanameInit.js";
 import { transformToLvlh } from "../coordTransform.js";
-import { getDisplayScaleProfile, type DisplayScaleProfile } from "../displayScale.js";
+import { getDisplayScaleProfile, computeSceneAmplification, type DisplayScaleProfile } from "../displayScale.js";
+import { getSatelliteModelConfig } from "../satelliteModels.js";
 
 // Set scene up vector before any Three.js objects are created
 // so that Camera, OrbitControls, and all scene objects use the correct convention.
@@ -251,9 +252,23 @@ export function Scene({
 
   // Display scale profile for the current view center
   const displayProfile = useMemo(
-    () => getDisplayScaleProfile(referenceFrame.center, centralBodyRadius),
-    [referenceFrame.center, centralBodyRadius],
+    () => getDisplayScaleProfile(referenceFrame.center),
+    [referenceFrame.center],
   );
+
+  // Scene amplification: scale up environment to show correct proportions
+  // relative to the satellite's exaggerated model at origin.
+  const sceneAmplification = useMemo(() => {
+    if (!isSatCentered || centeredSatId == null) return 1;
+    const modelConfig = getSatelliteModelConfig(
+      centeredSatId,
+      satelliteNames?.get(centeredSatId),
+    );
+    return computeSceneAmplification(modelConfig, centralBodyRadius);
+  }, [isSatCentered, centeredSatId, satelliteNames, centralBodyRadius]);
+
+  // Effective scale radius: smaller when amplified, so positions appear larger
+  const effectiveScaleRadius = centralBodyRadius / sceneAmplification;
 
   // Compute origin position for satellite-centered view
   const originPosition: [number, number, number] | null = useMemo(() => {
@@ -327,9 +342,10 @@ export function Scene({
     return new THREE.Vector3(sx, sy, sz);
   }, [sunDirectionEci, isEcef, era, lvlhActive, lvlhAxes]);
 
+  const lightDistance = sceneAmplification * 10;
   const lightPosition = useMemo<[number, number, number]>(() => {
-    return [sunDirection.x * 10, sunDirection.y * 10, sunDirection.z * 10];
-  }, [sunDirection]);
+    return [sunDirection.x * lightDistance, sunDirection.y * lightDistance, sunDirection.z * lightDistance];
+  }, [sunDirection, lightDistance]);
 
   // Earth rotation angle for the mesh: ERA in ECI, 0 in ECEF (Earth is static)
   const earthRotation = isEcef ? 0 : era;
@@ -337,8 +353,8 @@ export function Scene({
   // Central body position and orientation in LVLH frame
   const bodyLvlhPosition = useMemo<[number, number, number] | null>(() => {
     if (!lvlhActive || originPosition == null || lvlhAxes == null) return null;
-    return transformToLvlh(0, 0, 0, originPosition, lvlhAxes, centralBodyRadius);
-  }, [lvlhActive, originPosition, lvlhAxes, centralBodyRadius]);
+    return transformToLvlh(0, 0, 0, originPosition, lvlhAxes, effectiveScaleRadius);
+  }, [lvlhActive, originPosition, lvlhAxes, effectiveScaleRadius]);
 
   const bodyLvlhQuaternion = useMemo<[number, number, number, number] | null>(() => {
     if (!lvlhActive || lvlhAxes == null) return null;
@@ -417,8 +433,6 @@ export function Scene({
             satName={satelliteNames?.get(centeredSatId)}
             originPosition={originPosition}
             lvlhAxes={lvlhAxes}
-            hideSphereFallback
-            displayProfile={displayProfile}
           />
         );
       })()}
@@ -430,8 +444,6 @@ export function Scene({
           epochJd={epochJd ?? undefined}
           originPosition={originPosition}
           lvlhAxes={lvlhAxes}
-          hideSphereFallback
-          displayProfile={displayProfile}
         />
       )}
 
@@ -441,6 +453,7 @@ export function Scene({
         <>
           <CelestialBody
             bodyId={centralBody}
+            radius={sceneAmplification}
             sunDirection={sunDirection}
             rotationAngle={earthRotation}
             lvlhPosition={bodyLvlhPosition}
@@ -459,7 +472,7 @@ export function Scene({
                   trailBuffer={buf}
                   visibleCount={vc}
                   drawStart={trailDrawStarts?.get(satId)}
-                  scaleRadius={centralBodyRadius}
+                  scaleRadius={effectiveScaleRadius}
                   color={color}
                   referenceFrame={referenceFrame}
                   epochJd={epochJd}
@@ -469,7 +482,7 @@ export function Scene({
                 {pos && !isCenteredSat && (
                   <Satellite
                     position={pos}
-                    scaleRadius={centralBodyRadius}
+                    scaleRadius={effectiveScaleRadius}
                     color={color}
                     referenceFrame={referenceFrame}
                     epochJd={epochJd ?? undefined}
@@ -477,7 +490,6 @@ export function Scene({
                     satName={satelliteNames?.get(satId)}
                     originPosition={originPosition}
                     lvlhAxes={lvlhAxes}
-                    displayProfile={displayProfile}
                   />
                 )}
               </group>
@@ -491,7 +503,7 @@ export function Scene({
                 trailBuffer={trailBuffer}
                 visibleCount={trailVisibleCount}
                 drawStart={trailDrawStart}
-                scaleRadius={centralBodyRadius}
+                scaleRadius={effectiveScaleRadius}
                 referenceFrame={referenceFrame}
                 epochJd={epochJd}
                 originPosition={originPosition}
@@ -502,7 +514,7 @@ export function Scene({
                 points={points!}
                 visibleCount={trailVisibleCount ?? points!.length}
                 drawStart={trailDrawStart}
-                scaleRadius={centralBodyRadius}
+                scaleRadius={effectiveScaleRadius}
                 referenceFrame={referenceFrame}
                 epochJd={epochJd}
                 originPosition={originPosition}
@@ -542,7 +554,6 @@ export function Scene({
                     epochJd={epochJd ?? undefined}
                     satId={satId}
                     satName={satelliteNames?.get(satId)}
-                    displayProfile={displayProfile}
                   />
                 )}
               </group>
@@ -577,7 +588,6 @@ export function Scene({
               scaleRadius={centralBodyRadius}
               referenceFrame={referenceFrame}
               epochJd={epochJd ?? undefined}
-              displayProfile={displayProfile}
             />
           )}
         </SmoothOriginGroup>
