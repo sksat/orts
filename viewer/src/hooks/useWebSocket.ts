@@ -295,12 +295,21 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     wsRef.current = ws;
 
     ws.addEventListener("open", () => {
-      setIsConnected(true);
+      // Only set connected if this is still the active WebSocket.
+      // If connect() was called again, wsRef.current points to the new one.
+      if (wsRef.current === ws) {
+        setIsConnected(true);
+      }
     });
 
     ws.addEventListener("close", () => {
-      setIsConnected(false);
-      wsRef.current = null;
+      // Only reset state if this is still the active WebSocket.
+      // A stale close handler from a previous connection must not
+      // corrupt the new connection's state.
+      if (wsRef.current === ws) {
+        setIsConnected(false);
+        wsRef.current = null;
+      }
     });
 
     ws.addEventListener("error", () => {

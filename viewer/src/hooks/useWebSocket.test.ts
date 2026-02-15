@@ -60,4 +60,93 @@ describe("dispatchServerMessage", () => {
 
     expect(() => dispatchServerMessage(msg, callbacks)).not.toThrow();
   });
+
+  it("dispatches history message with parsed OrbitPoints", () => {
+    const onHistory = vi.fn();
+    const callbacks = { ...baseCallbacks, onHistory };
+
+    const msg: ServerMessage = {
+      type: "history",
+      states: [
+        {
+          satellite_id: "sat-a",
+          t: 0,
+          position: [6778, 0, 0] as [number, number, number],
+          velocity: [0, 7.669, 0] as [number, number, number],
+          semi_major_axis: 6778,
+          eccentricity: 0,
+          inclination: 0.9,
+          raan: 0,
+          argument_of_periapsis: 0,
+          true_anomaly: 0,
+        },
+        {
+          satellite_id: "sat-a",
+          t: 10,
+          position: [6770, 500, 0] as [number, number, number],
+          velocity: [-0.5, 7.6, 0] as [number, number, number],
+          semi_major_axis: 6778,
+          eccentricity: 0.001,
+          inclination: 0.9,
+          raan: 0,
+          argument_of_periapsis: 0,
+          true_anomaly: 0.01,
+        },
+      ],
+    };
+
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onHistory).toHaveBeenCalledOnce();
+    const points = onHistory.mock.calls[0][0];
+    expect(points).toHaveLength(2);
+    expect(points[0].satelliteId).toBe("sat-a");
+    expect(points[0].t).toBe(0);
+    expect(points[0].x).toBe(6778);
+    expect(points[0].vy).toBe(7.669);
+    expect(points[1].t).toBe(10);
+    expect(points[1].x).toBe(6770);
+  });
+
+  it("dispatches history_detail separately from history", () => {
+    const onHistory = vi.fn();
+    const onHistoryDetail = vi.fn();
+    const callbacks = { ...baseCallbacks, onHistory, onHistoryDetail };
+
+    const msg: ServerMessage = {
+      type: "history_detail",
+      states: [
+        {
+          satellite_id: "sat-a",
+          t: 5,
+          position: [6775, 200, 0] as [number, number, number],
+          velocity: [-0.2, 7.65, 0] as [number, number, number],
+          semi_major_axis: 6778,
+          eccentricity: 0,
+          inclination: 0.9,
+          raan: 0,
+          argument_of_periapsis: 0,
+          true_anomaly: 0.005,
+        },
+      ],
+    };
+
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onHistory).not.toHaveBeenCalled();
+    expect(onHistoryDetail).toHaveBeenCalledOnce();
+    const points = onHistoryDetail.mock.calls[0][0];
+    expect(points).toHaveLength(1);
+    expect(points[0].t).toBe(5);
+  });
+
+  it("dispatches history_detail_complete", () => {
+    const onComplete = vi.fn();
+    const callbacks = { ...baseCallbacks, onHistoryDetailComplete: onComplete };
+
+    const msg: ServerMessage = { type: "history_detail_complete" };
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onComplete).toHaveBeenCalledOnce();
+  });
 });

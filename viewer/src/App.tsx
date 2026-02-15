@@ -27,6 +27,11 @@ type ViewerMode = "replay" | "realtime";
 
 const DEFAULT_WS_URL = "ws://localhost:9001";
 
+/** Stable reference for an empty terminated-satellites set.
+ *  Avoids creating a new Set object on each handleConnect call,
+ *  which would cascade through useRealtimePlayback's dependency chain. */
+const EMPTY_TERMINATED_SET: Set<string> = new Set();
+
 /** Chart color palette matching the 3D scene SATELLITE_COLORS. */
 const SATELLITE_CHART_COLORS = ["#00ff88", "#ff4488", "#44aaff", "#ffaa44", "#aa44ff"];
 
@@ -281,6 +286,11 @@ export function App() {
   }, [loadCSVFile]);
 
   // --- Realtime: connect / disconnect ---
+  // Use ref for goLive to avoid including it in handleConnect deps.
+  // This breaks the circular dependency: handleConnect → goLive → syncState → terminatedSatellites.
+  const goLiveRef = useRef(realtimePlayback.goLive);
+  goLiveRef.current = realtimePlayback.goLive;
+
   const handleConnect = useCallback(() => {
     detailBufferRef.current = [];
     streamingCountRef.current = 0;
@@ -289,21 +299,26 @@ export function App() {
     ingestBuffersRef.current.clear();
     singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
     setSimInfo(null);
-    setTerminatedSatellites(new Set());
-    realtimePlayback.goLive();
+    setTerminatedSatellites(EMPTY_TERMINATED_SET);
+    goLiveRef.current();
     connect();
-  }, [connect, realtimePlayback.goLive]);
+  }, [connect]);
 
   const handleDisconnect = useCallback(() => {
     disconnect();
   }, [disconnect]);
 
   // --- Auto-connect ---
+  // Use ref for handleConnect to make the effect immune to callback identity changes.
+  // The effect only re-fires on actual mode/connection changes.
+  const handleConnectRef = useRef(handleConnect);
+  handleConnectRef.current = handleConnect;
+
   useEffect(() => {
     if (mode === "realtime" && !isConnected) {
-      handleConnect();
+      handleConnectRef.current();
     }
-  }, [mode, isConnected, handleConnect]);
+  }, [mode, isConnected]);
 
   // --- Mode switching ---
   const handleModeChange = useCallback(

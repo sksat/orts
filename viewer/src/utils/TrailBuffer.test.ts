@@ -217,3 +217,62 @@ describe("TrailBuffer.indexBefore", () => {
     expect(buf.indexBefore(0)).toBe(0);
   });
 });
+
+describe("TrailBuffer history replay sequence", () => {
+  // Simulates the full handleHistory → handleHistoryDetailComplete flow
+  // to verify TrailBuffer correctly holds historical data after replay.
+
+  it("retains history overview data after push", () => {
+    const buf = new TrailBuffer(50000);
+    // Simulate handleHistory: push downsampled overview (100 points)
+    const overview = Array.from({ length: 100 }, (_, i) => makePoint(i * 10));
+    for (const p of overview) buf.push(p);
+
+    expect(buf.length).toBe(100);
+    expect(buf.getAll()[0].t).toBe(0);
+    expect(buf.latest!.t).toBe(990);
+  });
+
+  it("rebuilds with detail + streaming after handleHistoryDetailComplete", () => {
+    const buf = new TrailBuffer(50000);
+
+    // Step 1: Simulate handleHistory (overview: 100 points)
+    const overview = Array.from({ length: 100 }, (_, i) => makePoint(i * 10));
+    for (const p of overview) buf.push(p);
+    const genAfterOverview = buf.generation;
+
+    // Step 2: Simulate streaming points arriving (20 points after overview)
+    const streaming = Array.from({ length: 20 }, (_, i) => makePoint(1000 + i * 10));
+    for (const p of streaming) buf.push(p);
+    expect(buf.length).toBe(120);
+
+    // Step 3: Simulate handleHistoryDetailComplete
+    //   detail = full resolution of history (500 points)
+    //   streaming = last 20 points from buffer
+    const detail = Array.from({ length: 500 }, (_, i) => makePoint(i * 2));
+    const streamingSlice = buf.getAll().slice(-20);
+    const combined = [...detail, ...streamingSlice].sort((a, b) => a.t - b.t);
+
+    buf.clear();
+    buf.pushMany(combined);
+
+    // After rebuild: should contain detail (0..998) + streaming (1000..1190)
+    expect(buf.length).toBe(combined.length);
+    expect(buf.getAll()[0].t).toBe(0); // Starts from the beginning of history
+    expect(buf.latest!.t).toBe(1190); // Includes streaming data
+    expect(buf.generation).toBeGreaterThan(genAfterOverview); // Generation incremented by clear
+  });
+
+  it("generation increments on clear during replay rebuild", () => {
+    const buf = new TrailBuffer(50000);
+    buf.push(makePoint(0));
+    const gen0 = buf.generation;
+
+    buf.clear();
+    expect(buf.generation).toBe(gen0 + 1);
+
+    buf.pushMany([makePoint(0), makePoint(10), makePoint(20)]);
+    // pushMany doesn't trim (3 << 50000), so generation stays
+    expect(buf.generation).toBe(gen0 + 1);
+  });
+});
