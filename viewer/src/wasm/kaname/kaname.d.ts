@@ -44,6 +44,16 @@ export function jd_to_utc_string(epoch_jd: number, t: number): string;
  */
 export function sun_direction_eci(epoch_jd: number, t: number): Float32Array;
 
+/**
+ * Sun direction (unit vector) as seen from a given central body, in J2000 equatorial frame.
+ *
+ * Returns `[x, y, z]` (3 floats).
+ * `body`: body identifier string (e.g., "earth", "mars")
+ * `epoch_jd`: Julian Date of the simulation epoch
+ * `t`: elapsed simulation time in seconds
+ */
+export function sun_direction_from_body(body: string, epoch_jd: number, t: number): Float32Array;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -52,10 +62,12 @@ export interface InitOutput {
     readonly eci_to_ecef: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly earth_rotation_angle: (a: number, b: number) => number;
     readonly sun_direction_eci: (a: number, b: number) => [number, number];
+    readonly sun_direction_from_body: (a: number, b: number, c: number, d: number) => [number, number];
     readonly jd_to_utc_string: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_start: () => void;
 }
 

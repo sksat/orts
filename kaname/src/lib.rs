@@ -1,5 +1,6 @@
 pub mod epoch;
 pub mod moon;
+pub mod planets;
 pub mod sun;
 
 #[cfg(feature = "wasm")]

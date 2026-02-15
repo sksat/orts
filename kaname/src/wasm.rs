@@ -74,6 +74,19 @@ pub fn sun_direction_eci(epoch_jd: f64, t: f64) -> Vec<f32> {
     vec![dir.x as f32, dir.y as f32, dir.z as f32]
 }
 
+/// Sun direction (unit vector) as seen from a given central body, in J2000 equatorial frame.
+///
+/// Returns `[x, y, z]` (3 floats).
+/// `body`: body identifier string (e.g., "earth", "mars")
+/// `epoch_jd`: Julian Date of the simulation epoch
+/// `t`: elapsed simulation time in seconds
+#[wasm_bindgen]
+pub fn sun_direction_from_body(body: &str, epoch_jd: f64, t: f64) -> Vec<f32> {
+    let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
+    let dir = sun::sun_direction_from_body(body, &epoch);
+    vec![dir.x as f32, dir.y as f32, dir.z as f32]
+}
+
 /// Convert Julian Date + elapsed sim time to a UTC date/time string.
 ///
 /// Returns ISO 8601 string like "2024-03-20T12:00:00Z".

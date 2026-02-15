@@ -35,6 +35,8 @@ interface EarthBodyProps {
   textureBaseName?: string;
   /** Base name for multi-resolution night textures (e.g., "earth_night"). */
   nightTextureBaseName?: string;
+  /** Ambient light intensity (matches scene ambient). Default 0.15. */
+  ambientIntensity?: number;
 }
 
 /**
@@ -63,6 +65,7 @@ export function EarthBody({
   targetResolution,
   textureBaseName,
   nightTextureBaseName,
+  ambientIntensity = 0.15,
 }: EarthBodyProps) {
   // 1. Load 2K textures immediately via Suspense (guaranteed available)
   const [dayMap, nightMap] = useTexture([dayTexturePath, nightTexturePath]);
@@ -75,6 +78,7 @@ export function EarthBody({
         dayMap: { value: dayMap },
         nightMap: { value: nightMap },
         sunDirection: { value: sunDirection.clone().normalize() },
+        ambientIntensity: { value: ambientIntensity },
       },
       vertexShader: earthDayNightVert,
       fragmentShader: earthDayNightFrag,
@@ -150,7 +154,7 @@ export function EarthBody({
     };
   }, [targetResolution, textureBaseName, nightTextureBaseName]);
 
-  // 3. Update sun direction uniform reactively (no material recreation)
+  // 3. Update uniforms reactively (no material recreation)
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.sunDirection.value
@@ -158,6 +162,12 @@ export function EarthBody({
         .normalize();
     }
   }, [sunDirection]);
+
+  useEffect(() => {
+    if (materialRef.current) {
+      materialRef.current.uniforms.ambientIntensity.value = ambientIntensity;
+    }
+  }, [ambientIntensity]);
 
   return (
     <group rotation={[0, 0, rotationAngle ?? 0]}>

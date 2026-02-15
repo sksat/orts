@@ -18,6 +18,8 @@ interface CelestialBodyProps {
   lvlhPosition?: [number, number, number] | null;
   /** Quaternion [x,y,z,w] for body orientation in LVLH frame. Replaces ERA-based euler. */
   lvlhQuaternion?: [number, number, number, number] | null;
+  /** Ambient light intensity for shader-based bodies (matches scene ambient). */
+  ambientIntensity?: number;
 }
 
 function TexturedBody({
@@ -90,6 +92,7 @@ function FallbackBody({
 export function CelestialBody({
   bodyId, radius = 1, sunDirection, rotationAngle,
   lvlhPosition = null, lvlhQuaternion = null,
+  ambientIntensity,
 }: CelestialBodyProps) {
   const renderInfo = getBodyRenderInfo(bodyId);
   const isSatelliteCentered = lvlhPosition != null;
@@ -111,6 +114,7 @@ export function CelestialBody({
           targetResolution={targetResolution}
           textureBaseName={renderInfo.textureBaseName}
           nightTextureBaseName={renderInfo.nightTextureBaseName}
+          ambientIntensity={ambientIntensity}
         />
       </Suspense>
     );

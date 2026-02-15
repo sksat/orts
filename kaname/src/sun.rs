@@ -1,6 +1,7 @@
 use nalgebra::Vector3;
 
 use crate::epoch::Epoch;
+use crate::planets;
 
 /// Approximate sun direction (unit vector) in ECI (J2000) frame.
 ///
@@ -23,8 +24,8 @@ pub fn sun_direction_eci(epoch: &Epoch) -> Vector3<f64> {
     // Sun's ecliptic longitude (degrees → radians)
     let lambda = (l0 + c).to_radians();
 
-    // Obliquity of the ecliptic (degrees → radians)
-    let epsilon = (23.439291 - 0.0130042 * t).to_radians();
+    // Obliquity of the ecliptic
+    let epsilon = planets::obliquity(epoch);
 
     // Sun direction in ECI (equatorial coordinates)
     let x = lambda.cos();
@@ -64,6 +65,30 @@ pub fn sun_position_eci(epoch: &Epoch) -> Vector3<f64> {
     let direction = sun_direction_eci(epoch);
     let distance = sun_distance_km(epoch);
     direction * distance
+}
+
+/// Sun direction (unit vector) as seen from a given central body, in J2000 equatorial frame.
+///
+/// - `"earth"` / `"moon"`: delegates to [`sun_direction_eci`] (Moon parallax < 0.15°, negligible)
+/// - Other known planets: computed from heliocentric orbital elements
+/// - Unknown bodies: fallback to +X direction (vernal equinox)
+///
+/// The returned vector points FROM the body TOWARD the Sun.
+pub fn sun_direction_from_body(body: &str, epoch: &Epoch) -> Vector3<f64> {
+    match body {
+        "earth" | "moon" => sun_direction_eci(epoch),
+        _ => {
+            if let Some(body_pos_ecl) = planets::heliocentric_position_ecliptic(body, epoch) {
+                // Sun is at origin in heliocentric frame, so direction to sun = -body_pos
+                let sun_dir_ecl = -body_pos_ecl;
+                let epsilon = planets::obliquity(epoch);
+                planets::ecliptic_to_equatorial(&sun_dir_ecl, epsilon).normalize()
+            } else {
+                // Unknown body: fallback to +X (vernal equinox direction)
+                Vector3::new(1.0, 0.0, 0.0)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -247,6 +272,81 @@ mod tests {
         assert!(
             rel_err < 1e-10,
             "Position magnitude should match distance, rel_err={rel_err:.6e}"
+        );
+    }
+
+    // --- sun_direction_from_body tests ---
+
+    #[test]
+    fn sun_direction_from_body_earth_matches_eci() {
+        let dates = [
+            Epoch::from_gregorian(2024, 1, 1, 12, 0, 0.0),
+            Epoch::from_gregorian(2024, 6, 21, 12, 0, 0.0),
+            Epoch::from_gregorian(2024, 9, 22, 12, 0, 0.0),
+        ];
+        for epoch in &dates {
+            let from_body = sun_direction_from_body("earth", epoch);
+            let eci = sun_direction_eci(epoch);
+            let diff = (from_body - eci).magnitude();
+            assert!(
+                diff < 1e-10,
+                "earth should match sun_direction_eci, diff={diff:.2e}"
+            );
+        }
+    }
+
+    #[test]
+    fn sun_direction_from_body_moon_matches_eci() {
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let from_body = sun_direction_from_body("moon", &epoch);
+        let eci = sun_direction_eci(&epoch);
+        let diff = (from_body - eci).magnitude();
+        assert!(
+            diff < 1e-10,
+            "moon should match sun_direction_eci, diff={diff:.2e}"
+        );
+    }
+
+    #[test]
+    fn sun_direction_from_body_mars_is_unit_vector() {
+        let dates = [
+            Epoch::from_gregorian(2024, 1, 1, 12, 0, 0.0),
+            Epoch::from_gregorian(2024, 6, 15, 12, 0, 0.0),
+            Epoch::from_gregorian(2024, 12, 1, 12, 0, 0.0),
+        ];
+        for epoch in &dates {
+            let dir = sun_direction_from_body("mars", epoch);
+            let norm = dir.norm();
+            assert!(
+                (norm - 1.0).abs() < 1e-10,
+                "Mars sun direction should be unit vector, norm={norm}"
+            );
+        }
+    }
+
+    #[test]
+    fn sun_direction_from_body_mars_varies() {
+        let epoch1 = Epoch::from_gregorian(2024, 1, 1, 12, 0, 0.0);
+        let epoch2 = Epoch::from_gregorian(2024, 7, 1, 12, 0, 0.0);
+        let dir1 = sun_direction_from_body("mars", &epoch1);
+        let dir2 = sun_direction_from_body("mars", &epoch2);
+        let dot = dir1.dot(&dir2);
+        assert!(
+            dot < 0.9,
+            "Mars sun direction should change significantly over 6 months, dot={dot:.3}"
+        );
+    }
+
+    #[test]
+    fn sun_direction_from_body_unknown_fallback() {
+        let epoch = Epoch::from_gregorian(2024, 1, 1, 12, 0, 0.0);
+        let dir = sun_direction_from_body("pluto", &epoch);
+        assert!(
+            (dir.x - 1.0).abs() < 1e-10 && dir.y.abs() < 1e-10 && dir.z.abs() < 1e-10,
+            "Unknown body should return +X fallback, got ({}, {}, {})",
+            dir.x,
+            dir.y,
+            dir.z
         );
     }
 
