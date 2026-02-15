@@ -127,6 +127,10 @@ struct SimArgs {
     /// Relative tolerance for adaptive integrator (dp45)
     #[arg(long, default_value_t = 1e-8)]
     rtol: f64,
+
+    /// Total simulation duration in seconds (overrides orbital period)
+    #[arg(long)]
+    duration: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -289,6 +293,13 @@ impl SimParams {
             .stream_interval
             .unwrap_or(output_interval)
             .clamp(args.dt, output_interval);
+
+        // Apply --duration override: replace each satellite's period with the user-specified duration
+        let satellites = if let Some(dur) = args.duration {
+            satellites.into_iter().map(|mut s| { s.period = dur; s }).collect()
+        } else {
+            satellites
+        };
 
         Self {
             body,
@@ -2065,6 +2076,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
@@ -2090,6 +2102,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.dt - 1.0).abs() < 1e-9);
@@ -2115,6 +2128,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.stream_interval - 5.0).abs() < 1e-9);
@@ -2135,6 +2149,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params2 = SimParams::from_sim_args(&args2, false);
         assert!((params2.stream_interval - 10.0).abs() < 1e-9);
@@ -2157,6 +2172,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!(params.epoch.is_some());
@@ -2249,6 +2265,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         SimParams::from_sim_args(&args, false);
     }
@@ -2472,6 +2489,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -2512,6 +2530,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         let state = params.satellites[0].initial_state(params.mu);
@@ -2549,6 +2568,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -2574,6 +2594,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -2724,6 +2745,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert_eq!(params.satellites.len(), 2);
@@ -2749,6 +2771,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert_eq!(params.satellites.len(), 1);
@@ -2773,6 +2796,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
+            duration: None,
         };
         let params = SimParams::from_sim_args(&args, true);
         // Should have at least SSO satellite
