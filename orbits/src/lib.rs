@@ -2,6 +2,7 @@ pub mod atmosphere;
 pub mod body;
 pub mod constants;
 pub mod drag;
+pub mod events;
 pub mod gravity;
 pub mod kepler;
 pub mod orbital_system;

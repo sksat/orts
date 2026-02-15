@@ -10,8 +10,8 @@ use orts_datamodel::entity_path::EntityPath;
 use orts_datamodel::recording::Recording;
 use orts_datamodel::timeline::TimePoint;
 use orts_coords::epoch::Epoch;
-use orts_integrator::{Rk4, State};
-use orts_orbits::{body::KnownBody, drag::AtmosphericDrag, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, third_body::ThirdBodyGravity, tle::Tle};
+use orts_integrator::{IntegrationOutcome, Rk4, State};
+use orts_orbits::{body::KnownBody, drag::AtmosphericDrag, events, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, third_body::ThirdBodyGravity, tle::Tle};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -648,6 +648,13 @@ enum WsMessage {
         t_max: f64,
         states: Vec<HistoryState>,
     },
+    /// Notification that a satellite's simulation has terminated.
+    #[serde(rename = "simulation_terminated")]
+    SimulationTerminated {
+        satellite_id: String,
+        t: f64,
+        reason: String,
+    },
 }
 
 /// Try fetching a TLE by NORAD catalog number. Tries CelesTrak first, falls back to SatNOGS.
@@ -817,7 +824,8 @@ fn build_orbital_system(
         }),
         None => Box::new(gravity::PointMass),
     };
-    let mut system = OrbitalSystem::new(mu, gravity_field);
+    let mut system = OrbitalSystem::new(mu, gravity_field)
+        .with_body_radius(props.radius);
 
     // Set epoch for time-dependent perturbations
     if let Some(epoch) = epoch {
@@ -868,18 +876,44 @@ fn run_simulation(params: &SimParams) -> Recording {
 
         let mut next_output_t = params.output_interval;
         let mut last_output_t = 0.0_f64;
-        let final_state =
-            Rk4::integrate(&system, initial, 0.0, sat.period, params.dt, |t, state| {
+        let body_radius = params.body.properties().radius;
+        let event_checker = events::collision_check(body_radius);
+        let outcome = Rk4::integrate_with_events(
+            &system,
+            initial,
+            0.0,
+            sat.period,
+            params.dt,
+            |t, state| {
                 if t >= next_output_t - 1e-9 {
                     record_state(&mut rec, t, step, state);
                     step += 1;
                     last_output_t = t;
                     next_output_t += params.output_interval;
                 }
-            });
+            },
+            &event_checker,
+        );
 
-        if (sat.period - last_output_t) > 1e-9 {
-            record_state(&mut rec, sat.period, step, &final_state);
+        match &outcome {
+            IntegrationOutcome::Completed(final_state) => {
+                if (sat.period - last_output_t) > 1e-9 {
+                    record_state(&mut rec, sat.period, step, final_state);
+                }
+            }
+            IntegrationOutcome::Terminated { state, t, reason } => {
+                eprintln!(
+                    "Simulation terminated at t={t:.2}s for {}: {reason:?}",
+                    sat.id
+                );
+                record_state(&mut rec, *t, step, state);
+            }
+            IntegrationOutcome::Error(err) => {
+                eprintln!(
+                    "Simulation error at for {}: {err:?}",
+                    sat.id
+                );
+            }
         }
     }
 
@@ -1119,6 +1153,7 @@ struct SatSimState {
     orbit_end_t: f64,
     next_stream_t: f64,
     next_save_t: f64,
+    terminated: bool,
 }
 
 async fn simulation_loop(
@@ -1148,6 +1183,7 @@ async fn simulation_loop(
             orbit_end_t: spec.period,
             next_stream_t: params.stream_interval,
             next_save_t: params.output_interval,
+            terminated: false,
         }
     }).collect();
 
@@ -1167,6 +1203,10 @@ async fn simulation_loop(
         let mut all_outputs: Vec<HistoryState> = Vec::new();
 
         for ss in &mut sat_states {
+            if ss.terminated {
+                continue;
+            }
+
             // Each satellite advances by exactly chunk_sim_time, handling
             // orbit boundaries within the loop so all satellites stay in sync.
             let target_t = ss.t + chunk_sim_time;
@@ -1189,7 +1229,7 @@ async fn simulation_loop(
                     target_t.min(ss.orbit_end_t)
                 };
 
-                let (outputs, new_state, new_t) = compute_output_chunk(
+                let (outputs, new_state, new_t, termination) = compute_output_chunk(
                     &ss.spec.id,
                     &ss.system,
                     ss.state.clone(),
@@ -1215,6 +1255,23 @@ async fn simulation_loop(
                 }
 
                 all_outputs.extend(outputs);
+
+                // Handle termination
+                if let Some(reason) = termination {
+                    eprintln!(
+                        "Simulation terminated for {} at t={:.2}s: {}",
+                        ss.spec.id, ss.t, reason
+                    );
+                    let msg = serde_json::to_string(&WsMessage::SimulationTerminated {
+                        satellite_id: ss.spec.id.clone(),
+                        t: ss.t,
+                        reason: reason.to_string(),
+                    })
+                    .expect("failed to serialize termination message");
+                    let _ = tx.send(msg);
+                    ss.terminated = true;
+                    break;
+                }
             }
         }
 
@@ -1405,10 +1462,28 @@ async fn handle_connection(
     eprintln!("Client disconnected");
 }
 
+/// Reason a satellite simulation was terminated in serve mode.
+#[derive(Debug)]
+enum TerminationReason {
+    Collision { altitude_km: f64 },
+    NonFiniteState,
+}
+
+impl std::fmt::Display for TerminationReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Collision { altitude_km } => {
+                write!(f, "collision at altitude {altitude_km:.1} km")
+            }
+            Self::NonFiniteState => write!(f, "numerical divergence (NaN/Inf)"),
+        }
+    }
+}
+
 /// Compute RK4 integration from t_start to chunk_end, collecting output states
 /// at output_interval boundaries. Pure computation with no IO.
 ///
-/// Returns (output_states, final_state, final_t).
+/// Returns (output_states, final_state, final_t, optional termination reason).
 #[allow(clippy::too_many_arguments)]
 fn compute_output_chunk(
     satellite_id: &str,
@@ -1419,8 +1494,9 @@ fn compute_output_chunk(
     dt: f64,
     output_interval: f64,
     next_output_t: &mut f64,
-) -> (Vec<HistoryState>, State, f64) {
+) -> (Vec<HistoryState>, State, f64, Option<TerminationReason>) {
     let mu = system.mu;
+    let body_radius = system.body_radius;
     let mut outputs = Vec::new();
     let mut t = t_start;
 
@@ -1429,13 +1505,38 @@ fn compute_output_chunk(
         state = Rk4::step(system, t, &state, h);
         t += h;
 
+        // Check for NaN/Inf
+        if !state
+            .position
+            .iter()
+            .chain(state.velocity.iter())
+            .all(|v| v.is_finite())
+        {
+            return (outputs, state, t, Some(TerminationReason::NonFiniteState));
+        }
+
+        // Check for collision
+        if let Some(r_body) = body_radius {
+            let r = state.position.magnitude();
+            if r < r_body {
+                return (
+                    outputs,
+                    state,
+                    t,
+                    Some(TerminationReason::Collision {
+                        altitude_km: r - r_body,
+                    }),
+                );
+            }
+        }
+
         if t >= *next_output_t - 1e-9 {
             outputs.push(make_history_state(satellite_id, t, &state.position, &state.velocity, mu));
             *next_output_t += output_interval;
         }
     }
 
-    (outputs, state, t)
+    (outputs, state, t, None)
 }
 
 fn state_message(satellite_id: &str, t: f64, state: &State, mu: f64) -> String {
@@ -2015,7 +2116,7 @@ mod tests {
         };
 
         let mut next_output = 10.0;
-        let (outputs, _final_state, final_t) =
+        let (outputs, _final_state, final_t, _term) =
             compute_output_chunk("test", &system, initial, 0.0, 100.0, 10.0, 10.0, &mut next_output);
 
         assert_eq!(outputs.len(), 10);
@@ -2035,7 +2136,7 @@ mod tests {
         };
 
         let mut next_output = 10.0;
-        let (outputs, _, _) =
+        let (outputs, _, _, _) =
             compute_output_chunk("test", &system, initial, 0.0, 100.0, 1.0, 10.0, &mut next_output);
 
         assert_eq!(outputs.len(), 10);
@@ -2063,7 +2164,7 @@ mod tests {
         let initial_energy = v0 * v0 / 2.0 - mu / r0;
 
         let mut next_output = 10.0;
-        let (outputs, _, _) =
+        let (outputs, _, _, _) =
             compute_output_chunk("test", &system, initial, 0.0, 500.0, 10.0, 10.0, &mut next_output);
 
         for out in &outputs {
@@ -2095,7 +2196,7 @@ mod tests {
 
         let mut next_output = 10.0;
         // chunk_end=55 with output_interval=10 → outputs at 10,20,30,40,50 (5 outputs)
-        let (outputs, _, final_t) =
+        let (outputs, _, final_t, _) =
             compute_output_chunk("test", &system, initial, 0.0, 55.0, 10.0, 10.0, &mut next_output);
 
         assert_eq!(outputs.len(), 5);
@@ -2121,7 +2222,7 @@ mod tests {
         let output_interval = 10.0;
         let mut next_stream = stream_interval;
 
-        let (outputs, _, _) =
+        let (outputs, _, _, _) =
             compute_output_chunk("test", &system, initial, 0.0, 20.0, 1.0, stream_interval, &mut next_stream);
 
         assert_eq!(outputs.len(), 10); // 20s / 2s = 10 stream outputs
@@ -2163,7 +2264,7 @@ mod tests {
 
         // Chunked
         let mut next_output = 10.0;
-        let (chunk_outputs, _, _) =
+        let (chunk_outputs, _, _, _) =
             compute_output_chunk("test", &system, initial, 0.0, 100.0, 10.0, 10.0, &mut next_output);
 
         assert_eq!(chunk_outputs.len(), step_outputs.len());
@@ -2571,5 +2672,13 @@ mod tests {
         let spec = parse_sat_spec("altitude=400,id=my-sat", KnownBody::Earth);
         let path = spec.entity_path();
         assert_eq!(path.to_string(), "/world/sat/my-sat");
+    }
+
+    #[test]
+    fn build_orbital_system_sets_body_radius() {
+        let body = KnownBody::Earth;
+        let spec = parse_sat_spec("altitude=400", body);
+        let system = build_orbital_system(&body, body.properties().mu, None, &spec);
+        assert_eq!(system.body_radius, Some(body.properties().radius));
     }
 }

@@ -12,6 +12,8 @@ pub struct OrbitalSystem {
     /// Initial epoch corresponding to integration time t=0.
     /// Used to compute absolute epoch for time-dependent perturbations (e.g., third-body).
     pub epoch_0: Option<Epoch>,
+    /// Equatorial radius of the central body [km]. Used for collision detection.
+    pub body_radius: Option<f64>,
 }
 
 impl OrbitalSystem {
@@ -21,6 +23,7 @@ impl OrbitalSystem {
             gravity,
             perturbations: Vec::new(),
             epoch_0: None,
+            body_radius: None,
         }
     }
 
@@ -31,6 +34,11 @@ impl OrbitalSystem {
 
     pub fn with_epoch(mut self, epoch: Epoch) -> Self {
         self.epoch_0 = Some(epoch);
+        self
+    }
+
+    pub fn with_body_radius(mut self, radius: f64) -> Self {
+        self.body_radius = Some(radius);
         self
     }
 }
@@ -98,6 +106,19 @@ mod tests {
         // Should be bit-for-bit identical
         assert_eq!(final_tb.position, final_os.position);
         assert_eq!(final_tb.velocity, final_os.velocity);
+    }
+
+    #[test]
+    fn orbital_system_with_body_radius() {
+        let system =
+            OrbitalSystem::new(MU_EARTH, Box::new(PointMass)).with_body_radius(R_EARTH);
+        assert_eq!(system.body_radius, Some(R_EARTH));
+    }
+
+    #[test]
+    fn orbital_system_default_no_body_radius() {
+        let system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass));
+        assert_eq!(system.body_radius, None);
     }
 
     fn earth_j2_system() -> OrbitalSystem {

@@ -1,3 +1,5 @@
+use std::ops::ControlFlow;
+
 use nalgebra::Vector3;
 
 /// State of a dynamical system with position and velocity vectors.
@@ -95,6 +97,74 @@ impl Rk4 {
 
         state
     }
+
+    /// Integrate a dynamical system with event detection and NaN/Inf checking.
+    ///
+    /// After each step:
+    /// 1. Checks for NaN/Inf in state → returns `IntegrationOutcome::Error`
+    /// 2. Calls `callback(t, &state)`
+    /// 3. Calls `event_check(t, &state)` → if `Break(reason)`, returns `Terminated`
+    ///
+    /// The existing `integrate` method is unchanged for backward compatibility.
+    pub fn integrate_with_events<S, F, E, B>(
+        system: &S,
+        initial: State,
+        t0: f64,
+        t_end: f64,
+        dt: f64,
+        mut callback: F,
+        event_check: E,
+    ) -> IntegrationOutcome<B>
+    where
+        S: DynamicalSystem,
+        F: FnMut(f64, &State),
+        E: Fn(f64, &State) -> ControlFlow<B>,
+    {
+        let mut state = initial;
+        let mut t = t0;
+
+        while t < t_end {
+            let h = dt.min(t_end - t);
+            state = Self::step(system, t, &state, h);
+            t += h;
+
+            // Check for NaN/Inf
+            if !state
+                .position
+                .iter()
+                .chain(state.velocity.iter())
+                .all(|v| v.is_finite())
+            {
+                return IntegrationOutcome::Error(IntegrationError::NonFiniteState { t });
+            }
+
+            callback(t, &state);
+
+            if let ControlFlow::Break(reason) = event_check(t, &state) {
+                return IntegrationOutcome::Terminated { state, t, reason };
+            }
+        }
+
+        IntegrationOutcome::Completed(state)
+    }
+}
+
+/// Reason the integration was stopped by the integrator itself.
+#[derive(Debug, Clone, PartialEq)]
+pub enum IntegrationError {
+    /// A NaN or Inf was detected in the state after a step.
+    NonFiniteState { t: f64 },
+}
+
+/// Outcome of an integration with event detection.
+#[derive(Debug, Clone)]
+pub enum IntegrationOutcome<B> {
+    /// Integration completed normally (reached t_end).
+    Completed(State),
+    /// Integration was terminated early by the event checker.
+    Terminated { state: State, t: f64, reason: B },
+    /// Integration was aborted due to a numerical error.
+    Error(IntegrationError),
 }
 
 #[cfg(test)]
@@ -418,5 +488,143 @@ mod tests {
             max_energy_drift < threshold,
             "Energy drift {max_energy_drift:.2e} exceeds threshold {threshold:.2e}"
         );
+    }
+
+    // --- integrate_with_events tests ---
+
+    #[test]
+    fn integrate_with_events_completes_normally() {
+        let system = UniformMotion {
+            constant_velocity: vector![1.0, 0.0, 0.0],
+        };
+        let initial = State {
+            position: vector![0.0, 0.0, 0.0],
+            velocity: vector![1.0, 0.0, 0.0],
+        };
+        let outcome: IntegrationOutcome<()> = Rk4::integrate_with_events(
+            &system,
+            initial,
+            0.0,
+            1.0,
+            0.1,
+            |_t, _state| {},
+            |_t, _state| ControlFlow::Continue(()),
+        );
+        match outcome {
+            IntegrationOutcome::Completed(state) => {
+                assert!((state.position.x - 1.0).abs() < 1e-12);
+            }
+            _ => panic!("Expected Completed, got other variant"),
+        }
+    }
+
+    #[test]
+    fn integrate_with_events_terminates_on_event() {
+        let system = UniformMotion {
+            constant_velocity: vector![1.0, 0.0, 0.0],
+        };
+        let initial = State {
+            position: vector![0.0, 0.0, 0.0],
+            velocity: vector![1.0, 0.0, 0.0],
+        };
+        let outcome = Rk4::integrate_with_events(
+            &system,
+            initial,
+            0.0,
+            10.0,
+            0.1,
+            |_t, _state| {},
+            |_t, state| {
+                if state.position.x > 0.5 {
+                    ControlFlow::Break("crossed threshold")
+                } else {
+                    ControlFlow::Continue(())
+                }
+            },
+        );
+        match outcome {
+            IntegrationOutcome::Terminated { t, reason, .. } => {
+                assert!(t < 10.0, "Should terminate early, got t={t}");
+                // Position crosses 0.5 at t≈0.5; with dt=0.1, detected at t=0.6
+                assert!(
+                    t > 0.4 && t < 0.7,
+                    "Should terminate around t=0.5-0.6, got t={t}"
+                );
+                assert_eq!(reason, "crossed threshold");
+            }
+            _ => panic!("Expected Terminated"),
+        }
+    }
+
+    #[test]
+    fn integrate_with_events_detects_nan() {
+        // System that produces NaN after a few steps by returning Inf acceleration
+        struct ExplodingSystem;
+        impl DynamicalSystem for ExplodingSystem {
+            fn derivatives(&self, t: f64, state: &State) -> StateDerivative {
+                // After t > 0.3, return Inf to simulate numerical blow-up
+                let accel = if t > 0.3 {
+                    vector![f64::INFINITY, 0.0, 0.0]
+                } else {
+                    vector![0.0, 0.0, 0.0]
+                };
+                StateDerivative {
+                    velocity: state.velocity,
+                    acceleration: accel,
+                }
+            }
+        }
+
+        let initial = State {
+            position: vector![1.0, 0.0, 0.0],
+            velocity: vector![0.0, 0.0, 0.0],
+        };
+        let outcome: IntegrationOutcome<()> = Rk4::integrate_with_events(
+            &ExplodingSystem,
+            initial,
+            0.0,
+            10.0,
+            0.1,
+            |_t, _state| {},
+            |_t, _state| ControlFlow::Continue(()),
+        );
+        match outcome {
+            IntegrationOutcome::Error(IntegrationError::NonFiniteState { t }) => {
+                assert!(t > 0.3, "NaN should be detected after blow-up, got t={t}");
+            }
+            _ => panic!("Expected NonFiniteState error"),
+        }
+    }
+
+    #[test]
+    fn integrate_with_events_callback_fires_on_termination_step() {
+        let system = UniformMotion {
+            constant_velocity: vector![1.0, 0.0, 0.0],
+        };
+        let initial = State {
+            position: vector![0.0, 0.0, 0.0],
+            velocity: vector![1.0, 0.0, 0.0],
+        };
+        let mut callback_count = 0;
+        let outcome = Rk4::integrate_with_events(
+            &system,
+            initial,
+            0.0,
+            10.0,
+            1.0,
+            |_t, _state| {
+                callback_count += 1;
+            },
+            |_t, state| {
+                if state.position.x > 2.5 {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            },
+        );
+        // Callback fires for t=1, t=2, t=3 (terminated at t=3)
+        assert_eq!(callback_count, 3);
+        assert!(matches!(outcome, IntegrationOutcome::Terminated { .. }));
     }
 }
