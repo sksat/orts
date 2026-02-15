@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildMultiChartData } from "./buildMultiChartData.js";
+import { computeGlobalLatestT } from "./computeGlobalLatestT.js";
 
 /** Minimal ChartDataMap for testing. */
 type ChartDataMap = { t: Float64Array; [key: string]: Float64Array };
@@ -95,5 +96,46 @@ describe("buildMultiChartData", () => {
     const alt = result!.altitude!;
     expect(alt.series).toHaveLength(1);
     expect(alt.series[0].label).toBe("SSO");
+  });
+});
+
+/** Minimal mock that satisfies the { latestT: number } interface. */
+function mockBuf(latestT: number) {
+  return { latestT };
+}
+
+describe("computeGlobalLatestT", () => {
+  it("returns the maximum latestT across all buffers", () => {
+    const buffers = new Map([
+      ["sat-a", mockBuf(1000)],
+      ["sat-b", mockBuf(2000)],
+    ]);
+
+    expect(computeGlobalLatestT(buffers)).toBe(2000);
+  });
+
+  it("uses surviving satellite latestT when one is frozen", () => {
+    const buffers = new Map([
+      ["terminated", mockBuf(80000)],
+      ["alive", mockBuf(90000)],
+    ]);
+
+    // Should be 90000 (the surviving satellite's time), not 80000
+    expect(computeGlobalLatestT(buffers)).toBe(90000);
+  });
+
+  it("returns -Infinity when no buffers exist", () => {
+    const buffers = new Map<string, { latestT: number }>();
+    expect(computeGlobalLatestT(buffers)).toBe(-Infinity);
+  });
+
+  it("returns -Infinity when buffers have no data", () => {
+    const buffers = new Map([["empty", mockBuf(-Infinity)]]);
+    expect(computeGlobalLatestT(buffers)).toBe(-Infinity);
+  });
+
+  it("handles single buffer", () => {
+    const buffers = new Map([["only", mockBuf(500)]]);
+    expect(computeGlobalLatestT(buffers)).toBe(500);
   });
 });

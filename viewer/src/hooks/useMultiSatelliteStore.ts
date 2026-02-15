@@ -17,6 +17,7 @@ import {
   IngestBuffer,
 } from "@orts/uneri";
 import { buildMultiChartData, type SatelliteConfig, type MultiChartDataMap } from "./buildMultiChartData.js";
+import { computeGlobalLatestT } from "./computeGlobalLatestT.js";
 
 export type { SatelliteConfig, MultiChartDataMap } from "./buildMultiChartData.js";
 export { buildMultiChartData } from "./buildMultiChartData.js";
@@ -162,13 +163,16 @@ export function useMultiSatelliteStore<T extends TimePoint>(
           try {
             const perSatData = new Map<string, ChartDataMap>();
 
+            // Use a unified tMin across all satellites so they share the same
+            // time window. Without this, a terminated satellite's frozen latestT
+            // would cause its query to cover a stale range, creating a wide gap
+            // in the aligned chart time axis.
+            const globalLatest = computeGlobalLatestT(buffersRef.current);
+            const tMin = computeTMin(timeRangeRef.current, globalLatest);
+
             for (const cfg of configsRef.current) {
               if (!hasData.has(cfg.id)) continue;
               const schema = makeSatelliteSchema(baseSchemaRef.current, cfg.id);
-              const buf = buffersRef.current.get(cfg.id);
-              const tMin = buf
-                ? computeTMin(timeRangeRef.current, buf.latestT)
-                : undefined;
               const result = await queryDerived(conn, schema, tMin, maxPointsRef.current);
               if (result.t.length > 0) {
                 perSatData.set(cfg.id, result);
