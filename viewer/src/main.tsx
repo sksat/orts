@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import "@orts/uneri/style.css";
+import "uneri/style.css";
 import { App } from "./App.js";
 
 const root = document.getElementById("root");

@@ -37,7 +37,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build uneri
-        run: pnpm --filter @orts/uneri build
+        run: pnpm --filter uneri build
 
       - name: Build viewer
         run: pnpm --filter orts-viewer build

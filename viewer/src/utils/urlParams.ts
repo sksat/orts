@@ -1,4 +1,4 @@
-import type { TimeRange } from "@orts/uneri";
+import type { TimeRange } from "uneri";
 
 /**
  * Read the `timeRange` query parameter from the current URL.

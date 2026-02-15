@@ -63,9 +63,6 @@ importers:
       '@duckdb/duckdb-wasm':
         specifier: 1.33.1-dev18.0
         version: 1.33.1-dev18.0
-      '@orts/uneri':
-        specifier: workspace:*
-        version: link:../packages/uneri
       '@react-three/drei':
         specifier: ^10.7.7
         version: 10.7.7(@react-three/fiber@9.5.0(@types/react@19.2.13)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(three@0.170.0))(@types/react@19.2.13)(@types/three@0.170.0)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(three@0.170.0)
@@ -81,6 +78,9 @@ importers:
       three:
         specifier: ^0.170.0
         version: 0.170.0
+      uneri:
+        specifier: workspace:*
+        version: link:../packages/uneri
       uplot:
         specifier: ^1.6.32
         version: 1.6.32

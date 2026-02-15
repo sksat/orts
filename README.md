@@ -30,7 +30,7 @@ Rust core for simulation with a React-based real-time 3D viewer connected via We
 
 | Package | Description |
 |---------|-------------|
-| `@orts/uneri` | DuckDB-wasm + uPlot time-series charting library |
+| `uneri` | DuckDB-wasm + uPlot time-series charting library |
 | `orts-viewer` | Real-time 3D orbit viewer (React + R3F) |
 
 ## Quick Start

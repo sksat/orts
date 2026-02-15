@@ -1,4 +1,4 @@
-// @orts/uneri - DuckDB + uPlot time-series charting library
+// uneri - DuckDB + uPlot time-series charting library
 
 // Types
 export type {

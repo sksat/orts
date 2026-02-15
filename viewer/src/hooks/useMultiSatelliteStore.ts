@@ -14,7 +14,7 @@ import {
   DISPLAY_MAX_POINTS,
   COMPACT_DEFAULTS,
   IngestBuffer,
-} from "@orts/uneri";
+} from "uneri";
 import { buildMultiChartData, type SatelliteConfig, type MultiChartDataMap } from "./buildMultiChartData.js";
 import { computeUnifiedTMin } from "./computeGlobalLatestT.js";
 

@@ -125,7 +125,7 @@ export function App() {
         minHeight: "100vh",
       }}
     >
-      <h1>@orts/uneri: Mixed-Density Test</h1>
+      <h1>uneri: Mixed-Density Test</h1>
       <p data-testid="points-received">
         Points received: {pointsReceived} | Chart points:{" "}
         {data?.t?.length ?? 0} | Buffer latestT:{" "}

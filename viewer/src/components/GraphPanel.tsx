@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { TimeSeriesChart, type TimeRange, type ChartDataMap } from "@orts/uneri";
+import { TimeSeriesChart, type TimeRange, type ChartDataMap } from "uneri";
 import type { MultiChartDataMap } from "../hooks/buildMultiChartData.js";
 
 const TIME_RANGE_OPTIONS: { label: string; value: TimeRange }[] = [

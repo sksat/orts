@@ -100,7 +100,7 @@ export function App() {
         minHeight: "100vh",
       }}
     >
-      <h1>@orts/uneri Example: Multi-Series</h1>
+      <h1>uneri Example: Multi-Series</h1>
       <p>Two sine waves with different frequencies on the same chart.</p>
       <TimeSeriesChart
         title="sin(t) vs sin(3t)"

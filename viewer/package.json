@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@duckdb/duckdb-wasm": "1.33.1-dev18.0",
-    "@orts/uneri": "workspace:*",
+    "uneri": "workspace:*",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "react": "^19.2.4",

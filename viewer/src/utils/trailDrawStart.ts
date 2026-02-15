@@ -1,5 +1,5 @@
 import type { OrbitPoint } from "../orbit.js";
-import type { TimeRange } from "@orts/uneri";
+import type { TimeRange } from "uneri";
 
 /**
  * Compute the draw-start index for a replay-mode points array.

@@ -13,7 +13,7 @@ import {
   quantizeChartTime,
   type TimeRange,
   type ChartDataMap,
-} from "@orts/uneri";
+} from "uneri";
 import { createOrbitSchema } from "./db/orbitSchema.js";
 import { TrailBuffer } from "./utils/TrailBuffer.js";
 import { parseOrbitCSVWithMetadata, CSVMetadata, OrbitPoint } from "./orbit.js";

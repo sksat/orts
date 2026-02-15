@@ -1,18 +1,18 @@
-import { alignTimeSeries, type NamedTimeSeries } from "@orts/uneri/align";
+import { alignTimeSeries, type NamedTimeSeries } from "uneri/align";
 
-/** Generic chart data: keyed by column name. Compatible with @orts/uneri ChartDataMap. */
+/** Generic chart data: keyed by column name. Compatible with uneri ChartDataMap. */
 interface ChartDataMap {
   t: Float64Array;
   [derivedName: string]: Float64Array;
 }
 
-/** Configuration for a single series. Compatible with @orts/uneri SeriesConfig. */
+/** Configuration for a single series. Compatible with uneri SeriesConfig. */
 interface SeriesConfig {
   label: string;
   color: string;
 }
 
-/** Multi-series data. Compatible with @orts/uneri MultiSeriesData. */
+/** Multi-series data. Compatible with uneri MultiSeriesData. */
 export interface MultiSeriesData {
   t: Float64Array;
   values: Float64Array[];

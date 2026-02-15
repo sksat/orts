@@ -56,13 +56,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build uneri
-        run: pnpm --filter @orts/uneri build
+        run: pnpm --filter uneri build
 
       - name: Build viewer
         run: pnpm --filter orts-viewer build
 
       - name: Test uneri
-        run: pnpm --filter @orts/uneri test
+        run: pnpm --filter uneri test
 
       - name: Test viewer
         run: pnpm --filter orts-viewer test
@@ -87,7 +87,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build uneri
-        run: pnpm --filter @orts/uneri build
+        run: pnpm --filter uneri build
 
       - name: Cache Playwright browsers
         id: playwright-cache
@@ -139,7 +139,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build uneri
-        run: pnpm --filter @orts/uneri build
+        run: pnpm --filter uneri build
 
       - name: Cache Playwright browsers
         id: playwright-cache

@@ -1,4 +1,4 @@
-# @orts/uneri
+# uneri
 
 DuckDB-wasm + uPlot time-series charting library for real-time streaming data.
 

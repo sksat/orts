@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import type { OrbitPoint } from "../orbit.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
-import type { TimeRange } from "@orts/uneri";
+import type { TimeRange } from "uneri";
 
 type RealtimeMode = "live" | "paused" | "playing";
 

@@ -1,4 +1,4 @@
-import type { TableSchema } from "@orts/uneri";
+import type { TableSchema } from "uneri";
 import type { OrbitPoint } from "../orbit.js";
 
 const MU_EARTH = 398600.4418;
