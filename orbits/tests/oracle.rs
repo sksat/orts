@@ -12,7 +12,7 @@
 //! - Third-body perturbation effects at GEO
 
 use nalgebra::vector;
-use orts_coords::epoch::Epoch;
+use orts_kaname::epoch::Epoch;
 use orts_integrator::{Rk4, State};
 use orts_orbits::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use orts_orbits::drag::AtmosphericDrag;

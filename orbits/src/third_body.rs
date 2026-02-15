@@ -1,5 +1,5 @@
 use nalgebra::Vector3;
-use orts_coords::epoch::Epoch;
+use orts_kaname::epoch::Epoch;
 use orts_integrator::State;
 
 use crate::perturbations::ForceModel;
@@ -25,7 +25,7 @@ impl ThirdBodyGravity {
     pub fn sun() -> Self {
         Self {
             mu_body: crate::constants::MU_SUN,
-            body_position_fn: orts_coords::sun::sun_position_eci,
+            body_position_fn: orts_kaname::sun::sun_position_eci,
         }
     }
 
@@ -35,7 +35,7 @@ impl ThirdBodyGravity {
     pub fn moon() -> Self {
         Self {
             mu_body: 4902.800066, // μ_Moon [km³/s²]
-            body_position_fn: orts_coords::moon::moon_position_eci,
+            body_position_fn: orts_kaname::moon::moon_position_eci,
         }
     }
 }

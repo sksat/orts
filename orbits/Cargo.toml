@@ -7,7 +7,7 @@ repository.workspace = true
 
 [dependencies]
 nalgebra.workspace = true
-orts-coords.workspace = true
+orts-kaname.workspace = true
 orts-integrator.workspace = true
 serde.workspace = true
 serde_json.workspace = true

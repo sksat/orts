@@ -3015,22 +3015,15 @@ dependencies = [
  "clap",
  "futures-util",
  "nalgebra",
- "orts-coords",
  "orts-datamodel",
  "orts-integrator",
+ "orts-kaname",
  "orts-orbits",
  "serde",
  "serde_json",
  "tokio",
  "tokio-tungstenite",
  "ureq 3.2.0",
-]
-
-[[package]]
-name = "orts-coords"
-version = "0.0.0"
-dependencies = [
- "nalgebra",
 ]
 
 [[package]]
@@ -3049,12 +3042,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "orts-kaname"
+version = "0.0.0"
+dependencies = [
+ "nalgebra",
+]
+
+[[package]]
 name = "orts-orbits"
 version = "0.0.0"
 dependencies = [
  "nalgebra",
- "orts-coords",
  "orts-integrator",
+ "orts-kaname",
  "serde",
  "serde_json",
 ]

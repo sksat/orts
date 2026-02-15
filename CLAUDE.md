@@ -25,7 +25,7 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 - `cargo run --bin orts -- --serve --dt 1 --output-interval 10` — fine dt with decimated output
 - `cargo test -p orts-integrator` — test only the integrator crate
 - `cargo test -p orts-orbits` — test only the orbits crate
-- `cargo test -p orts-coords` — test only the coords crate
+- `cargo test -p orts-kaname` — test only the kaname crate
 - `cargo test -p orts` — run CLI E2E tests
 
 ### Viewer (React + TypeScript)

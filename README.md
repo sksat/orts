@@ -21,7 +21,7 @@ Rust core for simulation with a React-based real-time 3D viewer connected via We
 | Crate | Description |
 |-------|-------------|
 | `orts-integrator` | Numerical integrators (RK4) |
-| `orts-coords` | Coordinate systems, epoch, sun position |
+| `orts-kaname` | Coordinate systems, epoch, sun position |
 | `orts-orbits` | Orbital mechanics (two-body, Keplerian elements) |
 | `orts-datamodel` | ECS-inspired data model with Rerun SDK integration |
 | `orts` | CLI interface (run, serve, convert) |

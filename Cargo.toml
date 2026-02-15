@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "integrator",
     "orbits",
-    "coords",
+    "kaname",
     "cli",
     "datamodel",
 ]
@@ -17,7 +17,7 @@ repository = "https://github.com/sksat/orts"
 [workspace.dependencies]
 orts-integrator = { path = "integrator" }
 orts-orbits = { path = "orbits" }
-orts-coords = { path = "coords" }
+orts-kaname = { path = "kaname" }
 orts-datamodel = { path = "datamodel" }
 nalgebra = "0.34"
 clap = { version = "4", features = ["derive"] }

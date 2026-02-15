@@ -1,7 +1,7 @@
 use std::fmt;
 use std::f64::consts::PI;
 
-use orts_coords::epoch::Epoch;
+use orts_kaname::epoch::Epoch;
 
 use crate::kepler::{mean_to_true_anomaly, KeplerianElements};
 

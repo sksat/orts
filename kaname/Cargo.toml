@@ -1,5 +1,5 @@
 [package]
-name = "orts-coords"
+name = "orts-kaname"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
