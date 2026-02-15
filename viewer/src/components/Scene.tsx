@@ -186,7 +186,7 @@ export function Scene({
               epochJd={epochJd}
               originPosition={originPosition}
             />
-            {pos && !isCenteredSat && (
+            {pos && (
               <Satellite
                 position={pos}
                 scaleRadius={centralBodyRadius}
@@ -196,6 +196,7 @@ export function Scene({
                 satId={satId}
                 satName={satelliteNames?.get(satId)}
                 originPosition={originPosition}
+                hideSphereFallback={isCenteredSat}
               />
             )}
           </group>
@@ -226,13 +227,14 @@ export function Scene({
           />
         )
       )}
-      {!multiSatEntries && satellitePosition && !isSatCentered && (
+      {!multiSatEntries && satellitePosition && (
         <Satellite
           position={satellitePosition}
           scaleRadius={centralBodyRadius}
           referenceFrame={referenceFrame}
           epochJd={epochJd ?? undefined}
           originPosition={originPosition}
+          hideSphereFallback={isSatCentered}
         />
       )}
     </Canvas>

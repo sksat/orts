@@ -25,6 +25,8 @@ interface SatelliteProps {
   satName?: string | null;
   /** Origin position in ECI [km] for the current frame center, or null for central body. */
   originPosition?: [number, number, number] | null;
+  /** When true, suppress the sphere fallback (used for centered satellite at origin). */
+  hideSphereFallback?: boolean;
 }
 
 const DEFAULT_REF_FRAME: ReferenceFrame = { center: { type: "central_body" }, orientation: "inertial" };
@@ -51,6 +53,7 @@ export function Satellite({
   satId,
   satName,
   originPosition = null,
+  hideSphereFallback = false,
 }: SatelliteProps) {
   let px = position.x, py = position.y, pz = position.z;
 
@@ -81,5 +84,6 @@ export function Satellite({
     );
   }
 
+  if (hideSphereFallback) return null;
   return <SphereMarker position={scenePos} color={color} />;
 }
