@@ -10,7 +10,7 @@ use orts_datamodel::entity_path::EntityPath;
 use orts_datamodel::recording::Recording;
 use orts_datamodel::timeline::TimePoint;
 use orts_coords::epoch::Epoch;
-use orts_integrator::{IntegrationOutcome, Rk4, State};
+use orts_integrator::{DormandPrince, DynamicalSystem, IntegrationOutcome, Rk4, State, Tolerances};
 use orts_orbits::{body::KnownBody, drag::AtmosphericDrag, events, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, third_body::ThirdBodyGravity, tle::Tle};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -115,6 +115,26 @@ struct SimArgs {
     /// Format: key=value,key=value (keys: altitude, norad-id, tle-line1, tle-line2, id, name)
     #[arg(long = "sat", num_args = 1)]
     sats: Vec<String>,
+
+    /// Integration method
+    #[arg(long, default_value = "dp45")]
+    integrator: IntegratorChoice,
+
+    /// Absolute tolerance for adaptive integrator (dp45)
+    #[arg(long, default_value_t = 1e-10)]
+    atol: f64,
+
+    /// Relative tolerance for adaptive integrator (dp45)
+    #[arg(long, default_value_t = 1e-8)]
+    rtol: f64,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum IntegratorChoice {
+    /// Fixed-step 4th-order Runge-Kutta
+    Rk4,
+    /// Adaptive Dormand-Prince RK5(4) (recommended)
+    Dp45,
 }
 
 /// How the orbit was specified on the command line.
@@ -203,6 +223,8 @@ struct SimParams {
     stream_interval: f64,
     epoch: Option<Epoch>,
     satellites: Vec<SatelliteSpec>,
+    integrator: IntegratorChoice,
+    tolerances: Tolerances,
 }
 
 impl SimParams {
@@ -276,6 +298,8 @@ impl SimParams {
             stream_interval,
             epoch,
             satellites,
+            integrator: args.integrator,
+            tolerances: Tolerances { atol: args.atol, rtol: args.rtol },
         }
     }
 
@@ -878,22 +902,35 @@ fn run_simulation(params: &SimParams) -> Recording {
         let mut last_output_t = 0.0_f64;
         let body_radius = params.body.properties().radius;
         let event_checker = events::collision_check(body_radius);
-        let outcome = Rk4::integrate_with_events(
-            &system,
-            initial,
-            0.0,
-            sat.period,
-            params.dt,
-            |t, state| {
-                if t >= next_output_t - 1e-9 {
-                    record_state(&mut rec, t, step, state);
-                    step += 1;
-                    last_output_t = t;
-                    next_output_t += params.output_interval;
-                }
-            },
-            &event_checker,
-        );
+        let callback = |t: f64, state: &State| {
+            if t >= next_output_t - 1e-9 {
+                record_state(&mut rec, t, step, state);
+                step += 1;
+                last_output_t = t;
+                next_output_t += params.output_interval;
+            }
+        };
+        let outcome = match params.integrator {
+            IntegratorChoice::Rk4 => Rk4::integrate_with_events(
+                &system,
+                initial,
+                0.0,
+                sat.period,
+                params.dt,
+                callback,
+                &event_checker,
+            ),
+            IntegratorChoice::Dp45 => DormandPrince::integrate_adaptive_with_events(
+                &system,
+                initial,
+                0.0,
+                sat.period,
+                params.dt,
+                &params.tolerances,
+                callback,
+                &event_checker,
+            ),
+        };
 
         match &outcome {
             IntegrationOutcome::Completed(final_state) => {
@@ -1229,16 +1266,29 @@ async fn simulation_loop(
                     target_t.min(ss.orbit_end_t)
                 };
 
-                let (outputs, new_state, new_t, termination) = compute_output_chunk(
-                    &ss.spec.id,
-                    &ss.system,
-                    ss.state.clone(),
-                    ss.t,
-                    sub_end,
-                    dt,
-                    params.stream_interval,
-                    &mut ss.next_stream_t,
-                );
+                let (outputs, new_state, new_t, termination) = match params.integrator {
+                    IntegratorChoice::Rk4 => compute_output_chunk(
+                        &ss.spec.id,
+                        &ss.system,
+                        ss.state.clone(),
+                        ss.t,
+                        sub_end,
+                        dt,
+                        params.stream_interval,
+                        &mut ss.next_stream_t,
+                    ),
+                    IntegratorChoice::Dp45 => compute_output_chunk_adaptive(
+                        &ss.spec.id,
+                        &ss.system,
+                        ss.state.clone(),
+                        ss.t,
+                        sub_end,
+                        dt,
+                        &params.tolerances,
+                        params.stream_interval,
+                        &mut ss.next_stream_t,
+                    ),
+                };
 
                 ss.state = new_state;
                 ss.t = new_t;
@@ -1533,6 +1583,109 @@ fn compute_output_chunk(
         if t >= *next_output_t - 1e-9 {
             outputs.push(make_history_state(satellite_id, t, &state.position, &state.velocity, mu));
             *next_output_t += output_interval;
+        }
+    }
+
+    (outputs, state, t, None)
+}
+
+/// Adaptive Dormand-Prince version of compute_output_chunk.
+/// Step size adapts automatically; outputs are produced at output_interval boundaries
+/// by clamping the step to not overshoot the next output time.
+#[allow(clippy::too_many_arguments)]
+fn compute_output_chunk_adaptive(
+    satellite_id: &str,
+    system: &OrbitalSystem,
+    mut state: State,
+    t_start: f64,
+    chunk_end: f64,
+    dt_hint: f64,
+    tol: &Tolerances,
+    output_interval: f64,
+    next_output_t: &mut f64,
+) -> (Vec<HistoryState>, State, f64, Option<TerminationReason>) {
+    let mu = system.mu;
+    let body_radius = system.body_radius;
+    let mut outputs = Vec::new();
+    let mut t = t_start;
+    let mut dt = dt_hint;
+    let dt_min = 1e-12 * (chunk_end - t_start).abs().max(1.0);
+
+    let mut k1 = system.derivatives(t, &state);
+
+    while t < chunk_end - 1e-12 {
+        // Clamp dt to not overshoot chunk_end or next_output_t
+        let h = dt.min(chunk_end - t).min(*next_output_t - t);
+        if h < 1e-14 {
+            break;
+        }
+
+        let (y5, err_pos, err_vel, k7) =
+            DormandPrince::step_with_k1(system, t, &state, h, &k1);
+
+        // Check for NaN/Inf
+        if !y5
+            .position
+            .iter()
+            .chain(y5.velocity.iter())
+            .all(|v| v.is_finite())
+        {
+            return (outputs, y5, t + h, Some(TerminationReason::NonFiniteState));
+        }
+
+        // Compute error norm and decide accept/reject
+        let err = orts_integrator::error_norm(&state, &y5, &err_pos, &err_vel, tol);
+
+        if err <= 1.0 {
+            // Accept step
+            state = y5;
+            t += h;
+            k1 = k7;
+
+            // Check for collision
+            if let Some(r_body) = body_radius {
+                let r = state.position.magnitude();
+                if r < r_body {
+                    return (
+                        outputs,
+                        state,
+                        t,
+                        Some(TerminationReason::Collision {
+                            altitude_km: r - r_body,
+                        }),
+                    );
+                }
+            }
+
+            // Output at interval boundaries
+            if t >= *next_output_t - 1e-9 {
+                outputs.push(make_history_state(
+                    satellite_id,
+                    t,
+                    &state.position,
+                    &state.velocity,
+                    mu,
+                ));
+                *next_output_t += output_interval;
+            }
+
+            // Grow step size
+            let factor = if err < 1e-15 {
+                5.0
+            } else {
+                (0.9 * err.powf(-0.2)).clamp(0.2, 5.0)
+            };
+            dt = h * factor;
+        } else {
+            // Reject step, shrink dt
+            let factor = (0.9 * err.powf(-0.2)).clamp(0.2, 1.0);
+            dt = h * factor;
+
+            if dt < dt_min {
+                return (outputs, state, t, Some(TerminationReason::NonFiniteState));
+            }
+
+            // k1 is still valid (state unchanged)
         }
     }
 
@@ -1909,6 +2062,9 @@ mod tests {
             tle_line2: None,
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
@@ -1931,6 +2087,9 @@ mod tests {
             tle_line2: None,
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.dt - 1.0).abs() < 1e-9);
@@ -1953,6 +2112,9 @@ mod tests {
             tle_line2: None,
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.stream_interval - 5.0).abs() < 1e-9);
@@ -1970,6 +2132,9 @@ mod tests {
             tle_line2: None,
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params2 = SimParams::from_sim_args(&args2, false);
         assert!((params2.stream_interval - 10.0).abs() < 1e-9);
@@ -1989,6 +2154,9 @@ mod tests {
             tle_line2: None,
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!(params.epoch.is_some());
@@ -2078,6 +2246,9 @@ mod tests {
             tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
             norad_id: Some(25544),
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         SimParams::from_sim_args(&args, false);
     }
@@ -2298,6 +2469,9 @@ mod tests {
             tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -2335,6 +2509,9 @@ mod tests {
             tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, false);
         let state = params.satellites[0].initial_state(params.mu);
@@ -2369,6 +2546,9 @@ mod tests {
             tle_line2: None,
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -2391,6 +2571,9 @@ mod tests {
             tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -2538,6 +2721,9 @@ mod tests {
             tle_line2: None,
             norad_id: None,
             sats: vec!["altitude=800,id=sso".to_string(), "altitude=600,id=leo".to_string()],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert_eq!(params.satellites.len(), 2);
@@ -2560,6 +2746,9 @@ mod tests {
             tle_line2: None,
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert_eq!(params.satellites.len(), 1);
@@ -2581,6 +2770,9 @@ mod tests {
             tle_line2: None,
             norad_id: None,
             sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
         };
         let params = SimParams::from_sim_args(&args, true);
         // Should have at least SSO satellite
