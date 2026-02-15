@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -13,6 +13,7 @@ import { rotateZ } from "../frameTransform.js";
 import { type ReferenceFrame, isLegacyEcef, isDefaultEci, DEFAULT_FRAME } from "../referenceFrame.js";
 import { earth_rotation_angle, sun_direction_eci } from "../wasm/kanameInit.js";
 import { transformToLvlh } from "../coordTransform.js";
+import { getDisplayScaleProfile, type DisplayScaleProfile } from "../displayScale.js";
 
 // Set scene up vector before any Three.js objects are created
 // so that Camera, OrbitControls, and all scene objects use the correct convention.
@@ -155,6 +156,46 @@ function SmoothOriginGroup({ children, targetPosition }: {
   return <group ref={groupRef}>{children}</group>;
 }
 
+/**
+ * Dynamically updates camera near/far planes based on the active display scale profile.
+ * Must be rendered inside the Canvas tree.
+ */
+function CameraConfigurator({ profile }: { profile: DisplayScaleProfile }) {
+  const { camera } = useThree();
+
+  useEffect(() => {
+    if (camera instanceof THREE.PerspectiveCamera) {
+      camera.near = profile.cameraNear;
+      camera.far = profile.cameraFar;
+      camera.updateProjectionMatrix();
+    }
+  }, [camera, profile.cameraNear, profile.cameraFar]);
+
+  return null;
+}
+
+/**
+ * Snaps camera distance when transitioning between display scale profiles.
+ * Runs at useFrame priority -2 (before CameraLvlhTracker at -1).
+ */
+function CameraDistanceTransition({ profile }: { profile: DisplayScaleProfile }) {
+  const { camera } = useThree();
+  const prevProfileRef = useRef(profile.name);
+
+  useFrame(() => {
+    if (profile.name !== prevProfileRef.current) {
+      prevProfileRef.current = profile.name;
+      // Snap camera to profile's default distance, keeping current direction
+      const dir = camera.position.clone().normalize();
+      if (dir.length() > 0) {
+        camera.position.copy(dir.multiplyScalar(profile.defaultCameraDistance));
+      }
+    }
+  }, -2);
+
+  return null;
+}
+
 interface SceneProps {
   /** Points array for replay mode. */
   points?: OrbitPoint[] | null;
@@ -207,6 +248,12 @@ export function Scene({
   const isEcef = isLegacyEcef(referenceFrame);
   const isSatCentered = referenceFrame.center.type === "satellite";
   const centeredSatId = referenceFrame.center.type === "satellite" ? referenceFrame.center.id : null;
+
+  // Display scale profile for the current view center
+  const displayProfile = useMemo(
+    () => getDisplayScaleProfile(referenceFrame.center, centralBodyRadius),
+    [referenceFrame.center, centralBodyRadius],
+  );
 
   // Compute origin position for satellite-centered view
   const originPosition: [number, number, number] | null = useMemo(() => {
@@ -336,13 +383,16 @@ export function Scene({
   return (
     <Canvas
       camera={{ position: DEFAULT_CAMERA_POSITION, fov: 60, near: 0.01, far: 1000 }}
+      gl={{ logarithmicDepthBuffer: true }}
       style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
     >
+      <CameraConfigurator profile={displayProfile} />
+      <CameraDistanceTransition profile={displayProfile} />
       <OrbitControls
         enableDamping
         dampingFactor={0.1}
-        minDistance={isSatCentered ? 0.01 : 1.5}
-        maxDistance={100}
+        minDistance={displayProfile.minDistance}
+        maxDistance={displayProfile.maxDistance}
       />
       <CameraLvlhTracker originPosition={originPosition} originVelocity={originVelocity} lvlhActive={lvlhActive} />
 
@@ -368,6 +418,7 @@ export function Scene({
             originPosition={originPosition}
             lvlhAxes={lvlhAxes}
             hideSphereFallback
+            displayProfile={displayProfile}
           />
         );
       })()}
@@ -380,6 +431,7 @@ export function Scene({
           originPosition={originPosition}
           lvlhAxes={lvlhAxes}
           hideSphereFallback
+          displayProfile={displayProfile}
         />
       )}
 
@@ -425,6 +477,7 @@ export function Scene({
                     satName={satelliteNames?.get(satId)}
                     originPosition={originPosition}
                     lvlhAxes={lvlhAxes}
+                    displayProfile={displayProfile}
                   />
                 )}
               </group>
@@ -489,6 +542,7 @@ export function Scene({
                     epochJd={epochJd ?? undefined}
                     satId={satId}
                     satName={satelliteNames?.get(satId)}
+                    displayProfile={displayProfile}
                   />
                 )}
               </group>
@@ -523,6 +577,7 @@ export function Scene({
               scaleRadius={centralBodyRadius}
               referenceFrame={referenceFrame}
               epochJd={epochJd ?? undefined}
+              displayProfile={displayProfile}
             />
           )}
         </SmoothOriginGroup>

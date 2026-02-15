@@ -6,9 +6,10 @@ import { transformToLvlh } from "../coordTransform.js";
 import type { LvlhAxes } from "../sceneFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { SatelliteModel } from "./SatelliteModel.js";
+import type { DisplayScaleProfile } from "../displayScale.js";
 
-/** Radius of the sphere fallback marker in scene units. */
-const SPHERE_RADIUS = 0.005;
+/** Default radius of the sphere fallback marker in scene units (body-centered). */
+const DEFAULT_SPHERE_RADIUS = 0.005;
 
 interface SatelliteProps {
   /** Current interpolated orbit state (position in km). */
@@ -31,14 +32,20 @@ interface SatelliteProps {
   lvlhAxes?: LvlhAxes | null;
   /** When true, suppress the sphere fallback (used for centered satellite at origin). */
   hideSphereFallback?: boolean;
+  /** Active display scale profile. */
+  displayProfile?: DisplayScaleProfile;
 }
 
 const DEFAULT_REF_FRAME: ReferenceFrame = { center: { type: "central_body" }, orientation: "inertial" };
 
-function SphereMarker({ position, color }: { position: [number, number, number]; color: number }) {
+function SphereMarker({ position, color, radius = DEFAULT_SPHERE_RADIUS }: {
+  position: [number, number, number];
+  color: number;
+  radius?: number;
+}) {
   return (
     <mesh position={position}>
-      <sphereGeometry args={[SPHERE_RADIUS, 16, 16]} />
+      <sphereGeometry args={[radius, 16, 16]} />
       <meshBasicMaterial color={color} />
     </mesh>
   );
@@ -59,6 +66,7 @@ export function Satellite({
   originPosition = null,
   lvlhAxes = null,
   hideSphereFallback = false,
+  displayProfile,
 }: SatelliteProps) {
   let scenePos: [number, number, number];
 
@@ -81,15 +89,21 @@ export function Satellite({
   }
 
   const modelConfig = satId ? getSatelliteModelConfig(satId, satName) : null;
+  const sphereRadius = displayProfile?.sphereFallbackRadius ?? DEFAULT_SPHERE_RADIUS;
 
   if (modelConfig) {
     return (
-      <Suspense fallback={<SphereMarker position={scenePos} color={color} />}>
-        <SatelliteModel position={scenePos} config={modelConfig} />
+      <Suspense fallback={<SphereMarker position={scenePos} color={color} radius={sphereRadius} />}>
+        <SatelliteModel
+          position={scenePos}
+          config={modelConfig}
+          displayProfile={displayProfile}
+          centralBodyRadius={scaleRadius}
+        />
       </Suspense>
     );
   }
 
   if (hideSphereFallback) return null;
-  return <SphereMarker position={scenePos} color={color} />;
+  return <SphereMarker position={scenePos} color={color} radius={sphereRadius} />;
 }

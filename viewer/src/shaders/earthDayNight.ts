@@ -1,5 +1,8 @@
 /** Vertex shader for Earth day/night blending. */
 export const earthDayNightVert = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_vertex>
+
 varying vec2 vUv;
 varying vec3 vWorldNormal;
 
@@ -7,11 +10,15 @@ void main() {
   vUv = uv;
   vWorldNormal = normalize((modelMatrix * vec4(normal, 0.0)).xyz);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+
+  #include <logdepthbuf_vertex>
 }
 `;
 
 /** Fragment shader for Earth day/night blending with smooth terminator. */
 export const earthDayNightFrag = /* glsl */ `
+#include <logdepthbuf_pars_fragment>
+
 uniform sampler2D dayMap;
 uniform sampler2D nightMap;
 uniform vec3 sunDirection;
@@ -38,5 +45,7 @@ void main() {
 
   vec3 finalColor = mix(litNight, litDay, blend);
   gl_FragColor = vec4(finalColor, 1.0);
+
+  #include <logdepthbuf_fragment>
 }
 `;

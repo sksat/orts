@@ -2,10 +2,17 @@
 export interface SatelliteModelConfig {
   /** URL to the GLB model file. */
   modelUrl: string;
-  /** Scale factor applied to the loaded model (in scene units). */
+  /** Scale factor applied to the loaded model for body-centered (exaggerated) display. */
   scale: number;
   /** Euler rotation [rx, ry, rz] to orient the model in ECI frame. */
   rotation: [number, number, number];
+  /** Physical span of the real satellite in km (e.g. ISS = 0.109 km). */
+  physicalSpanKm?: number;
+  /**
+   * Native span of the 3D model in model-local units (before any scale).
+   * Used to compute true-scale: trueScale = (physicalSpanKm / bodyRadius) / nativeSpanUnits.
+   */
+  nativeSpanUnits?: number;
 }
 
 const MODEL_REGISTRY: Record<string, SatelliteModelConfig> = {
@@ -14,6 +21,8 @@ const MODEL_REGISTRY: Record<string, SatelliteModelConfig> = {
       "https://assets.science.nasa.gov/content/dam/science/psd/solar/2023/09/i/ISS_stationary.glb",
     scale: 0.0003,
     rotation: [0, 0, 0],
+    physicalSpanKm: 0.109, // ~109 m
+    // nativeSpanUnits: set after measuring GLB bounding box
   },
 };
 
@@ -37,4 +46,28 @@ export function getSatelliteModelConfig(
     }
   }
   return null;
+}
+
+/** Default physical span for satellites without a known size (10 m). */
+const DEFAULT_PHYSICAL_SPAN_KM = 0.010;
+
+/**
+ * Compute the scene-unit scale for a satellite model at true 1:1 physical proportions.
+ *
+ * @param config - Model config (with optional physicalSpanKm / nativeSpanUnits)
+ * @param centralBodyRadius - Central body radius in km
+ * @returns Scale to apply to the model for true-size rendering, or null if
+ *          nativeSpanUnits is unknown (fall back to exaggerated scale).
+ */
+export function computeTrueModelScale(
+  config: SatelliteModelConfig,
+  centralBodyRadius: number,
+): number | null {
+  const nativeSpan = config.nativeSpanUnits;
+  if (nativeSpan == null || nativeSpan <= 0) return null;
+
+  const physicalKm = config.physicalSpanKm ?? DEFAULT_PHYSICAL_SPAN_KM;
+  // physicalKm / centralBodyRadius = desired span in scene units
+  // Divide by nativeSpan to get per-unit scale
+  return (physicalKm / centralBodyRadius) / nativeSpan;
 }
