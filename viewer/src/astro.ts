@@ -1,7 +1,8 @@
 /**
  * Low-precision astronomical computations for visualization.
  *
- * Mirrors the Rust implementations in kaname for use in the viewer.
+ * Earth Rotation Angle (ERA) and ECI→ECEF transforms are handled by the
+ * kaname WASM module. This file retains time formatting and sun direction.
  */
 
 const J2000_JD = 2451545.0;
@@ -29,26 +30,6 @@ export function jdToUTCString(epochJd: number, simTimeSec: number): string {
  * @param simTimeSec  Elapsed simulation time in seconds
  * @returns  Normalized [x, y, z] sun direction in ECI
  */
-/**
- * Compute the Earth Rotation Angle (ERA) in radians.
- *
- * Uses the IERS 2003 formula, matching the Rust implementation in
- * kaname Epoch::gmst(). Result is normalized to [0, 2π).
- *
- * @param epochJd   Julian Date of the simulation start epoch
- * @param simTimeSec  Elapsed simulation time in seconds
- * @returns  ERA in radians, normalized to [0, 2π)
- */
-export function earthRotationAngle(
-  epochJd: number,
-  simTimeSec: number,
-): number {
-  const du = epochJd + simTimeSec / 86400 - J2000_JD;
-  const era = 2 * Math.PI * (0.7790572732640 + 1.00273781191135448 * du);
-  const normalized = era % (2 * Math.PI);
-  return normalized < 0 ? normalized + 2 * Math.PI : normalized;
-}
-
 export function sunDirectionECI(
   epochJd: number,
   simTimeSec: number,

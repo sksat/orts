@@ -8,9 +8,10 @@ import { Satellite } from "./Satellite.js";
 import { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import type { SatelliteInfo } from "../hooks/useWebSocket.js";
-import { earthRotationAngle, sunDirectionECI } from "../astro.js";
+import { sunDirectionECI } from "../astro.js";
 import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "../sceneFrame.js";
 import { rotateZ, type DisplayFrame } from "../frameTransform.js";
+import { earth_rotation_angle } from "../wasm/kanameInit.js";
 
 // Set scene up vector before any Three.js objects are created
 // so that Camera, OrbitControls, and all scene objects use the correct convention.
@@ -86,10 +87,10 @@ export function Scene({
     return new THREE.Vector3(x, y, z);
   }, [epochJd, quantizedSimTime]);
 
-  // Earth rotation angle (ERA) — updates every frame via simTime (not quantized)
+  // Earth rotation angle (ERA) via WASM — updates every frame via simTime (not quantized)
   const era = useMemo(() => {
     if (epochJd == null) return undefined;
-    return earthRotationAngle(epochJd, simTime);
+    return earth_rotation_angle(epochJd, simTime);
   }, [epochJd, simTime]);
 
   // Sun direction in the display frame
@@ -160,7 +161,7 @@ export function Scene({
                 scaleRadius={centralBodyRadius}
                 color={color}
                 displayFrame={displayFrame}
-                era={era}
+                epochJd={epochJd ?? undefined}
                 satId={satId}
                 satName={satelliteNames?.get(satId)}
               />
@@ -196,7 +197,7 @@ export function Scene({
           position={satellitePosition}
           scaleRadius={centralBodyRadius}
           displayFrame={displayFrame}
-          era={era}
+          epochJd={epochJd ?? undefined}
         />
       )}
     </Canvas>

@@ -2,6 +2,21 @@
 /* eslint-disable */
 
 /**
+ * Compute the Earth Rotation Angle (GMST) in radians.
+ *
+ * `epoch_jd`: Julian Date of the simulation epoch
+ * `t`: elapsed simulation time in seconds
+ */
+export function earth_rotation_angle(epoch_jd: number, t: number): number;
+
+/**
+ * Single-point ECI→ECEF transform.
+ *
+ * Returns flat ECEF `[ex, ey, ez]` (3 floats, km).
+ */
+export function eci_to_ecef(x: number, y: number, z: number, epoch_jd: number, t: number): Float32Array;
+
+/**
  * Batch ECI→ECEF transform with per-point time.
  *
  * `positions`: flat `[x0,y0,z0, x1,y1,z1, ...]` (length = N×3, km)
@@ -20,9 +35,11 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly eci_to_ecef_batch: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly eci_to_ecef: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly earth_rotation_angle: (a: number, b: number) => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_start: () => void;
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { jdToUTCString, sunDirectionECI, earthRotationAngle } from "./astro.js";
+import { jdToUTCString, sunDirectionECI } from "./astro.js";
 
 describe("jdToUTCString", () => {
   it("converts J2000.0 epoch to 2000-01-01T12:00:00Z", () => {
@@ -58,42 +58,3 @@ describe("sunDirectionECI", () => {
   });
 });
 
-describe("earthRotationAngle", () => {
-  const TAU = 2 * Math.PI;
-  const J2000_JD = 2451545.0;
-
-  it("returns ~4.895 rad at J2000", () => {
-    // At J2000.0, ERA = 2π × 0.7790572732640 ≈ 4.8949 rad
-    // Matches Rust test: coords/src/epoch.rs gmst_at_j2000
-    const era = earthRotationAngle(J2000_JD, 0);
-    const expected = TAU * 0.7790572732640;
-    expect(Math.abs(era - expected)).toBeLessThan(0.01);
-  });
-
-  it("increases by ~2π × 1.00274 per solar day", () => {
-    // After one solar day (86400s), ERA should increase by ~360.986°
-    // Matches Rust test: coords/src/epoch.rs gmst_increases_one_sidereal_day
-    const era0 = earthRotationAngle(J2000_JD, 0);
-    const era1 = earthRotationAngle(J2000_JD, 86400);
-    const delta = era1 > era0 ? era1 - era0 : era1 + TAU - era0;
-    const expectedDelta = (TAU * 1.00273781191135448) % TAU;
-    expect(Math.abs(delta - expectedDelta)).toBeLessThan(0.001);
-  });
-
-  it("is normalized to [0, 2π)", () => {
-    // ERA should always be in [0, 2π) for any time
-    // Matches Rust test: coords/src/epoch.rs gmst_normalized
-    for (const days of [0, 0.5, 1, 100, 365.25, 3652.5]) {
-      const era = earthRotationAngle(J2000_JD, days * 86400);
-      expect(era).toBeGreaterThanOrEqual(0);
-      expect(era).toBeLessThan(TAU);
-    }
-  });
-
-  it("advances with sim time offset", () => {
-    // Using epochJd with simTimeSec should match epochJd+offset with 0
-    const era1 = earthRotationAngle(J2000_JD, 3600);
-    const era2 = earthRotationAngle(J2000_JD + 3600 / 86400, 0);
-    expect(Math.abs(era1 - era2)).toBeLessThan(1e-10);
-  });
-});

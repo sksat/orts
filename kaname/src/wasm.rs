@@ -40,3 +40,25 @@ pub fn eci_to_ecef_batch(positions: &[f32], times: &[f32], epoch_jd: f64) -> Vec
 
     out
 }
+
+/// Single-point ECI→ECEF transform.
+///
+/// Returns flat ECEF `[ex, ey, ez]` (3 floats, km).
+#[wasm_bindgen]
+pub fn eci_to_ecef(x: f32, y: f32, z: f32, epoch_jd: f64, t: f32) -> Vec<f32> {
+    let epoch = Epoch::from_jd(epoch_jd).add_seconds(t as f64);
+    let gmst = epoch.gmst();
+    let eci = Eci(Vector3::new(x as f64, y as f64, z as f64));
+    let ecef = eci.to_ecef(gmst);
+    vec![ecef.0.x as f32, ecef.0.y as f32, ecef.0.z as f32]
+}
+
+/// Compute the Earth Rotation Angle (GMST) in radians.
+///
+/// `epoch_jd`: Julian Date of the simulation epoch
+/// `t`: elapsed simulation time in seconds
+#[wasm_bindgen]
+pub fn earth_rotation_angle(epoch_jd: f64, t: f64) -> f64 {
+    let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
+    epoch.gmst()
+}

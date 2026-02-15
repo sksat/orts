@@ -2,9 +2,8 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { initKaname } from "./wasm/kanameInit.js";
 import { Scene } from "./components/Scene.js";
 
-// Start loading kaname WASM module immediately (non-blocking).
-// The coordinate transform fallback handles the case where WASM isn't ready yet.
-initKaname().catch(console.error);
+// Start loading kaname WASM module immediately.
+const kanameReady = initKaname();
 import { PlaybackBar } from "./components/PlaybackBar.js";
 import { GraphPanel } from "./components/GraphPanel.js";
 import { usePlayback } from "./hooks/usePlayback.js";
@@ -69,6 +68,10 @@ function getOrCreateIngestBuffer(map: Map<string, IngestBuffer<OrbitPoint>>, id:
 }
 
 export function App() {
+  // --- WASM initialization (must complete before rendering ECEF transforms) ---
+  const [wasmReady, setWasmReady] = useState(false);
+  useEffect(() => { kanameReady.then(() => setWasmReady(true)); }, []);
+
   // --- Mode toggle ---
   const [mode, setMode] = useState<ViewerMode>("realtime");
 
@@ -471,6 +474,8 @@ export function App() {
     }
     return parts.join(" | ");
   }, [simInfo]);
+
+  if (!wasmReady) return null;
 
   return (
     <div

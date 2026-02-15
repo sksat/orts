@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { OrbitPoint } from "../orbit.js";
-import { eciToEcef, type DisplayFrame } from "../frameTransform.js";
+import { type DisplayFrame } from "../frameTransform.js";
+import { eci_to_ecef } from "../wasm/kanameInit.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { SatelliteModel } from "./SatelliteModel.js";
 
@@ -16,8 +17,8 @@ interface SatelliteProps {
   color?: number;
   /** Display coordinate frame (default: "eci"). */
   displayFrame?: DisplayFrame;
-  /** ERA at current time (needed for ECEF transform). */
-  era?: number;
+  /** Julian Date of the simulation epoch (needed for ECEF transform). */
+  epochJd?: number;
   /** Satellite identifier for model lookup. */
   satId?: string;
   /** Satellite display name for model lookup fallback. */
@@ -42,13 +43,14 @@ export function Satellite({
   scaleRadius,
   color = 0xff4444,
   displayFrame = "eci",
-  era,
+  epochJd,
   satId,
   satName,
 }: SatelliteProps) {
   let px = position.x, py = position.y, pz = position.z;
-  if (displayFrame === "ecef" && era != null) {
-    [px, py, pz] = eciToEcef(px, py, pz, era);
+  if (displayFrame === "ecef" && epochJd != null) {
+    const ecef = eci_to_ecef(px, py, pz, epochJd, position.t);
+    px = ecef[0]; py = ecef[1]; pz = ecef[2];
   }
 
   const scenePos: [number, number, number] = [
