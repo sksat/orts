@@ -28,10 +28,16 @@ impl DateTime {
 
 impl std::fmt::Display for DateTime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Round to integer seconds and normalize overflow (e.g. sec=59.999... → 60)
+        let sec = self.sec.round() as u32;
+        let (sec, carry) = if sec >= 60 { (0u32, 1u32) } else { (sec, 0) };
+        let min = self.min + carry;
+        let (min, carry) = if min >= 60 { (min - 60, 1u32) } else { (min, 0) };
+        let hour = self.hour + carry;
         write!(
             f,
-            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02.0}Z",
-            self.year, self.month, self.day, self.hour, self.min, self.sec
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            self.year, self.month, self.day, hour, min, sec
         )
     }
 }
@@ -544,6 +550,53 @@ mod tests {
             "TLE epoch {} vs ISO epoch {}",
             tle_epoch.jd(),
             iso_epoch.jd()
+        );
+    }
+
+    // --- JD → UTC string end-to-end (mirrors deleted TS astro.test.ts) ---
+
+    #[test]
+    fn jd_to_utc_string_j2000() {
+        let s = Epoch::from_jd(J2000_JD).to_datetime().to_string();
+        assert_eq!(s, "2000-01-01T12:00:00Z");
+    }
+
+    #[test]
+    fn jd_to_utc_string_2024_march() {
+        let s = Epoch::from_jd(2460390.0).to_datetime().to_string();
+        assert_eq!(s, "2024-03-20T12:00:00Z");
+    }
+
+    #[test]
+    fn jd_to_utc_string_with_offset_1h() {
+        // J2000 + 3600s = 2000-01-01T13:00:00Z
+        let s = Epoch::from_jd(J2000_JD)
+            .add_seconds(3600.0)
+            .to_datetime()
+            .to_string();
+        assert_eq!(s, "2000-01-01T13:00:00Z");
+    }
+
+    #[test]
+    fn jd_to_utc_string_with_offset_1day() {
+        // J2000 + 86400s = 2000-01-02T12:00:00Z
+        let s = Epoch::from_jd(J2000_JD)
+            .add_seconds(86400.0)
+            .to_datetime()
+            .to_string();
+        assert_eq!(s, "2000-01-02T12:00:00Z");
+    }
+
+    #[test]
+    fn jd_to_utc_string_no_fractional_seconds() {
+        // Fractional seconds should be truncated (format uses {:02.0})
+        let s = Epoch::from_jd(J2000_JD)
+            .add_seconds(0.5)
+            .to_datetime()
+            .to_string();
+        assert!(
+            s.ends_with("Z") && !s.contains('.'),
+            "Should not contain fractional seconds: {s}"
         );
     }
 
