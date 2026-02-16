@@ -3,26 +3,31 @@
 //! Based on US Standard Atmosphere 1976 reference values.
 //! Returns atmospheric density [kg/m³] at a given altitude [km].
 
+use kaname::epoch::Epoch;
+use nalgebra::Vector3;
+
+use crate::AtmosphereModel;
+
 /// Atmosphere layer: base altitude, base density, and scale height.
 struct Layer {
-    h_base: f64,  // km
-    rho_base: f64, // kg/m³
+    h_base: f64,       // km
+    rho_base: f64,     // kg/m³
     scale_height: f64, // km
 }
 
 const LAYERS: &[Layer] = &[
-    Layer { h_base: 0.0,   rho_base: 1.225,       scale_height: 7.249 },
-    Layer { h_base: 100.0, rho_base: 5.297e-7,    scale_height: 5.877 },
-    Layer { h_base: 150.0, rho_base: 1.454e-9,    scale_height: 8.382 },
-    Layer { h_base: 200.0, rho_base: 2.789e-10,   scale_height: 37.105 },
-    Layer { h_base: 300.0, rho_base: 1.916e-11,   scale_height: 40.590 },
-    Layer { h_base: 400.0, rho_base: 3.725e-12,   scale_height: 58.515 },
-    Layer { h_base: 500.0, rho_base: 6.967e-13,   scale_height: 73.700 },
-    Layer { h_base: 600.0, rho_base: 1.454e-13,   scale_height: 88.667 },
-    Layer { h_base: 700.0, rho_base: 3.614e-14,   scale_height: 124.64 },
-    Layer { h_base: 800.0, rho_base: 1.170e-14,   scale_height: 181.05 },
-    Layer { h_base: 900.0, rho_base: 5.245e-15,   scale_height: 268.00 },
-    Layer { h_base: 1000.0, rho_base: 3.019e-15,  scale_height: 408.88 },
+    Layer { h_base: 0.0, rho_base: 1.225, scale_height: 7.249 },
+    Layer { h_base: 100.0, rho_base: 5.297e-7, scale_height: 5.877 },
+    Layer { h_base: 150.0, rho_base: 1.454e-9, scale_height: 8.382 },
+    Layer { h_base: 200.0, rho_base: 2.789e-10, scale_height: 37.105 },
+    Layer { h_base: 300.0, rho_base: 1.916e-11, scale_height: 40.590 },
+    Layer { h_base: 400.0, rho_base: 3.725e-12, scale_height: 58.515 },
+    Layer { h_base: 500.0, rho_base: 6.967e-13, scale_height: 73.700 },
+    Layer { h_base: 600.0, rho_base: 1.454e-13, scale_height: 88.667 },
+    Layer { h_base: 700.0, rho_base: 3.614e-14, scale_height: 124.64 },
+    Layer { h_base: 800.0, rho_base: 1.170e-14, scale_height: 181.05 },
+    Layer { h_base: 900.0, rho_base: 5.245e-15, scale_height: 268.00 },
+    Layer { h_base: 1000.0, rho_base: 3.019e-15, scale_height: 408.88 },
 ];
 
 /// Compute atmospheric density [kg/m³] at the given altitude [km].
@@ -41,13 +46,20 @@ pub fn density(altitude_km: f64) -> f64 {
         Some(l) => {
             let rho = l.rho_base * (-(altitude_km - l.h_base) / l.scale_height).exp();
             // Cut off at negligible density (below ~1e-16 kg/m³, drag is insignificant)
-            if rho < 1e-16 {
-                0.0
-            } else {
-                rho
-            }
+            if rho < 1e-16 { 0.0 } else { rho }
         }
         None => 0.0,
+    }
+}
+
+/// Piecewise exponential atmosphere model based on US Standard Atmosphere 1976.
+///
+/// This is an altitude-only model with no time or position dependence.
+pub struct Exponential;
+
+impl AtmosphereModel for Exponential {
+    fn density(&self, altitude_km: f64, _position: &Vector3<f64>, _epoch: Option<&Epoch>) -> f64 {
+        density(altitude_km)
     }
 }
 
@@ -134,5 +146,16 @@ mod tests {
         assert!(density(400.0) > 1e-13 && density(400.0) < 1e-11);
         assert!(density(600.0) > 1e-14 && density(600.0) < 1e-12);
         assert!(density(800.0) > 1e-16 && density(800.0) < 1e-13);
+    }
+
+    #[test]
+    fn trait_ignores_position_and_epoch() {
+        let model = Exponential;
+        let pos = Vector3::new(6778.0, 0.0, 0.0);
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+
+        let rho_trait = model.density(400.0, &pos, Some(&epoch));
+        let rho_free = density(400.0);
+        assert_eq!(rho_trait, rho_free, "Trait should delegate to free function");
     }
 }

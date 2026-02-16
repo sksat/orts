@@ -1,4 +1,3 @@
-pub mod atmosphere;
 pub mod body;
 pub mod constants;
 pub mod drag;

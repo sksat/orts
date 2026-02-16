@@ -9,6 +9,7 @@ repository.workspace = true
 nalgebra.workspace = true
 orts-integrator.workspace = true
 orts-orbits.workspace = true
+orts-atmosphere.workspace = true
 kaname.workspace = true
 orts-datamodel.workspace = true
 clap.workspace = true

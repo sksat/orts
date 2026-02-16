@@ -1,8 +1,9 @@
 use nalgebra::Vector3;
 use kaname::epoch::Epoch;
+use orts_atmosphere::AtmosphereModel;
+use orts_atmosphere::exponential::Exponential;
 use orts_integrator::State;
 
-use crate::atmosphere;
 use crate::constants::R_EARTH;
 use crate::perturbations::ForceModel;
 
@@ -19,8 +20,8 @@ pub const DEFAULT_BALLISTIC_COEFF: f64 = 0.01;
 
 /// Atmospheric drag perturbation.
 ///
-/// Uses a piecewise exponential atmosphere model and computes drag
-/// acceleration based on the ballistic coefficient B = Cd*A/(2*m) \[m²/kg\].
+/// Computes drag acceleration based on the ballistic coefficient B = Cd*A/(2*m) \[m²/kg\]
+/// and a pluggable atmospheric density model.
 pub struct AtmosphericDrag {
     /// Central body equatorial radius [km]
     pub body_radius: f64,
@@ -28,18 +29,28 @@ pub struct AtmosphericDrag {
     pub omega_body: f64,
     /// Ballistic coefficient Cd*A/(2*m) [m²/kg]
     pub ballistic_coeff: f64,
+    /// Atmospheric density model.
+    pub atmosphere: Box<dyn AtmosphereModel>,
 }
 
 impl AtmosphericDrag {
     /// Create drag model for Earth orbit with an optional explicit ballistic coefficient.
     ///
+    /// Uses the piecewise exponential atmosphere model by default.
     /// When `ballistic_coeff` is `None`, uses [`DEFAULT_BALLISTIC_COEFF`] (0.01 m²/kg).
     pub fn for_earth(ballistic_coeff: Option<f64>) -> Self {
         Self {
             body_radius: R_EARTH,
             omega_body: OMEGA_EARTH,
             ballistic_coeff: ballistic_coeff.unwrap_or(DEFAULT_BALLISTIC_COEFF),
+            atmosphere: Box::new(Exponential),
         }
+    }
+
+    /// Replace the atmospheric density model (builder pattern).
+    pub fn with_atmosphere(mut self, model: Box<dyn AtmosphereModel>) -> Self {
+        self.atmosphere = model;
+        self
     }
 
     /// Create drag model for Earth orbit from B* (TLE drag term).
@@ -62,12 +73,13 @@ impl AtmosphericDrag {
             body_radius,
             omega_body: OMEGA_EARTH,
             ballistic_coeff,
+            atmosphere: Box::new(Exponential),
         }
     }
 }
 
 impl ForceModel for AtmosphericDrag {
-    fn acceleration(&self, _t: f64, state: &State, _epoch: Option<&Epoch>) -> Vector3<f64> {
+    fn acceleration(&self, _t: f64, state: &State, epoch: Option<&Epoch>) -> Vector3<f64> {
         let alt = state.position.magnitude() - self.body_radius;
 
         // No drag above atmosphere
@@ -75,7 +87,7 @@ impl ForceModel for AtmosphericDrag {
             return Vector3::zeros();
         }
 
-        let rho = atmosphere::density(alt); // kg/m³
+        let rho = self.atmosphere.density(alt, &state.position, epoch); // kg/m³
         if rho == 0.0 {
             return Vector3::zeros();
         }
@@ -111,6 +123,7 @@ mod tests {
             body_radius: R_EARTH,
             omega_body: OMEGA_EARTH,
             ballistic_coeff: 0.005, // physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
+            atmosphere: Box::new(Exponential),
         }
     }
 
@@ -231,11 +244,13 @@ mod tests {
             body_radius: R_EARTH,
             omega_body: OMEGA_EARTH,
             ballistic_coeff: 0.005,
+            atmosphere: Box::new(Exponential),
         };
         let drag_static = AtmosphericDrag {
             body_radius: R_EARTH,
             omega_body: 0.0,
             ballistic_coeff: 0.005,
+            atmosphere: Box::new(Exponential),
         };
 
         let r = R_EARTH + 400.0;
@@ -253,5 +268,24 @@ mod tests {
             a_rotating < a_static,
             "Prograde drag with rotation ({a_rotating:.6e}) should be less than without ({a_static:.6e})"
         );
+    }
+
+    #[test]
+    fn with_atmosphere_builder() {
+        use orts_atmosphere::harris_priester::HarrisPriester;
+
+        let drag = AtmosphericDrag::for_earth(Some(0.005))
+            .with_atmosphere(Box::new(HarrisPriester::new()));
+
+        let r = R_EARTH + 400.0;
+        let v = (MU_EARTH / r).sqrt();
+        let state = State {
+            position: vector![r, 0.0, 0.0],
+            velocity: vector![0.0, v, 0.0],
+        };
+
+        // Without epoch, HP returns average density — should still produce non-zero drag
+        let a = drag.acceleration(0.0, &state, None);
+        assert!(a.magnitude() > 0.0, "HP drag should be non-zero at ISS altitude");
     }
 }
