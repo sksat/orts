@@ -39,6 +39,12 @@ export const MIE_ANISOTROPY = 0.76;
 /** Multi-scattering factor f_ms (Hillaire approximation). */
 export const MULTI_SCATTERING_FACTOR = 0.25;
 
+/** Airglow emission color (blue-dominant chemiluminescence at ~90-300 km). */
+export const AIRGLOW_COLOR: [number, number, number] = [0.1, 0.25, 0.5];
+
+/** Airglow emission strength factor. */
+export const AIRGLOW_STRENGTH = 2.0;
+
 // ── Math utility functions (also used in GLSL) ─────────────────────
 
 /**
@@ -125,20 +131,17 @@ uniform float atmosphereRadius; // scene units (earthRadius * scale)
 varying vec3 vWorldPosition;
 varying vec3 vSphereCenter;
 
-// ── Physical constants ──
+// ── Physical constants (all in Earth-radius units, earthRadius = 1) ──
+//
+// The shader normalizes all distances by earthRadius at the start of main(),
+// so these constants work correctly regardless of scene scale.
 
-// Rayleigh scattering coefficients (scaled for scene units).
-// In real units [m⁻¹]: (5.5e-6, 13.0e-6, 22.4e-6).
-// We scale by (6371e3 / earthRadius) to convert to scene units.
-// Since earthRadius = 1 in scene: multiply by 6.371e6.
+// Rayleigh scattering coefficients per Earth-radius [R_E⁻¹].
+// Physical [m⁻¹] × 6.371e6 [m/R_E] → [R_E⁻¹].
 const vec3 RAY_BETA = vec3(5.5e-6, 13.0e-6, 22.4e-6) * 6.371e6;
 
-// Mie scattering coefficient (scaled).
+// Mie scattering coefficient per Earth-radius [R_E⁻¹].
 const vec3 MIE_BETA = vec3(21e-6) * 6.371e6;
-
-// Scale heights: computed dynamically from atmosphere extent in main().
-// Preserves real atmosphere ratio (H_ray=8km / 100km=0.08, H_mie=1.2km / 100km=0.012).
-// Physical mode → real values; amplified mode → proportionally larger for visual density.
 
 // Mie asymmetry (forward-scattering dominant).
 const float G_MIE = 0.76;
@@ -146,12 +149,22 @@ const float G_MIE = 0.76;
 // Multi-scattering approximation factor (Hillaire 2020).
 const float F_MS = 0.25;
 
+// Scale heights in Earth-radius units.
+const float HEIGHT_RAY = 0.001256;  // Rayleigh: 8.0 km / 6371 km
+const float HEIGHT_MIE = 0.000188;  // Mie: 1.2 km / 6371 km
+const float HEIGHT_GLOW = 0.01;     // Airglow: ~64 km (broad emission layer)
+
 // Number of ray-march steps.
-const int I_STEPS = 8;   // primary ray (view direction)
-const int J_STEPS = 4;   // secondary ray (toward sun)
+const int I_STEPS = 16;  // primary ray (view direction)
+const int J_STEPS = 8;   // secondary ray (toward sun)
 
 // Sun intensity multiplier for visual tuning.
-const float SUN_INTENSITY_SCALE = 22.0;
+const float SUN_INTENSITY_SCALE = 20.0;
+
+// Airglow: faint atmospheric self-emission (chemiluminescence at ~90-300 km).
+// Visible from orbit as thin blue band on night-side limb.
+const vec3 AIRGLOW_COLOR = vec3(0.1, 0.25, 0.5);
+const float AIRGLOW_STRENGTH = 2.0;
 
 // ── Ray-sphere intersection ──
 
@@ -183,22 +196,22 @@ float phaseMie(float cosTheta, float g) {
 }
 
 void main() {
-  // Dynamic scale heights: ratio from real atmosphere (8km/100km, 1.2km/100km).
-  float extent = atmosphereRadius - earthRadius;
-  float HEIGHT_RAY = extent * 0.08;
-  float HEIGHT_MIE = extent * 0.012;
-
-  // Sphere center in world space (passed from vertex shader via varying).
+  // ── Normalize to Earth-radius units ──
+  // All constants (RAY_BETA, HEIGHT_RAY, etc.) assume earthRadius = 1.
+  // Dividing by earthRadius makes the shader scale-invariant.
   vec3 center = vSphereCenter;
+  float R = earthRadius;   // scene-unit Earth radius (may be 1 or ~200)
+  float invR = 1.0 / R;
 
-  // View ray from camera, relative to sphere center.
-  // rsi() assumes sphere at origin, so offset camera position by center.
-  vec3 r0 = cameraWorldPos - center;
-  vec3 rd = normalize(vWorldPosition - cameraWorldPos);
+  // Ray origin and direction in normalized units (planet center = origin, radius = 1).
+  vec3 r0 = (cameraWorldPos - center) * invR;
+  vec3 rd = normalize(vWorldPosition - cameraWorldPos);  // direction is scale-invariant
 
-  // Intersect view ray with atmosphere and planet spheres.
-  vec2 atmoHit = rsi(r0, rd, atmosphereRadius);
-  vec2 planetHit = rsi(r0, rd, earthRadius);
+  float nAtmoRadius = atmosphereRadius * invR;  // e.g. 1.06
+
+  // Intersect view ray with atmosphere and planet spheres (normalized).
+  vec2 atmoHit = rsi(r0, rd, nAtmoRadius);
+  vec2 planetHit = rsi(r0, rd, 1.0);
 
   // No atmosphere intersection → fully transparent.
   if (atmoHit.x > atmoHit.y) {
@@ -216,7 +229,7 @@ void main() {
     tEnd = min(tEnd, planetHit.x);
   }
 
-  // Step size along view ray.
+  // Step size along view ray (in normalized units).
   float iStepSize = (tEnd - tStart) / float(I_STEPS);
 
   // Accumulated scattering and optical depth.
@@ -224,17 +237,18 @@ void main() {
   vec3 totalMie = vec3(0.0);
   float iOptRay = 0.0;
   float iOptMie = 0.0;
+  float totalGlow = 0.0;
 
   // Phase function values (constant along the ray).
   float mu = dot(rd, sunDirection);
   float pRay = phaseRayleigh(mu);
   float pMie = phaseMie(mu, G_MIE);
 
-  // ── Primary ray-march ──
+  // ── Primary ray-march (all in normalized Earth-radius units) ──
   for (int i = 0; i < I_STEPS; i++) {
     // Sample point at center of step.
     vec3 iPos = r0 + rd * (tStart + iStepSize * (float(i) + 0.5));
-    float iHeight = length(iPos) - earthRadius;
+    float iHeight = length(iPos) - 1.0;  // altitude above surface in R_E
 
     // Density at this sample point.
     float dRay = exp(-iHeight / HEIGHT_RAY) * iStepSize;
@@ -243,15 +257,17 @@ void main() {
     // Accumulate optical depth along view ray.
     iOptRay += dRay;
     iOptMie += dMie;
+    // Airglow: broad emission layer (~90-300 km altitude range).
+    totalGlow += exp(-iHeight / HEIGHT_GLOW) * iStepSize;
 
     // ── Secondary ray-march toward sun ──
-    float jStepSize = rsi(iPos, sunDirection, atmosphereRadius).y / float(J_STEPS);
+    float jStepSize = rsi(iPos, sunDirection, nAtmoRadius).y / float(J_STEPS);
     float jOptRay = 0.0;
     float jOptMie = 0.0;
 
     for (int j = 0; j < J_STEPS; j++) {
       vec3 jPos = iPos + sunDirection * (jStepSize * (float(j) + 0.5));
-      float jHeight = length(jPos) - earthRadius;
+      float jHeight = length(jPos) - 1.0;
       jOptRay += exp(-jHeight / HEIGHT_RAY) * jStepSize;
       jOptMie += exp(-jHeight / HEIGHT_MIE) * jStepSize;
     }
@@ -274,10 +290,14 @@ void main() {
   vec3 multiScatter = (isoPhase * RAY_BETA * totalRay + isoPhase * MIE_BETA * totalMie)
                       * F_MS / (1.0 - F_MS);
 
-  vec3 color = (singleScatter + multiScatter) * sunIntensity * SUN_INTENSITY_SCALE;
+  // Airglow: sun-independent emission visible on night-side limb.
+  vec3 airglow = AIRGLOW_COLOR * AIRGLOW_STRENGTH * totalGlow;
+  vec3 color = (singleScatter + multiScatter) * sunIntensity * SUN_INTENSITY_SCALE + airglow;
 
-  // Alpha from scatter intensity (controls additive brightness).
-  float alpha = clamp(length(color) * 0.5, 0.0, 1.0);
+  // With additive blending, color itself controls contribution intensity.
+  // Using alpha=1.0 avoids quadratic dimming (faint scatter × faint alpha)
+  // that would make thin physical-scale atmospheres invisible.
+  float alpha = 1.0;
 
   gl_FragColor = vec4(color, alpha);
 

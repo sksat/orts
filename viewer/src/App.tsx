@@ -516,7 +516,7 @@ export function App() {
         epochJd={epochJd ?? null}
         referenceFrame={referenceFrame}
         satelliteNames={satelliteNames}
-        physicalScale={isSatCentered}
+        physicalScale={false}
       />
 
       {/* UI overlay */}

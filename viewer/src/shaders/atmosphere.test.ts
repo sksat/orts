@@ -12,6 +12,8 @@ import {
   MIE_SCALE_HEIGHT,
   MIE_ANISOTROPY,
   MULTI_SCATTERING_FACTOR,
+  AIRGLOW_COLOR,
+  AIRGLOW_STRENGTH,
   atmosphereVert,
   atmosphereFrag,
 } from "./atmosphere.js";
@@ -182,6 +184,16 @@ describe("physical constants", () => {
     expect(MULTI_SCATTERING_FACTOR).toBeGreaterThan(0);
     expect(MULTI_SCATTERING_FACTOR).toBeLessThan(1);
   });
+
+  it("airglow color is blue-dominant (B > G > R)", () => {
+    const [r, g, b] = AIRGLOW_COLOR;
+    expect(b).toBeGreaterThan(g);
+    expect(g).toBeGreaterThan(r);
+  });
+
+  it("airglow strength is positive", () => {
+    expect(AIRGLOW_STRENGTH).toBeGreaterThan(0);
+  });
 });
 
 describe("shader strings", () => {
@@ -202,6 +214,11 @@ describe("shader strings", () => {
 
   it("fragment shader contains ray-marching loop", () => {
     expect(atmosphereFrag).toContain("for");
+  });
+
+  it("fragment shader contains airglow emission term", () => {
+    expect(atmosphereFrag).toContain("AIRGLOW");
+    expect(atmosphereFrag).toContain("totalGlow");
   });
 
   it("fragment shader contains Rayleigh and Mie phase functions", () => {
