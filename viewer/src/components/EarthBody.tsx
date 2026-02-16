@@ -1,5 +1,4 @@
-import { useEffect, useRef } from "react";
-import { useTexture } from "@react-three/drei";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import {
   earthDayNightVert,
@@ -70,27 +69,36 @@ export function EarthBody({
   ambientIntensity = 0.15,
   sunIntensity = 1.0,
 }: EarthBodyProps) {
-  // 1. Load 2K textures immediately via Suspense (guaranteed available)
-  const [dayMap, nightMap] = useTexture([dayTexturePath, nightTexturePath]);
   const materialRef = useRef<THREE.ShaderMaterial | null>(null);
+  const [ready, setReady] = useState(false);
 
-  // Create material once when textures load
-  if (!materialRef.current) {
-    materialRef.current = new THREE.ShaderMaterial({
-      uniforms: {
-        dayMap: { value: dayMap },
-        nightMap: { value: nightMap },
-        sunDirection: { value: sunDirection.clone().normalize() },
-        ambientIntensity: { value: ambientIntensity },
-        sunIntensity: { value: sunIntensity },
-      },
-      vertexShader: earthDayNightVert,
-      fragmentShader: earthDayNightFrag,
+  // 1. Load 2K textures manually (no Suspense — keeps Canvas interactive)
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      loadTexture(dayTexturePath),
+      loadTexture(nightTexturePath),
+    ]).then(([dayMap, nightMap]) => {
+      if (cancelled || !dayMap || !nightMap) return;
+      materialRef.current = new THREE.ShaderMaterial({
+        uniforms: {
+          dayMap: { value: dayMap },
+          nightMap: { value: nightMap },
+          sunDirection: { value: new THREE.Vector3(0, 0, 1) },
+          ambientIntensity: { value: ambientIntensity },
+          sunIntensity: { value: sunIntensity },
+        },
+        vertexShader: earthDayNightVert,
+        fragmentShader: earthDayNightFrag,
+      });
+      setReady(true);
     });
-  }
+    return () => { cancelled = true; };
+  }, [dayTexturePath, nightTexturePath]);
 
   // 2. Async upgrade to higher-resolution textures
   useEffect(() => {
+    if (!ready) return;
     if (
       !targetResolution ||
       targetResolution === "2k" ||
@@ -156,35 +164,44 @@ export function EarthBody({
     return () => {
       cancelled = true;
     };
-  }, [targetResolution, textureBaseName, nightTextureBaseName]);
+  }, [ready, targetResolution, textureBaseName, nightTextureBaseName]);
 
   // 3. Update uniforms reactively (no material recreation)
+  // `ready` dependency ensures uniforms are set after material creation.
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.sunDirection.value
         .copy(sunDirection)
         .normalize();
     }
-  }, [sunDirection]);
+  }, [sunDirection, ready]);
 
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.ambientIntensity.value = ambientIntensity;
     }
-  }, [ambientIntensity]);
+  }, [ambientIntensity, ready]);
 
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.sunIntensity.value = sunIntensity;
     }
-  }, [sunIntensity]);
+  }, [sunIntensity, ready]);
 
   return (
     <group rotation={[0, 0, rotationAngle ?? 0]}>
       {/* Inner group: align Three.js Y-pole to ECI Z-pole (north pole → +Z) */}
       <group rotation={POLE_ALIGNMENT_ROTATION}>
-        <mesh material={materialRef.current}>
+        <mesh material={materialRef.current ?? undefined}>
           <sphereGeometry args={[radius, 64, 64]} />
+          {!ready && (
+            <meshPhongMaterial
+              color={0x2244aa}
+              emissive={0x112244}
+              emissiveIntensity={0.1}
+              shininess={25}
+            />
+          )}
         </mesh>
         <mesh>
           <sphereGeometry args={[radius * 1.002, 24, 24]} />

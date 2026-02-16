@@ -1,6 +1,5 @@
-import { Suspense } from "react";
+import { useEffect, useState } from "react";
 import * as THREE from "three";
-import { useTexture } from "@react-three/drei";
 import { getBodyRenderInfo, BodyRenderInfo } from "../bodies.js";
 import { EarthBody } from "./EarthBody.js";
 import { useTextureResolution } from "../hooks/useTextureResolution.js";
@@ -31,16 +30,39 @@ function TexturedBody({
   renderInfo: BodyRenderInfo;
   radius: number;
 }) {
-  const texture = useTexture(renderInfo.texturePath!);
+  const [texture, setTexture] = useState<THREE.Texture | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    new THREE.TextureLoader().load(
+      renderInfo.texturePath!,
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        if (!cancelled) setTexture(tex);
+      },
+      undefined,
+      () => {},
+    );
+    return () => { cancelled = true; };
+  }, [renderInfo.texturePath]);
 
   return (
     <group>
       <mesh>
         <sphereGeometry args={[radius, 64, 64]} />
-        {renderInfo.isSelfLuminous ? (
-          <meshBasicMaterial map={texture} />
+        {texture ? (
+          renderInfo.isSelfLuminous ? (
+            <meshBasicMaterial map={texture} />
+          ) : (
+            <meshStandardMaterial map={texture} />
+          )
         ) : (
-          <meshStandardMaterial map={texture} />
+          <meshPhongMaterial
+            color={renderInfo.fallbackColor}
+            emissive={renderInfo.emissiveColor}
+            emissiveIntensity={0.1}
+            shininess={25}
+          />
         )}
       </mesh>
       <mesh>
@@ -104,31 +126,21 @@ export function CelestialBody({
 
   if (renderInfo.nightTexturePath && renderInfo.texturePath && sunDirection) {
     body = (
-      <Suspense
-        fallback={<FallbackBody renderInfo={renderInfo} radius={radius} />}
-      >
-        <EarthBody
-          radius={radius}
-          sunDirection={sunDirection}
-          dayTexturePath={renderInfo.texturePath}
-          nightTexturePath={renderInfo.nightTexturePath}
-          rotationAngle={lvlhQuaternion != null ? undefined : rotationAngle}
-          targetResolution={targetResolution}
-          textureBaseName={renderInfo.textureBaseName}
-          nightTextureBaseName={renderInfo.nightTextureBaseName}
-          ambientIntensity={ambientIntensity}
-          sunIntensity={sunIntensity}
-        />
-      </Suspense>
+      <EarthBody
+        radius={radius}
+        sunDirection={sunDirection}
+        dayTexturePath={renderInfo.texturePath}
+        nightTexturePath={renderInfo.nightTexturePath}
+        rotationAngle={lvlhQuaternion != null ? undefined : rotationAngle}
+        targetResolution={targetResolution}
+        textureBaseName={renderInfo.textureBaseName}
+        nightTextureBaseName={renderInfo.nightTextureBaseName}
+        ambientIntensity={ambientIntensity}
+        sunIntensity={sunIntensity}
+      />
     );
   } else if (renderInfo.texturePath) {
-    body = (
-      <Suspense
-        fallback={<FallbackBody renderInfo={renderInfo} radius={radius} />}
-      >
-        <TexturedBody renderInfo={renderInfo} radius={radius} />
-      </Suspense>
-    );
+    body = <TexturedBody renderInfo={renderInfo} radius={radius} />;
   } else {
     body = <FallbackBody renderInfo={renderInfo} radius={radius} />;
   }
