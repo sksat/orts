@@ -37,5 +37,16 @@ export default defineConfig({
       port: 5176,
       reuseExistingServer: true,
     },
+    {
+      command: "npx tsx examples/multi-table/server.ts",
+      port: 9005,
+      reuseExistingServer: true,
+    },
+    {
+      command:
+        "npx vite --config vite.multi-table.config.ts --port 5177",
+      port: 5177,
+      reuseExistingServer: true,
+    },
   ],
 });

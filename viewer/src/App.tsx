@@ -104,6 +104,14 @@ export function App() {
   const bodyRadius = mode === "realtime" ? simInfo?.central_body_radius : (csvMetadata?.centralBodyRadius ?? undefined);
   const orbitSchema = useMemo(() => createOrbitSchema(mu ?? 398600.4418, bodyRadius ?? 6378.137), [mu, bodyRadius]);
   const { conn, isReady: dbReady } = useDuckDB(orbitSchema);
+
+  // Expose DuckDB connection for E2E testing (dev mode only)
+  useEffect(() => {
+    if (import.meta.env.DEV && conn) {
+      (window as Record<string, unknown>).__duckdb_conn = conn;
+    }
+  }, [conn]);
+
   const detailBufferRef = useRef<OrbitPoint[]>([]);
   const streamingCountRef = useRef(0);
 
