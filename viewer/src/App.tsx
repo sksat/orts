@@ -108,7 +108,7 @@ export function App() {
   // Expose DuckDB connection for E2E testing (dev mode only)
   useEffect(() => {
     if (import.meta.env.DEV && conn) {
-      (window as Record<string, unknown>).__duckdb_conn = conn;
+      (window as unknown as Record<string, unknown>).__duckdb_conn = conn;
     }
   }, [conn]);
 

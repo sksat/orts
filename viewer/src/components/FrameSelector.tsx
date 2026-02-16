@@ -48,7 +48,7 @@ export function FrameSelector({
 }: FrameSelectorProps) {
   const centerKey = encodeCenterKey(referenceFrame.center);
   const isSatCentered = referenceFrame.center.type === "satellite";
-  const labels = (centralBody && ORIENTATION_LABELS[centralBody]) ?? { inertial: "Inertial", body_fixed: "Body-Fixed" };
+  const labels = (centralBody ? ORIENTATION_LABELS[centralBody] : undefined) ?? { inertial: "Inertial", body_fixed: "Body-Fixed" };
 
   function handleCenterChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const newCenter = decodeCenterKey(e.target.value);
