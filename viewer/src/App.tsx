@@ -538,6 +538,7 @@ export function App() {
           onChange={setReferenceFrame}
           satellites={simInfo?.satellites}
           hasEpoch={epochJd != null}
+          centralBody={centralBody}
         />
 
         {mode === "replay" && (

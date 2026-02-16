@@ -13,7 +13,14 @@ interface FrameSelectorProps {
   satellites?: SatelliteInfo[];
   /** Whether epoch is available (needed for body-fixed frame). */
   hasEpoch?: boolean;
+  /** Central body identifier (e.g. "earth"). Used for display labels. */
+  centralBody?: string;
 }
+
+/** Body-specific orientation labels. Falls back to generic Inertial / Body-Fixed. */
+const ORIENTATION_LABELS: Record<string, { inertial: string; body_fixed: string }> = {
+  earth: { inertial: "ECI", body_fixed: "ECEF" },
+};
 
 /** Encode a FrameCenter to a string key for the <select> value. */
 function encodeCenterKey(center: FrameCenter): string {
@@ -37,9 +44,11 @@ export function FrameSelector({
   onChange,
   satellites = [],
   hasEpoch = false,
+  centralBody,
 }: FrameSelectorProps) {
   const centerKey = encodeCenterKey(referenceFrame.center);
   const isSatCentered = referenceFrame.center.type === "satellite";
+  const labels = (centralBody && ORIENTATION_LABELS[centralBody]) ?? { inertial: "Inertial", body_fixed: "Body-Fixed" };
 
   function handleCenterChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const newCenter = decodeCenterKey(e.target.value);
@@ -76,7 +85,7 @@ export function FrameSelector({
           className={`mode-toggle-btn ${referenceFrame.orientation === "inertial" ? "active" : ""}`}
           onClick={() => handleOrientationChange("inertial")}
         >
-          Inertial
+          {labels.inertial}
         </button>
         <button
           className={`mode-toggle-btn ${referenceFrame.orientation === "body_fixed" ? "active" : ""}`}
@@ -84,7 +93,7 @@ export function FrameSelector({
           disabled={isSatCentered || !hasEpoch}
           title={isSatCentered ? "Body-fixed not available for satellite center" : !hasEpoch ? "Requires epoch" : ""}
         >
-          Body-Fixed
+          {labels.body_fixed}
         </button>
       </div>
     </div>
