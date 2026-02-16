@@ -20,6 +20,8 @@ interface CelestialBodyProps {
   lvlhQuaternion?: [number, number, number, number] | null;
   /** Ambient light intensity for shader-based bodies (matches scene ambient). */
   ambientIntensity?: number;
+  /** Sun intensity scale factor: (1 AU / distance)². Default 1.0. */
+  sunIntensity?: number;
 }
 
 function TexturedBody({
@@ -92,7 +94,7 @@ function FallbackBody({
 export function CelestialBody({
   bodyId, radius = 1, sunDirection, rotationAngle,
   lvlhPosition = null, lvlhQuaternion = null,
-  ambientIntensity,
+  ambientIntensity, sunIntensity,
 }: CelestialBodyProps) {
   const renderInfo = getBodyRenderInfo(bodyId);
   const isSatelliteCentered = lvlhPosition != null;
@@ -115,6 +117,7 @@ export function CelestialBody({
           textureBaseName={renderInfo.textureBaseName}
           nightTextureBaseName={renderInfo.nightTextureBaseName}
           ambientIntensity={ambientIntensity}
+          sunIntensity={sunIntensity}
         />
       </Suspense>
     );

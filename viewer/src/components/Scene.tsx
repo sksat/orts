@@ -11,7 +11,7 @@ import type { SatelliteInfo } from "../hooks/useWebSocket.js";
 import { DEFAULT_CAMERA_POSITION, SCENE_UP, computeCameraUp, computeLvlhAxes, type LvlhAxes } from "../sceneFrame.js";
 import { rotateZ } from "../frameTransform.js";
 import { type ReferenceFrame, isLegacyEcef, isDefaultEci, DEFAULT_FRAME } from "../referenceFrame.js";
-import { earth_rotation_angle, sun_direction_from_body } from "../wasm/kanameInit.js";
+import { earth_rotation_angle, sun_direction_from_body, sun_distance_from_body } from "../wasm/kanameInit.js";
 import { transformToLvlh } from "../coordTransform.js";
 import { getDisplayScaleProfile, computeSceneAmplification, type DisplayScaleProfile } from "../displayScale.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
@@ -324,6 +324,14 @@ export function Scene({
     return new THREE.Vector3(dir[0], dir[1], dir[2]);
   }, [centralBody, epochJd, quantizedSimTime]);
 
+  // Sun intensity: inverse square law based on body-Sun distance
+  const AU_KM = 149_597_870.7;
+  const sunIntensity = useMemo(() => {
+    if (epochJd == null) return 1.0;
+    const distKm = sun_distance_from_body(centralBody, epochJd, quantizedSimTime);
+    return (AU_KM / distKm) ** 2;
+  }, [centralBody, epochJd, quantizedSimTime]);
+
   // Earth rotation angle (ERA) via WASM — updates every frame via simTime (not quantized)
   const era = useMemo(() => {
     if (epochJd == null) return undefined;
@@ -419,7 +427,7 @@ export function Scene({
       <CameraLvlhTracker originPosition={originPosition} originVelocity={originVelocity} lvlhActive={lvlhActive} />
 
       <ambientLight intensity={0.15} />
-      <directionalLight intensity={3.0} position={lightPosition} />
+      <directionalLight intensity={3.0 * sunIntensity} position={lightPosition} />
 
       {/* Centered satellite: always exactly at world origin (0,0,0). */}
       {centeredSatId != null && multiSatEntries && (() => {
@@ -464,6 +472,7 @@ export function Scene({
             lvlhPosition={bodyLvlhPosition}
             lvlhQuaternion={bodyLvlhQuaternion}
             ambientIntensity={0.15}
+            sunIntensity={sunIntensity}
           />
 
           {/* Multi-satellite mode */}
@@ -532,7 +541,7 @@ export function Scene({
       ) : (
         /* Non-LVLH mode: SmoothOriginGroup handles satellite-centered offset. */
         <SmoothOriginGroup targetPosition={originOffset}>
-          <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={earthRotation} ambientIntensity={0.15} />
+          <CelestialBody bodyId={centralBody} sunDirection={sunDirection} rotationAngle={earthRotation} ambientIntensity={0.15} sunIntensity={sunIntensity} />
 
           {/* Multi-satellite mode */}
           {multiSatEntries && multiSatEntries.map(([satId, buf], index) => {

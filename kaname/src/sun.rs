@@ -67,6 +67,20 @@ pub fn sun_position_eci(epoch: &Epoch) -> Vector3<f64> {
     direction * distance
 }
 
+/// Sun distance [km] from a given central body.
+///
+/// - `"earth"` / `"moon"`: delegates to [`sun_distance_km`]
+/// - Other known planets: computed from heliocentric orbital elements
+/// - Unknown bodies: fallback to Earth-Sun distance
+pub fn sun_distance_from_body(body: &str, epoch: &Epoch) -> f64 {
+    match body {
+        "earth" | "moon" => sun_distance_km(epoch),
+        _ => planets::heliocentric_position_ecliptic(body, epoch)
+            .map(|p| p.magnitude())
+            .unwrap_or_else(|| sun_distance_km(epoch)),
+    }
+}
+
 /// Sun direction (unit vector) as seen from a given central body, in J2000 equatorial frame.
 ///
 /// - `"earth"` / `"moon"`: delegates to [`sun_direction_eci`] (Moon parallax < 0.15°, negligible)
@@ -347,6 +361,52 @@ mod tests {
             dir.x,
             dir.y,
             dir.z
+        );
+    }
+
+    // --- sun_distance_from_body tests ---
+
+    #[test]
+    fn sun_distance_from_body_earth_matches() {
+        let epoch = Epoch::from_gregorian(2024, 6, 15, 12, 0, 0.0);
+        let from_body = sun_distance_from_body("earth", &epoch);
+        let direct = sun_distance_km(&epoch);
+        assert!(
+            (from_body - direct).abs() < 1.0,
+            "earth distance should match sun_distance_km: {from_body} vs {direct}"
+        );
+    }
+
+    #[test]
+    fn sun_distance_from_body_mars() {
+        let epoch = Epoch::from_gregorian(2024, 6, 15, 12, 0, 0.0);
+        let dist = sun_distance_from_body("mars", &epoch);
+        let dist_au = dist / AU_KM;
+        assert!(
+            dist_au > 1.3 && dist_au < 1.7,
+            "Mars-Sun distance should be 1.3-1.7 AU, got {dist_au:.4} AU"
+        );
+    }
+
+    #[test]
+    fn sun_distance_from_body_jupiter() {
+        let epoch = Epoch::from_gregorian(2024, 6, 15, 12, 0, 0.0);
+        let dist = sun_distance_from_body("jupiter", &epoch);
+        let dist_au = dist / AU_KM;
+        assert!(
+            dist_au > 4.5 && dist_au < 5.8,
+            "Jupiter-Sun distance should be 4.5-5.8 AU, got {dist_au:.4} AU"
+        );
+    }
+
+    #[test]
+    fn sun_distance_from_body_unknown_fallback() {
+        let epoch = Epoch::from_gregorian(2024, 1, 1, 12, 0, 0.0);
+        let dist = sun_distance_from_body("pluto", &epoch);
+        let earth_dist = sun_distance_km(&epoch);
+        assert!(
+            (dist - earth_dist).abs() < 1.0,
+            "Unknown body should fall back to Earth distance"
         );
     }
 

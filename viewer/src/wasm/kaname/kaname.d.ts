@@ -54,6 +54,15 @@ export function sun_direction_eci(epoch_jd: number, t: number): Float32Array;
  */
 export function sun_direction_from_body(body: string, epoch_jd: number, t: number): Float32Array;
 
+/**
+ * Sun distance [km] from a given central body.
+ *
+ * `body`: body identifier string (e.g., "earth", "mars")
+ * `epoch_jd`: Julian Date of the simulation epoch
+ * `t`: elapsed simulation time in seconds
+ */
+export function sun_distance_from_body(body: string, epoch_jd: number, t: number): number;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -63,6 +72,7 @@ export interface InitOutput {
     readonly earth_rotation_angle: (a: number, b: number) => number;
     readonly sun_direction_eci: (a: number, b: number) => [number, number];
     readonly sun_direction_from_body: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly sun_distance_from_body: (a: number, b: number, c: number, d: number) => number;
     readonly jd_to_utc_string: (a: number, b: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;

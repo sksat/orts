@@ -23,6 +23,7 @@ uniform sampler2D dayMap;
 uniform sampler2D nightMap;
 uniform vec3 sunDirection;
 uniform float ambientIntensity;
+uniform float sunIntensity; // (1 AU / distance)^2
 
 varying vec2 vUv;
 varying vec3 vWorldNormal;
@@ -37,9 +38,9 @@ void main() {
   // Smooth terminator transition (~18 degree twilight zone)
   float blend = smoothstep(-0.1, 0.2, cosAngle);
 
-  // Day side: Lambertian diffuse with configurable ambient floor
+  // Day side: Lambertian diffuse scaled by inverse-square sun intensity
   float diffuse = max(cosAngle, 0.0);
-  vec3 litDay = dayColor.rgb * (ambientIntensity + (1.0 - ambientIntensity) * diffuse);
+  vec3 litDay = dayColor.rgb * (ambientIntensity + (1.0 - ambientIntensity) * diffuse * sunIntensity);
 
   // Night side: city lights (emissive)
   vec3 litNight = nightColor.rgb;
@@ -47,6 +48,8 @@ void main() {
   vec3 finalColor = mix(litNight, litDay, blend);
   gl_FragColor = vec4(finalColor, 1.0);
 
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
   #include <logdepthbuf_fragment>
 }
 `;
