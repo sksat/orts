@@ -910,7 +910,7 @@ fn build_orbital_system(
                 AtmosphereChoice::HarrisPriester => {
                     AtmosphericDrag::for_earth(sat.ballistic_coeff)
                         .with_atmosphere(Box::new(
-                            orts_atmosphere::harris_priester::HarrisPriester::new(),
+                            tobari::harris_priester::HarrisPriester::new(),
                         ))
                 }
             };

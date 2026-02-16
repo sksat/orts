@@ -3058,23 +3058,15 @@ dependencies = [
  "futures-util",
  "kaname",
  "nalgebra",
- "orts-atmosphere",
  "orts-datamodel",
  "orts-integrator",
  "orts-orbits",
  "serde",
  "serde_json",
+ "tobari",
  "tokio",
  "tokio-tungstenite",
  "ureq 3.2.0",
-]
-
-[[package]]
-name = "orts-atmosphere"
-version = "0.0.0"
-dependencies = [
- "kaname",
- "nalgebra",
 ]
 
 [[package]]
@@ -3098,10 +3090,10 @@ version = "0.0.0"
 dependencies = [
  "kaname",
  "nalgebra",
- "orts-atmosphere",
  "orts-integrator",
  "serde",
  "serde_json",
+ "tobari",
 ]
 
 [[package]]
@@ -4958,6 +4950,14 @@ checksum = "42d3e9c45c09de15d06dd8acf5f4e0e399e85927b7f00711024eb7ae10fa4869"
 dependencies = [
  "displaydoc",
  "zerovec",
+]
+
+[[package]]
+name = "tobari"
+version = "0.0.0"
+dependencies = [
+ "kaname",
+ "nalgebra",
 ]
 
 [[package]]

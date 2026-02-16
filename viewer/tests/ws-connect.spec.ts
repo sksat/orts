@@ -235,7 +235,7 @@ test("3D scene renders orbit trails and satellite markers", async ({ page }) => 
 
   // Take a screenshot of the canvas and verify it has non-uniform pixels
   // (Playwright captures composited output regardless of preserveDrawingBuffer).
-  const screenshot = await canvas.screenshot();
+  const screenshot = await page.screenshot();
   expect(screenshot.byteLength, "canvas screenshot should not be empty").toBeGreaterThan(0);
 
   // Decode PNG to check for non-uniform content: a blank/black canvas compresses

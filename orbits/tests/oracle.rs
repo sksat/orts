@@ -445,7 +445,7 @@ fn drag_monotonic_sma_decay() {
         body_radius: R_EARTH,
         omega_body: orts_orbits::drag::OMEGA_EARTH,
         ballistic_coeff: 0.005, // physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
-        atmosphere: Box::new(orts_atmosphere::exponential::Exponential),
+        atmosphere: Box::new(tobari::exponential::Exponential),
     }));
 
     let initial = State {
@@ -524,7 +524,7 @@ fn drag_scaling_with_ballistic_coefficient() {
             body_radius: R_EARTH,
             omega_body: orts_orbits::drag::OMEGA_EARTH,
             ballistic_coeff: b,
-            atmosphere: Box::new(orts_atmosphere::exponential::Exponential),
+            atmosphere: Box::new(tobari::exponential::Exponential),
         }));
 
         let initial = State {
@@ -1610,7 +1610,7 @@ fn drag_decay_200_orbits() {
         body_radius: R_EARTH,
         omega_body: orts_orbits::drag::OMEGA_EARTH,
         ballistic_coeff: orts_orbits::drag::DEFAULT_BALLISTIC_COEFF,
-        atmosphere: Box::new(orts_atmosphere::exponential::Exponential),
+        atmosphere: Box::new(tobari::exponential::Exponential),
     }));
 
     let initial = State {
@@ -1826,7 +1826,7 @@ fn iss_drag_30day_survival() {
         body_radius: R_EARTH,
         omega_body: orts_orbits::drag::OMEGA_EARTH,
         ballistic_coeff: 0.005, // Physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
-        atmosphere: Box::new(orts_atmosphere::exponential::Exponential),
+        atmosphere: Box::new(tobari::exponential::Exponential),
     }));
 
     let initial = State {
