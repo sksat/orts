@@ -42,6 +42,7 @@ export function buildDerivedQuery(
   schema: TableSchema,
   tMin?: number,
   maxPoints?: number,
+  tMax?: number,
 ): string {
   const whereClause = tMin != null ? `WHERE t >= ${tMin}` : "";
   const maxPts = maxPoints ?? 0;
@@ -65,9 +66,14 @@ export function buildDerivedQuery(
   // This ensures even *temporal* coverage regardless of data density —
   // sparse overview regions retain proportional representation even when
   // dense streaming data dominates by row count.
+  //
+  // When tMax is provided, all tables use the same t_hi for bucket
+  // boundaries, ensuring aligned timestamps across multi-table queries.
+  const tHiExpr = tMax != null ? `${tMax} AS t_hi` : `MAX(t) AS t_hi`;
+
   return (
     `WITH filtered AS (SELECT ${baseCols} FROM ${schema.tableName} ${whereClause}), ` +
-    `bounds AS (SELECT MIN(t) AS t_lo, MAX(t) AS t_hi, COUNT(*) AS total FROM filtered), ` +
+    `bounds AS (SELECT MIN(t) AS t_lo, ${tHiExpr}, COUNT(*) AS total FROM filtered), ` +
     `bucketed AS (SELECT f.*, ` +
     `CASE WHEN b.t_hi = b.t_lo THEN 0 ` +
     `ELSE LEAST(GREATEST(CAST(FLOOR((CAST(f.t AS DOUBLE) - CAST(b.t_lo AS DOUBLE)) ` +
@@ -169,8 +175,9 @@ export async function queryDerived(
   schema: TableSchema,
   tMin?: number,
   maxPoints?: number,
+  tMax?: number,
 ): Promise<ChartDataMap> {
-  const sql = buildDerivedQuery(schema, tMin, maxPoints);
+  const sql = buildDerivedQuery(schema, tMin, maxPoints, tMax);
   const result = await conn.query(sql);
 
   const t = result.getChildAt(0)!.toArray() as Float64Array;

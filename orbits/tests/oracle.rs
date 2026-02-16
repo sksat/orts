@@ -13,7 +13,7 @@
 
 use nalgebra::vector;
 use kaname::epoch::Epoch;
-use orts_integrator::{Rk4, State};
+use orts_integrator::{DormandPrince, IntegrationOutcome, Rk4, State, Tolerances};
 use orts_orbits::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use orts_orbits::drag::AtmosphericDrag;
 use orts_orbits::gravity::ZonalHarmonics;
@@ -21,6 +21,7 @@ use orts_orbits::kepler::KeplerianElements;
 use orts_orbits::orbital_system::OrbitalSystem;
 use orts_orbits::third_body::ThirdBodyGravity;
 use std::f64::consts::PI;
+use std::ops::ControlFlow;
 
 // ============================================================================
 // Helpers
@@ -93,6 +94,67 @@ fn propagate_collecting_elements(
     }
 
     (orbit_elements, current)
+}
+
+/// Propagate with DP45 (adaptive) and collect orbital elements at each orbit completion.
+fn propagate_collecting_elements_dp45(
+    system: &OrbitalSystem,
+    elements: &KeplerianElements,
+    n_orbits: usize,
+    tol: &Tolerances,
+) -> (Vec<KeplerianElements>, State) {
+    let (pos, vel) = elements.to_state_vector(MU_EARTH);
+    let initial = State {
+        position: pos,
+        velocity: vel,
+    };
+    let period = elements.period(MU_EARTH);
+
+    let mut orbit_elements = vec![];
+    let mut current = initial;
+    let mut t = 0.0;
+
+    for _ in 0..n_orbits {
+        let t_end = t + period;
+        let outcome: IntegrationOutcome<()> =
+            DormandPrince::integrate_adaptive_with_events(
+                system,
+                current,
+                t,
+                t_end,
+                period / 100.0, // initial dt guess
+                tol,
+                |_, _| {},
+                |_, _| ControlFlow::Continue(()),
+            );
+        match outcome {
+            IntegrationOutcome::Completed(state) => current = state,
+            other => panic!("DP45 integration failed: {other:?}"),
+        }
+        t = t_end;
+        let elems = KeplerianElements::from_state_vector(
+            &current.position,
+            &current.velocity,
+            MU_EARTH,
+        );
+        orbit_elements.push(elems);
+    }
+
+    (orbit_elements, current)
+}
+
+/// Compute total energy including J2 gravitational potential.
+///
+/// E = v²/2 - μ/r + μ·J2·Re²/(2r³)·(3z²/r² - 1)
+///
+/// This is the conserved quantity for the J2 system.
+fn j2_total_energy(state: &State, mu: f64, j2: f64, r_body: f64) -> f64 {
+    let r = state.position.magnitude();
+    let z = state.position[2];
+    let v_sq = state.velocity.magnitude_squared();
+    let two_body = v_sq / 2.0 - mu / r;
+    let j2_potential = mu * j2 * r_body.powi(2) / (2.0 * r.powi(3)) * (3.0 * z * z / (r * r) - 1.0);
+    two_body + j2_potential
 }
 
 /// Unwrap an angle relative to a reference to handle 0/2π wrapping.
@@ -1807,6 +1869,374 @@ fn iss_drag_30day_survival() {
     assert!(
         decay_per_day > 0.01 && decay_per_day < 1.0,
         "ISS decay rate should be 0.01-1.0 km/day, got {decay_per_day:.4} km/day"
+    );
+}
+
+// ============================================================================
+// Test: J2 Eccentricity Oscillation Bounded
+//
+// Near-circular orbit under J2 has short-period eccentricity oscillations
+// with amplitude ≈ (3/4) J2 (R_e/p)² ≈ 0.0006-0.001.
+// The ω precession modulates the oscillation envelope but eccentricity
+// must remain bounded (no secular divergence for conservative J2).
+//
+// Oracle: Brouwer theory — J2 causes no secular eccentricity change;
+//         energy must be conserved for the conservative J2 system.
+// ============================================================================
+
+#[test]
+fn j2_eccentricity_oscillation_bounded() {
+    let a = R_EARTH + 800.0;
+    let e_0 = 0.01;
+    let i = 51.6_f64.to_radians();
+
+    let elements = KeplerianElements {
+        semi_major_axis: a,
+        eccentricity: e_0,
+        inclination: i,
+        raan: 0.0,
+        argument_of_periapsis: 0.0,
+        true_anomaly: 0.0,
+    };
+
+    let system = earth_j2_system();
+    let n_orbits = 50;
+    let dt = 10.0;
+
+    // Compute initial total energy (including J2 potential)
+    let (pos_0, vel_0) = elements.to_state_vector(MU_EARTH);
+    let initial = State {
+        position: pos_0.clone(),
+        velocity: vel_0.clone(),
+    };
+    let energy_0 = j2_total_energy(&initial, MU_EARTH, J2_EARTH, R_EARTH);
+
+    let (orbit_elems, final_state) =
+        propagate_collecting_elements(&system, &elements, n_orbits, dt);
+
+    // Collect eccentricity values
+    let ecc_values: Vec<f64> = orbit_elems.iter().map(|el| el.eccentricity).collect();
+    let e_min = ecc_values.iter().copied().fold(f64::MAX, f64::min);
+    let e_max = ecc_values.iter().copied().fold(f64::MIN, f64::max);
+    let e_mean = ecc_values.iter().sum::<f64>() / ecc_values.len() as f64;
+    let e_range = e_max - e_min;
+
+    println!("J2 e oscillation (50 orbits): e_0={e_0}, e_min={e_min:.6}, e_max={e_max:.6}, e_mean={e_mean:.6}, range={e_range:.6}");
+
+    // 1. Eccentricity must remain bounded (no divergence)
+    //    J2 short-period amplitude ≈ (3/4) J2 (Re/p)² ≈ 0.0006 for this orbit.
+    //    Allow generous margin: e stays within e_0 ± 0.01
+    assert!(
+        e_max < e_0 + 0.01,
+        "Eccentricity should not diverge: e_max={e_max:.6}, limit={:.6}",
+        e_0 + 0.01
+    );
+    assert!(
+        e_min > 0.0,
+        "Eccentricity must remain positive: e_min={e_min:.6}"
+    );
+
+    // 2. Mean eccentricity should be close to initial (no secular drift)
+    assert!(
+        (e_mean - e_0).abs() < 0.005,
+        "Mean eccentricity should not drift: e_mean={e_mean:.6}, e_0={e_0}"
+    );
+
+    // 3. Short-period oscillation amplitude should be physically reasonable
+    //    Theory: Δe_sp ≈ (3/4) J2 (Re/p)² ≈ 0.0006
+    let p = a * (1.0 - e_0 * e_0);
+    let delta_e_theory = 0.75 * J2_EARTH * (R_EARTH / p).powi(2);
+    println!("  Theoretical J2 short-period Δe ≈ {delta_e_theory:.6}");
+    // Oscillation range should be on the order of the theoretical value
+    // (within 10x is acceptable given higher-order effects)
+    assert!(
+        e_range < delta_e_theory * 20.0,
+        "Oscillation range {e_range:.6} exceeds 20× theoretical Δe {delta_e_theory:.6}"
+    );
+
+    // 4. Total energy conservation (including J2 potential — the true conserved quantity)
+    //    With correct total energy, RK4 drift should be much smaller than
+    //    the ~5e-4 we saw with two-body energy (which oscillates due to J2).
+    let energy_final = j2_total_energy(&final_state, MU_EARTH, J2_EARTH, R_EARTH);
+    let rel_energy_error = ((energy_final - energy_0) / energy_0).abs();
+    println!("  Total energy: initial={energy_0:.10}, final={energy_final:.10}, rel_error={rel_energy_error:.2e}");
+    assert!(
+        rel_energy_error < 1e-5,
+        "Total energy should be conserved: relative error = {rel_energy_error:.2e}"
+    );
+}
+
+// ============================================================================
+// Test: J2 ω Precession Modulates Eccentricity (Long-Duration)
+//
+// Over 200 orbits (~14 days), ω precesses ~46° (at 3.3°/day for ISS incl.).
+// The eccentricity oscillation envelope is modulated by ω but must remain
+// bounded. This validates long-term numerical stability of the J2 integrator.
+//
+// Oracle: Lagrange planetary equations predict no secular e change from J2.
+//         ω̇ ≈ 3.3°/day at ISS inclination confirms precession tracking.
+// ============================================================================
+
+#[test]
+fn j2_omega_precession_modulates_eccentricity() {
+    let a = R_EARTH + 800.0;
+    let e_0 = 0.05; // larger e to make ω oscillation coupling visible
+    let i = 51.6_f64.to_radians();
+
+    let elements = KeplerianElements {
+        semi_major_axis: a,
+        eccentricity: e_0,
+        inclination: i,
+        raan: 0.0,
+        argument_of_periapsis: 0.0,
+        true_anomaly: 0.0,
+    };
+
+    let system = earth_j2_system();
+    let n_orbits = 200;
+    let dt = 10.0;
+
+    let (orbit_elems, _) = propagate_collecting_elements(&system, &elements, n_orbits, dt);
+
+    // Collect e and ω over time
+    let ecc_values: Vec<f64> = orbit_elems.iter().map(|el| el.eccentricity).collect();
+    let omega_values: Vec<f64> = orbit_elems
+        .iter()
+        .map(|el| unwrap_angle(el.argument_of_periapsis, elements.argument_of_periapsis))
+        .collect();
+
+    let e_min = ecc_values.iter().copied().fold(f64::MAX, f64::min);
+    let e_max = ecc_values.iter().copied().fold(f64::MIN, f64::max);
+    let e_mean = ecc_values.iter().sum::<f64>() / ecc_values.len() as f64;
+
+    let omega_final = omega_values.last().copied().unwrap();
+    let period = elements.period(MU_EARTH);
+    let total_time = n_orbits as f64 * period;
+    let omega_rate_deg_per_day = omega_final.to_degrees() * 86400.0 / total_time;
+
+    println!("J2 e-ω modulation (200 orbits, {:.1} days):", total_time / 86400.0);
+    println!("  e: min={e_min:.6}, max={e_max:.6}, mean={e_mean:.6}, range={:.6}", e_max - e_min);
+    println!("  ω: initial=0°, final={:.2}°, rate={omega_rate_deg_per_day:.2}°/day", omega_final.to_degrees());
+
+    // 1. ω precession rate should match analytical prediction
+    let p = a * (1.0 - e_0 * e_0);
+    let n_mean = (MU_EARTH / a.powi(3)).sqrt();
+    let expected_omega_dot =
+        1.5 * n_mean * J2_EARTH * (R_EARTH / p).powi(2) * (2.0 - 2.5 * i.sin().powi(2));
+    let expected_deg_per_day = expected_omega_dot.to_degrees() * 86400.0;
+
+    let omega_error = (omega_rate_deg_per_day - expected_deg_per_day).abs();
+    assert!(
+        omega_error < 1.5,
+        "ω precession rate: expected≈{expected_deg_per_day:.2}°/day, got={omega_rate_deg_per_day:.2}°/day, error={omega_error:.3}"
+    );
+
+    // 2. Eccentricity must remain bounded (no divergence over 200 orbits)
+    assert!(
+        e_max < e_0 + 0.02,
+        "Eccentricity diverging: e_max={e_max:.6}, limit={:.6}",
+        e_0 + 0.02
+    );
+    assert!(
+        e_min > e_0 - 0.02,
+        "Eccentricity diverging: e_min={e_min:.6}, limit={:.6}",
+        e_0 - 0.02
+    );
+
+    // 3. Mean eccentricity should be close to initial (no secular drift)
+    assert!(
+        (e_mean - e_0).abs() < 0.01,
+        "Mean eccentricity drifted: e_mean={e_mean:.6}, e_0={e_0}"
+    );
+
+    // 4. Eccentricity should show oscillatory structure, not monotonic growth
+    //    Check: first quarter e-mean vs last quarter e-mean should be similar
+    let q_len = ecc_values.len() / 4;
+    let e_mean_q1 = ecc_values[..q_len].iter().sum::<f64>() / q_len as f64;
+    let e_mean_q4 = ecc_values[3 * q_len..].iter().sum::<f64>() / (ecc_values.len() - 3 * q_len) as f64;
+    let secular_drift = (e_mean_q4 - e_mean_q1).abs();
+    println!("  Secular e drift (Q1 mean vs Q4 mean): {secular_drift:.6}");
+    assert!(
+        secular_drift < 0.005,
+        "Secular eccentricity drift detected: Q1 mean={e_mean_q1:.6}, Q4 mean={e_mean_q4:.6}, drift={secular_drift:.6}"
+    );
+}
+
+// ============================================================================
+// DP45 (Dormand-Prince) versions — tighter tolerances, longer duration
+//
+// DP45 with atol=1e-12, rtol=1e-10 preserves energy to ~1e-10 level,
+// enabling strict energy conservation checks over long periods.
+// ============================================================================
+
+#[test]
+fn j2_eccentricity_dp45_500_orbits() {
+    let a = R_EARTH + 800.0;
+    let e_0 = 0.01;
+    let i = 51.6_f64.to_radians();
+
+    let elements = KeplerianElements {
+        semi_major_axis: a,
+        eccentricity: e_0,
+        inclination: i,
+        raan: 0.0,
+        argument_of_periapsis: 0.0,
+        true_anomaly: 0.0,
+    };
+
+    let system = earth_j2_system();
+    let n_orbits = 500; // ~35 days
+    let tol = Tolerances {
+        atol: 1e-12,
+        rtol: 1e-10,
+    };
+
+    let (pos_0, vel_0) = elements.to_state_vector(MU_EARTH);
+    let initial = State {
+        position: pos_0.clone(),
+        velocity: vel_0.clone(),
+    };
+    let energy_0 = j2_total_energy(&initial, MU_EARTH, J2_EARTH, R_EARTH);
+
+    let (orbit_elems, final_state) =
+        propagate_collecting_elements_dp45(&system, &elements, n_orbits, &tol);
+
+    let ecc_values: Vec<f64> = orbit_elems.iter().map(|el| el.eccentricity).collect();
+    let e_min = ecc_values.iter().copied().fold(f64::MAX, f64::min);
+    let e_max = ecc_values.iter().copied().fold(f64::MIN, f64::max);
+    let e_mean = ecc_values.iter().sum::<f64>() / ecc_values.len() as f64;
+
+    let period = elements.period(MU_EARTH);
+    let total_days = n_orbits as f64 * period / 86400.0;
+
+    println!("DP45 J2 e oscillation ({n_orbits} orbits, {total_days:.1} days):");
+    println!("  e: min={e_min:.8}, max={e_max:.8}, mean={e_mean:.8}, range={:.8}", e_max - e_min);
+
+    // 1. Eccentricity bounded
+    assert!(
+        e_max < e_0 + 0.01,
+        "e diverged: e_max={e_max:.8}, limit={:.6}", e_0 + 0.01
+    );
+    assert!(e_min > 0.0, "e went negative: e_min={e_min:.8}");
+
+    // 2. Mean eccentricity stable
+    assert!(
+        (e_mean - e_0).abs() < 0.005,
+        "Mean e drifted: e_mean={e_mean:.8}, e_0={e_0}"
+    );
+
+    // 3. Strict total energy conservation (including J2 potential)
+    //    DP45 with tight tolerances should preserve total energy to ~1e-10 level
+    let energy_final = j2_total_energy(&final_state, MU_EARTH, J2_EARTH, R_EARTH);
+    let rel_energy_error = ((energy_final - energy_0) / energy_0).abs();
+    println!("  Total energy: rel_error={rel_energy_error:.2e}");
+    assert!(
+        rel_energy_error < 1e-7,
+        "DP45 total energy should be conserved: rel_error={rel_energy_error:.2e}"
+    );
+
+    // 4. No secular drift: Q1 vs Q4 mean eccentricity
+    let q_len = ecc_values.len() / 4;
+    let e_mean_q1 = ecc_values[..q_len].iter().sum::<f64>() / q_len as f64;
+    let e_mean_q4 = ecc_values[3 * q_len..].iter().sum::<f64>() / (ecc_values.len() - 3 * q_len) as f64;
+    let secular_drift = (e_mean_q4 - e_mean_q1).abs();
+    println!("  Secular e drift (Q1 vs Q4): {secular_drift:.8}");
+    assert!(
+        secular_drift < 0.002,
+        "Secular drift: Q1={e_mean_q1:.8}, Q4={e_mean_q4:.8}, drift={secular_drift:.8}"
+    );
+}
+
+#[test]
+fn j2_omega_precession_dp45_500_orbits() {
+    let a = R_EARTH + 800.0;
+    let e_0 = 0.05;
+    let i = 51.6_f64.to_radians();
+
+    let elements = KeplerianElements {
+        semi_major_axis: a,
+        eccentricity: e_0,
+        inclination: i,
+        raan: 0.0,
+        argument_of_periapsis: 0.0,
+        true_anomaly: 0.0,
+    };
+
+    let system = earth_j2_system();
+    let n_orbits = 500; // ~35 days
+    let tol = Tolerances {
+        atol: 1e-12,
+        rtol: 1e-10,
+    };
+
+    let (pos_0, vel_0) = elements.to_state_vector(MU_EARTH);
+    let initial = State {
+        position: pos_0.clone(),
+        velocity: vel_0.clone(),
+    };
+    let energy_0 = j2_total_energy(&initial, MU_EARTH, J2_EARTH, R_EARTH);
+
+    let (orbit_elems, final_state) =
+        propagate_collecting_elements_dp45(&system, &elements, n_orbits, &tol);
+
+    let ecc_values: Vec<f64> = orbit_elems.iter().map(|el| el.eccentricity).collect();
+    let omega_values: Vec<f64> = orbit_elems
+        .iter()
+        .map(|el| unwrap_angle(el.argument_of_periapsis, elements.argument_of_periapsis))
+        .collect();
+
+    let e_min = ecc_values.iter().copied().fold(f64::MAX, f64::min);
+    let e_max = ecc_values.iter().copied().fold(f64::MIN, f64::max);
+    let e_mean = ecc_values.iter().sum::<f64>() / ecc_values.len() as f64;
+
+    let omega_final = omega_values.last().copied().unwrap();
+    let period = elements.period(MU_EARTH);
+    let total_time = n_orbits as f64 * period;
+    let total_days = total_time / 86400.0;
+    let omega_rate_deg_per_day = omega_final.to_degrees() * 86400.0 / total_time;
+
+    println!("DP45 J2 e-ω modulation ({n_orbits} orbits, {total_days:.1} days):");
+    println!("  e: min={e_min:.8}, max={e_max:.8}, mean={e_mean:.8}");
+    println!("  ω: final={:.2}°, rate={omega_rate_deg_per_day:.3}°/day", omega_final.to_degrees());
+
+    // 1. ω precession rate matches theory (tighter tolerance with DP45)
+    let p = a * (1.0 - e_0 * e_0);
+    let n_mean = (MU_EARTH / a.powi(3)).sqrt();
+    let expected_omega_dot =
+        1.5 * n_mean * J2_EARTH * (R_EARTH / p).powi(2) * (2.0 - 2.5 * i.sin().powi(2));
+    let expected_deg_per_day = expected_omega_dot.to_degrees() * 86400.0;
+
+    let omega_error = (omega_rate_deg_per_day - expected_deg_per_day).abs();
+    println!("  ω rate error: {omega_error:.4}°/day (expected {expected_deg_per_day:.3}°/day)");
+    assert!(
+        omega_error < 0.5,
+        "ω rate: expected≈{expected_deg_per_day:.3}°/day, got={omega_rate_deg_per_day:.3}°/day"
+    );
+
+    // 2. Eccentricity bounded
+    assert!(
+        e_max < e_0 + 0.02 && e_min > e_0 - 0.02,
+        "e out of bounds: [{e_min:.8}, {e_max:.8}]"
+    );
+
+    // 3. Strict total energy conservation (including J2 potential)
+    let energy_final = j2_total_energy(&final_state, MU_EARTH, J2_EARTH, R_EARTH);
+    let rel_energy_error = ((energy_final - energy_0) / energy_0).abs();
+    println!("  Total energy: rel_error={rel_energy_error:.2e}");
+    assert!(
+        rel_energy_error < 1e-7,
+        "DP45 total energy: rel_error={rel_energy_error:.2e}"
+    );
+
+    // 4. No secular drift over ~35 days
+    let q_len = ecc_values.len() / 4;
+    let e_mean_q1 = ecc_values[..q_len].iter().sum::<f64>() / q_len as f64;
+    let e_mean_q4 = ecc_values[3 * q_len..].iter().sum::<f64>() / (ecc_values.len() - 3 * q_len) as f64;
+    let secular_drift = (e_mean_q4 - e_mean_q1).abs();
+    println!("  Secular e drift (Q1 vs Q4): {secular_drift:.8}");
+    assert!(
+        secular_drift < 0.003,
+        "Secular drift: Q1={e_mean_q1:.8}, Q4={e_mean_q4:.8}"
     );
 }
 

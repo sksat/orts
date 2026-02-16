@@ -203,6 +203,54 @@ describe("buildDerivedQuery", () => {
     expect(sql).not.toContain("UNION");
   });
 
+  it("uses provided tMax in bounds CTE instead of computing MAX(t)", () => {
+    const sql = buildDerivedQuery(testSchema, undefined, 100, 1000);
+    // bounds CTE should use the provided tMax as t_hi, not MAX(t)
+    expect(sql).toContain("1000 AS t_hi");
+    // Should still compute MIN(t) and COUNT(*) from data
+    expect(sql).toContain("MIN(t) AS t_lo");
+    expect(sql).toContain("COUNT(*)");
+  });
+
+  it("two schemas with same tMax produce identical bucket boundaries", () => {
+    const schemaA: TableSchema<TestPoint> = {
+      ...testSchema,
+      tableName: "orbit_SSO",
+    };
+    const schemaB: TableSchema<TestPoint> = {
+      ...testSchema,
+      tableName: "orbit_ISS",
+    };
+    const tMax = 2592000; // 30 days in seconds
+    const sqlA = buildDerivedQuery(schemaA, undefined, 100, tMax);
+    const sqlB = buildDerivedQuery(schemaB, undefined, 100, tMax);
+    // Extract the bucket calculation part (everything after bucketed AS)
+    // Both should use the same tMax value in the formula
+    const bucketFormulaA = sqlA.replace(/orbit_SSO/g, "TABLE");
+    const bucketFormulaB = sqlB.replace(/orbit_ISS/g, "TABLE");
+    expect(bucketFormulaA).toBe(bucketFormulaB);
+  });
+
+  it("without tMax, bounds CTE computes MAX(t) from data", () => {
+    const sql = buildDerivedQuery(testSchema, undefined, 100);
+    // Default behavior: compute t_hi from data
+    expect(sql).toContain("MAX(t) AS t_hi");
+    expect(sql).not.toMatch(/\d+ AS t_hi/);
+  });
+
+  it("tMax is used with tMin together", () => {
+    const sql = buildDerivedQuery(testSchema, 500, 100, 2000);
+    expect(sql).toContain("WHERE t >= 500");
+    expect(sql).toContain("2000 AS t_hi");
+  });
+
+  it("tMax has no effect without downsampling", () => {
+    const sql = buildDerivedQuery(testSchema, undefined, undefined, 1000);
+    // No downsampling → simple query, tMax is irrelevant
+    expect(sql).not.toContain("bounds");
+    expect(sql).not.toContain("bucket");
+  });
+
   it("includes pass-through derived columns that reference base columns", () => {
     // When a base column (like 'value') should appear in chart output,
     // a pass-through derived entry { name: "value", sql: "value" } must exist.

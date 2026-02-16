@@ -170,10 +170,28 @@ export function useMultiSatelliteStore<T extends TimePoint>(
             // preventing invalid -Infinity SQL values.
             const tMin = computeUnifiedTMin(timeRangeRef.current, buffersRef.current);
 
+            // Compute unified tMax across all satellite tables so that
+            // time-bucket downsampling produces aligned bucket boundaries.
+            // Without this, each table independently computes MAX(t) as t_hi,
+            // leading to different bucket edges and misaligned timestamps that
+            // cause NaN gaps when series are merged in alignTimeSeries().
+            let unifiedTMax: number | undefined;
+            if (hasData.size > 1) {
+              let maxT = -Infinity;
+              for (const cfg of configsRef.current) {
+                if (!hasData.has(cfg.id)) continue;
+                const schema = makeSatelliteSchema(baseSchemaRef.current, cfg.id);
+                const res = await conn.query(`SELECT MAX(t) AS t_max FROM ${schema.tableName}`);
+                const val = Number(res.getChildAt(0)?.get(0));
+                if (Number.isFinite(val) && val > maxT) maxT = val;
+              }
+              if (Number.isFinite(maxT)) unifiedTMax = maxT;
+            }
+
             for (const cfg of configsRef.current) {
               if (!hasData.has(cfg.id)) continue;
               const schema = makeSatelliteSchema(baseSchemaRef.current, cfg.id);
-              const result = await queryDerived(conn, schema, tMin, maxPointsRef.current);
+              const result = await queryDerived(conn, schema, tMin, maxPointsRef.current, unifiedTMax);
               if (result.t.length > 0) {
                 perSatData.set(cfg.id, result);
               }
