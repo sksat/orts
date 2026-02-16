@@ -65,7 +65,7 @@ mod tests {
     use crate::kepler::KeplerianElements;
     use crate::two_body::TwoBodySystem;
     use nalgebra::vector;
-    use orts_integrator::Rk4;
+    use orts_integrator::{Integrator, Rk4};
     use std::f64::consts::PI;
 
     #[test]
@@ -98,10 +98,10 @@ mod tests {
         };
 
         let two_body = TwoBodySystem { mu: MU_EARTH };
-        let final_tb = Rk4::integrate(&two_body, initial.clone(), 0.0, period, dt, |_, _| {});
+        let final_tb = Rk4.integrate(&two_body, initial.clone(), 0.0, period, dt, |_, _| {});
 
         let orbital = OrbitalSystem::new(MU_EARTH, Box::new(PointMass));
-        let final_os = Rk4::integrate(&orbital, initial, 0.0, period, dt, |_, _| {});
+        let final_os = Rk4.integrate(&orbital, initial, 0.0, period, dt, |_, _| {});
 
         // Should be bit-for-bit identical
         assert_eq!(final_tb.position, final_os.position);
@@ -141,7 +141,7 @@ mod tests {
             velocity: vel,
         };
 
-        let final_state = Rk4::integrate(system, initial, 0.0, duration, dt, |_, _| {});
+        let final_state = Rk4.integrate(system, initial, 0.0, duration, dt, |_, _| {});
 
         let final_elements = KeplerianElements::from_state_vector(
             &final_state.position,
@@ -263,9 +263,9 @@ mod tests {
         let dt_fine = 2.0;
         let dt_finest = 1.0;
 
-        let final_coarse = Rk4::integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
-        let final_fine = Rk4::integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
-        let final_finest = Rk4::integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
+        let final_coarse = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
+        let final_fine = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
+        let final_finest = Rk4.integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
 
         let err_coarse = (final_coarse.position - final_finest.position).magnitude();
         let err_fine = (final_fine.position - final_finest.position).magnitude();
@@ -314,9 +314,9 @@ mod tests {
         let dt_fine = 2.0;
         let dt_finest = 1.0;
 
-        let final_coarse = Rk4::integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
-        let final_fine = Rk4::integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
-        let final_finest = Rk4::integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
+        let final_coarse = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
+        let final_fine = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
+        let final_finest = Rk4.integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
 
         let err_coarse = (final_coarse.position - final_finest.position).magnitude();
         let err_fine = (final_fine.position - final_finest.position).magnitude();

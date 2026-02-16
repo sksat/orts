@@ -91,7 +91,7 @@ mod tests {
 
     // --- Propagation tests using RK4 ---
 
-    use orts_integrator::Rk4;
+    use orts_integrator::{Integrator, Rk4};
     use std::f64::consts::PI;
 
     /// Helper: set up a circular ISS orbit initial state
@@ -114,7 +114,7 @@ mod tests {
         let mut t = 0.0;
         states.push(state.clone());
         for _ in 0..n_steps {
-            state = Rk4::step(system, t, &state, dt);
+            state = Rk4.step(system, t, &state, dt);
             t += dt;
             states.push(state.clone());
         }

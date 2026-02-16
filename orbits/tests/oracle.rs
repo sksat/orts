@@ -13,7 +13,7 @@
 
 use nalgebra::vector;
 use kaname::epoch::Epoch;
-use orts_integrator::{DormandPrince, IntegrationOutcome, Rk4, State, Tolerances};
+use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, State, Tolerances};
 use orts_orbits::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use orts_orbits::drag::AtmosphericDrag;
 use orts_orbits::gravity::ZonalHarmonics;
@@ -83,7 +83,7 @@ fn propagate_collecting_elements(
 
     for _ in 0..n_orbits {
         let t_end = t + period;
-        current = Rk4::integrate(system, current, t, t_end, dt, |_, _| {});
+        current = Rk4.integrate(system, current, t, t_end, dt, |_, _| {});
         t = t_end;
         let elems = KeplerianElements::from_state_vector(
             &current.position,
@@ -117,7 +117,7 @@ fn propagate_collecting_elements_dp45(
     for _ in 0..n_orbits {
         let t_end = t + period;
         let outcome: IntegrationOutcome<()> =
-            DormandPrince::integrate_adaptive_with_events(
+            DormandPrince.integrate_adaptive_with_events(
                 system,
                 current,
                 t,
@@ -177,7 +177,7 @@ fn integrate_backward(system: &OrbitalSystem, state: State, t0: f64, t_end: f64,
 
     while t > t_end + 1e-10 {
         let h = step.max(t_end - t); // max of two negatives = less negative = smaller step
-        current = Rk4::step(system, t, &current, h);
+        current = Rk4.step(system, t, &current, h);
         t += h;
     }
 
@@ -346,7 +346,7 @@ fn zonal_harmonics_lz_conservation() {
     let total_time = 10.0 * period;
     let dt = 5.0;
 
-    Rk4::integrate(&system, initial, 0.0, total_time, dt, |_, state| {
+    Rk4.integrate(&system, initial, 0.0, total_time, dt, |_, state| {
         let lz = state.position.cross(&state.velocity).z;
         let drift = (lz - initial_lz).abs() / initial_lz.abs();
         max_lz_drift = max_lz_drift.max(drift);
@@ -396,7 +396,7 @@ fn time_reversal_j2_conservative() {
     let dt = 10.0;
 
     // Forward propagation
-    let forward = Rk4::integrate(&system, initial.clone(), 0.0, total_time, dt, |_, _| {});
+    let forward = Rk4.integrate(&system, initial.clone(), 0.0, total_time, dt, |_, _| {});
 
     // Backward propagation (manual loop since integrate doesn't support t_end < t0)
     let backward = integrate_backward(&system, forward, total_time, 0.0, dt);
@@ -462,7 +462,7 @@ fn drag_monotonic_sma_decay() {
 
     for _ in 0..n_orbits {
         let t_end = t + period;
-        current = Rk4::integrate(&system, current, t, t_end, dt, |_, _| {});
+        current = Rk4.integrate(&system, current, t, t_end, dt, |_, _| {});
         t = t_end;
         let elems =
             KeplerianElements::from_state_vector(&current.position, &current.velocity, MU_EARTH);
@@ -534,7 +534,7 @@ fn drag_scaling_with_ballistic_coefficient() {
         let mut t = 0.0;
         for _ in 0..n_orbits {
             let t_end = t + period;
-            current = Rk4::integrate(&system, current, t, t_end, dt, |_, _| {});
+            current = Rk4.integrate(&system, current, t, t_end, dt, |_, _| {});
             t = t_end;
         }
         let final_elems = KeplerianElements::from_state_vector(
@@ -665,7 +665,7 @@ fn third_body_geo_inclination_change() {
     let duration = 30.0 * 86400.0; // 30 days
     let dt = 30.0; // larger dt for GEO (slower dynamics)
 
-    let final_state = Rk4::integrate(&system, initial, 0.0, duration, dt, |_, _| {});
+    let final_state = Rk4.integrate(&system, initial, 0.0, duration, dt, |_, _| {});
     let final_elems = KeplerianElements::from_state_vector(
         &final_state.position,
         &final_state.velocity,
@@ -714,26 +714,26 @@ fn third_body_individual_effects() {
 
     // J2 only (no third-body) as baseline
     let system_j2 = earth_j2_j3_j4_system();
-    let final_j2 = Rk4::integrate(&system_j2, initial.clone(), 0.0, duration, dt, |_, _| {});
+    let final_j2 = Rk4.integrate(&system_j2, initial.clone(), 0.0, duration, dt, |_, _| {});
 
     // Sun only
     let system_sun = earth_j2_j3_j4_system()
         .with_epoch(epoch)
         .with_perturbation(Box::new(ThirdBodyGravity::sun()));
-    let final_sun = Rk4::integrate(&system_sun, initial.clone(), 0.0, duration, dt, |_, _| {});
+    let final_sun = Rk4.integrate(&system_sun, initial.clone(), 0.0, duration, dt, |_, _| {});
 
     // Moon only
     let system_moon = earth_j2_j3_j4_system()
         .with_epoch(epoch)
         .with_perturbation(Box::new(ThirdBodyGravity::moon()));
-    let final_moon = Rk4::integrate(&system_moon, initial.clone(), 0.0, duration, dt, |_, _| {});
+    let final_moon = Rk4.integrate(&system_moon, initial.clone(), 0.0, duration, dt, |_, _| {});
 
     // Both
     let system_both = earth_j2_j3_j4_system()
         .with_epoch(epoch)
         .with_perturbation(Box::new(ThirdBodyGravity::sun()))
         .with_perturbation(Box::new(ThirdBodyGravity::moon()));
-    let final_both = Rk4::integrate(&system_both, initial, 0.0, duration, dt, |_, _| {});
+    let final_both = Rk4.integrate(&system_both, initial, 0.0, duration, dt, |_, _| {});
 
     // Each third-body should cause a measurable difference from J2-only
     let diff_sun = (final_sun.position - final_j2.position).magnitude();
@@ -797,10 +797,10 @@ fn full_model_dt_convergence() {
     let dt_finest = 2.0;
 
     let final_coarse =
-        Rk4::integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
+        Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
     let final_fine =
-        Rk4::integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
-    let final_finest = Rk4::integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
+        Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
+    let final_finest = Rk4.integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
 
     let err_coarse = (final_coarse.position - final_finest.position).magnitude();
     let err_fine = (final_fine.position - final_finest.position).magnitude();
@@ -946,7 +946,7 @@ fn compare_with_sgp4(
         // Integrate forward to this time point
         while t < target_t - 1e-6 {
             let h = dt.min(target_t - t);
-            state = Rk4::step(system, t, &state, h);
+            state = Rk4.step(system, t, &state, h);
             t += h;
         }
 
@@ -1230,7 +1230,7 @@ fn compare_with_sgp4_checking_altitude(
         }
         while t < target_t - 1e-6 {
             let h = dt.min(target_t - t);
-            state = Rk4::step(system, t, &state, h);
+            state = Rk4.step(system, t, &state, h);
             t += h;
         }
 
@@ -1625,7 +1625,7 @@ fn drag_decay_200_orbits() {
 
     for _ in 0..n_orbits {
         let t_end = t + period;
-        current = Rk4::integrate(&system, current, t, t_end, dt, |_, _| {});
+        current = Rk4.integrate(&system, current, t, t_end, dt, |_, _| {});
         t = t_end;
         let elems =
             KeplerianElements::from_state_vector(&current.position, &current.velocity, MU_EARTH);
@@ -1786,7 +1786,7 @@ fn lz_conservation_500_orbits() {
     let total_time = 500.0 * period;
     let dt = 5.0;
 
-    Rk4::integrate(&system, initial, 0.0, total_time, dt, |_, state| {
+    Rk4.integrate(&system, initial, 0.0, total_time, dt, |_, state| {
         let lz = state.position.cross(&state.velocity).z;
         let drift = (lz - initial_lz).abs() / initial_lz.abs();
         max_lz_drift = max_lz_drift.max(drift);
@@ -1834,7 +1834,7 @@ fn iss_drag_30day_survival() {
     let dt = 30.0;
 
     let mut min_altitude = f64::MAX;
-    let final_state = Rk4::integrate(&system, initial, 0.0, duration, dt, |_, state| {
+    let final_state = Rk4.integrate(&system, initial, 0.0, duration, dt, |_, state| {
         let alt = state.position.magnitude() - R_EARTH;
         min_altitude = min_altitude.min(alt);
     });

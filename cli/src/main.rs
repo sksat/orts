@@ -11,7 +11,7 @@ use orts_datamodel::entity_path::EntityPath;
 use orts_datamodel::recording::Recording;
 use orts_datamodel::timeline::TimePoint;
 use kaname::epoch::Epoch;
-use orts_integrator::{DormandPrince, DynamicalSystem, IntegrationError, IntegrationOutcome, Rk4, State, Tolerances};
+use orts_integrator::{AdvanceOutcome, DormandPrince, IntegrationOutcome, Integrator, Rk4, State, Tolerances};
 use orts_orbits::{body::KnownBody, drag::AtmosphericDrag, events, events::SimulationEvent, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, third_body::ThirdBodyGravity, tle::Tle};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -936,7 +936,7 @@ fn run_simulation(params: &SimParams) -> Recording {
                         next_output_t += params.output_interval;
                     }
                 };
-                Rk4::integrate_with_events(
+                Rk4.integrate_with_events(
                     &system,
                     initial,
                     0.0,
@@ -947,71 +947,43 @@ fn run_simulation(params: &SimParams) -> Recording {
                 )
             }
             IntegratorChoice::Dp45 => {
-                // Custom adaptive loop that clamps steps to output boundaries
-                // for exact output-interval alignment.
                 let t_end = sat.period;
-                let mut state = initial;
-                let mut t = 0.0;
-                let mut dt = params.dt.min(t_end);
-                let dt_min = 1e-12 * t_end.abs().max(1.0);
-                let mut k1 = system.derivatives(t, &state);
-                let tol = &params.tolerances;
+                let mut stepper = DormandPrince.stepper(
+                    &system,
+                    initial,
+                    0.0,
+                    params.dt.min(t_end),
+                    params.tolerances.clone(),
+                );
+                stepper.dt_min = 1e-12 * t_end.abs().max(1.0);
 
                 let mut final_outcome: IntegrationOutcome<SimulationEvent> =
-                    IntegrationOutcome::Completed(state.clone());
+                    IntegrationOutcome::Completed(stepper.state().clone());
 
-                'outer: while t < t_end {
-                    // Clamp to both t_end and next output boundary
-                    let h = dt.min(t_end - t).min(next_output_t - t).max(1e-15);
-
-                    let (y5, err_pos, err_vel, k7) =
-                        DormandPrince::step_with_k1(&system, t, &state, h, &k1);
-
-                    // NaN/Inf check
-                    if !y5.position.iter().chain(y5.velocity.iter()).all(|v| v.is_finite()) {
-                        final_outcome = IntegrationOutcome::Error(
-                            IntegrationError::NonFiniteState { t: t + h },
-                        );
-                        break;
-                    }
-
-                    let err = orts_integrator::error_norm(&state, &y5, &err_pos, &err_vel, tol);
-
-                    if err <= 1.0 {
-                        state = y5;
-                        t += h;
-                        k1 = k7;
-
-                        // Record at output boundaries
-                        if t >= next_output_t - 1e-9 {
-                            record_state(&mut rec, t, step, &state);
-                            step += 1;
-                            last_output_t = t;
-                            next_output_t += params.output_interval;
+                while stepper.t() < t_end {
+                    let t_target = next_output_t.min(t_end);
+                    match stepper.advance_to(t_target, |_, _| {}, &event_checker) {
+                        Ok(AdvanceOutcome::Reached) => {
+                            if stepper.t() >= next_output_t - 1e-9 {
+                                record_state(&mut rec, stepper.t(), step, stepper.state());
+                                step += 1;
+                                last_output_t = stepper.t();
+                                next_output_t += params.output_interval;
+                            }
+                            final_outcome =
+                                IntegrationOutcome::Completed(stepper.state().clone());
                         }
-
-                        // Event check
-                        if let ControlFlow::Break(reason) = event_checker(t, &state) {
-                            final_outcome = IntegrationOutcome::Terminated { state, t, reason };
-                            break 'outer;
+                        Ok(AdvanceOutcome::Event { reason }) => {
+                            let t = stepper.t();
+                            final_outcome = IntegrationOutcome::Terminated {
+                                state: stepper.into_state(),
+                                t,
+                                reason,
+                            };
+                            break;
                         }
-
-                        final_outcome = IntegrationOutcome::Completed(state.clone());
-
-                        let factor = if err < 1e-15 {
-                            5.0
-                        } else {
-                            (0.9 * err.powf(-0.2)).clamp(0.2, 5.0)
-                        };
-                        dt = h * factor;
-                    } else {
-                        let factor = (0.9 * err.powf(-0.2)).clamp(0.2, 1.0);
-                        dt = h * factor;
-
-                        if dt < dt_min {
-                            final_outcome = IntegrationOutcome::Error(
-                                IntegrationError::StepSizeTooSmall { t, dt },
-                            );
+                        Err(e) => {
+                            final_outcome = IntegrationOutcome::Error(e);
                             break;
                         }
                     }
@@ -1676,7 +1648,7 @@ fn compute_output_chunk(
 
     while t < chunk_end {
         let h = dt.min(chunk_end - t);
-        state = Rk4::step(system, t, &state, h);
+        state = Rk4.step(system, t, &state, h);
         t += h;
 
         // Check for NaN/Inf
@@ -1725,6 +1697,33 @@ fn compute_output_chunk(
     (outputs, state, t, None)
 }
 
+/// Create an event checker for the serve mode adaptive loop.
+///
+/// Like `events::collision_check` but handles `body_radius: Option<f64>`.
+fn make_serve_event_checker(
+    body_radius: Option<f64>,
+    atmosphere_altitude: Option<f64>,
+) -> impl Fn(f64, &State) -> ControlFlow<SimulationEvent> {
+    move |_t: f64, state: &State| {
+        if let Some(r_body) = body_radius {
+            let r = state.position.magnitude();
+            if r < r_body {
+                return ControlFlow::Break(SimulationEvent::Collision {
+                    altitude_km: r - r_body,
+                });
+            }
+            if let Some(atm_alt) = atmosphere_altitude
+                && r < r_body + atm_alt
+            {
+                return ControlFlow::Break(SimulationEvent::AtmosphericEntry {
+                    altitude_km: r - r_body,
+                });
+            }
+        }
+        ControlFlow::Continue(())
+    }
+}
+
 /// Adaptive Dormand-Prince version of compute_output_chunk.
 /// Step size adapts automatically; outputs are produced at output_interval boundaries
 /// by clamping the step to not overshoot the next output time.
@@ -1732,7 +1731,7 @@ fn compute_output_chunk(
 fn compute_output_chunk_adaptive(
     satellite_id: &str,
     system: &OrbitalSystem,
-    mut state: State,
+    state: State,
     t_start: f64,
     chunk_end: f64,
     dt_hint: f64,
@@ -1744,101 +1743,57 @@ fn compute_output_chunk_adaptive(
     let mu = system.mu;
     let body_radius = system.body_radius;
     let mut outputs = Vec::new();
-    let mut t = t_start;
-    let mut dt = dt_hint;
-    let dt_min = 1e-12 * (chunk_end - t_start).abs().max(1.0);
 
-    let mut k1 = system.derivatives(t, &state);
+    let event_checker = make_serve_event_checker(body_radius, atmosphere_altitude);
 
-    while t < chunk_end - 1e-12 {
-        // Clamp dt to not overshoot chunk_end or next_output_t
-        let h = dt.min(chunk_end - t).min(*next_output_t - t);
-        if h < 1e-14 {
+    let mut stepper = DormandPrince.stepper(system, state, t_start, dt_hint, tol.clone());
+    stepper.dt_min = 1e-12 * (chunk_end - t_start).abs().max(1.0);
+
+    while stepper.t() < chunk_end - 1e-12 {
+        let t_target = (*next_output_t).min(chunk_end);
+        if t_target - stepper.t() < 1e-14 {
             break;
         }
 
-        let (y5, err_pos, err_vel, k7) =
-            DormandPrince::step_with_k1(system, t, &state, h, &k1);
-
-        // Check for NaN/Inf
-        if !y5
-            .position
-            .iter()
-            .chain(y5.velocity.iter())
-            .all(|v| v.is_finite())
-        {
-            return (outputs, y5, t + h, Some(TerminationReason::NonFiniteState));
-        }
-
-        // Compute error norm and decide accept/reject
-        let err = orts_integrator::error_norm(&state, &y5, &err_pos, &err_vel, tol);
-
-        if err <= 1.0 {
-            // Accept step
-            state = y5;
-            t += h;
-            k1 = k7;
-
-            // Check for collision and atmospheric entry
-            if let Some(r_body) = body_radius {
-                let r = state.position.magnitude();
-                if r < r_body {
-                    return (
-                        outputs,
-                        state,
-                        t,
-                        Some(TerminationReason::Collision {
-                            altitude_km: r - r_body,
-                        }),
-                    );
-                }
-                if let Some(atm_alt) = atmosphere_altitude
-                    && r < r_body + atm_alt
-                {
-                    return (
-                        outputs,
-                        state,
-                        t,
-                        Some(TerminationReason::AtmosphericEntry {
-                            altitude_km: r - r_body,
-                        }),
-                    );
+        match stepper.advance_to(t_target, |_, _| {}, &event_checker) {
+            Ok(AdvanceOutcome::Reached) => {
+                if stepper.t() >= *next_output_t - 1e-9 {
+                    outputs.push(make_history_state(
+                        satellite_id,
+                        stepper.t(),
+                        &stepper.state().position,
+                        &stepper.state().velocity,
+                        mu,
+                    ));
+                    *next_output_t += output_interval;
                 }
             }
-
-            // Output at interval boundaries
-            if t >= *next_output_t - 1e-9 {
-                outputs.push(make_history_state(
-                    satellite_id,
+            Ok(AdvanceOutcome::Event { reason }) => {
+                let t = stepper.t();
+                let termination = match reason {
+                    SimulationEvent::Collision { altitude_km } => {
+                        TerminationReason::Collision { altitude_km }
+                    }
+                    SimulationEvent::AtmosphericEntry { altitude_km } => {
+                        TerminationReason::AtmosphericEntry { altitude_km }
+                    }
+                };
+                return (outputs, stepper.into_state(), t, Some(termination));
+            }
+            Err(_) => {
+                let t = stepper.t();
+                return (
+                    outputs,
+                    stepper.into_state(),
                     t,
-                    &state.position,
-                    &state.velocity,
-                    mu,
-                ));
-                *next_output_t += output_interval;
+                    Some(TerminationReason::NonFiniteState),
+                );
             }
-
-            // Grow step size
-            let factor = if err < 1e-15 {
-                5.0
-            } else {
-                (0.9 * err.powf(-0.2)).clamp(0.2, 5.0)
-            };
-            dt = h * factor;
-        } else {
-            // Reject step, shrink dt
-            let factor = (0.9 * err.powf(-0.2)).clamp(0.2, 1.0);
-            dt = h * factor;
-
-            if dt < dt_min {
-                return (outputs, state, t, Some(TerminationReason::NonFiniteState));
-            }
-
-            // k1 is still valid (state unchanged)
         }
     }
 
-    (outputs, state, t, None)
+    let t = stepper.t();
+    (outputs, stepper.into_state(), t, None)
 }
 
 fn state_message(satellite_id: &str, t: f64, state: &State, mu: f64) -> String {
@@ -2583,7 +2538,7 @@ mod tests {
         let dt = 10.0;
         let mut step_outputs = Vec::new();
         for _ in 0..10 {
-            state_ss = Rk4::step(&system, t, &state_ss, dt);
+            state_ss = Rk4.step(&system, t, &state_ss, dt);
             t += dt;
             step_outputs.push(make_history_state("test", t, &state_ss.position, &state_ss.velocity, mu));
         }

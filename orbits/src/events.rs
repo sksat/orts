@@ -1,6 +1,6 @@
 //! Simulation event detection for orbital mechanics.
 //!
-//! Provides event checkers compatible with `Rk4::integrate_with_events`.
+//! Provides event checkers compatible with `Integrator::integrate_with_events`.
 
 use std::ops::ControlFlow;
 
@@ -152,7 +152,7 @@ mod tests {
     fn suborbital_trajectory_terminates_on_collision() {
         use crate::gravity::PointMass;
         use crate::orbital_system::OrbitalSystem;
-        use orts_integrator::{IntegrationOutcome, Rk4};
+        use orts_integrator::{IntegrationOutcome, Integrator, Rk4};
 
         let system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
             .with_body_radius(R_EARTH);
@@ -167,7 +167,7 @@ mod tests {
 
         // No atmosphere → hits surface directly
         let event_checker = collision_check(R_EARTH, None);
-        let outcome = Rk4::integrate_with_events(
+        let outcome = Rk4.integrate_with_events(
             &system,
             initial,
             0.0,
@@ -195,7 +195,7 @@ mod tests {
     fn suborbital_trajectory_terminates_on_atmospheric_entry() {
         use crate::gravity::PointMass;
         use crate::orbital_system::OrbitalSystem;
-        use orts_integrator::{IntegrationOutcome, Rk4};
+        use orts_integrator::{IntegrationOutcome, Integrator, Rk4};
 
         let system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
             .with_body_radius(R_EARTH);
@@ -210,7 +210,7 @@ mod tests {
 
         // With 100 km atmosphere → should stop at atmosphere boundary before hitting surface
         let event_checker = collision_check(R_EARTH, Some(100.0));
-        let outcome = Rk4::integrate_with_events(
+        let outcome = Rk4.integrate_with_events(
             &system,
             initial,
             0.0,
