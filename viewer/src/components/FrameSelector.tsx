@@ -96,6 +96,7 @@ export function FrameSelector({
           {labels.body_fixed}
         </button>
       </div>
+
     </div>
   );
 }

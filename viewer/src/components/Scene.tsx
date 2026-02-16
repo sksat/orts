@@ -230,6 +230,8 @@ interface SceneProps {
   referenceFrame?: ReferenceFrame;
   /** Per-satellite metadata for model lookup. */
   satelliteNames?: Map<string, string | null>;
+  /** When true, atmosphere uses physical scale. Default: auto (true for satellite-centered). */
+  physicalScale?: boolean;
 }
 
 /**
@@ -251,6 +253,7 @@ export function Scene({
   epochJd,
   referenceFrame = DEFAULT_FRAME,
   satelliteNames,
+  physicalScale,
 }: SceneProps) {
   const isEcef = isLegacyEcef(referenceFrame);
   const isSatCentered = referenceFrame.center.type === "satellite";
@@ -473,6 +476,7 @@ export function Scene({
           lvlhQuaternion={lvlhActive ? bodyLvlhQuaternion : null}
           ambientIntensity={0.15}
           sunIntensity={sunIntensity}
+          physicalScale={physicalScale}
         />
 
         {/* Multi-satellite mode */}

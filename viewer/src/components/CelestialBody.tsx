@@ -21,6 +21,8 @@ interface CelestialBodyProps {
   ambientIntensity?: number;
   /** Sun intensity scale factor: (1 AU / distance)². Default 1.0. */
   sunIntensity?: number;
+  /** When true, atmosphere uses physical scale. Default false (amplified). */
+  physicalScale?: boolean;
 }
 
 function TexturedBody({
@@ -116,7 +118,7 @@ function FallbackBody({
 export function CelestialBody({
   bodyId, radius = 1, sunDirection, rotationAngle,
   lvlhPosition = null, lvlhQuaternion = null,
-  ambientIntensity, sunIntensity,
+  ambientIntensity, sunIntensity, physicalScale,
 }: CelestialBodyProps) {
   const renderInfo = getBodyRenderInfo(bodyId);
   const isSatelliteCentered = lvlhPosition != null;
@@ -137,6 +139,7 @@ export function CelestialBody({
         nightTextureBaseName={renderInfo.nightTextureBaseName}
         ambientIntensity={ambientIntensity}
         sunIntensity={sunIntensity}
+        physicalScale={physicalScale}
       />
     );
   } else if (renderInfo.texturePath) {

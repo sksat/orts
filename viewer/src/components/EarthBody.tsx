@@ -5,6 +5,7 @@ import {
   earthDayNightFrag,
 } from "../shaders/earthDayNight.js";
 import type { TextureResolution } from "../hooks/useTextureResolution.js";
+import { EarthAtmosphere } from "./EarthAtmosphere.js";
 
 /**
  * Euler rotation [rx, ry, rz] that aligns the Three.js sphere (Y-pole)
@@ -38,6 +39,8 @@ interface EarthBodyProps {
   ambientIntensity?: number;
   /** Sun intensity scale factor: (1 AU / distance)². Default 1.0. */
   sunIntensity?: number;
+  /** When true, atmosphere uses physical scale (~100km). Default false (amplified). */
+  physicalScale?: boolean;
 }
 
 /**
@@ -68,6 +71,7 @@ export function EarthBody({
   nightTextureBaseName,
   ambientIntensity = 0.15,
   sunIntensity = 1.0,
+  physicalScale = false,
 }: EarthBodyProps) {
   const materialRef = useRef<THREE.ShaderMaterial | null>(null);
   const [ready, setReady] = useState(false);
@@ -189,30 +193,39 @@ export function EarthBody({
   }, [sunIntensity, ready]);
 
   return (
-    <group rotation={[0, 0, rotationAngle ?? 0]}>
-      {/* Inner group: align Three.js Y-pole to ECI Z-pole (north pole → +Z) */}
-      <group rotation={POLE_ALIGNMENT_ROTATION}>
-        <mesh material={materialRef.current ?? undefined}>
-          <sphereGeometry args={[radius, 64, 64]} />
-          {!ready && (
-            <meshPhongMaterial
-              color={0x2244aa}
-              emissive={0x112244}
-              emissiveIntensity={0.1}
-              shininess={25}
+    <group>
+      <group rotation={[0, 0, rotationAngle ?? 0]}>
+        {/* Inner group: align Three.js Y-pole to ECI Z-pole (north pole → +Z) */}
+        <group rotation={POLE_ALIGNMENT_ROTATION}>
+          <mesh material={materialRef.current ?? undefined}>
+            <sphereGeometry args={[radius, 64, 64]} />
+            {!ready && (
+              <meshPhongMaterial
+                color={0x2244aa}
+                emissive={0x112244}
+                emissiveIntensity={0.1}
+                shininess={25}
+              />
+            )}
+          </mesh>
+          <mesh>
+            <sphereGeometry args={[radius * 1.002, 24, 24]} />
+            <meshBasicMaterial
+              color={0x4488cc}
+              wireframe
+              transparent
+              opacity={0.15}
             />
-          )}
-        </mesh>
-        <mesh>
-          <sphereGeometry args={[radius * 1.002, 24, 24]} />
-          <meshBasicMaterial
-            color={0x4488cc}
-            wireframe
-            transparent
-            opacity={0.15}
-          />
-        </mesh>
+          </mesh>
+        </group>
       </group>
+      {/* Atmosphere: uniform sphere, no rotation needed */}
+      <EarthAtmosphere
+        radius={radius}
+        sunDirection={sunDirection}
+        sunIntensity={sunIntensity}
+        physicalScale={physicalScale}
+      />
     </group>
   );
 }

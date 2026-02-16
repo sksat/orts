@@ -79,6 +79,8 @@ export function App() {
   // --- Reference frame ---
   const [referenceFrame, setReferenceFrame] = useState<ReferenceFrame>(DEFAULT_FRAME);
 
+  const isSatCentered = referenceFrame.center.type === "satellite";
+
   // --- Replay mode state ---
   const [replayPoints, setReplayPoints] = useState<OrbitPoint[] | null>(null);
   const [csvMetadata, setCsvMetadata] = useState<CSVMetadata | null>(null);
@@ -514,6 +516,7 @@ export function App() {
         epochJd={epochJd ?? null}
         referenceFrame={referenceFrame}
         satelliteNames={satelliteNames}
+        physicalScale={isSatCentered}
       />
 
       {/* UI overlay */}
