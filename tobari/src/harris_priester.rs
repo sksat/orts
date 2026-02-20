@@ -131,16 +131,18 @@ impl HarrisPriester {
 
     /// Compute the density bulge apex direction in ECI.
     ///
-    /// The apex is the Sun direction rotated by `lag_angle` about the Z-axis
-    /// (Earth spin axis), representing the thermal inertia delay.
+    /// The apex is the Sun direction rotated by `+lag_angle` about the Z-axis
+    /// (Earth spin axis) in the direction of Earth's rotation (eastward).
+    /// This places the bulge at ~14h local solar time (2 hours after local noon),
+    /// representing the thermal inertia delay.
     fn bulge_apex(&self, epoch: &Epoch) -> Vector3<f64> {
         let sun_dir = (self.sun_direction_fn)(epoch);
         let cos_lag = self.lag_angle.cos();
         let sin_lag = self.lag_angle.sin();
-        // Rotate about Z-axis by lag_angle
+        // Counter-clockwise rotation about Z-axis by +lag_angle
         Vector3::new(
-            cos_lag * sun_dir.x + sin_lag * sun_dir.y,
-            -sin_lag * sun_dir.x + cos_lag * sun_dir.y,
+            cos_lag * sun_dir.x - sin_lag * sun_dir.y,
+            sin_lag * sun_dir.x + cos_lag * sun_dir.y,
             sun_dir.z,
         )
         .normalize()
@@ -376,9 +378,10 @@ mod tests {
         let epoch = dummy_epoch();
         let apex = hp.bulge_apex(&epoch);
 
-        // Sun at +X, rotated 30° about Z → apex.x = cos(30°), apex.y = -sin(30°)
+        // Sun at +X, rotated +30° about Z (eastward) → apex.x = cos(30°), apex.y = +sin(30°)
+        // The density bulge leads the sub-solar point in the direction of Earth's rotation
         let expected_x = (PI / 6.0).cos();
-        let expected_y = -(PI / 6.0).sin();
+        let expected_y = (PI / 6.0).sin();
 
         assert!(
             (apex.x - expected_x).abs() < 1e-10,

@@ -4958,6 +4958,8 @@ version = "0.0.0"
 dependencies = [
  "kaname",
  "nalgebra",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

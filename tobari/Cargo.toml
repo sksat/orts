@@ -8,3 +8,8 @@ repository.workspace = true
 [dependencies]
 nalgebra.workspace = true
 kaname.workspace = true
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+kaname = { workspace = true }
