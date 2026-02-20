@@ -17,5 +17,9 @@ viewer/src/wasm/kaname/*.js
 viewer/src/wasm/kaname/*.wasm
 viewer/src/wasm/kaname/package.json
 
+# Orekit data cache (downloaded by tools/generate_hp_fixtures.py)
+orekit-data.zip
+orekit-data/
+
 # Claude Code local settings (not shared)
 .claude/settings.local.json
