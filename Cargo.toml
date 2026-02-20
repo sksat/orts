@@ -6,7 +6,7 @@ members = [
     "kaname",
     "cli",
     "datamodel",
-    "atmosphere",
+    "tobari",
 ]
 
 [workspace.package]
@@ -20,7 +20,7 @@ orts-integrator = { path = "integrator" }
 orts-orbits = { path = "orbits" }
 kaname = { path = "kaname" }
 orts-datamodel = { path = "datamodel" }
-tobari = { path = "atmosphere" }
+tobari = { path = "tobari" }
 nalgebra = "0.34"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
