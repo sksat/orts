@@ -22,6 +22,16 @@ pub const MU_MOON: f64 = 4902.8;
 /// Earth rotation rate (rad/s, IERS 2010)
 pub const OMEGA_EARTH: f64 = 7.2921159e-5;
 
+/// Speed of light (m/s, exact)
+pub const SPEED_OF_LIGHT: f64 = 299_792_458.0;
+
+/// Total solar irradiance at 1 AU (W/m², solar constant)
+pub const SOLAR_CONSTANT: f64 = 1361.0;
+
+/// Solar radiation pressure at 1 AU (N/m²).
+/// P_sun/c = SOLAR_CONSTANT / SPEED_OF_LIGHT ≈ 4.5396e-6 N/m²
+pub const SOLAR_RADIATION_PRESSURE: f64 = 4.5396e-6;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,5 +114,18 @@ mod tests {
         // J2 >> |J3| >> |J4| (roughly)
         assert!(J2_EARTH > J3_EARTH.abs());
         assert!(J3_EARTH.abs() > J4_EARTH.abs());
+    }
+
+    #[test]
+    fn solar_radiation_pressure_value() {
+        // P/c = 1361 / 299792458 ≈ 4.5396e-6
+        let computed = SOLAR_CONSTANT / SPEED_OF_LIGHT;
+        let rel_err = (SOLAR_RADIATION_PRESSURE - computed).abs() / computed;
+        assert!(rel_err < 1e-4, "SRP constant mismatch: rel_err={rel_err:.2e}");
+    }
+
+    #[test]
+    fn solar_radiation_pressure_is_positive() {
+        assert!(SOLAR_RADIATION_PRESSURE > 0.0);
     }
 }

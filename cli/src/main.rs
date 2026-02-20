@@ -12,7 +12,7 @@ use orts_datamodel::recording::Recording;
 use orts_datamodel::timeline::TimePoint;
 use kaname::epoch::Epoch;
 use orts_integrator::{AdvanceOutcome, DormandPrince, IntegrationOutcome, Integrator, Rk4, State, Tolerances};
-use orts_orbits::{body::KnownBody, drag::AtmosphericDrag, events, events::SimulationEvent, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, third_body::ThirdBodyGravity, tle::Tle};
+use orts_orbits::{body::KnownBody, drag::AtmosphericDrag, events, events::SimulationEvent, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, srp::SolarRadiationPressure, third_body::ThirdBodyGravity, tle::Tle};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
@@ -183,6 +183,10 @@ struct SatelliteSpec {
     period: f64,
     /// Explicit ballistic coefficient Cd*A/(2m) [m²/kg] for drag.
     ballistic_coeff: Option<f64>,
+    /// SRP cross-sectional area to mass ratio [m²/kg].
+    srp_area_to_mass: Option<f64>,
+    /// SRP radiation pressure coefficient (default: 1.5).
+    srp_cr: Option<f64>,
 }
 
 impl SatelliteSpec {
@@ -288,6 +292,8 @@ impl SimParams {
                     orbit: OrbitSpec::Tle { tle_data: tle, elements },
                     period,
                     ballistic_coeff: None,
+                    srp_area_to_mass: None,
+                    srp_cr: None,
                 }]
             } else if is_serve && args.altitude == 400.0 && args.tle.is_none() && args.tle_line1.is_none() && args.norad_id.is_none() {
                 // serve with no explicit orbit → SSO + ISS default
@@ -302,6 +308,8 @@ impl SimParams {
                     orbit: OrbitSpec::Circular { altitude: args.altitude, r0, inclination: 0.0, raan: 0.0 },
                     period,
                     ballistic_coeff: None,
+                    srp_area_to_mass: None,
+                    srp_cr: None,
                 }]
             }
         };
@@ -350,6 +358,8 @@ impl SimParams {
             },
             period,
             ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
         });
 
         // ISS: try online sources, fall back to embedded TLE
@@ -372,6 +382,8 @@ impl SimParams {
             orbit: OrbitSpec::Tle { tle_data: iss_tle, elements },
             period,
             ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
         });
 
         sats
@@ -422,6 +434,8 @@ fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
     let mut tle_line1: Option<String> = None;
     let mut tle_line2: Option<String> = None;
     let mut ballistic_coeff: Option<f64> = None;
+    let mut srp_area_to_mass: Option<f64> = None;
+    let mut srp_cr: Option<f64> = None;
 
     for part in s.split(',') {
         if let Some((key, value)) = part.split_once('=') {
@@ -435,6 +449,8 @@ fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
                 "tle-line1" => tle_line1 = Some(value.trim().to_string()),
                 "tle-line2" => tle_line2 = Some(value.trim().to_string()),
                 "ballistic-coeff" => ballistic_coeff = Some(value.trim().parse().unwrap_or_else(|_| panic!("Invalid ballistic-coeff: {value}"))),
+                "srp-area-to-mass" => srp_area_to_mass = Some(value.trim().parse().unwrap_or_else(|_| panic!("Invalid srp-area-to-mass: {value}"))),
+                "srp-cr" => srp_cr = Some(value.trim().parse().unwrap_or_else(|_| panic!("Invalid srp-cr: {value}"))),
                 k => panic!("Unknown satellite spec key: {k}"),
             }
         }
@@ -473,6 +489,8 @@ fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         orbit,
         period,
         ballistic_coeff,
+        srp_area_to_mass,
+        srp_cr,
     }
 }
 
@@ -916,6 +934,17 @@ fn build_orbital_system(
             };
             system = system.with_perturbation(Box::new(drag));
         }
+    }
+
+    // Solar Radiation Pressure (requires epoch for Sun position)
+    if epoch.is_some()
+        && let Some(am) = sat.srp_area_to_mass
+    {
+        let mut srp = SolarRadiationPressure::for_earth(Some(am));
+        if let Some(cr) = sat.srp_cr {
+            srp = srp.with_cr(cr);
+        }
+        system = system.with_perturbation(Box::new(srp));
     }
 
     system
