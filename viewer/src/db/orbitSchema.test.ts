@@ -4,16 +4,18 @@ import { createOrbitSchema } from "./orbitSchema.js";
 describe("createOrbitSchema", () => {
   const schema = createOrbitSchema();
 
-  it("has 13 base columns", () => {
-    expect(schema.columns).toHaveLength(13);
+  it("has 18 base columns (13 orbital + 5 acceleration)", () => {
+    expect(schema.columns).toHaveLength(18);
     const names = schema.columns.map((c) => c.name);
     expect(names).toEqual([
       "t", "x", "y", "z", "vx", "vy", "vz",
       "a", "e", "inc", "raan", "omega", "nu",
+      "accel_gravity", "accel_drag", "accel_srp",
+      "accel_third_body_sun", "accel_third_body_moon",
     ]);
   });
 
-  it("toRow returns 13 values matching column count", () => {
+  it("toRow returns 18 values matching column count", () => {
     const point = {
       t: 0, x: 6778, y: 0, z: 0, vx: 0, vy: 7.669, vz: 0,
       a: 6778, e: 0.001, inc: 0.9, raan: 3.14, omega: 1.0, nu: 0.5,
@@ -53,6 +55,9 @@ describe("createOrbitSchema", () => {
       "altitude", "energy", "angular_momentum", "velocity",
       "inc_deg", "raan_deg", "omega_deg", "nu_deg",
       "a", "e",
+      "accel_gravity", "accel_drag", "accel_srp",
+      "accel_third_body_sun", "accel_third_body_moon",
+      "accel_perturbation_total",
     ];
     for (const col of expectedChartColumns) {
       expect(derivedNames, `missing derived column: ${col}`).toContain(col);

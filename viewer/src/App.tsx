@@ -42,11 +42,7 @@ const EMPTY_TERMINATED_SET: Set<string> = new Set();
 /** Chart color palette matching the 3D scene SATELLITE_COLORS. */
 const SATELLITE_CHART_COLORS = ["#00ff88", "#ff4488", "#44aaff", "#ffaa44", "#aa44ff"];
 
-/** Derived metric names for multi-satellite alignment. */
-const METRIC_NAMES = [
-  "altitude", "energy", "angular_momentum", "velocity",
-  "a", "e", "inc_deg", "raan_deg",
-];
+import { METRIC_NAMES } from "./chartMetrics.js";
 
 /** Helper: get or create a TrailBuffer in a Map. */
 function getOrCreateTrailBuffer(map: Map<string, TrailBuffer>, id: string): TrailBuffer {

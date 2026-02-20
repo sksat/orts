@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { buildMultiChartData } from "./buildMultiChartData.js";
 import { computeGlobalLatestT, computeUnifiedTMin } from "./computeGlobalLatestT.js";
+import { BASE_CHART_METRICS, ACCEL_CHART_METRICS, METRIC_NAMES } from "../chartMetrics.js";
 
 /** Minimal ChartDataMap for testing. */
 type ChartDataMap = { t: Float64Array; [key: string]: Float64Array };
@@ -96,6 +97,70 @@ describe("buildMultiChartData", () => {
     const alt = result!.altitude!;
     expect(alt.series).toHaveLength(1);
     expect(alt.series[0].label).toBe("SSO");
+  });
+
+  it("includes acceleration metrics when present in data and metricNames", () => {
+    const accelMetrics = [
+      "altitude", "accel_gravity", "accel_drag",
+      "accel_perturbation_total",
+    ];
+    const satData = new Map<string, ChartDataMap>([
+      ["sat1", {
+        t: f64([1, 2]),
+        altitude: f64([800, 801]),
+        accel_gravity: f64([0.008, 0.008]),
+        accel_drag: f64([1e-9, 1e-9]),
+        accel_perturbation_total: f64([1e-9, 1e-9]),
+      }],
+      ["sat2", {
+        t: f64([1, 2]),
+        altitude: f64([400, 401]),
+        accel_gravity: f64([0.009, 0.009]),
+        accel_drag: f64([2e-9, 2e-9]),
+        accel_perturbation_total: f64([2e-9, 2e-9]),
+      }],
+    ]);
+    const configs = [
+      { id: "sat1", label: "SSO", color: "#0f0" },
+      { id: "sat2", label: "ISS", color: "#f0f" },
+    ];
+
+    const result = buildMultiChartData(satData, accelMetrics, configs);
+    expect(result).not.toBeNull();
+
+    // Acceleration metrics should be present
+    const gravity = result!.accel_gravity;
+    expect(gravity).not.toBeNull();
+    expect(gravity!.series).toHaveLength(2);
+    expect(Array.from(gravity!.values[0])).toEqual([0.008, 0.008]);
+    expect(Array.from(gravity!.values[1])).toEqual([0.009, 0.009]);
+
+    const drag = result!.accel_drag;
+    expect(drag).not.toBeNull();
+    expect(drag!.series).toHaveLength(2);
+
+    const total = result!.accel_perturbation_total;
+    expect(total).not.toBeNull();
+    expect(total!.series).toHaveLength(2);
+  });
+});
+
+/**
+ * Verify that METRIC_NAMES (passed to useMultiSatelliteStore) covers all chart
+ * metrics. If a metric is rendered by GraphPanel but missing from METRIC_NAMES,
+ * it won't have data in multi-satellite mode.
+ */
+describe("METRIC_NAMES covers all chart metrics", () => {
+  it("includes all base chart metrics", () => {
+    for (const m of BASE_CHART_METRICS) {
+      expect(METRIC_NAMES, `missing "${m}"`).toContain(m);
+    }
+  });
+
+  it("includes all acceleration chart metrics", () => {
+    for (const m of ACCEL_CHART_METRICS) {
+      expect(METRIC_NAMES, `missing "${m}"`).toContain(m);
+    }
   });
 });
 

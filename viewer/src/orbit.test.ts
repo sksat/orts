@@ -21,6 +21,11 @@ describe("parseOrbitCSV", () => {
       raan: 0,
       omega: 0,
       nu: 0,
+      accel_gravity: 0,
+      accel_drag: 0,
+      accel_srp: 0,
+      accel_third_body_sun: 0,
+      accel_third_body_moon: 0,
     });
     expect(points[1].t).toBe(10.0);
   });
