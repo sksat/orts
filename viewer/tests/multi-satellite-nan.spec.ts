@@ -13,7 +13,7 @@
 import { test, expect } from "@playwright/test";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
 
-const VIEWER_URL = "http://localhost:5173";
+const VIEWER_URL = process.env.VIEWER_URL ?? "http://localhost:5173";
 const MOCK_WS_PORT = 9097;
 
 /** Build a state message for a circular orbit. */
@@ -116,6 +116,11 @@ test.describe("multi-satellite NaN alignment", () => {
     // Wait for DuckDB tables to be populated (history ingestion + query ticks)
     await page.waitForTimeout(6000);
 
+    // Stop streaming: close mock server connections so no more data arrives
+    wss.clients.forEach((ws) => ws.close());
+    // Wait for tick loop to drain any remaining buffered data
+    await page.waitForTimeout(2000);
+
     // Query DuckDB tables directly via the exposed connection
     const dbResult = await page.evaluate(async () => {
       const conn = (window as Record<string, unknown>).__duckdb_conn;
@@ -157,7 +162,7 @@ test.describe("multi-satellite NaN alignment", () => {
 
       // Run downsampled queries with unified tMax
       // This mirrors the exact query that useMultiSatelliteStore runs
-      const maxPoints = 2000;
+      const maxPoints = 200;
       const buildQuery = (tableName: string) => {
         return (
           `WITH filtered AS (SELECT * FROM ${tableName}), ` +
