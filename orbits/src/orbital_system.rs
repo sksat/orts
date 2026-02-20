@@ -41,6 +41,26 @@ impl OrbitalSystem {
         self.body_radius = Some(radius);
         self
     }
+
+    /// Compute per-force acceleration magnitudes [km/s²].
+    ///
+    /// Returns a vec of (name, magnitude) pairs: `"gravity"` first,
+    /// then each perturbation by its [`ForceModel::name()`].
+    pub fn acceleration_breakdown(&self, t: f64, state: &State) -> Vec<(&str, f64)> {
+        let epoch = self.epoch_0.map(|e| e.add_seconds(t));
+        let grav = self.gravity.acceleration(self.mu, &state.position).magnitude();
+        let mut result = vec![("gravity", grav)];
+        for p in &self.perturbations {
+            let a = p.acceleration(t, state, epoch.as_ref()).magnitude();
+            result.push((p.name(), a));
+        }
+        result
+    }
+
+    /// Names of active perturbations (excluding gravity).
+    pub fn perturbation_names(&self) -> Vec<&str> {
+        self.perturbations.iter().map(|p| p.name()).collect()
+    }
 }
 
 impl DynamicalSystem for OrbitalSystem {

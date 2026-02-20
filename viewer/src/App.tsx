@@ -486,6 +486,16 @@ export function App() {
     return parts.join(" | ");
   }, [simInfo]);
 
+  // Union of active perturbation names across all satellites
+  const activePerturbations = useMemo(() => {
+    if (!simInfo) return [];
+    const set = new Set<string>();
+    for (const sat of simInfo.satellites) {
+      for (const p of sat.perturbations) set.add(p);
+    }
+    return [...set];
+  }, [simInfo]);
+
   if (!wasmReady) return null;
 
   return (
@@ -587,6 +597,14 @@ export function App() {
                 {satInfoText && <><strong>{satInfoText}</strong> | </>}
                 {simInfo.epoch_jd != null && <>{jd_to_utc_string(simInfo.epoch_jd, 0)} | </>}
                 mu={simInfo.mu.toFixed(2)} km^3/s^2 | dt={simInfo.dt.toFixed(1)} s | stream={simInfo.stream_interval.toFixed(1)} s
+                {activePerturbations.length > 0 && (
+                  <span className="pert-tags">
+                    {" | "}
+                    {activePerturbations.map((p) => (
+                      <span key={p} className="pert-tag">{p}</span>
+                    ))}
+                  </span>
+                )}
               </div>
             )}
 
@@ -615,6 +633,7 @@ export function App() {
           timeRange={timeRange}
           onTimeRangeChange={setTimeRange}
           onZoom={handleChartZoom}
+          activePerturbations={activePerturbations}
         />
       )}
 

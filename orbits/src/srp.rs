@@ -99,6 +99,10 @@ fn shadow_function(
 }
 
 impl ForceModel for SolarRadiationPressure {
+    fn name(&self) -> &str {
+        "srp"
+    }
+
     fn acceleration(&self, _t: f64, state: &State, epoch: Option<&Epoch>) -> Vector3<f64> {
         let epoch = match epoch {
             Some(e) => e,

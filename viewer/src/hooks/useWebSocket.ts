@@ -7,6 +7,8 @@ export interface SatelliteInfo {
   name: string | null;
   altitude: number;
   period: number;
+  /** Names of active perturbation force models (e.g. "drag", "srp"). */
+  perturbations: string[];
 }
 
 /**
@@ -44,6 +46,7 @@ interface StateMessage {
   raan: number;
   argument_of_periapsis: number;
   true_anomaly: number;
+  accelerations?: Record<string, number>;
 }
 
 /** Raw info message received over the WebSocket. */
@@ -64,6 +67,7 @@ interface SatelliteInfoMsg {
   name?: string | null;
   altitude: number;
   period: number;
+  perturbations?: string[];
 }
 
 interface HistoryStateMsg {
@@ -77,6 +81,7 @@ interface HistoryStateMsg {
   raan: number;
   argument_of_periapsis: number;
   true_anomaly: number;
+  accelerations?: Record<string, number>;
 }
 
 interface HistoryMessage {
@@ -143,6 +148,16 @@ export interface DispatchCallbacks {
   onSimulationTerminated?: (satelliteId: string, t: number, reason: string) => void;
 }
 
+function parseAccelerations(accels?: Record<string, number>) {
+  return {
+    accel_gravity: accels?.gravity ?? 0,
+    accel_drag: accels?.drag ?? 0,
+    accel_srp: accels?.srp ?? 0,
+    accel_third_body_sun: accels?.third_body_sun ?? 0,
+    accel_third_body_moon: accels?.third_body_moon ?? 0,
+  };
+}
+
 function parseHistoryPoints(states: HistoryStateMsg[]): OrbitPoint[] {
   return states.map((s) => ({
     satelliteId: s.satellite_id,
@@ -159,6 +174,7 @@ function parseHistoryPoints(states: HistoryStateMsg[]): OrbitPoint[] {
     raan: s.raan,
     omega: s.argument_of_periapsis,
     nu: s.true_anomaly,
+    ...parseAccelerations(s.accelerations),
   }));
 }
 
@@ -187,6 +203,7 @@ export function dispatchServerMessage(
       raan: stateMsg.raan,
       omega: stateMsg.argument_of_periapsis,
       nu: stateMsg.true_anomaly,
+      ...parseAccelerations(stateMsg.accelerations),
     });
   } else if (msg.type === "info") {
     const infoMsg = msg as InfoMessage;
@@ -195,6 +212,7 @@ export function dispatchServerMessage(
       name: s.name ?? null,
       altitude: s.altitude,
       period: s.period,
+      perturbations: s.perturbations ?? [],
     }));
     callbacks.onInfo?.({
       mu: infoMsg.mu,

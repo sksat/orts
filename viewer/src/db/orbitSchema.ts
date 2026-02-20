@@ -24,6 +24,11 @@ export function createOrbitSchema(
       { name: "raan", type: "DOUBLE" },
       { name: "omega", type: "DOUBLE" },
       { name: "nu", type: "DOUBLE" },
+      { name: "accel_gravity", type: "DOUBLE" },
+      { name: "accel_drag", type: "DOUBLE" },
+      { name: "accel_srp", type: "DOUBLE" },
+      { name: "accel_third_body_sun", type: "DOUBLE" },
+      { name: "accel_third_body_moon", type: "DOUBLE" },
     ],
     derived: [
       // Pass-through: expose base columns for charting
@@ -70,10 +75,23 @@ export function createOrbitSchema(
         sql: `nu * 180.0 / 3.141592653589793`,
         unit: "deg",
       },
+      // Acceleration pass-through columns
+      { name: "accel_gravity", sql: "accel_gravity", unit: "km/s²" },
+      { name: "accel_drag", sql: "accel_drag", unit: "km/s²" },
+      { name: "accel_srp", sql: "accel_srp", unit: "km/s²" },
+      { name: "accel_third_body_sun", sql: "accel_third_body_sun", unit: "km/s²" },
+      { name: "accel_third_body_moon", sql: "accel_third_body_moon", unit: "km/s²" },
+      {
+        name: "accel_perturbation_total",
+        sql: "accel_drag + accel_srp + accel_third_body_sun + accel_third_body_moon",
+        unit: "km/s²",
+      },
     ],
     toRow: (p: OrbitPoint) => [
       p.t, p.x, p.y, p.z, p.vx, p.vy, p.vz,
       p.a, p.e, p.inc, p.raan, p.omega, p.nu,
+      p.accel_gravity ?? 0, p.accel_drag ?? 0, p.accel_srp ?? 0,
+      p.accel_third_body_sun ?? 0, p.accel_third_body_moon ?? 0,
     ],
   };
 }

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -235,6 +235,8 @@ struct SatelliteInfo {
     name: Option<String>,
     altitude: f64,
     period: f64,
+    /// Names of active perturbation force models (e.g. "drag", "srp", "third_body_sun").
+    perturbations: Vec<String>,
 }
 
 /// Simulation parameters derived from CLI arguments.
@@ -507,10 +509,20 @@ struct HistoryState {
     raan: f64,
     argument_of_periapsis: f64,
     true_anomaly: f64,
+    /// Per-force acceleration magnitudes [km/s²]: "gravity", "drag", "srp", etc.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    accelerations: HashMap<String, f64>,
 }
 
 /// Create a HistoryState from position/velocity, computing Keplerian elements.
-fn make_history_state(satellite_id: &str, t: f64, pos: &nalgebra::Vector3<f64>, vel: &nalgebra::Vector3<f64>, mu: f64) -> HistoryState {
+fn make_history_state(
+    satellite_id: &str,
+    t: f64,
+    pos: &nalgebra::Vector3<f64>,
+    vel: &nalgebra::Vector3<f64>,
+    mu: f64,
+    accelerations: HashMap<String, f64>,
+) -> HistoryState {
     let elements = KeplerianElements::from_state_vector(pos, vel, mu);
     HistoryState {
         satellite_id: satellite_id.to_string(),
@@ -523,7 +535,17 @@ fn make_history_state(satellite_id: &str, t: f64, pos: &nalgebra::Vector3<f64>, 
         raan: elements.raan,
         argument_of_periapsis: elements.argument_of_periapsis,
         true_anomaly: elements.true_anomaly,
+        accelerations,
     }
+}
+
+/// Compute acceleration breakdown as a HashMap from an OrbitalSystem.
+fn accel_breakdown(system: &OrbitalSystem, t: f64, state: &State) -> HashMap<String, f64> {
+    system
+        .acceleration_breakdown(t, state)
+        .into_iter()
+        .map(|(name, mag)| (name.to_string(), mag))
+        .collect()
 }
 
 /// Bounded buffer that accumulates history states and periodically flushes to .rrd segments.
@@ -612,7 +634,7 @@ impl HistoryBuffer {
                         let sid = row.entity_path.as_deref()
                             .and_then(|p| p.rsplit('/').next())
                             .unwrap_or("default");
-                        all.push(make_history_state(sid, row.t, &pos, &vel, self.mu));
+                        all.push(make_history_state(sid, row.t, &pos, &vel, self.mu, HashMap::new()));
                     }
                 }
                 Err(e) => {
@@ -708,6 +730,8 @@ enum WsMessage {
         raan: f64,
         argument_of_periapsis: f64,
         true_anomaly: f64,
+        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        accelerations: HashMap<String, f64>,
     },
     /// Downsampled history overview sent on connect.
     #[serde(rename = "history")]
@@ -1351,9 +1375,10 @@ async fn simulation_loop(
     {
         let mut h = history.write().await;
         for ss in &sat_states {
-            let hs = make_history_state(&ss.spec.id, 0.0, &ss.state.position, &ss.state.velocity, params.mu);
+            let accels = accel_breakdown(&ss.system, 0.0, &ss.state);
+            let hs = make_history_state(&ss.spec.id, 0.0, &ss.state.position, &ss.state.velocity, params.mu, accels.clone());
             h.push(hs);
-            let msg = state_message(&ss.spec.id, 0.0, &ss.state, params.mu);
+            let msg = state_message(&ss.spec.id, 0.0, &ss.state, params.mu, accels);
             let _ = tx.send(msg);
         }
     }
@@ -1470,6 +1495,7 @@ async fn simulation_loop(
                     raan: out.raan,
                     argument_of_periapsis: out.argument_of_periapsis,
                     true_anomaly: out.true_anomaly,
+                    accelerations: out.accelerations.clone(),
                 })
                 .expect("failed to serialize state");
                 let _ = tx.send(msg);
@@ -1507,11 +1533,13 @@ async fn handle_connection(
 
     // 1. Send info message
     let satellites_info: Vec<SatelliteInfo> = params.satellites.iter().map(|s| {
+        let system = build_orbital_system(&params.body, params.mu, params.epoch, s, params.atmosphere);
         SatelliteInfo {
             id: s.id.clone(),
             name: s.name.clone(),
             altitude: s.altitude(&params.body),
             period: s.period,
+            perturbations: system.perturbation_names().into_iter().map(String::from).collect(),
         }
     }).collect();
     let info = WsMessage::Info {
@@ -1742,7 +1770,8 @@ fn compute_output_chunk(
         }
 
         if t >= *next_output_t - 1e-9 {
-            outputs.push(make_history_state(satellite_id, t, &state.position, &state.velocity, mu));
+            let accels = accel_breakdown(system, t, &state);
+            outputs.push(make_history_state(satellite_id, t, &state.position, &state.velocity, mu, accels));
             *next_output_t += output_interval;
         }
     }
@@ -1811,12 +1840,14 @@ fn compute_output_chunk_adaptive(
         match stepper.advance_to(t_target, |_, _| {}, &event_checker) {
             Ok(AdvanceOutcome::Reached) => {
                 if stepper.t() >= *next_output_t - 1e-9 {
+                    let accels = accel_breakdown(system, stepper.t(), stepper.state());
                     outputs.push(make_history_state(
                         satellite_id,
                         stepper.t(),
                         &stepper.state().position,
                         &stepper.state().velocity,
                         mu,
+                        accels,
                     ));
                     *next_output_t += output_interval;
                 }
@@ -1849,7 +1880,13 @@ fn compute_output_chunk_adaptive(
     (outputs, stepper.into_state(), t, None)
 }
 
-fn state_message(satellite_id: &str, t: f64, state: &State, mu: f64) -> String {
+fn state_message(
+    satellite_id: &str,
+    t: f64,
+    state: &State,
+    mu: f64,
+    accelerations: HashMap<String, f64>,
+) -> String {
     let elements = KeplerianElements::from_state_vector(&state.position, &state.velocity, mu);
     let msg = WsMessage::State {
         satellite_id: satellite_id.to_string(),
@@ -1862,6 +1899,7 @@ fn state_message(satellite_id: &str, t: f64, state: &State, mu: f64) -> String {
         raan: elements.raan,
         argument_of_periapsis: elements.argument_of_periapsis,
         true_anomaly: elements.true_anomaly,
+        accelerations,
     };
     serde_json::to_string(&msg).expect("failed to serialize state message")
 }
@@ -1876,7 +1914,7 @@ mod tests {
     fn make_state(t: f64) -> HistoryState {
         let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
         let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
-        make_history_state("default", t, &pos, &vel, TEST_MU)
+        make_history_state("default", t, &pos, &vel, TEST_MU, HashMap::new())
     }
 
     fn temp_data_dir(name: &str) -> PathBuf {
@@ -2347,6 +2385,7 @@ mod tests {
                 name: None,
                 altitude: 400.0,
                 period: 5554.0,
+                perturbations: vec![],
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -2390,6 +2429,7 @@ mod tests {
                 name: Some("ISS (ZARYA)".to_string()),
                 altitude: 420.0,
                 period: 5560.0,
+                perturbations: vec![],
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -2599,7 +2639,7 @@ mod tests {
         for _ in 0..10 {
             state_ss = Rk4.step(&system, t, &state_ss, dt);
             t += dt;
-            step_outputs.push(make_history_state("test", t, &state_ss.position, &state_ss.velocity, mu));
+            step_outputs.push(make_history_state("test", t, &state_ss.position, &state_ss.velocity, mu, HashMap::new()));
         }
 
         // Chunked
@@ -2805,7 +2845,7 @@ mod tests {
         let hs = make_history_state("test-sat", 10.0,
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
-            TEST_MU);
+            TEST_MU, HashMap::new());
         assert_eq!(hs.satellite_id, "test-sat");
         assert!((hs.t - 10.0).abs() < 1e-9);
     }
@@ -2815,7 +2855,7 @@ mod tests {
         let hs = make_history_state("my-sat", 5.0,
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
-            TEST_MU);
+            TEST_MU, HashMap::new());
         let json = serde_json::to_string(&hs).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["satellite_id"], "my-sat");
@@ -2839,12 +2879,14 @@ mod tests {
                     name: Some("SSO 800km".to_string()),
                     altitude: 800.0,
                     period: 6052.5,
+                    perturbations: vec![],
                 },
                 SatelliteInfo {
                     id: "iss".to_string(),
                     name: Some("ISS (ZARYA)".to_string()),
                     altitude: 420.0,
                     period: 5560.0,
+                    perturbations: vec![],
                 },
             ],
         };
@@ -2875,6 +2917,7 @@ mod tests {
             raan: 1.2,
             argument_of_periapsis: 0.5,
             true_anomaly: 2.1,
+            accelerations: HashMap::new(),
         };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();

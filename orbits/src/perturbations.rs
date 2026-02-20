@@ -4,6 +4,9 @@ use orts_integrator::State;
 
 /// A non-gravitational perturbation force (e.g., atmospheric drag, SRP, third-body gravity).
 pub trait ForceModel: Send + Sync {
+    /// Human-readable name for this force model (e.g., "drag", "srp", "third_body_sun").
+    fn name(&self) -> &str;
+
     /// Compute perturbation acceleration [km/s²].
     ///
     /// `epoch` is the absolute time corresponding to integration time `t`,

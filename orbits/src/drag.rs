@@ -79,6 +79,10 @@ impl AtmosphericDrag {
 }
 
 impl ForceModel for AtmosphericDrag {
+    fn name(&self) -> &str {
+        "drag"
+    }
+
     fn acceleration(&self, _t: f64, state: &State, epoch: Option<&Epoch>) -> Vector3<f64> {
         let alt = state.position.magnitude() - self.body_radius;
 

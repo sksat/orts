@@ -29,6 +29,12 @@ export interface OrbitPoint {
   omega: number;
   /** True anomaly [rad] */
   nu: number;
+  /** Acceleration magnitudes [km/s²] — 0 when perturbation is inactive. */
+  accel_gravity?: number;
+  accel_drag?: number;
+  accel_srp?: number;
+  accel_third_body_sun?: number;
+  accel_third_body_moon?: number;
 }
 
 /** Metadata parsed from CSV comment headers. */
@@ -108,6 +114,11 @@ export function parseOrbitCSVWithMetadata(text: string): ParsedCSV {
       raan: nums[10] ?? 0,
       omega: nums[11] ?? 0,
       nu: nums[12] ?? 0,
+      accel_gravity: 0,
+      accel_drag: 0,
+      accel_srp: 0,
+      accel_third_body_sun: 0,
+      accel_third_body_moon: 0,
     });
   }
 

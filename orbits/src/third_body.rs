@@ -14,6 +14,8 @@ use crate::perturbations::ForceModel;
 /// where r_body is the position of the third body relative to the central body,
 /// and r_sat is the satellite position relative to the central body.
 pub struct ThirdBodyGravity {
+    /// Human-readable name (e.g., "third_body_sun", "third_body_moon")
+    pub name: &'static str,
     /// Gravitational parameter of the third body [km³/s²]
     pub mu_body: f64,
     /// Function returning the third body position in ECI [km] at a given epoch
@@ -24,6 +26,7 @@ impl ThirdBodyGravity {
     /// Create a Sun third-body perturbation.
     pub fn sun() -> Self {
         Self {
+            name: "third_body_sun",
             mu_body: crate::constants::MU_SUN,
             body_position_fn: kaname::sun::sun_position_eci,
         }
@@ -34,6 +37,7 @@ impl ThirdBodyGravity {
     /// Moon μ ≈ 4902.8 km³/s² (from body properties).
     pub fn moon() -> Self {
         Self {
+            name: "third_body_moon",
             mu_body: 4902.800066, // μ_Moon [km³/s²]
             body_position_fn: kaname::moon::moon_position_eci,
         }
@@ -41,6 +45,10 @@ impl ThirdBodyGravity {
 }
 
 impl ForceModel for ThirdBodyGravity {
+    fn name(&self) -> &str {
+        self.name
+    }
+
     fn acceleration(&self, _t: f64, state: &State, epoch: Option<&Epoch>) -> Vector3<f64> {
         let epoch = match epoch {
             Some(e) => e,

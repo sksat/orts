@@ -21,6 +21,16 @@ const CHART_DEFS: { metric: string; title: string; yLabel: string; color: string
   { metric: "raan_deg", title: "RAAN", yLabel: "deg", color: "#84f" },
 ];
 
+/** Acceleration chart definitions. Shown conditionally based on active perturbations. */
+const ACCEL_CHART_DEFS: { metric: string; title: string; color: string; pertKey?: string }[] = [
+  { metric: "accel_gravity", title: "Gravity", color: "#aaa" },
+  { metric: "accel_drag", title: "Drag", color: "#f80", pertKey: "drag" },
+  { metric: "accel_srp", title: "SRP", color: "#ff0", pertKey: "srp" },
+  { metric: "accel_third_body_sun", title: "Sun 3rd-body", color: "#fa0", pertKey: "third_body_sun" },
+  { metric: "accel_third_body_moon", title: "Moon 3rd-body", color: "#8af", pertKey: "third_body_moon" },
+  { metric: "accel_perturbation_total", title: "Total Perturbation", color: "#f44", pertKey: "_any" },
+];
+
 interface GraphPanelProps {
   /** Single-satellite chart data (replay mode / single sat). */
   chartData?: ChartDataMap | null;
@@ -31,6 +41,8 @@ interface GraphPanelProps {
   onTimeRangeChange: (range: TimeRange) => void;
   /** Called when the user drag-zooms into a time range on any chart. */
   onZoom?: (tMin: number, tMax: number) => void;
+  /** Active perturbation names from SimInfo (union across all satellites). */
+  activePerturbations?: string[];
 }
 
 export function GraphPanel({
@@ -40,20 +52,36 @@ export function GraphPanel({
   timeRange,
   onTimeRangeChange,
   onZoom,
+  activePerturbations,
 }: GraphPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
+
+  // Filter acceleration charts: show gravity always + perturbations that are active
+  const visibleAccelDefs = useMemo(() => {
+    if (!activePerturbations || activePerturbations.length === 0) return [];
+    return ACCEL_CHART_DEFS.filter((def) => {
+      if (!def.pertKey) return true; // gravity: always show
+      if (def.pertKey === "_any") return true; // total: show when any perturbation is active
+      return activePerturbations.includes(def.pertKey);
+    });
+  }, [activePerturbations]);
+
+  const allDefs = useMemo(
+    () => [...CHART_DEFS, ...visibleAccelDefs.map((d) => ({ ...d, yLabel: "km/s\u00B2" }))],
+    [visibleAccelDefs],
+  );
 
   // Single-series data extraction (for backward compat / single satellite)
   const singleSeriesData = useMemo(() => {
     if (!chartData) return null;
     const result: Record<string, [Float64Array, Float64Array] | null> = {};
-    for (const def of CHART_DEFS) {
+    for (const def of allDefs) {
       result[def.metric] = chartData[def.metric]
         ? [chartData.t, chartData[def.metric]] as [Float64Array, Float64Array]
         : null;
     }
     return result;
-  }, [chartData]);
+  }, [chartData, allDefs]);
 
   return (
     <div className={`graph-panel ${collapsed ? "collapsed" : ""}`}>
@@ -77,7 +105,7 @@ export function GraphPanel({
               </button>
             ))}
           </div>
-          {CHART_DEFS.map((def) => (
+          {allDefs.map((def) => (
             <TimeSeriesChart
               key={def.metric}
               title={def.title}
