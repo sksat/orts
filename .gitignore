@@ -21,5 +21,8 @@ viewer/src/wasm/kaname/package.json
 orekit-data.zip
 orekit-data/
 
+# Environment variables (credentials)
+.env
+
 # Claude Code local settings (not shared)
 .claude/settings.local.json
