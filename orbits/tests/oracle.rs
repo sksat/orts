@@ -15,6 +15,7 @@ use nalgebra::vector;
 use kaname::epoch::Epoch;
 use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, State, Tolerances};
 use orts_orbits::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
+use orts_orbits::body::KnownBody;
 use orts_orbits::drag::AtmosphericDrag;
 use orts_orbits::gravity::ZonalHarmonics;
 use orts_orbits::kepler::KeplerianElements;
@@ -442,6 +443,7 @@ fn drag_monotonic_sma_decay() {
         }),
     );
     system.perturbations.push(Box::new(AtmosphericDrag {
+        body: Some(KnownBody::Earth),
         body_radius: R_EARTH,
         omega_body: orts_orbits::drag::OMEGA_EARTH,
         ballistic_coeff: 0.005, // physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
@@ -521,6 +523,7 @@ fn drag_scaling_with_ballistic_coefficient() {
             }),
         );
         system.perturbations.push(Box::new(AtmosphericDrag {
+            body: Some(KnownBody::Earth),
             body_radius: R_EARTH,
             omega_body: orts_orbits::drag::OMEGA_EARTH,
             ballistic_coeff: b,
@@ -1607,6 +1610,7 @@ fn drag_decay_200_orbits() {
     // ISS physical B=0.005 decays too slowly over 200 orbits (~1 km) relative
     // to the 58 km scale height for the effect to be measurable.
     system.perturbations.push(Box::new(AtmosphericDrag {
+        body: Some(KnownBody::Earth),
         body_radius: R_EARTH,
         omega_body: orts_orbits::drag::OMEGA_EARTH,
         ballistic_coeff: orts_orbits::drag::DEFAULT_BALLISTIC_COEFF,
@@ -1823,6 +1827,7 @@ fn iss_drag_30day_survival() {
 
     let mut system = earth_j2_system();
     system.perturbations.push(Box::new(AtmosphericDrag {
+        body: Some(KnownBody::Earth),
         body_radius: R_EARTH,
         omega_body: orts_orbits::drag::OMEGA_EARTH,
         ballistic_coeff: 0.005, // Physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)

@@ -1,9 +1,11 @@
 use nalgebra::Vector3;
 use kaname::epoch::Epoch;
+use kaname::{WGS84_A, WGS84_B};
 use tobari::AtmosphereModel;
 use tobari::exponential::Exponential;
 use orts_integrator::State;
 
+use crate::body::KnownBody;
 use crate::constants::R_EARTH;
 use crate::perturbations::ForceModel;
 
@@ -23,7 +25,9 @@ pub const DEFAULT_BALLISTIC_COEFF: f64 = 0.01;
 /// Computes drag acceleration based on the ballistic coefficient B = Cd*A/(2*m) \[m²/kg\]
 /// and a pluggable atmospheric density model.
 pub struct AtmosphericDrag {
-    /// Central body equatorial radius [km]
+    /// Central body (enables WGS-84 geodetic altitude for Earth)
+    pub body: Option<KnownBody>,
+    /// Central body equatorial radius [km] (fallback for non-Earth bodies)
     pub body_radius: f64,
     /// Central body rotation rate [rad/s]
     pub omega_body: f64,
@@ -40,6 +44,7 @@ impl AtmosphericDrag {
     /// When `ballistic_coeff` is `None`, uses [`DEFAULT_BALLISTIC_COEFF`] (0.01 m²/kg).
     pub fn for_earth(ballistic_coeff: Option<f64>) -> Self {
         Self {
+            body: Some(KnownBody::Earth),
             body_radius: R_EARTH,
             omega_body: OMEGA_EARTH,
             ballistic_coeff: ballistic_coeff.unwrap_or(DEFAULT_BALLISTIC_COEFF),
@@ -70,6 +75,7 @@ impl AtmosphericDrag {
         let rho0 = 2.461e-5;
         let ballistic_coeff = bstar / rho0;
         Self {
+            body: Some(KnownBody::Earth),
             body_radius,
             omega_body: OMEGA_EARTH,
             ballistic_coeff,
@@ -84,12 +90,25 @@ impl ForceModel for AtmosphericDrag {
     }
 
     fn acceleration(&self, _t: f64, state: &State, epoch: Option<&Epoch>) -> Vector3<f64> {
-        let alt = state.position.magnitude() - self.body_radius;
-
-        // No drag above atmosphere
-        if alt < 0.0 {
+        // Check if inside the body (ellipsoid test for Earth, spherical for others)
+        let inside = match self.body {
+            Some(KnownBody::Earth) => {
+                let p2 = state.position.x * state.position.x
+                    + state.position.y * state.position.y;
+                let z2 = state.position.z * state.position.z;
+                p2 / (WGS84_A * WGS84_A) + z2 / (WGS84_B * WGS84_B) < 1.0
+            }
+            _ => state.position.magnitude() < self.body_radius,
+        };
+        if inside {
             return Vector3::zeros();
         }
+
+        // Altitude: WGS-84 geodetic for Earth, spherical for others
+        let alt = match self.body {
+            Some(KnownBody::Earth) => kaname::geodetic_altitude(&state.position),
+            _ => state.position.magnitude() - self.body_radius,
+        };
 
         let rho = self.atmosphere.density(alt, &state.position, epoch); // kg/m³
         if rho == 0.0 {
@@ -124,6 +143,7 @@ mod tests {
 
     fn iss_drag() -> AtmosphericDrag {
         AtmosphericDrag {
+            body: Some(KnownBody::Earth),
             body_radius: R_EARTH,
             omega_body: OMEGA_EARTH,
             ballistic_coeff: 0.005, // physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
@@ -245,12 +265,14 @@ mod tests {
     fn earth_rotation_effect() {
         // Verify that Earth rotation reduces the relative velocity
         let drag_rotating = AtmosphericDrag {
+            body: Some(KnownBody::Earth),
             body_radius: R_EARTH,
             omega_body: OMEGA_EARTH,
             ballistic_coeff: 0.005,
             atmosphere: Box::new(Exponential),
         };
         let drag_static = AtmosphericDrag {
+            body: Some(KnownBody::Earth),
             body_radius: R_EARTH,
             omega_body: 0.0,
             ballistic_coeff: 0.005,

@@ -413,29 +413,29 @@ fn orekit_j2_srp_sso_10orbits() {
 }
 
 // ─── Tier 4: Gravity + HP Drag ───
-// Geodetic (Orekit) vs spherical (ours) altitude: up to ~15 km at high lat.
-// Equatorial: near-zero alt difference → small drag mismatch.
-// ISS 51.6°: ~10-30% density bias at high latitudes → ~1 km along-track.
+// With geodetic altitude (WGS-84), remaining differences are:
+// - J2 constant (~3e-9), Meeus Sun direction for HP bulge (~0.35°)
+// - Minor geodetic algorithm differences (Bowring vs Orekit's WGS-84)
 
 #[test]
 fn orekit_j2_hp_iss_equatorial_5orbits() {
-    run_scenario("j2_hp_iss_equatorial_5orbits", 0.020); // 20 m (measured: 7 m)
+    run_scenario("j2_hp_iss_equatorial_5orbits", 0.006); // 6 m (measured: 2.7 m)
 }
 
 #[test]
 fn orekit_j2_hp_iss_10orbits() {
-    run_scenario("j2_hp_iss_10orbits", 3.0); // 3 km (measured: 1.3 km)
+    run_scenario("j2_hp_iss_10orbits", 0.010); // 10 m (measured: 3.6 m)
 }
 
 // ─── Tier 5: Full force model ───
-// All differences combined. ISS dominated by drag; SSO by drag+SRP.
+// All differences combined. With geodetic altitude, drag error is now small.
 
 #[test]
 fn orekit_full_iss_10orbits() {
-    run_scenario("full_iss_10orbits", 3.0); // 3 km (measured: 1.3 km)
+    run_scenario("full_iss_10orbits", 0.010); // 10 m (measured: 3.8 m)
 }
 
 #[test]
 fn orekit_full_sso_10orbits() {
-    run_scenario("full_sso_10orbits", 0.050); // 50 m (measured: 14 m)
+    run_scenario("full_sso_10orbits", 0.002); // 2 m (measured: 0.8 m)
 }

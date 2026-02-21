@@ -57,22 +57,31 @@ impl Ecef {
         let p = (v.x * v.x + v.y * v.y).sqrt();
         let longitude = v.y.atan2(v.x);
 
-        // Initial estimate using Bowring's method
-        let mut lat = v.z.atan2(p * (1.0 - WGS84_E2));
-        let mut alt;
+        // Near-polar special case
+        if p < 1e-10 {
+            return Geodetic {
+                latitude: v.z.signum() * std::f64::consts::FRAC_PI_2,
+                longitude,
+                altitude: v.z.abs() - WGS84_B,
+            };
+        }
 
-        // Iterative refinement
-        for _ in 0..10 {
+        // Bowring iteration with convergence check
+        let mut lat = v.z.atan2(p * (1.0 - WGS84_E2));
+        let mut alt = 0.0_f64;
+
+        for _ in 0..5 {
             let sin_lat = lat.sin();
             let cos_lat = lat.cos();
             let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
-            alt = p / cos_lat - n;
-            lat = (v.z / p * (1.0 - WGS84_E2 * n / (n + alt)).powi(-1)).atan();
+            let new_alt = p / cos_lat - n;
+            lat = (v.z / p / (1.0 - WGS84_E2 * n / (n + new_alt))).atan();
+            if (new_alt - alt).abs() < 1e-12 {
+                alt = new_alt;
+                break;
+            }
+            alt = new_alt;
         }
-
-        let sin_lat = lat.sin();
-        let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
-        alt = p / lat.cos() - n;
 
         Geodetic {
             latitude: lat,
@@ -93,6 +102,40 @@ pub const WGS84_B: f64 = WGS84_A * (1.0 - WGS84_F);
 
 /// WGS84 first eccentricity squared
 pub const WGS84_E2: f64 = 1.0 - (1.0 - WGS84_F) * (1.0 - WGS84_F);
+
+/// Compute WGS-84 geodetic altitude \[km\] directly from a position vector \[km\].
+///
+/// Works on ECI (or ECEF) coordinates — geodetic altitude depends only on
+/// `p = sqrt(x² + y²)` and `z`, which are invariant under Z-axis rotation.
+/// Uses Bowring iteration (converges in 2-3 iterations to sub-mm accuracy at LEO).
+pub fn geodetic_altitude(position: &Vector3<f64>) -> f64 {
+    let p = (position.x * position.x + position.y * position.y).sqrt();
+    let z = position.z;
+
+    // Near-polar special case: avoid p/cos(lat) singularity
+    if p < 1e-10 {
+        return z.abs() - WGS84_B;
+    }
+
+    // Bowring iteration for geodetic latitude
+    let mut lat = z.atan2(p * (1.0 - WGS84_E2));
+    let mut alt = 0.0_f64;
+
+    for _ in 0..5 {
+        let sin_lat = lat.sin();
+        let cos_lat = lat.cos();
+        let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
+        let new_alt = p / cos_lat - n;
+        let new_lat = (z / p / (1.0 - WGS84_E2 * n / (n + new_alt))).atan();
+        if (new_alt - alt).abs() < 1e-9 {
+            return new_alt;
+        }
+        alt = new_alt;
+        lat = new_lat;
+    }
+
+    alt
+}
 
 impl Geodetic {
     /// Convert geodetic coordinates to ECEF position (WGS84).
@@ -323,6 +366,113 @@ mod tests {
             "altitude: expected {}, got {}",
             original.altitude,
             roundtrip.altitude,
+        );
+    }
+
+    // geodetic_altitude() tests
+
+    #[test]
+    fn geodetic_altitude_equator() {
+        // At equator, geodetic altitude = r - WGS84_A (exact)
+        let pos = Vector3::new(WGS84_A + 400.0, 0.0, 0.0);
+        let alt = geodetic_altitude(&pos);
+        assert!(
+            (alt - 400.0).abs() < 1e-9,
+            "equator: expected 400.0, got {alt}"
+        );
+    }
+
+    #[test]
+    fn geodetic_altitude_north_pole() {
+        // At north pole, geodetic altitude = |z| - WGS84_B
+        let pos = Vector3::new(0.0, 0.0, WGS84_B + 400.0);
+        let alt = geodetic_altitude(&pos);
+        assert!(
+            (alt - 400.0).abs() < 1e-6,
+            "north pole: expected 400.0, got {alt}"
+        );
+    }
+
+    #[test]
+    fn geodetic_altitude_south_pole() {
+        let pos = Vector3::new(0.0, 0.0, -(WGS84_B + 400.0));
+        let alt = geodetic_altitude(&pos);
+        assert!(
+            (alt - 400.0).abs() < 1e-6,
+            "south pole: expected 400.0, got {alt}"
+        );
+    }
+
+    #[test]
+    fn geodetic_altitude_matches_to_geodetic() {
+        // At 45° latitude, compare geodetic_altitude with Ecef::to_geodetic()
+        let geo = Geodetic {
+            latitude: std::f64::consts::FRAC_PI_4, // 45°
+            longitude: 0.5,
+            altitude: 400.0,
+        };
+        let ecef = geo.to_ecef();
+        let expected = ecef.to_geodetic().altitude;
+        let actual = geodetic_altitude(&ecef.0);
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "45° lat: to_geodetic={expected}, geodetic_altitude={actual}"
+        );
+    }
+
+    #[test]
+    fn geodetic_altitude_spherical_difference_at_iss_inclination() {
+        // ISS-like position at high latitude (~51.6°)
+        // Geodetic altitude should differ from spherical by ~10-15 km
+        let lat = 51.6_f64.to_radians();
+        let geo = Geodetic {
+            latitude: lat,
+            longitude: 0.0,
+            altitude: 400.0,
+        };
+        let ecef = geo.to_ecef();
+        let r = ecef.0.magnitude();
+        let spherical_alt = r - WGS84_A;
+        let geodetic_alt = geodetic_altitude(&ecef.0);
+
+        let diff = spherical_alt - geodetic_alt;
+        // Spherical altitude is lower than geodetic at high latitudes
+        // because r is smaller (oblate) but we subtract equatorial radius
+        assert!(
+            diff.abs() > 5.0 && diff.abs() < 20.0,
+            "spherical-geodetic diff at 51.6° should be ~10-15 km, got {diff:.2} km"
+        );
+    }
+
+    #[test]
+    fn geodetic_altitude_near_polar_edge_case() {
+        // Very small p (near pole but not exactly)
+        let pos = Vector3::new(1e-12, 0.0, WGS84_B + 400.0);
+        let alt = geodetic_altitude(&pos);
+        assert!(
+            (alt - 400.0).abs() < 1e-3,
+            "near-polar: expected ~400.0, got {alt}"
+        );
+    }
+
+    #[test]
+    fn geodetic_altitude_invariant_under_z_rotation() {
+        // Geodetic altitude should be the same regardless of XY angle (Z-rotation invariant)
+        let r = WGS84_A + 400.0;
+        let z = 3000.0; // some z component
+        let p = (r * r - z * z).sqrt();
+
+        let alt1 = geodetic_altitude(&Vector3::new(p, 0.0, z));
+        let alt2 = geodetic_altitude(&Vector3::new(p * 0.6, p * 0.8, z));
+        let alt3 = geodetic_altitude(&Vector3::new(-p * 0.5, p * (3.0_f64).sqrt() / 2.0, z));
+
+        assert!(
+            (alt1 - alt2).abs() < 1e-10,
+            "Z-rotation invariance: {alt1} vs {alt2}"
+        );
+        assert!(
+            (alt1 - alt3).abs() < 1e-10,
+            "Z-rotation invariance: {alt1} vs {alt3}"
         );
     }
 
