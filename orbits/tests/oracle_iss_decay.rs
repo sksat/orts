@@ -10,8 +10,16 @@
 //! - Mean-to-osculating SMA offset cancels when comparing *change*.
 //! - Tolerance is wide because our atmosphere models (US Std 1976 / HP)
 //!   have no solar flux input:
-//!   - Solar minimum (F10.7 ~70): ratio 0.3-3.0×
-//!   - Solar maximum (F10.7 ~150+): ratio 0.05-0.5× (model underpredicts)
+//!   - Solar minimum (F10.7 ~70): ratio 5-30× (model overpredicts)
+//!   - Solar maximum (F10.7 ~150+): ratio 0.5-2.0×
+//!
+//! TODO: To tighten tolerances, implement an atmosphere model with F10.7
+//! input (e.g., NRLMSISE-00, JB2008). Without solar flux, HP/Exponential
+//! cannot represent density variation across the solar cycle.
+//!
+//! Numerical integration accuracy is verified separately by Orekit cross-
+//! validation with matched HP force model (oracle_orekit.rs, Tier 4):
+//! 13m error at 7 days, 191m at 30 days — negligible vs km-scale decay.
 //!
 //! Fixture: `orbits/tests/fixtures/iss_decay_reference.json`
 //! Generator: `tools/generate_iss_decay_fixtures.py`

@@ -427,6 +427,19 @@ fn orekit_j2_hp_iss_10orbits() {
     run_scenario("j2_hp_iss_10orbits", 0.010); // 10 m (measured: 3.6 m)
 }
 
+// Long-duration HP drag: validates error growth over ISS decay timescales.
+// Uses B=0.005 m²/kg (ISS physical value) to match oracle_iss_decay.rs pipeline.
+
+#[test]
+fn orekit_j2_hp_iss_7days() {
+    run_scenario("j2_hp_iss_7days", 0.030); // 30 m (measured: 13.4 m)
+}
+
+#[test]
+fn orekit_j2_hp_iss_30days() {
+    run_scenario("j2_hp_iss_30days", 0.400); // 400 m (measured: 191 m)
+}
+
 // ─── Tier 5: Full force model ───
 // All differences combined. With geodetic altitude, drag error is now small.
 

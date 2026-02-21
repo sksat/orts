@@ -584,6 +584,58 @@ def tier4_scenarios():
         "output_step_s": 60.0,
     })
 
+    # Long-duration ISS with ISS-like ballistic coefficient (B=0.005)
+    # Validates error growth over timescales relevant to ISS decay tests
+    iss_b = 0.005  # ISS physical B ≈ Cd*A/(2m)
+
+    # 7 days (~108 orbits)
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "j2_hp_iss_7days",
+        "description": "ISS orbit, J2 + HP drag (B=0.005), 7 days",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "harris_priester", "n": 2},
+            "srp": None,
+            "third_body_sun": False, "third_body_moon": False,
+        },
+        "satellite": {
+            "ballistic_coeff_m2_kg": iss_b,
+        },
+        "duration_s": 7.0 * 86400.0,
+        "output_step_s": 300.0,
+    })
+
+    # 30 days (~464 orbits)
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "j2_hp_iss_30days",
+        "description": "ISS orbit, J2 + HP drag (B=0.005), 30 days",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "harris_priester", "n": 2},
+            "srp": None,
+            "third_body_sun": False, "third_body_moon": False,
+        },
+        "satellite": {
+            "ballistic_coeff_m2_kg": iss_b,
+        },
+        "duration_s": 30.0 * 86400.0,
+        "output_step_s": 600.0,
+    })
+
     return scenarios
 
 
