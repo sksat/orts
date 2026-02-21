@@ -61,13 +61,16 @@ impl GravityField for ZonalHarmonics {
         let mut accel = a_pm + a_j2;
 
         // J3 perturbation (pear-shaped asymmetry)
+        // From U_J3 = -(μ J3 Re³/2)(5z³/r⁷ - 3z/r⁵), a = ∇U:
+        //   a_x = -(μ J3 Re³/2) × 5xz/r⁷ × (3 - 7s²)
+        //   a_z = +(μ J3 Re³/2) × (1/r⁵) × (3 - 30s² + 35s⁴)
         if let Some(j3) = self.j3 {
             let re3 = re2 * re;
             let r7 = r5 * r2;
             let coeff3 = 0.5 * j3 * mu * re3;
             accel += Vector3::new(
-                coeff3 * 5.0 * x * z / r7 * (3.0 - 7.0 * s2),
-                coeff3 * 5.0 * y * z / r7 * (3.0 - 7.0 * s2),
+                -coeff3 * 5.0 * x * z / r7 * (3.0 - 7.0 * s2),
+                -coeff3 * 5.0 * y * z / r7 * (3.0 - 7.0 * s2),
                 coeff3 / r5 * (3.0 - 30.0 * s2 + 35.0 * s2 * s2),
             );
         }
