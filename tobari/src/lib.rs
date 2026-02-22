@@ -5,6 +5,7 @@
 
 pub mod exponential;
 pub mod harris_priester;
+pub mod nrlmsise00;
 
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;

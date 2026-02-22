@@ -1,0 +1,174 @@
+//! Geographic and temporal conversions for NRLMSISE-00.
+//!
+//! Converts between ECI coordinates and the geodetic/time parameters
+//! required by the NRLMSISE-00 model.
+
+use kaname::epoch::Epoch;
+use nalgebra::Vector3;
+
+/// Convert ECI position + epoch to geodetic latitude and longitude [degrees].
+///
+/// Uses Earth's rotation angle (GMST) to convert from ECI to ECEF,
+/// then computes geodetic lat/lon.
+pub fn eci_to_geodetic_latlon(position: &Vector3<f64>, epoch: &Epoch) -> (f64, f64) {
+    // GMST gives the rotation angle from ECI to ECEF
+    let gmst_rad = epoch.gmst();
+
+    // ECI to ECEF rotation (about Z axis by -GMST)
+    let x_eci = position[0];
+    let y_eci = position[1];
+    let z_eci = position[2];
+
+    let cos_g = gmst_rad.cos();
+    let sin_g = gmst_rad.sin();
+
+    let x_ecef = x_eci * cos_g + y_eci * sin_g;
+    let y_ecef = -x_eci * sin_g + y_eci * cos_g;
+
+    // Geodetic longitude
+    let lon_deg = y_ecef.atan2(x_ecef).to_degrees();
+
+    // Geodetic latitude (spherical approximation for now)
+    // TODO: use Bowring iteration for WGS-84 geodetic latitude
+    let p = (x_ecef * x_ecef + y_ecef * y_ecef).sqrt();
+    let lat_deg = z_eci.atan2(p).to_degrees();
+
+    (lat_deg, lon_deg)
+}
+
+/// Convert epoch to (day_of_year, ut_seconds).
+pub fn epoch_to_day_of_year_and_ut(epoch: &Epoch) -> (u32, f64) {
+    let dt = epoch.to_datetime();
+
+    // Day of year
+    let doy = day_of_year(dt.year, dt.month, dt.day);
+
+    // UT seconds since midnight
+    let ut_sec = dt.hour as f64 * 3600.0 + dt.min as f64 * 60.0 + dt.sec;
+
+    (doy, ut_sec)
+}
+
+/// Compute day of year from (year, month, day).
+fn day_of_year(year: i32, month: u32, day: u32) -> u32 {
+    let is_leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    let days_in_month = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+    let mut doy = 0u32;
+    for m in 1..month {
+        doy += days_in_month[m as usize];
+        if m == 2 && is_leap {
+            doy += 1;
+        }
+    }
+    doy + day
+}
+
+/// Compute local apparent solar time [hours].
+///
+/// LST = UT/3600 + lon/15
+///
+/// This is a simple approximation (no equation of time correction).
+/// The NRLMSISE-00 model expects apparent solar time, but the difference
+/// from mean solar time is at most ~16 minutes, well within the model's
+/// intended precision.
+pub fn local_solar_time(ut_sec: f64, longitude_deg: f64) -> f64 {
+    let lst = ut_sec / 3600.0 + longitude_deg / 15.0;
+    // Normalize to [0, 24)
+    ((lst % 24.0) + 24.0) % 24.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn day_of_year_jan1() {
+        assert_eq!(day_of_year(2024, 1, 1), 1);
+    }
+
+    #[test]
+    fn day_of_year_dec31_non_leap() {
+        assert_eq!(day_of_year(2023, 12, 31), 365);
+    }
+
+    #[test]
+    fn day_of_year_dec31_leap() {
+        assert_eq!(day_of_year(2024, 12, 31), 366);
+    }
+
+    #[test]
+    fn day_of_year_mar1_leap() {
+        // Jan(31) + Feb(29) + 1 = 61
+        assert_eq!(day_of_year(2024, 3, 1), 61);
+    }
+
+    #[test]
+    fn day_of_year_mar1_non_leap() {
+        // Jan(31) + Feb(28) + 1 = 60
+        assert_eq!(day_of_year(2023, 3, 1), 60);
+    }
+
+    #[test]
+    fn local_solar_time_greenwich_noon() {
+        // UT=12h, lon=0° → LST=12h
+        let lst = local_solar_time(43200.0, 0.0);
+        assert!((lst - 12.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn local_solar_time_east_90() {
+        // UT=0h, lon=90° → LST=6h
+        let lst = local_solar_time(0.0, 90.0);
+        assert!((lst - 6.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn local_solar_time_west_90() {
+        // UT=0h, lon=-90° → LST=18h (wraps)
+        let lst = local_solar_time(0.0, -90.0);
+        assert!((lst - 18.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn local_solar_time_wraps_24() {
+        // UT=23h, lon=30° → LST=25h → 1h
+        let lst = local_solar_time(23.0 * 3600.0, 30.0);
+        assert!((lst - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn epoch_to_day_of_year_and_ut_vernal_equinox_2024() {
+        // 2024-03-20T12:00:00Z
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let (doy, ut_sec) = epoch_to_day_of_year_and_ut(&epoch);
+        // Jan(31) + Feb(29) + 20 = 80
+        assert_eq!(doy, 80);
+        assert!((ut_sec - 43200.0).abs() < 1.0); // 12h = 43200s
+    }
+
+    #[test]
+    fn eci_to_latlon_on_equator_at_gmst_zero() {
+        // At GMST=0, ECI x-axis = ECEF x-axis → lon=0
+        // Position on equator along x-axis
+        let epoch = Epoch::from_jd(2451545.0); // J2000.0 (GMST ≈ 280.46°)
+        let gmst = epoch.gmst();
+
+        // Place the satellite along the ECEF x-axis (lon=0)
+        // In ECI: rotate by +GMST
+        let r = 6778.0; // LEO
+        let pos = Vector3::new(r * gmst.cos(), r * gmst.sin(), 0.0);
+
+        let (lat, lon) = eci_to_geodetic_latlon(&pos, &epoch);
+        assert!(lat.abs() < 0.1, "lat={lat}, expected ~0");
+        assert!(lon.abs() < 0.1, "lon={lon}, expected ~0");
+    }
+
+    #[test]
+    fn eci_to_latlon_north_pole() {
+        let epoch = Epoch::from_jd(2451545.0);
+        let pos = Vector3::new(0.0, 0.0, 6378.0);
+        let (lat, _lon) = eci_to_geodetic_latlon(&pos, &epoch);
+        assert!((lat - 90.0).abs() < 0.1, "lat={lat}, expected ~90");
+    }
+}
