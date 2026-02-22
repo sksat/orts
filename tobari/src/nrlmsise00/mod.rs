@@ -18,6 +18,7 @@
 //!
 //! Validated against `pymsis` (official NRL Fortran wrapper, `version=0`).
 
+pub mod coefficients;
 pub mod geo;
 
 use crate::AtmosphereModel;
