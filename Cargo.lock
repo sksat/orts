@@ -4960,6 +4960,7 @@ dependencies = [
  "nalgebra",
  "serde",
  "serde_json",
+ "ureq 3.2.0",
 ]
 
 [[package]]

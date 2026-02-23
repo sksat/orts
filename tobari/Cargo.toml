@@ -8,6 +8,10 @@ repository.workspace = true
 [dependencies]
 nalgebra.workspace = true
 kaname.workspace = true
+ureq = { workspace = true, optional = true }
+
+[features]
+fetch = ["ureq"]
 
 [dev-dependencies]
 serde = { workspace = true }

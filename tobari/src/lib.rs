@@ -9,14 +9,32 @@
 //!
 //! All models implement [`AtmosphereModel`] and can be swapped at runtime via
 //! `Box<dyn AtmosphereModel>`.
+//!
+//! ## Space weather
+//!
+//! The [`space_weather`] module defines [`SpaceWeather`] conditions and the
+//! [`SpaceWeatherProvider`] trait for supplying time-varying solar/geomagnetic data.
+//! [`CssiSpaceWeather`] parses CelesTrak CSSI-format files and (with the `fetch`
+//! feature) downloads them automatically with local caching.
+//!
+//! ## Data attribution
+//!
+//! Space weather indices are sourced from:
+//! - Kp/Ap geomagnetic indices: GFZ Helmholtz Centre for Geosciences (CC BY 4.0)
+//! - F10.7 solar radio flux: NOAA SWPC / NRCan DRAO (public domain)
+//! - Aggregated and distributed by CelesTrak (<https://celestrak.org/SpaceData/>)
 
+pub mod cssi;
 pub mod exponential;
 pub mod harris_priester;
 pub mod nrlmsise00;
+pub mod space_weather;
 
+pub use cssi::{CssiData, CssiSpaceWeather};
 pub use exponential::Exponential;
 pub use harris_priester::HarrisPriester;
-pub use nrlmsise00::{ConstantWeather, Nrlmsise00, SpaceWeather, SpaceWeatherProvider};
+pub use nrlmsise00::Nrlmsise00;
+pub use space_weather::{ConstantWeather, SpaceWeather, SpaceWeatherProvider};
 
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;

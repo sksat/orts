@@ -9,7 +9,7 @@ repository.workspace = true
 nalgebra.workspace = true
 orts-integrator.workspace = true
 orts-orbits.workspace = true
-tobari.workspace = true
+tobari = { workspace = true, features = ["fetch"] }
 kaname.workspace = true
 orts-datamodel.workspace = true
 clap.workspace = true
