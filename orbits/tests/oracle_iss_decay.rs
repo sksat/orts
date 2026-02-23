@@ -29,7 +29,7 @@ use orts_orbits::drag::AtmosphericDrag;
 use orts_orbits::gravity::ZonalHarmonics;
 use orts_orbits::orbital_system::OrbitalSystem;
 use serde::Deserialize;
-use tobari::{ConstantWeather, HarrisPriester, Nrlmsise00};
+use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
 
 // ─── Fixture data structures ───
 
@@ -458,4 +458,136 @@ fn iss_decay_solar_min_2020c_msise() {
 #[test]
 fn iss_decay_solar_max_2024d_msise() {
     run_decay_window_msise("solar_max_2024d", 250.0, 50.0, 1.0, 5.0);
+}
+
+// ─── NRLMSISE-00 with real CSSI space weather ───
+//
+// Uses observed daily F10.7 and 3-hourly Ap from CelesTrak CSSI data.
+// This should significantly improve over ConstantWeather because:
+// - Solar minimum: actual F10.7 varies 60-80 SFU day-to-day (not fixed 70)
+// - Solar maximum: actual F10.7 was ~150-180 SFU (not the conservative 250)
+// - Ap 3-hour history captures geomagnetic storm effects
+
+fn build_iss_system_msise_cssi(epoch: Epoch) -> OrbitalSystem {
+    let cssi_text = include_str!("fixtures/cssi_test_weather.txt");
+    let cssi_data = CssiData::parse(cssi_text).expect("Failed to parse CSSI fixture");
+    let weather = Box::new(CssiSpaceWeather::new(cssi_data));
+    let gravity = ZonalHarmonics {
+        r_body: R_EARTH,
+        j2: J2_EARTH,
+        j3: None,
+        j4: None,
+    };
+    OrbitalSystem::new(MU_EARTH, Box::new(gravity))
+        .with_epoch(epoch)
+        .with_body_radius(R_EARTH)
+        .with_perturbation(Box::new(
+            AtmosphericDrag::for_earth(Some(0.005))
+                .with_atmosphere(Box::new(Nrlmsise00::new(weather))),
+        ))
+}
+
+fn run_decay_window_cssi(window_name: &str, min_ratio: f64, max_ratio: f64) {
+    let fixture = load_fixture();
+    let window = fixture
+        .windows
+        .iter()
+        .find(|w| w.name == window_name)
+        .unwrap_or_else(|| panic!("Window '{window_name}' not found in fixture"));
+
+    let mu = fixture.mu_earth_km3_s2;
+    let ic = &window.initial_osculating;
+    let initial = State {
+        position: Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
+        velocity: Vector3::new(
+            ic.velocity_km_s[0],
+            ic.velocity_km_s[1],
+            ic.velocity_km_s[2],
+        ),
+    };
+
+    let epoch = Epoch::from_jd(window.initial_tle.epoch_jd);
+    let system = build_iss_system_msise_cssi(epoch);
+
+    let tol = Tolerances {
+        atol: 1e-12,
+        rtol: 1e-10,
+    };
+    let n_avg_orbits = 3;
+    let samples_per_orbit = 50;
+
+    let dp = DormandPrince;
+    let mut stepper = dp.stepper(&system, initial.clone(), 0.0, 10.0, tol.clone());
+    let avg_sma_start = orbit_averaged_sma(&mut stepper, mu, n_avg_orbits, samples_per_orbit);
+
+    let last_tle = window.tle_sequence.last().unwrap();
+    let dt_end = (last_tle.epoch_jd - window.initial_tle.epoch_jd) * 86400.0;
+    let period = orbital_period(avg_sma_start, mu);
+    let t_avg_end_start = dt_end - period * n_avg_orbits as f64;
+
+    stepper
+        .advance_to(
+            t_avg_end_start,
+            |_, _| {},
+            |_, _| std::ops::ControlFlow::<()>::Continue(()),
+        )
+        .expect("Integration failed");
+
+    let avg_sma_end = orbit_averaged_sma(&mut stepper, mu, n_avg_orbits, samples_per_orbit);
+
+    let predicted_decay = avg_sma_start - avg_sma_end;
+    let observed_decay = window.total_mean_sma_decay_km;
+    let decay_ratio = predicted_decay / observed_decay;
+
+    println!("\n{window_name} (NRLMSISE-00 + CSSI real weather):");
+    println!("  Predicted decay: {predicted_decay:.4} km, Observed: {observed_decay:.4} km");
+    println!(
+        "  Predicted rate: {:.4} km/day, Observed: {:.4} km/day",
+        predicted_decay / window.window_duration_days,
+        window.mean_decay_rate_km_per_day,
+    );
+    println!("  Ratio: {decay_ratio:.3}");
+
+    assert!(
+        predicted_decay > 0.0,
+        "{window_name}: must have positive decay"
+    );
+    assert!(
+        decay_ratio >= min_ratio && decay_ratio <= max_ratio,
+        "{window_name} (MSISE+CSSI): ratio {decay_ratio:.3} outside [{min_ratio}, {max_ratio}]"
+    );
+}
+
+// NRLMSISE-00 + CSSI real weather: solar minimum
+// Real F10.7 varies 60-80 SFU during 2019 deep solar minimum.
+// CSSI provides day-to-day F10.7 and 3-hourly Ap variation.
+// Solar-min ratios barely improve over ConstantWeather(70,4) because F10.7≈70
+// was already close to actual conditions. Remaining error is NRLMSISE-00 model
+// accuracy + ballistic coefficient uncertainty + LST approximation.
+// Measured ratios: 1.56, 2.07, 1.90
+
+#[test]
+fn iss_decay_solar_min_2019a_msise_cssi() {
+    run_decay_window_cssi("solar_min_2019a", 0.5, 3.0);
+}
+
+#[test]
+fn iss_decay_solar_min_2019b_msise_cssi() {
+    run_decay_window_cssi("solar_min_2019b", 0.5, 3.5);
+}
+
+#[test]
+fn iss_decay_solar_min_2020c_msise_cssi() {
+    run_decay_window_cssi("solar_min_2020c", 0.5, 3.5);
+}
+
+// NRLMSISE-00 + CSSI real weather: solar maximum
+// Real F10.7 was ~150-180 SFU during 2024 March-April.
+// Dramatic improvement over ConstantWeather(250, 50) which gave 3.87×.
+// CSSI data resolves the solar flux overestimate → ratio drops to 1.20×.
+// Measured ratio: 1.20
+
+#[test]
+fn iss_decay_solar_max_2024d_msise_cssi() {
+    run_decay_window_cssi("solar_max_2024d", 0.5, 2.0);
 }

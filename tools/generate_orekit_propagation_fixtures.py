@@ -15,6 +15,7 @@ Tiered scenarios:
   Tier 5: Full force model (HP)
   Tier 6: Gravity + NRLMSISE-00 drag (constant weather)
   Tier 7: Full force model (NRLMSISE-00)
+  Tier 8: NRLMSISE-00 with CSSI real weather (both sides read same file)
 
 Known differences from our Rust implementation:
   - Sun/Moon position: Orekit DE405 vs our Meeus/analytical
@@ -297,6 +298,21 @@ def _make_constant_solar_activity(f107, ap):
     return jpype.JProxy(NRLMSISE00InputParameters, inst=ConstantSolarActivity())
 
 
+def _load_cssi_solar_activity():
+    """Load CSSI space weather from Orekit's default SpaceWeather-All file.
+
+    Orekit's CssiSpaceWeatherData has cache/generator requirements that
+    make it incompatible with our trimmed fixture file. Instead, we use
+    the full SpaceWeather-All-v1.2.txt from orekit-data (which contains
+    the same data for overlapping dates). The Rust side uses our trimmed
+    cssi_test_weather.txt — since both extract from the same CelesTrak
+    source, F10.7/Ap values are identical for the same dates.
+    """
+    from org.orekit.models.earth.atmosphere.data import CssiSpaceWeatherData
+
+    return CssiSpaceWeatherData("SpaceWeather-All-v1.2.txt")
+
+
 def _add_drag(propagator, sat_config, drag_config, eci):
     """Add atmospheric drag with Harris-Priester or NRLMSISE-00 model."""
     from org.orekit.bodies import CelestialBodyFactory, OneAxisEllipsoid
@@ -332,6 +348,10 @@ def _add_drag(propagator, sat_config, drag_config, eci):
         weather = drag_config["weather"]
         solar_proxy = _make_constant_solar_activity(weather["f107"], weather["ap"])
         atmosphere = NRLMSISE00(solar_proxy, sun, earth)
+    elif model_name == "nrlmsise00_cssi":
+        from org.orekit.models.earth.atmosphere import NRLMSISE00
+
+        atmosphere = NRLMSISE00(_load_cssi_solar_activity(), sun, earth)
     else:
         raise ValueError(f"Unknown drag model: {model_name}")
 
@@ -953,6 +973,92 @@ def tier7_scenarios():
     return scenarios
 
 
+def tier8_scenarios():
+    """NRLMSISE-00 scenarios with real CSSI space weather data.
+
+    Both Orekit and Rust read the same trimmed CSSI fixture file.
+    This validates that our CSSI parser + binary search + 3-hour Ap
+    interpolation matches Orekit's CssiSpaceWeatherData implementation.
+    """
+    scenarios = []
+
+    iss_a = R_EARTH_KM + 400.0
+    iss_period = 2 * math.pi * math.sqrt(iss_a ** 3 / MU_EARTH_KM3_S2)
+    iss_b = 0.005
+
+    # ISS, CSSI weather, 10 orbits
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "j2_msise_cssi_iss_10orbits",
+        "description": "ISS orbit, J2 + NRLMSISE-00 (CSSI real weather), 10 orbits",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00_cssi"},
+            "srp": None,
+            "third_body_sun": False, "third_body_moon": False,
+        },
+        "satellite": {"ballistic_coeff_m2_kg": DEFAULT_BALLISTIC_COEFF},
+        "duration_s": round(iss_period * 10, 1),
+        "output_step_s": 60.0,
+    })
+
+    # ISS, CSSI weather, 7 days (B=0.005)
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "j2_msise_cssi_iss_7days",
+        "description": "ISS orbit, J2 + NRLMSISE-00 (CSSI, B=0.005), 7 days",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00_cssi"},
+            "srp": None,
+            "third_body_sun": False, "third_body_moon": False,
+        },
+        "satellite": {"ballistic_coeff_m2_kg": iss_b},
+        "duration_s": 7.0 * 86400.0,
+        "output_step_s": 300.0,
+    })
+
+    # ISS, full model + CSSI weather, 10 orbits
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "full_msise_cssi_iss_10orbits",
+        "description": "ISS orbit, J2 + NRLMSISE-00 (CSSI) + SRP + Sun + Moon, 10 orbits",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00_cssi"},
+            "srp": {"shadow": True},
+            "third_body_sun": True, "third_body_moon": True,
+        },
+        "satellite": {
+            "ballistic_coeff_m2_kg": DEFAULT_BALLISTIC_COEFF,
+            "srp_area_to_mass_m2_kg": DEFAULT_AREA_TO_MASS,
+            "srp_cr": DEFAULT_CR,
+        },
+        "duration_s": round(iss_period * 10, 1),
+        "output_step_s": 60.0,
+    })
+
+    return scenarios
+
+
 def main():
     setup_orekit()
 
@@ -968,6 +1074,7 @@ def main():
         ("Tier 5 (full force model)", tier5_scenarios),
         ("Tier 6 (gravity + NRLMSISE-00 drag)", tier6_scenarios),
         ("Tier 7 (full force + NRLMSISE-00)", tier7_scenarios),
+        ("Tier 8 (NRLMSISE-00 + CSSI real weather)", tier8_scenarios),
     ]:
         scenarios = tier_fn()
         print(f"\n{tier_name}: {len(scenarios)} scenarios")

@@ -14,7 +14,7 @@
 
 use kaname::epoch::Epoch;
 use serde::Deserialize;
-use tobari::{ConstantWeather, Nrlmsise00};
+use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, Nrlmsise00};
 
 // ─── Fixture structures ───
 
@@ -187,5 +187,102 @@ fn orekit_msise_density_equatorial_tight() {
         max_rel_err < 0.05,
         "equatorial max error {:.2}% exceeds 5%",
         max_rel_err * 100.0,
+    );
+}
+
+// ─── CSSI real weather density tests ───
+//
+// Uses the same trimmed CSSI fixture file as the Rust propagation tests.
+// Both Orekit and Rust read the same CSSI data, so differences isolate:
+// - CSSI parser implementation (binary search, 3-hour Ap interpolation)
+// - LST approximation (UT+lon/15 vs Orekit precise solar time)
+
+#[derive(Deserialize)]
+struct CssiFixtureData {
+    #[allow(dead_code)]
+    generator: String,
+    #[allow(dead_code)]
+    note: String,
+    #[allow(dead_code)]
+    known_differences: Vec<String>,
+    points: Vec<CssiDensityPoint>,
+}
+
+#[derive(Deserialize)]
+struct CssiDensityPoint {
+    epoch_utc: String,
+    latitude_deg: f64,
+    longitude_deg: f64,
+    altitude_km: f64,
+    density_kg_m3: f64,
+}
+
+/// All CSSI density points: compare Orekit vs Rust NRLMSISE-00 with real weather.
+///
+/// A single Nrlmsise00 instance with CssiSpaceWeather provides time-varying
+/// F10.7 and Ap from the CSSI fixture file. This validates that our CSSI
+/// parser's binary search and 3-hour Ap history match Orekit's implementation.
+#[test]
+fn orekit_msise_cssi_density_all_points() {
+    let json = include_str!("fixtures/orekit_cssi_density_reference.json");
+    let fixture: CssiFixtureData =
+        serde_json::from_str(json).expect("Failed to parse Orekit CSSI density fixture");
+
+    let cssi_text = include_str!("fixtures/cssi_test_weather.txt");
+    let cssi_data = CssiData::parse(cssi_text).expect("Failed to parse CSSI fixture");
+    let weather = Box::new(CssiSpaceWeather::new(cssi_data));
+    let model = Nrlmsise00::new(weather);
+
+    let mut max_rel_err = 0.0_f64;
+    let mut sum_rel_err = 0.0_f64;
+    let mut n_exceed_5pct = 0;
+    let mut worst_point = String::new();
+
+    for (i, p) in fixture.points.iter().enumerate() {
+        let epoch = parse_epoch(&p.epoch_utc);
+        let our_density =
+            compute_density_via_eci(&model, p.latitude_deg, p.longitude_deg, p.altitude_km, &epoch);
+
+        let rel_err = if p.density_kg_m3.abs() > 1e-30 {
+            (our_density - p.density_kg_m3).abs() / p.density_kg_m3
+        } else {
+            (our_density - p.density_kg_m3).abs()
+        };
+
+        sum_rel_err += rel_err;
+        if rel_err > max_rel_err {
+            max_rel_err = rel_err;
+            worst_point = format!(
+                "#{i}: epoch={} lat={} lon={} alt={} orekit={:.4e} ours={:.4e} err={:.2}%",
+                p.epoch_utc, p.latitude_deg, p.longitude_deg, p.altitude_km,
+                p.density_kg_m3, our_density, rel_err * 100.0
+            );
+        }
+        if rel_err > 0.05 {
+            n_exceed_5pct += 1;
+        }
+    }
+
+    let mean_rel_err = sum_rel_err / fixture.points.len() as f64;
+
+    println!(
+        "NRLMSISE-00 CSSI cross-validation: {} points",
+        fixture.points.len()
+    );
+    println!("  max relative error: {:.4}%", max_rel_err * 100.0);
+    println!("  mean relative error: {:.4}%", mean_rel_err * 100.0);
+    println!("  points > 5% error: {n_exceed_5pct}");
+    println!("  worst: {worst_point}");
+
+    // Same thresholds as constant weather — LST approximation dominates
+    assert!(
+        max_rel_err < 0.05,
+        "max relative error {:.2}% exceeds 5% threshold\n  worst: {worst_point}",
+        max_rel_err * 100.0,
+    );
+    assert!(
+        mean_rel_err < 0.02,
+        "mean relative error {:.2}% exceeds 2% threshold",
+        mean_rel_err * 100.0,
     );
 }

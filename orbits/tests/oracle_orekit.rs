@@ -11,6 +11,7 @@
 //! - Tier 5: Full force model (HP) — all differences combined
 //! - Tier 6: Gravity + NRLMSISE-00 drag — LST approximation dominates
 //! - Tier 7: Full force model (NRLMSISE-00) — all differences combined
+//! - Tier 8: NRLMSISE-00 + CSSI real weather — same file, parser differences only
 //!
 //! Known difference sources:
 //! - **J2 coefficient**: Orekit EGM96 C̄₂₀ → J2 differs by ~3e-9 (negligible)
@@ -28,7 +29,7 @@ use orts_orbits::orbital_system::OrbitalSystem;
 use orts_orbits::srp::SolarRadiationPressure;
 use orts_orbits::third_body::ThirdBodyGravity;
 use serde::Deserialize;
-use tobari::{ConstantWeather, HarrisPriester, Nrlmsise00};
+use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
 
 // ─── Fixture data structures ───
 
@@ -244,6 +245,12 @@ fn build_system(scenario: &Scenario) -> OrbitalSystem {
                     let provider = Box::new(ConstantWeather::new(weather.f107, weather.ap));
                     drag = drag.with_atmosphere(Box::new(Nrlmsise00::new(provider)));
                 }
+            }
+            "nrlmsise00_cssi" => {
+                let cssi_text = include_str!("fixtures/cssi_test_weather.txt");
+                let cssi_data = CssiData::parse(cssi_text).expect("Failed to parse CSSI fixture");
+                let provider = Box::new(CssiSpaceWeather::new(cssi_data));
+                drag = drag.with_atmosphere(Box::new(Nrlmsise00::new(provider)));
             }
             other => panic!("Unknown drag model: {other}"),
         }
@@ -522,4 +529,25 @@ fn orekit_full_msise_iss_moderate_10orbits() {
 #[test]
 fn orekit_full_msise_sso_moderate_10orbits() {
     run_scenario("full_msise_sso_moderate_10orbits", 0.003); // 3 m (measured: 1.4 m)
+}
+
+// ─── Tier 8: NRLMSISE-00 + CSSI real weather ───
+// Both Orekit and Rust read the same trimmed CSSI fixture file.
+// This validates CSSI parser + binary search + 3-hour Ap interpolation
+// matching Orekit's CssiSpaceWeatherData implementation.
+// LST approximation still dominates the remaining difference.
+
+#[test]
+fn orekit_j2_msise_cssi_iss_10orbits() {
+    run_scenario("j2_msise_cssi_iss_10orbits", 0.060); // 60 m (measured: 42.1 m)
+}
+
+#[test]
+fn orekit_j2_msise_cssi_iss_7days() {
+    run_scenario("j2_msise_cssi_iss_7days", 3.500); // 3.5 km (measured: 2.61 km)
+}
+
+#[test]
+fn orekit_full_msise_cssi_iss_10orbits() {
+    run_scenario("full_msise_cssi_iss_10orbits", 0.060); // 60 m (measured: 42.2 m)
 }

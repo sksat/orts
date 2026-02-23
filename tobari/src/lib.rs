@@ -30,7 +30,7 @@ pub mod harris_priester;
 pub mod nrlmsise00;
 pub mod space_weather;
 
-pub use cssi::{CssiData, CssiSpaceWeather};
+pub use cssi::{CssiData, CssiSpaceWeather, OutOfRangeBehavior};
 pub use exponential::Exponential;
 pub use harris_priester::HarrisPriester;
 pub use nrlmsise00::Nrlmsise00;
