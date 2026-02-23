@@ -1,4 +1,4 @@
-use crate::{DynamicalSystem, Integrator, State};
+use crate::{DynamicalSystem, Integrator, OdeState};
 
 /// Classic 4th-order Runge-Kutta integrator.
 pub struct Rk4;
@@ -12,38 +12,29 @@ impl Integrator for Rk4 {
     /// k3 = f(t + dt/2, y + dt/2 * k2)
     /// k4 = f(t + dt, y + dt * k3)
     /// y_next = y + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
-    fn step<S: DynamicalSystem>(&self, system: &S, t: f64, state: &State, dt: f64) -> State {
+    fn step<S: DynamicalSystem>(
+        &self,
+        system: &S,
+        t: f64,
+        state: &S::State,
+        dt: f64,
+    ) -> S::State {
         let k1 = system.derivatives(t, state);
 
-        let state2 = State {
-            position: state.position + dt / 2.0 * k1.velocity,
-            velocity: state.velocity + dt / 2.0 * k1.acceleration,
-        };
-        let k2 = system.derivatives(t + dt / 2.0, &state2);
+        let s2 = state.axpy(dt / 2.0, &k1);
+        let k2 = system.derivatives(t + dt / 2.0, &s2);
 
-        let state3 = State {
-            position: state.position + dt / 2.0 * k2.velocity,
-            velocity: state.velocity + dt / 2.0 * k2.acceleration,
-        };
-        let k3 = system.derivatives(t + dt / 2.0, &state3);
+        let s3 = state.axpy(dt / 2.0, &k2);
+        let k3 = system.derivatives(t + dt / 2.0, &s3);
 
-        let state4 = State {
-            position: state.position + dt * k3.velocity,
-            velocity: state.velocity + dt * k3.acceleration,
-        };
-        let k4 = system.derivatives(t + dt, &state4);
+        let s4 = state.axpy(dt, &k3);
+        let k4 = system.derivatives(t + dt, &s4);
 
-        State {
-            position: state.position
-                + dt / 6.0
-                    * (k1.velocity + 2.0 * k2.velocity + 2.0 * k3.velocity + k4.velocity),
-            velocity: state.velocity
-                + dt / 6.0
-                    * (k1.acceleration
-                        + 2.0 * k2.acceleration
-                        + 2.0 * k3.acceleration
-                        + k4.acceleration),
-        }
+        // y + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
+        let k_sum = k1.axpy(2.0, &k2).axpy(2.0, &k3).axpy(1.0, &k4);
+        let mut result = state.axpy(dt / 6.0, &k_sum);
+        result.project(t + dt);
+        result
     }
 }
 
@@ -274,7 +265,7 @@ mod tests {
             position: vector![0.0, 0.0, 0.0],
             velocity: vector![1.0, 0.0, 0.0],
         };
-        let outcome: IntegrationOutcome<()> = Rk4.integrate_with_events(
+        let outcome: IntegrationOutcome<State, ()> = Rk4.integrate_with_events(
             &system,
             initial,
             0.0,
@@ -330,20 +321,18 @@ mod tests {
 
     #[test]
     fn integrate_with_events_detects_nan() {
-        use crate::{DynamicalSystem, StateDerivative};
+        use crate::DynamicalSystem;
 
         struct ExplodingSystem;
         impl DynamicalSystem for ExplodingSystem {
-            fn derivatives(&self, t: f64, state: &State) -> StateDerivative {
+            type State = State;
+            fn derivatives(&self, t: f64, state: &State) -> State {
                 let accel = if t > 0.3 {
                     vector![f64::INFINITY, 0.0, 0.0]
                 } else {
                     vector![0.0, 0.0, 0.0]
                 };
-                StateDerivative {
-                    velocity: state.velocity,
-                    acceleration: accel,
-                }
+                State::from_derivative(state.velocity, accel)
             }
         }
 
@@ -351,7 +340,7 @@ mod tests {
             position: vector![1.0, 0.0, 0.0],
             velocity: vector![0.0, 0.0, 0.0],
         };
-        let outcome: IntegrationOutcome<()> = Rk4.integrate_with_events(
+        let outcome: IntegrationOutcome<State, ()> = Rk4.integrate_with_events(
             &ExplodingSystem,
             initial,
             0.0,

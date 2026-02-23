@@ -344,7 +344,8 @@ fn compare_trajectory(scenario: &Scenario, system: &OrbitalSystem) -> Comparison
     // Acceleration comparison at t=0
     let accel_err = scenario.acceleration_at_t0.as_ref().map(|accel_snap| {
         let our_deriv = system.derivatives(0.0, &initial);
-        let our_accel = our_deriv.acceleration;
+        // Derivative stored as State: .velocity holds acceleration
+        let our_accel = our_deriv.velocity;
         let orekit_accel = Vector3::new(
             accel_snap.total_km_s2[0],
             accel_snap.total_km_s2[1],

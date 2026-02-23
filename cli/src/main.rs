@@ -1056,7 +1056,7 @@ fn run_simulation(params: &SimParams) -> Recording {
         let body_radius = props.radius;
         let event_checker = events::collision_check(body_radius, props.atmosphere_altitude);
 
-        let outcome: IntegrationOutcome<SimulationEvent> = match params.integrator {
+        let outcome: IntegrationOutcome<State, SimulationEvent> = match params.integrator {
             IntegratorChoice::Rk4 => {
                 let callback = |t: f64, state: &State| {
                     if t >= next_output_t - 1e-9 {
@@ -1087,7 +1087,7 @@ fn run_simulation(params: &SimParams) -> Recording {
                 );
                 stepper.dt_min = 1e-12 * t_end.abs().max(1.0);
 
-                let mut final_outcome: IntegrationOutcome<SimulationEvent> =
+                let mut final_outcome: IntegrationOutcome<State, SimulationEvent> =
                     IntegrationOutcome::Completed(stepper.state().clone());
 
                 while stepper.t() < t_end {

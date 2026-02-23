@@ -1,5 +1,5 @@
 use kaname::epoch::Epoch;
-use orts_integrator::{DynamicalSystem, State, StateDerivative};
+use orts_integrator::{DynamicalSystem, State};
 
 use crate::gravity::GravityField;
 use crate::perturbations::ForceModel;
@@ -64,16 +64,14 @@ impl OrbitalSystem {
 }
 
 impl DynamicalSystem for OrbitalSystem {
-    fn derivatives(&self, t: f64, state: &State) -> StateDerivative {
+    type State = State;
+    fn derivatives(&self, t: f64, state: &State) -> State {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
         let mut accel = self.gravity.acceleration(self.mu, &state.position);
         for p in &self.perturbations {
             accel += p.acceleration(t, state, epoch.as_ref());
         }
-        StateDerivative {
-            velocity: state.velocity,
-            acceleration: accel,
-        }
+        State::from_derivative(state.velocity, accel)
     }
 }
 
@@ -101,8 +99,9 @@ mod tests {
         let d1 = two_body.derivatives(0.0, &state);
         let d2 = orbital.derivatives(0.0, &state);
 
-        assert_eq!(d1.velocity, d2.velocity);
-        assert!((d1.acceleration - d2.acceleration).magnitude() < 1e-15);
+        // Derivatives stored as State: .position = velocity, .velocity = acceleration
+        assert_eq!(d1.position, d2.position);
+        assert!((d1.velocity - d2.velocity).magnitude() < 1e-15);
     }
 
     #[test]

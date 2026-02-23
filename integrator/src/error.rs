@@ -1,4 +1,4 @@
-use crate::State;
+use crate::OdeState;
 
 /// Tolerance configuration for adaptive step-size integrators.
 #[derive(Debug, Clone)]
@@ -29,11 +29,11 @@ pub enum IntegrationError {
 
 /// Outcome of an integration with event detection.
 #[derive(Debug, Clone)]
-pub enum IntegrationOutcome<B> {
+pub enum IntegrationOutcome<Y: OdeState, B> {
     /// Integration completed normally (reached t_end).
-    Completed(State),
+    Completed(Y),
     /// Integration was terminated early by the event checker.
-    Terminated { state: State, t: f64, reason: B },
+    Terminated { state: Y, t: f64, reason: B },
     /// Integration was aborted due to a numerical error.
     Error(IntegrationError),
 }

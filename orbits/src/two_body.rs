@@ -1,4 +1,4 @@
-use orts_integrator::{DynamicalSystem, State, StateDerivative};
+use orts_integrator::{DynamicalSystem, State};
 
 /// Two-body gravitational system.
 ///
@@ -9,14 +9,12 @@ pub struct TwoBodySystem {
 }
 
 impl DynamicalSystem for TwoBodySystem {
-    fn derivatives(&self, _t: f64, state: &State) -> StateDerivative {
+    type State = State;
+    fn derivatives(&self, _t: f64, state: &State) -> State {
         let r = &state.position;
         let r_mag = r.magnitude();
         let acceleration = -self.mu / (r_mag * r_mag * r_mag) * r;
-        StateDerivative {
-            velocity: state.velocity,
-            acceleration,
-        }
+        State::from_derivative(state.velocity, acceleration)
     }
 }
 
@@ -37,11 +35,11 @@ mod tests {
         let deriv = system.derivatives(0.0, &state);
 
         // Dot product of acceleration and position should be negative (antiparallel)
-        let dot = deriv.acceleration.dot(&state.position);
+        let dot = deriv.velocity.dot(&state.position);
         assert!(dot < 0.0, "acceleration should point toward center (dot={dot})");
 
         // Cross product should be approximately zero (parallel/antiparallel vectors)
-        let cross = deriv.acceleration.cross(&state.position);
+        let cross = deriv.velocity.cross(&state.position);
         assert!(
             cross.magnitude() < 1e-10,
             "acceleration should be collinear with position (cross mag={})",
@@ -62,7 +60,7 @@ mod tests {
 
         let r_mag = r.magnitude();
         let expected_mag = MU_EARTH / (r_mag * r_mag);
-        let actual_mag = deriv.acceleration.magnitude();
+        let actual_mag = deriv.velocity.magnitude();
 
         let rel_err = (actual_mag - expected_mag).abs() / expected_mag;
         assert!(
@@ -81,7 +79,7 @@ mod tests {
         };
         let deriv = system.derivatives(0.0, &state);
 
-        let g = deriv.acceleration.magnitude();
+        let g = deriv.velocity.magnitude();
         let expected_g = 9.798e-3; // km/s²
         assert!(
             (g - expected_g).abs() < 0.01e-3,

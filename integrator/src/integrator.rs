@@ -1,6 +1,6 @@
 use std::ops::ControlFlow;
 
-use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, State};
+use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState};
 
 /// Common interface for fixed-step numerical integrators.
 ///
@@ -10,7 +10,13 @@ use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, State};
 /// to provide multi-step integration with optional event detection.
 pub trait Integrator {
     /// Perform a single integration step, advancing the state from `t` by `dt`.
-    fn step<S: DynamicalSystem>(&self, system: &S, t: f64, state: &State, dt: f64) -> State;
+    fn step<S: DynamicalSystem>(
+        &self,
+        system: &S,
+        t: f64,
+        state: &S::State,
+        dt: f64,
+    ) -> S::State;
 
     /// Integrate a dynamical system from `t0` to `t_end` using fixed step size `dt`.
     ///
@@ -21,15 +27,15 @@ pub trait Integrator {
     fn integrate<S, F>(
         &self,
         system: &S,
-        initial: State,
+        initial: S::State,
         t0: f64,
         t_end: f64,
         dt: f64,
         mut callback: F,
-    ) -> State
+    ) -> S::State
     where
         S: DynamicalSystem,
-        F: FnMut(f64, &State),
+        F: FnMut(f64, &S::State),
     {
         let mut state = initial;
         let mut t = t0;
@@ -54,17 +60,17 @@ pub trait Integrator {
     fn integrate_with_events<S, F, E, B>(
         &self,
         system: &S,
-        initial: State,
+        initial: S::State,
         t0: f64,
         t_end: f64,
         dt: f64,
         mut callback: F,
         event_check: E,
-    ) -> IntegrationOutcome<B>
+    ) -> IntegrationOutcome<S::State, B>
     where
         S: DynamicalSystem,
-        F: FnMut(f64, &State),
-        E: Fn(f64, &State) -> ControlFlow<B>,
+        F: FnMut(f64, &S::State),
+        E: Fn(f64, &S::State) -> ControlFlow<B>,
     {
         let mut state = initial;
         let mut t = t0;
@@ -74,13 +80,7 @@ pub trait Integrator {
             state = self.step(system, t, &state, h);
             t += h;
 
-            // Check for NaN/Inf
-            if !state
-                .position
-                .iter()
-                .chain(state.velocity.iter())
-                .all(|v| v.is_finite())
-            {
+            if !state.is_finite() {
                 return IntegrationOutcome::Error(IntegrationError::NonFiniteState { t });
             }
 

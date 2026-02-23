@@ -112,7 +112,7 @@ fn propagate_collecting_elements_dp45(
 
     for _ in 0..n_orbits {
         let t_end = t + period;
-        let outcome: IntegrationOutcome<()> =
+        let outcome: IntegrationOutcome<State, ()> =
             DormandPrince.integrate_adaptive_with_events(
                 system,
                 current,

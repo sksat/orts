@@ -1,8 +1,8 @@
 //! Shared dynamical systems for testing.
 
-use nalgebra::{Vector3, vector};
+use nalgebra::Vector3;
 
-use crate::{DynamicalSystem, State, StateDerivative};
+use crate::{DynamicalSystem, State};
 
 /// Uniform motion: dx/dt = constant velocity, dv/dt = 0.
 pub(crate) struct UniformMotion {
@@ -10,11 +10,9 @@ pub(crate) struct UniformMotion {
 }
 
 impl DynamicalSystem for UniformMotion {
-    fn derivatives(&self, _t: f64, _state: &State) -> StateDerivative {
-        StateDerivative {
-            velocity: self.constant_velocity,
-            acceleration: vector![0.0, 0.0, 0.0],
-        }
+    type State = State;
+    fn derivatives(&self, _t: f64, _state: &State) -> State {
+        State::from_derivative(self.constant_velocity, Vector3::zeros())
     }
 }
 
@@ -24,11 +22,9 @@ pub(crate) struct ConstantAcceleration {
 }
 
 impl DynamicalSystem for ConstantAcceleration {
-    fn derivatives(&self, _t: f64, state: &State) -> StateDerivative {
-        StateDerivative {
-            velocity: state.velocity,
-            acceleration: self.acceleration,
-        }
+    type State = State;
+    fn derivatives(&self, _t: f64, state: &State) -> State {
+        State::from_derivative(state.velocity, self.acceleration)
     }
 }
 
@@ -36,10 +32,8 @@ impl DynamicalSystem for ConstantAcceleration {
 pub(crate) struct HarmonicOscillator;
 
 impl DynamicalSystem for HarmonicOscillator {
-    fn derivatives(&self, _t: f64, state: &State) -> StateDerivative {
-        StateDerivative {
-            velocity: state.velocity,
-            acceleration: -state.position,
-        }
+    type State = State;
+    fn derivatives(&self, _t: f64, state: &State) -> State {
+        State::from_derivative(state.velocity, -state.position)
     }
 }
