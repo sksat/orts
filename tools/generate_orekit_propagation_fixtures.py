@@ -12,12 +12,15 @@ Tiered scenarios:
   Tier 2: Gravity + third-body (Sun, Moon)
   Tier 3: Gravity + SRP
   Tier 4: Gravity + Harris-Priester drag
-  Tier 5: Full force model
+  Tier 5: Full force model (HP)
+  Tier 6: Gravity + NRLMSISE-00 drag (constant weather)
+  Tier 7: Full force model (NRLMSISE-00)
 
 Known differences from our Rust implementation:
   - Sun/Moon position: Orekit DE405 vs our Meeus/analytical
-  - Altitude for drag: Orekit geodetic (WGS-84) vs our spherical (r - R)
+  - Altitude for drag: both use WGS-84 geodetic
   - Gravity: Orekit HolmesFeatherstone vs our explicit J2/J3/J4
+  - LST: Orekit precise vs our UT+lon/15 (no equation-of-time, ±16 min)
 
 Output: orbits/tests/fixtures/orekit_propagation_reference.json
 Run:   uv run tools/generate_orekit_propagation_fixtures.py
@@ -265,13 +268,50 @@ def _add_srp(propagator, sat_config, srp_config):
     propagator.addForceModel(srp)
 
 
+def _make_constant_solar_activity(f107, ap):
+    """Create a constant solar activity provider for Orekit NRLMSISE-00.
+
+    Uses jpype.JProxy to implement the NRLMSISE00InputParameters interface.
+    """
+    import jpype
+
+    from org.orekit.models.earth.atmosphere import NRLMSISE00InputParameters
+    from org.orekit.time import AbsoluteDate
+
+    class ConstantSolarActivity:
+        def getDailyFlux(self, date):
+            return float(f107)
+
+        def getAverageFlux(self, date):
+            return float(f107)
+
+        def getAp(self, date):
+            return [float(ap)] * 7
+
+        def getMinDate(self):
+            return AbsoluteDate.PAST_INFINITY
+
+        def getMaxDate(self):
+            return AbsoluteDate.FUTURE_INFINITY
+
+    return jpype.JProxy(NRLMSISE00InputParameters, inst=ConstantSolarActivity())
+
+
 def _add_drag(propagator, sat_config, drag_config, eci):
-    """Add atmospheric drag with Harris-Priester model."""
+    """Add atmospheric drag with Harris-Priester or NRLMSISE-00 model."""
     from org.orekit.bodies import CelestialBodyFactory, OneAxisEllipsoid
     from org.orekit.forces.drag import DragForce, IsotropicDrag
     from org.orekit.frames import FramesFactory
-    from org.orekit.models.earth.atmosphere import HarrisPriester
     from org.orekit.utils import Constants, IERSConventions
+
+    b = sat_config.get("ballistic_coeff_m2_kg", DEFAULT_BALLISTIC_COEFF)
+    # Our B = Cd * A / (2*m).  Orekit: a = 0.5 * Cd * (A/m) * ρ * v²
+    # IsotropicDrag(crossSection, cd): for unit mass, area = 2*B/Cd
+    cd = 2.2
+    area = 2.0 * b / cd  # m² (for unit mass)
+    drag_spacecraft = IsotropicDrag(area, cd)
+
+    model_name = drag_config.get("model", "harris_priester")
 
     sun = CelestialBodyFactory.getSun()
     itrf = FramesFactory.getITRF(IERSConventions.IERS_2010, True)
@@ -281,19 +321,21 @@ def _add_drag(propagator, sat_config, drag_config, eci):
         itrf,
     )
 
-    n = drag_config.get("n", 2)
-    hp = HarrisPriester(sun, earth, n)
+    if model_name == "harris_priester":
+        from org.orekit.models.earth.atmosphere import HarrisPriester
 
-    b = sat_config.get("ballistic_coeff_m2_kg", DEFAULT_BALLISTIC_COEFF)
-    # Our B = Cd * A / (2*m).  Orekit drag: a = 0.5 * Cd * (A/m) * ρ * v²
-    # So for unit mass: a = 0.5 * Cd * A * ρ * v² = B * ρ * v² when Cd*A/2 = B
-    # IsotropicDrag(crossSection, cd): for unit mass, set cross_section = 2*B/Cd
-    # with Cd = 2.2 (standard): area = 2 * B / 2.2
-    cd = 2.2
-    area = 2.0 * b / cd  # m² (for unit mass)
-    drag_spacecraft = IsotropicDrag(area, cd)
+        n = drag_config.get("n", 2)
+        atmosphere = HarrisPriester(sun, earth, n)
+    elif model_name == "nrlmsise00":
+        from org.orekit.models.earth.atmosphere import NRLMSISE00
 
-    propagator.addForceModel(DragForce(hp, drag_spacecraft))
+        weather = drag_config["weather"]
+        solar_proxy = _make_constant_solar_activity(weather["f107"], weather["ap"])
+        atmosphere = NRLMSISE00(solar_proxy, sun, earth)
+    else:
+        raise ValueError(f"Unknown drag model: {model_name}")
+
+    propagator.addForceModel(DragForce(atmosphere, drag_spacecraft))
 
 
 def propagate_scenario(scenario):
@@ -702,6 +744,215 @@ def tier5_scenarios():
     return scenarios
 
 
+def tier6_scenarios():
+    """Gravity + NRLMSISE-00 drag scenarios (constant solar activity)."""
+    scenarios = []
+
+    iss_a = R_EARTH_KM + 400.0
+    iss_period = 2 * math.pi * math.sqrt(iss_a ** 3 / MU_EARTH_KM3_S2)
+    sso_a = R_EARTH_KM + 800.0
+    sso_period = 2 * math.pi * math.sqrt(sso_a ** 3 / MU_EARTH_KM3_S2)
+
+    # ISS, moderate activity, 10 orbits
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "j2_msise_iss_moderate_10orbits",
+        "description": "ISS orbit, J2 + NRLMSISE-00 (F10.7=150, Ap=15), 10 orbits",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00", "weather": {"f107": 150.0, "ap": 15.0}},
+            "srp": None,
+            "third_body_sun": False, "third_body_moon": False,
+        },
+        "satellite": {"ballistic_coeff_m2_kg": DEFAULT_BALLISTIC_COEFF},
+        "duration_s": round(iss_period * 10, 1),
+        "output_step_s": 60.0,
+    })
+
+    # ISS, solar minimum, 10 orbits
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "j2_msise_iss_solar_min_10orbits",
+        "description": "ISS orbit, J2 + NRLMSISE-00 (F10.7=70, Ap=4), 10 orbits",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00", "weather": {"f107": 70.0, "ap": 4.0}},
+            "srp": None,
+            "third_body_sun": False, "third_body_moon": False,
+        },
+        "satellite": {"ballistic_coeff_m2_kg": DEFAULT_BALLISTIC_COEFF},
+        "duration_s": round(iss_period * 10, 1),
+        "output_step_s": 60.0,
+    })
+
+    # ISS, solar maximum, 10 orbits
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "j2_msise_iss_solar_max_10orbits",
+        "description": "ISS orbit, J2 + NRLMSISE-00 (F10.7=250, Ap=50), 10 orbits",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00", "weather": {"f107": 250.0, "ap": 50.0}},
+            "srp": None,
+            "third_body_sun": False, "third_body_moon": False,
+        },
+        "satellite": {"ballistic_coeff_m2_kg": DEFAULT_BALLISTIC_COEFF},
+        "duration_s": round(iss_period * 10, 1),
+        "output_step_s": 60.0,
+    })
+
+    # SSO, moderate activity, 10 orbits
+    pos, vel = keplerian_to_cartesian(sso_a, 0.001, 98.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "j2_msise_sso_moderate_10orbits",
+        "description": "SSO orbit, J2 + NRLMSISE-00 (F10.7=150, Ap=15), 10 orbits",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": sso_a, "e": 0.001, "i_deg": 98.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00", "weather": {"f107": 150.0, "ap": 15.0}},
+            "srp": None,
+            "third_body_sun": False, "third_body_moon": False,
+        },
+        "satellite": {"ballistic_coeff_m2_kg": DEFAULT_BALLISTIC_COEFF},
+        "duration_s": round(sso_period * 10, 1),
+        "output_step_s": 60.0,
+    })
+
+    # ISS, moderate activity, 7 days (B=0.005)
+    iss_b = 0.005
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "j2_msise_iss_moderate_7days",
+        "description": "ISS orbit, J2 + NRLMSISE-00 (F10.7=150, Ap=15, B=0.005), 7 days",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00", "weather": {"f107": 150.0, "ap": 15.0}},
+            "srp": None,
+            "third_body_sun": False, "third_body_moon": False,
+        },
+        "satellite": {"ballistic_coeff_m2_kg": iss_b},
+        "duration_s": 7.0 * 86400.0,
+        "output_step_s": 300.0,
+    })
+
+    # ISS, moderate activity, 30 days (B=0.005)
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "j2_msise_iss_moderate_30days",
+        "description": "ISS orbit, J2 + NRLMSISE-00 (F10.7=150, Ap=15, B=0.005), 30 days",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00", "weather": {"f107": 150.0, "ap": 15.0}},
+            "srp": None,
+            "third_body_sun": False, "third_body_moon": False,
+        },
+        "satellite": {"ballistic_coeff_m2_kg": iss_b},
+        "duration_s": 30.0 * 86400.0,
+        "output_step_s": 600.0,
+    })
+
+    return scenarios
+
+
+def tier7_scenarios():
+    """Full force model with NRLMSISE-00 scenarios."""
+    scenarios = []
+
+    iss_a = R_EARTH_KM + 400.0
+    iss_period = 2 * math.pi * math.sqrt(iss_a ** 3 / MU_EARTH_KM3_S2)
+    sso_a = R_EARTH_KM + 800.0
+    sso_period = 2 * math.pi * math.sqrt(sso_a ** 3 / MU_EARTH_KM3_S2)
+
+    # ISS, full model + NRLMSISE-00, 10 orbits
+    pos, vel = keplerian_to_cartesian(iss_a, 0.001, 51.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "full_msise_iss_moderate_10orbits",
+        "description": "ISS orbit, J2 + NRLMSISE-00 + SRP + Sun + Moon, 10 orbits",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": iss_a, "e": 0.001, "i_deg": 51.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00", "weather": {"f107": 150.0, "ap": 15.0}},
+            "srp": {"shadow": True},
+            "third_body_sun": True, "third_body_moon": True,
+        },
+        "satellite": {
+            "ballistic_coeff_m2_kg": DEFAULT_BALLISTIC_COEFF,
+            "srp_area_to_mass_m2_kg": DEFAULT_AREA_TO_MASS,
+            "srp_cr": DEFAULT_CR,
+        },
+        "duration_s": round(iss_period * 10, 1),
+        "output_step_s": 60.0,
+    })
+
+    # SSO, full model + NRLMSISE-00, 10 orbits
+    pos, vel = keplerian_to_cartesian(sso_a, 0.001, 98.6, 0.0, 0.0, 0.0, MU_EARTH_KM3_S2)
+    scenarios.append({
+        "name": "full_msise_sso_moderate_10orbits",
+        "description": "SSO orbit, J2 + NRLMSISE-00 + SRP + Sun + Moon, 10 orbits",
+        "epoch_utc": "2024-03-20T12:00:00Z",
+        "initial_keplerian": {
+            "a_km": sso_a, "e": 0.001, "i_deg": 98.6,
+            "raan_deg": 0.0, "omega_deg": 0.0, "nu_deg": 0.0,
+        },
+        "initial_cartesian": {"position_km": pos, "velocity_km_s": vel},
+        "force_model": {
+            "gravity": {"degree": 2, "order": 0},
+            "drag": {"model": "nrlmsise00", "weather": {"f107": 150.0, "ap": 15.0}},
+            "srp": {"shadow": True},
+            "third_body_sun": True, "third_body_moon": True,
+        },
+        "satellite": {
+            "ballistic_coeff_m2_kg": DEFAULT_BALLISTIC_COEFF,
+            "srp_area_to_mass_m2_kg": DEFAULT_AREA_TO_MASS,
+            "srp_cr": DEFAULT_CR,
+        },
+        "duration_s": round(sso_period * 10, 1),
+        "output_step_s": 60.0,
+    })
+
+    return scenarios
+
+
 def main():
     setup_orekit()
 
@@ -715,6 +966,8 @@ def main():
         ("Tier 3 (gravity + SRP)", tier3_scenarios),
         ("Tier 4 (gravity + HP drag)", tier4_scenarios),
         ("Tier 5 (full force model)", tier5_scenarios),
+        ("Tier 6 (gravity + NRLMSISE-00 drag)", tier6_scenarios),
+        ("Tier 7 (full force + NRLMSISE-00)", tier7_scenarios),
     ]:
         scenarios = tier_fn()
         print(f"\n{tier_name}: {len(scenarios)} scenarios")

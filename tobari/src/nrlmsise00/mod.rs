@@ -167,3 +167,62 @@ impl AtmosphereModel for Nrlmsise00 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ConstantWeather;
+
+    /// Verify that density computed via ECI position (going through geo.rs conversion)
+    /// matches density computed via direct geodetic input to within 0.1%.
+    ///
+    /// This catches bugs where eci_to_geodetic_latlon returns wrong coordinates.
+    #[test]
+    fn density_via_eci_matches_direct_input_at_high_latitude() {
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let f107 = 150.0;
+        let ap = 15.0;
+        let model = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
+
+        let lat_deg: f64 = 51.6; // ISS inclination
+        let lon_deg: f64 = 30.0;
+        let alt_km: f64 = 400.0;
+
+        // Path 1: direct input (known-correct geodetic coords)
+        let (doy, ut_sec) = geo::epoch_to_day_of_year_and_ut(&epoch);
+        let lst = geo::local_solar_time(ut_sec, lon_deg);
+        let sw = model.weather.get(&epoch);
+        let direct_input = Nrlmsise00Input {
+            day_of_year: doy,
+            ut_seconds: ut_sec,
+            altitude_km: alt_km,
+            latitude_deg: lat_deg,
+            longitude_deg: lon_deg,
+            local_solar_time_hours: lst,
+            f107_daily: sw.f107_daily,
+            f107_avg: sw.f107_avg,
+            ap_daily: sw.ap_daily,
+            ap_array: sw.ap_3hour_history,
+        };
+        let direct_density = model.calculate(&direct_input).total_mass_density;
+
+        // Path 2: via ECI position (goes through geo.rs eci_to_geodetic_latlon)
+        let gmst = epoch.gmst();
+        let geod = kaname::Geodetic {
+            latitude: lat_deg.to_radians(),
+            longitude: lon_deg.to_radians(),
+            altitude: alt_km,
+        };
+        let eci = geod.to_ecef().to_eci(gmst);
+        let eci_density = model
+            .density_with_composition(alt_km, &eci.0, &epoch)
+            .total_mass_density;
+
+        let rel_err = (eci_density - direct_density).abs() / direct_density;
+        assert!(
+            rel_err < 0.001,
+            "density mismatch: direct={direct_density:.6e}, eci={eci_density:.6e}, \
+             rel_err={rel_err:.4e} (>0.1%)"
+        );
+    }
+}

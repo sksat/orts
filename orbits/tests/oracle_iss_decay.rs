@@ -8,14 +8,11 @@
 //!   Osculating SMA oscillates ~5-10 km per orbit due to J2; secular decay is
 //!   only 0.01-0.1 km/day, so orbit-averaging is essential.
 //! - Mean-to-osculating SMA offset cancels when comparing *change*.
-//! - Tolerance is wide because our atmosphere models (US Std 1976 / HP)
-//!   have no solar flux input:
-//!   - Solar minimum (F10.7 ~70): ratio 5-30× (model overpredicts)
+//! - HP tests have wide tolerance because HP has no solar flux input:
+//!   - Solar minimum (F10.7 ~70): ratio 5-30× (HP overpredicts)
 //!   - Solar maximum (F10.7 ~150+): ratio 0.5-2.0×
-//!
-//! TODO: To tighten tolerances, implement an atmosphere model with F10.7
-//! input (e.g., NRLMSISE-00, JB2008). Without solar flux, HP/Exponential
-//! cannot represent density variation across the solar cycle.
+//! - NRLMSISE-00 tests use ConstantWeather with epoch-appropriate F10.7/Ap,
+//!   giving much tighter ratios (especially during solar minimum).
 //!
 //! Numerical integration accuracy is verified separately by Orekit cross-
 //! validation with matched HP force model (oracle_orekit.rs, Tier 4):
@@ -32,7 +29,7 @@ use orts_orbits::drag::AtmosphericDrag;
 use orts_orbits::gravity::ZonalHarmonics;
 use orts_orbits::orbital_system::OrbitalSystem;
 use serde::Deserialize;
-use tobari::HarrisPriester;
+use tobari::{ConstantWeather, HarrisPriester, Nrlmsise00};
 
 // ─── Fixture data structures ───
 
@@ -326,4 +323,139 @@ fn iss_decay_solar_min_2020c() {
 fn iss_decay_solar_max_2024d() {
     // 32-day window, 2024-03-14 to 2024-04-15
     run_decay_window("solar_max_2024d", 0.5, 2.0);
+}
+
+// ─── NRLMSISE-00 decay tests ───
+//
+// Key improvement over HP: NRLMSISE-00 responds to F10.7 solar flux input.
+// HP overpredicts solar-min decay by 5-30x because its density table
+// represents moderate (~F10.7=150) activity. NRLMSISE-00 with F10.7=70
+// should produce much lower densities, bringing the decay ratio closer to 1.0.
+//
+// Still using ConstantWeather (single F10.7/Ap for entire window), so some
+// overshoot is expected vs reality where conditions vary day-to-day.
+
+fn build_iss_system_msise(epoch: Epoch, f107: f64, ap: f64) -> OrbitalSystem {
+    let gravity = ZonalHarmonics {
+        r_body: R_EARTH,
+        j2: J2_EARTH,
+        j3: None,
+        j4: None,
+    };
+    let weather = Box::new(ConstantWeather::new(f107, ap));
+    OrbitalSystem::new(MU_EARTH, Box::new(gravity))
+        .with_epoch(epoch)
+        .with_body_radius(R_EARTH)
+        .with_perturbation(Box::new(
+            AtmosphericDrag::for_earth(Some(0.005))
+                .with_atmosphere(Box::new(Nrlmsise00::new(weather))),
+        ))
+}
+
+fn run_decay_window_msise(
+    window_name: &str,
+    f107: f64,
+    ap: f64,
+    min_ratio: f64,
+    max_ratio: f64,
+) {
+    let fixture = load_fixture();
+    let window = fixture
+        .windows
+        .iter()
+        .find(|w| w.name == window_name)
+        .unwrap_or_else(|| panic!("Window '{window_name}' not found in fixture"));
+
+    let mu = fixture.mu_earth_km3_s2;
+    let ic = &window.initial_osculating;
+    let initial = State {
+        position: Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
+        velocity: Vector3::new(
+            ic.velocity_km_s[0],
+            ic.velocity_km_s[1],
+            ic.velocity_km_s[2],
+        ),
+    };
+
+    let epoch = Epoch::from_jd(window.initial_tle.epoch_jd);
+    let system = build_iss_system_msise(epoch, f107, ap);
+
+    let tol = Tolerances {
+        atol: 1e-12,
+        rtol: 1e-10,
+    };
+    let n_avg_orbits = 3;
+    let samples_per_orbit = 50;
+
+    let dp = DormandPrince;
+    let mut stepper = dp.stepper(&system, initial.clone(), 0.0, 10.0, tol.clone());
+    let avg_sma_start = orbit_averaged_sma(&mut stepper, mu, n_avg_orbits, samples_per_orbit);
+
+    let last_tle = window.tle_sequence.last().unwrap();
+    let dt_end = (last_tle.epoch_jd - window.initial_tle.epoch_jd) * 86400.0;
+    let period = orbital_period(avg_sma_start, mu);
+    let t_avg_end_start = dt_end - period * n_avg_orbits as f64;
+
+    stepper
+        .advance_to(
+            t_avg_end_start,
+            |_, _| {},
+            |_, _| std::ops::ControlFlow::<()>::Continue(()),
+        )
+        .expect("Integration failed");
+
+    let avg_sma_end = orbit_averaged_sma(&mut stepper, mu, n_avg_orbits, samples_per_orbit);
+
+    let predicted_decay = avg_sma_start - avg_sma_end;
+    let observed_decay = window.total_mean_sma_decay_km;
+    let decay_ratio = predicted_decay / observed_decay;
+
+    println!("\n{window_name} (NRLMSISE-00, F10.7={f107}, Ap={ap}):");
+    println!("  Predicted decay: {predicted_decay:.4} km, Observed: {observed_decay:.4} km");
+    println!(
+        "  Predicted rate: {:.4} km/day, Observed: {:.4} km/day",
+        predicted_decay / window.window_duration_days,
+        window.mean_decay_rate_km_per_day,
+    );
+    println!("  Ratio: {decay_ratio:.3}");
+
+    assert!(
+        predicted_decay > 0.0,
+        "{window_name}: must have positive decay"
+    );
+    assert!(
+        decay_ratio >= min_ratio && decay_ratio <= max_ratio,
+        "{window_name} (MSISE): ratio {decay_ratio:.3} outside [{min_ratio}, {max_ratio}]"
+    );
+}
+
+// NRLMSISE-00 solar minimum: F10.7=70, Ap=4
+// HP overpredicts by 5-30×. NRLMSISE-00 brings ratios down to 1.6-2.1×.
+// Still overpredicts because ConstantWeather ignores day-to-day variation
+// and actual F10.7 was sometimes even lower (60-65 SFU) in deep minimum.
+// Measured ratios: 1.64, 2.05, 1.94
+
+#[test]
+fn iss_decay_solar_min_2019a_msise() {
+    run_decay_window_msise("solar_min_2019a", 70.0, 4.0, 0.5, 3.0);
+}
+
+#[test]
+fn iss_decay_solar_min_2019b_msise() {
+    run_decay_window_msise("solar_min_2019b", 70.0, 4.0, 0.5, 3.5);
+}
+
+#[test]
+fn iss_decay_solar_min_2020c_msise() {
+    run_decay_window_msise("solar_min_2020c", 70.0, 4.0, 0.5, 3.5);
+}
+
+// NRLMSISE-00 solar maximum: F10.7=250, Ap=50
+// F10.7=250 is conservative for 2024 March-April (actual ~150-180 SFU).
+// The constant F10.7=250 overpredicts. Measured ratio: 3.87×.
+// Tolerance: 1.0-5.0×
+
+#[test]
+fn iss_decay_solar_max_2024d_msise() {
+    run_decay_window_msise("solar_max_2024d", 250.0, 50.0, 1.0, 5.0);
 }

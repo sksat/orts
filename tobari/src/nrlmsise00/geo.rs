@@ -3,37 +3,19 @@
 //! Converts between ECI coordinates and the geodetic/time parameters
 //! required by the NRLMSISE-00 model.
 
+use kaname::Eci;
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 
-/// Convert ECI position + epoch to geodetic latitude and longitude [degrees].
+/// Convert ECI position + epoch to WGS-84 geodetic latitude and longitude [degrees].
 ///
-/// Uses Earth's rotation angle (GMST) to convert from ECI to ECEF,
-/// then computes geodetic lat/lon.
+/// Uses GMST to rotate from ECI to ECEF, then computes geodetic latitude
+/// via Bowring iteration (delegated to `kaname::Ecef::to_geodetic()`).
 pub fn eci_to_geodetic_latlon(position: &Vector3<f64>, epoch: &Epoch) -> (f64, f64) {
-    // GMST gives the rotation angle from ECI to ECEF
     let gmst_rad = epoch.gmst();
-
-    // ECI to ECEF rotation (about Z axis by -GMST)
-    let x_eci = position[0];
-    let y_eci = position[1];
-    let z_eci = position[2];
-
-    let cos_g = gmst_rad.cos();
-    let sin_g = gmst_rad.sin();
-
-    let x_ecef = x_eci * cos_g + y_eci * sin_g;
-    let y_ecef = -x_eci * sin_g + y_eci * cos_g;
-
-    // Geodetic longitude
-    let lon_deg = y_ecef.atan2(x_ecef).to_degrees();
-
-    // Geodetic latitude (spherical approximation for now)
-    // TODO: use Bowring iteration for WGS-84 geodetic latitude
-    let p = (x_ecef * x_ecef + y_ecef * y_ecef).sqrt();
-    let lat_deg = z_eci.atan2(p).to_degrees();
-
-    (lat_deg, lon_deg)
+    let ecef = Eci(*position).to_ecef(gmst_rad);
+    let geod = ecef.to_geodetic();
+    (geod.latitude.to_degrees(), geod.longitude.to_degrees())
 }
 
 /// Convert epoch to (day_of_year, ut_seconds).
@@ -170,5 +152,64 @@ mod tests {
         let pos = Vector3::new(0.0, 0.0, 6378.0);
         let (lat, _lon) = eci_to_geodetic_latlon(&pos, &epoch);
         assert!((lat - 90.0).abs() < 0.1, "lat={lat}, expected ~90");
+    }
+
+    #[test]
+    fn eci_to_latlon_matches_kaname_geodetic_at_iss_inclination() {
+        // ISS-like: 400 km altitude, 51.6° geodetic latitude
+        // Geocentric vs geodetic differs by ~0.17° at this latitude.
+        // Round-trip: Geodetic → ECEF → ECI → eci_to_geodetic_latlon
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let gmst = epoch.gmst();
+
+        let expected_lat: f64 = 51.6;
+        let expected_lon: f64 = 30.0;
+        let geod = kaname::Geodetic {
+            latitude: expected_lat.to_radians(),
+            longitude: expected_lon.to_radians(),
+            altitude: 400.0,
+        };
+        let eci = geod.to_ecef().to_eci(gmst);
+
+        let (lat_deg, lon_deg) = eci_to_geodetic_latlon(&eci.0, &epoch);
+
+        assert!(
+            (lat_deg - expected_lat).abs() < 0.01,
+            "lat={lat_deg}, expected {expected_lat} (geodetic, not geocentric)"
+        );
+        assert!(
+            (lon_deg - expected_lon).abs() < 0.01,
+            "lon={lon_deg}, expected {expected_lon}"
+        );
+    }
+
+    #[test]
+    fn eci_to_latlon_matches_kaname_geodetic_at_polar() {
+        // Near-polar: 800 km altitude, 80° geodetic latitude
+        // Maximum geocentric↔geodetic difference region
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let gmst = epoch.gmst();
+
+        let expected_lat: f64 = 80.0;
+        let expected_lon: f64 = -45.0;
+        let geod = kaname::Geodetic {
+            latitude: expected_lat.to_radians(),
+            longitude: expected_lon.to_radians(),
+            altitude: 800.0,
+        };
+        let eci = geod.to_ecef().to_eci(gmst);
+
+        let (lat_deg, lon_deg) = eci_to_geodetic_latlon(&eci.0, &epoch);
+
+        assert!(
+            (lat_deg - expected_lat).abs() < 0.01,
+            "lat={lat_deg}, expected {expected_lat} (geodetic, not geocentric)"
+        );
+        // Longitude wraps to [-180, 180]
+        let lon_diff = ((lon_deg - expected_lon + 180.0) % 360.0 - 180.0).abs();
+        assert!(
+            lon_diff < 0.01,
+            "lon={lon_deg}, expected {expected_lon}"
+        );
     }
 }

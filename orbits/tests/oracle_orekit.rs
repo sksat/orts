@@ -7,14 +7,16 @@
 //! - Tier 1: Gravity-only (J2, J2+J3+J4) — should agree to cm-level
 //! - Tier 2: Gravity + third-body (Sun, Moon) — ephemeris difference dominates
 //! - Tier 3: Gravity + SRP — Sun direction error ~0.35°
-//! - Tier 4: Gravity + HP drag — geodetic vs spherical altitude difference
-//! - Tier 5: Full force model — all differences combined
+//! - Tier 4: Gravity + HP drag — geodetic altitude differences
+//! - Tier 5: Full force model (HP) — all differences combined
+//! - Tier 6: Gravity + NRLMSISE-00 drag — LST approximation dominates
+//! - Tier 7: Full force model (NRLMSISE-00) — all differences combined
 //!
 //! Known difference sources:
 //! - **J2 coefficient**: Orekit EGM96 C̄₂₀ → J2 differs by ~3e-9 (negligible)
 //! - **Sun position**: Meeus analytical vs DE405 (~0.35°)
 //! - **Moon position**: Simplified analytical vs DE405 (~10')
-//! - **Altitude model**: Spherical (r - R_earth) vs geodetic (WGS-84)
+//! - **LST**: Orekit precise solar time vs our UT+lon/15 (~±16 min → 1-5% density)
 
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
@@ -26,7 +28,7 @@ use orts_orbits::orbital_system::OrbitalSystem;
 use orts_orbits::srp::SolarRadiationPressure;
 use orts_orbits::third_body::ThirdBodyGravity;
 use serde::Deserialize;
-use tobari::HarrisPriester;
+use tobari::{ConstantWeather, HarrisPriester, Nrlmsise00};
 
 // ─── Fixture data structures ───
 
@@ -90,9 +92,17 @@ struct GravityConfig {
 
 #[derive(Deserialize)]
 struct DragConfig {
-    #[allow(dead_code)]
     model: String,
-    n: u32,
+    #[serde(default)]
+    #[allow(dead_code)]
+    n: Option<u32>,
+    weather: Option<WeatherConfig>,
+}
+
+#[derive(Deserialize)]
+struct WeatherConfig {
+    f107: f64,
+    ap: f64,
 }
 
 #[derive(Deserialize)]
@@ -225,8 +235,17 @@ fn build_system(scenario: &Scenario) -> OrbitalSystem {
         let sat = &scenario.satellite;
         let b = sat.ballistic_coeff_m2_kg.unwrap_or(0.01);
         let mut drag = AtmosphericDrag::for_earth(Some(b));
-        if drag_cfg.n == 2 {
-            drag = drag.with_atmosphere(Box::new(HarrisPriester::new()));
+        match drag_cfg.model.as_str() {
+            "harris_priester" => {
+                drag = drag.with_atmosphere(Box::new(HarrisPriester::new()));
+            }
+            "nrlmsise00" => {
+                if let Some(weather) = &drag_cfg.weather {
+                    let provider = Box::new(ConstantWeather::new(weather.f107, weather.ap));
+                    drag = drag.with_atmosphere(Box::new(Nrlmsise00::new(provider)));
+                }
+            }
+            other => panic!("Unknown drag model: {other}"),
         }
         system = system.with_perturbation(Box::new(drag));
     }
@@ -451,4 +470,56 @@ fn orekit_full_iss_10orbits() {
 #[test]
 fn orekit_full_sso_10orbits() {
     run_scenario("full_sso_10orbits", 0.002); // 2 m (measured: 0.8 m)
+}
+
+// ─── Tier 6: Gravity + NRLMSISE-00 Drag ───
+// Both implementations derive from same NRL Fortran source.
+// Remaining differences: LST approximation (±16 min → 1-5% density),
+// Sun position (Meeus vs DE405), Bowring iteration differences.
+// Density-level cross-validation showed max 3.14%, mean 0.51%.
+//
+// NRLMSISE-00 long-duration errors are ~100x larger than HP due to LST
+// sensitivity: HP only uses altitude and sun direction, while NRLMSISE-00
+// uses precise local solar time which our UT+lon/15 approximation offsets.
+
+#[test]
+fn orekit_j2_msise_iss_moderate_10orbits() {
+    run_scenario("j2_msise_iss_moderate_10orbits", 0.060); // 60 m (measured: 38.3 m)
+}
+
+#[test]
+fn orekit_j2_msise_iss_solar_min_10orbits() {
+    run_scenario("j2_msise_iss_solar_min_10orbits", 0.020); // 20 m (measured: 12.3 m)
+}
+
+#[test]
+fn orekit_j2_msise_iss_solar_max_10orbits() {
+    run_scenario("j2_msise_iss_solar_max_10orbits", 0.100); // 100 m (measured: 66.1 m)
+}
+
+#[test]
+fn orekit_j2_msise_sso_moderate_10orbits() {
+    run_scenario("j2_msise_sso_moderate_10orbits", 0.003); // 3 m (measured: 1.1 m)
+}
+
+#[test]
+fn orekit_j2_msise_iss_moderate_7days() {
+    run_scenario("j2_msise_iss_moderate_7days", 3.500); // 3.5 km (measured: 2.15 km)
+}
+
+#[test]
+fn orekit_j2_msise_iss_moderate_30days() {
+    run_scenario("j2_msise_iss_moderate_30days", 25.0); // 25 km (measured: 17.2 km)
+}
+
+// ─── Tier 7: Full force model + NRLMSISE-00 ───
+
+#[test]
+fn orekit_full_msise_iss_moderate_10orbits() {
+    run_scenario("full_msise_iss_moderate_10orbits", 0.060); // 60 m (measured: 38.5 m)
+}
+
+#[test]
+fn orekit_full_msise_sso_moderate_10orbits() {
+    run_scenario("full_msise_sso_moderate_10orbits", 0.003); // 3 m (measured: 1.4 m)
 }
