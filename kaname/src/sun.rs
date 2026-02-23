@@ -3,13 +3,22 @@ use nalgebra::Vector3;
 use crate::epoch::Epoch;
 use crate::planets;
 
-/// Approximate sun direction (unit vector) in ECI (J2000) frame.
+/// Solar orbital elements at epoch.
 ///
-/// Uses a low-precision analytical model based on mean orbital elements.
-/// Accuracy is ~1 arcminute, sufficient for visualization purposes.
+/// Intermediate values used by both `sun_direction_eci` and `equation_of_time`.
+struct SolarElements {
+    /// Mean longitude [degrees] (not normalized to 0-360)
+    l0_deg: f64,
+    /// Ecliptic longitude [radians]
+    lambda_rad: f64,
+    /// Obliquity of the ecliptic [radians]
+    epsilon_rad: f64,
+}
+
+/// Compute solar orbital elements at the given epoch.
 ///
 /// Reference: Meeus, "Astronomical Algorithms", Chapter 25.
-pub fn sun_direction_eci(epoch: &Epoch) -> Vector3<f64> {
+fn solar_elements(epoch: &Epoch) -> SolarElements {
     let t = epoch.centuries_since_j2000();
 
     // Mean longitude (degrees)
@@ -21,18 +30,65 @@ pub fn sun_direction_eci(epoch: &Epoch) -> Vector3<f64> {
     // Equation of center (degrees)
     let c = (1.9146 - 0.004817 * t) * m.sin() + 0.019993 * (2.0 * m).sin();
 
-    // Sun's ecliptic longitude (degrees → radians)
+    // Sun's ecliptic longitude (radians)
     let lambda = (l0 + c).to_radians();
 
     // Obliquity of the ecliptic
     let epsilon = planets::obliquity(epoch);
 
+    SolarElements {
+        l0_deg: l0,
+        lambda_rad: lambda,
+        epsilon_rad: epsilon,
+    }
+}
+
+/// Approximate sun direction (unit vector) in ECI (J2000) frame.
+///
+/// Uses a low-precision analytical model based on mean orbital elements.
+/// Accuracy is ~1 arcminute, sufficient for visualization purposes.
+///
+/// Reference: Meeus, "Astronomical Algorithms", Chapter 25.
+pub fn sun_direction_eci(epoch: &Epoch) -> Vector3<f64> {
+    let el = solar_elements(epoch);
+
     // Sun direction in ECI (equatorial coordinates)
-    let x = lambda.cos();
-    let y = epsilon.cos() * lambda.sin();
-    let z = epsilon.sin() * lambda.sin();
+    let x = el.lambda_rad.cos();
+    let y = el.epsilon_rad.cos() * el.lambda_rad.sin();
+    let z = el.epsilon_rad.sin() * el.lambda_rad.sin();
 
     Vector3::new(x, y, z).normalize()
+}
+
+/// Equation of Time [hours].
+///
+/// Returns `apparent_solar_time - mean_solar_time`.
+/// Positive means the apparent Sun is ahead of the mean Sun.
+///
+/// Range: approximately -0.27 to +0.27 hours (-16 to +16 minutes).
+///
+/// Reference: Meeus, "Astronomical Algorithms", Chapter 28.
+pub fn equation_of_time(epoch: &Epoch) -> f64 {
+    let el = solar_elements(epoch);
+
+    // Right ascension from ecliptic longitude
+    let alpha_rad = f64::atan2(
+        el.epsilon_rad.cos() * el.lambda_rad.sin(),
+        el.lambda_rad.cos(),
+    );
+
+    // EoT = L₀ - α (apparent - mean), then convert to hours
+    // Positive in November (sundial fast), negative in February (sundial slow).
+    let l0_rad = el.l0_deg.to_radians();
+    let mut eot_rad = l0_rad - alpha_rad;
+
+    // Normalize to [-π, π]
+    eot_rad = ((eot_rad + std::f64::consts::PI) % std::f64::consts::TAU + std::f64::consts::TAU)
+        % std::f64::consts::TAU
+        - std::f64::consts::PI;
+
+    // Convert radians to hours: 2π rad = 24 hours
+    eot_rad * 24.0 / std::f64::consts::TAU
 }
 
 /// 1 Astronomical Unit in km.
@@ -108,6 +164,56 @@ pub fn sun_direction_from_body(body: &str, epoch: &Epoch) -> Vector3<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- Equation of Time tests ---
+
+    #[test]
+    fn eot_february_negative() {
+        // Mid-February: EoT ≈ -14 minutes (sundial slow, apparent sun behind mean sun)
+        let epoch = Epoch::from_gregorian(2024, 2, 12, 12, 0, 0.0);
+        let eot_min = equation_of_time(&epoch) * 60.0;
+        assert!(
+            (eot_min - (-14.0)).abs() < 2.0,
+            "Feb 12: EoT={eot_min:.1} min, expected ~-14"
+        );
+    }
+
+    #[test]
+    fn eot_november_positive() {
+        // Early November: EoT ≈ +16 minutes (sundial fast, apparent sun ahead of mean sun)
+        let epoch = Epoch::from_gregorian(2024, 11, 3, 12, 0, 0.0);
+        let eot_min = equation_of_time(&epoch) * 60.0;
+        assert!(
+            (eot_min - 16.0).abs() < 2.0,
+            "Nov 3: EoT={eot_min:.1} min, expected ~+16"
+        );
+    }
+
+    #[test]
+    fn eot_april_near_zero() {
+        // Mid-April: EoT ≈ 0 minutes (one of the four zero-crossings)
+        let epoch = Epoch::from_gregorian(2024, 4, 15, 12, 0, 0.0);
+        let eot_min = equation_of_time(&epoch) * 60.0;
+        assert!(
+            eot_min.abs() < 2.0,
+            "Apr 15: EoT={eot_min:.1} min, expected ~0"
+        );
+    }
+
+    #[test]
+    fn eot_annual_range() {
+        // EoT should stay within ±17 minutes throughout the year
+        for month in 1..=12 {
+            let epoch = Epoch::from_gregorian(2024, month, 15, 12, 0, 0.0);
+            let eot_min = equation_of_time(&epoch) * 60.0;
+            assert!(
+                eot_min.abs() < 17.0,
+                "Month {month}: EoT={eot_min:.1} min, out of range"
+            );
+        }
+    }
+
+    // --- Sun direction tests ---
 
     #[test]
     fn sun_direction_is_unit_vector() {

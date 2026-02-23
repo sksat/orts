@@ -8,8 +8,7 @@
 //! Generator: `tools/generate_orekit_msise_density_fixtures.py`
 //!
 //! Known differences:
-//!   - LST: Orekit uses precise solar time; Rust uses UT + lon/15 (no equation-of-time)
-//!     This can cause up to ~16 min offset → 1-5% density difference in some regimes.
+//!   - LST: Orekit uses precise solar time; Rust uses Meeus EoT correction (residual < 1 min).
 //!   - Coordinates: both use WGS-84 geodetic (after geo.rs fix).
 
 use kaname::epoch::Epoch;
@@ -91,8 +90,8 @@ fn compute_density_via_eci(
 
 /// All density points: compare Orekit vs Rust NRLMSISE-00 via ECI path.
 ///
-/// Expected accuracy: < 5% for most points (LST approximation dominates).
-/// Some regimes with strong diurnal variation may show up to ~10%.
+/// With EoT correction, residual error is dominated by Meeus vs Orekit precise
+/// solar position difference (~1 arcmin).
 #[test]
 fn orekit_msise_density_all_points() {
     let fixture = load_fixture();
@@ -136,15 +135,15 @@ fn orekit_msise_density_all_points() {
     println!("  points > 5% error: {n_exceed_5pct}");
     println!("  worst: {worst_point}");
 
-    // Measured: max 3.14%, mean 0.51% (LST approximation dominates)
+    // Measured: max 0.32%, mean 0.05% (after EoT correction)
     assert!(
-        max_rel_err < 0.05,
-        "max relative error {:.2}% exceeds 5% threshold\n  worst: {worst_point}",
+        max_rel_err < 0.01,
+        "max relative error {:.2}% exceeds 1% threshold\n  worst: {worst_point}",
         max_rel_err * 100.0,
     );
     assert!(
-        mean_rel_err < 0.02,
-        "mean relative error {:.2}% exceeds 2% threshold",
+        mean_rel_err < 0.002,
+        "mean relative error {:.2}% exceeds 0.2% threshold",
         mean_rel_err * 100.0,
     );
 }
@@ -183,9 +182,10 @@ fn orekit_msise_density_equatorial_tight() {
     );
 
     // Equatorial should be tighter (no latitude conversion issue)
+    // Measured: max 0.11% (after EoT correction)
     assert!(
-        max_rel_err < 0.05,
-        "equatorial max error {:.2}% exceeds 5%",
+        max_rel_err < 0.005,
+        "equatorial max error {:.2}% exceeds 0.5%",
         max_rel_err * 100.0,
     );
 }
@@ -274,7 +274,8 @@ fn orekit_msise_cssi_density_all_points() {
     println!("  points > 5% error: {n_exceed_5pct}");
     println!("  worst: {worst_point}");
 
-    // Same thresholds as constant weather — LST approximation dominates
+    // CSSI has additional parser/interpolation differences on top of LST residual.
+    // Measured: max 2.85%, mean 0.54% (after EoT correction)
     assert!(
         max_rel_err < 0.05,
         "max relative error {:.2}% exceeds 5% threshold\n  worst: {worst_point}",

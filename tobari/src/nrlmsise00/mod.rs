@@ -139,7 +139,7 @@ impl Nrlmsise00 {
     ) -> Nrlmsise00Output {
         let (lat_deg, lon_deg) = geo::eci_to_geodetic_latlon(position, epoch);
         let (doy, ut_seconds) = geo::epoch_to_day_of_year_and_ut(epoch);
-        let lst = geo::local_solar_time(ut_seconds, lon_deg);
+        let lst = geo::local_solar_time(ut_seconds, lon_deg, epoch);
         let sw = self.weather.get(epoch);
 
         let input = Nrlmsise00Input {
@@ -190,7 +190,7 @@ mod tests {
 
         // Path 1: direct input (known-correct geodetic coords)
         let (doy, ut_sec) = geo::epoch_to_day_of_year_and_ut(&epoch);
-        let lst = geo::local_solar_time(ut_sec, lon_deg);
+        let lst = geo::local_solar_time(ut_sec, lon_deg, &epoch);
         let sw = model.weather.get(&epoch);
         let direct_input = Nrlmsise00Input {
             day_of_year: doy,

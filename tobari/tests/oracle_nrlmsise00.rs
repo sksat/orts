@@ -78,7 +78,8 @@ fn load_fixture() -> FixtureData {
 /// Since the fixture already provides lat/lon/alt directly, we construct
 /// the input without going through ECI → geodetic conversion.
 fn make_input(p: &DensityPoint, doy: u32, ut_seconds: f64) -> Nrlmsise00Input {
-    let lst = tobari::nrlmsise00::geo::local_solar_time(ut_seconds, p.longitude_deg);
+    // Use simple LST (no EoT) to match pymsis C reference which uses the same formula.
+    let lst = ((ut_seconds / 3600.0 + p.longitude_deg / 15.0) % 24.0 + 24.0) % 24.0;
     Nrlmsise00Input {
         day_of_year: doy,
         ut_seconds,

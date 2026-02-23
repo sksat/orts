@@ -48,14 +48,16 @@ fn day_of_year(year: i32, month: u32, day: u32) -> u32 {
 
 /// Compute local apparent solar time [hours].
 ///
-/// LST = UT/3600 + lon/15
+/// Applies the Equation of Time correction to convert from mean to apparent
+/// solar time:
 ///
-/// This is a simple approximation (no equation of time correction).
-/// The NRLMSISE-00 model expects apparent solar time, but the difference
-/// from mean solar time is at most ~16 minutes, well within the model's
-/// intended precision.
-pub fn local_solar_time(ut_sec: f64, longitude_deg: f64) -> f64 {
-    let lst = ut_sec / 3600.0 + longitude_deg / 15.0;
+///   LST_apparent = UT/3600 + lon/15 + EoT(epoch)
+///
+/// where EoT accounts for Earth's orbital eccentricity and axial tilt
+/// (up to ±16 minutes correction).
+pub fn local_solar_time(ut_sec: f64, longitude_deg: f64, epoch: &Epoch) -> f64 {
+    let eot_hours = kaname::sun::equation_of_time(epoch);
+    let lst = ut_sec / 3600.0 + longitude_deg / 15.0 + eot_hours;
     // Normalize to [0, 24)
     ((lst % 24.0) + 24.0) % 24.0
 }
@@ -93,30 +95,46 @@ mod tests {
 
     #[test]
     fn local_solar_time_greenwich_noon() {
-        // UT=12h, lon=0° → LST=12h
-        let lst = local_solar_time(43200.0, 0.0);
-        assert!((lst - 12.0).abs() < 1e-10);
+        // UT=12h, lon=0° — EoT shifts by up to ~16 min
+        let epoch = Epoch::from_gregorian(2024, 4, 15, 12, 0, 0.0); // EoT ≈ 0
+        let lst = local_solar_time(43200.0, 0.0, &epoch);
+        assert!((lst - 12.0).abs() < 0.05, "lst={lst}");
     }
 
     #[test]
     fn local_solar_time_east_90() {
-        // UT=0h, lon=90° → LST=6h
-        let lst = local_solar_time(0.0, 90.0);
-        assert!((lst - 6.0).abs() < 1e-10);
+        // UT=0h, lon=90° → mean LST=6h, plus EoT correction
+        let epoch = Epoch::from_gregorian(2024, 4, 15, 0, 0, 0.0);
+        let lst = local_solar_time(0.0, 90.0, &epoch);
+        assert!((lst - 6.0).abs() < 0.05, "lst={lst}");
     }
 
     #[test]
     fn local_solar_time_west_90() {
-        // UT=0h, lon=-90° → LST=18h (wraps)
-        let lst = local_solar_time(0.0, -90.0);
-        assert!((lst - 18.0).abs() < 1e-10);
+        // UT=0h, lon=-90° → mean LST=18h (wraps), plus EoT
+        let epoch = Epoch::from_gregorian(2024, 4, 15, 0, 0, 0.0);
+        let lst = local_solar_time(0.0, -90.0, &epoch);
+        assert!((lst - 18.0).abs() < 0.05, "lst={lst}");
     }
 
     #[test]
     fn local_solar_time_wraps_24() {
-        // UT=23h, lon=30° → LST=25h → 1h
-        let lst = local_solar_time(23.0 * 3600.0, 30.0);
-        assert!((lst - 1.0).abs() < 1e-10);
+        // UT=23h, lon=30° → mean LST=25h → ~1h, plus EoT
+        let epoch = Epoch::from_gregorian(2024, 4, 15, 23, 0, 0.0);
+        let lst = local_solar_time(23.0 * 3600.0, 30.0, &epoch);
+        assert!((lst - 1.0).abs() < 0.05, "lst={lst}");
+    }
+
+    #[test]
+    fn local_solar_time_eot_effect_february() {
+        // February: EoT ≈ -14 min (sundial slow) → LST shifted ~0.23h behind mean
+        let epoch = Epoch::from_gregorian(2024, 2, 12, 12, 0, 0.0);
+        let lst = local_solar_time(43200.0, 0.0, &epoch);
+        // Without EoT: exactly 12.0; with EoT: ~11.77
+        assert!(
+            lst > 11.65 && lst < 11.85,
+            "Feb EoT should shift LST behind: lst={lst}"
+        );
     }
 
     #[test]
