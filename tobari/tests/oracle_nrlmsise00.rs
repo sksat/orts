@@ -178,12 +178,18 @@ fn total_mass_density_all_points() {
     println!("  mean error: {:.4}%", mean_error * 100.0);
 
     if !failures.is_empty() {
+        // Sort by error descending
+        failures.sort_by(|a, b| {
+            let ea: f64 = a.split("err=").nth(1).unwrap().split('%').next().unwrap().parse().unwrap();
+            let eb: f64 = b.split("err=").nth(1).unwrap().split('%').next().unwrap().parse().unwrap();
+            eb.partial_cmp(&ea).unwrap()
+        });
         println!("\nFailed points ({}/{count}):", failures.len());
-        for f in &failures[..failures.len().min(20)] {
+        for f in &failures[..failures.len().min(30)] {
             println!("{f}");
         }
-        if failures.len() > 20 {
-            println!("  ... and {} more", failures.len() - 20);
+        if failures.len() > 30 {
+            println!("  ... and {} more", failures.len() - 30);
         }
         panic!(
             "{}/{count} points exceeded tolerance (max err={:.2}%)",
@@ -349,8 +355,14 @@ fn temperature_at_altitude() {
     println!("Temperature: max error={:.4}%", max_error * 100.0);
 
     if !failures.is_empty() {
+        // Sort by error (descending) for debugging
+        failures.sort_by(|a, b| {
+            let ea: f64 = a.split("err=").nth(1).unwrap().split('%').next().unwrap().parse().unwrap();
+            let eb: f64 = b.split("err=").nth(1).unwrap().split('%').next().unwrap().parse().unwrap();
+            eb.partial_cmp(&ea).unwrap()
+        });
         println!("Temperature failures ({}):", failures.len());
-        for f in &failures[..failures.len().min(20)] {
+        for f in &failures[..failures.len().min(30)] {
             println!("{f}");
         }
         panic!("{} temperature points exceeded 1% tolerance", failures.len());

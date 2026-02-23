@@ -20,6 +20,7 @@
 
 pub mod coefficients;
 pub mod geo;
+mod model;
 
 use crate::AtmosphereModel;
 use kaname::epoch::Epoch;
@@ -157,20 +158,22 @@ impl Nrlmsise00 {
     /// Compute full NRLMSISE-00 output for the given input parameters.
     ///
     /// Returns temperatures and all species number densities.
-    pub fn calculate(&self, _input: &Nrlmsise00Input) -> Nrlmsise00Output {
-        // TODO: implement — stub returns zeros
+    pub fn calculate(&self, input: &Nrlmsise00Input) -> Nrlmsise00Output {
+        let (d, temp_exo, temp_alt) = model::compute(input);
+        // d[0..8]: He, O, N2, O2, Ar, total_mass(g/cm³), H, N, anomO
+        // Total mass density: d[5] is in g/cm³, convert to kg/m³ (* 1000)
         Nrlmsise00Output {
-            temp_exo: 0.0,
-            temp_alt: 0.0,
-            density_he: 0.0,
-            density_o: 0.0,
-            density_n2: 0.0,
-            density_o2: 0.0,
-            density_ar: 0.0,
-            density_h: 0.0,
-            density_n: 0.0,
-            density_anomalous_o: 0.0,
-            total_mass_density: 0.0,
+            temp_exo,
+            temp_alt,
+            density_he: d[0],
+            density_o: d[1],
+            density_n2: d[2],
+            density_o2: d[3],
+            density_ar: d[4],
+            density_h: d[6],
+            density_n: d[7],
+            density_anomalous_o: d[8],
+            total_mass_density: d[5] * 1000.0,
         }
     }
 }
