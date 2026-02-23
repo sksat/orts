@@ -32,7 +32,7 @@ use orts_orbits::drag::AtmosphericDrag;
 use orts_orbits::gravity::ZonalHarmonics;
 use orts_orbits::orbital_system::OrbitalSystem;
 use serde::Deserialize;
-use tobari::harris_priester::HarrisPriester;
+use tobari::HarrisPriester;
 
 // ─── Fixture data structures ───
 

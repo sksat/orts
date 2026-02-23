@@ -68,6 +68,14 @@ pub struct ConstantWeather {
 
 impl ConstantWeather {
     /// Create a constant weather provider with the given F10.7 and Ap values.
+    ///
+    /// - `f107`: 10.7 cm solar radio flux \[SFU\]. Higher values indicate stronger
+    ///   solar activity and higher thermospheric density. Typical range: 70–250.
+    /// - `ap`: daily geomagnetic index. Higher values indicate geomagnetic storms
+    ///   which expand the upper atmosphere. Typical range: 0–400, quiet ≤ 15.
+    ///
+    /// Both `f107_daily` and `f107_avg` are set to `f107`; all Ap history
+    /// entries are set to `ap` (constant approximation).
     pub fn new(f107: f64, ap: f64) -> Self {
         Self {
             weather: SpaceWeather {
@@ -77,6 +85,31 @@ impl ConstantWeather {
                 ap_3hour_history: [ap; 7],
             },
         }
+    }
+
+    /// Solar minimum conditions (F10.7 = 70, Ap = 4).
+    ///
+    /// Represents quiet solar conditions near the bottom of the 11-year solar cycle.
+    /// Thermospheric density is at its lowest, resulting in minimal atmospheric drag.
+    pub fn solar_min() -> Self {
+        Self::new(70.0, 4.0)
+    }
+
+    /// Solar moderate conditions (F10.7 = 150, Ap = 15).
+    ///
+    /// Represents typical mid-cycle solar conditions. This is a reasonable default
+    /// for general-purpose simulations when specific space weather data is unavailable.
+    pub fn solar_moderate() -> Self {
+        Self::new(150.0, 15.0)
+    }
+
+    /// Solar maximum conditions (F10.7 = 250, Ap = 50).
+    ///
+    /// Represents active solar conditions near the peak of the 11-year cycle.
+    /// Thermospheric density is significantly elevated, causing much stronger drag
+    /// on LEO satellites.
+    pub fn solar_max() -> Self {
+        Self::new(250.0, 50.0)
     }
 }
 
@@ -176,25 +209,29 @@ impl Nrlmsise00 {
             total_mass_density: d[5] * 1000.0,
         }
     }
-}
 
-impl AtmosphereModel for Nrlmsise00 {
-    fn density(&self, altitude_km: f64, position: &Vector3<f64>, epoch: Option<&Epoch>) -> f64 {
-        let epoch = match epoch {
-            Some(e) => e,
-            None => return 0.0,
-        };
-
-        // Convert position to geodetic coordinates
+    /// Compute full atmospheric composition at the given position and epoch.
+    ///
+    /// Returns the complete NRLMSISE-00 output including:
+    /// - Total mass density \[kg/m³\]
+    /// - Number densities \[cm⁻³\] for 9 species: He, O, N₂, O₂, Ar, H, N, anomalous O
+    /// - Exospheric and local temperatures \[K\]
+    ///
+    /// This is the high-level API that handles ECI-to-geodetic coordinate conversions
+    /// internally. For direct low-level access with pre-computed geodetic coordinates,
+    /// use [`Nrlmsise00::calculate()`].
+    ///
+    /// Unlike [`AtmosphereModel::density()`] which only returns total mass density,
+    /// this method provides the full species breakdown for diagnostics and analysis.
+    pub fn density_with_composition(
+        &self,
+        altitude_km: f64,
+        position: &Vector3<f64>,
+        epoch: &Epoch,
+    ) -> Nrlmsise00Output {
         let (lat_deg, lon_deg) = geo::eci_to_geodetic_latlon(position, epoch);
-
-        // Convert epoch to day-of-year and UT seconds
         let (doy, ut_seconds) = geo::epoch_to_day_of_year_and_ut(epoch);
-
-        // Compute local solar time
         let lst = geo::local_solar_time(ut_seconds, lon_deg);
-
-        // Get space weather
         let sw = self.weather.get(epoch);
 
         let input = Nrlmsise00Input {
@@ -210,6 +247,15 @@ impl AtmosphereModel for Nrlmsise00 {
             ap_array: sw.ap_3hour_history,
         };
 
-        self.calculate(&input).total_mass_density
+        self.calculate(&input)
+    }
+}
+
+impl AtmosphereModel for Nrlmsise00 {
+    fn density(&self, altitude_km: f64, position: &Vector3<f64>, epoch: Option<&Epoch>) -> f64 {
+        match epoch {
+            Some(e) => self.density_with_composition(altitude_km, position, e).total_mass_density,
+            None => 0.0,
+        }
     }
 }

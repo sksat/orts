@@ -17,8 +17,7 @@
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 use serde::Deserialize;
-use tobari::harris_priester::HarrisPriester;
-use tobari::AtmosphereModel;
+use tobari::{AtmosphereModel, HarrisPriester};
 
 // ─── Fixture data structures ───
 

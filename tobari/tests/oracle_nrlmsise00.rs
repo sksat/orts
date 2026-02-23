@@ -7,7 +7,8 @@
 //! against the official implementation — not a third-party reimplementation.
 
 use serde::Deserialize;
-use tobari::nrlmsise00::{ConstantWeather, Nrlmsise00, Nrlmsise00Input};
+use tobari::nrlmsise00::Nrlmsise00Input;
+use tobari::{ConstantWeather, Nrlmsise00};
 
 // ─── Fixture structures ───
 

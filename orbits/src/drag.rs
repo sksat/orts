@@ -1,8 +1,7 @@
 use nalgebra::Vector3;
 use kaname::epoch::Epoch;
 use kaname::{WGS84_A, WGS84_B};
-use tobari::AtmosphereModel;
-use tobari::exponential::Exponential;
+use tobari::{AtmosphereModel, Exponential};
 use orts_integrator::State;
 
 use crate::body::KnownBody;
@@ -298,7 +297,7 @@ mod tests {
 
     #[test]
     fn with_atmosphere_builder() {
-        use tobari::harris_priester::HarrisPriester;
+        use tobari::HarrisPriester;
 
         let drag = AtmosphericDrag::for_earth(Some(0.005))
             .with_atmosphere(Box::new(HarrisPriester::new()));

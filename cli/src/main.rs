@@ -133,6 +133,18 @@ struct SimArgs {
     #[arg(long, default_value = "exponential")]
     atmosphere: AtmosphereChoice,
 
+    /// F10.7 solar radio flux [SFU] for NRLMSISE-00.
+    /// Controls solar activity level: ~70 (solar min), ~150 (moderate), ~250 (solar max).
+    /// Only used when --atmosphere=nrlmsise00.
+    #[arg(long, default_value_t = 150.0)]
+    f107: f64,
+
+    /// Ap geomagnetic index for NRLMSISE-00.
+    /// Controls geomagnetic activity: ~4 (quiet), ~15 (moderate), ~50 (storm).
+    /// Only used when --atmosphere=nrlmsise00.
+    #[arg(long, default_value_t = 15.0)]
+    ap: f64,
+
     /// Total simulation duration in seconds (overrides orbital period)
     #[arg(long)]
     duration: Option<f64>,
@@ -152,6 +164,8 @@ enum AtmosphereChoice {
     Exponential,
     /// Harris-Priester (diurnal variation, uses Sun position)
     HarrisPriester,
+    /// NRLMSISE-00 empirical model (uses F10.7 and Ap)
+    Nrlmsise00,
 }
 
 /// How the orbit was specified on the command line.
@@ -251,6 +265,8 @@ struct SimParams {
     integrator: IntegratorChoice,
     tolerances: Tolerances,
     atmosphere: AtmosphereChoice,
+    f107: f64,
+    ap: f64,
 }
 
 impl SimParams {
@@ -340,6 +356,8 @@ impl SimParams {
             integrator: args.integrator,
             tolerances: Tolerances { atol: args.atol, rtol: args.rtol },
             atmosphere: args.atmosphere,
+            f107: args.f107,
+            ap: args.ap,
         }
     }
 
@@ -915,6 +933,8 @@ fn build_orbital_system(
     epoch: Option<Epoch>,
     sat: &SatelliteSpec,
     atmosphere: AtmosphereChoice,
+    f107: f64,
+    ap: f64,
 ) -> OrbitalSystem {
     let props = body.properties();
     let gravity_field: Box<dyn gravity::GravityField> = match props.j2 {
@@ -952,7 +972,15 @@ fn build_orbital_system(
                 AtmosphereChoice::HarrisPriester => {
                     AtmosphericDrag::for_earth(sat.ballistic_coeff)
                         .with_atmosphere(Box::new(
-                            tobari::harris_priester::HarrisPriester::new(),
+                            tobari::HarrisPriester::new(),
+                        ))
+                }
+                AtmosphereChoice::Nrlmsise00 => {
+                    AtmosphericDrag::for_earth(sat.ballistic_coeff)
+                        .with_atmosphere(Box::new(
+                            tobari::Nrlmsise00::new(
+                                Box::new(tobari::ConstantWeather::new(f107, ap)),
+                            ),
                         ))
                 }
             };
@@ -983,7 +1011,7 @@ fn run_simulation(params: &SimParams) -> Recording {
     rec.log_static(&body_path, &BodyRadius(params.body.properties().radius));
 
     for sat in &params.satellites {
-        let system = build_orbital_system(&params.body, params.mu, params.epoch, sat, params.atmosphere);
+        let system = build_orbital_system(&params.body, params.mu, params.epoch, sat, params.atmosphere, params.f107, params.ap);
         let initial = sat.initial_state(params.mu);
         let sat_path = sat.entity_path();
 
@@ -1361,7 +1389,7 @@ async fn simulation_loop(
         let initial = spec.initial_state(params.mu);
         SatSimState {
             spec: spec.clone(),
-            system: build_orbital_system(&params.body, params.mu, params.epoch, spec, params.atmosphere),
+            system: build_orbital_system(&params.body, params.mu, params.epoch, spec, params.atmosphere, params.f107, params.ap),
             state: initial,
             t: 0.0,
             orbit_end_t: spec.period,
@@ -1533,7 +1561,7 @@ async fn handle_connection(
 
     // 1. Send info message
     let satellites_info: Vec<SatelliteInfo> = params.satellites.iter().map(|s| {
-        let system = build_orbital_system(&params.body, params.mu, params.epoch, s, params.atmosphere);
+        let system = build_orbital_system(&params.body, params.mu, params.epoch, s, params.atmosphere, params.f107, params.ap);
         SatelliteInfo {
             id: s.id.clone(),
             name: s.name.clone(),
@@ -2261,6 +2289,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
@@ -2288,6 +2318,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
@@ -2315,6 +2347,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
@@ -2337,6 +2371,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params2 = SimParams::from_sim_args(&args2, false);
@@ -2361,6 +2397,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
@@ -2457,6 +2495,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         SimParams::from_sim_args(&args, false);
@@ -2682,6 +2722,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
@@ -2724,6 +2766,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
@@ -2763,6 +2807,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
@@ -2790,6 +2836,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
@@ -2945,6 +2993,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
@@ -2972,6 +3022,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, false);
@@ -2998,6 +3050,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
             atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
             duration: None,
         };
         let params = SimParams::from_sim_args(&args, true);
@@ -3096,7 +3150,7 @@ mod tests {
     fn build_orbital_system_sets_body_radius() {
         let body = KnownBody::Earth;
         let spec = parse_sat_spec("altitude=400", body);
-        let system = build_orbital_system(&body, body.properties().mu, None, &spec, AtmosphereChoice::Exponential);
+        let system = build_orbital_system(&body, body.properties().mu, None, &spec, AtmosphereChoice::Exponential, 150.0, 15.0);
         assert_eq!(system.body_radius, Some(body.properties().radius));
     }
 }
