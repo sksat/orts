@@ -31,6 +31,7 @@ const ALPHA: [f64; 9] = [-0.38, 0.0, 0.0, 0.0, 0.17, 0.0, -0.38, 0.0, 0.0];
 const MIXING_ALT_LIMITS: [f64; 8] = [200.0, 300.0, 160.0, 250.0, 240.0, 450.0, 320.0, 450.0];
 
 /// Molecular masses [amu].
+#[allow(dead_code)]
 const MOLECULAR_MASS: [f64; 9] = [4.0, 16.0, 28.0, 32.0, 40.0, 1.0, 1.0, 14.0, 16.0];
 
 /// Atomic mass unit [g].
@@ -74,13 +75,13 @@ fn compute_legendre(sin_lat: f64) -> [[f64; 9]; 9] {
     }
 
     // Diagonal+1: P_{m+1}^m = (2m+1) * x * P_m^m
+    #[allow(clippy::needless_range_loop)]
     for m in 0..=7usize {
-        if m + 1 <= 8 {
-            plg[m][m + 1] = (2 * m + 1) as f64 * x * plg[m][m];
-        }
+        plg[m][m + 1] = (2 * m + 1) as f64 * x * plg[m][m];
     }
 
     // General recurrence: (n-m)*P_n^m = (2n-1)*x*P_{n-1}^m - (n+m-1)*P_{n-2}^m
+    #[allow(clippy::needless_range_loop)]
     for m in 0..=8usize {
         for n in (m + 2)..=8usize {
             plg[m][n] = ((2 * n - 1) as f64 * x * plg[m][n - 1]
@@ -489,6 +490,7 @@ fn cubic_spline_integrate(xa: &[f64], ya: &[f64], y2a: &[f64], n: usize, x: f64)
 /// ZA may differ from zlb (e.g., ZA = 123.435 km, zlb = 120 km).
 ///
 /// Returns (temperature, density).
+#[allow(clippy::too_many_arguments)]
 fn density_temperature_profile(
     alt: f64,
     dlb: f64,
@@ -784,7 +786,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
             let rl = (b28 * DENSITY_BOUNDARY[0][1] / b04).ln();
             let hc04 = DENSITY_BOUNDARY[0][5] * CORRECTION_PARAMS[1][1];
             let zc04 = DENSITY_BOUNDARY[0][4] * CORRECTION_PARAMS[1][0];
-            d[0] = d[0] * composition_correction(alt, rl, hc04, zc04);
+            d[0] *= composition_correction(alt, rl, hc04, zc04);
         }
     }
 
@@ -815,12 +817,12 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
             let hc16 = DENSITY_BOUNDARY[1][5] * CORRECTION_PARAMS[1][3];
             let zc16 = DENSITY_BOUNDARY[1][4] * CORRECTION_PARAMS[1][2];
             let hc216 = DENSITY_BOUNDARY[1][5] * CORRECTION_PARAMS[1][4];
-            d[1] = d[1] * composition_correction_dual(alt, rl, hc16, zc16, hc216);
+            d[1] *= composition_correction_dual(alt, rl, hc16, zc16, hc216);
             // Chemistry correction
             let hcc16 = DENSITY_BOUNDARY[1][7] * CORRECTION_PARAMS[1][13];
             let zcc16 = DENSITY_BOUNDARY[1][6] * CORRECTION_PARAMS[1][12];
             let rc16 = DENSITY_BOUNDARY[1][3] * CORRECTION_PARAMS[1][14];
-            d[1] = d[1] * composition_correction(alt, rc16, hcc16, zcc16);
+            d[1] *= composition_correction(alt, rc16, hcc16, zcc16);
         }
     }
 
@@ -872,7 +874,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
             let rl = (b28 * DENSITY_BOUNDARY[3][1] / b32).ln();
             let hc32 = DENSITY_BOUNDARY[3][5] * CORRECTION_PARAMS[1][7];
             let zc32 = DENSITY_BOUNDARY[3][4] * CORRECTION_PARAMS[1][6];
-            d[3] = d[3] * composition_correction(alt, rl, hc32, zc32);
+            d[3] *= composition_correction(alt, rl, hc32, zc32);
         }
         // Photodissociation correction (all altitudes, F10.7-dependent)
         let hcc32 = DENSITY_BOUNDARY[3][7] * CORRECTION_PARAMS[1][22];
@@ -880,7 +882,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         let zcc32 = DENSITY_BOUNDARY[3][6] * CORRECTION_PARAMS[1][21];
         let rc32 = DENSITY_BOUNDARY[3][3] * CORRECTION_PARAMS[1][23]
             * (1.0 + sw[1] * CORRECTION_PARAMS[0][23] * (input.f107_avg - 150.0));
-        d[3] = d[3] * composition_correction_dual(alt, rc32, hcc32, zcc32, hcc232);
+        d[3] *= composition_correction_dual(alt, rc32, hcc32, zcc32, hcc232);
     }
 
     // --- Ar ---
@@ -908,7 +910,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
             let rl = (b28 * DENSITY_BOUNDARY[4][1] / b40).ln();
             let hc40 = DENSITY_BOUNDARY[4][5] * CORRECTION_PARAMS[1][9];
             let zc40 = DENSITY_BOUNDARY[4][4] * CORRECTION_PARAMS[1][8];
-            d[4] = d[4] * composition_correction(alt, rl, hc40, zc40);
+            d[4] *= composition_correction(alt, rl, hc40, zc40);
         }
     }
 
@@ -937,12 +939,12 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
             let rl = (b28 * DENSITY_BOUNDARY[5][1] * CORRECTION_PARAMS[1][17].abs() / b01).ln();
             let hc01 = DENSITY_BOUNDARY[5][5] * CORRECTION_PARAMS[1][11];
             let zc01 = DENSITY_BOUNDARY[5][4] * CORRECTION_PARAMS[1][10];
-            d[6] = d[6] * composition_correction(alt, rl, hc01, zc01);
+            d[6] *= composition_correction(alt, rl, hc01, zc01);
             // Chemistry correction
             let hcc01 = DENSITY_BOUNDARY[5][7] * CORRECTION_PARAMS[1][19];
             let zcc01 = DENSITY_BOUNDARY[5][6] * CORRECTION_PARAMS[1][18];
             let rc01 = DENSITY_BOUNDARY[5][3] * CORRECTION_PARAMS[1][20];
-            d[6] = d[6] * composition_correction(alt, rc01, hcc01, zcc01);
+            d[6] *= composition_correction(alt, rc01, hcc01, zcc01);
         }
     }
 
@@ -971,12 +973,12 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
             let rl = (b28 * DENSITY_BOUNDARY[6][1] * CORRECTION_PARAMS[0][2].abs() / b14).ln();
             let hc14 = DENSITY_BOUNDARY[6][5] * CORRECTION_PARAMS[0][1];
             let zc14 = DENSITY_BOUNDARY[6][4] * CORRECTION_PARAMS[0][0];
-            d[7] = d[7] * composition_correction(alt, rl, hc14, zc14);
+            d[7] *= composition_correction(alt, rl, hc14, zc14);
             // Chemistry correction
             let hcc14 = DENSITY_BOUNDARY[6][7] * CORRECTION_PARAMS[0][4];
             let zcc14 = DENSITY_BOUNDARY[6][6] * CORRECTION_PARAMS[0][3];
             let rc14 = DENSITY_BOUNDARY[6][3] * CORRECTION_PARAMS[0][5];
-            d[7] = d[7] * composition_correction(alt, rc14, hcc14, zcc14);
+            d[7] *= composition_correction(alt, rc14, hcc14, zcc14);
         }
     }
 
