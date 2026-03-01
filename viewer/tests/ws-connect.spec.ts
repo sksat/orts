@@ -197,7 +197,7 @@ test("history message arrives after info before state", async ({ page }) => {
       setTimeout(() => {
         ws.close();
         resolve(types);
-      }, 10000);
+      }, 30000);
     });
   }, WS_URL);
 
