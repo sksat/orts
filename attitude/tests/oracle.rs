@@ -464,3 +464,121 @@ fn tolerance_convergence_dp45() {
         errors[2]
     );
 }
+
+// ──────────────────────────────────────────────────────
+// Integrator precision comparison
+// ──────────────────────────────────────────────────────
+
+#[test]
+fn rk4_vs_dp45_energy_conservation() {
+    // Same torque-free asymmetric body problem solved by both integrators.
+    // Verify that precision is governed by different control parameters:
+    //   - RK4: error ∝ dt⁴ (4th-order, fixed step)
+    //   - DP45: error controlled by tolerance (5th-order, adaptive step)
+    //
+    // Also verify DP45 at tight tolerance outperforms RK4 at coarse dt.
+    let inertia = diagonal_inertia(10.0, 20.0, 30.0);
+    let system = AttitudeSystem::new(inertia);
+
+    let omega0 = Vector3::new(0.5, 0.3, 0.1);
+    let initial = AttitudeState {
+        quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+        angular_velocity: omega0,
+    };
+    let e0 = rotational_energy(&initial, &inertia);
+    let l0 = angular_momentum_inertial(&initial, &inertia);
+    let t_end = 100.0;
+
+    // --- RK4 at two dt values ---
+    let mut rk4_energy_errs = Vec::new();
+    let mut rk4_angmom_errs = Vec::new();
+    for &dt in &[0.1, 0.05] {
+        let mut max_e_err = 0.0_f64;
+        let mut max_l_err = 0.0_f64;
+        let _ = Rk4.integrate(&system, initial.clone(), 0.0, t_end, dt, |_t, state| {
+            let e_err = ((rotational_energy(state, &inertia) - e0) / e0).abs();
+            let l_err =
+                (angular_momentum_inertial(state, &inertia) - l0).magnitude() / l0.magnitude();
+            max_e_err = max_e_err.max(e_err);
+            max_l_err = max_l_err.max(l_err);
+        });
+        rk4_energy_errs.push(max_e_err);
+        rk4_angmom_errs.push(max_l_err);
+    }
+
+    // RK4: finer dt → better energy conservation (monotonic improvement)
+    assert!(
+        rk4_energy_errs[1] < rk4_energy_errs[0],
+        "RK4 finer dt should give better energy conservation: \
+         dt=0.1 → {:.2e}, dt=0.05 → {:.2e}",
+        rk4_energy_errs[0],
+        rk4_energy_errs[1]
+    );
+    assert!(
+        rk4_angmom_errs[1] < rk4_angmom_errs[0],
+        "RK4 finer dt should give better L conservation: \
+         dt=0.1 → {:.2e}, dt=0.05 → {:.2e}",
+        rk4_angmom_errs[0],
+        rk4_angmom_errs[1]
+    );
+
+    // --- DP45 at two tolerance levels ---
+    let mut dp45_energy_errs = Vec::new();
+    let mut dp45_angmom_errs = Vec::new();
+    for &tol_val in &[1e-8, 1e-12] {
+        let tol = Tolerances {
+            atol: tol_val,
+            rtol: tol_val,
+        };
+        let mut max_e_err = 0.0_f64;
+        let mut max_l_err = 0.0_f64;
+        let outcome: IntegrationOutcome<AttitudeState, ()> =
+            DormandPrince.integrate_adaptive_with_events(
+                &system,
+                initial.clone(),
+                0.0,
+                t_end,
+                0.1,
+                &tol,
+                |_t, state| {
+                    let e_err = ((rotational_energy(state, &inertia) - e0) / e0).abs();
+                    let l_err = (angular_momentum_inertial(state, &inertia) - l0).magnitude()
+                        / l0.magnitude();
+                    max_e_err = max_e_err.max(e_err);
+                    max_l_err = max_l_err.max(l_err);
+                },
+                |_, _| ControlFlow::Continue(()),
+            );
+        match outcome {
+            IntegrationOutcome::Completed(_) => {}
+            other => panic!("DP45 failed at tol={tol_val}: {other:?}"),
+        }
+        dp45_energy_errs.push(max_e_err);
+        dp45_angmom_errs.push(max_l_err);
+    }
+
+    // DP45: tighter tolerance → better conservation
+    assert!(
+        dp45_energy_errs[1] < dp45_energy_errs[0],
+        "DP45 tighter tol should give better energy conservation: \
+         tol=1e-8 → {:.2e}, tol=1e-12 → {:.2e}",
+        dp45_energy_errs[0],
+        dp45_energy_errs[1]
+    );
+    assert!(
+        dp45_angmom_errs[1] < dp45_angmom_errs[0],
+        "DP45 tighter tol should give better L conservation: \
+         tol=1e-8 → {:.2e}, tol=1e-12 → {:.2e}",
+        dp45_angmom_errs[0],
+        dp45_angmom_errs[1]
+    );
+
+    // DP45 at tight tolerance should outperform RK4 at coarse dt
+    assert!(
+        dp45_energy_errs[1] < rk4_energy_errs[0],
+        "DP45(tol=1e-12) should beat RK4(dt=0.1): \
+         DP45={:.2e}, RK4={:.2e}",
+        dp45_energy_errs[1],
+        rk4_energy_errs[0]
+    );
+}
