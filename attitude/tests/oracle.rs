@@ -380,3 +380,87 @@ fn dt_convergence_rk4() {
         );
     }
 }
+
+#[test]
+fn tolerance_convergence_dp45() {
+    // DP45 is adaptive: tightening tolerances should improve accuracy
+    let inertia = diagonal_inertia(10.0, 20.0, 30.0);
+    let system = AttitudeSystem::new(inertia);
+
+    let omega0 = Vector3::new(0.5, 0.3, 0.1);
+    let initial = AttitudeState {
+        quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+        angular_velocity: omega0,
+    };
+
+    let t_end = 50.0;
+    let dt0 = 0.1;
+
+    // Reference: very tight tolerance
+    let ref_tol = Tolerances {
+        atol: 1e-14,
+        rtol: 1e-14,
+    };
+    let ref_outcome: IntegrationOutcome<AttitudeState, ()> =
+        DormandPrince.integrate_adaptive_with_events(
+            &system,
+            initial.clone(),
+            0.0,
+            t_end,
+            dt0,
+            &ref_tol,
+            |_, _| {},
+            |_, _| ControlFlow::Continue(()),
+        );
+    let ref_state = match ref_outcome {
+        IntegrationOutcome::Completed(s) => s,
+        other => panic!("Reference integration failed: {other:?}"),
+    };
+
+    // Test with progressively tighter tolerances
+    let tol_levels = [1e-6, 1e-8, 1e-10];
+    let mut errors = Vec::new();
+    for &tol_val in &tol_levels {
+        let tol = Tolerances {
+            atol: tol_val,
+            rtol: tol_val,
+        };
+        let outcome: IntegrationOutcome<AttitudeState, ()> =
+            DormandPrince.integrate_adaptive_with_events(
+                &system,
+                initial.clone(),
+                0.0,
+                t_end,
+                dt0,
+                &tol,
+                |_, _| {},
+                |_, _| ControlFlow::Continue(()),
+            );
+        let state = match outcome {
+            IntegrationOutcome::Completed(s) => s,
+            other => panic!("DP45 failed at tol={tol_val}: {other:?}"),
+        };
+        let err = (state.angular_velocity - ref_state.angular_velocity).magnitude();
+        errors.push(err);
+    }
+
+    // Each 100x tightening of tolerance should reduce error significantly
+    for i in 0..errors.len() - 1 {
+        assert!(
+            errors[i + 1] < errors[i],
+            "Tighter tolerance should give smaller error: tol={:.0e} err={:.2e}, \
+             tol={:.0e} err={:.2e}",
+            tol_levels[i],
+            errors[i],
+            tol_levels[i + 1],
+            errors[i + 1]
+        );
+    }
+
+    // Tightest tolerance should give very good accuracy
+    assert!(
+        errors[2] < 1e-8,
+        "DP45 with tol=1e-10 should achieve <1e-8 error, got {:.2e}",
+        errors[2]
+    );
+}
