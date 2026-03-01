@@ -3070,6 +3070,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "orts-attitude"
+version = "0.0.0"
+dependencies = [
+ "kaname",
+ "nalgebra",
+ "orts-integrator",
+]
+
+[[package]]
 name = "orts-datamodel"
 version = "0.0.0"
 dependencies = [
