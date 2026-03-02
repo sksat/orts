@@ -175,10 +175,18 @@ export function App() {
   }, []);
 
   const handleHistory = useCallback((points: OrbitPoint[]) => {
+    // Group by satellite, then markRebuild so DuckDB tables are fully
+    // replaced.  This clears stale data left over from a prior connection.
+    const byId = new Map<string, OrbitPoint[]>();
     for (const point of points) {
       const id = point.satelliteId ?? "default";
-      getOrCreateIngestBuffer(ingestBuffersRef.current, id).push(point);
+      let arr = byId.get(id);
+      if (!arr) { arr = []; byId.set(id, arr); }
+      arr.push(point);
       getOrCreateTrailBuffer(trailBuffersRef.current, id).push(point);
+    }
+    for (const [id, pts] of byId) {
+      getOrCreateIngestBuffer(ingestBuffersRef.current, id).markRebuild(pts);
     }
     streamingCountRef.current = 0;
   }, []);
