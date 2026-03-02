@@ -114,7 +114,21 @@ test.describe("multi-satellite NaN alignment", () => {
     await expect(statusText).toHaveText("Connected", { timeout: 5000 });
 
     // Wait for DuckDB tables to be populated (history ingestion + query ticks)
-    await page.waitForTimeout(6000);
+    // Poll instead of fixed timeout — CI can be slow
+    await expect(async () => {
+      const counts = await page.evaluate(async () => {
+        const conn = (window as Record<string, unknown>).__duckdb_conn;
+        if (!conn) return { sso: 0, iss: 0 };
+        const q = async (sql: string) =>
+          (conn as { query: (s: string) => Promise<{ getChildAt: (i: number) => { get: (i: number) => number } | null }> }).query(sql);
+        let sso = 0, iss = 0;
+        try { sso = Number((await q("SELECT COUNT(*) FROM orbit_sso")).getChildAt(0)?.get(0)); } catch { /* table not yet created */ }
+        try { iss = Number((await q("SELECT COUNT(*) FROM orbit_iss")).getChildAt(0)?.get(0)); } catch { /* table not yet created */ }
+        return { sso, iss };
+      });
+      expect(counts.sso).toBeGreaterThan(0);
+      expect(counts.iss).toBeGreaterThan(0);
+    }).toPass({ timeout: 15000, intervals: [500, 1000, 1000, 2000, 2000] });
 
     // Stop streaming: close mock server connections so no more data arrives
     wss.clients.forEach((ws) => ws.close());
