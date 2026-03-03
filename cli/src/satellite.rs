@@ -1,4 +1,4 @@
-use orts_datamodel::entity_path::EntityPath;
+use orts_sim::record::entity_path::EntityPath;
 use orts_integrator::State;
 use orts_orbits::{body::KnownBody, kepler::KeplerianElements, tle::Tle};
 use serde::Serialize;

@@ -11,7 +11,7 @@ orts-integrator.workspace = true
 orts-orbits.workspace = true
 tobari = { workspace = true, features = ["fetch"] }
 kaname.workspace = true
-orts-datamodel.workspace = true
+orts-sim.workspace = true
 clap.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true

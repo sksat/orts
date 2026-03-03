@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::archetypes::OrbitalState;
-use crate::component::{Component, ComponentName};
-use crate::entity_path::EntityPath;
-use crate::timeline::{TimeIndex, TimePoint, TimelineName};
+use crate::record::archetypes::OrbitalState;
+use crate::record::component::{Component, ComponentName};
+use crate::record::entity_path::EntityPath;
+use crate::record::timeline::{TimeIndex, TimePoint, TimelineName};
 
 /// A column of component data (SoA layout for a single component type).
 #[derive(Debug, Clone)]
@@ -161,8 +161,8 @@ mod tests {
     use nalgebra::Vector3;
 
     use super::*;
-    use crate::components::*;
-    use crate::timeline::TimePoint;
+    use crate::record::components::*;
+    use crate::record::timeline::TimePoint;
 
     #[test]
     fn component_column_push_and_get() {

@@ -102,7 +102,7 @@ Rust crate は `orts-` prefix を使用し、ディレクトリ名は prefix な
 | tobari | `tobari/` | 大気密度モデル・宇宙天気。詳細は [`tobari/DESIGN.md`](tobari/DESIGN.md) |
 | orts-orbits | `orbits/` | 軌道力学。重力場 (J2+)、摂動 (抗力/SRP/第三体)、ケプラー要素、TLE/SGP4、イベント検出。orbits→tobari 依存は trait + デフォルト実装のため |
 | orts-attitude | `attitude/` | 姿勢力学。AttitudeState (四元数+角速度)、TorqueModel trait、重力傾斜トルク |
-| orts-datamodel | `datamodel/` | ECS 風データモデル・Rerun (.rrd) エクスポート |
+| orts-sim | `sim/` | 宇宙機統合。SpacecraftState (軌道+姿勢+質量)、WrenchModel trait、ECS データモデル・Rerun エクスポート |
 | orts | `cli/` | CLI + WebSocket サーバ。run/serve/convert サブコマンド |
 
 ### TypeScript パッケージ

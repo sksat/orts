@@ -1,5 +1,5 @@
 [package]
-name = "orts-datamodel"
+name = "orts-sim"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,3 +8,7 @@ repository.workspace = true
 [dependencies]
 nalgebra.workspace = true
 rerun.workspace = true
+kaname.workspace = true
+orts-integrator.workspace = true
+orts-orbits.workspace = true
+orts-attitude.workspace = true

@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use crate::component::Component;
-use crate::components::{BodyRadius, GravitationalParameter, Position3D, Velocity3D};
-use crate::entity_path::EntityPath;
-use crate::recording::{Recording, SimMetadata};
-use crate::timeline::{TimeIndex, TimelineName};
+use crate::record::component::Component;
+use crate::record::components::{BodyRadius, GravitationalParameter, Position3D, Velocity3D};
+use crate::record::entity_path::EntityPath;
+use crate::record::recording::{Recording, SimMetadata};
+use crate::record::timeline::{TimeIndex, TimelineName};
 
 /// Save a Recording to a .rrd file using the Rerun SDK.
 pub fn save_as_rrd(
@@ -291,8 +291,8 @@ fn to_rerun_path(path: &EntityPath) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::archetypes::OrbitalState;
-    use crate::timeline::TimePoint;
+    use crate::record::archetypes::OrbitalState;
+    use crate::record::timeline::TimePoint;
     use nalgebra::Vector3;
 
     #[test]

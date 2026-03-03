@@ -5,7 +5,7 @@ members = [
     "orbits",
     "kaname",
     "cli",
-    "datamodel",
+    "sim",
     "tobari",
     "attitude",
 ]
@@ -20,7 +20,7 @@ repository = "https://github.com/sksat/orts"
 orts-integrator = { path = "integrator" }
 orts-orbits = { path = "orbits" }
 kaname = { path = "kaname" }
-orts-datamodel = { path = "datamodel" }
+orts-sim = { path = "sim" }
 tobari = { path = "tobari" }
 orts-attitude = { path = "attitude" }
 nalgebra = "0.34"

@@ -3058,9 +3058,9 @@ dependencies = [
  "futures-util",
  "kaname",
  "nalgebra",
- "orts-datamodel",
  "orts-integrator",
  "orts-orbits",
+ "orts-sim",
  "serde",
  "serde_json",
  "tobari",
@@ -3076,14 +3076,6 @@ dependencies = [
  "kaname",
  "nalgebra",
  "orts-integrator",
-]
-
-[[package]]
-name = "orts-datamodel"
-version = "0.0.0"
-dependencies = [
- "nalgebra",
- "rerun",
 ]
 
 [[package]]
@@ -3103,6 +3095,18 @@ dependencies = [
  "serde",
  "serde_json",
  "tobari",
+]
+
+[[package]]
+name = "orts-sim"
+version = "0.0.0"
+dependencies = [
+ "kaname",
+ "nalgebra",
+ "orts-attitude",
+ "orts-integrator",
+ "orts-orbits",
+ "rerun",
 ]
 
 [[package]]

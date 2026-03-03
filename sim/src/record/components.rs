@@ -1,6 +1,6 @@
 use nalgebra::Vector3;
 
-use crate::component::{Component, ComponentName};
+use crate::record::component::{Component, ComponentName};
 
 /// 3D position in km.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -148,7 +148,7 @@ impl Component for KeplerianState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::Component;
+    use crate::record::component::Component;
 
     fn assert_roundtrip<C: Component + PartialEq>(original: &C) {
         let scalars = original.to_scalars();

@@ -1,4 +1,4 @@
-use crate::component::ComponentName;
+use crate::record::component::ComponentName;
 
 /// An archetype is a named bundle of components that are commonly logged together.
 pub trait Archetype: std::fmt::Debug + Send + Sync {

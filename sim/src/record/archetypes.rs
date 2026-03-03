@@ -1,8 +1,8 @@
 use nalgebra::Vector3;
 
-use crate::archetype::Archetype;
-use crate::component::{Component, ComponentName};
-use crate::components::*;
+use crate::record::archetype::Archetype;
+use crate::record::component::{Component, ComponentName};
+use crate::record::components::*;
 
 /// The primary state of an orbiting body: position + velocity.
 #[derive(Debug, Clone)]
