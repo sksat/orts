@@ -3,38 +3,38 @@ use nalgebra::Vector3;
 use orts_attitude::TorqueModel;
 use orts_orbits::perturbations::ForceModel;
 
-use super::{SpacecraftState, Wrench, WrenchModel};
+use super::{ExternalLoads, LoadModel, SpacecraftState};
 
-/// Adapts a `ForceModel` (translational acceleration only) into a `WrenchModel`.
+/// Adapts a `ForceModel` (translational acceleration only) into a `LoadModel`.
 ///
 /// The force acts at the center of mass, producing zero torque.
 pub struct ForceModelAtCoM(pub Box<dyn ForceModel>);
 
-impl WrenchModel for ForceModelAtCoM {
+impl LoadModel for ForceModelAtCoM {
     fn name(&self) -> &str {
         self.0.name()
     }
 
-    fn wrench(&self, t: f64, state: &SpacecraftState, epoch: Option<&Epoch>) -> Wrench {
-        Wrench {
+    fn loads(&self, t: f64, state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads {
+        ExternalLoads {
             acceleration_inertial: self.0.acceleration(t, &state.orbit, epoch),
             torque_body: Vector3::zeros(),
         }
     }
 }
 
-/// Adapts a `TorqueModel` (rotational torque only) into a `WrenchModel`.
+/// Adapts a `TorqueModel` (rotational torque only) into a `LoadModel`.
 ///
 /// Only produces torque; translational acceleration is zero.
 pub struct TorqueModelOnly(pub Box<dyn TorqueModel>);
 
-impl WrenchModel for TorqueModelOnly {
+impl LoadModel for TorqueModelOnly {
     fn name(&self) -> &str {
         self.0.name()
     }
 
-    fn wrench(&self, t: f64, state: &SpacecraftState, epoch: Option<&Epoch>) -> Wrench {
-        Wrench {
+    fn loads(&self, t: f64, state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads {
+        ExternalLoads {
             acceleration_inertial: Vector3::zeros(),
             torque_body: self.0.torque(t, &state.attitude, epoch),
         }
@@ -96,7 +96,7 @@ mod tests {
         let accel = Vector3::new(1e-6, 2e-6, 3e-6);
         let adapter = ForceModelAtCoM(Box::new(MockForce { accel }));
         let state = sample_spacecraft_state();
-        let w = adapter.wrench(10.0, &state, None);
+        let w = adapter.loads(10.0, &state, None);
 
         assert_eq!(w.acceleration_inertial, accel);
         assert_eq!(w.torque_body, Vector3::zeros());
@@ -118,7 +118,7 @@ mod tests {
         }));
         let state = sample_spacecraft_state();
         let epoch = Epoch::from_jd(2460000.5);
-        let w = adapter.wrench(0.0, &state, Some(&epoch));
+        let w = adapter.loads(0.0, &state, Some(&epoch));
         assert_eq!(w.acceleration_inertial, Vector3::new(1.0, 0.0, 0.0));
     }
 
@@ -127,7 +127,7 @@ mod tests {
         let torque_val = Vector3::new(0.01, 0.02, 0.03);
         let adapter = TorqueModelOnly(Box::new(MockTorque { torque_val }));
         let state = sample_spacecraft_state();
-        let w = adapter.wrench(10.0, &state, None);
+        let w = adapter.loads(10.0, &state, None);
 
         assert_eq!(w.torque_body, torque_val);
         assert_eq!(w.acceleration_inertial, Vector3::zeros());
@@ -148,7 +148,7 @@ mod tests {
         }));
         let state = sample_spacecraft_state();
         let epoch = Epoch::from_jd(2460000.5);
-        let w = adapter.wrench(0.0, &state, Some(&epoch));
+        let w = adapter.loads(0.0, &state, Some(&epoch));
         assert_eq!(w.torque_body, Vector3::new(0.0, 0.0, 1.0));
     }
 }
