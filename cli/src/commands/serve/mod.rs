@@ -1,11 +1,13 @@
 pub mod protocol;
 pub mod compute;
 
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use orts_integrator::State;
-use orts_orbits::orbital_system::OrbitalSystem;
+use orts_sim::group::prop_group::{PropGroup, SatId};
+use orts_sim::group::{IndependentGroup, IntegratorConfig};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
@@ -15,7 +17,7 @@ use crate::sim::core::{accel_breakdown, build_orbital_system, make_history_state
 use crate::sim::params::SimParams;
 
 use protocol::{ClientMessage, HistoryBuffer, WsMessage};
-use compute::{compute_output_chunk, compute_output_chunk_adaptive, state_message};
+use compute::state_message;
 
 pub fn run_server(sim: &SimArgs, port: u16) {
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
@@ -73,16 +75,11 @@ async fn async_server(sim: &SimArgs, port: u16) {
     }
 }
 
-/// Per-satellite simulation state tracked across loop iterations.
-pub struct SatSimState {
-    pub spec: SatelliteSpec,
-    pub system: OrbitalSystem,
-    pub state: State,
-    pub t: f64,
-    pub orbit_end_t: f64,
-    pub next_stream_t: f64,
-    pub next_save_t: f64,
-    pub terminated: bool,
+/// Per-satellite metadata for serve mode (not propagation state — that's in IndependentGroup).
+struct SatMeta {
+    spec: SatelliteSpec,
+    orbit_end_t: f64,
+    next_save_t: f64,
 }
 
 async fn simulation_loop(
@@ -91,136 +88,178 @@ async fn simulation_loop(
     history: Arc<tokio::sync::RwLock<HistoryBuffer>>,
     terminated_events: Arc<tokio::sync::RwLock<Vec<String>>>,
 ) {
-    let dt = params.dt;
-
     // Batch N stream intervals into a single compute chunk.
     const OUTPUTS_PER_CHUNK: usize = 10;
     let chunk_sim_time = params.stream_interval * OUTPUTS_PER_CHUNK as f64;
 
     // Wall-clock pacing: target sim speed ratio.
-    let wall_per_sim_sec = ((dt / 100.0).max(0.01)) / params.stream_interval;
+    let wall_per_sim_sec = ((params.dt / 100.0).max(0.01)) / params.stream_interval;
     let chunk_wall_time =
         std::time::Duration::from_secs_f64(chunk_sim_time * wall_per_sim_sec);
 
-    // Initialize per-satellite state
-    let mut sat_states: Vec<SatSimState> = params.satellites.iter().map(|spec| {
-        let initial = spec.initial_state(params.mu);
-        SatSimState {
-            spec: spec.clone(),
-            system: build_orbital_system(&params.body, params.mu, params.epoch, spec, params.atmosphere, params.f107, params.ap, params.space_weather_provider.as_ref()),
-            state: initial,
-            t: 0.0,
-            orbit_end_t: spec.period,
-            next_stream_t: params.stream_interval,
-            next_save_t: params.output_interval,
-            terminated: false,
+    // Build integrator config
+    let config = match params.integrator {
+        IntegratorChoice::Rk4 => IntegratorConfig::Rk4 { dt: params.dt },
+        IntegratorChoice::Dp45 => IntegratorConfig::Dp45 {
+            dt: params.dt,
+            tolerances: params.tolerances.clone(),
+        },
+    };
+
+    // Build event checker (collision + atmospheric entry)
+    let body_radius = params.body.properties().radius;
+    let atmosphere_altitude = params.body.properties().atmosphere_altitude;
+    let event_checker = move |_t: f64, state: &State| -> ControlFlow<String> {
+        let r = state.position.magnitude();
+        if r < body_radius {
+            ControlFlow::Break(format!("collision at {:.1} km altitude", r - body_radius))
+        } else if let Some(atm_alt) = atmosphere_altitude {
+            if r < body_radius + atm_alt {
+                ControlFlow::Break(format!(
+                    "atmospheric entry at {:.1} km altitude",
+                    r - body_radius
+                ))
+            } else {
+                ControlFlow::Continue(())
+            }
+        } else {
+            ControlFlow::Continue(())
         }
-    }).collect();
+    };
+
+    // Build group with all satellites
+    let mut group = IndependentGroup::new(config).with_event_checker(event_checker);
+
+    let mut metas: Vec<SatMeta> = Vec::new();
+    for spec in &params.satellites {
+        let system = build_orbital_system(
+            &params.body,
+            params.mu,
+            params.epoch,
+            spec,
+            params.atmosphere,
+            params.f107,
+            params.ap,
+            params.space_weather_provider.as_ref(),
+        );
+        let initial = spec.initial_state(params.mu);
+        group = group.add_satellite(spec.id.as_str(), initial, system);
+        metas.push(SatMeta {
+            spec: spec.clone(),
+            orbit_end_t: spec.period,
+            next_save_t: params.output_interval,
+        });
+    }
+
+    let has_perturbations = params.body.properties().j2.is_some();
 
     // Emit initial states for all satellites
     {
         let mut h = history.write().await;
-        for ss in &sat_states {
-            let accels = accel_breakdown(&ss.system, 0.0, &ss.state);
-            let hs = make_history_state(&ss.spec.id, 0.0, &ss.state.position, &ss.state.velocity, params.mu, accels.clone());
+        for (i, (entry, dyn_sys)) in group.satellites_with_dynamics().enumerate() {
+            let accels = accel_breakdown(dyn_sys, 0.0, &entry.state);
+            let hs = make_history_state(
+                metas[i].spec.id.as_str(),
+                0.0,
+                &entry.state.position,
+                &entry.state.velocity,
+                params.mu,
+                accels.clone(),
+            );
             h.push(hs);
-            let msg = state_message(&ss.spec.id, 0.0, &ss.state, params.mu, accels);
+            let msg = state_message(
+                metas[i].spec.id.as_str(),
+                0.0,
+                &entry.state,
+                params.mu,
+                accels,
+            );
             let _ = tx.send(msg);
         }
     }
+
+    let mut current_t = 0.0_f64;
 
     loop {
         let chunk_start = tokio::time::Instant::now();
         let mut all_outputs: Vec<crate::sim::core::HistoryState> = Vec::new();
 
-        for ss in &mut sat_states {
-            if ss.terminated {
-                continue;
-            }
+        for _ in 0..OUTPUTS_PER_CHUNK {
+            let target_t = current_t + params.stream_interval;
 
-            // Each satellite advances by exactly chunk_sim_time, handling
-            // orbit boundaries within the loop so all satellites stay in sync.
-            let target_t = ss.t + chunk_sim_time;
-
-            // Skip orbit boundary reset when perturbations are active
-            // (orbit is no longer periodic with J2)
-            let has_perturbations = params.body.properties().j2.is_some();
-
-            while ss.t < target_t - 1e-9 {
-                // Check orbit boundary → reset (only for unperturbed 2-body)
-                if !has_perturbations && ss.t >= ss.orbit_end_t - 1e-9 {
-                    ss.state = ss.spec.initial_state(params.mu);
-                    ss.orbit_end_t = ss.t + ss.spec.period;
-                }
-
-                // With perturbations, orbit is not periodic; propagate continuously
-                let sub_end = if has_perturbations {
-                    target_t
-                } else {
-                    target_t.min(ss.orbit_end_t)
-                };
-
-                let atm_alt = params.body.properties().atmosphere_altitude;
-                let (outputs, new_state, new_t, termination) = match params.integrator {
-                    IntegratorChoice::Rk4 => compute_output_chunk(
-                        &ss.spec.id,
-                        &ss.system,
-                        ss.state.clone(),
-                        ss.t,
-                        sub_end,
-                        dt,
-                        params.stream_interval,
-                        &mut ss.next_stream_t,
-                        atm_alt,
-                    ),
-                    IntegratorChoice::Dp45 => compute_output_chunk_adaptive(
-                        &ss.spec.id,
-                        &ss.system,
-                        ss.state.clone(),
-                        ss.t,
-                        sub_end,
-                        dt,
-                        &params.tolerances,
-                        params.stream_interval,
-                        &mut ss.next_stream_t,
-                        atm_alt,
-                    ),
-                };
-
-                ss.state = new_state;
-                ss.t = new_t;
-
-                // Save output_interval-aligned states to history
-                {
-                    let mut h = history.write().await;
-                    for out in &outputs {
-                        if out.t >= ss.next_save_t - 1e-9 {
-                            h.push(out.clone());
-                            ss.next_save_t += params.output_interval;
+            // Orbit boundary reset (only for unperturbed 2-body)
+            if !has_perturbations {
+                let resets: Vec<(SatId, State)> = group
+                    .satellites_with_dynamics()
+                    .enumerate()
+                    .filter_map(|(i, (entry, _))| {
+                        if !entry.terminated && current_t >= metas[i].orbit_end_t - 1e-9 {
+                            Some((entry.id.clone(), metas[i].spec.initial_state(params.mu)))
+                        } else {
+                            None
                         }
+                    })
+                    .collect();
+
+                for (id, new_state) in &resets {
+                    group.reset_state(id, new_state.clone());
+                    if let Some(i) = metas.iter().position(|m| {
+                        m.spec.id.as_str() == AsRef::<str>::as_ref(id)
+                    }) {
+                        metas[i].orbit_end_t = current_t + metas[i].spec.period;
                     }
                 }
-
-                all_outputs.extend(outputs);
-
-                // Handle termination
-                if let Some(reason) = termination {
-                    eprintln!(
-                        "Simulation terminated for {} at t={:.2}s: {}",
-                        ss.spec.id, ss.t, reason
-                    );
-                    let msg = serde_json::to_string(&WsMessage::SimulationTerminated {
-                        satellite_id: ss.spec.id.clone(),
-                        t: ss.t,
-                        reason: reason.to_string(),
-                    })
-                    .expect("failed to serialize termination message");
-                    let _ = tx.send(msg.clone());
-                    terminated_events.write().await.push(msg);
-                    ss.terminated = true;
-                    break;
-                }
             }
+
+            let outcome = group.propagate_to(target_t).unwrap();
+
+            // Collect stream outputs
+            for (i, (entry, dyn_sys)) in group.satellites_with_dynamics().enumerate() {
+                if entry.terminated {
+                    continue;
+                }
+                if entry.t < target_t - 1e-9 {
+                    continue;
+                }
+
+                let accels = accel_breakdown(dyn_sys, entry.t, &entry.state);
+                let hs = make_history_state(
+                    metas[i].spec.id.as_str(),
+                    entry.t,
+                    &entry.state.position,
+                    &entry.state.velocity,
+                    params.mu,
+                    accels,
+                );
+
+                // Save output_interval-aligned states to history
+                if hs.t >= metas[i].next_save_t - 1e-9 {
+                    let mut h = history.write().await;
+                    h.push(hs.clone());
+                    metas[i].next_save_t += params.output_interval;
+                }
+
+                all_outputs.push(hs);
+            }
+
+            // Handle terminations
+            for term in &outcome.terminations {
+                eprintln!(
+                    "Simulation terminated for {} at t={:.2}s: {}",
+                    term.satellite_id, term.t, term.reason
+                );
+                let sid_str: &str = term.satellite_id.as_ref();
+                let msg = serde_json::to_string(&WsMessage::SimulationTerminated {
+                    satellite_id: sid_str.to_string(),
+                    t: term.t,
+                    reason: term.reason.clone(),
+                })
+                .expect("failed to serialize termination message");
+                let _ = tx.send(msg.clone());
+                terminated_events.write().await.push(msg);
+            }
+
+            current_t = target_t;
         }
 
         // Sort all outputs by time for interleaved sending

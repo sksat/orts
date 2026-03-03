@@ -6,7 +6,7 @@ pub mod independent;
 pub use state::GroupState;
 pub use dynamics::IndependentGroupDynamics;
 pub use prop_group::{PropGroup, PropGroupOutcome, SatId, SatelliteTermination, GroupSnapshot};
-pub use independent::IndependentGroup;
+pub use independent::{IndependentGroup, IntegratorConfig};
 
 use nalgebra::Vector3;
 

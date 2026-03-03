@@ -1,12 +1,16 @@
+use std::ops::ControlFlow;
+
+use orts_integrator::State;
+use orts_orbits::kepler::KeplerianElements;
+use orts_sim::group::prop_group::PropGroup;
+use orts_sim::group::{IndependentGroup, IntegratorConfig};
 use orts_sim::record::archetypes::OrbitalState;
 use orts_sim::record::components::{BodyRadius, GravitationalParameter};
 use orts_sim::record::entity_path::EntityPath;
 use orts_sim::record::recording::Recording;
 use orts_sim::record::timeline::TimePoint;
-use orts_integrator::{AdvanceOutcome, DormandPrince, IntegrationOutcome, Integrator, Rk4, State};
-use orts_orbits::{events, events::SimulationEvent, kepler::KeplerianElements};
 
-use crate::cli::{SimArgs, OutputFormat, IntegratorChoice};
+use crate::cli::{IntegratorChoice, OutputFormat, SimArgs};
 use crate::satellite::OrbitSpec;
 use crate::sim::params::SimParams;
 
@@ -45,113 +49,130 @@ pub fn run_simulation(params: &SimParams) -> Recording {
     rec.log_static(&body_path, &GravitationalParameter(params.mu));
     rec.log_static(&body_path, &BodyRadius(params.body.properties().radius));
 
+    // Build integrator config
+    let config = match params.integrator {
+        IntegratorChoice::Rk4 => IntegratorConfig::Rk4 { dt: params.dt },
+        IntegratorChoice::Dp45 => IntegratorConfig::Dp45 {
+            dt: params.dt,
+            tolerances: params.tolerances.clone(),
+        },
+    };
+
+    // Build event checker (collision + atmospheric entry)
+    let props = params.body.properties();
+    let body_radius = props.radius;
+    let atmosphere_altitude = props.atmosphere_altitude;
+    let event_checker = move |_t: f64, state: &State| -> ControlFlow<String> {
+        let r = state.position.magnitude();
+        if r < body_radius {
+            ControlFlow::Break(format!("collision at {:.1} km altitude", r - body_radius))
+        } else if let Some(atm_alt) = atmosphere_altitude {
+            if r < body_radius + atm_alt {
+                ControlFlow::Break(format!(
+                    "atmospheric entry at {:.1} km altitude",
+                    r - body_radius
+                ))
+            } else {
+                ControlFlow::Continue(())
+            }
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
+
+    // Build group with all satellites
+    let mut group = IndependentGroup::new(config).with_event_checker(event_checker);
+
+    // Track entity paths per satellite for recording
+    let sat_paths: Vec<EntityPath> = params.satellites.iter().map(|s| s.entity_path()).collect();
+
     for sat in &params.satellites {
-        let system = build_orbital_system(&params.body, params.mu, params.epoch, sat, params.atmosphere, params.f107, params.ap, params.space_weather_provider.as_ref());
+        let system = build_orbital_system(
+            &params.body,
+            params.mu,
+            params.epoch,
+            sat,
+            params.atmosphere,
+            params.f107,
+            params.ap,
+            params.space_weather_provider.as_ref(),
+        );
         let initial = sat.initial_state(params.mu);
-        let sat_path = sat.entity_path();
 
-        let mut step: u64 = 0;
-        let record_state = |rec: &mut Recording, t: f64, step: u64, state: &State| {
-            let tp = TimePoint::new().with_sim_time(t).with_step(step);
-            let os = OrbitalState::new(state.position, state.velocity);
-            rec.log_orbital_state(&sat_path, &tp, &os);
-        };
+        group = group.add_satellite_until(sat.id.as_str(), initial, sat.period, system);
+    }
 
-        record_state(&mut rec, 0.0, step, &initial);
-        step += 1;
+    // Record initial states
+    let mut steps: Vec<u64> = vec![0; params.satellites.len()];
+    let mut last_output_t: Vec<f64> = vec![0.0; params.satellites.len()];
+    for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
+        let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
+        let os = OrbitalState::new(entry.state.position, entry.state.velocity);
+        rec.log_orbital_state(&sat_paths[i], &tp, &os);
+        steps[i] = 1;
+    }
 
-        let mut next_output_t = params.output_interval;
-        let mut last_output_t = 0.0_f64;
-        let props = params.body.properties();
-        let body_radius = props.radius;
-        let event_checker = events::collision_check(body_radius, props.atmosphere_altitude);
+    // Propagate in output_interval steps
+    let max_period = params
+        .satellites
+        .iter()
+        .map(|s| s.period)
+        .fold(0.0_f64, f64::max);
+    let mut t = 0.0_f64;
 
-        let outcome: IntegrationOutcome<State, SimulationEvent> = match params.integrator {
-            IntegratorChoice::Rk4 => {
-                let callback = |t: f64, state: &State| {
-                    if t >= next_output_t - 1e-9 {
-                        record_state(&mut rec, t, step, state);
-                        step += 1;
-                        last_output_t = t;
-                        next_output_t += params.output_interval;
-                    }
-                };
-                Rk4.integrate_with_events(
-                    &system,
-                    initial,
-                    0.0,
-                    sat.period,
-                    params.dt,
-                    callback,
-                    &event_checker,
-                )
+    while !group.all_finished() {
+        t += params.output_interval;
+        if t > max_period {
+            t = max_period;
+        }
+
+        let outcome = group.propagate_to(t).unwrap();
+
+        // Record states for satellites that reached this output time
+        for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
+            if !entry.terminated && entry.t >= t - 1e-9 {
+                let tp = TimePoint::new()
+                    .with_sim_time(entry.t)
+                    .with_step(steps[i]);
+                let os = OrbitalState::new(entry.state.position, entry.state.velocity);
+                rec.log_orbital_state(&sat_paths[i], &tp, &os);
+                steps[i] += 1;
+                last_output_t[i] = entry.t;
             }
-            IntegratorChoice::Dp45 => {
-                let t_end = sat.period;
-                let mut stepper = DormandPrince.stepper(
-                    &system,
-                    initial,
-                    0.0,
-                    params.dt.min(t_end),
-                    params.tolerances.clone(),
-                );
-                stepper.dt_min = 1e-12 * t_end.abs().max(1.0);
+        }
 
-                let mut final_outcome: IntegrationOutcome<State, SimulationEvent> =
-                    IntegrationOutcome::Completed(stepper.state().clone());
+        // Report terminations
+        for term in &outcome.terminations {
+            eprintln!(
+                "Simulation terminated at t={:.2}s for {}: {}",
+                term.t, term.satellite_id, term.reason
+            );
+            // Record final state for terminated satellites
+            if let Some(i) = params
+                .satellites
+                .iter()
+                .position(|s| s.id.as_str() == AsRef::<str>::as_ref(&term.satellite_id))
+                && let Some(entry) = group.satellite(&term.satellite_id)
+            {
+                let tp = TimePoint::new()
+                    .with_sim_time(entry.t)
+                    .with_step(steps[i]);
+                let os = OrbitalState::new(entry.state.position, entry.state.velocity);
+                rec.log_orbital_state(&sat_paths[i], &tp, &os);
+                steps[i] += 1;
+            }
+        }
+    }
 
-                while stepper.t() < t_end {
-                    let t_target = next_output_t.min(t_end);
-                    match stepper.advance_to(t_target, |_, _| {}, &event_checker) {
-                        Ok(AdvanceOutcome::Reached) => {
-                            if stepper.t() >= next_output_t - 1e-9 {
-                                record_state(&mut rec, stepper.t(), step, stepper.state());
-                                step += 1;
-                                last_output_t = stepper.t();
-                                next_output_t += params.output_interval;
-                            }
-                            final_outcome =
-                                IntegrationOutcome::Completed(stepper.state().clone());
-                        }
-                        Ok(AdvanceOutcome::Event { reason }) => {
-                            let t = stepper.t();
-                            final_outcome = IntegrationOutcome::Terminated {
-                                state: stepper.into_state(),
-                                t,
-                                reason,
-                            };
-                            break;
-                        }
-                        Err(e) => {
-                            final_outcome = IntegrationOutcome::Error(e);
-                            break;
-                        }
-                    }
-                }
-
-                final_outcome
-            }
-        };
-
-        match &outcome {
-            IntegrationOutcome::Completed(final_state) => {
-                if (sat.period - last_output_t) > 1e-9 {
-                    record_state(&mut rec, sat.period, step, final_state);
-                }
-            }
-            IntegrationOutcome::Terminated { state, t, reason } => {
-                eprintln!(
-                    "Simulation terminated at t={t:.2}s for {}: {reason:?}",
-                    sat.id
-                );
-                record_state(&mut rec, *t, step, state);
-            }
-            IntegrationOutcome::Error(err) => {
-                eprintln!(
-                    "Simulation error for {}: {err:?}",
-                    sat.id
-                );
-            }
+    // Record final states for satellites that finished at end_time
+    // (covers the case where period doesn't align with output_interval)
+    for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
+        if !entry.terminated && (entry.t - last_output_t[i]) > 1e-9 {
+            let tp = TimePoint::new()
+                .with_sim_time(entry.t)
+                .with_step(steps[i]);
+            let os = OrbitalState::new(entry.state.position, entry.state.velocity);
+            rec.log_orbital_state(&sat_paths[i], &tp, &os);
         }
     }
 
