@@ -13,7 +13,7 @@ pub use coupled::{
     CoupledGroup, CoupledGroupDynamics, CoupledGroupParts, InterSatelliteForce, InteractionPair,
     MutualGravity, PairContext,
 };
-pub use scheduler::{RegimeConfig, PairRegime, PairPolicy, InteractionSpec};
+pub use scheduler::{RegimeConfig, PairRegime, PairPolicy, InteractionSpec, Scheduler};
 
 use nalgebra::{Vector3, Vector4};
 use orts_integrator::OdeState;

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use orts_integrator::State;
-use orts_sim::group::prop_group::{PropGroup, SatId};
+use orts_sim::group::prop_group::SatId;
 use orts_sim::group::{IndependentGroup, IntegratorConfig};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;

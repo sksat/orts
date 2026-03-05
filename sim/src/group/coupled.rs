@@ -317,17 +317,11 @@ where
     pub fn is_terminated(&self) -> bool {
         self.terminated
     }
-}
 
-impl<D: DynamicalSystem + Send> super::prop_group::PropGroup for CoupledGroup<D>
-where
-    D::State: HasPosition + FromAcceleration + Send,
-{
-    fn ids(&self) -> Vec<SatId> {
-        self.ids.clone()
-    }
-
-    fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError> {
+    pub fn propagate_to(
+        &mut self,
+        t_target: f64,
+    ) -> Result<PropGroupOutcome, IntegrationError> {
         if self.terminated || self.t >= t_target {
             return Ok(PropGroupOutcome {
                 terminations: Vec::new(),
@@ -403,7 +397,11 @@ where
                             IntegrationError::StepSizeTooSmall { t, .. } => *t,
                         };
                         let term = SatelliteTermination {
-                            satellite_id: self.ids.first().cloned().unwrap_or_else(|| SatId::from("unknown")),
+                            satellite_id: self
+                                .ids
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| SatId::from("unknown")),
                             t,
                             reason: format!("{e:?}"),
                         };
@@ -429,7 +427,11 @@ where
                         self.t = current_t;
                         self.terminated = true;
                         let term = SatelliteTermination {
-                            satellite_id: self.ids.first().cloned().unwrap_or_else(|| SatId::from("unknown")),
+                            satellite_id: self
+                                .ids
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| SatId::from("unknown")),
                             t: current_t,
                             reason: "NonFiniteState".to_string(),
                         };
@@ -468,7 +470,7 @@ where
         }
     }
 
-    fn snapshot(&self) -> GroupSnapshot {
+    pub fn snapshot(&self) -> GroupSnapshot {
         if self.terminated {
             return GroupSnapshot {
                 positions: Vec::new(),
@@ -482,6 +484,23 @@ where
                 .map(|(id, s)| (id.clone(), s.position()))
                 .collect(),
         }
+    }
+}
+
+impl<D: DynamicalSystem + Send> super::prop_group::PropGroup for CoupledGroup<D>
+where
+    D::State: HasPosition + FromAcceleration + Send,
+{
+    fn ids(&self) -> Vec<SatId> {
+        self.ids.clone()
+    }
+
+    fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError> {
+        self.propagate_to(t_target)
+    }
+
+    fn snapshot(&self) -> GroupSnapshot {
+        self.snapshot()
     }
 }
 

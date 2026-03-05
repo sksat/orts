@@ -194,17 +194,33 @@ where
             entry.terminated || entry.end_time.is_some_and(|et| entry.t >= et - 1e-9)
         })
     }
-}
 
-impl<D: DynamicalSystem + Send> super::prop_group::PropGroup for IndependentGroup<D>
-where
-    D::State: HasPosition + Send,
-{
-    fn ids(&self) -> Vec<SatId> {
-        self.satellites.iter().map(|(e, _)| e.id.clone()).collect()
+    /// Add a satellite to an already-constructed group (mutable reference).
+    ///
+    /// Unlike the builder methods, this allows specifying both start time and end time.
+    /// Used by the Scheduler when building ephemeral groups.
+    pub fn push_satellite(
+        &mut self,
+        id: impl Into<SatId>,
+        state: D::State,
+        t: f64,
+        end_time: Option<f64>,
+        dynamics: D,
+    ) {
+        let entry = SatelliteEntry {
+            id: id.into(),
+            state,
+            t,
+            terminated: false,
+            end_time,
+        };
+        self.satellites.push((entry, dynamics));
     }
 
-    fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError> {
+    pub fn propagate_to(
+        &mut self,
+        t_target: f64,
+    ) -> Result<PropGroupOutcome, IntegrationError> {
         let mut terminations = Vec::new();
         let integrator = self.integrator.clone();
         let event_checker = &self.event_checker;
@@ -235,9 +251,7 @@ where
                     );
 
                     let result = if let Some(checker) = event_checker {
-                        stepper.advance_to(effective_target, |_, _| {}, |t, s| {
-                            checker(t, s)
-                        })
+                        stepper.advance_to(effective_target, |_, _| {}, |t, s| checker(t, s))
                     } else {
                         stepper.advance_to(
                             effective_target,
@@ -325,7 +339,7 @@ where
         Ok(PropGroupOutcome { terminations })
     }
 
-    fn snapshot(&self) -> GroupSnapshot {
+    pub fn snapshot(&self) -> GroupSnapshot {
         GroupSnapshot {
             positions: self
                 .satellites
@@ -334,6 +348,23 @@ where
                 .map(|(e, _)| (e.id.clone(), e.state.position()))
                 .collect(),
         }
+    }
+}
+
+impl<D: DynamicalSystem + Send> super::prop_group::PropGroup for IndependentGroup<D>
+where
+    D::State: HasPosition + Send,
+{
+    fn ids(&self) -> Vec<SatId> {
+        self.satellites.iter().map(|(e, _)| e.id.clone()).collect()
+    }
+
+    fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError> {
+        self.propagate_to(t_target)
+    }
+
+    fn snapshot(&self) -> GroupSnapshot {
+        self.snapshot()
     }
 }
 
