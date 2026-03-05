@@ -99,14 +99,28 @@ impl InterSatelliteForce for Spring {
     }
 }
 
+/// Extracted data returned by [`CoupledGroup::into_parts`].
+///
+/// Contains everything needed to transfer satellites back to the Scheduler.
+/// Interactions are NOT returned (forces are stateless; the Scheduler
+/// recreates them from `InteractionSpec` factories).
+pub struct CoupledGroupParts<S, D> {
+    pub ids: Vec<SatId>,
+    pub states: Vec<S>,
+    pub dynamics: Vec<D>,
+    pub t: f64,
+    pub terminated: bool,
+    pub termination: Option<SatelliteTermination>,
+}
+
 /// Coupled group dynamics: each satellite's derivatives plus inter-satellite
 /// force contributions, integrated as a single ODE.
 pub struct CoupledGroupDynamics<D: DynamicalSystem>
 where
     D::State: HasPosition + FromAcceleration,
 {
-    pub dynamics: Vec<D>,
-    pub interactions: Vec<InteractionPair>,
+    pub(crate) dynamics: Vec<D>,
+    pub(crate) interactions: Vec<InteractionPair>,
 }
 
 impl<D: DynamicalSystem> CoupledGroupDynamics<D>
@@ -248,6 +262,47 @@ where
             .interactions
             .push(InteractionPair { i, j, force });
         self
+    }
+
+    /// Add a satellite to an already-constructed group (mutable reference).
+    ///
+    /// Unlike [`add_satellite`](Self::add_satellite) (builder pattern, consumes self),
+    /// this method borrows `&mut self` for use by the Scheduler when building
+    /// ephemeral groups.
+    pub fn push_satellite(&mut self, id: impl Into<SatId>, state: D::State, dynamics: D) {
+        self.ids.push(id.into());
+        self.dynamics.dynamics.push(dynamics);
+        self.state.states.push(state);
+    }
+
+    /// Add an interaction to an already-constructed group (mutable reference).
+    pub fn push_interaction(&mut self, i: usize, j: usize, force: Box<dyn InterSatelliteForce>) {
+        self.dynamics
+            .interactions
+            .push(InteractionPair { i, j, force });
+    }
+
+    /// Set the current time for this group.
+    ///
+    /// Used by the Scheduler to set the start time of an ephemeral group.
+    pub fn set_t(&mut self, t: f64) {
+        self.t = t;
+    }
+
+    /// Consume the group, returning all satellite data and dynamics.
+    ///
+    /// Used by the Scheduler to recover state and dynamics after ephemeral
+    /// group propagation. Interactions are NOT returned (forces are stateless;
+    /// the Scheduler recreates them from `InteractionSpec` factories).
+    pub fn into_parts(self) -> CoupledGroupParts<D::State, D> {
+        CoupledGroupParts {
+            ids: self.ids,
+            states: self.state.states,
+            dynamics: self.dynamics.dynamics,
+            t: self.t,
+            terminated: self.terminated,
+            termination: self.termination,
+        }
     }
 
     pub fn group_state(&self) -> &GroupState<D::State> {
@@ -1192,6 +1247,89 @@ mod tests {
         let snap2 = group.snapshot();
         assert_eq!(snap2.positions.len(), 2);
         assert!((snap2.positions[0].1 - snap.positions[0].1).magnitude() > 1.0);
+    }
+
+    // ── into_parts + push API tests ──────────────────────────────────────
+
+    #[test]
+    fn into_parts_preserves_state_and_dynamics() {
+        let group: CoupledGroup<TwoBodySystem> =
+            CoupledGroup::rk4(10.0)
+                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
+                .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH })
+                .with_interaction(
+                    0,
+                    1,
+                    Box::new(MutualGravity {
+                        mu_i: 1e-10,
+                        mu_j: 1e-10,
+                    }),
+                );
+
+        let parts = group.into_parts();
+        assert_eq!(parts.ids.len(), 2);
+        assert_eq!(parts.states.len(), 2);
+        assert_eq!(parts.dynamics.len(), 2);
+        assert_eq!(parts.ids[0], SatId::from("iss"));
+        assert_eq!(parts.ids[1], SatId::from("sso"));
+        assert!((parts.states[0].position.x - 6778.137).abs() < 1e-10);
+        assert!((parts.dynamics[0].mu - MU_EARTH).abs() < 1e-6);
+        assert!((parts.t - 0.0).abs() < 1e-15);
+        assert!(!parts.terminated);
+        assert!(parts.termination.is_none());
+    }
+
+    #[test]
+    fn into_parts_after_termination() {
+        let decaying = State {
+            position: Vector3::new(6500.0, 0.0, 0.0),
+            velocity: Vector3::new(-5.0, 3.0, 0.0),
+        };
+
+        let mut group: CoupledGroup<TwoBodySystem> =
+            CoupledGroup::dp45(10.0, default_tol())
+                .with_event_checker(move |_t: f64, state: &State| {
+                    if state.position.magnitude() < EARTH_RADIUS {
+                        ControlFlow::Break("collision".to_string())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                })
+                .add_satellite("safe", iss_state(), TwoBodySystem { mu: MU_EARTH })
+                .add_satellite("decay", decaying, TwoBodySystem { mu: MU_EARTH });
+
+        group.propagate_to(10000.0).unwrap();
+        assert!(group.is_terminated());
+
+        let parts = group.into_parts();
+        assert!(parts.terminated);
+        assert!(parts.termination.is_some());
+        assert!(parts.termination.unwrap().reason.contains("collision"));
+        // Dynamics are still returned even after termination
+        assert_eq!(parts.dynamics.len(), 2);
+    }
+
+    #[test]
+    fn push_satellite_and_interaction() {
+        let mut group: CoupledGroup<TwoBodySystem> = CoupledGroup::rk4(10.0);
+        group.push_satellite("a", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        group.push_satellite("b", sso_state(), TwoBodySystem { mu: MU_EARTH });
+        group.push_interaction(
+            0,
+            1,
+            Box::new(Spring {
+                stiffness: 0.01,
+                rest_length: 10.0,
+            }),
+        );
+        group.set_t(42.0);
+
+        assert_eq!(group.ids(), vec![SatId::from("a"), SatId::from("b")]);
+        assert!((group.current_t() - 42.0).abs() < 1e-15);
+
+        // Should be able to propagate after push construction
+        group.propagate_to(52.0).unwrap();
+        assert!((group.current_t() - 52.0).abs() < 1e-9);
     }
 
     #[test]

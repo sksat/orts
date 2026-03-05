@@ -24,6 +24,19 @@ pub struct SatelliteEntry<S: OdeState> {
     pub end_time: Option<f64>,
 }
 
+/// Extracted satellite data returned by [`IndependentGroup::into_parts`].
+///
+/// Contains everything needed to reconstruct an `IndependentGroup` or
+/// transfer satellites to a different group type (e.g., `CoupledGroup`).
+pub struct SatelliteParts<S, D> {
+    pub id: SatId,
+    pub state: S,
+    pub t: f64,
+    pub terminated: bool,
+    pub end_time: Option<f64>,
+    pub dynamics: D,
+}
+
 /// Group of independently propagated satellites, each with its own stepper.
 ///
 /// Each satellite has its own `DynamicalSystem` instance and adaptive step size.
@@ -155,6 +168,24 @@ where
         if let Some((entry, _)) = self.satellites.iter_mut().find(|(e, _)| &e.id == id) {
             entry.state = new_state;
         }
+    }
+
+    /// Consume the group, returning all satellite data and dynamics.
+    ///
+    /// Used by the Scheduler to recover state and dynamics after ephemeral
+    /// group propagation.
+    pub fn into_parts(self) -> Vec<SatelliteParts<D::State, D>> {
+        self.satellites
+            .into_iter()
+            .map(|(entry, dynamics)| SatelliteParts {
+                id: entry.id,
+                state: entry.state,
+                t: entry.t,
+                terminated: entry.terminated,
+                end_time: entry.end_time,
+                dynamics,
+            })
+            .collect()
     }
 
     /// Returns `true` if every satellite is either terminated or has reached its `end_time`.
@@ -936,6 +967,48 @@ mod tests {
         assert!((entry.t - t_before).abs() < 1e-12);
         // Position should be back to initial
         assert!((entry.state.position.x - 6778.137).abs() < 1e-10);
+    }
+
+    // --- into_parts tests ---
+
+    #[test]
+    fn into_parts_preserves_state_and_dynamics() {
+        let group: IndependentGroup<TwoBodySystem> =
+            IndependentGroup::dp45(10.0, default_tol())
+                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
+                .add_satellite_until("sso", sso_state(), 50.0, TwoBodySystem { mu: MU_EARTH });
+
+        let parts = group.into_parts();
+        assert_eq!(parts.len(), 2);
+
+        assert_eq!(parts[0].id, SatId::from("iss"));
+        assert!((parts[0].state.position.x - 6778.137).abs() < 1e-10);
+        assert!((parts[0].t - 0.0).abs() < 1e-15);
+        assert!(!parts[0].terminated);
+        assert!(parts[0].end_time.is_none());
+        assert!((parts[0].dynamics.mu - MU_EARTH).abs() < 1e-6);
+
+        assert_eq!(parts[1].id, SatId::from("sso"));
+        assert!((parts[1].end_time.unwrap() - 50.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn into_parts_after_propagation() {
+        let mut group: IndependentGroup<TwoBodySystem> =
+            IndependentGroup::dp45(10.0, default_tol())
+                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+
+        group.propagate_to(100.0).unwrap();
+
+        // Capture state before consuming
+        let expected_t = group.satellites().next().unwrap().t;
+        let expected_pos = group.satellites().next().unwrap().state.position;
+
+        let parts = group.into_parts();
+        assert_eq!(parts.len(), 1);
+        assert!((parts[0].t - expected_t).abs() < 1e-15);
+        assert_eq!(parts[0].state.position, expected_pos);
+        assert!(!parts[0].terminated);
     }
 
     #[test]

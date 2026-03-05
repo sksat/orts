@@ -7,10 +7,10 @@ pub mod coupled;
 pub use state::GroupState;
 pub use dynamics::IndependentGroupDynamics;
 pub use prop_group::{PropGroup, PropGroupOutcome, SatId, SatelliteTermination, GroupSnapshot};
-pub use independent::{IndependentGroup, IntegratorConfig};
+pub use independent::{IndependentGroup, IntegratorConfig, SatelliteParts};
 pub use coupled::{
-    CoupledGroup, CoupledGroupDynamics, InterSatelliteForce, InteractionPair, MutualGravity,
-    PairContext,
+    CoupledGroup, CoupledGroupDynamics, CoupledGroupParts, InterSatelliteForce, InteractionPair,
+    MutualGravity, PairContext,
 };
 
 use nalgebra::{Vector3, Vector4};
