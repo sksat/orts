@@ -3,6 +3,7 @@ pub mod dynamics;
 pub mod prop_group;
 pub mod independent;
 pub mod coupled;
+pub mod scheduler;
 
 pub use state::GroupState;
 pub use dynamics::IndependentGroupDynamics;
@@ -12,6 +13,7 @@ pub use coupled::{
     CoupledGroup, CoupledGroupDynamics, CoupledGroupParts, InterSatelliteForce, InteractionPair,
     MutualGravity, PairContext,
 };
+pub use scheduler::{RegimeConfig, PairRegime, PairPolicy, InteractionSpec};
 
 use nalgebra::{Vector3, Vector4};
 use orts_integrator::OdeState;

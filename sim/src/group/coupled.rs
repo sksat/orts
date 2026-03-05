@@ -1,4 +1,5 @@
 use std::ops::ControlFlow;
+use std::sync::Arc;
 
 use nalgebra::Vector3;
 use orts_integrator::{
@@ -35,7 +36,7 @@ pub trait InterSatelliteForce: Send + Sync {
 pub struct InteractionPair {
     pub i: usize,
     pub j: usize,
-    pub force: Box<dyn InterSatelliteForce>,
+    pub force: Arc<dyn InterSatelliteForce>,
 }
 
 /// Mutual gravitational attraction between two bodies.
@@ -102,8 +103,8 @@ impl InterSatelliteForce for Spring {
 /// Extracted data returned by [`CoupledGroup::into_parts`].
 ///
 /// Contains everything needed to transfer satellites back to the Scheduler.
-/// Interactions are NOT returned (forces are stateless; the Scheduler
-/// recreates them from `InteractionSpec` factories).
+/// Interactions are NOT returned; the Scheduler holds `Arc` references
+/// to forces and re-clones them into new ephemeral groups.
 pub struct CoupledGroupParts<S, D> {
     pub ids: Vec<SatId>,
     pub states: Vec<S>,
@@ -256,7 +257,7 @@ where
         mut self,
         i: usize,
         j: usize,
-        force: Box<dyn InterSatelliteForce>,
+        force: Arc<dyn InterSatelliteForce>,
     ) -> Self {
         self.dynamics
             .interactions
@@ -276,7 +277,7 @@ where
     }
 
     /// Add an interaction to an already-constructed group (mutable reference).
-    pub fn push_interaction(&mut self, i: usize, j: usize, force: Box<dyn InterSatelliteForce>) {
+    pub fn push_interaction(&mut self, i: usize, j: usize, force: Arc<dyn InterSatelliteForce>) {
         self.dynamics
             .interactions
             .push(InteractionPair { i, j, force });
@@ -292,8 +293,8 @@ where
     /// Consume the group, returning all satellite data and dynamics.
     ///
     /// Used by the Scheduler to recover state and dynamics after ephemeral
-    /// group propagation. Interactions are NOT returned (forces are stateless;
-    /// the Scheduler recreates them from `InteractionSpec` factories).
+    /// group propagation. Interactions are NOT returned; the Scheduler
+    /// holds `Arc` references to forces and re-clones them.
     pub fn into_parts(self) -> CoupledGroupParts<D::State, D> {
         CoupledGroupParts {
             ids: self.ids,
@@ -663,7 +664,7 @@ mod tests {
             vec![InteractionPair {
                 i: 0,
                 j: 1,
-                force: Box::new(MutualGravity {
+                force: Arc::new(MutualGravity {
                     mu_i: 1e-10,
                     mu_j: 1e-10,
                 }),
@@ -703,8 +704,8 @@ mod tests {
             velocity: Vector3::new(0.0, 0.0, 7.1),
         };
 
-        let mg = |mu_i, mu_j| -> Box<dyn InterSatelliteForce> {
-            Box::new(MutualGravity { mu_i, mu_j })
+        let mg = |mu_i, mu_j| -> Arc<dyn InterSatelliteForce> {
+            Arc::new(MutualGravity { mu_i, mu_j })
         };
 
         let coupled = CoupledGroupDynamics::new(
@@ -775,17 +776,17 @@ mod tests {
                 InteractionPair {
                     i: 0,
                     j: 1,
-                    force: Box::new(MutualGravity { mu_i: mu_0, mu_j: mu_1 }),
+                    force: Arc::new(MutualGravity { mu_i: mu_0, mu_j: mu_1 }),
                 },
                 InteractionPair {
                     i: 0,
                     j: 2,
-                    force: Box::new(MutualGravity { mu_i: mu_0, mu_j: mu_2 }),
+                    force: Arc::new(MutualGravity { mu_i: mu_0, mu_j: mu_2 }),
                 },
                 InteractionPair {
                     i: 1,
                     j: 2,
-                    force: Box::new(MutualGravity { mu_i: mu_1, mu_j: mu_2 }),
+                    force: Arc::new(MutualGravity { mu_i: mu_1, mu_j: mu_2 }),
                 },
             ],
         );
@@ -823,7 +824,7 @@ mod tests {
             vec![InteractionPair {
                 i: 0,
                 j: 1,
-                force: Box::new(Spring {
+                force: Arc::new(Spring {
                     stiffness: k,
                     rest_length: rest,
                 }),
@@ -887,7 +888,7 @@ mod tests {
             vec![InteractionPair {
                 i: 0,
                 j: 1,
-                force: Box::new(Spring {
+                force: Arc::new(Spring {
                     stiffness: k,
                     rest_length: rest,
                 }),
@@ -943,7 +944,7 @@ mod tests {
             vec![InteractionPair {
                 i: 0,
                 j: 1,
-                force: Box::new(Spring {
+                force: Arc::new(Spring {
                     stiffness: k,
                     rest_length: rest,
                 }),
@@ -1087,7 +1088,7 @@ mod tests {
             CoupledGroup::dp45(1.0, Tolerances { atol: 1e-12, rtol: 1e-10 })
                 .add_satellite("a", s0, FreeParticle)
                 .add_satellite("b", s1, FreeParticle)
-                .with_interaction(0, 1, Box::new(Spring { stiffness: k, rest_length: rest }));
+                .with_interaction(0, 1, Arc::new(Spring { stiffness: k, rest_length: rest }));
 
         let energy = |gs: &GroupState<State>| -> f64 {
             let ke = gs.states[0].velocity.magnitude_squared() / 2.0
@@ -1138,7 +1139,7 @@ mod tests {
             CoupledGroup::rk4(0.01)
                 .add_satellite("a", s0, FreeParticle)
                 .add_satellite("b", s1, FreeParticle)
-                .with_interaction(0, 1, Box::new(Spring { stiffness: k, rest_length: rest }));
+                .with_interaction(0, 1, Arc::new(Spring { stiffness: k, rest_length: rest }));
 
         group.propagate_to(expected_period).unwrap();
 
@@ -1260,7 +1261,7 @@ mod tests {
                 .with_interaction(
                     0,
                     1,
-                    Box::new(MutualGravity {
+                    Arc::new(MutualGravity {
                         mu_i: 1e-10,
                         mu_j: 1e-10,
                     }),
@@ -1317,7 +1318,7 @@ mod tests {
         group.push_interaction(
             0,
             1,
-            Box::new(Spring {
+            Arc::new(Spring {
                 stiffness: 0.01,
                 rest_length: 10.0,
             }),
