@@ -130,8 +130,12 @@ test.describe("multi-satellite NaN alignment", () => {
       expect(counts.iss).toBeGreaterThan(0);
     }).toPass({ timeout: 15000, intervals: [500, 1000, 1000, 2000, 2000] });
 
-    // Stop streaming: close mock server connections so no more data arrives
-    wss.clients.forEach((ws) => ws.close());
+    // Stop streaming: click the viewer's disconnect button.
+    // Using the UI button sets manualDisconnectRef, which suppresses
+    // auto-reconnect.  Server-side close would trigger auto-reconnect →
+    // handleConnect → setSimInfo(null) → CREATE OR REPLACE TABLE, wiping
+    // the DuckDB tables before the final query.
+    await page.locator(".ws-disconnect-btn").click();
     // Wait for tick loop to drain any remaining buffered data
     await page.waitForTimeout(2000);
 
