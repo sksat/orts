@@ -113,6 +113,11 @@ fn evaluate_auto_regime(
     t: f64,
     config: &RegimeConfig,
 ) -> PairRegime {
+    // Non-finite distance (NaN or Infinity) → force Independent
+    if !dist.is_finite() {
+        return PairRegime::Independent;
+    }
+
     let can_downgrade = (t - current.last_transition_t) >= config.min_dwell_time;
 
     match current.regime {
@@ -491,7 +496,21 @@ where
         let mut all_terminations = Vec::new();
 
         while self.t < t_target - 1e-12 {
-            let sync_target = (self.t + self.config.sync_interval).min(t_target);
+            // Clamp sync_target to earliest active end_time not yet reached
+            let min_end = self
+                .satellites
+                .iter()
+                .filter(|s| {
+                    !s.terminated && s.end_time.is_some_and(|et| et > self.t + 1e-9)
+                })
+                .filter_map(|s| s.end_time)
+                .fold(t_target, f64::min);
+            let sync_target = (self.t + self.config.sync_interval).min(min_end);
+
+            // Progress guard: if sync_target can't advance (float precision), break
+            if sync_target <= self.t + 1e-12 {
+                break;
+            }
 
             // Re-evaluate pair regimes based on current distances
             self.update_pair_regimes();
@@ -505,8 +524,8 @@ where
                 // KDK path: Strang splitting (half-kick + drift + half-kick)
                 let dt_sync = sync_target - self.t;
 
-                // 1. Compute accelerations at current positions
-                let accels_start = self.compute_kick_accels(&grouping.kick_pairs);
+                // 1. Compute accelerations at current positions (pre-drift time)
+                let accels_start = self.compute_kick_accels(&grouping.kick_pairs, self.t);
 
                 // 2. Half-kick (apply dt_sync/2 velocity impulse)
                 self.apply_kicks(&grouping.kick_pairs, &accels_start, dt_sync / 2.0);
@@ -520,17 +539,20 @@ where
 
                 if has_events {
                     // Event during drift. Apply second half-kick only to active sats.
-                    let accels_end = self.compute_kick_accels(&grouping.kick_pairs);
+                    let accels_end =
+                        self.compute_kick_accels(&grouping.kick_pairs, sync_target);
                     self.apply_kicks_active(
                         &grouping.kick_pairs,
                         &accels_end,
                         dt_sync / 2.0,
                     );
+                    self.t = sync_target;
                     break;
                 }
 
-                // 5. Compute accelerations at new positions
-                let accels_end = self.compute_kick_accels(&grouping.kick_pairs);
+                // 5. Compute accelerations at new positions (post-drift time)
+                let accels_end =
+                    self.compute_kick_accels(&grouping.kick_pairs, sync_target);
 
                 // 6. Second half-kick
                 self.apply_kicks(&grouping.kick_pairs, &accels_end, dt_sync / 2.0);
@@ -554,16 +576,23 @@ where
     /// Update pair regimes based on current satellite distances and hysteresis.
     fn update_pair_regimes(&mut self) {
         for (idx, spec) in self.interactions.iter().enumerate() {
-            let regime = match &spec.policy {
-                PairPolicy::Fixed(r) => *r,
-                PairPolicy::Auto => {
-                    let i = self.satellites.iter().position(|s| s.id == spec.sat_i);
-                    let j = self.satellites.iter().position(|s| s.id == spec.sat_j);
+            // If either satellite is terminated, force Independent regardless of policy
+            let either_terminated = {
+                let i = self.satellites.iter().find(|s| s.id == spec.sat_i);
+                let j = self.satellites.iter().find(|s| s.id == spec.sat_j);
+                i.is_some_and(|s| s.terminated) || j.is_some_and(|s| s.terminated)
+            };
 
-                    if let (Some(i), Some(j)) = (i, j) {
-                        if self.satellites[i].terminated || self.satellites[j].terminated {
-                            PairRegime::Independent
-                        } else {
+            let regime = if either_terminated {
+                PairRegime::Independent
+            } else {
+                match &spec.policy {
+                    PairPolicy::Fixed(r) => *r,
+                    PairPolicy::Auto => {
+                        let i = self.satellites.iter().position(|s| s.id == spec.sat_i);
+                        let j = self.satellites.iter().position(|s| s.id == spec.sat_j);
+
+                        if let (Some(i), Some(j)) = (i, j) {
                             let dist = (self.satellites[i].state.position()
                                 - self.satellites[j].state.position())
                             .magnitude();
@@ -573,9 +602,9 @@ where
                                 self.t,
                                 &self.config,
                             )
+                        } else {
+                            self.pair_states[idx].regime
                         }
-                    } else {
-                        self.pair_states[idx].regime
                     }
                 }
             };
@@ -695,8 +724,10 @@ where
             terminations.extend(outcome.terminations);
 
             let parts = group.into_parts();
-            // Recover state and dynamics for each satellite
-            let terminated = parts.terminated;
+            // Recover state and dynamics for each satellite.
+            // For event terminations: only the triggering satellite is "dead".
+            // For integration errors: all satellites in the group are corrupted.
+            let term_id = parts.termination.as_ref().map(|t| &t.satellite_id);
             for ((state, dynamics), &sat_idx) in parts
                 .states
                 .into_iter()
@@ -706,7 +737,12 @@ where
                 let sat = &mut self.satellites[sat_idx];
                 sat.state = state;
                 sat.dynamics = Some(dynamics);
-                sat.terminated = terminated;
+                if parts.terminated && !parts.is_event_termination {
+                    // Integration error: composite ODE state corrupted
+                    sat.terminated = true;
+                } else {
+                    sat.terminated = term_id.is_some_and(|tid| tid == &sat.id);
+                }
             }
         }
 
@@ -722,6 +758,7 @@ where
     fn compute_kick_accels(
         &self,
         kick_pairs: &[KickPair],
+        t: f64,
     ) -> Vec<(nalgebra::Vector3<f64>, nalgebra::Vector3<f64>)> {
         kick_pairs
             .iter()
@@ -729,7 +766,7 @@ where
                 let pos_i = self.satellites[kp.sat_i].state.position();
                 let pos_j = self.satellites[kp.sat_j].state.position();
                 let ctx = PairContext {
-                    t: self.t,
+                    t,
                     pos_i: &pos_i,
                     pos_j: &pos_j,
                 };
@@ -1503,9 +1540,10 @@ mod tests {
         // "b" should eventually cross x=30 (spring + outward velocity)
         assert!(!outcome.terminations.is_empty());
 
-        // CoupledGroup terminates the whole group, so snapshot should be empty
+        // Only the triggering satellite ("b") should be terminated; "a" survives
         let snap = sched.snapshot();
-        assert!(snap.positions.is_empty(), "coupled group should be fully terminated");
+        assert_eq!(snap.positions.len(), 1, "only 'a' should survive");
+        assert_eq!(snap.positions[0].0, SatId::from("a"));
     }
 
     #[test]
@@ -2199,5 +2237,448 @@ mod tests {
         let b = sched.satellite_state(&SatId::from("b")).unwrap();
         assert!(a.position.x.is_finite() && a.position.y.is_finite() && a.position.z.is_finite());
         assert!(b.position.x.is_finite() && b.position.y.is_finite() && b.position.z.is_finite());
+    }
+
+    // ── Bug 1: compute_kick_accels time parameter ───────────────────
+
+    /// Spring whose stiffness scales linearly with time: k(t) = k0 * (1 + alpha * t).
+    /// This makes the force time-dependent, exposing bugs where the wrong time is used.
+    struct TimeScaledSpring {
+        k0: f64,
+        alpha: f64,
+        rest_length: f64,
+    }
+
+    impl InterSatelliteForce for TimeScaledSpring {
+        fn name(&self) -> &str {
+            "time_scaled_spring"
+        }
+        fn acceleration_pair(
+            &self,
+            ctx: &PairContext<'_>,
+        ) -> (Vector3<f64>, Vector3<f64>) {
+            let k = self.k0 * (1.0 + self.alpha * ctx.t);
+            let r_vec = ctx.pos_j - ctx.pos_i;
+            let r = r_vec.magnitude();
+            if r < 1e-10 {
+                return (Vector3::zeros(), Vector3::zeros());
+            }
+            let r_hat = r_vec / r;
+            let f = k * (r - self.rest_length);
+            (f * r_hat, -f * r_hat)
+        }
+    }
+
+    #[test]
+    fn kdk_second_kick_uses_post_drift_time() {
+        // With a time-dependent spring, the 2nd kick should use t = sync_target,
+        // not t = 0 (the pre-drift time). If the wrong time is used, the
+        // final velocity will differ from the reference.
+        let k0 = 0.04;
+        let alpha = 0.1;
+        let rest = 10.0;
+        let sync_interval = 5.0;
+
+        let s0 = State {
+            position: Vector3::zeros(),
+            velocity: Vector3::zeros(),
+        };
+        let s1 = State {
+            position: Vector3::new(15.0, 0.0, 0.0),
+            velocity: Vector3::zeros(),
+        };
+        let spring = Arc::new(TimeScaledSpring {
+            k0,
+            alpha,
+            rest_length: rest,
+        });
+
+        let mut sched: Scheduler<FreeParticle> = Scheduler::new(
+            sync_config(sync_interval),
+            IntegratorConfig::Dp45 {
+                dt: 0.1,
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
+            },
+        )
+        .add_satellite("a", s0.clone(), FreeParticle)
+        .add_satellite("b", s1.clone(), FreeParticle)
+        .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring.clone());
+
+        // Propagate exactly one sync step
+        sched.propagate_to(sync_interval).unwrap();
+
+        // Reference: manual KDK with correct time on 2nd kick
+        // 1st kick at t=0: k(0) = k0, displacement = 15-10 = 5
+        let k_start = k0 * (1.0 + alpha * 0.0);
+        let f_start = k_start * (15.0 - rest);
+        // Half-kick: Δv = f * dt_sync/2 = f * 2.5
+        let dt_half = sync_interval / 2.0;
+        let v_a_half = f_start * dt_half; // positive x
+        let v_b_half = -f_start * dt_half;
+
+        // After half-kick, drift for sync_interval (free particle)
+        let pos_a_drift = s0.position.x + v_a_half * sync_interval;
+        let pos_b_drift = s1.position.x + v_b_half * sync_interval;
+
+        // 2nd kick at t=sync_target=5.0: k(5) = k0*(1+0.5) = 1.5*k0
+        let k_end = k0 * (1.0 + alpha * sync_interval);
+        let r_drift = pos_b_drift - pos_a_drift;
+        let f_end = k_end * (r_drift - rest);
+        let v_a_final = v_a_half + f_end * dt_half;
+        let v_b_final = v_b_half - f_end * dt_half;
+
+        let a = sched.satellite_state(&SatId::from("a")).unwrap();
+        let b = sched.satellite_state(&SatId::from("b")).unwrap();
+
+        // Tolerance accounts for DP45 drift integration error
+        assert!(
+            (a.velocity.x - v_a_final).abs() < 1e-6,
+            "a velocity: got {}, expected {}",
+            a.velocity.x,
+            v_a_final
+        );
+        assert!(
+            (b.velocity.x - v_b_final).abs() < 1e-6,
+            "b velocity: got {}, expected {}",
+            b.velocity.x,
+            v_b_final
+        );
+    }
+
+    // ── Bug 6: progress guard ───────────────────────────────────────
+
+    #[test]
+    fn tiny_sync_interval_does_not_hang() {
+        // sync_interval so small that self.t + interval == self.t
+        let mut config = sync_config(1e-300);
+        config.sync_exit = 200.0;
+
+        let s0 = State {
+            position: Vector3::zeros(),
+            velocity: Vector3::new(1.0, 0.0, 0.0),
+        };
+        let s1 = State {
+            position: Vector3::new(100.0, 0.0, 0.0),
+            velocity: Vector3::zeros(),
+        };
+        let spring = Arc::new(Spring {
+            stiffness: 0.01,
+            rest_length: 10.0,
+        });
+
+        let mut sched: Scheduler<FreeParticle> = Scheduler::new(
+            config,
+            IntegratorConfig::Rk4 { dt: 0.1 },
+        )
+        .add_satellite("a", s0, FreeParticle)
+        .add_satellite("b", s1, FreeParticle)
+        .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring);
+
+        // Should complete without hanging (progress guard breaks the loop)
+        sched.propagate_to(10.0).unwrap();
+    }
+
+    #[test]
+    fn float_precision_boundary_does_not_hang() {
+        // At t=1e15, adding 0.01 doesn't change the value due to f64 precision
+        let config = sync_config(0.01);
+
+        let s0 = State {
+            position: Vector3::zeros(),
+            velocity: Vector3::zeros(),
+        };
+
+        let mut sched: Scheduler<FreeParticle> = Scheduler::new(
+            config,
+            IntegratorConfig::Rk4 { dt: 0.1 },
+        )
+        .add_satellite("a", s0, FreeParticle);
+
+        // Start at a large time where sync_interval can't advance
+        sched.t = 1e15;
+        sched.propagate_to(1e15 + 1.0).unwrap();
+    }
+
+    // ── Bug 3: sync_target clamped to end_time ──────────────────────
+
+    #[test]
+    fn kdk_sync_target_clamped_to_end_time() {
+        // With sync_interval=5 and end_time=3, the first sync step should target t=3
+        // (not t=5). Kicks should be sized for dt=3, not dt=5.
+        let k = 0.04;
+        let rest = 10.0;
+        let sync_interval = 5.0;
+
+        let s0 = State {
+            position: Vector3::zeros(),
+            velocity: Vector3::zeros(),
+        };
+        let s1 = State {
+            position: Vector3::new(15.0, 0.0, 0.0),
+            velocity: Vector3::zeros(),
+        };
+        let spring = Arc::new(Spring {
+            stiffness: k,
+            rest_length: rest,
+        });
+
+        let mut sched: Scheduler<FreeParticle> = Scheduler::new(
+            sync_config(sync_interval),
+            IntegratorConfig::Dp45 {
+                dt: 0.1,
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
+            },
+        )
+        .add_satellite("a", s0.clone(), FreeParticle)
+        .add_satellite_until("b", s1.clone(), 3.0, FreeParticle)
+        .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring.clone());
+
+        sched.propagate_to(10.0).unwrap();
+
+        // Reference: KDK with dt_sync=3 (clamped to end_time), not 5
+        // 1st kick at t=0: displacement = 15-10 = 5, force = k*5 = 0.2
+        let f_start = k * (15.0 - rest);
+        let dt_half = 3.0 / 2.0; // clamped dt_sync/2
+
+        // Half-kick: Δv = f * dt_sync/2
+        let v_a_after_kick1 = f_start * dt_half;
+        let v_b_after_kick1 = -f_start * dt_half;
+
+        // After drift for dt_sync=3.0
+        let pos_a_drift = 0.0 + v_a_after_kick1 * 3.0;
+        let pos_b_drift = 15.0 + v_b_after_kick1 * 3.0;
+
+        // 2nd kick at positions after drift
+        let r_drift = pos_b_drift - pos_a_drift;
+        let f_end = k * (r_drift - rest);
+        let v_a_at_3 = v_a_after_kick1 + f_end * dt_half;
+
+        // After t=3, "b" stops. "a" drifts freely from t=3 to t=10 at constant velocity
+        let a = sched.satellite_state(&SatId::from("a")).unwrap();
+        let expected_pos = pos_a_drift + v_a_at_3 * (10.0 - 3.0);
+
+        assert!(
+            (a.position.x - expected_pos).abs() < 1e-4,
+            "a position: got {}, expected {}",
+            a.position.x,
+            expected_pos
+        );
+        assert!((sched.current_t() - 10.0).abs() < 1e-12);
+    }
+
+    // ── Bug 2: self.t updated after event break ─────────────────────
+
+    #[test]
+    fn kdk_event_updates_scheduler_time() {
+        // After an event during KDK on the FIRST sync step, self.t should
+        // advance to sync_target (not remain at 0).
+        let s0 = State {
+            position: Vector3::zeros(),
+            velocity: Vector3::zeros(),
+        };
+        let s1 = State {
+            position: Vector3::new(15.0, 0.0, 0.0),
+            velocity: Vector3::new(10.0, 0.0, 0.0), // very fast → triggers event in first step
+        };
+        let spring = Arc::new(Spring {
+            stiffness: 0.01,
+            rest_length: 10.0,
+        });
+
+        let mut sched: Scheduler<FreeParticle> = Scheduler::new(
+            sync_config(5.0),
+            IntegratorConfig::Dp45 {
+                dt: 0.1,
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
+            },
+        )
+        .with_event_checker(|_t, state: &State| {
+            if state.position.x > 25.0 {
+                ControlFlow::Break("boundary".to_string())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .add_satellite("a", s0, FreeParticle)
+        .add_satellite("b", s1, FreeParticle)
+        .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring);
+
+        let outcome = sched.propagate_to(100.0).unwrap();
+
+        assert!(!outcome.terminations.is_empty());
+        // Key assertion: scheduler time must have advanced from 0
+        // Before fix: self.t stays at 0 because the break skips self.t = sync_target
+        assert!(
+            sched.current_t() >= 5.0 - 1e-9,
+            "scheduler time should be at sync_target=5: got {}",
+            sched.current_t()
+        );
+    }
+
+    // ── Bug 5: NaN distance guard ───────────────────────────────────
+
+    #[test]
+    fn nan_distance_forces_independent_from_coupled() {
+        let config = default_config();
+        let ps = pair_state(PairRegime::Coupled, 0.0);
+        let result = evaluate_auto_regime(f64::NAN, &ps, 1000.0, &config);
+        assert_eq!(result, PairRegime::Independent);
+    }
+
+    #[test]
+    fn nan_distance_forces_independent_from_synchronized() {
+        let config = default_config();
+        let ps = pair_state(PairRegime::Synchronized, 0.0);
+        let result = evaluate_auto_regime(f64::NAN, &ps, 1000.0, &config);
+        assert_eq!(result, PairRegime::Independent);
+    }
+
+    #[test]
+    fn nan_distance_forces_independent_from_independent() {
+        let config = default_config();
+        let ps = pair_state(PairRegime::Independent, 0.0);
+        let result = evaluate_auto_regime(f64::NAN, &ps, 1000.0, &config);
+        assert_eq!(result, PairRegime::Independent);
+    }
+
+    #[test]
+    fn infinity_distance_forces_independent() {
+        let config = default_config();
+        let ps = pair_state(PairRegime::Coupled, 0.0);
+        let result = evaluate_auto_regime(f64::INFINITY, &ps, 1000.0, &config);
+        assert_eq!(result, PairRegime::Independent);
+    }
+
+    // ── Bug 4: per-satellite termination in CoupledGroup ────────────
+
+    #[test]
+    fn coupled_event_only_terminates_triggering_satellite() {
+        // Two satellites with Fixed(Coupled) spring. "b" triggers x > 30 event.
+        // Only "b" should be terminated; "a" should survive in snapshot.
+        let k = 0.01;
+        let rest = 10.0;
+        let s0 = State {
+            position: Vector3::zeros(),
+            velocity: Vector3::zeros(),
+        };
+        let s1 = State {
+            position: Vector3::new(15.0, 0.0, 0.0),
+            velocity: Vector3::new(1.0, 0.0, 0.0), // moving outward
+        };
+        let spring = Arc::new(Spring {
+            stiffness: k,
+            rest_length: rest,
+        });
+
+        let mut sched: Scheduler<FreeParticle> = Scheduler::new(
+            default_config(),
+            IntegratorConfig::Dp45 {
+                dt: 0.1,
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
+            },
+        )
+        .with_event_checker(|_t, state: &State| {
+            if state.position.x > 30.0 {
+                ControlFlow::Break("boundary".to_string())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .add_satellite("a", s0, FreeParticle)
+        .add_satellite("b", s1, FreeParticle)
+        .add_interaction_fixed("a", "b", PairRegime::Coupled, spring);
+
+        let outcome = sched.propagate_to(1000.0).unwrap();
+
+        // "b" should have triggered the event
+        assert_eq!(outcome.terminations.len(), 1);
+        assert_eq!(outcome.terminations[0].satellite_id, SatId::from("b"));
+
+        // Only "b" is terminated; "a" should still be in snapshot
+        let snap = sched.snapshot();
+        assert_eq!(
+            snap.positions.len(),
+            1,
+            "only 'a' should survive, got {} positions",
+            snap.positions.len()
+        );
+        assert_eq!(snap.positions[0].0, SatId::from("a"));
+    }
+
+    #[test]
+    fn coupled_surviving_satellite_continues_propagation() {
+        // After one satellite terminates in a coupled group, the surviving
+        // satellite should continue propagating independently.
+        // Use a per-satellite event that only triggers for "b" (by id).
+        // "a" at origin with y-velocity, "b" far out with outward x-velocity.
+        // Weak spring so "a" stays near origin.
+        let s0 = State {
+            position: Vector3::zeros(),
+            velocity: Vector3::new(0.0, 0.5, 0.0),
+        };
+        let s1 = State {
+            position: Vector3::new(100.0, 0.0, 0.0),
+            velocity: Vector3::new(1.0, 0.0, 0.0),
+        };
+        // Very weak spring, large rest length — negligible force on "a"
+        let spring = Arc::new(Spring {
+            stiffness: 1e-6,
+            rest_length: 100.0,
+        });
+
+        let mut sched: Scheduler<FreeParticle> = Scheduler::new(
+            default_config(),
+            IntegratorConfig::Dp45 {
+                dt: 0.1,
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
+            },
+        )
+        .with_event_checker(|_t, state: &State| {
+            // Only triggers for satellites far in +x direction
+            if state.position.x > 200.0 {
+                ControlFlow::Break("boundary".to_string())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .add_satellite("a", s0, FreeParticle)
+        .add_satellite("b", s1, FreeParticle)
+        .add_interaction_fixed("a", "b", PairRegime::Coupled, spring);
+
+        // Propagate: "b" at x=100 + 1*t will reach 200 at ~t=100
+        let outcome1 = sched.propagate_to(200.0).unwrap();
+        assert!(
+            outcome1.terminations.iter().any(|t| t.satellite_id == SatId::from("b")),
+            "b should have triggered the boundary event"
+        );
+        let t_after = sched.current_t();
+
+        // Continue propagation: "a" should still move (y direction)
+        let a_before = sched.satellite_state(&SatId::from("a")).unwrap().clone();
+        sched.propagate_to(t_after + 100.0).unwrap();
+        let a_after = sched.satellite_state(&SatId::from("a")).unwrap();
+
+        // "a" should have moved further in y (free particle with y-velocity ~0.5)
+        assert!(
+            a_after.position.y > a_before.position.y + 10.0,
+            "surviving satellite should continue: before_y={}, after_y={}",
+            a_before.position.y,
+            a_after.position.y,
+        );
     }
 }

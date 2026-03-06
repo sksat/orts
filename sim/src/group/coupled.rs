@@ -112,6 +112,10 @@ pub struct CoupledGroupParts<S, D> {
     pub t: f64,
     pub terminated: bool,
     pub termination: Option<SatelliteTermination>,
+    /// `true` if termination was caused by a `ControlFlow::Break` event
+    /// (only the triggering satellite is "dead"). `false` for integration
+    /// errors where the composite ODE state is corrupted.
+    pub is_event_termination: bool,
 }
 
 /// Coupled group dynamics: each satellite's derivatives plus inter-satellite
@@ -204,6 +208,7 @@ where
     t: f64,
     terminated: bool,
     termination: Option<SatelliteTermination>,
+    is_event_termination: bool,
     integrator: IntegratorConfig,
     event_checker: Option<EventChecker<D::State>>,
 }
@@ -220,6 +225,7 @@ where
             t: 0.0,
             terminated: false,
             termination: None,
+            is_event_termination: false,
             integrator,
             event_checker: None,
         }
@@ -303,6 +309,7 @@ where
             t: self.t,
             terminated: self.terminated,
             termination: self.termination,
+            is_event_termination: self.is_event_termination,
         }
     }
 
@@ -380,6 +387,7 @@ where
                         self.state = stepper.into_state();
                         self.t = t;
                         self.terminated = true;
+                        self.is_event_termination = true;
                         let term = SatelliteTermination {
                             satellite_id: sat_id,
                             t,
@@ -447,6 +455,7 @@ where
                                 self.state = current_state;
                                 self.t = current_t;
                                 self.terminated = true;
+                                self.is_event_termination = true;
                                 let term = SatelliteTermination {
                                     satellite_id: id.clone(),
                                     t: current_t,
