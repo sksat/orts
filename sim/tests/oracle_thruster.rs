@@ -8,7 +8,7 @@
 //! - RK4 dt convergence (4th order)
 
 use nalgebra::{Matrix3, Vector3, Vector4};
-use orts_attitude::AttitudeState;
+use orts_sim::attitude::AttitudeState;
 use orts_integrator::{Integrator, Rk4, State};
 use orts_orbits::gravity::PointMass;
 use orts_sim::spacecraft::{

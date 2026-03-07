@@ -1,5 +1,5 @@
 use nalgebra::{Vector3, Vector4};
-use orts_attitude::AttitudeState;
+use crate::attitude::AttitudeState;
 use orts_integrator::{OdeState, State, Tolerances};
 
 /// Combined spacecraft state: orbital (6D) + attitude (7D) + mass (1D).

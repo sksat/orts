@@ -83,7 +83,7 @@ impl<S: OdeState> OdeState for GroupState<S> {
 mod tests {
     use super::*;
     use nalgebra::{Vector3, Vector4};
-    use orts_attitude::AttitudeState;
+    use crate::attitude::AttitudeState;
     use orts_integrator::State;
 
     use crate::SpacecraftState;

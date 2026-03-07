@@ -477,7 +477,7 @@ mod tests {
 
     // ======== PanelDrag loads() — shared helpers ========
 
-    use orts_attitude::AttitudeState;
+    use crate::attitude::AttitudeState;
     use orts_integrator::State;
     use nalgebra::Vector4;
 

@@ -123,8 +123,7 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
 mod tests {
     use super::*;
     use nalgebra::{Vector3, Vector4};
-    use orts_attitude::AttitudeState;
-    use orts_attitude::TorqueModel;
+    use crate::attitude::{AttitudeState, TorqueModel};
     use orts_integrator::{Integrator, OdeState, Rk4, State};
     use orts_orbits::constants::MU_EARTH;
     use orts_orbits::gravity::PointMass;

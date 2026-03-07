@@ -6,7 +6,7 @@ use orts_integrator::{
     DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances,
 };
 
-use orts_attitude::{AttitudeState, AttitudeSystem, GravityGradientTorque};
+use orts_sim::attitude::{AttitudeState, AttitudeSystem, GravityGradientTorque};
 
 fn diagonal_inertia(ix: f64, iy: f64, iz: f64) -> Matrix3<f64> {
     Matrix3::from_diagonal(&Vector3::new(ix, iy, iz))

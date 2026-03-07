@@ -2,8 +2,8 @@ use kaname::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
 use orts_integrator::DynamicalSystem;
 
-use crate::state::AttitudeState;
-use crate::TorqueModel;
+use super::state::AttitudeState;
+use super::TorqueModel;
 
 /// Attitude dynamics system composing Euler's rotation equation with torque models.
 ///

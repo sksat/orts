@@ -101,8 +101,7 @@ Rust crate は `orts-` prefix を使用し、ディレクトリ名は prefix な
 | kaname | `kaname/` | 測地学・天文ライブラリ。詳細は [`kaname/DESIGN.md`](kaname/DESIGN.md) |
 | tobari | `tobari/` | 大気密度モデル・宇宙天気。詳細は [`tobari/DESIGN.md`](tobari/DESIGN.md) |
 | orts-orbits | `orbits/` | 軌道力学。重力場 (J2+)、摂動 (抗力/SRP/第三体)、ケプラー要素、TLE/SGP4、イベント検出。orbits→tobari 依存は trait + デフォルト実装のため |
-| orts-attitude | `attitude/` | 姿勢力学。AttitudeState (四元数+角速度)、TorqueModel trait、重力傾斜トルク |
-| orts-sim | `sim/` | 宇宙機統合。SpacecraftState (軌道+姿勢+質量)、WrenchModel trait、ECS データモデル・Rerun エクスポート |
+| orts-sim | `sim/` | 宇宙機統合。姿勢力学 (AttitudeState/TorqueModel)、SpacecraftState (軌道+姿勢+質量)、LoadModel trait、ECS データモデル・Rerun エクスポート |
 | orts | `cli/` | CLI + WebSocket サーバ。run/serve/convert サブコマンド |
 
 ### TypeScript パッケージ
@@ -121,9 +120,7 @@ tobari              │
   ↑                 │
 orts-orbits ────────┘
   ↑
-orts-attitude ──────┘
-  ↑
-orts-sim (spacecraft + record)
+orts-sim (attitude + spacecraft + record)
   ↑
 orts (CLI/WS)
 ```
@@ -131,8 +128,8 @@ orts (CLI/WS)
 - kaname と orts-integrator は独立（ワークスペース内の他クレートに依存しない）
 - tobari は kaname のみに依存し、大気モデルライブラリとして独立性を維持
 - orts-orbits は integrator, kaname, tobari を利用
-- orts-attitude は integrator, kaname を利用（orbits には依存しない）
-- orts-sim は orbits, attitude, integrator, kaname を利用（宇宙機統合 + データ記録）
+- orts-sim は orbits, integrator, kaname を利用（姿勢力学 + 宇宙機統合 + データ記録）
+- 姿勢力学は `sim/src/attitude/` モジュールとして実装。orbits には依存しない（モジュール境界で分離）
 - orts-integrator は汎用 ODE ソルバであり、軌道力学・姿勢力学の両方から利用される
 
 ### 設計原則
@@ -143,17 +140,17 @@ orts (CLI/WS)
 
 ## 実装済みのアーキテクチャ拡張
 
-### 姿勢力学 (orts-attitude)
+### 姿勢力学 (orts-sim::attitude)
 
-軌道力学 (並進 6 自由度) に加え、姿勢力学 (回転 3 自由度) を扱う crate。
+軌道力学 (並進 6 自由度) に加え、姿勢力学 (回転 3 自由度) を扱うモジュール (`sim/src/attitude/`)。
 
 - `AttitudeState`: 四元数 (Hamilton, スカラー先頭) + 角速度 (機体座標系)。7 状態量、OdeState 実装
 - `TorqueModel` trait: ForceModel の姿勢版。`torque(t, state, epoch) -> Vector3`
-- `GravityGradientTorque`: 重力傾斜トルクモデル
+- `GravityGradientTorque`: 重力傾斜トルクモデル。`position_fn` で軌道状態を外部注入可能（mock 対応）
 - `AttitudeSystem`: DynamicalSystem 実装。Euler の回転方程式 + 四元数運動学
 
-orts-orbits と orts-attitude は互いに依存しない。
-統合も検討したが、姿勢-軌道結合は一時的・シナリオ依存であり opt-in が望ましい。
+姿勢モジュールは orbits に依存しない（モジュール境界で設計上の分離を維持）。
+姿勢のみの伝播は `AttitudeSystem` 単体で可能（mock トルク・mock 軌道の注入に対応）。
 
 ### Integrator のジェネリック化 (実装済み)
 
@@ -211,9 +208,7 @@ tobari              │
   ↑                 │
 orts-orbits ────────┘
   ↑
-orts-attitude ──────┘
-  ↑
-orts-sim (spacecraft + orchestration + record)
+orts-sim (attitude + spacecraft + orchestration + record)
   ↑
 orts (CLI/WS) — 薄いワイヤリングのみ
 ```
@@ -223,6 +218,7 @@ orts (CLI/WS) — 薄いワイヤリングのみ
 ```
 orts-sim/
   src/
+    attitude/         # AttitudeState, TorqueModel, AttitudeSystem, GravityGradientTorque
     spacecraft/       # SpacecraftState, ExternalLoads, LoadModel, SpacecraftDynamics
     group/            # PropGroup, GroupState
     scheduler/        # 同期点管理、レジーム遷移
@@ -263,7 +259,7 @@ DynamicalSystem 実装の3層は排他的選択:
 | 層 | 型 | 状態 | crate |
 |---|---|---|---|
 | 軌道のみ | `OrbitalSystem` | State (6D) | orts-orbits |
-| 姿勢のみ | `AttitudeSystem` | AttitudeState (7D) | orts-attitude |
+| 姿勢のみ | `AttitudeSystem` | AttitudeState (7D) | orts-sim::attitude |
 | 結合 | `SpacecraftDynamics` | SpacecraftState (14D) | orts-sim |
 
 `*System` は DynamicalSystem trait 実装だが「システム全体の管理」と誤読されうるため、

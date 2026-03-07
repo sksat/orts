@@ -70,7 +70,7 @@ impl FromAcceleration for crate::SpacecraftState {
 mod tests {
     use super::*;
     use nalgebra::Vector4;
-    use orts_attitude::AttitudeState;
+    use crate::attitude::AttitudeState;
     use orts_integrator::State;
 
     #[test]

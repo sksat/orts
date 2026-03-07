@@ -1,6 +1,6 @@
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
-use orts_attitude::TorqueModel;
+use crate::attitude::TorqueModel;
 use orts_orbits::perturbations::ForceModel;
 
 use super::{ExternalLoads, LoadModel, SpacecraftState};
@@ -46,7 +46,7 @@ impl LoadModel for TorqueModelOnly {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orts_attitude::AttitudeState;
+    use crate::attitude::AttitudeState;
     use orts_integrator::State;
 
     /// Mock ForceModel that returns a fixed acceleration and records the inputs.

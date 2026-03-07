@@ -186,7 +186,7 @@ impl LoadModel for Thruster {
 mod tests {
     use super::*;
     use nalgebra::Vector4;
-    use orts_attitude::AttitudeState;
+    use crate::attitude::AttitudeState;
     use orts_integrator::State;
     use std::f64::consts::FRAC_PI_2;
 

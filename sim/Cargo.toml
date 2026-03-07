@@ -11,5 +11,4 @@ rerun.workspace = true
 kaname.workspace = true
 orts-integrator.workspace = true
 orts-orbits.workspace = true
-orts-attitude.workspace = true
 tobari.workspace = true

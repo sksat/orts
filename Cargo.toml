@@ -7,7 +7,6 @@ members = [
     "cli",
     "sim",
     "tobari",
-    "attitude",
 ]
 
 [workspace.package]
@@ -22,7 +21,6 @@ orts-orbits = { path = "orbits" }
 kaname = { path = "kaname" }
 orts-sim = { path = "sim" }
 tobari = { path = "tobari" }
-orts-attitude = { path = "attitude" }
 nalgebra = "0.34"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }

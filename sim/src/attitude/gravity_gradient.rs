@@ -1,8 +1,8 @@
 use kaname::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
 
-use crate::state::AttitudeState;
-use crate::TorqueModel;
+use super::state::AttitudeState;
+use super::TorqueModel;
 
 /// Gravity gradient torque on a rigid body in a gravitational field.
 ///
