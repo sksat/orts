@@ -14,7 +14,16 @@ use crate::satellite::OrbitSpec;
 use crate::sim::params::SimParams;
 
 pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
-    let params = SimParams::from_sim_args(sim, false);
+    let params = if let Some(config_path) = &sim.config {
+        let config = crate::config::SimConfig::load(std::path::Path::new(config_path))
+            .unwrap_or_else(|e| {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            });
+        SimParams::from_config(&config)
+    } else {
+        SimParams::from_sim_args(sim, false)
+    };
 
     // Determine effective format: stdout defaults to csv if format not explicitly set.
     let rec = run_simulation(&params);

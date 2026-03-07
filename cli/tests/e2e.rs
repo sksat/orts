@@ -138,6 +138,57 @@ fn test_cli_j2_orbit_drifts() {
     );
 }
 
+#[test]
+fn test_cli_config_file() {
+    let dir = std::env::temp_dir().join(format!("orts-e2e-config-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("test.json");
+    std::fs::write(
+        &config_path,
+        r#"{
+            "body": "sun",
+            "dt": 10.0,
+            "satellites": [
+                { "id": "test", "orbit": { "type": "circular", "altitude": 400.0 } }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let output = Command::new(binary)
+        .args([
+            "run",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--output",
+            "stdout",
+            "--format",
+            "csv",
+        ])
+        .output()
+        .expect("failed to execute orts");
+
+    assert!(
+        output.status.success(),
+        "CLI exited with non-zero status: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("# Orts 2-body orbit propagation"));
+
+    // Point-mass (Sun, no J2): orbit should close
+    let data_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    assert!(data_lines.len() > 10, "Expected many data lines");
+    assert_eq!(data_lines[0].split(',').count(), 13, "Expected 13 CSV fields");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Parse a CSV data line into (t, x, y, z, vx, vy, vz)
 fn parse_csv_line(line: &str) -> (f64, f64, f64, f64, f64, f64, f64) {
     let fields: Vec<f64> = line.split(',').map(|f| f.trim().parse().unwrap()).collect();

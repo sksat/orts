@@ -79,6 +79,49 @@ impl Server {
         }
     }
 
+    /// Spawn in idle mode (no --sat args, no --config).
+    fn spawn_idle(port: u16) -> Self {
+        let binary = env!("CARGO_BIN_EXE_orts");
+        let args = vec![
+            "serve".to_string(),
+            "--port".to_string(),
+            port.to_string(),
+        ];
+        let mut child = Command::new(binary)
+            .args(&args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn orts");
+
+        let stderr = child.stderr.take().expect("failed to capture stderr");
+        let (tx, rx) = mpsc::channel::<()>();
+
+        let stderr_thread = std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            let mut notified = false;
+            for line in reader.lines() {
+                let line = line.expect("failed to read stderr line");
+                eprintln!("[server stderr] {line}");
+                if !notified && line.contains("WebSocket server listening") {
+                    let _ = tx.send(());
+                    notified = true;
+                }
+            }
+            if !notified {
+                let _ = tx.send(());
+            }
+        });
+
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("server did not print 'listening' message within 10 seconds");
+
+        Server {
+            child,
+            _stderr_thread: stderr_thread,
+        }
+    }
+
     fn kill(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -724,6 +767,118 @@ async fn test_websocket_terminated_replay_on_late_connect() {
                 "only 'high' satellite should still stream state messages"
             );
         }
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+/// Verify that a server started without --sat args enters idle mode,
+/// and that a client can start the simulation via start_simulation message.
+#[tokio::test]
+async fn test_websocket_idle_then_start_simulation() {
+    let port = test_port() + 9;
+    let mut server = Server::spawn_idle(port);
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}");
+        let (ws, _) = connect_async(&url)
+            .await
+            .expect("failed to connect");
+        let (mut write, mut read) = ws.split();
+
+        // Should receive status: idle
+        let status = next_json(&mut read).await;
+        assert_eq!(status["type"], "status");
+        assert_eq!(status["state"], "idle");
+
+        // Send start_simulation
+        let config = serde_json::json!({
+            "type": "start_simulation",
+            "config": {
+                "body": "sun",
+                "dt": 10.0,
+                "satellites": [
+                    { "id": "test", "orbit": { "type": "circular", "altitude": 400.0 } }
+                ]
+            }
+        });
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                config.to_string().into(),
+            ))
+            .await
+            .expect("failed to send start_simulation");
+
+        // Should receive info message (via broadcast)
+        let (info, _) = read_until_type(&mut read, "info", 10).await;
+        assert_eq!(info["type"], "info");
+        assert!(info["satellites"].as_array().unwrap().len() >= 1);
+
+        // Should receive state messages
+        let (state, _) = read_until_type(&mut read, "state", 100).await;
+        assert_eq!(state["type"], "state");
+        assert!(state["t"].as_f64().is_some());
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+/// Verify that add_satellite works on a running simulation.
+#[tokio::test]
+async fn test_websocket_add_satellite() {
+    let port = test_port() + 10;
+    let mut server = Server::spawn(port);
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}");
+        let (ws, _) = connect_async(&url)
+            .await
+            .expect("failed to connect");
+        let (mut write, mut read) = ws.split();
+
+        // Read info + history
+        let info = next_json(&mut read).await;
+        assert_eq!(info["type"], "info");
+
+        let _history = next_json(&mut read).await;
+
+        // Wait a bit for simulation to run
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // Send add_satellite
+        let add_sat = serde_json::json!({
+            "type": "add_satellite",
+            "id": "new-sat",
+            "name": "Dynamically Added",
+            "orbit": { "type": "circular", "altitude": 600.0 }
+        });
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                add_sat.to_string().into(),
+            ))
+            .await
+            .expect("failed to send add_satellite");
+
+        // Should receive satellite_added among the messages
+        let (added, _) = read_until_type(&mut read, "satellite_added", 200).await;
+        assert_eq!(added["type"], "satellite_added");
+        assert_eq!(added["satellite"]["id"], "new-sat");
+        assert!(added["t"].as_f64().is_some());
+
+        // Should now receive state messages for the new satellite
+        let mut found_new_sat_state = false;
+        for _ in 0..200 {
+            let msg = next_json(&mut read).await;
+            if msg["type"] == "state" && msg["satellite_id"] == "new-sat" {
+                found_new_sat_state = true;
+                break;
+            }
+        }
+        assert!(found_new_sat_state, "should receive state messages for new satellite");
     })
     .await;
 

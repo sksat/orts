@@ -7,6 +7,7 @@ use orts_sim::record::recording::Recording;
 use orts_sim::record::timeline::TimePoint;
 use serde::{Deserialize, Serialize};
 
+use crate::config::{SimConfig, SatelliteConfig};
 use crate::satellite::SatelliteInfo;
 use crate::sim::core::{HistoryState, make_history_state};
 
@@ -20,6 +21,15 @@ pub enum ClientMessage {
         t_max: f64,
         max_points: Option<usize>,
         satellite_id: Option<String>,
+    },
+    /// Start a simulation from idle state.
+    #[serde(rename = "start_simulation")]
+    StartSimulation { config: SimConfig },
+    /// Add a satellite to a running simulation.
+    #[serde(rename = "add_satellite")]
+    AddSatellite {
+        #[serde(flatten)]
+        satellite: SatelliteConfig,
     },
 }
 
@@ -79,6 +89,15 @@ pub enum WsMessage {
         t: f64,
         reason: String,
     },
+    /// Server status (sent on connect when idle).
+    #[serde(rename = "status")]
+    Status { state: String },
+    /// Confirmation that a satellite was added.
+    #[serde(rename = "satellite_added")]
+    SatelliteAdded { satellite: SatelliteInfo, t: f64 },
+    /// Error response.
+    #[serde(rename = "error")]
+    Error { message: String },
 }
 
 /// Bounded buffer that accumulates history states and periodically flushes to .rrd segments.
@@ -460,6 +479,7 @@ mod tests {
                 assert_eq!(max_points, Some(100));
                 assert_eq!(satellite_id, None);
             }
+            _ => panic!("unexpected variant"),
         }
     }
 
@@ -472,6 +492,7 @@ mod tests {
                 assert_eq!(max_points, None);
                 assert_eq!(satellite_id, None);
             }
+            _ => panic!("unexpected variant"),
         }
     }
 
@@ -483,6 +504,7 @@ mod tests {
             ClientMessage::QueryRange { satellite_id, .. } => {
                 assert_eq!(satellite_id, Some("iss".to_string()));
             }
+            _ => panic!("unexpected variant"),
         }
     }
 

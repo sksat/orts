@@ -217,6 +217,20 @@ where
         self.satellites.push((entry, dynamics));
     }
 
+    /// Add a satellite to an already-constructed group at a specified time (mutable reference).
+    ///
+    /// Convenience wrapper around [`push_satellite`] with no end time.
+    /// Used for dynamic satellite addition in serve mode.
+    pub fn push_satellite_at(
+        &mut self,
+        id: impl Into<SatId>,
+        state: D::State,
+        t0: f64,
+        dynamics: D,
+    ) {
+        self.push_satellite(id, state, t0, None, dynamics);
+    }
+
     pub fn propagate_to(
         &mut self,
         t_target: f64,
@@ -1040,6 +1054,30 @@ mod tests {
         assert!((parts[0].t - expected_t).abs() < 1e-15);
         assert_eq!(parts[0].state.position, expected_pos);
         assert!(!parts[0].terminated);
+    }
+
+    #[test]
+    fn push_satellite_at_adds_to_running_group() {
+        let mut group: IndependentGroup<TwoBodySystem> =
+            IndependentGroup::dp45(10.0, default_tol())
+                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+
+        // Propagate to t=50
+        group.propagate_to(50.0).unwrap();
+        assert_eq!(group.satellites().count(), 1);
+
+        // Dynamically add a satellite at t=50
+        group.push_satellite_at("sso", sso_state(), 50.0, TwoBodySystem { mu: MU_EARTH });
+        assert_eq!(group.satellites().count(), 2);
+
+        // Both satellites should propagate to t=100
+        group.propagate_to(100.0).unwrap();
+
+        let entries: Vec<_> = group.satellites().collect();
+        assert_eq!(entries.len(), 2);
+        assert!((entries[0].t - 100.0).abs() < 1e-9, "ISS should reach t=100");
+        assert!((entries[1].t - 100.0).abs() < 1e-9, "SSO should reach t=100");
+        assert_eq!(entries[1].id, SatId::from("sso"));
     }
 
     #[test]

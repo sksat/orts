@@ -5,6 +5,7 @@ use orts_integrator::Tolerances;
 use orts_orbits::{body::KnownBody, tle::Tle};
 
 use crate::cli::{SimArgs, IntegratorChoice, AtmosphereChoice};
+use crate::config::SimConfig;
 use crate::satellite::{OrbitSpec, SatelliteSpec, parse_sat_spec, parse_body};
 use crate::tle::{try_fetch_tle_by_norad_id, fetch_tle_by_norad_id};
 
@@ -114,19 +115,73 @@ impl SimParams {
             atmosphere: args.atmosphere,
             f107: args.f107,
             ap: args.ap,
-            space_weather_provider: match args.space_weather.as_deref() {
-                Some("auto") => {
-                    let cssi = tobari::CssiSpaceWeather::fetch_default()
-                        .expect("Failed to fetch space weather data from CelesTrak");
-                    Some(Arc::new(cssi))
-                }
-                Some(path) => {
-                    let cssi = tobari::CssiSpaceWeather::from_file(std::path::Path::new(path))
-                        .unwrap_or_else(|e| panic!("Failed to load space weather file {path}: {e}"));
-                    Some(Arc::new(cssi))
-                }
-                None => None,
-            },
+            space_weather_provider: Self::load_space_weather(args.space_weather.as_deref()),
+        }
+    }
+
+    /// Build SimParams from a config file.
+    pub fn from_config(config: &SimConfig) -> Self {
+        let body = config.known_body();
+        let mu = body.properties().mu;
+
+        let epoch = match &config.epoch {
+            Some(s) => Some(
+                Epoch::from_iso8601(s)
+                    .unwrap_or_else(|| panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)"))
+            ),
+            None => Some(Epoch::now()),
+        };
+
+        let satellites: Vec<SatelliteSpec> = config
+            .satellites
+            .iter()
+            .enumerate()
+            .map(|(i, sc)| sc.to_satellite_spec(i, body, mu))
+            .collect();
+
+        let output_interval = config.output_interval.unwrap_or(config.dt);
+        let stream_interval = config
+            .stream_interval
+            .unwrap_or(output_interval)
+            .clamp(config.dt, output_interval);
+
+        let satellites = if let Some(dur) = config.duration {
+            satellites.into_iter().map(|mut s| { s.period = dur; s }).collect()
+        } else {
+            satellites
+        };
+
+        Self {
+            body,
+            mu,
+            dt: config.dt,
+            output_interval,
+            stream_interval,
+            epoch,
+            satellites,
+            integrator: config.integrator_choice(),
+            tolerances: Tolerances { atol: config.integrator.atol, rtol: config.integrator.rtol },
+            atmosphere: config.atmosphere_choice(),
+            f107: config.f107,
+            ap: config.ap,
+            space_weather_provider: Self::load_space_weather(config.space_weather.as_deref()),
+        }
+    }
+
+    /// Load space weather provider from a source string.
+    fn load_space_weather(source: Option<&str>) -> Option<Arc<tobari::CssiSpaceWeather>> {
+        match source {
+            Some("auto") => {
+                let cssi = tobari::CssiSpaceWeather::fetch_default()
+                    .expect("Failed to fetch space weather data from CelesTrak");
+                Some(Arc::new(cssi))
+            }
+            Some(path) => {
+                let cssi = tobari::CssiSpaceWeather::from_file(std::path::Path::new(path))
+                    .unwrap_or_else(|e| panic!("Failed to load space weather file {path}: {e}"));
+                Some(Arc::new(cssi))
+            }
+            None => None,
         }
     }
 
@@ -238,6 +293,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
@@ -268,6 +324,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.dt - 1.0).abs() < 1e-9);
@@ -298,6 +355,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.stream_interval - 5.0).abs() < 1e-9);
@@ -323,6 +381,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params2 = SimParams::from_sim_args(&args2, false);
         assert!((params2.stream_interval - 10.0).abs() < 1e-9);
@@ -350,6 +409,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!(params.epoch.is_some());
@@ -381,6 +441,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         SimParams::from_sim_args(&args, false);
     }
@@ -407,6 +468,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -452,6 +514,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         let state = params.satellites[0].initial_state(params.mu);
@@ -494,6 +557,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -524,6 +588,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -557,6 +622,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert_eq!(params.satellites.len(), 2);
@@ -587,6 +653,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert_eq!(params.satellites.len(), 1);
@@ -616,6 +683,7 @@ mod tests {
             ap: 15.0,
             space_weather: None,
             duration: None,
+            config: None,
         };
         let params = SimParams::from_sim_args(&args, true);
         // Should have at least SSO satellite

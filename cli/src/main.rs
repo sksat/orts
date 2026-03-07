@@ -1,4 +1,5 @@
 mod cli;
+mod config;
 mod satellite;
 mod tle;
 mod sim;

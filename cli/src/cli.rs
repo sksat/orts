@@ -138,6 +138,11 @@ pub struct SimArgs {
     /// Total simulation duration in seconds (overrides orbital period)
     #[arg(long)]
     pub duration: Option<f64>,
+
+    /// Path to simulation config file (JSON/TOML/YAML).
+    /// When specified, orbit-related args (--altitude, --sat, --tle, etc.) are ignored.
+    #[arg(long)]
+    pub config: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
