@@ -146,7 +146,7 @@ fn test_cli_config_file() {
     std::fs::write(
         &config_path,
         r#"{
-            "body": "sun",
+            "body": "earth",
             "dt": 10.0,
             "satellites": [
                 { "id": "test", "orbit": { "type": "circular", "altitude": 400.0 } }
@@ -155,19 +155,7 @@ fn test_cli_config_file() {
     )
     .unwrap();
 
-    let binary = env!("CARGO_BIN_EXE_orts");
-    let output = Command::new(binary)
-        .args([
-            "run",
-            "--config",
-            config_path.to_str().unwrap(),
-            "--output",
-            "stdout",
-            "--format",
-            "csv",
-        ])
-        .output()
-        .expect("failed to execute orts");
+    let output = run_cli_with_config(config_path.to_str().unwrap());
 
     assert!(
         output.status.success(),
@@ -176,9 +164,15 @@ fn test_cli_config_file() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("# Orts 2-body orbit propagation"));
+    assert!(
+        stdout.contains("# central_body = earth"),
+        "Header should specify central body"
+    );
+    assert!(
+        stdout.contains("circular at 400 km"),
+        "Header should describe orbit"
+    );
 
-    // Point-mass (Sun, no J2): orbit should close
     let data_lines: Vec<&str> = stdout
         .lines()
         .filter(|line| !line.starts_with('#'))
@@ -186,7 +180,38 @@ fn test_cli_config_file() {
     assert!(data_lines.len() > 10, "Expected many data lines");
     assert_eq!(data_lines[0].split(',').count(), 13, "Expected 13 CSV fields");
 
+    // Invariant: orbital radius ≈ 6778 km (Earth radius 6378 + 400 km altitude)
+    let mut prev_t = f64::NEG_INFINITY;
+    for line in &data_lines {
+        let (t, x, y, z, _, _, _) = parse_csv_line(line);
+        let r = (x * x + y * y + z * z).sqrt();
+        assert!(r.is_finite(), "Non-finite radius at t={t}");
+        assert!(t > prev_t, "Time not monotonically increasing at t={t}");
+        prev_t = t;
+        // J2 causes oscillations but radius stays within ~50 km of nominal (R_earth=6378.137)
+        assert!(
+            (r - 6778.0).abs() < 50.0,
+            "Orbital radius {r:.1} km out of range at t={t}"
+        );
+    }
+
     std::fs::remove_dir_all(&dir).ok();
+}
+
+fn run_cli_with_config(config_path: &str) -> std::process::Output {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    Command::new(binary)
+        .args([
+            "run",
+            "--config",
+            config_path,
+            "--output",
+            "stdout",
+            "--format",
+            "csv",
+        ])
+        .output()
+        .expect("failed to execute orts")
 }
 
 /// Parse a CSV data line into (t, x, y, z, vx, vy, vz)
@@ -229,4 +254,179 @@ fn test_cli_tle_from_stdin() {
     let data_lines: Vec<&str> = stdout.lines().filter(|l| !l.starts_with('#')).collect();
     assert!(data_lines.len() > 10, "Expected many data lines, got {}", data_lines.len());
     assert_eq!(data_lines[0].split(',').count(), 13, "Expected 13 CSV fields");
+}
+
+#[test]
+fn test_cli_config_file_multi_satellite() {
+    let dir = std::env::temp_dir().join(format!("orts-e2e-config-multi-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("multi.json");
+    std::fs::write(
+        &config_path,
+        r#"{
+            "body": "earth",
+            "dt": 10.0,
+            "satellites": [
+                { "id": "iss", "orbit": { "type": "circular", "altitude": 400.0, "inclination": 51.6 } },
+                { "id": "sso", "orbit": { "type": "circular", "altitude": 800.0, "inclination": 98.6 } }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let output = run_cli_with_config(config_path.to_str().unwrap());
+    assert!(
+        output.status.success(),
+        "CLI exited with non-zero status: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("# satellites = iss, sso"),
+        "Header should list both satellites"
+    );
+
+    let data_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    assert!(data_lines.len() > 10, "Expected many data lines");
+    // Multi-satellite format: satellite_id + 13 = 14 columns
+    assert_eq!(
+        data_lines[0].split(',').count(),
+        14,
+        "Expected 14 CSV fields (satellite_id + 13)"
+    );
+
+    // Check both satellites appear and have plausible radii
+    let mut iss_count = 0;
+    let mut sso_count = 0;
+    for line in &data_lines {
+        let fields: Vec<&str> = line.split(',').collect();
+        let sat_id = fields[0].trim();
+        // Fields 1..=7 are t, x, y, z, vx, vy, vz
+        let x: f64 = fields[2].trim().parse().unwrap();
+        let y: f64 = fields[3].trim().parse().unwrap();
+        let z: f64 = fields[4].trim().parse().unwrap();
+        let r = (x * x + y * y + z * z).sqrt();
+        match sat_id {
+            "iss" => {
+                iss_count += 1;
+                assert!(
+                    (r - 6778.0).abs() < 50.0,
+                    "ISS radius {r:.1} km out of range"
+                );
+            }
+            "sso" => {
+                sso_count += 1;
+                assert!(
+                    (r - 7178.0).abs() < 50.0,
+                    "SSO radius {r:.1} km out of range"
+                );
+            }
+            _ => panic!("Unexpected satellite_id: {sat_id}"),
+        }
+    }
+    assert!(iss_count > 5, "Expected ISS data rows, got {iss_count}");
+    assert!(sso_count > 5, "Expected SSO data rows, got {sso_count}");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn test_cli_config_file_toml() {
+    let dir = std::env::temp_dir().join(format!("orts-e2e-config-toml-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("test.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+body = "earth"
+dt = 10.0
+
+[[satellites]]
+id = "test"
+
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+inclination = 51.6
+"#,
+    )
+    .unwrap();
+
+    let output = run_cli_with_config(config_path.to_str().unwrap());
+    assert!(
+        output.status.success(),
+        "CLI exited with non-zero status: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let data_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    assert!(data_lines.len() > 10, "Expected many data lines");
+
+    // Check altitude from first data line
+    let (_, x, y, z, _, _, _) = parse_csv_line(data_lines[0]);
+    let r = (x * x + y * y + z * z).sqrt();
+    assert!(
+        (r - 6778.0).abs() < 50.0,
+        "TOML config: orbital radius {r:.1} km out of range"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn test_cli_config_file_mars() {
+    let dir = std::env::temp_dir().join(format!("orts-e2e-config-mars-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("mars.json");
+    std::fs::write(
+        &config_path,
+        r#"{
+            "body": "mars",
+            "dt": 10.0,
+            "satellites": [
+                { "id": "mro", "orbit": { "type": "circular", "altitude": 300.0 } }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let output = run_cli_with_config(config_path.to_str().unwrap());
+    assert!(
+        output.status.success(),
+        "CLI exited with non-zero status: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("# central_body = mars"),
+        "Header should specify Mars as central body"
+    );
+
+    let data_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    assert!(data_lines.len() > 10, "Expected many data lines");
+
+    // Mars radius = 3396.2 km, altitude 300 km → r ≈ 3696.2 km
+    for line in &data_lines {
+        let (t, x, y, z, _, _, _) = parse_csv_line(line);
+        let r = (x * x + y * y + z * z).sqrt();
+        assert!(r.is_finite(), "Non-finite radius at t={t}");
+        assert!(
+            (r - 3696.0).abs() < 50.0,
+            "Mars orbital radius {r:.1} km out of range at t={t}"
+        );
+    }
+
+    std::fs::remove_dir_all(&dir).ok();
 }

@@ -797,7 +797,7 @@ async fn test_websocket_idle_then_start_simulation() {
         let config = serde_json::json!({
             "type": "start_simulation",
             "config": {
-                "body": "sun",
+                "body": "earth",
                 "dt": 10.0,
                 "satellites": [
                     { "id": "test", "orbit": { "type": "circular", "altitude": 400.0 } }
