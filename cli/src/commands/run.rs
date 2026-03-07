@@ -49,7 +49,8 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
 
 /// Run the simulation and return a Recording.
 pub fn run_simulation(params: &SimParams) -> Recording {
-    use crate::sim::core::build_orbital_system;
+    use crate::sim::core::sat_params;
+    use orts_sim::setup::build_orbital_system;
 
     let mut rec = Recording::new();
     let body_path = EntityPath::parse(&format!("/world/{}", params.body.properties().name));
@@ -99,7 +100,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
             &params.body,
             params.mu,
             params.epoch,
-            sat,
+            &sat_params(sat),
             params.atmosphere,
             params.f107,
             params.ap,

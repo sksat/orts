@@ -14,7 +14,8 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use crate::cli::{IntegratorChoice, SimArgs};
 use crate::config::{SimConfig, SatelliteConfig};
 use crate::satellite::{SatelliteInfo, SatelliteSpec};
-use crate::sim::core::{accel_breakdown, build_orbital_system, make_history_state};
+use crate::sim::core::{accel_breakdown, make_history_state, sat_params};
+use orts_sim::setup::build_orbital_system;
 use crate::sim::params::SimParams;
 
 use protocol::{ClientMessage, HistoryBuffer, WsMessage};
@@ -194,7 +195,7 @@ fn build_info_message(params: &SimParams) -> WsMessage {
                 &params.body,
                 params.mu,
                 params.epoch,
-                s,
+                &sat_params(s),
                 params.atmosphere,
                 params.f107,
                 params.ap,
@@ -279,7 +280,7 @@ async fn run_simulation_loop(
             &params.body,
             params.mu,
             params.epoch,
-            spec,
+            &sat_params(spec),
             params.atmosphere,
             params.f107,
             params.ap,
@@ -361,7 +362,7 @@ async fn run_simulation_loop(
                             &params.body,
                             params.mu,
                             params.epoch,
-                            &spec,
+                            &sat_params(&spec),
                             params.atmosphere,
                             params.f107,
                             params.ap,

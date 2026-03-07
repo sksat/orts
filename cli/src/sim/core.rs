@@ -1,12 +1,11 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use kaname::epoch::Epoch;
+use orts_orbits::kepler::KeplerianElements;
+use orts_orbits::orbital_system::OrbitalSystem;
 use orts_integrator::State;
-use orts_orbits::{body::KnownBody, drag::AtmosphericDrag, gravity, kepler::KeplerianElements, orbital_system::OrbitalSystem, srp::SolarRadiationPressure, third_body::ThirdBodyGravity};
+use orts_sim::setup::SatelliteParams;
 use serde::{Deserialize, Serialize};
 
-use crate::cli::AtmosphereChoice;
 use crate::satellite::{OrbitSpec, SatelliteSpec};
 
 /// A single state snapshot used in history messages.
@@ -61,94 +60,20 @@ pub fn accel_breakdown(system: &OrbitalSystem, t: f64, state: &State) -> HashMap
         .collect()
 }
 
-/// Build an OrbitalSystem for the given body, using ZonalHarmonics if available.
-///
-/// When `epoch` is provided, epoch-dependent perturbations (third-body gravity)
-/// are automatically enabled. When the satellite has a TLE with non-zero B*,
-/// atmospheric drag is added (Earth only).
-#[allow(clippy::too_many_arguments)]
-pub fn build_orbital_system(
-    body: &KnownBody,
-    mu: f64,
-    epoch: Option<Epoch>,
-    sat: &SatelliteSpec,
-    atmosphere: AtmosphereChoice,
-    f107: f64,
-    ap: f64,
-    space_weather: Option<&Arc<tobari::CssiSpaceWeather>>,
-) -> OrbitalSystem {
-    let props = body.properties();
-    let gravity_field: Box<dyn gravity::GravityField> = match props.j2 {
-        Some(j2) => Box::new(gravity::ZonalHarmonics {
-            r_body: props.radius,
-            j2,
-            j3: props.j3,
-            j4: props.j4,
-        }),
-        None => Box::new(gravity::PointMass),
-    };
-    let mut system = OrbitalSystem::new(mu, gravity_field)
-        .with_body_radius(props.radius);
-
-    // Set epoch for time-dependent perturbations
-    if let Some(epoch) = epoch {
-        system = system.with_epoch(epoch);
-
-        // Third-body gravity: Sun (always), Moon (Earth only)
-        system = system.with_perturbation(Box::new(ThirdBodyGravity::sun()));
-        if *body == KnownBody::Earth {
-            system = system.with_perturbation(Box::new(ThirdBodyGravity::moon()));
-        }
+/// Convert a SatelliteSpec to SatelliteParams for OrbitalSystem construction.
+pub fn sat_params(spec: &SatelliteSpec) -> SatelliteParams {
+    let has_tle_drag = matches!(&spec.orbit, OrbitSpec::Tle { tle_data, .. } if tle_data.bstar.abs() > 1e-15);
+    SatelliteParams {
+        has_drag: has_tle_drag || spec.ballistic_coeff.is_some(),
+        ballistic_coeff: spec.ballistic_coeff,
+        srp_area_to_mass: spec.srp_area_to_mass,
+        srp_cr: spec.srp_cr,
     }
-
-    // Atmospheric drag (Earth only)
-    // Enable when: TLE has non-zero B* (implies drag-relevant orbit), or user provides ballistic-coeff
-    if *body == KnownBody::Earth {
-        let has_tle_drag = matches!(&sat.orbit, OrbitSpec::Tle { tle_data, .. } if tle_data.bstar.abs() > 1e-15);
-        if has_tle_drag || sat.ballistic_coeff.is_some() {
-            let drag = match atmosphere {
-                AtmosphereChoice::Exponential => {
-                    AtmosphericDrag::for_earth(sat.ballistic_coeff)
-                }
-                AtmosphereChoice::HarrisPriester => {
-                    AtmosphericDrag::for_earth(sat.ballistic_coeff)
-                        .with_atmosphere(Box::new(
-                            tobari::HarrisPriester::new(),
-                        ))
-                }
-                AtmosphereChoice::Nrlmsise00 => {
-                    let provider: Box<dyn tobari::SpaceWeatherProvider> = match space_weather {
-                        Some(cssi) => Box::new((**cssi).clone()),
-                        None => Box::new(tobari::ConstantWeather::new(f107, ap)),
-                    };
-                    AtmosphericDrag::for_earth(sat.ballistic_coeff)
-                        .with_atmosphere(Box::new(
-                            tobari::Nrlmsise00::new(provider),
-                        ))
-                }
-            };
-            system = system.with_perturbation(Box::new(drag));
-        }
-    }
-
-    // Solar Radiation Pressure (requires epoch for Sun position)
-    if epoch.is_some()
-        && let Some(am) = sat.srp_area_to_mass
-    {
-        let mut srp = SolarRadiationPressure::for_earth(Some(am));
-        if let Some(cr) = sat.srp_cr {
-            srp = srp.with_cr(cr);
-        }
-        system = system.with_perturbation(Box::new(srp));
-    }
-
-    system
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::satellite::parse_sat_spec;
 
     const TEST_MU: f64 = 398600.4418;
 
@@ -171,13 +96,5 @@ mod tests {
         let json = serde_json::to_string(&hs).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["satellite_id"], "my-sat");
-    }
-
-    #[test]
-    fn build_orbital_system_sets_body_radius() {
-        let body = KnownBody::Earth;
-        let spec = parse_sat_spec("altitude=400", body);
-        let system = build_orbital_system(&body, body.properties().mu, None, &spec, AtmosphereChoice::Exponential, 150.0, 15.0, None);
-        assert_eq!(system.body_radius, Some(body.properties().radius));
     }
 }
