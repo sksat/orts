@@ -115,7 +115,7 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
         let alpha = self.inertia_inv
             * (total.torque_body - state.attitude.angular_velocity.cross(&iw));
 
-        SpacecraftState::from_derivative(state.orbit.velocity, total_accel, q_dot, alpha, 0.0)
+        SpacecraftState::from_derivative(state.orbit.velocity, total_accel, q_dot, alpha, total.mass_rate)
     }
 }
 
@@ -205,6 +205,7 @@ mod tests {
                 Some(e) => ExternalLoads {
                     acceleration_inertial: Vector3::new(e.jd() * 1e-10, 0.0, 0.0),
                     torque_body: Vector3::zeros(),
+                    mass_rate: 0.0,
                 },
                 None => ExternalLoads::zeros(),
             }

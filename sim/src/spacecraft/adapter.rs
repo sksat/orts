@@ -19,6 +19,7 @@ impl LoadModel for ForceModelAtCoM {
         ExternalLoads {
             acceleration_inertial: self.0.acceleration(t, &state.orbit, epoch),
             torque_body: Vector3::zeros(),
+            mass_rate: 0.0,
         }
     }
 }
@@ -37,6 +38,7 @@ impl LoadModel for TorqueModelOnly {
         ExternalLoads {
             acceleration_inertial: Vector3::zeros(),
             torque_body: self.0.torque(t, &state.attitude, epoch),
+            mass_rate: 0.0,
         }
     }
 }

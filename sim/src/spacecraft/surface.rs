@@ -219,6 +219,7 @@ impl LoadModel for PanelDrag {
                 ExternalLoads {
                     acceleration_inertial: a_drag_m / 1000.0, // m/s² → km/s²
                     torque_body: Vector3::zeros(),
+                    mass_rate: 0.0,
                 }
             }
             SpacecraftShape::Panels(panels) => {
@@ -257,6 +258,7 @@ impl LoadModel for PanelDrag {
                 ExternalLoads {
                     acceleration_inertial: a_inertial,
                     torque_body: total_torque_body,
+                    mass_rate: 0.0,
                 }
             }
         }

@@ -17,6 +17,8 @@ pub struct ExternalLoads {
     pub acceleration_inertial: Vector3<f64>,
     /// Torque in body frame [N·m].
     pub torque_body: Vector3<f64>,
+    /// Mass rate [kg/s] (negative for depletion, e.g. propellant consumption).
+    pub mass_rate: f64,
 }
 
 impl ExternalLoads {
@@ -24,6 +26,7 @@ impl ExternalLoads {
         Self {
             acceleration_inertial: Vector3::zeros(),
             torque_body: Vector3::zeros(),
+            mass_rate: 0.0,
         }
     }
 }
@@ -35,6 +38,7 @@ impl Add for ExternalLoads {
         Self {
             acceleration_inertial: self.acceleration_inertial + rhs.acceleration_inertial,
             torque_body: self.torque_body + rhs.torque_body,
+            mass_rate: self.mass_rate + rhs.mass_rate,
         }
     }
 }
@@ -43,6 +47,7 @@ impl AddAssign for ExternalLoads {
     fn add_assign(&mut self, rhs: Self) {
         self.acceleration_inertial += rhs.acceleration_inertial;
         self.torque_body += rhs.torque_body;
+        self.mass_rate += rhs.mass_rate;
     }
 }
 
@@ -72,14 +77,17 @@ mod tests {
         let a = ExternalLoads {
             acceleration_inertial: Vector3::new(1.0, 2.0, 3.0),
             torque_body: Vector3::new(0.1, 0.2, 0.3),
+            mass_rate: -0.5,
         };
         let b = ExternalLoads {
             acceleration_inertial: Vector3::new(10.0, 20.0, 30.0),
             torque_body: Vector3::new(1.0, 2.0, 3.0),
+            mass_rate: -0.3,
         };
         let sum = a + b;
         assert_eq!(sum.acceleration_inertial, Vector3::new(11.0, 22.0, 33.0));
         assert_eq!(sum.torque_body, Vector3::new(1.1, 2.2, 3.3));
+        assert!((sum.mass_rate - (-0.8)).abs() < 1e-15);
     }
 
     #[test]
@@ -87,14 +95,17 @@ mod tests {
         let mut a = ExternalLoads {
             acceleration_inertial: Vector3::new(1.0, 2.0, 3.0),
             torque_body: Vector3::new(0.1, 0.2, 0.3),
+            mass_rate: -0.5,
         };
         let b = ExternalLoads {
             acceleration_inertial: Vector3::new(10.0, 20.0, 30.0),
             torque_body: Vector3::new(1.0, 2.0, 3.0),
+            mass_rate: -0.3,
         };
         a += b;
         assert_eq!(a.acceleration_inertial, Vector3::new(11.0, 22.0, 33.0));
         assert_eq!(a.torque_body, Vector3::new(1.1, 2.2, 3.3));
+        assert!((a.mass_rate - (-0.8)).abs() < 1e-15);
     }
 
     #[test]
@@ -102,8 +113,14 @@ mod tests {
         let w = ExternalLoads {
             acceleration_inertial: Vector3::new(1.0, 2.0, 3.0),
             torque_body: Vector3::new(0.1, 0.2, 0.3),
+            mass_rate: -0.1,
         };
         let sum = w.clone() + ExternalLoads::zeros();
         assert_eq!(sum, w);
+    }
+
+    #[test]
+    fn zeros_has_zero_mass_rate() {
+        assert_eq!(ExternalLoads::zeros().mass_rate, 0.0);
     }
 }
