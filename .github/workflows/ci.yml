@@ -199,7 +199,7 @@ jobs:
         run: chmod +x ./bin/orts
 
       - name: Start WebSocket server
-        run: ./bin/orts serve --dt 1 --output-interval 10 &
+        run: ./bin/orts serve --sat altitude=400 --dt 1 --output-interval 10 &
 
       - name: Wait for WebSocket server
         run: |
