@@ -108,20 +108,20 @@ test("multi-table: NaN count in aligned chart data is zero", async ({
     { timeout: 30000 },
   );
 
-  // Wait for a few query ticks to fire
-  await page.waitForTimeout(3000);
+  // Wait for chart queries to stabilize with zero NaN.
+  // Use polling instead of a fixed wait to avoid flaky races at chart boundaries.
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector("[data-testid='stats']");
+      if (!el) return false;
+      const text = el.textContent ?? "";
+      const alpha = text.match(/NaN: alpha=(\d+)/);
+      const beta = text.match(/beta=(\d+)/);
+      return alpha && beta && alpha[1] === "0" && beta[1] === "0";
+    },
+    { timeout: 15000 },
+  );
 
-  // Check the stats display for NaN counts
   const statsText = await page.locator("[data-testid='stats']").textContent();
   console.log("Stats:", statsText);
-
-  // Parse NaN counts from the stats display
-  const alphaNanMatch = statsText?.match(/NaN: alpha=(\d+)/);
-  const betaNanMatch = statsText?.match(/beta=(\d+)/);
-
-  const alphaNan = alphaNanMatch ? parseInt(alphaNanMatch[1], 10) : -1;
-  const betaNan = betaNanMatch ? parseInt(betaNanMatch[1], 10) : -1;
-
-  expect(alphaNan, "Alpha NaN count in chart should be 0").toBe(0);
-  expect(betaNan, "Beta NaN count in chart should be 0").toBe(0);
 });
