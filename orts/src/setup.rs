@@ -1,19 +1,8 @@
-use std::sync::Arc;
-
 use kaname::epoch::Epoch;
 use orts_orbits::{body::KnownBody, gravity};
 
 use crate::orbital_system::OrbitalSystem;
 use crate::perturbations::{AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity};
-
-/// Which atmosphere model to use for drag computation.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum AtmosphereChoice {
-    #[default]
-    Exponential,
-    HarrisPriester,
-    Nrlmsise00,
-}
 
 /// Physical parameters of a satellite relevant to force model construction.
 pub struct SatelliteParams {
@@ -29,16 +18,15 @@ pub struct SatelliteParams {
 
 /// Build an OrbitalSystem for the given body, automatically configuring gravity,
 /// third-body perturbations, drag, and SRP based on the provided parameters.
-#[allow(clippy::too_many_arguments)]
+///
+/// If `atmosphere` is provided and drag is enabled for Earth, it will be used as the
+/// atmospheric density model. If `None`, the default exponential model is used.
 pub fn build_orbital_system(
     body: &KnownBody,
     mu: f64,
     epoch: Option<Epoch>,
     sat: &SatelliteParams,
-    atmosphere: AtmosphereChoice,
-    f107: f64,
-    ap: f64,
-    space_weather: Option<&Arc<tobari::CssiSpaceWeather>>,
+    atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
 ) -> OrbitalSystem {
     let props = body.properties();
     let gravity_field: Box<dyn gravity::GravityField> = match props.j2 {
@@ -66,25 +54,11 @@ pub fn build_orbital_system(
     // Atmospheric drag (Earth only)
     if *body == KnownBody::Earth && sat.has_drag {
         let drag = match atmosphere {
-            AtmosphereChoice::Exponential => {
+            Some(model) => {
                 AtmosphericDrag::for_earth(sat.ballistic_coeff)
+                    .with_atmosphere(model)
             }
-            AtmosphereChoice::HarrisPriester => {
-                AtmosphericDrag::for_earth(sat.ballistic_coeff)
-                    .with_atmosphere(Box::new(
-                        tobari::HarrisPriester::new(),
-                    ))
-            }
-            AtmosphereChoice::Nrlmsise00 => {
-                let provider: Box<dyn tobari::SpaceWeatherProvider> = match space_weather {
-                    Some(cssi) => Box::new((**cssi).clone()),
-                    None => Box::new(tobari::ConstantWeather::new(f107, ap)),
-                };
-                AtmosphericDrag::for_earth(sat.ballistic_coeff)
-                    .with_atmosphere(Box::new(
-                        tobari::Nrlmsise00::new(provider),
-                    ))
-            }
+            None => AtmosphericDrag::for_earth(sat.ballistic_coeff),
         };
         system = system.with_perturbation(Box::new(drag));
     }
@@ -118,7 +92,7 @@ mod tests {
         };
         let system = build_orbital_system(
             &body, body.properties().mu, None, &sat,
-            AtmosphereChoice::Exponential, 150.0, 15.0, None,
+            None,
         );
         assert_eq!(system.body_radius, Some(body.properties().radius));
     }
@@ -134,7 +108,7 @@ mod tests {
         };
         let system = build_orbital_system(
             &body, body.properties().mu, None, &sat,
-            AtmosphereChoice::Exponential, 150.0, 15.0, None,
+            None,
         );
         assert!(system.perturbation_names().contains(&"drag"));
     }
@@ -150,7 +124,7 @@ mod tests {
         };
         let system = build_orbital_system(
             &body, body.properties().mu, None, &sat,
-            AtmosphereChoice::Exponential, 150.0, 15.0, None,
+            None,
         );
         assert!(!system.perturbation_names().contains(&"drag"));
     }
@@ -167,7 +141,7 @@ mod tests {
         };
         let system = build_orbital_system(
             &body, body.properties().mu, Some(epoch), &sat,
-            AtmosphereChoice::Exponential, 150.0, 15.0, None,
+            None,
         );
         let names = system.perturbation_names();
         assert!(names.contains(&"third_body_sun"));
@@ -186,7 +160,7 @@ mod tests {
         };
         let system = build_orbital_system(
             &body, body.properties().mu, Some(epoch), &sat,
-            AtmosphereChoice::Exponential, 150.0, 15.0, None,
+            None,
         );
         assert!(system.perturbation_names().contains(&"srp"));
     }

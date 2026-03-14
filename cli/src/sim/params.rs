@@ -3,9 +3,8 @@ use std::sync::Arc;
 use kaname::epoch::Epoch;
 use orts_integrator::Tolerances;
 use orts_orbits::{body::KnownBody, tle::Tle};
-use orts::setup::AtmosphereChoice;
 
-use crate::cli::{SimArgs, IntegratorChoice, AtmosphereChoice as CliAtmosphereChoice};
+use crate::cli::{SimArgs, IntegratorChoice, AtmosphereChoice};
 use crate::config::SimConfig;
 use crate::satellite::{OrbitSpec, SatelliteSpec, parse_sat_spec, parse_body};
 use crate::tle::{try_fetch_tle_by_norad_id, fetch_tle_by_norad_id};
@@ -27,11 +26,23 @@ pub struct SimParams {
     pub space_weather_provider: Option<Arc<tobari::CssiSpaceWeather>>,
 }
 
-fn convert_atmosphere(cli: CliAtmosphereChoice) -> AtmosphereChoice {
-    match cli {
-        CliAtmosphereChoice::Exponential => AtmosphereChoice::Exponential,
-        CliAtmosphereChoice::HarrisPriester => AtmosphereChoice::HarrisPriester,
-        CliAtmosphereChoice::Nrlmsise00 => AtmosphereChoice::Nrlmsise00,
+impl SimParams {
+    /// Build an atmosphere model from the current parameters.
+    pub fn build_atmosphere_model(&self) -> Option<Box<dyn tobari::AtmosphereModel>> {
+        match self.atmosphere {
+            AtmosphereChoice::Exponential => None, // use default
+            AtmosphereChoice::HarrisPriester => {
+                Some(Box::new(tobari::HarrisPriester::new()))
+            }
+            AtmosphereChoice::Nrlmsise00 => {
+                let provider: Box<dyn tobari::SpaceWeatherProvider> =
+                    match &self.space_weather_provider {
+                        Some(cssi) => Box::new((**cssi).clone()),
+                        None => Box::new(tobari::ConstantWeather::new(self.f107, self.ap)),
+                    };
+                Some(Box::new(tobari::Nrlmsise00::new(provider)))
+            }
+        }
     }
 }
 
@@ -121,7 +132,7 @@ impl SimParams {
             satellites,
             integrator: args.integrator,
             tolerances: Tolerances { atol: args.atol, rtol: args.rtol },
-            atmosphere: convert_atmosphere(args.atmosphere),
+            atmosphere: args.atmosphere,
             f107: args.f107,
             ap: args.ap,
             space_weather_provider: Self::load_space_weather(args.space_weather.as_deref()),
@@ -170,7 +181,7 @@ impl SimParams {
             satellites,
             integrator: config.integrator_choice(),
             tolerances: Tolerances { atol: config.integrator.atol, rtol: config.integrator.rtol },
-            atmosphere: convert_atmosphere(config.atmosphere_choice()),
+            atmosphere: config.atmosphere_choice(),
             f107: config.f107,
             ap: config.ap,
             space_weather_provider: Self::load_space_weather(config.space_weather.as_deref()),
@@ -297,7 +308,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -328,7 +339,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -359,7 +370,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -385,7 +396,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -413,7 +424,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -445,7 +456,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -472,7 +483,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -518,7 +529,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -561,7 +572,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -592,7 +603,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -626,7 +637,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -657,7 +668,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,
@@ -687,7 +698,7 @@ mod tests {
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,
-            atmosphere: CliAtmosphereChoice::Exponential,
+            atmosphere: AtmosphereChoice::Exponential,
             f107: 150.0,
             ap: 15.0,
             space_weather: None,

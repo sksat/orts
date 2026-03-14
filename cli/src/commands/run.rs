@@ -101,10 +101,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
             params.mu,
             params.epoch,
             &sat_params(sat),
-            params.atmosphere,
-            params.f107,
-            params.ap,
-            params.space_weather_provider.as_ref(),
+            params.build_atmosphere_model(),
         );
         let initial = sat.initial_state(params.mu);
 

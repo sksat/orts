@@ -196,10 +196,7 @@ fn build_info_message(params: &SimParams) -> WsMessage {
                 params.mu,
                 params.epoch,
                 &sat_params(s),
-                params.atmosphere,
-                params.f107,
-                params.ap,
-                params.space_weather_provider.as_ref(),
+                params.build_atmosphere_model(),
             );
             SatelliteInfo {
                 id: s.id.clone(),
@@ -281,10 +278,7 @@ async fn run_simulation_loop(
             params.mu,
             params.epoch,
             &sat_params(spec),
-            params.atmosphere,
-            params.f107,
-            params.ap,
-            params.space_weather_provider.as_ref(),
+            params.build_atmosphere_model(),
         );
         let initial = spec.initial_state(params.mu);
         group = group.add_satellite(spec.id.as_str(), initial, system);
@@ -363,10 +357,7 @@ async fn run_simulation_loop(
                             params.mu,
                             params.epoch,
                             &sat_params(&spec),
-                            params.atmosphere,
-                            params.f107,
-                            params.ap,
-                            params.space_weather_provider.as_ref(),
+                            params.build_atmosphere_model(),
                         );
                         let initial = spec.initial_state(params.mu);
                         group.push_satellite_at(
