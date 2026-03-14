@@ -3,8 +3,12 @@ use kaname::epoch::Epoch;
 use kaname::sun;
 use orts_integrator::State;
 
-use orts_orbits::constants::{R_EARTH, SOLAR_RADIATION_PRESSURE};
+use kaname::constants::R_EARTH;
 use crate::perturbations::ForceModel;
+
+/// Solar radiation pressure at 1 AU (N/m²).
+/// P/c = 1361 W/m² / 299792458 m/s ≈ 4.5396e-6 N/m²
+pub const SOLAR_RADIATION_PRESSURE: f64 = 4.5396e-6;
 
 /// Default radiation pressure coefficient (dimensionless).
 ///
@@ -137,7 +141,7 @@ impl ForceModel for SolarRadiationPressure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orts_orbits::constants::MU_EARTH;
+    use kaname::constants::MU_EARTH;
     use nalgebra::vector;
 
     fn test_epoch() -> Epoch {

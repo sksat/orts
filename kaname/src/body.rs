@@ -80,7 +80,7 @@ impl KnownBody {
                 atmosphere_altitude: Some(100.0), // Kármán line
             },
             KnownBody::Moon => BodyProperties {
-                mu: 4902.800066,
+                mu: constants::MU_MOON,
                 radius: 1737.4,
                 name: "Moon",
                 j2: Some(2.033e-4),
@@ -261,7 +261,6 @@ mod tests {
 
     #[test]
     fn jupiter_j2_largest_among_planets() {
-        // Gas giants have the largest J2 values due to rapid rotation
         let j2_earth = KnownBody::Earth.properties().j2.unwrap();
         let j2_jupiter = KnownBody::Jupiter.properties().j2.unwrap();
         assert!(
@@ -282,10 +281,8 @@ mod tests {
 
     #[test]
     fn only_earth_has_j3_j4() {
-        // Currently only Earth has J3/J4 values
         assert!(KnownBody::Earth.properties().j3.is_some());
         assert!(KnownBody::Earth.properties().j4.is_some());
-        // Other bodies don't have J3/J4
         for body in &[KnownBody::Moon, KnownBody::Mars, KnownBody::Jupiter, KnownBody::Saturn] {
             assert!(
                 body.properties().j3.is_none(),

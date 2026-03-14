@@ -4,12 +4,9 @@ use kaname::{WGS84_A, WGS84_B};
 use tobari::{AtmosphereModel, Exponential};
 use orts_integrator::State;
 
-use orts_orbits::body::KnownBody;
-use orts_orbits::constants::R_EARTH;
+use kaname::body::KnownBody;
+use kaname::constants::{R_EARTH, OMEGA_EARTH};
 use crate::perturbations::ForceModel;
-
-/// Earth rotation rate [rad/s] (IERS 2010)
-pub const OMEGA_EARTH: f64 = 7.2921159e-5;
 
 /// Default ballistic coefficient for LEO satellites \[m²/kg\].
 ///
@@ -137,7 +134,7 @@ impl ForceModel for AtmosphericDrag {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orts_orbits::constants::{MU_EARTH, R_EARTH};
+    use kaname::constants::{MU_EARTH, R_EARTH};
     use nalgebra::vector;
 
     fn iss_drag() -> AtmosphericDrag {

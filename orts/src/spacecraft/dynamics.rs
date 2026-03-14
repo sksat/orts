@@ -125,7 +125,7 @@ mod tests {
     use nalgebra::{Vector3, Vector4};
     use crate::attitude::{AttitudeState, TorqueModel};
     use orts_integrator::{Integrator, OdeState, Rk4, State};
-    use orts_orbits::constants::MU_EARTH;
+    use kaname::constants::MU_EARTH;
     use orts_orbits::gravity::PointMass;
     use crate::orbital_system::OrbitalSystem;
     use crate::perturbations::ForceModel;

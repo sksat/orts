@@ -261,8 +261,8 @@ impl Tle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::body::KnownBody;
-    use crate::constants::MU_EARTH;
+    use kaname::body::KnownBody;
+    use kaname::constants::MU_EARTH;
 
     const ISS_TLE: &str = "\
 ISS (ZARYA)

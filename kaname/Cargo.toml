@@ -10,6 +10,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 nalgebra.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 wasm-bindgen = { version = "0.2", optional = true }
 
 [features]

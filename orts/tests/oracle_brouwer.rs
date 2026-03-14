@@ -11,7 +11,7 @@
 //! - Lara, M. (2021), Celest. Mech. Dyn. Astron. 133, 43.
 
 use orts_integrator::{DormandPrince, IntegrationOutcome, State, Tolerances};
-use orts_orbits::constants::{J2_EARTH, MU_EARTH, R_EARTH};
+use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
 use orts_orbits::gravity::ZonalHarmonics;
 use orts_orbits::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;

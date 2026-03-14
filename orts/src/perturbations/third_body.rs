@@ -27,7 +27,7 @@ impl ThirdBodyGravity {
     pub fn sun() -> Self {
         Self {
             name: "third_body_sun",
-            mu_body: orts_orbits::constants::MU_SUN,
+            mu_body: kaname::constants::MU_SUN,
             body_position_fn: kaname::sun::sun_position_eci,
         }
     }
@@ -68,7 +68,7 @@ impl ForceModel for ThirdBodyGravity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orts_orbits::constants::{MU_EARTH, R_EARTH};
+    use kaname::constants::{MU_EARTH, R_EARTH};
     use nalgebra::vector;
 
     fn iss_state() -> State {

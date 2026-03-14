@@ -94,7 +94,7 @@ impl GravityField for ZonalHarmonics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{J2_EARTH, MU_EARTH, R_EARTH};
+    use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
 
     #[test]
     fn point_mass_acceleration_direction() {
@@ -282,7 +282,7 @@ mod tests {
 
     // --- J3 tests ---
 
-    use crate::constants::{J3_EARTH, J4_EARTH};
+    use kaname::constants::{J3_EARTH, J4_EARTH};
 
     fn earth_j2_j3_j4() -> ZonalHarmonics {
         ZonalHarmonics {

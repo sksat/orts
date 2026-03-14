@@ -1,5 +1,6 @@
 use kaname::epoch::Epoch;
-use orts_orbits::{body::KnownBody, gravity};
+use kaname::body::KnownBody;
+use orts_orbits::gravity;
 
 use crate::orbital_system::OrbitalSystem;
 use crate::perturbations::{AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity};

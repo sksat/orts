@@ -14,8 +14,8 @@
 use nalgebra::vector;
 use kaname::epoch::Epoch;
 use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, State, Tolerances};
-use orts_orbits::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
-use orts_orbits::body::KnownBody;
+use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
+use kaname::body::KnownBody;
 use orts::perturbations::AtmosphericDrag;
 use orts_orbits::gravity::ZonalHarmonics;
 use orts_orbits::kepler::KeplerianElements;

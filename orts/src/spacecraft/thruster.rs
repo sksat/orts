@@ -455,7 +455,7 @@ mod tests {
     fn dynamics_uses_mass_rate() {
         use nalgebra::Matrix3;
         use orts_integrator::DynamicalSystem;
-        use orts_orbits::constants::MU_EARTH;
+        use kaname::constants::MU_EARTH;
         use orts_orbits::gravity::PointMass;
 
         use super::super::SpacecraftDynamics;

@@ -2583,6 +2583,8 @@ name = "kaname"
 version = "0.0.0"
 dependencies = [
  "nalgebra",
+ "serde",
+ "serde_json",
  "wasm-bindgen",
 ]
 

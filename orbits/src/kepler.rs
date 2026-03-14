@@ -271,7 +271,7 @@ impl KeplerianElements {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::MU_EARTH;
+    use kaname::constants::MU_EARTH;
     use nalgebra::vector;
 
     #[test]

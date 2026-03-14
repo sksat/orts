@@ -11,7 +11,7 @@
 use nalgebra::vector;
 use kaname::epoch::Epoch;
 use orts_integrator::{Integrator, Rk4, State};
-use orts_orbits::constants::{MU_EARTH, R_EARTH};
+use kaname::constants::{MU_EARTH, R_EARTH};
 use orts_orbits::gravity::PointMass;
 use orts_orbits::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;

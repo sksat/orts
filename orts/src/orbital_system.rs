@@ -78,7 +78,7 @@ impl DynamicalSystem for OrbitalSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use orts_orbits::constants::{J2_EARTH, MU_EARTH, R_EARTH};
+    use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
     use orts_orbits::gravity::{PointMass, ZonalHarmonics};
     use orts_orbits::kepler::KeplerianElements;
     use orts_orbits::two_body::TwoBodySystem;
@@ -288,8 +288,8 @@ mod tests {
             Box::new(ZonalHarmonics {
                 r_body: R_EARTH,
                 j2: J2_EARTH,
-                j3: Some(orts_orbits::constants::J3_EARTH),
-                j4: Some(orts_orbits::constants::J4_EARTH),
+                j3: Some(kaname::constants::J3_EARTH),
+                j4: Some(kaname::constants::J4_EARTH),
             }),
         )
     }

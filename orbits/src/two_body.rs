@@ -21,7 +21,7 @@ impl DynamicalSystem for TwoBodySystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{MU_EARTH, R_EARTH};
+    use kaname::constants::{MU_EARTH, R_EARTH};
     use nalgebra::vector;
 
     #[test]

@@ -1,7 +1,7 @@
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
-use orts_orbits::body::KnownBody;
-use orts_orbits::constants::R_EARTH;
+use kaname::body::KnownBody;
+use kaname::constants::R_EARTH;
 use crate::perturbations::OMEGA_EARTH;
 use tobari::{AtmosphereModel, Exponential};
 
@@ -483,7 +483,7 @@ mod tests {
 
     fn iss_state() -> SpacecraftState {
         let r = R_EARTH + 400.0;
-        let v = (orts_orbits::constants::MU_EARTH / r).sqrt();
+        let v = (kaname::constants::MU_EARTH / r).sqrt();
         SpacecraftState {
             orbit: State {
                 position: Vector3::new(r, 0.0, 0.0),
@@ -1396,7 +1396,7 @@ mod tests {
         use nalgebra::Matrix3;
         use orts_integrator::{Integrator, OdeState, Rk4};
         use orts_orbits::gravity::PointMass;
-        use orts_orbits::constants::MU_EARTH;
+        use kaname::constants::MU_EARTH;
         use super::super::SpacecraftDynamics;
 
         let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
@@ -1416,7 +1416,7 @@ mod tests {
         use nalgebra::Matrix3;
         use orts_integrator::{Integrator, Rk4};
         use orts_orbits::gravity::PointMass;
-        use orts_orbits::constants::MU_EARTH;
+        use kaname::constants::MU_EARTH;
         use super::super::SpacecraftDynamics;
 
         let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
@@ -1445,7 +1445,7 @@ mod tests {
         use nalgebra::Matrix3;
         use orts_integrator::{Integrator, Rk4};
         use orts_orbits::gravity::PointMass;
-        use orts_orbits::constants::MU_EARTH;
+        use kaname::constants::MU_EARTH;
         use super::super::SpacecraftDynamics;
 
         // Asymmetric panel: only one face, so drag depends on orientation
@@ -1483,7 +1483,7 @@ mod tests {
         use nalgebra::Matrix3;
         use orts_integrator::{Integrator, OdeState, Rk4};
         use orts_orbits::gravity::PointMass;
-        use orts_orbits::constants::MU_EARTH;
+        use kaname::constants::MU_EARTH;
         use super::super::SpacecraftDynamics;
 
         let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.01));

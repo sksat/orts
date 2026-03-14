@@ -22,7 +22,7 @@
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 use orts_integrator::{DormandPrince, DynamicalSystem, State, Tolerances};
-use orts_orbits::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
+use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use orts::perturbations::AtmosphericDrag;
 use orts_orbits::gravity::{PointMass, ZonalHarmonics};
 use orts::orbital_system::OrbitalSystem;
