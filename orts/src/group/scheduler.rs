@@ -1136,7 +1136,7 @@ mod tests {
 
     use nalgebra::Vector3;
     use orts_integrator::State;
-    use orts_orbits::two_body::TwoBodySystem;
+    use crate::two_body::TwoBodySystem;
     use super::super::coupled::MutualGravity;
 
     const MU_EARTH: f64 = 398600.4418;

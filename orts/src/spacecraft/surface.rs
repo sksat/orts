@@ -1395,7 +1395,7 @@ mod tests {
     fn panels_integrable_with_rk4() {
         use nalgebra::Matrix3;
         use orts_integrator::{Integrator, OdeState, Rk4};
-        use orts_orbits::gravity::PointMass;
+        use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
         use super::super::SpacecraftDynamics;
 
@@ -1415,7 +1415,7 @@ mod tests {
     fn panels_drag_reduces_orbital_energy() {
         use nalgebra::Matrix3;
         use orts_integrator::{Integrator, Rk4};
-        use orts_orbits::gravity::PointMass;
+        use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
         use super::super::SpacecraftDynamics;
 
@@ -1444,7 +1444,7 @@ mod tests {
     fn tumbling_asymmetric_panels_varying_drag() {
         use nalgebra::Matrix3;
         use orts_integrator::{Integrator, Rk4};
-        use orts_orbits::gravity::PointMass;
+        use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
         use super::super::SpacecraftDynamics;
 
@@ -1482,7 +1482,7 @@ mod tests {
     fn cannonball_integrable_with_spacecraft_dynamics() {
         use nalgebra::Matrix3;
         use orts_integrator::{Integrator, OdeState, Rk4};
-        use orts_orbits::gravity::PointMass;
+        use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
         use super::super::SpacecraftDynamics;
 

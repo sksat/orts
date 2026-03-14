@@ -639,7 +639,7 @@ mod tests {
 
     // ── CoupledGroupDynamics tests ─────────────────────────────────────────
 
-    use orts_orbits::two_body::TwoBodySystem;
+    use crate::two_body::TwoBodySystem;
 
     fn iss_state() -> State {
         let r: f64 = 6778.137;

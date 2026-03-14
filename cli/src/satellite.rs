@@ -1,7 +1,7 @@
 use orts::record::entity_path::EntityPath;
 use orts_integrator::State;
 use kaname::body::KnownBody;
-use orts_orbits::{kepler::KeplerianElements, tle::Tle};
+use orts::{kepler::KeplerianElements, tle::Tle};
 use serde::Serialize;
 
 use crate::tle::fetch_tle_by_norad_id;

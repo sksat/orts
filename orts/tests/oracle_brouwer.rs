@@ -12,8 +12,8 @@
 
 use orts_integrator::{DormandPrince, IntegrationOutcome, State, Tolerances};
 use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
-use orts_orbits::gravity::ZonalHarmonics;
-use orts_orbits::kepler::KeplerianElements;
+use orts::gravity::ZonalHarmonics;
+use orts::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;
 use std::f64::consts::PI;
 use std::ops::ControlFlow;

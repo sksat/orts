@@ -24,7 +24,7 @@ use nalgebra::Vector3;
 use orts_integrator::{DormandPrince, DynamicalSystem, State, Tolerances};
 use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use orts::perturbations::AtmosphericDrag;
-use orts_orbits::gravity::{PointMass, ZonalHarmonics};
+use orts::gravity::{PointMass, ZonalHarmonics};
 use orts::orbital_system::OrbitalSystem;
 use orts::perturbations::SolarRadiationPressure;
 use orts::perturbations::ThirdBodyGravity;
@@ -184,7 +184,7 @@ fn build_system(scenario: &Scenario) -> OrbitalSystem {
     let epoch = parse_epoch(&scenario.epoch_utc);
 
     // Gravity model
-    let gravity: Box<dyn orts_orbits::gravity::GravityField> = match fm.gravity.degree {
+    let gravity: Box<dyn orts::gravity::GravityField> = match fm.gravity.degree {
         0 => Box::new(PointMass),
         2 => Box::new(ZonalHarmonics {
             r_body: R_EARTH,

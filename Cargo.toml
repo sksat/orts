@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "integrator",
-    "orbits",
     "kaname",
     "cli",
     "orts",
@@ -17,7 +16,6 @@ repository = "https://github.com/sksat/orts"
 
 [workspace.dependencies]
 orts-integrator = { path = "integrator" }
-orts-orbits = { path = "orbits" }
 kaname = { path = "kaname" }
 orts = { path = "orts" }
 tobari = { path = "tobari" }

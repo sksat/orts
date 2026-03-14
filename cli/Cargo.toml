@@ -12,7 +12,6 @@ path = "src/main.rs"
 [dependencies]
 nalgebra.workspace = true
 orts-integrator.workspace = true
-orts-orbits.workspace = true
 tobari = { workspace = true, features = ["fetch"] }
 kaname.workspace = true
 orts.workspace = true

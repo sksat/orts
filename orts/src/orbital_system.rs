@@ -1,7 +1,7 @@
 use kaname::epoch::Epoch;
 use orts_integrator::{DynamicalSystem, State};
 
-use orts_orbits::gravity::GravityField;
+use crate::gravity::GravityField;
 use crate::perturbations::ForceModel;
 
 /// Orbital dynamics system combining a gravity field model with perturbation forces.
@@ -79,9 +79,9 @@ impl DynamicalSystem for OrbitalSystem {
 mod tests {
     use super::*;
     use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
-    use orts_orbits::gravity::{PointMass, ZonalHarmonics};
-    use orts_orbits::kepler::KeplerianElements;
-    use orts_orbits::two_body::TwoBodySystem;
+    use crate::gravity::{PointMass, ZonalHarmonics};
+    use crate::kepler::KeplerianElements;
+    use crate::two_body::TwoBodySystem;
     use nalgebra::vector;
     use orts_integrator::{Integrator, Rk4};
     use std::f64::consts::PI;

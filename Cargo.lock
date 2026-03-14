@@ -3059,7 +3059,6 @@ dependencies = [
  "kaname",
  "nalgebra",
  "orts-integrator",
- "orts-orbits",
  "rerun",
  "serde",
  "serde_json",
@@ -3076,7 +3075,6 @@ dependencies = [
  "nalgebra",
  "orts",
  "orts-integrator",
- "orts-orbits",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3092,17 +3090,6 @@ name = "orts-integrator"
 version = "0.0.0"
 dependencies = [
  "nalgebra",
-]
-
-[[package]]
-name = "orts-orbits"
-version = "0.0.0"
-dependencies = [
- "kaname",
- "nalgebra",
- "orts-integrator",
- "serde",
- "serde_json",
 ]
 
 [[package]]

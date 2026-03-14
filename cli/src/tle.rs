@@ -1,4 +1,4 @@
-use orts_orbits::tle::Tle;
+use orts::tle::Tle;
 
 /// Try fetching a TLE by NORAD catalog number. Tries CelesTrak first, falls back to SatNOGS.
 pub fn try_fetch_tle_by_norad_id(norad_id: u32) -> Option<Tle> {

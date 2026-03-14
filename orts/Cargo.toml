@@ -10,7 +10,6 @@ nalgebra.workspace = true
 rerun.workspace = true
 kaname.workspace = true
 orts-integrator.workspace = true
-orts-orbits.workspace = true
 tobari.workspace = true
 
 [dev-dependencies]

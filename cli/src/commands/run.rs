@@ -1,7 +1,7 @@
 use std::ops::ControlFlow;
 
 use orts_integrator::State;
-use orts_orbits::kepler::KeplerianElements;
+use orts::kepler::KeplerianElements;
 use orts::group::{IndependentGroup, IntegratorConfig};
 use orts::record::archetypes::OrbitalState;
 use orts::record::components::{BodyRadius, GravitationalParameter};

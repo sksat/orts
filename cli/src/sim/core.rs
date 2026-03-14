@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use orts_orbits::kepler::KeplerianElements;
+use orts::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;
 use orts_integrator::State;
 use orts::setup::SatelliteParams;

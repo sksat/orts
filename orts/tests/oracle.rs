@@ -17,8 +17,8 @@ use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, State,
 use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use kaname::body::KnownBody;
 use orts::perturbations::AtmosphericDrag;
-use orts_orbits::gravity::ZonalHarmonics;
-use orts_orbits::kepler::KeplerianElements;
+use orts::gravity::ZonalHarmonics;
+use orts::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;
 use orts::perturbations::ThirdBodyGravity;
 use std::f64::consts::PI;

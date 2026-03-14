@@ -1,7 +1,7 @@
 use kaname::epoch::Epoch;
 use nalgebra::Matrix3;
 use orts_integrator::DynamicalSystem;
-use orts_orbits::gravity::GravityField;
+use crate::gravity::GravityField;
 
 use super::{ExternalLoads, LoadModel, SpacecraftState};
 
@@ -126,7 +126,7 @@ mod tests {
     use crate::attitude::{AttitudeState, TorqueModel};
     use orts_integrator::{Integrator, OdeState, Rk4, State};
     use kaname::constants::MU_EARTH;
-    use orts_orbits::gravity::PointMass;
+    use crate::gravity::PointMass;
     use crate::orbital_system::OrbitalSystem;
     use crate::perturbations::ForceModel;
 

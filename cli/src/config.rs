@@ -6,7 +6,7 @@ use crate::cli::{AtmosphereChoice, IntegratorChoice};
 use crate::satellite::{OrbitSpec, SatelliteSpec};
 use crate::tle::fetch_tle_by_norad_id;
 use kaname::body::KnownBody;
-use orts_orbits::tle::Tle;
+use orts::tle::Tle;
 
 /// JSON/TOML/YAML simulation configuration.
 #[derive(Deserialize, Serialize, Clone, Debug)]

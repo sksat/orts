@@ -456,7 +456,7 @@ mod tests {
         use nalgebra::Matrix3;
         use orts_integrator::DynamicalSystem;
         use kaname::constants::MU_EARTH;
-        use orts_orbits::gravity::PointMass;
+        use crate::gravity::PointMass;
 
         use super::super::SpacecraftDynamics;
 

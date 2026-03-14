@@ -387,7 +387,7 @@ mod tests {
     use super::*;
     use nalgebra::Vector3;
     use orts_integrator::{IntegrationOutcome, State};
-    use orts_orbits::two_body::TwoBodySystem;
+    use crate::two_body::TwoBodySystem;
 
     use super::super::prop_group::PropGroup;
 

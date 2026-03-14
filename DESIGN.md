@@ -100,8 +100,7 @@ Rust crate は `orts-` prefix を使用し、ディレクトリ名は prefix な
 | orts-integrator | `integrator/` | 汎用 ODE ソルバ。OdeState trait、DynamicalSystem trait、RK4、Dormand-Prince 適応刻み |
 | kaname | `kaname/` | 測地学・天文ライブラリ。詳細は [`kaname/DESIGN.md`](kaname/DESIGN.md) |
 | tobari | `tobari/` | 大気密度モデル・宇宙天気。詳細は [`tobari/DESIGN.md`](tobari/DESIGN.md) |
-| orts-orbits | `orbits/` | 軌道力学（純粋な軌道数学）。重力場 (J2+)、ケプラー要素、TLE/SGP4、天体定数、イベント検出 |
-| orts | `orts/` | シミュレーション層。摂動 (ForceModel: 抗力/SRP/第三体)、OrbitalSystem、姿勢力学 (AttitudeState/TorqueModel)、SpacecraftState (軌道+姿勢+質量)、LoadModel trait、ECS データモデル・Rerun エクスポート |
+| orts | `orts/` | 軌道力学 + シミュレーション。重力場 (J2+)、ケプラー要素、TLE、摂動 (ForceModel: 抗力/SRP/第三体)、OrbitalSystem、イベント検出、姿勢力学 (AttitudeState/TorqueModel)、SpacecraftState (軌道+姿勢+質量)、LoadModel trait、ECS データモデル・Rerun エクスポート |
 | orts-cli | `cli/` | CLI + WebSocket サーバ。run/serve/convert サブコマンド。バイナリ名は `orts` |
 
 ### TypeScript パッケージ
@@ -115,22 +114,18 @@ Rust crate は `orts-` prefix を使用し、ディレクトリ名は prefix な
 
 ```
 kaname              orts-integrator       ← 基盤層
-  ↑   ↑                  ↑   ↑
-  │   tobari              │   │           ← 環境層
-  │     ↑                 │   │
-  │     orts-orbits ──────┘   │           ← 軌道力学層（純粋な軌道数学）
-  │       ↑                   │
-  │     orts ─────────────────┘           ← シミュレーション層
+  ↑   ↑                  ↑
+  │   tobari              │               ← 環境層
+  │     ↑                 │
+  │     orts ─────────────┘               ← 軌道力学 + シミュレーション層
   │       ↑        ↑ tobari
   └── orts-cli                            ← アプリ層
 ```
 
 - kaname と orts-integrator は独立（ワークスペース内の他クレートに依存しない）
 - tobari は kaname のみに依存し、大気モデルライブラリとして独立性を維持
-- orts-orbits は integrator, kaname を利用（tobari には依存しない）
-- orts (旧 orts-sim) は orbits, integrator, kaname, tobari を利用（摂動モデル + 姿勢力学 + 宇宙機統合 + データ記録）
-- orts-cli (旧 orts) は orts を利用する薄い CLI ラッパー
-- 姿勢力学は `orts/src/attitude/` モジュールとして実装。orbits には依存しない（モジュール境界で分離）
+- orts は integrator, kaname, tobari を利用（軌道力学 + 摂動モデル + 姿勢力学 + 宇宙機統合 + データ記録）
+- orts-cli は orts を利用する薄い CLI ラッパー
 - orts-integrator は汎用 ODE ソルバであり、軌道力学・姿勢力学の両方から利用される
 
 ### 設計原則

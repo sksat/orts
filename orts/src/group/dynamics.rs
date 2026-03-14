@@ -47,7 +47,7 @@ mod tests {
     use orts_integrator::{
         DormandPrince, IntegrationOutcome, Integrator, Rk4, State, Tolerances,
     };
-    use orts_orbits::two_body::TwoBodySystem;
+    use crate::two_body::TwoBodySystem;
     use std::ops::ControlFlow;
 
     /// Simple harmonic oscillator: dv/dt = -x (ω = 1).
