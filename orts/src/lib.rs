@@ -1,4 +1,5 @@
 pub mod attitude;
+pub mod events;
 pub mod orbital_system;
 pub mod perturbations;
 pub mod spacecraft;

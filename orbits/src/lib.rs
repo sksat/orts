@@ -1,4 +1,3 @@
-pub mod events;
 pub mod gravity;
 pub mod kepler;
 pub mod tle;
