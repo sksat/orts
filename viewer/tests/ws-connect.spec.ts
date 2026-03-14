@@ -1,10 +1,86 @@
 import { test, expect } from "@playwright/test";
+import { spawn, type ChildProcess } from "child_process";
+import { createInterface } from "readline";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const VIEWER_URL = "http://localhost:5173";
-const WS_URL = "ws://localhost:9001";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+let ortsProcess: ChildProcess;
+let wsUrl: string;
+
+test.beforeAll(async () => {
+  const binary = path.resolve(__dirname, "../../target/debug/orts");
+  const child = spawn(binary, [
+    "serve",
+    "--port",
+    "0",
+    "--sat",
+    "altitude=400,id=test",
+  ]);
+  ortsProcess = child;
+
+  // Parse the actual port from stderr
+  const port = await new Promise<number>((resolve, reject) => {
+    const rl = createInterface({ input: child.stderr! });
+    const timeout = setTimeout(() => {
+      rl.close();
+      reject(new Error("Timed out waiting for orts server to start"));
+    }, 30000);
+
+    rl.on("line", (line) => {
+      const match = line.match(/ws:\/\/localhost:(\d+)/);
+      if (match) {
+        clearTimeout(timeout);
+        resolve(parseInt(match[1], 10));
+      }
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timeout);
+      reject(new Error(`orts exited with code ${code} before listening`));
+    });
+  });
+
+  wsUrl = `ws://localhost:${port}`;
+  console.log(`orts server started at ${wsUrl}`);
+});
+
+test.afterAll(async () => {
+  if (ortsProcess && !ortsProcess.killed) {
+    ortsProcess.kill("SIGTERM");
+  }
+});
+
+/** Helper: disconnect from auto-connect and connect to the test server. */
+async function connectToTestServer(page: import("@playwright/test").Page) {
+  await page.goto("/");
+
+  // Disconnect from auto-connected default server if needed
+  const disconnectBtn = page.locator(".ws-disconnect-btn");
+  try {
+    await disconnectBtn.waitFor({ state: "visible", timeout: 3000 });
+    await disconnectBtn.click();
+  } catch {
+    // Not connected; continue
+  }
+
+  // Connect to the test server
+  const urlInput = page.locator(".ws-url-input");
+  await urlInput.fill(wsUrl);
+  const connectBtn = page.locator(".ws-connect-btn");
+  await connectBtn.click();
+
+  const statusText = page.locator(".ws-status-text");
+  await expect(statusText).toHaveText("Connected", { timeout: 10000 });
+}
 
 test("raw WebSocket connects and receives messages", async ({ page }) => {
-  await page.goto(VIEWER_URL);
+  await page.goto("/");
 
   const wsResult = await page.evaluate(async (url) => {
     return new Promise<string>((resolve) => {
@@ -30,23 +106,19 @@ test("raw WebSocket connects and receives messages", async ({ page }) => {
         resolve(events.join(" | "));
       }, 5000);
     });
-  }, WS_URL);
+  }, wsUrl);
 
   console.log("Raw WS result:", wsResult);
   expect(wsResult).toContain("open");
   expect(wsResult).toContain("message:");
 });
 
-test("realtime mode auto-connects and streams orbit data", async ({ page }) => {
+test("realtime mode connects and streams orbit data", async ({ page }) => {
   const consoleLogs: string[] = [];
   page.on("console", (msg) => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
   page.on("pageerror", (err) => consoleLogs.push(`[PAGE_ERROR] ${err.message}`));
 
-  await page.goto(VIEWER_URL);
-
-  // Realtime mode is the default and should auto-connect.
-  const statusText = page.locator(".ws-status-text");
-  await expect(statusText).toHaveText("Connected", { timeout: 10000 });
+  await connectToTestServer(page);
 
   // Wait for data to stream in
   await page.waitForTimeout(3000);
@@ -70,11 +142,7 @@ test("charts render with data after streaming starts", async ({ page }) => {
   const consoleLogs: string[] = [];
   page.on("console", (msg) => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
 
-  await page.goto(VIEWER_URL);
-
-  // Wait for WebSocket connection
-  const statusText = page.locator(".ws-status-text");
-  await expect(statusText).toHaveText("Connected", { timeout: 10000 });
+  await connectToTestServer(page);
 
   // Wait for DuckDB to initialize and charts to render (may be slow in CI)
   const charts = page.locator('[data-testid="time-series-chart"]');
@@ -128,7 +196,7 @@ test("charts render with data after streaming starts", async ({ page }) => {
 });
 
 test("state messages include Keplerian elements", async ({ page }) => {
-  await page.goto(VIEWER_URL);
+  await page.goto("/");
 
   const keplerian = await page.evaluate(async (url) => {
     return new Promise<Record<string, boolean>>((resolve) => {
@@ -156,7 +224,7 @@ test("state messages include Keplerian elements", async ({ page }) => {
         resolve({});
       }, 10000);
     });
-  }, WS_URL);
+  }, wsUrl);
 
   expect(keplerian.has_semi_major_axis, "state must include semi_major_axis").toBe(true);
   expect(keplerian.has_eccentricity, "state must include eccentricity").toBe(true);
@@ -167,7 +235,7 @@ test("state messages include Keplerian elements", async ({ page }) => {
 });
 
 test("history message arrives after info before state", async ({ page }) => {
-  await page.goto(VIEWER_URL);
+  await page.goto("/");
 
   const messageTypes = await page.evaluate(async (url) => {
     return new Promise<string[]>((resolve) => {
@@ -199,7 +267,7 @@ test("history message arrives after info before state", async ({ page }) => {
         resolve(types);
       }, 20000);
     });
-  }, WS_URL);
+  }, wsUrl);
 
   console.log("Message types:", messageTypes);
 
@@ -215,11 +283,7 @@ test("3D scene renders orbit trails and satellite markers", async ({ page }) => 
   const consoleLogs: string[] = [];
   page.on("console", (msg) => consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
 
-  await page.goto(VIEWER_URL);
-
-  // Wait for WebSocket connection
-  const statusText = page.locator(".ws-status-text");
-  await expect(statusText).toHaveText("Connected", { timeout: 10000 });
+  await connectToTestServer(page);
 
   // Wait for enough data to stream so trails are visible
   await page.waitForTimeout(4000);

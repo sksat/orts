@@ -7,9 +7,7 @@
  */
 import { test, expect } from "@playwright/test";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
-
-const VIEWER_URL = "http://localhost:5173";
-const MOCK_WS_PORT = 9099;
+import type { AddressInfo } from "net";
 
 /** Build a minimal state message for a given satellite. */
 function stateMsg(satelliteId: string, t: number) {
@@ -35,7 +33,7 @@ test.describe("simulation_terminated handling", () => {
   let wss: WebSocketServer;
 
   test.beforeEach(async () => {
-    wss = new WebSocketServer({ port: MOCK_WS_PORT });
+    wss = new WebSocketServer({ port: 0 });
   });
 
   test.afterEach(async () => {
@@ -93,7 +91,7 @@ test.describe("simulation_terminated handling", () => {
     });
 
     // Navigate and set WS URL to mock server
-    await page.goto(VIEWER_URL);
+    await page.goto("/");
 
     // Disconnect from auto-connected default server if needed
     // (auto-connect may have connected to ws://localhost:9001)
@@ -107,7 +105,8 @@ test.describe("simulation_terminated handling", () => {
 
     // URL input is now enabled; point to mock server
     const urlInput = page.locator(".ws-url-input");
-    await urlInput.fill(`ws://localhost:${MOCK_WS_PORT}`);
+    const mockPort = (wss.address() as AddressInfo).port;
+    await urlInput.fill(`ws://localhost:${mockPort}`);
 
     const connectBtn = page.locator(".ws-connect-btn");
     await connectBtn.click();

@@ -12,9 +12,7 @@
  */
 import { test, expect } from "@playwright/test";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
-
-const VIEWER_URL = process.env.VIEWER_URL ?? "http://localhost:5173";
-const MOCK_WS_PORT = 9097;
+import type { AddressInfo } from "net";
 
 /** Build a state message for a circular orbit. */
 function stateMsg(satelliteId: string, t: number, altitude: number) {
@@ -42,7 +40,7 @@ test.describe("multi-satellite NaN alignment", () => {
   let wss: WebSocketServer;
 
   test.beforeEach(async () => {
-    wss = new WebSocketServer({ port: MOCK_WS_PORT });
+    wss = new WebSocketServer({ port: 0 });
   });
 
   test.afterEach(async () => {
@@ -93,7 +91,7 @@ test.describe("multi-satellite NaN alignment", () => {
       }, 20);
     });
 
-    await page.goto(VIEWER_URL);
+    await page.goto("/");
 
     // Disconnect from auto-connected default server
     const disconnectBtn = page.locator(".ws-disconnect-btn");
@@ -106,7 +104,8 @@ test.describe("multi-satellite NaN alignment", () => {
 
     // Connect to mock server
     const urlInput = page.locator(".ws-url-input");
-    await urlInput.fill(`ws://localhost:${MOCK_WS_PORT}`);
+    const mockPort = (wss.address() as AddressInfo).port;
+    await urlInput.fill(`ws://localhost:${mockPort}`);
     const connectBtn = page.locator(".ws-connect-btn");
     await connectBtn.click();
 

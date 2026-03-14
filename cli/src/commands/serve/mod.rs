@@ -78,7 +78,8 @@ async fn async_server(sim: &SimArgs, port: u16) {
         .await
         .unwrap_or_else(|e| panic!("failed to bind to {addr}: {e}"));
 
-    eprintln!("WebSocket server listening on ws://localhost:{port}");
+    let actual_port = listener.local_addr().unwrap().port();
+    eprintln!("WebSocket server listening on ws://localhost:{actual_port}");
 
     let (tx, _rx) = broadcast::channel::<String>(256);
     let (cmd_tx, cmd_rx) = mpsc::channel::<SimCommand>(16);
