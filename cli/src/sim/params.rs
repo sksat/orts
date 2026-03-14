@@ -3,7 +3,7 @@ use std::sync::Arc;
 use kaname::epoch::Epoch;
 use orts_integrator::Tolerances;
 use orts_orbits::{body::KnownBody, tle::Tle};
-use orts_sim::setup::AtmosphereChoice;
+use orts::setup::AtmosphereChoice;
 
 use crate::cli::{SimArgs, IntegratorChoice, AtmosphereChoice as CliAtmosphereChoice};
 use crate::config::SimConfig;

@@ -9,6 +9,5 @@ repository.workspace = true
 nalgebra.workspace = true
 kaname.workspace = true
 orts-integrator.workspace = true
-tobari.workspace = true
 serde.workspace = true
 serde_json.workspace = true

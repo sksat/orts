@@ -1,14 +1,10 @@
 use std::sync::Arc;
 
 use kaname::epoch::Epoch;
-use orts_orbits::{
-    body::KnownBody,
-    drag::AtmosphericDrag,
-    gravity,
-    orbital_system::OrbitalSystem,
-    srp::SolarRadiationPressure,
-    third_body::ThirdBodyGravity,
-};
+use orts_orbits::{body::KnownBody, gravity};
+
+use crate::orbital_system::OrbitalSystem;
+use crate::perturbations::{AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity};
 
 /// Which atmosphere model to use for drag computation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use orts_integrator::State;
-use orts_sim::group::prop_group::SatId;
-use orts_sim::group::{IndependentGroup, IntegratorConfig};
+use orts::group::prop_group::SatId;
+use orts::group::{IndependentGroup, IntegratorConfig};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -15,7 +15,7 @@ use crate::cli::{IntegratorChoice, SimArgs};
 use crate::config::{SimConfig, SatelliteConfig};
 use crate::satellite::{SatelliteInfo, SatelliteSpec};
 use crate::sim::core::{accel_breakdown, make_history_state, sat_params};
-use orts_sim::setup::build_orbital_system;
+use orts::setup::build_orbital_system;
 use crate::sim::params::SimParams;
 
 use protocol::{ClientMessage, HistoryBuffer, WsMessage};

@@ -1,9 +1,13 @@
 [package]
-name = "orts"
+name = "orts-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[[bin]]
+name = "orts"
+path = "src/main.rs"
 
 [dependencies]
 nalgebra.workspace = true
@@ -11,7 +15,7 @@ orts-integrator.workspace = true
 orts-orbits.workspace = true
 tobari = { workspace = true, features = ["fetch"] }
 kaname.workspace = true
-orts-sim.workspace = true
+orts.workspace = true
 clap.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true

@@ -150,12 +150,10 @@ mod tests {
 
     #[test]
     fn suborbital_trajectory_terminates_on_collision() {
-        use crate::gravity::PointMass;
-        use crate::orbital_system::OrbitalSystem;
+        use crate::two_body::TwoBodySystem;
         use orts_integrator::{IntegrationOutcome, Integrator, Rk4};
 
-        let system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
-            .with_body_radius(R_EARTH);
+        let system = TwoBodySystem { mu: MU_EARTH };
 
         // Start at 100 km altitude with only 80% of circular velocity → will fall back
         let r = R_EARTH + 100.0;
@@ -193,12 +191,10 @@ mod tests {
 
     #[test]
     fn suborbital_trajectory_terminates_on_atmospheric_entry() {
-        use crate::gravity::PointMass;
-        use crate::orbital_system::OrbitalSystem;
+        use crate::two_body::TwoBodySystem;
         use orts_integrator::{IntegrationOutcome, Integrator, Rk4};
 
-        let system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
-            .with_body_radius(R_EARTH);
+        let system = TwoBodySystem { mu: MU_EARTH };
 
         // Start at 200 km altitude with 80% of circular velocity → will fall back
         let r = R_EARTH + 200.0;

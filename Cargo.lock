@@ -3054,13 +3054,27 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 name = "orts"
 version = "0.0.0"
 dependencies = [
- "clap",
- "futures-util",
  "kaname",
  "nalgebra",
  "orts-integrator",
  "orts-orbits",
- "orts-sim",
+ "rerun",
+ "serde",
+ "serde_json",
+ "tobari",
+]
+
+[[package]]
+name = "orts-cli"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "futures-util",
+ "kaname",
+ "nalgebra",
+ "orts",
+ "orts-integrator",
+ "orts-orbits",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -3087,19 +3101,6 @@ dependencies = [
  "orts-integrator",
  "serde",
  "serde_json",
- "tobari",
-]
-
-[[package]]
-name = "orts-sim"
-version = "0.0.0"
-dependencies = [
- "kaname",
- "nalgebra",
- "orts-integrator",
- "orts-orbits",
- "rerun",
- "tobari",
 ]
 
 [[package]]

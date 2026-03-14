@@ -1,7 +1,7 @@
 use kaname::epoch::Epoch;
 use orts_integrator::{DynamicalSystem, State};
 
-use crate::gravity::GravityField;
+use orts_orbits::gravity::GravityField;
 use crate::perturbations::ForceModel;
 
 /// Orbital dynamics system combining a gravity field model with perturbation forces.
@@ -78,10 +78,10 @@ impl DynamicalSystem for OrbitalSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{J2_EARTH, MU_EARTH, R_EARTH};
-    use crate::gravity::{PointMass, ZonalHarmonics};
-    use crate::kepler::KeplerianElements;
-    use crate::two_body::TwoBodySystem;
+    use orts_orbits::constants::{J2_EARTH, MU_EARTH, R_EARTH};
+    use orts_orbits::gravity::{PointMass, ZonalHarmonics};
+    use orts_orbits::kepler::KeplerianElements;
+    use orts_orbits::two_body::TwoBodySystem;
     use nalgebra::vector;
     use orts_integrator::{Integrator, Rk4};
     use std::f64::consts::PI;
@@ -172,40 +172,33 @@ mod tests {
 
     #[test]
     fn j2_iss_raan_precession() {
-        // ISS orbit: h=400km, i=51.6°, circular
-        // Analytical RAAN precession rate:
-        //   dΩ/dt = -(3/2) * n * J2 * (R_e/a)² * cos(i) / (1-e²)²
-        let a = R_EARTH + 400.0; // 6778.137 km
+        let a = R_EARTH + 400.0;
         let i = 51.6_f64.to_radians();
-        let n = (MU_EARTH / a.powi(3)).sqrt(); // mean motion [rad/s]
+        let n = (MU_EARTH / a.powi(3)).sqrt();
         let expected_rate = -1.5 * n * J2_EARTH * (R_EARTH / a).powi(2) * i.cos();
-        // Convert to deg/day
         let expected_deg_per_day = expected_rate.to_degrees() * 86400.0;
 
         let system = earth_j2_system();
         let elements = KeplerianElements {
             semi_major_axis: a,
-            eccentricity: 0.0001, // near-circular (avoid singularity)
+            eccentricity: 0.0001,
             inclination: i,
             raan: 0.0,
             argument_of_periapsis: 0.0,
             true_anomaly: 0.0,
         };
 
-        let duration = 86400.0; // 1 day
-        let dt = 5.0; // 5s steps for accuracy
+        let duration = 86400.0;
+        let dt = 5.0;
         let final_raan = propagate_raan(&system, &elements, dt, duration);
 
-        // RAAN should have changed by approximately expected_deg_per_day degrees
         let raan_change_deg = final_raan.to_degrees();
-        // Handle wrapping: if raan went negative, it wraps to ~360
         let raan_change_deg = if raan_change_deg > 180.0 {
             raan_change_deg - 360.0
         } else {
             raan_change_deg
         };
 
-        // Expected ~-5.0 deg/day for ISS
         assert!(
             (raan_change_deg - expected_deg_per_day).abs() < 0.5,
             "ISS RAAN precession: expected≈{expected_deg_per_day:.2} deg/day, got={raan_change_deg:.2} deg/day"
@@ -214,8 +207,6 @@ mod tests {
 
     #[test]
     fn j2_sso_raan_precession() {
-        // Sun-synchronous orbit: h=800km, i≈98.6°
-        // RAAN precession rate should be ~+0.9856 deg/day (matches Earth's orbit around Sun)
         let a = R_EARTH + 800.0;
         let i = 98.6_f64.to_radians();
         let n = (MU_EARTH / a.powi(3)).sqrt();
@@ -243,12 +234,10 @@ mod tests {
             raan_change_deg
         };
 
-        // Should be close to +0.9856 deg/day
         assert!(
             (raan_change_deg - expected_deg_per_day).abs() < 0.3,
             "SSO RAAN precession: expected≈{expected_deg_per_day:.3} deg/day, got={raan_change_deg:.3} deg/day"
         );
-        // Also verify it's positive (prograde precession for retrograde orbit)
         assert!(
             raan_change_deg > 0.0,
             "SSO RAAN should precess prograde, got={raan_change_deg:.3} deg/day"
@@ -257,7 +246,6 @@ mod tests {
 
     #[test]
     fn j2_dt_convergence() {
-        // Verify RK4 4th-order convergence is maintained with J2
         let system = earth_j2_system();
         let a = R_EARTH + 400.0;
         let i = 51.6_f64.to_radians();
@@ -275,9 +263,7 @@ mod tests {
             velocity: vel,
         };
 
-        let duration = 1000.0; // ~1/5 orbit
-
-        // Propagate with three dt values
+        let duration = 1000.0;
         let dt_coarse = 4.0;
         let dt_fine = 2.0;
         let dt_finest = 1.0;
@@ -302,15 +288,14 @@ mod tests {
             Box::new(ZonalHarmonics {
                 r_body: R_EARTH,
                 j2: J2_EARTH,
-                j3: Some(crate::constants::J3_EARTH),
-                j4: Some(crate::constants::J4_EARTH),
+                j3: Some(orts_orbits::constants::J3_EARTH),
+                j4: Some(orts_orbits::constants::J4_EARTH),
             }),
         )
     }
 
     #[test]
     fn j2_j3_j4_dt_convergence() {
-        // Verify RK4 4th-order convergence is maintained with J2+J3+J4
         let system = earth_j2_j3_j4_system();
         let a = R_EARTH + 400.0;
         let i = 51.6_f64.to_radians();
@@ -349,7 +334,6 @@ mod tests {
 
     #[test]
     fn j2_j3_j4_raan_closer_to_analytical() {
-        // J2+J3+J4 RAAN precession should be measurably different from J2-only
         let a = R_EARTH + 400.0;
         let i = 51.6_f64.to_radians();
         let elements = KeplerianElements {
@@ -367,7 +351,6 @@ mod tests {
         let raan_j2 = propagate_raan(&earth_j2_system(), &elements, dt, duration);
         let raan_j2_j3_j4 = propagate_raan(&earth_j2_j3_j4_system(), &elements, dt, duration);
 
-        // They should differ, but not by a lot (J3+J4 is small correction)
         let diff_deg = (raan_j2 - raan_j2_j3_j4).to_degrees().abs();
         assert!(
             diff_deg > 1e-4,

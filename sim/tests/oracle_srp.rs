@@ -14,8 +14,8 @@ use orts_integrator::{Integrator, Rk4, State};
 use orts_orbits::constants::{MU_EARTH, R_EARTH};
 use orts_orbits::gravity::PointMass;
 use orts_orbits::kepler::KeplerianElements;
-use orts_orbits::orbital_system::OrbitalSystem;
-use orts_orbits::srp::SolarRadiationPressure;
+use orts::orbital_system::OrbitalSystem;
+use orts::perturbations::SolarRadiationPressure;
 use std::f64::consts::PI;
 
 // ============================================================================
@@ -359,7 +359,7 @@ fn srp_energy_work_consistency() {
         shadow_body_radius: None,
     };
 
-    use orts_orbits::perturbations::ForceModel;
+    use orts::perturbations::ForceModel;
     let mut work_accumulated = 0.0;
 
     let final_state = Rk4.integrate(&system, initial, 0.0, total_time, dt, |t, state| {

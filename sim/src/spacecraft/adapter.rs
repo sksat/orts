@@ -1,7 +1,7 @@
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 use crate::attitude::TorqueModel;
-use orts_orbits::perturbations::ForceModel;
+use crate::perturbations::ForceModel;
 
 use super::{ExternalLoads, LoadModel, SpacecraftState};
 

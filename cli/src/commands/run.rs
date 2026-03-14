@@ -2,12 +2,12 @@ use std::ops::ControlFlow;
 
 use orts_integrator::State;
 use orts_orbits::kepler::KeplerianElements;
-use orts_sim::group::{IndependentGroup, IntegratorConfig};
-use orts_sim::record::archetypes::OrbitalState;
-use orts_sim::record::components::{BodyRadius, GravitationalParameter};
-use orts_sim::record::entity_path::EntityPath;
-use orts_sim::record::recording::Recording;
-use orts_sim::record::timeline::TimePoint;
+use orts::group::{IndependentGroup, IntegratorConfig};
+use orts::record::archetypes::OrbitalState;
+use orts::record::components::{BodyRadius, GravitationalParameter};
+use orts::record::entity_path::EntityPath;
+use orts::record::recording::Recording;
+use orts::record::timeline::TimePoint;
 
 use crate::cli::{IntegratorChoice, OutputFormat, SimArgs};
 use crate::satellite::OrbitSpec;
@@ -37,7 +37,7 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
             std::process::exit(1);
         }
         (path, OutputFormat::Rrd) => {
-            orts_sim::record::rerun_export::save_as_rrd(&rec, "orts", path)
+            orts::record::rerun_export::save_as_rrd(&rec, "orts", path)
                 .unwrap_or_else(|e| {
                     eprintln!("Error saving .rrd: {e}");
                     std::process::exit(1);
@@ -50,7 +50,7 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
 /// Run the simulation and return a Recording.
 pub fn run_simulation(params: &SimParams) -> Recording {
     use crate::sim::core::sat_params;
-    use orts_sim::setup::build_orbital_system;
+    use orts::setup::build_orbital_system;
 
     let mut rec = Recording::new();
     let body_path = EntityPath::parse(&format!("/world/{}", params.body.properties().name));
@@ -187,7 +187,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
 
     // Use first satellite for metadata (backward compatibility)
     let first_sat = params.satellites.first();
-    rec.metadata = orts_sim::record::recording::SimMetadata {
+    rec.metadata = orts::record::recording::SimMetadata {
         epoch_jd: params.epoch.map(|e| e.jd()),
         mu: Some(params.mu),
         body_radius: Some(params.body.properties().radius),
@@ -252,9 +252,9 @@ pub fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
 }
 
 pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with_id: bool) {
-    use orts_sim::record::component::Component;
-    use orts_sim::record::components::{Position3D, Velocity3D};
-    use orts_sim::record::timeline::TimelineName;
+    use orts::record::component::Component;
+    use orts::record::components::{Position3D, Velocity3D};
+    use orts::record::timeline::TimelineName;
 
     let store = match rec.entity(sat_path) {
         Some(s) => s,
@@ -279,7 +279,7 @@ pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with
 
     for i in 0..pos_col.num_rows() {
         let t = match sim_times.get(i * 2) {
-            Some(orts_sim::record::timeline::TimeIndex::Seconds(s)) => *s,
+            Some(orts::record::timeline::TimeIndex::Seconds(s)) => *s,
             _ => 0.0,
         };
         let pos = pos_col.get_row(i).unwrap();

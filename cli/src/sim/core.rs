@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use orts_orbits::kepler::KeplerianElements;
-use orts_orbits::orbital_system::OrbitalSystem;
+use orts::orbital_system::OrbitalSystem;
 use orts_integrator::State;
-use orts_sim::setup::SatelliteParams;
+use orts::setup::SatelliteParams;
 use serde::{Deserialize, Serialize};
 
 use crate::satellite::{OrbitSpec, SatelliteSpec};

@@ -26,7 +26,8 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 - `cargo test -p orts-integrator` — test only the integrator crate
 - `cargo test -p orts-orbits` — test only the orbits crate
 - `cargo test -p kaname` — test only the kaname crate
-- `cargo test -p orts` — run CLI E2E tests
+- `cargo test -p orts` — test the simulation library (orts crate)
+- `cargo test -p orts-cli` — run CLI E2E tests
 
 ### Viewer (React + TypeScript)
 - `cd viewer && pnpm install` — install dependencies

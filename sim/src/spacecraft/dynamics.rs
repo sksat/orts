@@ -127,8 +127,8 @@ mod tests {
     use orts_integrator::{Integrator, OdeState, Rk4, State};
     use orts_orbits::constants::MU_EARTH;
     use orts_orbits::gravity::PointMass;
-    use orts_orbits::orbital_system::OrbitalSystem;
-    use orts_orbits::perturbations::ForceModel;
+    use crate::orbital_system::OrbitalSystem;
+    use crate::perturbations::ForceModel;
 
     use super::super::{ForceModelAtCoM, TorqueModelOnly};
 

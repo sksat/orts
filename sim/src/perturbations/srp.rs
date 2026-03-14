@@ -3,7 +3,7 @@ use kaname::epoch::Epoch;
 use kaname::sun;
 use orts_integrator::State;
 
-use crate::constants::{R_EARTH, SOLAR_RADIATION_PRESSURE};
+use orts_orbits::constants::{R_EARTH, SOLAR_RADIATION_PRESSURE};
 use crate::perturbations::ForceModel;
 
 /// Default radiation pressure coefficient (dimensionless).
@@ -137,7 +137,7 @@ impl ForceModel for SolarRadiationPressure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::MU_EARTH;
+    use orts_orbits::constants::MU_EARTH;
     use nalgebra::vector;
 
     fn test_epoch() -> Epoch {

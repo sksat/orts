@@ -16,11 +16,11 @@ use kaname::epoch::Epoch;
 use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, State, Tolerances};
 use orts_orbits::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use orts_orbits::body::KnownBody;
-use orts_orbits::drag::AtmosphericDrag;
+use orts::perturbations::AtmosphericDrag;
 use orts_orbits::gravity::ZonalHarmonics;
 use orts_orbits::kepler::KeplerianElements;
-use orts_orbits::orbital_system::OrbitalSystem;
-use orts_orbits::third_body::ThirdBodyGravity;
+use orts::orbital_system::OrbitalSystem;
+use orts::perturbations::ThirdBodyGravity;
 use std::f64::consts::PI;
 use std::ops::ControlFlow;
 
@@ -445,7 +445,7 @@ fn drag_monotonic_sma_decay() {
     system.perturbations.push(Box::new(AtmosphericDrag {
         body: Some(KnownBody::Earth),
         body_radius: R_EARTH,
-        omega_body: orts_orbits::drag::OMEGA_EARTH,
+        omega_body: orts::perturbations::OMEGA_EARTH,
         ballistic_coeff: 0.005, // physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
         atmosphere: Box::new(tobari::exponential::Exponential),
     }));
@@ -525,7 +525,7 @@ fn drag_scaling_with_ballistic_coefficient() {
         system.perturbations.push(Box::new(AtmosphericDrag {
             body: Some(KnownBody::Earth),
             body_radius: R_EARTH,
-            omega_body: orts_orbits::drag::OMEGA_EARTH,
+            omega_body: orts::perturbations::OMEGA_EARTH,
             ballistic_coeff: b,
             atmosphere: Box::new(tobari::exponential::Exponential),
         }));
@@ -1612,8 +1612,8 @@ fn drag_decay_200_orbits() {
     system.perturbations.push(Box::new(AtmosphericDrag {
         body: Some(KnownBody::Earth),
         body_radius: R_EARTH,
-        omega_body: orts_orbits::drag::OMEGA_EARTH,
-        ballistic_coeff: orts_orbits::drag::DEFAULT_BALLISTIC_COEFF,
+        omega_body: orts::perturbations::OMEGA_EARTH,
+        ballistic_coeff: orts::perturbations::DEFAULT_BALLISTIC_COEFF,
         atmosphere: Box::new(tobari::exponential::Exponential),
     }));
 
@@ -1829,7 +1829,7 @@ fn iss_drag_30day_survival() {
     system.perturbations.push(Box::new(AtmosphericDrag {
         body: Some(KnownBody::Earth),
         body_radius: R_EARTH,
-        omega_body: orts_orbits::drag::OMEGA_EARTH,
+        omega_body: orts::perturbations::OMEGA_EARTH,
         ballistic_coeff: 0.005, // Physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
         atmosphere: Box::new(tobari::exponential::Exponential),
     }));

@@ -25,9 +25,9 @@ use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 use orts_integrator::{DormandPrince, State, Tolerances};
 use orts_orbits::constants::{J2_EARTH, MU_EARTH, R_EARTH};
-use orts_orbits::drag::AtmosphericDrag;
+use orts::perturbations::AtmosphericDrag;
 use orts_orbits::gravity::ZonalHarmonics;
-use orts_orbits::orbital_system::OrbitalSystem;
+use orts::orbital_system::OrbitalSystem;
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
 

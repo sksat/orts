@@ -4,8 +4,8 @@ use kaname::{WGS84_A, WGS84_B};
 use tobari::{AtmosphereModel, Exponential};
 use orts_integrator::State;
 
-use crate::body::KnownBody;
-use crate::constants::R_EARTH;
+use orts_orbits::body::KnownBody;
+use orts_orbits::constants::R_EARTH;
 use crate::perturbations::ForceModel;
 
 /// Earth rotation rate [rad/s] (IERS 2010)
@@ -137,7 +137,7 @@ impl ForceModel for AtmosphericDrag {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants::{MU_EARTH, R_EARTH};
+    use orts_orbits::constants::{MU_EARTH, R_EARTH};
     use nalgebra::vector;
 
     fn iss_drag() -> AtmosphericDrag {

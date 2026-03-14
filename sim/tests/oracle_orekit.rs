@@ -23,11 +23,11 @@ use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 use orts_integrator::{DormandPrince, DynamicalSystem, State, Tolerances};
 use orts_orbits::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
-use orts_orbits::drag::AtmosphericDrag;
+use orts::perturbations::AtmosphericDrag;
 use orts_orbits::gravity::{PointMass, ZonalHarmonics};
-use orts_orbits::orbital_system::OrbitalSystem;
-use orts_orbits::srp::SolarRadiationPressure;
-use orts_orbits::third_body::ThirdBodyGravity;
+use orts::orbital_system::OrbitalSystem;
+use orts::perturbations::SolarRadiationPressure;
+use orts::perturbations::ThirdBodyGravity;
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
 

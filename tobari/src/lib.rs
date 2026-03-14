@@ -42,7 +42,7 @@ use nalgebra::Vector3;
 /// An atmospheric density model.
 ///
 /// Computes density \[kg/m³\] from altitude, satellite position, and epoch.
-/// Implementors must be `Send + Sync` for use inside [`ForceModel`](orts_orbits::perturbations::ForceModel).
+/// Implementors must be `Send + Sync` for use inside [`ForceModel`](orts::perturbations::ForceModel).
 pub trait AtmosphereModel: Send + Sync {
     /// Compute atmospheric density \[kg/m³\].
     ///

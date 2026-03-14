@@ -2,7 +2,7 @@ use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 use orts_orbits::body::KnownBody;
 use orts_orbits::constants::R_EARTH;
-use orts_orbits::drag::OMEGA_EARTH;
+use crate::perturbations::OMEGA_EARTH;
 use tobari::{AtmosphereModel, Exponential};
 
 use super::{ExternalLoads, LoadModel, SpacecraftState};
@@ -709,8 +709,8 @@ mod tests {
 
     #[test]
     fn cannonball_matches_atmospheric_drag() {
-        use orts_orbits::drag::AtmosphericDrag;
-        use orts_orbits::perturbations::ForceModel;
+        use crate::perturbations::AtmosphericDrag;
+        use crate::perturbations::ForceModel;
 
         let b = 0.005;
         let panel_drag = PanelDrag::for_earth(SpacecraftShape::cannonball(b));

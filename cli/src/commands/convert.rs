@@ -3,7 +3,7 @@ use crate::cli::OutputFormat;
 pub fn run_convert(input: &str, format: OutputFormat, output: Option<&str>) {
     match format {
         OutputFormat::Csv => {
-            let data = orts_sim::record::rerun_export::load_rrd_data(input)
+            let data = orts::record::rerun_export::load_rrd_data(input)
                 .unwrap_or_else(|e| {
                     eprintln!("Error reading {input}: {e}");
                     std::process::exit(1);

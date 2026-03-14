@@ -1,10 +1,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
-use orts_sim::record::archetypes::OrbitalState;
-use orts_sim::record::entity_path::EntityPath;
-use orts_sim::record::recording::Recording;
-use orts_sim::record::timeline::TimePoint;
+use orts::record::archetypes::OrbitalState;
+use orts::record::entity_path::EntityPath;
+use orts::record::recording::Recording;
+use orts::record::timeline::TimePoint;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{SimConfig, SatelliteConfig};
@@ -161,7 +161,7 @@ impl HistoryBuffer {
             .data_dir
             .join(format!("seg_{:04}.rrd", self.segment_count));
         if let Err(e) =
-            orts_sim::record::rerun_export::save_as_rrd(&rec, "orts", seg_path.to_str().unwrap())
+            orts::record::rerun_export::save_as_rrd(&rec, "orts", seg_path.to_str().unwrap())
         {
             eprintln!("Warning: failed to flush segment: {e}");
             return;
@@ -177,7 +177,7 @@ impl HistoryBuffer {
         // Read .rrd segment files in order
         for i in 0..self.segment_count {
             let seg_path = self.data_dir.join(format!("seg_{i:04}.rrd"));
-            match orts_sim::record::rerun_export::load_from_rrd(seg_path.to_str().unwrap()) {
+            match orts::record::rerun_export::load_from_rrd(seg_path.to_str().unwrap()) {
                 Ok(rows) => {
                     for row in rows {
                         let pos = nalgebra::Vector3::new(row.x, row.y, row.z);
