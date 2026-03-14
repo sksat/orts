@@ -6,11 +6,18 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-let ortsProcess: ChildProcess;
+let ortsProcess: ChildProcess | undefined;
 let wsUrl: string;
 
 test.beforeAll(async () => {
-  const binary = path.resolve(__dirname, "../../target/debug/orts");
+  // If ORTS_WS_URL is set (e.g. in CI), use the existing server directly.
+  if (process.env.ORTS_WS_URL) {
+    wsUrl = process.env.ORTS_WS_URL;
+    console.log(`Using existing orts server at ${wsUrl}`);
+    return;
+  }
+
+  const binary = process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");
   const child = spawn(binary, [
     "serve",
     "--port",

@@ -231,6 +231,9 @@ jobs:
       - name: Run Playwright E2E
         working-directory: viewer
         run: npx playwright test
+        env:
+          VIEWER_PORT: "5173"
+          ORTS_WS_URL: "ws://localhost:9001"
 
       - name: Upload Playwright report
         if: failure()
