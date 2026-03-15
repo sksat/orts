@@ -21,6 +21,14 @@ use crate::sim::params::SimParams;
 use protocol::{ClientMessage, HistoryBuffer, WsMessage};
 use compute::state_message;
 
+type WsSender = futures_util::stream::SplitSink<
+    tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+    tokio_tungstenite::tungstenite::Message,
+>;
+type WsReceiver = futures_util::stream::SplitStream<
+    tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+>;
+
 /// Command sent from connection handlers to the simulation manager.
 enum SimCommand {
     /// Start a simulation from idle state.
@@ -661,7 +669,7 @@ async fn handle_connection(
         }
     };
 
-    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+    let (mut ws_sender, mut ws_receiver): (WsSender, WsReceiver) = ws_stream.split();
 
     // 1. Query current status from the manager
     let (status_tx, status_rx) = oneshot::channel();
@@ -794,14 +802,39 @@ async fn handle_connection(
     eprintln!("Client disconnected");
 }
 
+/// Send a command to the simulation manager, await the response, and send
+/// an error message back to the client if the command failed.
+/// Returns `ControlFlow::Break(())` if the connection should be closed.
+async fn dispatch_command<T>(
+    cmd_tx: &mpsc::Sender<SimCommand>,
+    ws_sender: &mut WsSender,
+    make_cmd: impl FnOnce(oneshot::Sender<Result<T, String>>) -> SimCommand,
+) -> ControlFlow<()> {
+    let (resp_tx, resp_rx) = oneshot::channel();
+    if cmd_tx.send(make_cmd(resp_tx)).await.is_err() {
+        return ControlFlow::Break(());
+    }
+    match resp_rx.await {
+        Ok(Ok(_)) => ControlFlow::Continue(()),
+        Ok(Err(e)) => {
+            let err_msg = serde_json::to_string(&WsMessage::Error { message: e })
+                .expect("failed to serialize error");
+            if ws_sender
+                .send(tokio_tungstenite::tungstenite::Message::Text(err_msg.into()))
+                .await
+                .is_err()
+            {
+                return ControlFlow::Break(());
+            }
+            ControlFlow::Continue(())
+        }
+        Err(_) => ControlFlow::Break(()),
+    }
+}
+
 async fn main_loop(
-    ws_sender: &mut futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-        tokio_tungstenite::tungstenite::Message,
-    >,
-    ws_receiver: &mut futures_util::stream::SplitStream<
-        tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-    >,
+    ws_sender: &mut WsSender,
+    ws_receiver: &mut WsReceiver,
     rx: &mut broadcast::Receiver<String>,
     cmd_tx: &mpsc::Sender<SimCommand>,
     mut detail_rx: Option<&mut tokio::sync::mpsc::Receiver<String>>,
@@ -851,7 +884,7 @@ async fn main_loop(
                 match ws_msg {
                     Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
                         if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
-                            match client_msg {
+                            let result = match client_msg {
                                 ClientMessage::QueryRange { t_min, t_max, max_points, satellite_id } => {
                                     let (resp_tx, resp_rx) = oneshot::channel();
                                     if cmd_tx.send(SimCommand::QueryRange {
@@ -871,138 +904,36 @@ async fn main_loop(
                                             break;
                                         }
                                     }
+                                    ControlFlow::Continue(())
                                 }
                                 ClientMessage::StartSimulation { config } => {
-                                    let (resp_tx, resp_rx) = oneshot::channel();
-                                    if cmd_tx.send(SimCommand::Start {
-                                        config, respond: resp_tx,
-                                    }).await.is_err() {
-                                        break;
-                                    }
-                                    match resp_rx.await {
-                                        Ok(Ok(())) => {
-                                            // Manager will broadcast Info via the broadcast channel.
-                                            // Nothing to send here — the client will receive it via rx.
-                                        }
-                                        Ok(Err(e)) => {
-                                            let err_msg = serde_json::to_string(&WsMessage::Error {
-                                                message: e,
-                                            }).expect("failed to serialize error");
-                                            if ws_sender
-                                                .send(tokio_tungstenite::tungstenite::Message::Text(err_msg.into()))
-                                                .await
-                                                .is_err()
-                                            {
-                                                break;
-                                            }
-                                        }
-                                        Err(_) => break,
-                                    }
+                                    dispatch_command(cmd_tx, ws_sender, |respond| {
+                                        SimCommand::Start { config, respond }
+                                    }).await
                                 }
                                 ClientMessage::PauseSimulation => {
-                                    let (resp_tx, resp_rx) = oneshot::channel();
-                                    if cmd_tx.send(SimCommand::Pause {
-                                        respond: resp_tx,
-                                    }).await.is_err() {
-                                        break;
-                                    }
-                                    match resp_rx.await {
-                                        Ok(Err(e)) => {
-                                            let err_msg = serde_json::to_string(&WsMessage::Error {
-                                                message: e,
-                                            }).expect("failed to serialize error");
-                                            if ws_sender
-                                                .send(tokio_tungstenite::tungstenite::Message::Text(err_msg.into()))
-                                                .await
-                                                .is_err()
-                                            {
-                                                break;
-                                            }
-                                        }
-                                        Ok(Ok(())) => {
-                                            // Status broadcast via tx
-                                        }
-                                        Err(_) => break,
-                                    }
+                                    dispatch_command(cmd_tx, ws_sender, |respond| {
+                                        SimCommand::Pause { respond }
+                                    }).await
                                 }
                                 ClientMessage::ResumeSimulation => {
-                                    let (resp_tx, resp_rx) = oneshot::channel();
-                                    if cmd_tx.send(SimCommand::Resume {
-                                        respond: resp_tx,
-                                    }).await.is_err() {
-                                        break;
-                                    }
-                                    match resp_rx.await {
-                                        Ok(Err(e)) => {
-                                            let err_msg = serde_json::to_string(&WsMessage::Error {
-                                                message: e,
-                                            }).expect("failed to serialize error");
-                                            if ws_sender
-                                                .send(tokio_tungstenite::tungstenite::Message::Text(err_msg.into()))
-                                                .await
-                                                .is_err()
-                                            {
-                                                break;
-                                            }
-                                        }
-                                        Ok(Ok(())) => {
-                                            // Status broadcast via tx
-                                        }
-                                        Err(_) => break,
-                                    }
+                                    dispatch_command(cmd_tx, ws_sender, |respond| {
+                                        SimCommand::Resume { respond }
+                                    }).await
                                 }
                                 ClientMessage::TerminateSimulation => {
-                                    let (resp_tx, resp_rx) = oneshot::channel();
-                                    if cmd_tx.send(SimCommand::Terminate {
-                                        respond: resp_tx,
-                                    }).await.is_err() {
-                                        break;
-                                    }
-                                    match resp_rx.await {
-                                        Ok(Err(e)) => {
-                                            let err_msg = serde_json::to_string(&WsMessage::Error {
-                                                message: e,
-                                            }).expect("failed to serialize error");
-                                            if ws_sender
-                                                .send(tokio_tungstenite::tungstenite::Message::Text(err_msg.into()))
-                                                .await
-                                                .is_err()
-                                            {
-                                                break;
-                                            }
-                                        }
-                                        Ok(Ok(())) => {
-                                            // Status broadcast via tx
-                                        }
-                                        Err(_) => break,
-                                    }
+                                    dispatch_command(cmd_tx, ws_sender, |respond| {
+                                        SimCommand::Terminate { respond }
+                                    }).await
                                 }
                                 ClientMessage::AddSatellite { satellite } => {
-                                    let (resp_tx, resp_rx) = oneshot::channel();
-                                    if cmd_tx.send(SimCommand::AddSatellite {
-                                        satellite, respond: resp_tx,
-                                    }).await.is_err() {
-                                        break;
-                                    }
-                                    match resp_rx.await {
-                                        Ok(Err(e)) => {
-                                            let err_msg = serde_json::to_string(&WsMessage::Error {
-                                                message: e,
-                                            }).expect("failed to serialize error");
-                                            if ws_sender
-                                                .send(tokio_tungstenite::tungstenite::Message::Text(err_msg.into()))
-                                                .await
-                                                .is_err()
-                                            {
-                                                break;
-                                            }
-                                        }
-                                        Ok(Ok(_)) => {
-                                            // SatelliteAdded already broadcast via tx
-                                        }
-                                        Err(_) => break,
-                                    }
+                                    dispatch_command(cmd_tx, ws_sender, |respond| {
+                                        SimCommand::AddSatellite { satellite, respond }
+                                    }).await
                                 }
+                            };
+                            if result.is_break() {
+                                break;
                             }
                         }
                     }
