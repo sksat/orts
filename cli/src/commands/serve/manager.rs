@@ -4,6 +4,7 @@ use std::sync::Arc;
 use orts_integrator::State;
 use orts::group::prop_group::SatId;
 use orts::group::{IndependentGroup, IntegratorConfig};
+use orts::orbital_system::OrbitalSystem;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::cli::IntegratorChoice;
@@ -214,272 +215,275 @@ fn build_info_message(params: &SimParams) -> WsMessage {
     }
 }
 
-/// Core simulation loop: builds group, propagates, handles commands.
-/// Returns the exit reason and gives back the command receiver for reuse.
-async fn run_simulation_loop(
+/// Mutable state for the running simulation loop.
+struct SimLoopContext {
     params: Arc<SimParams>,
-    mut cmd_rx: mpsc::Receiver<SimCommand>,
+    group: IndependentGroup<OrbitalSystem>,
+    metas: Vec<SatMeta>,
+    history: HistoryBuffer,
     tx: broadcast::Sender<String>,
-    mut history: HistoryBuffer,
-) -> (LoopExit, mpsc::Receiver<SimCommand>) {
-    const OUTPUTS_PER_CHUNK: usize = 10;
-    let chunk_sim_time = params.stream_interval * OUTPUTS_PER_CHUNK as f64;
+    info_json: String,
+    terminated_events: Vec<String>,
+    paused: bool,
+    current_t: f64,
+    has_perturbations: bool,
+}
 
-    let wall_per_sim_sec = ((params.dt / 100.0).max(0.01)) / params.stream_interval;
-    let chunk_wall_time =
-        std::time::Duration::from_secs_f64(chunk_sim_time * wall_per_sim_sec);
+impl SimLoopContext {
+    fn new(
+        params: Arc<SimParams>,
+        tx: broadcast::Sender<String>,
+        mut history: HistoryBuffer,
+    ) -> Self {
+        let config = match params.integrator {
+            IntegratorChoice::Rk4 => IntegratorConfig::Rk4 { dt: params.dt },
+            IntegratorChoice::Dp45 => IntegratorConfig::Dp45 {
+                dt: params.dt,
+                tolerances: params.tolerances.clone(),
+            },
+        };
 
-    let config = match params.integrator {
-        IntegratorChoice::Rk4 => IntegratorConfig::Rk4 { dt: params.dt },
-        IntegratorChoice::Dp45 => IntegratorConfig::Dp45 {
-            dt: params.dt,
-            tolerances: params.tolerances.clone(),
-        },
-    };
-
-    let body_radius = params.body.properties().radius;
-    let atmosphere_altitude = params.body.properties().atmosphere_altitude;
-    let event_checker = move |_t: f64, state: &State| -> ControlFlow<String> {
-        let r = state.position.magnitude();
-        if r < body_radius {
-            ControlFlow::Break(format!("collision at {:.1} km altitude", r - body_radius))
-        } else if let Some(atm_alt) = atmosphere_altitude {
-            if r < body_radius + atm_alt {
-                ControlFlow::Break(format!(
-                    "atmospheric entry at {:.1} km altitude",
-                    r - body_radius
-                ))
+        let body_radius = params.body.properties().radius;
+        let atmosphere_altitude = params.body.properties().atmosphere_altitude;
+        let event_checker = move |_t: f64, state: &State| -> ControlFlow<String> {
+            let r = state.position.magnitude();
+            if r < body_radius {
+                ControlFlow::Break(format!("collision at {:.1} km altitude", r - body_radius))
+            } else if let Some(atm_alt) = atmosphere_altitude {
+                if r < body_radius + atm_alt {
+                    ControlFlow::Break(format!(
+                        "atmospheric entry at {:.1} km altitude",
+                        r - body_radius
+                    ))
+                } else {
+                    ControlFlow::Continue(())
+                }
             } else {
                 ControlFlow::Continue(())
             }
-        } else {
-            ControlFlow::Continue(())
+        };
+
+        let mut group = IndependentGroup::new(config).with_event_checker(event_checker);
+
+        let mut metas: Vec<SatMeta> = Vec::new();
+        for spec in &params.satellites {
+            let system = build_orbital_system(
+                &params.body,
+                params.mu,
+                params.epoch,
+                &sat_params(spec),
+                params.build_atmosphere_model(),
+            );
+            let initial = spec.initial_state(params.mu);
+            group = group.add_satellite(spec.id.as_str(), initial, system);
+            metas.push(SatMeta {
+                spec: spec.clone(),
+                orbit_end_t: spec.period,
+                next_save_t: params.output_interval,
+            });
         }
-    };
 
-    let mut group = IndependentGroup::new(config).with_event_checker(event_checker);
+        let has_perturbations = params.body.properties().j2.is_some();
 
-    let mut metas: Vec<SatMeta> = Vec::new();
-    for spec in &params.satellites {
-        let system = build_orbital_system(
-            &params.body,
-            params.mu,
-            params.epoch,
-            &sat_params(spec),
-            params.build_atmosphere_model(),
-        );
-        let initial = spec.initial_state(params.mu);
-        group = group.add_satellite(spec.id.as_str(), initial, system);
-        metas.push(SatMeta {
-            spec: spec.clone(),
-            orbit_end_t: spec.period,
-            next_save_t: params.output_interval,
-        });
+        // Build and broadcast Info message
+        let info_msg = build_info_message(&params);
+        let info_json = serde_json::to_string(&info_msg).expect("failed to serialize info");
+        let _ = tx.send(info_json.clone());
+
+        // Emit initial states
+        for (i, (entry, dyn_sys)) in group.satellites_with_dynamics().enumerate() {
+            let accels = accel_breakdown(dyn_sys, 0.0, &entry.state);
+            let hs = make_history_state(
+                metas[i].spec.id.as_str(),
+                0.0,
+                &entry.state.position,
+                &entry.state.velocity,
+                params.mu,
+                accels.clone(),
+            );
+            history.push(hs);
+            let msg = state_message(
+                metas[i].spec.id.as_str(),
+                0.0,
+                &entry.state,
+                params.mu,
+                accels,
+            );
+            let _ = tx.send(msg);
+        }
+
+        SimLoopContext {
+            params,
+            group,
+            metas,
+            history,
+            tx,
+            info_json,
+            terminated_events: Vec::new(),
+            paused: false,
+            current_t: 0.0,
+            has_perturbations,
+        }
     }
 
-    let has_perturbations = params.body.properties().j2.is_some();
-
-    // Build and broadcast Info message
-    let info_msg = build_info_message(&params);
-    let info_json = serde_json::to_string(&info_msg).expect("failed to serialize info");
-    let _ = tx.send(info_json.clone());
-
-    // Track terminated events for late-connecting clients
-    let mut terminated_events: Vec<String> = Vec::new();
-
-    // Emit initial states
-    for (i, (entry, dyn_sys)) in group.satellites_with_dynamics().enumerate() {
-        let accels = accel_breakdown(dyn_sys, 0.0, &entry.state);
-        let hs = make_history_state(
-            metas[i].spec.id.as_str(),
-            0.0,
-            &entry.state.position,
-            &entry.state.velocity,
-            params.mu,
-            accels.clone(),
-        );
-        history.push(hs);
-        let msg = state_message(
-            metas[i].spec.id.as_str(),
-            0.0,
-            &entry.state,
-            params.mu,
-            accels,
-        );
-        let _ = tx.send(msg);
-    }
-
-    let mut current_t = 0.0_f64;
-    let mut paused = false;
-
-    loop {
-        let chunk_start = tokio::time::Instant::now();
-        let mut all_outputs: Vec<crate::sim::core::HistoryState> = Vec::new();
-
-        // Process any pending commands between chunks
-        loop {
-            match cmd_rx.try_recv() {
-                Ok(cmd) => match cmd {
-                    SimCommand::GetStatus { respond } => {
-                        let all_states = history.load_all();
-                        let response = if paused {
-                            SimStatusResponse::Paused {
-                                info_json: info_json.clone(),
-                                terminated_events: terminated_events.clone(),
-                                history_states: all_states,
-                            }
-                        } else {
-                            SimStatusResponse::Running {
-                                info_json: info_json.clone(),
-                                terminated_events: terminated_events.clone(),
-                                history_states: all_states,
-                            }
-                        };
-                        let _ = respond.send(response);
+    /// Handle a single command from the connection handler.
+    /// Returns `ControlFlow::Break(())` if the simulation should terminate.
+    fn handle_command(&mut self, cmd: SimCommand) -> ControlFlow<()> {
+        match cmd {
+            SimCommand::GetStatus { respond } => {
+                let all_states = self.history.load_all();
+                let response = if self.paused {
+                    SimStatusResponse::Paused {
+                        info_json: self.info_json.clone(),
+                        terminated_events: self.terminated_events.clone(),
+                        history_states: all_states,
                     }
-                    SimCommand::Start { respond, .. } => {
-                        let _ = respond.send(Err("Simulation is already running".to_string()));
+                } else {
+                    SimStatusResponse::Running {
+                        info_json: self.info_json.clone(),
+                        terminated_events: self.terminated_events.clone(),
+                        history_states: all_states,
                     }
-                    SimCommand::Pause { respond } => {
-                        if paused {
-                            let _ = respond.send(Err("Simulation is already paused".to_string()));
-                        } else {
-                            paused = true;
-                            eprintln!("Simulation paused at t={current_t:.2}s");
-                            let status = serde_json::to_string(&WsMessage::Status {
-                                state: "paused".to_string(),
-                            }).expect("failed to serialize status");
-                            let _ = tx.send(status);
-                            let _ = respond.send(Ok(()));
-                        }
-                    }
-                    SimCommand::Resume { respond } => {
-                        if !paused {
-                            let _ = respond.send(Err("Simulation is not paused".to_string()));
-                        } else {
-                            paused = false;
-                            eprintln!("Simulation resumed at t={current_t:.2}s");
-                            let status = serde_json::to_string(&WsMessage::Status {
-                                state: "running".to_string(),
-                            }).expect("failed to serialize status");
-                            let _ = tx.send(status);
-                            let _ = respond.send(Ok(()));
-                        }
-                    }
-                    SimCommand::Terminate { respond } => {
-                        eprintln!("Simulation terminated at t={current_t:.2}s");
-                        let status = serde_json::to_string(&WsMessage::Status {
-                            state: "idle".to_string(),
-                        }).expect("failed to serialize status");
-                        let _ = tx.send(status);
-                        let _ = respond.send(Ok(()));
-                        return (LoopExit::Terminated, cmd_rx);
-                    }
-                    SimCommand::AddSatellite {
-                        satellite,
-                        respond,
-                    } => {
-                        let sat_index = metas.len();
-                        let spec = satellite.to_satellite_spec(
-                            sat_index,
-                            params.body,
-                            params.mu,
-                        );
-                        let system = build_orbital_system(
-                            &params.body,
-                            params.mu,
-                            params.epoch,
-                            &sat_params(&spec),
-                            params.build_atmosphere_model(),
-                        );
-                        let initial = spec.initial_state(params.mu);
-                        group.push_satellite_at(
-                            spec.id.as_str(),
-                            initial.clone(),
-                            current_t,
-                            system,
-                        );
+                };
+                let _ = respond.send(response);
+            }
+            SimCommand::Start { respond, .. } => {
+                let _ = respond.send(Err("Simulation is already running".to_string()));
+            }
+            SimCommand::Pause { respond } => {
+                if self.paused {
+                    let _ = respond.send(Err("Simulation is already paused".to_string()));
+                } else {
+                    self.paused = true;
+                    eprintln!("Simulation paused at t={:.2}s", self.current_t);
+                    let status = serde_json::to_string(&WsMessage::Status {
+                        state: "paused".to_string(),
+                    }).expect("failed to serialize status");
+                    let _ = self.tx.send(status);
+                    let _ = respond.send(Ok(()));
+                }
+            }
+            SimCommand::Resume { respond } => {
+                if !self.paused {
+                    let _ = respond.send(Err("Simulation is not paused".to_string()));
+                } else {
+                    self.paused = false;
+                    eprintln!("Simulation resumed at t={:.2}s", self.current_t);
+                    let status = serde_json::to_string(&WsMessage::Status {
+                        state: "running".to_string(),
+                    }).expect("failed to serialize status");
+                    let _ = self.tx.send(status);
+                    let _ = respond.send(Ok(()));
+                }
+            }
+            SimCommand::Terminate { respond } => {
+                eprintln!("Simulation terminated at t={:.2}s", self.current_t);
+                let status = serde_json::to_string(&WsMessage::Status {
+                    state: "idle".to_string(),
+                }).expect("failed to serialize status");
+                let _ = self.tx.send(status);
+                let _ = respond.send(Ok(()));
+                return ControlFlow::Break(());
+            }
+            SimCommand::AddSatellite { satellite, respond } => {
+                let sat_index = self.metas.len();
+                let spec = satellite.to_satellite_spec(
+                    sat_index,
+                    self.params.body,
+                    self.params.mu,
+                );
+                let system = build_orbital_system(
+                    &self.params.body,
+                    self.params.mu,
+                    self.params.epoch,
+                    &sat_params(&spec),
+                    self.params.build_atmosphere_model(),
+                );
+                let initial = spec.initial_state(self.params.mu);
+                self.group.push_satellite_at(
+                    spec.id.as_str(),
+                    initial.clone(),
+                    self.current_t,
+                    system,
+                );
 
-                        let sat_info = SatelliteInfo {
-                            id: spec.id.clone(),
-                            name: spec.name.clone(),
-                            altitude: spec.altitude(&params.body),
-                            period: spec.period,
-                            perturbations: vec![], // simplified
-                        };
-                        let t = current_t;
+                let sat_info = SatelliteInfo {
+                    id: spec.id.clone(),
+                    name: spec.name.clone(),
+                    altitude: spec.altitude(&self.params.body),
+                    period: spec.period,
+                    perturbations: vec![],
+                };
+                let t = self.current_t;
 
-                        metas.push(SatMeta {
-                            spec,
-                            orbit_end_t: current_t + metas.last().map_or(5554.0, |m| m.spec.period),
-                            next_save_t: current_t + params.output_interval,
-                        });
+                self.metas.push(SatMeta {
+                    spec,
+                    orbit_end_t: self.current_t + self.metas.last().map_or(5554.0, |m| m.spec.period),
+                    next_save_t: self.current_t + self.params.output_interval,
+                });
 
-                        // Emit initial state for new satellite
-                        let hs = make_history_state(
-                            &sat_info.id,
-                            current_t,
-                            &initial.position,
-                            &initial.velocity,
-                            params.mu,
-                            std::collections::HashMap::new(),
-                        );
-                        history.push(hs);
-                        let msg = state_message(
-                            &sat_info.id,
-                            current_t,
-                            &initial,
-                            params.mu,
-                            std::collections::HashMap::new(),
-                        );
-                        let _ = tx.send(msg);
+                let hs = make_history_state(
+                    &sat_info.id,
+                    self.current_t,
+                    &initial.position,
+                    &initial.velocity,
+                    self.params.mu,
+                    std::collections::HashMap::new(),
+                );
+                self.history.push(hs);
+                let msg = state_message(
+                    &sat_info.id,
+                    self.current_t,
+                    &initial,
+                    self.params.mu,
+                    std::collections::HashMap::new(),
+                );
+                let _ = self.tx.send(msg);
 
-                        // Broadcast satellite_added to all clients
-                        let added_msg = serde_json::to_string(&WsMessage::SatelliteAdded {
-                            satellite: sat_info.clone(),
-                            t,
-                        })
-                        .expect("failed to serialize satellite_added");
-                        let _ = tx.send(added_msg);
+                let added_msg = serde_json::to_string(&WsMessage::SatelliteAdded {
+                    satellite: sat_info.clone(),
+                    t,
+                })
+                .expect("failed to serialize satellite_added");
+                let _ = self.tx.send(added_msg);
 
-                        let _ = respond.send(Ok((sat_info, t)));
-                    }
-                    SimCommand::QueryRange {
-                        t_min,
-                        t_max,
-                        max_points,
-                        satellite_id,
-                        respond,
-                    } => {
-                        let mut states = history.query_range(t_min, t_max, max_points);
-                        if let Some(ref sid) = satellite_id {
-                            states.retain(|s| s.satellite_id == *sid);
-                        }
-                        let _ = respond.send(states);
-                    }
-                },
-                Err(mpsc::error::TryRecvError::Empty) => break,
-                Err(mpsc::error::TryRecvError::Disconnected) => return (LoopExit::Disconnected, cmd_rx),
+                let _ = respond.send(Ok((sat_info, t)));
+            }
+            SimCommand::QueryRange {
+                t_min,
+                t_max,
+                max_points,
+                satellite_id,
+                respond,
+            } => {
+                let mut states = self.history.query_range(t_min, t_max, max_points);
+                if let Some(ref sid) = satellite_id {
+                    states.retain(|s| s.satellite_id == *sid);
+                }
+                let _ = respond.send(states);
             }
         }
+        ControlFlow::Continue(())
+    }
 
-        // Skip propagation while paused
-        if paused {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            continue;
-        }
+    /// Propagate one chunk of simulation time, collecting outputs.
+    fn propagate_chunk(
+        &mut self,
+        outputs_per_chunk: usize,
+    ) -> Vec<crate::sim::core::HistoryState> {
+        let mut all_outputs = Vec::new();
 
-        for _ in 0..OUTPUTS_PER_CHUNK {
-            let target_t = current_t + params.stream_interval;
+        for _ in 0..outputs_per_chunk {
+            let target_t = self.current_t + self.params.stream_interval;
 
             // Orbit boundary reset (only for unperturbed 2-body)
-            if !has_perturbations {
-                let resets: Vec<(SatId, State)> = group
+            if !self.has_perturbations {
+                let resets: Vec<(SatId, State)> = self.group
                     .satellites_with_dynamics()
                     .enumerate()
                     .filter_map(|(i, (entry, _))| {
-                        if !entry.terminated && current_t >= metas[i].orbit_end_t - 1e-9 {
-                            Some((entry.id.clone(), metas[i].spec.initial_state(params.mu)))
+                        if !entry.terminated && self.current_t >= self.metas[i].orbit_end_t - 1e-9 {
+                            Some((entry.id.clone(), self.metas[i].spec.initial_state(self.params.mu)))
                         } else {
                             None
                         }
@@ -487,35 +491,35 @@ async fn run_simulation_loop(
                     .collect();
 
                 for (id, new_state) in &resets {
-                    group.reset_state(id, new_state.clone());
-                    if let Some(i) = metas.iter().position(|m| {
+                    self.group.reset_state(id, new_state.clone());
+                    if let Some(i) = self.metas.iter().position(|m| {
                         m.spec.id.as_str() == AsRef::<str>::as_ref(id)
                     }) {
-                        metas[i].orbit_end_t = current_t + metas[i].spec.period;
+                        self.metas[i].orbit_end_t = self.current_t + self.metas[i].spec.period;
                     }
                 }
             }
 
-            let outcome = group.propagate_to(target_t).unwrap();
+            let outcome = self.group.propagate_to(target_t).unwrap();
 
-            for (i, (entry, dyn_sys)) in group.satellites_with_dynamics().enumerate() {
+            for (i, (entry, dyn_sys)) in self.group.satellites_with_dynamics().enumerate() {
                 if entry.terminated || entry.t < target_t - 1e-9 {
                     continue;
                 }
 
                 let accels = accel_breakdown(dyn_sys, entry.t, &entry.state);
                 let hs = make_history_state(
-                    metas[i].spec.id.as_str(),
+                    self.metas[i].spec.id.as_str(),
                     entry.t,
                     &entry.state.position,
                     &entry.state.velocity,
-                    params.mu,
+                    self.params.mu,
                     accels,
                 );
 
-                if hs.t >= metas[i].next_save_t - 1e-9 {
-                    history.push(hs.clone());
-                    metas[i].next_save_t += params.output_interval;
+                if hs.t >= self.metas[i].next_save_t - 1e-9 {
+                    self.history.push(hs.clone());
+                    self.metas[i].next_save_t += self.params.output_interval;
                 }
 
                 all_outputs.push(hs);
@@ -533,14 +537,57 @@ async fn run_simulation_loop(
                     reason: term.reason.clone(),
                 })
                 .expect("failed to serialize termination message");
-                let _ = tx.send(msg.clone());
-                terminated_events.push(msg);
+                let _ = self.tx.send(msg.clone());
+                self.terminated_events.push(msg);
             }
 
-            current_t = target_t;
+            self.current_t = target_t;
         }
 
         all_outputs.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+        all_outputs
+    }
+}
+
+/// Core simulation loop: builds group, propagates, handles commands.
+/// Returns the exit reason and gives back the command receiver for reuse.
+async fn run_simulation_loop(
+    params: Arc<SimParams>,
+    mut cmd_rx: mpsc::Receiver<SimCommand>,
+    tx: broadcast::Sender<String>,
+    history: HistoryBuffer,
+) -> (LoopExit, mpsc::Receiver<SimCommand>) {
+    const OUTPUTS_PER_CHUNK: usize = 10;
+    let chunk_sim_time = params.stream_interval * OUTPUTS_PER_CHUNK as f64;
+    let wall_per_sim_sec = ((params.dt / 100.0).max(0.01)) / params.stream_interval;
+    let chunk_wall_time =
+        std::time::Duration::from_secs_f64(chunk_sim_time * wall_per_sim_sec);
+
+    let mut ctx = SimLoopContext::new(params, tx, history);
+
+    loop {
+        let chunk_start = tokio::time::Instant::now();
+
+        // Process any pending commands between chunks
+        loop {
+            match cmd_rx.try_recv() {
+                Ok(cmd) => {
+                    if ctx.handle_command(cmd).is_break() {
+                        return (LoopExit::Terminated, cmd_rx);
+                    }
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => return (LoopExit::Disconnected, cmd_rx),
+            }
+        }
+
+        // Skip propagation while paused
+        if ctx.paused {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            continue;
+        }
+
+        let all_outputs = ctx.propagate_chunk(OUTPUTS_PER_CHUNK);
 
         if !all_outputs.is_empty() {
             let send_interval = chunk_wall_time / all_outputs.len() as u32;
@@ -560,7 +607,7 @@ async fn run_simulation_loop(
                     accelerations: out.accelerations.clone(),
                 })
                 .expect("failed to serialize state");
-                let _ = tx.send(msg);
+                let _ = ctx.tx.send(msg);
 
                 let send_elapsed = send_start.elapsed();
                 if send_elapsed < send_interval {
