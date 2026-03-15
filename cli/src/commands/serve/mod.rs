@@ -1,7 +1,8 @@
 pub mod protocol;
 pub mod compute;
-mod manager;
 mod connection;
+mod history;
+mod manager;
 
 use std::sync::Arc;
 

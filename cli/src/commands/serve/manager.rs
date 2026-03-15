@@ -14,7 +14,8 @@ use crate::sim::core::{accel_breakdown, make_history_state, sat_params};
 use orts::setup::build_orbital_system;
 use crate::sim::params::SimParams;
 
-use super::protocol::{HistoryBuffer, WsMessage};
+use super::history::HistoryBuffer;
+use super::protocol::WsMessage;
 use super::compute::state_message;
 
 /// Command sent from connection handlers to the simulation manager.

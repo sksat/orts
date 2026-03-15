@@ -4,7 +4,8 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::manager::{SimCommand, SimStatusResponse};
-use super::protocol::{ClientMessage, HistoryBuffer, WsMessage};
+use super::history::HistoryBuffer;
+use super::protocol::{ClientMessage, WsMessage};
 
 pub(super) type WsSender = futures_util::stream::SplitSink<
     tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
