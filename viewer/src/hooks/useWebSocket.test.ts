@@ -149,4 +149,48 @@ describe("dispatchServerMessage", () => {
 
     expect(onComplete).toHaveBeenCalledOnce();
   });
+
+  it("dispatches status message", () => {
+    const onStatus = vi.fn();
+    const callbacks = { ...baseCallbacks, onStatus };
+
+    const msg: ServerMessage = { type: "status", state: "idle" };
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onStatus).toHaveBeenCalledOnce();
+    expect(onStatus).toHaveBeenCalledWith("idle");
+  });
+
+  it("dispatches status paused message", () => {
+    const onStatus = vi.fn();
+    const callbacks = { ...baseCallbacks, onStatus };
+
+    const msg: ServerMessage = { type: "status", state: "paused" };
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onStatus).toHaveBeenCalledOnce();
+    expect(onStatus).toHaveBeenCalledWith("paused");
+  });
+
+  it("dispatches status running message", () => {
+    const onStatus = vi.fn();
+    const callbacks = { ...baseCallbacks, onStatus };
+
+    const msg: ServerMessage = { type: "status", state: "running" };
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onStatus).toHaveBeenCalledOnce();
+    expect(onStatus).toHaveBeenCalledWith("running");
+  });
+
+  it("dispatches error message", () => {
+    const onError = vi.fn();
+    const callbacks = { ...baseCallbacks, onError };
+
+    const msg: ServerMessage = { type: "error", message: "Simulation is already running" };
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onError).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith("Simulation is already running");
+  });
 });

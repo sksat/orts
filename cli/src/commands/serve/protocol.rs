@@ -31,6 +31,15 @@ pub enum ClientMessage {
         #[serde(flatten)]
         satellite: SatelliteConfig,
     },
+    /// Pause a running simulation.
+    #[serde(rename = "pause_simulation")]
+    PauseSimulation,
+    /// Resume a paused simulation.
+    #[serde(rename = "resume_simulation")]
+    ResumeSimulation,
+    /// Terminate the simulation and return to idle.
+    #[serde(rename = "terminate_simulation")]
+    TerminateSimulation,
 }
 
 /// Server-to-client WebSocket message.
@@ -687,6 +696,27 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["satellites"][0]["name"], "ISS (ZARYA)");
         assert_eq!(v["satellites"][0]["id"], "iss");
+    }
+
+    #[test]
+    fn client_message_pause_simulation() {
+        let json = r#"{"type":"pause_simulation"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, ClientMessage::PauseSimulation));
+    }
+
+    #[test]
+    fn client_message_resume_simulation() {
+        let json = r#"{"type":"resume_simulation"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, ClientMessage::ResumeSimulation));
+    }
+
+    #[test]
+    fn client_message_terminate_simulation() {
+        let json = r#"{"type":"terminate_simulation"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, ClientMessage::TerminateSimulation));
     }
 
     #[test]

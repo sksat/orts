@@ -438,6 +438,152 @@
         padding: 16px 32px;
         border-radius: 8px;
       }
+
+      /* --- Simulation Config Form --- */
+      .sim-config-form {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        background: rgba(20, 20, 40, 0.85);
+        border: 1px solid rgba(68, 136, 204, 0.4);
+        border-radius: 4px;
+        padding: 10px;
+        max-width: 340px;
+      }
+      .sim-config-section {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .preset-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .preset-btn {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 10px;
+        background: rgba(30, 30, 60, 0.85);
+        color: #8899bb;
+        border: 1px solid rgba(68, 136, 204, 0.3);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        transition: background 0.15s, color 0.15s;
+      }
+      .preset-btn:hover {
+        background: rgba(34, 55, 100, 0.85);
+        color: #bbc;
+      }
+      .preset-btn.active {
+        background: rgba(34, 85, 170, 0.85);
+        color: #fff;
+        border-color: rgba(68, 136, 204, 0.7);
+      }
+      .preset-detail {
+        font-size: 11px;
+        opacity: 0.7;
+      }
+      .sim-config-inputs {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .sim-config-label {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        color: #8899bb;
+        font-size: 12px;
+      }
+      .sim-config-input {
+        padding: 5px 8px;
+        background: rgba(10, 10, 30, 0.85);
+        color: #ccd;
+        border: 1px solid rgba(68, 136, 204, 0.3);
+        border-radius: 3px;
+        font-size: 13px;
+        font-family: monospace;
+      }
+      .sim-config-input:focus {
+        outline: none;
+        border-color: rgba(68, 136, 204, 0.7);
+      }
+      .sim-config-tle {
+        min-width: 280px;
+        font-size: 11px;
+      }
+      .sim-config-select {
+        padding: 5px 8px;
+        background: rgba(10, 10, 30, 0.85);
+        color: #ccd;
+        border: 1px solid rgba(68, 136, 204, 0.3);
+        border-radius: 3px;
+        font-size: 13px;
+      }
+      .sim-config-advanced-toggle {
+        background: none;
+        border: none;
+        color: #8899bb;
+        cursor: pointer;
+        font-size: 12px;
+        text-align: left;
+        padding: 2px 0;
+      }
+      .sim-config-advanced-toggle:hover {
+        color: #bbc;
+      }
+      .sim-config-start-btn {
+        padding: 8px 16px;
+        background: rgba(0, 140, 80, 0.85);
+        color: #fff;
+        border: 1px solid rgba(0, 180, 100, 0.6);
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: bold;
+      }
+      .sim-config-start-btn:hover {
+        background: rgba(0, 160, 90, 1.0);
+      }
+
+      /* Simulation control bar (pause / resume / stop) */
+      .sim-control-bar {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .sim-control-btn {
+        padding: 6px 14px;
+        color: #fff;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: bold;
+      }
+      .sim-pause-btn {
+        background: rgba(180, 140, 0, 0.85);
+        border: 1px solid rgba(220, 180, 0, 0.6);
+      }
+      .sim-pause-btn:hover {
+        background: rgba(200, 160, 0, 1.0);
+      }
+      .sim-resume-btn {
+        background: rgba(0, 140, 80, 0.85);
+        border: 1px solid rgba(0, 180, 100, 0.6);
+      }
+      .sim-resume-btn:hover {
+        background: rgba(0, 160, 90, 1.0);
+      }
+      .sim-terminate-btn {
+        background: rgba(160, 40, 40, 0.85);
+        border: 1px solid rgba(200, 60, 60, 0.6);
+      }
+      .sim-terminate-btn:hover {
+        background: rgba(180, 50, 50, 1.0);
+      }
     </style>
   </head>
   <body>

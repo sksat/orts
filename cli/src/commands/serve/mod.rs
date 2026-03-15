@@ -45,11 +45,28 @@ enum SimCommand {
         satellite_id: Option<String>,
         respond: oneshot::Sender<Vec<crate::sim::core::HistoryState>>,
     },
+    /// Pause the simulation.
+    Pause {
+        respond: oneshot::Sender<Result<(), String>>,
+    },
+    /// Resume a paused simulation.
+    Resume {
+        respond: oneshot::Sender<Result<(), String>>,
+    },
+    /// Terminate the simulation and return to idle.
+    Terminate {
+        respond: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 enum SimStatusResponse {
     Idle,
     Running {
+        info_json: String,
+        terminated_events: Vec<String>,
+        history_states: Vec<crate::sim::core::HistoryState>,
+    },
+    Paused {
         info_json: String,
         terminated_events: Vec<String>,
         history_states: Vec<crate::sim::core::HistoryState>,
@@ -133,48 +150,40 @@ struct SatMeta {
 /// Simulation manager that starts with a pre-built SimParams (legacy CLI args path).
 async fn simulation_manager_with_params(
     params: Arc<SimParams>,
-    cmd_rx: mpsc::Receiver<SimCommand>,
+    mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
 ) {
     let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
     let history = HistoryBuffer::new(5000, data_dir, params.mu);
-    run_simulation_loop(params, cmd_rx, tx, history).await;
+    match run_simulation_loop(params, cmd_rx, tx.clone(), history).await {
+        (LoopExit::Terminated, mut returned_rx) => {
+            // Legacy path: after terminate, go idle and allow restart.
+            eprintln!("Simulation manager: idle, waiting for start_simulation...");
+            if let Some(config) = idle_loop(&mut returned_rx).await {
+                // Delegate to the standard manager for subsequent runs.
+                simulation_manager(Some(config), returned_rx, tx).await;
+            }
+        }
+        (LoopExit::Disconnected, _) => {}
+    }
 }
 
-/// Simulation manager: handles idle/running state and commands.
-async fn simulation_manager(
-    initial_config: Option<SimConfig>,
-    mut cmd_rx: mpsc::Receiver<SimCommand>,
-    tx: broadcast::Sender<String>,
-) {
-    // If initial config is provided, start running immediately.
-    if let Some(config) = initial_config {
-        let params = Arc::new(SimParams::from_config(&config));
-        let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
-        let history = HistoryBuffer::new(5000, data_dir, params.mu);
-        run_simulation_loop(params, cmd_rx, tx, history).await;
-        return;
-    }
-
-    // Idle state: wait for Start command.
-    eprintln!("Simulation manager: idle, waiting for start_simulation...");
+/// Drain the cmd_rx, handling only GetStatus (as idle) and rejecting others,
+/// until a Start command arrives or the channel disconnects.
+async fn idle_loop(
+    cmd_rx: &mut mpsc::Receiver<SimCommand>,
+) -> Option<SimConfig> {
     loop {
         let Some(cmd) = cmd_rx.recv().await else {
-            return; // All senders dropped
+            return None; // All senders dropped
         };
         match cmd {
             SimCommand::GetStatus { respond } => {
                 let _ = respond.send(SimStatusResponse::Idle);
             }
             SimCommand::Start { config, respond } => {
-                let params = Arc::new(SimParams::from_config(&config));
-                let data_dir =
-                    std::env::temp_dir().join(format!("orts-{}", std::process::id()));
-                let history = HistoryBuffer::new(5000, data_dir, params.mu);
-                eprintln!("Simulation manager: starting simulation...");
                 let _ = respond.send(Ok(()));
-                run_simulation_loop(params, cmd_rx, tx, history).await;
-                return;
+                return Some(config);
             }
             SimCommand::AddSatellite { respond, .. } => {
                 let _ = respond.send(Err("Simulation is not running".to_string()));
@@ -182,6 +191,47 @@ async fn simulation_manager(
             SimCommand::QueryRange { respond, .. } => {
                 let _ = respond.send(vec![]);
             }
+            SimCommand::Pause { respond } => {
+                let _ = respond.send(Err("Simulation is not running".to_string()));
+            }
+            SimCommand::Resume { respond } => {
+                let _ = respond.send(Err("Simulation is not running".to_string()));
+            }
+            SimCommand::Terminate { respond } => {
+                let _ = respond.send(Err("Simulation is not running".to_string()));
+            }
+        }
+    }
+}
+
+/// Simulation manager: handles idle/running state and commands.
+/// Loops between idle and running states; after terminate it returns to idle.
+async fn simulation_manager(
+    initial_config: Option<SimConfig>,
+    mut cmd_rx: mpsc::Receiver<SimCommand>,
+    tx: broadcast::Sender<String>,
+) {
+    // Determine the first config to start with.
+    let mut next_config = if let Some(config) = initial_config {
+        Some(config)
+    } else {
+        eprintln!("Simulation manager: idle, waiting for start_simulation...");
+        idle_loop(&mut cmd_rx).await
+    };
+
+    // Main manager loop: start simulation, run until terminated, return to idle.
+    while let Some(config) = next_config {
+        let params = Arc::new(SimParams::from_config(&config));
+        let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
+        let history = HistoryBuffer::new(5000, data_dir, params.mu);
+        eprintln!("Simulation manager: starting simulation...");
+        match run_simulation_loop(params, cmd_rx, tx.clone(), history).await {
+            (LoopExit::Terminated, returned_rx) => {
+                cmd_rx = returned_rx;
+                eprintln!("Simulation manager: idle, waiting for start_simulation...");
+                next_config = idle_loop(&mut cmd_rx).await;
+            }
+            (LoopExit::Disconnected, _) => return,
         }
     }
 }
@@ -228,13 +278,22 @@ fn build_info_message(params: &SimParams) -> WsMessage {
     }
 }
 
+/// Why the simulation loop exited.
+enum LoopExit {
+    /// Terminated by client request; server should return to idle.
+    Terminated,
+    /// Command channel disconnected (all clients gone).
+    Disconnected,
+}
+
 /// Core simulation loop: builds group, propagates, handles commands.
+/// Returns the exit reason and gives back the command receiver for reuse.
 async fn run_simulation_loop(
     params: Arc<SimParams>,
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     mut history: HistoryBuffer,
-) {
+) -> (LoopExit, mpsc::Receiver<SimCommand>) {
     const OUTPUTS_PER_CHUNK: usize = 10;
     let chunk_sim_time = params.stream_interval * OUTPUTS_PER_CHUNK as f64;
 
@@ -323,6 +382,7 @@ async fn run_simulation_loop(
     }
 
     let mut current_t = 0.0_f64;
+    let mut paused = false;
 
     loop {
         let chunk_start = tokio::time::Instant::now();
@@ -334,14 +394,58 @@ async fn run_simulation_loop(
                 Ok(cmd) => match cmd {
                     SimCommand::GetStatus { respond } => {
                         let all_states = history.load_all();
-                        let _ = respond.send(SimStatusResponse::Running {
-                            info_json: info_json.clone(),
-                            terminated_events: terminated_events.clone(),
-                            history_states: all_states,
-                        });
+                        let response = if paused {
+                            SimStatusResponse::Paused {
+                                info_json: info_json.clone(),
+                                terminated_events: terminated_events.clone(),
+                                history_states: all_states,
+                            }
+                        } else {
+                            SimStatusResponse::Running {
+                                info_json: info_json.clone(),
+                                terminated_events: terminated_events.clone(),
+                                history_states: all_states,
+                            }
+                        };
+                        let _ = respond.send(response);
                     }
                     SimCommand::Start { respond, .. } => {
                         let _ = respond.send(Err("Simulation is already running".to_string()));
+                    }
+                    SimCommand::Pause { respond } => {
+                        if paused {
+                            let _ = respond.send(Err("Simulation is already paused".to_string()));
+                        } else {
+                            paused = true;
+                            eprintln!("Simulation paused at t={current_t:.2}s");
+                            let status = serde_json::to_string(&WsMessage::Status {
+                                state: "paused".to_string(),
+                            }).expect("failed to serialize status");
+                            let _ = tx.send(status);
+                            let _ = respond.send(Ok(()));
+                        }
+                    }
+                    SimCommand::Resume { respond } => {
+                        if !paused {
+                            let _ = respond.send(Err("Simulation is not paused".to_string()));
+                        } else {
+                            paused = false;
+                            eprintln!("Simulation resumed at t={current_t:.2}s");
+                            let status = serde_json::to_string(&WsMessage::Status {
+                                state: "running".to_string(),
+                            }).expect("failed to serialize status");
+                            let _ = tx.send(status);
+                            let _ = respond.send(Ok(()));
+                        }
+                    }
+                    SimCommand::Terminate { respond } => {
+                        eprintln!("Simulation terminated at t={current_t:.2}s");
+                        let status = serde_json::to_string(&WsMessage::Status {
+                            state: "idle".to_string(),
+                        }).expect("failed to serialize status");
+                        let _ = tx.send(status);
+                        let _ = respond.send(Ok(()));
+                        return (LoopExit::Terminated, cmd_rx);
                     }
                     SimCommand::AddSatellite {
                         satellite,
@@ -427,8 +531,14 @@ async fn run_simulation_loop(
                     }
                 },
                 Err(mpsc::error::TryRecvError::Empty) => break,
-                Err(mpsc::error::TryRecvError::Disconnected) => return,
+                Err(mpsc::error::TryRecvError::Disconnected) => return (LoopExit::Disconnected, cmd_rx),
             }
+        }
+
+        // Skip propagation while paused
+        if paused {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            continue;
         }
 
         for _ in 0..OUTPUTS_PER_CHUNK {
@@ -569,6 +679,8 @@ async fn handle_connection(
         Err(_) => return,
     };
 
+    let is_paused = matches!(status, SimStatusResponse::Paused { .. });
+
     match status {
         SimStatusResponse::Idle => {
             let idle_msg = serde_json::to_string(&WsMessage::Status {
@@ -587,6 +699,11 @@ async fn handle_connection(
             info_json,
             terminated_events,
             history_states,
+        }
+        | SimStatusResponse::Paused {
+            info_json,
+            terminated_events,
+            history_states,
         } => {
             // Send info
             if ws_sender
@@ -597,6 +714,21 @@ async fn handle_connection(
                 .is_err()
             {
                 return;
+            }
+
+            // If paused, send status so the client knows immediately
+            if is_paused {
+                let paused_msg = serde_json::to_string(&WsMessage::Status {
+                    state: "paused".to_string(),
+                })
+                .expect("failed to serialize status");
+                if ws_sender
+                    .send(tokio_tungstenite::tungstenite::Message::Text(paused_msg.into()))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
             }
 
             // Replay terminated events
@@ -763,6 +895,84 @@ async fn main_loop(
                                             {
                                                 break;
                                             }
+                                        }
+                                        Err(_) => break,
+                                    }
+                                }
+                                ClientMessage::PauseSimulation => {
+                                    let (resp_tx, resp_rx) = oneshot::channel();
+                                    if cmd_tx.send(SimCommand::Pause {
+                                        respond: resp_tx,
+                                    }).await.is_err() {
+                                        break;
+                                    }
+                                    match resp_rx.await {
+                                        Ok(Err(e)) => {
+                                            let err_msg = serde_json::to_string(&WsMessage::Error {
+                                                message: e,
+                                            }).expect("failed to serialize error");
+                                            if ws_sender
+                                                .send(tokio_tungstenite::tungstenite::Message::Text(err_msg.into()))
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        Ok(Ok(())) => {
+                                            // Status broadcast via tx
+                                        }
+                                        Err(_) => break,
+                                    }
+                                }
+                                ClientMessage::ResumeSimulation => {
+                                    let (resp_tx, resp_rx) = oneshot::channel();
+                                    if cmd_tx.send(SimCommand::Resume {
+                                        respond: resp_tx,
+                                    }).await.is_err() {
+                                        break;
+                                    }
+                                    match resp_rx.await {
+                                        Ok(Err(e)) => {
+                                            let err_msg = serde_json::to_string(&WsMessage::Error {
+                                                message: e,
+                                            }).expect("failed to serialize error");
+                                            if ws_sender
+                                                .send(tokio_tungstenite::tungstenite::Message::Text(err_msg.into()))
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        Ok(Ok(())) => {
+                                            // Status broadcast via tx
+                                        }
+                                        Err(_) => break,
+                                    }
+                                }
+                                ClientMessage::TerminateSimulation => {
+                                    let (resp_tx, resp_rx) = oneshot::channel();
+                                    if cmd_tx.send(SimCommand::Terminate {
+                                        respond: resp_tx,
+                                    }).await.is_err() {
+                                        break;
+                                    }
+                                    match resp_rx.await {
+                                        Ok(Err(e)) => {
+                                            let err_msg = serde_json::to_string(&WsMessage::Error {
+                                                message: e,
+                                            }).expect("failed to serialize error");
+                                            if ws_sender
+                                                .send(tokio_tungstenite::tungstenite::Message::Text(err_msg.into()))
+                                                .await
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                        }
+                                        Ok(Ok(())) => {
+                                            // Status broadcast via tx
                                         }
                                         Err(_) => break,
                                     }

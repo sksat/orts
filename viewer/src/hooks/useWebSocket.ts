@@ -112,7 +112,17 @@ interface SimulationTerminatedMessage {
   reason: string;
 }
 
-export type ServerMessage = StateMessage | InfoMessage | HistoryMessage | HistoryDetailMessage | HistoryDetailCompleteMessage | QueryRangeResponseMessage | SimulationTerminatedMessage;
+interface StatusMessage {
+  type: "status";
+  state: string;
+}
+
+interface ErrorMessage {
+  type: "error";
+  message: string;
+}
+
+export type ServerMessage = StateMessage | InfoMessage | HistoryMessage | HistoryDetailMessage | HistoryDetailCompleteMessage | QueryRangeResponseMessage | SimulationTerminatedMessage | StatusMessage | ErrorMessage;
 
 /** Response data from a query_range request. */
 export interface QueryRangeResponse {
@@ -135,6 +145,10 @@ export interface UseWebSocketOptions {
   onQueryRangeResponse?: (response: QueryRangeResponse) => void;
   /** Called when a satellite's simulation terminates (collision, atmospheric entry, etc.). */
   onSimulationTerminated?: (satelliteId: string, t: number, reason: string) => void;
+  /** Called when the server sends its status (e.g. "idle"). */
+  onStatus?: (state: string) => void;
+  /** Called when the server sends an error message. */
+  onError?: (message: string) => void;
 }
 
 /** Callbacks for message dispatch (subset of UseWebSocketOptions used by dispatchServerMessage). */
@@ -146,6 +160,8 @@ export interface DispatchCallbacks {
   onHistoryDetailComplete?: () => void;
   onQueryRangeResponse?: (response: QueryRangeResponse) => void;
   onSimulationTerminated?: (satelliteId: string, t: number, reason: string) => void;
+  onStatus?: (state: string) => void;
+  onError?: (message: string) => void;
 }
 
 function parseAccelerations(accels?: Record<string, number>) {
@@ -245,6 +261,10 @@ export function dispatchServerMessage(
   } else if (msg.type === "simulation_terminated") {
     const termMsg = msg as SimulationTerminatedMessage;
     callbacks.onSimulationTerminated?.(termMsg.satellite_id, termMsg.t, termMsg.reason);
+  } else if (msg.type === "status") {
+    callbacks.onStatus?.((msg as StatusMessage).state);
+  } else if (msg.type === "error") {
+    callbacks.onError?.((msg as ErrorMessage).message);
   }
 }
 
@@ -280,6 +300,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onHistoryDetailComplete: options.onHistoryDetailComplete,
     onQueryRangeResponse: options.onQueryRangeResponse,
     onSimulationTerminated: options.onSimulationTerminated,
+    onStatus: options.onStatus,
+    onError: options.onError,
   });
   callbacksRef.current = {
     onState: options.onState,
@@ -289,6 +311,8 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onHistoryDetailComplete: options.onHistoryDetailComplete,
     onQueryRangeResponse: options.onQueryRangeResponse,
     onSimulationTerminated: options.onSimulationTerminated,
+    onStatus: options.onStatus,
+    onError: options.onError,
   };
 
   const urlRef = useRef(options.url);

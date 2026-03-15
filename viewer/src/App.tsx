@@ -28,6 +28,8 @@ import { jd_to_utc_string } from "./wasm/kanameInit.js";
 import { useMultiSatelliteStore, type SatelliteConfig } from "./hooks/useMultiSatelliteStore.js";
 import { type ReferenceFrame, DEFAULT_FRAME } from "./referenceFrame.js";
 import { FrameSelector } from "./components/FrameSelector.js";
+import { SimConfigForm, type SimConfigPayload } from "./components/SimConfigForm.js";
+import { SimControlBar } from "./components/SimControlBar.js";
 
 /** The two viewer modes. */
 type ViewerMode = "replay" | "realtime";
@@ -97,6 +99,9 @@ export function App() {
   const [simInfo, setSimInfo] = useState<SimInfo | null>(null);
   const [terminatedSatellites, setTerminatedSatellites] = useState<Set<string>>(new Set());
 
+  type ServerState = "unknown" | "idle" | "running" | "paused";
+  const [serverState, setServerState] = useState<ServerState>("unknown");
+
   // --- DuckDB + Charts ---
   const mu = mode === "realtime" ? simInfo?.mu : (csvMetadata?.mu ?? undefined);
   const bodyRadius = mode === "realtime" ? simInfo?.central_body_radius : (csvMetadata?.centralBodyRadius ?? undefined);
@@ -163,6 +168,22 @@ export function App() {
 
   const handleInfo = useCallback((info: SimInfo) => {
     setSimInfo(info);
+    setServerState("running");
+  }, []);
+
+  const handleStatus = useCallback((state: string) => {
+    if (state === "idle") {
+      setServerState("idle");
+      setSimInfo(null);
+    } else if (state === "paused") {
+      setServerState("paused");
+    } else if (state === "running") {
+      setServerState("running");
+    }
+  }, []);
+
+  const handleError = useCallback((message: string) => {
+    console.error("Server error:", message);
   }, []);
 
   const handleSimulationTerminated = useCallback((satelliteId: string, t: number, reason: string) => {
@@ -247,7 +268,25 @@ export function App() {
     onHistoryDetailComplete: handleHistoryDetailComplete,
     onQueryRangeResponse: handleQueryRangeResponse,
     onSimulationTerminated: handleSimulationTerminated,
+    onStatus: handleStatus,
+    onError: handleError,
   });
+
+  const handleStartSimulation = useCallback((config: SimConfigPayload) => {
+    send({ type: "start_simulation", config });
+  }, [send]);
+
+  const handlePause = useCallback(() => {
+    send({ type: "pause_simulation" });
+  }, [send]);
+
+  const handleResume = useCallback(() => {
+    send({ type: "resume_simulation" });
+  }, [send]);
+
+  const handleTerminate = useCallback(() => {
+    send({ type: "terminate_simulation" });
+  }, [send]);
 
   const handleChartZoom = useCallback((tMin: number, tMax: number) => {
     if (!isMultiSatellite) {
@@ -341,6 +380,7 @@ export function App() {
     ingestBuffersRef.current.clear();
     singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
     setSimInfo(null);
+    setServerState("unknown");
     setTerminatedSatellites(EMPTY_TERMINATED_SET);
     goLiveRef.current();
     connect();
@@ -592,9 +632,26 @@ export function App() {
             <div className="ws-status">
               <span className={`ws-status-dot ${isConnected ? "connected" : "disconnected"}`} />
               <span className="ws-status-text">
-                {isConnected ? "Connected" : "Disconnected"}
+                {isConnected
+                  ? serverState === "idle" ? "Connected (Idle)"
+                    : serverState === "paused" ? "Connected (Paused)"
+                    : "Connected"
+                  : "Disconnected"}
               </span>
             </div>
+
+            {isConnected && serverState === "idle" && (
+              <SimConfigForm onStart={handleStartSimulation} />
+            )}
+
+            {isConnected && (serverState === "running" || serverState === "paused") && (
+              <SimControlBar
+                serverState={serverState}
+                onPause={handlePause}
+                onResume={handleResume}
+                onTerminate={handleTerminate}
+              />
+            )}
 
             {simInfo && (
               <div className="orbit-info">
