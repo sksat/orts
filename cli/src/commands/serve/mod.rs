@@ -150,7 +150,7 @@ struct SatMeta {
 /// Simulation manager that starts with a pre-built SimParams (legacy CLI args path).
 async fn simulation_manager_with_params(
     params: Arc<SimParams>,
-    mut cmd_rx: mpsc::Receiver<SimCommand>,
+    cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
 ) {
     let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
