@@ -6,6 +6,10 @@ import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// These tests require an idle server (no pre-started simulation).
+// Skip when ORTS_WS_URL is set (CI uses a pre-started running server).
+test.skip(!!process.env.ORTS_WS_URL, "Requires idle server; CI uses pre-started running server");
+
 let ortsProcess: ChildProcess | undefined;
 let wsUrl: string;
 
