@@ -5,6 +5,7 @@ mod error;
 mod integrator;
 mod rk4;
 mod state;
+mod verlet;
 
 #[cfg(test)]
 pub(crate) mod test_systems;
@@ -15,6 +16,7 @@ pub use error::{IntegrationError, IntegrationOutcome, Tolerances};
 pub use integrator::Integrator;
 pub use rk4::Rk4;
 pub use state::{DynamicalSystem, OdeState, State};
+pub use verlet::StormerVerlet;
 
 #[cfg(test)]
 mod tests {
