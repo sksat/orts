@@ -27,13 +27,12 @@ describe("buildMultiChartData", () => {
     const result = buildMultiChartData(satData, metricNames, configs);
     expect(result).not.toBeNull();
 
-    const alt = result?.altitude;
-    expect(alt).not.toBeNull();
-    expect(alt?.series).toHaveLength(1);
-    expect(alt?.series[0].label).toBe("SSO");
-    expect(alt?.series[0].color).toBe("#f00");
-    expect(Array.from(alt?.t)).toEqual([1, 2, 3]);
-    expect(Array.from(alt?.values[0])).toEqual([100, 200, 300]);
+    const alt = result!.altitude!;
+    expect(alt.series).toHaveLength(1);
+    expect(alt.series[0].label).toBe("SSO");
+    expect(alt.series[0].color).toBe("#f00");
+    expect(Array.from(alt.t)).toEqual([1, 2, 3]);
+    expect(Array.from(alt.values[0])).toEqual([100, 200, 300]);
   });
 
   it("two satellites with same time axes align without NaN", () => {
@@ -49,13 +48,13 @@ describe("buildMultiChartData", () => {
     const result = buildMultiChartData(satData, metricNames, configs);
     expect(result).not.toBeNull();
 
-    const alt = result?.altitude;
-    expect(alt?.series).toHaveLength(2);
-    expect(alt?.series[0].label).toBe("SSO");
-    expect(alt?.series[1].label).toBe("ISS");
-    expect(Array.from(alt?.t)).toEqual([1, 2]);
-    expect(Array.from(alt?.values[0])).toEqual([100, 200]);
-    expect(Array.from(alt?.values[1])).toEqual([150, 250]);
+    const alt = result!.altitude!;
+    expect(alt.series).toHaveLength(2);
+    expect(alt.series[0].label).toBe("SSO");
+    expect(alt.series[1].label).toBe("ISS");
+    expect(Array.from(alt.t)).toEqual([1, 2]);
+    expect(Array.from(alt.values[0])).toEqual([100, 200]);
+    expect(Array.from(alt.values[1])).toEqual([150, 250]);
   });
 
   it("two satellites with different time axes fill NaN", () => {
@@ -128,19 +127,16 @@ describe("buildMultiChartData", () => {
     expect(result).not.toBeNull();
 
     // Acceleration metrics should be present
-    const gravity = result?.accel_gravity;
-    expect(gravity).not.toBeNull();
-    expect(gravity?.series).toHaveLength(2);
-    expect(Array.from(gravity?.values[0])).toEqual([0.008, 0.008]);
-    expect(Array.from(gravity?.values[1])).toEqual([0.009, 0.009]);
+    const gravity = result!.accel_gravity!;
+    expect(gravity.series).toHaveLength(2);
+    expect(Array.from(gravity.values[0])).toEqual([0.008, 0.008]);
+    expect(Array.from(gravity.values[1])).toEqual([0.009, 0.009]);
 
-    const drag = result?.accel_drag;
-    expect(drag).not.toBeNull();
-    expect(drag?.series).toHaveLength(2);
+    const drag = result!.accel_drag!;
+    expect(drag.series).toHaveLength(2);
 
-    const total = result?.accel_perturbation_total;
-    expect(total).not.toBeNull();
-    expect(total?.series).toHaveLength(2);
+    const total = result!.accel_perturbation_total!;
+    expect(total.series).toHaveLength(2);
   });
 });
 
