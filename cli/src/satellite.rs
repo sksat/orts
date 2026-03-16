@@ -1,5 +1,5 @@
 use orts::record::entity_path::EntityPath;
-use orts_integrator::State;
+use orts::OrbitalState;
 use kaname::body::KnownBody;
 use orts::{kepler::KeplerianElements, tle::Tle};
 use serde::Serialize;
@@ -42,7 +42,7 @@ pub struct SatelliteSpec {
 }
 
 impl SatelliteSpec {
-    pub fn initial_state(&self, mu: f64) -> State {
+    pub fn initial_state(&self, mu: f64) -> OrbitalState {
         match &self.orbit {
             OrbitSpec::Circular { r0, inclination, raan, .. } => {
                 let elements = KeplerianElements {
@@ -54,11 +54,11 @@ impl SatelliteSpec {
                     true_anomaly: 0.0,
                 };
                 let (pos, vel) = elements.to_state_vector(mu);
-                State { position: pos, velocity: vel }
+                OrbitalState::new(pos, vel)
             }
             OrbitSpec::Tle { elements, .. } => {
                 let (pos, vel) = elements.to_state_vector(mu);
-                State { position: pos, velocity: vel }
+                OrbitalState::new(pos, vel)
             }
         }
     }
@@ -219,7 +219,7 @@ mod tests {
         let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth);
         let mu = KnownBody::Earth.properties().mu;
         let state = spec.initial_state(mu);
-        let r = state.position.magnitude();
+        let r = state.position().magnitude();
         let expected_r = 6378.137 + 400.0;
         assert!((r - expected_r).abs() < 1e-6, "r = {r}, expected {expected_r}");
     }
@@ -230,15 +230,15 @@ mod tests {
         let spec = parse_sat_spec("altitude=800,inclination=98.6,id=sso-test", KnownBody::Earth);
         let state = spec.initial_state(mu);
 
-        let r = state.position.magnitude();
+        let r = state.position().magnitude();
         let expected_r = 6378.137 + 800.0;
         assert!((r - expected_r).abs() < 1e-6, "r = {r}, expected {expected_r}");
 
-        let v = state.velocity.magnitude();
+        let v = state.velocity().magnitude();
         let expected_v = (mu / expected_r).sqrt();
         assert!((v - expected_v).abs() < 1e-6, "v = {v}, expected {expected_v}");
 
-        let h = state.position.cross(&state.velocity);
+        let h = state.position().cross(state.velocity());
         let i = (h[2] / h.magnitude()).acos();
         let expected_i = 98.6_f64.to_radians();
         assert!(
@@ -255,7 +255,7 @@ mod tests {
         let spec = parse_sat_spec("altitude=400,inclination=51.6,raan=90,id=iss-like", KnownBody::Earth);
         let state = spec.initial_state(mu);
 
-        let h = state.position.cross(&state.velocity);
+        let h = state.position().cross(state.velocity());
         let i = (h[2] / h.magnitude()).acos();
         assert!(
             (i - 51.6_f64.to_radians()).abs() < 1e-10,
@@ -280,9 +280,9 @@ mod tests {
         let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth);
         let state = spec.initial_state(mu);
         assert!(
-            state.position[2].abs() < 1e-10,
+            state.position()[2].abs() < 1e-10,
             "equatorial orbit should have z ≈ 0, got {}",
-            state.position[2]
+            state.position()[2]
         );
     }
 

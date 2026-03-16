@@ -23,7 +23,8 @@
 
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
-use orts_integrator::{DormandPrince, State, Tolerances};
+use orts_integrator::{DormandPrince, Tolerances};
+use orts::OrbitalState;
 use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
 use orts::perturbations::AtmosphericDrag;
 use orts::gravity::ZonalHarmonics;
@@ -131,8 +132,8 @@ fn orbit_averaged_sma(
     samples_per_orbit: usize,
 ) -> f64 {
     let sma0 = osculating_sma(
-        &stepper.state().position,
-        &stepper.state().velocity,
+        stepper.state().position(),
+        stepper.state().velocity(),
         mu,
     );
     let period = orbital_period(sma0, mu);
@@ -152,8 +153,8 @@ fn orbit_averaged_sma(
             )
             .expect("Integration failed during orbit averaging");
         let sma = osculating_sma(
-            &stepper.state().position,
-            &stepper.state().velocity,
+            stepper.state().position(),
+            stepper.state().velocity(),
             mu,
         );
         sum_sma += sma;
@@ -175,20 +176,20 @@ fn run_decay_window(window_name: &str, min_ratio: f64, max_ratio: f64) {
 
     // Initial state from SGP4 osculating
     let ic = &window.initial_osculating;
-    let initial = State {
-        position: Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
-        velocity: Vector3::new(
+    let initial = OrbitalState::new(
+        Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
+        Vector3::new(
             ic.velocity_km_s[0],
             ic.velocity_km_s[1],
             ic.velocity_km_s[2],
         ),
-    };
+    );
 
     let epoch_jd_start = window.initial_tle.epoch_jd;
     let epoch = Epoch::from_jd(epoch_jd_start);
     let system = build_iss_system(epoch);
 
-    let initial_sma = osculating_sma(&initial.position, &initial.velocity, mu);
+    let initial_sma = osculating_sma(initial.position(), initial.velocity(), mu);
     println!(
         "{}: initial osc SMA={:.3} km (alt={:.1} km), TLE mean SMA={:.3} km",
         window_name,
@@ -228,7 +229,7 @@ fn run_decay_window(window_name: &str, min_ratio: f64, max_ratio: f64) {
         .advance_to(
             t_avg_end_start,
             |_, state| {
-                let alt = state.position.magnitude() - R_EARTH;
+                let alt = state.position().magnitude() - R_EARTH;
                 if alt < min_altitude {
                     min_altitude = alt;
                 }
@@ -368,14 +369,14 @@ fn run_decay_window_msise(
 
     let mu = fixture.mu_earth_km3_s2;
     let ic = &window.initial_osculating;
-    let initial = State {
-        position: Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
-        velocity: Vector3::new(
+    let initial = OrbitalState::new(
+        Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
+        Vector3::new(
             ic.velocity_km_s[0],
             ic.velocity_km_s[1],
             ic.velocity_km_s[2],
         ),
-    };
+    );
 
     let epoch = Epoch::from_jd(window.initial_tle.epoch_jd);
     let system = build_iss_system_msise(epoch, f107, ap);
@@ -497,14 +498,14 @@ fn run_decay_window_cssi(window_name: &str, min_ratio: f64, max_ratio: f64) {
 
     let mu = fixture.mu_earth_km3_s2;
     let ic = &window.initial_osculating;
-    let initial = State {
-        position: Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
-        velocity: Vector3::new(
+    let initial = OrbitalState::new(
+        Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
+        Vector3::new(
             ic.velocity_km_s[0],
             ic.velocity_km_s[1],
             ic.velocity_km_s[2],
         ),
-    };
+    );
 
     let epoch = Epoch::from_jd(window.initial_tle.epoch_jd);
     let system = build_iss_system_msise_cssi(epoch);

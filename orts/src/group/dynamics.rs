@@ -45,8 +45,9 @@ mod tests {
     use super::*;
     use nalgebra::Vector3;
     use orts_integrator::{
-        DormandPrince, IntegrationOutcome, Integrator, Rk4, State, Tolerances,
+        DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances,
     };
+    use crate::OrbitalState;
     use crate::two_body::TwoBodySystem;
     use std::ops::ControlFlow;
 
@@ -54,9 +55,9 @@ mod tests {
     struct HarmonicOscillator;
 
     impl DynamicalSystem for HarmonicOscillator {
-        type State = State;
-        fn derivatives(&self, _t: f64, state: &State) -> State {
-            State::from_derivative(state.velocity, -state.position)
+        type State = OrbitalState;
+        fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+            OrbitalState::from_derivative(*state.velocity(), -*state.position())
         }
     }
 
@@ -66,28 +67,28 @@ mod tests {
     }
 
     impl DynamicalSystem for UniformMotion {
-        type State = State;
-        fn derivatives(&self, _t: f64, _state: &State) -> State {
-            State::from_derivative(self.velocity, Vector3::zeros())
+        type State = OrbitalState;
+        fn derivatives(&self, _t: f64, _state: &OrbitalState) -> OrbitalState {
+            OrbitalState::from_derivative(self.velocity, Vector3::zeros())
         }
     }
 
-    fn iss_state() -> State {
+    fn iss_state() -> OrbitalState {
         let r: f64 = 6778.137;
         let v = (398600.4418_f64 / r).sqrt();
-        State {
-            position: Vector3::new(r, 0.0, 0.0),
-            velocity: Vector3::new(0.0, v, 0.0),
-        }
+        OrbitalState::new(
+            Vector3::new(r, 0.0, 0.0),
+            Vector3::new(0.0, v, 0.0),
+        )
     }
 
-    fn sso_state() -> State {
+    fn sso_state() -> OrbitalState {
         let r: f64 = 6378.137 + 800.0;
         let v = (398600.4418_f64 / r).sqrt();
-        State {
-            position: Vector3::new(r, 0.0, 0.0),
-            velocity: Vector3::new(0.0, v, 0.0),
-        }
+        OrbitalState::new(
+            Vector3::new(r, 0.0, 0.0),
+            Vector3::new(0.0, v, 0.0),
+        )
     }
 
     #[test]
@@ -108,10 +109,10 @@ mod tests {
         let d2 = TwoBodySystem { mu }.derivatives(0.0, &s2);
 
         // Bit-identical
-        assert_eq!(group_deriv.states[0].position, d1.position);
-        assert_eq!(group_deriv.states[0].velocity, d1.velocity);
-        assert_eq!(group_deriv.states[1].position, d2.position);
-        assert_eq!(group_deriv.states[1].velocity, d2.velocity);
+        assert_eq!(*group_deriv.states[0].position(), *d1.position());
+        assert_eq!(*group_deriv.states[0].velocity(), *d1.velocity());
+        assert_eq!(*group_deriv.states[1].position(), *d2.position());
+        assert_eq!(*group_deriv.states[1].velocity(), *d2.velocity());
     }
 
     #[test]
@@ -155,10 +156,10 @@ mod tests {
         }
 
         // Should be bit-identical (same floating-point operations in same order)
-        assert_eq!(group_state.states[0].position, s1.position);
-        assert_eq!(group_state.states[0].velocity, s1.velocity);
-        assert_eq!(group_state.states[1].position, s2.position);
-        assert_eq!(group_state.states[1].velocity, s2.velocity);
+        assert_eq!(*group_state.states[0].position(), *s1.position());
+        assert_eq!(*group_state.states[0].velocity(), *s1.velocity());
+        assert_eq!(*group_state.states[1].position(), *s2.position());
+        assert_eq!(*group_state.states[1].velocity(), *s2.velocity());
     }
 
     #[test]
@@ -169,9 +170,9 @@ mod tests {
             rtol: 1e-8,
         };
         let duration = 100.0;
-        let no_event = |_t: f64, _s: &State| ControlFlow::<()>::Continue(());
+        let no_event = |_t: f64, _s: &OrbitalState| ControlFlow::<()>::Continue(());
         let no_event_group =
-            |_t: f64, _s: &GroupState<State>| ControlFlow::<()>::Continue(());
+            |_t: f64, _s: &GroupState<OrbitalState>| ControlFlow::<()>::Continue(());
 
         // Individual DP45
         let outcome1 = DormandPrince.integrate_adaptive_with_events(
@@ -197,7 +198,7 @@ mod tests {
             10.0,
             &tol,
             |_, _| {},
-            |_t: f64, _s: &State| ControlFlow::<()>::Continue(()),
+            |_t: f64, _s: &OrbitalState| ControlFlow::<()>::Continue(()),
         );
         let s2 = match outcome2 {
             IntegrationOutcome::Completed(s) => s,
@@ -227,9 +228,9 @@ mod tests {
         // Group uses max error_norm across satellites, so step sizes may differ
         // from individual propagation. Check results match within tolerance.
         let pos_err_1 =
-            (group_state.states[0].position - s1.position).magnitude();
+            (group_state.states[0].position() - s1.position()).magnitude();
         let pos_err_2 =
-            (group_state.states[1].position - s2.position).magnitude();
+            (group_state.states[1].position() - s2.position()).magnitude();
 
         // Within tolerance (both should be ~1e-6 km or better)
         assert!(
@@ -250,18 +251,18 @@ mod tests {
             HarmonicOscillator,
         ]);
 
-        let s1 = State {
-            position: Vector3::new(1.0, 0.0, 0.0),
-            velocity: Vector3::zeros(),
-        };
-        let s2 = State {
-            position: Vector3::zeros(),
-            velocity: Vector3::new(0.0, 2.0, 0.0),
-        };
+        let s1 = OrbitalState::new(
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::zeros(),
+        );
+        let s2 = OrbitalState::new(
+            Vector3::zeros(),
+            Vector3::new(0.0, 2.0, 0.0),
+        );
         let initial = GroupState::new(vec![s1.clone(), s2.clone()]);
 
-        let energy = |s: &State| -> f64 {
-            (s.velocity.magnitude_squared() + s.position.magnitude_squared()) / 2.0
+        let energy = |s: &OrbitalState| -> f64 {
+            (s.velocity().magnitude_squared() + s.position().magnitude_squared()) / 2.0
         };
         let e0_1 = energy(&s1);
         let e0_2 = energy(&s2);
@@ -296,21 +297,21 @@ mod tests {
         };
         let group_dyn = IndependentGroupDynamics::new(vec![sys1, sys2]);
 
-        let s1 = State {
-            position: Vector3::zeros(),
-            velocity: Vector3::new(1.0, 0.0, 0.0),
-        };
-        let s2 = State {
-            position: Vector3::zeros(),
-            velocity: Vector3::new(0.0, 2.0, 0.0),
-        };
+        let s1 = OrbitalState::new(
+            Vector3::zeros(),
+            Vector3::new(1.0, 0.0, 0.0),
+        );
+        let s2 = OrbitalState::new(
+            Vector3::zeros(),
+            Vector3::new(0.0, 2.0, 0.0),
+        );
         let initial = GroupState::new(vec![s1, s2]);
 
         let dt = 1.0;
         let result = Rk4.step(&group_dyn, 0.0, &initial, dt);
 
         // Uniform motion: x(t) = x0 + v*t (exact for any RK method)
-        assert!((result.states[0].position[0] - 1.0).abs() < 1e-15);
-        assert!((result.states[1].position[1] - 2.0).abs() < 1e-15);
+        assert!((result.states[0].position()[0] - 1.0).abs() < 1e-15);
+        assert!((result.states[1].position()[1] - 2.0).abs() < 1e-15);
     }
 }

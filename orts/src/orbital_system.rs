@@ -1,6 +1,7 @@
 use kaname::epoch::Epoch;
-use orts_integrator::{DynamicalSystem, State};
+use orts_integrator::DynamicalSystem;
 
+use crate::OrbitalState;
 use crate::gravity::GravityField;
 use crate::perturbations::ForceModel;
 
@@ -46,9 +47,9 @@ impl OrbitalSystem {
     ///
     /// Returns a vec of (name, magnitude) pairs: `"gravity"` first,
     /// then each perturbation by its [`ForceModel::name()`].
-    pub fn acceleration_breakdown(&self, t: f64, state: &State) -> Vec<(&str, f64)> {
+    pub fn acceleration_breakdown(&self, t: f64, state: &OrbitalState) -> Vec<(&str, f64)> {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
-        let grav = self.gravity.acceleration(self.mu, &state.position).magnitude();
+        let grav = self.gravity.acceleration(self.mu, state.position()).magnitude();
         let mut result = vec![("gravity", grav)];
         for p in &self.perturbations {
             let a = p.acceleration(t, state, epoch.as_ref()).magnitude();
@@ -64,14 +65,14 @@ impl OrbitalSystem {
 }
 
 impl DynamicalSystem for OrbitalSystem {
-    type State = State;
-    fn derivatives(&self, t: f64, state: &State) -> State {
+    type State = OrbitalState;
+    fn derivatives(&self, t: f64, state: &OrbitalState) -> OrbitalState {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
-        let mut accel = self.gravity.acceleration(self.mu, &state.position);
+        let mut accel = self.gravity.acceleration(self.mu, state.position());
         for p in &self.perturbations {
             accel += p.acceleration(t, state, epoch.as_ref());
         }
-        State::from_derivative(state.velocity, accel)
+        OrbitalState::from_derivative(*state.velocity(), accel)
     }
 }
 
@@ -91,17 +92,17 @@ mod tests {
         let two_body = TwoBodySystem { mu: MU_EARTH };
         let orbital = OrbitalSystem::new(MU_EARTH, Box::new(PointMass));
 
-        let state = State {
-            position: vector![6778.137, 0.0, 0.0],
-            velocity: vector![0.0, 7.6693, 0.0],
-        };
+        let state = OrbitalState::new(
+            vector![6778.137, 0.0, 0.0],
+            vector![0.0, 7.6693, 0.0],
+        );
 
         let d1 = two_body.derivatives(0.0, &state);
         let d2 = orbital.derivatives(0.0, &state);
 
-        // Derivatives stored as State: .position = velocity, .velocity = acceleration
-        assert_eq!(d1.position, d2.position);
-        assert!((d1.velocity - d2.velocity).magnitude() < 1e-15);
+        // Derivatives stored as OrbitalState: .position() = velocity, .velocity() = acceleration
+        assert_eq!(d1.position(), d2.position());
+        assert!((*d1.velocity() - *d2.velocity()).magnitude() < 1e-15);
     }
 
     #[test]
@@ -111,10 +112,10 @@ mod tests {
         let period = 2.0 * PI * (r.powi(3) / MU_EARTH).sqrt();
         let dt = 10.0;
 
-        let initial = State {
-            position: vector![r, 0.0, 0.0],
-            velocity: vector![0.0, v, 0.0],
-        };
+        let initial = OrbitalState::new(
+            vector![r, 0.0, 0.0],
+            vector![0.0, v, 0.0],
+        );
 
         let two_body = TwoBodySystem { mu: MU_EARTH };
         let final_tb = Rk4.integrate(&two_body, initial.clone(), 0.0, period, dt, |_, _| {});
@@ -123,8 +124,8 @@ mod tests {
         let final_os = Rk4.integrate(&orbital, initial, 0.0, period, dt, |_, _| {});
 
         // Should be bit-for-bit identical
-        assert_eq!(final_tb.position, final_os.position);
-        assert_eq!(final_tb.velocity, final_os.velocity);
+        assert_eq!(final_tb.position(), final_os.position());
+        assert_eq!(final_tb.velocity(), final_os.velocity());
     }
 
     #[test]
@@ -155,16 +156,13 @@ mod tests {
     /// Propagate and return the final RAAN after duration seconds.
     fn propagate_raan(system: &OrbitalSystem, elements: &KeplerianElements, dt: f64, duration: f64) -> f64 {
         let (pos, vel) = elements.to_state_vector(MU_EARTH);
-        let initial = State {
-            position: pos,
-            velocity: vel,
-        };
+        let initial = OrbitalState::new(pos, vel);
 
         let final_state = Rk4.integrate(system, initial, 0.0, duration, dt, |_, _| {});
 
         let final_elements = KeplerianElements::from_state_vector(
-            &final_state.position,
-            &final_state.velocity,
+            final_state.position(),
+            final_state.velocity(),
             MU_EARTH,
         );
         final_elements.raan
@@ -258,10 +256,7 @@ mod tests {
             true_anomaly: 0.0,
         };
         let (pos, vel) = elements.to_state_vector(MU_EARTH);
-        let initial = State {
-            position: pos,
-            velocity: vel,
-        };
+        let initial = OrbitalState::new(pos, vel);
 
         let duration = 1000.0;
         let dt_coarse = 4.0;
@@ -272,8 +267,8 @@ mod tests {
         let final_fine = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
         let final_finest = Rk4.integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
 
-        let err_coarse = (final_coarse.position - final_finest.position).magnitude();
-        let err_fine = (final_fine.position - final_finest.position).magnitude();
+        let err_coarse = (*final_coarse.position() - *final_finest.position()).magnitude();
+        let err_fine = (*final_fine.position() - *final_finest.position()).magnitude();
 
         let ratio = err_coarse / err_fine;
         assert!(
@@ -308,10 +303,7 @@ mod tests {
             true_anomaly: 0.0,
         };
         let (pos, vel) = elements.to_state_vector(MU_EARTH);
-        let initial = State {
-            position: pos,
-            velocity: vel,
-        };
+        let initial = OrbitalState::new(pos, vel);
 
         let duration = 1000.0;
         let dt_coarse = 4.0;
@@ -322,8 +314,8 @@ mod tests {
         let final_fine = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
         let final_finest = Rk4.integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
 
-        let err_coarse = (final_coarse.position - final_finest.position).magnitude();
-        let err_fine = (final_fine.position - final_finest.position).magnitude();
+        let err_coarse = (final_coarse.position() - final_finest.position()).magnitude();
+        let err_fine = (final_fine.position() - final_finest.position()).magnitude();
 
         let ratio = err_coarse / err_fine;
         assert!(

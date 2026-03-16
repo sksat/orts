@@ -10,7 +10,8 @@
 //! - Kozai, Y. (1959), AJ 64, 367–377.
 //! - Lara, M. (2021), Celest. Mech. Dyn. Astron. 133, 43.
 
-use orts_integrator::{DormandPrince, IntegrationOutcome, State, Tolerances};
+use orts_integrator::{DormandPrince, IntegrationOutcome, Tolerances};
+use orts::OrbitalState;
 use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
 use orts::gravity::ZonalHarmonics;
 use orts::kepler::KeplerianElements;
@@ -98,12 +99,9 @@ fn propagate_collecting_elements_dp45(
     elements: &KeplerianElements,
     n_orbits: usize,
     tol: &Tolerances,
-) -> (Vec<KeplerianElements>, State) {
+) -> (Vec<KeplerianElements>, OrbitalState) {
     let (pos, vel) = elements.to_state_vector(MU_EARTH);
-    let initial = State {
-        position: pos,
-        velocity: vel,
-    };
+    let initial = OrbitalState::new(pos, vel);
     let period = elements.period(MU_EARTH);
 
     let mut orbit_elements = vec![];
@@ -112,7 +110,7 @@ fn propagate_collecting_elements_dp45(
 
     for _ in 0..n_orbits {
         let t_end = t + period;
-        let outcome: IntegrationOutcome<State, ()> =
+        let outcome: IntegrationOutcome<OrbitalState, ()> =
             DormandPrince.integrate_adaptive_with_events(
                 system,
                 current,
@@ -129,8 +127,8 @@ fn propagate_collecting_elements_dp45(
         }
         t = t_end;
         let elems = KeplerianElements::from_state_vector(
-            &current.position,
-            &current.velocity,
+            current.position(),
+            current.velocity(),
             MU_EARTH,
         );
         orbit_elements.push(elems);

@@ -1,6 +1,7 @@
 use nalgebra::{Vector3, Vector4};
 use crate::attitude::AttitudeState;
-use orts_integrator::{OdeState, State, Tolerances};
+use orts_integrator::{OdeState, Tolerances};
+use crate::OrbitalState;
 
 /// Combined spacecraft state: orbital (6D) + attitude (7D) + mass (1D).
 ///
@@ -8,7 +9,7 @@ use orts_integrator::{OdeState, State, Tolerances};
 /// Mass is included for future thrust modeling (mass depletion).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpacecraftState {
-    pub orbit: State,
+    pub orbit: OrbitalState,
     pub attitude: AttitudeState,
     pub mass: f64,
 }
@@ -28,7 +29,7 @@ impl SpacecraftState {
         mass_rate: f64,
     ) -> Self {
         Self {
-            orbit: State::from_derivative(velocity, acceleration),
+            orbit: OrbitalState::from_derivative(velocity, acceleration),
             attitude: AttitudeState::from_derivative(q_dot, angular_acceleration),
             mass: mass_rate,
         }
@@ -95,10 +96,10 @@ mod tests {
 
     fn sample_state() -> SpacecraftState {
         SpacecraftState {
-            orbit: State {
-                position: Vector3::new(7000.0, 0.0, 0.0),
-                velocity: Vector3::new(0.0, 7.5, 0.0),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(7000.0, 0.0, 0.0),
+                Vector3::new(0.0, 7.5, 0.0),
+            ),
             attitude: AttitudeState::identity(),
             mass: 500.0,
         }
@@ -108,8 +109,8 @@ mod tests {
     fn zero_like() {
         let state = sample_state();
         let zero = state.zero_like();
-        assert_eq!(zero.orbit.position, Vector3::zeros());
-        assert_eq!(zero.orbit.velocity, Vector3::zeros());
+        assert_eq!(*zero.orbit.position(), Vector3::zeros());
+        assert_eq!(*zero.orbit.velocity(), Vector3::zeros());
         assert_eq!(zero.attitude.quaternion, Vector4::zeros());
         assert_eq!(zero.attitude.angular_velocity, Vector3::zeros());
         assert_eq!(zero.mass, 0.0);
@@ -118,10 +119,10 @@ mod tests {
     #[test]
     fn axpy_linear_combination() {
         let a = SpacecraftState {
-            orbit: State {
-                position: Vector3::new(1.0, 2.0, 3.0),
-                velocity: Vector3::new(4.0, 5.0, 6.0),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(1.0, 2.0, 3.0),
+                Vector3::new(4.0, 5.0, 6.0),
+            ),
             attitude: AttitudeState {
                 quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
                 angular_velocity: Vector3::new(0.1, 0.0, 0.0),
@@ -129,10 +130,10 @@ mod tests {
             mass: 100.0,
         };
         let b = SpacecraftState {
-            orbit: State {
-                position: Vector3::new(10.0, 20.0, 30.0),
-                velocity: Vector3::new(40.0, 50.0, 60.0),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(10.0, 20.0, 30.0),
+                Vector3::new(40.0, 50.0, 60.0),
+            ),
             attitude: AttitudeState {
                 quaternion: Vector4::new(0.0, 1.0, 0.0, 0.0),
                 angular_velocity: Vector3::new(0.0, 0.2, 0.0),
@@ -140,8 +141,8 @@ mod tests {
             mass: 50.0,
         };
         let result = a.axpy(0.5, &b);
-        assert_eq!(result.orbit.position, Vector3::new(6.0, 12.0, 18.0));
-        assert_eq!(result.orbit.velocity, Vector3::new(24.0, 30.0, 36.0));
+        assert_eq!(*result.orbit.position(), Vector3::new(6.0, 12.0, 18.0));
+        assert_eq!(*result.orbit.velocity(), Vector3::new(24.0, 30.0, 36.0));
         assert_eq!(
             result.attitude.quaternion,
             Vector4::new(1.0, 0.5, 0.0, 0.0)
@@ -157,8 +158,8 @@ mod tests {
     fn scale_zero_gives_zeros() {
         let state = sample_state();
         let scaled = state.scale(0.0);
-        assert_eq!(scaled.orbit.position, Vector3::zeros());
-        assert_eq!(scaled.orbit.velocity, Vector3::zeros());
+        assert_eq!(*scaled.orbit.position(), Vector3::zeros());
+        assert_eq!(*scaled.orbit.velocity(), Vector3::zeros());
         assert_eq!(scaled.attitude.quaternion, Vector4::zeros());
         assert_eq!(scaled.attitude.angular_velocity, Vector3::zeros());
         assert_eq!(scaled.mass, 0.0);
@@ -179,7 +180,7 @@ mod tests {
     #[test]
     fn is_finite_nan_orbit() {
         let mut state = sample_state();
-        state.orbit.position[0] = f64::NAN;
+        state.orbit.position_mut()[0] = f64::NAN;
         assert!(!state.is_finite());
     }
 
@@ -210,10 +211,10 @@ mod tests {
         let y_n = sample_state();
         let y_next = sample_state();
         let error = SpacecraftState {
-            orbit: State {
-                position: Vector3::new(1.0, 1.0, 1.0), // large (km-scale)
-                velocity: Vector3::new(0.01, 0.01, 0.01),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(1.0, 1.0, 1.0), // large (km-scale)
+                Vector3::new(0.01, 0.01, 0.01),
+            ),
             attitude: AttitudeState {
                 quaternion: Vector4::new(1e-12, 1e-12, 1e-12, 1e-12),
                 angular_velocity: Vector3::new(1e-12, 1e-12, 1e-12),
@@ -238,10 +239,10 @@ mod tests {
         let y_n = sample_state();
         let y_next = sample_state();
         let error = SpacecraftState {
-            orbit: State {
-                position: Vector3::new(1e-12, 1e-12, 1e-12),
-                velocity: Vector3::new(1e-12, 1e-12, 1e-12),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(1e-12, 1e-12, 1e-12),
+                Vector3::new(1e-12, 1e-12, 1e-12),
+            ),
             attitude: AttitudeState {
                 quaternion: Vector4::new(0.1, 0.1, 0.1, 0.1),
                 angular_velocity: Vector3::new(0.1, 0.1, 0.1),
@@ -267,10 +268,10 @@ mod tests {
         let y_n = sample_state();
         let y_next = sample_state();
         let error = SpacecraftState {
-            orbit: State {
-                position: Vector3::zeros(),
-                velocity: Vector3::zeros(),
-            },
+            orbit: OrbitalState::new(
+                Vector3::zeros(),
+                Vector3::zeros(),
+            ),
             attitude: AttitudeState {
                 quaternion: Vector4::zeros(),
                 angular_velocity: Vector3::zeros(),
@@ -292,10 +293,10 @@ mod tests {
     #[test]
     fn project_normalizes_quaternion() {
         let mut state = SpacecraftState {
-            orbit: State {
-                position: Vector3::new(7000.0, 0.0, 0.0),
-                velocity: Vector3::new(0.0, 7.5, 0.0),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(7000.0, 0.0, 0.0),
+                Vector3::new(0.0, 7.5, 0.0),
+            ),
             attitude: AttitudeState {
                 quaternion: Vector4::new(2.0, 0.0, 0.0, 0.0),
                 angular_velocity: Vector3::new(0.1, 0.2, 0.3),
@@ -323,10 +324,10 @@ mod tests {
     fn from_derivative_and_euler_step() {
         // Test that from_derivative + axpy(dt, deriv) gives a correct Euler step
         let state = SpacecraftState {
-            orbit: State {
-                position: Vector3::new(7000.0, 0.0, 0.0),
-                velocity: Vector3::new(0.0, 7.5, 0.0),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(7000.0, 0.0, 0.0),
+                Vector3::new(0.0, 7.5, 0.0),
+            ),
             attitude: AttitudeState {
                 quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
                 angular_velocity: Vector3::new(0.0, 0.0, 0.1),
@@ -346,12 +347,12 @@ mod tests {
         let new_state = state.axpy(dt, &deriv);
 
         // Position: (7000, 0, 0) + 1.0 * (0, 7.5, 0) = (7000, 7.5, 0)
-        assert!((new_state.orbit.position[0] - 7000.0).abs() < 1e-10);
-        assert!((new_state.orbit.position[1] - 7.5).abs() < 1e-10);
+        assert!((new_state.orbit.position()[0] - 7000.0).abs() < 1e-10);
+        assert!((new_state.orbit.position()[1] - 7.5).abs() < 1e-10);
 
         // Velocity: (0, 7.5, 0) + 1.0 * (-0.008, 0, 0) = (-0.008, 7.5, 0)
-        assert!((new_state.orbit.velocity[0] - (-0.008)).abs() < 1e-10);
-        assert!((new_state.orbit.velocity[1] - 7.5).abs() < 1e-10);
+        assert!((new_state.orbit.velocity()[0] - (-0.008)).abs() < 1e-10);
+        assert!((new_state.orbit.velocity()[1] - 7.5).abs() < 1e-10);
 
         // Quaternion: (1, 0, 0, 0) + 1.0 * (0, 0, 0, 0.05) = (1, 0, 0, 0.05)
         assert!((new_state.attitude.quaternion[0] - 1.0).abs() < 1e-10);

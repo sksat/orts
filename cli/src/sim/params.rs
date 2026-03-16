@@ -540,8 +540,8 @@ mod tests {
         let params = SimParams::from_sim_args(&args, false);
         let state = params.satellites[0].initial_state(params.mu);
 
-        let r = state.position.magnitude();
-        let v = state.velocity.magnitude();
+        let r = state.position().magnitude();
+        let v = state.velocity().magnitude();
         let altitude = r - 6378.137;
 
         // ISS altitude ~400 km

@@ -1,9 +1,9 @@
 use std::ops::ControlFlow;
 
-use orts_integrator::State;
+use orts::OrbitalState;
 use orts::kepler::KeplerianElements;
 use orts::group::{IndependentGroup, IntegratorConfig};
-use orts::record::archetypes::OrbitalState;
+use orts::record::archetypes::OrbitalState as RecordOrbitalState;
 use orts::record::components::{BodyRadius, GravitationalParameter};
 use orts::record::entity_path::EntityPath;
 use orts::record::recording::Recording;
@@ -71,8 +71,8 @@ pub fn run_simulation(params: &SimParams) -> Recording {
     let props = params.body.properties();
     let body_radius = props.radius;
     let atmosphere_altitude = props.atmosphere_altitude;
-    let event_checker = move |_t: f64, state: &State| -> ControlFlow<String> {
-        let r = state.position.magnitude();
+    let event_checker = move |_t: f64, state: &OrbitalState| -> ControlFlow<String> {
+        let r = state.position().magnitude();
         if r < body_radius {
             ControlFlow::Break(format!("collision at {:.1} km altitude", r - body_radius))
         } else if let Some(atm_alt) = atmosphere_altitude {
@@ -113,7 +113,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
     let mut last_output_t: Vec<f64> = vec![0.0; params.satellites.len()];
     for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
         let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
-        let os = OrbitalState::new(entry.state.position, entry.state.velocity);
+        let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
         rec.log_orbital_state(&sat_paths[i], &tp, &os);
         steps[i] = 1;
     }
@@ -140,7 +140,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
                 let tp = TimePoint::new()
                     .with_sim_time(entry.t)
                     .with_step(steps[i]);
-                let os = OrbitalState::new(entry.state.position, entry.state.velocity);
+                let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
                 rec.log_orbital_state(&sat_paths[i], &tp, &os);
                 steps[i] += 1;
                 last_output_t[i] = entry.t;
@@ -163,7 +163,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
                 let tp = TimePoint::new()
                     .with_sim_time(entry.t)
                     .with_step(steps[i]);
-                let os = OrbitalState::new(entry.state.position, entry.state.velocity);
+                let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
                 rec.log_orbital_state(&sat_paths[i], &tp, &os);
                 steps[i] += 1;
             }
@@ -177,7 +177,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
             let tp = TimePoint::new()
                 .with_sim_time(entry.t)
                 .with_step(steps[i]);
-            let os = OrbitalState::new(entry.state.position, entry.state.velocity);
+            let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
             rec.log_orbital_state(&sat_paths[i], &tp, &os);
         }
     }

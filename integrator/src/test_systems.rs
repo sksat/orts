@@ -10,8 +10,8 @@ pub(crate) struct UniformMotion {
 }
 
 impl DynamicalSystem for UniformMotion {
-    type State = State;
-    fn derivatives(&self, _t: f64, _state: &State) -> State {
+    type State = State<2>;
+    fn derivatives(&self, _t: f64, _state: &State<2>) -> State<2> {
         State::from_derivative(self.constant_velocity, Vector3::zeros())
     }
 }
@@ -22,9 +22,9 @@ pub(crate) struct ConstantAcceleration {
 }
 
 impl DynamicalSystem for ConstantAcceleration {
-    type State = State;
-    fn derivatives(&self, _t: f64, state: &State) -> State {
-        State::from_derivative(state.velocity, self.acceleration)
+    type State = State<2>;
+    fn derivatives(&self, _t: f64, state: &State<2>) -> State<2> {
+        State::from_derivative(*state.dy(), self.acceleration)
     }
 }
 
@@ -32,8 +32,8 @@ impl DynamicalSystem for ConstantAcceleration {
 pub(crate) struct HarmonicOscillator;
 
 impl DynamicalSystem for HarmonicOscillator {
-    type State = State;
-    fn derivatives(&self, _t: f64, state: &State) -> State {
-        State::from_derivative(state.velocity, -state.position)
+    type State = State<2>;
+    fn derivatives(&self, _t: f64, state: &State<2>) -> State<2> {
+        State::from_derivative(*state.dy(), -*state.y())
     }
 }

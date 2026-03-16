@@ -4,7 +4,7 @@
 
 use std::ops::ControlFlow;
 
-use orts_integrator::State;
+use crate::OrbitalState;
 
 /// Events that can terminate a simulation early.
 #[derive(Debug, Clone, PartialEq)]
@@ -29,9 +29,9 @@ pub enum SimulationEvent {
 pub fn collision_check(
     body_radius: f64,
     atmosphere_altitude: Option<f64>,
-) -> impl Fn(f64, &State) -> ControlFlow<SimulationEvent> {
-    move |_t: f64, state: &State| {
-        let r = state.position.magnitude();
+) -> impl Fn(f64, &OrbitalState) -> ControlFlow<SimulationEvent> {
+    move |_t: f64, state: &OrbitalState| {
+        let r = state.position().magnitude();
         if r < body_radius {
             ControlFlow::Break(SimulationEvent::Collision {
                 altitude_km: r - body_radius,
@@ -59,20 +59,20 @@ mod tests {
     #[test]
     fn collision_check_above_surface() {
         let check = collision_check(R_EARTH, None);
-        let state = State {
-            position: vector![R_EARTH + 400.0, 0.0, 0.0],
-            velocity: vector![0.0, 7.66, 0.0],
-        };
+        let state = OrbitalState::new(
+            vector![R_EARTH + 400.0, 0.0, 0.0],
+            vector![0.0, 7.66, 0.0],
+        );
         assert!(matches!(check(0.0, &state), ControlFlow::Continue(())));
     }
 
     #[test]
     fn collision_check_below_surface() {
         let check = collision_check(R_EARTH, None);
-        let state = State {
-            position: vector![R_EARTH - 10.0, 0.0, 0.0],
-            velocity: vector![0.0, 7.0, 0.0],
-        };
+        let state = OrbitalState::new(
+            vector![R_EARTH - 10.0, 0.0, 0.0],
+            vector![0.0, 7.0, 0.0],
+        );
         match check(0.0, &state) {
             ControlFlow::Break(SimulationEvent::Collision { altitude_km }) => {
                 assert!(altitude_km < 0.0);
@@ -86,10 +86,10 @@ mod tests {
     fn collision_check_at_surface() {
         let check = collision_check(R_EARTH, None);
         // Exactly at surface: r == body_radius, should NOT trigger (not < body_radius)
-        let state = State {
-            position: vector![R_EARTH, 0.0, 0.0],
-            velocity: vector![0.0, 7.0, 0.0],
-        };
+        let state = OrbitalState::new(
+            vector![R_EARTH, 0.0, 0.0],
+            vector![0.0, 7.0, 0.0],
+        );
         assert!(matches!(check(0.0, &state), ControlFlow::Continue(())));
     }
 
@@ -97,10 +97,10 @@ mod tests {
     fn collision_check_3d_position() {
         let check = collision_check(R_EARTH, None);
         // Position magnitude = sqrt(3000^2 * 3) ≈ 5196 km < R_EARTH (6378 km)
-        let state = State {
-            position: vector![3000.0, 3000.0, 3000.0],
-            velocity: vector![0.0, 0.0, 0.0],
-        };
+        let state = OrbitalState::new(
+            vector![3000.0, 3000.0, 3000.0],
+            vector![0.0, 0.0, 0.0],
+        );
         assert!(matches!(
             check(0.0, &state),
             ControlFlow::Break(SimulationEvent::Collision { .. })
@@ -111,10 +111,10 @@ mod tests {
     fn atmospheric_entry_above_karman() {
         // At 200 km altitude with 100 km atmosphere → no event
         let check = collision_check(R_EARTH, Some(100.0));
-        let state = State {
-            position: vector![R_EARTH + 200.0, 0.0, 0.0],
-            velocity: vector![0.0, 7.66, 0.0],
-        };
+        let state = OrbitalState::new(
+            vector![R_EARTH + 200.0, 0.0, 0.0],
+            vector![0.0, 7.66, 0.0],
+        );
         assert!(matches!(check(0.0, &state), ControlFlow::Continue(())));
     }
 
@@ -122,10 +122,10 @@ mod tests {
     fn atmospheric_entry_below_karman() {
         // At 50 km altitude with 100 km atmosphere → AtmosphericEntry
         let check = collision_check(R_EARTH, Some(100.0));
-        let state = State {
-            position: vector![R_EARTH + 50.0, 0.0, 0.0],
-            velocity: vector![0.0, 7.0, 0.0],
-        };
+        let state = OrbitalState::new(
+            vector![R_EARTH + 50.0, 0.0, 0.0],
+            vector![0.0, 7.0, 0.0],
+        );
         match check(0.0, &state) {
             ControlFlow::Break(SimulationEvent::AtmosphericEntry { altitude_km }) => {
                 assert!((altitude_km - 50.0).abs() < 1e-10);
@@ -138,10 +138,10 @@ mod tests {
     fn collision_takes_priority_over_atmospheric_entry() {
         // Below surface with atmosphere set → Collision, not AtmosphericEntry
         let check = collision_check(R_EARTH, Some(100.0));
-        let state = State {
-            position: vector![R_EARTH - 5.0, 0.0, 0.0],
-            velocity: vector![0.0, 7.0, 0.0],
-        };
+        let state = OrbitalState::new(
+            vector![R_EARTH - 5.0, 0.0, 0.0],
+            vector![0.0, 7.0, 0.0],
+        );
         assert!(matches!(
             check(0.0, &state),
             ControlFlow::Break(SimulationEvent::Collision { .. })
@@ -158,10 +158,10 @@ mod tests {
         // Start at 100 km altitude with only 80% of circular velocity → will fall back
         let r = R_EARTH + 100.0;
         let v_circular = (MU_EARTH / r).sqrt();
-        let initial = State {
-            position: vector![r, 0.0, 0.0],
-            velocity: vector![0.0, v_circular * 0.8, 0.0],
-        };
+        let initial = OrbitalState::new(
+            vector![r, 0.0, 0.0],
+            vector![0.0, v_circular * 0.8, 0.0],
+        );
 
         // No atmosphere → hits surface directly
         let event_checker = collision_check(R_EARTH, None);
@@ -199,10 +199,10 @@ mod tests {
         // Start at 200 km altitude with 80% of circular velocity → will fall back
         let r = R_EARTH + 200.0;
         let v_circular = (MU_EARTH / r).sqrt();
-        let initial = State {
-            position: vector![r, 0.0, 0.0],
-            velocity: vector![0.0, v_circular * 0.8, 0.0],
-        };
+        let initial = OrbitalState::new(
+            vector![r, 0.0, 0.0],
+            vector![0.0, v_circular * 0.8, 0.0],
+        );
 
         // With 100 km atmosphere → should stop at atmosphere boundary before hitting surface
         let event_checker = collision_check(R_EARTH, Some(100.0));

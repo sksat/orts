@@ -31,73 +31,108 @@ pub trait OdeState: Clone + Sized {
     fn project(&mut self, _t: f64) {}
 }
 
-/// State of a dynamical system with position and velocity vectors.
+/// N-th order ODE state: `ORDER` vectors of 3 components each.
+///
+/// For a 2nd-order ODE (e.g., mechanics), `State<2>` holds `[y, dy]`
+/// where `y` is position-like and `dy` is velocity-like.
+/// For a 1st-order ODE, `State<1>` holds just `[y]`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct State {
-    pub position: Vector3<f64>,
-    pub velocity: Vector3<f64>,
+pub struct State<const ORDER: usize> {
+    pub components: [Vector3<f64>; ORDER],
 }
 
-impl State {
-    /// Create a State representing a derivative (velocity, acceleration).
-    ///
-    /// In the ODE formulation y = (position, velocity), the derivative
-    /// dy/dt = (velocity, acceleration) has the same type:
-    /// - `position` field holds velocity (d(position)/dt)
-    /// - `velocity` field holds acceleration (d(velocity)/dt)
-    pub fn from_derivative(velocity: Vector3<f64>, acceleration: Vector3<f64>) -> Self {
-        State {
-            position: velocity,
-            velocity: acceleration,
-        }
-    }
-}
-
-impl OdeState for State {
+impl<const ORDER: usize> OdeState for State<ORDER> {
     fn zero_like(&self) -> Self {
         State {
-            position: Vector3::zeros(),
-            velocity: Vector3::zeros(),
+            components: [Vector3::zeros(); ORDER],
         }
     }
 
     fn axpy(&self, scale: f64, other: &Self) -> Self {
-        State {
-            position: self.position + scale * other.position,
-            velocity: self.velocity + scale * other.velocity,
+        let mut components = self.components;
+        for (c, (s, o)) in components
+            .iter_mut()
+            .zip(self.components.iter().zip(other.components.iter()))
+        {
+            *c = s + scale * o;
         }
+        State { components }
     }
 
     fn scale(&self, factor: f64) -> Self {
-        State {
-            position: factor * self.position,
-            velocity: factor * self.velocity,
+        let mut components = self.components;
+        for (c, s) in components.iter_mut().zip(self.components.iter()) {
+            *c = factor * s;
         }
+        State { components }
     }
 
     fn is_finite(&self) -> bool {
-        self.position
+        self.components
             .iter()
-            .chain(self.velocity.iter())
+            .flat_map(|c| c.iter())
             .all(|v| v.is_finite())
     }
 
     fn error_norm(&self, y_next: &Self, error: &Self, tol: &Tolerances) -> f64 {
         let mut sum_sq = 0.0;
-        let n = 6; // 3 position + 3 velocity components
+        let n = 3 * ORDER;
 
-        for i in 0..3 {
-            let sc = tol.atol + tol.rtol * self.position[i].abs().max(y_next.position[i].abs());
-            let e = error.position[i] / sc;
-            sum_sq += e * e;
-        }
-        for i in 0..3 {
-            let sc = tol.atol + tol.rtol * self.velocity[i].abs().max(y_next.velocity[i].abs());
-            let e = error.velocity[i] / sc;
-            sum_sq += e * e;
+        for i in 0..ORDER {
+            for j in 0..3 {
+                let sc = tol.atol
+                    + tol.rtol
+                        * self.components[i][j]
+                            .abs()
+                            .max(y_next.components[i][j].abs());
+                let e = error.components[i][j] / sc;
+                sum_sq += e * e;
+            }
         }
 
         (sum_sq / n as f64).sqrt()
+    }
+}
+
+/// Convenience methods for 2nd-order ODE states (e.g., position + velocity).
+impl State<2> {
+    /// Create a new 2nd-order state from `y` (0th derivative) and `dy` (1st derivative).
+    pub fn new(y: Vector3<f64>, dy: Vector3<f64>) -> Self {
+        State {
+            components: [y, dy],
+        }
+    }
+
+    /// The 0th-order component (position-like).
+    pub fn y(&self) -> &Vector3<f64> {
+        &self.components[0]
+    }
+
+    /// The 1st-order component (velocity-like).
+    pub fn dy(&self) -> &Vector3<f64> {
+        &self.components[1]
+    }
+
+    /// Mutable access to the 0th-order component.
+    pub fn y_mut(&mut self) -> &mut Vector3<f64> {
+        &mut self.components[0]
+    }
+
+    /// Mutable access to the 1st-order component.
+    pub fn dy_mut(&mut self) -> &mut Vector3<f64> {
+        &mut self.components[1]
+    }
+
+    /// Create a State representing a derivative (dy, ddy).
+    ///
+    /// In the ODE formulation y = (q, q'), the derivative
+    /// dy/dt = (q', q'') has the same type:
+    /// - `components[0]` holds dy (1st derivative)
+    /// - `components[1]` holds ddy (2nd derivative)
+    pub fn from_derivative(dy: Vector3<f64>, ddy: Vector3<f64>) -> Self {
+        State {
+            components: [dy, ddy],
+        }
     }
 }
 

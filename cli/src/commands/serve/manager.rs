@@ -1,7 +1,7 @@
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use orts_integrator::State;
+use orts::OrbitalState;
 use orts::group::prop_group::SatId;
 use orts::group::{IndependentGroup, IntegratorConfig};
 use orts::orbital_system::OrbitalSystem;
@@ -246,8 +246,8 @@ impl SimLoopContext {
 
         let body_radius = params.body.properties().radius;
         let atmosphere_altitude = params.body.properties().atmosphere_altitude;
-        let event_checker = move |_t: f64, state: &State| -> ControlFlow<String> {
-            let r = state.position.magnitude();
+        let event_checker = move |_t: f64, state: &OrbitalState| -> ControlFlow<String> {
+            let r = state.position().magnitude();
             if r < body_radius {
                 ControlFlow::Break(format!("collision at {:.1} km altitude", r - body_radius))
             } else if let Some(atm_alt) = atmosphere_altitude {
@@ -297,8 +297,8 @@ impl SimLoopContext {
             let hs = make_history_state(
                 metas[i].spec.id.as_str(),
                 0.0,
-                &entry.state.position,
-                &entry.state.velocity,
+                entry.state.position(),
+                entry.state.velocity(),
                 params.mu,
                 accels.clone(),
             );
@@ -426,8 +426,8 @@ impl SimLoopContext {
                 let hs = make_history_state(
                     &sat_info.id,
                     self.current_t,
-                    &initial.position,
-                    &initial.velocity,
+                    initial.position(),
+                    initial.velocity(),
                     self.params.mu,
                     std::collections::HashMap::new(),
                 );
@@ -479,7 +479,7 @@ impl SimLoopContext {
 
             // Orbit boundary reset (only for unperturbed 2-body)
             if !self.has_perturbations {
-                let resets: Vec<(SatId, State)> = self.group
+                let resets: Vec<(SatId, OrbitalState)> = self.group
                     .satellites_with_dynamics()
                     .enumerate()
                     .filter_map(|(i, (entry, _))| {
@@ -512,8 +512,8 @@ impl SimLoopContext {
                 let hs = make_history_state(
                     self.metas[i].spec.id.as_str(),
                     entry.t,
-                    &entry.state.position,
-                    &entry.state.velocity,
+                    entry.state.position(),
+                    entry.state.velocity(),
                     self.params.mu,
                     accels,
                 );

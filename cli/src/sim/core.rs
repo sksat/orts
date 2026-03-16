@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use orts::kepler::KeplerianElements;
+use orts::OrbitalState;
 use orts::orbital_system::OrbitalSystem;
-use orts_integrator::State;
 use orts::setup::SatelliteParams;
 use serde::{Deserialize, Serialize};
 
@@ -52,7 +52,7 @@ pub fn make_history_state(
 }
 
 /// Compute acceleration breakdown as a HashMap from an OrbitalSystem.
-pub fn accel_breakdown(system: &OrbitalSystem, t: f64, state: &State) -> HashMap<String, f64> {
+pub fn accel_breakdown(system: &OrbitalSystem, t: f64, state: &OrbitalState) -> HashMap<String, f64> {
     system
         .acceleration_breakdown(t, state)
         .into_iter()

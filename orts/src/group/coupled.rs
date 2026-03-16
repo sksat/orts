@@ -517,7 +517,8 @@ where
 mod tests {
     use super::*;
     use nalgebra::Vector3;
-    use orts_integrator::{Integrator, Rk4, State, Tolerances};
+    use orts_integrator::{Integrator, Rk4, Tolerances};
+    use crate::OrbitalState;
     use super::super::prop_group::PropGroup;
 
     // ── InterSatelliteForce tests ──────────────────────────────────────────
@@ -641,22 +642,22 @@ mod tests {
 
     use crate::two_body::TwoBodySystem;
 
-    fn iss_state() -> State {
+    fn iss_state() -> OrbitalState {
         let r: f64 = 6778.137;
         let v = (398600.4418_f64 / r).sqrt();
-        State {
-            position: Vector3::new(r, 0.0, 0.0),
-            velocity: Vector3::new(0.0, v, 0.0),
-        }
+        OrbitalState::new(
+            Vector3::new(r, 0.0, 0.0),
+            Vector3::new(0.0, v, 0.0),
+        )
     }
 
-    fn sso_state() -> State {
+    fn sso_state() -> OrbitalState {
         let r: f64 = 6378.137 + 800.0;
         let v = (398600.4418_f64 / r).sqrt();
-        State {
-            position: Vector3::new(r, 0.0, 0.0),
-            velocity: Vector3::new(0.0, v, 0.0),
-        }
+        OrbitalState::new(
+            Vector3::new(r, 0.0, 0.0),
+            Vector3::new(0.0, v, 0.0),
+        )
     }
 
     #[test]
@@ -678,10 +679,10 @@ mod tests {
         let d_independent = independent.derivatives(0.0, &state);
 
         // Should be bit-identical
-        assert_eq!(d_coupled.states[0].position, d_independent.states[0].position);
-        assert_eq!(d_coupled.states[0].velocity, d_independent.states[0].velocity);
-        assert_eq!(d_coupled.states[1].position, d_independent.states[1].position);
-        assert_eq!(d_coupled.states[1].velocity, d_independent.states[1].velocity);
+        assert_eq!(d_coupled.states[0].position(), d_independent.states[0].position());
+        assert_eq!(d_coupled.states[0].velocity(), d_independent.states[0].velocity());
+        assert_eq!(d_coupled.states[1].position(), d_independent.states[1].position());
+        assert_eq!(d_coupled.states[1].velocity(), d_independent.states[1].velocity());
     }
 
     #[test]
@@ -708,8 +709,8 @@ mod tests {
         let d_independent = independent.derivatives(0.0, &state);
 
         // Coupled should differ from independent (mutual gravity adds acceleration)
-        let diff0 = (d_coupled.states[0].velocity - d_independent.states[0].velocity).magnitude();
-        let diff1 = (d_coupled.states[1].velocity - d_independent.states[1].velocity).magnitude();
+        let diff0 = (*d_coupled.states[0].velocity() - *d_independent.states[0].velocity()).magnitude();
+        let diff1 = (*d_coupled.states[1].velocity() - *d_independent.states[1].velocity()).magnitude();
         assert!(diff0 > 0.0);
         assert!(diff1 > 0.0);
     }
@@ -719,18 +720,18 @@ mod tests {
         // 3 satellites with 3 pairs: (0,1), (0,2), (1,2)
         // Verify all pairs contribute correctly
         let mu = 398600.4418;
-        let s0 = State {
-            position: Vector3::new(7000.0, 0.0, 0.0),
-            velocity: Vector3::new(0.0, 7.5, 0.0),
-        };
-        let s1 = State {
-            position: Vector3::new(0.0, 7200.0, 0.0),
-            velocity: Vector3::new(-7.3, 0.0, 0.0),
-        };
-        let s2 = State {
-            position: Vector3::new(0.0, 0.0, 7400.0),
-            velocity: Vector3::new(0.0, 0.0, 7.1),
-        };
+        let s0 = OrbitalState::new(
+            Vector3::new(7000.0, 0.0, 0.0),
+            Vector3::new(0.0, 7.5, 0.0),
+        );
+        let s1 = OrbitalState::new(
+            Vector3::new(0.0, 7200.0, 0.0),
+            Vector3::new(-7.3, 0.0, 0.0),
+        );
+        let s2 = OrbitalState::new(
+            Vector3::new(0.0, 0.0, 7400.0),
+            Vector3::new(0.0, 0.0, 7.1),
+        );
 
         let mg = |mu_i, mu_j| -> Arc<dyn InterSatelliteForce> {
             Arc::new(MutualGravity { mu_i, mu_j })
@@ -762,7 +763,7 @@ mod tests {
 
         // All 3 satellites should have different accelerations from independent
         for k in 0..3 {
-            let diff = (derivs.states[k].velocity - d_indep.states[k].velocity).magnitude();
+            let diff = (*derivs.states[k].velocity() - *d_indep.states[k].velocity()).magnitude();
             assert!(diff > 0.0, "satellite {k} should have inter-satellite acceleration");
         }
     }
@@ -775,26 +776,26 @@ mod tests {
         let mu_1 = 2.0;
         let mu_2 = 3.0;
 
-        let s0 = State {
-            position: Vector3::new(10.0, 0.0, 0.0),
-            velocity: Vector3::zeros(),
-        };
-        let s1 = State {
-            position: Vector3::new(0.0, 10.0, 0.0),
-            velocity: Vector3::zeros(),
-        };
-        let s2 = State {
-            position: Vector3::new(0.0, 0.0, 10.0),
-            velocity: Vector3::zeros(),
-        };
+        let s0 = OrbitalState::new(
+            Vector3::new(10.0, 0.0, 0.0),
+            Vector3::zeros(),
+        );
+        let s1 = OrbitalState::new(
+            Vector3::new(0.0, 10.0, 0.0),
+            Vector3::zeros(),
+        );
+        let s2 = OrbitalState::new(
+            Vector3::new(0.0, 0.0, 10.0),
+            Vector3::zeros(),
+        );
 
         // Use a dummy DynamicalSystem that returns zero derivatives
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
         impl DynamicalSystem for FreeParticle {
-            type State = State;
-            fn derivatives(&self, _t: f64, state: &State) -> State {
-                State::from_derivative(state.velocity, Vector3::zeros())
+            type State = OrbitalState;
+            fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+                OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
             }
         }
 
@@ -823,9 +824,9 @@ mod tests {
         let derivs = coupled.derivatives(0.0, &state);
 
         // Σ mu_i * a_i = 0 (since FreeParticle → only inter-satellite forces)
-        let momentum = mu_0 * derivs.states[0].velocity
-            + mu_1 * derivs.states[1].velocity
-            + mu_2 * derivs.states[2].velocity;
+        let momentum = mu_0 * *derivs.states[0].velocity()
+            + mu_1 * *derivs.states[1].velocity()
+            + mu_2 * *derivs.states[2].velocity();
         assert!(
             momentum.magnitude() < 1e-15,
             "total momentum should be conserved, got {momentum:?}"
@@ -839,9 +840,9 @@ mod tests {
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
         impl DynamicalSystem for FreeParticle {
-            type State = State;
-            fn derivatives(&self, _t: f64, state: &State) -> State {
-                State::from_derivative(state.velocity, Vector3::zeros())
+            type State = OrbitalState;
+            fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+                OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
             }
         }
 
@@ -860,19 +861,19 @@ mod tests {
         );
 
         // Initial: stretched spring (15 km apart, rest = 10 km), both at rest
-        let s0 = State {
-            position: Vector3::new(0.0, 0.0, 0.0),
-            velocity: Vector3::zeros(),
-        };
-        let s1 = State {
-            position: Vector3::new(15.0, 0.0, 0.0),
-            velocity: Vector3::zeros(),
-        };
+        let s0 = OrbitalState::new(
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::zeros(),
+        );
+        let s1 = OrbitalState::new(
+            Vector3::new(15.0, 0.0, 0.0),
+            Vector3::zeros(),
+        );
 
-        let energy = |gs: &GroupState<State>| -> f64 {
-            let ke = gs.states[0].velocity.magnitude_squared() / 2.0
-                + gs.states[1].velocity.magnitude_squared() / 2.0;
-            let r = (gs.states[1].position - gs.states[0].position).magnitude();
+        let energy = |gs: &GroupState<OrbitalState>| -> f64 {
+            let ke = gs.states[0].velocity().magnitude_squared() / 2.0
+                + gs.states[1].velocity().magnitude_squared() / 2.0;
+            let r = (*gs.states[1].position() - *gs.states[0].position()).magnitude();
             let pe = k * (r - rest).powi(2) / 2.0;
             ke + pe
         };
@@ -902,9 +903,9 @@ mod tests {
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
         impl DynamicalSystem for FreeParticle {
-            type State = State;
-            fn derivatives(&self, _t: f64, state: &State) -> State {
-                State::from_derivative(state.velocity, Vector3::zeros())
+            type State = OrbitalState;
+            fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+                OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
             }
         }
 
@@ -923,14 +924,14 @@ mod tests {
             }],
         );
 
-        let s0 = State {
-            position: Vector3::new(0.0, 0.0, 0.0),
-            velocity: Vector3::zeros(),
-        };
-        let s1 = State {
-            position: Vector3::new(rest + amplitude, 0.0, 0.0),
-            velocity: Vector3::zeros(),
-        };
+        let s0 = OrbitalState::new(
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::zeros(),
+        );
+        let s1 = OrbitalState::new(
+            Vector3::new(rest + amplitude, 0.0, 0.0),
+            Vector3::zeros(),
+        );
 
         let expected_period = 2.0 * std::f64::consts::PI / (2.0 * k).sqrt();
 
@@ -944,7 +945,7 @@ mod tests {
             t += dt;
         }
 
-        let final_sep = (state.states[1].position - state.states[0].position).magnitude();
+        let final_sep = (*state.states[1].position() - *state.states[0].position()).magnitude();
         // After one full period, separation should return to rest + amplitude
         assert!(
             (final_sep - (rest + amplitude)).abs() < 0.01,
@@ -959,9 +960,9 @@ mod tests {
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
         impl DynamicalSystem for FreeParticle {
-            type State = State;
-            fn derivatives(&self, _t: f64, state: &State) -> State {
-                State::from_derivative(state.velocity, Vector3::zeros())
+            type State = OrbitalState;
+            fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+                OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
             }
         }
 
@@ -979,18 +980,18 @@ mod tests {
             }],
         );
 
-        let s0 = State {
-            position: Vector3::zeros(),
-            velocity: Vector3::zeros(),
-        };
-        let s1 = State {
-            position: Vector3::new(15.0, 0.0, 0.0),
-            velocity: Vector3::zeros(),
-        };
+        let s0 = OrbitalState::new(
+            Vector3::zeros(),
+            Vector3::zeros(),
+        );
+        let s1 = OrbitalState::new(
+            Vector3::new(15.0, 0.0, 0.0),
+            Vector3::zeros(),
+        );
 
         let t_end = 10.0; // ~2.25 relative oscillation periods
 
-        let propagate = |dt: f64| -> GroupState<State> {
+        let propagate = |dt: f64| -> GroupState<OrbitalState> {
             let mut state = GroupState::new(vec![s0.clone(), s1.clone()]);
             let n_steps = (t_end / dt).round() as usize;
             let mut t = 0.0;
@@ -1008,9 +1009,9 @@ mod tests {
         let state_fine = propagate(0.01);
 
         let err_coarse =
-            (state_coarse.states[0].position - ref_state.states[0].position).magnitude();
+            (*state_coarse.states[0].position() - *ref_state.states[0].position()).magnitude();
         let err_fine =
-            (state_fine.states[0].position - ref_state.states[0].position).magnitude();
+            (*state_fine.states[0].position() - *ref_state.states[0].position()).magnitude();
 
         assert!(err_coarse > 0.0, "coarse error should be nonzero");
         assert!(err_fine > 0.0, "fine error should be nonzero");
@@ -1083,8 +1084,8 @@ mod tests {
         let indep_entries: Vec<_> = independent.satellites().collect();
 
         // RK4 with same dt: should be bit-identical
-        let iss_pos_err = (coupled_states[0].position - indep_entries[0].state.position).magnitude();
-        let sso_pos_err = (coupled_states[1].position - indep_entries[1].state.position).magnitude();
+        let iss_pos_err = (*coupled_states[0].position() - *indep_entries[0].state.position()).magnitude();
+        let sso_pos_err = (*coupled_states[1].position() - *indep_entries[1].state.position()).magnitude();
         assert!(iss_pos_err < 1e-12, "ISS position error: {iss_pos_err}");
         assert!(sso_pos_err < 1e-12, "SSO position error: {sso_pos_err}");
     }
@@ -1095,22 +1096,22 @@ mod tests {
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
         impl DynamicalSystem for FreeParticle {
-            type State = State;
-            fn derivatives(&self, _t: f64, state: &State) -> State {
-                State::from_derivative(state.velocity, Vector3::zeros())
+            type State = OrbitalState;
+            fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+                OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
             }
         }
 
         let k = 0.01;
         let rest = 10.0;
-        let s0 = State {
-            position: Vector3::zeros(),
-            velocity: Vector3::zeros(),
-        };
-        let s1 = State {
-            position: Vector3::new(15.0, 0.0, 0.0),
-            velocity: Vector3::zeros(),
-        };
+        let s0 = OrbitalState::new(
+            Vector3::zeros(),
+            Vector3::zeros(),
+        );
+        let s1 = OrbitalState::new(
+            Vector3::new(15.0, 0.0, 0.0),
+            Vector3::zeros(),
+        );
 
         let mut group: CoupledGroup<FreeParticle> =
             CoupledGroup::dp45(1.0, Tolerances { atol: 1e-12, rtol: 1e-10 })
@@ -1118,10 +1119,10 @@ mod tests {
                 .add_satellite("b", s1, FreeParticle)
                 .with_interaction(0, 1, Arc::new(Spring { stiffness: k, rest_length: rest }));
 
-        let energy = |gs: &GroupState<State>| -> f64 {
-            let ke = gs.states[0].velocity.magnitude_squared() / 2.0
-                + gs.states[1].velocity.magnitude_squared() / 2.0;
-            let r = (gs.states[1].position - gs.states[0].position).magnitude();
+        let energy = |gs: &GroupState<OrbitalState>| -> f64 {
+            let ke = gs.states[0].velocity().magnitude_squared() / 2.0
+                + gs.states[1].velocity().magnitude_squared() / 2.0;
+            let r = (*gs.states[1].position() - *gs.states[0].position()).magnitude();
             ke + k * (r - rest).powi(2) / 2.0
         };
 
@@ -1143,23 +1144,23 @@ mod tests {
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
         struct FreeParticle;
         impl DynamicalSystem for FreeParticle {
-            type State = State;
-            fn derivatives(&self, _t: f64, state: &State) -> State {
-                State::from_derivative(state.velocity, Vector3::zeros())
+            type State = OrbitalState;
+            fn derivatives(&self, _t: f64, state: &OrbitalState) -> OrbitalState {
+                OrbitalState::from_derivative(*state.velocity(), Vector3::zeros())
             }
         }
 
         let k = 0.04;
         let rest = 10.0;
         let amplitude = 3.0;
-        let s0 = State {
-            position: Vector3::zeros(),
-            velocity: Vector3::zeros(),
-        };
-        let s1 = State {
-            position: Vector3::new(rest + amplitude, 0.0, 0.0),
-            velocity: Vector3::zeros(),
-        };
+        let s0 = OrbitalState::new(
+            Vector3::zeros(),
+            Vector3::zeros(),
+        );
+        let s1 = OrbitalState::new(
+            Vector3::new(rest + amplitude, 0.0, 0.0),
+            Vector3::zeros(),
+        );
 
         let expected_period = 2.0 * std::f64::consts::PI / (2.0_f64 * k).sqrt();
 
@@ -1171,8 +1172,8 @@ mod tests {
 
         group.propagate_to(expected_period).unwrap();
 
-        let final_sep = (group.group_state().states[1].position
-            - group.group_state().states[0].position)
+        let final_sep = (group.group_state().states[1].position()
+            - group.group_state().states[0].position())
             .magnitude();
         assert!(
             (final_sep - (rest + amplitude)).abs() < 0.01,
@@ -1183,15 +1184,15 @@ mod tests {
     #[test]
     fn coupled_group_event_terminates_whole_group() {
         // One satellite hits Earth → entire coupled group terminates
-        let decaying = State {
-            position: Vector3::new(6500.0, 0.0, 0.0),
-            velocity: Vector3::new(-5.0, 3.0, 0.0),
-        };
+        let decaying = OrbitalState::new(
+            Vector3::new(6500.0, 0.0, 0.0),
+            Vector3::new(-5.0, 3.0, 0.0),
+        );
 
         let mut group: CoupledGroup<TwoBodySystem> =
             CoupledGroup::dp45(10.0, default_tol())
-                .with_event_checker(move |_t: f64, state: &State| {
-                    if state.position.magnitude() < EARTH_RADIUS {
+                .with_event_checker(move |_t: f64, state: &OrbitalState| {
+                    if state.position().magnitude() < EARTH_RADIUS {
                         ControlFlow::Break("collision".to_string())
                     } else {
                         ControlFlow::Continue(())
@@ -1212,19 +1213,19 @@ mod tests {
     #[test]
     fn coupled_group_multiple_events_first_wins() {
         // Two decaying satellites: first one detected wins
-        let decay1 = State {
-            position: Vector3::new(6500.0, 0.0, 0.0),
-            velocity: Vector3::new(-5.0, 3.0, 0.0),
-        };
-        let decay2 = State {
-            position: Vector3::new(6500.0, 0.0, 0.0),
-            velocity: Vector3::new(-5.0, 3.0, 0.0),
-        };
+        let decay1 = OrbitalState::new(
+            Vector3::new(6500.0, 0.0, 0.0),
+            Vector3::new(-5.0, 3.0, 0.0),
+        );
+        let decay2 = OrbitalState::new(
+            Vector3::new(6500.0, 0.0, 0.0),
+            Vector3::new(-5.0, 3.0, 0.0),
+        );
 
         let mut group: CoupledGroup<TwoBodySystem> =
             CoupledGroup::dp45(10.0, default_tol())
-                .with_event_checker(move |_t: f64, state: &State| {
-                    if state.position.magnitude() < EARTH_RADIUS {
+                .with_event_checker(move |_t: f64, state: &OrbitalState| {
+                    if state.position().magnitude() < EARTH_RADIUS {
                         ControlFlow::Break("collision".to_string())
                     } else {
                         ControlFlow::Continue(())
@@ -1243,10 +1244,10 @@ mod tests {
 
     #[test]
     fn coupled_group_nan_terminates() {
-        let degenerate = State {
-            position: Vector3::zeros(),
-            velocity: Vector3::new(0.0, 1.0, 0.0),
-        };
+        let degenerate = OrbitalState::new(
+            Vector3::zeros(),
+            Vector3::new(0.0, 1.0, 0.0),
+        );
 
         let mut group: CoupledGroup<TwoBodySystem> =
             CoupledGroup::rk4(10.0)
@@ -1301,7 +1302,7 @@ mod tests {
         assert_eq!(parts.dynamics.len(), 2);
         assert_eq!(parts.ids[0], SatId::from("iss"));
         assert_eq!(parts.ids[1], SatId::from("sso"));
-        assert!((parts.states[0].position.x - 6778.137).abs() < 1e-10);
+        assert!((parts.states[0].position().x - 6778.137).abs() < 1e-10);
         assert!((parts.dynamics[0].mu - MU_EARTH).abs() < 1e-6);
         assert!((parts.t - 0.0).abs() < 1e-15);
         assert!(!parts.terminated);
@@ -1310,15 +1311,15 @@ mod tests {
 
     #[test]
     fn into_parts_after_termination() {
-        let decaying = State {
-            position: Vector3::new(6500.0, 0.0, 0.0),
-            velocity: Vector3::new(-5.0, 3.0, 0.0),
-        };
+        let decaying = OrbitalState::new(
+            Vector3::new(6500.0, 0.0, 0.0),
+            Vector3::new(-5.0, 3.0, 0.0),
+        );
 
         let mut group: CoupledGroup<TwoBodySystem> =
             CoupledGroup::dp45(10.0, default_tol())
-                .with_event_checker(move |_t: f64, state: &State| {
-                    if state.position.magnitude() < EARTH_RADIUS {
+                .with_event_checker(move |_t: f64, state: &OrbitalState| {
+                    if state.position().magnitude() < EARTH_RADIUS {
                         ControlFlow::Break("collision".to_string())
                     } else {
                         ControlFlow::Continue(())

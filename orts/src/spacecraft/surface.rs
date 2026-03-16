@@ -182,7 +182,7 @@ impl PanelDrag {
     /// Compute relative velocity accounting for atmosphere co-rotation [km/s].
     fn relative_velocity(&self, state: &SpacecraftState) -> Vector3<f64> {
         let omega = Vector3::new(0.0, 0.0, self.omega_body);
-        state.orbit.velocity - omega.cross(&state.orbit.position)
+        *state.orbit.velocity() - omega.cross(state.orbit.position())
     }
 }
 
@@ -193,12 +193,12 @@ impl LoadModel for PanelDrag {
 
     fn loads(&self, _t: f64, state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads {
         // Inside body → zero
-        if self.is_inside(&state.orbit.position) {
+        if self.is_inside(state.orbit.position()) {
             return ExternalLoads::zeros();
         }
 
-        let alt = self.altitude(&state.orbit.position);
-        let rho = self.atmosphere.density(alt, &state.orbit.position, epoch);
+        let alt = self.altitude(state.orbit.position());
+        let rho = self.atmosphere.density(alt, state.orbit.position(), epoch);
         if rho == 0.0 {
             return ExternalLoads::zeros();
         }
@@ -478,17 +478,17 @@ mod tests {
     // ======== PanelDrag loads() — shared helpers ========
 
     use crate::attitude::AttitudeState;
-    use orts_integrator::State;
+    use crate::OrbitalState;
     use nalgebra::Vector4;
 
     fn iss_state() -> SpacecraftState {
         let r = R_EARTH + 400.0;
         let v = (kaname::constants::MU_EARTH / r).sqrt();
         SpacecraftState {
-            orbit: State {
-                position: Vector3::new(r, 0.0, 0.0),
-                velocity: Vector3::new(0.0, v, 0.0),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(r, 0.0, 0.0),
+                Vector3::new(0.0, v, 0.0),
+            ),
             attitude: AttitudeState::identity(),
             mass: 500.0,
         }
@@ -633,10 +633,10 @@ mod tests {
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let state = SpacecraftState {
-            orbit: State {
-                position: Vector3::new(R_EARTH + 3000.0, 0.0, 0.0),
-                velocity: Vector3::new(0.0, 5.0, 0.0),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(R_EARTH + 3000.0, 0.0, 0.0),
+                Vector3::new(0.0, 5.0, 0.0),
+            ),
             attitude: AttitudeState::identity(),
             mass: 500.0,
         };
@@ -867,8 +867,8 @@ mod tests {
         ];
 
         let base = iss_state();
-        let v_rel = base.orbit.velocity
-            - Vector3::new(0.0, 0.0, OMEGA_EARTH).cross(&base.orbit.position);
+        let v_rel = *base.orbit.velocity()
+            - Vector3::new(0.0, 0.0, OMEGA_EARTH).cross(base.orbit.position());
 
         for (axis, angle) in axes.iter().zip(angles.iter()) {
             let mut state = iss_state();
@@ -911,8 +911,8 @@ mod tests {
 
             let loads = drag.loads(0.0, &state, None);
             let a = loads.acceleration_inertial;
-            let v_rel = state.orbit.velocity
-                - Vector3::new(0.0, 0.0, OMEGA_EARTH).cross(&state.orbit.position);
+            let v_rel = *state.orbit.velocity()
+                - Vector3::new(0.0, 0.0, OMEGA_EARTH).cross(state.orbit.position());
 
             let power = a.dot(&v_rel); // F·v / m, proportional to power
             assert!(
@@ -1126,10 +1126,10 @@ mod tests {
         .rotation_matrix();
 
         let s2 = SpacecraftState {
-            orbit: State {
-                position: r_mat * s1.orbit.position,
-                velocity: r_mat * s1.orbit.velocity,
-            },
+            orbit: OrbitalState::new(
+                r_mat * *s1.orbit.position(),
+                r_mat * *s1.orbit.velocity(),
+            ),
             attitude: AttitudeState {
                 quaternion: quat_compose(&q_r, &s1.attitude.quaternion),
                 angular_velocity: s1.attitude.angular_velocity,
@@ -1189,10 +1189,10 @@ mod tests {
             .rotation_matrix();
 
             let s2 = SpacecraftState {
-                orbit: State {
-                    position: r_mat * s1.orbit.position,
-                    velocity: r_mat * s1.orbit.velocity,
-                },
+                orbit: OrbitalState::new(
+                    r_mat * *s1.orbit.position(),
+                    r_mat * *s1.orbit.velocity(),
+                ),
                 attitude: AttitudeState {
                     quaternion: quat_compose(&q_r, &s1.attitude.quaternion),
                     angular_velocity: s1.attitude.angular_velocity,
@@ -1346,7 +1346,7 @@ mod tests {
         let s1 = iss_state();
         let mut s2 = iss_state();
         // Scale velocity by 2x (keep position same → same density with mock)
-        s2.orbit.velocity = s1.orbit.velocity * 2.0;
+        *s2.orbit.velocity_mut() = *s1.orbit.velocity() * 2.0;
 
         let a1 = drag.loads(0.0, &s1, None).acceleration_inertial.magnitude();
         let a2 = drag.loads(0.0, &s2, None).acceleration_inertial.magnitude();
@@ -1376,7 +1376,7 @@ mod tests {
         let loads = drag.loads(0.0, &state, None);
 
         // With mock (no co-rotation), v_rel = v
-        let v_ms = state.orbit.velocity.magnitude() * 1000.0; // m/s
+        let v_ms = state.orbit.velocity().magnitude() * 1000.0; // m/s
         let expected_a_ms2 = 0.5 * rho * cd * area * v_ms * v_ms / mass;
         let expected_a_kms2 = expected_a_ms2 / 1000.0;
 
@@ -1408,7 +1408,7 @@ mod tests {
 
         let result = Rk4.integrate(&dyn_sc, iss_state(), 0.0, 60.0, 1.0, |_, _| {});
         assert!(result.is_finite(), "State should remain finite after 60s integration");
-        assert!(result.orbit.position.magnitude() > 0.0);
+        assert!(result.orbit.position().magnitude() > 0.0);
     }
 
     #[test]
@@ -1427,12 +1427,12 @@ mod tests {
             .with_load(Box::new(drag));
 
         let s0 = iss_state();
-        let e0 = 0.5 * s0.orbit.velocity.magnitude_squared()
-            - MU_EARTH / s0.orbit.position.magnitude();
+        let e0 = 0.5 * s0.orbit.velocity().magnitude_squared()
+            - MU_EARTH / s0.orbit.position().magnitude();
 
         let s1 = Rk4.integrate(&dyn_sc, s0, 0.0, 300.0, 1.0, |_, _| {});
-        let e1 = 0.5 * s1.orbit.velocity.magnitude_squared()
-            - MU_EARTH / s1.orbit.position.magnitude();
+        let e1 = 0.5 * s1.orbit.velocity().magnitude_squared()
+            - MU_EARTH / s1.orbit.position().magnitude();
 
         assert!(
             e1 < e0,

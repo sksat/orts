@@ -1,9 +1,9 @@
 use nalgebra::Vector3;
 use kaname::epoch::Epoch;
 use kaname::sun;
-use orts_integrator::State;
 
 use kaname::constants::R_EARTH;
+use crate::OrbitalState;
 use crate::perturbations::ForceModel;
 
 /// Solar radiation pressure at 1 AU (N/m²).
@@ -107,20 +107,20 @@ impl ForceModel for SolarRadiationPressure {
         "srp"
     }
 
-    fn acceleration(&self, _t: f64, state: &State, epoch: Option<&Epoch>) -> Vector3<f64> {
+    fn acceleration(&self, _t: f64, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
         let epoch = match epoch {
             Some(e) => e,
             None => return Vector3::zeros(),
         };
 
         let sun_pos = sun::sun_position_eci(epoch);
-        let sat_to_sun = sun_pos - state.position;
+        let sat_to_sun = sun_pos - *state.position();
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
 
         // Shadow check
         if let Some(body_r) = self.shadow_body_radius {
-            let illumination = shadow_function(&state.position, &sun_pos, body_r);
+            let illumination = shadow_function(state.position(), &sun_pos, body_r);
             if illumination < 0.5 {
                 return Vector3::zeros();
             }
@@ -148,13 +148,13 @@ mod tests {
         Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0)
     }
 
-    fn iss_state() -> State {
+    fn iss_state() -> OrbitalState {
         let r = R_EARTH + 400.0;
         let v = (MU_EARTH / r).sqrt();
-        State {
-            position: vector![r, 0.0, 0.0],
-            velocity: vector![0.0, v, 0.0],
-        }
+        OrbitalState::new(
+            vector![r, 0.0, 0.0],
+            vector![0.0, v, 0.0],
+        )
     }
 
     #[test]
@@ -321,10 +321,10 @@ mod tests {
             shadow_body_radius: Some(R_EARTH),
         };
         let epoch = test_epoch();
-        let state = State {
-            position: vector![-(R_EARTH + 400.0), 0.0, 0.0],
-            velocity: vector![0.0, -7.67, 0.0],
-        };
+        let state = OrbitalState::new(
+            vector![-(R_EARTH + 400.0), 0.0, 0.0],
+            vector![0.0, -7.67, 0.0],
+        );
         let a = srp.acceleration(0.0, &state, Some(&epoch));
         assert_eq!(a, Vector3::zeros(), "SRP should be zero in shadow");
     }

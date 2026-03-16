@@ -96,7 +96,7 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
 
         // Gravitational acceleration
-        let grav_accel = self.gravity.acceleration(self.mu, &state.orbit.position);
+        let grav_accel = self.gravity.acceleration(self.mu, state.orbit.position());
 
         // Accumulate external loads
         let mut total = ExternalLoads::zeros();
@@ -115,7 +115,7 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
         let alpha = self.inertia_inv
             * (total.torque_body - state.attitude.angular_velocity.cross(&iw));
 
-        SpacecraftState::from_derivative(state.orbit.velocity, total_accel, q_dot, alpha, total.mass_rate)
+        SpacecraftState::from_derivative(*state.orbit.velocity(), total_accel, q_dot, alpha, total.mass_rate)
     }
 }
 
@@ -124,7 +124,8 @@ mod tests {
     use super::*;
     use nalgebra::{Vector3, Vector4};
     use crate::attitude::{AttitudeState, TorqueModel};
-    use orts_integrator::{Integrator, OdeState, Rk4, State};
+    use orts_integrator::{Integrator, OdeState, Rk4};
+    use crate::OrbitalState;
     use kaname::constants::MU_EARTH;
     use crate::gravity::PointMass;
     use crate::orbital_system::OrbitalSystem;
@@ -138,11 +139,11 @@ mod tests {
         Matrix3::from_diagonal(&Vector3::new(i, i, i))
     }
 
-    fn sample_orbit() -> State {
-        State {
-            position: Vector3::new(7000.0, 0.0, 0.0),
-            velocity: Vector3::new(0.0, 7.5, 0.0),
-        }
+    fn sample_orbit() -> OrbitalState {
+        OrbitalState::new(
+            Vector3::new(7000.0, 0.0, 0.0),
+            Vector3::new(0.0, 7.5, 0.0),
+        )
     }
 
     fn sample_spacecraft() -> SpacecraftState {
@@ -164,7 +165,7 @@ mod tests {
         fn acceleration(
             &self,
             _t: f64,
-            _state: &State,
+            _state: &OrbitalState,
             _epoch: Option<&Epoch>,
         ) -> Vector3<f64> {
             self.0
@@ -223,7 +224,7 @@ mod tests {
         let d_orb = dyn_orb.derivatives(0.0, &sc.orbit);
 
         // Translational acceleration should match
-        assert!((d_sc.orbit.velocity - d_orb.velocity).magnitude() < 1e-15);
+        assert!((d_sc.orbit.velocity() - d_orb.velocity()).magnitude() < 1e-15);
     }
 
     #[test]
@@ -233,7 +234,7 @@ mod tests {
         let d = dyn_sc.derivatives(0.0, &sc);
 
         // Position derivative = input velocity
-        assert_eq!(d.orbit.position, sc.orbit.velocity);
+        assert_eq!(*d.orbit.position(), *sc.orbit.velocity());
     }
 
     #[test]
@@ -358,7 +359,7 @@ mod tests {
         let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
         let d_grav = dyn_grav.derivatives(0.0, &sc);
 
-        let diff = d_with.orbit.velocity - d_grav.orbit.velocity;
+        let diff = d_with.orbit.velocity() - d_grav.orbit.velocity();
         assert!((diff - accel).magnitude() < 1e-15);
     }
 
@@ -392,7 +393,7 @@ mod tests {
         let d_grav = dyn_grav.derivatives(0.0, &sc);
 
         // Force contribution
-        let accel_diff = d.orbit.velocity - d_grav.orbit.velocity;
+        let accel_diff = d.orbit.velocity() - d_grav.orbit.velocity();
         assert!((accel_diff - accel).magnitude() < 1e-15);
 
         // Torque contribution (ω = 0 → α = I⁻¹ τ = τ / 10)
@@ -470,7 +471,7 @@ mod tests {
 
         let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
         let d_grav = dyn_grav.derivatives(t, &sc);
-        let diff_x = d.orbit.velocity[0] - d_grav.orbit.velocity[0];
+        let diff_x = d.orbit.velocity()[0] - d_grav.orbit.velocity()[0];
 
         let rel_err = (diff_x - expected_accel_x).abs() / expected_accel_x.abs();
         assert!(
@@ -491,7 +492,7 @@ mod tests {
         let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
         let d_grav = dyn_grav.derivatives(0.0, &sc);
 
-        assert!((d.orbit.velocity - d_grav.orbit.velocity).magnitude() < 1e-15);
+        assert!((d.orbit.velocity() - d_grav.orbit.velocity()).magnitude() < 1e-15);
     }
 
     #[test]
@@ -500,7 +501,7 @@ mod tests {
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
         let result = Rk4.integrate(&dyn_sc, sc, 0.0, 60.0, 10.0, |_, _| {});
 
-        assert!(result.orbit.position.magnitude() > 0.0);
+        assert!(result.orbit.position().magnitude() > 0.0);
         assert!(result.is_finite());
     }
 
@@ -516,10 +517,10 @@ mod tests {
     fn derivative_preserves_two_body_energy() {
         // dE/dt = v · a + (μ/r³)(r · v) = 0 for point-mass gravity
         let sc = SpacecraftState {
-            orbit: State {
-                position: Vector3::new(7000.0, 1000.0, 500.0),
-                velocity: Vector3::new(-1.0, 7.0, 0.5),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(7000.0, 1000.0, 500.0),
+                Vector3::new(-1.0, 7.0, 0.5),
+            ),
             attitude: AttitudeState::identity(),
             mass: 500.0,
         };
@@ -527,9 +528,9 @@ mod tests {
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
         let d = dyn_sc.derivatives(0.0, &sc);
 
-        let r = &sc.orbit.position;
-        let v = &sc.orbit.velocity;
-        let a = &d.orbit.velocity; // acceleration
+        let r = sc.orbit.position();
+        let v = sc.orbit.velocity();
+        let a = d.orbit.velocity(); // acceleration
         let r_mag = r.magnitude();
 
         let de_dt = v.dot(a) + MU_EARTH / (r_mag.powi(3)) * r.dot(v);
@@ -543,10 +544,10 @@ mod tests {
     fn derivative_preserves_angular_momentum() {
         // dL/dt = r × a = 0 for central gravity
         let sc = SpacecraftState {
-            orbit: State {
-                position: Vector3::new(7000.0, 1000.0, 500.0),
-                velocity: Vector3::new(-1.0, 7.0, 0.5),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(7000.0, 1000.0, 500.0),
+                Vector3::new(-1.0, 7.0, 0.5),
+            ),
             attitude: AttitudeState::identity(),
             mass: 500.0,
         };
@@ -554,8 +555,8 @@ mod tests {
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
         let d = dyn_sc.derivatives(0.0, &sc);
 
-        let r = &sc.orbit.position;
-        let a = &d.orbit.velocity;
+        let r = sc.orbit.position();
+        let a = d.orbit.velocity();
         let dl_dt = r.cross(a);
 
         assert!(

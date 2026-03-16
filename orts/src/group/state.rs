@@ -84,18 +84,18 @@ mod tests {
     use super::*;
     use nalgebra::{Vector3, Vector4};
     use crate::attitude::AttitudeState;
-    use orts_integrator::State;
+    use crate::OrbitalState;
 
     use crate::SpacecraftState;
 
-    fn orbit_state(x: f64, vx: f64) -> State {
-        State {
-            position: Vector3::new(x, 0.0, 0.0),
-            velocity: Vector3::new(vx, 0.0, 0.0),
-        }
+    fn orbit_state(x: f64, vx: f64) -> OrbitalState {
+        OrbitalState::new(
+            Vector3::new(x, 0.0, 0.0),
+            Vector3::new(vx, 0.0, 0.0),
+        )
     }
 
-    fn two_orbit_group() -> GroupState<State> {
+    fn two_orbit_group() -> GroupState<OrbitalState> {
         GroupState::new(vec![orbit_state(7000.0, 0.0), orbit_state(7200.0, 1.0)])
     }
 
@@ -105,8 +105,8 @@ mod tests {
         let zero = group.zero_like();
         assert_eq!(zero.len(), 2);
         for s in &zero.states {
-            assert_eq!(s.position, Vector3::zeros());
-            assert_eq!(s.velocity, Vector3::zeros());
+            assert_eq!(*s.position(), Vector3::zeros());
+            assert_eq!(*s.velocity(), Vector3::zeros());
         }
     }
 
@@ -115,10 +115,10 @@ mod tests {
         let a = GroupState::new(vec![orbit_state(1.0, 2.0), orbit_state(3.0, 4.0)]);
         let b = GroupState::new(vec![orbit_state(10.0, 20.0), orbit_state(30.0, 40.0)]);
         let result = a.axpy(0.5, &b);
-        assert!((result.states[0].position[0] - 6.0).abs() < 1e-15);
-        assert!((result.states[0].velocity[0] - 12.0).abs() < 1e-15);
-        assert!((result.states[1].position[0] - 18.0).abs() < 1e-15);
-        assert!((result.states[1].velocity[0] - 24.0).abs() < 1e-15);
+        assert!((result.states[0].position()[0] - 6.0).abs() < 1e-15);
+        assert!((result.states[0].velocity()[0] - 12.0).abs() < 1e-15);
+        assert!((result.states[1].position()[0] - 18.0).abs() < 1e-15);
+        assert!((result.states[1].velocity()[0] - 24.0).abs() < 1e-15);
     }
 
     #[test]
@@ -133,8 +133,8 @@ mod tests {
     fn scale_element_wise() {
         let group = GroupState::new(vec![orbit_state(10.0, 20.0), orbit_state(30.0, 40.0)]);
         let scaled = group.scale(0.5);
-        assert!((scaled.states[0].position[0] - 5.0).abs() < 1e-15);
-        assert!((scaled.states[1].position[0] - 15.0).abs() < 1e-15);
+        assert!((scaled.states[0].position()[0] - 5.0).abs() < 1e-15);
+        assert!((scaled.states[1].position()[0] - 15.0).abs() < 1e-15);
     }
 
     #[test]
@@ -142,8 +142,8 @@ mod tests {
         let group = two_orbit_group();
         let scaled = group.scale(0.0);
         for s in &scaled.states {
-            assert_eq!(s.position, Vector3::zeros());
-            assert_eq!(s.velocity, Vector3::zeros());
+            assert_eq!(*s.position(), Vector3::zeros());
+            assert_eq!(*s.velocity(), Vector3::zeros());
         }
     }
 
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn is_finite_nan_in_one_element() {
         let mut group = two_orbit_group();
-        group.states[1].position[0] = f64::NAN;
+        group.states[1].position_mut()[0] = f64::NAN;
         assert!(!group.is_finite());
     }
 
@@ -202,13 +202,13 @@ mod tests {
     #[test]
     fn error_norm_empty_returns_zero() {
         let tol = Tolerances::default();
-        let empty: GroupState<State> = GroupState::new(vec![]);
+        let empty: GroupState<OrbitalState> = GroupState::new(vec![]);
         assert_eq!(empty.error_norm(&empty, &empty, &tol), 0.0);
     }
 
     #[test]
     fn is_finite_empty_returns_true() {
-        let empty: GroupState<State> = GroupState::new(vec![]);
+        let empty: GroupState<OrbitalState> = GroupState::new(vec![]);
         assert!(empty.is_finite());
     }
 
@@ -235,7 +235,7 @@ mod tests {
         assert_eq!(group.len(), 2);
         assert!(!group.is_empty());
 
-        let empty: GroupState<State> = GroupState::new(vec![]);
+        let empty: GroupState<OrbitalState> = GroupState::new(vec![]);
         assert_eq!(empty.len(), 0);
         assert!(empty.is_empty());
     }

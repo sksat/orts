@@ -1,7 +1,7 @@
 use nalgebra::Vector3;
 use kaname::epoch::Epoch;
-use orts_integrator::State;
 
+use crate::OrbitalState;
 use crate::perturbations::ForceModel;
 
 /// Third-body gravitational perturbation.
@@ -49,14 +49,14 @@ impl ForceModel for ThirdBodyGravity {
         self.name
     }
 
-    fn acceleration(&self, _t: f64, state: &State, epoch: Option<&Epoch>) -> Vector3<f64> {
+    fn acceleration(&self, _t: f64, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
         let epoch = match epoch {
             Some(e) => e,
             None => return Vector3::zeros(),
         };
 
         let r_body = (self.body_position_fn)(epoch);
-        let r_sat_to_body = r_body - state.position;
+        let r_sat_to_body = r_body - *state.position();
         let d = r_sat_to_body.magnitude();
         let r_body_mag = r_body.magnitude();
 
@@ -71,13 +71,13 @@ mod tests {
     use kaname::constants::{MU_EARTH, R_EARTH};
     use nalgebra::vector;
 
-    fn iss_state() -> State {
+    fn iss_state() -> OrbitalState {
         let r = R_EARTH + 400.0;
         let v = (MU_EARTH / r).sqrt();
-        State {
-            position: vector![r, 0.0, 0.0],
-            velocity: vector![0.0, v, 0.0],
-        }
+        OrbitalState::new(
+            vector![r, 0.0, 0.0],
+            vector![0.0, v, 0.0],
+        )
     }
 
     fn test_epoch() -> Epoch {
@@ -138,7 +138,7 @@ mod tests {
         let a_moon = tb_moon.acceleration(0.0, &state, Some(&epoch)).magnitude();
 
         // Central body gravity: μ/r² ≈ 398600/6778² ≈ 8.7e-3 km/s²
-        let r = state.position.magnitude();
+        let r = state.position().magnitude();
         let a_central = MU_EARTH / (r * r);
 
         // Third-body should be ~6-7 orders of magnitude smaller
@@ -162,10 +162,10 @@ mod tests {
         let tb = ThirdBodyGravity::sun();
         let r = R_EARTH + 400.0;
         let v = (MU_EARTH / r).sqrt();
-        let state = State {
-            position: vector![0.0, r, 0.0],
-            velocity: vector![-v, 0.0, 0.0],
-        };
+        let state = OrbitalState::new(
+            vector![0.0, r, 0.0],
+            vector![-v, 0.0, 0.0],
+        );
 
         let epoch1 = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let epoch2 = Epoch::from_gregorian(2024, 6, 20, 12, 0, 0.0);
@@ -190,10 +190,10 @@ mod tests {
         let leo_state = iss_state();
         let geo_r = 42164.0; // GEO radius
         let geo_v = (MU_EARTH / geo_r).sqrt();
-        let geo_state = State {
-            position: vector![geo_r, 0.0, 0.0],
-            velocity: vector![0.0, geo_v, 0.0],
-        };
+        let geo_state = OrbitalState::new(
+            vector![geo_r, 0.0, 0.0],
+            vector![0.0, geo_v, 0.0],
+        );
 
         let a_leo = tb_moon.acceleration(0.0, &leo_state, Some(&epoch)).magnitude();
         let a_geo = tb_moon.acceleration(0.0, &geo_state, Some(&epoch)).magnitude();
@@ -201,8 +201,8 @@ mod tests {
         // At GEO, satellite is closer to Moon (shorter range) → larger perturbation
         // Also the "indirect" term is larger relative to "direct" term
         // The absolute perturbation may not always be larger, but relative to central gravity it is
-        let a_central_leo = MU_EARTH / leo_state.position.magnitude_squared();
-        let a_central_geo = MU_EARTH / geo_state.position.magnitude_squared();
+        let a_central_leo = MU_EARTH / leo_state.position().magnitude_squared();
+        let a_central_geo = MU_EARTH / geo_state.position().magnitude_squared();
 
         let ratio_leo = a_leo / a_central_leo;
         let ratio_geo = a_geo / a_central_geo;

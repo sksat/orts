@@ -9,7 +9,8 @@
 
 use nalgebra::{Matrix3, Vector3, Vector4};
 use orts::attitude::AttitudeState;
-use orts_integrator::{Integrator, Rk4, State};
+use orts_integrator::{Integrator, Rk4};
+use orts::OrbitalState;
 use orts::gravity::PointMass;
 use orts::spacecraft::{
     BurnWindow, ScheduledBurn, SpacecraftDynamics, SpacecraftState, Thruster, G0,
@@ -42,10 +43,10 @@ fn symmetric_inertia(i: f64) -> Matrix3<f64> {
 
 fn identity_spacecraft(mass: f64) -> SpacecraftState {
     SpacecraftState {
-        orbit: State {
-            position: Vector3::new(1e12, 0.0, 0.0), // far from origin → negligible gravity
-            velocity: Vector3::zeros(),
-        },
+        orbit: OrbitalState::new(
+            Vector3::new(1e12, 0.0, 0.0), // far from origin → negligible gravity
+            Vector3::zeros(),
+        ),
         attitude: AttitudeState::identity(),
         mass,
     }
@@ -77,7 +78,7 @@ fn tsiolkovsky_constant_thrust() {
     let state0 = identity_spacecraft(m0);
     let result = Rk4.integrate(&dynamics, state0, 0.0, burn_time, dt, |_, _| {});
 
-    let dv_numerical = result.orbit.velocity.magnitude();
+    let dv_numerical = result.orbit.velocity().magnitude();
     let rel_err = (dv_numerical - dv_analytical).abs() / dv_analytical;
 
     assert!(
@@ -163,7 +164,7 @@ fn propellant_exhaustion_stops_thrust() {
     );
     let state0b = identity_spacecraft(m0);
     let r2 = Rk4.integrate(&dynamics2, state0b, 0.0, burn_time * 2.0, dt, |_, _| {});
-    let v_diff = (result.orbit.velocity - r2.orbit.velocity).magnitude();
+    let v_diff = (*result.orbit.velocity() - *r2.orbit.velocity()).magnitude();
     assert!(
         v_diff < 1e-10,
         "Velocity should not increase after propellant exhaustion: |v(3T)-v(2T)| = {v_diff:.3e}"
@@ -239,7 +240,7 @@ fn dt_convergence_tsiolkovsky() {
         let dynamics = free_space_dynamics(symmetric_inertia(10.0), thruster);
         let state0 = identity_spacecraft(m0);
         let result = Rk4.integrate(&dynamics, state0, 0.0, burn_time, dt, |_, _| {});
-        let dv = result.orbit.velocity.magnitude();
+        let dv = result.orbit.velocity().magnitude();
         errors.push((dv - dv_exact).abs());
     }
 
@@ -285,7 +286,7 @@ fn scheduled_burn_delta_v() {
     // Integrate past the burn end to verify coast
     let result = Rk4.integrate(&dynamics, state0, 0.0, 200.0, dt, |_, _| {});
 
-    let dv = result.orbit.velocity.magnitude();
+    let dv = result.orbit.velocity().magnitude();
     let rel_err = (dv - dv_analytical).abs() / dv_analytical;
 
     assert!(
@@ -321,10 +322,10 @@ fn tsiolkovsky_velocity_vector_direction() {
     let dynamics = free_space_dynamics(symmetric_inertia(10.0), thruster);
 
     let state0 = SpacecraftState {
-        orbit: State {
-            position: Vector3::new(1e12, 0.0, 0.0),
-            velocity: Vector3::new(1.0, 0.0, 0.0), // nonzero initial v along X
-        },
+        orbit: OrbitalState::new(
+            Vector3::new(1e12, 0.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0), // nonzero initial v along X
+        ),
         attitude: AttitudeState::identity(),
         mass: m0,
     };
@@ -334,16 +335,16 @@ fn tsiolkovsky_velocity_vector_direction() {
 
     // X velocity should be unchanged (no thrust along X)
     assert!(
-        (result.orbit.velocity[0] - 1.0).abs() < 1e-10,
+        (result.orbit.velocity()[0] - 1.0).abs() < 1e-10,
         "vx should remain ~1.0, got {}",
-        result.orbit.velocity[0]
+        result.orbit.velocity()[0]
     );
 
     // Y velocity should be ~0
     assert!(
-        result.orbit.velocity[1].abs() < 1e-10,
+        result.orbit.velocity()[1].abs() < 1e-10,
         "vy should remain ~0, got {}",
-        result.orbit.velocity[1]
+        result.orbit.velocity()[1]
     );
 
     // Z velocity should match Tsiolkovsky (positive, along thrust direction)
@@ -351,11 +352,11 @@ fn tsiolkovsky_velocity_vector_direction() {
     let mf = m0 - mass_rate * burn_time;
     let dv_z_analytical = isp * G0 * (m0 / mf).ln() / 1000.0;
 
-    let rel_err = (result.orbit.velocity[2] - dv_z_analytical).abs() / dv_z_analytical;
+    let rel_err = (result.orbit.velocity()[2] - dv_z_analytical).abs() / dv_z_analytical;
     assert!(
         rel_err < 1e-4,
         "vz: numerical={:.6e}, analytical={dv_z_analytical:.6e}, rel_err={rel_err:.3e}",
-        result.orbit.velocity[2]
+        result.orbit.velocity()[2]
     );
 }
 
@@ -382,9 +383,9 @@ fn opposing_thrusters_superposition() {
 
     // Net acceleration should be ~0 → velocity stays ~0
     assert!(
-        result.orbit.velocity.magnitude() < 1e-12,
+        result.orbit.velocity().magnitude() < 1e-12,
         "Opposing thrusters should cancel: |v| = {:.3e}",
-        result.orbit.velocity.magnitude()
+        result.orbit.velocity().magnitude()
     );
 
     // Mass rate should be double (both consume propellant)
@@ -421,10 +422,10 @@ fn rotating_spacecraft_thrust_integration() {
     let dynamics = free_space_dynamics(symmetric_inertia(10.0), thruster);
 
     let state0 = SpacecraftState {
-        orbit: State {
-            position: Vector3::new(1e12, 0.0, 0.0),
-            velocity: Vector3::zeros(),
-        },
+        orbit: OrbitalState::new(
+            Vector3::new(1e12, 0.0, 0.0),
+            Vector3::zeros(),
+        ),
         attitude: AttitudeState {
             quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
             angular_velocity: Vector3::new(0.0, 0.0, omega_z),
@@ -441,28 +442,28 @@ fn rotating_spacecraft_thrust_integration() {
     let expected_vx = a_mag * (omega_z * t_final).sin() / omega_z;
     let expected_vy = a_mag * (1.0 - (omega_z * t_final).cos()) / omega_z;
 
-    let vx_err = (result.orbit.velocity[0] - expected_vx).abs();
-    let vy_err = (result.orbit.velocity[1] - expected_vy).abs();
+    let vx_err = (result.orbit.velocity()[0] - expected_vx).abs();
+    let vy_err = (result.orbit.velocity()[1] - expected_vy).abs();
 
     // Tolerance: constant-mass approximation introduces small error from mass change
     let v_scale = a_mag * t_final; // characteristic velocity scale
     assert!(
         vx_err / v_scale < 1e-3,
         "vx: numerical={:.6e}, expected={expected_vx:.6e}, err/scale={:.3e}",
-        result.orbit.velocity[0],
+        result.orbit.velocity()[0],
         vx_err / v_scale
     );
     assert!(
         vy_err / v_scale < 1e-3,
         "vy: numerical={:.6e}, expected={expected_vy:.6e}, err/scale={:.3e}",
-        result.orbit.velocity[1],
+        result.orbit.velocity()[1],
         vy_err / v_scale
     );
 
     // vz should be ~0 (no thrust component along Z)
     assert!(
-        result.orbit.velocity[2].abs() < 1e-12,
+        result.orbit.velocity()[2].abs() < 1e-12,
         "vz should be ~0, got {:.3e}",
-        result.orbit.velocity[2]
+        result.orbit.velocity()[2]
     );
 }

@@ -13,7 +13,8 @@
 
 use nalgebra::vector;
 use kaname::epoch::Epoch;
-use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, State, Tolerances};
+use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
+use orts::OrbitalState;
 use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use kaname::body::KnownBody;
 use orts::perturbations::AtmosphericDrag;
@@ -70,12 +71,9 @@ fn propagate_collecting_elements(
     elements: &KeplerianElements,
     n_orbits: usize,
     dt: f64,
-) -> (Vec<KeplerianElements>, State) {
+) -> (Vec<KeplerianElements>, OrbitalState) {
     let (pos, vel) = elements.to_state_vector(MU_EARTH);
-    let initial = State {
-        position: pos,
-        velocity: vel,
-    };
+    let initial = OrbitalState::new(pos, vel);
     let period = elements.period(MU_EARTH);
 
     let mut orbit_elements = vec![];
@@ -87,8 +85,8 @@ fn propagate_collecting_elements(
         current = Rk4.integrate(system, current, t, t_end, dt, |_, _| {});
         t = t_end;
         let elems = KeplerianElements::from_state_vector(
-            &current.position,
-            &current.velocity,
+            current.position(),
+            current.velocity(),
             MU_EARTH,
         );
         orbit_elements.push(elems);
@@ -103,12 +101,9 @@ fn propagate_collecting_elements_dp45(
     elements: &KeplerianElements,
     n_orbits: usize,
     tol: &Tolerances,
-) -> (Vec<KeplerianElements>, State) {
+) -> (Vec<KeplerianElements>, OrbitalState) {
     let (pos, vel) = elements.to_state_vector(MU_EARTH);
-    let initial = State {
-        position: pos,
-        velocity: vel,
-    };
+    let initial = OrbitalState::new(pos, vel);
     let period = elements.period(MU_EARTH);
 
     let mut orbit_elements = vec![];
@@ -117,7 +112,7 @@ fn propagate_collecting_elements_dp45(
 
     for _ in 0..n_orbits {
         let t_end = t + period;
-        let outcome: IntegrationOutcome<State, ()> =
+        let outcome: IntegrationOutcome<OrbitalState, ()> =
             DormandPrince.integrate_adaptive_with_events(
                 system,
                 current,
@@ -134,8 +129,8 @@ fn propagate_collecting_elements_dp45(
         }
         t = t_end;
         let elems = KeplerianElements::from_state_vector(
-            &current.position,
-            &current.velocity,
+            current.position(),
+            current.velocity(),
             MU_EARTH,
         );
         orbit_elements.push(elems);
@@ -149,10 +144,10 @@ fn propagate_collecting_elements_dp45(
 /// E = v²/2 - μ/r + μ·J2·Re²/(2r³)·(3z²/r² - 1)
 ///
 /// This is the conserved quantity for the J2 system.
-fn j2_total_energy(state: &State, mu: f64, j2: f64, r_body: f64) -> f64 {
-    let r = state.position.magnitude();
-    let z = state.position[2];
-    let v_sq = state.velocity.magnitude_squared();
+fn j2_total_energy(state: &OrbitalState, mu: f64, j2: f64, r_body: f64) -> f64 {
+    let r = state.position().magnitude();
+    let z = state.position()[2];
+    let v_sq = state.velocity().magnitude_squared();
     let two_body = v_sq / 2.0 - mu / r;
     let j2_potential = mu * j2 * r_body.powi(2) / (2.0 * r.powi(3)) * (3.0 * z * z / (r * r) - 1.0);
     two_body + j2_potential
@@ -171,7 +166,7 @@ fn unwrap_angle(angle: f64, reference: f64) -> f64 {
 }
 
 /// Propagate backward using manual RK4 steps (integrate doesn't support t_end < t0).
-fn integrate_backward(system: &OrbitalSystem, state: State, t0: f64, t_end: f64, dt: f64) -> State {
+fn integrate_backward(system: &OrbitalSystem, state: OrbitalState, t0: f64, t_end: f64, dt: f64) -> OrbitalState {
     let mut current = state;
     let mut t = t0;
     let step = -dt.abs(); // ensure negative
@@ -335,12 +330,9 @@ fn zonal_harmonics_lz_conservation() {
 
     let system = earth_j2_j3_j4_system();
     let (pos, vel) = elements.to_state_vector(MU_EARTH);
-    let initial = State {
-        position: pos,
-        velocity: vel,
-    };
+    let initial = OrbitalState::new(pos, vel);
 
-    let initial_lz = initial.position.cross(&initial.velocity).z;
+    let initial_lz = initial.position().cross(initial.velocity()).z;
     let mut max_lz_drift: f64 = 0.0;
 
     let period = elements.period(MU_EARTH);
@@ -348,7 +340,7 @@ fn zonal_harmonics_lz_conservation() {
     let dt = 5.0;
 
     Rk4.integrate(&system, initial, 0.0, total_time, dt, |_, state| {
-        let lz = state.position.cross(&state.velocity).z;
+        let lz = state.position().cross(state.velocity()).z;
         let drift = (lz - initial_lz).abs() / initial_lz.abs();
         max_lz_drift = max_lz_drift.max(drift);
     });
@@ -386,10 +378,7 @@ fn time_reversal_j2_conservative() {
 
     let system = earth_j2_system();
     let (pos, vel) = elements.to_state_vector(MU_EARTH);
-    let initial = State {
-        position: pos,
-        velocity: vel,
-    };
+    let initial = OrbitalState::new(pos, vel);
 
     let period = elements.period(MU_EARTH);
     let n_orbits = 10;
@@ -402,8 +391,8 @@ fn time_reversal_j2_conservative() {
     // Backward propagation (manual loop since integrate doesn't support t_end < t0)
     let backward = integrate_backward(&system, forward, total_time, 0.0, dt);
 
-    let pos_err_km = (backward.position - initial.position).magnitude();
-    let vel_err_kms = (backward.velocity - initial.velocity).magnitude();
+    let pos_err_km = (*backward.position() - *initial.position()).magnitude();
+    let vel_err_kms = (*backward.velocity() - *initial.velocity()).magnitude();
 
     // Codex estimate: for dt=10s, 10 orbits LEO, expect ~1-10 m position error
     // Use 100 m (0.1 km) as conservative tolerance
@@ -450,10 +439,10 @@ fn drag_monotonic_sma_decay() {
         atmosphere: Box::new(tobari::exponential::Exponential),
     }));
 
-    let initial = State {
-        position: vector![a, 0.0, 0.0],
-        velocity: vector![0.0, v, 0.0],
-    };
+    let initial = OrbitalState::new(
+        vector![a, 0.0, 0.0],
+        vector![0.0, v, 0.0],
+    );
 
     let period = 2.0 * PI * (a.powi(3) / MU_EARTH).sqrt();
     let n_orbits = 10;
@@ -468,7 +457,7 @@ fn drag_monotonic_sma_decay() {
         current = Rk4.integrate(&system, current, t, t_end, dt, |_, _| {});
         t = t_end;
         let elems =
-            KeplerianElements::from_state_vector(&current.position, &current.velocity, MU_EARTH);
+            KeplerianElements::from_state_vector(current.position(), current.velocity(), MU_EARTH);
         sma_values.push(elems.semi_major_axis);
     }
 
@@ -530,10 +519,10 @@ fn drag_scaling_with_ballistic_coefficient() {
             atmosphere: Box::new(tobari::exponential::Exponential),
         }));
 
-        let initial = State {
-            position: vector![a, 0.0, 0.0],
-            velocity: vector![0.0, v, 0.0],
-        };
+        let initial = OrbitalState::new(
+            vector![a, 0.0, 0.0],
+            vector![0.0, v, 0.0],
+        );
 
         let mut current = initial;
         let mut t = 0.0;
@@ -543,8 +532,8 @@ fn drag_scaling_with_ballistic_coefficient() {
             t = t_end;
         }
         let final_elems = KeplerianElements::from_state_vector(
-            &current.position,
-            &current.velocity,
+            current.position(),
+            current.velocity(),
             MU_EARTH,
         );
         a - final_elems.semi_major_axis // positive = decay
@@ -662,18 +651,18 @@ fn third_body_geo_inclination_change() {
     system = system.with_perturbation(Box::new(ThirdBodyGravity::moon()));
 
     // GEO: nearly equatorial, circular orbit
-    let initial = State {
-        position: vector![a_geo, 0.0, 0.0],
-        velocity: vector![0.0, v_geo, 0.0],
-    };
+    let initial = OrbitalState::new(
+        vector![a_geo, 0.0, 0.0],
+        vector![0.0, v_geo, 0.0],
+    );
 
     let duration = 30.0 * 86400.0; // 30 days
     let dt = 30.0; // larger dt for GEO (slower dynamics)
 
     let final_state = Rk4.integrate(&system, initial, 0.0, duration, dt, |_, _| {});
     let final_elems = KeplerianElements::from_state_vector(
-        &final_state.position,
-        &final_state.velocity,
+        final_state.position(),
+        final_state.velocity(),
         MU_EARTH,
     );
 
@@ -709,10 +698,10 @@ fn third_body_individual_effects() {
     let v_geo = (MU_EARTH / a_geo).sqrt();
     let epoch = Epoch::from_gregorian(2024, 6, 15, 0, 0, 0.0);
 
-    let initial = State {
-        position: vector![a_geo, 0.0, 0.0],
-        velocity: vector![0.0, v_geo, 0.0],
-    };
+    let initial = OrbitalState::new(
+        vector![a_geo, 0.0, 0.0],
+        vector![0.0, v_geo, 0.0],
+    );
 
     let duration = 7.0 * 86400.0; // 7 days
     let dt = 30.0;
@@ -741,9 +730,9 @@ fn third_body_individual_effects() {
     let final_both = Rk4.integrate(&system_both, initial, 0.0, duration, dt, |_, _| {});
 
     // Each third-body should cause a measurable difference from J2-only
-    let diff_sun = (final_sun.position - final_j2.position).magnitude();
-    let diff_moon = (final_moon.position - final_j2.position).magnitude();
-    let diff_both = (final_both.position - final_j2.position).magnitude();
+    let diff_sun = (*final_sun.position() - *final_j2.position()).magnitude();
+    let diff_moon = (*final_moon.position() - *final_j2.position()).magnitude();
+    let diff_both = (*final_both.position() - *final_j2.position()).magnitude();
 
     assert!(
         diff_sun > 0.1,
@@ -790,10 +779,7 @@ fn full_model_dt_convergence() {
         .with_perturbation(Box::new(ThirdBodyGravity::moon()));
 
     let (pos, vel) = elements.to_state_vector(MU_EARTH);
-    let initial = State {
-        position: pos,
-        velocity: vel,
-    };
+    let initial = OrbitalState::new(pos, vel);
 
     let duration = 2000.0; // ~1/3 orbit
 
@@ -807,8 +793,8 @@ fn full_model_dt_convergence() {
         Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
     let final_finest = Rk4.integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
 
-    let err_coarse = (final_coarse.position - final_finest.position).magnitude();
-    let err_fine = (final_fine.position - final_finest.position).magnitude();
+    let err_coarse = (*final_coarse.position() - *final_finest.position()).magnitude();
+    let err_fine = (*final_fine.position() - *final_finest.position()).magnitude();
 
     let ratio = err_coarse / err_fine;
     assert!(
@@ -924,18 +910,18 @@ fn compare_with_sgp4(
     system: &OrbitalSystem,
     dt: f64,
 ) -> Sgp4Comparison {
-    let initial = State {
-        position: vector![
+    let initial = OrbitalState::new(
+        vector![
             fixture.initial_position_km[0],
             fixture.initial_position_km[1],
             fixture.initial_position_km[2]
         ],
-        velocity: vector![
+        vector![
             fixture.initial_velocity_km_s[0],
             fixture.initial_velocity_km_s[1],
             fixture.initial_velocity_km_s[2]
         ],
-    };
+    );
 
     let mut max_pos_err = 0.0_f64;
     let mut max_vel_err = 0.0_f64;
@@ -963,13 +949,13 @@ fn compare_with_sgp4(
             point.velocity_km_s[2]
         ];
 
-        let pos_err = (state.position - sgp4_pos).magnitude();
-        let vel_err = (state.velocity - sgp4_vel).magnitude();
+        let pos_err = (*state.position() - sgp4_pos).magnitude();
+        let vel_err = (*state.velocity() - sgp4_vel).magnitude();
 
         // Angular separation: angle between the two position vectors.
         // arccos(r̂₁ · r̂₂), clamped for numerical safety.
         let cos_angle = state
-            .position
+            .position()
             .normalize()
             .dot(&sgp4_pos.normalize())
             .clamp(-1.0, 1.0);
@@ -1209,18 +1195,18 @@ fn compare_with_sgp4_checking_altitude(
     min_alt_km: f64,
     max_alt_km: f64,
 ) -> Sgp4Comparison {
-    let initial = State {
-        position: vector![
+    let initial = OrbitalState::new(
+        vector![
             fixture.initial_position_km[0],
             fixture.initial_position_km[1],
             fixture.initial_position_km[2]
         ],
-        velocity: vector![
+        vector![
             fixture.initial_velocity_km_s[0],
             fixture.initial_velocity_km_s[1],
             fixture.initial_velocity_km_s[2]
         ],
-    };
+    );
 
     let mut max_pos_err = 0.0_f64;
     let mut max_vel_err = 0.0_f64;
@@ -1240,7 +1226,7 @@ fn compare_with_sgp4_checking_altitude(
         }
 
         // Check altitude at each comparison point
-        let alt = state.position.magnitude() - R_EARTH;
+        let alt = state.position().magnitude() - R_EARTH;
         assert!(
             alt >= min_alt_km && alt <= max_alt_km,
             "Altitude {alt:.1} km outside expected range [{min_alt_km}, {max_alt_km}] at t={t:.0}s"
@@ -1254,11 +1240,11 @@ fn compare_with_sgp4_checking_altitude(
             point.velocity_km_s[2]
         ];
 
-        let pos_err = (state.position - sgp4_pos).magnitude();
-        let vel_err = (state.velocity - sgp4_vel).magnitude();
+        let pos_err = (*state.position() - sgp4_pos).magnitude();
+        let vel_err = (*state.velocity() - sgp4_vel).magnitude();
 
         let cos_angle = state
-            .position
+            .position()
             .normalize()
             .dot(&sgp4_pos.normalize())
             .clamp(-1.0, 1.0);
@@ -1617,10 +1603,10 @@ fn drag_decay_200_orbits() {
         atmosphere: Box::new(tobari::exponential::Exponential),
     }));
 
-    let initial = State {
-        position: vector![a, 0.0, 0.0],
-        velocity: vector![0.0, v, 0.0],
-    };
+    let initial = OrbitalState::new(
+        vector![a, 0.0, 0.0],
+        vector![0.0, v, 0.0],
+    );
 
     let period = 2.0 * PI * (a.powi(3) / MU_EARTH).sqrt();
     let n_orbits = 200;
@@ -1635,7 +1621,7 @@ fn drag_decay_200_orbits() {
         current = Rk4.integrate(&system, current, t, t_end, dt, |_, _| {});
         t = t_end;
         let elems =
-            KeplerianElements::from_state_vector(&current.position, &current.velocity, MU_EARTH);
+            KeplerianElements::from_state_vector(current.position(), current.velocity(), MU_EARTH);
         sma_values.push(elems.semi_major_axis);
     }
 
@@ -1781,12 +1767,9 @@ fn lz_conservation_500_orbits() {
 
     let system = earth_j2_j3_j4_system();
     let (pos, vel) = elements.to_state_vector(MU_EARTH);
-    let initial = State {
-        position: pos,
-        velocity: vel,
-    };
+    let initial = OrbitalState::new(pos, vel);
 
-    let initial_lz = initial.position.cross(&initial.velocity).z;
+    let initial_lz = initial.position().cross(initial.velocity()).z;
     let mut max_lz_drift: f64 = 0.0;
 
     let period = elements.period(MU_EARTH);
@@ -1794,7 +1777,7 @@ fn lz_conservation_500_orbits() {
     let dt = 5.0;
 
     Rk4.integrate(&system, initial, 0.0, total_time, dt, |_, state| {
-        let lz = state.position.cross(&state.velocity).z;
+        let lz = state.position().cross(state.velocity()).z;
         let drift = (lz - initial_lz).abs() / initial_lz.abs();
         max_lz_drift = max_lz_drift.max(drift);
     });
@@ -1834,23 +1817,23 @@ fn iss_drag_30day_survival() {
         atmosphere: Box::new(tobari::exponential::Exponential),
     }));
 
-    let initial = State {
-        position: vector![a, 0.0, 0.0],
-        velocity: vector![0.0, v, 0.0],
-    };
+    let initial = OrbitalState::new(
+        vector![a, 0.0, 0.0],
+        vector![0.0, v, 0.0],
+    );
 
     let duration = 30.0 * 86400.0; // 30 days in seconds
     let dt = 30.0;
 
     let mut min_altitude = f64::MAX;
     let final_state = Rk4.integrate(&system, initial, 0.0, duration, dt, |_, state| {
-        let alt = state.position.magnitude() - R_EARTH;
+        let alt = state.position().magnitude() - R_EARTH;
         min_altitude = min_altitude.min(alt);
     });
 
-    let final_alt = final_state.position.magnitude() - R_EARTH;
+    let final_alt = final_state.position().magnitude() - R_EARTH;
     let final_elems =
-        KeplerianElements::from_state_vector(&final_state.position, &final_state.velocity, MU_EARTH);
+        KeplerianElements::from_state_vector(final_state.position(), final_state.velocity(), MU_EARTH);
     let sma_decay = a - final_elems.semi_major_axis;
     let decay_per_day = sma_decay / 30.0;
 
@@ -1914,10 +1897,7 @@ fn j2_eccentricity_oscillation_bounded() {
 
     // Compute initial total energy (including J2 potential)
     let (pos_0, vel_0) = elements.to_state_vector(MU_EARTH);
-    let initial = State {
-        position: pos_0.clone(),
-        velocity: vel_0.clone(),
-    };
+    let initial = OrbitalState::new(pos_0.clone(), vel_0.clone());
     let energy_0 = j2_total_energy(&initial, MU_EARTH, J2_EARTH, R_EARTH);
 
     let (orbit_elems, final_state) =
@@ -2101,10 +2081,7 @@ fn j2_eccentricity_dp45_500_orbits() {
     };
 
     let (pos_0, vel_0) = elements.to_state_vector(MU_EARTH);
-    let initial = State {
-        position: pos_0.clone(),
-        velocity: vel_0.clone(),
-    };
+    let initial = OrbitalState::new(pos_0.clone(), vel_0.clone());
     let energy_0 = j2_total_energy(&initial, MU_EARTH, J2_EARTH, R_EARTH);
 
     let (orbit_elems, final_state) =
@@ -2179,10 +2156,7 @@ fn j2_omega_precession_dp45_500_orbits() {
     };
 
     let (pos_0, vel_0) = elements.to_state_vector(MU_EARTH);
-    let initial = State {
-        position: pos_0.clone(),
-        velocity: vel_0.clone(),
-    };
+    let initial = OrbitalState::new(pos_0.clone(), vel_0.clone());
     let energy_0 = j2_total_energy(&initial, MU_EARTH, J2_EARTH, R_EARTH);
 
     let (orbit_elems, final_state) =

@@ -21,7 +21,8 @@
 
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
-use orts_integrator::{DormandPrince, DynamicalSystem, State, Tolerances};
+use orts_integrator::{DormandPrince, DynamicalSystem, Tolerances};
+use orts::OrbitalState;
 use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use orts::perturbations::AtmosphericDrag;
 use orts::gravity::{PointMass, ZonalHarmonics};
@@ -273,10 +274,10 @@ struct ComparisonResult {
 /// Propagate with DP45 and compare against Orekit trajectory.
 fn compare_trajectory(scenario: &Scenario, system: &OrbitalSystem) -> ComparisonResult {
     let ic = &scenario.initial_cartesian;
-    let initial = State {
-        position: Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
-        velocity: Vector3::new(ic.velocity_km_s[0], ic.velocity_km_s[1], ic.velocity_km_s[2]),
-    };
+    let initial = OrbitalState::new(
+        Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
+        Vector3::new(ic.velocity_km_s[0], ic.velocity_km_s[1], ic.velocity_km_s[2]),
+    );
 
     // Tight tolerances to minimize integration error
     let tol = Tolerances {
@@ -314,8 +315,8 @@ fn compare_trajectory(scenario: &Scenario, system: &OrbitalSystem) -> Comparison
             }
         }
 
-        let our_pos = stepper.state().position;
-        let our_vel = stepper.state().velocity;
+        let our_pos = *stepper.state().position();
+        let our_vel = *stepper.state().velocity();
 
         let orekit_pos = Vector3::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
         let orekit_vel = Vector3::new(
@@ -344,8 +345,8 @@ fn compare_trajectory(scenario: &Scenario, system: &OrbitalSystem) -> Comparison
     // Acceleration comparison at t=0
     let accel_err = scenario.acceleration_at_t0.as_ref().map(|accel_snap| {
         let our_deriv = system.derivatives(0.0, &initial);
-        // Derivative stored as State: .velocity holds acceleration
-        let our_accel = our_deriv.velocity;
+        // Derivative stored as OrbitalState: .velocity() holds acceleration
+        let our_accel = *our_deriv.velocity();
         let orekit_accel = Vector3::new(
             accel_snap.total_km_s2[0],
             accel_snap.total_km_s2[1],

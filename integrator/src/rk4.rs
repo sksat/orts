@@ -54,18 +54,15 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let state = State {
-            position: vector![0.0, 0.0, 0.0],
-            velocity: vector![1.0, 0.0, 0.0],
-        };
+        let state = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let result = Rk4.step(&system, 0.0, &state, 1.0);
         let eps = 1e-12;
-        assert!((result.position.x - 1.0).abs() < eps, "x: {}", result.position.x);
-        assert!(result.position.y.abs() < eps);
-        assert!(result.position.z.abs() < eps);
-        assert!((result.velocity.x - 1.0).abs() < eps);
-        assert!(result.velocity.y.abs() < eps);
-        assert!(result.velocity.z.abs() < eps);
+        assert!((result.y().x - 1.0).abs() < eps, "x: {}", result.y().x);
+        assert!(result.y().y.abs() < eps);
+        assert!(result.y().z.abs() < eps);
+        assert!((result.dy().x - 1.0).abs() < eps);
+        assert!(result.dy().y.abs() < eps);
+        assert!(result.dy().z.abs() < eps);
     }
 
     #[test]
@@ -73,10 +70,7 @@ mod tests {
         let system = ConstantAcceleration {
             acceleration: vector![0.0, -9.8, 0.0],
         };
-        let state = State {
-            position: vector![0.0, 0.0, 0.0],
-            velocity: vector![10.0, 20.0, 0.0],
-        };
+        let state = State::<2>::new(vector![0.0, 0.0, 0.0], vector![10.0, 20.0, 0.0]);
         let dt = 1.0;
         let result = Rk4.step(&system, 0.0, &state, dt);
 
@@ -85,19 +79,16 @@ mod tests {
         let expected_vy = 20.0 + (-9.8) * 1.0;
 
         let eps = 1e-12;
-        assert!((result.position.x - expected_px).abs() < eps, "px: {}", result.position.x);
-        assert!((result.position.y - expected_py).abs() < eps, "py: {}", result.position.y);
-        assert!((result.velocity.x - 10.0).abs() < eps);
-        assert!((result.velocity.y - expected_vy).abs() < eps);
+        assert!((result.y().x - expected_px).abs() < eps, "px: {}", result.y().x);
+        assert!((result.y().y - expected_py).abs() < eps, "py: {}", result.y().y);
+        assert!((result.dy().x - 10.0).abs() < eps);
+        assert!((result.dy().y - expected_vy).abs() < eps);
     }
 
     #[test]
     fn test_rk4_harmonic_oscillator() {
         let system = HarmonicOscillator;
-        let mut state = State {
-            position: vector![1.0, 0.0, 0.0],
-            velocity: vector![0.0, 0.0, 0.0],
-        };
+        let mut state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
         let dt = 0.001;
         let steps = 1000;
@@ -111,34 +102,31 @@ mod tests {
         let expected_vx = -t.sin();
         let eps = 1e-10;
         assert!(
-            (state.position.x - expected_x).abs() < eps,
-            "position.x: {} expected: {} error: {}",
-            state.position.x,
+            (state.y().x - expected_x).abs() < eps,
+            "y().x: {} expected: {} error: {}",
+            state.y().x,
             expected_x,
-            (state.position.x - expected_x).abs()
+            (state.y().x - expected_x).abs()
         );
         assert!(
-            (state.velocity.x - expected_vx).abs() < eps,
-            "velocity.x: {} expected: {} error: {}",
-            state.velocity.x,
+            (state.dy().x - expected_vx).abs() < eps,
+            "dy().x: {} expected: {} error: {}",
+            state.dy().x,
             expected_vx,
-            (state.velocity.x - expected_vx).abs()
+            (state.dy().x - expected_vx).abs()
         );
     }
 
     fn harmonic_oscillator_error_with_steps(dt: f64, steps: usize) -> f64 {
         let system = HarmonicOscillator;
-        let mut state = State {
-            position: vector![1.0, 0.0, 0.0],
-            velocity: vector![0.0, 0.0, 0.0],
-        };
+        let mut state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let mut t = 0.0;
         for _ in 0..steps {
             state = Rk4.step(&system, t, &state, dt);
             t += dt;
         }
-        let x_error = (state.position.x - t.cos()).abs();
-        let v_error = (state.velocity.x + t.sin()).abs();
+        let x_error = (state.y().x - t.cos()).abs();
+        let v_error = (state.dy().x + t.sin()).abs();
         x_error.max(v_error)
     }
 
@@ -202,10 +190,7 @@ mod tests {
     #[test]
     fn test_rk4_integrate_harmonic_oscillator() {
         let system = HarmonicOscillator;
-        let initial = State {
-            position: vector![1.0, 0.0, 0.0],
-            velocity: vector![0.0, 0.0, 0.0],
-        };
+        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
         let t_end = 2.0 * std::f64::consts::PI;
         let dt = 0.001;
@@ -214,29 +199,26 @@ mod tests {
 
         let eps = 1e-8;
         assert!(
-            (final_state.position.x - 1.0).abs() < eps,
+            (final_state.y().x - 1.0).abs() < eps,
             "After one period, x should return to 1.0, got {} (error: {:.2e})",
-            final_state.position.x,
-            (final_state.position.x - 1.0).abs()
+            final_state.y().x,
+            (final_state.y().x - 1.0).abs()
         );
         assert!(
-            final_state.velocity.x.abs() < eps,
+            final_state.dy().x.abs() < eps,
             "After one period, vx should return to 0.0, got {} (error: {:.2e})",
-            final_state.velocity.x,
-            final_state.velocity.x.abs()
+            final_state.dy().x,
+            final_state.dy().x.abs()
         );
     }
 
     #[test]
     fn test_rk4_energy_conservation() {
         let system = HarmonicOscillator;
-        let initial = State {
-            position: vector![1.0, 0.0, 0.0],
-            velocity: vector![0.0, 0.0, 0.0],
-        };
+        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
         let initial_energy =
-            0.5 * (initial.velocity.norm_squared() + initial.position.norm_squared());
+            0.5 * (initial.dy().norm_squared() + initial.y().norm_squared());
 
         let mut max_energy_drift: f64 = 0.0;
 
@@ -244,7 +226,7 @@ mod tests {
         let dt = 0.01;
 
         Rk4.integrate(&system, initial, 0.0, t_end, dt, |_t, state| {
-            let energy = 0.5 * (state.velocity.norm_squared() + state.position.norm_squared());
+            let energy = 0.5 * (state.dy().norm_squared() + state.y().norm_squared());
             let drift = (energy - initial_energy).abs();
             max_energy_drift = max_energy_drift.max(drift);
         });
@@ -261,11 +243,8 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State {
-            position: vector![0.0, 0.0, 0.0],
-            velocity: vector![1.0, 0.0, 0.0],
-        };
-        let outcome: IntegrationOutcome<State, ()> = Rk4.integrate_with_events(
+        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let outcome: IntegrationOutcome<State<2>, ()> = Rk4.integrate_with_events(
             &system,
             initial,
             0.0,
@@ -276,7 +255,7 @@ mod tests {
         );
         match outcome {
             IntegrationOutcome::Completed(state) => {
-                assert!((state.position.x - 1.0).abs() < 1e-12);
+                assert!((state.y().x - 1.0).abs() < 1e-12);
             }
             _ => panic!("Expected Completed, got other variant"),
         }
@@ -287,10 +266,7 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State {
-            position: vector![0.0, 0.0, 0.0],
-            velocity: vector![1.0, 0.0, 0.0],
-        };
+        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let outcome = Rk4.integrate_with_events(
             &system,
             initial,
@@ -299,7 +275,7 @@ mod tests {
             0.1,
             |_t, _state| {},
             |_t, state| {
-                if state.position.x > 0.5 {
+                if state.y().x > 0.5 {
                     ControlFlow::Break("crossed threshold")
                 } else {
                     ControlFlow::Continue(())
@@ -325,22 +301,19 @@ mod tests {
 
         struct ExplodingSystem;
         impl DynamicalSystem for ExplodingSystem {
-            type State = State;
-            fn derivatives(&self, t: f64, state: &State) -> State {
+            type State = State<2>;
+            fn derivatives(&self, t: f64, state: &State<2>) -> State<2> {
                 let accel = if t > 0.3 {
                     vector![f64::INFINITY, 0.0, 0.0]
                 } else {
                     vector![0.0, 0.0, 0.0]
                 };
-                State::from_derivative(state.velocity, accel)
+                State::<2>::from_derivative(*state.dy(), accel)
             }
         }
 
-        let initial = State {
-            position: vector![1.0, 0.0, 0.0],
-            velocity: vector![0.0, 0.0, 0.0],
-        };
-        let outcome: IntegrationOutcome<State, ()> = Rk4.integrate_with_events(
+        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let outcome: IntegrationOutcome<State<2>, ()> = Rk4.integrate_with_events(
             &ExplodingSystem,
             initial,
             0.0,
@@ -362,10 +335,7 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State {
-            position: vector![0.0, 0.0, 0.0],
-            velocity: vector![1.0, 0.0, 0.0],
-        };
+        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let mut callback_count = 0;
         let outcome = Rk4.integrate_with_events(
             &system,
@@ -377,7 +347,7 @@ mod tests {
                 callback_count += 1;
             },
             |_t, state| {
-                if state.position.x > 2.5 {
+                if state.y().x > 2.5 {
                     ControlFlow::Break(())
                 } else {
                     ControlFlow::Continue(())

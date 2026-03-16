@@ -187,15 +187,15 @@ mod tests {
     use super::*;
     use nalgebra::Vector4;
     use crate::attitude::AttitudeState;
-    use orts_integrator::State;
+    use crate::OrbitalState;
     use std::f64::consts::FRAC_PI_2;
 
     fn sample_state() -> SpacecraftState {
         SpacecraftState {
-            orbit: State {
-                position: Vector3::new(7000.0, 0.0, 0.0),
-                velocity: Vector3::new(0.0, 7.5, 0.0),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(7000.0, 0.0, 0.0),
+                Vector3::new(0.0, 7.5, 0.0),
+            ),
             attitude: AttitudeState::identity(),
             mass: 500.0,
         }
@@ -212,10 +212,10 @@ mod tests {
     fn rotated_90z_state() -> SpacecraftState {
         let half = FRAC_PI_2 / 2.0;
         SpacecraftState {
-            orbit: State {
-                position: Vector3::new(7000.0, 0.0, 0.0),
-                velocity: Vector3::new(0.0, 7.5, 0.0),
-            },
+            orbit: OrbitalState::new(
+                Vector3::new(7000.0, 0.0, 0.0),
+                Vector3::new(0.0, 7.5, 0.0),
+            ),
             attitude: AttitudeState {
                 quaternion: Vector4::new(half.cos(), 0.0, 0.0, half.sin()),
                 angular_velocity: Vector3::zeros(),

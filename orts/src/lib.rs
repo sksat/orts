@@ -1,3 +1,4 @@
+pub mod state;
 pub mod attitude;
 pub mod events;
 pub mod gravity;
@@ -11,4 +12,5 @@ pub mod spacecraft;
 pub mod tle;
 pub mod two_body;
 
+pub use state::OrbitalState;
 pub use spacecraft::SpacecraftState;
