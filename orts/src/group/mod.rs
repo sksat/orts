@@ -1,19 +1,19 @@
-pub mod state;
-pub mod dynamics;
-pub mod prop_group;
-pub mod independent;
 pub mod coupled;
+pub mod dynamics;
+pub mod independent;
+pub mod prop_group;
 pub mod scheduler;
+pub mod state;
 
-pub use state::GroupState;
-pub use dynamics::IndependentGroupDynamics;
-pub use prop_group::{PropGroup, PropGroupOutcome, SatId, SatelliteTermination, GroupSnapshot};
-pub use independent::{IndependentGroup, IntegratorConfig, SatelliteParts};
 pub use coupled::{
     CoupledGroup, CoupledGroupDynamics, CoupledGroupParts, InterSatelliteForce, InteractionPair,
     MutualGravity, PairContext,
 };
-pub use scheduler::{RegimeConfig, PairRegime, PairPolicy, InteractionSpec, Scheduler};
+pub use dynamics::IndependentGroupDynamics;
+pub use independent::{IndependentGroup, IntegratorConfig, SatelliteParts};
+pub use prop_group::{GroupSnapshot, PropGroup, PropGroupOutcome, SatId, SatelliteTermination};
+pub use scheduler::{InteractionSpec, PairPolicy, PairRegime, RegimeConfig, Scheduler};
+pub use state::GroupState;
 
 use nalgebra::{Vector3, Vector4};
 use orts_integrator::OdeState;
@@ -71,8 +71,8 @@ impl FromAcceleration for crate::SpacecraftState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::Vector4;
     use crate::attitude::AttitudeState;
+    use nalgebra::Vector4;
 
     #[test]
     fn has_position_state() {
@@ -80,16 +80,16 @@ mod tests {
             Vector3::new(7000.0, 100.0, 50.0),
             Vector3::new(0.0, 7.5, 0.0),
         );
-        assert_eq!(HasPosition::position(&state), Vector3::new(7000.0, 100.0, 50.0));
+        assert_eq!(
+            HasPosition::position(&state),
+            Vector3::new(7000.0, 100.0, 50.0)
+        );
     }
 
     #[test]
     fn has_position_spacecraft_state() {
         let sc = crate::SpacecraftState {
-            orbit: OrbitalState::new(
-                Vector3::new(7200.0, 0.0, 0.0),
-                Vector3::new(0.0, 7.3, 0.0),
-            ),
+            orbit: OrbitalState::new(Vector3::new(7200.0, 0.0, 0.0), Vector3::new(0.0, 7.3, 0.0)),
             attitude: AttitudeState {
                 quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
                 angular_velocity: Vector3::zeros(),
@@ -126,7 +126,7 @@ mod tests {
         // Simulate adding inter-satellite acceleration to an existing derivative
         let existing_deriv = OrbitalState::from_derivative(
             Vector3::new(0.0, 7.5, 0.0),    // velocity
-            Vector3::new(-0.008, 0.0, 0.0),  // gravity acceleration
+            Vector3::new(-0.008, 0.0, 0.0), // gravity acceleration
         );
         let inter_sat_accel = Vector3::new(0.0, 0.0, 0.001);
         let delta = OrbitalState::from_acceleration(inter_sat_accel);

@@ -107,9 +107,7 @@ pub fn sun_distance_km(epoch: &Epoch) -> f64 {
     let m = m_deg.to_radians();
 
     // Distance in AU (Meeus Eq. 25.5)
-    let r_au = 1.000_140_12
-        - 0.016_708_17 * m.cos()
-        - 0.000_139_89 * (2.0 * m).cos();
+    let r_au = 1.000_140_12 - 0.016_708_17 * m.cos() - 0.000_139_89 * (2.0 * m).cos();
 
     r_au * AU_KM
 }
@@ -243,11 +241,7 @@ mod tests {
         let dir = sun_direction_eci(&epoch);
 
         // X should be dominant and positive
-        assert!(
-            dir.x > 0.9,
-            "March equinox: x={:.3} should be > 0.9",
-            dir.x
-        );
+        assert!(dir.x > 0.9, "March equinox: x={:.3} should be > 0.9", dir.x);
         // Y and Z should be small
         assert!(
             dir.y.abs() < 0.2,

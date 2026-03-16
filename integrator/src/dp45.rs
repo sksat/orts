@@ -85,9 +85,7 @@ fn dp_step_impl<S: DynamicalSystem>(
     let k2 = system.derivatives(t + DP_C2 * dt, &s2);
 
     // Stage 3
-    let s3 = state
-        .axpy(dt * DP_A31, k1)
-        .axpy(dt * DP_A32, &k2);
+    let s3 = state.axpy(dt * DP_A31, k1).axpy(dt * DP_A32, &k2);
     let k3 = system.derivatives(t + DP_C3 * dt, &s3);
 
     // Stage 4
@@ -139,13 +137,7 @@ fn dp_step_impl<S: DynamicalSystem>(
 }
 
 impl Integrator for DormandPrince {
-    fn step<S: DynamicalSystem>(
-        &self,
-        system: &S,
-        t: f64,
-        state: &S::State,
-        dt: f64,
-    ) -> S::State {
+    fn step<S: DynamicalSystem>(&self, system: &S, t: f64, state: &S::State, dt: f64) -> S::State {
         let k1 = system.derivatives(t, state);
         let (y5, _, _) = dp_step_impl(system, t, state, dt, &k1);
         y5
@@ -197,8 +189,7 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
         while self.t < t_target {
             let h = self.dt.min(t_target - self.t);
 
-            let (y5, error, k7) =
-                dp_step_impl(self.system, self.t, &self.state, h, &self.k1);
+            let (y5, error, k7) = dp_step_impl(self.system, self.t, &self.state, h, &self.k1);
 
             // NaN/Inf check
             if !y5.is_finite() {
@@ -474,8 +465,14 @@ mod tests {
         let state = State::<2>::new(vector![0.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let err = State::<2>::new(vector![1e-8, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
-        let tol1 = Tolerances { atol: 1e-8, rtol: 0.0 };
-        let tol2 = Tolerances { atol: 2e-8, rtol: 0.0 };
+        let tol1 = Tolerances {
+            atol: 1e-8,
+            rtol: 0.0,
+        };
+        let tol2 = Tolerances {
+            atol: 2e-8,
+            rtol: 0.0,
+        };
 
         let norm1 = state.error_norm(&state, &err, &tol1);
         let norm2 = state.error_norm(&state, &err, &tol2);
@@ -557,8 +554,8 @@ mod tests {
         };
         let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let tol = Tolerances::default();
-        let outcome: IntegrationOutcome<State<2>, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 &system,
                 initial,
                 0.0,
@@ -589,8 +586,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 &system,
                 initial,
                 0.0,
@@ -624,8 +621,7 @@ mod tests {
     fn dp_adaptive_energy_conservation() {
         let system = HarmonicOscillator;
         let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
-        let initial_energy =
-            0.5 * (initial.dy().norm_squared() + initial.y().norm_squared());
+        let initial_energy = 0.5 * (initial.dy().norm_squared() + initial.y().norm_squared());
         let mut max_energy_drift: f64 = 0.0;
 
         let t_end = 2.0 * std::f64::consts::PI;
@@ -633,8 +629,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 &system,
                 initial,
                 0.0,
@@ -642,8 +638,7 @@ mod tests {
                 0.1,
                 &tol,
                 |_t, state| {
-                    let energy =
-                        0.5 * (state.dy().norm_squared() + state.y().norm_squared());
+                    let energy = 0.5 * (state.dy().norm_squared() + state.y().norm_squared());
                     let drift = (energy - initial_energy).abs();
                     max_energy_drift = max_energy_drift.max(drift);
                 },
@@ -663,8 +658,8 @@ mod tests {
         let t_end = 1.234;
         let tol = Tolerances::default();
         let mut last_t = 0.0;
-        let outcome: IntegrationOutcome<State<2>, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 &system,
                 initial,
                 0.0,
@@ -709,7 +704,10 @@ mod tests {
         match outcome {
             IntegrationOutcome::Terminated { t, reason, .. } => {
                 assert!(t < 10.0);
-                assert!(t > 0.4 && t < 1.5, "Expected termination near 0.5, got t={t}");
+                assert!(
+                    t > 0.4 && t < 1.5,
+                    "Expected termination near 0.5, got t={t}"
+                );
                 assert_eq!(reason, "crossed threshold");
             }
             other => panic!("Expected Terminated, got {other:?}"),
@@ -735,8 +733,8 @@ mod tests {
 
         let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let tol = Tolerances::default();
-        let outcome: IntegrationOutcome<State<2>, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 &ExplodingSystem,
                 initial,
                 0.0,
@@ -771,8 +769,8 @@ mod tests {
             atol: 1e-12,
             rtol: 1e-12,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 &VeryStiffSystem,
                 initial,
                 0.0,
@@ -802,8 +800,8 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 &system,
                 initial.clone(),
                 0.0,

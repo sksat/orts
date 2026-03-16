@@ -16,18 +16,66 @@ struct Layer {
 }
 
 const LAYERS: &[Layer] = &[
-    Layer { h_base: 0.0, rho_base: 1.225, scale_height: 7.249 },
-    Layer { h_base: 100.0, rho_base: 5.297e-7, scale_height: 5.877 },
-    Layer { h_base: 150.0, rho_base: 1.454e-9, scale_height: 8.382 },
-    Layer { h_base: 200.0, rho_base: 2.789e-10, scale_height: 37.105 },
-    Layer { h_base: 300.0, rho_base: 1.916e-11, scale_height: 40.590 },
-    Layer { h_base: 400.0, rho_base: 3.725e-12, scale_height: 58.515 },
-    Layer { h_base: 500.0, rho_base: 6.967e-13, scale_height: 73.700 },
-    Layer { h_base: 600.0, rho_base: 1.454e-13, scale_height: 88.667 },
-    Layer { h_base: 700.0, rho_base: 3.614e-14, scale_height: 124.64 },
-    Layer { h_base: 800.0, rho_base: 1.170e-14, scale_height: 181.05 },
-    Layer { h_base: 900.0, rho_base: 5.245e-15, scale_height: 268.00 },
-    Layer { h_base: 1000.0, rho_base: 3.019e-15, scale_height: 408.88 },
+    Layer {
+        h_base: 0.0,
+        rho_base: 1.225,
+        scale_height: 7.249,
+    },
+    Layer {
+        h_base: 100.0,
+        rho_base: 5.297e-7,
+        scale_height: 5.877,
+    },
+    Layer {
+        h_base: 150.0,
+        rho_base: 1.454e-9,
+        scale_height: 8.382,
+    },
+    Layer {
+        h_base: 200.0,
+        rho_base: 2.789e-10,
+        scale_height: 37.105,
+    },
+    Layer {
+        h_base: 300.0,
+        rho_base: 1.916e-11,
+        scale_height: 40.590,
+    },
+    Layer {
+        h_base: 400.0,
+        rho_base: 3.725e-12,
+        scale_height: 58.515,
+    },
+    Layer {
+        h_base: 500.0,
+        rho_base: 6.967e-13,
+        scale_height: 73.700,
+    },
+    Layer {
+        h_base: 600.0,
+        rho_base: 1.454e-13,
+        scale_height: 88.667,
+    },
+    Layer {
+        h_base: 700.0,
+        rho_base: 3.614e-14,
+        scale_height: 124.64,
+    },
+    Layer {
+        h_base: 800.0,
+        rho_base: 1.170e-14,
+        scale_height: 181.05,
+    },
+    Layer {
+        h_base: 900.0,
+        rho_base: 5.245e-15,
+        scale_height: 268.00,
+    },
+    Layer {
+        h_base: 1000.0,
+        rho_base: 3.019e-15,
+        scale_height: 408.88,
+    },
 ];
 
 /// Compute atmospheric density [kg/m³] at the given altitude [km].
@@ -156,6 +204,9 @@ mod tests {
 
         let rho_trait = model.density(400.0, &pos, Some(&epoch));
         let rho_free = density(400.0);
-        assert_eq!(rho_trait, rho_free, "Trait should delegate to free function");
+        assert_eq!(
+            rho_trait, rho_free,
+            "Trait should delegate to free function"
+        );
     }
 }

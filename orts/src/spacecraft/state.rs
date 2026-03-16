@@ -1,7 +1,7 @@
-use nalgebra::{Vector3, Vector4};
-use crate::attitude::AttitudeState;
-use orts_integrator::{OdeState, Tolerances};
 use crate::OrbitalState;
+use crate::attitude::AttitudeState;
+use nalgebra::{Vector3, Vector4};
+use orts_integrator::{OdeState, Tolerances};
 
 /// Combined spacecraft state: orbital (6D) + attitude (7D) + mass (1D).
 ///
@@ -76,8 +76,7 @@ impl OdeState for SpacecraftState {
             .error_norm(&y_next.attitude, &error.attitude, tol);
 
         // Mass: 1D scalar norm
-        let sc =
-            tol.atol + tol.rtol * self.mass.abs().max(y_next.mass.abs());
+        let sc = tol.atol + tol.rtol * self.mass.abs().max(y_next.mass.abs());
         let mass_norm = (error.mass / sc).abs();
 
         orbit_norm.max(attitude_norm).max(mass_norm)
@@ -96,10 +95,7 @@ mod tests {
 
     fn sample_state() -> SpacecraftState {
         SpacecraftState {
-            orbit: OrbitalState::new(
-                Vector3::new(7000.0, 0.0, 0.0),
-                Vector3::new(0.0, 7.5, 0.0),
-            ),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0)),
             attitude: AttitudeState::identity(),
             mass: 500.0,
         }
@@ -119,10 +115,7 @@ mod tests {
     #[test]
     fn axpy_linear_combination() {
         let a = SpacecraftState {
-            orbit: OrbitalState::new(
-                Vector3::new(1.0, 2.0, 3.0),
-                Vector3::new(4.0, 5.0, 6.0),
-            ),
+            orbit: OrbitalState::new(Vector3::new(1.0, 2.0, 3.0), Vector3::new(4.0, 5.0, 6.0)),
             attitude: AttitudeState {
                 quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
                 angular_velocity: Vector3::new(0.1, 0.0, 0.0),
@@ -143,10 +136,7 @@ mod tests {
         let result = a.axpy(0.5, &b);
         assert_eq!(*result.orbit.position(), Vector3::new(6.0, 12.0, 18.0));
         assert_eq!(*result.orbit.velocity(), Vector3::new(24.0, 30.0, 36.0));
-        assert_eq!(
-            result.attitude.quaternion,
-            Vector4::new(1.0, 0.5, 0.0, 0.0)
-        );
+        assert_eq!(result.attitude.quaternion, Vector4::new(1.0, 0.5, 0.0, 0.0));
         assert_eq!(
             result.attitude.angular_velocity,
             Vector3::new(0.1, 0.1, 0.0)
@@ -268,10 +258,7 @@ mod tests {
         let y_n = sample_state();
         let y_next = sample_state();
         let error = SpacecraftState {
-            orbit: OrbitalState::new(
-                Vector3::zeros(),
-                Vector3::zeros(),
-            ),
+            orbit: OrbitalState::new(Vector3::zeros(), Vector3::zeros()),
             attitude: AttitudeState {
                 quaternion: Vector4::zeros(),
                 angular_velocity: Vector3::zeros(),
@@ -293,10 +280,7 @@ mod tests {
     #[test]
     fn project_normalizes_quaternion() {
         let mut state = SpacecraftState {
-            orbit: OrbitalState::new(
-                Vector3::new(7000.0, 0.0, 0.0),
-                Vector3::new(0.0, 7.5, 0.0),
-            ),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0)),
             attitude: AttitudeState {
                 quaternion: Vector4::new(2.0, 0.0, 0.0, 0.0),
                 angular_velocity: Vector3::new(0.1, 0.2, 0.3),
@@ -314,20 +298,14 @@ mod tests {
         assert_eq!(state.orbit, orbit_before);
         assert_eq!(state.mass, mass_before);
         // Angular velocity should be unchanged
-        assert_eq!(
-            state.attitude.angular_velocity,
-            Vector3::new(0.1, 0.2, 0.3)
-        );
+        assert_eq!(state.attitude.angular_velocity, Vector3::new(0.1, 0.2, 0.3));
     }
 
     #[test]
     fn from_derivative_and_euler_step() {
         // Test that from_derivative + axpy(dt, deriv) gives a correct Euler step
         let state = SpacecraftState {
-            orbit: OrbitalState::new(
-                Vector3::new(7000.0, 0.0, 0.0),
-                Vector3::new(0.0, 7.5, 0.0),
-            ),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0)),
             attitude: AttitudeState {
                 quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
                 angular_velocity: Vector3::new(0.0, 0.0, 0.1),
@@ -337,11 +315,11 @@ mod tests {
 
         let dt = 1.0;
         let deriv = SpacecraftState::from_derivative(
-            Vector3::new(0.0, 7.5, 0.0),          // velocity
-            Vector3::new(-0.008, 0.0, 0.0),        // acceleration
-            Vector4::new(0.0, 0.0, 0.0, 0.05),     // q_dot
-            Vector3::new(0.0, 0.0, 0.001),         // angular accel
-            -0.1,                                    // mass rate
+            Vector3::new(0.0, 7.5, 0.0),       // velocity
+            Vector3::new(-0.008, 0.0, 0.0),    // acceleration
+            Vector4::new(0.0, 0.0, 0.0, 0.05), // q_dot
+            Vector3::new(0.0, 0.0, 0.001),     // angular accel
+            -0.1,                              // mass rate
         );
 
         let new_state = state.axpy(dt, &deriv);

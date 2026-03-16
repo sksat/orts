@@ -102,10 +102,7 @@ mod tests {
             tp.get(&TimelineName::SimTime),
             Some(TimeIndex::Seconds(100.0))
         );
-        assert_eq!(
-            tp.get(&TimelineName::Step),
-            Some(TimeIndex::Sequence(42))
-        );
+        assert_eq!(tp.get(&TimelineName::Step), Some(TimeIndex::Sequence(42)));
         assert_eq!(
             tp.get(&TimelineName::WallClock),
             Some(TimeIndex::Seconds(1700000000.0))

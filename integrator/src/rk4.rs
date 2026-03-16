@@ -12,13 +12,7 @@ impl Integrator for Rk4 {
     /// k3 = f(t + dt/2, y + dt/2 * k2)
     /// k4 = f(t + dt, y + dt * k3)
     /// y_next = y + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
-    fn step<S: DynamicalSystem>(
-        &self,
-        system: &S,
-        t: f64,
-        state: &S::State,
-        dt: f64,
-    ) -> S::State {
+    fn step<S: DynamicalSystem>(&self, system: &S, t: f64, state: &S::State, dt: f64) -> S::State {
         let k1 = system.derivatives(t, state);
 
         let s2 = state.axpy(dt / 2.0, &k1);
@@ -79,8 +73,16 @@ mod tests {
         let expected_vy = 20.0 + (-9.8) * 1.0;
 
         let eps = 1e-12;
-        assert!((result.y().x - expected_px).abs() < eps, "px: {}", result.y().x);
-        assert!((result.y().y - expected_py).abs() < eps, "py: {}", result.y().y);
+        assert!(
+            (result.y().x - expected_px).abs() < eps,
+            "px: {}",
+            result.y().x
+        );
+        assert!(
+            (result.y().y - expected_py).abs() < eps,
+            "py: {}",
+            result.y().y
+        );
         assert!((result.dy().x - 10.0).abs() < eps);
         assert!((result.dy().y - expected_vy).abs() < eps);
     }
@@ -217,8 +219,7 @@ mod tests {
         let system = HarmonicOscillator;
         let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
-        let initial_energy =
-            0.5 * (initial.dy().norm_squared() + initial.y().norm_squared());
+        let initial_energy = 0.5 * (initial.dy().norm_squared() + initial.y().norm_squared());
 
         let mut max_energy_drift: f64 = 0.0;
 

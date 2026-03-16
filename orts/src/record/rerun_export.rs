@@ -21,10 +21,7 @@ pub fn save_as_rrd(
         // Log static data
         for (name, scalars) in &store.static_data {
             if *name == GravitationalParameter::component_name() {
-                rec.log_static(
-                    format!("{rr_path}/mu"),
-                    &rerun::Scalars::new([scalars[0]]),
-                )?;
+                rec.log_static(format!("{rr_path}/mu"), &rerun::Scalars::new([scalars[0]]))?;
             } else if *name == BodyRadius::component_name() {
                 rec.log_static(
                     format!("{rr_path}/radius"),
@@ -105,7 +102,10 @@ pub fn save_as_rrd(
         rec.log_static("meta/sim/period", &rerun::Scalars::new([period]))?;
     }
     if let Some(ref name) = meta.body_name {
-        rec.log_static("meta/sim/body_name", &rerun::TextDocument::new(name.as_str()))?;
+        rec.log_static(
+            "meta/sim/body_name",
+            &rerun::TextDocument::new(name.as_str()),
+        )?;
     }
 
     rec.flush_blocking()?;
@@ -168,19 +168,19 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                 let comp_name = comp_id.as_str();
                 if comp_name.contains("Scalar") || comp_name.contains("scalars") {
                     for row_idx in 0..n {
-                        let batch = chunk
-                            .component_batch::<rerun::components::Scalar>(comp_id, row_idx);
+                        let batch =
+                            chunk.component_batch::<rerun::components::Scalar>(comp_id, row_idx);
                         if let Some(Ok(scalar_vec)) = batch
                             && let Some(s) = scalar_vec.first()
                         {
-                            meta_scalars.insert(entity_path.clone(), s.0 .0);
+                            meta_scalars.insert(entity_path.clone(), s.0.0);
                         }
                     }
                 }
                 if comp_name.contains("Text") || comp_name.contains("text") {
                     for row_idx in 0..n {
-                        let batch = chunk
-                            .component_batch::<rerun::components::Text>(comp_id, row_idx);
+                        let batch =
+                            chunk.component_batch::<rerun::components::Text>(comp_id, row_idx);
                         if let Some(Ok(text_vec)) = batch
                             && let Some(t) = text_vec.first()
                         {
@@ -206,14 +206,14 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
             let comp_name = comp_id.as_str();
             if comp_name.contains("Scalar") || comp_name.contains("scalars") {
                 for (row_idx, &t) in times.iter().enumerate() {
-                    let batch = chunk
-                        .component_batch::<rerun::components::Scalar>(comp_id, row_idx);
+                    let batch =
+                        chunk.component_batch::<rerun::components::Scalar>(comp_id, row_idx);
                     if let Some(Ok(scalar_vec)) = batch {
                         for s in scalar_vec {
                             scalars
                                 .entry(entity_path.clone())
                                 .or_default()
-                                .push((t, s.0 .0));
+                                .push((t, s.0.0));
                         }
                     }
                 }
@@ -308,13 +308,8 @@ mod tests {
         let v0 = (398600.4418_f64 / r0).sqrt();
 
         for i in 0..10u64 {
-            let tp = TimePoint::new()
-                .with_sim_time(i as f64 * 10.0)
-                .with_step(i);
-            let os = OrbitalState::new(
-                Vector3::new(r0, 0.0, 0.0),
-                Vector3::new(0.0, v0, 0.0),
-            );
+            let tp = TimePoint::new().with_sim_time(i as f64 * 10.0).with_step(i);
+            let os = OrbitalState::new(Vector3::new(r0, 0.0, 0.0), Vector3::new(0.0, v0, 0.0));
             rec.log_orbital_state(&sat, &tp, &os);
         }
 
@@ -351,10 +346,7 @@ mod tests {
         for i in 0..5u64 {
             let t = i as f64 * 10.0;
             let tp = TimePoint::new().with_sim_time(t).with_step(i);
-            let os = OrbitalState::new(
-                Vector3::new(r0, 0.0, 0.0),
-                Vector3::new(0.0, v0, 0.0),
-            );
+            let os = OrbitalState::new(Vector3::new(r0, 0.0, 0.0), Vector3::new(0.0, v0, 0.0));
             rec.log_orbital_state(&sat, &tp, &os);
         }
 
@@ -414,13 +406,8 @@ mod tests {
         let r0 = 6778.137;
         let v0 = (398600.4418_f64 / r0).sqrt();
         for i in 0..3u64 {
-            let tp = TimePoint::new()
-                .with_sim_time(i as f64 * 10.0)
-                .with_step(i);
-            let os = OrbitalState::new(
-                Vector3::new(r0, 0.0, 0.0),
-                Vector3::new(0.0, v0, 0.0),
-            );
+            let tp = TimePoint::new().with_sim_time(i as f64 * 10.0).with_step(i);
+            let os = OrbitalState::new(Vector3::new(r0, 0.0, 0.0), Vector3::new(0.0, v0, 0.0));
             rec.log_orbital_state(&sat, &tp, &os);
         }
 

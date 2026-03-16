@@ -43,12 +43,10 @@ impl<D: DynamicalSystem> DynamicalSystem for IndependentGroupDynamics<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::Vector3;
-    use orts_integrator::{
-        DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances,
-    };
     use crate::OrbitalState;
     use crate::two_body::TwoBodySystem;
+    use nalgebra::Vector3;
+    use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
     use std::ops::ControlFlow;
 
     /// Simple harmonic oscillator: dv/dt = -x (ω = 1).
@@ -76,19 +74,13 @@ mod tests {
     fn iss_state() -> OrbitalState {
         let r: f64 = 6778.137;
         let v = (398600.4418_f64 / r).sqrt();
-        OrbitalState::new(
-            Vector3::new(r, 0.0, 0.0),
-            Vector3::new(0.0, v, 0.0),
-        )
+        OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0))
     }
 
     fn sso_state() -> OrbitalState {
         let r: f64 = 6378.137 + 800.0;
         let v = (398600.4418_f64 / r).sqrt();
-        OrbitalState::new(
-            Vector3::new(r, 0.0, 0.0),
-            Vector3::new(0.0, v, 0.0),
-        )
+        OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0))
     }
 
     #[test]
@@ -118,8 +110,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "dynamics count")]
     fn length_mismatch_panics() {
-        let group_dyn =
-            IndependentGroupDynamics::new(vec![TwoBodySystem { mu: 1.0 }]);
+        let group_dyn = IndependentGroupDynamics::new(vec![TwoBodySystem { mu: 1.0 }]);
         let group_state = GroupState::new(vec![iss_state(), sso_state()]);
         let _ = group_dyn.derivatives(0.0, &group_state);
     }
@@ -144,10 +135,8 @@ mod tests {
         }
 
         // Group propagation
-        let group_dyn = IndependentGroupDynamics::new(vec![
-            TwoBodySystem { mu },
-            TwoBodySystem { mu },
-        ]);
+        let group_dyn =
+            IndependentGroupDynamics::new(vec![TwoBodySystem { mu }, TwoBodySystem { mu }]);
         let mut group_state = GroupState::new(vec![iss_state(), sso_state()]);
         t = 0.0;
         for _ in 0..n_steps {
@@ -206,10 +195,8 @@ mod tests {
         };
 
         // Group DP45
-        let group_dyn = IndependentGroupDynamics::new(vec![
-            TwoBodySystem { mu },
-            TwoBodySystem { mu },
-        ]);
+        let group_dyn =
+            IndependentGroupDynamics::new(vec![TwoBodySystem { mu }, TwoBodySystem { mu }]);
         let group_outcome = DormandPrince.integrate_adaptive_with_events(
             &group_dyn,
             GroupState::new(vec![iss_state(), sso_state()]),
@@ -227,38 +214,21 @@ mod tests {
 
         // Group uses max error_norm across satellites, so step sizes may differ
         // from individual propagation. Check results match within tolerance.
-        let pos_err_1 =
-            (group_state.states[0].position() - s1.position()).magnitude();
-        let pos_err_2 =
-            (group_state.states[1].position() - s2.position()).magnitude();
+        let pos_err_1 = (group_state.states[0].position() - s1.position()).magnitude();
+        let pos_err_2 = (group_state.states[1].position() - s2.position()).magnitude();
 
         // Within tolerance (both should be ~1e-6 km or better)
-        assert!(
-            pos_err_1 < 1e-6,
-            "ISS position difference: {pos_err_1} km"
-        );
-        assert!(
-            pos_err_2 < 1e-6,
-            "SSO position difference: {pos_err_2} km"
-        );
+        assert!(pos_err_1 < 1e-6, "ISS position difference: {pos_err_1} km");
+        assert!(pos_err_2 < 1e-6, "SSO position difference: {pos_err_2} km");
     }
 
     #[test]
     fn harmonic_oscillator_energy_conservation() {
         // E = (v² + x²) / 2 should be conserved for each satellite
-        let group_dyn = IndependentGroupDynamics::new(vec![
-            HarmonicOscillator,
-            HarmonicOscillator,
-        ]);
+        let group_dyn = IndependentGroupDynamics::new(vec![HarmonicOscillator, HarmonicOscillator]);
 
-        let s1 = OrbitalState::new(
-            Vector3::new(1.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
-        let s2 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::new(0.0, 2.0, 0.0),
-        );
+        let s1 = OrbitalState::new(Vector3::new(1.0, 0.0, 0.0), Vector3::zeros());
+        let s2 = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, 2.0, 0.0));
         let initial = GroupState::new(vec![s1.clone(), s2.clone()]);
 
         let energy = |s: &OrbitalState| -> f64 {
@@ -297,14 +267,8 @@ mod tests {
         };
         let group_dyn = IndependentGroupDynamics::new(vec![sys1, sys2]);
 
-        let s1 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::new(1.0, 0.0, 0.0),
-        );
-        let s2 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::new(0.0, 2.0, 0.0),
-        );
+        let s1 = OrbitalState::new(Vector3::zeros(), Vector3::new(1.0, 0.0, 0.0));
+        let s2 = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, 2.0, 0.0));
         let initial = GroupState::new(vec![s1, s2]);
 
         let dt = 1.0;

@@ -22,7 +22,14 @@ pub struct DateTime {
 
 impl DateTime {
     pub fn new(year: i32, month: u32, day: u32, hour: u32, min: u32, sec: f64) -> Self {
-        DateTime { year, month, day, hour, min, sec }
+        DateTime {
+            year,
+            month,
+            day,
+            hour,
+            min,
+            sec,
+        }
     }
 }
 
@@ -32,7 +39,11 @@ impl std::fmt::Display for DateTime {
         let sec = self.sec.round() as u32;
         let (sec, carry) = if sec >= 60 { (0u32, 1u32) } else { (sec, 0) };
         let min = self.min + carry;
-        let (min, carry) = if min >= 60 { (min - 60, 1u32) } else { (min, 0) };
+        let (min, carry) = if min >= 60 {
+            (min - 60, 1u32)
+        } else {
+            (min, 0)
+        };
         let hour = self.hour + carry;
         write!(
             f,
@@ -205,7 +216,14 @@ impl Epoch {
         let min = mins_total.floor() as u32;
         let sec = (mins_total - min as f64) * 60.0;
 
-        DateTime { year, month, day, hour, min, sec }
+        DateTime {
+            year,
+            month,
+            day,
+            hour,
+            min,
+            sec,
+        }
     }
 
     /// Create an epoch from a TLE epoch (2-digit year + fractional day of year).
@@ -307,7 +325,11 @@ mod tests {
         assert_eq!(dt.day, 21);
         assert_eq!(dt.hour, 15);
         assert_eq!(dt.min, 30);
-        assert!((dt.sec - 45.0).abs() < 0.01, "sec: expected 45.0, got {}", dt.sec);
+        assert!(
+            (dt.sec - 45.0).abs() < 0.01,
+            "sec: expected 45.0, got {}",
+            dt.sec
+        );
     }
 
     #[test]

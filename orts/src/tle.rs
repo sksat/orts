@@ -1,9 +1,9 @@
-use std::fmt;
 use std::f64::consts::PI;
+use std::fmt;
 
 use kaname::epoch::Epoch;
 
-use crate::kepler::{mean_to_true_anomaly, KeplerianElements};
+use crate::kepler::{KeplerianElements, mean_to_true_anomaly};
 
 /// Error type for TLE parsing failures.
 #[derive(Debug, Clone)]
@@ -15,7 +15,11 @@ pub enum TleParseError {
     /// Line 2 does not start with '2'.
     InvalidLine2Prefix,
     /// A numeric field could not be parsed.
-    InvalidField { line: u8, field: &'static str, value: String },
+    InvalidField {
+        line: u8,
+        field: &'static str,
+        value: String,
+    },
 }
 
 impl fmt::Display for TleParseError {
@@ -120,13 +124,14 @@ impl Tle {
             field: "eccentricity",
             value: String::new(),
         })?;
-        let eccentricity: f64 = format!("0.{}", ecc_str.trim())
-            .parse()
-            .map_err(|_| TleParseError::InvalidField {
-                line: 2,
-                field: "eccentricity",
-                value: ecc_str.to_string(),
-            })?;
+        let eccentricity: f64 =
+            format!("0.{}", ecc_str.trim())
+                .parse()
+                .map_err(|_| TleParseError::InvalidField {
+                    line: 2,
+                    field: "eccentricity",
+                    value: ecc_str.to_string(),
+                })?;
 
         let arg_perigee_deg = Self::parse_field::<f64>(line2, 34, 42, 2, "argument_of_perigee")?;
         let mean_anomaly_deg = Self::parse_field::<f64>(line2, 43, 51, 2, "mean_anomaly")?;
@@ -310,7 +315,10 @@ ISS (ZARYA)
     fn parse_geo_satellite() {
         let tle = Tle::parse(GEO_TLE).unwrap();
         assert_eq!(tle.satellite_number, 28358);
-        assert!(tle.inclination.to_degrees() < 1.0, "GEO should have near-zero inclination");
+        assert!(
+            tle.inclination.to_degrees() < 1.0,
+            "GEO should have near-zero inclination"
+        );
         // Mean motion ~1.0 rev/day → near GEO
         let mm_rev_day = tle.mean_motion * 86400.0 / (2.0 * PI);
         assert!(
@@ -389,10 +397,7 @@ ISS (ZARYA)
         );
 
         // Velocity should be ~7.7 km/s for LEO
-        assert!(
-            (v - 7.66).abs() < 0.2,
-            "ISS velocity: {v:.3} km/s"
-        );
+        assert!((v - 7.66).abs() < 0.2, "ISS velocity: {v:.3} km/s");
 
         // Verify energy conservation: ε = v²/2 - μ/r = -μ/(2a)
         let energy = v * v / 2.0 - MU_EARTH / r;

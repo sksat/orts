@@ -8,21 +8,18 @@
 //! - RK4 dt convergence (4th order)
 
 use nalgebra::{Matrix3, Vector3, Vector4};
-use orts::attitude::AttitudeState;
-use orts_integrator::{Integrator, Rk4};
 use orts::OrbitalState;
+use orts::attitude::AttitudeState;
 use orts::gravity::PointMass;
 use orts::spacecraft::{
-    BurnWindow, ScheduledBurn, SpacecraftDynamics, SpacecraftState, Thruster, G0,
+    BurnWindow, G0, ScheduledBurn, SpacecraftDynamics, SpacecraftState, Thruster,
 };
+use orts_integrator::{Integrator, Rk4};
 
 /// Free-space SpacecraftDynamics (negligible gravity).
 ///
 /// Uses a tiny μ so gravity is effectively zero, letting us isolate thrust effects.
-fn free_space_dynamics(
-    inertia: Matrix3<f64>,
-    thruster: Thruster,
-) -> SpacecraftDynamics<PointMass> {
+fn free_space_dynamics(inertia: Matrix3<f64>, thruster: Thruster) -> SpacecraftDynamics<PointMass> {
     SpacecraftDynamics::new(1e-30, PointMass, inertia).with_load(Box::new(thruster))
 }
 
@@ -185,8 +182,8 @@ fn torque_spin_up() {
     let inertia_val = 100.0;
     let t_final = 10.0;
 
-    let thruster = Thruster::new(thrust, isp, Vector3::x())
-        .with_offset(Vector3::new(0.0, 1.0, 0.0));
+    let thruster =
+        Thruster::new(thrust, isp, Vector3::x()).with_offset(Vector3::new(0.0, 1.0, 0.0));
     let dynamics = free_space_dynamics(symmetric_inertia(inertia_val), thruster);
 
     let dt = 0.01;
@@ -197,8 +194,8 @@ fn torque_spin_up() {
     // Expected: ωz = -F * t / I (constant torque, approximately — mass changes slightly)
     // For small mass change ratio, this is very close to linear
     let expected_omega_z = -thrust * t_final / inertia_val;
-    let rel_err = (result.attitude.angular_velocity[2] - expected_omega_z).abs()
-        / expected_omega_z.abs();
+    let rel_err =
+        (result.attitude.angular_velocity[2] - expected_omega_z).abs() / expected_omega_z.abs();
 
     assert!(
         rel_err < 1e-3,
@@ -422,10 +419,7 @@ fn rotating_spacecraft_thrust_integration() {
     let dynamics = free_space_dynamics(symmetric_inertia(10.0), thruster);
 
     let state0 = SpacecraftState {
-        orbit: OrbitalState::new(
-            Vector3::new(1e12, 0.0, 0.0),
-            Vector3::zeros(),
-        ),
+        orbit: OrbitalState::new(Vector3::new(1e12, 0.0, 0.0), Vector3::zeros()),
         attitude: AttitudeState {
             quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
             angular_velocity: Vector3::new(0.0, 0.0, omega_z),

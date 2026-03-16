@@ -19,16 +19,16 @@
 //! - **Moon position**: Simplified analytical vs DE405 (~10')
 //! - **LST**: Orekit precise solar time vs our UT+lon/15 (~±16 min → 1-5% density)
 
+use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
-use orts_integrator::{DormandPrince, DynamicalSystem, Tolerances};
 use orts::OrbitalState;
-use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
-use orts::perturbations::AtmosphericDrag;
 use orts::gravity::{PointMass, ZonalHarmonics};
 use orts::orbital_system::OrbitalSystem;
+use orts::perturbations::AtmosphericDrag;
 use orts::perturbations::SolarRadiationPressure;
 use orts::perturbations::ThirdBodyGravity;
+use orts_integrator::{DormandPrince, DynamicalSystem, Tolerances};
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
 
@@ -276,7 +276,11 @@ fn compare_trajectory(scenario: &Scenario, system: &OrbitalSystem) -> Comparison
     let ic = &scenario.initial_cartesian;
     let initial = OrbitalState::new(
         Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
-        Vector3::new(ic.velocity_km_s[0], ic.velocity_km_s[1], ic.velocity_km_s[2]),
+        Vector3::new(
+            ic.velocity_km_s[0],
+            ic.velocity_km_s[1],
+            ic.velocity_km_s[2],
+        ),
     );
 
     // Tight tolerances to minimize integration error
@@ -308,10 +312,7 @@ fn compare_trajectory(scenario: &Scenario, system: &OrbitalSystem) -> Comparison
         match result {
             Ok(_) => {}
             Err(e) => {
-                panic!(
-                    "Integration error at t={}: {:?}",
-                    pt.t_seconds, e
-                );
+                panic!("Integration error at t={}: {:?}", pt.t_seconds, e);
             }
         }
 

@@ -269,9 +269,14 @@ fn hp_sun_direction_vs_orekit() {
             "Sun direction at {}: angular separation = {:.4}°\n\
              \tours=({:.6}, {:.6}, {:.6})\n\
              \torekit=({:.6}, {:.6}, {:.6})",
-            sun_pt.epoch, angle_deg,
-            our_dir.x, our_dir.y, our_dir.z,
-            orekit_dir.x, orekit_dir.y, orekit_dir.z,
+            sun_pt.epoch,
+            angle_deg,
+            our_dir.x,
+            our_dir.y,
+            our_dir.z,
+            orekit_dir.x,
+            orekit_dir.y,
+            orekit_dir.z,
         );
 
         assert!(
@@ -372,16 +377,24 @@ fn hp_seasonal_variation_range() {
 
             for pt in &pts {
                 let epoch = parse_epoch(&pt.epoch);
-                let pos =
-                    Vector3::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
+                let pos = Vector3::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
                 our_densities.push(hp.density(pt.altitude_km, &pos, Some(&epoch)));
                 orekit_densities.push(pt.density_kg_m3);
             }
 
-            let our_max = our_densities.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let our_max = our_densities
+                .iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max);
             let our_min = our_densities.iter().cloned().fold(f64::INFINITY, f64::min);
-            let orekit_max = orekit_densities.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let orekit_min = orekit_densities.iter().cloned().fold(f64::INFINITY, f64::min);
+            let orekit_max = orekit_densities
+                .iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max);
+            let orekit_min = orekit_densities
+                .iter()
+                .cloned()
+                .fold(f64::INFINITY, f64::min);
 
             // Compare max/min ratio (diurnal + seasonal range)
             if our_min > 0.0 && orekit_min > 0.0 {

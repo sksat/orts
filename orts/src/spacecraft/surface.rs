@@ -1,8 +1,8 @@
-use kaname::epoch::Epoch;
-use nalgebra::Vector3;
+use crate::perturbations::OMEGA_EARTH;
 use kaname::body::KnownBody;
 use kaname::constants::R_EARTH;
-use crate::perturbations::OMEGA_EARTH;
+use kaname::epoch::Epoch;
+use nalgebra::Vector3;
 use tobari::{AtmosphereModel, Exponential};
 
 use super::{ExternalLoads, LoadModel, SpacecraftState};
@@ -477,18 +477,15 @@ mod tests {
 
     // ======== PanelDrag loads() — shared helpers ========
 
-    use crate::attitude::AttitudeState;
     use crate::OrbitalState;
+    use crate::attitude::AttitudeState;
     use nalgebra::Vector4;
 
     fn iss_state() -> SpacecraftState {
         let r = R_EARTH + 400.0;
         let v = (kaname::constants::MU_EARTH / r).sqrt();
         SpacecraftState {
-            orbit: OrbitalState::new(
-                Vector3::new(r, 0.0, 0.0),
-                Vector3::new(0.0, v, 0.0),
-            ),
+            orbit: OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0)),
             attitude: AttitudeState::identity(),
             mass: 500.0,
         }
@@ -754,8 +751,8 @@ mod tests {
         // - Cannonball uses v_rel in inertial frame directly
         // - Panels transform to body frame then back
         // With identity attitude, these should be numerically identical
-        let diff = (panel_loads.acceleration_inertial - cannon_loads.acceleration_inertial)
-            .magnitude();
+        let diff =
+            (panel_loads.acceleration_inertial - cannon_loads.acceleration_inertial).magnitude();
         let rel = diff / cannon_loads.acceleration_inertial.magnitude();
         assert!(
             rel < 1e-10,
@@ -802,7 +799,10 @@ mod tests {
             quat_from_axis_angle(Vector3::new(1.0, 0.0, 0.0), std::f64::consts::FRAC_PI_4);
 
         let a0 = drag.loads(0.0, &s0, None).acceleration_inertial.magnitude();
-        let a45 = drag.loads(0.0, &s45, None).acceleration_inertial.magnitude();
+        let a45 = drag
+            .loads(0.0, &s45, None)
+            .acceleration_inertial
+            .magnitude();
 
         let ratio = a45 / a0;
         let expected = std::f64::consts::FRAC_PI_4.cos(); // cos(45°) = √2/2
@@ -824,7 +824,10 @@ mod tests {
             quat_from_axis_angle(Vector3::new(1.0, 0.0, 0.0), std::f64::consts::FRAC_PI_3);
 
         let a0 = drag.loads(0.0, &s0, None).acceleration_inertial.magnitude();
-        let a60 = drag.loads(0.0, &s60, None).acceleration_inertial.magnitude();
+        let a60 = drag
+            .loads(0.0, &s60, None)
+            .acceleration_inertial
+            .magnitude();
 
         let ratio = a60 / a0;
         assert!(
@@ -843,11 +846,11 @@ mod tests {
         s90.attitude.quaternion =
             quat_from_axis_angle(Vector3::new(1.0, 0.0, 0.0), std::f64::consts::FRAC_PI_2);
 
-        let a = drag.loads(0.0, &s90, None).acceleration_inertial.magnitude();
-        assert!(
-            a < 1e-20,
-            "90° rotation: expected zero drag, got {a:.3e}"
-        );
+        let a = drag
+            .loads(0.0, &s90, None)
+            .acceleration_inertial
+            .magnitude();
+        assert!(a < 1e-20, "90° rotation: expected zero drag, got {a:.3e}");
     }
 
     #[test]
@@ -906,8 +909,7 @@ mod tests {
         for i in 0..20 {
             let angle = (i as f64) * std::f64::consts::PI / 10.0; // 0 to 2π
             let mut state = iss_state();
-            state.attitude.quaternion =
-                quat_from_axis_angle(Vector3::new(1.0, 1.0, 1.0), angle);
+            state.attitude.quaternion = quat_from_axis_angle(Vector3::new(1.0, 1.0, 1.0), angle);
 
             let loads = drag.loads(0.0, &state, None);
             let a = loads.acceleration_inertial;
@@ -1071,7 +1073,10 @@ mod tests {
     fn quat_compose(q_second: &Vector4<f64>, q_first: &Vector4<f64>) -> Vector4<f64> {
         use nalgebra::{Quaternion, UnitQuaternion};
         let uq_second = UnitQuaternion::from_quaternion(Quaternion::new(
-            q_second[0], q_second[1], q_second[2], q_second[3],
+            q_second[0],
+            q_second[1],
+            q_second[2],
+            q_second[3],
         ));
         let uq_first = UnitQuaternion::from_quaternion(Quaternion::new(
             q_first[0], q_first[1], q_first[2], q_first[3],
@@ -1126,10 +1131,7 @@ mod tests {
         .rotation_matrix();
 
         let s2 = SpacecraftState {
-            orbit: OrbitalState::new(
-                r_mat * *s1.orbit.position(),
-                r_mat * *s1.orbit.velocity(),
-            ),
+            orbit: OrbitalState::new(r_mat * *s1.orbit.position(), r_mat * *s1.orbit.velocity()),
             attitude: AttitudeState {
                 quaternion: quat_compose(&q_r, &s1.attitude.quaternion),
                 angular_velocity: s1.attitude.angular_velocity,
@@ -1201,8 +1203,8 @@ mod tests {
             };
             let l2 = drag.loads(0.0, &s2, None);
 
-            let tau_rel = (l2.torque_body - l1.torque_body).magnitude()
-                / l1.torque_body.magnitude();
+            let tau_rel =
+                (l2.torque_body - l1.torque_body).magnitude() / l1.torque_body.magnitude();
             assert!(
                 tau_rel < 1e-10,
                 "Body-frame torque should be invariant under {angle_deg}° about {axis:?}: \
@@ -1264,7 +1266,7 @@ mod tests {
 
         let rel = (loads.acceleration_inertial.magnitude()
             - ref_loads.acceleration_inertial.magnitude())
-            .abs()
+        .abs()
             / ref_loads.acceleration_inertial.magnitude();
         assert!(
             rel < 1e-10,
@@ -1393,38 +1395,41 @@ mod tests {
 
     #[test]
     fn panels_integrable_with_rk4() {
-        use nalgebra::Matrix3;
-        use orts_integrator::{Integrator, OdeState, Rk4};
+        use super::super::SpacecraftDynamics;
         use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
-        use super::super::SpacecraftDynamics;
+        use nalgebra::Matrix3;
+        use orts_integrator::{Integrator, OdeState, Rk4};
 
         let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));
-        let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia)
-            .with_load(Box::new(drag));
+        let dyn_sc =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_load(Box::new(drag));
 
         let result = Rk4.integrate(&dyn_sc, iss_state(), 0.0, 60.0, 1.0, |_, _| {});
-        assert!(result.is_finite(), "State should remain finite after 60s integration");
+        assert!(
+            result.is_finite(),
+            "State should remain finite after 60s integration"
+        );
         assert!(result.orbit.position().magnitude() > 0.0);
     }
 
     #[test]
     fn panels_drag_reduces_orbital_energy() {
-        use nalgebra::Matrix3;
-        use orts_integrator::{Integrator, Rk4};
+        use super::super::SpacecraftDynamics;
         use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
-        use super::super::SpacecraftDynamics;
+        use nalgebra::Matrix3;
+        use orts_integrator::{Integrator, Rk4};
 
         let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));
-        let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia)
-            .with_load(Box::new(drag));
+        let dyn_sc =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_load(Box::new(drag));
 
         let s0 = iss_state();
         let e0 = 0.5 * s0.orbit.velocity().magnitude_squared()
@@ -1442,19 +1447,19 @@ mod tests {
 
     #[test]
     fn tumbling_asymmetric_panels_varying_drag() {
-        use nalgebra::Matrix3;
-        use orts_integrator::{Integrator, Rk4};
+        use super::super::SpacecraftDynamics;
         use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
-        use super::super::SpacecraftDynamics;
+        use nalgebra::Matrix3;
+        use orts_integrator::{Integrator, Rk4};
 
         // Asymmetric panel: only one face, so drag depends on orientation
         let panel = SurfacePanel::at_com(20.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));
-        let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia)
-            .with_load(Box::new(drag));
+        let dyn_sc =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_load(Box::new(drag));
 
         // Give it a tumble
         let mut state = iss_state();
@@ -1480,16 +1485,16 @@ mod tests {
 
     #[test]
     fn cannonball_integrable_with_spacecraft_dynamics() {
-        use nalgebra::Matrix3;
-        use orts_integrator::{Integrator, OdeState, Rk4};
+        use super::super::SpacecraftDynamics;
         use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
-        use super::super::SpacecraftDynamics;
+        use nalgebra::Matrix3;
+        use orts_integrator::{Integrator, OdeState, Rk4};
 
         let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.01));
         let inertia = Matrix3::from_diagonal(&Vector3::new(10.0, 10.0, 10.0));
-        let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia)
-            .with_load(Box::new(drag));
+        let dyn_sc =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_load(Box::new(drag));
 
         let result = Rk4.integrate(&dyn_sc, iss_state(), 0.0, 60.0, 1.0, |_, _| {});
         assert!(result.is_finite());

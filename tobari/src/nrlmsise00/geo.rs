@@ -225,9 +225,6 @@ mod tests {
         );
         // Longitude wraps to [-180, 180]
         let lon_diff = ((lon_deg - expected_lon + 180.0) % 360.0 - 180.0).abs();
-        assert!(
-            lon_diff < 0.01,
-            "lon={lon_deg}, expected {expected_lon}"
-        );
+        assert!(lon_diff < 0.01, "lon={lon_deg}, expected {expected_lon}");
     }
 }

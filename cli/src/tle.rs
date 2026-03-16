@@ -17,9 +17,7 @@ pub fn fetch_tle_by_norad_id(norad_id: u32) -> Tle {
 
 /// Try fetching TLE from CelesTrak (3LE format).
 fn fetch_tle_celestrak(norad_id: u32) -> Option<Tle> {
-    let url = format!(
-        "https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=3LE"
-    );
+    let url = format!("https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=3LE");
     eprintln!("Fetching TLE for NORAD ID {norad_id} from CelesTrak...");
     let body = match ureq::get(&url).call() {
         Ok(mut resp) => match resp.body_mut().read_to_string() {
@@ -49,9 +47,7 @@ fn fetch_tle_celestrak(norad_id: u32) -> Option<Tle> {
 
 /// Try fetching TLE from SatNOGS DB (JSON API).
 fn fetch_tle_satnogs(norad_id: u32) -> Option<Tle> {
-    let url = format!(
-        "https://db.satnogs.org/api/tle/?norad_cat_id={norad_id}&format=json"
-    );
+    let url = format!("https://db.satnogs.org/api/tle/?norad_cat_id={norad_id}&format=json");
     eprintln!("Fetching TLE for NORAD ID {norad_id} from SatNOGS...");
     let body = match ureq::get(&url).call() {
         Ok(mut resp) => match resp.body_mut().read_to_string() {

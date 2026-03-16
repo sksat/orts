@@ -1,5 +1,5 @@
-use nalgebra::Vector3;
 use kaname::epoch::Epoch;
+use nalgebra::Vector3;
 
 use crate::OrbitalState;
 use crate::perturbations::ForceModel;
@@ -61,7 +61,8 @@ impl ForceModel for ThirdBodyGravity {
         let r_body_mag = r_body.magnitude();
 
         // a = μ₃ * [(r_body - r_sat)/d³ - r_body/R³]
-        self.mu_body * (r_sat_to_body / (d * d * d) - r_body / (r_body_mag * r_body_mag * r_body_mag))
+        self.mu_body
+            * (r_sat_to_body / (d * d * d) - r_body / (r_body_mag * r_body_mag * r_body_mag))
     }
 }
 
@@ -74,10 +75,7 @@ mod tests {
     fn iss_state() -> OrbitalState {
         let r = R_EARTH + 400.0;
         let v = (MU_EARTH / r).sqrt();
-        OrbitalState::new(
-            vector![r, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        )
+        OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0])
     }
 
     fn test_epoch() -> Epoch {
@@ -124,7 +122,11 @@ mod tests {
         let state = iss_state();
 
         let a = tb.acceleration(0.0, &state, None);
-        assert_eq!(a, Vector3::zeros(), "No epoch should give zero acceleration");
+        assert_eq!(
+            a,
+            Vector3::zeros(),
+            "No epoch should give zero acceleration"
+        );
     }
 
     #[test]
@@ -162,10 +164,7 @@ mod tests {
         let tb = ThirdBodyGravity::sun();
         let r = R_EARTH + 400.0;
         let v = (MU_EARTH / r).sqrt();
-        let state = OrbitalState::new(
-            vector![0.0, r, 0.0],
-            vector![-v, 0.0, 0.0],
-        );
+        let state = OrbitalState::new(vector![0.0, r, 0.0], vector![-v, 0.0, 0.0]);
 
         let epoch1 = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let epoch2 = Epoch::from_gregorian(2024, 6, 20, 12, 0, 0.0);
@@ -190,13 +189,14 @@ mod tests {
         let leo_state = iss_state();
         let geo_r = 42164.0; // GEO radius
         let geo_v = (MU_EARTH / geo_r).sqrt();
-        let geo_state = OrbitalState::new(
-            vector![geo_r, 0.0, 0.0],
-            vector![0.0, geo_v, 0.0],
-        );
+        let geo_state = OrbitalState::new(vector![geo_r, 0.0, 0.0], vector![0.0, geo_v, 0.0]);
 
-        let a_leo = tb_moon.acceleration(0.0, &leo_state, Some(&epoch)).magnitude();
-        let a_geo = tb_moon.acceleration(0.0, &geo_state, Some(&epoch)).magnitude();
+        let a_leo = tb_moon
+            .acceleration(0.0, &leo_state, Some(&epoch))
+            .magnitude();
+        let a_geo = tb_moon
+            .acceleration(0.0, &geo_state, Some(&epoch))
+            .magnitude();
 
         // At GEO, satellite is closer to Moon (shorter range) → larger perturbation
         // Also the "indirect" term is larger relative to "direct" term

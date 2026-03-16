@@ -8,15 +8,15 @@
 //! - dt convergence (4th-order for RK4)
 //! - Energy-work consistency (nonconservative force)
 
-use nalgebra::vector;
-use kaname::epoch::Epoch;
-use orts_integrator::{Integrator, Rk4};
-use orts::OrbitalState;
 use kaname::constants::{MU_EARTH, R_EARTH};
+use kaname::epoch::Epoch;
+use nalgebra::vector;
+use orts::OrbitalState;
 use orts::gravity::PointMass;
 use orts::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;
 use orts::perturbations::SolarRadiationPressure;
+use orts_integrator::{Integrator, Rk4};
 use std::f64::consts::PI;
 
 // ============================================================================
@@ -61,11 +61,8 @@ fn propagate_collecting(
         let t_end = t + period;
         current = Rk4.integrate(system, current, t, t_end, dt, |_, _| {});
         t = t_end;
-        let elems = KeplerianElements::from_state_vector(
-            current.position(),
-            current.velocity(),
-            MU_EARTH,
-        );
+        let elems =
+            KeplerianElements::from_state_vector(current.position(), current.velocity(), MU_EARTH);
         eccentricities.push(elems.eccentricity);
         sma_values.push(elems.semi_major_axis);
     }
@@ -93,10 +90,7 @@ fn srp_eccentricity_growth_no_shadow() {
     let dt = 10.0;
 
     let system = point_mass_srp_system(1.5, 0.02, false, epoch);
-    let initial = OrbitalState::new(
-        vector![a, 0.0, 0.0],
-        vector![0.0, v, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
     let (eccentricities, _, _) = propagate_collecting(&system, &initial, period, n_orbits, dt);
 
@@ -119,9 +113,7 @@ fn srp_eccentricity_growth_no_shadow() {
         eccentricities.first().unwrap()
     );
 
-    println!(
-        "SRP eccentricity growth over {n_orbits} orbits: e_final={final_e:.6e}"
-    );
+    println!("SRP eccentricity growth over {n_orbits} orbits: e_final={final_e:.6e}");
 }
 
 // ============================================================================
@@ -143,10 +135,7 @@ fn srp_scaling_area_to_mass() {
 
     let run_with_am = |am: f64| -> f64 {
         let system = point_mass_srp_system(1.5, am, false, epoch);
-        let initial = OrbitalState::new(
-            vector![a, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        );
+        let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
         let (eccentricities, _, _) = propagate_collecting(&system, &initial, period, n_orbits, dt);
         *eccentricities.last().unwrap()
     };
@@ -183,10 +172,7 @@ fn srp_no_sma_secular_drift() {
     let dt = 10.0;
 
     let system = point_mass_srp_system(1.5, 0.02, false, epoch);
-    let initial = OrbitalState::new(
-        vector![a, 0.0, 0.0],
-        vector![0.0, v, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
     let (_, sma_values, _) = propagate_collecting(&system, &initial, period, n_orbits, dt);
 
@@ -197,9 +183,7 @@ fn srp_no_sma_secular_drift() {
         .map(|s| (s - mean_sma).abs())
         .fold(0.0_f64, f64::max);
 
-    println!(
-        "SMA stability: mean={mean_sma:.3} km, max_deviation={max_deviation:.6} km"
-    );
+    println!("SMA stability: mean={mean_sma:.3} km, max_deviation={max_deviation:.6} km");
 
     // Allow oscillation but no secular drift
     assert!(
@@ -235,10 +219,7 @@ fn srp_shadow_reduces_effect() {
 
     let run = |with_shadow: bool| -> f64 {
         let system = point_mass_srp_system(1.5, 0.02, with_shadow, epoch);
-        let initial = OrbitalState::new(
-            vector![a, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        );
+        let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
         let (eccentricities, _, _) = propagate_collecting(&system, &initial, period, n_orbits, dt);
         *eccentricities.last().unwrap()
     };
@@ -282,10 +263,7 @@ fn srp_time_reversal() {
     let v = (MU_EARTH / a).sqrt();
 
     let system = point_mass_srp_system(1.5, 0.02, false, epoch);
-    let initial = OrbitalState::new(
-        vector![a, 0.0, 0.0],
-        vector![0.0, v, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
     let period = 2.0 * PI * (a.powi(3) / MU_EARTH).sqrt();
     let total_time = 5.0 * period;
@@ -295,22 +273,21 @@ fn srp_time_reversal() {
     let forward = Rk4.integrate(&system, initial.clone(), 0.0, total_time, dt, |_, _| {});
 
     // Backward propagation (negate velocity, propagate forward, negate velocity again)
-    let reversed = OrbitalState::new(
-        *forward.position(),
-        -*forward.velocity(),
+    let reversed = OrbitalState::new(*forward.position(), -*forward.velocity());
+    let backward = Rk4.integrate(
+        &system,
+        reversed,
+        total_time,
+        2.0 * total_time,
+        dt,
+        |_, _| {},
     );
-    let backward = Rk4.integrate(&system, reversed, total_time, 2.0 * total_time, dt, |_, _| {});
-    let recovered = OrbitalState::new(
-        *backward.position(),
-        -*backward.velocity(),
-    );
+    let recovered = OrbitalState::new(*backward.position(), -*backward.velocity());
 
     let pos_err = (*recovered.position() - *initial.position()).magnitude();
     let rel_pos_err = pos_err / initial.position().magnitude();
 
-    println!(
-        "Time reversal: pos_err={pos_err:.3e} km, rel_err={rel_pos_err:.3e}"
-    );
+    println!("Time reversal: pos_err={pos_err:.3e} km, rel_err={rel_pos_err:.3e}");
 
     assert!(
         rel_pos_err < 1e-6,
@@ -337,10 +314,7 @@ fn srp_energy_work_consistency() {
     let cr = 1.5;
     let area_to_mass = 0.02;
     let system = point_mass_srp_system(cr, area_to_mass, false, epoch);
-    let initial = OrbitalState::new(
-        vector![a, 0.0, 0.0],
-        vector![0.0, v, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
     let orbital_energy = |s: &OrbitalState| -> f64 {
         let r = s.position().magnitude();
@@ -375,9 +349,7 @@ fn srp_energy_work_consistency() {
     // The work integral is computed via left Riemann sum (O(dt)),
     // so we allow reasonable tolerance for a quantity that oscillates
     // around zero. Check that both are small and have the same sign.
-    println!(
-        "Energy-work: ΔE={delta_e:.6e}, work={work_accumulated:.6e}"
-    );
+    println!("Energy-work: ΔE={delta_e:.6e}, work={work_accumulated:.6e}");
 
     // Both should be very small (SRP barely changes energy on circular orbit)
     assert!(
@@ -413,10 +385,7 @@ fn srp_dt_convergence() {
     let v = (MU_EARTH / a).sqrt();
 
     let system = point_mass_srp_system(1.5, 0.02, false, epoch);
-    let initial = OrbitalState::new(
-        vector![a, 0.0, 0.0],
-        vector![0.0, v, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
     let duration = 1000.0; // ~1/6 orbit
 
@@ -424,7 +393,14 @@ fn srp_dt_convergence() {
     let dt_fine = 2.0;
     let dt_finest = 1.0;
 
-    let f_coarse = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
+    let f_coarse = Rk4.integrate(
+        &system,
+        initial.clone(),
+        0.0,
+        duration,
+        dt_coarse,
+        |_, _| {},
+    );
     let f_fine = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
     let f_finest = Rk4.integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
 
@@ -433,9 +409,7 @@ fn srp_dt_convergence() {
 
     let ratio = err_coarse / err_fine;
 
-    println!(
-        "dt convergence: err(4s)={err_coarse:.3e}, err(2s)={err_fine:.3e}, ratio={ratio:.2}"
-    );
+    println!("dt convergence: err(4s)={err_coarse:.3e}, err(2s)={err_fine:.3e}, ratio={ratio:.2}");
 
     assert!(
         ratio > 10.0 && ratio < 25.0,
@@ -462,10 +436,7 @@ fn srp_geo_eccentricity() {
     let dt = 30.0; // GPS period ~12h, dt=30s is fine
 
     let system = point_mass_srp_system(1.5, 0.04, true, epoch);
-    let initial = OrbitalState::new(
-        vector![a, 0.0, 0.0],
-        vector![0.0, v, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
     let (eccentricities, sma_values, _) =
         propagate_collecting(&system, &initial, period, n_orbits, dt);

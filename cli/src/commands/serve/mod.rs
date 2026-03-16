@@ -1,8 +1,8 @@
-pub mod protocol;
 pub mod compute;
 mod connection;
 mod history;
 mod manager;
+pub mod protocol;
 
 use std::sync::Arc;
 
@@ -12,8 +12,8 @@ use tokio::sync::{broadcast, mpsc};
 use crate::cli::SimArgs;
 use crate::sim::params::SimParams;
 
-use manager::SimCommand;
 use connection::handle_connection;
+use manager::SimCommand;
 
 pub fn run_server(sim: &SimArgs, port: u16) {
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
@@ -58,7 +58,9 @@ async fn async_server(sim: &SimArgs, port: u16) {
     if has_explicit_sim_args(sim) && initial_config.is_none() {
         // Legacy path: build SimParams from CLI args directly
         let params = Arc::new(SimParams::from_sim_args(sim, true));
-        tokio::spawn(manager::simulation_manager_with_params(params, cmd_rx, mgr_tx));
+        tokio::spawn(manager::simulation_manager_with_params(
+            params, cmd_rx, mgr_tx,
+        ));
     } else {
         tokio::spawn(manager::simulation_manager(initial_config, cmd_rx, mgr_tx));
     }

@@ -1,7 +1,7 @@
-use kaname::epoch::Epoch;
-use nalgebra::Vector3;
 use crate::attitude::TorqueModel;
 use crate::perturbations::ForceModel;
+use kaname::epoch::Epoch;
+use nalgebra::Vector3;
 
 use super::{ExternalLoads, LoadModel, SpacecraftState};
 
@@ -46,8 +46,8 @@ impl LoadModel for TorqueModelOnly {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::attitude::AttitudeState;
     use crate::OrbitalState;
+    use crate::attitude::AttitudeState;
 
     /// Mock ForceModel that returns a fixed acceleration and records the inputs.
     struct MockForce {
@@ -58,7 +58,12 @@ mod tests {
         fn name(&self) -> &str {
             "mock_force"
         }
-        fn acceleration(&self, _t: f64, _state: &OrbitalState, _epoch: Option<&Epoch>) -> Vector3<f64> {
+        fn acceleration(
+            &self,
+            _t: f64,
+            _state: &OrbitalState,
+            _epoch: Option<&Epoch>,
+        ) -> Vector3<f64> {
             self.accel
         }
     }
@@ -72,22 +77,14 @@ mod tests {
         fn name(&self) -> &str {
             "mock_torque"
         }
-        fn torque(
-            &self,
-            _t: f64,
-            _state: &AttitudeState,
-            _epoch: Option<&Epoch>,
-        ) -> Vector3<f64> {
+        fn torque(&self, _t: f64, _state: &AttitudeState, _epoch: Option<&Epoch>) -> Vector3<f64> {
             self.torque_val
         }
     }
 
     fn sample_spacecraft_state() -> SpacecraftState {
         SpacecraftState {
-            orbit: OrbitalState::new(
-                Vector3::new(7000.0, 0.0, 0.0),
-                Vector3::new(0.0, 7.5, 0.0),
-            ),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0)),
             attitude: AttitudeState::identity(),
             mass: 500.0,
         }

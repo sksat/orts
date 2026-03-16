@@ -1,12 +1,12 @@
-use nalgebra::Vector3;
 use kaname::epoch::Epoch;
 use kaname::{WGS84_A, WGS84_B};
+use nalgebra::Vector3;
 use tobari::{AtmosphereModel, Exponential};
 
-use kaname::body::KnownBody;
-use kaname::constants::{R_EARTH, OMEGA_EARTH};
 use crate::OrbitalState;
 use crate::perturbations::ForceModel;
+use kaname::body::KnownBody;
+use kaname::constants::{OMEGA_EARTH, R_EARTH};
 
 /// Default ballistic coefficient for LEO satellites \[m²/kg\].
 ///
@@ -152,10 +152,7 @@ mod tests {
         let drag = iss_drag();
         let r = R_EARTH + 400.0;
         let v = (MU_EARTH / r).sqrt();
-        let state = OrbitalState::new(
-            vector![r, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        );
+        let state = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
 
         let a = drag.acceleration(0.0, &state, None);
 
@@ -165,8 +162,16 @@ mod tests {
         // Drag should be in -y direction (opposing v_rel)
         assert!(a.y < 0.0, "Drag should oppose velocity, got a.y={}", a.y);
         // x and z components should be near zero
-        assert!(a.x.abs() < a.y.abs() * 1e-10, "a.x should be ~0, got {}", a.x);
-        assert!(a.z.abs() < a.y.abs() * 1e-10, "a.z should be ~0, got {}", a.z);
+        assert!(
+            a.x.abs() < a.y.abs() * 1e-10,
+            "a.x should be ~0, got {}",
+            a.x
+        );
+        assert!(
+            a.z.abs() < a.y.abs() * 1e-10,
+            "a.z should be ~0, got {}",
+            a.z
+        );
 
         // Check that drag accounts for atmosphere co-rotation
         // v_rel < v_inertial because atmosphere moves with Earth
@@ -181,10 +186,7 @@ mod tests {
         let drag = iss_drag();
         let r = R_EARTH + 400.0;
         let v = (MU_EARTH / r).sqrt();
-        let state = OrbitalState::new(
-            vector![r, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        );
+        let state = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
 
         let a = drag.acceleration(0.0, &state, None);
         let a_mag = a.magnitude();
@@ -205,14 +207,9 @@ mod tests {
         let drag = iss_drag();
         let v = 7.5; // approximate LEO velocity
 
-        let state_high = OrbitalState::new(
-            vector![R_EARTH + 600.0, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        );
-        let state_low = OrbitalState::new(
-            vector![R_EARTH + 300.0, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        );
+        let state_high =
+            OrbitalState::new(vector![R_EARTH + 600.0, 0.0, 0.0], vector![0.0, v, 0.0]);
+        let state_low = OrbitalState::new(vector![R_EARTH + 300.0, 0.0, 0.0], vector![0.0, v, 0.0]);
 
         let a_high = drag.acceleration(0.0, &state_high, None).magnitude();
         let a_low = drag.acceleration(0.0, &state_low, None).magnitude();
@@ -226,10 +223,7 @@ mod tests {
     #[test]
     fn no_drag_above_atmosphere() {
         let drag = iss_drag();
-        let state = OrbitalState::new(
-            vector![R_EARTH + 3000.0, 0.0, 0.0],
-            vector![0.0, 5.0, 0.0],
-        );
+        let state = OrbitalState::new(vector![R_EARTH + 3000.0, 0.0, 0.0], vector![0.0, 5.0, 0.0]);
 
         let a = drag.acceleration(0.0, &state, None);
         assert_eq!(a, Vector3::zeros(), "No drag above atmosphere");
@@ -301,13 +295,13 @@ mod tests {
 
         let r = R_EARTH + 400.0;
         let v = (MU_EARTH / r).sqrt();
-        let state = OrbitalState::new(
-            vector![r, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        );
+        let state = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
 
         // Without epoch, HP returns average density — should still produce non-zero drag
         let a = drag.acceleration(0.0, &state, None);
-        assert!(a.magnitude() > 0.0, "HP drag should be non-zero at ISS altitude");
+        assert!(
+            a.magnitude() > 0.0,
+            "HP drag should be non-zero at ISS altitude"
+        );
     }
 }

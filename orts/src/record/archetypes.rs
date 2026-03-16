@@ -25,10 +25,7 @@ impl Archetype for OrbitalState {
         "OrbitalState"
     }
     fn required_components() -> Vec<ComponentName> {
-        vec![
-            Position3D::component_name(),
-            Velocity3D::component_name(),
-        ]
+        vec![Position3D::component_name(), Velocity3D::component_name()]
     }
     fn optional_components() -> Vec<ComponentName> {
         vec![KeplerianState::component_name()]

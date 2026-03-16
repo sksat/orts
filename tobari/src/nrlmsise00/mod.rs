@@ -22,8 +22,8 @@ pub mod coefficients;
 pub mod geo;
 mod model;
 
-use crate::space_weather::SpaceWeatherProvider;
 use crate::AtmosphereModel;
+use crate::space_weather::SpaceWeatherProvider;
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 
@@ -162,7 +162,10 @@ impl Nrlmsise00 {
 impl AtmosphereModel for Nrlmsise00 {
     fn density(&self, altitude_km: f64, position: &Vector3<f64>, epoch: Option<&Epoch>) -> f64 {
         match epoch {
-            Some(e) => self.density_with_composition(altitude_km, position, e).total_mass_density,
+            Some(e) => {
+                self.density_with_composition(altitude_km, position, e)
+                    .total_mass_density
+            }
             None => 0.0,
         }
     }

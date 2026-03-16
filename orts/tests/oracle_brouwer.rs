@@ -10,12 +10,12 @@
 //! - Kozai, Y. (1959), AJ 64, 367–377.
 //! - Lara, M. (2021), Celest. Mech. Dyn. Astron. 133, 43.
 
-use orts_integrator::{DormandPrince, IntegrationOutcome, Tolerances};
-use orts::OrbitalState;
 use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
+use orts::OrbitalState;
 use orts::gravity::ZonalHarmonics;
 use orts::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;
+use orts_integrator::{DormandPrince, IntegrationOutcome, Tolerances};
 use std::f64::consts::PI;
 use std::ops::ControlFlow;
 
@@ -73,9 +73,7 @@ fn raan_rate_brouwer_j2sq(a: f64, e: f64, i: f64) -> f64 {
     let first = -1.5 * n * J2_EARTH * re_over_p.powi(2) * c;
 
     // Second-order J2² bracket
-    let bracket = (5.0 * s2 + 4.0) * eta * eta
-        + (36.0 * s2 - 24.0) * eta
-        + 5.0 * (7.0 * s2 - 8.0);
+    let bracket = (5.0 * s2 + 4.0) * eta * eta + (36.0 * s2 - 24.0) * eta + 5.0 * (7.0 * s2 - 8.0);
 
     let second = (3.0 / 16.0) * n * J2_EARTH.powi(2) * re_over_p.powi(4) * c * bracket;
 
@@ -110,8 +108,8 @@ fn propagate_collecting_elements_dp45(
 
     for _ in 0..n_orbits {
         let t_end = t + period;
-        let outcome: IntegrationOutcome<OrbitalState, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<OrbitalState, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 system,
                 current,
                 t,
@@ -126,11 +124,8 @@ fn propagate_collecting_elements_dp45(
             other => panic!("DP45 integration failed: {other:?}"),
         }
         t = t_end;
-        let elems = KeplerianElements::from_state_vector(
-            current.position(),
-            current.velocity(),
-            MU_EARTH,
-        );
+        let elems =
+            KeplerianElements::from_state_vector(current.position(), current.velocity(), MU_EARTH);
         orbit_elements.push(elems);
     }
 
@@ -435,10 +430,10 @@ fn j2_squared_correction_sign_and_magnitude() {
     // short-period residuals (~0.004 °/day noise). Instead, we verify the
     // analytical properties of the correction directly.
     let test_cases = [
-        (400.0, 0.001, 51.6_f64.to_radians()),   // ISS-like, prograde
-        (800.0, 0.001, 98.6_f64.to_radians()),    // SSO, retrograde
-        (600.0, 0.001, 70.0_f64.to_radians()),    // Mid-inclination
-        (1000.0, 0.001, 99.5_f64.to_radians()),   // High SSO
+        (400.0, 0.001, 51.6_f64.to_radians()),  // ISS-like, prograde
+        (800.0, 0.001, 98.6_f64.to_radians()),  // SSO, retrograde
+        (600.0, 0.001, 70.0_f64.to_radians()),  // Mid-inclination
+        (1000.0, 0.001, 99.5_f64.to_radians()), // High SSO
     ];
 
     for (alt, e, i) in test_cases {
@@ -487,8 +482,7 @@ fn j2_squared_correction_sign_and_magnitude() {
             rtol: 1e-10,
         };
         let system = earth_j2_system();
-        let (orbit_elems, _) =
-            propagate_collecting_elements_dp45(&system, &elements, 200, &tol);
+        let (orbit_elems, _) = propagate_collecting_elements_dp45(&system, &elements, 200, &tol);
         let numerical = orbit_averaged_raan_rate(&elements, &orbit_elems, 200);
 
         let err_first = (numerical - first).abs().to_degrees() * 86400.0;
@@ -609,12 +603,7 @@ fn sso_raan_tracks_sun_60days() {
     let (orbit_elems, _) = propagate_collecting_elements_dp45(&system, &elements, n_orbits, &tol);
 
     // Compute RAAN at several checkpoints and compare drift rate vs SSO target
-    let checkpoints = [
-        n_orbits / 4,
-        n_orbits / 2,
-        3 * n_orbits / 4,
-        n_orbits - 1,
-    ];
+    let checkpoints = [n_orbits / 4, n_orbits / 2, 3 * n_orbits / 4, n_orbits - 1];
 
     let initial_raan = elements.raan;
 

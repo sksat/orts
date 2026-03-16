@@ -1,8 +1,8 @@
 use kaname::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
 
-use super::state::AttitudeState;
 use super::TorqueModel;
+use super::state::AttitudeState;
 
 /// Gravity gradient torque on a rigid body in a gravitational field.
 ///
@@ -37,11 +37,7 @@ impl GravityGradientTorque {
     ///
     /// The position traces a circle of given radius at the mean motion rate.
     /// Useful for testing gravity gradient libration.
-    pub fn circular_orbit(
-        mu: f64,
-        radius: f64,
-        inertia: Matrix3<f64>,
-    ) -> Self {
+    pub fn circular_orbit(mu: f64, radius: f64, inertia: Matrix3<f64>) -> Self {
         let n = (mu / radius.powi(3)).sqrt(); // mean motion
         Self::new(mu, inertia, move |t| {
             let theta = n * t;

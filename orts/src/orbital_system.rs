@@ -49,7 +49,10 @@ impl OrbitalSystem {
     /// then each perturbation by its [`ForceModel::name()`].
     pub fn acceleration_breakdown(&self, t: f64, state: &OrbitalState) -> Vec<(&str, f64)> {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
-        let grav = self.gravity.acceleration(self.mu, state.position()).magnitude();
+        let grav = self
+            .gravity
+            .acceleration(self.mu, state.position())
+            .magnitude();
         let mut result = vec![("gravity", grav)];
         for p in &self.perturbations {
             let a = p.acceleration(t, state, epoch.as_ref()).magnitude();
@@ -79,10 +82,10 @@ impl DynamicalSystem for OrbitalSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
     use crate::gravity::{PointMass, ZonalHarmonics};
     use crate::kepler::KeplerianElements;
     use crate::two_body::TwoBodySystem;
+    use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
     use nalgebra::vector;
     use orts_integrator::{Integrator, Rk4};
     use std::f64::consts::PI;
@@ -92,10 +95,7 @@ mod tests {
         let two_body = TwoBodySystem { mu: MU_EARTH };
         let orbital = OrbitalSystem::new(MU_EARTH, Box::new(PointMass));
 
-        let state = OrbitalState::new(
-            vector![6778.137, 0.0, 0.0],
-            vector![0.0, 7.6693, 0.0],
-        );
+        let state = OrbitalState::new(vector![6778.137, 0.0, 0.0], vector![0.0, 7.6693, 0.0]);
 
         let d1 = two_body.derivatives(0.0, &state);
         let d2 = orbital.derivatives(0.0, &state);
@@ -112,10 +112,7 @@ mod tests {
         let period = 2.0 * PI * (r.powi(3) / MU_EARTH).sqrt();
         let dt = 10.0;
 
-        let initial = OrbitalState::new(
-            vector![r, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        );
+        let initial = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
 
         let two_body = TwoBodySystem { mu: MU_EARTH };
         let final_tb = Rk4.integrate(&two_body, initial.clone(), 0.0, period, dt, |_, _| {});
@@ -130,8 +127,7 @@ mod tests {
 
     #[test]
     fn orbital_system_with_body_radius() {
-        let system =
-            OrbitalSystem::new(MU_EARTH, Box::new(PointMass)).with_body_radius(R_EARTH);
+        let system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass)).with_body_radius(R_EARTH);
         assert_eq!(system.body_radius, Some(R_EARTH));
     }
 
@@ -154,7 +150,12 @@ mod tests {
     }
 
     /// Propagate and return the final RAAN after duration seconds.
-    fn propagate_raan(system: &OrbitalSystem, elements: &KeplerianElements, dt: f64, duration: f64) -> f64 {
+    fn propagate_raan(
+        system: &OrbitalSystem,
+        elements: &KeplerianElements,
+        dt: f64,
+        duration: f64,
+    ) -> f64 {
         let (pos, vel) = elements.to_state_vector(MU_EARTH);
         let initial = OrbitalState::new(pos, vel);
 
@@ -263,7 +264,14 @@ mod tests {
         let dt_fine = 2.0;
         let dt_finest = 1.0;
 
-        let final_coarse = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
+        let final_coarse = Rk4.integrate(
+            &system,
+            initial.clone(),
+            0.0,
+            duration,
+            dt_coarse,
+            |_, _| {},
+        );
         let final_fine = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
         let final_finest = Rk4.integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
 
@@ -310,7 +318,14 @@ mod tests {
         let dt_fine = 2.0;
         let dt_finest = 1.0;
 
-        let final_coarse = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
+        let final_coarse = Rk4.integrate(
+            &system,
+            initial.clone(),
+            0.0,
+            duration,
+            dt_coarse,
+            |_, _| {},
+        );
         let final_fine = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
         let final_finest = Rk4.integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
 

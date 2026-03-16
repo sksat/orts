@@ -1,6 +1,6 @@
-use kaname::epoch::Epoch;
-use kaname::body::KnownBody;
 use crate::gravity;
+use kaname::body::KnownBody;
+use kaname::epoch::Epoch;
 
 use crate::orbital_system::OrbitalSystem;
 use crate::perturbations::{AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity};
@@ -39,8 +39,7 @@ pub fn build_orbital_system(
         }),
         None => Box::new(gravity::PointMass),
     };
-    let mut system = OrbitalSystem::new(mu, gravity_field)
-        .with_body_radius(props.radius);
+    let mut system = OrbitalSystem::new(mu, gravity_field).with_body_radius(props.radius);
 
     // Third-body gravity (requires epoch for ephemeris)
     if let Some(epoch) = epoch {
@@ -55,10 +54,7 @@ pub fn build_orbital_system(
     // Atmospheric drag (Earth only)
     if *body == KnownBody::Earth && sat.has_drag {
         let drag = match atmosphere {
-            Some(model) => {
-                AtmosphericDrag::for_earth(sat.ballistic_coeff)
-                    .with_atmosphere(model)
-            }
+            Some(model) => AtmosphericDrag::for_earth(sat.ballistic_coeff).with_atmosphere(model),
             None => AtmosphericDrag::for_earth(sat.ballistic_coeff),
         };
         system = system.with_perturbation(Box::new(drag));
@@ -91,10 +87,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
         };
-        let system = build_orbital_system(
-            &body, body.properties().mu, None, &sat,
-            None,
-        );
+        let system = build_orbital_system(&body, body.properties().mu, None, &sat, None);
         assert_eq!(system.body_radius, Some(body.properties().radius));
     }
 
@@ -107,10 +100,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
         };
-        let system = build_orbital_system(
-            &body, body.properties().mu, None, &sat,
-            None,
-        );
+        let system = build_orbital_system(&body, body.properties().mu, None, &sat, None);
         assert!(system.perturbation_names().contains(&"drag"));
     }
 
@@ -123,10 +113,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
         };
-        let system = build_orbital_system(
-            &body, body.properties().mu, None, &sat,
-            None,
-        );
+        let system = build_orbital_system(&body, body.properties().mu, None, &sat, None);
         assert!(!system.perturbation_names().contains(&"drag"));
     }
 
@@ -140,10 +127,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
         };
-        let system = build_orbital_system(
-            &body, body.properties().mu, Some(epoch), &sat,
-            None,
-        );
+        let system = build_orbital_system(&body, body.properties().mu, Some(epoch), &sat, None);
         let names = system.perturbation_names();
         assert!(names.contains(&"third_body_sun"));
         assert!(names.contains(&"third_body_moon"));
@@ -159,10 +143,7 @@ mod tests {
             srp_area_to_mass: Some(0.02),
             srp_cr: Some(1.8),
         };
-        let system = build_orbital_system(
-            &body, body.properties().mu, Some(epoch), &sat,
-            None,
-        );
+        let system = build_orbital_system(&body, body.properties().mu, Some(epoch), &sat, None);
         assert!(system.perturbation_names().contains(&"srp"));
     }
 }

@@ -103,7 +103,10 @@ mod tests {
 
         // Acceleration should be antiparallel to position
         let dot = accel.dot(&state_pos);
-        assert!(dot < 0.0, "acceleration should point toward center (dot={dot})");
+        assert!(
+            dot < 0.0,
+            "acceleration should point toward center (dot={dot})"
+        );
 
         // Should be collinear
         let cross = accel.cross(&state_pos);
@@ -362,8 +365,10 @@ mod tests {
         let pos1 = Vector3::new(7000.0, 0.0, 500.0);
         let pos2 = Vector3::new(14000.0, 0.0, 1000.0);
 
-        let j3_1 = (grav.acceleration(MU_EARTH, &pos1) - PointMass.acceleration(MU_EARTH, &pos1)).magnitude();
-        let j3_2 = (grav.acceleration(MU_EARTH, &pos2) - PointMass.acceleration(MU_EARTH, &pos2)).magnitude();
+        let j3_1 = (grav.acceleration(MU_EARTH, &pos1) - PointMass.acceleration(MU_EARTH, &pos1))
+            .magnitude();
+        let j3_2 = (grav.acceleration(MU_EARTH, &pos2) - PointMass.acceleration(MU_EARTH, &pos2))
+            .magnitude();
 
         // For same direction, J3 ~ r^(-5), so ratio should be 2^5 = 32
         let ratio = j3_1 / j3_2;
@@ -385,8 +390,10 @@ mod tests {
         };
         let pos = Vector3::new(6778.0, 0.0, 3000.0); // off-equator for nonzero J3
 
-        let a_j2 = (grav_j2.acceleration(MU_EARTH, &pos) - PointMass.acceleration(MU_EARTH, &pos)).magnitude();
-        let a_j3 = (grav_j3.acceleration(MU_EARTH, &pos) - PointMass.acceleration(MU_EARTH, &pos)).magnitude();
+        let a_j2 = (grav_j2.acceleration(MU_EARTH, &pos) - PointMass.acceleration(MU_EARTH, &pos))
+            .magnitude();
+        let a_j3 = (grav_j3.acceleration(MU_EARTH, &pos) - PointMass.acceleration(MU_EARTH, &pos))
+            .magnitude();
 
         // J3 should be ~1000x smaller than J2 (J3/J2 ~ 2.3e-3)
         assert!(
@@ -431,8 +438,10 @@ mod tests {
         let pos1 = Vector3::new(7000.0, 0.0, 500.0);
         let pos2 = Vector3::new(14000.0, 0.0, 1000.0);
 
-        let j4_1 = (grav.acceleration(MU_EARTH, &pos1) - PointMass.acceleration(MU_EARTH, &pos1)).magnitude();
-        let j4_2 = (grav.acceleration(MU_EARTH, &pos2) - PointMass.acceleration(MU_EARTH, &pos2)).magnitude();
+        let j4_1 = (grav.acceleration(MU_EARTH, &pos1) - PointMass.acceleration(MU_EARTH, &pos1))
+            .magnitude();
+        let j4_2 = (grav.acceleration(MU_EARTH, &pos2) - PointMass.acceleration(MU_EARTH, &pos2))
+            .magnitude();
 
         // For same direction, J4 ~ r^(-6), so ratio should be 2^6 = 64
         let ratio = j4_1 / j4_2;
@@ -484,9 +493,6 @@ mod tests {
             "J3+J4 correction ({diff:.6e}) should be <1% of J2 ({a_j2_mag:.6e})"
         );
         // But should be non-zero
-        assert!(
-            diff > 0.0,
-            "J3+J4 correction should be non-zero"
-        );
+        assert!(diff > 0.0, "J3+J4 correction should be non-zero");
     }
 }

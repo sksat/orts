@@ -166,7 +166,12 @@ mod tests {
     fn all_bodies_have_positive_mu() {
         for body in &ALL_BODIES {
             let props = body.properties();
-            assert!(props.mu > 0.0, "{:?} has non-positive mu: {}", body, props.mu);
+            assert!(
+                props.mu > 0.0,
+                "{:?} has non-positive mu: {}",
+                body,
+                props.mu
+            );
         }
     }
 
@@ -283,7 +288,12 @@ mod tests {
     fn only_earth_has_j3_j4() {
         assert!(KnownBody::Earth.properties().j3.is_some());
         assert!(KnownBody::Earth.properties().j4.is_some());
-        for body in &[KnownBody::Moon, KnownBody::Mars, KnownBody::Jupiter, KnownBody::Saturn] {
+        for body in &[
+            KnownBody::Moon,
+            KnownBody::Mars,
+            KnownBody::Jupiter,
+            KnownBody::Saturn,
+        ] {
             assert!(
                 body.properties().j3.is_none(),
                 "{:?} should not have J3 value",

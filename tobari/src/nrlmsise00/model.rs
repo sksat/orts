@@ -7,8 +7,8 @@
 //!
 //! All coefficient indices are 0-based (matching Rust arrays).
 
-use super::coefficients::*;
 use super::Nrlmsise00Input;
+use super::coefficients::*;
 use std::f64::consts::PI;
 
 // ─── Constants ───
@@ -108,15 +108,17 @@ fn ap_sum_factor(ex: f64) -> f64 {
 
 /// Geomagnetic activity function using 3-hour Ap history.
 fn ap_geomagnetic_index(ex: f64, ap_array: &[f64; 7], p: &[f64]) -> f64 {
-    let g0_vals: Vec<f64> = ap_array.iter().map(|&a| ap_saturation(a, p[24], p[25])).collect();
+    let g0_vals: Vec<f64> = ap_array
+        .iter()
+        .map(|&a| ap_saturation(a, p[24], p[25]))
+        .collect();
 
     let sum = g0_vals[0]
         + g0_vals[1] * ex
         + g0_vals[2] * ex * ex
         + g0_vals[3] * ex.powi(3)
         + g0_vals[4] * ex.powi(4)
-        + (g0_vals[5] * ex.powi(12) + g0_vals[6] * ex.powi(25)) * (1.0 - ex.powi(8))
-            / (1.0 - ex);
+        + (g0_vals[5] * ex.powi(12) + g0_vals[6] * ex.powi(25)) * (1.0 - ex.powi(8)) / (1.0 - ex);
 
     sum / ap_sum_factor(ex)
 }
@@ -224,13 +226,25 @@ fn geographic_variation(
     if sw[11].abs() > 0.0 && input.longitude_deg > -1000.0 {
         let lon_rad = input.longitude_deg * DEG_TO_RAD;
         t[10] = (1.0 + p[80] * dfa * sw[1].abs())
-            * ((p[64] * plg[1][2] + p[65] * plg[1][4] + p[66] * plg[1][6]
-                + p[103] * plg[1][1] + p[104] * plg[1][3] + p[105] * plg[1][5]
-                + sw[5].abs() * (p[109] * plg[1][1] + p[110] * plg[1][3] + p[111] * plg[1][5]) * cd14)
+            * ((p[64] * plg[1][2]
+                + p[65] * plg[1][4]
+                + p[66] * plg[1][6]
+                + p[103] * plg[1][1]
+                + p[104] * plg[1][3]
+                + p[105] * plg[1][5]
+                + sw[5].abs()
+                    * (p[109] * plg[1][1] + p[110] * plg[1][3] + p[111] * plg[1][5])
+                    * cd14)
                 * lon_rad.cos()
-                + (p[90] * plg[1][2] + p[91] * plg[1][4] + p[92] * plg[1][6]
-                    + p[106] * plg[1][1] + p[107] * plg[1][3] + p[108] * plg[1][5]
-                    + sw[5].abs() * (p[112] * plg[1][1] + p[113] * plg[1][3] + p[114] * plg[1][5]) * cd14)
+                + (p[90] * plg[1][2]
+                    + p[91] * plg[1][4]
+                    + p[92] * plg[1][6]
+                    + p[106] * plg[1][1]
+                    + p[107] * plg[1][3]
+                    + p[108] * plg[1][5]
+                    + sw[5].abs()
+                        * (p[112] * plg[1][1] + p[113] * plg[1][3] + p[114] * plg[1][5])
+                        * cd14)
                     * lon_rad.sin());
     }
 
@@ -277,11 +291,9 @@ fn geographic_variation(
 
     // t[13]: Terdiurnal (with annual modulation)
     t[13] = f2
-        * ((p[39] * plg[3][3]
-            + (p[93] * plg[3][4] + p[46] * plg[3][6]) * cd14 * sw[5].abs())
+        * ((p[39] * plg[3][3] + (p[93] * plg[3][4] + p[46] * plg[3][6]) * cd14 * sw[5].abs())
             * s3tloc
-            + (p[40] * plg[3][3]
-                + (p[94] * plg[3][4] + p[48] * plg[3][6]) * cd14 * sw[5].abs())
+            + (p[40] * plg[3][3] + (p[94] * plg[3][4] + p[48] * plg[3][6]) * cd14 * sw[5].abs())
                 * c3tloc);
 
     // Sum: p[30] + |sw[i+1]| * t[i]
@@ -323,8 +335,12 @@ fn geographic_variation_lower(
     t[0] = p[21] * dfa;
 
     // t[1]: Time independent (latitude)
-    t[1] = p[1] * plg[0][2] + p[2] * plg[0][4] + p[22] * plg[0][6]
-        + p[26] * plg[0][1] + p[14] * plg[0][3] + p[59] * plg[0][5];
+    t[1] = p[1] * plg[0][2]
+        + p[2] * plg[0][4]
+        + p[22] * plg[0][6]
+        + p[26] * plg[0][1]
+        + p[14] * plg[0][3]
+        + p[59] * plg[0][5];
 
     // t[2]: Symmetrical annual
     t[2] = (p[18] + p[47] * plg[0][2] + p[29] * plg[0][4]) * cd32;
@@ -424,8 +440,8 @@ fn cubic_spline_setup(x: &[f64], y: &[f64], n: usize, yp1: f64, ypn: f64, y2: &m
     if ypn > 0.99e30 {
         y2[n - 1] = 0.0;
     } else {
-        let un = (3.0 / (x[n - 1] - x[n - 2]))
-            * (ypn - (y[n - 1] - y[n - 2]) / (x[n - 1] - x[n - 2]));
+        let un =
+            (3.0 / (x[n - 1] - x[n - 2])) * (ypn - (y[n - 1] - y[n - 2]) / (x[n - 1] - x[n - 2]));
         y2[n - 1] = (un - 0.5 * u[n - 2]) / (0.5 * y2[n - 2] + 1.0);
     }
 
@@ -449,7 +465,8 @@ fn cubic_spline_interpolate(xa: &[f64], ya: &[f64], y2a: &[f64], n: usize, x: f6
     let h = xa[khi] - xa[klo];
     let a = (xa[khi] - x) / h;
     let b = (x - xa[klo]) / h;
-    a * ya[klo] + b * ya[khi]
+    a * ya[klo]
+        + b * ya[khi]
         + ((a * a * a - a) * y2a[klo] + (b * b * b - b) * y2a[khi]) * h * h / 6.0
 }
 
@@ -466,7 +483,8 @@ fn cubic_spline_integrate(xa: &[f64], ya: &[f64], y2a: &[f64], n: usize, x: f64)
         let b = (xx - xa[klo]) / h;
         let a2 = a * a;
         let b2 = b * b;
-        yi += ((1.0 - a2) * ya[klo] / 2.0 + b2 * ya[khi] / 2.0
+        yi += ((1.0 - a2) * ya[klo] / 2.0
+            + b2 * ya[khi] / 2.0
             + ((-(1.0 + a2 * a2) / 4.0 + a2 / 2.0) * y2a[klo]
                 + (b2 * b2 / 4.0 - b2 / 2.0) * y2a[khi])
                 * h
@@ -597,7 +615,13 @@ fn mixing_transition(dd: f64, dm: f64, zhm: f64, xmm: f64, xm: f64) -> f64 {
     let a = zhm / (xmm - xm);
 
     if dm <= 0.0 || dd <= 0.0 {
-        return if dd > 0.0 { dd } else if dm > 0.0 { dm } else { 1.0 };
+        return if dd > 0.0 {
+            dd
+        } else if dm > 0.0 {
+            dm
+        } else {
+            1.0
+        };
     }
 
     let ylog = a * (dm / dd).ln();
@@ -632,8 +656,16 @@ fn composition_correction_dual(alt: f64, r: f64, h1: f64, zh: f64, h2: f64) -> f
     if e1 < -70.0 && e2 < -70.0 {
         return r.exp();
     }
-    let ex1 = if e1 < -70.0 { (-70.0_f64).exp() } else { e1.exp() };
-    let ex2 = if e2 < -70.0 { (-70.0_f64).exp() } else { e2.exp() };
+    let ex1 = if e1 < -70.0 {
+        (-70.0_f64).exp()
+    } else {
+        e1.exp()
+    };
+    let ex2 = if e2 < -70.0 {
+        (-70.0_f64).exp()
+    } else {
+        e2.exp()
+    };
     (r / (1.0 + 0.5 * (ex1 + ex2))).exp()
 }
 
@@ -663,18 +695,25 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
     // ─── Exospheric temperature ───
     // Tinf variations are not important below za (simplification from C reference)
     let tinf = if alt > za {
-        (TEMP_BOUNDARY[0] * TEMP_COEFFICIENTS[0] * (1.0 + sw[16] * geographic_variation(&TEMP_COEFFICIENTS, input, &sw, &plg))).max(0.0)
+        (TEMP_BOUNDARY[0]
+            * TEMP_COEFFICIENTS[0]
+            * (1.0 + sw[16] * geographic_variation(&TEMP_COEFFICIENTS, input, &sw, &plg)))
+        .max(0.0)
     } else {
         TEMP_BOUNDARY[0] * TEMP_COEFFICIENTS[0]
     };
 
     // ─── Temperature at lower boundary (120 km) ───
-    let tlb = TEMP_BOUNDARY[1] * DENSITY_COEFFICIENTS[3][0] * (1.0 + sw[17] * geographic_variation(&DENSITY_COEFFICIENTS[3], input, &sw, &plg));
+    let tlb = TEMP_BOUNDARY[1]
+        * DENSITY_COEFFICIENTS[3][0]
+        * (1.0 + sw[17] * geographic_variation(&DENSITY_COEFFICIENTS[3], input, &sw, &plg));
 
     // ─── Gradient parameter (g0) and normalized s ───
     // Gradient variations not important below bottom of spline (72.5 km)
     let g0 = if alt > SPLINE_ALTITUDES[4] {
-        TEMP_BOUNDARY[3] * GRADIENT_COEFFICIENTS[0] * (1.0 + sw[19] * geographic_variation(&GRADIENT_COEFFICIENTS, input, &sw, &plg))
+        TEMP_BOUNDARY[3]
+            * GRADIENT_COEFFICIENTS[0]
+            * (1.0 + sw[19] * geographic_variation(&GRADIENT_COEFFICIENTS, input, &sw, &plg))
     } else {
         TEMP_BOUNDARY[3] * GRADIENT_COEFFICIENTS[0]
     };
@@ -702,15 +741,58 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
     tn1[0] = tlb; // placeholder; density_temperature_profile overrides with Bates-Walker temp at za
     if alt < 300.0 {
         tn1[1] = TEMP_BOUNDARY[6] * TEMP_NODE_COEFFICIENTS[0][0]
-            / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[0], input, &sw, &plg, apdf));
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[0],
+                        input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
         tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0]
-            / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[1], input, &sw, &plg, apdf));
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[1],
+                        input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
         tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0]
-            / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[2], input, &sw, &plg, apdf));
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[2],
+                        input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
         tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]
-            / (1.0 - sw[18] * sw[20] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[3], input, &sw, &plg, apdf));
-        tgn1[1] = TEMP_BOUNDARY[8] * MID_ATMO_COEFFICIENTS[8][0]
-            * (1.0 + sw[18] * sw[20] * geographic_variation_lower(&MID_ATMO_COEFFICIENTS[8], input, &sw, &plg, apdf))
+            / (1.0
+                - sw[18]
+                    * sw[20]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[3],
+                        input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
+        tgn1[1] = TEMP_BOUNDARY[8]
+            * MID_ATMO_COEFFICIENTS[8][0]
+            * (1.0
+                + sw[18]
+                    * sw[20]
+                    * geographic_variation_lower(
+                        &MID_ATMO_COEFFICIENTS[8],
+                        input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ))
             * tn1[4]
             * tn1[4]
             / (TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]).powi(2);
@@ -719,9 +801,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0];
         tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0];
         tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0];
-        tgn1[1] = TEMP_BOUNDARY[8] * MID_ATMO_COEFFICIENTS[8][0]
-            * tn1[4]
-            * tn1[4]
+        tgn1[1] = TEMP_BOUNDARY[8] * MID_ATMO_COEFFICIENTS[8][0] * tn1[4] * tn1[4]
             / (TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]).powi(2);
     }
     // tgn1[0] is unused: density_temperature_profile computes gradient at za from Bates-Walker
@@ -745,7 +825,9 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
     // Turbopause height variation factor (latitude/season dependent)
     let zhf = CORRECTION_PARAMS[1][24]
         * (1.0
-            + sw[5] * CORRECTION_PARAMS[0][24] * (input.latitude_deg * DEG_TO_RAD).sin()
+            + sw[5]
+                * CORRECTION_PARAMS[0][24]
+                * (input.latitude_deg * DEG_TO_RAD).sin()
                 * (DAY_ANGLE_RATE * (input.day_of_year as f64 - TEMP_COEFFICIENTS[13])).cos());
 
     // N2 reference density at ZLB
@@ -755,8 +837,19 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
     // N2 mixing reference at turbopause height (shared by all species for rl)
     let zh28 = DENSITY_BOUNDARY[2][2] * zhf;
     let (_, b28) = density_temperature_profile(
-        zh28, db28, tinf, tlb, 28.0 - xmm, ALPHA[2] - 1.0,
-        zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+        zh28,
+        db28,
+        tinf,
+        tlb,
+        28.0 - xmm,
+        ALPHA[2] - 1.0,
+        zlb,
+        s,
+        &zn1,
+        &tn1,
+        &tgn1,
+        gsurf,
+        re,
     );
 
     // --- He ---
@@ -766,20 +859,29 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         #[cfg(test)]
         eprintln!("  He: g1={g1:.8} db04={db04:.6e}");
         let (_, dd) = density_temperature_profile(
-            alt, db04, tinf, tlb, 4.0, ALPHA[0],
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            alt, db04, tinf, tlb, 4.0, ALPHA[0], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
         );
         d[0] = dd;
         if alt < MIXING_ALT_LIMITS[0] {
             // Turbopause mixing: compute mixing density via two-stage profile
             let zh04 = DENSITY_BOUNDARY[0][2];
             let (_, b04) = density_temperature_profile(
-                zh04, db04, tinf, tlb, 4.0 - xmm, ALPHA[0] - 1.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                zh04,
+                db04,
+                tinf,
+                tlb,
+                4.0 - xmm,
+                ALPHA[0] - 1.0,
+                zlb,
+                s,
+                &zn1,
+                &tn1,
+                &tgn1,
+                gsurf,
+                re,
             );
             let (_, dm04) = density_temperature_profile(
-                alt, b04, tinf, tlb, xmm, 0.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                alt, b04, tinf, tlb, xmm, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
             );
             d[0] = mixing_transition(d[0], dm04, zhm28, xmm, 4.0);
             // Composition correction (ground mixing ratio)
@@ -795,24 +897,34 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[1], input, &sw, &plg);
         let db16 = DENSITY_BOUNDARY[1][0] * g1.exp() * DENSITY_COEFFICIENTS[1][0];
         let (_, dd) = density_temperature_profile(
-            alt, db16, tinf, tlb, 16.0, ALPHA[1],
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            alt, db16, tinf, tlb, 16.0, ALPHA[1], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
         );
         d[1] = dd;
         if alt <= MIXING_ALT_LIMITS[1] {
             // Turbopause mixing
             let zh16 = DENSITY_BOUNDARY[1][2];
             let (_, b16) = density_temperature_profile(
-                zh16, db16, tinf, tlb, 16.0 - xmm, ALPHA[1] - 1.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                zh16,
+                db16,
+                tinf,
+                tlb,
+                16.0 - xmm,
+                ALPHA[1] - 1.0,
+                zlb,
+                s,
+                &zn1,
+                &tn1,
+                &tgn1,
+                gsurf,
+                re,
             );
             let (_, dm16) = density_temperature_profile(
-                alt, b16, tinf, tlb, xmm, 0.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                alt, b16, tinf, tlb, xmm, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
             );
             d[1] = mixing_transition(d[1], dm16, zhm28, xmm, 16.0);
             // Diffusive equilibrium departure (F10.7-dependent)
-            let rl = DENSITY_BOUNDARY[1][1] * CORRECTION_PARAMS[1][16]
+            let rl = DENSITY_BOUNDARY[1][1]
+                * CORRECTION_PARAMS[1][16]
                 * (1.0 + sw[1] * CORRECTION_PARAMS[0][23] * (input.f107_avg - 150.0));
             let hc16 = DENSITY_BOUNDARY[1][5] * CORRECTION_PARAMS[1][3];
             let zc16 = DENSITY_BOUNDARY[1][4] * CORRECTION_PARAMS[1][2];
@@ -829,15 +941,13 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
     // --- N2 ---
     {
         let (_, dd) = density_temperature_profile(
-            alt, db28, tinf, tlb, 28.0, ALPHA[2],
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            alt, db28, tinf, tlb, 28.0, ALPHA[2], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
         );
         d[2] = dd;
         if alt <= MIXING_ALT_LIMITS[2] {
             // Turbopause mixing only (no composition correction for N2)
             let (_, dm28_alt) = density_temperature_profile(
-                alt, b28, tinf, tlb, xmm, 0.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                alt, b28, tinf, tlb, xmm, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
             );
             d[2] = mixing_transition(d[2], dm28_alt, zhm28, xmm, 28.0);
         }
@@ -845,8 +955,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
 
     // --- Temperature at altitude ---
     let (temp_alt, _) = density_temperature_profile(
-        alt, 1.0, tinf, tlb, 0.0, 0.0,
-        zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+        alt, 1.0, tinf, tlb, 0.0, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
     );
 
     // --- O2 ---
@@ -854,20 +963,29 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[4], input, &sw, &plg);
         let db32 = DENSITY_BOUNDARY[3][0] * g1.exp() * DENSITY_COEFFICIENTS[4][0];
         let (_, dd) = density_temperature_profile(
-            alt, db32, tinf, tlb, 32.0, ALPHA[3],
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            alt, db32, tinf, tlb, 32.0, ALPHA[3], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
         );
         d[3] = dd;
         if alt <= MIXING_ALT_LIMITS[3] {
             // Turbopause mixing (O2 is heavier than mean mass; mixing_transition still applies)
             let zh32 = DENSITY_BOUNDARY[3][2];
             let (_, b32) = density_temperature_profile(
-                zh32, db32, tinf, tlb, 32.0 - xmm, ALPHA[3] - 1.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                zh32,
+                db32,
+                tinf,
+                tlb,
+                32.0 - xmm,
+                ALPHA[3] - 1.0,
+                zlb,
+                s,
+                &zn1,
+                &tn1,
+                &tgn1,
+                gsurf,
+                re,
             );
             let (_, dm32) = density_temperature_profile(
-                alt, b32, tinf, tlb, xmm, 0.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                alt, b32, tinf, tlb, xmm, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
             );
             d[3] = mixing_transition(d[3], dm32, zhm28, xmm, 32.0);
             // Composition correction (ground mixing ratio)
@@ -880,7 +998,8 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         let hcc32 = DENSITY_BOUNDARY[3][7] * CORRECTION_PARAMS[1][22];
         let hcc232 = DENSITY_BOUNDARY[3][7] * CORRECTION_PARAMS[0][22];
         let zcc32 = DENSITY_BOUNDARY[3][6] * CORRECTION_PARAMS[1][21];
-        let rc32 = DENSITY_BOUNDARY[3][3] * CORRECTION_PARAMS[1][23]
+        let rc32 = DENSITY_BOUNDARY[3][3]
+            * CORRECTION_PARAMS[1][23]
             * (1.0 + sw[1] * CORRECTION_PARAMS[0][23] * (input.f107_avg - 150.0));
         d[3] *= composition_correction_dual(alt, rc32, hcc32, zcc32, hcc232);
     }
@@ -890,20 +1009,29 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[5], input, &sw, &plg);
         let db40 = DENSITY_BOUNDARY[4][0] * g1.exp() * DENSITY_COEFFICIENTS[5][0];
         let (_, dd) = density_temperature_profile(
-            alt, db40, tinf, tlb, 40.0, ALPHA[4],
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            alt, db40, tinf, tlb, 40.0, ALPHA[4], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
         );
         d[4] = dd;
         if alt <= MIXING_ALT_LIMITS[4] {
             // Turbopause mixing
             let zh40 = DENSITY_BOUNDARY[4][2];
             let (_, b40) = density_temperature_profile(
-                zh40, db40, tinf, tlb, 40.0 - xmm, ALPHA[4] - 1.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                zh40,
+                db40,
+                tinf,
+                tlb,
+                40.0 - xmm,
+                ALPHA[4] - 1.0,
+                zlb,
+                s,
+                &zn1,
+                &tn1,
+                &tgn1,
+                gsurf,
+                re,
             );
             let (_, dm40) = density_temperature_profile(
-                alt, b40, tinf, tlb, xmm, 0.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                alt, b40, tinf, tlb, xmm, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
             );
             d[4] = mixing_transition(d[4], dm40, zhm28, xmm, 40.0);
             // Composition correction
@@ -919,20 +1047,29 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[6], input, &sw, &plg);
         let db01 = DENSITY_BOUNDARY[5][0] * g1.exp() * DENSITY_COEFFICIENTS[6][0];
         let (_, dd) = density_temperature_profile(
-            alt, db01, tinf, tlb, 1.0, ALPHA[6],
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            alt, db01, tinf, tlb, 1.0, ALPHA[6], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
         );
         d[6] = dd;
         if alt <= MIXING_ALT_LIMITS[6] {
             // Turbopause mixing
             let zh01 = DENSITY_BOUNDARY[5][2];
             let (_, b01) = density_temperature_profile(
-                zh01, db01, tinf, tlb, 1.0 - xmm, ALPHA[6] - 1.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                zh01,
+                db01,
+                tinf,
+                tlb,
+                1.0 - xmm,
+                ALPHA[6] - 1.0,
+                zlb,
+                s,
+                &zn1,
+                &tn1,
+                &tgn1,
+                gsurf,
+                re,
             );
             let (_, dm01) = density_temperature_profile(
-                alt, b01, tinf, tlb, xmm, 0.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                alt, b01, tinf, tlb, xmm, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
             );
             d[6] = mixing_transition(d[6], dm01, zhm28, xmm, 1.0);
             // Composition correction (ground mixing ratio)
@@ -953,20 +1090,29 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[7], input, &sw, &plg);
         let db14 = DENSITY_BOUNDARY[6][0] * g1.exp() * DENSITY_COEFFICIENTS[7][0];
         let (_, dd) = density_temperature_profile(
-            alt, db14, tinf, tlb, 14.0, ALPHA[7],
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            alt, db14, tinf, tlb, 14.0, ALPHA[7], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
         );
         d[7] = dd;
         if alt <= MIXING_ALT_LIMITS[7] {
             // Turbopause mixing
             let zh14 = DENSITY_BOUNDARY[6][2];
             let (_, b14) = density_temperature_profile(
-                zh14, db14, tinf, tlb, 14.0 - xmm, ALPHA[7] - 1.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                zh14,
+                db14,
+                tinf,
+                tlb,
+                14.0 - xmm,
+                ALPHA[7] - 1.0,
+                zlb,
+                s,
+                &zn1,
+                &tn1,
+                &tgn1,
+                gsurf,
+                re,
             );
             let (_, dm14) = density_temperature_profile(
-                alt, b14, tinf, tlb, xmm, 0.0,
-                zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+                alt, b14, tinf, tlb, xmm, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
             );
             d[7] = mixing_transition(d[7], dm14, zhm28, xmm, 14.0);
             // Composition correction (ground mixing ratio)
@@ -988,8 +1134,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         let db16h = DENSITY_BOUNDARY[7][0] * g1.exp() * DENSITY_COEFFICIENTS[8][0];
         let tho = DENSITY_BOUNDARY[7][9] * CORRECTION_PARAMS[0][6];
         let (_, dd) = density_temperature_profile(
-            alt, db16h, tho, tho, 16.0, ALPHA[8],
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            alt, db16h, tho, tho, 16.0, ALPHA[8], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
         );
         let zmho = DENSITY_BOUNDARY[7][4];
         let zsht = DENSITY_BOUNDARY[7][5];
@@ -1021,9 +1166,15 @@ mod tests {
 
     fn test_input() -> Nrlmsise00Input {
         Nrlmsise00Input {
-            day_of_year: 80, ut_seconds: 43200.0, altitude_km: 400.0,
-            latitude_deg: 0.0, longitude_deg: 0.0, local_solar_time_hours: 12.0,
-            f107_daily: 150.0, f107_avg: 150.0, ap_daily: 15.0,
+            day_of_year: 80,
+            ut_seconds: 43200.0,
+            altitude_km: 400.0,
+            latitude_deg: 0.0,
+            longitude_deg: 0.0,
+            local_solar_time_hours: 12.0,
+            f107_daily: 150.0,
+            f107_avg: 150.0,
+            ap_daily: 15.0,
             ap_array: [15.0; 7],
         }
     }
@@ -1034,7 +1185,10 @@ mod tests {
         let (d, tinf, temp) = compute(&input);
         eprintln!("tinf={tinf:.1} temp={temp:.1}");
         eprintln!("rho={:.4e} kg/m3", d[5] * 1000.0);
-        eprintln!("He={:.3e} O={:.3e} N2={:.3e} O2={:.3e}", d[0], d[1], d[2], d[3]);
+        eprintln!(
+            "He={:.3e} O={:.3e} N2={:.3e} O2={:.3e}",
+            d[0], d[1], d[2], d[3]
+        );
         assert!(tinf > 500.0 && tinf < 2000.0, "tinf={tinf}");
         assert!(temp > 500.0, "temp={temp}");
         assert!(d[5] > 0.0, "total density must be positive");
@@ -1047,9 +1201,15 @@ mod tests {
         let sin_lat = 0.0;
         let plg = compute_legendre(sin_lat);
         let (gsurf, re) = surface_gravity_and_radius(0.0);
-        let tinf = TEMP_BOUNDARY[0] * TEMP_COEFFICIENTS[0] * (1.0 + sw[16] * geographic_variation(&TEMP_COEFFICIENTS, &input, &sw, &plg));
-        let tlb = TEMP_BOUNDARY[1] * DENSITY_COEFFICIENTS[3][0] * (1.0 + sw[17] * geographic_variation(&DENSITY_COEFFICIENTS[3], &input, &sw, &plg));
-        let g0 = TEMP_BOUNDARY[3] * GRADIENT_COEFFICIENTS[0] * (1.0 + sw[19] * geographic_variation(&GRADIENT_COEFFICIENTS, &input, &sw, &plg));
+        let tinf = TEMP_BOUNDARY[0]
+            * TEMP_COEFFICIENTS[0]
+            * (1.0 + sw[16] * geographic_variation(&TEMP_COEFFICIENTS, &input, &sw, &plg));
+        let tlb = TEMP_BOUNDARY[1]
+            * DENSITY_COEFFICIENTS[3][0]
+            * (1.0 + sw[17] * geographic_variation(&DENSITY_COEFFICIENTS[3], &input, &sw, &plg));
+        let g0 = TEMP_BOUNDARY[3]
+            * GRADIENT_COEFFICIENTS[0]
+            * (1.0 + sw[19] * geographic_variation(&GRADIENT_COEFFICIENTS, &input, &sw, &plg));
         let s = g0 / (tinf - tlb);
         let apdf = {
             let apd = input.ap_daily - 4.0;
@@ -1062,22 +1222,88 @@ mod tests {
 
         let mut tn1 = [0.0f64; 5];
         tn1[0] = tlb;
-        tn1[1] = TEMP_BOUNDARY[6] * TEMP_NODE_COEFFICIENTS[0][0] / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[0], &input, &sw, &plg, apdf));
-        tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0] / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[1], &input, &sw, &plg, apdf));
-        tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0] / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[2], &input, &sw, &plg, apdf));
-        tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0] / (1.0 - sw[18] * sw[20] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[3], &input, &sw, &plg, apdf));
+        tn1[1] = TEMP_BOUNDARY[6] * TEMP_NODE_COEFFICIENTS[0][0]
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[0],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
+        tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0]
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[1],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
+        tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0]
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[2],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
+        tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]
+            / (1.0
+                - sw[18]
+                    * sw[20]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[3],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
         eprintln!("tn1: {:?}", tn1);
 
         let mut tgn1 = [0.0f64; 2];
         tgn1[0] = g0;
-        tgn1[1] = TEMP_BOUNDARY[8] * MID_ATMO_COEFFICIENTS[8][0] * (1.0 + sw[18] * sw[20] * geographic_variation_lower(&MID_ATMO_COEFFICIENTS[8], &input, &sw, &plg, apdf))
-            * tn1[4] * tn1[4] / (TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]).powi(2);
+        tgn1[1] = TEMP_BOUNDARY[8]
+            * MID_ATMO_COEFFICIENTS[8][0]
+            * (1.0
+                + sw[18]
+                    * sw[20]
+                    * geographic_variation_lower(
+                        &MID_ATMO_COEFFICIENTS[8],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ))
+            * tn1[4]
+            * tn1[4]
+            / (TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]).powi(2);
         eprintln!("tgn1: {:?}", tgn1);
 
         // Test temperatures at each altitude
         let zn1 = SPLINE_ALTITUDES;
-        for alt in [72.5, 80.0, 90.0, 100.0, 110.0, 115.0, 120.0, 150.0, 200.0, 400.0] {
-            let (t, _) = density_temperature_profile(alt, 1.0, tinf, tlb, 0.0, 0.0, TEMP_BOUNDARY[5], s, &zn1, &tn1, &tgn1, gsurf, re);
+        for alt in [
+            72.5, 80.0, 90.0, 100.0, 110.0, 115.0, 120.0, 150.0, 200.0, 400.0,
+        ] {
+            let (t, _) = density_temperature_profile(
+                alt,
+                1.0,
+                tinf,
+                tlb,
+                0.0,
+                0.0,
+                TEMP_BOUNDARY[5],
+                s,
+                &zn1,
+                &tn1,
+                &tgn1,
+                gsurf,
+                re,
+            );
             eprintln!("  T({alt:.1}km) = {t:.1} K");
         }
     }
@@ -1091,9 +1317,15 @@ mod tests {
         let zn1 = SPLINE_ALTITUDES;
 
         let input = test_input();
-        let tinf = TEMP_BOUNDARY[0] * TEMP_COEFFICIENTS[0] * (1.0 + sw[16] * geographic_variation(&TEMP_COEFFICIENTS, &input, &sw, &plg));
-        let tlb = TEMP_BOUNDARY[1] * DENSITY_COEFFICIENTS[3][0] * (1.0 + sw[17] * geographic_variation(&DENSITY_COEFFICIENTS[3], &input, &sw, &plg));
-        let g0_val = TEMP_BOUNDARY[3] * GRADIENT_COEFFICIENTS[0] * (1.0 + sw[19] * geographic_variation(&GRADIENT_COEFFICIENTS, &input, &sw, &plg));
+        let tinf = TEMP_BOUNDARY[0]
+            * TEMP_COEFFICIENTS[0]
+            * (1.0 + sw[16] * geographic_variation(&TEMP_COEFFICIENTS, &input, &sw, &plg));
+        let tlb = TEMP_BOUNDARY[1]
+            * DENSITY_COEFFICIENTS[3][0]
+            * (1.0 + sw[17] * geographic_variation(&DENSITY_COEFFICIENTS[3], &input, &sw, &plg));
+        let g0_val = TEMP_BOUNDARY[3]
+            * GRADIENT_COEFFICIENTS[0]
+            * (1.0 + sw[19] * geographic_variation(&GRADIENT_COEFFICIENTS, &input, &sw, &plg));
         let s = g0_val / (tinf - tlb);
         let zlb = TEMP_BOUNDARY[5];
         let xmm = DENSITY_BOUNDARY[2][4];
@@ -1110,28 +1342,84 @@ mod tests {
         let mut tn1 = [0.0f64; 5];
         let mut tgn1 = [0.0f64; 2];
         tn1[0] = tlb;
-        tn1[1] = TEMP_BOUNDARY[6] * TEMP_NODE_COEFFICIENTS[0][0] / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[0], &input, &sw, &plg, apdf));
-        tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0] / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[1], &input, &sw, &plg, apdf));
-        tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0] / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[2], &input, &sw, &plg, apdf));
-        tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0] / (1.0 - sw[18] * sw[20] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[3], &input, &sw, &plg, apdf));
+        tn1[1] = TEMP_BOUNDARY[6] * TEMP_NODE_COEFFICIENTS[0][0]
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[0],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
+        tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0]
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[1],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
+        tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0]
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[2],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
+        tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]
+            / (1.0
+                - sw[18]
+                    * sw[20]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[3],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
         tgn1[0] = g0_val;
-        tgn1[1] = TEMP_BOUNDARY[8] * MID_ATMO_COEFFICIENTS[8][0] * (1.0 + sw[18] * sw[20] * geographic_variation_lower(&MID_ATMO_COEFFICIENTS[8], &input, &sw, &plg, apdf))
-            * tn1[4] * tn1[4] / (TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]).powi(2);
+        tgn1[1] = TEMP_BOUNDARY[8]
+            * MID_ATMO_COEFFICIENTS[8][0]
+            * (1.0
+                + sw[18]
+                    * sw[20]
+                    * geographic_variation_lower(
+                        &MID_ATMO_COEFFICIENTS[8],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ))
+            * tn1[4]
+            * tn1[4]
+            / (TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]).powi(2);
 
         // N2 base density
         let g28 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[2], &input, &sw, &plg);
         let db28 = DENSITY_BOUNDARY[2][0] * g28.exp() * DENSITY_COEFFICIENTS[2][0];
-        eprintln!("N2: g28={g28:.6} db28={db28:.4e} DENSITY_BOUNDARY[2][0]={} DENSITY_COEFFICIENTS[2][0]={}", DENSITY_BOUNDARY[2][0], DENSITY_COEFFICIENTS[2][0]);
+        eprintln!(
+            "N2: g28={g28:.6} db28={db28:.4e} DENSITY_BOUNDARY[2][0]={} DENSITY_COEFFICIENTS[2][0]={}",
+            DENSITY_BOUNDARY[2][0], DENSITY_COEFFICIENTS[2][0]
+        );
 
         // O2 base density
         let g_o2 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[4], &input, &sw, &plg);
         let db32 = DENSITY_BOUNDARY[3][0] * g_o2.exp() * DENSITY_COEFFICIENTS[4][0];
-        eprintln!("O2: g_o2={g_o2:.6} db32={db32:.4e} DENSITY_BOUNDARY[3][0]={} DENSITY_COEFFICIENTS[4][0]={}", DENSITY_BOUNDARY[3][0], DENSITY_COEFFICIENTS[4][0]);
+        eprintln!(
+            "O2: g_o2={g_o2:.6} db32={db32:.4e} DENSITY_BOUNDARY[3][0]={} DENSITY_COEFFICIENTS[4][0]={}",
+            DENSITY_BOUNDARY[3][0], DENSITY_COEFFICIENTS[4][0]
+        );
 
         // He base density
         let g_he = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[0], &input, &sw, &plg);
         let db04 = DENSITY_BOUNDARY[0][0] * g_he.exp() * DENSITY_COEFFICIENTS[0][0];
-        eprintln!("He: g_he={g_he:.6} db04={db04:.4e}", );
+        eprintln!("He: g_he={g_he:.6} db04={db04:.4e}",);
 
         // O base density
         let g_o = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[1], &input, &sw, &plg);
@@ -1146,19 +1434,36 @@ mod tests {
         // Densities at multiple altitudes
         eprintln!("\nDensities at ZLB (120km) and above:");
         for alt in [120.0, 150.0, 200.0, 300.0, 400.0] {
-            let (_, n2) = density_temperature_profile(alt, db28, tinf, tlb, 28.0, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re);
-            let (_, o2) = density_temperature_profile(alt, db32, tinf, tlb, 32.0, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re);
-            let (_, he) = density_temperature_profile(alt, db04, tinf, tlb, 4.0, ALPHA[0], zlb, s, &zn1, &tn1, &tgn1, gsurf, re);
-            let (t, _) = density_temperature_profile(alt, 1.0, tinf, tlb, 0.0, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re);
-            eprintln!("  {alt:.0}km: T={t:.1}K N2={n2:.4e} O2={o2:.4e} He={he:.4e} O2/N2={:.4}", o2/n2);
+            let (_, n2) = density_temperature_profile(
+                alt, db28, tinf, tlb, 28.0, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            );
+            let (_, o2) = density_temperature_profile(
+                alt, db32, tinf, tlb, 32.0, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            );
+            let (_, he) = density_temperature_profile(
+                alt, db04, tinf, tlb, 4.0, ALPHA[0], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            );
+            let (t, _) = density_temperature_profile(
+                alt, 1.0, tinf, tlb, 0.0, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+            );
+            eprintln!(
+                "  {alt:.0}km: T={t:.1}K N2={n2:.4e} O2={o2:.4e} He={he:.4e} O2/N2={:.4}",
+                o2 / n2
+            );
         }
 
         // Full compute for comparison
         let (d, _, _) = compute(&input);
         eprintln!("\nFull compute at 400km:");
-        eprintln!("  He={:.4e} O={:.4e} N2={:.4e} O2={:.4e} Ar={:.4e} H={:.4e} N={:.4e}",
-            d[0], d[1], d[2], d[3], d[4], d[6], d[7]);
-        eprintln!("  Total mass = {:.4e} g/cm3 = {:.4e} kg/m3", d[5], d[5]*1000.0);
+        eprintln!(
+            "  He={:.4e} O={:.4e} N2={:.4e} O2={:.4e} Ar={:.4e} H={:.4e} N={:.4e}",
+            d[0], d[1], d[2], d[3], d[4], d[6], d[7]
+        );
+        eprintln!(
+            "  Total mass = {:.4e} g/cm3 = {:.4e} kg/m3",
+            d[5],
+            d[5] * 1000.0
+        );
     }
 
     #[test]
@@ -1172,9 +1477,15 @@ mod tests {
         let mut input = test_input();
         input.altitude_km = 100.0;
 
-        let tinf = TEMP_BOUNDARY[0] * TEMP_COEFFICIENTS[0] * (1.0 + sw[16] * geographic_variation(&TEMP_COEFFICIENTS, &input, &sw, &plg));
-        let tlb = TEMP_BOUNDARY[1] * DENSITY_COEFFICIENTS[3][0] * (1.0 + sw[17] * geographic_variation(&DENSITY_COEFFICIENTS[3], &input, &sw, &plg));
-        let g0_val = TEMP_BOUNDARY[3] * GRADIENT_COEFFICIENTS[0] * (1.0 + sw[19] * geographic_variation(&GRADIENT_COEFFICIENTS, &input, &sw, &plg));
+        let tinf = TEMP_BOUNDARY[0]
+            * TEMP_COEFFICIENTS[0]
+            * (1.0 + sw[16] * geographic_variation(&TEMP_COEFFICIENTS, &input, &sw, &plg));
+        let tlb = TEMP_BOUNDARY[1]
+            * DENSITY_COEFFICIENTS[3][0]
+            * (1.0 + sw[17] * geographic_variation(&DENSITY_COEFFICIENTS[3], &input, &sw, &plg));
+        let g0_val = TEMP_BOUNDARY[3]
+            * GRADIENT_COEFFICIENTS[0]
+            * (1.0 + sw[19] * geographic_variation(&GRADIENT_COEFFICIENTS, &input, &sw, &plg));
         let s = g0_val / (tinf - tlb);
         let zlb = TEMP_BOUNDARY[5];
         let xmm = DENSITY_BOUNDARY[2][4];
@@ -1190,27 +1501,92 @@ mod tests {
         let mut tn1 = [0.0f64; 5];
         let mut tgn1 = [0.0f64; 2];
         tn1[0] = tlb;
-        tn1[1] = TEMP_BOUNDARY[6] * TEMP_NODE_COEFFICIENTS[0][0] / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[0], &input, &sw, &plg, apdf));
-        tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0] / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[1], &input, &sw, &plg, apdf));
-        tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0] / (1.0 - sw[18] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[2], &input, &sw, &plg, apdf));
-        tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0] / (1.0 - sw[18] * sw[20] * geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[3], &input, &sw, &plg, apdf));
+        tn1[1] = TEMP_BOUNDARY[6] * TEMP_NODE_COEFFICIENTS[0][0]
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[0],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
+        tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0]
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[1],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
+        tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0]
+            / (1.0
+                - sw[18]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[2],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
+        tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]
+            / (1.0
+                - sw[18]
+                    * sw[20]
+                    * geographic_variation_lower(
+                        &TEMP_NODE_COEFFICIENTS[3],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ));
         tgn1[0] = g0_val;
-        tgn1[1] = TEMP_BOUNDARY[8] * MID_ATMO_COEFFICIENTS[8][0] * (1.0 + sw[18] * sw[20] * geographic_variation_lower(&MID_ATMO_COEFFICIENTS[8], &input, &sw, &plg, apdf))
-            * tn1[4] * tn1[4] / (TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]).powi(2);
+        tgn1[1] = TEMP_BOUNDARY[8]
+            * MID_ATMO_COEFFICIENTS[8][0]
+            * (1.0
+                + sw[18]
+                    * sw[20]
+                    * geographic_variation_lower(
+                        &MID_ATMO_COEFFICIENTS[8],
+                        &input,
+                        &sw,
+                        &plg,
+                        apdf,
+                    ))
+            * tn1[4]
+            * tn1[4]
+            / (TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]).powi(2);
 
         let alt = 100.0;
         let g28 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[2], &input, &sw, &plg);
         let db28 = DENSITY_BOUNDARY[2][0] * g28.exp() * DENSITY_COEFFICIENTS[2][0];
         let zh28 = DENSITY_BOUNDARY[2][2];
-        let (_, b28) = density_temperature_profile(zh28, db28, tinf, tlb, xmm - 28.0, ALPHA[2] - 1.0,
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re);
+        let (_, b28) = density_temperature_profile(
+            zh28,
+            db28,
+            tinf,
+            tlb,
+            xmm - 28.0,
+            ALPHA[2] - 1.0,
+            zlb,
+            s,
+            &zn1,
+            &tn1,
+            &tgn1,
+            gsurf,
+            re,
+        );
 
         // Raw diffusive N2 at 100km
-        let (_, dd) = density_temperature_profile(alt, db28, tinf, tlb, 28.0, ALPHA[2],
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re);
+        let (_, dd) = density_temperature_profile(
+            alt, db28, tinf, tlb, 28.0, ALPHA[2], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+        );
         // Mixing density at 100km
-        let (_, dm28_alt) = density_temperature_profile(alt, b28, tinf, tlb, xmm, 0.0,
-            zlb, s, &zn1, &tn1, &tgn1, gsurf, re);
+        let (_, dm28_alt) = density_temperature_profile(
+            alt, b28, tinf, tlb, xmm, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
+        );
 
         let a = zhm28 / (xmm - 28.0);
         let ratio = dm28_alt / dd;
@@ -1231,15 +1607,24 @@ mod tests {
     fn composition_correction_limits() {
         // High altitude (e >> 0): logistic → 0, exp(0) = 1.0
         let v = composition_correction(200.0, 0.5, 10.0, 50.0);
-        assert!((v - 1.0).abs() < 1e-6, "composition_correction high alt: {v}");
+        assert!(
+            (v - 1.0).abs() < 1e-6,
+            "composition_correction high alt: {v}"
+        );
 
         // Very low altitude (e < -70): should return exp(r)
         let v = composition_correction(-800.0, 0.5, 10.0, 50.0);
-        assert!((v - 0.5_f64.exp()).abs() < 1e-10, "composition_correction low alt: {v}");
+        assert!(
+            (v - 0.5_f64.exp()).abs() < 1e-10,
+            "composition_correction low alt: {v}"
+        );
 
         // Normal range: between 1.0 and exp(r)
         let v = composition_correction(50.0, 0.5, 10.0, 50.0);
-        assert!(v > 1.0 && v < 0.5_f64.exp(), "composition_correction normal: {v}");
+        assert!(
+            v > 1.0 && v < 0.5_f64.exp(),
+            "composition_correction normal: {v}"
+        );
     }
 
     #[test]
@@ -1247,12 +1632,27 @@ mod tests {
         let sw = [1.0f64; 24];
         let plg = compute_legendre(0.0);
 
-        for (label, f107) in [("solar_min", 70.0), ("solar_mod", 150.0), ("solar_max", 250.0)] {
-            let ap = if f107 < 100.0 { 4.0 } else if f107 < 200.0 { 15.0 } else { 30.0 };
+        for (label, f107) in [
+            ("solar_min", 70.0),
+            ("solar_mod", 150.0),
+            ("solar_max", 250.0),
+        ] {
+            let ap = if f107 < 100.0 {
+                4.0
+            } else if f107 < 200.0 {
+                15.0
+            } else {
+                30.0
+            };
             let input = Nrlmsise00Input {
-                day_of_year: 80, ut_seconds: 43200.0, altitude_km: 100.0,
-                latitude_deg: 0.0, longitude_deg: 0.0, local_solar_time_hours: 12.0,
-                f107_daily: f107, f107_avg: f107,
+                day_of_year: 80,
+                ut_seconds: 43200.0,
+                altitude_km: 100.0,
+                latitude_deg: 0.0,
+                longitude_deg: 0.0,
+                local_solar_time_hours: 12.0,
+                f107_daily: f107,
+                f107_avg: f107,
                 ap_daily: ap,
                 ap_array: [ap; 7],
             };
@@ -1264,10 +1664,12 @@ mod tests {
                 apd + (p45 - 1.0) * (apd + ((-p44 * apd).exp() - 1.0) / p44)
             };
 
-            let g7s_ptl1 = geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[1], &input, &sw, &plg, apdf);
+            let g7s_ptl1 =
+                geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[1], &input, &sw, &plg, apdf);
             let tn1_2 = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0] / (1.0 - sw[18] * g7s_ptl1);
 
-            let g7s_ptl0 = geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[0], &input, &sw, &plg, apdf);
+            let g7s_ptl0 =
+                geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[0], &input, &sw, &plg, apdf);
             let tn1_1 = TEMP_BOUNDARY[6] * TEMP_NODE_COEFFICIENTS[0][0] / (1.0 - sw[18] * g7s_ptl0);
 
             let g7_pt = geographic_variation(&TEMP_COEFFICIENTS, &input, &sw, &plg);
@@ -1277,8 +1679,12 @@ mod tests {
 
             eprintln!("{label} (F10.7={f107}, Ap={ap}):");
             eprintln!("  apdf = {apdf:.6}");
-            eprintln!("  geographic_variation_lower(TEMP_NODE_COEFFICIENTS[1]) = {g7s_ptl1:.6}  → tn1[2] = {tn1_2:.2}K");
-            eprintln!("  geographic_variation_lower(TEMP_NODE_COEFFICIENTS[0]) = {g7s_ptl0:.6}  → tn1[1] = {tn1_1:.2}K");
+            eprintln!(
+                "  geographic_variation_lower(TEMP_NODE_COEFFICIENTS[1]) = {g7s_ptl1:.6}  → tn1[2] = {tn1_2:.2}K"
+            );
+            eprintln!(
+                "  geographic_variation_lower(TEMP_NODE_COEFFICIENTS[0]) = {g7s_ptl0:.6}  → tn1[1] = {tn1_1:.2}K"
+            );
             eprintln!("  tinf = {tinf:.1}K  tlb = {tlb:.1}K");
         }
     }
@@ -1287,39 +1693,68 @@ mod tests {
     fn debug_worst_case_species() {
         // Compare He/H at multiple altitudes against C reference
         let base = Nrlmsise00Input {
-            day_of_year: 172, ut_seconds: 43200.0, altitude_km: 0.0,
-            latitude_deg: 75.0, longitude_deg: 270.0, local_solar_time_hours: 12.0 + 270.0 / 15.0,
-            f107_daily: 70.0, f107_avg: 70.0, ap_daily: 4.0,
+            day_of_year: 172,
+            ut_seconds: 43200.0,
+            altitude_km: 0.0,
+            latitude_deg: 75.0,
+            longitude_deg: 270.0,
+            local_solar_time_hours: 12.0 + 270.0 / 15.0,
+            f107_daily: 70.0,
+            f107_avg: 70.0,
+            ap_daily: 4.0,
             ap_array: [4.0; 7],
         };
         eprintln!("He/H density (lat=75, summer_solstice, solar_min):");
-        let c_he = [3.181456e6, 7.021742e5, 3.983057e5, 2.398846e5, 1.470449e5, 5.761877e4, 1.554627e4];
-        let c_h =  [3.004045e6, 2.063095e5, 1.521022e5, 1.335147e5, 1.181220e5, 9.345534e4, 6.735497e4];
-        for (i, &alt) in [120.0, 200.0, 300.0, 400.0, 500.0, 700.0, 1000.0].iter().enumerate() {
+        let c_he = [
+            3.181456e6, 7.021742e5, 3.983057e5, 2.398846e5, 1.470449e5, 5.761877e4, 1.554627e4,
+        ];
+        let c_h = [
+            3.004045e6, 2.063095e5, 1.521022e5, 1.335147e5, 1.181220e5, 9.345534e4, 6.735497e4,
+        ];
+        for (i, &alt) in [120.0, 200.0, 300.0, 400.0, 500.0, 700.0, 1000.0]
+            .iter()
+            .enumerate()
+        {
             let mut inp = base.clone();
             inp.altitude_km = alt;
             let (d, _, temp) = compute(&inp);
             let he_err = (d[0] - c_he[i]) / c_he[i] * 100.0;
             let h_err = (d[6] - c_h[i]) / c_h[i] * 100.0;
-            eprintln!("  {alt:7.1}km: He={:.6e} ({he_err:+.2}%)  H={:.6e} ({h_err:+.2}%)  T={temp:.2}",
-                d[0], d[6]);
+            eprintln!(
+                "  {alt:7.1}km: He={:.6e} ({he_err:+.2}%)  H={:.6e} ({h_err:+.2}%)  T={temp:.2}",
+                d[0], d[6]
+            );
         }
 
         // Equatorial reference
         let base2 = Nrlmsise00Input {
-            day_of_year: 80, ut_seconds: 43200.0, altitude_km: 0.0,
-            latitude_deg: 0.0, longitude_deg: 0.0, local_solar_time_hours: 12.0,
-            f107_daily: 150.0, f107_avg: 150.0, ap_daily: 15.0,
+            day_of_year: 80,
+            ut_seconds: 43200.0,
+            altitude_km: 0.0,
+            latitude_deg: 0.0,
+            longitude_deg: 0.0,
+            local_solar_time_hours: 12.0,
+            f107_daily: 150.0,
+            f107_avg: 150.0,
+            ap_daily: 15.0,
             ap_array: [15.0; 7],
         };
         eprintln!("\nHe density (equatorial, vernal_equinox, solar_mod):");
-        let c_he2 = [4.326096e7, 1.347404e7, 8.282984e6, 5.650467e6, 3.943564e6, 1.987947e6, 7.635356e5];
-        for (i, &alt) in [120.0, 200.0, 300.0, 400.0, 500.0, 700.0, 1000.0].iter().enumerate() {
+        let c_he2 = [
+            4.326096e7, 1.347404e7, 8.282984e6, 5.650467e6, 3.943564e6, 1.987947e6, 7.635356e5,
+        ];
+        for (i, &alt) in [120.0, 200.0, 300.0, 400.0, 500.0, 700.0, 1000.0]
+            .iter()
+            .enumerate()
+        {
             let mut inp = base2.clone();
             inp.altitude_km = alt;
             let (d, _, temp) = compute(&inp);
             let he_err = (d[0] - c_he2[i]) / c_he2[i] * 100.0;
-            eprintln!("  {alt:7.1}km: He={:.6e} ({he_err:+.2}%)  T={temp:.2}", d[0]);
+            eprintln!(
+                "  {alt:7.1}km: He={:.6e} ({he_err:+.2}%)  T={temp:.2}",
+                d[0]
+            );
         }
     }
 
@@ -1327,11 +1762,17 @@ mod tests {
     fn composition_correction_dual_limits() {
         // High altitude: should return 1.0
         let v = composition_correction_dual(200.0, 0.5, 10.0, 50.0, 5.0);
-        assert!((v - 1.0).abs() < 1e-6, "composition_correction_dual high alt: {v}");
+        assert!(
+            (v - 1.0).abs() < 1e-6,
+            "composition_correction_dual high alt: {v}"
+        );
 
         // Very low altitude (both e < -70): should return exp(r)
         let v = composition_correction_dual(-800.0, 0.5, 10.0, 50.0, 5.0);
-        assert!((v - 0.5_f64.exp()).abs() < 1e-10, "composition_correction_dual low alt: {v}");
+        assert!(
+            (v - 0.5_f64.exp()).abs() < 1e-10,
+            "composition_correction_dual low alt: {v}"
+        );
 
         // One e < -70, other normal: should be finite
         let v = composition_correction_dual(30.0, 0.5, 10.0, 50.0, 0.1);

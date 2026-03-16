@@ -11,17 +11,17 @@
 //! - Frozen orbit conditions (J2+J3)
 //! - Third-body perturbation effects at GEO
 
-use nalgebra::vector;
-use kaname::epoch::Epoch;
-use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
-use orts::OrbitalState;
-use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use kaname::body::KnownBody;
-use orts::perturbations::AtmosphericDrag;
+use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
+use kaname::epoch::Epoch;
+use nalgebra::vector;
+use orts::OrbitalState;
 use orts::gravity::ZonalHarmonics;
 use orts::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;
+use orts::perturbations::AtmosphericDrag;
 use orts::perturbations::ThirdBodyGravity;
+use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
 use std::f64::consts::PI;
 use std::ops::ControlFlow;
 
@@ -84,11 +84,8 @@ fn propagate_collecting_elements(
         let t_end = t + period;
         current = Rk4.integrate(system, current, t, t_end, dt, |_, _| {});
         t = t_end;
-        let elems = KeplerianElements::from_state_vector(
-            current.position(),
-            current.velocity(),
-            MU_EARTH,
-        );
+        let elems =
+            KeplerianElements::from_state_vector(current.position(), current.velocity(), MU_EARTH);
         orbit_elements.push(elems);
     }
 
@@ -112,8 +109,8 @@ fn propagate_collecting_elements_dp45(
 
     for _ in 0..n_orbits {
         let t_end = t + period;
-        let outcome: IntegrationOutcome<OrbitalState, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<OrbitalState, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 system,
                 current,
                 t,
@@ -128,11 +125,8 @@ fn propagate_collecting_elements_dp45(
             other => panic!("DP45 integration failed: {other:?}"),
         }
         t = t_end;
-        let elems = KeplerianElements::from_state_vector(
-            current.position(),
-            current.velocity(),
-            MU_EARTH,
-        );
+        let elems =
+            KeplerianElements::from_state_vector(current.position(), current.velocity(), MU_EARTH);
         orbit_elements.push(elems);
     }
 
@@ -166,7 +160,13 @@ fn unwrap_angle(angle: f64, reference: f64) -> f64 {
 }
 
 /// Propagate backward using manual RK4 steps (integrate doesn't support t_end < t0).
-fn integrate_backward(system: &OrbitalSystem, state: OrbitalState, t0: f64, t_end: f64, dt: f64) -> OrbitalState {
+fn integrate_backward(
+    system: &OrbitalSystem,
+    state: OrbitalState,
+    t0: f64,
+    t_end: f64,
+    dt: f64,
+) -> OrbitalState {
     let mut current = state;
     let mut t = t0;
     let step = -dt.abs(); // ensure negative
@@ -292,8 +292,7 @@ fn j2_perigee_precession_iss() {
 
     let period = elements.period(MU_EARTH);
     let dt_halves = (n_orbits as f64 / 2.0) * period;
-    let actual_deg_per_day =
-        ((mean_second - mean_first) / dt_halves).to_degrees() * 86400.0;
+    let actual_deg_per_day = ((mean_second - mean_first) / dt_halves).to_degrees() * 86400.0;
 
     // Allow 1.0 deg/day tolerance: first-order secular theory neglects
     // J2² coupling terms and averaging artifacts from short-period terms.
@@ -439,10 +438,7 @@ fn drag_monotonic_sma_decay() {
         atmosphere: Box::new(tobari::exponential::Exponential),
     }));
 
-    let initial = OrbitalState::new(
-        vector![a, 0.0, 0.0],
-        vector![0.0, v, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
     let period = 2.0 * PI * (a.powi(3) / MU_EARTH).sqrt();
     let n_orbits = 10;
@@ -519,10 +515,7 @@ fn drag_scaling_with_ballistic_coefficient() {
             atmosphere: Box::new(tobari::exponential::Exponential),
         }));
 
-        let initial = OrbitalState::new(
-            vector![a, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        );
+        let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
         let mut current = initial;
         let mut t = 0.0;
@@ -531,11 +524,8 @@ fn drag_scaling_with_ballistic_coefficient() {
             current = Rk4.integrate(&system, current, t, t_end, dt, |_, _| {});
             t = t_end;
         }
-        let final_elems = KeplerianElements::from_state_vector(
-            current.position(),
-            current.velocity(),
-            MU_EARTH,
-        );
+        let final_elems =
+            KeplerianElements::from_state_vector(current.position(), current.velocity(), MU_EARTH);
         a - final_elems.semi_major_axis // positive = decay
     };
 
@@ -651,10 +641,7 @@ fn third_body_geo_inclination_change() {
     system = system.with_perturbation(Box::new(ThirdBodyGravity::moon()));
 
     // GEO: nearly equatorial, circular orbit
-    let initial = OrbitalState::new(
-        vector![a_geo, 0.0, 0.0],
-        vector![0.0, v_geo, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a_geo, 0.0, 0.0], vector![0.0, v_geo, 0.0]);
 
     let duration = 30.0 * 86400.0; // 30 days
     let dt = 30.0; // larger dt for GEO (slower dynamics)
@@ -698,10 +685,7 @@ fn third_body_individual_effects() {
     let v_geo = (MU_EARTH / a_geo).sqrt();
     let epoch = Epoch::from_gregorian(2024, 6, 15, 0, 0, 0.0);
 
-    let initial = OrbitalState::new(
-        vector![a_geo, 0.0, 0.0],
-        vector![0.0, v_geo, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a_geo, 0.0, 0.0], vector![0.0, v_geo, 0.0]);
 
     let duration = 7.0 * 86400.0; // 7 days
     let dt = 30.0;
@@ -787,10 +771,15 @@ fn full_model_dt_convergence() {
     let dt_fine = 4.0;
     let dt_finest = 2.0;
 
-    let final_coarse =
-        Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_coarse, |_, _| {});
-    let final_fine =
-        Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
+    let final_coarse = Rk4.integrate(
+        &system,
+        initial.clone(),
+        0.0,
+        duration,
+        dt_coarse,
+        |_, _| {},
+    );
+    let final_fine = Rk4.integrate(&system, initial.clone(), 0.0, duration, dt_fine, |_, _| {});
     let final_finest = Rk4.integrate(&system, initial, 0.0, duration, dt_finest, |_, _| {});
 
     let err_coarse = (*final_coarse.position() - *final_finest.position()).magnitude();
@@ -941,8 +930,11 @@ fn compare_with_sgp4(
             t += h;
         }
 
-        let sgp4_pos =
-            vector![point.position_km[0], point.position_km[1], point.position_km[2]];
+        let sgp4_pos = vector![
+            point.position_km[0],
+            point.position_km[1],
+            point.position_km[2]
+        ];
         let sgp4_vel = vector![
             point.velocity_km_s[0],
             point.velocity_km_s[1],
@@ -1232,8 +1224,11 @@ fn compare_with_sgp4_checking_altitude(
             "Altitude {alt:.1} km outside expected range [{min_alt_km}, {max_alt_km}] at t={t:.0}s"
         );
 
-        let sgp4_pos =
-            vector![point.position_km[0], point.position_km[1], point.position_km[2]];
+        let sgp4_pos = vector![
+            point.position_km[0],
+            point.position_km[1],
+            point.position_km[2]
+        ];
         let sgp4_vel = vector![
             point.velocity_km_s[0],
             point.velocity_km_s[1],
@@ -1603,10 +1598,7 @@ fn drag_decay_200_orbits() {
         atmosphere: Box::new(tobari::exponential::Exponential),
     }));
 
-    let initial = OrbitalState::new(
-        vector![a, 0.0, 0.0],
-        vector![0.0, v, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
     let period = 2.0 * PI * (a.powi(3) / MU_EARTH).sqrt();
     let n_orbits = 200;
@@ -1700,7 +1692,8 @@ fn sma_stability_500_orbits() {
         let deviation = (sma - a).abs();
         assert!(
             deviation < 20.0,
-            "SMA deviates by {deviation:.2} km at orbit {} (catastrophic drift)", i + 1
+            "SMA deviates by {deviation:.2} km at orbit {} (catastrophic drift)",
+            i + 1
         );
     }
 
@@ -1817,10 +1810,7 @@ fn iss_drag_30day_survival() {
         atmosphere: Box::new(tobari::exponential::Exponential),
     }));
 
-    let initial = OrbitalState::new(
-        vector![a, 0.0, 0.0],
-        vector![0.0, v, 0.0],
-    );
+    let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
     let duration = 30.0 * 86400.0; // 30 days in seconds
     let dt = 30.0;
@@ -1832,8 +1822,11 @@ fn iss_drag_30day_survival() {
     });
 
     let final_alt = final_state.position().magnitude() - R_EARTH;
-    let final_elems =
-        KeplerianElements::from_state_vector(final_state.position(), final_state.velocity(), MU_EARTH);
+    let final_elems = KeplerianElements::from_state_vector(
+        final_state.position(),
+        final_state.velocity(),
+        MU_EARTH,
+    );
     let sma_decay = a - final_elems.semi_major_axis;
     let decay_per_day = sma_decay / 30.0;
 
@@ -1910,7 +1903,9 @@ fn j2_eccentricity_oscillation_bounded() {
     let e_mean = ecc_values.iter().sum::<f64>() / ecc_values.len() as f64;
     let e_range = e_max - e_min;
 
-    println!("J2 e oscillation (50 orbits): e_0={e_0}, e_min={e_min:.6}, e_max={e_max:.6}, e_mean={e_mean:.6}, range={e_range:.6}");
+    println!(
+        "J2 e oscillation (50 orbits): e_0={e_0}, e_min={e_min:.6}, e_max={e_max:.6}, e_mean={e_mean:.6}, range={e_range:.6}"
+    );
 
     // 1. Eccentricity must remain bounded (no divergence)
     //    J2 short-period amplitude ≈ (3/4) J2 (Re/p)² ≈ 0.0006 for this orbit.
@@ -1948,7 +1943,9 @@ fn j2_eccentricity_oscillation_bounded() {
     //    the ~5e-4 we saw with two-body energy (which oscillates due to J2).
     let energy_final = j2_total_energy(&final_state, MU_EARTH, J2_EARTH, R_EARTH);
     let rel_energy_error = ((energy_final - energy_0) / energy_0).abs();
-    println!("  Total energy: initial={energy_0:.10}, final={energy_final:.10}, rel_error={rel_energy_error:.2e}");
+    println!(
+        "  Total energy: initial={energy_0:.10}, final={energy_final:.10}, rel_error={rel_energy_error:.2e}"
+    );
     assert!(
         rel_energy_error < 1e-5,
         "Total energy should be conserved: relative error = {rel_energy_error:.2e}"
@@ -2003,9 +2000,18 @@ fn j2_omega_precession_modulates_eccentricity() {
     let total_time = n_orbits as f64 * period;
     let omega_rate_deg_per_day = omega_final.to_degrees() * 86400.0 / total_time;
 
-    println!("J2 e-ω modulation (200 orbits, {:.1} days):", total_time / 86400.0);
-    println!("  e: min={e_min:.6}, max={e_max:.6}, mean={e_mean:.6}, range={:.6}", e_max - e_min);
-    println!("  ω: initial=0°, final={:.2}°, rate={omega_rate_deg_per_day:.2}°/day", omega_final.to_degrees());
+    println!(
+        "J2 e-ω modulation (200 orbits, {:.1} days):",
+        total_time / 86400.0
+    );
+    println!(
+        "  e: min={e_min:.6}, max={e_max:.6}, mean={e_mean:.6}, range={:.6}",
+        e_max - e_min
+    );
+    println!(
+        "  ω: initial=0°, final={:.2}°, rate={omega_rate_deg_per_day:.2}°/day",
+        omega_final.to_degrees()
+    );
 
     // 1. ω precession rate should match analytical prediction
     let p = a * (1.0 - e_0 * e_0);
@@ -2042,7 +2048,8 @@ fn j2_omega_precession_modulates_eccentricity() {
     //    Check: first quarter e-mean vs last quarter e-mean should be similar
     let q_len = ecc_values.len() / 4;
     let e_mean_q1 = ecc_values[..q_len].iter().sum::<f64>() / q_len as f64;
-    let e_mean_q4 = ecc_values[3 * q_len..].iter().sum::<f64>() / (ecc_values.len() - 3 * q_len) as f64;
+    let e_mean_q4 =
+        ecc_values[3 * q_len..].iter().sum::<f64>() / (ecc_values.len() - 3 * q_len) as f64;
     let secular_drift = (e_mean_q4 - e_mean_q1).abs();
     println!("  Secular e drift (Q1 mean vs Q4 mean): {secular_drift:.6}");
     assert!(
@@ -2096,12 +2103,16 @@ fn j2_eccentricity_dp45_500_orbits() {
     let total_days = n_orbits as f64 * period / 86400.0;
 
     println!("DP45 J2 e oscillation ({n_orbits} orbits, {total_days:.1} days):");
-    println!("  e: min={e_min:.8}, max={e_max:.8}, mean={e_mean:.8}, range={:.8}", e_max - e_min);
+    println!(
+        "  e: min={e_min:.8}, max={e_max:.8}, mean={e_mean:.8}, range={:.8}",
+        e_max - e_min
+    );
 
     // 1. Eccentricity bounded
     assert!(
         e_max < e_0 + 0.01,
-        "e diverged: e_max={e_max:.8}, limit={:.6}", e_0 + 0.01
+        "e diverged: e_max={e_max:.8}, limit={:.6}",
+        e_0 + 0.01
     );
     assert!(e_min > 0.0, "e went negative: e_min={e_min:.8}");
 
@@ -2124,7 +2135,8 @@ fn j2_eccentricity_dp45_500_orbits() {
     // 4. No secular drift: Q1 vs Q4 mean eccentricity
     let q_len = ecc_values.len() / 4;
     let e_mean_q1 = ecc_values[..q_len].iter().sum::<f64>() / q_len as f64;
-    let e_mean_q4 = ecc_values[3 * q_len..].iter().sum::<f64>() / (ecc_values.len() - 3 * q_len) as f64;
+    let e_mean_q4 =
+        ecc_values[3 * q_len..].iter().sum::<f64>() / (ecc_values.len() - 3 * q_len) as f64;
     let secular_drift = (e_mean_q4 - e_mean_q1).abs();
     println!("  Secular e drift (Q1 vs Q4): {secular_drift:.8}");
     assert!(
@@ -2180,7 +2192,10 @@ fn j2_omega_precession_dp45_500_orbits() {
 
     println!("DP45 J2 e-ω modulation ({n_orbits} orbits, {total_days:.1} days):");
     println!("  e: min={e_min:.8}, max={e_max:.8}, mean={e_mean:.8}");
-    println!("  ω: final={:.2}°, rate={omega_rate_deg_per_day:.3}°/day", omega_final.to_degrees());
+    println!(
+        "  ω: final={:.2}°, rate={omega_rate_deg_per_day:.3}°/day",
+        omega_final.to_degrees()
+    );
 
     // 1. ω precession rate matches theory (tighter tolerance with DP45)
     let p = a * (1.0 - e_0 * e_0);
@@ -2214,7 +2229,8 @@ fn j2_omega_precession_dp45_500_orbits() {
     // 4. No secular drift over ~35 days
     let q_len = ecc_values.len() / 4;
     let e_mean_q1 = ecc_values[..q_len].iter().sum::<f64>() / q_len as f64;
-    let e_mean_q4 = ecc_values[3 * q_len..].iter().sum::<f64>() / (ecc_values.len() - 3 * q_len) as f64;
+    let e_mean_q4 =
+        ecc_values[3 * q_len..].iter().sum::<f64>() / (ecc_values.len() - 3 * q_len) as f64;
     let secular_drift = (e_mean_q4 - e_mean_q1).abs();
     println!("  Secular e drift (Q1 vs Q4): {secular_drift:.8}");
     assert!(
@@ -2222,4 +2238,3 @@ fn j2_omega_precession_dp45_500_orbits() {
         "Secular drift: Q1={e_mean_q1:.8}, Q4={e_mean_q4:.8}"
     );
 }
-

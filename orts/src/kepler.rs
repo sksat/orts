@@ -116,11 +116,7 @@ impl KeplerianElements {
         // Right ascension of ascending node
         let raan = if n_mag > 1e-15 {
             let omega = (n[0] / n_mag).acos();
-            if n[1] >= 0.0 {
-                omega
-            } else {
-                2.0 * PI - omega
-            }
+            if n[1] >= 0.0 { omega } else { 2.0 * PI - omega }
         } else {
             0.0
         };
@@ -129,11 +125,7 @@ impl KeplerianElements {
         let omega = if n_mag > 1e-15 && e > 1e-15 {
             let cos_omega = n.dot(&e_vec) / (n_mag * e);
             let w = cos_omega.clamp(-1.0, 1.0).acos();
-            if e_vec[2] >= 0.0 {
-                w
-            } else {
-                2.0 * PI - w
-            }
+            if e_vec[2] >= 0.0 { w } else { 2.0 * PI - w }
         } else {
             0.0
         };
@@ -314,14 +306,8 @@ mod tests {
 
         let pos_err = (pos - pos2).magnitude();
         let vel_err = (vel - vel2).magnitude();
-        assert!(
-            pos_err < 1e-6,
-            "position roundtrip error: {pos_err} km"
-        );
-        assert!(
-            vel_err < 1e-9,
-            "velocity roundtrip error: {vel_err} km/s"
-        );
+        assert!(pos_err < 1e-6, "position roundtrip error: {pos_err} km");
+        assert!(vel_err < 1e-9, "velocity roundtrip error: {vel_err} km/s");
     }
 
     #[test]
@@ -514,10 +500,7 @@ mod tests {
     fn test_eccentric_to_true_anomaly_at_periapsis() {
         // At periapsis: E=0 → ν=0
         let nu = eccentric_to_true_anomaly(0.0, 0.5);
-        assert!(
-            nu.abs() < 1e-14,
-            "At periapsis, ν should be 0: ν={nu}"
-        );
+        assert!(nu.abs() < 1e-14, "At periapsis, ν should be 0: ν={nu}");
     }
 
     #[test]

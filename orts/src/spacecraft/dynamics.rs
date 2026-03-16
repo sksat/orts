@@ -1,7 +1,7 @@
+use crate::gravity::GravityField;
 use kaname::epoch::Epoch;
 use nalgebra::Matrix3;
 use orts_integrator::DynamicalSystem;
-use crate::gravity::GravityField;
 
 use super::{ExternalLoads, LoadModel, SpacecraftState};
 
@@ -112,24 +112,30 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
 
         // Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
         let iw = self.inertia * state.attitude.angular_velocity;
-        let alpha = self.inertia_inv
-            * (total.torque_body - state.attitude.angular_velocity.cross(&iw));
+        let alpha =
+            self.inertia_inv * (total.torque_body - state.attitude.angular_velocity.cross(&iw));
 
-        SpacecraftState::from_derivative(*state.orbit.velocity(), total_accel, q_dot, alpha, total.mass_rate)
+        SpacecraftState::from_derivative(
+            *state.orbit.velocity(),
+            total_accel,
+            q_dot,
+            alpha,
+            total.mass_rate,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::{Vector3, Vector4};
-    use crate::attitude::{AttitudeState, TorqueModel};
-    use orts_integrator::{Integrator, OdeState, Rk4};
     use crate::OrbitalState;
-    use kaname::constants::MU_EARTH;
+    use crate::attitude::{AttitudeState, TorqueModel};
     use crate::gravity::PointMass;
     use crate::orbital_system::OrbitalSystem;
     use crate::perturbations::ForceModel;
+    use kaname::constants::MU_EARTH;
+    use nalgebra::{Vector3, Vector4};
+    use orts_integrator::{Integrator, OdeState, Rk4};
 
     use super::super::{ForceModelAtCoM, TorqueModelOnly};
 
@@ -140,10 +146,7 @@ mod tests {
     }
 
     fn sample_orbit() -> OrbitalState {
-        OrbitalState::new(
-            Vector3::new(7000.0, 0.0, 0.0),
-            Vector3::new(0.0, 7.5, 0.0),
-        )
+        OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0))
     }
 
     fn sample_spacecraft() -> SpacecraftState {
@@ -178,12 +181,7 @@ mod tests {
         fn name(&self) -> &str {
             "const_torque"
         }
-        fn torque(
-            &self,
-            _t: f64,
-            _state: &AttitudeState,
-            _epoch: Option<&Epoch>,
-        ) -> Vector3<f64> {
+        fn torque(&self, _t: f64, _state: &AttitudeState, _epoch: Option<&Epoch>) -> Vector3<f64> {
             self.0
         }
     }
@@ -195,12 +193,7 @@ mod tests {
         fn name(&self) -> &str {
             "epoch_sensitive"
         }
-        fn loads(
-            &self,
-            _t: f64,
-            _state: &SpacecraftState,
-            epoch: Option<&Epoch>,
-        ) -> ExternalLoads {
+        fn loads(&self, _t: f64, _state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads {
             match epoch {
                 Some(e) => ExternalLoads {
                     acceleration_inertial: Vector3::new(e.jd() * 1e-10, 0.0, 0.0),
@@ -534,10 +527,7 @@ mod tests {
         let r_mag = r.magnitude();
 
         let de_dt = v.dot(a) + MU_EARTH / (r_mag.powi(3)) * r.dot(v);
-        assert!(
-            de_dt.abs() < 1e-12,
-            "dE/dt should be ≈ 0, got {de_dt:.3e}"
-        );
+        assert!(de_dt.abs() < 1e-12, "dE/dt should be ≈ 0, got {de_dt:.3e}");
     }
 
     #[test]

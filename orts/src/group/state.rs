@@ -82,17 +82,14 @@ impl<S: OdeState> OdeState for GroupState<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::{Vector3, Vector4};
-    use crate::attitude::AttitudeState;
     use crate::OrbitalState;
+    use crate::attitude::AttitudeState;
+    use nalgebra::{Vector3, Vector4};
 
     use crate::SpacecraftState;
 
     fn orbit_state(x: f64, vx: f64) -> OrbitalState {
-        OrbitalState::new(
-            Vector3::new(x, 0.0, 0.0),
-            Vector3::new(vx, 0.0, 0.0),
-        )
+        OrbitalState::new(Vector3::new(x, 0.0, 0.0), Vector3::new(vx, 0.0, 0.0))
     }
 
     fn two_orbit_group() -> GroupState<OrbitalState> {
@@ -170,12 +167,11 @@ mod tests {
         let y_next = y_n.clone();
         let error = GroupState::new(vec![
             orbit_state(1e-12, 1e-12), // tiny error
-            orbit_state(1.0, 0.01),     // large error
+            orbit_state(1.0, 0.01),    // large error
         ]);
 
         let group_norm = y_n.error_norm(&y_next, &error, &tol);
-        let sat1_norm =
-            y_n.states[1].error_norm(&y_next.states[1], &error.states[1], &tol);
+        let sat1_norm = y_n.states[1].error_norm(&y_next.states[1], &error.states[1], &tol);
 
         // Group norm should equal the worst (satellite 1)
         assert!((group_norm - sat1_norm).abs() < 1e-10);

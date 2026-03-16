@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use kaname::epoch::Epoch;
-use orts_integrator::Tolerances;
 use kaname::body::KnownBody;
+use kaname::epoch::Epoch;
 use orts::tle::Tle;
+use orts_integrator::Tolerances;
 
-use crate::cli::{SimArgs, IntegratorChoice, AtmosphereChoice};
+use crate::cli::{AtmosphereChoice, IntegratorChoice, SimArgs};
 use crate::config::SimConfig;
-use crate::satellite::{OrbitSpec, SatelliteSpec, parse_sat_spec, parse_body};
-use crate::tle::{try_fetch_tle_by_norad_id, fetch_tle_by_norad_id};
+use crate::satellite::{OrbitSpec, SatelliteSpec, parse_body, parse_sat_spec};
+use crate::tle::{fetch_tle_by_norad_id, try_fetch_tle_by_norad_id};
 
 /// Simulation parameters derived from CLI arguments.
 pub struct SimParams {
@@ -32,9 +32,7 @@ impl SimParams {
     pub fn build_atmosphere_model(&self) -> Option<Box<dyn tobari::AtmosphereModel>> {
         match self.atmosphere {
             AtmosphereChoice::Exponential => None, // use default
-            AtmosphereChoice::HarrisPriester => {
-                Some(Box::new(tobari::HarrisPriester::new()))
-            }
+            AtmosphereChoice::HarrisPriester => Some(Box::new(tobari::HarrisPriester::new())),
             AtmosphereChoice::Nrlmsise00 => {
                 let provider: Box<dyn tobari::SpaceWeatherProvider> =
                     match &self.space_weather_provider {
@@ -55,10 +53,9 @@ impl SimParams {
         let mu = body.properties().mu;
 
         let epoch = match &args.epoch {
-            Some(s) => Some(
-                Epoch::from_iso8601(s)
-                    .unwrap_or_else(|| panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)"))
-            ),
+            Some(s) => Some(Epoch::from_iso8601(s).unwrap_or_else(|| {
+                panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)")
+            })),
             None => Some(Epoch::now()),
         };
 
@@ -67,13 +64,17 @@ impl SimParams {
             if args.tle.is_some() || args.tle_line1.is_some() || args.norad_id.is_some() {
                 panic!("Cannot specify both --sat and --tle/--tle-line1/--tle-line2/--norad-id");
             }
-            args.sats.iter().enumerate().map(|(i, s)| {
-                let mut spec = parse_sat_spec(s, body);
-                if spec.id.is_empty() || spec.id == "auto" {
-                    spec.id = format!("sat-{i}");
-                }
-                spec
-            }).collect()
+            args.sats
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let mut spec = parse_sat_spec(s, body);
+                    if spec.id.is_empty() || spec.id == "auto" {
+                        spec.id = format!("sat-{i}");
+                    }
+                    spec
+                })
+                .collect()
         } else {
             // No --sat flags: use legacy single-satellite args
             let tle_opt = Self::parse_tle_from_args(args);
@@ -85,13 +86,21 @@ impl SimParams {
                 vec![SatelliteSpec {
                     id: "default".to_string(),
                     name: sat_name,
-                    orbit: OrbitSpec::Tle { tle_data: tle, elements },
+                    orbit: OrbitSpec::Tle {
+                        tle_data: tle,
+                        elements,
+                    },
                     period,
                     ballistic_coeff: None,
                     srp_area_to_mass: None,
                     srp_cr: None,
                 }]
-            } else if is_serve && args.altitude == 400.0 && args.tle.is_none() && args.tle_line1.is_none() && args.norad_id.is_none() {
+            } else if is_serve
+                && args.altitude == 400.0
+                && args.tle.is_none()
+                && args.tle_line1.is_none()
+                && args.norad_id.is_none()
+            {
                 // serve with no explicit orbit → SSO + ISS default
                 Self::default_serve_satellites(body, mu)
             } else {
@@ -101,7 +110,12 @@ impl SimParams {
                 vec![SatelliteSpec {
                     id: "default".to_string(),
                     name: None,
-                    orbit: OrbitSpec::Circular { altitude: args.altitude, r0, inclination: 0.0, raan: 0.0 },
+                    orbit: OrbitSpec::Circular {
+                        altitude: args.altitude,
+                        r0,
+                        inclination: 0.0,
+                        raan: 0.0,
+                    },
                     period,
                     ballistic_coeff: None,
                     srp_area_to_mass: None,
@@ -118,7 +132,13 @@ impl SimParams {
 
         // Apply --duration override: replace each satellite's period with the user-specified duration
         let satellites = if let Some(dur) = args.duration {
-            satellites.into_iter().map(|mut s| { s.period = dur; s }).collect()
+            satellites
+                .into_iter()
+                .map(|mut s| {
+                    s.period = dur;
+                    s
+                })
+                .collect()
         } else {
             satellites
         };
@@ -132,7 +152,10 @@ impl SimParams {
             epoch,
             satellites,
             integrator: args.integrator,
-            tolerances: Tolerances { atol: args.atol, rtol: args.rtol },
+            tolerances: Tolerances {
+                atol: args.atol,
+                rtol: args.rtol,
+            },
             atmosphere: args.atmosphere,
             f107: args.f107,
             ap: args.ap,
@@ -146,10 +169,9 @@ impl SimParams {
         let mu = body.properties().mu;
 
         let epoch = match &config.epoch {
-            Some(s) => Some(
-                Epoch::from_iso8601(s)
-                    .unwrap_or_else(|| panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)"))
-            ),
+            Some(s) => Some(Epoch::from_iso8601(s).unwrap_or_else(|| {
+                panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)")
+            })),
             None => Some(Epoch::now()),
         };
 
@@ -167,7 +189,13 @@ impl SimParams {
             .clamp(config.dt, output_interval);
 
         let satellites = if let Some(dur) = config.duration {
-            satellites.into_iter().map(|mut s| { s.period = dur; s }).collect()
+            satellites
+                .into_iter()
+                .map(|mut s| {
+                    s.period = dur;
+                    s
+                })
+                .collect()
         } else {
             satellites
         };
@@ -181,7 +209,10 @@ impl SimParams {
             epoch,
             satellites,
             integrator: config.integrator_choice(),
-            tolerances: Tolerances { atol: config.integrator.atol, rtol: config.integrator.rtol },
+            tolerances: Tolerances {
+                atol: config.integrator.atol,
+                rtol: config.integrator.rtol,
+            },
             atmosphere: config.atmosphere_choice(),
             f107: config.f107,
             ap: config.ap,
@@ -217,7 +248,8 @@ impl SimParams {
             id: "sso".to_string(),
             name: Some("SSO 800km".to_string()),
             orbit: OrbitSpec::Circular {
-                altitude: 800.0, r0,
+                altitude: 800.0,
+                r0,
                 inclination: 98.6_f64.to_radians(),
                 raan: 0.0,
             },
@@ -244,7 +276,10 @@ impl SimParams {
         sats.push(SatelliteSpec {
             id: "iss".to_string(),
             name: sat_name,
-            orbit: OrbitSpec::Tle { tle_data: iss_tle, elements },
+            orbit: OrbitSpec::Tle {
+                tle_data: iss_tle,
+                elements,
+            },
             period,
             ballistic_coeff: None,
             srp_area_to_mass: None,
@@ -450,8 +485,12 @@ mod tests {
             stream_interval: None,
             epoch: None,
             tle: None,
-            tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
-            tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+            tle_line1: Some(
+                "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string(),
+            ),
+            tle_line2: Some(
+                "2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string(),
+            ),
             norad_id: Some(25544),
             sats: vec![],
             integrator: IntegratorChoice::Dp45,
@@ -477,8 +516,12 @@ mod tests {
             stream_interval: None,
             epoch: None,
             tle: None,
-            tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
-            tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+            tle_line1: Some(
+                "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string(),
+            ),
+            tle_line2: Some(
+                "2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string(),
+            ),
             norad_id: None,
             sats: vec![],
             integrator: IntegratorChoice::Dp45,
@@ -500,10 +543,7 @@ mod tests {
 
         // Altitude should be ~400 km
         let alt = sat.altitude(&params.body);
-        assert!(
-            (alt - 400.0).abs() < 30.0,
-            "ISS altitude: {:.1} km", alt
-        );
+        assert!((alt - 400.0).abs() < 30.0, "ISS altitude: {:.1} km", alt);
 
         // Period should be ~92 minutes
         assert!(
@@ -523,8 +563,12 @@ mod tests {
             stream_interval: None,
             epoch: None,
             tle: None,
-            tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
-            tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+            tle_line1: Some(
+                "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string(),
+            ),
+            tle_line2: Some(
+                "2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string(),
+            ),
             norad_id: None,
             sats: vec![],
             integrator: IntegratorChoice::Dp45,
@@ -550,10 +594,7 @@ mod tests {
             "ISS altitude from state: {altitude:.1} km"
         );
         // ISS velocity ~7.66 km/s
-        assert!(
-            (v - 7.66).abs() < 0.2,
-            "ISS velocity: {v:.3} km/s"
-        );
+        assert!((v - 7.66).abs() < 0.2, "ISS velocity: {v:.3} km/s");
     }
 
     #[test]
@@ -583,7 +624,10 @@ mod tests {
         let params = SimParams::from_sim_args(&args, false);
 
         assert_eq!(params.satellites.len(), 1);
-        assert!(matches!(params.satellites[0].orbit, OrbitSpec::Circular { .. }));
+        assert!(matches!(
+            params.satellites[0].orbit,
+            OrbitSpec::Circular { .. }
+        ));
         assert!((params.satellites[0].altitude(&params.body) - 400.0).abs() < 1e-9);
     }
 
@@ -597,8 +641,12 @@ mod tests {
             stream_interval: None,
             epoch: Some("2025-01-01T00:00:00Z".to_string()),
             tle: None,
-            tle_line1: Some("1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string()),
-            tle_line2: Some("2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string()),
+            tle_line1: Some(
+                "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string(),
+            ),
+            tle_line2: Some(
+                "2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string(),
+            ),
             norad_id: None,
             sats: vec![],
             integrator: IntegratorChoice::Dp45,
@@ -634,7 +682,10 @@ mod tests {
             tle_line1: None,
             tle_line2: None,
             norad_id: None,
-            sats: vec!["altitude=800,id=sso".to_string(), "altitude=600,id=leo".to_string()],
+            sats: vec![
+                "altitude=800,id=sso".to_string(),
+                "altitude=600,id=leo".to_string(),
+            ],
             integrator: IntegratorChoice::Dp45,
             atol: 1e-10,
             rtol: 1e-8,

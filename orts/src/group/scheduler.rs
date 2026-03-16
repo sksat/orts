@@ -486,10 +486,7 @@ where
     /// - Coupled pairs → CoupledGroup (single ODE)
     /// - Synchronized pairs → KDK velocity kicks
     /// - Independent → IndependentGroup (drift only)
-    pub fn propagate_to(
-        &mut self,
-        t_target: f64,
-    ) -> Result<PropGroupOutcome, IntegrationError>
+    pub fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError>
     where
         D::State: 'static,
     {
@@ -500,9 +497,7 @@ where
             let min_end = self
                 .satellites
                 .iter()
-                .filter(|s| {
-                    !s.terminated && s.end_time.is_some_and(|et| et > self.t + 1e-9)
-                })
+                .filter(|s| !s.terminated && s.end_time.is_some_and(|et| et > self.t + 1e-9))
                 .filter_map(|s| s.end_time)
                 .fold(t_target, f64::min);
             let sync_target = (self.t + self.config.sync_interval).min(min_end);
@@ -539,20 +534,14 @@ where
 
                 if has_events {
                     // Event during drift. Apply second half-kick only to active sats.
-                    let accels_end =
-                        self.compute_kick_accels(&grouping.kick_pairs, sync_target);
-                    self.apply_kicks_active(
-                        &grouping.kick_pairs,
-                        &accels_end,
-                        dt_sync / 2.0,
-                    );
+                    let accels_end = self.compute_kick_accels(&grouping.kick_pairs, sync_target);
+                    self.apply_kicks_active(&grouping.kick_pairs, &accels_end, dt_sync / 2.0);
                     self.t = sync_target;
                     break;
                 }
 
                 // 5. Compute accelerations at new positions (post-drift time)
-                let accels_end =
-                    self.compute_kick_accels(&grouping.kick_pairs, sync_target);
+                let accels_end = self.compute_kick_accels(&grouping.kick_pairs, sync_target);
 
                 // 6. Second half-kick
                 self.apply_kicks(&grouping.kick_pairs, &accels_end, dt_sync / 2.0);
@@ -561,9 +550,11 @@ where
             self.t = sync_target;
 
             // If all satellites are done, break early
-            if self.satellites.iter().all(|s| {
-                s.terminated || s.end_time.is_some_and(|et| self.t >= et - 1e-9)
-            }) {
+            if self
+                .satellites
+                .iter()
+                .all(|s| s.terminated || s.end_time.is_some_and(|et| self.t >= et - 1e-9))
+            {
                 break;
             }
         }
@@ -596,12 +587,7 @@ where
                             let dist = (self.satellites[i].state.position()
                                 - self.satellites[j].state.position())
                             .magnitude();
-                            evaluate_auto_regime(
-                                dist,
-                                &self.pair_states[idx],
-                                self.t,
-                                &self.config,
-                            )
+                            evaluate_auto_regime(dist, &self.pair_states[idx], self.t, &self.config)
                         } else {
                             self.pair_states[idx].regime
                         }
@@ -1065,10 +1051,7 @@ mod tests {
     fn grouping_chain_promotion() {
         // A-B coupled, B-C coupled → {A,B,C} single component
         let active = vec![true, true, true];
-        let pairs = vec![
-            (0, 1, PairRegime::Coupled),
-            (1, 2, PairRegime::Coupled),
-        ];
+        let pairs = vec![(0, 1, PairRegime::Coupled), (1, 2, PairRegime::Coupled)];
         let g = determine_grouping(3, &pairs, &active);
         assert_eq!(g.coupled_components.len(), 1);
         assert_eq!(g.coupled_components[0], vec![0, 1, 2]);
@@ -1134,29 +1117,23 @@ mod tests {
 
     // ── Scheduler builder + accessors ───────────────────────────────────
 
-    use nalgebra::Vector3;
+    use super::super::coupled::MutualGravity;
     use crate::OrbitalState;
     use crate::two_body::TwoBodySystem;
-    use super::super::coupled::MutualGravity;
+    use nalgebra::Vector3;
 
     const MU_EARTH: f64 = 398600.4418;
 
     fn iss_state() -> OrbitalState {
         let r: f64 = 6778.137;
         let v = (MU_EARTH / r).sqrt();
-        OrbitalState::new(
-            Vector3::new(r, 0.0, 0.0),
-            Vector3::new(0.0, v, 0.0),
-        )
+        OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0))
     }
 
     fn sso_state() -> OrbitalState {
         let r: f64 = 7178.137;
         let v = (MU_EARTH / r).sqrt();
-        OrbitalState::new(
-            Vector3::new(r, 0.0, 0.0),
-            Vector3::new(0.0, v, 0.0),
-        )
+        OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0))
     }
 
     fn test_integrator() -> IntegratorConfig {
@@ -1247,11 +1224,12 @@ mod tests {
             .add_satellite("a", iss_state(), TwoBodySystem { mu: MU_EARTH })
             .add_satellite("b", sso_state(), TwoBodySystem { mu: MU_EARTH })
             .add_satellite("c", iss_state(), TwoBodySystem { mu: MU_EARTH })
-            .add_group_interaction(
-                &["a", "b", "c"],
-                PairPolicy::Auto,
-                |_i, _j| Arc::new(MutualGravity { mu_i: 1e-10, mu_j: 1e-10 }),
-            );
+            .add_group_interaction(&["a", "b", "c"], PairPolicy::Auto, |_i, _j| {
+                Arc::new(MutualGravity {
+                    mu_i: 1e-10,
+                    mu_j: 1e-10,
+                })
+            });
 
         // 3 members → 3 pairs: (a,b), (a,c), (b,c)
         assert_eq!(
@@ -1343,15 +1321,16 @@ mod tests {
     fn scheduler_independent_event_termination() {
         const EARTH_RADIUS: f64 = 6378.137;
 
-        let decaying = OrbitalState::new(
-            Vector3::new(6500.0, 0.0, 0.0),
-            Vector3::new(-5.0, 3.0, 0.0),
-        );
+        let decaying =
+            OrbitalState::new(Vector3::new(6500.0, 0.0, 0.0), Vector3::new(-5.0, 3.0, 0.0));
 
         let mut sched: Scheduler<TwoBodySystem> = Scheduler::new(default_config(), test_dp45())
             .with_event_checker(move |_t, state: &OrbitalState| {
                 if state.position().magnitude() < EARTH_RADIUS {
-                    ControlFlow::Break(format!("collision at {:.1} km", state.position().magnitude()))
+                    ControlFlow::Break(format!(
+                        "collision at {:.1} km",
+                        state.position().magnitude()
+                    ))
                 } else {
                     ControlFlow::Continue(())
                 }
@@ -1362,10 +1341,12 @@ mod tests {
         let outcome = sched.propagate_to(10000.0).unwrap();
 
         // "decay" should have terminated, "safe" should be fine
-        assert!(outcome
-            .terminations
-            .iter()
-            .any(|t| t.satellite_id == SatId::from("decay")));
+        assert!(
+            outcome
+                .terminations
+                .iter()
+                .any(|t| t.satellite_id == SatId::from("decay"))
+        );
 
         // Snapshot should only show "safe"
         let snap = sched.snapshot();
@@ -1394,14 +1375,8 @@ mod tests {
         // Scheduler should produce identical results to direct CoupledGroup.
         let k = 0.01;
         let rest = 10.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(15.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(15.0, 0.0, 0.0), Vector3::zeros());
         let spring = Arc::new(Spring {
             stiffness: k,
             rest_length: rest,
@@ -1434,8 +1409,8 @@ mod tests {
 
         // Energy conservation check
         let energy = |p0: &OrbitalState, p1: &OrbitalState| -> f64 {
-            let ke = p0.velocity().magnitude_squared() / 2.0
-                + p1.velocity().magnitude_squared() / 2.0;
+            let ke =
+                p0.velocity().magnitude_squared() / 2.0 + p1.velocity().magnitude_squared() / 2.0;
             let r = (p1.position() - p0.position()).magnitude();
             ke + k * (r - rest).powi(2) / 2.0
         };
@@ -1449,18 +1424,11 @@ mod tests {
 
     #[test]
     fn scheduler_coupled_dp45_spring() {
-
         let k = 0.04;
         let rest = 10.0;
         let amplitude = 3.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(rest + amplitude, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(rest + amplitude, 0.0, 0.0), Vector3::zeros());
         let spring = Arc::new(Spring {
             stiffness: k,
             rest_length: rest,
@@ -1500,10 +1468,7 @@ mod tests {
         // Spring with initial velocity causing one satellite to cross x=20 boundary
         let k = 0.01;
         let rest = 10.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::new(0.0, 0.0, 0.0),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, 0.0, 0.0));
         let s1 = OrbitalState::new(
             Vector3::new(15.0, 0.0, 0.0),
             Vector3::new(1.0, 0.0, 0.0), // moving outward
@@ -1567,8 +1532,7 @@ mod tests {
 
     /// Helper: spring energy for two free particles
     fn spring_energy(k: f64, rest: f64, a: &OrbitalState, b: &OrbitalState) -> f64 {
-        let ke = a.velocity().magnitude_squared() / 2.0
-            + b.velocity().magnitude_squared() / 2.0;
+        let ke = a.velocity().magnitude_squared() / 2.0 + b.velocity().magnitude_squared() / 2.0;
         let r = (b.position() - a.position()).magnitude();
         ke + k * (r - rest).powi(2) / 2.0
     }
@@ -1591,14 +1555,8 @@ mod tests {
         let k = 0.04;
         let rest = 10.0;
         let amplitude = 3.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(rest + amplitude, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(rest + amplitude, 0.0, 0.0), Vector3::zeros());
         let spring = Arc::new(Spring {
             stiffness: k,
             rest_length: rest,
@@ -1610,7 +1568,10 @@ mod tests {
             sync_config(1.0), // sync every 1 second
             IntegratorConfig::Dp45 {
                 dt: 0.1,
-                tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
             },
         )
         .add_satellite("a", s0, FreeParticle)
@@ -1640,14 +1601,8 @@ mod tests {
         let k = 0.04;
         let rest = 10.0;
         let amplitude = 3.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(rest + amplitude, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(rest + amplitude, 0.0, 0.0), Vector3::zeros());
         let spring = Arc::new(Spring {
             stiffness: k,
             rest_length: rest,
@@ -1656,28 +1611,28 @@ mod tests {
         let t_end = 20.0; // ~1 period
         let dp45_tight = IntegratorConfig::Dp45 {
             dt: 0.1,
-            tolerances: Tolerances { atol: 1e-14, rtol: 1e-12 },
+            tolerances: Tolerances {
+                atol: 1e-14,
+                rtol: 1e-12,
+            },
         };
 
         // Truth run: CoupledGroup
-        let mut truth: CoupledGroup<FreeParticle> =
-            CoupledGroup::new(dp45_tight.clone())
-                .add_satellite("a", s0.clone(), FreeParticle)
-                .add_satellite("b", s1.clone(), FreeParticle)
-                .with_interaction(0, 1, spring.clone());
+        let mut truth: CoupledGroup<FreeParticle> = CoupledGroup::new(dp45_tight.clone())
+            .add_satellite("a", s0.clone(), FreeParticle)
+            .add_satellite("b", s1.clone(), FreeParticle)
+            .with_interaction(0, 1, spring.clone());
         truth.propagate_to(t_end).unwrap();
         let truth_a = truth.group_state().states[0].clone();
 
         // Run KDK at three sync_intervals: dt, dt/2, dt/4
         let mut errors = Vec::new();
         for &si in &[2.0, 1.0, 0.5] {
-            let mut sched: Scheduler<FreeParticle> = Scheduler::new(
-                sync_config(si),
-                dp45_tight.clone(),
-            )
-            .add_satellite("a", s0.clone(), FreeParticle)
-            .add_satellite("b", s1.clone(), FreeParticle)
-            .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring.clone());
+            let mut sched: Scheduler<FreeParticle> =
+                Scheduler::new(sync_config(si), dp45_tight.clone())
+                    .add_satellite("a", s0.clone(), FreeParticle)
+                    .add_satellite("b", s1.clone(), FreeParticle)
+                    .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring.clone());
 
             sched.propagate_to(t_end).unwrap();
 
@@ -1704,14 +1659,8 @@ mod tests {
         // As sync_interval → 0, KDK result should approach CoupledGroup result
         let k = 0.04;
         let rest = 10.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(13.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(13.0, 0.0, 0.0), Vector3::zeros());
         let spring = Arc::new(Spring {
             stiffness: k,
             rest_length: rest,
@@ -1720,41 +1669,47 @@ mod tests {
 
         let dp45 = IntegratorConfig::Dp45 {
             dt: 0.1,
-            tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+            tolerances: Tolerances {
+                atol: 1e-12,
+                rtol: 1e-10,
+            },
         };
 
         // CoupledGroup reference
-        let mut coupled: CoupledGroup<FreeParticle> =
-            CoupledGroup::new(dp45.clone())
-                .add_satellite("a", s0.clone(), FreeParticle)
-                .add_satellite("b", s1.clone(), FreeParticle)
-                .with_interaction(0, 1, spring.clone());
+        let mut coupled: CoupledGroup<FreeParticle> = CoupledGroup::new(dp45.clone())
+            .add_satellite("a", s0.clone(), FreeParticle)
+            .add_satellite("b", s1.clone(), FreeParticle)
+            .with_interaction(0, 1, spring.clone());
         coupled.propagate_to(t_end).unwrap();
         let coupled_a = coupled.group_state().states[0].clone();
 
         // KDK with large sync_interval
-        let mut sched_large: Scheduler<FreeParticle> = Scheduler::new(
-            sync_config(5.0),
-            dp45.clone(),
-        )
-        .add_satellite("a", s0.clone(), FreeParticle)
-        .add_satellite("b", s1.clone(), FreeParticle)
-        .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring.clone());
+        let mut sched_large: Scheduler<FreeParticle> =
+            Scheduler::new(sync_config(5.0), dp45.clone())
+                .add_satellite("a", s0.clone(), FreeParticle)
+                .add_satellite("b", s1.clone(), FreeParticle)
+                .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring.clone());
         sched_large.propagate_to(t_end).unwrap();
-        let large_err = (sched_large.satellite_state(&SatId::from("a")).unwrap().position()
-            - coupled_a.position()).magnitude();
+        let large_err = (sched_large
+            .satellite_state(&SatId::from("a"))
+            .unwrap()
+            .position()
+            - coupled_a.position())
+        .magnitude();
 
         // KDK with small sync_interval
-        let mut sched_small: Scheduler<FreeParticle> = Scheduler::new(
-            sync_config(0.1),
-            dp45.clone(),
-        )
-        .add_satellite("a", s0, FreeParticle)
-        .add_satellite("b", s1, FreeParticle)
-        .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring);
+        let mut sched_small: Scheduler<FreeParticle> =
+            Scheduler::new(sync_config(0.1), dp45.clone())
+                .add_satellite("a", s0, FreeParticle)
+                .add_satellite("b", s1, FreeParticle)
+                .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring);
         sched_small.propagate_to(t_end).unwrap();
-        let small_err = (sched_small.satellite_state(&SatId::from("a")).unwrap().position()
-            - coupled_a.position()).magnitude();
+        let small_err = (sched_small
+            .satellite_state(&SatId::from("a"))
+            .unwrap()
+            .position()
+            - coupled_a.position())
+        .magnitude();
 
         // Smaller sync_interval should give smaller error vs coupled
         assert!(
@@ -1774,14 +1729,8 @@ mod tests {
         // Momentum should be conserved (free particles + spring).
         let k = 0.04;
         let rest = 10.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::new(0.1, 0.0, 0.0),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(13.0, 0.0, 0.0),
-            Vector3::new(-0.1, 0.0, 0.0),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::new(0.1, 0.0, 0.0));
+        let s1 = OrbitalState::new(Vector3::new(13.0, 0.0, 0.0), Vector3::new(-0.1, 0.0, 0.0));
         let spring = Arc::new(Spring {
             stiffness: k,
             rest_length: rest,
@@ -1793,7 +1742,10 @@ mod tests {
             sync_config(2.0),
             IntegratorConfig::Dp45 {
                 dt: 0.1,
-                tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
             },
         )
         .add_satellite("a", s0, FreeParticle)
@@ -1808,10 +1760,7 @@ mod tests {
         let p_final = a.velocity() + b.velocity();
 
         let dp = (p_final - p0).magnitude();
-        assert!(
-            dp < 1e-10,
-            "momentum not conserved: dp={dp}"
-        );
+        assert!(dp < 1e-10, "momentum not conserved: dp={dp}");
     }
 
     #[test]
@@ -1819,10 +1768,7 @@ mod tests {
         // Event during KDK drift phase should stop propagation and correct kick.
         let k = 0.01;
         let rest = 10.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
         let s1 = OrbitalState::new(
             Vector3::new(15.0, 0.0, 0.0),
             Vector3::new(2.0, 0.0, 0.0), // moving outward fast
@@ -1836,7 +1782,10 @@ mod tests {
             sync_config(5.0),
             IntegratorConfig::Dp45 {
                 dt: 0.1,
-                tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
             },
         )
         .with_event_checker(|_t, state: &OrbitalState| {
@@ -1865,14 +1814,8 @@ mod tests {
         // Satellite with end_time should stop receiving kicks when it expires.
         let k = 0.01;
         let rest = 10.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(15.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(15.0, 0.0, 0.0), Vector3::zeros());
         let spring = Arc::new(Spring {
             stiffness: k,
             rest_length: rest,
@@ -1882,7 +1825,10 @@ mod tests {
             sync_config(2.0),
             IntegratorConfig::Dp45 {
                 dt: 0.1,
-                tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
             },
         )
         .add_satellite("a", s0, FreeParticle)
@@ -1909,18 +1855,9 @@ mod tests {
         let k = 0.01;
         let rest = 10.0;
 
-        let sa = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let sb = OrbitalState::new(
-            Vector3::new(15.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
-        let sc = OrbitalState::new(
-            Vector3::new(50.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let sa = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let sb = OrbitalState::new(Vector3::new(15.0, 0.0, 0.0), Vector3::zeros());
+        let sc = OrbitalState::new(Vector3::new(50.0, 0.0, 0.0), Vector3::zeros());
         let spring = Arc::new(Spring {
             stiffness: k,
             rest_length: rest,
@@ -1930,7 +1867,10 @@ mod tests {
             sync_config(1.0),
             IntegratorConfig::Dp45 {
                 dt: 0.1,
-                tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
             },
         )
         .add_satellite("a", sa, FreeParticle)
@@ -1949,7 +1889,11 @@ mod tests {
         assert!(a.position().x.abs() > 1e-6, "a should move");
         assert!(b.position().x > 14.0, "b should still be near initial");
         // C should have been pulled toward B by KDK kicks
-        assert!(c.position().x < 50.0, "c should move toward b: x={}", c.position().x);
+        assert!(
+            c.position().x < 50.0,
+            "c should move toward b: x={}",
+            c.position().x
+        );
 
         // Momentum should be approximately conserved (all springs, no external forces)
         let p_total = a.velocity() + b.velocity() + c.velocity();
@@ -1965,14 +1909,8 @@ mod tests {
         // C should drift unperturbed.
         let k = 0.04;
         let rest = 10.0;
-        let sa = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let sb = OrbitalState::new(
-            Vector3::new(rest + 3.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let sa = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let sb = OrbitalState::new(Vector3::new(rest + 3.0, 0.0, 0.0), Vector3::zeros());
         let sc = OrbitalState::new(
             Vector3::new(100.0, 0.0, 0.0),
             Vector3::new(0.0, 1.0, 0.0), // drifting in y
@@ -1986,7 +1924,10 @@ mod tests {
             sync_config(1.0),
             IntegratorConfig::Dp45 {
                 dt: 0.1,
-                tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
             },
         )
         .add_satellite("a", sa.clone(), FreeParticle)
@@ -2046,7 +1987,10 @@ mod tests {
             approach_config,
             IntegratorConfig::Dp45 {
                 dt: 0.1,
-                tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
             },
         )
         .add_satellite("a", sa, FreeParticle)
@@ -2065,12 +2009,18 @@ mod tests {
 
         let a = sched.satellite_state(&SatId::from("a")).unwrap();
         let b = sched.satellite_state(&SatId::from("b")).unwrap();
-        assert!(a.position().x.is_finite() && a.position().y.is_finite() && a.position().z.is_finite());
-        assert!(b.position().x.is_finite() && b.position().y.is_finite() && b.position().z.is_finite());
+        assert!(
+            a.position().x.is_finite() && a.position().y.is_finite() && a.position().z.is_finite()
+        );
+        assert!(
+            b.position().x.is_finite() && b.position().y.is_finite() && b.position().z.is_finite()
+        );
 
         // At t=30, dist ≈ 30 - 30 = 0 (plus spring bounce effects)
         // Well inside couple_enter=5 → should be Coupled
-        let regime = sched.pair_regime(&SatId::from("a"), &SatId::from("b")).unwrap();
+        let regime = sched
+            .pair_regime(&SatId::from("a"), &SatId::from("b"))
+            .unwrap();
         assert_eq!(
             regime,
             PairRegime::Coupled,
@@ -2110,7 +2060,10 @@ mod tests {
             departure_config,
             IntegratorConfig::Dp45 {
                 dt: 0.1,
-                tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
             },
         )
         .add_satellite("a", sa, FreeParticle)
@@ -2120,12 +2073,20 @@ mod tests {
         // First propagate briefly — should start as Independent (initial regime)
         // but distance=4 < couple_enter=5 → should upgrade to Coupled immediately
         sched.propagate_to(0.5).unwrap();
-        let regime_early = sched.pair_regime(&SatId::from("a"), &SatId::from("b")).unwrap();
-        assert_eq!(regime_early, PairRegime::Coupled, "close pair should be Coupled");
+        let regime_early = sched
+            .pair_regime(&SatId::from("a"), &SatId::from("b"))
+            .unwrap();
+        assert_eq!(
+            regime_early,
+            PairRegime::Coupled,
+            "close pair should be Coupled"
+        );
 
         // After 15s: dist ≈ 4 + 2*1*15 = 34 > sync_exit=25 → Independent
         sched.propagate_to(15.0).unwrap();
-        let regime_late = sched.pair_regime(&SatId::from("a"), &SatId::from("b")).unwrap();
+        let regime_late = sched
+            .pair_regime(&SatId::from("a"), &SatId::from("b"))
+            .unwrap();
         assert_eq!(
             regime_late,
             PairRegime::Independent,
@@ -2138,10 +2099,7 @@ mod tests {
         // After one satellite terminates, it should be excluded from all groups.
         let k = 0.01;
         let rest = 10.0;
-        let sa = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
+        let sa = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
         let sb = OrbitalState::new(
             Vector3::new(15.0, 0.0, 0.0),
             Vector3::new(5.0, 0.0, 0.0), // will trigger event
@@ -2155,7 +2113,10 @@ mod tests {
             sync_config(1.0),
             IntegratorConfig::Dp45 {
                 dt: 0.1,
-                tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
             },
         )
         .with_event_checker(|_t, state: &OrbitalState| {
@@ -2180,7 +2141,9 @@ mod tests {
         // Further propagation should work (a alone, no interactions)
         sched.propagate_to(200.0).unwrap();
         let a = sched.satellite_state(&SatId::from("a")).unwrap();
-        assert!(a.position().x.is_finite() && a.position().y.is_finite() && a.position().z.is_finite());
+        assert!(
+            a.position().x.is_finite() && a.position().y.is_finite() && a.position().z.is_finite()
+        );
     }
 
     #[test]
@@ -2199,14 +2162,8 @@ mod tests {
         let k = 0.001;
         let rest = 0.0;
         // Start far apart (dist=40), approach, pass through all regimes
-        let sa = OrbitalState::new(
-            Vector3::new(-20.0, 0.0, 0.0),
-            Vector3::new(0.3, 0.0, 0.0),
-        );
-        let sb = OrbitalState::new(
-            Vector3::new(20.0, 0.0, 0.0),
-            Vector3::new(-0.3, 0.0, 0.0),
-        );
+        let sa = OrbitalState::new(Vector3::new(-20.0, 0.0, 0.0), Vector3::new(0.3, 0.0, 0.0));
+        let sb = OrbitalState::new(Vector3::new(20.0, 0.0, 0.0), Vector3::new(-0.3, 0.0, 0.0));
         let spring = Arc::new(Spring {
             stiffness: k,
             rest_length: rest,
@@ -2216,7 +2173,10 @@ mod tests {
             config,
             IntegratorConfig::Dp45 {
                 dt: 0.1,
-                tolerances: Tolerances { atol: 1e-12, rtol: 1e-10 },
+                tolerances: Tolerances {
+                    atol: 1e-12,
+                    rtol: 1e-10,
+                },
             },
         )
         .add_satellite("a", sa, FreeParticle)
@@ -2229,14 +2189,24 @@ mod tests {
         sched.propagate_to(70.0).unwrap();
 
         // After 70s, distance should be negative-ish → Coupled
-        let regime = sched.pair_regime(&SatId::from("a"), &SatId::from("b")).unwrap();
-        assert_eq!(regime, PairRegime::Coupled, "close pair should be Coupled after approach");
+        let regime = sched
+            .pair_regime(&SatId::from("a"), &SatId::from("b"))
+            .unwrap();
+        assert_eq!(
+            regime,
+            PairRegime::Coupled,
+            "close pair should be Coupled after approach"
+        );
 
         // Verify state is valid
         let a = sched.satellite_state(&SatId::from("a")).unwrap();
         let b = sched.satellite_state(&SatId::from("b")).unwrap();
-        assert!(a.position().x.is_finite() && a.position().y.is_finite() && a.position().z.is_finite());
-        assert!(b.position().x.is_finite() && b.position().y.is_finite() && b.position().z.is_finite());
+        assert!(
+            a.position().x.is_finite() && a.position().y.is_finite() && a.position().z.is_finite()
+        );
+        assert!(
+            b.position().x.is_finite() && b.position().y.is_finite() && b.position().z.is_finite()
+        );
     }
 
     // ── Bug 1: compute_kick_accels time parameter ───────────────────
@@ -2253,10 +2223,7 @@ mod tests {
         fn name(&self) -> &str {
             "time_scaled_spring"
         }
-        fn acceleration_pair(
-            &self,
-            ctx: &PairContext<'_>,
-        ) -> (Vector3<f64>, Vector3<f64>) {
+        fn acceleration_pair(&self, ctx: &PairContext<'_>) -> (Vector3<f64>, Vector3<f64>) {
             let k = self.k0 * (1.0 + self.alpha * ctx.t);
             let r_vec = ctx.pos_j - ctx.pos_i;
             let r = r_vec.magnitude();
@@ -2279,14 +2246,8 @@ mod tests {
         let rest = 10.0;
         let sync_interval = 5.0;
 
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(15.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(15.0, 0.0, 0.0), Vector3::zeros());
         let spring = Arc::new(TimeScaledSpring {
             k0,
             alpha,
@@ -2356,26 +2317,18 @@ mod tests {
         let mut config = sync_config(1e-300);
         config.sync_exit = 200.0;
 
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::new(1.0, 0.0, 0.0),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(100.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::new(1.0, 0.0, 0.0));
+        let s1 = OrbitalState::new(Vector3::new(100.0, 0.0, 0.0), Vector3::zeros());
         let spring = Arc::new(Spring {
             stiffness: 0.01,
             rest_length: 10.0,
         });
 
-        let mut sched: Scheduler<FreeParticle> = Scheduler::new(
-            config,
-            IntegratorConfig::Rk4 { dt: 0.1 },
-        )
-        .add_satellite("a", s0, FreeParticle)
-        .add_satellite("b", s1, FreeParticle)
-        .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring);
+        let mut sched: Scheduler<FreeParticle> =
+            Scheduler::new(config, IntegratorConfig::Rk4 { dt: 0.1 })
+                .add_satellite("a", s0, FreeParticle)
+                .add_satellite("b", s1, FreeParticle)
+                .add_interaction_fixed("a", "b", PairRegime::Synchronized, spring);
 
         // Should complete without hanging (progress guard breaks the loop)
         sched.propagate_to(10.0).unwrap();
@@ -2386,10 +2339,7 @@ mod tests {
         // At t=1e15, adding 0.01 doesn't change the value due to f64 precision
         let config = sync_config(0.01);
 
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
 
         let mut sched: Scheduler<FreeParticle> = Scheduler::new(
             config,
@@ -2412,14 +2362,8 @@ mod tests {
         let rest = 10.0;
         let sync_interval = 5.0;
 
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(15.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(15.0, 0.0, 0.0), Vector3::zeros());
         let spring = Arc::new(Spring {
             stiffness: k,
             rest_length: rest,
@@ -2478,10 +2422,7 @@ mod tests {
     fn kdk_event_updates_scheduler_time() {
         // After an event during KDK on the FIRST sync step, self.t should
         // advance to sync_target (not remain at 0).
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
         let s1 = OrbitalState::new(
             Vector3::new(15.0, 0.0, 0.0),
             Vector3::new(10.0, 0.0, 0.0), // very fast → triggers event in first step
@@ -2566,10 +2507,7 @@ mod tests {
         // Only "b" should be terminated; "a" should survive in snapshot.
         let k = 0.01;
         let rest = 10.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
         let s1 = OrbitalState::new(
             Vector3::new(15.0, 0.0, 0.0),
             Vector3::new(1.0, 0.0, 0.0), // moving outward
@@ -2624,14 +2562,8 @@ mod tests {
         // Use a per-satellite event that only triggers for "b" (by id).
         // "a" at origin with y-velocity, "b" far out with outward x-velocity.
         // Weak spring so "a" stays near origin.
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::new(0.0, 0.5, 0.0),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(100.0, 0.0, 0.0),
-            Vector3::new(1.0, 0.0, 0.0),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, 0.5, 0.0));
+        let s1 = OrbitalState::new(Vector3::new(100.0, 0.0, 0.0), Vector3::new(1.0, 0.0, 0.0));
         // Very weak spring, large rest length — negligible force on "a"
         let spring = Arc::new(Spring {
             stiffness: 1e-6,
@@ -2663,7 +2595,10 @@ mod tests {
         // Propagate: "b" at x=100 + 1*t will reach 200 at ~t=100
         let outcome1 = sched.propagate_to(200.0).unwrap();
         assert!(
-            outcome1.terminations.iter().any(|t| t.satellite_id == SatId::from("b")),
+            outcome1
+                .terminations
+                .iter()
+                .any(|t| t.satellite_id == SatId::from("b")),
             "b should have triggered the boundary event"
         );
         let t_after = sched.current_t();

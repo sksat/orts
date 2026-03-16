@@ -250,10 +250,7 @@ mod tests {
         assert!(store.columns.contains_key(&Velocity3D::component_name()));
 
         let pos_col = &store.columns[&Position3D::component_name()];
-        assert_eq!(
-            pos_col.get_row(0),
-            Some([6778.137, 0.0, 0.0].as_slice())
-        );
+        assert_eq!(pos_col.get_row(0), Some([6778.137, 0.0, 0.0].as_slice()));
 
         let vel_col = &store.columns[&Velocity3D::component_name()];
         assert_eq!(vel_col.get_row(0), Some([0.0, 7.669, 0.0].as_slice()));
@@ -284,10 +281,7 @@ mod tests {
     #[test]
     fn entities_under_excludes_partial_matches() {
         let mut rec = Recording::new();
-        rec.log_static(
-            &EntityPath::parse("/world/satellite"),
-            &BodyRadius(0.0),
-        );
+        rec.log_static(&EntityPath::parse("/world/satellite"), &BodyRadius(0.0));
         rec.log_static(&EntityPath::parse("/world/sat/iss"), &BodyRadius(0.0));
 
         // "/world/sat" should NOT match "/world/satellite"

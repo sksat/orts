@@ -10,13 +10,7 @@ use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState};
 /// to provide multi-step integration with optional event detection.
 pub trait Integrator {
     /// Perform a single integration step, advancing the state from `t` by `dt`.
-    fn step<S: DynamicalSystem>(
-        &self,
-        system: &S,
-        t: f64,
-        state: &S::State,
-        dt: f64,
-    ) -> S::State;
+    fn step<S: DynamicalSystem>(&self, system: &S, t: f64, state: &S::State, dt: f64) -> S::State;
 
     /// Integrate a dynamical system from `t0` to `t_end` using fixed step size `dt`.
     ///

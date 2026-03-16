@@ -153,7 +153,11 @@ pub fn obliquity(epoch: &Epoch) -> f64 {
 pub fn ecliptic_to_equatorial(v: &Vector3<f64>, epsilon: f64) -> Vector3<f64> {
     let cos_eps = epsilon.cos();
     let sin_eps = epsilon.sin();
-    Vector3::new(v.x, cos_eps * v.y - sin_eps * v.z, sin_eps * v.y + cos_eps * v.z)
+    Vector3::new(
+        v.x,
+        cos_eps * v.y - sin_eps * v.z,
+        sin_eps * v.y + cos_eps * v.z,
+    )
 }
 
 /// Compute heliocentric position of a planet in the ecliptic frame [km].
@@ -187,8 +191,7 @@ pub fn heliocentric_position_ecliptic(body: &str, epoch: &Epoch) -> Option<Vecto
     let ea = solve_kepler(m, e);
 
     // True anomaly
-    let nu = 2.0
-        * ((1.0 + e).sqrt() * (ea / 2.0).sin()).atan2((1.0 - e).sqrt() * (ea / 2.0).cos());
+    let nu = 2.0 * ((1.0 + e).sqrt() * (ea / 2.0).sin()).atan2((1.0 - e).sqrt() * (ea / 2.0).cos());
 
     // Heliocentric distance [AU]
     let r = elements.a * (1.0 - e * ea.cos());
@@ -252,10 +255,7 @@ mod tests {
         for &(m, ecc) in &test_cases {
             let ea = solve_kepler(m, ecc);
             let residual = (ea - ecc * ea.sin() - m).abs();
-            assert!(
-                residual < 1e-12,
-                "M={m}, e={ecc}: residual={residual:.2e}"
-            );
+            assert!(residual < 1e-12, "M={m}, e={ecc}: residual={residual:.2e}");
         }
     }
 

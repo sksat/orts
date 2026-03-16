@@ -105,7 +105,13 @@ fn orekit_msise_density_all_points() {
         let epoch = parse_epoch(&p.epoch_utc);
         let model = Nrlmsise00::new(Box::new(ConstantWeather::new(p.f107, p.ap)));
 
-        let our_density = compute_density_via_eci(&model, p.latitude_deg, p.longitude_deg, p.altitude_km, &epoch);
+        let our_density = compute_density_via_eci(
+            &model,
+            p.latitude_deg,
+            p.longitude_deg,
+            p.altitude_km,
+            &epoch,
+        );
 
         let rel_err = if p.density_kg_m3.abs() > 1e-30 {
             (our_density - p.density_kg_m3).abs() / p.density_kg_m3
@@ -118,8 +124,15 @@ fn orekit_msise_density_all_points() {
             max_rel_err = rel_err;
             worst_point = format!(
                 "#{i}: epoch={} lat={} lon={} alt={} f107={} ap={} orekit={:.4e} ours={:.4e} err={:.2}%",
-                p.epoch_utc, p.latitude_deg, p.longitude_deg, p.altitude_km,
-                p.f107, p.ap, p.density_kg_m3, our_density, rel_err * 100.0
+                p.epoch_utc,
+                p.latitude_deg,
+                p.longitude_deg,
+                p.altitude_km,
+                p.f107,
+                p.ap,
+                p.density_kg_m3,
+                our_density,
+                rel_err * 100.0
             );
         }
         if rel_err > 0.05 {
@@ -129,7 +142,10 @@ fn orekit_msise_density_all_points() {
 
     let mean_rel_err = sum_rel_err / fixture.points.len() as f64;
 
-    println!("NRLMSISE-00 Orekit cross-validation: {} points", fixture.points.len());
+    println!(
+        "NRLMSISE-00 Orekit cross-validation: {} points",
+        fixture.points.len()
+    );
     println!("  max relative error: {:.4}%", max_rel_err * 100.0);
     println!("  mean relative error: {:.4}%", mean_rel_err * 100.0);
     println!("  points > 5% error: {n_exceed_5pct}");
@@ -167,7 +183,13 @@ fn orekit_msise_density_equatorial_tight() {
     for p in &equatorial {
         let epoch = parse_epoch(&p.epoch_utc);
         let model = Nrlmsise00::new(Box::new(ConstantWeather::new(p.f107, p.ap)));
-        let our_density = compute_density_via_eci(&model, p.latitude_deg, p.longitude_deg, p.altitude_km, &epoch);
+        let our_density = compute_density_via_eci(
+            &model,
+            p.latitude_deg,
+            p.longitude_deg,
+            p.altitude_km,
+            &epoch,
+        );
 
         let rel_err = (our_density - p.density_kg_m3).abs() / p.density_kg_m3;
         if rel_err > max_rel_err {
@@ -240,8 +262,13 @@ fn orekit_msise_cssi_density_all_points() {
 
     for (i, p) in fixture.points.iter().enumerate() {
         let epoch = parse_epoch(&p.epoch_utc);
-        let our_density =
-            compute_density_via_eci(&model, p.latitude_deg, p.longitude_deg, p.altitude_km, &epoch);
+        let our_density = compute_density_via_eci(
+            &model,
+            p.latitude_deg,
+            p.longitude_deg,
+            p.altitude_km,
+            &epoch,
+        );
 
         let rel_err = if p.density_kg_m3.abs() > 1e-30 {
             (our_density - p.density_kg_m3).abs() / p.density_kg_m3
@@ -254,8 +281,13 @@ fn orekit_msise_cssi_density_all_points() {
             max_rel_err = rel_err;
             worst_point = format!(
                 "#{i}: epoch={} lat={} lon={} alt={} orekit={:.4e} ours={:.4e} err={:.2}%",
-                p.epoch_utc, p.latitude_deg, p.longitude_deg, p.altitude_km,
-                p.density_kg_m3, our_density, rel_err * 100.0
+                p.epoch_utc,
+                p.latitude_deg,
+                p.longitude_deg,
+                p.altitude_km,
+                p.density_kg_m3,
+                our_density,
+                rel_err * 100.0
             );
         }
         if rel_err > 0.05 {

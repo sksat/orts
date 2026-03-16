@@ -30,11 +30,7 @@ impl Server {
     /// Spawn the CLI binary with custom satellite configurations.
     fn spawn_with_sats(port: u16, sats: &[&str]) -> Self {
         let binary = env!("CARGO_BIN_EXE_orts");
-        let mut args = vec![
-            "serve".to_string(),
-            "--port".to_string(),
-            port.to_string(),
-        ];
+        let mut args = vec!["serve".to_string(), "--port".to_string(), port.to_string()];
         for sat in sats {
             args.push("--sat".to_string());
             args.push(sat.to_string());
@@ -82,11 +78,7 @@ impl Server {
     /// Spawn in idle mode (no --sat args, no --config).
     fn spawn_idle(port: u16) -> Self {
         let binary = env!("CARGO_BIN_EXE_orts");
-        let args = vec![
-            "serve".to_string(),
-            "--port".to_string(),
-            port.to_string(),
-        ];
+        let args = vec!["serve".to_string(), "--port".to_string(), port.to_string()];
         let mut child = Command::new(binary)
             .args(&args)
             .stdout(Stdio::null())
@@ -210,11 +202,16 @@ async fn test_websocket_info_and_state_messages() {
             "info.central_body_radius must be a number"
         );
         // New protocol: satellites array
-        let satellites = info["satellites"].as_array().expect("info must have satellites array");
+        let satellites = info["satellites"]
+            .as_array()
+            .expect("info must have satellites array");
         assert!(!satellites.is_empty(), "satellites array must not be empty");
         // At least the SSO satellite should be present
         let first_sat = &satellites[0];
-        assert!(first_sat["altitude"].is_f64(), "satellite must have altitude");
+        assert!(
+            first_sat["altitude"].is_f64(),
+            "satellite must have altitude"
+        );
         assert!(first_sat["period"].is_f64(), "satellite must have period");
         assert!(first_sat["id"].is_string(), "satellite must have id");
 
@@ -244,7 +241,10 @@ async fn test_websocket_info_and_state_messages() {
         // (may also include history_detail interleaved)
         let (first_state, _) = read_until_type(&mut read, "state", 50).await;
         assert!(first_state["t"].is_f64(), "state.t must be a number");
-        assert!(first_state["satellite_id"].is_string(), "state must have satellite_id");
+        assert!(
+            first_state["satellite_id"].is_string(),
+            "state must have satellite_id"
+        );
         let position = first_state["position"].as_array().unwrap();
         assert_eq!(position.len(), 3);
         let velocity = first_state["velocity"].as_array().unwrap();
@@ -270,10 +270,7 @@ async fn test_websocket_info_and_state_messages() {
             first_state["inclination"].is_f64(),
             "state must include inclination"
         );
-        assert!(
-            first_state["raan"].is_f64(),
-            "state must include raan"
-        );
+        assert!(first_state["raan"].is_f64(), "state must include raan");
         assert!(
             first_state["argument_of_periapsis"].is_f64(),
             "state must include argument_of_periapsis"
@@ -345,7 +342,10 @@ async fn test_websocket_multiple_clients() {
         let info1 = next_json(&mut read1).await;
         assert_eq!(info1["type"], "info", "client 1 must get info message");
         let hist1 = next_json(&mut read1).await;
-        assert_eq!(hist1["type"], "history", "client 1 must get history message");
+        assert_eq!(
+            hist1["type"], "history",
+            "client 1 must get history message"
+        );
 
         // Connect second client while the first is still connected.
         let (ws2, _) = connect_async(&url)
@@ -357,7 +357,10 @@ async fn test_websocket_multiple_clients() {
         let info2 = next_json(&mut read2).await;
         assert_eq!(info2["type"], "info", "client 2 must get info message");
         let hist2 = next_json(&mut read2).await;
-        assert_eq!(hist2["type"], "history", "client 2 must get history message");
+        assert_eq!(
+            hist2["type"], "history",
+            "client 2 must get history message"
+        );
 
         // Both clients should receive state messages
         let (s1, _) = read_until_type(&mut read1, "state", 50).await;
@@ -382,9 +385,7 @@ async fn test_websocket_history_on_connect() {
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}");
-        let (ws, _) = connect_async(&url)
-            .await
-            .expect("failed to connect");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
         // info → history → state
@@ -477,9 +478,7 @@ async fn test_websocket_history_detail_follows() {
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}");
-        let (ws, _) = connect_async(&url)
-            .await
-            .expect("failed to connect");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
         // info → history
@@ -542,9 +541,7 @@ async fn test_websocket_overview_arrives_fast() {
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}");
-        let (ws, _) = connect_async(&url)
-            .await
-            .expect("failed to connect");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
         let _info = next_json(&mut read).await;
@@ -575,9 +572,7 @@ async fn test_websocket_query_range() {
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}");
-        let (ws, _) = connect_async(&url)
-            .await
-            .expect("failed to connect");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
         // info → history
@@ -590,7 +585,9 @@ async fn test_websocket_query_range() {
 
         // Determine a valid time range from the history
         let first_t = history_states[0]["t"].as_f64().unwrap();
-        let last_t = history_states[history_states.len() - 1]["t"].as_f64().unwrap();
+        let last_t = history_states[history_states.len() - 1]["t"]
+            .as_f64()
+            .unwrap();
 
         // Send query_range request
         let query = serde_json::json!({
@@ -651,9 +648,7 @@ async fn test_websocket_monotonic_time_across_orbits() {
 
     let result = tokio::time::timeout(Duration::from_secs(60), async {
         let url = format!("ws://localhost:{port}");
-        let (ws, _) = connect_async(&url)
-            .await
-            .expect("failed to connect");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
         // info → history
@@ -700,7 +695,9 @@ async fn test_websocket_monotonic_time_across_orbits() {
                 .as_str()
                 .unwrap_or("unknown")
                 .to_string();
-            let prev = last_t_per_sat.entry(sid.clone()).or_insert(f64::NEG_INFINITY);
+            let prev = last_t_per_sat
+                .entry(sid.clone())
+                .or_insert(f64::NEG_INFINITY);
             assert!(
                 t >= *prev,
                 "live state t for {sid} must be monotonically increasing: \
@@ -723,17 +720,14 @@ async fn test_websocket_terminated_replay_on_late_connect() {
     let port = test_port() + 8;
     // altitude=50 is below Earth's atmosphere (100 km Kármán line)
     // → immediate atmospheric entry termination
-    let mut server =
-        Server::spawn_with_sats(port, &["altitude=50,id=low", "altitude=800,id=high"]);
+    let mut server = Server::spawn_with_sats(port, &["altitude=50,id=low", "altitude=800,id=high"]);
 
     // Wait for the low satellite to terminate (should be nearly instant)
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}");
-        let (ws, _) = connect_async(&url)
-            .await
-            .expect("failed to connect");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
         // First message: info
@@ -744,8 +738,7 @@ async fn test_websocket_terminated_replay_on_late_connect() {
 
         // Should receive simulation_terminated for "low" among early messages
         // (after info, before or interleaved with history/state)
-        let (terminated, _) =
-            read_until_type(&mut read, "simulation_terminated", 50).await;
+        let (terminated, _) = read_until_type(&mut read, "simulation_terminated", 50).await;
         assert_eq!(
             terminated["satellite_id"], "low",
             "should receive termination for 'low' satellite"
@@ -783,9 +776,7 @@ async fn test_websocket_idle_then_start_simulation() {
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}");
-        let (ws, _) = connect_async(&url)
-            .await
-            .expect("failed to connect");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
         // Should receive status: idle
@@ -835,9 +826,7 @@ async fn test_websocket_add_satellite() {
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
         let url = format!("ws://localhost:{port}");
-        let (ws, _) = connect_async(&url)
-            .await
-            .expect("failed to connect");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
         // Read info + history
@@ -878,7 +867,10 @@ async fn test_websocket_add_satellite() {
                 break;
             }
         }
-        assert!(found_new_sat_state, "should receive state messages for new satellite");
+        assert!(
+            found_new_sat_state,
+            "should receive state messages for new satellite"
+        );
     })
     .await;
 

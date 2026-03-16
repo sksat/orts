@@ -30,15 +30,15 @@ mod tests {
     fn test_acceleration_direction() {
         // Acceleration should be antiparallel to position (pointing toward center)
         let system = TwoBodySystem { mu: MU_EARTH };
-        let state = OrbitalState::new(
-            vector![6778.137, 0.0, 0.0],
-            vector![0.0, 7.6693, 0.0],
-        );
+        let state = OrbitalState::new(vector![6778.137, 0.0, 0.0], vector![0.0, 7.6693, 0.0]);
         let deriv = system.derivatives(0.0, &state);
 
         // Dot product of acceleration and position should be negative (antiparallel)
         let dot = deriv.velocity().dot(state.position());
-        assert!(dot < 0.0, "acceleration should point toward center (dot={dot})");
+        assert!(
+            dot < 0.0,
+            "acceleration should point toward center (dot={dot})"
+        );
 
         // Cross product should be approximately zero (parallel/antiparallel vectors)
         let cross = deriv.velocity().cross(state.position());
@@ -54,10 +54,7 @@ mod tests {
         // |a| = μ/|r|² for a known position
         let system = TwoBodySystem { mu: MU_EARTH };
         let r = vector![6778.137, 0.0, 0.0];
-        let state = OrbitalState::new(
-            r,
-            vector![0.0, 7.6693, 0.0],
-        );
+        let state = OrbitalState::new(r, vector![0.0, 7.6693, 0.0]);
         let deriv = system.derivatives(0.0, &state);
 
         let r_mag = r.magnitude();
@@ -75,10 +72,7 @@ mod tests {
     fn test_surface_gravity() {
         // At Earth's surface, |a| ≈ 9.798e-3 km/s²
         let system = TwoBodySystem { mu: MU_EARTH };
-        let state = OrbitalState::new(
-            vector![R_EARTH, 0.0, 0.0],
-            vector![0.0, 0.0, 0.0],
-        );
+        let state = OrbitalState::new(vector![R_EARTH, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let deriv = system.derivatives(0.0, &state);
 
         let g = deriv.velocity().magnitude();
@@ -99,15 +93,17 @@ mod tests {
         let r = R_EARTH + 400.0; // 6778.137 km
         let v = (MU_EARTH / r).sqrt();
         let system = TwoBodySystem { mu: MU_EARTH };
-        let state = OrbitalState::new(
-            vector![r, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        );
+        let state = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
         (system, state)
     }
 
     /// Helper: propagate for a given duration with step size dt
-    fn propagate(system: &TwoBodySystem, initial: &OrbitalState, dt: f64, duration: f64) -> Vec<OrbitalState> {
+    fn propagate(
+        system: &TwoBodySystem,
+        initial: &OrbitalState,
+        dt: f64,
+        duration: f64,
+    ) -> Vec<OrbitalState> {
         let n_steps = (duration / dt).round() as usize;
         let mut states = Vec::with_capacity(n_steps + 1);
         let mut state = initial.clone();

@@ -22,56 +22,256 @@ struct HpEntry {
 /// Harris-Priester density table from Montenbruck & Gill "Satellite Orbits", Table 3.1.
 /// Covers 100–2000 km altitude.
 const HP_TABLE: &[HpEntry] = &[
-    HpEntry { h: 100.0, rho_min: 4.974e-7, rho_max: 4.974e-7 },
-    HpEntry { h: 120.0, rho_min: 2.490e-8, rho_max: 2.490e-8 },
-    HpEntry { h: 130.0, rho_min: 8.377e-9, rho_max: 8.710e-9 },
-    HpEntry { h: 140.0, rho_min: 3.899e-9, rho_max: 4.059e-9 },
-    HpEntry { h: 150.0, rho_min: 2.122e-9, rho_max: 2.215e-9 },
-    HpEntry { h: 160.0, rho_min: 1.263e-9, rho_max: 1.344e-9 },
-    HpEntry { h: 170.0, rho_min: 8.008e-10, rho_max: 8.758e-10 },
-    HpEntry { h: 180.0, rho_min: 5.283e-10, rho_max: 6.010e-10 },
-    HpEntry { h: 190.0, rho_min: 3.617e-10, rho_max: 4.297e-10 },
-    HpEntry { h: 200.0, rho_min: 2.557e-10, rho_max: 3.162e-10 },
-    HpEntry { h: 210.0, rho_min: 1.839e-10, rho_max: 2.396e-10 },
-    HpEntry { h: 220.0, rho_min: 1.341e-10, rho_max: 1.853e-10 },
-    HpEntry { h: 230.0, rho_min: 9.949e-11, rho_max: 1.455e-10 },
-    HpEntry { h: 240.0, rho_min: 7.488e-11, rho_max: 1.157e-10 },
-    HpEntry { h: 250.0, rho_min: 5.709e-11, rho_max: 9.308e-11 },
-    HpEntry { h: 260.0, rho_min: 4.403e-11, rho_max: 7.555e-11 },
-    HpEntry { h: 270.0, rho_min: 3.430e-11, rho_max: 6.182e-11 },
-    HpEntry { h: 280.0, rho_min: 2.697e-11, rho_max: 5.095e-11 },
-    HpEntry { h: 290.0, rho_min: 2.139e-11, rho_max: 4.226e-11 },
-    HpEntry { h: 300.0, rho_min: 1.708e-11, rho_max: 3.526e-11 },
-    HpEntry { h: 320.0, rho_min: 1.099e-11, rho_max: 2.511e-11 },
-    HpEntry { h: 340.0, rho_min: 7.214e-12, rho_max: 1.819e-11 },
-    HpEntry { h: 360.0, rho_min: 4.824e-12, rho_max: 1.337e-11 },
-    HpEntry { h: 380.0, rho_min: 3.274e-12, rho_max: 9.955e-12 },
-    HpEntry { h: 400.0, rho_min: 2.249e-12, rho_max: 7.492e-12 },
-    HpEntry { h: 420.0, rho_min: 1.558e-12, rho_max: 5.684e-12 },
-    HpEntry { h: 440.0, rho_min: 1.091e-12, rho_max: 4.355e-12 },
-    HpEntry { h: 460.0, rho_min: 7.701e-13, rho_max: 3.362e-12 },
-    HpEntry { h: 480.0, rho_min: 5.474e-13, rho_max: 2.612e-12 },
-    HpEntry { h: 500.0, rho_min: 3.916e-13, rho_max: 2.042e-12 },
-    HpEntry { h: 520.0, rho_min: 2.819e-13, rho_max: 1.605e-12 },
-    HpEntry { h: 540.0, rho_min: 2.042e-13, rho_max: 1.267e-12 },
-    HpEntry { h: 560.0, rho_min: 1.488e-13, rho_max: 1.005e-12 },
-    HpEntry { h: 580.0, rho_min: 1.092e-13, rho_max: 7.997e-13 },
-    HpEntry { h: 600.0, rho_min: 8.070e-14, rho_max: 6.390e-13 },
-    HpEntry { h: 620.0, rho_min: 6.012e-14, rho_max: 5.123e-13 },
-    HpEntry { h: 640.0, rho_min: 4.519e-14, rho_max: 4.121e-13 },
-    HpEntry { h: 660.0, rho_min: 3.430e-14, rho_max: 3.325e-13 },
-    HpEntry { h: 680.0, rho_min: 2.632e-14, rho_max: 2.691e-13 },
-    HpEntry { h: 700.0, rho_min: 2.043e-14, rho_max: 2.185e-13 },
-    HpEntry { h: 720.0, rho_min: 1.607e-14, rho_max: 1.779e-13 },
-    HpEntry { h: 740.0, rho_min: 1.281e-14, rho_max: 1.452e-13 },
-    HpEntry { h: 760.0, rho_min: 1.036e-14, rho_max: 1.190e-13 },
-    HpEntry { h: 780.0, rho_min: 8.496e-15, rho_max: 9.776e-14 },
-    HpEntry { h: 800.0, rho_min: 7.069e-15, rho_max: 8.059e-14 },
-    HpEntry { h: 840.0, rho_min: 4.680e-15, rho_max: 5.741e-14 },
-    HpEntry { h: 880.0, rho_min: 3.200e-15, rho_max: 4.210e-14 },
-    HpEntry { h: 920.0, rho_min: 2.210e-15, rho_max: 3.130e-14 },
-    HpEntry { h: 960.0, rho_min: 1.560e-15, rho_max: 2.360e-14 },
-    HpEntry { h: 1000.0, rho_min: 1.150e-15, rho_max: 1.810e-14 },
+    HpEntry {
+        h: 100.0,
+        rho_min: 4.974e-7,
+        rho_max: 4.974e-7,
+    },
+    HpEntry {
+        h: 120.0,
+        rho_min: 2.490e-8,
+        rho_max: 2.490e-8,
+    },
+    HpEntry {
+        h: 130.0,
+        rho_min: 8.377e-9,
+        rho_max: 8.710e-9,
+    },
+    HpEntry {
+        h: 140.0,
+        rho_min: 3.899e-9,
+        rho_max: 4.059e-9,
+    },
+    HpEntry {
+        h: 150.0,
+        rho_min: 2.122e-9,
+        rho_max: 2.215e-9,
+    },
+    HpEntry {
+        h: 160.0,
+        rho_min: 1.263e-9,
+        rho_max: 1.344e-9,
+    },
+    HpEntry {
+        h: 170.0,
+        rho_min: 8.008e-10,
+        rho_max: 8.758e-10,
+    },
+    HpEntry {
+        h: 180.0,
+        rho_min: 5.283e-10,
+        rho_max: 6.010e-10,
+    },
+    HpEntry {
+        h: 190.0,
+        rho_min: 3.617e-10,
+        rho_max: 4.297e-10,
+    },
+    HpEntry {
+        h: 200.0,
+        rho_min: 2.557e-10,
+        rho_max: 3.162e-10,
+    },
+    HpEntry {
+        h: 210.0,
+        rho_min: 1.839e-10,
+        rho_max: 2.396e-10,
+    },
+    HpEntry {
+        h: 220.0,
+        rho_min: 1.341e-10,
+        rho_max: 1.853e-10,
+    },
+    HpEntry {
+        h: 230.0,
+        rho_min: 9.949e-11,
+        rho_max: 1.455e-10,
+    },
+    HpEntry {
+        h: 240.0,
+        rho_min: 7.488e-11,
+        rho_max: 1.157e-10,
+    },
+    HpEntry {
+        h: 250.0,
+        rho_min: 5.709e-11,
+        rho_max: 9.308e-11,
+    },
+    HpEntry {
+        h: 260.0,
+        rho_min: 4.403e-11,
+        rho_max: 7.555e-11,
+    },
+    HpEntry {
+        h: 270.0,
+        rho_min: 3.430e-11,
+        rho_max: 6.182e-11,
+    },
+    HpEntry {
+        h: 280.0,
+        rho_min: 2.697e-11,
+        rho_max: 5.095e-11,
+    },
+    HpEntry {
+        h: 290.0,
+        rho_min: 2.139e-11,
+        rho_max: 4.226e-11,
+    },
+    HpEntry {
+        h: 300.0,
+        rho_min: 1.708e-11,
+        rho_max: 3.526e-11,
+    },
+    HpEntry {
+        h: 320.0,
+        rho_min: 1.099e-11,
+        rho_max: 2.511e-11,
+    },
+    HpEntry {
+        h: 340.0,
+        rho_min: 7.214e-12,
+        rho_max: 1.819e-11,
+    },
+    HpEntry {
+        h: 360.0,
+        rho_min: 4.824e-12,
+        rho_max: 1.337e-11,
+    },
+    HpEntry {
+        h: 380.0,
+        rho_min: 3.274e-12,
+        rho_max: 9.955e-12,
+    },
+    HpEntry {
+        h: 400.0,
+        rho_min: 2.249e-12,
+        rho_max: 7.492e-12,
+    },
+    HpEntry {
+        h: 420.0,
+        rho_min: 1.558e-12,
+        rho_max: 5.684e-12,
+    },
+    HpEntry {
+        h: 440.0,
+        rho_min: 1.091e-12,
+        rho_max: 4.355e-12,
+    },
+    HpEntry {
+        h: 460.0,
+        rho_min: 7.701e-13,
+        rho_max: 3.362e-12,
+    },
+    HpEntry {
+        h: 480.0,
+        rho_min: 5.474e-13,
+        rho_max: 2.612e-12,
+    },
+    HpEntry {
+        h: 500.0,
+        rho_min: 3.916e-13,
+        rho_max: 2.042e-12,
+    },
+    HpEntry {
+        h: 520.0,
+        rho_min: 2.819e-13,
+        rho_max: 1.605e-12,
+    },
+    HpEntry {
+        h: 540.0,
+        rho_min: 2.042e-13,
+        rho_max: 1.267e-12,
+    },
+    HpEntry {
+        h: 560.0,
+        rho_min: 1.488e-13,
+        rho_max: 1.005e-12,
+    },
+    HpEntry {
+        h: 580.0,
+        rho_min: 1.092e-13,
+        rho_max: 7.997e-13,
+    },
+    HpEntry {
+        h: 600.0,
+        rho_min: 8.070e-14,
+        rho_max: 6.390e-13,
+    },
+    HpEntry {
+        h: 620.0,
+        rho_min: 6.012e-14,
+        rho_max: 5.123e-13,
+    },
+    HpEntry {
+        h: 640.0,
+        rho_min: 4.519e-14,
+        rho_max: 4.121e-13,
+    },
+    HpEntry {
+        h: 660.0,
+        rho_min: 3.430e-14,
+        rho_max: 3.325e-13,
+    },
+    HpEntry {
+        h: 680.0,
+        rho_min: 2.632e-14,
+        rho_max: 2.691e-13,
+    },
+    HpEntry {
+        h: 700.0,
+        rho_min: 2.043e-14,
+        rho_max: 2.185e-13,
+    },
+    HpEntry {
+        h: 720.0,
+        rho_min: 1.607e-14,
+        rho_max: 1.779e-13,
+    },
+    HpEntry {
+        h: 740.0,
+        rho_min: 1.281e-14,
+        rho_max: 1.452e-13,
+    },
+    HpEntry {
+        h: 760.0,
+        rho_min: 1.036e-14,
+        rho_max: 1.190e-13,
+    },
+    HpEntry {
+        h: 780.0,
+        rho_min: 8.496e-15,
+        rho_max: 9.776e-14,
+    },
+    HpEntry {
+        h: 800.0,
+        rho_min: 7.069e-15,
+        rho_max: 8.059e-14,
+    },
+    HpEntry {
+        h: 840.0,
+        rho_min: 4.680e-15,
+        rho_max: 5.741e-14,
+    },
+    HpEntry {
+        h: 880.0,
+        rho_min: 3.200e-15,
+        rho_max: 4.210e-14,
+    },
+    HpEntry {
+        h: 920.0,
+        rho_min: 2.210e-15,
+        rho_max: 3.130e-14,
+    },
+    HpEntry {
+        h: 960.0,
+        rho_min: 1.560e-15,
+        rho_max: 2.360e-14,
+    },
+    HpEntry {
+        h: 1000.0,
+        rho_min: 1.150e-15,
+        rho_max: 1.810e-14,
+    },
 ];
 
 /// Harris-Priester atmospheric density model.
@@ -252,7 +452,10 @@ mod tests {
         let rho = hp.density(400.0, &pos, Some(&epoch));
         let expected = 7.492e-12;
         let rel_err = (rho - expected).abs() / expected;
-        assert!(rel_err < 1e-6, "At apex, 400 km: expected {expected:.3e}, got {rho:.3e}");
+        assert!(
+            rel_err < 1e-6,
+            "At apex, 400 km: expected {expected:.3e}, got {rho:.3e}"
+        );
     }
 
     #[test]
@@ -268,7 +471,10 @@ mod tests {
         let rho = hp.density(400.0, &pos, Some(&epoch));
         let expected = 2.249e-12;
         let rel_err = (rho - expected).abs() / expected;
-        assert!(rel_err < 1e-6, "At anti-apex, 400 km: expected {expected:.3e}, got {rho:.3e}");
+        assert!(
+            rel_err < 1e-6,
+            "At anti-apex, 400 km: expected {expected:.3e}, got {rho:.3e}"
+        );
     }
 
     #[test]
@@ -339,7 +545,10 @@ mod tests {
         let rho_hp = hp.density(50.0, &pos, Some(&epoch));
         let rho_exp = crate::exponential::density(50.0);
 
-        assert_eq!(rho_hp, rho_exp, "Below 100 km should fall back to exponential");
+        assert_eq!(
+            rho_hp, rho_exp,
+            "Below 100 km should fall back to exponential"
+        );
     }
 
     #[test]
@@ -393,7 +602,11 @@ mod tests {
             "Apex y: expected {expected_y:.4}, got {:.4}",
             apex.y
         );
-        assert!(apex.z.abs() < 1e-10, "Apex z should be ~0, got {:.4}", apex.z);
+        assert!(
+            apex.z.abs() < 1e-10,
+            "Apex z should be ~0, got {:.4}",
+            apex.z
+        );
     }
 
     #[test]

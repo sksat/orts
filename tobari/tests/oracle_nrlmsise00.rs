@@ -110,11 +110,7 @@ fn epoch_params(epoch_name: &str) -> (u32, f64) {
 /// Relative error between two values. Returns f64::MAX if expected is zero.
 fn rel_error(computed: f64, expected: f64) -> f64 {
     if expected == 0.0 {
-        if computed == 0.0 {
-            0.0
-        } else {
-            f64::MAX
-        }
+        if computed == 0.0 { 0.0 } else { f64::MAX }
     } else {
         (computed - expected).abs() / expected.abs()
     }
@@ -182,8 +178,24 @@ fn total_mass_density_all_points() {
     if !failures.is_empty() {
         // Sort by error descending
         failures.sort_by(|a, b| {
-            let ea: f64 = a.split("err=").nth(1).unwrap().split('%').next().unwrap().parse().unwrap();
-            let eb: f64 = b.split("err=").nth(1).unwrap().split('%').next().unwrap().parse().unwrap();
+            let ea: f64 = a
+                .split("err=")
+                .nth(1)
+                .unwrap()
+                .split('%')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            let eb: f64 = b
+                .split("err=")
+                .nth(1)
+                .unwrap()
+                .split('%')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
             eb.partial_cmp(&ea).unwrap()
         });
         println!("\nFailed points ({}/{count}):", failures.len());
@@ -311,7 +323,10 @@ fn species_densities() {
         for f in &failures[..failures.len().min(20)] {
             println!("{f}");
         }
-        panic!("{} species density points exceeded tolerance", failures.len());
+        panic!(
+            "{} species density points exceeded tolerance",
+            failures.len()
+        );
     }
 }
 
@@ -359,15 +374,34 @@ fn temperature_at_altitude() {
     if !failures.is_empty() {
         // Sort by error (descending) for debugging
         failures.sort_by(|a, b| {
-            let ea: f64 = a.split("err=").nth(1).unwrap().split('%').next().unwrap().parse().unwrap();
-            let eb: f64 = b.split("err=").nth(1).unwrap().split('%').next().unwrap().parse().unwrap();
+            let ea: f64 = a
+                .split("err=")
+                .nth(1)
+                .unwrap()
+                .split('%')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            let eb: f64 = b
+                .split("err=")
+                .nth(1)
+                .unwrap()
+                .split('%')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
             eb.partial_cmp(&ea).unwrap()
         });
         println!("Temperature failures ({}):", failures.len());
         for f in &failures[..failures.len().min(30)] {
             println!("{f}");
         }
-        panic!("{} temperature points exceeded 1% tolerance", failures.len());
+        panic!(
+            "{} temperature points exceeded 1% tolerance",
+            failures.len()
+        );
     }
 }
 
@@ -413,7 +447,10 @@ fn density_increases_with_f107() {
     println!("F10.7 variation at 400km equator noon:");
     println!("  solar_min: computed={rho_min:.4e}, oracle={expected_min:.4e}");
     println!("  solar_max: computed={rho_max:.4e}, oracle={expected_max:.4e}");
-    println!("  oracle ratio (max/min): {:.1}×", expected_max / expected_min);
+    println!(
+        "  oracle ratio (max/min): {:.1}×",
+        expected_max / expected_min
+    );
 
     assert!(
         rho_max > rho_min,
@@ -479,8 +516,12 @@ fn diurnal_density_variation() {
     let p_midnight = find(180.0); // lon=180, UT=12h → LST=24h=0h (midnight)
     let (doy, ut_seconds) = epoch_params("vernal_equinox");
 
-    let rho_noon = model.calculate(&make_input(p_noon, doy, ut_seconds)).total_mass_density;
-    let rho_midnight = model.calculate(&make_input(p_midnight, doy, ut_seconds)).total_mass_density;
+    let rho_noon = model
+        .calculate(&make_input(p_noon, doy, ut_seconds))
+        .total_mass_density;
+    let rho_midnight = model
+        .calculate(&make_input(p_midnight, doy, ut_seconds))
+        .total_mass_density;
 
     let expected_noon = p_noon.mass_density_kg_m3.unwrap();
     let expected_midnight = p_midnight.mass_density_kg_m3.unwrap();
@@ -488,7 +529,10 @@ fn diurnal_density_variation() {
     println!("Diurnal variation at 400km equator:");
     println!("  noon (lon=0°):     computed={rho_noon:.4e}, oracle={expected_noon:.4e}");
     println!("  midnight (lon=180°): computed={rho_midnight:.4e}, oracle={expected_midnight:.4e}");
-    println!("  oracle ratio (noon/midnight): {:.2}×", expected_noon / expected_midnight);
+    println!(
+        "  oracle ratio (noon/midnight): {:.2}×",
+        expected_noon / expected_midnight
+    );
 
     assert!(
         rho_noon > rho_midnight,

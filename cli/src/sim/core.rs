@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use orts::kepler::KeplerianElements;
 use orts::OrbitalState;
+use orts::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;
 use orts::setup::SatelliteParams;
 use serde::{Deserialize, Serialize};
@@ -52,7 +52,11 @@ pub fn make_history_state(
 }
 
 /// Compute acceleration breakdown as a HashMap from an OrbitalSystem.
-pub fn accel_breakdown(system: &OrbitalSystem, t: f64, state: &OrbitalState) -> HashMap<String, f64> {
+pub fn accel_breakdown(
+    system: &OrbitalSystem,
+    t: f64,
+    state: &OrbitalState,
+) -> HashMap<String, f64> {
     system
         .acceleration_breakdown(t, state)
         .into_iter()
@@ -62,7 +66,8 @@ pub fn accel_breakdown(system: &OrbitalSystem, t: f64, state: &OrbitalState) -> 
 
 /// Convert a SatelliteSpec to SatelliteParams for OrbitalSystem construction.
 pub fn sat_params(spec: &SatelliteSpec) -> SatelliteParams {
-    let has_tle_drag = matches!(&spec.orbit, OrbitSpec::Tle { tle_data, .. } if tle_data.bstar.abs() > 1e-15);
+    let has_tle_drag =
+        matches!(&spec.orbit, OrbitSpec::Tle { tle_data, .. } if tle_data.bstar.abs() > 1e-15);
     SatelliteParams {
         has_drag: has_tle_drag || spec.ballistic_coeff.is_some(),
         ballistic_coeff: spec.ballistic_coeff,
@@ -79,20 +84,28 @@ mod tests {
 
     #[test]
     fn history_state_has_satellite_id() {
-        let hs = make_history_state("test-sat", 10.0,
+        let hs = make_history_state(
+            "test-sat",
+            10.0,
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
-            TEST_MU, HashMap::new());
+            TEST_MU,
+            HashMap::new(),
+        );
         assert_eq!(hs.satellite_id, "test-sat");
         assert!((hs.t - 10.0).abs() < 1e-9);
     }
 
     #[test]
     fn history_state_satellite_id_serialized() {
-        let hs = make_history_state("my-sat", 5.0,
+        let hs = make_history_state(
+            "my-sat",
+            5.0,
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
-            TEST_MU, HashMap::new());
+            TEST_MU,
+            HashMap::new(),
+        );
         let json = serde_json::to_string(&hs).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["satellite_id"], "my-sat");

@@ -2,9 +2,7 @@ use std::f64::consts::PI;
 use std::ops::ControlFlow;
 
 use nalgebra::{Matrix3, UnitQuaternion, Vector3, Vector4};
-use orts_integrator::{
-    DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances,
-};
+use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
 
 use orts::attitude::{AttitudeState, AttitudeSystem, GravityGradientTorque};
 
@@ -18,7 +16,9 @@ fn symmetric_inertia(i: f64) -> Matrix3<f64> {
 
 /// Rotational kinetic energy T = 0.5 * ω · (I · ω)
 fn rotational_energy(state: &AttitudeState, inertia: &Matrix3<f64>) -> f64 {
-    0.5 * state.angular_velocity.dot(&(inertia * state.angular_velocity))
+    0.5 * state
+        .angular_velocity
+        .dot(&(inertia * state.angular_velocity))
 }
 
 /// Angular momentum in inertial frame: L_inertial = R_bi^T * (I * ω)
@@ -220,8 +220,8 @@ fn gravity_gradient_libration_frequency() {
     let mut times = vec![0.0];
     let mut pitches = vec![pitch0];
 
-    let outcome: IntegrationOutcome<AttitudeState, ()> =
-        DormandPrince.integrate_adaptive_with_events(
+    let outcome: IntegrationOutcome<AttitudeState, ()> = DormandPrince
+        .integrate_adaptive_with_events(
             &system,
             initial,
             0.0,
@@ -247,8 +247,8 @@ fn gravity_gradient_libration_frequency() {
     for i in 1..pitches.len() {
         if pitches[i - 1] * pitches[i] < 0.0 {
             // Linear interpolation for zero crossing
-            let t_zero =
-                times[i - 1] + (times[i] - times[i - 1]) * pitches[i - 1].abs()
+            let t_zero = times[i - 1]
+                + (times[i] - times[i - 1]) * pitches[i - 1].abs()
                     / (pitches[i - 1].abs() + pitches[i].abs());
             zero_crossings.push(t_zero);
         }
@@ -303,8 +303,8 @@ fn dp45_attitude_integration() {
     let e0 = rotational_energy(&initial, &inertia);
     let l0 = angular_momentum_inertial(&initial, &inertia);
 
-    let outcome: IntegrationOutcome<AttitudeState, ()> =
-        DormandPrince.integrate_adaptive_with_events(
+    let outcome: IntegrationOutcome<AttitudeState, ()> = DormandPrince
+        .integrate_adaptive_with_events(
             &system,
             initial,
             0.0,
@@ -323,18 +323,12 @@ fn dp45_attitude_integration() {
     // Energy conservation
     let e_final = rotational_energy(&final_state, &inertia);
     let energy_err = ((e_final - e0) / e0).abs();
-    assert!(
-        energy_err < 1e-9,
-        "DP45 energy error: {energy_err:.2e}"
-    );
+    assert!(energy_err < 1e-9, "DP45 energy error: {energy_err:.2e}");
 
     // Angular momentum conservation
     let l_final = angular_momentum_inertial(&final_state, &inertia);
     let l_err = (l_final - l0).magnitude() / l0.magnitude();
-    assert!(
-        l_err < 1e-9,
-        "DP45 angular momentum error: {l_err:.2e}"
-    );
+    assert!(l_err < 1e-9, "DP45 angular momentum error: {l_err:.2e}");
 
     // Quaternion should be close to unit (project() renormalizes each step,
     // but adaptive stepping may accumulate small drift)
@@ -401,8 +395,8 @@ fn tolerance_convergence_dp45() {
         atol: 1e-14,
         rtol: 1e-14,
     };
-    let ref_outcome: IntegrationOutcome<AttitudeState, ()> =
-        DormandPrince.integrate_adaptive_with_events(
+    let ref_outcome: IntegrationOutcome<AttitudeState, ()> = DormandPrince
+        .integrate_adaptive_with_events(
             &system,
             initial.clone(),
             0.0,
@@ -425,8 +419,8 @@ fn tolerance_convergence_dp45() {
             atol: tol_val,
             rtol: tol_val,
         };
-        let outcome: IntegrationOutcome<AttitudeState, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<AttitudeState, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 &system,
                 initial.clone(),
                 0.0,
@@ -532,8 +526,8 @@ fn rk4_vs_dp45_energy_conservation() {
         };
         let mut max_e_err = 0.0_f64;
         let mut max_l_err = 0.0_f64;
-        let outcome: IntegrationOutcome<AttitudeState, ()> =
-            DormandPrince.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<AttitudeState, ()> = DormandPrince
+            .integrate_adaptive_with_events(
                 &system,
                 initial.clone(),
                 0.0,

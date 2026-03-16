@@ -21,14 +21,14 @@
 //! Fixture: `orbits/tests/fixtures/iss_decay_reference.json`
 //! Generator: `tools/generate_iss_decay_fixtures.py`
 
+use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
-use orts_integrator::{DormandPrince, Tolerances};
 use orts::OrbitalState;
-use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
-use orts::perturbations::AtmosphericDrag;
 use orts::gravity::ZonalHarmonics;
 use orts::orbital_system::OrbitalSystem;
+use orts::perturbations::AtmosphericDrag;
+use orts_integrator::{DormandPrince, Tolerances};
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
 
@@ -131,11 +131,7 @@ fn orbit_averaged_sma(
     n_orbits: usize,
     samples_per_orbit: usize,
 ) -> f64 {
-    let sma0 = osculating_sma(
-        stepper.state().position(),
-        stepper.state().velocity(),
-        mu,
-    );
+    let sma0 = osculating_sma(stepper.state().position(), stepper.state().velocity(), mu);
     let period = orbital_period(sma0, mu);
     let dt_sample = period / samples_per_orbit as f64;
     let n_samples = n_orbits * samples_per_orbit;
@@ -152,11 +148,7 @@ fn orbit_averaged_sma(
                 |_, _| std::ops::ControlFlow::<()>::Continue(()),
             )
             .expect("Integration failed during orbit averaging");
-        let sma = osculating_sma(
-            stepper.state().position(),
-            stepper.state().velocity(),
-            mu,
-        );
+        let sma = osculating_sma(stepper.state().position(), stepper.state().velocity(), mu);
         sum_sma += sma;
     }
 
@@ -242,7 +234,9 @@ fn run_decay_window(window_name: &str, min_ratio: f64, max_ratio: f64) {
     let avg_sma_end = orbit_averaged_sma(&mut stepper, mu, n_avg_orbits, samples_per_orbit);
     println!(
         "{}: orbit-avg SMA at end = {:.3} km (t={:.0}s)",
-        window_name, avg_sma_end, stepper.t(),
+        window_name,
+        avg_sma_end,
+        stepper.t(),
     );
 
     // Compare decay
@@ -260,7 +254,10 @@ fn run_decay_window(window_name: &str, min_ratio: f64, max_ratio: f64) {
         window.window_duration_days,
         window.tle_sequence.len()
     );
-    println!("  Predicted SMA decay: {:.4} km (orbit-averaged)", predicted_decay);
+    println!(
+        "  Predicted SMA decay: {:.4} km (orbit-averaged)",
+        predicted_decay
+    );
     println!("  Observed SMA decay:  {:.4} km (TLE mean)", observed_decay);
     println!(
         "  Predicted rate: {:.4} km/day",
@@ -353,13 +350,7 @@ fn build_iss_system_msise(epoch: Epoch, f107: f64, ap: f64) -> OrbitalSystem {
         ))
 }
 
-fn run_decay_window_msise(
-    window_name: &str,
-    f107: f64,
-    ap: f64,
-    min_ratio: f64,
-    max_ratio: f64,
-) {
+fn run_decay_window_msise(window_name: &str, f107: f64, ap: f64, min_ratio: f64, max_ratio: f64) {
     let fixture = load_fixture();
     let window = fixture
         .windows

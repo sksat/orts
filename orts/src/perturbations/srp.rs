@@ -1,10 +1,10 @@
-use nalgebra::Vector3;
 use kaname::epoch::Epoch;
 use kaname::sun;
+use nalgebra::Vector3;
 
-use kaname::constants::R_EARTH;
 use crate::OrbitalState;
 use crate::perturbations::ForceModel;
+use kaname::constants::R_EARTH;
 
 /// Solar radiation pressure at 1 AU (N/m²).
 /// P/c = 1361 W/m² / 299792458 m/s ≈ 4.5396e-6 N/m²
@@ -130,8 +130,12 @@ impl ForceModel for SolarRadiationPressure {
         // SOLAR_RADIATION_PRESSURE [N/m²] × Cr × (A/m) [m²/kg] = [m/s²]
         // Divide by 1000 to convert to km/s²
         let distance_ratio = sun::AU_KM / r_sun;
-        let a_mag = SOLAR_RADIATION_PRESSURE * self.cr * self.area_to_mass
-            * distance_ratio * distance_ratio / 1000.0;
+        let a_mag = SOLAR_RADIATION_PRESSURE
+            * self.cr
+            * self.area_to_mass
+            * distance_ratio
+            * distance_ratio
+            / 1000.0;
 
         // Acceleration is away from the Sun (opposite to ŝ)
         -a_mag * s_hat
@@ -151,10 +155,7 @@ mod tests {
     fn iss_state() -> OrbitalState {
         let r = R_EARTH + 400.0;
         let v = (MU_EARTH / r).sqrt();
-        OrbitalState::new(
-            vector![r, 0.0, 0.0],
-            vector![0.0, v, 0.0],
-        )
+        OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0])
     }
 
     #[test]
@@ -207,8 +208,16 @@ mod tests {
         let epoch = test_epoch();
         let state = iss_state();
 
-        let srp1 = SolarRadiationPressure { cr: 1.0, area_to_mass: 0.01, shadow_body_radius: None };
-        let srp2 = SolarRadiationPressure { cr: 2.0, area_to_mass: 0.01, shadow_body_radius: None };
+        let srp1 = SolarRadiationPressure {
+            cr: 1.0,
+            area_to_mass: 0.01,
+            shadow_body_radius: None,
+        };
+        let srp2 = SolarRadiationPressure {
+            cr: 2.0,
+            area_to_mass: 0.01,
+            shadow_body_radius: None,
+        };
 
         let a1 = srp1.acceleration(0.0, &state, Some(&epoch)).magnitude();
         let a2 = srp2.acceleration(0.0, &state, Some(&epoch)).magnitude();
@@ -225,8 +234,16 @@ mod tests {
         let epoch = test_epoch();
         let state = iss_state();
 
-        let srp1 = SolarRadiationPressure { cr: 1.5, area_to_mass: 0.01, shadow_body_radius: None };
-        let srp2 = SolarRadiationPressure { cr: 1.5, area_to_mass: 0.02, shadow_body_radius: None };
+        let srp1 = SolarRadiationPressure {
+            cr: 1.5,
+            area_to_mass: 0.01,
+            shadow_body_radius: None,
+        };
+        let srp2 = SolarRadiationPressure {
+            cr: 1.5,
+            area_to_mass: 0.02,
+            shadow_body_radius: None,
+        };
 
         let a1 = srp1.acceleration(0.0, &state, Some(&epoch)).magnitude();
         let a2 = srp2.acceleration(0.0, &state, Some(&epoch)).magnitude();

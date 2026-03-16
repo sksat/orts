@@ -29,16 +29,14 @@ pub fn moon_position_eci(epoch: &Epoch) -> Vector3<f64> {
     let f_rad = f.to_radians();
 
     // Ecliptic longitude (simplified, main terms)
-    let lambda_deg = lp
-        + 6.289 * mp_rad.sin()
+    let lambda_deg = lp + 6.289 * mp_rad.sin()
         - 1.274 * (2.0 * d_rad - mp_rad).sin()
         - 0.658 * (2.0 * d_rad).sin()
         - 0.214 * (2.0 * mp_rad).sin()
         + 0.186 * m_rad.sin();
 
     // Ecliptic latitude (simplified, main terms)
-    let beta_deg = 5.128 * f_rad.sin()
-        + 0.281 * (mp_rad + f_rad).sin()
+    let beta_deg = 5.128 * f_rad.sin() + 0.281 * (mp_rad + f_rad).sin()
         - 0.278 * (f_rad - mp_rad).sin()
         + 0.176 * (2.0 * d_rad - f_rad).sin();
 

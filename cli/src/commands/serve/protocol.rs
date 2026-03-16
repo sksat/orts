@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{SimConfig, SatelliteConfig};
+use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::SatelliteInfo;
 use crate::sim::core::HistoryState;
 
@@ -187,7 +187,11 @@ mod tests {
         let json = r#"{"type":"query_range","t_min":0.0,"t_max":100.0}"#;
         let msg: ClientMessage = serde_json::from_str(json).unwrap();
         match msg {
-            ClientMessage::QueryRange { max_points, satellite_id, .. } => {
+            ClientMessage::QueryRange {
+                max_points,
+                satellite_id,
+                ..
+            } => {
                 assert_eq!(max_points, None);
                 assert_eq!(satellite_id, None);
             }

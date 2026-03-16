@@ -59,20 +59,14 @@ mod tests {
     #[test]
     fn collision_check_above_surface() {
         let check = collision_check(R_EARTH, None);
-        let state = OrbitalState::new(
-            vector![R_EARTH + 400.0, 0.0, 0.0],
-            vector![0.0, 7.66, 0.0],
-        );
+        let state = OrbitalState::new(vector![R_EARTH + 400.0, 0.0, 0.0], vector![0.0, 7.66, 0.0]);
         assert!(matches!(check(0.0, &state), ControlFlow::Continue(())));
     }
 
     #[test]
     fn collision_check_below_surface() {
         let check = collision_check(R_EARTH, None);
-        let state = OrbitalState::new(
-            vector![R_EARTH - 10.0, 0.0, 0.0],
-            vector![0.0, 7.0, 0.0],
-        );
+        let state = OrbitalState::new(vector![R_EARTH - 10.0, 0.0, 0.0], vector![0.0, 7.0, 0.0]);
         match check(0.0, &state) {
             ControlFlow::Break(SimulationEvent::Collision { altitude_km }) => {
                 assert!(altitude_km < 0.0);
@@ -86,10 +80,7 @@ mod tests {
     fn collision_check_at_surface() {
         let check = collision_check(R_EARTH, None);
         // Exactly at surface: r == body_radius, should NOT trigger (not < body_radius)
-        let state = OrbitalState::new(
-            vector![R_EARTH, 0.0, 0.0],
-            vector![0.0, 7.0, 0.0],
-        );
+        let state = OrbitalState::new(vector![R_EARTH, 0.0, 0.0], vector![0.0, 7.0, 0.0]);
         assert!(matches!(check(0.0, &state), ControlFlow::Continue(())));
     }
 
@@ -97,10 +88,7 @@ mod tests {
     fn collision_check_3d_position() {
         let check = collision_check(R_EARTH, None);
         // Position magnitude = sqrt(3000^2 * 3) ≈ 5196 km < R_EARTH (6378 km)
-        let state = OrbitalState::new(
-            vector![3000.0, 3000.0, 3000.0],
-            vector![0.0, 0.0, 0.0],
-        );
+        let state = OrbitalState::new(vector![3000.0, 3000.0, 3000.0], vector![0.0, 0.0, 0.0]);
         assert!(matches!(
             check(0.0, &state),
             ControlFlow::Break(SimulationEvent::Collision { .. })
@@ -111,10 +99,7 @@ mod tests {
     fn atmospheric_entry_above_karman() {
         // At 200 km altitude with 100 km atmosphere → no event
         let check = collision_check(R_EARTH, Some(100.0));
-        let state = OrbitalState::new(
-            vector![R_EARTH + 200.0, 0.0, 0.0],
-            vector![0.0, 7.66, 0.0],
-        );
+        let state = OrbitalState::new(vector![R_EARTH + 200.0, 0.0, 0.0], vector![0.0, 7.66, 0.0]);
         assert!(matches!(check(0.0, &state), ControlFlow::Continue(())));
     }
 
@@ -122,10 +107,7 @@ mod tests {
     fn atmospheric_entry_below_karman() {
         // At 50 km altitude with 100 km atmosphere → AtmosphericEntry
         let check = collision_check(R_EARTH, Some(100.0));
-        let state = OrbitalState::new(
-            vector![R_EARTH + 50.0, 0.0, 0.0],
-            vector![0.0, 7.0, 0.0],
-        );
+        let state = OrbitalState::new(vector![R_EARTH + 50.0, 0.0, 0.0], vector![0.0, 7.0, 0.0]);
         match check(0.0, &state) {
             ControlFlow::Break(SimulationEvent::AtmosphericEntry { altitude_km }) => {
                 assert!((altitude_km - 50.0).abs() < 1e-10);
@@ -138,10 +120,7 @@ mod tests {
     fn collision_takes_priority_over_atmospheric_entry() {
         // Below surface with atmosphere set → Collision, not AtmosphericEntry
         let check = collision_check(R_EARTH, Some(100.0));
-        let state = OrbitalState::new(
-            vector![R_EARTH - 5.0, 0.0, 0.0],
-            vector![0.0, 7.0, 0.0],
-        );
+        let state = OrbitalState::new(vector![R_EARTH - 5.0, 0.0, 0.0], vector![0.0, 7.0, 0.0]);
         assert!(matches!(
             check(0.0, &state),
             ControlFlow::Break(SimulationEvent::Collision { .. })
@@ -158,10 +137,7 @@ mod tests {
         // Start at 100 km altitude with only 80% of circular velocity → will fall back
         let r = R_EARTH + 100.0;
         let v_circular = (MU_EARTH / r).sqrt();
-        let initial = OrbitalState::new(
-            vector![r, 0.0, 0.0],
-            vector![0.0, v_circular * 0.8, 0.0],
-        );
+        let initial = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v_circular * 0.8, 0.0]);
 
         // No atmosphere → hits surface directly
         let event_checker = collision_check(R_EARTH, None);
@@ -181,7 +157,10 @@ mod tests {
                 t,
                 ..
             } => {
-                assert!(altitude_km < 0.0, "Altitude should be negative at collision");
+                assert!(
+                    altitude_km < 0.0,
+                    "Altitude should be negative at collision"
+                );
                 assert!(t < 100_000.0, "Should terminate before t_end");
                 assert!(t > 0.0, "Should not terminate immediately");
             }
@@ -199,10 +178,7 @@ mod tests {
         // Start at 200 km altitude with 80% of circular velocity → will fall back
         let r = R_EARTH + 200.0;
         let v_circular = (MU_EARTH / r).sqrt();
-        let initial = OrbitalState::new(
-            vector![r, 0.0, 0.0],
-            vector![0.0, v_circular * 0.8, 0.0],
-        );
+        let initial = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v_circular * 0.8, 0.0]);
 
         // With 100 km atmosphere → should stop at atmosphere boundary before hitting surface
         let event_checker = collision_check(R_EARTH, Some(100.0));

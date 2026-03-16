@@ -3,17 +3,16 @@ use std::ops::ControlFlow;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use super::manager::{SimCommand, SimStatusResponse};
 use super::history::HistoryBuffer;
+use super::manager::{SimCommand, SimStatusResponse};
 use super::protocol::{ClientMessage, WsMessage};
 
 pub(super) type WsSender = futures_util::stream::SplitSink<
     tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
     tokio_tungstenite::tungstenite::Message,
 >;
-pub(super) type WsReceiver = futures_util::stream::SplitStream<
-    tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
->;
+pub(super) type WsReceiver =
+    futures_util::stream::SplitStream<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>>;
 
 pub(super) async fn handle_connection(
     stream: tokio::net::TcpStream,
@@ -33,9 +32,7 @@ pub(super) async fn handle_connection(
     // 1. Query current status from the manager
     let (status_tx, status_rx) = oneshot::channel();
     if cmd_tx
-        .send(SimCommand::GetStatus {
-            respond: status_tx,
-        })
+        .send(SimCommand::GetStatus { respond: status_tx })
         .await
         .is_err()
     {
@@ -55,7 +52,9 @@ pub(super) async fn handle_connection(
             })
             .expect("failed to serialize status");
             if ws_sender
-                .send(tokio_tungstenite::tungstenite::Message::Text(idle_msg.into()))
+                .send(tokio_tungstenite::tungstenite::Message::Text(
+                    idle_msg.into(),
+                ))
                 .await
                 .is_err()
             {
@@ -90,7 +89,9 @@ pub(super) async fn handle_connection(
                 })
                 .expect("failed to serialize status");
                 if ws_sender
-                    .send(tokio_tungstenite::tungstenite::Message::Text(paused_msg.into()))
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        paused_msg.into(),
+                    ))
                     .await
                     .is_err()
                 {
@@ -145,8 +146,14 @@ pub(super) async fn handle_connection(
                 let _ = detail_tx.send(complete).await;
             });
 
-            main_loop(&mut ws_sender, &mut ws_receiver, &mut rx, &cmd_tx, Some(&mut detail_rx))
-                .await;
+            main_loop(
+                &mut ws_sender,
+                &mut ws_receiver,
+                &mut rx,
+                &cmd_tx,
+                Some(&mut detail_rx),
+            )
+            .await;
             eprintln!("Client disconnected");
             return;
         }
@@ -175,7 +182,9 @@ async fn dispatch_command<T>(
             let err_msg = serde_json::to_string(&WsMessage::Error { message: e })
                 .expect("failed to serialize error");
             if ws_sender
-                .send(tokio_tungstenite::tungstenite::Message::Text(err_msg.into()))
+                .send(tokio_tungstenite::tungstenite::Message::Text(
+                    err_msg.into(),
+                ))
                 .await
                 .is_err()
             {

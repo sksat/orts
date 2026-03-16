@@ -185,17 +185,14 @@ impl LoadModel for Thruster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::Vector4;
-    use crate::attitude::AttitudeState;
     use crate::OrbitalState;
+    use crate::attitude::AttitudeState;
+    use nalgebra::Vector4;
     use std::f64::consts::FRAC_PI_2;
 
     fn sample_state() -> SpacecraftState {
         SpacecraftState {
-            orbit: OrbitalState::new(
-                Vector3::new(7000.0, 0.0, 0.0),
-                Vector3::new(0.0, 7.5, 0.0),
-            ),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0)),
             attitude: AttitudeState::identity(),
             mass: 500.0,
         }
@@ -212,10 +209,7 @@ mod tests {
     fn rotated_90z_state() -> SpacecraftState {
         let half = FRAC_PI_2 / 2.0;
         SpacecraftState {
-            orbit: OrbitalState::new(
-                Vector3::new(7000.0, 0.0, 0.0),
-                Vector3::new(0.0, 7.5, 0.0),
-            ),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0)),
             attitude: AttitudeState {
                 quaternion: Vector4::new(half.cos(), 0.0, 0.0, half.sin()),
                 angular_velocity: Vector3::zeros(),
@@ -346,11 +340,7 @@ mod tests {
         let t = Thruster::new(1.0, 300.0, Vector3::x());
         let loads = t.loads(0.0, &rotated_90z_state(), None);
         let a = loads.acceleration_inertial;
-        assert!(
-            a[0].abs() < 1e-10,
-            "expected ~0 x-component, got {}",
-            a[0]
-        );
+        assert!(a[0].abs() < 1e-10, "expected ~0 x-component, got {}", a[0]);
         assert!(a[1] > 0.0, "expected positive y-component, got {}", a[1]);
         assert!(a[2].abs() < 1e-15);
     }
@@ -359,17 +349,10 @@ mod tests {
     fn torque_from_offset() {
         // Offset [0, 1, 0] m, force along +X: τ = [0,1,0] × [F,0,0] = [0,0,-F]
         let thrust = 10.0;
-        let t = Thruster::new(thrust, 300.0, Vector3::x())
-            .with_offset(Vector3::new(0.0, 1.0, 0.0));
+        let t = Thruster::new(thrust, 300.0, Vector3::x()).with_offset(Vector3::new(0.0, 1.0, 0.0));
         let loads = t.loads(0.0, &sample_state(), None);
-        assert!(
-            (loads.torque_body[0]).abs() < 1e-15,
-            "τx should be 0"
-        );
-        assert!(
-            (loads.torque_body[1]).abs() < 1e-15,
-            "τy should be 0"
-        );
+        assert!((loads.torque_body[0]).abs() < 1e-15, "τx should be 0");
+        assert!((loads.torque_body[1]).abs() < 1e-15, "τy should be 0");
         assert!(
             (loads.torque_body[2] - (-thrust)).abs() < 1e-12,
             "τz should be -F={}, got {}",
@@ -421,29 +404,30 @@ mod tests {
 
     #[test]
     fn throttle_clamped_above_one() {
-        let t = Thruster::new(1.0, 300.0, Vector3::x())
-            .with_profile(Box::new(ConstantThrottle(1.5)));
+        let t =
+            Thruster::new(1.0, 300.0, Vector3::x()).with_profile(Box::new(ConstantThrottle(1.5)));
         let loads = t.loads(0.0, &sample_state(), None);
         // Should be clamped to 1.0: same as full throttle
         let t_full = Thruster::new(1.0, 300.0, Vector3::x());
         let loads_full = t_full.loads(0.0, &sample_state(), None);
-        assert!((loads.acceleration_inertial - loads_full.acceleration_inertial).magnitude() < 1e-15);
+        assert!(
+            (loads.acceleration_inertial - loads_full.acceleration_inertial).magnitude() < 1e-15
+        );
         assert!((loads.mass_rate - loads_full.mass_rate).abs() < 1e-15);
     }
 
     #[test]
     fn partial_throttle() {
         let t_full = Thruster::new(10.0, 300.0, Vector3::x());
-        let t_half = Thruster::new(10.0, 300.0, Vector3::x())
-            .with_profile(Box::new(ConstantThrottle(0.5)));
+        let t_half =
+            Thruster::new(10.0, 300.0, Vector3::x()).with_profile(Box::new(ConstantThrottle(0.5)));
         let state = sample_state();
         let loads_full = t_full.loads(0.0, &state, None);
         let loads_half = t_half.loads(0.0, &state, None);
 
         // Half throttle → half acceleration, half mass_rate
         assert!(
-            (loads_half.acceleration_inertial - loads_full.acceleration_inertial * 0.5)
-                .magnitude()
+            (loads_half.acceleration_inertial - loads_full.acceleration_inertial * 0.5).magnitude()
                 < 1e-15
         );
         assert!((loads_half.mass_rate - loads_full.mass_rate * 0.5).abs() < 1e-15);
@@ -453,10 +437,10 @@ mod tests {
 
     #[test]
     fn dynamics_uses_mass_rate() {
+        use crate::gravity::PointMass;
+        use kaname::constants::MU_EARTH;
         use nalgebra::Matrix3;
         use orts_integrator::DynamicalSystem;
-        use kaname::constants::MU_EARTH;
-        use crate::gravity::PointMass;
 
         use super::super::SpacecraftDynamics;
 

@@ -11,7 +11,9 @@ fn run_cli_csv() -> std::process::Output {
 fn run_cli_csv_with_body(body: &str) -> std::process::Output {
     let binary = env!("CARGO_BIN_EXE_orts");
     Command::new(binary)
-        .args(["run", "--body", body, "--output", "stdout", "--format", "csv"])
+        .args([
+            "run", "--body", body, "--output", "stdout", "--format", "csv",
+        ])
         .output()
         .expect("failed to execute orts")
 }
@@ -178,7 +180,11 @@ fn test_cli_config_file() {
         .filter(|line| !line.starts_with('#'))
         .collect();
     assert!(data_lines.len() > 10, "Expected many data lines");
-    assert_eq!(data_lines[0].split(',').count(), 13, "Expected 13 CSV fields");
+    assert_eq!(
+        data_lines[0].split(',').count(),
+        13,
+        "Expected 13 CSV fields"
+    );
 
     // Invariant: orbital radius ≈ 6778 km (Earth radius 6378 + 400 km altitude)
     let mut prev_t = f64::NEG_INFINITY;
@@ -245,15 +251,31 @@ fn test_cli_tle_from_stdin() {
         .expect("failed to write TLE to stdin");
 
     let output = child.wait_with_output().expect("failed to wait for child");
-    assert!(output.status.success(), "CLI exited with non-zero status: stderr={}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "CLI exited with non-zero status: stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Should contain TLE orbit info
-    assert!(stdout.contains("from TLE"), "Missing TLE header in: {}", stdout.lines().take(10).collect::<Vec<_>>().join("\n"));
+    assert!(
+        stdout.contains("from TLE"),
+        "Missing TLE header in: {}",
+        stdout.lines().take(10).collect::<Vec<_>>().join("\n")
+    );
     // Should produce CSV data with 13 fields
     let data_lines: Vec<&str> = stdout.lines().filter(|l| !l.starts_with('#')).collect();
-    assert!(data_lines.len() > 10, "Expected many data lines, got {}", data_lines.len());
-    assert_eq!(data_lines[0].split(',').count(), 13, "Expected 13 CSV fields");
+    assert!(
+        data_lines.len() > 10,
+        "Expected many data lines, got {}",
+        data_lines.len()
+    );
+    assert_eq!(
+        data_lines[0].split(',').count(),
+        13,
+        "Expected 13 CSV fields"
+    );
 }
 
 #[test]

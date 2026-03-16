@@ -56,9 +56,7 @@ impl HistoryBuffer {
 
         for (i, hs) in to_flush.iter().enumerate() {
             let sat_path = EntityPath::parse(&format!("/world/sat/{}", hs.satellite_id));
-            let tp = TimePoint::new()
-                .with_sim_time(hs.t)
-                .with_step(i as u64);
+            let tp = TimePoint::new().with_sim_time(hs.t).with_step(i as u64);
             let os = OrbitalState::new(
                 nalgebra::Vector3::new(hs.position[0], hs.position[1], hs.position[2]),
                 nalgebra::Vector3::new(hs.velocity[0], hs.velocity[1], hs.velocity[2]),
@@ -91,10 +89,19 @@ impl HistoryBuffer {
                     for row in rows {
                         let pos = nalgebra::Vector3::new(row.x, row.y, row.z);
                         let vel = nalgebra::Vector3::new(row.vx, row.vy, row.vz);
-                        let sid = row.entity_path.as_deref()
+                        let sid = row
+                            .entity_path
+                            .as_deref()
                             .and_then(|p| p.rsplit('/').next())
                             .unwrap_or("default");
-                        all.push(make_history_state(sid, row.t, &pos, &vel, self.mu, HashMap::new()));
+                        all.push(make_history_state(
+                            sid,
+                            row.t,
+                            &pos,
+                            &vel,
+                            self.mu,
+                            HashMap::new(),
+                        ));
                     }
                 }
                 Err(e) => {
@@ -113,7 +120,12 @@ impl HistoryBuffer {
     }
 
     /// Query states within a time range, optionally downsampled.
-    pub fn query_range(&self, t_min: f64, t_max: f64, max_points: Option<usize>) -> Vec<HistoryState> {
+    pub fn query_range(
+        &self,
+        t_min: f64,
+        t_max: f64,
+        max_points: Option<usize>,
+    ) -> Vec<HistoryState> {
         let all = self.load_all();
         let filtered: Vec<HistoryState> = all
             .into_iter()

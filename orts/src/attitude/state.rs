@@ -18,12 +18,7 @@ impl AttitudeState {
     /// Create from a nalgebra `UnitQuaternion` and angular velocity.
     pub fn new(orientation: UnitQuaternion<f64>, angular_velocity: Vector3<f64>) -> Self {
         Self {
-            quaternion: Vector4::new(
-                orientation.w,
-                orientation.i,
-                orientation.j,
-                orientation.k,
-            ),
+            quaternion: Vector4::new(orientation.w, orientation.i, orientation.j, orientation.k),
             angular_velocity,
         }
     }
@@ -82,10 +77,7 @@ impl AttitudeState {
     /// has the same type:
     /// - `quaternion` field holds dq/dt
     /// - `angular_velocity` field holds dω/dt (angular acceleration)
-    pub fn from_derivative(
-        q_dot: Vector4<f64>,
-        angular_acceleration: Vector3<f64>,
-    ) -> Self {
+    pub fn from_derivative(q_dot: Vector4<f64>, angular_acceleration: Vector3<f64>) -> Self {
         Self {
             quaternion: q_dot,
             angular_velocity: angular_acceleration,
@@ -130,11 +122,7 @@ impl OdeState for AttitudeState {
         let n = 7; // 4 quaternion + 3 angular velocity
 
         for i in 0..4 {
-            let sc = tol.atol
-                + tol.rtol
-                    * self.quaternion[i]
-                        .abs()
-                        .max(y_next.quaternion[i].abs());
+            let sc = tol.atol + tol.rtol * self.quaternion[i].abs().max(y_next.quaternion[i].abs());
             let e = error.quaternion[i] / sc;
             sum_sq += e * e;
         }

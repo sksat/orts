@@ -41,10 +41,7 @@ pub struct CssiDailyRecord {
 #[derive(Debug)]
 pub enum CssiParseError {
     /// Line too short for required fields.
-    LineTooShort {
-        line_number: usize,
-        length: usize,
-    },
+    LineTooShort { line_number: usize, length: usize },
     /// Failed to parse a numeric field.
     ParseField {
         line_number: usize,
@@ -165,14 +162,15 @@ impl CssiData {
     ///
     /// Fixed-width format (Fortran): `FORMAT(I4,I3,I3,I5,I3,8I3,I4,8I4,I4,F4.1,I2,I4,F6.1,I2,5F6.1)`
     fn parse_line(line: &str, line_number: usize) -> Result<CssiDailyRecord, CssiParseError> {
-        let parse_int = |start: usize, end: usize, field: &'static str| -> Result<i64, CssiParseError> {
-            let s = line[start..end].trim();
-            s.parse::<i64>().map_err(|_| CssiParseError::ParseField {
-                line_number,
-                field,
-                value: s.to_string(),
-            })
-        };
+        let parse_int =
+            |start: usize, end: usize, field: &'static str| -> Result<i64, CssiParseError> {
+                let s = line[start..end].trim();
+                s.parse::<i64>().map_err(|_| CssiParseError::ParseField {
+                    line_number,
+                    field,
+                    value: s.to_string(),
+                })
+            };
 
         let parse_float =
             |start: usize, end: usize, field: &'static str| -> Result<f64, CssiParseError> {
@@ -180,12 +178,11 @@ impl CssiData {
                 if s.is_empty() {
                     return Ok(0.0);
                 }
-                s.parse::<f64>()
-                    .map_err(|_| CssiParseError::ParseField {
-                        line_number,
-                        field,
-                        value: s.to_string(),
-                    })
+                s.parse::<f64>().map_err(|_| CssiParseError::ParseField {
+                    line_number,
+                    field,
+                    value: s.to_string(),
+                })
             };
 
         // Date fields
@@ -308,7 +305,12 @@ impl CssiSpaceWeather {
 ///
 /// Each day has 8 slots (3 hours each). This function navigates backward
 /// across day boundaries in the sorted record array.
-fn ap_at_offset(records: &[CssiDailyRecord], day_idx: usize, current_slot: usize, slots_back: usize) -> f64 {
+fn ap_at_offset(
+    records: &[CssiDailyRecord],
+    day_idx: usize,
+    current_slot: usize,
+    slots_back: usize,
+) -> f64 {
     let total_current = day_idx * 8 + current_slot;
     if slots_back > total_current {
         // Not enough history; use daily Ap of first available day
@@ -365,14 +367,20 @@ impl SpaceWeatherProvider for CssiSpaceWeather {
         // Build NRLMSISE-00 7-element ap history array
         let ap_array = [
             day.ap_daily,
-            ap_at_offset(records, idx, current_slot, 0),       // current 3-hr
-            ap_at_offset(records, idx, current_slot, 1),       // 3 hr ago
-            ap_at_offset(records, idx, current_slot, 2),       // 6 hr ago
-            ap_at_offset(records, idx, current_slot, 3),       // 9 hr ago
+            ap_at_offset(records, idx, current_slot, 0), // current 3-hr
+            ap_at_offset(records, idx, current_slot, 1), // 3 hr ago
+            ap_at_offset(records, idx, current_slot, 2), // 6 hr ago
+            ap_at_offset(records, idx, current_slot, 3), // 9 hr ago
             // Average of 12-33 hours before (8 slots: 4..=11)
-            (4..=11).map(|s| ap_at_offset(records, idx, current_slot, s)).sum::<f64>() / 8.0,
+            (4..=11)
+                .map(|s| ap_at_offset(records, idx, current_slot, s))
+                .sum::<f64>()
+                / 8.0,
             // Average of 36-57 hours before (8 slots: 12..=19)
-            (12..=19).map(|s| ap_at_offset(records, idx, current_slot, s)).sum::<f64>() / 8.0,
+            (12..=19)
+                .map(|s| ap_at_offset(records, idx, current_slot, s))
+                .sum::<f64>()
+                / 8.0,
         ];
 
         // F10.7: NRLMSISE-00 uses previous day's observed value
@@ -453,11 +461,7 @@ mod fetch_impl {
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&cache_path, &body)?;
-            eprintln!(
-                "Cached {} records to {}",
-                data.len(),
-                cache_path.display()
-            );
+            eprintln!("Cached {} records to {}", data.len(), cache_path.display());
 
             Ok(Self::new(data))
         }
@@ -470,8 +474,7 @@ mod fetch_impl {
 
     /// Determine the cache file path: `~/.cache/orts/SW-Last5Years.txt`
     fn cache_file_path() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-        let home = std::env::var("HOME")
-            .map_err(|_| "HOME environment variable not set")?;
+        let home = std::env::var("HOME").map_err(|_| "HOME environment variable not set")?;
         Ok(std::path::PathBuf::from(home)
             .join(".cache")
             .join("orts")

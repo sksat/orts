@@ -4,11 +4,11 @@ mod third_body;
 
 pub use drag::{AtmosphericDrag, DEFAULT_BALLISTIC_COEFF};
 pub use kaname::constants::OMEGA_EARTH;
-pub use srp::{SolarRadiationPressure, DEFAULT_CR, DEFAULT_AREA_TO_MASS};
+pub use srp::{DEFAULT_AREA_TO_MASS, DEFAULT_CR, SolarRadiationPressure};
 pub use third_body::ThirdBodyGravity;
 
-use nalgebra::Vector3;
 use kaname::epoch::Epoch;
+use nalgebra::Vector3;
 
 use crate::OrbitalState;
 
