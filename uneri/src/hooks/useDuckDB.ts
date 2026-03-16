@@ -33,7 +33,8 @@ export function useDuckDB(schema: TableSchema): UseDuckDBReturn {
         setError(e instanceof Error ? e.message : "DuckDB init failed");
       }
     })();
-  }, [schema]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return { db, conn, isReady: conn !== null, error };
 }

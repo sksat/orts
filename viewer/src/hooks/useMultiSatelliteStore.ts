@@ -256,7 +256,7 @@ export function useMultiSatelliteStore<T extends TimePoint>(
       clearTimeout(timerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn, compactEveryN, compactOptions, queryEveryN, tickInterval]);
+  }, [conn]);
 
   return { data, isLoading };
 }

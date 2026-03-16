@@ -164,11 +164,11 @@ export async function queryDerived(
   const sql = buildDerivedQuery(schema, tMin, maxPoints, tMax);
   const result = await conn.query(sql);
 
-  const t = result.getChildAt(0)?.toArray() as Float64Array;
+  const t = result.getChildAt(0)!.toArray() as Float64Array;
   const map: ChartDataMap = { t };
 
   for (let i = 0; i < schema.derived.length; i++) {
-    const col = result.getChildAt(i + 1)?.toArray() as Float64Array;
+    const col = result.getChildAt(i + 1)!.toArray() as Float64Array;
     map[schema.derived[i].name] = col;
   }
 
@@ -208,7 +208,7 @@ export async function compactTable(
 ): Promise<boolean> {
   // 1. Check row count
   const countRes = await conn.query(`SELECT COUNT(*) AS total FROM ${schema.tableName}`);
-  const total = Number(countRes.getChildAt(0)?.get(0));
+  const total = Number(countRes.getChildAt(0)!.get(0));
   if (total <= opts.maxRows) return false;
 
   // 2. Find cutoff t (boundary between old and recent)
@@ -217,7 +217,7 @@ export async function compactTable(
     `SELECT t FROM (SELECT t, ROW_NUMBER() OVER (ORDER BY t DESC) AS rn ` +
       `FROM ${schema.tableName}) sub WHERE rn = ${opts.keepRecentRows} LIMIT 1`,
   );
-  const cutoffT = Number(cutoffRes.getChildAt(0)?.get(0));
+  const cutoffT = Number(cutoffRes.getChildAt(0)!.get(0));
 
   // 3. Create temp table of keeper t values, delete non-keepers, cleanup
   try {

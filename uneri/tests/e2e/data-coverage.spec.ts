@@ -71,11 +71,11 @@ test("mixed-density: sparse region has proportional chart coverage", async ({ pa
   expect(result).not.toBeNull();
 
   // Verify DuckDB has received all data (no data loss)
-  expect(result?.dbRowCount).toBeGreaterThan(2000);
+  expect(result!.dbRowCount).toBeGreaterThan(2000);
 
   // Verify chart data covers the full time range
-  expect(result?.tMin).toBeLessThan(100); // Should start near t=0
-  expect(result?.tMax).toBeGreaterThan(5000); // Should extend into streaming region
+  expect(result!.tMin).toBeLessThan(100); // Should start near t=0
+  expect(result!.tMax).toBeGreaterThan(5000); // Should extend into streaming region
 
   // KEY ASSERTION: The sparse region (0-5000s) should retain nearly all its
   // original 100 overview points. Time-bucket downsampling allocates ~95% of
@@ -87,12 +87,12 @@ test("mixed-density: sparse region has proportional chart coverage", async ({ pa
   //
   // We assert sparseCount >= 40 (significant portion of the 100 overview points survive,
   // relaxed from 80 to tolerate CI runner timing variance) and sparseCount > 30% of total.
-  const sparseRatio = result?.sparseCount / result?.chartTotal;
+  const sparseRatio = result!.sparseCount / result!.chartTotal;
   console.log(
-    `Sparse coverage: ${result?.sparseCount}/${result?.chartTotal} = ${(sparseRatio * 100).toFixed(1)}%`,
+    `Sparse coverage: ${result!.sparseCount}/${result!.chartTotal} = ${(sparseRatio * 100).toFixed(1)}%`,
   );
-  expect(result?.sparseCount).toBeGreaterThanOrEqual(40);
-  expect(result?.sparseCount).toBeGreaterThan(result?.chartTotal * 0.3);
+  expect(result!.sparseCount).toBeGreaterThanOrEqual(40);
+  expect(result!.sparseCount).toBeGreaterThan(result!.chartTotal * 0.3);
 });
 
 test("mixed-density: DuckDB row count is monotonically increasing (no data loss)", async ({

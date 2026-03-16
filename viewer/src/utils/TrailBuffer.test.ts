@@ -28,11 +28,11 @@ describe("TrailBuffer", () => {
 
     buf.push(makePoint(0));
     expect(buf.length).toBe(1);
-    expect(buf.latest?.t).toBe(0);
+    expect(buf.latest!.t).toBe(0);
 
     buf.push(makePoint(10));
     expect(buf.length).toBe(2);
-    expect(buf.latest?.t).toBe(10);
+    expect(buf.latest!.t).toBe(10);
   });
 
   it("trims when exceeding capacity * 1.5", () => {
@@ -46,7 +46,7 @@ describe("TrailBuffer", () => {
     expect(buf.length).toBe(10);
     // Oldest remaining should be point 6 (kept last 10 of 0..15)
     expect(buf.getAll()[0].t).toBe(6);
-    expect(buf.latest?.t).toBe(15);
+    expect(buf.latest!.t).toBe(15);
   });
 
   it("increments generation on trim", () => {
@@ -69,7 +69,7 @@ describe("TrailBuffer", () => {
     for (let i = 0; i < 20; i++) {
       buf.push(makePoint(i));
     }
-    expect(buf.latest?.t).toBe(19);
+    expect(buf.latest!.t).toBe(19);
   });
 
   it("pushMany adds multiple points and trims once", () => {
@@ -79,7 +79,7 @@ describe("TrailBuffer", () => {
 
     expect(buf.length).toBe(10);
     expect(buf.getAll()[0].t).toBe(10);
-    expect(buf.latest?.t).toBe(19);
+    expect(buf.latest!.t).toBe(19);
     // Only one trim should have happened
     expect(buf.generation).toBe(1);
   });
@@ -119,7 +119,7 @@ describe("TrailBuffer", () => {
     // Push second point — triggers trim at > 1.5 (i.e., at 2)
     buf.push(makePoint(10));
     expect(buf.length).toBe(1);
-    expect(buf.latest?.t).toBe(10);
+    expect(buf.latest!.t).toBe(10);
   });
 });
 
@@ -244,7 +244,7 @@ describe("TrailBuffer history replay sequence", () => {
 
     expect(buf.length).toBe(100);
     expect(buf.getAll()[0].t).toBe(0);
-    expect(buf.latest?.t).toBe(990);
+    expect(buf.latest!.t).toBe(990);
   });
 
   it("rebuilds with detail + streaming after handleHistoryDetailComplete", () => {
@@ -273,7 +273,7 @@ describe("TrailBuffer history replay sequence", () => {
     // After rebuild: should contain detail (0..998) + streaming (1000..1190)
     expect(buf.length).toBe(combined.length);
     expect(buf.getAll()[0].t).toBe(0); // Starts from the beginning of history
-    expect(buf.latest?.t).toBe(1190); // Includes streaming data
+    expect(buf.latest!.t).toBe(1190); // Includes streaming data
     expect(buf.generation).toBeGreaterThan(genAfterOverview); // Generation incremented by clear
   });
 

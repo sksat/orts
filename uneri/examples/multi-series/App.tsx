@@ -60,7 +60,8 @@ export function App() {
         color: COLORS[label] ?? "#0f0",
       })),
     });
-  }, [COLORS]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const ws = new WebSocket("ws://localhost:9004");

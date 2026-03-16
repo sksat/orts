@@ -75,7 +75,8 @@ export function App() {
       await createTable(conn, betaSchema);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn, alphaSchema, betaSchema]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conn]);
 
   // WebSocket connection
   useEffect(() => {
@@ -122,8 +123,8 @@ export function App() {
           conn.query("SELECT MAX(t) FROM tbl_alpha"),
           conn.query("SELECT MAX(t) FROM tbl_beta"),
         ]);
-        const aMax = Number(aMaxRes.getChildAt(0)?.get(0));
-        const bMax = Number(bMaxRes.getChildAt(0)?.get(0));
+        const aMax = Number(aMaxRes.getChildAt(0)!.get(0));
+        const bMax = Number(bMaxRes.getChildAt(0)!.get(0));
         const unifiedTMax = Math.max(
           Number.isFinite(aMax) ? aMax : -Infinity,
           Number.isFinite(bMax) ? bMax : -Infinity,
@@ -161,7 +162,8 @@ export function App() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn, alphaSchema, betaSchema]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conn]);
 
   // Expose debug API
   const queryAlignment = useCallback(async () => {
@@ -172,8 +174,8 @@ export function App() {
       conn.query("SELECT COUNT(*) FROM tbl_alpha"),
       conn.query("SELECT COUNT(*) FROM tbl_beta"),
     ]);
-    const aC = Number(aCountRes.getChildAt(0)?.get(0));
-    const bC = Number(bCountRes.getChildAt(0)?.get(0));
+    const aC = Number(aCountRes.getChildAt(0)!.get(0));
+    const bC = Number(bCountRes.getChildAt(0)!.get(0));
     if (aC === 0 || bC === 0) {
       throw new Error(`Empty tables: alpha=${aC}, beta=${bC}`);
     }
@@ -184,8 +186,8 @@ export function App() {
       conn.query("SELECT MAX(t) FROM tbl_beta"),
     ]);
     const unifiedTMax = Math.max(
-      Number(aMaxRes.getChildAt(0)?.get(0)),
-      Number(bMaxRes.getChildAt(0)?.get(0)),
+      Number(aMaxRes.getChildAt(0)!.get(0)),
+      Number(bMaxRes.getChildAt(0)!.get(0)),
     );
 
     // Downsampled queries with unified tMax
@@ -223,7 +225,8 @@ export function App() {
       alphaNanCount,
       betaNanCount,
     };
-  }, [conn, alphaSchema, betaSchema]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conn]);
 
   useEffect(() => {
     window.__multiTableDebug = {

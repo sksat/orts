@@ -7,13 +7,13 @@ describe("getSatelliteModelConfig", () => {
   it("returns ISS config by id", () => {
     const config = getSatelliteModelConfig("iss");
     expect(config).not.toBeNull();
-    expect(config?.physicalSpanKm).toBe(0.109);
+    expect(config!.physicalSpanKm).toBe(0.109);
   });
 
   it("returns ISS config by name pattern", () => {
     const config = getSatelliteModelConfig("25544", "ISS (ZARYA)");
     expect(config).not.toBeNull();
-    expect(config?.physicalSpanKm).toBe(0.109);
+    expect(config!.physicalSpanKm).toBe(0.109);
   });
 
   it("returns null for unknown satellite", () => {

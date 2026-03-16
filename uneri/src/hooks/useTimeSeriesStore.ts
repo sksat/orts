@@ -197,19 +197,7 @@ export function useTimeSeriesStore<T extends TimePoint>(
       clearTimeout(queryTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    conn,
-    mode,
-    compactEveryN,
-    compactOptions,
-    ingestBufferRef.current.consumeRebuild,
-    ingestBufferRef.current.drain,
-    ingestBufferRef.current.latestT,
-    ingestBufferRef.current.markRebuild,
-    ingestBufferRef.current.pushMany,
-    queryEveryN,
-    tickInterval,
-  ]);
+  }, [conn, mode]);
 
   return { data, isLoading };
 }

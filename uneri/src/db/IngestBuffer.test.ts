@@ -114,8 +114,8 @@ describe("IngestBuffer", () => {
 
     const result = buf.consumeRebuild();
     expect(result).toHaveLength(3);
-    expect(result?.[0].t).toBe(0);
-    expect(result?.[2].t).toBe(20);
+    expect(result![0].t).toBe(0);
+    expect(result![2].t).toBe(20);
   });
 
   it("consumeRebuild returns null on second call (consumed)", () => {

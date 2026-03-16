@@ -225,10 +225,10 @@ test.describe("multi-satellite NaN alignment", () => {
       const ssoData = await query(buildQuery("orbit_sso"));
       const issData = await query(buildQuery("orbit_iss"));
 
-      const ssoT = Array.from(ssoData.getChildAt(0)?.toArray());
-      const issT = Array.from(issData.getChildAt(0)?.toArray());
-      const ssoAlt = Array.from(ssoData.getChildAt(1)?.toArray());
-      const issAlt = Array.from(issData.getChildAt(1)?.toArray());
+      const ssoT = Array.from(ssoData.getChildAt(0)!.toArray());
+      const issT = Array.from(issData.getChildAt(0)!.toArray());
+      const ssoAlt = Array.from(ssoData.getChildAt(1)!.toArray());
+      const issAlt = Array.from(issData.getChildAt(1)!.toArray());
 
       // Check for NaN in altitude values
       const ssoNanCount = ssoAlt.filter((v: number) => Number.isNaN(v)).length;

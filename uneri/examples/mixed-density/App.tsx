@@ -84,7 +84,7 @@ export function App() {
   const queryRowCount = useCallback(async () => {
     if (!conn) return 0;
     const result = await conn.query(`SELECT COUNT(*) AS cnt FROM ${mixedSchema.tableName}`);
-    return Number(result.getChildAt(0)?.toArray()[0]);
+    return Number(result.getChildAt(0)!.toArray()[0]);
   }, [conn]);
 
   useEffect(() => {

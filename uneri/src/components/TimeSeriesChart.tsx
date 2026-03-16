@@ -285,7 +285,7 @@ export function TimeSeriesChart({
     try {
       chartRef.current.setData(plotData);
     } catch {
-      chartRef.current?.destroy();
+      chartRef.current!.destroy();
       chartRef.current = createChart(containerRef.current, plotData, seriesConfig);
     }
     isProgrammaticRef.current = false;
@@ -305,14 +305,14 @@ export function TimeSeriesChart({
             chartRef.current.setSize({ width, height });
           } catch {
             const container = containerRef.current;
-            const currentData = chartRef.current?.data;
+            const currentData = chartRef.current!.data;
             const resolved = resolveData();
             const seriesConfig = resolved?.seriesConfig ?? [
               {},
               { label: yLabel, stroke: color, width: 1.5 },
             ];
             if (container) {
-              chartRef.current?.destroy();
+              chartRef.current!.destroy();
               chartRef.current = createChart(container, currentData, seriesConfig);
             }
           }
