@@ -239,7 +239,7 @@ jobs:
         run: npx playwright test
         env:
           VIEWER_PORT: "5173"
-          ORTS_WS_URL: "ws://localhost:9001"
+          ORTS_WS_URL: "ws://localhost:9001/ws"
 
       - name: Upload Playwright report
         if: failure()
