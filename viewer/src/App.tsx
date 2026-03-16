@@ -570,11 +570,12 @@ export function App() {
   }, [mode, timeRange, replayPoints, snapshot.elapsedTime]);
 
   // Total points across all satellite buffers
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const totalPoints = useMemo(() => {
     let count = 0;
     for (const buf of trailBuffersRef.current.values()) count += buf.length;
     return count;
-  }, []);
+  }, [realtimePlayback.snapshot.currentTime]);
 
   const showPlaybackBar =
     mode === "realtime" ? totalPoints > 0 : replayPoints != null && replayPoints.length > 0;
