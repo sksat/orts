@@ -14,6 +14,7 @@ pub use solver::dop853::{AdaptiveStepper853, AdvanceOutcome853, Dop853};
 pub use solver::dp45::{AdaptiveStepper, AdvanceOutcome, DormandPrince};
 pub use solver::rk4::Rk4;
 pub use solver::verlet::StormerVerlet;
+pub use solver::yoshida::{Yoshida4, Yoshida6, Yoshida8};
 pub use state::{DynamicalSystem, OdeState, State};
 
 #[cfg(test)]
