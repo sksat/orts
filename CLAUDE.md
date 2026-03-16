@@ -52,6 +52,8 @@ Before committing, always run the relevant checks and confirm they pass.
 - `cargo test --workspace` — run all tests
 
 ### TypeScript (viewer + uneri)
+- `pnpm lint` — lint & format check (Biome, CI enforces)
+- `pnpm lint:fix` — auto-fix lint & format issues
 - `pnpm --filter uneri build` — build uneri library
 - `pnpm --filter orts-viewer build` — build viewer (includes wasm-pack + tsc)
 - `pnpm --filter uneri test` — run uneri unit tests
