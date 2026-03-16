@@ -1,30 +1,40 @@
 # orts
 
-A numerical computation and optimization platform for astrodynamics.
+A numerical simulation platform for astrodynamics.
 
-Rust core for simulation with a React-based real-time 3D viewer connected via WebSocket.
+Rust core for orbital mechanics and simulation, with a React-based real-time 3D viewer connected via WebSocket.
 
 ## Features
 
-- Two-body orbital simulation with RK4 numerical integration
-- Coordinate transformations (ECI, Keplerian elements, epoch handling)
-- Sun-synchronous orbit support with analytical sun position
+- N-body orbital simulation with adaptive (Dormand-Prince) and symplectic (Verlet, Yoshida) integrators
+- Gravity models: point-mass, zonal harmonics (J2/J3/J4)
+- Perturbations: atmospheric drag, solar radiation pressure, third-body gravity
+- Atmosphere models: exponential, Harris-Priester, NRLMSISE-00
+- Coordinate transforms, Keplerian elements, TLE/SGP4, epoch handling
+- Spacecraft modeling: mass, attitude dynamics, thruster, surface panels
+- Multi-spacecraft group propagation with event scheduling
 - CLI with simulation, WebSocket server, and format conversion modes
 - Real-time 3D viewer with time-series charting (DuckDB-wasm + uPlot)
-- History replay with downsampled overview and full-resolution detail
 - Rerun `.rrd` data format for recording and export
 
 ## Project Structure
 
-| Package | Description |
-|---------|-------------|
-| `orts` | CLI interface (run, serve, convert) |
-| `utsuroi` | Numerical integrators (RK4, Dormand-Prince, Yoshida symplectic) |
-| `orts-orbits` | Orbital mechanics (two-body, Keplerian elements) |
-| `orts-datamodel` | ECS-inspired data model with Rerun SDK integration |
-| `orts-viewer` | Real-time 3D orbit viewer (React + R3F) |
-| `kaname` | Coordinate systems, epoch, sun position |
-| `uneri` | DuckDB-wasm + uPlot time-series charting library |
+### Rust crates
+
+| Crate | Directory | Description |
+|-------|-----------|-------------|
+| `orts` | `orts/` | Orbital mechanics, simulation, perturbations, spacecraft, events |
+| `orts-cli` | `cli/` | CLI + WebSocket server (binary name: `orts`) |
+| `utsuroi` | `utsuroi/` | Generic ODE solvers (RK4, Dormand-Prince, Störmer-Verlet, Yoshida) |
+| `kaname` | `kaname/` | Geodesy, astronomy, coordinate systems, epoch, sun/moon position |
+| `tobari` | `tobari/` | Atmosphere density models, space weather (CSSI) |
+
+### TypeScript packages
+
+| Package | Directory | Description |
+|---------|-----------|-------------|
+| `@orts/uneri` | `uneri/` | DuckDB-wasm + uPlot time-series charting library |
+| `viewer` | `viewer/` | Real-time 3D orbit viewer (React + @react-three/fiber) |
 
 ## Quick Start
 
