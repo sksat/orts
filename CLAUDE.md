@@ -42,6 +42,26 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 - **Playwright** for viewer E2E tests.
 - **CLI execution** enables simple E2E testing of the simulator independently from the viewer.
 
+## Pre-commit Checklist
+
+Before committing, always run the relevant checks and confirm they pass.
+
+### Rust
+- `cargo fmt --all` — format all crates (CI enforces `--check`)
+- `cargo clippy --workspace -- -D warnings` — lint with warnings as errors
+- `cargo test --workspace` — run all tests
+
+### TypeScript (viewer + uneri)
+- `pnpm --filter uneri build` — build uneri library
+- `pnpm --filter orts-viewer build` — build viewer (includes wasm-pack + tsc)
+- `pnpm --filter uneri test` — run uneri unit tests
+- `pnpm --filter orts-viewer test` — run viewer unit tests
+
+### E2E tests (Playwright)
+WebSocket 通信、データフロー、UI 統合など mock しにくい部分を変更した場合は E2E テストも実行する:
+- `cd uneri && pnpm test:e2e` — uneri E2E (DuckDB + charting)
+- `cd viewer && npx playwright test` — viewer E2E (requires orts serve + vite dev)
+
 ## Architecture Notes
 
 - Systems and precision are configurable — e.g., Earth-Moon-Sun for SSO vs. full N-body for solar system simulations; detailed atmospheric drag vs. simple drag coefficients.
