@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import * as THREE from "three";
-import { getBodyRenderInfo, BodyRenderInfo } from "../bodies.js";
-import { EarthBody } from "./EarthBody.js";
+import { type BodyRenderInfo, getBodyRenderInfo } from "../bodies.js";
 import { useTextureResolution } from "../hooks/useTextureResolution.js";
+import { EarthBody } from "./EarthBody.js";
 
 interface CelestialBodyProps {
   /** Body identifier from the server (e.g., "earth"). */
@@ -25,13 +25,7 @@ interface CelestialBodyProps {
   physicalScale?: boolean;
 }
 
-function TexturedBody({
-  renderInfo,
-  radius,
-}: {
-  renderInfo: BodyRenderInfo;
-  radius: number;
-}) {
+function TexturedBody({ renderInfo, radius }: { renderInfo: BodyRenderInfo; radius: number }) {
   const [texture, setTexture] = useState<THREE.Texture | null>(null);
 
   useEffect(() => {
@@ -45,7 +39,9 @@ function TexturedBody({
       undefined,
       () => {},
     );
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [renderInfo.texturePath]);
 
   return (
@@ -69,24 +65,13 @@ function TexturedBody({
       </mesh>
       <mesh>
         <sphereGeometry args={[radius * 1.002, 24, 24]} />
-        <meshBasicMaterial
-          color={0x4488cc}
-          wireframe
-          transparent
-          opacity={0.15}
-        />
+        <meshBasicMaterial color={0x4488cc} wireframe transparent opacity={0.15} />
       </mesh>
     </group>
   );
 }
 
-function FallbackBody({
-  renderInfo,
-  radius,
-}: {
-  renderInfo: BodyRenderInfo;
-  radius: number;
-}) {
+function FallbackBody({ renderInfo, radius }: { renderInfo: BodyRenderInfo; radius: number }) {
   return (
     <group>
       <mesh>
@@ -100,12 +85,7 @@ function FallbackBody({
       </mesh>
       <mesh>
         <sphereGeometry args={[radius * 1.002, 24, 24]} />
-        <meshBasicMaterial
-          color={0x4488cc}
-          wireframe
-          transparent
-          opacity={0.15}
-        />
+        <meshBasicMaterial color={0x4488cc} wireframe transparent opacity={0.15} />
       </mesh>
     </group>
   );
@@ -116,9 +96,15 @@ function FallbackBody({
  * falling back to a colored Phong sphere.
  */
 export function CelestialBody({
-  bodyId, radius = 1, sunDirection, rotationAngle,
-  lvlhPosition = null, lvlhQuaternion = null,
-  ambientIntensity, sunIntensity, physicalScale,
+  bodyId,
+  radius = 1,
+  sunDirection,
+  rotationAngle,
+  lvlhPosition = null,
+  lvlhQuaternion = null,
+  ambientIntensity,
+  sunIntensity,
+  physicalScale,
 }: CelestialBodyProps) {
   const renderInfo = getBodyRenderInfo(bodyId);
   const isSatelliteCentered = lvlhPosition != null;
@@ -151,7 +137,12 @@ export function CelestialBody({
   // In LVLH mode: position and orient the body via an outer group
   if (lvlhPosition != null || lvlhQuaternion != null) {
     const quat = lvlhQuaternion
-      ? new THREE.Quaternion(lvlhQuaternion[0], lvlhQuaternion[1], lvlhQuaternion[2], lvlhQuaternion[3])
+      ? new THREE.Quaternion(
+          lvlhQuaternion[0],
+          lvlhQuaternion[1],
+          lvlhQuaternion[2],
+          lvlhQuaternion[3],
+        )
       : undefined;
     return (
       <group position={lvlhPosition ?? undefined} quaternion={quat}>

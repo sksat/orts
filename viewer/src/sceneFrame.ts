@@ -23,11 +23,7 @@ export const SCENE_UP: [number, number, number] = [0, 0, 1];
  *
  * ECI: +π/2 around X maps local +Y → world +Z (north pole).
  */
-export const POLE_ALIGNMENT_ROTATION: [number, number, number] = [
-  Math.PI / 2,
-  0,
-  0,
-];
+export const POLE_ALIGNMENT_ROTATION: [number, number, number] = [Math.PI / 2, 0, 0];
 
 /**
  * Default camera position for the display frame.

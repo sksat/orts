@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 test("chart containers render and are visible", async ({ page }) => {
   await page.goto("http://localhost:5174");

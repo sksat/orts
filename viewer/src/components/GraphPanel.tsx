@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { TimeSeriesChart, type TimeRange, type ChartDataMap } from "uneri";
+import { useMemo, useState } from "react";
+import { type ChartDataMap, type TimeRange, TimeSeriesChart } from "uneri";
 import type { MultiChartDataMap } from "../hooks/buildMultiChartData.js";
 
 const TIME_RANGE_OPTIONS: { label: string; value: TimeRange }[] = [
@@ -26,9 +26,24 @@ const ACCEL_CHART_DEFS: { metric: string; title: string; color: string; pertKey?
   { metric: "accel_gravity", title: "Gravity", color: "#aaa" },
   { metric: "accel_drag", title: "Drag", color: "#f80", pertKey: "drag" },
   { metric: "accel_srp", title: "SRP", color: "#ff0", pertKey: "srp" },
-  { metric: "accel_third_body_sun", title: "Sun 3rd-body", color: "#fa0", pertKey: "third_body_sun" },
-  { metric: "accel_third_body_moon", title: "Moon 3rd-body", color: "#8af", pertKey: "third_body_moon" },
-  { metric: "accel_perturbation_total", title: "Total Perturbation", color: "#f44", pertKey: "_any" },
+  {
+    metric: "accel_third_body_sun",
+    title: "Sun 3rd-body",
+    color: "#fa0",
+    pertKey: "third_body_sun",
+  },
+  {
+    metric: "accel_third_body_moon",
+    title: "Moon 3rd-body",
+    color: "#8af",
+    pertKey: "third_body_moon",
+  },
+  {
+    metric: "accel_perturbation_total",
+    title: "Total Perturbation",
+    color: "#f44",
+    pertKey: "_any",
+  },
 ];
 
 interface GraphPanelProps {
@@ -77,7 +92,7 @@ export function GraphPanel({
     const result: Record<string, [Float64Array, Float64Array] | null> = {};
     for (const def of allDefs) {
       result[def.metric] = chartData[def.metric]
-        ? [chartData.t, chartData[def.metric]] as [Float64Array, Float64Array]
+        ? ([chartData.t, chartData[def.metric]] as [Float64Array, Float64Array])
         : null;
     }
     return result;
@@ -85,10 +100,7 @@ export function GraphPanel({
 
   return (
     <div className={`graph-panel ${collapsed ? "collapsed" : ""}`}>
-      <button
-        className="graph-panel-toggle"
-        onClick={() => setCollapsed((c) => !c)}
-      >
+      <button className="graph-panel-toggle" onClick={() => setCollapsed((c) => !c)}>
         {collapsed ? "\u25C0 Graphs" : "\u25B6"}
       </button>
       {!collapsed && (

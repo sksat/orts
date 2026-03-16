@@ -1,8 +1,5 @@
-import { useRef, useEffect, useState, useCallback } from "react";
-import {
-  TimeSeriesChart,
-  type MultiSeriesData,
-} from "../../src/components/TimeSeriesChart.js";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { type MultiSeriesData, TimeSeriesChart } from "../../src/components/TimeSeriesChart.js";
 import { alignTimeSeries, type NamedTimeSeries } from "../../src/utils/alignTimeSeries.js";
 
 /** Bounded buffer for a single named time series. */
@@ -63,7 +60,7 @@ export function App() {
         color: COLORS[label] ?? "#0f0",
       })),
     });
-  }, []);
+  }, [COLORS]);
 
   useEffect(() => {
     const ws = new WebSocket("ws://localhost:9004");
@@ -102,11 +99,7 @@ export function App() {
     >
       <h1>uneri Example: Multi-Series</h1>
       <p>Two sine waves with different frequencies on the same chart.</p>
-      <TimeSeriesChart
-        title="sin(t) vs sin(3t)"
-        yLabel=""
-        multiData={multiData}
-      />
+      <TimeSeriesChart title="sin(t) vs sin(3t)" yLabel="" multiData={multiData} />
     </div>
   );
 }

@@ -1,9 +1,23 @@
-import { describe, it, expect } from "vitest";
-import { computeReplayDrawStart } from "./trailDrawStart.js";
+import { describe, expect, it } from "vitest";
 import type { OrbitPoint } from "../orbit.js";
+import { computeReplayDrawStart } from "./trailDrawStart.js";
 
 function makePoint(t: number): OrbitPoint {
-  return { t, x: 6778 + t, y: t * 0.1, z: 0, vx: 0, vy: 7.669, vz: 0, a: 0, e: 0, inc: 0, raan: 0, omega: 0, nu: 0 };
+  return {
+    t,
+    x: 6778 + t,
+    y: t * 0.1,
+    z: 0,
+    vx: 0,
+    vy: 7.669,
+    vz: 0,
+    a: 0,
+    e: 0,
+    inc: 0,
+    raan: 0,
+    omega: 0,
+    nu: 0,
+  };
 }
 
 describe("computeReplayDrawStart", () => {

@@ -1,4 +1,4 @@
-import { OrbitPoint } from "./orbit.js";
+import type { OrbitPoint } from "./orbit.js";
 
 /** Playback state snapshot. */
 export interface PlaybackState {

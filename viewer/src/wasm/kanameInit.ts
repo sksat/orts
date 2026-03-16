@@ -4,13 +4,7 @@ type EciToEcefBatch = (
   epoch_jd: number,
 ) => Float32Array;
 
-type EciToEcef = (
-  x: number,
-  y: number,
-  z: number,
-  epoch_jd: number,
-  t: number,
-) => Float32Array;
+type EciToEcef = (x: number, y: number, z: number, epoch_jd: number, t: number) => Float32Array;
 
 type EarthRotationAngle = (epoch_jd: number, t: number) => number;
 type SunDirectionEci = (epoch_jd: number, t: number) => Float32Array;
@@ -59,7 +53,7 @@ export function eci_to_ecef_batch(
   times: Float32Array,
   epoch_jd: number,
 ): Float32Array {
-  return wasmBatch!(positions, times, epoch_jd);
+  return wasmBatch?.(positions, times, epoch_jd);
 }
 
 /** Single-point ECI→ECEF transform via WASM. Returns [ex, ey, ez]. */
@@ -70,30 +64,30 @@ export function eci_to_ecef(
   epoch_jd: number,
   t: number,
 ): Float32Array {
-  return wasmSingle!(x, y, z, epoch_jd, t);
+  return wasmSingle?.(x, y, z, epoch_jd, t);
 }
 
 /** Compute Earth Rotation Angle (GMST) in radians via WASM. */
 export function earth_rotation_angle(epoch_jd: number, t: number): number {
-  return wasmEra!(epoch_jd, t);
+  return wasmEra?.(epoch_jd, t);
 }
 
 /** Approximate sun direction (unit vector) in ECI frame via WASM. Returns [x, y, z]. */
 export function sun_direction_eci(epoch_jd: number, t: number): Float32Array {
-  return wasmSunDir!(epoch_jd, t);
+  return wasmSunDir?.(epoch_jd, t);
 }
 
 /** Sun direction (unit vector) as seen from a given body, in J2000 equatorial frame via WASM. Returns [x, y, z]. */
 export function sun_direction_from_body(body: string, epoch_jd: number, t: number): Float32Array {
-  return wasmSunDirFromBody!(body, epoch_jd, t);
+  return wasmSunDirFromBody?.(body, epoch_jd, t);
 }
 
 /** Sun distance [km] from a given body via WASM. */
 export function sun_distance_from_body(body: string, epoch_jd: number, t: number): number {
-  return wasmSunDistFromBody!(body, epoch_jd, t);
+  return wasmSunDistFromBody?.(body, epoch_jd, t);
 }
 
 /** Convert Julian Date + elapsed sim time to ISO 8601 UTC string via WASM. */
 export function jd_to_utc_string(epoch_jd: number, t: number): string {
-  return wasmJdToUtc!(epoch_jd, t);
+  return wasmJdToUtc?.(epoch_jd, t);
 }

@@ -1,5 +1,5 @@
-import { useMemo, useEffect } from "react";
 import { useGLTF } from "@react-three/drei";
+import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import type { SatelliteModelConfig } from "../satelliteModels.js";
 
@@ -31,11 +31,7 @@ export function SatelliteModel({ position, config }: SatelliteModelProps) {
 
   return (
     <group position={position}>
-      <primitive
-        object={cloned}
-        scale={config.scale}
-        rotation={config.rotation}
-      />
+      <primitive object={cloned} scale={config.scale} rotation={config.rotation} />
     </group>
   );
 }

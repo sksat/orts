@@ -1,9 +1,13 @@
-import { describe, it, expect } from "vitest";
-import { SCENE_UP, computeCameraUp, computeLvlhAxes } from "./sceneFrame.js";
+import { describe, expect, it } from "vitest";
+import { computeCameraUp, computeLvlhAxes, SCENE_UP } from "./sceneFrame.js";
 
 type Vec3 = [number, number, number];
-function dot(a: Vec3, b: Vec3): number { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
-function mag(v: Vec3): number { return Math.sqrt(dot(v, v)); }
+function dot(a: Vec3, b: Vec3): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+function mag(v: Vec3): number {
+  return Math.sqrt(dot(v, v));
+}
 
 describe("computeCameraUp", () => {
   it("returns SCENE_UP when originPosition is null", () => {
@@ -146,9 +150,9 @@ describe("computeLvlhAxes", () => {
   it("forms a right-handed coordinate system (R × I = C... actually C × R = I)", () => {
     const axes = computeLvlhAxes([3000, 4000, 1000], [1.5, -2.0, 6.0])!;
     // crossTrack × radial = inTrack
-    const cx = axes.crossTrack[1]*axes.radial[2] - axes.crossTrack[2]*axes.radial[1];
-    const cy = axes.crossTrack[2]*axes.radial[0] - axes.crossTrack[0]*axes.radial[2];
-    const cz = axes.crossTrack[0]*axes.radial[1] - axes.crossTrack[1]*axes.radial[0];
+    const cx = axes.crossTrack[1] * axes.radial[2] - axes.crossTrack[2] * axes.radial[1];
+    const cy = axes.crossTrack[2] * axes.radial[0] - axes.crossTrack[0] * axes.radial[2];
+    const cz = axes.crossTrack[0] * axes.radial[1] - axes.crossTrack[1] * axes.radial[0];
     expect(cx).toBeCloseTo(axes.inTrack[0], 10);
     expect(cy).toBeCloseTo(axes.inTrack[1], 10);
     expect(cz).toBeCloseTo(axes.inTrack[2], 10);

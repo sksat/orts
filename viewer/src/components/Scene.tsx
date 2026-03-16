@@ -1,20 +1,33 @@
-import { useEffect, useMemo, useRef } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { transformToLvlh } from "../coordTransform.js";
+import {
+  computeSceneAmplification,
+  type DisplayScaleProfile,
+  getDisplayScaleProfile,
+} from "../displayScale.js";
+import { rotateZ } from "../frameTransform.js";
+import type { OrbitPoint } from "../orbit.js";
+import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
+import { getSatelliteModelConfig } from "../satelliteModels.js";
+import {
+  computeCameraUp,
+  computeLvlhAxes,
+  DEFAULT_CAMERA_POSITION,
+  type LvlhAxes,
+  SCENE_UP,
+} from "../sceneFrame.js";
+import type { TrailBuffer } from "../utils/TrailBuffer.js";
+import {
+  earth_rotation_angle,
+  sun_direction_from_body,
+  sun_distance_from_body,
+} from "../wasm/kanameInit.js";
 import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { Satellite } from "./Satellite.js";
-import { OrbitPoint } from "../orbit.js";
-import { TrailBuffer } from "../utils/TrailBuffer.js";
-import type { SatelliteInfo } from "../hooks/useWebSocket.js";
-import { DEFAULT_CAMERA_POSITION, SCENE_UP, computeCameraUp, computeLvlhAxes, type LvlhAxes } from "../sceneFrame.js";
-import { rotateZ } from "../frameTransform.js";
-import { type ReferenceFrame, isLegacyEcef, isDefaultEci, DEFAULT_FRAME } from "../referenceFrame.js";
-import { earth_rotation_angle, sun_direction_from_body, sun_distance_from_body } from "../wasm/kanameInit.js";
-import { transformToLvlh } from "../coordTransform.js";
-import { getDisplayScaleProfile, computeSceneAmplification, type DisplayScaleProfile } from "../displayScale.js";
-import { getSatelliteModelConfig } from "../satelliteModels.js";
 
 // Set scene up vector before any Three.js objects are created
 // so that Camera, OrbitControls, and all scene objects use the correct convention.
@@ -55,7 +68,11 @@ const SMOOTHING_SPEED = 6;
  *
  * Falls back to radial-only tracking when velocity is unavailable.
  */
-function CameraLvlhTracker({ originPosition, originVelocity, lvlhActive }: {
+function CameraLvlhTracker({
+  originPosition,
+  originVelocity,
+  lvlhActive,
+}: {
   originPosition: [number, number, number] | null;
   originVelocity: [number, number, number] | null;
   /** When true, LVLH rotation is handled by the coordinate data, not the camera. */
@@ -126,7 +143,10 @@ function CameraLvlhTracker({ originPosition, originVelocity, lvlhActive }: {
  * Snaps instantly when the target jumps by more than 1 scene unit (e.g.,
  * switching from central-body to satellite-centered mode).
  */
-function SmoothOriginGroup({ children, targetPosition }: {
+function SmoothOriginGroup({
+  children,
+  targetPosition,
+}: {
   children: React.ReactNode;
   targetPosition: [number, number, number];
 }) {
@@ -257,7 +277,8 @@ export function Scene({
 }: SceneProps) {
   const isEcef = isLegacyEcef(referenceFrame);
   const isSatCentered = referenceFrame.center.type === "satellite";
-  const centeredSatId = referenceFrame.center.type === "satellite" ? referenceFrame.center.id : null;
+  const centeredSatId =
+    referenceFrame.center.type === "satellite" ? referenceFrame.center.id : null;
 
   // Display scale profile for the current view center
   const displayProfile = useMemo(
@@ -269,10 +290,7 @@ export function Scene({
   // relative to the satellite's exaggerated model at origin.
   const sceneAmplification = useMemo(() => {
     if (!isSatCentered || centeredSatId == null) return 1;
-    const modelConfig = getSatelliteModelConfig(
-      centeredSatId,
-      satelliteNames?.get(centeredSatId),
-    );
+    const modelConfig = getSatelliteModelConfig(centeredSatId, satelliteNames?.get(centeredSatId));
     return computeSceneAmplification(modelConfig, centralBodyRadius);
   }, [isSatCentered, centeredSatId, satelliteNames, centralBodyRadius]);
 
@@ -300,7 +318,8 @@ export function Scene({
     const satPos = satellitePositions?.get(centeredSatId);
     if (satPos) return [satPos.vx, satPos.vy, satPos.vz];
 
-    if (satellitePosition) return [satellitePosition.vx, satellitePosition.vy, satellitePosition.vz];
+    if (satellitePosition)
+      return [satellitePosition.vx, satellitePosition.vy, satellitePosition.vz];
 
     return null;
   }, [isSatCentered, centeredSatId, satellitePositions, satellitePosition]);
@@ -315,8 +334,11 @@ export function Scene({
   const lvlhActive = isSatCentered && lvlhAxes != null && originPosition != null;
 
   // Determine sim time for sun direction from first available satellite position
-  const firstPosition = satellitePosition
-    ?? (satellitePositions ? Array.from(satellitePositions.values()).find((p) => p != null) ?? null : null);
+  const firstPosition =
+    satellitePosition ??
+    (satellitePositions
+      ? (Array.from(satellitePositions.values()).find((p) => p != null) ?? null)
+      : null);
   const simTime = firstPosition?.t ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
@@ -361,7 +383,11 @@ export function Scene({
 
   const lightDistance = sceneAmplification * 10;
   const lightPosition = useMemo<[number, number, number]>(() => {
-    return [sunDirection.x * lightDistance, sunDirection.y * lightDistance, sunDirection.z * lightDistance];
+    return [
+      sunDirection.x * lightDistance,
+      sunDirection.y * lightDistance,
+      sunDirection.z * lightDistance,
+    ];
   }, [sunDirection, lightDistance]);
 
   // Earth rotation angle for the mesh: ERA in ECI, 0 in ECEF (Earth is static)
@@ -409,9 +435,7 @@ export function Scene({
     : null;
 
   // Single-satellite backward compat
-  const hasTrailData = trailBuffer
-    ? trailBuffer.length > 0
-    : points != null && points.length > 0;
+  const hasTrailData = trailBuffer ? trailBuffer.length > 0 : points != null && points.length > 0;
 
   return (
     <Canvas
@@ -427,31 +451,37 @@ export function Scene({
         minDistance={displayProfile.minDistance}
         maxDistance={displayProfile.maxDistance}
       />
-      <CameraLvlhTracker originPosition={originPosition} originVelocity={originVelocity} lvlhActive={lvlhActive} />
+      <CameraLvlhTracker
+        originPosition={originPosition}
+        originVelocity={originVelocity}
+        lvlhActive={lvlhActive}
+      />
 
       <ambientLight intensity={0.15} />
       <directionalLight intensity={3.0 * sunIntensity} position={lightPosition} />
 
       {/* Centered satellite: always exactly at world origin (0,0,0). */}
-      {centeredSatId != null && multiSatEntries && (() => {
-        const idx = multiSatEntries.findIndex(([id]) => id === centeredSatId);
-        if (idx < 0) return null;
-        const pos = satellitePositions?.get(centeredSatId);
-        if (!pos) return null;
-        return (
-          <Satellite
-            position={pos}
-            scaleRadius={centralBodyRadius}
-            color={SATELLITE_COLORS[idx % SATELLITE_COLORS.length]}
-            referenceFrame={referenceFrame}
-            epochJd={epochJd ?? undefined}
-            satId={centeredSatId}
-            satName={satelliteNames?.get(centeredSatId)}
-            originPosition={originPosition}
-            lvlhAxes={lvlhAxes}
-          />
-        );
-      })()}
+      {centeredSatId != null &&
+        multiSatEntries &&
+        (() => {
+          const idx = multiSatEntries.findIndex(([id]) => id === centeredSatId);
+          if (idx < 0) return null;
+          const pos = satellitePositions?.get(centeredSatId);
+          if (!pos) return null;
+          return (
+            <Satellite
+              position={pos}
+              scaleRadius={centralBodyRadius}
+              color={SATELLITE_COLORS[idx % SATELLITE_COLORS.length]}
+              referenceFrame={referenceFrame}
+              epochJd={epochJd ?? undefined}
+              satId={centeredSatId}
+              satName={satelliteNames?.get(centeredSatId)}
+              originPosition={originPosition}
+              lvlhAxes={lvlhAxes}
+            />
+          );
+        })()}
       {!multiSatEntries && isSatCentered && satellitePosition && (
         <Satellite
           position={satellitePosition}
@@ -480,7 +510,7 @@ export function Scene({
         />
 
         {/* Multi-satellite mode */}
-        {multiSatEntries && multiSatEntries.map(([satId, buf], index) => {
+        {multiSatEntries?.map(([satId, buf], index) => {
           const color = SATELLITE_COLORS[index % SATELLITE_COLORS.length];
           const vc = trailVisibleCounts?.get(satId);
           const pos = satellitePositions?.get(satId);
@@ -517,32 +547,34 @@ export function Scene({
         })}
 
         {/* Single-satellite fallback (replay mode or legacy) */}
-        {!multiSatEntries && hasTrailData && (() => {
-          const trailScale = lvlhActive ? effectiveScaleRadius : centralBodyRadius;
-          return trailBuffer ? (
-            <OrbitTrail
-              trailBuffer={trailBuffer}
-              visibleCount={trailVisibleCount}
-              drawStart={trailDrawStart}
-              scaleRadius={trailScale}
-              referenceFrame={referenceFrame}
-              epochJd={epochJd}
-              originPosition={lvlhActive ? originPosition : null}
-              lvlhAxes={lvlhActive ? lvlhAxes : null}
-            />
-          ) : (
-            <OrbitTrail
-              points={points!}
-              visibleCount={trailVisibleCount ?? points!.length}
-              drawStart={trailDrawStart}
-              scaleRadius={trailScale}
-              referenceFrame={referenceFrame}
-              epochJd={epochJd}
-              originPosition={lvlhActive ? originPosition : null}
-              lvlhAxes={lvlhActive ? lvlhAxes : null}
-            />
-          );
-        })()}
+        {!multiSatEntries &&
+          hasTrailData &&
+          (() => {
+            const trailScale = lvlhActive ? effectiveScaleRadius : centralBodyRadius;
+            return trailBuffer ? (
+              <OrbitTrail
+                trailBuffer={trailBuffer}
+                visibleCount={trailVisibleCount}
+                drawStart={trailDrawStart}
+                scaleRadius={trailScale}
+                referenceFrame={referenceFrame}
+                epochJd={epochJd}
+                originPosition={lvlhActive ? originPosition : null}
+                lvlhAxes={lvlhActive ? lvlhAxes : null}
+              />
+            ) : (
+              <OrbitTrail
+                points={points!}
+                visibleCount={trailVisibleCount ?? points?.length}
+                drawStart={trailDrawStart}
+                scaleRadius={trailScale}
+                referenceFrame={referenceFrame}
+                epochJd={epochJd}
+                originPosition={lvlhActive ? originPosition : null}
+                lvlhAxes={lvlhActive ? lvlhAxes : null}
+              />
+            );
+          })()}
         {!multiSatEntries && satellitePosition && !isSatCentered && (
           <Satellite
             position={satellitePosition}

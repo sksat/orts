@@ -1,5 +1,5 @@
-import { useRef, useState, useCallback, useEffect } from "react";
-import { OrbitPoint } from "../orbit.js";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { OrbitPoint } from "../orbit.js";
 
 /** Per-satellite info from the server. */
 export interface SatelliteInfo {
@@ -122,7 +122,16 @@ interface ErrorMessage {
   message: string;
 }
 
-export type ServerMessage = StateMessage | InfoMessage | HistoryMessage | HistoryDetailMessage | HistoryDetailCompleteMessage | QueryRangeResponseMessage | SimulationTerminatedMessage | StatusMessage | ErrorMessage;
+export type ServerMessage =
+  | StateMessage
+  | InfoMessage
+  | HistoryMessage
+  | HistoryDetailMessage
+  | HistoryDetailCompleteMessage
+  | QueryRangeResponseMessage
+  | SimulationTerminatedMessage
+  | StatusMessage
+  | ErrorMessage;
 
 /** Response data from a query_range request. */
 export interface QueryRangeResponse {
@@ -198,10 +207,7 @@ function parseHistoryPoints(states: HistoryStateMsg[]): OrbitPoint[] {
  * Dispatch a parsed server message to the appropriate callback.
  * Extracted as a pure function for testability.
  */
-export function dispatchServerMessage(
-  msg: ServerMessage,
-  callbacks: DispatchCallbacks,
-): void {
+export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCallbacks): void {
   if (msg.type === "state") {
     const stateMsg = msg as StateMessage;
     callbacks.onState({

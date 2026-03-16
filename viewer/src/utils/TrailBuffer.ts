@@ -44,9 +44,7 @@ export class TrailBuffer {
 
   /** The most recently pushed point, or null if empty. */
   get latest(): OrbitPoint | null {
-    return this.points.length > 0
-      ? this.points[this.points.length - 1]
-      : null;
+    return this.points.length > 0 ? this.points[this.points.length - 1] : null;
   }
 
   /**

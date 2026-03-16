@@ -1,13 +1,12 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  IngestBuffer,
-  useDuckDB,
-  TimeSeriesChart,
-  type TableSchema,
-  type ChartDataMap,
-  insertPoints,
   createTable,
+  IngestBuffer,
+  insertPoints,
   queryDerived,
+  type TableSchema,
+  TimeSeriesChart,
+  useDuckDB,
 } from "../../src/index.js";
 import { alignTimeSeries, type NamedTimeSeries } from "../../src/utils/alignTimeSeries.js";
 
@@ -22,9 +21,7 @@ const baseSchema: TableSchema<DataPoint> = {
     { name: "t", type: "DOUBLE" },
     { name: "value", type: "DOUBLE" },
   ],
-  derived: [
-    { name: "value", sql: "value", unit: "" },
-  ],
+  derived: [{ name: "value", sql: "value", unit: "" }],
   toRow: (p) => [p.t, p.value],
 };
 
@@ -78,12 +75,13 @@ export function App() {
       await createTable(conn, betaSchema);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn]);
+  }, [conn, alphaSchema, betaSchema]);
 
   // WebSocket connection
   useEffect(() => {
     const ws = new WebSocket("ws://localhost:9005");
-    let aCount = 0, bCount = 0;
+    let aCount = 0,
+      bCount = 0;
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       if (msg.type === "state") {
@@ -159,9 +157,11 @@ export function App() {
     };
 
     setTimeout(tick, 200);
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn]);
+  }, [conn, alphaSchema, betaSchema]);
 
   // Expose debug API
   const queryAlignment = useCallback(async () => {
@@ -200,8 +200,8 @@ export function App() {
     const betaValues = Array.from(betaData.value as Float64Array);
 
     // NaN check
-    const alphaNanCount = alphaValues.filter(v => Number.isNaN(v)).length;
-    const betaNanCount = betaValues.filter(v => Number.isNaN(v)).length;
+    const alphaNanCount = alphaValues.filter((v) => Number.isNaN(v)).length;
+    const betaNanCount = betaValues.filter((v) => Number.isNaN(v)).length;
 
     // Alignment check
     const aSet = new Set(alphaT);
@@ -223,7 +223,7 @@ export function App() {
       alphaNanCount,
       betaNanCount,
     };
-  }, [conn]);
+  }, [conn, alphaSchema, betaSchema]);
 
   useEffect(() => {
     window.__multiTableDebug = {
@@ -235,21 +235,31 @@ export function App() {
   }, [conn, alphaCount, betaCount, queryAlignment]);
 
   // Chart rendering
-  const alphaChartData = chartData && chartData.labels.includes("alpha")
-    ? [chartData.t, chartData.values[chartData.labels.indexOf("alpha")]] as [Float64Array, Float64Array]
+  const alphaChartData = chartData?.labels.includes("alpha")
+    ? ([chartData.t, chartData.values[chartData.labels.indexOf("alpha")]] as [
+        Float64Array,
+        Float64Array,
+      ])
     : null;
-  const betaChartData = chartData && chartData.labels.includes("beta")
-    ? [chartData.t, chartData.values[chartData.labels.indexOf("beta")]] as [Float64Array, Float64Array]
+  const betaChartData = chartData?.labels.includes("beta")
+    ? ([chartData.t, chartData.values[chartData.labels.indexOf("beta")]] as [
+        Float64Array,
+        Float64Array,
+      ])
     : null;
 
   // Count NaN in aligned data
   const nanStats = chartData
     ? {
         alpha: chartData.labels.includes("alpha")
-          ? Array.from(chartData.values[chartData.labels.indexOf("alpha")]).filter(v => Number.isNaN(v)).length
+          ? Array.from(chartData.values[chartData.labels.indexOf("alpha")]).filter((v) =>
+              Number.isNaN(v),
+            ).length
           : 0,
         beta: chartData.labels.includes("beta")
-          ? Array.from(chartData.values[chartData.labels.indexOf("beta")]).filter(v => Number.isNaN(v)).length
+          ? Array.from(chartData.values[chartData.labels.indexOf("beta")]).filter((v) =>
+              Number.isNaN(v),
+            ).length
           : 0,
       }
     : null;
@@ -265,8 +275,7 @@ export function App() {
     >
       <h1>uneri: Multi-Table Alignment Test</h1>
       <p data-testid="stats">
-        Alpha: {alphaCount} pts | Beta: {betaCount} pts |
-        Chart: {chartData?.t?.length ?? 0} pts |
+        Alpha: {alphaCount} pts | Beta: {betaCount} pts | Chart: {chartData?.t?.length ?? 0} pts |
         NaN: alpha={nanStats?.alpha ?? "-"} beta={nanStats?.beta ?? "-"}
       </p>
       <TimeSeriesChart title="alpha (sin)" yLabel="" data={alphaChartData} color="#4af" />

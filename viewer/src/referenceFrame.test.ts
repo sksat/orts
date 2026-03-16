@@ -1,11 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   DEFAULT_FRAME,
+  type FrameCenter,
+  frameCenterEquals,
   isDefaultEci,
   isLegacyEcef,
-  frameCenterEquals,
   type ReferenceFrame,
-  type FrameCenter,
 } from "./referenceFrame.js";
 
 describe("DEFAULT_FRAME", () => {

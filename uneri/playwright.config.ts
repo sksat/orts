@@ -21,8 +21,7 @@ export default defineConfig({
       reuseExistingServer: true,
     },
     {
-      command:
-        "npx vite --config vite.mixed-density.config.ts --port 5175",
+      command: "npx vite --config vite.mixed-density.config.ts --port 5175",
       port: 5175,
       reuseExistingServer: true,
     },
@@ -32,8 +31,7 @@ export default defineConfig({
       reuseExistingServer: true,
     },
     {
-      command:
-        "npx vite --config vite.multi-series.config.ts --port 5176",
+      command: "npx vite --config vite.multi-series.config.ts --port 5176",
       port: 5176,
       reuseExistingServer: true,
     },
@@ -43,8 +41,7 @@ export default defineConfig({
       reuseExistingServer: true,
     },
     {
-      command:
-        "npx vite --config vite.multi-table.config.ts --port 5177",
+      command: "npx vite --config vite.multi-table.config.ts --port 5177",
       port: 5177,
       reuseExistingServer: true,
     },

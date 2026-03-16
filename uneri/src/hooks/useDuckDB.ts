@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
 import type { AsyncDuckDB, AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
+import { useEffect, useRef, useState } from "react";
 import { initDuckDB } from "../db/duckdb.js";
 import { createTable } from "../db/store.js";
 import type { TableSchema } from "../types.js";
@@ -33,7 +33,7 @@ export function useDuckDB(schema: TableSchema): UseDuckDBReturn {
         setError(e instanceof Error ? e.message : "DuckDB init failed");
       }
     })();
-  }, []);
+  }, [schema]);
 
   return { db, conn, isReady: conn !== null, error };
 }

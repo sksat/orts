@@ -1,9 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { getDisplayScaleProfile, computeSceneAmplification } from "./displayScale.js";
-import { getSatelliteModelConfig, computeTrueModelScale } from "./satelliteModels.js";
+import { describe, expect, it } from "vitest";
 import { transformToLvlh } from "./coordTransform.js";
+import { computeSceneAmplification, getDisplayScaleProfile } from "./displayScale.js";
+import { computeTrueModelScale, getSatelliteModelConfig } from "./satelliteModels.js";
 import type { LvlhAxes } from "./sceneFrame.js";
-import type { FrameCenter } from "./referenceFrame.js";
 
 const EARTH_RADIUS_KM = 6378.137;
 
@@ -51,7 +50,7 @@ describe("computeSceneAmplification", () => {
     // Unknown satellite → sphere fallback
     const amplification = computeSceneAmplification(null, EARTH_RADIUS_KM);
     // True radius = 10m / 6378.137km in scene units
-    const trueRadius = 0.010 / EARTH_RADIUS_KM;
+    const trueRadius = 0.01 / EARTH_RADIUS_KM;
     // Exaggerated radius = 0.005 (body-centered sphere radius)
     const expectedAmp = 0.005 / trueRadius;
     expect(amplification).toBeCloseTo(expectedAmp, 5);
@@ -121,7 +120,7 @@ describe("physical accuracy: angular size of Earth", () => {
 
     // Expected: arcsin(6378.137 / 6778.137) ≈ 70.2°
     const expectedDeg = 70.2;
-    expect(sceneAngle * 180 / Math.PI).toBeCloseTo(expectedDeg, 0);
+    expect((sceneAngle * 180) / Math.PI).toBeCloseTo(expectedDeg, 0);
     expect(sceneAngle).toBeCloseTo(physAngle, 10);
   });
 
@@ -137,7 +136,7 @@ describe("physical accuracy: angular size of Earth", () => {
 
     // Expected: arcsin(6378 / 42164) ≈ 8.7°
     const expectedDeg = 8.7;
-    expect(sceneAngle * 180 / Math.PI).toBeCloseTo(expectedDeg, 0);
+    expect((sceneAngle * 180) / Math.PI).toBeCloseTo(expectedDeg, 0);
     expect(sceneAngle).toBeCloseTo(physAngle, 10);
   });
 
@@ -172,9 +171,7 @@ describe("physical accuracy: distance ratios", () => {
     const aLvlh = transformToLvlh(...aEci, satPos, equatorialAxes, effectiveScaleRadius);
     const bLvlh = transformToLvlh(...bEci, satPos, equatorialAxes, effectiveScaleRadius);
     return Math.sqrt(
-      (aLvlh[0] - bLvlh[0]) ** 2 +
-      (aLvlh[1] - bLvlh[1]) ** 2 +
-      (aLvlh[2] - bLvlh[2]) ** 2,
+      (aLvlh[0] - bLvlh[0]) ** 2 + (aLvlh[1] - bLvlh[1]) ** 2 + (aLvlh[2] - bLvlh[2]) ** 2,
     );
   }
 
@@ -240,11 +237,11 @@ describe("physical accuracy: angular separation between points", () => {
     const dot12 = p1Lvlh[0] * p2Lvlh[0] + p1Lvlh[1] * p2Lvlh[1] + p1Lvlh[2] * p2Lvlh[2];
     const mag1 = Math.sqrt(p1Lvlh[0] ** 2 + p1Lvlh[1] ** 2 + p1Lvlh[2] ** 2);
     const mag2 = Math.sqrt(p2Lvlh[0] ** 2 + p2Lvlh[1] ** 2 + p2Lvlh[2] ** 2);
-    const sceneAngle = Math.acos(dot12 / (mag1 * mag2));
+    const _sceneAngle = Math.acos(dot12 / (mag1 * mag2));
 
     // Physical angular separation from satellite
-    const d1 = [100, 0, 0]; // relative to sat
-    const d2 = [200, 0, 0];
+    const _d1 = [100, 0, 0]; // relative to sat
+    const _d2 = [200, 0, 0];
     // Both along the same axis, so angular separation is 0. Let's use offset points instead.
     // Actually p1 and p2 are both along in-track from satPos, so they're collinear from sat.
     // Use a cross-track offset to get a real angle.
@@ -254,7 +251,8 @@ describe("physical accuracy: angular separation between points", () => {
     const p1offLvlh = transformToLvlh(...p1off, satPos, equatorialAxes, effectiveScaleRadius);
     const p2offLvlh = transformToLvlh(...p2off, satPos, equatorialAxes, effectiveScaleRadius);
 
-    const dotOff = p1offLvlh[0] * p2offLvlh[0] + p1offLvlh[1] * p2offLvlh[1] + p1offLvlh[2] * p2offLvlh[2];
+    const dotOff =
+      p1offLvlh[0] * p2offLvlh[0] + p1offLvlh[1] * p2offLvlh[1] + p1offLvlh[2] * p2offLvlh[2];
     const mag1off = Math.sqrt(p1offLvlh[0] ** 2 + p1offLvlh[1] ** 2 + p1offLvlh[2] ** 2);
     const mag2off = Math.sqrt(p2offLvlh[0] ** 2 + p2offLvlh[1] ** 2 + p2offLvlh[2] ** 2);
     const sceneAngleOff = Math.acos(dotOff / (mag1off * mag2off));
@@ -314,7 +312,7 @@ describe("physical accuracy: angular separation between points", () => {
 
     // Sanity check: 1000 km feature at 400 km altitude subtends ~100°
     // (large angle because 1000 km is a significant portion of the visible surface)
-    const angleDeg = sceneAngle * 180 / Math.PI;
+    const angleDeg = (sceneAngle * 180) / Math.PI;
     expect(angleDeg).toBeGreaterThan(90);
     expect(angleDeg).toBeLessThan(110);
   });
@@ -324,7 +322,7 @@ describe("physical accuracy: camera FOV and Earth coverage", () => {
   it("Earth limb angle from ISS altitude is ~70°", () => {
     const altitude = 400;
     const halfAngle = Math.asin(EARTH_RADIUS_KM / (EARTH_RADIUS_KM + altitude));
-    const halfAngleDeg = halfAngle * 180 / Math.PI;
+    const halfAngleDeg = (halfAngle * 180) / Math.PI;
 
     // From ISS, Earth's limb is at ~70° from nadir → 20° from horizontal
     expect(halfAngleDeg).toBeCloseTo(70.2, 0);
@@ -336,7 +334,7 @@ describe("physical accuracy: camera FOV and Earth coverage", () => {
   it("Earth limb angle from GEO is ~8.7°", () => {
     const altitude = 35786;
     const halfAngle = Math.asin(EARTH_RADIUS_KM / (EARTH_RADIUS_KM + altitude));
-    const halfAngleDeg = halfAngle * 180 / Math.PI;
+    const halfAngleDeg = (halfAngle * 180) / Math.PI;
     expect(halfAngleDeg).toBeCloseTo(8.7, 0);
   });
 
@@ -346,7 +344,7 @@ describe("physical accuracy: camera FOV and Earth coverage", () => {
     const altitude = 400;
     const r = EARTH_RADIUS_KM + altitude;
     const horizonDipRad = Math.acos(EARTH_RADIUS_KM / r);
-    const horizonDipDeg = horizonDipRad * 180 / Math.PI;
+    const horizonDipDeg = (horizonDipRad * 180) / Math.PI;
 
     // ~19.8° below horizontal — consistent with astronaut observations
     expect(horizonDipDeg).toBeCloseTo(19.8, 0);

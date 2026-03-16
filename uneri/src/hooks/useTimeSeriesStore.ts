@@ -1,15 +1,15 @@
-import { useState, useEffect, useRef } from "react";
 import type { AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
-import type { TimePoint, TableSchema, ChartDataMap } from "../types.js";
+import { useEffect, useRef, useState } from "react";
 import type { IngestBuffer } from "../db/IngestBuffer.js";
-import {
-  insertPoints,
-  clearTable,
-  queryDerived,
-  compactTable,
-  COMPACT_DEFAULTS,
-} from "../db/store.js";
 import type { CompactOptions } from "../db/store.js";
+import {
+  COMPACT_DEFAULTS,
+  clearTable,
+  compactTable,
+  insertPoints,
+  queryDerived,
+} from "../db/store.js";
+import type { ChartDataMap, TableSchema, TimePoint } from "../types.js";
 
 /** Maximum number of points to display in charts. Query-time downsampling
  *  keeps chart rendering fast regardless of total data in DuckDB. */
@@ -19,10 +19,7 @@ export const DISPLAY_MAX_POINTS = 2000;
 export type TimeRange = number | null;
 
 /** Compute the minimum t value for a chart query given a time range window. */
-export function computeTMin(
-  timeRange: TimeRange,
-  latestT: number,
-): number | undefined {
+export function computeTMin(timeRange: TimeRange, latestT: number): number | undefined {
   if (timeRange == null) return undefined;
   return latestT - timeRange;
 }
@@ -155,7 +152,12 @@ export function useTimeSeriesStore<T extends TimePoint>(
               await insertPoints(conn, schemaRef.current, newPoints);
               hasDataRef.current = true;
             } catch (e) {
-              console.warn("useTimeSeriesStore: insert failed, re-queuing", newPoints.length, "points:", e);
+              console.warn(
+                "useTimeSeriesStore: insert failed, re-queuing",
+                newPoints.length,
+                "points:",
+                e,
+              );
               ingestBufferRef.current.pushMany(newPoints);
             }
           }
@@ -165,16 +167,8 @@ export function useTimeSeriesStore<T extends TimePoint>(
         tickCount++;
         if (hasDataRef.current && tickCount % queryEveryN === 0) {
           try {
-            const tMin = computeTMin(
-              timeRangeRef.current,
-              ingestBufferRef.current.latestT,
-            );
-            const result = await queryDerived(
-              conn,
-              schemaRef.current,
-              tMin,
-              maxPointsRef.current,
-            );
+            const tMin = computeTMin(timeRangeRef.current, ingestBufferRef.current.latestT);
+            const result = await queryDerived(conn, schemaRef.current, tMin, maxPointsRef.current);
             if (!cancelled) setData(result);
 
             // 3. Periodically compact old data to control memory
@@ -189,17 +183,11 @@ export function useTimeSeriesStore<T extends TimePoint>(
           }
         }
         if (!cancelled) {
-          queryTimerRef.current = window.setTimeout(
-            tick,
-            tickInterval,
-          ) as unknown as number;
+          queryTimerRef.current = window.setTimeout(tick, tickInterval) as unknown as number;
         }
       };
 
-      queryTimerRef.current = window.setTimeout(
-        tick,
-        tickInterval,
-      ) as unknown as number;
+      queryTimerRef.current = window.setTimeout(tick, tickInterval) as unknown as number;
     };
 
     startPolling();
@@ -209,7 +197,19 @@ export function useTimeSeriesStore<T extends TimePoint>(
       clearTimeout(queryTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn, mode]);
+  }, [
+    conn,
+    mode,
+    compactEveryN,
+    compactOptions,
+    ingestBufferRef.current.consumeRebuild,
+    ingestBufferRef.current.drain,
+    ingestBufferRef.current.latestT,
+    ingestBufferRef.current.markRebuild,
+    ingestBufferRef.current.pushMany,
+    queryEveryN,
+    tickInterval,
+  ]);
 
   return { data, isLoading };
 }

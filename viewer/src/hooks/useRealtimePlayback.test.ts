@@ -1,14 +1,24 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import type { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import { computeLiveSyncTime, computeTrailDrawStarts } from "./useRealtimePlayback.js";
-import type { OrbitPoint } from "../orbit.js";
 
 function makePoint(t: number, satelliteId?: string): OrbitPoint {
   return {
-    t, satelliteId,
-    x: 6778 + t, y: t * 0.1, z: 0,
-    vx: 0, vy: 7.669, vz: 0,
-    a: 6778, e: 0, inc: 0.9, raan: 0, omega: 0, nu: 0,
+    t,
+    satelliteId,
+    x: 6778 + t,
+    y: t * 0.1,
+    z: 0,
+    vx: 0,
+    vy: 7.669,
+    vz: 0,
+    a: 6778,
+    e: 0,
+    inc: 0.9,
+    raan: 0,
+    omega: 0,
+    nu: 0,
   };
 }
 

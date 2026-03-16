@@ -1,11 +1,15 @@
-import { useRef, useEffect, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { OrbitPoint } from "../orbit.js";
-import { TrailBuffer } from "../utils/TrailBuffer.js";
-import { type ReferenceFrame, isLegacyEcef, frameCenterEquals } from "../referenceFrame.js";
-import { batchEciToEcef, batchTransformWithOffset, batchTransformToLvlh } from "../coordTransform.js";
+import {
+  batchEciToEcef,
+  batchTransformToLvlh,
+  batchTransformWithOffset,
+} from "../coordTransform.js";
+import type { OrbitPoint } from "../orbit.js";
+import { frameCenterEquals, isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import type { LvlhAxes } from "../sceneFrame.js";
+import type { TrailBuffer } from "../utils/TrailBuffer.js";
 
 /** Initial capacity for the streaming vertex buffer. Grows as needed. */
 const INITIAL_CAPACITY = 2048;
@@ -34,7 +38,10 @@ interface OrbitTrailProps {
   lvlhAxes?: LvlhAxes | null;
 }
 
-const DEFAULT_REF_FRAME: ReferenceFrame = { center: { type: "central_body" }, orientation: "inertial" };
+const DEFAULT_REF_FRAME: ReferenceFrame = {
+  center: { type: "central_body" },
+  orientation: "inertial",
+};
 
 /**
  * Orbit trajectory line component.
@@ -44,9 +51,16 @@ const DEFAULT_REF_FRAME: ReferenceFrame = { center: { type: "central_body" }, or
  *   - `trailBuffer`: realtime mode (bounded, generation-based GPU invalidation)
  */
 export function OrbitTrail({
-  points, visibleCount, trailBuffer, scaleRadius, color = 0x00ff88,
-  referenceFrame = DEFAULT_REF_FRAME, epochJd, drawStart = 0,
-  originPosition = null, lvlhAxes = null,
+  points,
+  visibleCount,
+  trailBuffer,
+  scaleRadius,
+  color = 0x00ff88,
+  referenceFrame = DEFAULT_REF_FRAME,
+  epochJd,
+  drawStart = 0,
+  originPosition = null,
+  lvlhAxes = null,
 }: OrbitTrailProps) {
   const writtenCountRef = useRef(0);
   const capacityRef = useRef(INITIAL_CAPACITY);
@@ -55,7 +69,7 @@ export function OrbitTrail({
   const prevFrameRef = useRef<ReferenceFrame>(referenceFrame);
 
   // Determine data source identity for geometry recreation
-  const sourceIdentity = trailBuffer ?? points;
+  const _sourceIdentity = trailBuffer ?? points;
 
   const geometry = useMemo(() => {
     bufferRef.current = new Float32Array(INITIAL_CAPACITY * 3);
@@ -69,12 +83,9 @@ export function OrbitTrail({
     geom.setAttribute("position", attr);
     geom.setDrawRange(0, 0);
     return geom;
-  }, [sourceIdentity]);
+  }, [trailBuffer]);
 
-  const material = useMemo(
-    () => new THREE.LineBasicMaterial({ color, linewidth: 1 }),
-    [color]
-  );
+  const material = useMemo(() => new THREE.LineBasicMaterial({ color, linewidth: 1 }), [color]);
   const lineObject = useMemo(() => new THREE.Line(geometry, material), [geometry, material]);
 
   useEffect(() => {
@@ -100,8 +111,8 @@ export function OrbitTrail({
   useFrame(() => {
     // Detect reference frame change → force full rewrite
     const frameChanged =
-      referenceFrame.orientation !== prevFrameRef.current.orientation
-      || !frameCenterEquals(referenceFrame.center, prevFrameRef.current.center);
+      referenceFrame.orientation !== prevFrameRef.current.orientation ||
+      !frameCenterEquals(referenceFrame.center, prevFrameRef.current.center);
     if (frameChanged) {
       prevFrameRef.current = referenceFrame;
       writtenCountRef.current = 0;
@@ -114,10 +125,10 @@ export function OrbitTrail({
       const totalPoints = allPoints.length;
 
       const needsFullRewrite =
-        currentGen !== generationRef.current
-        || writtenCountRef.current === 0
+        currentGen !== generationRef.current ||
+        writtenCountRef.current === 0 ||
         // For satellite-centered, origin moves every frame → always full rewrite
-        || originPosition != null;
+        originPosition != null;
 
       if (needsFullRewrite) {
         generationRef.current = currentGen;

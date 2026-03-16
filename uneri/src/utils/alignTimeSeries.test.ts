@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { alignTimeSeries, type NamedTimeSeries } from "./alignTimeSeries.js";
 
 function f64(arr: number[]): Float64Array {
@@ -14,9 +14,7 @@ describe("alignTimeSeries", () => {
   });
 
   it("single series returns identity (no NaN)", () => {
-    const input: NamedTimeSeries[] = [
-      { label: "A", t: f64([1, 2, 3]), values: f64([10, 20, 30]) },
-    ];
+    const input: NamedTimeSeries[] = [{ label: "A", t: f64([1, 2, 3]), values: f64([10, 20, 30]) }];
     const result = alignTimeSeries(input);
     expect(Array.from(result.t)).toEqual([1, 2, 3]);
     expect(result.values).toHaveLength(1);

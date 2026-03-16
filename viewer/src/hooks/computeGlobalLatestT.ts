@@ -6,9 +6,7 @@
  * per-satellite latestT which causes terminated satellites to have a stale
  * time window.
  */
-export function computeGlobalLatestT(
-  buffers: Map<string, { latestT: number }>,
-): number {
+export function computeGlobalLatestT(buffers: Map<string, { latestT: number }>): number {
   let max = -Infinity;
   for (const buf of buffers.values()) {
     if (buf.latestT > max) max = buf.latestT;
@@ -35,6 +33,6 @@ export function computeUnifiedTMin(
 ): number | undefined {
   if (timeRange == null) return undefined;
   const globalLatest = computeGlobalLatestT(buffers);
-  if (!isFinite(globalLatest)) return undefined;
+  if (!Number.isFinite(globalLatest)) return undefined;
   return globalLatest - timeRange;
 }

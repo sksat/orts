@@ -1,10 +1,10 @@
 import { Suspense } from "react";
-import { OrbitPoint } from "../orbit.js";
-import { type ReferenceFrame, isLegacyEcef } from "../referenceFrame.js";
-import { eci_to_ecef } from "../wasm/kanameInit.js";
 import { transformToLvlh } from "../coordTransform.js";
-import type { LvlhAxes } from "../sceneFrame.js";
+import type { OrbitPoint } from "../orbit.js";
+import { isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
+import type { LvlhAxes } from "../sceneFrame.js";
+import { eci_to_ecef } from "../wasm/kanameInit.js";
 import { SatelliteModel } from "./SatelliteModel.js";
 
 /** Default radius of the sphere fallback marker in scene units. */
@@ -33,9 +33,16 @@ interface SatelliteProps {
   hideSphereFallback?: boolean;
 }
 
-const DEFAULT_REF_FRAME: ReferenceFrame = { center: { type: "central_body" }, orientation: "inertial" };
+const DEFAULT_REF_FRAME: ReferenceFrame = {
+  center: { type: "central_body" },
+  orientation: "inertial",
+};
 
-function SphereMarker({ position, color, radius = DEFAULT_SPHERE_RADIUS }: {
+function SphereMarker({
+  position,
+  color,
+  radius = DEFAULT_SPHERE_RADIUS,
+}: {
   position: [number, number, number];
   color: number;
   radius?: number;
@@ -72,7 +79,14 @@ export function Satellite({
     scenePos = [ecef[0] / scaleRadius, ecef[1] / scaleRadius, ecef[2] / scaleRadius];
   } else if (originPosition != null && lvlhAxes != null) {
     // LVLH body-frame transform (f64 precision)
-    scenePos = transformToLvlh(position.x, position.y, position.z, originPosition, lvlhAxes, scaleRadius);
+    scenePos = transformToLvlh(
+      position.x,
+      position.y,
+      position.z,
+      originPosition,
+      lvlhAxes,
+      scaleRadius,
+    );
   } else if (originPosition != null) {
     // Simple offset subtraction fallback
     scenePos = [
@@ -89,10 +103,7 @@ export function Satellite({
   if (modelConfig) {
     return (
       <Suspense fallback={<SphereMarker position={scenePos} color={color} />}>
-        <SatelliteModel
-          position={scenePos}
-          config={modelConfig}
-        />
+        <SatelliteModel position={scenePos} config={modelConfig} />
       </Suspense>
     );
   }

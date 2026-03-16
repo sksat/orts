@@ -1,16 +1,8 @@
-import { describe, it, expect } from "vitest";
-import {
-  sliceArrays,
-  lowerBound,
-  upperBound,
-  quantizeChartTime,
-} from "./chartViewport.js";
+import { describe, expect, it } from "vitest";
+import { lowerBound, quantizeChartTime, sliceArrays, upperBound } from "./chartViewport.js";
 
 /** Helper: create N Float64Arrays where the first is the time column. */
-function makeArrays(
-  times: number[],
-  columnCount: number = 3,
-): Float64Array[] {
+function makeArrays(times: number[], columnCount: number = 3): Float64Array[] {
   const arrays: Float64Array[] = [];
   const t = new Float64Array(times);
   arrays.push(t);

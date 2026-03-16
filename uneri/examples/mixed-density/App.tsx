@@ -1,11 +1,11 @@
-import { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IngestBuffer,
-  useDuckDB,
-  useTimeSeriesStore,
-  TimeSeriesChart,
   type TableSchema,
   type TimeRange,
+  TimeSeriesChart,
+  useDuckDB,
+  useTimeSeriesStore,
 } from "../../src/index.js";
 
 interface MixedPoint {
@@ -83,10 +83,8 @@ export function App() {
   // Expose debug data on window for Playwright tests
   const queryRowCount = useCallback(async () => {
     if (!conn) return 0;
-    const result = await conn.query(
-      `SELECT COUNT(*) AS cnt FROM ${mixedSchema.tableName}`,
-    );
-    return Number(result.getChildAt(0)!.toArray()[0]);
+    const result = await conn.query(`SELECT COUNT(*) AS cnt FROM ${mixedSchema.tableName}`);
+    return Number(result.getChildAt(0)?.toArray()[0]);
   }, [conn]);
 
   useEffect(() => {
@@ -99,20 +97,15 @@ export function App() {
 
   // Slice data for individual charts
   const sineData = useMemo(
-    () =>
-      data ? ([data.t, data.sine] as [Float64Array, Float64Array]) : null,
+    () => (data ? ([data.t, data.sine] as [Float64Array, Float64Array]) : null),
     [data],
   );
   const cosineData = useMemo(
-    () =>
-      data ? ([data.t, data.cosine] as [Float64Array, Float64Array]) : null,
+    () => (data ? ([data.t, data.cosine] as [Float64Array, Float64Array]) : null),
     [data],
   );
   const amplitudeData = useMemo(
-    () =>
-      data
-        ? ([data.t, data.amplitude] as [Float64Array, Float64Array])
-        : null,
+    () => (data ? ([data.t, data.amplitude] as [Float64Array, Float64Array]) : null),
     [data],
   );
 
@@ -127,8 +120,7 @@ export function App() {
     >
       <h1>uneri: Mixed-Density Test</h1>
       <p data-testid="points-received">
-        Points received: {pointsReceived} | Chart points:{" "}
-        {data?.t?.length ?? 0} | Buffer latestT:{" "}
+        Points received: {pointsReceived} | Chart points: {data?.t?.length ?? 0} | Buffer latestT:{" "}
         {bufferRef.current.latestT.toFixed(1)}
       </p>
       <div style={{ marginBottom: "1rem" }}>
@@ -137,18 +129,8 @@ export function App() {
         <button onClick={() => setTimeRange(60)}>60s</button>
       </div>
       <TimeSeriesChart title="sine" yLabel="" data={sineData} color="#4af" />
-      <TimeSeriesChart
-        title="cosine"
-        yLabel=""
-        data={cosineData}
-        color="#f84"
-      />
-      <TimeSeriesChart
-        title="amplitude"
-        yLabel=""
-        data={amplitudeData}
-        color="#8f4"
-      />
+      <TimeSeriesChart title="cosine" yLabel="" data={cosineData} color="#f84" />
+      <TimeSeriesChart title="amplitude" yLabel="" data={amplitudeData} color="#8f4" />
     </div>
   );
 }

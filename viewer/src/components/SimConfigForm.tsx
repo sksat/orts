@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useCallback, useState } from "react";
 
 export type OrbitMode = "preset" | "circular" | "tle";
 
@@ -56,9 +56,19 @@ export function buildSimConfig(state: FormState): SimConfigPayload {
     orbit = { type: "tle", line1: state.tleLine1, line2: state.tleLine2 };
   } else if (state.orbitMode === "preset") {
     const preset = PRESETS[state.presetIndex];
-    orbit = { type: "circular", altitude: preset.altitude, inclination: preset.inclination, raan: preset.raan };
+    orbit = {
+      type: "circular",
+      altitude: preset.altitude,
+      inclination: preset.inclination,
+      raan: preset.raan,
+    };
   } else {
-    orbit = { type: "circular", altitude: state.altitude, inclination: state.inclination, raan: state.raan };
+    orbit = {
+      type: "circular",
+      altitude: state.altitude,
+      inclination: state.inclination,
+      raan: state.raan,
+    };
   }
 
   return {
@@ -88,19 +98,54 @@ export function SimConfigForm({ onStart }: SimConfigFormProps) {
 
   const handleStart = useCallback(() => {
     const config = buildSimConfig({
-      orbitMode, presetIndex, altitude, inclination, raan,
-      tleLine1, tleLine2, dt, outputInterval, atmosphere,
+      orbitMode,
+      presetIndex,
+      altitude,
+      inclination,
+      raan,
+      tleLine1,
+      tleLine2,
+      dt,
+      outputInterval,
+      atmosphere,
     });
     onStart(config);
-  }, [orbitMode, presetIndex, altitude, inclination, raan, tleLine1, tleLine2, dt, outputInterval, atmosphere, onStart]);
+  }, [
+    orbitMode,
+    presetIndex,
+    altitude,
+    inclination,
+    raan,
+    tleLine1,
+    tleLine2,
+    dt,
+    outputInterval,
+    atmosphere,
+    onStart,
+  ]);
 
   return (
     <div className="sim-config-form">
       <div className="sim-config-section">
         <div className="mode-toggle" style={{ marginBottom: 8 }}>
-          <button className={`mode-toggle-btn ${orbitMode === "preset" ? "active" : ""}`} onClick={() => setOrbitMode("preset")}>Preset</button>
-          <button className={`mode-toggle-btn ${orbitMode === "circular" ? "active" : ""}`} onClick={() => setOrbitMode("circular")}>Custom</button>
-          <button className={`mode-toggle-btn ${orbitMode === "tle" ? "active" : ""}`} onClick={() => setOrbitMode("tle")}>TLE</button>
+          <button
+            className={`mode-toggle-btn ${orbitMode === "preset" ? "active" : ""}`}
+            onClick={() => setOrbitMode("preset")}
+          >
+            Preset
+          </button>
+          <button
+            className={`mode-toggle-btn ${orbitMode === "circular" ? "active" : ""}`}
+            onClick={() => setOrbitMode("circular")}
+          >
+            Custom
+          </button>
+          <button
+            className={`mode-toggle-btn ${orbitMode === "tle" ? "active" : ""}`}
+            onClick={() => setOrbitMode("tle")}
+          >
+            TLE
+          </button>
         </div>
 
         {orbitMode === "preset" && (
@@ -112,7 +157,9 @@ export function SimConfigForm({ onStart }: SimConfigFormProps) {
                 onClick={() => setPresetIndex(i)}
               >
                 {p.label}
-                <span className="preset-detail">{p.altitude} km / {p.inclination}°</span>
+                <span className="preset-detail">
+                  {p.altitude} km / {p.inclination}°
+                </span>
               </button>
             ))}
           </div>
@@ -122,15 +169,32 @@ export function SimConfigForm({ onStart }: SimConfigFormProps) {
           <div className="sim-config-inputs">
             <label className="sim-config-label">
               Altitude (km)
-              <input type="number" className="sim-config-input" value={altitude} onChange={(e) => setAltitude(Number(e.target.value))} />
+              <input
+                type="number"
+                className="sim-config-input"
+                value={altitude}
+                onChange={(e) => setAltitude(Number(e.target.value))}
+              />
             </label>
             <label className="sim-config-label">
               Inclination (°)
-              <input type="number" className="sim-config-input" value={inclination} onChange={(e) => setInclination(Number(e.target.value))} step={0.1} />
+              <input
+                type="number"
+                className="sim-config-input"
+                value={inclination}
+                onChange={(e) => setInclination(Number(e.target.value))}
+                step={0.1}
+              />
             </label>
             <label className="sim-config-label">
               RAAN (°)
-              <input type="number" className="sim-config-input" value={raan} onChange={(e) => setRaan(Number(e.target.value))} step={0.1} />
+              <input
+                type="number"
+                className="sim-config-input"
+                value={raan}
+                onChange={(e) => setRaan(Number(e.target.value))}
+                step={0.1}
+              />
             </label>
           </div>
         )}
@@ -139,11 +203,23 @@ export function SimConfigForm({ onStart }: SimConfigFormProps) {
           <div className="sim-config-inputs">
             <label className="sim-config-label">
               TLE Line 1
-              <input type="text" className="sim-config-input sim-config-tle" value={tleLine1} onChange={(e) => setTleLine1(e.target.value)} placeholder="1 25544U ..." />
+              <input
+                type="text"
+                className="sim-config-input sim-config-tle"
+                value={tleLine1}
+                onChange={(e) => setTleLine1(e.target.value)}
+                placeholder="1 25544U ..."
+              />
             </label>
             <label className="sim-config-label">
               TLE Line 2
-              <input type="text" className="sim-config-input sim-config-tle" value={tleLine2} onChange={(e) => setTleLine2(e.target.value)} placeholder="2 25544 ..." />
+              <input
+                type="text"
+                className="sim-config-input sim-config-tle"
+                value={tleLine2}
+                onChange={(e) => setTleLine2(e.target.value)}
+                placeholder="2 25544 ..."
+              />
             </label>
           </div>
         )}
@@ -157,15 +233,33 @@ export function SimConfigForm({ onStart }: SimConfigFormProps) {
         <div className="sim-config-inputs">
           <label className="sim-config-label">
             dt (s)
-            <input type="number" className="sim-config-input" value={dt} onChange={(e) => setDt(Number(e.target.value))} min={0.1} step={0.5} />
+            <input
+              type="number"
+              className="sim-config-input"
+              value={dt}
+              onChange={(e) => setDt(Number(e.target.value))}
+              min={0.1}
+              step={0.5}
+            />
           </label>
           <label className="sim-config-label">
             Output interval (s)
-            <input type="number" className="sim-config-input" value={outputInterval} onChange={(e) => setOutputInterval(Number(e.target.value))} min={1} step={5} />
+            <input
+              type="number"
+              className="sim-config-input"
+              value={outputInterval}
+              onChange={(e) => setOutputInterval(Number(e.target.value))}
+              min={1}
+              step={5}
+            />
           </label>
           <label className="sim-config-label">
             Atmosphere
-            <select className="sim-config-select" value={atmosphere} onChange={(e) => setAtmosphere(e.target.value)}>
+            <select
+              className="sim-config-select"
+              value={atmosphere}
+              onChange={(e) => setAtmosphere(e.target.value)}
+            >
               <option value="exponential">Exponential</option>
               <option value="harris-priester">Harris-Priester</option>
               <option value="nrlmsise00">NRLMSISE-00</option>

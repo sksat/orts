@@ -43,9 +43,7 @@ export function buildMultiChartData(
   satelliteConfigs: SatelliteConfig[],
 ): MultiChartDataMap | null {
   // Filter to configs that have data
-  const activeSats = satelliteConfigs.filter((cfg) =>
-    perSatelliteData.has(cfg.id),
-  );
+  const activeSats = satelliteConfigs.filter((cfg) => perSatelliteData.has(cfg.id));
 
   if (activeSats.length === 0) return null;
 

@@ -1,11 +1,11 @@
-import { useRef, useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   IngestBuffer,
-  useDuckDB,
-  useTimeSeriesStore,
-  TimeSeriesChart,
   type TableSchema,
   type TimeRange,
+  TimeSeriesChart,
+  useDuckDB,
+  useTimeSeriesStore,
 } from "../../src/index.js";
 
 interface SinePoint {
@@ -65,24 +65,15 @@ export function App() {
 
   // Slice data for individual charts
   const sineData = useMemo(
-    () =>
-      data
-        ? ([data.t, data.sine] as [Float64Array, Float64Array])
-        : null,
+    () => (data ? ([data.t, data.sine] as [Float64Array, Float64Array]) : null),
     [data],
   );
   const cosineData = useMemo(
-    () =>
-      data
-        ? ([data.t, data.cosine] as [Float64Array, Float64Array])
-        : null,
+    () => (data ? ([data.t, data.cosine] as [Float64Array, Float64Array]) : null),
     [data],
   );
   const amplitudeData = useMemo(
-    () =>
-      data
-        ? ([data.t, data.amplitude] as [Float64Array, Float64Array])
-        : null,
+    () => (data ? ([data.t, data.amplitude] as [Float64Array, Float64Array]) : null),
     [data],
   );
 
@@ -101,24 +92,9 @@ export function App() {
         <button onClick={() => setTimeRange(30)}>30s</button>
         <button onClick={() => setTimeRange(60)}>60s</button>
       </div>
-      <TimeSeriesChart
-        title="sin(t)"
-        yLabel=""
-        data={sineData}
-        color="#4af"
-      />
-      <TimeSeriesChart
-        title="cos(t)"
-        yLabel=""
-        data={cosineData}
-        color="#f84"
-      />
-      <TimeSeriesChart
-        title="amplitude"
-        yLabel=""
-        data={amplitudeData}
-        color="#8f4"
-      />
+      <TimeSeriesChart title="sin(t)" yLabel="" data={sineData} color="#4af" />
+      <TimeSeriesChart title="cos(t)" yLabel="" data={cosineData} color="#f84" />
+      <TimeSeriesChart title="amplitude" yLabel="" data={amplitudeData} color="#8f4" />
     </div>
   );
 }

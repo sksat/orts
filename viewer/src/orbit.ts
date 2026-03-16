@@ -98,7 +98,7 @@ export function parseOrbitCSVWithMetadata(text: string): ParsedCSV {
     if (parts.length < 7) continue;
 
     const nums = parts.map(Number);
-    if (nums.some(isNaN)) continue;
+    if (nums.some(Number.isNaN)) continue;
 
     points.push({
       t: nums[0],
@@ -147,25 +147,16 @@ export interface OrbitVisualization {
  * @param points - Parsed orbit points (positions in km)
  * @returns The line and marker meshes to be added to the scene
  */
-export function createOrbitVisualization(
-  points: OrbitPoint[]
-): OrbitVisualization {
+export function createOrbitVisualization(points: OrbitPoint[]): OrbitVisualization {
   // Convert positions from km to scene units (Earth radii)
   const vertices: number[] = [];
   for (const p of points) {
-    vertices.push(
-      p.x / EARTH_RADIUS_KM,
-      p.y / EARTH_RADIUS_KM,
-      p.z / EARTH_RADIUS_KM
-    );
+    vertices.push(p.x / EARTH_RADIUS_KM, p.y / EARTH_RADIUS_KM, p.z / EARTH_RADIUS_KM);
   }
 
   // Orbit trajectory line
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(vertices, 3)
-  );
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
 
   const material = new THREE.LineBasicMaterial({
     color: 0x00ff88,
@@ -182,7 +173,7 @@ export function createOrbitVisualization(
   satelliteMarker.position.set(
     lastPoint.x / EARTH_RADIUS_KM,
     lastPoint.y / EARTH_RADIUS_KM,
-    lastPoint.z / EARTH_RADIUS_KM
+    lastPoint.z / EARTH_RADIUS_KM,
   );
 
   return { orbitLine, satelliteMarker };
@@ -194,14 +185,11 @@ export function createOrbitVisualization(
  * @param marker - The satellite mesh to reposition
  * @param point  - The orbit state to move to (position in km)
  */
-export function updateSatellitePosition(
-  marker: THREE.Mesh,
-  point: OrbitPoint
-): void {
+export function updateSatellitePosition(marker: THREE.Mesh, point: OrbitPoint): void {
   marker.position.set(
     point.x / EARTH_RADIUS_KM,
     point.y / EARTH_RADIUS_KM,
-    point.z / EARTH_RADIUS_KM
+    point.z / EARTH_RADIUS_KM,
   );
 }
 
@@ -216,11 +204,7 @@ export function updateSatellitePosition(
  * @param visibleCount - Number of vertices to render (clamped to valid range)
  * @param totalCount   - Total number of vertices in the geometry
  */
-export function updateOrbitTrail(
-  line: THREE.Line,
-  visibleCount: number,
-  totalCount: number
-): void {
+export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCount: number): void {
   const clamped = Math.max(0, Math.min(visibleCount, totalCount));
   line.geometry.setDrawRange(0, clamped);
 }

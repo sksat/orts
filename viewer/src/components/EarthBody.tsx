@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import {
-  earthDayNightVert,
-  earthDayNightFrag,
-} from "../shaders/earthDayNight.js";
 import type { TextureResolution } from "../hooks/useTextureResolution.js";
+import { earthDayNightFrag, earthDayNightVert } from "../shaders/earthDayNight.js";
 import { EarthAtmosphere } from "./EarthAtmosphere.js";
 
 /**
@@ -13,11 +10,7 @@ import { EarthAtmosphere } from "./EarthAtmosphere.js";
  *
  * Rotation of +π/2 around X maps: local +Y → world +Z (north pole).
  */
-export const POLE_ALIGNMENT_ROTATION: [number, number, number] = [
-  Math.PI / 2,
-  0,
-  0,
-];
+export const POLE_ALIGNMENT_ROTATION: [number, number, number] = [Math.PI / 2, 0, 0];
 
 /** Resolution fallback chain: try highest first, then step down. */
 const FALLBACK_CHAIN: TextureResolution[] = ["16k", "8k", "4k"];
@@ -79,46 +72,41 @@ export function EarthBody({
   // 1. Load 2K textures manually (no Suspense — keeps Canvas interactive)
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      loadTexture(dayTexturePath),
-      loadTexture(nightTexturePath),
-    ]).then(([dayMap, nightMap]) => {
-      if (cancelled || !dayMap || !nightMap) return;
-      materialRef.current = new THREE.ShaderMaterial({
-        uniforms: {
-          dayMap: { value: dayMap },
-          nightMap: { value: nightMap },
-          sunDirection: { value: new THREE.Vector3(0, 0, 1) },
-          ambientIntensity: { value: ambientIntensity },
-          sunIntensity: { value: sunIntensity },
-        },
-        vertexShader: earthDayNightVert,
-        fragmentShader: earthDayNightFrag,
-      });
-      setReady(true);
-    });
-    return () => { cancelled = true; };
-  }, [dayTexturePath, nightTexturePath]);
+    Promise.all([loadTexture(dayTexturePath), loadTexture(nightTexturePath)]).then(
+      ([dayMap, nightMap]) => {
+        if (cancelled || !dayMap || !nightMap) return;
+        materialRef.current = new THREE.ShaderMaterial({
+          uniforms: {
+            dayMap: { value: dayMap },
+            nightMap: { value: nightMap },
+            sunDirection: { value: new THREE.Vector3(0, 0, 1) },
+            ambientIntensity: { value: ambientIntensity },
+            sunIntensity: { value: sunIntensity },
+          },
+          vertexShader: earthDayNightVert,
+          fragmentShader: earthDayNightFrag,
+        });
+        setReady(true);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [dayTexturePath, nightTexturePath, ambientIntensity, sunIntensity]);
 
   // 2. Async upgrade to higher-resolution textures
   useEffect(() => {
     if (!ready) return;
-    if (
-      !targetResolution ||
-      targetResolution === "2k" ||
-      !textureBaseName ||
-      !nightTextureBaseName
-    )
+    if (!targetResolution || targetResolution === "2k" || !textureBaseName || !nightTextureBaseName)
       return;
     if (!materialRef.current) return;
 
     let cancelled = false;
-    const basePath = import.meta.env.BASE_URL + "textures/";
+    const basePath = `${import.meta.env.BASE_URL}textures/`;
 
     // Build fallback chain starting from target resolution
     const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);
-    const candidates =
-      startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
+    const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
 
     async function tryUpgrade() {
       for (const res of candidates) {
@@ -127,10 +115,7 @@ export function EarthBody({
         const dayUrl = `${basePath}${textureBaseName}_${res}.jpg`;
         const nightUrl = `${basePath}${nightTextureBaseName}_${res}.jpg`;
 
-        const [newDay, newNight] = await Promise.all([
-          loadTexture(dayUrl),
-          loadTexture(nightUrl),
-        ]);
+        const [newDay, newNight] = await Promise.all([loadTexture(dayUrl), loadTexture(nightUrl)]);
 
         if (cancelled) {
           newDay?.dispose();
@@ -141,10 +126,8 @@ export function EarthBody({
         // Both textures must load successfully for this resolution
         if (newDay && newNight) {
           if (materialRef.current) {
-            const oldDay = materialRef.current.uniforms.dayMap
-              .value as THREE.Texture;
-            const oldNight = materialRef.current.uniforms.nightMap
-              .value as THREE.Texture;
+            const oldDay = materialRef.current.uniforms.dayMap.value as THREE.Texture;
+            const oldNight = materialRef.current.uniforms.nightMap.value as THREE.Texture;
 
             materialRef.current.uniforms.dayMap.value = newDay;
             materialRef.current.uniforms.nightMap.value = newNight;
@@ -174,23 +157,21 @@ export function EarthBody({
   // `ready` dependency ensures uniforms are set after material creation.
   useEffect(() => {
     if (materialRef.current) {
-      materialRef.current.uniforms.sunDirection.value
-        .copy(sunDirection)
-        .normalize();
+      materialRef.current.uniforms.sunDirection.value.copy(sunDirection).normalize();
     }
-  }, [sunDirection, ready]);
+  }, [sunDirection]);
 
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.ambientIntensity.value = ambientIntensity;
     }
-  }, [ambientIntensity, ready]);
+  }, [ambientIntensity]);
 
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.sunIntensity.value = sunIntensity;
     }
-  }, [sunIntensity, ready]);
+  }, [sunIntensity]);
 
   return (
     <group>
@@ -210,12 +191,7 @@ export function EarthBody({
           </mesh>
           <mesh>
             <sphereGeometry args={[radius * 1.002, 24, 24]} />
-            <meshBasicMaterial
-              color={0x4488cc}
-              wireframe
-              transparent
-              opacity={0.15}
-            />
+            <meshBasicMaterial color={0x4488cc} wireframe transparent opacity={0.15} />
           </mesh>
         </group>
       </group>

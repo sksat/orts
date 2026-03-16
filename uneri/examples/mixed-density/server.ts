@@ -4,9 +4,7 @@ const PORT = 9003;
 
 const wss = new WebSocketServer({ port: PORT });
 
-console.log(
-  `Mixed-density WebSocket server listening on ws://localhost:${PORT}`,
-);
+console.log(`Mixed-density WebSocket server listening on ws://localhost:${PORT}`);
 
 wss.on("connection", (ws) => {
   console.log("Client connected");

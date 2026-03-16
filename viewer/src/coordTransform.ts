@@ -1,6 +1,6 @@
-import { eci_to_ecef_batch as wasmBatch } from "./wasm/kanameInit.js";
 import type { OrbitPoint } from "./orbit.js";
 import type { LvlhAxes } from "./sceneFrame.js";
+import { eci_to_ecef_batch as wasmBatch } from "./wasm/kanameInit.js";
 
 /**
  * Batch-transform orbit points from ECI to ECEF via WASM, writing scaled
@@ -79,7 +79,9 @@ export function batchTransformWithOffset(
  * returned, avoiding float32 precision loss from large ECI coordinates.
  */
 export function transformToLvlh(
-  px: number, py: number, pz: number,
+  px: number,
+  py: number,
+  pz: number,
   origin: [number, number, number],
   axes: LvlhAxes,
   scaleRadius: number,
@@ -125,7 +127,7 @@ export function batchTransformToLvlh(
     const dz = p.z - oz;
 
     const outOff = (outOffset + i - from) * 3;
-    outBuf[outOff]     = (inTrack[0] * dx + inTrack[1] * dy + inTrack[2] * dz) * invScale;
+    outBuf[outOff] = (inTrack[0] * dx + inTrack[1] * dy + inTrack[2] * dz) * invScale;
     outBuf[outOff + 1] = (crossTrack[0] * dx + crossTrack[1] * dy + crossTrack[2] * dz) * invScale;
     outBuf[outOff + 2] = (radial[0] * dx + radial[1] * dy + radial[2] * dz) * invScale;
   }

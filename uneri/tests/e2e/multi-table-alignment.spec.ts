@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * E2E test: multi-table DuckDB downsampling produces aligned timestamps.
@@ -15,9 +15,7 @@ import { test, expect } from "@playwright/test";
 
 const MULTI_TABLE_URL = "http://localhost:5177";
 
-test("multi-table: aligned timestamps after downsampling (no NaN gaps)", async ({
-  page,
-}) => {
+test("multi-table: aligned timestamps after downsampling (no NaN gaps)", async ({ page }) => {
   test.setTimeout(50000);
 
   await page.goto(MULTI_TABLE_URL);
@@ -49,16 +47,23 @@ test("multi-table: aligned timestamps after downsampling (no NaN gaps)", async (
     }
   });
 
-  console.log("Alignment result:", JSON.stringify({
-    ...result,
-    // Truncate arrays for readability
-    alphaT: (result as any).alphaT?.slice(0, 3),
-    betaT: (result as any).betaT?.slice(0, 3),
-    alphaTLast: (result as any).alphaT?.slice(-3),
-    betaTLast: (result as any).betaT?.slice(-3),
-    alphaLen: (result as any).alphaT?.length,
-    betaLen: (result as any).betaT?.length,
-  }, null, 2));
+  console.log(
+    "Alignment result:",
+    JSON.stringify(
+      {
+        ...result,
+        // Truncate arrays for readability
+        alphaT: (result as any).alphaT?.slice(0, 3),
+        betaT: (result as any).betaT?.slice(0, 3),
+        alphaTLast: (result as any).alphaT?.slice(-3),
+        betaTLast: (result as any).betaT?.slice(-3),
+        alphaLen: (result as any).alphaT?.length,
+        betaLen: (result as any).betaT?.length,
+      },
+      null,
+      2,
+    ),
+  );
 
   expect(result).not.toHaveProperty("error");
 
@@ -91,9 +96,7 @@ test("multi-table: aligned timestamps after downsampling (no NaN gaps)", async (
   ).toBeGreaterThan(0.95);
 });
 
-test("multi-table: NaN count in aligned chart data is zero", async ({
-  page,
-}) => {
+test("multi-table: NaN count in aligned chart data is zero", async ({ page }) => {
   test.setTimeout(50000);
 
   await page.goto(MULTI_TABLE_URL);

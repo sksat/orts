@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { getSatelliteModelConfig, computeTrueModelScale } from "./satelliteModels.js";
+import { describe, expect, it } from "vitest";
+import { computeTrueModelScale, getSatelliteModelConfig } from "./satelliteModels.js";
 
 const EARTH_RADIUS_KM = 6378.137;
 
@@ -7,13 +7,13 @@ describe("getSatelliteModelConfig", () => {
   it("returns ISS config by id", () => {
     const config = getSatelliteModelConfig("iss");
     expect(config).not.toBeNull();
-    expect(config!.physicalSpanKm).toBe(0.109);
+    expect(config?.physicalSpanKm).toBe(0.109);
   });
 
   it("returns ISS config by name pattern", () => {
     const config = getSatelliteModelConfig("25544", "ISS (ZARYA)");
     expect(config).not.toBeNull();
-    expect(config!.physicalSpanKm).toBe(0.109);
+    expect(config?.physicalSpanKm).toBe(0.109);
   });
 
   it("returns null for unknown satellite", () => {

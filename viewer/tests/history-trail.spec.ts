@@ -4,9 +4,10 @@
  * Uses a mock WebSocket server to send controlled history + streaming messages,
  * verifying the viewer's TrailBuffer contains pre-connection history points.
  */
-import { test, expect } from "@playwright/test";
+
+import type { AddressInfo } from "node:net";
+import { expect, test } from "@playwright/test";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
-import type { AddressInfo } from "net";
 
 /** Build a state message for a circular orbit at the given time. */
 function stateMsg(satelliteId: string, t: number) {
@@ -60,7 +61,9 @@ test.describe("history trail after connect", () => {
     wss.close();
   });
 
-  test("TrailBuffer includes history points after connecting to running simulation", async ({ page }) => {
+  test("TrailBuffer includes history points after connecting to running simulation", async ({
+    page,
+  }) => {
     const consoleLogs: string[] = [];
     page.on("console", (msg) => consoleLogs.push(msg.text()));
 
@@ -72,19 +75,19 @@ test.describe("history trail after connect", () => {
 
     wss.on("connection", (ws: WsSocket) => {
       // 1. info message
-      ws.send(JSON.stringify({
-        type: "info",
-        mu: 398600.4418,
-        dt: 10,
-        output_interval: 10,
-        stream_interval: 10,
-        central_body: "earth",
-        central_body_radius: 6378.137,
-        epoch_jd: null,
-        satellites: [
-          { id: "sat1", name: "TestSat", altitude: 400, period: 5554 },
-        ],
-      }));
+      ws.send(
+        JSON.stringify({
+          type: "info",
+          mu: 398600.4418,
+          dt: 10,
+          output_interval: 10,
+          stream_interval: 10,
+          central_body: "earth",
+          central_body_radius: 6378.137,
+          epoch_jd: null,
+          satellites: [{ id: "sat1", name: "TestSat", altitude: 400, period: 5554 }],
+        }),
+      );
 
       // 2. history overview (downsampled to 50 points)
       const overviewStates = [];
@@ -108,7 +111,10 @@ test.describe("history trail after connect", () => {
       // 4. Stream live state messages
       let t = STREAM_START;
       const interval = setInterval(() => {
-        if (ws.readyState !== 1) { clearInterval(interval); return; }
+        if (ws.readyState !== 1) {
+          clearInterval(interval);
+          return;
+        }
         t += HISTORY_DT;
         ws.send(stateMsg("sat1", t));
       }, 50);
@@ -168,14 +174,11 @@ test.describe("history trail after connect", () => {
 
     // Verify no "Maximum update depth exceeded" warnings
     const depthWarnings = consoleLogs.filter((l) => l.includes("Maximum update depth"));
-    expect(
-      depthWarnings,
-      "Should not have Maximum update depth exceeded warnings",
-    ).toHaveLength(0);
+    expect(depthWarnings, "Should not have Maximum update depth exceeded warnings").toHaveLength(0);
 
     // Verify no critical React errors
-    const reactErrors = consoleLogs.filter((l) =>
-      l.includes("Uncaught") || l.includes("unhandled"),
+    const reactErrors = consoleLogs.filter(
+      (l) => l.includes("Uncaught") || l.includes("unhandled"),
     );
     expect(reactErrors, "Should not have uncaught errors").toHaveLength(0);
   });

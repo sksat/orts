@@ -16,7 +16,7 @@ export function initDuckDB(): Promise<duckdb.AsyncDuckDB> {
     const workerUrl = URL.createObjectURL(
       new Blob([`importScripts("${bundle.mainWorker!}");`], {
         type: "text/javascript",
-      })
+      }),
     );
 
     const worker = new Worker(workerUrl);

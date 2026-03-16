@@ -1,9 +1,5 @@
-import { describe, it, expect } from "vitest";
-import {
-  computeTMin,
-  DISPLAY_MAX_POINTS,
-  type TimeRange,
-} from "./useTimeSeriesStore.js";
+import { describe, expect, it } from "vitest";
+import { computeTMin, DISPLAY_MAX_POINTS, type TimeRange } from "./useTimeSeriesStore.js";
 
 describe("computeTMin", () => {
   it("returns undefined when timeRange is null (show all)", () => {

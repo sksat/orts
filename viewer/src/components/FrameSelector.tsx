@@ -1,10 +1,5 @@
 import type { SatelliteInfo } from "../hooks/useWebSocket.js";
-import {
-  type ReferenceFrame,
-  type FrameCenter,
-  type FrameOrientation,
-  frameCenterEquals,
-} from "../referenceFrame.js";
+import type { FrameCenter, FrameOrientation, ReferenceFrame } from "../referenceFrame.js";
 
 interface FrameSelectorProps {
   referenceFrame: ReferenceFrame;
@@ -48,7 +43,10 @@ export function FrameSelector({
 }: FrameSelectorProps) {
   const centerKey = encodeCenterKey(referenceFrame.center);
   const isSatCentered = referenceFrame.center.type === "satellite";
-  const labels = (centralBody ? ORIENTATION_LABELS[centralBody] : undefined) ?? { inertial: "Inertial", body_fixed: "Body-Fixed" };
+  const labels = (centralBody ? ORIENTATION_LABELS[centralBody] : undefined) ?? {
+    inertial: "Inertial",
+    body_fixed: "Body-Fixed",
+  };
 
   function handleCenterChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const newCenter = decodeCenterKey(e.target.value);
@@ -66,11 +64,7 @@ export function FrameSelector({
     <div className="frame-selector">
       <div className="frame-selector-row">
         <label className="frame-selector-label">Center</label>
-        <select
-          className="frame-selector-select"
-          value={centerKey}
-          onChange={handleCenterChange}
-        >
+        <select className="frame-selector-select" value={centerKey} onChange={handleCenterChange}>
           <option value="central_body">Central Body</option>
           {satellites.map((sat) => (
             <option key={sat.id} value={`satellite:${sat.id}`}>
@@ -91,12 +85,17 @@ export function FrameSelector({
           className={`mode-toggle-btn ${referenceFrame.orientation === "body_fixed" ? "active" : ""}`}
           onClick={() => handleOrientationChange("body_fixed")}
           disabled={isSatCentered || !hasEpoch}
-          title={isSatCentered ? "Body-fixed not available for satellite center" : !hasEpoch ? "Requires epoch" : ""}
+          title={
+            isSatCentered
+              ? "Body-fixed not available for satellite center"
+              : !hasEpoch
+                ? "Requires epoch"
+                : ""
+          }
         >
           {labels.body_fixed}
         </button>
       </div>
-
     </div>
   );
 }

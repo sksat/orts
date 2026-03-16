@@ -10,9 +10,10 @@
  * in dev mode) rather than relying on canvas pixel analysis, which is flaky
  * in headless/CI environments.
  */
-import { test, expect } from "@playwright/test";
+
+import type { AddressInfo } from "node:net";
+import { expect, test } from "@playwright/test";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
-import type { AddressInfo } from "net";
 
 /** Build a state message for a circular orbit. */
 function stateMsg(satelliteId: string, t: number, altitude: number) {
@@ -54,20 +55,22 @@ test.describe("multi-satellite NaN alignment", () => {
     const DT = 10;
 
     wss.on("connection", (ws: WsSocket) => {
-      ws.send(JSON.stringify({
-        type: "info",
-        mu: 398600.4418,
-        dt: DT,
-        output_interval: DT,
-        stream_interval: DT,
-        central_body: "earth",
-        central_body_radius: 6378.137,
-        epoch_jd: null,
-        satellites: [
-          { id: "sso", name: "SSO 800km", altitude: 800, period: 6052 },
-          { id: "iss", name: "ISS", altitude: 400, period: 5554 },
-        ],
-      }));
+      ws.send(
+        JSON.stringify({
+          type: "info",
+          mu: 398600.4418,
+          dt: DT,
+          output_interval: DT,
+          stream_interval: DT,
+          central_body: "earth",
+          central_body_radius: 6378.137,
+          epoch_jd: null,
+          satellites: [
+            { id: "sso", name: "SSO 800km", altitude: 800, period: 6052 },
+            { id: "iss", name: "ISS", altitude: 400, period: 5554 },
+          ],
+        }),
+      );
 
       // Send history with enough data to populate DuckDB tables
       const historyStates = [];
@@ -84,7 +87,10 @@ test.describe("multi-satellite NaN alignment", () => {
       // Stream live data
       let t = 3600;
       const interval = setInterval(() => {
-        if (ws.readyState !== 1) { clearInterval(interval); return; }
+        if (ws.readyState !== 1) {
+          clearInterval(interval);
+          return;
+        }
         t += DT;
         ws.send(stateMsg("sso", t, 800));
         ws.send(stateMsg("iss", t, 400));
@@ -119,10 +125,25 @@ test.describe("multi-satellite NaN alignment", () => {
         const conn = (window as Record<string, unknown>).__duckdb_conn;
         if (!conn) return { sso: 0, iss: 0 };
         const q = async (sql: string) =>
-          (conn as { query: (s: string) => Promise<{ getChildAt: (i: number) => { get: (i: number) => number } | null }> }).query(sql);
-        let sso = 0, iss = 0;
-        try { sso = Number((await q("SELECT COUNT(*) FROM orbit_sso")).getChildAt(0)?.get(0)); } catch { /* table not yet created */ }
-        try { iss = Number((await q("SELECT COUNT(*) FROM orbit_iss")).getChildAt(0)?.get(0)); } catch { /* table not yet created */ }
+          (
+            conn as {
+              query: (
+                s: string,
+              ) => Promise<{ getChildAt: (i: number) => { get: (i: number) => number } | null }>;
+            }
+          ).query(sql);
+        let sso = 0,
+          iss = 0;
+        try {
+          sso = Number((await q("SELECT COUNT(*) FROM orbit_sso")).getChildAt(0)?.get(0));
+        } catch {
+          /* table not yet created */
+        }
+        try {
+          iss = Number((await q("SELECT COUNT(*) FROM orbit_iss")).getChildAt(0)?.get(0));
+        } catch {
+          /* table not yet created */
+        }
         return { sso, iss };
       });
       expect(counts.sso).toBeGreaterThan(0);
@@ -144,7 +165,9 @@ test.describe("multi-satellite NaN alignment", () => {
       if (!conn) return { error: "DuckDB connection not exposed on window" };
 
       type QueryResult = {
-        getChildAt: (i: number) => { toArray: () => Float64Array; get: (i: number) => number } | null;
+        getChildAt: (
+          i: number,
+        ) => { toArray: () => Float64Array; get: (i: number) => number } | null;
         numRows: number;
       };
       const query = async (sql: string): Promise<QueryResult> => {
@@ -152,7 +175,8 @@ test.describe("multi-satellite NaN alignment", () => {
       };
 
       // Check both satellite tables exist and have data
-      let ssoCount = 0, issCount = 0;
+      let ssoCount = 0,
+        issCount = 0;
       try {
         const ssoRes = await query("SELECT COUNT(*) FROM orbit_sso");
         ssoCount = Number(ssoRes.getChildAt(0)?.get(0));
@@ -201,10 +225,10 @@ test.describe("multi-satellite NaN alignment", () => {
       const ssoData = await query(buildQuery("orbit_sso"));
       const issData = await query(buildQuery("orbit_iss"));
 
-      const ssoT = Array.from(ssoData.getChildAt(0)!.toArray());
-      const issT = Array.from(issData.getChildAt(0)!.toArray());
-      const ssoAlt = Array.from(ssoData.getChildAt(1)!.toArray());
-      const issAlt = Array.from(issData.getChildAt(1)!.toArray());
+      const ssoT = Array.from(ssoData.getChildAt(0)?.toArray());
+      const issT = Array.from(issData.getChildAt(0)?.toArray());
+      const ssoAlt = Array.from(ssoData.getChildAt(1)?.toArray());
+      const issAlt = Array.from(issData.getChildAt(1)?.toArray());
 
       // Check for NaN in altitude values
       const ssoNanCount = ssoAlt.filter((v: number) => Number.isNaN(v)).length;
@@ -279,8 +303,8 @@ test.describe("multi-satellite NaN alignment", () => {
     ).toBeGreaterThan(0.8);
 
     // Verify no critical DuckDB errors
-    const criticalErrors = consoleLogs.filter((l) =>
-      l.includes("undefined") && (l.includes("INSERT") || l.includes("DuckDB")),
+    const criticalErrors = consoleLogs.filter(
+      (l) => l.includes("undefined") && (l.includes("INSERT") || l.includes("DuckDB")),
     );
     expect(criticalErrors).toHaveLength(0);
   });

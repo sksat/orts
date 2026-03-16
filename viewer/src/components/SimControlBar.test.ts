@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { type SimControlBarProps } from "./SimControlBar.js";
+import { describe, expect, it } from "vitest";
+import type { SimControlBarProps } from "./SimControlBar.js";
 
 describe("SimControlBar props", () => {
   it("running state expects onPause and onTerminate", () => {

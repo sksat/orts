@@ -1,12 +1,12 @@
-import { describe, it, expect } from "vitest";
-import {
-  buildCreateTableSQL,
-  buildInsertSQL,
-  buildDerivedQuery,
-  buildCompactKeepersSQL,
-  buildCompactDeleteSQL,
-} from "./store.js";
+import { describe, expect, it } from "vitest";
 import type { TableSchema } from "../types.js";
+import {
+  buildCompactDeleteSQL,
+  buildCompactKeepersSQL,
+  buildCreateTableSQL,
+  buildDerivedQuery,
+  buildInsertSQL,
+} from "./store.js";
 
 // --- Test schema ---
 
@@ -52,7 +52,7 @@ const mixedTypeSchema: TableSchema = {
     { name: "approx", type: "FLOAT" },
   ],
   derived: [],
-  toRow: (p) => [p.t, p["count"], p["id"], p["approx"]],
+  toRow: (p) => [p.t, p.count, p.id, p.approx],
 };
 
 // ---------------------------------------------------------------------------

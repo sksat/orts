@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { IngestBuffer } from "./IngestBuffer.js";
+import { describe, expect, it } from "vitest";
 import type { TimePoint } from "../types.js";
+import { IngestBuffer } from "./IngestBuffer.js";
 
 /** Multi-field test point mimicking orbital data. */
 interface TestPoint extends TimePoint {
@@ -114,8 +114,8 @@ describe("IngestBuffer", () => {
 
     const result = buf.consumeRebuild();
     expect(result).toHaveLength(3);
-    expect(result![0].t).toBe(0);
-    expect(result![2].t).toBe(20);
+    expect(result?.[0].t).toBe(0);
+    expect(result?.[2].t).toBe(20);
   });
 
   it("consumeRebuild returns null on second call (consumed)", () => {
@@ -151,7 +151,7 @@ describe("IngestBuffer", () => {
 
     const result = buf.consumeRebuild()!;
     expect(result).toHaveLength(4);
-    expect(result[0].t).toBe(0);  // rebuild data
+    expect(result[0].t).toBe(0); // rebuild data
     expect(result[1].t).toBe(10); // rebuild data
     expect(result[2].t).toBe(20); // new point
     expect(result[3].t).toBe(30); // new point
@@ -224,10 +224,10 @@ describe("IngestBuffer", () => {
 
     const buf = new IngestBuffer<SensorPoint>();
     buf.push({ t: 0, temperature: 20.5, pressure: 1013.25, humidity: 65, altitude: 100 });
-    buf.push({ t: 1, temperature: 21.0, pressure: 1013.00, humidity: 64, altitude: 105 });
+    buf.push({ t: 1, temperature: 21.0, pressure: 1013.0, humidity: 64, altitude: 105 });
     buf.pushMany([
       { t: 2, temperature: 21.5, pressure: 1012.75, humidity: 63, altitude: 110 },
-      { t: 3, temperature: 22.0, pressure: 1012.50, humidity: 62, altitude: 115 },
+      { t: 3, temperature: 22.0, pressure: 1012.5, humidity: 62, altitude: 115 },
     ]);
 
     expect(buf.pendingCount).toBe(4);

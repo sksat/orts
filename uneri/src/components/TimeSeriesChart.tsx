@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useEffect, useRef } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 
@@ -64,10 +64,7 @@ export interface MultiSeriesData {
  * @param currentShow  Current visibility, indexed 0..N where 0 is x-axis
  * @returns New visibility array (same length as currentShow)
  */
-export function computeLegendIsolation(
-  clickedIndex: number,
-  currentShow: boolean[],
-): boolean[] {
+export function computeLegendIsolation(clickedIndex: number, currentShow: boolean[]): boolean[] {
   if (clickedIndex < 1 || clickedIndex >= currentShow.length) return currentShow;
 
   // Is the clicked series currently the only visible y-series?
@@ -85,9 +82,7 @@ export function computeLegendIsolation(
 }
 
 /** Build uPlot series config array from SeriesConfig[]. */
-export function buildMultiSeriesConfig(
-  configs: SeriesConfig[],
-): uPlot.Series[] {
+export function buildMultiSeriesConfig(configs: SeriesConfig[]): uPlot.Series[] {
   const result: uPlot.Series[] = [{}]; // x-axis placeholder
   for (const cfg of configs) {
     result.push({
@@ -182,20 +177,14 @@ export function TimeSeriesChart({
     if (data && data[0].length >= 2) {
       return {
         plotData: data,
-        seriesConfig: [
-          {},
-          { label: yLabel, stroke: color, width: 1.5 },
-        ],
+        seriesConfig: [{}, { label: yLabel, stroke: color, width: 1.5 }],
       };
     }
     return null;
   }
 
   /** Build uPlot options. */
-  function buildOpts(
-    container: HTMLDivElement,
-    seriesConfig: uPlot.Series[],
-  ): uPlot.Options {
+  function buildOpts(container: HTMLDivElement, seriesConfig: uPlot.Series[]): uPlot.Options {
     return {
       title,
       width: container.clientWidth,
@@ -245,11 +234,7 @@ export function TimeSeriesChart({
     plotData: uPlot.AlignedData,
     seriesConfig: uPlot.Series[],
   ): uPlot {
-    const chart = new uPlot(
-      buildOpts(container, seriesConfig),
-      plotData,
-      container,
-    );
+    const chart = new uPlot(buildOpts(container, seriesConfig), plotData, container);
     seriesCountRef.current = seriesConfig.length;
 
     // Attach Grafana-style legend isolation for multi-series charts (2+ y-series)
@@ -278,7 +263,7 @@ export function TimeSeriesChart({
       chartRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [color, createChart, resolveData, yLabel]);
 
   // Update data
   useEffect(() => {
@@ -292,11 +277,7 @@ export function TimeSeriesChart({
     // If series count changed, recreate the chart (uPlot series are fixed at construction).
     if (seriesConfig.length !== seriesCountRef.current) {
       chartRef.current.destroy();
-      chartRef.current = createChart(
-        containerRef.current,
-        plotData,
-        seriesConfig,
-      );
+      chartRef.current = createChart(containerRef.current, plotData, seriesConfig);
       return;
     }
 
@@ -304,16 +285,12 @@ export function TimeSeriesChart({
     try {
       chartRef.current.setData(plotData);
     } catch {
-      chartRef.current!.destroy();
-      chartRef.current = createChart(
-        containerRef.current,
-        plotData,
-        seriesConfig,
-      );
+      chartRef.current?.destroy();
+      chartRef.current = createChart(containerRef.current, plotData, seriesConfig);
     }
     isProgrammaticRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, multiData]);
+  }, [createChart, resolveData]);
 
   // Handle resize
   useEffect(() => {
@@ -328,14 +305,14 @@ export function TimeSeriesChart({
             chartRef.current.setSize({ width, height });
           } catch {
             const container = containerRef.current;
-            const currentData = chartRef.current!.data;
+            const currentData = chartRef.current?.data;
             const resolved = resolveData();
             const seriesConfig = resolved?.seriesConfig ?? [
               {},
               { label: yLabel, stroke: color, width: 1.5 },
             ];
             if (container) {
-              chartRef.current!.destroy();
+              chartRef.current?.destroy();
               chartRef.current = createChart(container, currentData, seriesConfig);
             }
           }
@@ -346,7 +323,7 @@ export function TimeSeriesChart({
 
     observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, [height]);
+  }, [height, color, createChart, resolveData, yLabel]);
 
   return <div ref={containerRef} data-testid="time-series-chart" style={{ width: "100%" }} />;
 }

@@ -49,7 +49,7 @@ export function getSatelliteModelConfig(
 }
 
 /** Default physical span for satellites without a known size (10 m). */
-const DEFAULT_PHYSICAL_SPAN_KM = 0.010;
+const DEFAULT_PHYSICAL_SPAN_KM = 0.01;
 
 /**
  * Compute the scene-unit scale for a satellite model at true 1:1 physical proportions.
@@ -69,5 +69,5 @@ export function computeTrueModelScale(
   const physicalKm = config.physicalSpanKm ?? DEFAULT_PHYSICAL_SPAN_KM;
   // physicalKm / centralBodyRadius = desired span in scene units
   // Divide by nativeSpan to get per-unit scale
-  return (physicalKm / centralBodyRadius) / nativeSpan;
+  return physicalKm / centralBodyRadius / nativeSpan;
 }

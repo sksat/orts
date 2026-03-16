@@ -1,8 +1,8 @@
-import { test, expect } from "@playwright/test";
-import { spawn, type ChildProcess } from "child_process";
-import { createInterface } from "readline";
-import path from "path";
-import { fileURLToPath } from "url";
+import { type ChildProcess, spawn } from "node:child_process";
+import path from "node:path";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+import { expect, test } from "@playwright/test";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,13 +18,7 @@ test.beforeAll(async () => {
   }
 
   const binary = process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");
-  const child = spawn(binary, [
-    "serve",
-    "--port",
-    "0",
-    "--sat",
-    "altitude=400,id=test",
-  ]);
+  const child = spawn(binary, ["serve", "--port", "0", "--sat", "altitude=400,id=test"]);
   ortsProcess = child;
 
   // Parse the actual port from stderr
@@ -174,7 +168,8 @@ test("charts render with data after streaming starts", async ({ page }) => {
       if (!canvas) return { hasCanvas: false, width: 0, height: 0, hasPixels: false };
       // Check if canvas has been drawn to by sampling a few pixels
       const ctx = canvas.getContext("2d");
-      if (!ctx) return { hasCanvas: true, width: canvas.width, height: canvas.height, hasPixels: false };
+      if (!ctx)
+        return { hasCanvas: true, width: canvas.width, height: canvas.height, hasPixels: false };
       // Sample the center area of the canvas for non-transparent pixels
       const w = canvas.width;
       const h = canvas.height;
@@ -196,8 +191,8 @@ test("charts render with data after streaming starts", async ({ page }) => {
   }
 
   // Verify no critical errors occurred (e.g., DuckDB insert failures from undefined values)
-  const criticalErrors = consoleLogs.filter((l) =>
-    l.includes("undefined") && (l.includes("INSERT") || l.includes("DuckDB"))
+  const criticalErrors = consoleLogs.filter(
+    (l) => l.includes("undefined") && (l.includes("INSERT") || l.includes("DuckDB")),
   );
   expect(criticalErrors, `Critical errors found: ${criticalErrors.join(", ")}`).toHaveLength(0);
 });
@@ -237,7 +232,9 @@ test("state messages include Keplerian elements", async ({ page }) => {
   expect(keplerian.has_eccentricity, "state must include eccentricity").toBe(true);
   expect(keplerian.has_inclination, "state must include inclination").toBe(true);
   expect(keplerian.has_raan, "state must include raan").toBe(true);
-  expect(keplerian.has_argument_of_periapsis, "state must include argument_of_periapsis").toBe(true);
+  expect(keplerian.has_argument_of_periapsis, "state must include argument_of_periapsis").toBe(
+    true,
+  );
   expect(keplerian.has_true_anomaly, "state must include true_anomaly").toBe(true);
 });
 
@@ -313,5 +310,7 @@ test("3D scene renders orbit trails and satellite markers", async ({ page }) => 
   // to a very small PNG. A rendered scene with lights, meshes, and trails is larger.
   // Empirically, a blank 1280x720 canvas PNG is ~2-5 KB, a rendered scene is >10 KB.
   console.log("Canvas screenshot size:", screenshot.byteLength, "bytes");
-  expect(screenshot.byteLength, "canvas should have rendered content (not blank)").toBeGreaterThan(5000);
+  expect(screenshot.byteLength, "canvas should have rendered content (not blank)").toBeGreaterThan(
+    5000,
+  );
 });

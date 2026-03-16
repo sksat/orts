@@ -87,7 +87,7 @@ export function rayleighPhase(cosTheta: number): number {
 export function miePhase(cosTheta: number, g: number): number {
   const gg = g * g;
   const num = (3 / (8 * Math.PI)) * (1 - gg) * (1 + cosTheta * cosTheta);
-  const denom = (2 + gg) * Math.pow(1 + gg - 2 * g * cosTheta, 1.5);
+  const denom = (2 + gg) * (1 + gg - 2 * g * cosTheta) ** 1.5;
   return num / denom;
 }
 

@@ -1,6 +1,6 @@
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { OrbitPoint } from "../orbit.js";
 import { PlaybackController } from "../playback.js";
-import { OrbitPoint } from "../orbit.js";
 
 /** Snapshot of playback state exposed to React components. */
 export interface PlaybackSnapshot {

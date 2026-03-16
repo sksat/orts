@@ -61,7 +61,7 @@ export function PlaybackBar({
     (e: React.ChangeEvent<HTMLSelectElement>) => {
       onSpeedChange(Number(e.target.value));
     },
-    [onSpeedChange]
+    [onSpeedChange],
   );
 
   const handleSliderInput = useCallback(
@@ -70,7 +70,7 @@ export function PlaybackBar({
       const f = Number(e.target.value) / 1000;
       onSeekFraction(f);
     },
-    [onSeekFraction]
+    [onSeekFraction],
   );
 
   const handleSliderChange = useCallback(() => {
@@ -81,7 +81,11 @@ export function PlaybackBar({
 
   const isRealtimeMode = onGoLive != null;
   const modeLabel = isRealtimeMode
-    ? (isLive ? "Live" : (isPlaying ? "Playing" : "Paused"))
+    ? isLive
+      ? "Live"
+      : isPlaying
+        ? "Playing"
+        : "Paused"
     : "Replay";
 
   return (
@@ -101,13 +105,9 @@ export function PlaybackBar({
       </div>
       <div className="playback-controls-row">
         <button className="play-pause-btn" onClick={handlePlayPause}>
-          {(isPlaying || isLive) ? "Pause" : "Play"}
+          {isPlaying || isLive ? "Pause" : "Play"}
         </button>
-        <select
-          className="speed-select"
-          defaultValue="1"
-          onChange={handleSpeedChange}
-        >
+        <select className="speed-select" defaultValue="1" onChange={handleSpeedChange}>
           {SPEED_OPTIONS.map((s) => (
             <option key={s} value={s}>
               {s}x
@@ -127,9 +127,7 @@ export function PlaybackBar({
             Live
           </button>
         )}
-        <span className={`mode-indicator ${isLive ? "live" : ""}`}>
-          {modeLabel}
-        </span>
+        <span className={`mode-indicator ${isLive ? "live" : ""}`}>{modeLabel}</span>
       </div>
     </div>
   );

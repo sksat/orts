@@ -1,8 +1,8 @@
-import { test, expect } from "@playwright/test";
-import { spawn, type ChildProcess } from "child_process";
-import { createInterface } from "readline";
-import path from "path";
-import { fileURLToPath } from "url";
+import { type ChildProcess, spawn } from "node:child_process";
+import path from "node:path";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+import { expect, test } from "@playwright/test";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { rotateZ } from "./frameTransform.js";
 
 const TAU = 2 * Math.PI;
@@ -70,4 +70,3 @@ describe("rotateZ", () => {
     expect(z).toBeCloseTo(5);
   });
 });
-

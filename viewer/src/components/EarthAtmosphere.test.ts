@@ -1,16 +1,12 @@
-import { describe, it, expect } from "vitest";
+import * as THREE from "three";
+import { describe, expect, it } from "vitest";
 import {
   ATMOSPHERE_SCALE_AMPLIFIED,
   ATMOSPHERE_SCALE_PHYSICAL,
-  atmosphereVert,
   atmosphereFrag,
+  atmosphereVert,
 } from "../shaders/atmosphere.js";
-import {
-  createAtmosphereMaterial,
-  ATMO_SEGMENTS,
-  getAtmosphereRadius,
-} from "./EarthAtmosphere.js";
-import * as THREE from "three";
+import { ATMO_SEGMENTS, createAtmosphereMaterial, getAtmosphereRadius } from "./EarthAtmosphere.js";
 
 describe("createAtmosphereMaterial", () => {
   it("returns a ShaderMaterial with additive blending", () => {

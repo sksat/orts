@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseOrbitCSV, parseOrbitCSVWithMetadata } from "./orbit.js";
 
 describe("parseOrbitCSV", () => {
@@ -104,10 +104,7 @@ describe("parseOrbitCSVWithMetadata", () => {
   });
 
   it("handles partial metadata", () => {
-    const csv = [
-      "# epoch_jd = 2460390.0",
-      "0.0,6778.137,0.0,0.0,0.0,7.669,0.0",
-    ].join("\n");
+    const csv = ["# epoch_jd = 2460390.0", "0.0,6778.137,0.0,0.0,0.0,7.669,0.0"].join("\n");
     const { metadata } = parseOrbitCSVWithMetadata(csv);
     expect(metadata.epochJd).toBeCloseTo(2460390.0);
     expect(metadata.mu).toBeNull();

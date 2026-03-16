@@ -1,5 +1,5 @@
 import type { AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
-import type { TableSchema, TimePoint, ChartDataMap } from "../types.js";
+import type { ChartDataMap, TableSchema, TimePoint } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // SQL builders (pure functions, testable without DuckDB)
@@ -17,14 +17,9 @@ export function buildCreateTableSQL(schema: TableSchema): string {
  * Generate an INSERT INTO ... VALUES statement for a batch of points.
  * Returns an empty string when the batch is empty.
  */
-export function buildInsertSQL<T extends TimePoint>(
-  schema: TableSchema<T>,
-  points: T[],
-): string {
+export function buildInsertSQL<T extends TimePoint>(schema: TableSchema<T>, points: T[]): string {
   if (points.length === 0) return "";
-  const values = points
-    .map((p) => `(${schema.toRow(p).join(",")})`)
-    .join(",");
+  const values = points.map((p) => `(${schema.toRow(p).join(",")})`).join(",");
   return `INSERT INTO ${schema.tableName} VALUES ${values}`;
 }
 
@@ -48,9 +43,7 @@ export function buildDerivedQuery(
   const maxPts = maxPoints ?? 0;
 
   // Build the SELECT column list: always include t, plus derived expressions
-  const derivedCols = schema.derived
-    .map((d) => `${d.sql} AS ${d.name}`)
-    .join(", ");
+  const derivedCols = schema.derived.map((d) => `${d.sql} AS ${d.name}`).join(", ");
   const selectColumns = derivedCols ? `t, ${derivedCols}` : "t";
 
   // Base column names for the filtered CTE (all raw columns needed by derived expressions)
@@ -115,10 +108,7 @@ export function buildCompactKeepersSQL(
  * Build SQL to delete non-keeper old rows (those older than cutoff
  * and not in the keepers temp table).
  */
-export function buildCompactDeleteSQL(
-  tableName: string,
-  cutoffT: number,
-): string {
+export function buildCompactDeleteSQL(tableName: string, cutoffT: number): string {
   return (
     `DELETE FROM ${tableName} ` +
     `WHERE t < ${cutoffT} AND t NOT IN (SELECT t FROM _compact_keepers)`
@@ -134,10 +124,7 @@ const BATCH_SIZE = 1000;
 /**
  * Create (or replace) the table described by the schema.
  */
-export async function createTable(
-  conn: AsyncDuckDBConnection,
-  schema: TableSchema,
-): Promise<void> {
+export async function createTable(conn: AsyncDuckDBConnection, schema: TableSchema): Promise<void> {
   await conn.query(buildCreateTableSQL(schema));
 }
 
@@ -160,10 +147,7 @@ export async function insertPoints<T extends TimePoint>(
 /**
  * Delete all rows from the table.
  */
-export async function clearTable(
-  conn: AsyncDuckDBConnection,
-  schema: TableSchema,
-): Promise<void> {
+export async function clearTable(conn: AsyncDuckDBConnection, schema: TableSchema): Promise<void> {
   await conn.query(`DELETE FROM ${schema.tableName}`);
 }
 
@@ -180,11 +164,11 @@ export async function queryDerived(
   const sql = buildDerivedQuery(schema, tMin, maxPoints, tMax);
   const result = await conn.query(sql);
 
-  const t = result.getChildAt(0)!.toArray() as Float64Array;
+  const t = result.getChildAt(0)?.toArray() as Float64Array;
   const map: ChartDataMap = { t };
 
   for (let i = 0; i < schema.derived.length; i++) {
-    const col = result.getChildAt(i + 1)!.toArray() as Float64Array;
+    const col = result.getChildAt(i + 1)?.toArray() as Float64Array;
     map[schema.derived[i].name] = col;
   }
 
@@ -223,25 +207,21 @@ export async function compactTable(
   opts: CompactOptions = COMPACT_DEFAULTS,
 ): Promise<boolean> {
   // 1. Check row count
-  const countRes = await conn.query(
-    `SELECT COUNT(*) AS total FROM ${schema.tableName}`,
-  );
-  const total = Number(countRes.getChildAt(0)!.get(0));
+  const countRes = await conn.query(`SELECT COUNT(*) AS total FROM ${schema.tableName}`);
+  const total = Number(countRes.getChildAt(0)?.get(0));
   if (total <= opts.maxRows) return false;
 
   // 2. Find cutoff t (boundary between old and recent)
   if (opts.keepRecentRows >= total) return false;
   const cutoffRes = await conn.query(
     `SELECT t FROM (SELECT t, ROW_NUMBER() OVER (ORDER BY t DESC) AS rn ` +
-    `FROM ${schema.tableName}) sub WHERE rn = ${opts.keepRecentRows} LIMIT 1`,
+      `FROM ${schema.tableName}) sub WHERE rn = ${opts.keepRecentRows} LIMIT 1`,
   );
-  const cutoffT = Number(cutoffRes.getChildAt(0)!.get(0));
+  const cutoffT = Number(cutoffRes.getChildAt(0)?.get(0));
 
   // 3. Create temp table of keeper t values, delete non-keepers, cleanup
   try {
-    await conn.query(
-      buildCompactKeepersSQL(schema.tableName, cutoffT, opts.targetOldRows),
-    );
+    await conn.query(buildCompactKeepersSQL(schema.tableName, cutoffT, opts.targetOldRows));
     await conn.query(buildCompactDeleteSQL(schema.tableName, cutoffT));
   } finally {
     await conn.query(`DROP TABLE IF EXISTS _compact_keepers`);
@@ -249,4 +229,3 @@ export async function compactTable(
 
   return true;
 }
-

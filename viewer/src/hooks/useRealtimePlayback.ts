@@ -1,7 +1,7 @@
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { TimeRange } from "uneri";
 import type { OrbitPoint } from "../orbit.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
-import type { TimeRange } from "uneri";
 
 type RealtimeMode = "live" | "paused" | "playing";
 
@@ -136,9 +136,7 @@ export function useRealtimePlayback(
       currentTime = currentTimeRef.current;
     }
 
-    const fraction = duration > 0
-      ? Math.min(1, Math.max(0, (currentTime - tMin) / duration))
-      : 1;
+    const fraction = duration > 0 ? Math.min(1, Math.max(0, (currentTime - tMin) / duration)) : 1;
 
     // Compute per-satellite positions and visible counts
     const positions = new Map<string, OrbitPoint | null>();
@@ -237,30 +235,36 @@ export function useRealtimePlayback(
     syncState();
   }, [syncState]);
 
-  const seekToFraction = useCallback((fraction: number) => {
-    let tMin = Infinity;
-    let tMax = -Infinity;
-    for (const buf of trailBuffers.values()) {
-      const pts = buf.getAll();
-      if (pts.length > 0) tMin = Math.min(tMin, pts[0].t);
-      if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
-    }
-    if (tMin === Infinity) tMin = 0;
-    if (tMax === -Infinity) tMax = 0;
-    const duration = tMax - tMin;
+  const seekToFraction = useCallback(
+    (fraction: number) => {
+      let tMin = Infinity;
+      let tMax = -Infinity;
+      for (const buf of trailBuffers.values()) {
+        const pts = buf.getAll();
+        if (pts.length > 0) tMin = Math.min(tMin, pts[0].t);
+        if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
+      }
+      if (tMin === Infinity) tMin = 0;
+      if (tMax === -Infinity) tMax = 0;
+      const duration = tMax - tMin;
 
-    currentTimeRef.current = tMin + fraction * duration;
+      currentTimeRef.current = tMin + fraction * duration;
 
-    if (modeRef.current === "live" || modeRef.current === "playing") {
-      modeRef.current = "paused";
-    }
-    syncState();
-  }, [trailBuffers, syncState]);
+      if (modeRef.current === "live" || modeRef.current === "playing") {
+        modeRef.current = "paused";
+      }
+      syncState();
+    },
+    [trailBuffers, syncState],
+  );
 
-  const setSpeed = useCallback((speed: number) => {
-    speedRef.current = Math.max(0.1, speed);
-    syncState();
-  }, [syncState]);
+  const setSpeed = useCallback(
+    (speed: number) => {
+      speedRef.current = Math.max(0.1, speed);
+      syncState();
+    },
+    [syncState],
+  );
 
   return {
     snapshot,

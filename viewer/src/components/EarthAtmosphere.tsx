@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
+import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import {
   ATMOSPHERE_SCALE_AMPLIFIED,
   ATMOSPHERE_SCALE_PHYSICAL,
-  atmosphereVert,
   atmosphereFrag,
+  atmosphereVert,
 } from "../shaders/atmosphere.js";
 
 /** Number of sphere segments for the atmosphere shell. */
@@ -61,14 +61,14 @@ export function EarthAtmosphere({
 
   // Dispose on unmount.
   useEffect(() => {
-    return () => { materialRef.current.dispose(); };
+    return () => {
+      materialRef.current.dispose();
+    };
   }, []);
 
   // Update uniforms reactively.
   useEffect(() => {
-    material.uniforms.sunDirection.value
-      .copy(sunDirection)
-      .normalize();
+    material.uniforms.sunDirection.value.copy(sunDirection).normalize();
   }, [material, sunDirection]);
 
   useEffect(() => {
@@ -77,8 +77,7 @@ export function EarthAtmosphere({
 
   useEffect(() => {
     material.uniforms.earthRadius.value = radius;
-    material.uniforms.atmosphereRadius.value =
-      getAtmosphereRadius(radius, physicalScale);
+    material.uniforms.atmosphereRadius.value = getAtmosphereRadius(radius, physicalScale);
   }, [material, radius, physicalScale]);
 
   // Update camera position every frame.

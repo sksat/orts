@@ -40,37 +40,33 @@ export function sliceArrays(
  * Quantize time to 0.5s steps to reduce useMemo recalculations.
  * 60fps over 10s produces ~20 unique values instead of 600.
  */
-export function quantizeChartTime(
-  time: number | undefined,
-): number | undefined {
+export function quantizeChartTime(time: number | undefined): number | undefined {
   if (time == null) return undefined;
   return Math.round(time * 2) / 2;
 }
 
 /** Find first index where arr[i] >= value. */
-export function lowerBound(
-  arr: Float64Array,
-  value: number,
-  lo: number,
-  hi: number,
-): number {
+export function lowerBound(arr: Float64Array, value: number, lo: number, hi: number): number {
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    arr[mid] < value ? (lo = mid + 1) : (hi = mid);
+    if (arr[mid] < value) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
   }
   return lo;
 }
 
 /** Find first index where arr[i] > value. */
-export function upperBound(
-  arr: Float64Array,
-  value: number,
-  lo: number,
-  hi: number,
-): number {
+export function upperBound(arr: Float64Array, value: number, lo: number, hi: number): number {
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    arr[mid] <= value ? (lo = mid + 1) : (hi = mid);
+    if (arr[mid] <= value) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
   }
   return lo;
 }

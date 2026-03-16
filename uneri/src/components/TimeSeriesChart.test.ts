@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { safeYRange, buildMultiSeriesConfig, computeLegendIsolation } from "./TimeSeriesChart.js";
+import { describe, expect, it } from "vitest";
+import { buildMultiSeriesConfig, computeLegendIsolation, safeYRange } from "./TimeSeriesChart.js";
 
 const mockU = {} as any;
 
@@ -57,9 +57,7 @@ describe("buildMultiSeriesConfig", () => {
   });
 
   it("returns x-axis + one y-series for single series", () => {
-    const result = buildMultiSeriesConfig([
-      { label: "SSO", color: "#f00" },
-    ]);
+    const result = buildMultiSeriesConfig([{ label: "SSO", color: "#f00" }]);
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({});
     expect(result[1]).toEqual({
@@ -86,9 +84,7 @@ describe("buildMultiSeriesConfig", () => {
   });
 
   it("preserves color and label exactly", () => {
-    const result = buildMultiSeriesConfig([
-      { label: "ISS (ZARYA)", color: "rgba(255,0,0,0.8)" },
-    ]);
+    const result = buildMultiSeriesConfig([{ label: "ISS (ZARYA)", color: "rgba(255,0,0,0.8)" }]);
     expect(result[1].label).toBe("ISS (ZARYA)");
     expect(result[1].stroke).toBe("rgba(255,0,0,0.8)");
   });

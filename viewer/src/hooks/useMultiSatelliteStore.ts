@@ -1,24 +1,28 @@
-import { useState, useEffect, useRef } from "react";
 import type { AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
+import { useEffect, useRef, useState } from "react";
 import {
-  type TimePoint,
-  type TableSchema,
   type ChartDataMap,
-  type TimeRange,
-  type CompactOptions,
-  insertPoints,
-  clearTable,
-  createTable,
-  queryDerived,
-  compactTable,
-  DISPLAY_MAX_POINTS,
   COMPACT_DEFAULTS,
-  IngestBuffer,
+  type CompactOptions,
+  clearTable,
+  compactTable,
+  createTable,
+  DISPLAY_MAX_POINTS,
+  type IngestBuffer,
+  insertPoints,
+  queryDerived,
+  type TableSchema,
+  type TimePoint,
+  type TimeRange,
 } from "uneri";
-import { buildMultiChartData, type SatelliteConfig, type MultiChartDataMap } from "./buildMultiChartData.js";
+import {
+  buildMultiChartData,
+  type MultiChartDataMap,
+  type SatelliteConfig,
+} from "./buildMultiChartData.js";
 import { computeUnifiedTMin } from "./computeGlobalLatestT.js";
 
-export type { SatelliteConfig, MultiChartDataMap } from "./buildMultiChartData.js";
+export type { MultiChartDataMap, SatelliteConfig } from "./buildMultiChartData.js";
 export { buildMultiChartData } from "./buildMultiChartData.js";
 
 export interface UseMultiSatelliteStoreOptions<T extends TimePoint> {
@@ -128,7 +132,9 @@ export function useMultiSatelliteStore<T extends TimePoint>(
 
           try {
             await ensureTable(cfg.id);
-          } catch { continue; }
+          } catch {
+            continue;
+          }
 
           const schema = makeSatelliteSchema(baseSchemaRef.current, cfg.id);
 
@@ -191,7 +197,13 @@ export function useMultiSatelliteStore<T extends TimePoint>(
             for (const cfg of configsRef.current) {
               if (!hasData.has(cfg.id)) continue;
               const schema = makeSatelliteSchema(baseSchemaRef.current, cfg.id);
-              const result = await queryDerived(conn, schema, tMin, maxPointsRef.current, unifiedTMax);
+              const result = await queryDerived(
+                conn,
+                schema,
+                tMin,
+                maxPointsRef.current,
+                unifiedTMax,
+              );
               if (result.t.length > 0) {
                 perSatData.set(cfg.id, result);
               }
@@ -244,7 +256,7 @@ export function useMultiSatelliteStore<T extends TimePoint>(
       clearTimeout(timerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn]);
+  }, [conn, compactEveryN, compactOptions, queryEveryN, tickInterval]);
 
   return { data, isLoading };
 }

@@ -43,7 +43,7 @@ export interface DisplayScaleProfile {
 }
 
 /** Default physical size for unknown satellites (10 m). */
-const DEFAULT_SATELLITE_SIZE_KM = 0.010;
+const DEFAULT_SATELLITE_SIZE_KM = 0.01;
 
 /** Body-centered profile: exaggerated satellite sizes for visibility. */
 const BODY_CENTERED_PROFILE: DisplayScaleProfile = {
@@ -79,9 +79,7 @@ const SATELLITE_CENTERED_PROFILE: DisplayScaleProfile = {
  *
  * @param center - Which object is at the scene origin
  */
-export function getDisplayScaleProfile(
-  center: FrameCenter,
-): DisplayScaleProfile {
+export function getDisplayScaleProfile(center: FrameCenter): DisplayScaleProfile {
   switch (center.type) {
     case "satellite":
       return SATELLITE_CENTERED_PROFILE;

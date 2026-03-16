@@ -5,9 +5,10 @@
  * simulation_terminated, verifying the viewer's handling of the full
  * communication path.
  */
-import { test, expect } from "@playwright/test";
+
+import type { AddressInfo } from "node:net";
+import { expect, test } from "@playwright/test";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
-import type { AddressInfo } from "net";
 
 /** Build a minimal state message for a given satellite. */
 function stateMsg(satelliteId: string, t: number) {
@@ -47,20 +48,22 @@ test.describe("simulation_terminated handling", () => {
     // Set up mock server that sends: info → history → states → termination → more states
     wss.on("connection", (ws: WsSocket) => {
       // 1. info message with two satellites
-      ws.send(JSON.stringify({
-        type: "info",
-        mu: 398600.4418,
-        dt: 10,
-        output_interval: 10,
-        stream_interval: 10,
-        central_body: "earth",
-        central_body_radius: 6378.137,
-        epoch_jd: null,
-        satellites: [
-          { id: "leo", name: "LEO", altitude: 200, period: 5310 },
-          { id: "sso", name: "SSO", altitude: 800, period: 6052 },
-        ],
-      }));
+      ws.send(
+        JSON.stringify({
+          type: "info",
+          mu: 398600.4418,
+          dt: 10,
+          output_interval: 10,
+          stream_interval: 10,
+          central_body: "earth",
+          central_body_radius: 6378.137,
+          epoch_jd: null,
+          satellites: [
+            { id: "leo", name: "LEO", altitude: 200, period: 5310 },
+            { id: "sso", name: "SSO", altitude: 800, period: 6052 },
+          ],
+        }),
+      );
 
       // 2. empty history
       ws.send(JSON.stringify({ type: "history", states: [] }));
@@ -68,17 +71,22 @@ test.describe("simulation_terminated handling", () => {
       // 3. Stream state messages for both satellites
       let t = 0;
       const interval = setInterval(() => {
-        if (ws.readyState !== 1) { clearInterval(interval); return; }
+        if (ws.readyState !== 1) {
+          clearInterval(interval);
+          return;
+        }
 
         t += 10;
         // LEO terminates at t=100
         if (t === 100) {
-          ws.send(JSON.stringify({
-            type: "simulation_terminated",
-            satellite_id: "leo",
-            t: 100,
-            reason: "atmospheric_entry",
-          }));
+          ws.send(
+            JSON.stringify({
+              type: "simulation_terminated",
+              satellite_id: "leo",
+              t: 100,
+              reason: "atmospheric_entry",
+            }),
+          );
         }
 
         // SSO continues past termination

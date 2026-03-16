@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { buildSimConfig, PRESETS, type OrbitMode } from "./SimConfigForm.js";
+import { describe, expect, it } from "vitest";
+import { buildSimConfig, PRESETS } from "./SimConfigForm.js";
 
 describe("buildSimConfig", () => {
   it("builds config from ISS preset", () => {
@@ -22,7 +22,12 @@ describe("buildSimConfig", () => {
     expect(config.satellites).toHaveLength(1);
     expect(config.satellites[0].orbit.type).toBe("circular");
 
-    const orbit = config.satellites[0].orbit as { type: "circular"; altitude: number; inclination: number; raan: number };
+    const orbit = config.satellites[0].orbit as {
+      type: "circular";
+      altitude: number;
+      inclination: number;
+      raan: number;
+    };
     expect(orbit.altitude).toBe(PRESETS[0].altitude);
     expect(orbit.inclination).toBe(PRESETS[0].inclination);
   });
@@ -41,7 +46,11 @@ describe("buildSimConfig", () => {
       atmosphere: "exponential",
     });
 
-    const orbit = config.satellites[0].orbit as { type: "circular"; altitude: number; inclination: number };
+    const orbit = config.satellites[0].orbit as {
+      type: "circular";
+      altitude: number;
+      inclination: number;
+    };
     expect(orbit.altitude).toBe(800);
     expect(orbit.inclination).toBe(98.6);
   });
@@ -60,7 +69,11 @@ describe("buildSimConfig", () => {
       atmosphere: "exponential",
     });
 
-    const orbit = config.satellites[0].orbit as { type: "circular"; altitude: number; inclination: number };
+    const orbit = config.satellites[0].orbit as {
+      type: "circular";
+      altitude: number;
+      inclination: number;
+    };
     expect(orbit.altitude).toBe(35786);
     expect(orbit.inclination).toBe(0);
   });
@@ -82,7 +95,12 @@ describe("buildSimConfig", () => {
     expect(config.dt).toBe(5);
     expect(config.atmosphere).toBe("harris-priester");
 
-    const orbit = config.satellites[0].orbit as { type: "circular"; altitude: number; inclination: number; raan: number };
+    const orbit = config.satellites[0].orbit as {
+      type: "circular";
+      altitude: number;
+      inclination: number;
+      raan: number;
+    };
     expect(orbit.type).toBe("circular");
     expect(orbit.altitude).toBe(600);
     expect(orbit.inclination).toBe(45.0);

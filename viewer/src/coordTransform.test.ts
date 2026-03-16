@@ -1,7 +1,11 @@
-import { describe, it, expect } from "vitest";
-import { batchTransformWithOffset, transformToLvlh, batchTransformToLvlh } from "./coordTransform.js";
-import type { LvlhAxes } from "./sceneFrame.js";
+import { describe, expect, it } from "vitest";
+import {
+  batchTransformToLvlh,
+  batchTransformWithOffset,
+  transformToLvlh,
+} from "./coordTransform.js";
 import type { OrbitPoint } from "./orbit.js";
+import type { LvlhAxes } from "./sceneFrame.js";
 
 function makePoint(t: number, x: number, y: number, z: number): OrbitPoint {
   return { t, x, y, z, vx: 0, vy: 0, vz: 0, a: 0, e: 0, inc: 0, raan: 0, omega: 0, nu: 0 };
@@ -9,10 +13,7 @@ function makePoint(t: number, x: number, y: number, z: number): OrbitPoint {
 
 describe("batchTransformWithOffset", () => {
   it("scales positions by 1/scaleRadius when no origin offset", () => {
-    const points = [
-      makePoint(0, 6378.137, 0, 0),
-      makePoint(10, 0, 6378.137, 0),
-    ];
+    const points = [makePoint(0, 6378.137, 0, 0), makePoint(10, 0, 6378.137, 0)];
     const outBuf = new Float32Array(6);
     batchTransformWithOffset(points, 0, 2, null, outBuf, 0, 6378.137);
 
@@ -25,10 +26,7 @@ describe("batchTransformWithOffset", () => {
   });
 
   it("subtracts origin position before scaling", () => {
-    const points = [
-      makePoint(0, 7000, 1000, 500),
-      makePoint(10, 7100, 1100, 600),
-    ];
+    const points = [makePoint(0, 7000, 1000, 500), makePoint(10, 7100, 1100, 600)];
     const origin: [number, number, number] = [6500, 800, 400];
     const outBuf = new Float32Array(6);
     const scale = 1000;
@@ -45,11 +43,7 @@ describe("batchTransformWithOffset", () => {
   });
 
   it("respects from/to range", () => {
-    const points = [
-      makePoint(0, 1000, 0, 0),
-      makePoint(10, 2000, 0, 0),
-      makePoint(20, 3000, 0, 0),
-    ];
+    const points = [makePoint(0, 1000, 0, 0), makePoint(10, 2000, 0, 0), makePoint(20, 3000, 0, 0)];
     const outBuf = new Float32Array(9);
     batchTransformWithOffset(points, 1, 3, null, outBuf, 0, 1000);
 
@@ -99,8 +93,12 @@ const polarAxes: LvlhAxes = {
 };
 
 type Vec3 = [number, number, number];
-function dot(a: Vec3, b: Vec3): number { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
-function mag(v: Vec3): number { return Math.sqrt(dot(v, v)); }
+function dot(a: Vec3, b: Vec3): number {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+function mag(v: Vec3): number {
+  return Math.sqrt(dot(v, v));
+}
 
 describe("transformToLvlh", () => {
   it("returns [0, 0, 0] for a point at the satellite position", () => {
@@ -116,27 +114,27 @@ describe("transformToLvlh", () => {
     // Point 100 km further from center in +X (radial direction)
     const result = transformToLvlh(7100, 0, 0, origin, equatorialAxes, 6378.137);
     // dp = [100, 0, 0], dot(inTrack=[0,1,0], dp) = 0, dot(cross=[0,0,1], dp) = 0, dot(radial=[1,0,0], dp) = 100
-    expect(result[0]).toBeCloseTo(0, 10);                      // X = inTrack
-    expect(result[1]).toBeCloseTo(0, 10);                      // Y = crossTrack
-    expect(result[2]).toBeCloseTo(100 / 6378.137, 5);          // Z = radial
+    expect(result[0]).toBeCloseTo(0, 10); // X = inTrack
+    expect(result[1]).toBeCloseTo(0, 10); // Y = crossTrack
+    expect(result[2]).toBeCloseTo(100 / 6378.137, 5); // Z = radial
   });
 
   it("maps point in velocity direction to +X (inTrack axis)", () => {
     const origin: Vec3 = [7000, 0, 0];
     // Point 100 km ahead in +Y (inTrack direction for equatorial orbit at +X)
     const result = transformToLvlh(7000, 100, 0, origin, equatorialAxes, 6378.137);
-    expect(result[0]).toBeCloseTo(100 / 6378.137, 5);          // X = inTrack
-    expect(result[1]).toBeCloseTo(0, 10);                      // Y = crossTrack
-    expect(result[2]).toBeCloseTo(0, 10);                      // Z = radial
+    expect(result[0]).toBeCloseTo(100 / 6378.137, 5); // X = inTrack
+    expect(result[1]).toBeCloseTo(0, 10); // Y = crossTrack
+    expect(result[2]).toBeCloseTo(0, 10); // Z = radial
   });
 
   it("maps point in orbit-normal direction to +Y (crossTrack axis)", () => {
     const origin: Vec3 = [7000, 0, 0];
     // Point 100 km in +Z (crossTrack for equatorial orbit)
     const result = transformToLvlh(7000, 0, 100, origin, equatorialAxes, 6378.137);
-    expect(result[0]).toBeCloseTo(0, 10);                      // X = inTrack
-    expect(result[1]).toBeCloseTo(100 / 6378.137, 5);          // Y = crossTrack
-    expect(result[2]).toBeCloseTo(0, 10);                      // Z = radial
+    expect(result[0]).toBeCloseTo(0, 10); // X = inTrack
+    expect(result[1]).toBeCloseTo(100 / 6378.137, 5); // Y = crossTrack
+    expect(result[2]).toBeCloseTo(0, 10); // Z = radial
   });
 
   it("maps central body (origin of ECI) to -Z direction", () => {
@@ -151,7 +149,9 @@ describe("transformToLvlh", () => {
 
   it("preserves distance (isometric transformation)", () => {
     const origin: Vec3 = [7000, 0, 0];
-    const px = 7050, py = 30, pz = -20;
+    const px = 7050,
+      py = 30,
+      pz = -20;
     const result = transformToLvlh(px, py, pz, origin, equatorialAxes, 1.0);
 
     const dp: Vec3 = [px - origin[0], py - origin[1], pz - origin[2]];
@@ -168,9 +168,9 @@ describe("transformToLvlh", () => {
     // inTrack = [0, 0, 1] → dot = 100
     // crossTrack = [0, -1, 0] → dot = 0
     // radial = [1, 0, 0] → dot = 0
-    expect(result[0]).toBeCloseTo(100, 10);  // X = inTrack
-    expect(result[1]).toBeCloseTo(0, 10);    // Y = crossTrack
-    expect(result[2]).toBeCloseTo(0, 10);    // Z = radial
+    expect(result[0]).toBeCloseTo(100, 10); // X = inTrack
+    expect(result[1]).toBeCloseTo(0, 10); // Y = crossTrack
+    expect(result[2]).toBeCloseTo(0, 10); // Z = radial
   });
 
   it("handles arbitrary LVLH axes with off-diagonal components", () => {
@@ -183,12 +183,14 @@ describe("transformToLvlh", () => {
     };
     const origin: Vec3 = [7000 * s, 7000 * s, 0];
     // Point 100 km radially outward
-    const px = (7000 + 100) * s, py = (7000 + 100) * s, pz = 0;
+    const px = (7000 + 100) * s,
+      py = (7000 + 100) * s,
+      pz = 0;
     const result = transformToLvlh(px, py, pz, origin, axes, 1.0);
 
-    expect(result[0]).toBeCloseTo(0, 5);     // X = inTrack (no along-track component)
-    expect(result[1]).toBeCloseTo(0, 5);     // Y = crossTrack
-    expect(result[2]).toBeCloseTo(100, 5);   // Z = radial (100 km outward)
+    expect(result[0]).toBeCloseTo(0, 5); // X = inTrack (no along-track component)
+    expect(result[1]).toBeCloseTo(0, 5); // Y = crossTrack
+    expect(result[2]).toBeCloseTo(100, 5); // Z = radial (100 km outward)
   });
 });
 
@@ -196,9 +198,9 @@ describe("batchTransformToLvlh", () => {
   it("transforms multiple points correctly", () => {
     const origin: Vec3 = [7000, 0, 0];
     const points = [
-      makePoint(0, 7100, 0, 0),    // 100 km radially outward
-      makePoint(10, 7000, 100, 0),  // 100 km in inTrack
-      makePoint(20, 7000, 0, 100),  // 100 km in crossTrack
+      makePoint(0, 7100, 0, 0), // 100 km radially outward
+      makePoint(10, 7000, 100, 0), // 100 km in inTrack
+      makePoint(20, 7000, 0, 100), // 100 km in crossTrack
     ];
     const outBuf = new Float32Array(9);
     batchTransformToLvlh(points, 0, 3, origin, equatorialAxes, outBuf, 0, 6378.137);
@@ -221,8 +223,8 @@ describe("batchTransformToLvlh", () => {
   it("respects from/to range", () => {
     const origin: Vec3 = [7000, 0, 0];
     const points = [
-      makePoint(0, 7000, 0, 0),    // at origin
-      makePoint(10, 7100, 0, 0),   // 100 km radial
+      makePoint(0, 7000, 0, 0), // at origin
+      makePoint(10, 7100, 0, 0), // 100 km radial
       makePoint(20, 7000, 200, 0), // 200 km inTrack
     ];
     const outBuf = new Float32Array(9);
