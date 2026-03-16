@@ -6,14 +6,24 @@ pub mod protocol;
 
 use std::sync::Arc;
 
+use axum::Router;
+use axum::extract::State;
+use axum::extract::ws::WebSocketUpgrade;
+use axum::response::IntoResponse;
+use axum::routing::get;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::cli::SimArgs;
 use crate::sim::params::SimParams;
 
-use connection::handle_connection;
 use manager::SimCommand;
+
+#[derive(Clone)]
+struct AppState {
+    tx: broadcast::Sender<String>,
+    cmd_tx: mpsc::Sender<SimCommand>,
+}
 
 pub fn run_server(sim: &SimArgs, port: u16) {
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
@@ -31,6 +41,15 @@ fn has_explicit_sim_args(sim: &SimArgs) -> bool {
         || (sim.altitude - 400.0).abs() > 1e-9
 }
 
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
+    let rx = state.tx.subscribe();
+    let cmd_tx = state.cmd_tx.clone();
+    ws.on_upgrade(move |socket| async move {
+        connection::handle_connection(socket, rx, cmd_tx).await;
+        eprintln!("Client disconnected");
+    })
+}
+
 async fn async_server(sim: &SimArgs, port: u16) {
     let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr)
@@ -38,7 +57,8 @@ async fn async_server(sim: &SimArgs, port: u16) {
         .unwrap_or_else(|e| panic!("failed to bind to {addr}: {e}"));
 
     let actual_port = listener.local_addr().unwrap().port();
-    eprintln!("WebSocket server listening on ws://localhost:{actual_port}");
+    eprintln!("Server listening on http://localhost:{actual_port}");
+    eprintln!("WebSocket endpoint: ws://localhost:{actual_port}/ws");
 
     let (tx, _rx) = broadcast::channel::<String>(256);
     let (cmd_tx, cmd_rx) = mpsc::channel::<SimCommand>(16);
@@ -65,21 +85,11 @@ async fn async_server(sim: &SimArgs, port: u16) {
         tokio::spawn(manager::simulation_manager(initial_config, cmd_rx, mgr_tx));
     }
 
-    loop {
-        let (stream, peer) = match listener.accept().await {
-            Ok(v) => v,
-            Err(e) => {
-                eprintln!("accept error: {e}");
-                continue;
-            }
-        };
+    let state = AppState { tx, cmd_tx };
 
-        eprintln!("New connection from {peer}");
-        let rx = tx.subscribe();
-        let client_cmd_tx = cmd_tx.clone();
+    let app = Router::new()
+        .route("/ws", get(ws_handler))
+        .with_state(state);
 
-        tokio::spawn(async move {
-            handle_connection(stream, rx, client_cmd_tx).await;
-        });
-    }
+    axum::serve(listener, app).await.expect("server error");
 }

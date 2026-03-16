@@ -40,7 +40,7 @@ import { jd_to_utc_string } from "./wasm/kanameInit.js";
 /** The two viewer modes. */
 type ViewerMode = "replay" | "realtime";
 
-const DEFAULT_WS_URL = "ws://localhost:9001";
+const DEFAULT_WS_URL = "ws://localhost:9001/ws";
 
 /** Stable reference for an empty terminated-satellites set.
  *  Avoids creating a new Set object on each handleConnect call,
@@ -685,7 +685,7 @@ export function App() {
                 className="ws-url-input"
                 value={wsUrl}
                 onChange={(e) => setWsUrl(e.target.value)}
-                placeholder="ws://localhost:9001"
+                placeholder="ws://localhost:9001/ws"
                 disabled={isConnected}
               />
               {isConnected ? (

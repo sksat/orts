@@ -1,5 +1,6 @@
 use std::ops::ControlFlow;
 
+use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -7,27 +8,15 @@ use super::history::HistoryBuffer;
 use super::manager::{SimCommand, SimStatusResponse};
 use super::protocol::{ClientMessage, WsMessage};
 
-pub(super) type WsSender = futures_util::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-    tokio_tungstenite::tungstenite::Message,
->;
-pub(super) type WsReceiver =
-    futures_util::stream::SplitStream<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>>;
+type WsSender = futures_util::stream::SplitSink<WebSocket, Message>;
+type WsReceiver = futures_util::stream::SplitStream<WebSocket>;
 
 pub(super) async fn handle_connection(
-    stream: tokio::net::TcpStream,
+    socket: WebSocket,
     mut rx: broadcast::Receiver<String>,
     cmd_tx: mpsc::Sender<SimCommand>,
 ) {
-    let ws_stream = match tokio_tungstenite::accept_async(stream).await {
-        Ok(ws) => ws,
-        Err(e) => {
-            eprintln!("WebSocket handshake failed: {e}");
-            return;
-        }
-    };
-
-    let (mut ws_sender, mut ws_receiver): (WsSender, WsReceiver) = ws_stream.split();
+    let (mut ws_sender, mut ws_receiver): (WsSender, WsReceiver) = socket.split();
 
     // 1. Query current status from the manager
     let (status_tx, status_rx) = oneshot::channel();
@@ -52,9 +41,7 @@ pub(super) async fn handle_connection(
             })
             .expect("failed to serialize status");
             if ws_sender
-                .send(tokio_tungstenite::tungstenite::Message::Text(
-                    idle_msg.into(),
-                ))
+                .send(Message::Text(idle_msg.into()))
                 .await
                 .is_err()
             {
@@ -73,9 +60,7 @@ pub(super) async fn handle_connection(
         } => {
             // Send info
             if ws_sender
-                .send(tokio_tungstenite::tungstenite::Message::Text(
-                    info_json.into(),
-                ))
+                .send(Message::Text(info_json.into()))
                 .await
                 .is_err()
             {
@@ -89,9 +74,7 @@ pub(super) async fn handle_connection(
                 })
                 .expect("failed to serialize status");
                 if ws_sender
-                    .send(tokio_tungstenite::tungstenite::Message::Text(
-                        paused_msg.into(),
-                    ))
+                    .send(Message::Text(paused_msg.into()))
                     .await
                     .is_err()
                 {
@@ -102,9 +85,7 @@ pub(super) async fn handle_connection(
             // Replay terminated events
             for event_json in &terminated_events {
                 if ws_sender
-                    .send(tokio_tungstenite::tungstenite::Message::Text(
-                        event_json.clone().into(),
-                    ))
+                    .send(Message::Text(event_json.clone().into()))
                     .await
                     .is_err()
                 {
@@ -118,9 +99,7 @@ pub(super) async fn handle_connection(
             let history_json =
                 serde_json::to_string(&history_msg).expect("failed to serialize history");
             if ws_sender
-                .send(tokio_tungstenite::tungstenite::Message::Text(
-                    history_json.into(),
-                ))
+                .send(Message::Text(history_json.into()))
                 .await
                 .is_err()
             {
@@ -154,14 +133,12 @@ pub(super) async fn handle_connection(
                 Some(&mut detail_rx),
             )
             .await;
-            eprintln!("Client disconnected");
             return;
         }
     }
 
     // Idle client: main loop (waiting for start_simulation or other messages)
     main_loop(&mut ws_sender, &mut ws_receiver, &mut rx, &cmd_tx, None).await;
-    eprintln!("Client disconnected");
 }
 
 /// Send a command to the simulation manager, await the response, and send
@@ -181,13 +158,7 @@ async fn dispatch_command<T>(
         Ok(Err(e)) => {
             let err_msg = serde_json::to_string(&WsMessage::Error { message: e })
                 .expect("failed to serialize error");
-            if ws_sender
-                .send(tokio_tungstenite::tungstenite::Message::Text(
-                    err_msg.into(),
-                ))
-                .await
-                .is_err()
-            {
+            if ws_sender.send(Message::Text(err_msg.into())).await.is_err() {
                 return ControlFlow::Break(());
             }
             ControlFlow::Continue(())
@@ -209,7 +180,7 @@ async fn main_loop(
                 match msg {
                     Ok(text) => {
                         if ws_sender
-                            .send(tokio_tungstenite::tungstenite::Message::Text(text.into()))
+                            .send(Message::Text(text.into()))
                             .await
                             .is_err()
                         {
@@ -233,7 +204,7 @@ async fn main_loop(
             } => {
                 if let Some(json) = detail {
                     if ws_sender
-                        .send(tokio_tungstenite::tungstenite::Message::Text(json.into()))
+                        .send(Message::Text(json.into()))
                         .await
                         .is_err()
                     {
@@ -246,7 +217,7 @@ async fn main_loop(
             }
             ws_msg = ws_receiver.next() => {
                 match ws_msg {
-                    Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) => {
+                    Some(Ok(Message::Text(text))) => {
                         if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                             let result = match client_msg {
                                 ClientMessage::QueryRange { t_min, t_max, max_points, satellite_id } => {
@@ -261,7 +232,7 @@ async fn main_loop(
                                         let json = serde_json::to_string(&resp)
                                             .expect("failed to serialize query_range_response");
                                         if ws_sender
-                                            .send(tokio_tungstenite::tungstenite::Message::Text(json.into()))
+                                            .send(Message::Text(json.into()))
                                             .await
                                             .is_err()
                                         {

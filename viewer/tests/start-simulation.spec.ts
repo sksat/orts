@@ -44,7 +44,7 @@ test.beforeAll(async () => {
     });
   });
 
-  wsUrl = `ws://localhost:${port}`;
+  wsUrl = `ws://localhost:${port}/ws`;
   console.log(`orts idle server started at ${wsUrl}`);
 });
 

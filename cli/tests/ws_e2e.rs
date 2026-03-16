@@ -53,7 +53,7 @@ impl Server {
             for line in reader.lines() {
                 let line = line.expect("failed to read stderr line");
                 eprintln!("[server stderr] {line}");
-                if !notified && line.contains("WebSocket server listening") {
+                if !notified && line.contains("Server listening on") {
                     let _ = tx.send(());
                     notified = true;
                 }
@@ -95,7 +95,7 @@ impl Server {
             for line in reader.lines() {
                 let line = line.expect("failed to read stderr line");
                 eprintln!("[server stderr] {line}");
-                if !notified && line.contains("WebSocket server listening") {
+                if !notified && line.contains("Server listening on") {
                     let _ = tx.send(());
                     notified = true;
                 }
@@ -167,7 +167,7 @@ async fn test_websocket_info_and_state_messages() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
 
         let mut ws_stream = None;
         for attempt in 0..20 {
@@ -330,7 +330,7 @@ async fn test_websocket_multiple_clients() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
 
         // Connect first client.
         let (ws1, _) = connect_async(&url)
@@ -384,7 +384,7 @@ async fn test_websocket_history_on_connect() {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -431,7 +431,7 @@ async fn test_websocket_history_grows_over_time() {
     let mut server = Server::spawn(port);
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
 
         // Connect client A immediately
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -477,7 +477,7 @@ async fn test_websocket_history_detail_follows() {
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -540,7 +540,7 @@ async fn test_websocket_overview_arrives_fast() {
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -571,7 +571,7 @@ async fn test_websocket_query_range() {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
@@ -647,7 +647,7 @@ async fn test_websocket_monotonic_time_across_orbits() {
     tokio::time::sleep(Duration::from_secs(65)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(60), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -726,7 +726,7 @@ async fn test_websocket_terminated_replay_on_late_connect() {
     tokio::time::sleep(Duration::from_secs(3)).await;
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
@@ -775,7 +775,7 @@ async fn test_websocket_idle_then_start_simulation() {
     let mut server = Server::spawn_idle(port);
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
@@ -825,7 +825,7 @@ async fn test_websocket_add_satellite() {
     let mut server = Server::spawn(port);
 
     let result = tokio::time::timeout(Duration::from_secs(30), async {
-        let url = format!("ws://localhost:{port}");
+        let url = format!("ws://localhost:{port}/ws");
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (mut write, mut read) = ws.split();
 
