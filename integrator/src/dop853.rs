@@ -493,7 +493,7 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let state = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let (y8, _error, _k13) = Dop853.step_full(&system, 0.0, &state, 1.0);
         let eps = 1e-12;
         assert!((y8.y().x - 1.0).abs() < eps, "y8 pos: {}", y8.y().x);
@@ -505,7 +505,7 @@ mod tests {
         let system = ConstantAcceleration {
             acceleration: vector![0.0, -9.8, 0.0],
         };
-        let state = State::<2>::new(vector![0.0, 0.0, 0.0], vector![10.0, 20.0, 0.0]);
+        let state = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![10.0, 20.0, 0.0]);
         let dt = 1.0;
         let (y8, _error, _k13) = Dop853.step_full(&system, 0.0, &state, dt);
 
@@ -522,7 +522,7 @@ mod tests {
     #[test]
     fn step_error_estimate_reasonable() {
         let system = HarmonicOscillator;
-        let state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let dt = 0.5;
         let (y8, error, _k13) = Dop853.step_full(&system, 0.0, &state, dt);
 
@@ -544,7 +544,7 @@ mod tests {
     #[test]
     fn step_fsal_property() {
         let system = HarmonicOscillator;
-        let state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let dt = 0.1;
         let (y8, _error, k13) = Dop853.step_full(&system, 0.0, &state, dt);
 
@@ -571,7 +571,7 @@ mod tests {
         // Halving h should reduce error by ~2^9 = 512
         // Use larger step sizes to avoid machine-precision floor
         let system = HarmonicOscillator;
-        let state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
         let dt1 = 0.5;
         let dt2 = 0.25;
@@ -597,7 +597,7 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let final_state = Dop853.integrate(&system, initial, 0.0, 1.0, 0.1, |_, _| {});
         assert!((final_state.y().x - 1.0).abs() < 1e-12);
     }
@@ -605,7 +605,7 @@ mod tests {
     #[test]
     fn integrate_harmonic_full_period() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 2.0 * std::f64::consts::PI;
         let dt = 0.01;
         let final_state = Dop853.integrate(&system, initial, 0.0, t_end, dt, |_, _| {});
@@ -632,7 +632,7 @@ mod tests {
         // Use larger step sizes to stay above machine precision floor
         fn harmonic_error(dt: f64, steps: usize) -> f64 {
             let system = HarmonicOscillator;
-            let mut state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+            let mut state = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
             let mut t = 0.0;
             for _ in 0..steps {
                 let (y8, _, _) = Dop853.step_full(&system, t, &state, dt);
@@ -662,9 +662,9 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let tol = Tolerances::default();
-        let outcome: IntegrationOutcome<State<2>, ()> = Dop853.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = Dop853.integrate_adaptive_with_events(
             &system,
             initial,
             0.0,
@@ -689,13 +689,13 @@ mod tests {
     #[test]
     fn adaptive_harmonic_full_period() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 2.0 * std::f64::consts::PI;
         let tol = Tolerances {
             atol: 1e-10,
             rtol: 1e-8,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> = Dop853.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = Dop853.integrate_adaptive_with_events(
             &system,
             initial,
             0.0,
@@ -728,7 +728,7 @@ mod tests {
     #[test]
     fn adaptive_energy_conservation() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let initial_energy = 0.5 * (initial.dy().norm_squared() + initial.y().norm_squared());
         let mut max_energy_drift: f64 = 0.0;
 
@@ -737,7 +737,7 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> = Dop853.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = Dop853.integrate_adaptive_with_events(
             &system,
             initial,
             0.0,
@@ -761,11 +761,11 @@ mod tests {
     #[test]
     fn adaptive_lands_on_t_end() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 1.234;
         let tol = Tolerances::default();
         let mut last_t = 0.0;
-        let outcome: IntegrationOutcome<State<2>, ()> = Dop853.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = Dop853.integrate_adaptive_with_events(
             &system,
             initial,
             0.0,
@@ -789,7 +789,7 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let tol = Tolerances::default();
         let outcome = Dop853.integrate_adaptive_with_events(
             &system,
@@ -826,20 +826,20 @@ mod tests {
 
         struct ExplodingSystem;
         impl DynamicalSystem for ExplodingSystem {
-            type State = State<2>;
-            fn derivatives(&self, t: f64, state: &State<2>) -> State<2> {
+            type State = State<3, 2>;
+            fn derivatives(&self, t: f64, state: &State<3, 2>) -> State<3, 2> {
                 let accel = if t > 0.3 {
                     vector![f64::INFINITY, 0.0, 0.0]
                 } else {
                     vector![0.0, 0.0, 0.0]
                 };
-                State::<2>::from_derivative(*state.dy(), accel)
+                State::<3, 2>::from_derivative(*state.dy(), accel)
             }
         }
 
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let tol = Tolerances::default();
-        let outcome: IntegrationOutcome<State<2>, ()> = Dop853.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = Dop853.integrate_adaptive_with_events(
             &ExplodingSystem,
             initial,
             0.0,
@@ -863,18 +863,18 @@ mod tests {
 
         struct VeryStiffSystem;
         impl DynamicalSystem for VeryStiffSystem {
-            type State = State<2>;
-            fn derivatives(&self, _t: f64, state: &State<2>) -> State<2> {
-                State::<2>::from_derivative(*state.dy(), -1e20 * state.y())
+            type State = State<3, 2>;
+            fn derivatives(&self, _t: f64, state: &State<3, 2>) -> State<3, 2> {
+                State::<3, 2>::from_derivative(*state.dy(), -1e20 * state.y())
             }
         }
 
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let tol = Tolerances {
             atol: 1e-12,
             rtol: 1e-12,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> = Dop853.integrate_adaptive_with_events(
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = Dop853.integrate_adaptive_with_events(
             &VeryStiffSystem,
             initial,
             0.0,
@@ -896,7 +896,7 @@ mod tests {
     #[test]
     fn adaptive_fewer_steps_than_dp45() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 2.0 * std::f64::consts::PI;
         let tol = Tolerances {
             atol: 1e-10,
@@ -905,23 +905,24 @@ mod tests {
 
         // Count DOP853 steps
         let mut dop853_steps = 0u64;
-        let outcome853: IntegrationOutcome<State<2>, ()> = Dop853.integrate_adaptive_with_events(
-            &system,
-            initial.clone(),
-            0.0,
-            t_end,
-            1.0,
-            &tol,
-            |_t, _state| {
-                dop853_steps += 1;
-            },
-            |_t, _state| ControlFlow::Continue(()),
-        );
+        let outcome853: IntegrationOutcome<State<3, 2>, ()> = Dop853
+            .integrate_adaptive_with_events(
+                &system,
+                initial.clone(),
+                0.0,
+                t_end,
+                1.0,
+                &tol,
+                |_t, _state| {
+                    dop853_steps += 1;
+                },
+                |_t, _state| ControlFlow::Continue(()),
+            );
         assert!(matches!(outcome853, IntegrationOutcome::Completed(_)));
 
         // Count DP45 steps
         let mut dp45_steps = 0u64;
-        let outcome45: IntegrationOutcome<State<2>, ()> = crate::DormandPrince
+        let outcome45: IntegrationOutcome<State<3, 2>, ()> = crate::DormandPrince
             .integrate_adaptive_with_events(
                 &system,
                 initial,
@@ -950,7 +951,7 @@ mod tests {
     #[test]
     fn coarse_step_dop853_accurate_rk4_fails() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 2.0 * std::f64::consts::PI;
         let dt = 0.5; // Deliberately coarse
 
@@ -982,35 +983,36 @@ mod tests {
     #[test]
     fn long_integration_dop853_better_energy_than_dp45() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 100.0 * 2.0 * std::f64::consts::PI; // 100 periods
         let tol = Tolerances {
             atol: 1e-10,
             rtol: 1e-10,
         };
 
-        let energy = |s: &State<2>| 0.5 * (s.y().norm_squared() + s.dy().norm_squared());
+        let energy = |s: &State<3, 2>| 0.5 * (s.y().norm_squared() + s.dy().norm_squared());
         let e0 = energy(&initial);
 
         // DOP853
         let mut max_drift_853: f64 = 0.0;
-        let outcome853: IntegrationOutcome<State<2>, ()> = Dop853.integrate_adaptive_with_events(
-            &system,
-            initial.clone(),
-            0.0,
-            t_end,
-            1.0,
-            &tol,
-            |_t, state| {
-                max_drift_853 = max_drift_853.max((energy(state) - e0).abs());
-            },
-            |_t, _state| ControlFlow::Continue(()),
-        );
+        let outcome853: IntegrationOutcome<State<3, 2>, ()> = Dop853
+            .integrate_adaptive_with_events(
+                &system,
+                initial.clone(),
+                0.0,
+                t_end,
+                1.0,
+                &tol,
+                |_t, state| {
+                    max_drift_853 = max_drift_853.max((energy(state) - e0).abs());
+                },
+                |_t, _state| ControlFlow::Continue(()),
+            );
         assert!(matches!(outcome853, IntegrationOutcome::Completed(_)));
 
         // DP45
         let mut max_drift_dp45: f64 = 0.0;
-        let outcome45: IntegrationOutcome<State<2>, ()> = crate::DormandPrince
+        let outcome45: IntegrationOutcome<State<3, 2>, ()> = crate::DormandPrince
             .integrate_adaptive_with_events(
                 &system,
                 initial,
@@ -1039,7 +1041,7 @@ mod tests {
     #[test]
     fn tight_tolerance_dop853_fewer_evaluations() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 10.0 * 2.0 * std::f64::consts::PI; // 10 periods
         let tol = Tolerances {
             atol: 1e-13,
@@ -1048,7 +1050,7 @@ mod tests {
 
         // Count steps → function evaluations
         let mut dop853_steps = 0u64;
-        let _: IntegrationOutcome<State<2>, ()> = Dop853.integrate_adaptive_with_events(
+        let _: IntegrationOutcome<State<3, 2>, ()> = Dop853.integrate_adaptive_with_events(
             &system,
             initial.clone(),
             0.0,
@@ -1063,7 +1065,7 @@ mod tests {
         let dop853_evals = dop853_steps * 13; // 13 stages per step
 
         let mut dp45_steps = 0u64;
-        let _: IntegrationOutcome<State<2>, ()> = crate::DormandPrince
+        let _: IntegrationOutcome<State<3, 2>, ()> = crate::DormandPrince
             .integrate_adaptive_with_events(
                 &system,
                 initial,
@@ -1090,7 +1092,7 @@ mod tests {
     #[test]
     fn long_fixed_step_rk4_drifts_dop853_accurate() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 1000.0 * 2.0 * std::f64::consts::PI; // 1000 periods
         let dt = 0.3;
 

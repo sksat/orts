@@ -1,4 +1,4 @@
-use nalgebra::Vector3;
+use nalgebra::SVector;
 
 use crate::Tolerances;
 
@@ -31,20 +31,20 @@ pub trait OdeState: Clone + Sized {
     fn project(&mut self, _t: f64) {}
 }
 
-/// N-th order ODE state: `ORDER` vectors of 3 components each.
+/// N-th order ODE state: `ORDER` vectors of `DIM` components each.
 ///
-/// For a 2nd-order ODE (e.g., mechanics), `State<2>` holds `[y, dy]`
-/// where `y` is position-like and `dy` is velocity-like.
-/// For a 1st-order ODE, `State<1>` holds just `[y]`.
+/// For a 2nd-order ODE in 3D (e.g., orbital mechanics), `State<3, 2>` holds
+/// `[position, velocity]`. For a 1D oscillator, `State<1, 2>` holds `[x, v]`.
+/// For a 1st-order ODE, `State<DIM, 1>` holds just `[y]`.
 #[derive(Debug, Clone, PartialEq)]
-pub struct State<const ORDER: usize> {
-    pub components: [Vector3<f64>; ORDER],
+pub struct State<const DIM: usize, const ORDER: usize> {
+    pub components: [SVector<f64, DIM>; ORDER],
 }
 
-impl<const ORDER: usize> OdeState for State<ORDER> {
+impl<const DIM: usize, const ORDER: usize> OdeState for State<DIM, ORDER> {
     fn zero_like(&self) -> Self {
         State {
-            components: [Vector3::zeros(); ORDER],
+            components: [SVector::zeros(); ORDER],
         }
     }
 
@@ -76,10 +76,10 @@ impl<const ORDER: usize> OdeState for State<ORDER> {
 
     fn error_norm(&self, y_next: &Self, error: &Self, tol: &Tolerances) -> f64 {
         let mut sum_sq = 0.0;
-        let n = 3 * ORDER;
+        let n = DIM * ORDER;
 
         for i in 0..ORDER {
-            for j in 0..3 {
+            for j in 0..DIM {
                 let sc = tol.atol
                     + tol.rtol
                         * self.components[i][j]
@@ -95,31 +95,31 @@ impl<const ORDER: usize> OdeState for State<ORDER> {
 }
 
 /// Convenience methods for 2nd-order ODE states (e.g., position + velocity).
-impl State<2> {
+impl<const DIM: usize> State<DIM, 2> {
     /// Create a new 2nd-order state from `y` (0th derivative) and `dy` (1st derivative).
-    pub fn new(y: Vector3<f64>, dy: Vector3<f64>) -> Self {
+    pub fn new(y: SVector<f64, DIM>, dy: SVector<f64, DIM>) -> Self {
         State {
             components: [y, dy],
         }
     }
 
     /// The 0th-order component (position-like).
-    pub fn y(&self) -> &Vector3<f64> {
+    pub fn y(&self) -> &SVector<f64, DIM> {
         &self.components[0]
     }
 
     /// The 1st-order component (velocity-like).
-    pub fn dy(&self) -> &Vector3<f64> {
+    pub fn dy(&self) -> &SVector<f64, DIM> {
         &self.components[1]
     }
 
     /// Mutable access to the 0th-order component.
-    pub fn y_mut(&mut self) -> &mut Vector3<f64> {
+    pub fn y_mut(&mut self) -> &mut SVector<f64, DIM> {
         &mut self.components[0]
     }
 
     /// Mutable access to the 1st-order component.
-    pub fn dy_mut(&mut self) -> &mut Vector3<f64> {
+    pub fn dy_mut(&mut self) -> &mut SVector<f64, DIM> {
         &mut self.components[1]
     }
 
@@ -129,7 +129,7 @@ impl State<2> {
     /// dy/dt = (q', q'') has the same type:
     /// - `components[0]` holds dy (1st derivative)
     /// - `components[1]` holds ddy (2nd derivative)
-    pub fn from_derivative(dy: Vector3<f64>, ddy: Vector3<f64>) -> Self {
+    pub fn from_derivative(dy: SVector<f64, DIM>, ddy: SVector<f64, DIM>) -> Self {
         State {
             components: [dy, ddy],
         }

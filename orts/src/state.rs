@@ -3,10 +3,10 @@ use orts_integrator::{OdeState, State, Tolerances};
 
 /// Orbital state: position and velocity in 3D space.
 ///
-/// A newtype around [`State<2>`] providing domain-specific accessors
+/// A newtype around [`State<3, 2>`] providing domain-specific accessors
 /// (`position`, `velocity`) for orbital mechanics.
 #[derive(Debug, Clone, PartialEq)]
-pub struct OrbitalState(pub State<2>);
+pub struct OrbitalState(pub State<3, 2>);
 
 impl OrbitalState {
     /// Create a new orbital state from position and velocity vectors.

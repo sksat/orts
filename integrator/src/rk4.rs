@@ -48,7 +48,7 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let state = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let result = Rk4.step(&system, 0.0, &state, 1.0);
         let eps = 1e-12;
         assert!((result.y().x - 1.0).abs() < eps, "x: {}", result.y().x);
@@ -64,7 +64,7 @@ mod tests {
         let system = ConstantAcceleration {
             acceleration: vector![0.0, -9.8, 0.0],
         };
-        let state = State::<2>::new(vector![0.0, 0.0, 0.0], vector![10.0, 20.0, 0.0]);
+        let state = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![10.0, 20.0, 0.0]);
         let dt = 1.0;
         let result = Rk4.step(&system, 0.0, &state, dt);
 
@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn test_rk4_harmonic_oscillator() {
         let system = HarmonicOscillator;
-        let mut state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let mut state = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
         let dt = 0.001;
         let steps = 1000;
@@ -121,7 +121,7 @@ mod tests {
 
     fn harmonic_oscillator_error_with_steps(dt: f64, steps: usize) -> f64 {
         let system = HarmonicOscillator;
-        let mut state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let mut state = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let mut t = 0.0;
         for _ in 0..steps {
             state = Rk4.step(&system, t, &state, dt);
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn test_rk4_integrate_harmonic_oscillator() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
         let t_end = 2.0 * std::f64::consts::PI;
         let dt = 0.001;
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn test_rk4_energy_conservation() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
         let initial_energy = 0.5 * (initial.dy().norm_squared() + initial.y().norm_squared());
 
@@ -244,8 +244,8 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
-        let outcome: IntegrationOutcome<State<2>, ()> = Rk4.integrate_with_events(
+        let initial = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = Rk4.integrate_with_events(
             &system,
             initial,
             0.0,
@@ -267,7 +267,7 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let outcome = Rk4.integrate_with_events(
             &system,
             initial,
@@ -302,19 +302,19 @@ mod tests {
 
         struct ExplodingSystem;
         impl DynamicalSystem for ExplodingSystem {
-            type State = State<2>;
-            fn derivatives(&self, t: f64, state: &State<2>) -> State<2> {
+            type State = State<3, 2>;
+            fn derivatives(&self, t: f64, state: &State<3, 2>) -> State<3, 2> {
                 let accel = if t > 0.3 {
                     vector![f64::INFINITY, 0.0, 0.0]
                 } else {
                     vector![0.0, 0.0, 0.0]
                 };
-                State::<2>::from_derivative(*state.dy(), accel)
+                State::<3, 2>::from_derivative(*state.dy(), accel)
             }
         }
 
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
-        let outcome: IntegrationOutcome<State<2>, ()> = Rk4.integrate_with_events(
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = Rk4.integrate_with_events(
             &ExplodingSystem,
             initial,
             0.0,
@@ -331,12 +331,166 @@ mod tests {
         }
     }
 
+    // --- 1D tests ---
+
+    #[test]
+    fn test_rk4_1d_harmonic_oscillator() {
+        let system = HarmonicOscillator1D;
+        let mut state = State::<1, 2>::new(vector![1.0], vector![0.0]);
+
+        let dt = 0.001;
+        let steps = 1000;
+        let mut t = 0.0;
+        for _ in 0..steps {
+            state = Rk4.step(&system, t, &state, dt);
+            t += dt;
+        }
+
+        let expected_x = t.cos();
+        let expected_vx = -t.sin();
+        let eps = 1e-10;
+        assert!(
+            (state.y()[0] - expected_x).abs() < eps,
+            "1D SHO x: {} expected: {} error: {:.2e}",
+            state.y()[0],
+            expected_x,
+            (state.y()[0] - expected_x).abs()
+        );
+        assert!(
+            (state.dy()[0] - expected_vx).abs() < eps,
+            "1D SHO v: {} expected: {} error: {:.2e}",
+            state.dy()[0],
+            expected_vx,
+            (state.dy()[0] - expected_vx).abs()
+        );
+    }
+
+    #[test]
+    fn test_rk4_1d_exponential_decay() {
+        let k = 0.5;
+        let system = ExponentialDecay { k };
+        let y0 = 2.0;
+        let mut state = State {
+            components: [nalgebra::Vector1::new(y0)],
+        };
+
+        let dt = 0.001;
+        let steps = 1000;
+        let mut t = 0.0;
+        for _ in 0..steps {
+            state = Rk4.step(&system, t, &state, dt);
+            t += dt;
+        }
+
+        let expected = y0 * (-k * t).exp();
+        let eps = 1e-10;
+        assert!(
+            (state.components[0][0] - expected).abs() < eps,
+            "Exponential decay: {} expected: {} error: {:.2e}",
+            state.components[0][0],
+            expected,
+            (state.components[0][0] - expected).abs()
+        );
+    }
+
+    #[test]
+    fn test_rk4_1d_integrate_full_period() {
+        let system = HarmonicOscillator1D;
+        let initial = State::<1, 2>::new(vector![1.0], vector![0.0]);
+        let t_end = 2.0 * std::f64::consts::PI;
+        let dt = 0.001;
+
+        let final_state = Rk4.integrate(&system, initial, 0.0, t_end, dt, |_t, _state| {});
+
+        let eps = 1e-8;
+        assert!(
+            (final_state.y()[0] - 1.0).abs() < eps,
+            "1D SHO full period: x={} (error: {:.2e})",
+            final_state.y()[0],
+            (final_state.y()[0] - 1.0).abs()
+        );
+    }
+
+    // --- 2D tests ---
+
+    #[test]
+    fn test_rk4_2d_harmonic_oscillator() {
+        let system = HarmonicOscillator2D;
+        // x-component: cos(t), y-component: sin(t)
+        let mut state = State::<2, 2>::new(vector![1.0, 0.0], vector![0.0, 1.0]);
+
+        let dt = 0.001;
+        let steps = 1000;
+        let mut t = 0.0;
+        for _ in 0..steps {
+            state = Rk4.step(&system, t, &state, dt);
+            t += dt;
+        }
+
+        let eps = 1e-10;
+        assert!(
+            (state.y()[0] - t.cos()).abs() < eps,
+            "2D SHO x: {} expected: {} error: {:.2e}",
+            state.y()[0],
+            t.cos(),
+            (state.y()[0] - t.cos()).abs()
+        );
+        assert!(
+            (state.y()[1] - t.sin()).abs() < eps,
+            "2D SHO y: {} expected: {} error: {:.2e}",
+            state.y()[1],
+            t.sin(),
+            (state.y()[1] - t.sin()).abs()
+        );
+    }
+
+    #[test]
+    fn test_rk4_lotka_volterra_invariant() {
+        // Classic Lotka-Volterra with α=β=δ=γ=1 for simplicity.
+        // Conserved quantity: H(x,y) = δx - γ ln(x) + βy - α ln(y)
+        let alpha = 1.0;
+        let beta = 1.0;
+        let delta = 1.0;
+        let gamma = 1.0;
+        let system = LotkaVolterra {
+            alpha,
+            beta,
+            delta,
+            gamma,
+        };
+        let x0 = 1.5;
+        let y0 = 1.0;
+        let mut state = State {
+            components: [nalgebra::Vector2::new(x0, y0)],
+        };
+
+        let h0 = delta * x0 - gamma * x0.ln() + beta * y0 - alpha * y0.ln();
+
+        let dt = 0.001;
+        let steps = 10000; // 10 time units
+        let mut t = 0.0;
+        let mut max_drift: f64 = 0.0;
+        for _ in 0..steps {
+            state = Rk4.step(&system, t, &state, dt);
+            t += dt;
+            let x = state.components[0][0];
+            let y = state.components[0][1];
+            let h = delta * x - gamma * x.ln() + beta * y - alpha * y.ln();
+            max_drift = max_drift.max((h - h0).abs());
+        }
+
+        assert!(
+            max_drift < 1e-6,
+            "Lotka-Volterra invariant drift: {max_drift:.2e}"
+        );
+    }
+
     #[test]
     fn integrate_with_events_callback_fires_on_termination_step() {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let mut callback_count = 0;
         let outcome = Rk4.integrate_with_events(
             &system,

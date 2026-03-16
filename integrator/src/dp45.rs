@@ -354,7 +354,7 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let state = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let (y5, _error, _k7) = DormandPrince.step_full(&system, 0.0, &state, 1.0);
         let eps = 1e-12;
         assert!((y5.y()[0] - 1.0).abs() < eps, "y5 pos: {}", y5.y()[0]);
@@ -366,7 +366,7 @@ mod tests {
         let system = ConstantAcceleration {
             acceleration: vector![0.0, -9.8, 0.0],
         };
-        let state = State::<2>::new(vector![0.0, 0.0, 0.0], vector![10.0, 20.0, 0.0]);
+        let state = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![10.0, 20.0, 0.0]);
         let dt = 1.0;
         let (y5, _error, _k7) = DormandPrince.step_full(&system, 0.0, &state, dt);
 
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn dp_step_error_estimate_reasonable() {
         let system = HarmonicOscillator;
-        let state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let dt = 0.5;
         let (y5, error, _k7) = DormandPrince.step_full(&system, 0.0, &state, dt);
 
@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn dp_step_fsal_property() {
         let system = HarmonicOscillator;
-        let state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let dt = 0.1;
         let (y5, _error, k7) = DormandPrince.step_full(&system, 0.0, &state, dt);
 
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn dp_step_local_truncation_order() {
         let system = HarmonicOscillator;
-        let state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
         let dt1 = 0.1;
         let dt2 = 0.05;
@@ -453,8 +453,8 @@ mod tests {
 
     #[test]
     fn error_norm_zero_for_identical_states() {
-        let state = State::<2>::new(vector![1.0, 2.0, 3.0], vector![4.0, 5.0, 6.0]);
-        let zero = State::<2>::new(vector![0.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![1.0, 2.0, 3.0], vector![4.0, 5.0, 6.0]);
+        let zero = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let tol = Tolerances::default();
         let norm = state.error_norm(&state, &zero, &tol);
         assert!(norm == 0.0, "Expected 0.0, got {norm}");
@@ -462,8 +462,8 @@ mod tests {
 
     #[test]
     fn error_norm_scales_with_atol() {
-        let state = State::<2>::new(vector![0.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
-        let err = State::<2>::new(vector![1e-8, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let state = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let err = State::<3, 2>::new(vector![1e-8, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
 
         let tol1 = Tolerances {
             atol: 1e-8,
@@ -491,7 +491,7 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let final_state = DormandPrince.integrate(&system, initial, 0.0, 1.0, 0.1, |_, _| {});
         assert!((final_state.y()[0] - 1.0).abs() < 1e-12);
     }
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn dp_integrate_harmonic_full_period() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 2.0 * std::f64::consts::PI;
         let dt = 0.01;
         let final_state = DormandPrince.integrate(&system, initial, 0.0, t_end, dt, |_, _| {});
@@ -523,7 +523,7 @@ mod tests {
     fn dp_integrate_5th_order_convergence() {
         fn dp_harmonic_error(dt: f64, steps: usize) -> f64 {
             let system = HarmonicOscillator;
-            let mut state = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+            let mut state = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
             let mut t = 0.0;
             for _ in 0..steps {
                 let (y5, _, _) = DormandPrince.step_full(&system, t, &state, dt);
@@ -552,9 +552,9 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let tol = Tolerances::default();
-        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = DormandPrince
             .integrate_adaptive_with_events(
                 &system,
                 initial,
@@ -580,13 +580,13 @@ mod tests {
     #[test]
     fn dp_adaptive_harmonic_full_period() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 2.0 * std::f64::consts::PI;
         let tol = Tolerances {
             atol: 1e-10,
             rtol: 1e-8,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = DormandPrince
             .integrate_adaptive_with_events(
                 &system,
                 initial,
@@ -620,7 +620,7 @@ mod tests {
     #[test]
     fn dp_adaptive_energy_conservation() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let initial_energy = 0.5 * (initial.dy().norm_squared() + initial.y().norm_squared());
         let mut max_energy_drift: f64 = 0.0;
 
@@ -629,7 +629,7 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = DormandPrince
             .integrate_adaptive_with_events(
                 &system,
                 initial,
@@ -654,11 +654,11 @@ mod tests {
     #[test]
     fn dp_adaptive_lands_on_t_end() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 1.234;
         let tol = Tolerances::default();
         let mut last_t = 0.0;
-        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = DormandPrince
             .integrate_adaptive_with_events(
                 &system,
                 initial,
@@ -683,7 +683,7 @@ mod tests {
         let system = UniformMotion {
             constant_velocity: vector![1.0, 0.0, 0.0],
         };
-        let initial = State::<2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![1.0, 0.0, 0.0]);
         let tol = Tolerances::default();
         let outcome = DormandPrince.integrate_adaptive_with_events(
             &system,
@@ -720,20 +720,20 @@ mod tests {
 
         struct ExplodingSystem;
         impl DynamicalSystem for ExplodingSystem {
-            type State = State<2>;
-            fn derivatives(&self, t: f64, state: &State<2>) -> State<2> {
+            type State = State<3, 2>;
+            fn derivatives(&self, t: f64, state: &State<3, 2>) -> State<3, 2> {
                 let accel = if t > 0.3 {
                     vector![f64::INFINITY, 0.0, 0.0]
                 } else {
                     vector![0.0, 0.0, 0.0]
                 };
-                State::<2>::from_derivative(*state.dy(), accel)
+                State::<3, 2>::from_derivative(*state.dy(), accel)
             }
         }
 
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let tol = Tolerances::default();
-        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = DormandPrince
             .integrate_adaptive_with_events(
                 &ExplodingSystem,
                 initial,
@@ -758,18 +758,18 @@ mod tests {
 
         struct VeryStiffSystem;
         impl DynamicalSystem for VeryStiffSystem {
-            type State = State<2>;
-            fn derivatives(&self, _t: f64, state: &State<2>) -> State<2> {
-                State::<2>::from_derivative(*state.dy(), -1e20 * *state.y())
+            type State = State<3, 2>;
+            fn derivatives(&self, _t: f64, state: &State<3, 2>) -> State<3, 2> {
+                State::<3, 2>::from_derivative(*state.dy(), -1e20 * *state.y())
             }
         }
 
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let tol = Tolerances {
             atol: 1e-12,
             rtol: 1e-12,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = DormandPrince
             .integrate_adaptive_with_events(
                 &VeryStiffSystem,
                 initial,
@@ -789,10 +789,183 @@ mod tests {
         );
     }
 
+    // --- 1D tests ---
+
+    #[test]
+    fn dp_1d_harmonic_oscillator_adaptive() {
+        let system = HarmonicOscillator1D;
+        let initial = State::<1, 2>::new(vector![1.0], vector![0.0]);
+        let t_end = 2.0 * std::f64::consts::PI;
+        let tol = Tolerances {
+            atol: 1e-10,
+            rtol: 1e-8,
+        };
+        let outcome: IntegrationOutcome<State<1, 2>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
+                &system,
+                initial,
+                0.0,
+                t_end,
+                0.1,
+                &tol,
+                |_t, _state| {},
+                |_t, _state| ControlFlow::Continue(()),
+            );
+        match outcome {
+            IntegrationOutcome::Completed(state) => {
+                let eps = 1e-6;
+                assert!(
+                    (state.y()[0] - 1.0).abs() < eps,
+                    "1D SHO adaptive: x={} (err={:.2e})",
+                    state.y()[0],
+                    (state.y()[0] - 1.0).abs()
+                );
+                assert!(
+                    state.dy()[0].abs() < eps,
+                    "1D SHO adaptive: v={} (err={:.2e})",
+                    state.dy()[0],
+                    state.dy()[0].abs()
+                );
+            }
+            other => panic!("Expected Completed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dp_1d_exponential_decay_adaptive() {
+        let k = 2.0;
+        let system = ExponentialDecay { k };
+        let y0 = 3.0;
+        let initial = State {
+            components: [nalgebra::Vector1::new(y0)],
+        };
+        let t_end = 5.0;
+        let tol = Tolerances {
+            atol: 1e-10,
+            rtol: 1e-8,
+        };
+        let outcome: IntegrationOutcome<State<1, 1>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
+                &system,
+                initial,
+                0.0,
+                t_end,
+                0.1,
+                &tol,
+                |_t, _state| {},
+                |_t, _state| ControlFlow::Continue(()),
+            );
+        match outcome {
+            IntegrationOutcome::Completed(state) => {
+                let expected = y0 * (-k * t_end).exp();
+                let eps = 1e-8;
+                assert!(
+                    (state.components[0][0] - expected).abs() < eps,
+                    "Exp decay adaptive: {} expected {} (err={:.2e})",
+                    state.components[0][0],
+                    expected,
+                    (state.components[0][0] - expected).abs()
+                );
+            }
+            other => panic!("Expected Completed, got {other:?}"),
+        }
+    }
+
+    // --- 2D tests ---
+
+    #[test]
+    fn dp_2d_harmonic_oscillator_adaptive() {
+        let system = HarmonicOscillator2D;
+        let initial = State::<2, 2>::new(vector![1.0, 0.0], vector![0.0, 1.0]);
+        let t_end = 2.0 * std::f64::consts::PI;
+        let tol = Tolerances {
+            atol: 1e-10,
+            rtol: 1e-8,
+        };
+        let outcome: IntegrationOutcome<State<2, 2>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
+                &system,
+                initial,
+                0.0,
+                t_end,
+                0.1,
+                &tol,
+                |_t, _state| {},
+                |_t, _state| ControlFlow::Continue(()),
+            );
+        match outcome {
+            IntegrationOutcome::Completed(state) => {
+                let eps = 1e-6;
+                assert!(
+                    (state.y()[0] - 1.0).abs() < eps,
+                    "2D SHO x={} (err={:.2e})",
+                    state.y()[0],
+                    (state.y()[0] - 1.0).abs()
+                );
+                assert!(
+                    state.y()[1].abs() < eps,
+                    "2D SHO y={} (err={:.2e})",
+                    state.y()[1],
+                    state.y()[1].abs()
+                );
+            }
+            other => panic!("Expected Completed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dp_lotka_volterra_adaptive_invariant() {
+        let alpha = 1.5;
+        let beta = 1.0;
+        let delta = 1.0;
+        let gamma = 3.0;
+        let system = LotkaVolterra {
+            alpha,
+            beta,
+            delta,
+            gamma,
+        };
+        let x0 = 10.0;
+        let y0 = 5.0;
+        let initial = State {
+            components: [nalgebra::Vector2::new(x0, y0)],
+        };
+
+        let h0 = delta * x0 - gamma * x0.ln() + beta * y0 - alpha * y0.ln();
+        let mut max_drift: f64 = 0.0;
+
+        let t_end = 20.0;
+        let tol = Tolerances {
+            atol: 1e-10,
+            rtol: 1e-8,
+        };
+        let outcome: IntegrationOutcome<State<2, 1>, ()> = DormandPrince
+            .integrate_adaptive_with_events(
+                &system,
+                initial,
+                0.0,
+                t_end,
+                0.01,
+                &tol,
+                |_t, state| {
+                    let x = state.components[0][0];
+                    let y = state.components[0][1];
+                    let h = delta * x - gamma * x.ln() + beta * y - alpha * y.ln();
+                    max_drift = max_drift.max((h - h0).abs());
+                },
+                |_t, _state| ControlFlow::Continue(()),
+            );
+        assert!(matches!(outcome, IntegrationOutcome::Completed(_)));
+        assert!(
+            max_drift < 1e-5,
+            "Lotka-Volterra invariant drift: {max_drift:.2e}"
+        );
+    }
+
     #[test]
     fn dp_adaptive_fewer_steps_for_smooth() {
         let system = HarmonicOscillator;
-        let initial = State::<2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 2.0 * std::f64::consts::PI;
 
         let mut adaptive_steps = 0u64;
@@ -800,7 +973,7 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
         };
-        let outcome: IntegrationOutcome<State<2>, ()> = DormandPrince
+        let outcome: IntegrationOutcome<State<3, 2>, ()> = DormandPrince
             .integrate_adaptive_with_events(
                 &system,
                 initial.clone(),
