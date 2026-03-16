@@ -8,15 +8,15 @@ use orts::orbital_system::OrbitalSystem;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::cli::IntegratorChoice;
-use crate::config::{SimConfig, SatelliteConfig};
+use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::{SatelliteInfo, SatelliteSpec};
 use crate::sim::core::{accel_breakdown, make_history_state, sat_params};
-use orts::setup::build_orbital_system;
 use crate::sim::params::SimParams;
+use orts::setup::build_orbital_system;
 
+use super::compute::state_message;
 use super::history::HistoryBuffer;
 use super::protocol::WsMessage;
-use super::compute::state_message;
 
 /// Command sent from connection handlers to the simulation manager.
 pub(super) enum SimCommand {
@@ -108,9 +108,7 @@ pub(super) async fn simulation_manager_with_params(
 
 /// Drain the cmd_rx, handling only GetStatus (as idle) and rejecting others,
 /// until a Start command arrives or the channel disconnects.
-async fn idle_loop(
-    cmd_rx: &mut mpsc::Receiver<SimCommand>,
-) -> Option<SimConfig> {
+async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig> {
     loop {
         let Some(cmd) = cmd_rx.recv().await else {
             return None; // All senders dropped
@@ -242,6 +240,10 @@ impl SimLoopContext {
                 dt: params.dt,
                 tolerances: params.tolerances.clone(),
             },
+            IntegratorChoice::Dop853 => IntegratorConfig::Dop853 {
+                dt: params.dt,
+                tolerances: params.tolerances.clone(),
+            },
         };
 
         let body_radius = params.body.properties().radius;
@@ -359,7 +361,8 @@ impl SimLoopContext {
                     eprintln!("Simulation paused at t={:.2}s", self.current_t);
                     let status = serde_json::to_string(&WsMessage::Status {
                         state: "paused".to_string(),
-                    }).expect("failed to serialize status");
+                    })
+                    .expect("failed to serialize status");
                     let _ = self.tx.send(status);
                     let _ = respond.send(Ok(()));
                 }
@@ -372,7 +375,8 @@ impl SimLoopContext {
                     eprintln!("Simulation resumed at t={:.2}s", self.current_t);
                     let status = serde_json::to_string(&WsMessage::Status {
                         state: "running".to_string(),
-                    }).expect("failed to serialize status");
+                    })
+                    .expect("failed to serialize status");
                     let _ = self.tx.send(status);
                     let _ = respond.send(Ok(()));
                 }
@@ -381,18 +385,15 @@ impl SimLoopContext {
                 eprintln!("Simulation terminated at t={:.2}s", self.current_t);
                 let status = serde_json::to_string(&WsMessage::Status {
                     state: "idle".to_string(),
-                }).expect("failed to serialize status");
+                })
+                .expect("failed to serialize status");
                 let _ = self.tx.send(status);
                 let _ = respond.send(Ok(()));
                 return ControlFlow::Break(());
             }
             SimCommand::AddSatellite { satellite, respond } => {
                 let sat_index = self.metas.len();
-                let spec = satellite.to_satellite_spec(
-                    sat_index,
-                    self.params.body,
-                    self.params.mu,
-                );
+                let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
                 let system = build_orbital_system(
                     &self.params.body,
                     self.params.mu,
@@ -419,7 +420,8 @@ impl SimLoopContext {
 
                 self.metas.push(SatMeta {
                     spec,
-                    orbit_end_t: self.current_t + self.metas.last().map_or(5554.0, |m| m.spec.period),
+                    orbit_end_t: self.current_t
+                        + self.metas.last().map_or(5554.0, |m| m.spec.period),
                     next_save_t: self.current_t + self.params.output_interval,
                 });
 
@@ -468,10 +470,7 @@ impl SimLoopContext {
     }
 
     /// Propagate one chunk of simulation time, collecting outputs.
-    fn propagate_chunk(
-        &mut self,
-        outputs_per_chunk: usize,
-    ) -> Vec<crate::sim::core::HistoryState> {
+    fn propagate_chunk(&mut self, outputs_per_chunk: usize) -> Vec<crate::sim::core::HistoryState> {
         let mut all_outputs = Vec::new();
 
         for _ in 0..outputs_per_chunk {
@@ -479,12 +478,16 @@ impl SimLoopContext {
 
             // Orbit boundary reset (only for unperturbed 2-body)
             if !self.has_perturbations {
-                let resets: Vec<(SatId, OrbitalState)> = self.group
+                let resets: Vec<(SatId, OrbitalState)> = self
+                    .group
                     .satellites_with_dynamics()
                     .enumerate()
                     .filter_map(|(i, (entry, _))| {
                         if !entry.terminated && self.current_t >= self.metas[i].orbit_end_t - 1e-9 {
-                            Some((entry.id.clone(), self.metas[i].spec.initial_state(self.params.mu)))
+                            Some((
+                                entry.id.clone(),
+                                self.metas[i].spec.initial_state(self.params.mu),
+                            ))
                         } else {
                             None
                         }
@@ -493,9 +496,11 @@ impl SimLoopContext {
 
                 for (id, new_state) in &resets {
                     self.group.reset_state(id, new_state.clone());
-                    if let Some(i) = self.metas.iter().position(|m| {
-                        m.spec.id.as_str() == AsRef::<str>::as_ref(id)
-                    }) {
+                    if let Some(i) = self
+                        .metas
+                        .iter()
+                        .position(|m| m.spec.id.as_str() == AsRef::<str>::as_ref(id))
+                    {
                         self.metas[i].orbit_end_t = self.current_t + self.metas[i].spec.period;
                     }
                 }
@@ -561,8 +566,7 @@ async fn run_simulation_loop(
     const OUTPUTS_PER_CHUNK: usize = 10;
     let chunk_sim_time = params.stream_interval * OUTPUTS_PER_CHUNK as f64;
     let wall_per_sim_sec = ((params.dt / 100.0).max(0.01)) / params.stream_interval;
-    let chunk_wall_time =
-        std::time::Duration::from_secs_f64(chunk_sim_time * wall_per_sim_sec);
+    let chunk_wall_time = std::time::Duration::from_secs_f64(chunk_sim_time * wall_per_sim_sec);
 
     let mut ctx = SimLoopContext::new(params, tx, history);
 
@@ -578,7 +582,9 @@ async fn run_simulation_loop(
                     }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
-                Err(mpsc::error::TryRecvError::Disconnected) => return (LoopExit::Disconnected, cmd_rx),
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    return (LoopExit::Disconnected, cmd_rx);
+                }
             }
         }
 

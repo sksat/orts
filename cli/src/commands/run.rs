@@ -1,8 +1,8 @@
 use std::ops::ControlFlow;
 
 use orts::OrbitalState;
-use orts::kepler::KeplerianElements;
 use orts::group::{IndependentGroup, IntegratorConfig};
+use orts::kepler::KeplerianElements;
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
 use orts::record::components::{BodyRadius, GravitationalParameter};
 use orts::record::entity_path::EntityPath;
@@ -33,15 +33,16 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
             print_recording_as_csv(&rec, &params);
         }
         ("stdout", OutputFormat::Rrd) => {
-            eprintln!("Error: cannot write .rrd format to stdout. Use --format csv or specify a file path.");
+            eprintln!(
+                "Error: cannot write .rrd format to stdout. Use --format csv or specify a file path."
+            );
             std::process::exit(1);
         }
         (path, OutputFormat::Rrd) => {
-            orts::record::rerun_export::save_as_rrd(&rec, "orts", path)
-                .unwrap_or_else(|e| {
-                    eprintln!("Error saving .rrd: {e}");
-                    std::process::exit(1);
-                });
+            orts::record::rerun_export::save_as_rrd(&rec, "orts", path).unwrap_or_else(|e| {
+                eprintln!("Error saving .rrd: {e}");
+                std::process::exit(1);
+            });
             eprintln!("Saved to {path}");
         }
     }
@@ -62,6 +63,10 @@ pub fn run_simulation(params: &SimParams) -> Recording {
     let config = match params.integrator {
         IntegratorChoice::Rk4 => IntegratorConfig::Rk4 { dt: params.dt },
         IntegratorChoice::Dp45 => IntegratorConfig::Dp45 {
+            dt: params.dt,
+            tolerances: params.tolerances.clone(),
+        },
+        IntegratorChoice::Dop853 => IntegratorConfig::Dop853 {
             dt: params.dt,
             tolerances: params.tolerances.clone(),
         },
@@ -137,9 +142,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
         // Record states for satellites that reached this output time
         for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
             if !entry.terminated && entry.t >= t - 1e-9 {
-                let tp = TimePoint::new()
-                    .with_sim_time(entry.t)
-                    .with_step(steps[i]);
+                let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
                 let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
                 rec.log_orbital_state(&sat_paths[i], &tp, &os);
                 steps[i] += 1;
@@ -160,9 +163,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
                 .position(|s| s.id.as_str() == AsRef::<str>::as_ref(&term.satellite_id))
                 && let Some(entry) = group.satellite(&term.satellite_id)
             {
-                let tp = TimePoint::new()
-                    .with_sim_time(entry.t)
-                    .with_step(steps[i]);
+                let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
                 let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
                 rec.log_orbital_state(&sat_paths[i], &tp, &os);
                 steps[i] += 1;
@@ -174,9 +175,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
     // (covers the case where period doesn't align with output_interval)
     for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
         if !entry.terminated && (entry.t - last_output_t[i]) > 1e-9 {
-            let tp = TimePoint::new()
-                .with_sim_time(entry.t)
-                .with_step(steps[i]);
+            let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
             let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
             rec.log_orbital_state(&sat_paths[i], &tp, &os);
         }
@@ -218,30 +217,55 @@ pub fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
         let sat = &params.satellites[0];
         match &sat.orbit {
             OrbitSpec::Circular { altitude, r0, .. } => {
-                println!("# Initial orbit: circular at {} km altitude (r = {} km)", altitude, r0);
+                println!(
+                    "# Initial orbit: circular at {} km altitude (r = {} km)",
+                    altitude, r0
+                );
             }
             OrbitSpec::Tle { tle_data, elements } => {
                 println!(
                     "# Initial orbit: from TLE (a = {:.1} km, e = {:.6}, i = {:.2}°)",
-                    elements.semi_major_axis, elements.eccentricity, elements.inclination.to_degrees()
+                    elements.semi_major_axis,
+                    elements.eccentricity,
+                    elements.inclination.to_degrees()
                 );
                 if let Some(name) = &tle_data.name {
                     println!("# satellite = {name}");
                 }
             }
         }
-        println!("# Period = {:.1} s ({:.1} min)", sat.period, sat.period / 60.0);
-        println!("# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s],a[km],e[-],i[rad],raan[rad],omega[rad],nu[rad]");
+        println!(
+            "# Period = {:.1} s ({:.1} min)",
+            sat.period,
+            sat.period / 60.0
+        );
+        println!(
+            "# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s],a[km],e[-],i[rad],raan[rad],omega[rad],nu[rad]"
+        );
 
         let sat_path = sat.entity_path();
         print_satellite_csv(rec, &sat_path, params.mu, false);
     } else {
         // Multi-satellite: add satellite_id as first column
-        println!("# satellites = {}", params.satellites.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(", "));
-        println!("# satellite_id,t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s],a[km],e[-],i[rad],raan[rad],omega[rad],nu[rad]");
+        println!(
+            "# satellites = {}",
+            params
+                .satellites
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        println!(
+            "# satellite_id,t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s],a[km],e[-],i[rad],raan[rad],omega[rad],nu[rad]"
+        );
 
         for sat in &params.satellites {
-            println!("# --- {} (period = {:.1} s) ---", sat.name.as_deref().unwrap_or(&sat.id), sat.period);
+            println!(
+                "# --- {} (period = {:.1} s) ---",
+                sat.name.as_deref().unwrap_or(&sat.id),
+                sat.period
+            );
             let sat_path = sat.entity_path();
             print_satellite_csv(rec, &sat_path, params.mu, true);
         }
@@ -287,18 +311,37 @@ pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with
         if with_id {
             println!(
                 "{},{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.3},{:.10},{:.10},{:.10},{:.10},{:.10}",
-                id, t, pos[0], pos[1], pos[2], vel[0], vel[1], vel[2],
-                elements.semi_major_axis, elements.eccentricity,
-                elements.inclination, elements.raan,
-                elements.argument_of_periapsis, elements.true_anomaly,
+                id,
+                t,
+                pos[0],
+                pos[1],
+                pos[2],
+                vel[0],
+                vel[1],
+                vel[2],
+                elements.semi_major_axis,
+                elements.eccentricity,
+                elements.inclination,
+                elements.raan,
+                elements.argument_of_periapsis,
+                elements.true_anomaly,
             );
         } else {
             println!(
                 "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.3},{:.10},{:.10},{:.10},{:.10},{:.10}",
-                t, pos[0], pos[1], pos[2], vel[0], vel[1], vel[2],
-                elements.semi_major_axis, elements.eccentricity,
-                elements.inclination, elements.raan,
-                elements.argument_of_periapsis, elements.true_anomaly,
+                t,
+                pos[0],
+                pos[1],
+                pos[2],
+                vel[0],
+                vel[1],
+                vel[2],
+                elements.semi_major_axis,
+                elements.eccentricity,
+                elements.inclination,
+                elements.raan,
+                elements.argument_of_periapsis,
+                elements.true_anomaly,
             );
         }
     }

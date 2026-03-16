@@ -104,11 +104,11 @@ pub struct SimArgs {
     #[arg(long, default_value = "dp45")]
     pub integrator: IntegratorChoice,
 
-    /// Absolute tolerance for adaptive integrator (dp45)
+    /// Absolute tolerance for adaptive integrators (dp45, dop853)
     #[arg(long, default_value_t = 1e-10)]
     pub atol: f64,
 
-    /// Relative tolerance for adaptive integrator (dp45)
+    /// Relative tolerance for adaptive integrators (dp45, dop853)
     #[arg(long, default_value_t = 1e-8)]
     pub rtol: f64,
 
@@ -149,8 +149,10 @@ pub struct SimArgs {
 pub enum IntegratorChoice {
     /// Fixed-step 4th-order Runge-Kutta
     Rk4,
-    /// Adaptive Dormand-Prince RK5(4) (recommended)
+    /// Adaptive Dormand-Prince RK5(4)
     Dp45,
+    /// Adaptive DOP853 8th-order Dormand-Prince (high accuracy)
+    Dop853,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

@@ -1,8 +1,8 @@
 use std::ops::ControlFlow;
 
 use orts_integrator::{
-    AdvanceOutcome, DynamicalSystem, DormandPrince, Integrator, IntegrationError, OdeState, Rk4,
-    Tolerances,
+    AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
+    Integrator, OdeState, Rk4, Tolerances,
 };
 
 use super::HasPosition;
@@ -13,6 +13,7 @@ use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermina
 pub enum IntegratorConfig {
     Rk4 { dt: f64 },
     Dp45 { dt: f64, tolerances: Tolerances },
+    Dop853 { dt: f64, tolerances: Tolerances },
 }
 
 /// Entry tracking an individual satellite's state and status.
@@ -74,6 +75,11 @@ where
     /// Create with Dormand-Prince 4/5 adaptive integrator.
     pub fn dp45(dt: f64, tolerances: Tolerances) -> Self {
         Self::new(IntegratorConfig::Dp45 { dt, tolerances })
+    }
+
+    /// Create with DOP853 (8th-order Dormand-Prince) adaptive integrator.
+    pub fn dop853(dt: f64, tolerances: Tolerances) -> Self {
+        Self::new(IntegratorConfig::Dop853 { dt, tolerances })
     }
 
     /// Create with fixed-step RK4 integrator.
@@ -150,9 +156,12 @@ where
     }
 
     /// Access satellite entries together with their dynamics (read-only).
-    pub fn satellites_with_dynamics(&self) -> impl Iterator<Item = (&SatelliteEntry<D::State>, &D)>
-    {
-        self.satellites.iter().map(|(entry, dyn_sys)| (entry, dyn_sys))
+    pub fn satellites_with_dynamics(
+        &self,
+    ) -> impl Iterator<Item = (&SatelliteEntry<D::State>, &D)> {
+        self.satellites
+            .iter()
+            .map(|(entry, dyn_sys)| (entry, dyn_sys))
     }
 
     /// Look up a single satellite by id.
@@ -231,10 +240,7 @@ where
         self.push_satellite(id, state, t0, None, dynamics);
     }
 
-    pub fn propagate_to(
-        &mut self,
-        t_target: f64,
-    ) -> Result<PropGroupOutcome, IntegrationError> {
+    pub fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError> {
         let mut terminations = Vec::new();
         let integrator = self.integrator.clone();
         let event_checker = &self.event_checker;
@@ -280,6 +286,55 @@ where
                             entry.t = effective_target;
                         }
                         Ok(AdvanceOutcome::Event { reason }) => {
+                            let t = stepper.t();
+                            entry.state = stepper.into_state();
+                            entry.t = t;
+                            entry.terminated = true;
+                            terminations.push(SatelliteTermination {
+                                satellite_id: entry.id.clone(),
+                                t,
+                                reason,
+                            });
+                        }
+                        Err(e) => {
+                            entry.terminated = true;
+                            let t = match &e {
+                                IntegrationError::NonFiniteState { t } => *t,
+                                IntegrationError::StepSizeTooSmall { t, .. } => *t,
+                            };
+                            terminations.push(SatelliteTermination {
+                                satellite_id: entry.id.clone(),
+                                t,
+                                reason: format!("{e:?}"),
+                            });
+                        }
+                    }
+                }
+                IntegratorConfig::Dop853 { dt, tolerances } => {
+                    let mut stepper = Dop853.stepper(
+                        dynamics,
+                        entry.state.clone(),
+                        entry.t,
+                        *dt,
+                        tolerances.clone(),
+                    );
+
+                    let result = if let Some(checker) = event_checker {
+                        stepper.advance_to(effective_target, |_, _| {}, |t, s| checker(t, s))
+                    } else {
+                        stepper.advance_to(
+                            effective_target,
+                            |_, _| {},
+                            |_, _| ControlFlow::<String>::Continue(()),
+                        )
+                    };
+
+                    match result {
+                        Ok(AdvanceOutcome853::Reached) => {
+                            entry.state = stepper.into_state();
+                            entry.t = effective_target;
+                        }
+                        Ok(AdvanceOutcome853::Event { reason }) => {
                             let t = stepper.t();
                             entry.state = stepper.into_state();
                             entry.t = t;
@@ -385,10 +440,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::Vector3;
-    use orts_integrator::IntegrationOutcome;
     use crate::OrbitalState;
     use crate::two_body::TwoBodySystem;
+    use nalgebra::Vector3;
+    use orts_integrator::IntegrationOutcome;
 
     use super::super::prop_group::PropGroup;
 
@@ -397,19 +452,13 @@ mod tests {
     fn iss_state() -> OrbitalState {
         let r: f64 = 6778.137;
         let v = (MU_EARTH / r).sqrt();
-        OrbitalState::new(
-            Vector3::new(r, 0.0, 0.0),
-            Vector3::new(0.0, v, 0.0),
-        )
+        OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0))
     }
 
     fn sso_state() -> OrbitalState {
         let r: f64 = 7178.137;
         let v = (MU_EARTH / r).sqrt();
-        OrbitalState::new(
-            Vector3::new(r, 0.0, 0.0),
-            Vector3::new(0.0, v, 0.0),
-        )
+        OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0))
     }
 
     fn default_tol() -> Tolerances {
@@ -421,9 +470,11 @@ mod tests {
 
     #[test]
     fn single_satellite_propagation() {
-        let mut group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
 
         let outcome = group.propagate_to(100.0).unwrap();
         assert!(outcome.terminations.is_empty());
@@ -437,9 +488,11 @@ mod tests {
     #[test]
     fn single_satellite_matches_direct_integration() {
         // Propagate with IndependentGroup
-        let mut group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
         group.propagate_to(100.0).unwrap();
         let group_state = group.satellites().next().unwrap().state.clone();
 
@@ -461,10 +514,7 @@ mod tests {
 
         // Should match exactly (same algorithm, same parameters)
         let pos_err = (*group_state.position() - *direct_state.position()).magnitude();
-        assert!(
-            pos_err < 1e-12,
-            "Position difference: {pos_err} km"
-        );
+        assert!(pos_err < 1e-12, "Position difference: {pos_err} km");
     }
 
     #[test]
@@ -484,7 +534,10 @@ mod tests {
 
         // Positions should differ (different orbits)
         let pos_diff = (*entries[0].state.position() - *entries[1].state.position()).magnitude();
-        assert!(pos_diff > 1.0, "Different orbits should have different positions");
+        assert!(
+            pos_diff > 1.0,
+            "Different orbits should have different positions"
+        );
     }
 
     #[test]
@@ -513,10 +566,9 @@ mod tests {
 
     #[test]
     fn ids_returns_correct_list() {
-        let group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("alpha", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("beta", sso_state(), TwoBodySystem { mu: MU_EARTH });
+        let group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(10.0, default_tol())
+            .add_satellite("alpha", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("beta", sso_state(), TwoBodySystem { mu: MU_EARTH });
 
         let ids = group.ids();
         assert_eq!(ids.len(), 2);
@@ -526,9 +578,11 @@ mod tests {
 
     #[test]
     fn propagate_to_already_at_target() {
-        let mut group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
 
         group.propagate_to(100.0).unwrap();
         let state_after_first = group.satellites().next().unwrap().state.clone();
@@ -541,9 +595,11 @@ mod tests {
 
     #[test]
     fn multiple_propagate_steps() {
-        let mut group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
 
         // Propagate in two steps: 0→50, 50→100
         group.propagate_to(50.0).unwrap();
@@ -551,9 +607,11 @@ mod tests {
         let two_step = group.satellites().next().unwrap().state.clone();
 
         // Propagate in one step: 0→100
-        let mut group2: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group2: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
         group2.propagate_to(100.0).unwrap();
         let one_step = group2.satellites().next().unwrap().state.clone();
 
@@ -570,10 +628,8 @@ mod tests {
     #[test]
     fn nan_terminates_satellite_others_continue() {
         // Create a state at origin (will cause division by zero in TwoBody)
-        let degenerate = OrbitalState::new(
-            Vector3::new(1e-15, 0.0, 0.0),
-            Vector3::new(0.0, 1e10, 0.0),
-        );
+        let degenerate =
+            OrbitalState::new(Vector3::new(1e-15, 0.0, 0.0), Vector3::new(0.0, 1e10, 0.0));
         let mut group2: IndependentGroup<TwoBodySystem> =
             IndependentGroup::dp45(10.0, default_tol())
                 .add_satellite("good", iss_state(), TwoBodySystem { mu: MU_EARTH })
@@ -583,12 +639,18 @@ mod tests {
 
         // The "bad" satellite should have terminated
         let entries: Vec<_> = group2.satellites().collect();
-        let good = entries.iter().find(|e| e.id == SatId::from("good")).unwrap();
+        let good = entries
+            .iter()
+            .find(|e| e.id == SatId::from("good"))
+            .unwrap();
         let bad = entries.iter().find(|e| e.id == SatId::from("bad")).unwrap();
 
         assert!(!good.terminated, "Good satellite should not be terminated");
         assert!(bad.terminated, "Bad satellite should be terminated");
-        assert!((good.t - 100.0).abs() < 1e-9, "Good satellite should reach t=100");
+        assert!(
+            (good.t - 100.0).abs() < 1e-9,
+            "Good satellite should reach t=100"
+        );
 
         // Outcome should report termination of bad satellite
         assert_eq!(outcome.terminations.len(), 1);
@@ -597,10 +659,8 @@ mod tests {
 
     #[test]
     fn terminated_satellite_skipped_on_next_propagate() {
-        let degenerate = OrbitalState::new(
-            Vector3::new(1e-15, 0.0, 0.0),
-            Vector3::new(0.0, 1e10, 0.0),
-        );
+        let degenerate =
+            OrbitalState::new(Vector3::new(1e-15, 0.0, 0.0), Vector3::new(0.0, 1e10, 0.0));
         let mut group: IndependentGroup<TwoBodySystem> =
             IndependentGroup::dp45(10.0, default_tol())
                 .add_satellite("good", iss_state(), TwoBodySystem { mu: MU_EARTH })
@@ -611,19 +671,23 @@ mod tests {
 
         // Second propagation: bad should be skipped
         let outcome = group.propagate_to(100.0).unwrap();
-        assert!(outcome.terminations.is_empty(), "No new terminations expected");
+        assert!(
+            outcome.terminations.is_empty(),
+            "No new terminations expected"
+        );
 
         let entries: Vec<_> = group.satellites().collect();
-        let good = entries.iter().find(|e| e.id == SatId::from("good")).unwrap();
+        let good = entries
+            .iter()
+            .find(|e| e.id == SatId::from("good"))
+            .unwrap();
         assert!((good.t - 100.0).abs() < 1e-9);
     }
 
     #[test]
     fn snapshot_excludes_terminated() {
-        let degenerate = OrbitalState::new(
-            Vector3::new(1e-15, 0.0, 0.0),
-            Vector3::new(0.0, 1e10, 0.0),
-        );
+        let degenerate =
+            OrbitalState::new(Vector3::new(1e-15, 0.0, 0.0), Vector3::new(0.0, 1e10, 0.0));
         let mut group: IndependentGroup<TwoBodySystem> =
             IndependentGroup::dp45(10.0, default_tol())
                 .add_satellite("good", iss_state(), TwoBodySystem { mu: MU_EARTH })
@@ -632,7 +696,11 @@ mod tests {
         group.propagate_to(100.0).unwrap();
 
         let snap = group.snapshot();
-        assert_eq!(snap.positions.len(), 1, "Only non-terminated sats in snapshot");
+        assert_eq!(
+            snap.positions.len(),
+            1,
+            "Only non-terminated sats in snapshot"
+        );
         assert_eq!(snap.positions[0].0, SatId::from("good"));
     }
 
@@ -701,22 +769,19 @@ mod tests {
         let sso_pos_err = (*sso_group.position() - *sso_direct.position()).magnitude();
 
         // Should match (same adaptive algorithm, no inter-satellite coupling)
-        assert!(
-            iss_pos_err < 1e-12,
-            "ISS position error: {iss_pos_err} km"
-        );
-        assert!(
-            sso_pos_err < 1e-12,
-            "SSO position error: {sso_pos_err} km"
-        );
+        assert!(iss_pos_err < 1e-12, "ISS position error: {iss_pos_err} km");
+        assert!(sso_pos_err < 1e-12, "SSO position error: {sso_pos_err} km");
     }
 
     // --- RK4 tests ---
 
     #[test]
     fn rk4_single_satellite_propagation() {
-        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(10.0)
-            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(10.0).add_satellite(
+            "iss",
+            iss_state(),
+            TwoBodySystem { mu: MU_EARTH },
+        );
 
         let outcome = group.propagate_to(100.0).unwrap();
         assert!(outcome.terminations.is_empty());
@@ -729,8 +794,11 @@ mod tests {
     #[test]
     fn rk4_matches_direct_step() {
         // Propagate with IndependentGroup RK4
-        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(10.0)
-            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(10.0).add_satellite(
+            "iss",
+            iss_state(),
+            TwoBodySystem { mu: MU_EARTH },
+        );
         group.propagate_to(100.0).unwrap();
         let group_state = group.satellites().next().unwrap().state.clone();
 
@@ -769,10 +837,7 @@ mod tests {
 
     #[test]
     fn rk4_nan_terminates_satellite() {
-        let degenerate = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::new(0.0, 1.0, 0.0),
-        );
+        let degenerate = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, 1.0, 0.0));
         let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(10.0)
             .add_satellite("good", iss_state(), TwoBodySystem { mu: MU_EARTH })
             .add_satellite("bad", degenerate, TwoBodySystem { mu: MU_EARTH });
@@ -780,7 +845,10 @@ mod tests {
         let outcome = group.propagate_to(100.0).unwrap();
 
         let entries: Vec<_> = group.satellites().collect();
-        let good = entries.iter().find(|e| e.id == SatId::from("good")).unwrap();
+        let good = entries
+            .iter()
+            .find(|e| e.id == SatId::from("good"))
+            .unwrap();
         let bad = entries.iter().find(|e| e.id == SatId::from("bad")).unwrap();
 
         assert!(!good.terminated);
@@ -792,8 +860,11 @@ mod tests {
 
     #[test]
     fn rk4_energy_conservation() {
-        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(10.0)
-            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(10.0).add_satellite(
+            "iss",
+            iss_state(),
+            TwoBodySystem { mu: MU_EARTH },
+        );
 
         let r0 = iss_state().position().magnitude();
         let v0 = iss_state().velocity().magnitude();
@@ -833,10 +904,8 @@ mod tests {
     #[test]
     fn dp45_event_terminates_satellite() {
         // Give satellite a decaying trajectory (towards Earth center)
-        let decaying = OrbitalState::new(
-            Vector3::new(6500.0, 0.0, 0.0),
-            Vector3::new(-5.0, 3.0, 0.0),
-        );
+        let decaying =
+            OrbitalState::new(Vector3::new(6500.0, 0.0, 0.0), Vector3::new(-5.0, 3.0, 0.0));
 
         let mut group: IndependentGroup<TwoBodySystem> =
             IndependentGroup::dp45(10.0, default_tol())
@@ -855,10 +924,8 @@ mod tests {
 
     #[test]
     fn rk4_event_terminates_satellite() {
-        let decaying = OrbitalState::new(
-            Vector3::new(6500.0, 0.0, 0.0),
-            Vector3::new(-5.0, 3.0, 0.0),
-        );
+        let decaying =
+            OrbitalState::new(Vector3::new(6500.0, 0.0, 0.0), Vector3::new(-5.0, 3.0, 0.0));
 
         let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(1.0)
             .with_event_checker(collision_checker())
@@ -876,10 +943,8 @@ mod tests {
 
     #[test]
     fn event_one_terminated_other_continues() {
-        let decaying = OrbitalState::new(
-            Vector3::new(6500.0, 0.0, 0.0),
-            Vector3::new(-5.0, 3.0, 0.0),
-        );
+        let decaying =
+            OrbitalState::new(Vector3::new(6500.0, 0.0, 0.0), Vector3::new(-5.0, 3.0, 0.0));
 
         let mut group: IndependentGroup<TwoBodySystem> =
             IndependentGroup::dp45(10.0, default_tol())
@@ -893,8 +958,14 @@ mod tests {
         assert_eq!(outcome.terminations[0].satellite_id, SatId::from("decay"));
 
         let entries: Vec<_> = group.satellites().collect();
-        let safe = entries.iter().find(|e| e.id == SatId::from("safe")).unwrap();
-        let decay = entries.iter().find(|e| e.id == SatId::from("decay")).unwrap();
+        let safe = entries
+            .iter()
+            .find(|e| e.id == SatId::from("safe"))
+            .unwrap();
+        let decay = entries
+            .iter()
+            .find(|e| e.id == SatId::from("decay"))
+            .unwrap();
 
         assert!(!safe.terminated);
         assert!((safe.t - 1000.0).abs() < 1e-9);
@@ -909,9 +980,11 @@ mod tests {
             Vector3::new(0.0, (MU_EARTH / 6500.0_f64).sqrt(), 0.0),
         );
 
-        let mut group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("low", low, TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("low", low, TwoBodySystem { mu: MU_EARTH });
 
         let outcome = group.propagate_to(100.0).unwrap();
         assert!(outcome.terminations.is_empty());
@@ -930,19 +1003,27 @@ mod tests {
         group.propagate_to(100.0).unwrap();
 
         let entries: Vec<_> = group.satellites().collect();
-        let short = entries.iter().find(|e| e.id == SatId::from("short")).unwrap();
-        let long = entries.iter().find(|e| e.id == SatId::from("long")).unwrap();
+        let short = entries
+            .iter()
+            .find(|e| e.id == SatId::from("short"))
+            .unwrap();
+        let long = entries
+            .iter()
+            .find(|e| e.id == SatId::from("long"))
+            .unwrap();
 
-        assert!((short.t - 50.0).abs() < 1e-9, "short should stop at end_time=50");
+        assert!(
+            (short.t - 50.0).abs() < 1e-9,
+            "short should stop at end_time=50"
+        );
         assert!((long.t - 100.0).abs() < 1e-9, "long should reach t=100");
     }
 
     #[test]
     fn different_end_times() {
-        let mut group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::rk4(10.0)
-                .add_satellite_until("a", iss_state(), 30.0, TwoBodySystem { mu: MU_EARTH })
-                .add_satellite_until("b", sso_state(), 70.0, TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(10.0)
+            .add_satellite_until("a", iss_state(), 30.0, TwoBodySystem { mu: MU_EARTH })
+            .add_satellite_until("b", sso_state(), 70.0, TwoBodySystem { mu: MU_EARTH });
 
         group.propagate_to(100.0).unwrap();
 
@@ -969,10 +1050,7 @@ mod tests {
 
     #[test]
     fn all_finished_with_termination() {
-        let degenerate = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::new(0.0, 1.0, 0.0),
-        );
+        let degenerate = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, 1.0, 0.0));
         let mut group: IndependentGroup<TwoBodySystem> =
             IndependentGroup::dp45(10.0, default_tol())
                 .add_satellite_until("good", iss_state(), 100.0, TwoBodySystem { mu: MU_EARTH })
@@ -986,9 +1064,8 @@ mod tests {
 
     #[test]
     fn satellites_with_dynamics_accessor() {
-        let group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(10.0, default_tol())
+            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
 
         let items: Vec<_> = group.satellites_with_dynamics().collect();
         assert_eq!(items.len(), 1);
@@ -998,9 +1075,11 @@ mod tests {
 
     #[test]
     fn reset_state_changes_position() {
-        let mut group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
 
         group.propagate_to(100.0).unwrap();
         let t_before = group.satellite(&SatId::from("iss")).unwrap().t;
@@ -1019,10 +1098,9 @@ mod tests {
 
     #[test]
     fn into_parts_preserves_state_and_dynamics() {
-        let group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite_until("sso", sso_state(), 50.0, TwoBodySystem { mu: MU_EARTH });
+        let group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(10.0, default_tol())
+            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite_until("sso", sso_state(), 50.0, TwoBodySystem { mu: MU_EARTH });
 
         let parts = group.into_parts();
         assert_eq!(parts.len(), 2);
@@ -1040,9 +1118,11 @@ mod tests {
 
     #[test]
     fn into_parts_after_propagation() {
-        let mut group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
 
         group.propagate_to(100.0).unwrap();
 
@@ -1059,9 +1139,11 @@ mod tests {
 
     #[test]
     fn push_satellite_at_adds_to_running_group() {
-        let mut group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
 
         // Propagate to t=50
         group.propagate_to(50.0).unwrap();
@@ -1076,16 +1158,24 @@ mod tests {
 
         let entries: Vec<_> = group.satellites().collect();
         assert_eq!(entries.len(), 2);
-        assert!((entries[0].t - 100.0).abs() < 1e-9, "ISS should reach t=100");
-        assert!((entries[1].t - 100.0).abs() < 1e-9, "SSO should reach t=100");
+        assert!(
+            (entries[0].t - 100.0).abs() < 1e-9,
+            "ISS should reach t=100"
+        );
+        assert!(
+            (entries[1].t - 100.0).abs() < 1e-9,
+            "SSO should reach t=100"
+        );
         assert_eq!(entries[1].id, SatId::from("sso"));
     }
 
     #[test]
     fn all_finished_no_end_time_never_finished() {
-        let mut group: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
 
         group.propagate_to(1000.0).unwrap();
         // Without end_time and not terminated, never "finished"

@@ -143,6 +143,7 @@ impl SimConfig {
     pub fn integrator_choice(&self) -> IntegratorChoice {
         match self.integrator.kind.as_str() {
             "rk4" => IntegratorChoice::Rk4,
+            "dop853" => IntegratorChoice::Dop853,
             _ => IntegratorChoice::Dp45,
         }
     }
@@ -165,10 +166,7 @@ impl SimConfig {
 impl SatelliteConfig {
     /// Convert a SatelliteConfig to a SatelliteSpec.
     pub fn to_satellite_spec(&self, index: usize, body: KnownBody, mu: f64) -> SatelliteSpec {
-        let id = self
-            .id
-            .clone()
-            .unwrap_or_else(|| format!("sat-{index}"));
+        let id = self.id.clone().unwrap_or_else(|| format!("sat-{index}"));
 
         let (orbit, period, derived_name) = match &self.orbit {
             OrbitConfig::Circular {
@@ -323,7 +321,10 @@ mod tests {
             }]
         }"#;
         let config: SimConfig = serde_json::from_str(json).unwrap();
-        assert!(matches!(config.satellites[0].orbit, OrbitConfig::Tle { .. }));
+        assert!(matches!(
+            config.satellites[0].orbit,
+            OrbitConfig::Tle { .. }
+        ));
     }
 
     #[test]
@@ -529,15 +530,16 @@ satellites:
 
     #[test]
     fn load_unknown_extension() {
-        let dir =
-            std::env::temp_dir().join(format!("orts-config-test-ext-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("orts-config-test-ext-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.xml");
         std::fs::write(&path, "{}").unwrap();
         let result = SimConfig::load(&path);
         assert!(result.is_err());
         assert!(
-            result.unwrap_err().contains("Unknown config file extension"),
+            result
+                .unwrap_err()
+                .contains("Unknown config file extension"),
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -601,7 +603,8 @@ satellites:
 
     #[test]
     fn load_toml_file() {
-        let dir = std::env::temp_dir().join(format!("orts-config-test-toml-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("orts-config-test-toml-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.toml");
         std::fs::write(
@@ -626,7 +629,8 @@ altitude = 400.0
 
     #[test]
     fn load_yaml_file() {
-        let dir = std::env::temp_dir().join(format!("orts-config-test-yaml-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("orts-config-test-yaml-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.yml");
         std::fs::write(

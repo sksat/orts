@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use nalgebra::Vector3;
 use orts_integrator::{
-    AdvanceOutcome, DynamicalSystem, DormandPrince, IntegrationError, Integrator, OdeState, Rk4,
-    Tolerances,
+    AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
+    Integrator, OdeState, Rk4, Tolerances,
 };
 
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
@@ -247,12 +247,7 @@ where
         self
     }
 
-    pub fn add_satellite(
-        mut self,
-        id: impl Into<SatId>,
-        state: D::State,
-        dynamics: D,
-    ) -> Self {
+    pub fn add_satellite(mut self, id: impl Into<SatId>, state: D::State, dynamics: D) -> Self {
         self.ids.push(id.into());
         self.dynamics.dynamics.push(dynamics);
         self.state.states.push(state);
@@ -325,10 +320,7 @@ where
         self.terminated
     }
 
-    pub fn propagate_to(
-        &mut self,
-        t_target: f64,
-    ) -> Result<PropGroupOutcome, IntegrationError> {
+    pub fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError> {
         if self.terminated || self.t >= t_target {
             return Ok(PropGroupOutcome {
                 terminations: Vec::new(),
@@ -381,6 +373,89 @@ where
                         })
                     }
                     Ok(AdvanceOutcome::Event {
+                        reason: (sat_id, reason),
+                    }) => {
+                        let t = stepper.t();
+                        self.state = stepper.into_state();
+                        self.t = t;
+                        self.terminated = true;
+                        self.is_event_termination = true;
+                        let term = SatelliteTermination {
+                            satellite_id: sat_id,
+                            t,
+                            reason,
+                        };
+                        self.termination = Some(term.clone());
+                        Ok(PropGroupOutcome {
+                            terminations: vec![term],
+                        })
+                    }
+                    Err(e) => {
+                        self.terminated = true;
+                        let t = match &e {
+                            IntegrationError::NonFiniteState { t } => *t,
+                            IntegrationError::StepSizeTooSmall { t, .. } => *t,
+                        };
+                        let term = SatelliteTermination {
+                            satellite_id: self
+                                .ids
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| SatId::from("unknown")),
+                            t,
+                            reason: format!("{e:?}"),
+                        };
+                        self.termination = Some(term.clone());
+                        Ok(PropGroupOutcome {
+                            terminations: vec![term],
+                        })
+                    }
+                }
+            }
+            IntegratorConfig::Dop853 { dt, tolerances } => {
+                let mut stepper = Dop853.stepper(
+                    &self.dynamics,
+                    self.state.clone(),
+                    self.t,
+                    *dt,
+                    tolerances.clone(),
+                );
+
+                let ids = self.ids.clone();
+                let event_checker = &self.event_checker;
+
+                let result = if let Some(checker) = event_checker {
+                    stepper.advance_to(
+                        t_target,
+                        |_, _| {},
+                        |t: f64, gs: &GroupState<D::State>| {
+                            for (id, sat_state) in ids.iter().zip(&gs.states) {
+                                if let ControlFlow::Break(reason) = checker(t, sat_state) {
+                                    return ControlFlow::Break((id.clone(), reason));
+                                }
+                            }
+                            ControlFlow::Continue(())
+                        },
+                    )
+                } else {
+                    stepper.advance_to(
+                        t_target,
+                        |_, _| {},
+                        |_: f64, _: &GroupState<D::State>| {
+                            ControlFlow::<(SatId, String)>::Continue(())
+                        },
+                    )
+                };
+
+                match result {
+                    Ok(AdvanceOutcome853::Reached) => {
+                        self.state = stepper.into_state();
+                        self.t = t_target;
+                        Ok(PropGroupOutcome {
+                            terminations: Vec::new(),
+                        })
+                    }
+                    Ok(AdvanceOutcome853::Event {
                         reason: (sat_id, reason),
                     }) => {
                         let t = stepper.t();
@@ -515,19 +590,15 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::super::prop_group::PropGroup;
     use super::*;
+    use crate::OrbitalState;
     use nalgebra::Vector3;
     use orts_integrator::{Integrator, Rk4, Tolerances};
-    use crate::OrbitalState;
-    use super::super::prop_group::PropGroup;
 
     // ── InterSatelliteForce tests ──────────────────────────────────────────
 
-    fn pair_ctx<'a>(
-        t: f64,
-        pos_i: &'a Vector3<f64>,
-        pos_j: &'a Vector3<f64>,
-    ) -> PairContext<'a> {
+    fn pair_ctx<'a>(t: f64, pos_i: &'a Vector3<f64>, pos_j: &'a Vector3<f64>) -> PairContext<'a> {
         PairContext { t, pos_i, pos_j }
     }
 
@@ -645,19 +716,13 @@ mod tests {
     fn iss_state() -> OrbitalState {
         let r: f64 = 6778.137;
         let v = (398600.4418_f64 / r).sqrt();
-        OrbitalState::new(
-            Vector3::new(r, 0.0, 0.0),
-            Vector3::new(0.0, v, 0.0),
-        )
+        OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0))
     }
 
     fn sso_state() -> OrbitalState {
         let r: f64 = 6378.137 + 800.0;
         let v = (398600.4418_f64 / r).sqrt();
-        OrbitalState::new(
-            Vector3::new(r, 0.0, 0.0),
-            Vector3::new(0.0, v, 0.0),
-        )
+        OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0))
     }
 
     #[test]
@@ -669,20 +734,30 @@ mod tests {
             vec![TwoBodySystem { mu }, TwoBodySystem { mu }],
             vec![], // no interactions
         );
-        let independent = IndependentGroupDynamics::new(vec![
-            TwoBodySystem { mu },
-            TwoBodySystem { mu },
-        ]);
+        let independent =
+            IndependentGroupDynamics::new(vec![TwoBodySystem { mu }, TwoBodySystem { mu }]);
 
         let state = GroupState::new(vec![iss_state(), sso_state()]);
         let d_coupled = coupled.derivatives(0.0, &state);
         let d_independent = independent.derivatives(0.0, &state);
 
         // Should be bit-identical
-        assert_eq!(d_coupled.states[0].position(), d_independent.states[0].position());
-        assert_eq!(d_coupled.states[0].velocity(), d_independent.states[0].velocity());
-        assert_eq!(d_coupled.states[1].position(), d_independent.states[1].position());
-        assert_eq!(d_coupled.states[1].velocity(), d_independent.states[1].velocity());
+        assert_eq!(
+            d_coupled.states[0].position(),
+            d_independent.states[0].position()
+        );
+        assert_eq!(
+            d_coupled.states[0].velocity(),
+            d_independent.states[0].velocity()
+        );
+        assert_eq!(
+            d_coupled.states[1].position(),
+            d_independent.states[1].position()
+        );
+        assert_eq!(
+            d_coupled.states[1].velocity(),
+            d_independent.states[1].velocity()
+        );
     }
 
     #[test]
@@ -709,8 +784,10 @@ mod tests {
         let d_independent = independent.derivatives(0.0, &state);
 
         // Coupled should differ from independent (mutual gravity adds acceleration)
-        let diff0 = (*d_coupled.states[0].velocity() - *d_independent.states[0].velocity()).magnitude();
-        let diff1 = (*d_coupled.states[1].velocity() - *d_independent.states[1].velocity()).magnitude();
+        let diff0 =
+            (*d_coupled.states[0].velocity() - *d_independent.states[0].velocity()).magnitude();
+        let diff1 =
+            (*d_coupled.states[1].velocity() - *d_independent.states[1].velocity()).magnitude();
         assert!(diff0 > 0.0);
         assert!(diff1 > 0.0);
     }
@@ -720,22 +797,12 @@ mod tests {
         // 3 satellites with 3 pairs: (0,1), (0,2), (1,2)
         // Verify all pairs contribute correctly
         let mu = 398600.4418;
-        let s0 = OrbitalState::new(
-            Vector3::new(7000.0, 0.0, 0.0),
-            Vector3::new(0.0, 7.5, 0.0),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(0.0, 7200.0, 0.0),
-            Vector3::new(-7.3, 0.0, 0.0),
-        );
-        let s2 = OrbitalState::new(
-            Vector3::new(0.0, 0.0, 7400.0),
-            Vector3::new(0.0, 0.0, 7.1),
-        );
+        let s0 = OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0));
+        let s1 = OrbitalState::new(Vector3::new(0.0, 7200.0, 0.0), Vector3::new(-7.3, 0.0, 0.0));
+        let s2 = OrbitalState::new(Vector3::new(0.0, 0.0, 7400.0), Vector3::new(0.0, 0.0, 7.1));
 
-        let mg = |mu_i, mu_j| -> Arc<dyn InterSatelliteForce> {
-            Arc::new(MutualGravity { mu_i, mu_j })
-        };
+        let mg =
+            |mu_i, mu_j| -> Arc<dyn InterSatelliteForce> { Arc::new(MutualGravity { mu_i, mu_j }) };
 
         let coupled = CoupledGroupDynamics::new(
             vec![
@@ -744,9 +811,21 @@ mod tests {
                 TwoBodySystem { mu },
             ],
             vec![
-                InteractionPair { i: 0, j: 1, force: mg(1.0, 2.0) },
-                InteractionPair { i: 0, j: 2, force: mg(1.0, 3.0) },
-                InteractionPair { i: 1, j: 2, force: mg(2.0, 3.0) },
+                InteractionPair {
+                    i: 0,
+                    j: 1,
+                    force: mg(1.0, 2.0),
+                },
+                InteractionPair {
+                    i: 0,
+                    j: 2,
+                    force: mg(1.0, 3.0),
+                },
+                InteractionPair {
+                    i: 1,
+                    j: 2,
+                    force: mg(2.0, 3.0),
+                },
             ],
         );
 
@@ -764,7 +843,10 @@ mod tests {
         // All 3 satellites should have different accelerations from independent
         for k in 0..3 {
             let diff = (*derivs.states[k].velocity() - *d_indep.states[k].velocity()).magnitude();
-            assert!(diff > 0.0, "satellite {k} should have inter-satellite acceleration");
+            assert!(
+                diff > 0.0,
+                "satellite {k} should have inter-satellite acceleration"
+            );
         }
     }
 
@@ -776,18 +858,9 @@ mod tests {
         let mu_1 = 2.0;
         let mu_2 = 3.0;
 
-        let s0 = OrbitalState::new(
-            Vector3::new(10.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(0.0, 10.0, 0.0),
-            Vector3::zeros(),
-        );
-        let s2 = OrbitalState::new(
-            Vector3::new(0.0, 0.0, 10.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::new(10.0, 0.0, 0.0), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(0.0, 10.0, 0.0), Vector3::zeros());
+        let s2 = OrbitalState::new(Vector3::new(0.0, 0.0, 10.0), Vector3::zeros());
 
         // Use a dummy DynamicalSystem that returns zero derivatives
         /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
@@ -805,17 +878,26 @@ mod tests {
                 InteractionPair {
                     i: 0,
                     j: 1,
-                    force: Arc::new(MutualGravity { mu_i: mu_0, mu_j: mu_1 }),
+                    force: Arc::new(MutualGravity {
+                        mu_i: mu_0,
+                        mu_j: mu_1,
+                    }),
                 },
                 InteractionPair {
                     i: 0,
                     j: 2,
-                    force: Arc::new(MutualGravity { mu_i: mu_0, mu_j: mu_2 }),
+                    force: Arc::new(MutualGravity {
+                        mu_i: mu_0,
+                        mu_j: mu_2,
+                    }),
                 },
                 InteractionPair {
                     i: 1,
                     j: 2,
-                    force: Arc::new(MutualGravity { mu_i: mu_1, mu_j: mu_2 }),
+                    force: Arc::new(MutualGravity {
+                        mu_i: mu_1,
+                        mu_j: mu_2,
+                    }),
                 },
             ],
         );
@@ -861,14 +943,8 @@ mod tests {
         );
 
         // Initial: stretched spring (15 km apart, rest = 10 km), both at rest
-        let s0 = OrbitalState::new(
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(15.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::new(0.0, 0.0, 0.0), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(15.0, 0.0, 0.0), Vector3::zeros());
 
         let energy = |gs: &GroupState<OrbitalState>| -> f64 {
             let ke = gs.states[0].velocity().magnitude_squared() / 2.0
@@ -924,14 +1000,8 @@ mod tests {
             }],
         );
 
-        let s0 = OrbitalState::new(
-            Vector3::new(0.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(rest + amplitude, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::new(0.0, 0.0, 0.0), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(rest + amplitude, 0.0, 0.0), Vector3::zeros());
 
         let expected_period = 2.0 * std::f64::consts::PI / (2.0 * k).sqrt();
 
@@ -980,14 +1050,8 @@ mod tests {
             }],
         );
 
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(15.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(15.0, 0.0, 0.0), Vector3::zeros());
 
         let t_end = 10.0; // ~2.25 relative oscillation periods
 
@@ -1038,10 +1102,9 @@ mod tests {
 
     #[test]
     fn coupled_group_dp45_basic_propagation() {
-        let mut group: CoupledGroup<TwoBodySystem> =
-            CoupledGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: CoupledGroup<TwoBodySystem> = CoupledGroup::dp45(10.0, default_tol())
+            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
 
         let outcome = group.propagate_to(100.0).unwrap();
         assert!(outcome.terminations.is_empty());
@@ -1051,10 +1114,9 @@ mod tests {
 
     #[test]
     fn coupled_group_rk4_basic_propagation() {
-        let mut group: CoupledGroup<TwoBodySystem> =
-            CoupledGroup::rk4(10.0)
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: CoupledGroup<TwoBodySystem> = CoupledGroup::rk4(10.0)
+            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
 
         let outcome = group.propagate_to(100.0).unwrap();
         assert!(outcome.terminations.is_empty());
@@ -1068,24 +1130,24 @@ mod tests {
         use super::super::IndependentGroup;
 
         let dt = 10.0;
-        let mut coupled: CoupledGroup<TwoBodySystem> =
-            CoupledGroup::rk4(dt)
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut coupled: CoupledGroup<TwoBodySystem> = CoupledGroup::rk4(dt)
+            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
         coupled.propagate_to(100.0).unwrap();
 
-        let mut independent: IndependentGroup<TwoBodySystem> =
-            IndependentGroup::rk4(dt)
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut independent: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(dt)
+            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
         independent.propagate_to(100.0).unwrap();
 
         let coupled_states = &coupled.group_state().states;
         let indep_entries: Vec<_> = independent.satellites().collect();
 
         // RK4 with same dt: should be bit-identical
-        let iss_pos_err = (*coupled_states[0].position() - *indep_entries[0].state.position()).magnitude();
-        let sso_pos_err = (*coupled_states[1].position() - *indep_entries[1].state.position()).magnitude();
+        let iss_pos_err =
+            (*coupled_states[0].position() - *indep_entries[0].state.position()).magnitude();
+        let sso_pos_err =
+            (*coupled_states[1].position() - *indep_entries[1].state.position()).magnitude();
         assert!(iss_pos_err < 1e-12, "ISS position error: {iss_pos_err}");
         assert!(sso_pos_err < 1e-12, "SSO position error: {sso_pos_err}");
     }
@@ -1104,20 +1166,26 @@ mod tests {
 
         let k = 0.01;
         let rest = 10.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(15.0, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(15.0, 0.0, 0.0), Vector3::zeros());
 
-        let mut group: CoupledGroup<FreeParticle> =
-            CoupledGroup::dp45(1.0, Tolerances { atol: 1e-12, rtol: 1e-10 })
-                .add_satellite("a", s0, FreeParticle)
-                .add_satellite("b", s1, FreeParticle)
-                .with_interaction(0, 1, Arc::new(Spring { stiffness: k, rest_length: rest }));
+        let mut group: CoupledGroup<FreeParticle> = CoupledGroup::dp45(
+            1.0,
+            Tolerances {
+                atol: 1e-12,
+                rtol: 1e-10,
+            },
+        )
+        .add_satellite("a", s0, FreeParticle)
+        .add_satellite("b", s1, FreeParticle)
+        .with_interaction(
+            0,
+            1,
+            Arc::new(Spring {
+                stiffness: k,
+                rest_length: rest,
+            }),
+        );
 
         let energy = |gs: &GroupState<OrbitalState>| -> f64 {
             let ke = gs.states[0].velocity().magnitude_squared() / 2.0
@@ -1133,10 +1201,7 @@ mod tests {
 
         let e_final = energy(group.group_state());
         let rel_err = (e_final - e0).abs() / e0;
-        assert!(
-            rel_err < 1e-8,
-            "DP45 energy relative error = {rel_err:.2e}"
-        );
+        assert!(rel_err < 1e-8, "DP45 energy relative error = {rel_err:.2e}");
     }
 
     #[test]
@@ -1153,28 +1218,28 @@ mod tests {
         let k = 0.04;
         let rest = 10.0;
         let amplitude = 3.0;
-        let s0 = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::zeros(),
-        );
-        let s1 = OrbitalState::new(
-            Vector3::new(rest + amplitude, 0.0, 0.0),
-            Vector3::zeros(),
-        );
+        let s0 = OrbitalState::new(Vector3::zeros(), Vector3::zeros());
+        let s1 = OrbitalState::new(Vector3::new(rest + amplitude, 0.0, 0.0), Vector3::zeros());
 
         let expected_period = 2.0 * std::f64::consts::PI / (2.0_f64 * k).sqrt();
 
-        let mut group: CoupledGroup<FreeParticle> =
-            CoupledGroup::rk4(0.01)
-                .add_satellite("a", s0, FreeParticle)
-                .add_satellite("b", s1, FreeParticle)
-                .with_interaction(0, 1, Arc::new(Spring { stiffness: k, rest_length: rest }));
+        let mut group: CoupledGroup<FreeParticle> = CoupledGroup::rk4(0.01)
+            .add_satellite("a", s0, FreeParticle)
+            .add_satellite("b", s1, FreeParticle)
+            .with_interaction(
+                0,
+                1,
+                Arc::new(Spring {
+                    stiffness: k,
+                    rest_length: rest,
+                }),
+            );
 
         group.propagate_to(expected_period).unwrap();
 
         let final_sep = (group.group_state().states[1].position()
             - group.group_state().states[0].position())
-            .magnitude();
+        .magnitude();
         assert!(
             (final_sep - (rest + amplitude)).abs() < 0.01,
             "after period T={expected_period:.2}, separation = {final_sep:.4}"
@@ -1184,22 +1249,19 @@ mod tests {
     #[test]
     fn coupled_group_event_terminates_whole_group() {
         // One satellite hits Earth → entire coupled group terminates
-        let decaying = OrbitalState::new(
-            Vector3::new(6500.0, 0.0, 0.0),
-            Vector3::new(-5.0, 3.0, 0.0),
-        );
+        let decaying =
+            OrbitalState::new(Vector3::new(6500.0, 0.0, 0.0), Vector3::new(-5.0, 3.0, 0.0));
 
-        let mut group: CoupledGroup<TwoBodySystem> =
-            CoupledGroup::dp45(10.0, default_tol())
-                .with_event_checker(move |_t: f64, state: &OrbitalState| {
-                    if state.position().magnitude() < EARTH_RADIUS {
-                        ControlFlow::Break("collision".to_string())
-                    } else {
-                        ControlFlow::Continue(())
-                    }
-                })
-                .add_satellite("safe", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("decay", decaying, TwoBodySystem { mu: MU_EARTH });
+        let mut group: CoupledGroup<TwoBodySystem> = CoupledGroup::dp45(10.0, default_tol())
+            .with_event_checker(move |_t: f64, state: &OrbitalState| {
+                if state.position().magnitude() < EARTH_RADIUS {
+                    ControlFlow::Break("collision".to_string())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            })
+            .add_satellite("safe", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("decay", decaying, TwoBodySystem { mu: MU_EARTH });
 
         let outcome = group.propagate_to(10000.0).unwrap();
 
@@ -1213,26 +1275,21 @@ mod tests {
     #[test]
     fn coupled_group_multiple_events_first_wins() {
         // Two decaying satellites: first one detected wins
-        let decay1 = OrbitalState::new(
-            Vector3::new(6500.0, 0.0, 0.0),
-            Vector3::new(-5.0, 3.0, 0.0),
-        );
-        let decay2 = OrbitalState::new(
-            Vector3::new(6500.0, 0.0, 0.0),
-            Vector3::new(-5.0, 3.0, 0.0),
-        );
+        let decay1 =
+            OrbitalState::new(Vector3::new(6500.0, 0.0, 0.0), Vector3::new(-5.0, 3.0, 0.0));
+        let decay2 =
+            OrbitalState::new(Vector3::new(6500.0, 0.0, 0.0), Vector3::new(-5.0, 3.0, 0.0));
 
-        let mut group: CoupledGroup<TwoBodySystem> =
-            CoupledGroup::dp45(10.0, default_tol())
-                .with_event_checker(move |_t: f64, state: &OrbitalState| {
-                    if state.position().magnitude() < EARTH_RADIUS {
-                        ControlFlow::Break("collision".to_string())
-                    } else {
-                        ControlFlow::Continue(())
-                    }
-                })
-                .add_satellite("first", decay1, TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("second", decay2, TwoBodySystem { mu: MU_EARTH });
+        let mut group: CoupledGroup<TwoBodySystem> = CoupledGroup::dp45(10.0, default_tol())
+            .with_event_checker(move |_t: f64, state: &OrbitalState| {
+                if state.position().magnitude() < EARTH_RADIUS {
+                    ControlFlow::Break("collision".to_string())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            })
+            .add_satellite("first", decay1, TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("second", decay2, TwoBodySystem { mu: MU_EARTH });
 
         let outcome = group.propagate_to(10000.0).unwrap();
 
@@ -1244,15 +1301,11 @@ mod tests {
 
     #[test]
     fn coupled_group_nan_terminates() {
-        let degenerate = OrbitalState::new(
-            Vector3::zeros(),
-            Vector3::new(0.0, 1.0, 0.0),
-        );
+        let degenerate = OrbitalState::new(Vector3::zeros(), Vector3::new(0.0, 1.0, 0.0));
 
-        let mut group: CoupledGroup<TwoBodySystem> =
-            CoupledGroup::rk4(10.0)
-                .add_satellite("good", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("bad", degenerate, TwoBodySystem { mu: MU_EARTH });
+        let mut group: CoupledGroup<TwoBodySystem> = CoupledGroup::rk4(10.0)
+            .add_satellite("good", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("bad", degenerate, TwoBodySystem { mu: MU_EARTH });
 
         let outcome = group.propagate_to(100.0).unwrap();
 
@@ -1263,10 +1316,9 @@ mod tests {
 
     #[test]
     fn coupled_group_snapshot() {
-        let mut group: CoupledGroup<TwoBodySystem> =
-            CoupledGroup::dp45(10.0, default_tol())
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut group: CoupledGroup<TwoBodySystem> = CoupledGroup::dp45(10.0, default_tol())
+            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
 
         let snap = group.snapshot();
         assert_eq!(snap.positions.len(), 2);
@@ -1283,18 +1335,17 @@ mod tests {
 
     #[test]
     fn into_parts_preserves_state_and_dynamics() {
-        let group: CoupledGroup<TwoBodySystem> =
-            CoupledGroup::rk4(10.0)
-                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH })
-                .with_interaction(
-                    0,
-                    1,
-                    Arc::new(MutualGravity {
-                        mu_i: 1e-10,
-                        mu_j: 1e-10,
-                    }),
-                );
+        let group: CoupledGroup<TwoBodySystem> = CoupledGroup::rk4(10.0)
+            .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH })
+            .with_interaction(
+                0,
+                1,
+                Arc::new(MutualGravity {
+                    mu_i: 1e-10,
+                    mu_j: 1e-10,
+                }),
+            );
 
         let parts = group.into_parts();
         assert_eq!(parts.ids.len(), 2);
@@ -1311,22 +1362,19 @@ mod tests {
 
     #[test]
     fn into_parts_after_termination() {
-        let decaying = OrbitalState::new(
-            Vector3::new(6500.0, 0.0, 0.0),
-            Vector3::new(-5.0, 3.0, 0.0),
-        );
+        let decaying =
+            OrbitalState::new(Vector3::new(6500.0, 0.0, 0.0), Vector3::new(-5.0, 3.0, 0.0));
 
-        let mut group: CoupledGroup<TwoBodySystem> =
-            CoupledGroup::dp45(10.0, default_tol())
-                .with_event_checker(move |_t: f64, state: &OrbitalState| {
-                    if state.position().magnitude() < EARTH_RADIUS {
-                        ControlFlow::Break("collision".to_string())
-                    } else {
-                        ControlFlow::Continue(())
-                    }
-                })
-                .add_satellite("safe", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("decay", decaying, TwoBodySystem { mu: MU_EARTH });
+        let mut group: CoupledGroup<TwoBodySystem> = CoupledGroup::dp45(10.0, default_tol())
+            .with_event_checker(move |_t: f64, state: &OrbitalState| {
+                if state.position().magnitude() < EARTH_RADIUS {
+                    ControlFlow::Break("collision".to_string())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            })
+            .add_satellite("safe", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("decay", decaying, TwoBodySystem { mu: MU_EARTH });
 
         group.propagate_to(10000.0).unwrap();
         assert!(group.is_terminated());
@@ -1364,10 +1412,9 @@ mod tests {
 
     #[test]
     fn coupled_group_ids() {
-        let group: CoupledGroup<TwoBodySystem> =
-            CoupledGroup::dp45(10.0, default_tol())
-                .add_satellite("alpha", iss_state(), TwoBodySystem { mu: MU_EARTH })
-                .add_satellite("beta", sso_state(), TwoBodySystem { mu: MU_EARTH });
+        let group: CoupledGroup<TwoBodySystem> = CoupledGroup::dp45(10.0, default_tol())
+            .add_satellite("alpha", iss_state(), TwoBodySystem { mu: MU_EARTH })
+            .add_satellite("beta", sso_state(), TwoBodySystem { mu: MU_EARTH });
 
         let ids = group.ids();
         assert_eq!(ids.len(), 2);
