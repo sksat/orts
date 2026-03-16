@@ -97,7 +97,7 @@ Rust crate は `orts-` prefix を使用し、ディレクトリ名は prefix な
 
 | Crate | ディレクトリ | 責務 |
 |---|---|---|
-| orts-integrator | `integrator/` | 汎用 ODE ソルバ。OdeState trait、DynamicalSystem trait、RK4、Dormand-Prince 適応刻み |
+| utsuroi | `utsuroi/` | 汎用 ODE ソルバ。OdeState trait、DynamicalSystem trait、RK4、Dormand-Prince 適応刻み、Yoshida シンプレクティック積分 |
 | kaname | `kaname/` | 測地学・天文ライブラリ。詳細は [`kaname/DESIGN.md`](kaname/DESIGN.md) |
 | tobari | `tobari/` | 大気密度モデル・宇宙天気。詳細は [`tobari/DESIGN.md`](tobari/DESIGN.md) |
 | orts | `orts/` | 軌道力学 + シミュレーション。重力場 (J2+)、ケプラー要素、TLE、摂動 (ForceModel: 抗力/SRP/第三体)、OrbitalSystem、イベント検出、姿勢力学 (AttitudeState/TorqueModel)、SpacecraftState (軌道+姿勢+質量)、LoadModel trait、ECS データモデル・Rerun エクスポート |
@@ -113,7 +113,7 @@ Rust crate は `orts-` prefix を使用し、ディレクトリ名は prefix な
 ### 依存関係
 
 ```
-kaname              orts-integrator       ← 基盤層
+kaname              utsuroi               ← 基盤層
   ↑   ↑                  ↑
   │   tobari              │               ← 環境層
   │     ↑                 │
@@ -122,11 +122,11 @@ kaname              orts-integrator       ← 基盤層
   └── orts-cli                            ← アプリ層
 ```
 
-- kaname と orts-integrator は独立（ワークスペース内の他クレートに依存しない）
+- kaname と utsuroi は独立（ワークスペース内の他クレートに依存しない）
 - tobari は kaname のみに依存し、大気モデルライブラリとして独立性を維持
 - orts は integrator, kaname, tobari を利用（軌道力学 + 摂動モデル + 姿勢力学 + 宇宙機統合 + データ記録）
 - orts-cli は orts を利用する薄い CLI ラッパー
-- orts-integrator は汎用 ODE ソルバであり、軌道力学・姿勢力学の両方から利用される
+- utsuroi は汎用 ODE ソルバであり、軌道力学・姿勢力学の両方から利用される
 
 ### 設計原則
 

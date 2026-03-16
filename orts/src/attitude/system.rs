@@ -1,6 +1,6 @@
 use kaname::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
-use orts_integrator::DynamicalSystem;
+use utsuroi::DynamicalSystem;
 
 use super::TorqueModel;
 use super::state::AttitudeState;

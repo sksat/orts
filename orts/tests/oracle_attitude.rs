@@ -2,7 +2,7 @@ use std::f64::consts::PI;
 use std::ops::ControlFlow;
 
 use nalgebra::{Matrix3, UnitQuaternion, Vector3, Vector4};
-use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
+use utsuroi::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
 
 use orts::attitude::{AttitudeState, AttitudeSystem, GravityGradientTorque};
 

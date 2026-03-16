@@ -440,7 +440,7 @@ mod tests {
         use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
         use nalgebra::Matrix3;
-        use orts_integrator::DynamicalSystem;
+        use utsuroi::DynamicalSystem;
 
         use super::super::SpacecraftDynamics;
 

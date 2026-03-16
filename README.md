@@ -19,7 +19,7 @@ Rust core for simulation with a React-based real-time 3D viewer connected via We
 | Package | Description |
 |---------|-------------|
 | `orts` | CLI interface (run, serve, convert) |
-| `orts-integrator` | Numerical integrators (RK4) |
+| `utsuroi` | Numerical integrators (RK4, Dormand-Prince, Yoshida symplectic) |
 | `orts-orbits` | Orbital mechanics (two-body, Keplerian elements) |
 | `orts-datamodel` | ECS-inspired data model with Rerun SDK integration |
 | `orts-viewer` | Real-time 3D orbit viewer (React + R3F) |

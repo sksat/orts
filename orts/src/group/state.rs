@@ -1,4 +1,4 @@
-use orts_integrator::{OdeState, Tolerances};
+use utsuroi::{OdeState, Tolerances};
 
 /// Composite ODE state for N satellites.
 ///

@@ -28,9 +28,9 @@ use orts::orbital_system::OrbitalSystem;
 use orts::perturbations::AtmosphericDrag;
 use orts::perturbations::SolarRadiationPressure;
 use orts::perturbations::ThirdBodyGravity;
-use orts_integrator::{DormandPrince, DynamicalSystem, Tolerances};
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
+use utsuroi::{DormandPrince, DynamicalSystem, Tolerances};
 
 // ─── Fixture data structures ───
 

@@ -1,7 +1,7 @@
 use crate::gravity::GravityField;
 use kaname::epoch::Epoch;
 use nalgebra::Matrix3;
-use orts_integrator::DynamicalSystem;
+use utsuroi::DynamicalSystem;
 
 use super::{ExternalLoads, LoadModel, SpacecraftState};
 
@@ -135,7 +135,7 @@ mod tests {
     use crate::perturbations::ForceModel;
     use kaname::constants::MU_EARTH;
     use nalgebra::{Vector3, Vector4};
-    use orts_integrator::{Integrator, OdeState, Rk4};
+    use utsuroi::{Integrator, OdeState, Rk4};
 
     use super::super::{ForceModelAtCoM, TorqueModelOnly};
 

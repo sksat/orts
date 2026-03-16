@@ -1,5 +1,5 @@
 use nalgebra::{Matrix3, UnitQuaternion, Vector3, Vector4};
-use orts_integrator::{OdeState, Tolerances};
+use utsuroi::{OdeState, Tolerances};
 
 /// Attitude state: unit quaternion (orientation) + angular velocity in body frame.
 ///

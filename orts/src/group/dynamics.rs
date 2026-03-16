@@ -1,4 +1,4 @@
-use orts_integrator::DynamicalSystem;
+use utsuroi::DynamicalSystem;
 
 use super::state::GroupState;
 
@@ -46,8 +46,8 @@ mod tests {
     use crate::OrbitalState;
     use crate::two_body::TwoBodySystem;
     use nalgebra::Vector3;
-    use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
     use std::ops::ControlFlow;
+    use utsuroi::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
 
     /// Simple harmonic oscillator: dv/dt = -x (ω = 1).
     struct HarmonicOscillator;

@@ -1,5 +1,5 @@
 use nalgebra::Vector3;
-use orts_integrator::{OdeState, State, Tolerances};
+use utsuroi::{OdeState, State, Tolerances};
 
 /// Orbital state: position and velocity in 3D space.
 ///

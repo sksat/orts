@@ -1399,7 +1399,7 @@ mod tests {
         use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
         use nalgebra::Matrix3;
-        use orts_integrator::{Integrator, OdeState, Rk4};
+        use utsuroi::{Integrator, OdeState, Rk4};
 
         let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
@@ -1422,7 +1422,7 @@ mod tests {
         use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
         use nalgebra::Matrix3;
-        use orts_integrator::{Integrator, Rk4};
+        use utsuroi::{Integrator, Rk4};
 
         let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
@@ -1451,7 +1451,7 @@ mod tests {
         use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
         use nalgebra::Matrix3;
-        use orts_integrator::{Integrator, Rk4};
+        use utsuroi::{Integrator, Rk4};
 
         // Asymmetric panel: only one face, so drag depends on orientation
         let panel = SurfacePanel::at_com(20.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
@@ -1489,7 +1489,7 @@ mod tests {
         use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
         use nalgebra::Matrix3;
-        use orts_integrator::{Integrator, OdeState, Rk4};
+        use utsuroi::{Integrator, OdeState, Rk4};
 
         let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.01));
         let inertia = Matrix3::from_diagonal(&Vector3::new(10.0, 10.0, 10.0));

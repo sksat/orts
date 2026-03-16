@@ -1,5 +1,5 @@
 use kaname::epoch::Epoch;
-use orts_integrator::DynamicalSystem;
+use utsuroi::DynamicalSystem;
 
 use crate::OrbitalState;
 use crate::gravity::GravityField;
@@ -87,8 +87,8 @@ mod tests {
     use crate::two_body::TwoBodySystem;
     use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
     use nalgebra::vector;
-    use orts_integrator::{Integrator, Rk4};
     use std::f64::consts::PI;
+    use utsuroi::{Integrator, Rk4};
 
     #[test]
     fn point_mass_matches_two_body_acceleration() {

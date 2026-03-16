@@ -1,7 +1,7 @@
 use std::fmt;
 
 use nalgebra::Vector3;
-use orts_integrator::IntegrationError;
+use utsuroi::IntegrationError;
 
 /// Unique identifier for a satellite within a group.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

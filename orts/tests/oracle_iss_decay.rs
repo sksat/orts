@@ -28,9 +28,9 @@ use orts::OrbitalState;
 use orts::gravity::ZonalHarmonics;
 use orts::orbital_system::OrbitalSystem;
 use orts::perturbations::AtmosphericDrag;
-use orts_integrator::{DormandPrince, Tolerances};
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
+use utsuroi::{DormandPrince, Tolerances};
 
 // ─── Fixture data structures ───
 
@@ -126,7 +126,7 @@ fn orbital_period(sma: f64, mu: f64) -> f64 {
 /// Advances the stepper by `n_orbits` orbital periods, sampling SMA at
 /// `samples_per_orbit` points per orbit, and returns the time-averaged value.
 fn orbit_averaged_sma(
-    stepper: &mut orts_integrator::AdaptiveStepper<'_, OrbitalSystem>,
+    stepper: &mut utsuroi::AdaptiveStepper<'_, OrbitalSystem>,
     mu: f64,
     n_orbits: usize,
     samples_per_orbit: usize,

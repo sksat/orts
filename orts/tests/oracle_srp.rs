@@ -16,8 +16,8 @@ use orts::gravity::PointMass;
 use orts::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;
 use orts::perturbations::SolarRadiationPressure;
-use orts_integrator::{Integrator, Rk4};
 use std::f64::consts::PI;
+use utsuroi::{Integrator, Rk4};
 
 // ============================================================================
 // Helpers

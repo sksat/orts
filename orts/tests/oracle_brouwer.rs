@@ -15,9 +15,9 @@ use orts::OrbitalState;
 use orts::gravity::ZonalHarmonics;
 use orts::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;
-use orts_integrator::{DormandPrince, IntegrationOutcome, Tolerances};
 use std::f64::consts::PI;
 use std::ops::ControlFlow;
+use utsuroi::{DormandPrince, IntegrationOutcome, Tolerances};
 
 // ============================================================================
 // Constants

@@ -1,7 +1,7 @@
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
 use nalgebra::{Vector3, Vector4};
-use orts_integrator::{OdeState, Tolerances};
+use utsuroi::{OdeState, Tolerances};
 
 /// Combined spacecraft state: orbital (6D) + attitude (7D) + mass (1D).
 ///

@@ -14,7 +14,7 @@ use orts::gravity::PointMass;
 use orts::spacecraft::{
     BurnWindow, G0, ScheduledBurn, SpacecraftDynamics, SpacecraftState, Thruster,
 };
-use orts_integrator::{Integrator, Rk4};
+use utsuroi::{Integrator, Rk4};
 
 /// Free-space SpacecraftDynamics (negligible gravity).
 ///

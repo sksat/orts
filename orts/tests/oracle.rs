@@ -21,9 +21,9 @@ use orts::kepler::KeplerianElements;
 use orts::orbital_system::OrbitalSystem;
 use orts::perturbations::AtmosphericDrag;
 use orts::perturbations::ThirdBodyGravity;
-use orts_integrator::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
 use std::f64::consts::PI;
 use std::ops::ControlFlow;
+use utsuroi::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
 
 // ============================================================================
 // Helpers

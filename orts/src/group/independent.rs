@@ -1,6 +1,6 @@
 use std::ops::ControlFlow;
 
-use orts_integrator::{
+use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
     Integrator, OdeState, Rk4, Tolerances,
 };
@@ -443,7 +443,7 @@ mod tests {
     use crate::OrbitalState;
     use crate::two_body::TwoBodySystem;
     use nalgebra::Vector3;
-    use orts_integrator::IntegrationOutcome;
+    use utsuroi::IntegrationOutcome;
 
     use super::super::prop_group::PropGroup;
 

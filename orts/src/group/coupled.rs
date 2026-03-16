@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use nalgebra::Vector3;
-use orts_integrator::{
+use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
     Integrator, OdeState, Rk4, Tolerances,
 };
@@ -594,7 +594,7 @@ mod tests {
     use super::*;
     use crate::OrbitalState;
     use nalgebra::Vector3;
-    use orts_integrator::{Integrator, Rk4, Tolerances};
+    use utsuroi::{Integrator, Rk4, Tolerances};
 
     // ── InterSatelliteForce tests ──────────────────────────────────────────
 

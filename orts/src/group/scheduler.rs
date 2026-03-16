@@ -12,7 +12,7 @@
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use orts_integrator::{DynamicalSystem, IntegrationError, OdeState};
+use utsuroi::{DynamicalSystem, IntegrationError, OdeState};
 
 use super::coupled::{CoupledGroup, InterSatelliteForce, PairContext};
 use super::independent::{IndependentGroup, IntegratorConfig};
@@ -1260,7 +1260,7 @@ mod tests {
 
     // ── Step 4: Independent-only propagation ────────────────────────────
 
-    use orts_integrator::Tolerances;
+    use utsuroi::Tolerances;
 
     fn test_dp45() -> IntegratorConfig {
         IntegratorConfig::Dp45 {
@@ -1357,7 +1357,7 @@ mod tests {
     // ── Step 5: Coupled-only propagation ─────────────────────────────
 
     use super::super::coupled::{CoupledGroup, Spring};
-    use orts_integrator::DynamicalSystem;
+    use utsuroi::DynamicalSystem;
 
     /// Free particle: d(pos)/dt = vel, d(vel)/dt = 0.
     #[derive(Clone, Copy)]

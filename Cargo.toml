@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "integrator",
+    "utsuroi",
     "kaname",
     "cli",
     "orts",
@@ -15,7 +15,7 @@ license = "MIT"
 repository = "https://github.com/sksat/orts"
 
 [workspace.dependencies]
-orts-integrator = { path = "integrator" }
+utsuroi = { path = "utsuroi" }
 kaname = { path = "kaname" }
 orts = { path = "orts" }
 tobari = { path = "tobari" }

@@ -16,7 +16,7 @@ pub use scheduler::{InteractionSpec, PairPolicy, PairRegime, RegimeConfig, Sched
 pub use state::GroupState;
 
 use nalgebra::{Vector3, Vector4};
-use orts_integrator::OdeState;
+use utsuroi::OdeState;
 
 use crate::OrbitalState;
 
