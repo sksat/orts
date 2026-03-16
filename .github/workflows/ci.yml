@@ -16,12 +16,15 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.8.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Format
+        run: cargo fmt --all -- --check
 
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
