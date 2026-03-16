@@ -136,6 +136,98 @@ impl<const DIM: usize> State<DIM, 2> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use nalgebra::SVector;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    proptest! {
+        /// axpy(0, other) == self (adding zero doesn't change state)
+        #[test]
+        fn axpy_zero_is_identity(
+            x in -100.0f64..100.0,
+            v in -100.0f64..100.0,
+            ox in -100.0f64..100.0,
+            ov in -100.0f64..100.0,
+        ) {
+            let state = State::<1, 2>::new(SVector::from([x]), SVector::from([v]));
+            let other = State::<1, 2>::new(SVector::from([ox]), SVector::from([ov]));
+            let result = state.axpy(0.0, &other);
+            prop_assert!((result.y()[0] - x).abs() < 1e-15);
+            prop_assert!((result.dy()[0] - v).abs() < 1e-15);
+        }
+
+        /// scale(1) == self
+        #[test]
+        fn scale_one_is_identity(
+            x in -100.0f64..100.0,
+            v in -100.0f64..100.0,
+        ) {
+            let state = State::<1, 2>::new(SVector::from([x]), SVector::from([v]));
+            let result = state.scale(1.0);
+            prop_assert!((result.y()[0] - x).abs() < 1e-15);
+            prop_assert!((result.dy()[0] - v).abs() < 1e-15);
+        }
+
+        /// scale(a).scale(b) == scale(a*b)
+        #[test]
+        fn scale_is_multiplicative(
+            x in -100.0f64..100.0,
+            v in -100.0f64..100.0,
+            a in -10.0f64..10.0,
+            b in -10.0f64..10.0,
+        ) {
+            let state = State::<1, 2>::new(SVector::from([x]), SVector::from([v]));
+            let left = state.scale(a).scale(b);
+            let right = state.scale(a * b);
+            prop_assert!((left.y()[0] - right.y()[0]).abs() < 1e-10 * (1.0 + right.y()[0].abs()));
+            prop_assert!((left.dy()[0] - right.dy()[0]).abs() < 1e-10 * (1.0 + right.dy()[0].abs()));
+        }
+
+        /// axpy(s, other) == self + s * other (linearity)
+        #[test]
+        fn axpy_is_linear(
+            x in -100.0f64..100.0,
+            v in -100.0f64..100.0,
+            ox in -100.0f64..100.0,
+            ov in -100.0f64..100.0,
+            s in -10.0f64..10.0,
+        ) {
+            let state = State::<1, 2>::new(SVector::from([x]), SVector::from([v]));
+            let other = State::<1, 2>::new(SVector::from([ox]), SVector::from([ov]));
+            let result = state.axpy(s, &other);
+            let expected_y = x + s * ox;
+            let expected_dy = v + s * ov;
+            prop_assert!((result.y()[0] - expected_y).abs() < 1e-10 * (1.0 + expected_y.abs()));
+            prop_assert!((result.dy()[0] - expected_dy).abs() < 1e-10 * (1.0 + expected_dy.abs()));
+        }
+
+        /// zero_like produces actual zeros
+        #[test]
+        fn zero_like_is_zero(
+            x in -100.0f64..100.0,
+            v in -100.0f64..100.0,
+        ) {
+            let state = State::<1, 2>::new(SVector::from([x]), SVector::from([v]));
+            let zero = state.zero_like();
+            prop_assert_eq!(zero.y()[0], 0.0);
+            prop_assert_eq!(zero.dy()[0], 0.0);
+        }
+
+        /// is_finite returns true for finite values, false for NaN/Inf
+        #[test]
+        fn is_finite_for_finite_values(
+            x in -1e300f64..1e300,
+            v in -1e300f64..1e300,
+        ) {
+            let state = State::<1, 2>::new(SVector::from([x]), SVector::from([v]));
+            prop_assert!(state.is_finite());
+        }
+    }
+}
+
 /// A dynamical system that can compute state derivatives at a given time.
 ///
 /// The derivative has the same type as the state (standard ODE formulation:

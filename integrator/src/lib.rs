@@ -8,6 +8,8 @@ mod state;
 mod verlet;
 
 #[cfg(test)]
+mod comparison;
+#[cfg(test)]
 pub(crate) mod test_systems;
 
 pub use dop853::{AdaptiveStepper853, AdvanceOutcome853, Dop853};

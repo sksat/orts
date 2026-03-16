@@ -219,126 +219,13 @@ mod tests {
         }
     }
 
-    // --- Symplectic property: bounded energy oscillation ---
-    //
-    // Symplectic integrators preserve a modified Hamiltonian H̃ = H + O(dt^p),
-    // so the true energy H oscillates with bounded amplitude O(dt^p) for ALL time.
-    // Non-symplectic methods (RK4 etc.) have secular energy drift that grows
-    // linearly with integration time.
-    //
-    // We verify this by splitting a long integration into halves and comparing
-    // the max |ΔE| in each half. For symplectic methods the ratio ≈ 1.0 (bounded);
-    // for non-symplectic the ratio ≈ 2.0 (linear growth).
-
-    /// Measure max energy deviation in the first and second halves of an integration.
-    fn energy_drift_halves<F>(
-        integrator: F,
-        t_end: f64,
-        dt: f64,
-    ) -> (f64, f64)
-    where
-        F: Fn(&HarmonicOscillator, State<3, 2>, f64, f64, f64, &mut dyn FnMut(f64, &State<3, 2>)) -> State<3, 2>,
-    {
-        let system = HarmonicOscillator;
-        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
-        let initial_energy = 0.5;
-        let t_mid = t_end / 2.0;
-
-        let mut first_half: f64 = 0.0;
-        let mut second_half: f64 = 0.0;
-
-        integrator(&system, initial, 0.0, t_end, dt, &mut |t, state: &State<3, 2>| {
-            let energy = 0.5 * (state.dy().norm_squared() + state.y().norm_squared());
-            let drift = (energy - initial_energy).abs();
-            if t < t_mid {
-                first_half = first_half.max(drift);
-            } else {
-                second_half = second_half.max(drift);
-            }
-        });
-
-        (first_half, second_half)
-    }
-
-    #[test]
-    fn verlet_no_secular_energy_drift() {
-        // Symplectic: max |ΔE| in the second half ≈ first half (ratio ≈ 1.0).
-        let dt = 0.05;
-        let t_end = 1000.0 * 2.0 * std::f64::consts::PI; // 1000 periods
-
-        let (first, second) = energy_drift_halves(
-            |sys, init, t0, te, dt, cb| StormerVerlet.integrate(sys, init, t0, te, dt, cb),
-            t_end, dt,
-        );
-
-        let ratio = second / first;
-        assert!(
-            ratio < 1.2,
-            "Verlet energy drift ratio (2nd/1st half) should be ~1.0, got {ratio:.2} \
-             (first={first:.2e}, second={second:.2e})"
-        );
-    }
-
-    #[test]
-    fn rk4_has_secular_energy_drift() {
-        // Contrast: RK4 (non-symplectic) has secular drift (ratio ≈ 2.0).
-        // This test exists to confirm the measurement methodology —
-        // if RK4 also showed ratio ≈ 1.0, the test above would be meaningless.
-        use crate::{Integrator, Rk4};
-
-        let dt = 0.05;
-        let t_end = 1000.0 * 2.0 * std::f64::consts::PI;
-
-        let (first, second) = energy_drift_halves(
-            |sys, init, t0, te, dt, cb| Rk4.integrate(sys, init, t0, te, dt, cb),
-            t_end, dt,
-        );
-
-        let ratio = second / first;
-        assert!(
-            ratio > 1.5,
-            "RK4 energy drift ratio (2nd/1st half) should be ~2.0, got {ratio:.2} \
-             (first={first:.2e}, second={second:.2e})"
-        );
-    }
-
     // --- Trade-offs ---
     //
-    // Symplectic integrators are not universally better. Key limitations:
-    // 1. Lower order (2nd) means worse per-step accuracy than RK4 (4th)
-    //    → need smaller dt for the same local error
-    // 2. Symplectic property holds only for separable Hamiltonians
-    //    (a = f(q) only). Velocity-dependent forces (drag, Lorentz)
-    //    break separability and the method degrades to a generic 2nd-order scheme.
-
-    #[test]
-    fn verlet_less_accurate_per_step_than_rk4() {
-        // At the same dt, RK4 (4th-order) is orders of magnitude more accurate.
-        // The symplectic advantage only appears over many periods.
-        use crate::{Integrator, Rk4};
-
-        let system = HarmonicOscillator;
-        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
-        let dt = 0.01;
-        let t_end = 2.0 * std::f64::consts::PI;
-
-        let verlet_final = StormerVerlet.integrate(&system, initial.clone(), 0.0, t_end, dt, |_, _| {});
-        let rk4_final = Rk4.integrate(&system, initial, 0.0, t_end, dt, |_, _| {});
-
-        let verlet_err = (verlet_final.y().x - 1.0).abs();
-        let rk4_err = (rk4_final.y().x - 1.0).abs();
-
-        assert!(
-            rk4_err < verlet_err,
-            "RK4 ({rk4_err:.2e}) should be more accurate than Verlet ({verlet_err:.2e}) at same dt"
-        );
-        // 2nd-order vs 4th-order → error ratio should be O(dt^{-2}) ≈ 10000x at dt=0.01
-        assert!(
-            verlet_err / rk4_err > 100.0,
-            "Verlet/RK4 error ratio should be large (2nd vs 4th order): {:.0}x",
-            verlet_err / rk4_err
-        );
-    }
+    // Symplectic property holds only for separable Hamiltonians
+    // (a = f(q) only). Velocity-dependent forces (drag, Lorentz)
+    // break separability and the method degrades to a generic 2nd-order scheme.
+    //
+    // Per-step accuracy and energy drift comparisons with RK4 are in comparison.rs.
 
     #[test]
     fn verlet_not_symplectic_for_velocity_dependent_forces() {
@@ -365,9 +252,8 @@ mod tests {
         let dt = 0.01;
         let t_end = 200.0 * std::f64::consts::PI; // ~628s, 100 periods
 
-        let final_state = StormerVerlet.integrate(
-            &DampedOscillator, initial, 0.0, t_end, dt, |_, _| {},
-        );
+        let final_state =
+            StormerVerlet.integrate(&DampedOscillator, initial, 0.0, t_end, dt, |_, _| {});
 
         // Analytical: amplitude ∝ e^(-γ/2 · t), γ=0.01
         // → e^(-0.005 · 628.3) ≈ 0.043
@@ -474,10 +360,7 @@ mod tests {
             max_drift = max_drift.max((energy - initial_energy).abs());
         });
 
-        assert!(
-            max_drift < 1e-4,
-            "2D energy drift: {max_drift:.2e}"
-        );
+        assert!(max_drift < 1e-4, "2D energy drift: {max_drift:.2e}");
     }
 
     // --- Event detection ---
@@ -568,6 +451,132 @@ mod tests {
                 assert!(t > 0.3, "NaN detected at t={t}");
             }
             _ => panic!("Expected NonFiniteState error"),
+        }
+    }
+
+    // --- Property-based tests (proptest) ---
+    //
+    // These verify universal mathematical properties that must hold for ANY
+    // valid initial conditions and step sizes, not just hand-picked examples.
+
+    use nalgebra::SVector;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Verlet is time-reversible: N steps forward + N steps backward = identity.
+        /// This is a fundamental property of symplectic integrators that holds
+        /// to machine precision (not just to truncation order).
+        #[test]
+        fn verlet_time_reversible(
+            x0 in -10.0f64..10.0,
+            v0 in -5.0f64..5.0,
+            dt in 0.01f64..0.2,
+            n_steps in 10u32..100,
+        ) {
+            let system = HarmonicOscillator1D;
+            let initial = State::<1, 2>::new(SVector::from([x0]), SVector::from([v0]));
+
+            // Forward integration: N steps with +dt
+            let mut state = initial.clone();
+            let mut t = 0.0;
+            for _ in 0..n_steps {
+                state = StormerVerlet.step(&system, t, &state, dt);
+                t += dt;
+            }
+
+            // Backward integration: N steps with -dt
+            for _ in 0..n_steps {
+                t -= dt;
+                state = StormerVerlet.step(&system, t, &state, -dt);
+            }
+
+            // Should return to initial state to near machine precision
+            let x_err = (state.y()[0] - x0).abs();
+            let v_err = (state.dy()[0] - v0).abs();
+            let scale = x0.abs().max(v0.abs()).max(1.0);
+            prop_assert!(
+                x_err < 1e-10 * scale,
+                "Time-reversal x error: {x_err:.2e} (x0={x0}, v0={v0}, dt={dt}, steps={n_steps})"
+            );
+            prop_assert!(
+                v_err < 1e-10 * scale,
+                "Time-reversal v error: {v_err:.2e} (x0={x0}, v0={v0}, dt={dt}, steps={n_steps})"
+            );
+        }
+
+        /// For any initial condition, halving dt reduces the integration error.
+        /// This is weaker than testing the exact convergence order but holds
+        /// universally without needing the asymptotic regime.
+        #[test]
+        fn verlet_error_decreases_with_smaller_dt(
+            x0 in -10.0f64..10.0,
+            v0 in -5.0f64..5.0,
+            dt in 0.02f64..0.1,
+        ) {
+            let system = HarmonicOscillator1D;
+            let t_end = 2.0 * std::f64::consts::PI;
+            let expected_x = x0 * t_end.cos() + v0 * t_end.sin();
+
+            let coarse = StormerVerlet.integrate(
+                &system,
+                State::<1, 2>::new(SVector::from([x0]), SVector::from([v0])),
+                0.0, t_end, dt, |_, _| {},
+            );
+            let fine = StormerVerlet.integrate(
+                &system,
+                State::<1, 2>::new(SVector::from([x0]), SVector::from([v0])),
+                0.0, t_end, dt / 2.0, |_, _| {},
+            );
+
+            let err_coarse = (coarse.y()[0] - expected_x).abs();
+            let err_fine = (fine.y()[0] - expected_x).abs();
+
+            prop_assume!(err_coarse > 1e-14);
+            prop_assert!(
+                err_fine < err_coarse,
+                "Finer dt should give smaller error: coarse={err_coarse:.2e}, fine={err_fine:.2e}"
+            );
+        }
+
+        /// For any initial condition and step size, Verlet's energy drift
+        /// does not grow over time (2nd half max |ΔE| ≈ 1st half).
+        #[test]
+        fn verlet_symplectic_for_any_initial_condition(
+            x0 in -10.0f64..10.0,
+            v0 in -5.0f64..5.0,
+            dt in 0.01f64..0.1,
+        ) {
+            let system = HarmonicOscillator1D;
+            let initial = State::<1, 2>::new(SVector::from([x0]), SVector::from([v0]));
+            let initial_energy = 0.5 * (x0 * x0 + v0 * v0);
+
+            // Skip near-zero amplitude (energy ≈ 0, ratios are meaningless)
+            prop_assume!(initial_energy > 1e-4);
+
+            let t_end = 100.0 * 2.0 * std::f64::consts::PI; // 100 periods
+            let t_mid = t_end / 2.0;
+
+            let mut first_half = 0.0f64;
+            let mut second_half = 0.0f64;
+
+            StormerVerlet.integrate(&system, initial, 0.0, t_end, dt, |t, state| {
+                let energy = 0.5 * (state.y()[0].powi(2) + state.dy()[0].powi(2));
+                let drift = (energy - initial_energy).abs();
+                if t < t_mid {
+                    first_half = first_half.max(drift);
+                } else {
+                    second_half = second_half.max(drift);
+                }
+            });
+
+            // Symplectic: ratio should be close to 1.0
+            prop_assume!(first_half > 1e-15); // avoid division by zero
+            let ratio = second_half / first_half;
+            prop_assert!(
+                ratio < 1.5,
+                "Verlet energy drift ratio={ratio:.2} (expected ~1.0), \
+                 x0={x0}, v0={v0}, dt={dt}, first={first_half:.2e}, second={second_half:.2e}"
+            );
         }
     }
 }

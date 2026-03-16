@@ -7,3 +7,6 @@ repository.workspace = true
 
 [dependencies]
 nalgebra.workspace = true
+
+[dev-dependencies]
+proptest = "1.10.0"
