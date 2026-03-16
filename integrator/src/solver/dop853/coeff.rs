@@ -1,0 +1,116 @@
+#![allow(clippy::excessive_precision)]
+
+// ---------------------------------------------------------------------------
+// DOP853 coefficients (Hairer, Norsett & Wanner, 1993)
+// Dormand-Prince 8(5,3) — 12 stages
+// Reference: SciPy dop853_coefficients.py (verified against Hairer's code)
+// ---------------------------------------------------------------------------
+
+// Nodes (c_i)
+pub(super) const C2: f64 = 0.526001519587677318785587544488e-01;
+pub(super) const C3: f64 = 0.789002279381515978178381316732e-01;
+pub(super) const C4: f64 = 0.118350341907227396726757197510;
+pub(super) const C5: f64 = 0.281649658092772603273242802490;
+pub(super) const C6: f64 = 0.333333333333333333333333333333;
+pub(super) const C7: f64 = 0.25;
+pub(super) const C8: f64 = 0.307692307692307692307692307692;
+pub(super) const C9: f64 = 0.651282051282051282051282051282;
+pub(super) const C10: f64 = 0.6;
+pub(super) const C11: f64 = 0.857142857142857142857142857142;
+// c12 = 1.0, c13 = 1.0 (used inline)
+
+// a-matrix coefficients (stage dependencies)
+// Source: SciPy A[i,j] → our A{i+1}{j+1} (1-indexed)
+pub(super) const A21: f64 = 5.26001519587677318785587544488e-2;
+
+pub(super) const A31: f64 = 1.97250569845378994544595329183e-2;
+pub(super) const A32: f64 = 5.91751709536136983633785987549e-2;
+
+pub(super) const A41: f64 = 2.95875854768068491816892993775e-2;
+pub(super) const A43: f64 = 8.87627564304205475450678981324e-2;
+
+pub(super) const A51: f64 = 2.41365134159266685502369798665e-1;
+pub(super) const A53: f64 = -8.84549479328286085344864962717e-1;
+pub(super) const A54: f64 = 9.24834003261792003115737966543e-1;
+
+pub(super) const A61: f64 = 3.7037037037037037037037037037e-2;
+pub(super) const A64: f64 = 1.70828608729473871279604482173e-1;
+pub(super) const A65: f64 = 1.25467687566822425016691814123e-1;
+
+pub(super) const A71: f64 = 3.7109375e-2;
+pub(super) const A74: f64 = 1.70252211019544039314978060272e-1;
+pub(super) const A75: f64 = 6.02165389804559606850219397283e-2;
+pub(super) const A76: f64 = -1.7578125e-2;
+
+pub(super) const A81: f64 = 3.70920001185047927108779319836e-2;
+pub(super) const A84: f64 = 1.70383925712239993810214054705e-1;
+pub(super) const A85: f64 = 1.07262030446373284651809199168e-1;
+pub(super) const A86: f64 = -1.53194377486244017527936158236e-2;
+pub(super) const A87: f64 = 8.27378916381402288758473766002e-3;
+
+pub(super) const A91: f64 = 6.24110958716075717114429577812e-1;
+pub(super) const A94: f64 = -3.36089262944694129406857109825;
+pub(super) const A95: f64 = -8.68219346841726006818189891453e-1;
+pub(super) const A96: f64 = 2.75920996994467083049415600797e1;
+pub(super) const A97: f64 = 2.01540675504778934086186788979e1;
+pub(super) const A98: f64 = -4.34898841810699588477366255144e1;
+
+pub(super) const A101: f64 = 4.77662536438264365890433908527e-1;
+pub(super) const A104: f64 = -2.48811461997166764192642586468;
+pub(super) const A105: f64 = -5.90290826836842996371446475743e-1;
+pub(super) const A106: f64 = 2.12300514481811942347288949897e1;
+pub(super) const A107: f64 = 1.52792336328824235832596922938e1;
+pub(super) const A108: f64 = -3.32882109689848629194453265587e1;
+pub(super) const A109: f64 = -2.03312017085086261358222928593e-2;
+
+pub(super) const A111: f64 = -9.3714243008598732571704021658e-1;
+pub(super) const A114: f64 = 5.18637242884406370830023853209;
+pub(super) const A115: f64 = 1.09143734899672957818500254654;
+pub(super) const A116: f64 = -8.14978701074692612513997267357;
+pub(super) const A117: f64 = -1.85200656599969598641566180701e1;
+pub(super) const A118: f64 = 2.27394870993505042818970056734e1;
+pub(super) const A119: f64 = 2.49360555267965238987089396762;
+pub(super) const A1110: f64 = -3.0467644718982195003823669022;
+
+pub(super) const A121: f64 = 2.27331014751653820792359768449;
+pub(super) const A124: f64 = -1.05344954667372501984066689879e1;
+pub(super) const A125: f64 = -2.00087205822486249909675718444;
+pub(super) const A126: f64 = -1.79589318631187989172765950534e1;
+pub(super) const A127: f64 = 2.79488845294199600508499808837e1;
+pub(super) const A128: f64 = -2.85899827713502369474065508674;
+pub(super) const A129: f64 = -8.87285693353062954433549289258;
+pub(super) const A1210: f64 = 1.23605671757943030647266201528e1;
+pub(super) const A1211: f64 = 6.43392746015763530355970484046e-1;
+
+// 8th-order weights (b_i) = A[12, :] (FSAL row)
+pub(super) const B1: f64 = 5.42937341165687622380535766363e-2;
+pub(super) const B6: f64 = 4.45031289275240888144113950566;
+pub(super) const B7: f64 = 1.89151789931450038304281599044;
+pub(super) const B8: f64 = -5.8012039600105847814672114227;
+pub(super) const B9: f64 = 3.1116436695781989440891606237e-1;
+pub(super) const B10: f64 = -1.52160949662516078556178806805e-1;
+pub(super) const B11: f64 = 2.01365400804030348374776537501e-1;
+pub(super) const B12: f64 = 4.47106157277725905176885569043e-2;
+
+// Error estimation coefficients
+// BHH: 3rd-order embedded method weights (applied to k1, k9, k12)
+pub(super) const BHH1: f64 = 0.244094488188976377952755905512;
+pub(super) const BHH2: f64 = 0.733846688281611857341361741547;
+pub(super) const BHH3: f64 = 0.220588235294117647058823529412e-1;
+
+// ER: 5th-order error coefficients (direct, not relative to b)
+pub(super) const ER1: f64 = 0.1312004499419488073250102996e-1;
+pub(super) const ER6: f64 = -0.1225156446376204440720569753e1;
+pub(super) const ER7: f64 = -0.4957589496572501915214079952;
+pub(super) const ER8: f64 = 0.1664377182454986536961530415e1;
+pub(super) const ER9: f64 = -0.3503288487499736816886487290;
+pub(super) const ER10: f64 = 0.3341791187130174790297318841;
+pub(super) const ER11: f64 = 0.8192320648511571246570742613e-1;
+pub(super) const ER12: f64 = -0.2235530786388629525884427845e-1;
+
+// Step-size controller constants
+pub(super) const SAFETY: f64 = 0.9;
+pub(super) const MIN_FACTOR: f64 = 1.0 / 6.0;
+pub(super) const MAX_FACTOR: f64 = 6.0;
+// Exponent for 8th-order method: 1/(q+1) = 1/8
+pub(super) const ORDER_EXP: f64 = 1.0 / 8.0;

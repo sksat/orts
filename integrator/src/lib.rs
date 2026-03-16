@@ -1,24 +1,20 @@
-#[allow(clippy::excessive_precision)]
-mod dop853;
-mod dp45;
 mod error;
 mod integrator;
-mod rk4;
+mod solver;
 mod state;
-mod verlet;
 
 #[cfg(test)]
 mod comparison;
 #[cfg(test)]
 pub(crate) mod test_systems;
 
-pub use dop853::{AdaptiveStepper853, AdvanceOutcome853, Dop853};
-pub use dp45::{AdaptiveStepper, AdvanceOutcome, DormandPrince};
 pub use error::{IntegrationError, IntegrationOutcome, Tolerances};
 pub use integrator::Integrator;
-pub use rk4::Rk4;
+pub use solver::dop853::{AdaptiveStepper853, AdvanceOutcome853, Dop853};
+pub use solver::dp45::{AdaptiveStepper, AdvanceOutcome, DormandPrince};
+pub use solver::rk4::Rk4;
+pub use solver::verlet::StormerVerlet;
 pub use state::{DynamicalSystem, OdeState, State};
-pub use verlet::StormerVerlet;
 
 #[cfg(test)]
 mod tests {
