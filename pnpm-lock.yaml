@@ -9,14 +9,14 @@ importers:
   .:
     devDependencies:
       '@biomejs/biome':
-        specifier: ~2.4
+        specifier: ~2.4.7
         version: 2.4.7
 
   uneri:
     dependencies:
       '@duckdb/duckdb-wasm':
-        specifier: 1.33.1-dev18.0
-        version: 1.33.1-dev18.0
+        specifier: 1.33.1-dev20.0
+        version: 1.33.1-dev20.0
       uplot:
         specifier: ^1.6.32
         version: 1.6.32
@@ -67,8 +67,8 @@ importers:
   viewer:
     dependencies:
       '@duckdb/duckdb-wasm':
-        specifier: 1.33.1-dev18.0
-        version: 1.33.1-dev18.0
+        specifier: 1.33.1-dev20.0
+        version: 1.33.1-dev20.0
       '@react-three/drei':
         specifier: ^10.7.7
         version: 10.7.7(@react-three/fiber@9.5.0(@types/react@19.2.13)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(three@0.183.2))(@types/react@19.2.13)(@types/three@0.183.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(three@0.183.2)
@@ -204,8 +204,8 @@ packages:
   '@dimforge/rapier3d-compat@0.12.0':
     resolution: {integrity: sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==}
 
-  '@duckdb/duckdb-wasm@1.33.1-dev18.0':
-    resolution: {integrity: sha512-BVF+CYmOsrMRY8rnJa0USmC5PujPs2eZovQrSEeHs85J/MZ9mSblhzDih9BPu4MgwUxK9dYbYxKkBIJ4jv3EKw==}
+  '@duckdb/duckdb-wasm@1.33.1-dev20.0':
+    resolution: {integrity: sha512-ual3d/WDZnyZHNZ3tGdFvTZY22IDdg63Bh0icSBA6JPOy1u89rNfVH/3wQhtoJPv3Xn7eWVJ/4gpT3wprrisoA==}
 
   '@emnapi/core@1.9.0':
     resolution: {integrity: sha512-0DQ98G9ZQZOxfUcQn1waV2yS8aWdZ6kJMbYCJB3oUBecjWYO1fqJ+a1DRfPF3O5JEkwqwP1A9QEN/9mYm2Yd0w==}
@@ -2036,7 +2036,7 @@ snapshots:
 
   '@dimforge/rapier3d-compat@0.12.0': {}
 
-  '@duckdb/duckdb-wasm@1.33.1-dev18.0':
+  '@duckdb/duckdb-wasm@1.33.1-dev20.0':
     dependencies:
       apache-arrow: 17.0.0
       qs: 6.14.1
