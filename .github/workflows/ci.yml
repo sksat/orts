@@ -220,7 +220,7 @@ jobs:
           exit 1
 
       - name: Start Vite dev server
-        run: pnpm --filter orts-viewer dev &
+        run: VITE_WS_URL=ws://localhost:9001/ws pnpm --filter orts-viewer dev &
 
       - name: Wait for Vite server
         run: |
