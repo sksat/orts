@@ -32,3 +32,4 @@ ureq = "3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "tiff"] }
 toml = "1.0"
 serde_yaml = "0.9"
+rust-embed = { version = "8", features = ["mime-guess", "include-exclude"] }

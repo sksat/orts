@@ -3,6 +3,8 @@ mod connection;
 mod history;
 mod manager;
 pub mod protocol;
+#[cfg(feature = "viewer")]
+mod spa;
 mod textures;
 
 use std::sync::Arc;
@@ -61,6 +63,8 @@ async fn async_server(sim: &SimArgs, port: u16) {
 
     let actual_port = listener.local_addr().unwrap().port();
     eprintln!("Server listening on http://localhost:{actual_port}");
+    #[cfg(feature = "viewer")]
+    eprintln!("Viewer:             http://localhost:{actual_port}/");
     eprintln!("WebSocket endpoint: ws://localhost:{actual_port}/ws");
 
     let (tx, _rx) = broadcast::channel::<String>(256);
@@ -97,13 +101,15 @@ async fn async_server(sim: &SimArgs, port: u16) {
         textures: texture_cache,
     };
 
-    let app = Router::new()
-        .route("/ws", get(ws_handler))
-        .route(
-            "/textures/{filename}",
-            get(textures::texture_handler).with_state(Arc::clone(&state.textures)),
-        )
-        .with_state(state);
+    let app = Router::new().route("/ws", get(ws_handler)).route(
+        "/textures/{filename}",
+        get(textures::texture_handler).with_state(Arc::clone(&state.textures)),
+    );
+
+    #[cfg(feature = "viewer")]
+    let app = app.fallback(spa::spa_handler);
+
+    let app = app.with_state(state);
 
     axum::serve(listener, app).await.expect("server error");
 }

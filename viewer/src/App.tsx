@@ -40,7 +40,9 @@ import { jd_to_utc_string } from "./wasm/kanameInit.js";
 /** The two viewer modes. */
 type ViewerMode = "replay" | "realtime";
 
-const DEFAULT_WS_URL = "ws://localhost:9001/ws";
+const DEFAULT_WS_URL: string =
+  import.meta.env.VITE_WS_URL ??
+  `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 
 /** Stable reference for an empty terminated-satellites set.
  *  Avoids creating a new Set object on each handleConnect call,

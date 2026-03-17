@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import * as THREE from "three";
 import { type BodyRenderInfo, getBodyRenderInfo } from "../bodies.js";
-import { useTextureResolution } from "../hooks/useTextureResolution.js";
+import { type TextureResolution, useTextureResolution } from "../hooks/useTextureResolution.js";
 import { EarthBody } from "./EarthBody.js";
 
 interface CelestialBodyProps {
@@ -25,16 +25,42 @@ interface CelestialBodyProps {
   physicalScale?: boolean;
 }
 
-function TexturedBody({ renderInfo, radius }: { renderInfo: BodyRenderInfo; radius: number }) {
-  const [texture, setTexture] = useState<THREE.Texture | null>(null);
+const FALLBACK_CHAIN: TextureResolution[] = ["16k", "8k", "4k"];
 
+function loadTexture(url: string): Promise<THREE.Texture | null> {
+  return new Promise((resolve) => {
+    new THREE.TextureLoader().load(
+      url,
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        resolve(tex);
+      },
+      undefined,
+      () => resolve(null),
+    );
+  });
+}
+
+function TexturedBody({
+  renderInfo,
+  radius,
+  targetResolution,
+}: { renderInfo: BodyRenderInfo; radius: number; targetResolution?: TextureResolution }) {
+  const [texture, setTexture] = useState<THREE.Texture | null>(null);
+  const [baseLoaded, setBaseLoaded] = useState(false);
+
+  // Load base texture
   useEffect(() => {
     let cancelled = false;
+    setBaseLoaded(false);
     new THREE.TextureLoader().load(
       renderInfo.texturePath!,
       (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
-        if (!cancelled) setTexture(tex);
+        if (!cancelled) {
+          setTexture(tex);
+          setBaseLoaded(true);
+        }
       },
       undefined,
       () => {},
@@ -43,6 +69,40 @@ function TexturedBody({ renderInfo, radius }: { renderInfo: BodyRenderInfo; radi
       cancelled = true;
     };
   }, [renderInfo.texturePath]);
+
+  // Upgrade to higher resolution when available (runs once after base loads)
+  useEffect(() => {
+    if (!baseLoaded || !renderInfo.textureBaseName) return;
+    if (!targetResolution || targetResolution === "2k") return;
+
+    let cancelled = false;
+    const basePath = `${import.meta.env.BASE_URL}textures/`;
+    const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);
+    const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
+
+    async function tryUpgrade() {
+      for (const res of candidates) {
+        if (cancelled) return;
+        const url = `${basePath}${renderInfo.textureBaseName}_${res}.jpg`;
+        const newTex = await loadTexture(url);
+        if (cancelled) {
+          newTex?.dispose();
+          return;
+        }
+        if (newTex) {
+          setTexture((old) => {
+            old?.dispose();
+            return newTex;
+          });
+          return;
+        }
+      }
+    }
+    tryUpgrade();
+    return () => {
+      cancelled = true;
+    };
+  }, [baseLoaded, targetResolution, renderInfo.textureBaseName]);
 
   return (
     <group>
@@ -129,7 +189,7 @@ export function CelestialBody({
       />
     );
   } else if (renderInfo.texturePath) {
-    body = <TexturedBody renderInfo={renderInfo} radius={radius} />;
+    body = <TexturedBody renderInfo={renderInfo} radius={radius} targetResolution={targetResolution} />;
   } else {
     body = <FallbackBody renderInfo={renderInfo} radius={radius} />;
   }
