@@ -3,6 +3,7 @@ mod connection;
 mod history;
 mod manager;
 pub mod protocol;
+mod textures;
 
 use std::sync::Arc;
 
@@ -18,11 +19,13 @@ use crate::cli::SimArgs;
 use crate::sim::params::SimParams;
 
 use manager::SimCommand;
+use textures::TextureCache;
 
 #[derive(Clone)]
 struct AppState {
     tx: broadcast::Sender<String>,
     cmd_tx: mpsc::Sender<SimCommand>,
+    textures: Arc<TextureCache>,
 }
 
 pub fn run_server(sim: &SimArgs, port: u16) {
@@ -85,10 +88,21 @@ async fn async_server(sim: &SimArgs, port: u16) {
         tokio::spawn(manager::simulation_manager(initial_config, cmd_rx, mgr_tx));
     }
 
-    let state = AppState { tx, cmd_tx };
+    let texture_cache = Arc::new(TextureCache::new());
+    textures::spawn_background_downloads(Arc::clone(&texture_cache));
+
+    let state = AppState {
+        tx,
+        cmd_tx,
+        textures: texture_cache,
+    };
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
+        .route(
+            "/textures/{filename}",
+            get(textures::texture_handler).with_state(Arc::clone(&state.textures)),
+        )
         .with_state(state);
 
     axum::serve(listener, app).await.expect("server error");

@@ -29,5 +29,6 @@ serde_json = "1"
 futures-util = "0.3"
 rerun = { version = "0.30", default-features = false, features = ["sdk"] }
 ureq = "3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "tiff"] }
 toml = "1.0"
 serde_yaml = "0.9"
