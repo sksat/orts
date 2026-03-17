@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+# Include viewer-dist/ so `cargo publish` bundles the embedded SPA assets
+include = ["src/**/*", "build.rs", "tests/**/*", "viewer-dist/**/*"]
 
 [[bin]]
 name = "orts"

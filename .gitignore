@@ -24,5 +24,8 @@ orekit-data/
 # Environment variables (credentials)
 .env
 
+# Embedded viewer assets (copied by cli/build.rs from viewer/dist/)
+cli/viewer-dist/
+
 # Claude Code local settings (not shared)
 .claude/settings.local.json

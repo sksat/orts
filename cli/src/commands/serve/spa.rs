@@ -4,8 +4,7 @@ use axum::response::{IntoResponse, Response};
 use rust_embed::{Embed, EmbeddedFile};
 
 #[derive(Embed)]
-#[folder = "../viewer/dist/"]
-#[exclude = "textures/*"]
+#[folder = "viewer-dist/"]
 struct ViewerAssets;
 
 fn get_asset(path: &str) -> Option<EmbeddedFile> {
