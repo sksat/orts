@@ -45,7 +45,11 @@ function TexturedBody({
   renderInfo,
   radius,
   targetResolution,
-}: { renderInfo: BodyRenderInfo; radius: number; targetResolution?: TextureResolution }) {
+}: {
+  renderInfo: BodyRenderInfo;
+  radius: number;
+  targetResolution?: TextureResolution;
+}) {
   const [texture, setTexture] = useState<THREE.Texture | null>(null);
   const [baseLoaded, setBaseLoaded] = useState(false);
 
@@ -189,7 +193,9 @@ export function CelestialBody({
       />
     );
   } else if (renderInfo.texturePath) {
-    body = <TexturedBody renderInfo={renderInfo} radius={radius} targetResolution={targetResolution} />;
+    body = (
+      <TexturedBody renderInfo={renderInfo} radius={radius} targetResolution={targetResolution} />
+    );
   } else {
     body = <FallbackBody renderInfo={renderInfo} radius={radius} />;
   }
