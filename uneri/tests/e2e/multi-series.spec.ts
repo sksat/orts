@@ -26,9 +26,8 @@ test("uPlot legend shows both series labels", async ({ page }) => {
 
   // uPlot legend renders series labels as .u-series elements inside .u-legend
   const legendEntries = page.locator(".u-legend .u-series");
-  // Expect at least 2 series entries (slow + fast) plus the x-axis entry
-  const count = await legendEntries.count();
-  expect(count).toBeGreaterThanOrEqual(3);
+  // Wait for all 3 entries (x-axis + slow + fast) to be present
+  await expect(legendEntries).toHaveCount(3, { timeout: 10000 });
 
   // Check that both "slow" and "fast" labels appear in the legend
   const legendText = await page.locator(".u-legend").textContent();
