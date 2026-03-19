@@ -38,8 +38,17 @@ export function App() {
   const bufferRef = useRef(new IngestBuffer<SinePoint>());
   const [timeRange, setTimeRange] = useState<TimeRange>(null);
 
-  // WebSocket connection
+  // Data source: WebSocket or mock (when ?mock is in URL)
   useEffect(() => {
+    const isMock = new URLSearchParams(window.location.search).has("mock");
+    if (isMock) {
+      const startTime = Date.now();
+      const interval = setInterval(() => {
+        const t = (Date.now() - startTime) / 1000;
+        bufferRef.current.push({ t, value: Math.sin(t), derivative: Math.cos(t) });
+      }, 100);
+      return () => clearInterval(interval);
+    }
     const ws = new WebSocket("ws://localhost:9002");
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
@@ -61,6 +70,8 @@ export function App() {
     replayPoints: null,
     ingestBufferRef: bufferRef,
     timeRange,
+    tickInterval: 100,
+    queryEveryN: 1,
   });
 
   // Slice data for individual charts

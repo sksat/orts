@@ -64,28 +64,42 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:9004");
+    const isMock = new URLSearchParams(window.location.search).has("mock");
     let tickCount = 0;
 
+    const pushPoint = (series: string, t: number, value: number) => {
+      let buf = buffersRef.current.get(series);
+      if (!buf) {
+        buf = new SeriesBuffer(series);
+        buffersRef.current.set(series, buf);
+      }
+      buf.push(t, value);
+      tickCount++;
+      if (tickCount % 10 === 0) buildMultiData();
+    };
+
+    if (isMock) {
+      const startTime = Date.now();
+      let toggle = false;
+      const interval = setInterval(() => {
+        const t = (Date.now() - startTime) / 1000;
+        toggle = !toggle;
+        if (toggle) {
+          pushPoint("slow", t, Math.sin(t));
+        } else {
+          pushPoint("fast", t, Math.sin(t * 3));
+        }
+      }, 50);
+      return () => clearInterval(interval);
+    }
+
+    const ws = new WebSocket("ws://localhost:9004");
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       if (msg.type === "state") {
-        const seriesId = msg.series as string;
-        let buf = buffersRef.current.get(seriesId);
-        if (!buf) {
-          buf = new SeriesBuffer(seriesId);
-          buffersRef.current.set(seriesId, buf);
-        }
-        buf.push(msg.t, msg.value);
-
-        // Update chart every 10 messages to reduce renders
-        tickCount++;
-        if (tickCount % 10 === 0) {
-          buildMultiData();
-        }
+        pushPoint(msg.series as string, msg.t, msg.value);
       }
     };
-
     return () => ws.close();
   }, [buildMultiData]);
 

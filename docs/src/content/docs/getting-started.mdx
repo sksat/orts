@@ -1,0 +1,54 @@
+---
+title: Getting Started
+description: How to install and run Orts
+---
+
+## Installation
+
+Clone the repository and build:
+
+```bash
+git clone https://github.com/sksat/orts.git
+cd orts
+cargo build --workspace
+```
+
+## Running the Simulator
+
+Run a simulation and output CSV:
+
+```bash
+cargo run --bin orts
+```
+
+## Starting the Viewer
+
+Start the WebSocket server with the embedded viewer:
+
+```bash
+cargo run --bin orts -- --serve
+```
+
+Then open `http://localhost:9001` in your browser.
+
+### Custom Parameters
+
+```bash
+# Higher altitude orbit with larger time step
+cargo run --bin orts -- --serve --altitude 800 --dt 5
+
+# Fine time step with decimated output
+cargo run --bin orts -- --serve --dt 1 --output-interval 10
+```
+
+## Project Structure
+
+| Crate | Description |
+|-------|-------------|
+| `orts` | Core orbital mechanics library |
+| `orts-cli` | CLI and WebSocket server |
+| `kaname` | Geodesy and coordinate transforms |
+| `utsuroi` | ODE numerical integrators |
+| `tobari` | Atmosphere models |
+| `uneri` | DuckDB + uPlot charting library |
+| `viewer` | React + Three.js 3D visualization |

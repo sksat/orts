@@ -4,7 +4,8 @@
     "lint": "biome check .",
     "lint:fix": "biome check --fix .",
     "format": "biome format --write .",
-    "format:check": "biome format ."
+    "format:check": "biome format .",
+    "build:site": "pnpm --filter uneri build && pnpm --filter orts-viewer build && pnpm --filter orts-docs build"
   },
   "devDependencies": {
     "@biomejs/biome": "~2.4.7"

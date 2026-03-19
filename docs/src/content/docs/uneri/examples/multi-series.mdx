@@ -1,0 +1,22 @@
+---
+title: "Multi-Series"
+description: Two sine waves with different frequencies on the same chart
+---
+
+import { Code } from "@astrojs/starlight/components";
+import app from "../../../../../../uneri/examples/multi-series/App.tsx?raw";
+import server from "../../../../../../uneri/examples/multi-series/server.ts?raw";
+
+Two sine waves with different frequencies plotted on the same chart using `alignTimeSeries`.
+
+## Live Demo
+
+<iframe src="/orts/uneri/examples/multi-series/demo/index.html?mock" style="width: 100%; height: 500px; border: none; border-radius: 8px;" />
+
+## Server
+
+<Code code={server} lang="ts" title="examples/multi-series/server.ts" />
+
+## Client
+
+<Code code={app} lang="tsx" title="examples/multi-series/App.tsx" />

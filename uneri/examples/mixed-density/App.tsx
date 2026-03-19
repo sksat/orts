@@ -49,23 +49,37 @@ export function App() {
   const [timeRange, setTimeRange] = useState<TimeRange>(null);
   const [pointsReceived, setPointsReceived] = useState(0);
 
-  // WebSocket connection
+  // Data source: WebSocket or mock (when ?mock is in URL)
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:9003");
+    const isMock = new URLSearchParams(window.location.search).has("mock");
     let count = 0;
+
+    const pushPoint = (t: number, value: number, derivative: number) => {
+      bufferRef.current.push({ t, value, derivative });
+      count++;
+      if (count % 100 === 0) setPointsReceived(count);
+    };
+
+    if (isMock) {
+      // Phase 1: sparse overview
+      for (let i = 0; i < 100; i++) {
+        const t = i * 50;
+        pushPoint(t, Math.sin(t * 0.001), Math.cos(t * 0.001));
+      }
+      // Phase 2: dense streaming
+      let streamT = 5000;
+      const interval = setInterval(() => {
+        pushPoint(streamT, Math.sin(streamT * 0.001), Math.cos(streamT * 0.001));
+        streamT += 0.1;
+      }, 10);
+      return () => clearInterval(interval);
+    }
+
+    const ws = new WebSocket("ws://localhost:9003");
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       if (msg.type === "state") {
-        bufferRef.current.push({
-          t: msg.t,
-          value: msg.value,
-          derivative: msg.derivative,
-        });
-        count++;
-        // Update count periodically to avoid excessive re-renders
-        if (count % 100 === 0) {
-          setPointsReceived(count);
-        }
+        pushPoint(msg.t, msg.value, msg.derivative);
       }
     };
     return () => ws.close();
@@ -78,6 +92,8 @@ export function App() {
     replayPoints: null,
     ingestBufferRef: bufferRef,
     timeRange,
+    tickInterval: 100,
+    queryEveryN: 1,
   });
 
   // Expose debug data on window for Playwright tests

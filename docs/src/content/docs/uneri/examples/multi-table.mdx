@@ -1,0 +1,22 @@
+---
+title: "Multi-Table"
+description: Multiple independent tables with separate schemas
+---
+
+import { Code } from "@astrojs/starlight/components";
+import app from "../../../../../../uneri/examples/multi-table/App.tsx?raw";
+import server from "../../../../../../uneri/examples/multi-table/server.ts?raw";
+
+Multiple independent tables with separate schemas, each displayed in its own chart.
+
+## Live Demo
+
+<iframe src="/orts/uneri/examples/multi-table/demo/index.html?mock" style="width: 100%; height: 500px; border: none; border-radius: 8px;" />
+
+## Server
+
+<Code code={server} lang="ts" title="examples/multi-table/server.ts" />
+
+## Client
+
+<Code code={app} lang="tsx" title="examples/multi-table/App.tsx" />

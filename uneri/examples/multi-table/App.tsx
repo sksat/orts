@@ -78,24 +78,41 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conn]);
 
-  // WebSocket connection
+  // Data source: WebSocket or mock (when ?mock is in URL)
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:9005");
+    const isMock = new URLSearchParams(window.location.search).has("mock");
     let aCount = 0,
       bCount = 0;
+
+    const pushPoint = (table: string, t: number, value: number) => {
+      const point: DataPoint = { t, value };
+      if (table === "alpha") {
+        alphaBufferRef.current.push(point);
+        aCount++;
+        if (aCount % 50 === 0) setAlphaCount(aCount);
+      } else if (table === "beta") {
+        betaBufferRef.current.push(point);
+        bCount++;
+        if (bCount % 50 === 0) setBetaCount(bCount);
+      }
+    };
+
+    if (isMock) {
+      let t = 0;
+      const DT = 0.5;
+      const interval = setInterval(() => {
+        pushPoint("alpha", t, Math.sin(t * 0.1));
+        pushPoint("beta", t, Math.cos(t * 0.1) + 2);
+        t += DT;
+      }, 10);
+      return () => clearInterval(interval);
+    }
+
+    const ws = new WebSocket("ws://localhost:9005");
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
       if (msg.type === "state") {
-        const point: DataPoint = { t: msg.t, value: msg.value };
-        if (msg.table === "alpha") {
-          alphaBufferRef.current.push(point);
-          aCount++;
-          if (aCount % 50 === 0) setAlphaCount(aCount);
-        } else if (msg.table === "beta") {
-          betaBufferRef.current.push(point);
-          bCount++;
-          if (bCount % 50 === 0) setBetaCount(bCount);
-        }
+        pushPoint(msg.table, msg.t, msg.value);
       }
     };
     return () => ws.close();

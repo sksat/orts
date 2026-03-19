@@ -1,0 +1,22 @@
+---
+title: "Mixed Density"
+description: Streams with different sampling rates in the same table
+---
+
+import { Code } from "@astrojs/starlight/components";
+import app from "../../../../../../uneri/examples/mixed-density/App.tsx?raw";
+import server from "../../../../../../uneri/examples/mixed-density/server.ts?raw";
+
+Streams with different sampling rates ingested into the same table, demonstrating how DuckDB handles irregular time series.
+
+## Live Demo
+
+<iframe src="/orts/uneri/examples/mixed-density/demo/index.html?mock" style="width: 100%; height: 700px; border: none; border-radius: 8px;" />
+
+## Server
+
+<Code code={server} lang="ts" title="examples/mixed-density/server.ts" />
+
+## Client
+
+<Code code={app} lang="tsx" title="examples/mixed-density/App.tsx" />

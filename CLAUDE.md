@@ -34,6 +34,10 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 - `cd viewer && pnpm dev` — start dev server (hot reload)
 - `cd viewer && pnpm build` — production build
 
+### Docs (Starlight + Astro)
+- `cd docs && pnpm dev` — start docs dev server (hot reload)
+- `cd docs && pnpm build` — production build
+
 ## Development Methodology
 
 - **TDD-first**: Write unit tests before integration. Every module (numerical integration, coordinate transforms, etc.) must have unit tests verifying behavior before being integrated.
