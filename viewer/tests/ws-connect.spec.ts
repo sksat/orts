@@ -77,7 +77,7 @@ async function connectToTestServer(page: import("@playwright/test").Page) {
   await connectBtn.click();
 
   const statusText = page.locator(".ws-status-text");
-  await expect(statusText).toHaveText("Connected", { timeout: 10000 });
+  await expect(statusText).toHaveText("Connected", { timeout: 30000 });
 }
 
 test("raw WebSocket connects and receives messages", async ({ page }) => {

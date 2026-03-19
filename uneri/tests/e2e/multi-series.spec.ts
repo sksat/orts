@@ -1,8 +1,16 @@
 import { expect, test } from "@playwright/test";
 
+/** Wait for the chart to be visible with at least one canvas (uPlot fully initialized). */
+async function waitForChart(page: import("@playwright/test").Page) {
+  const chart = page.locator("[data-testid='time-series-chart']");
+  await expect(chart).toBeVisible({ timeout: 15000 });
+  // uPlot renders multiple canvases (plot + overlay); wait for at least one
+  await expect(chart.locator("canvas").first()).toBeVisible({ timeout: 15000 });
+}
+
 test("multi-series chart renders with canvas", async ({ page }) => {
   await page.goto("http://localhost:5176");
-  await page.waitForTimeout(3000);
+  await waitForChart(page);
 
   const chart = page.locator("[data-testid='time-series-chart']");
   await expect(chart).toHaveCount(1);
@@ -14,7 +22,7 @@ test("multi-series chart renders with canvas", async ({ page }) => {
 
 test("uPlot legend shows both series labels", async ({ page }) => {
   await page.goto("http://localhost:5176");
-  await page.waitForTimeout(3000);
+  await waitForChart(page);
 
   // uPlot legend renders series labels as .u-series elements inside .u-legend
   const legendEntries = page.locator(".u-legend .u-series");
@@ -30,9 +38,11 @@ test("uPlot legend shows both series labels", async ({ page }) => {
 
 test("legend click isolates a series (Grafana-style)", async ({ page }) => {
   await page.goto("http://localhost:5176");
-  await page.waitForTimeout(3000);
+  await waitForChart(page);
 
   const legendEntries = page.locator(".u-legend .u-series");
+  await expect(legendEntries).toHaveCount(3, { timeout: 10000 });
+
   // entries: [0]=x-axis, [1]=slow, [2]=fast
   const slowEntry = legendEntries.nth(1);
   const fastEntry = legendEntries.nth(2);
@@ -43,29 +53,31 @@ test("legend click isolates a series (Grafana-style)", async ({ page }) => {
 
   // Click "slow" → isolate it (fast should get u-off)
   await slowEntry.click();
+  await expect(fastEntry).toHaveClass(/u-off/, { timeout: 5000 });
   await expect(slowEntry).not.toHaveClass(/u-off/);
-  await expect(fastEntry).toHaveClass(/u-off/);
 
   // Click "slow" again → un-isolate (show all)
   await slowEntry.click();
-  await expect(slowEntry).not.toHaveClass(/u-off/);
-  await expect(fastEntry).not.toHaveClass(/u-off/);
+  await expect(slowEntry).not.toHaveClass(/u-off/, { timeout: 5000 });
+  await expect(fastEntry).not.toHaveClass(/u-off/, { timeout: 5000 });
 });
 
 test("legend click on hidden series isolates it", async ({ page }) => {
   await page.goto("http://localhost:5176");
-  await page.waitForTimeout(3000);
+  await waitForChart(page);
 
   const legendEntries = page.locator(".u-legend .u-series");
+  await expect(legendEntries).toHaveCount(3, { timeout: 10000 });
+
   const slowEntry = legendEntries.nth(1);
   const fastEntry = legendEntries.nth(2);
 
   // Click "slow" → isolate it
   await slowEntry.click();
-  await expect(fastEntry).toHaveClass(/u-off/);
+  await expect(fastEntry).toHaveClass(/u-off/, { timeout: 5000 });
 
   // Click "fast" (currently hidden) → isolate fast instead
   await fastEntry.click();
-  await expect(fastEntry).not.toHaveClass(/u-off/);
-  await expect(slowEntry).toHaveClass(/u-off/);
+  await expect(fastEntry).not.toHaveClass(/u-off/, { timeout: 5000 });
+  await expect(slowEntry).toHaveClass(/u-off/, { timeout: 5000 });
 });

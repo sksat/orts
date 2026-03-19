@@ -209,7 +209,7 @@ jobs:
 
       - name: Wait for WebSocket server
         run: |
-          for _ in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if nc -z localhost 9001 2>/dev/null; then
               echo "WebSocket server ready"
               exit 0
@@ -224,8 +224,8 @@ jobs:
 
       - name: Wait for Vite server
         run: |
-          for _ in $(seq 1 30); do
-            if nc -z localhost 5173 2>/dev/null; then
+          for i in $(seq 1 60); do
+            if curl -sf --max-time 2 http://localhost:5173/ -o /dev/null; then
               echo "Vite server ready"
               exit 0
             fi

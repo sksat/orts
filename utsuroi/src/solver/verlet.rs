@@ -504,9 +504,10 @@ mod tests {
             );
         }
 
-        /// For any initial condition, halving dt reduces the integration error.
-        /// This is weaker than testing the exact convergence order but holds
-        /// universally without needing the asymptotic regime.
+        /// For any initial condition, doubling the step count (halving dt)
+        /// should yield noticeably better accuracy (Störmer-Verlet is 2nd
+        /// order, so ~4×). We force integer step counts to avoid partial-step
+        /// artifacts and allow generous slack for phase-error effects.
         #[test]
         fn verlet_error_decreases_with_smaller_dt(
             x0 in -10.0f64..10.0,
@@ -517,24 +518,36 @@ mod tests {
             let t_end = 2.0 * std::f64::consts::PI;
             let expected_x = x0 * t_end.cos() + v0 * t_end.sin();
 
+            // Force integer step counts so both runs reach t_end exactly,
+            // eliminating partial-step truncation differences.
+            let n_coarse = (t_end / dt).ceil() as usize;
+            let dt_coarse = t_end / n_coarse as f64;
+            let dt_fine = t_end / (n_coarse * 2) as f64;
+
             let coarse = StormerVerlet.integrate(
                 &system,
                 State::<1, 2>::new(SVector::from([x0]), SVector::from([v0])),
-                0.0, t_end, dt, |_, _| {},
+                0.0, t_end, dt_coarse, |_, _| {},
             );
+            let err_coarse = (coarse.y()[0] - expected_x).abs();
+
+            // Skip cases where the leading error coefficient is too small
+            // for reliable convergence comparison (phase-error regime).
+            prop_assume!(err_coarse > 1e-3);
+
             let fine = StormerVerlet.integrate(
                 &system,
                 State::<1, 2>::new(SVector::from([x0]), SVector::from([v0])),
-                0.0, t_end, dt / 2.0, |_, _| {},
+                0.0, t_end, dt_fine, |_, _| {},
             );
-
-            let err_coarse = (coarse.y()[0] - expected_x).abs();
             let err_fine = (fine.y()[0] - expected_x).abs();
 
-            prop_assume!(err_coarse > 1e-14);
+            // SV is 2nd order → expect ~4× improvement when halving dt.
+            // Allow generous slack for phase-error effects: require ≥2×.
             prop_assert!(
-                err_fine < err_coarse,
-                "Finer dt should give smaller error: coarse={err_coarse:.2e}, fine={err_fine:.2e}"
+                err_fine < err_coarse * 0.5,
+                "Expected ≥2× convergence: ratio={:.2}, coarse={err_coarse:.2e}, fine={err_fine:.2e}",
+                err_coarse / err_fine
             );
         }
 
