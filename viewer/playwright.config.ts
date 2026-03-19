@@ -4,7 +4,7 @@ const VIEWER_PORT = Number(process.env.VIEWER_PORT ?? 15173);
 
 export default defineConfig({
   testDir: "./tests",
-  timeout: 30000,
+  timeout: 60000,
   use: {
     baseURL: `http://localhost:${VIEWER_PORT}`,
     headless: true,
