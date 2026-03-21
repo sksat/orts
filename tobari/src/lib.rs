@@ -1,7 +1,8 @@
-//! Atmospheric density models for orbital mechanics.
+//! Earth environment models for orbital mechanics.
+//!
+//! ## Atmosphere
 //!
 //! Provides pluggable atmospheric density models behind the [`AtmosphereModel`] trait.
-//! Each model is implemented in its own module:
 //!
 //! - [`Exponential`] — US Standard Atmosphere 1976, altitude-only (simplest, no epoch needed)
 //! - [`HarrisPriester`] — diurnal density variation using Sun position
@@ -9,6 +10,13 @@
 //!
 //! All models implement [`AtmosphereModel`] and can be swapped at runtime via
 //! `Box<dyn AtmosphereModel>`.
+//!
+//! ## Magnetic field
+//!
+//! Provides pluggable geomagnetic field models behind the
+//! [`magnetic::MagneticFieldModel`] trait.
+//!
+//! - [`magnetic::TiltedDipole`] — simple tilted dipole approximation (fastest)
 //!
 //! ## Space weather
 //!
@@ -27,6 +35,7 @@
 pub mod cssi;
 pub mod exponential;
 pub mod harris_priester;
+pub mod magnetic;
 pub mod nrlmsise00;
 pub mod space_weather;
 

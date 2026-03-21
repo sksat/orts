@@ -5,7 +5,8 @@ use utsuroi::{Integrator, Rk4};
 
 use kaname::constants::{MU_EARTH, R_EARTH};
 use kaname::epoch::Epoch;
-use kaname::magnetic::TiltedDipole;
+use kaname::Eci;
+use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 use orts::attitude::{AttitudeState, BdotDetumbler, DecoupledAttitudeSystem};
 
 fn symmetric_inertia(i: f64) -> Matrix3<f64> {
@@ -32,7 +33,7 @@ fn magnetic_field_magnitude_at_equatorial_leo() {
     let dipole = TiltedDipole::earth();
     let pos = Vector3::new(7000.0, 0.0, 0.0);
     let epoch = test_epoch();
-    let b = dipole.field_eci(&pos, Some(&epoch));
+    let b = dipole.field_eci(&Eci(pos), &epoch);
     let b_micro_t = b.magnitude() * 1e6;
 
     assert!(
@@ -46,10 +47,10 @@ fn magnetic_field_inverse_cube_law() {
     let dipole = TiltedDipole::earth();
     let epoch = test_epoch();
     let b_near = dipole
-        .field_eci(&Vector3::new(7000.0, 0.0, 0.0), Some(&epoch))
+        .field_eci(&Eci(Vector3::new(7000.0, 0.0, 0.0)), &epoch)
         .magnitude();
     let b_far = dipole
-        .field_eci(&Vector3::new(14000.0, 0.0, 0.0), Some(&epoch))
+        .field_eci(&Eci(Vector3::new(14000.0, 0.0, 0.0)), &epoch)
         .magnitude();
 
     let ratio = b_near / b_far;

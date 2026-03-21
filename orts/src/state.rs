@@ -1,3 +1,4 @@
+use kaname::Eci;
 use nalgebra::Vector3;
 use utsuroi::{OdeState, State, Tolerances};
 
@@ -19,6 +20,11 @@ impl OrbitalState {
     /// Position vector (km).
     pub fn position(&self) -> &Vector3<f64> {
         self.0.y()
+    }
+
+    /// Position as an ECI coordinate (km).
+    pub fn position_eci(&self) -> Eci {
+        Eci(*self.0.y())
     }
 
     /// Velocity vector (km/s).

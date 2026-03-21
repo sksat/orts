@@ -1,7 +1,6 @@
 pub mod body;
 pub mod constants;
 pub mod epoch;
-pub mod magnetic;
 pub mod moon;
 pub mod planets;
 pub mod sun;

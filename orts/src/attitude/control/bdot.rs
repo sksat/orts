@@ -1,6 +1,6 @@
 use kaname::epoch::Epoch;
-use kaname::magnetic::TiltedDipole;
 use nalgebra::Vector3;
+use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
@@ -18,21 +18,24 @@ use crate::spacecraft::ExternalLoads;
 /// The resulting torque tau = m x B always opposes the component of angular
 /// velocity perpendicular to the local magnetic field (provable via
 /// Cauchy-Schwarz: omega . tau <= 0).
-pub struct BdotDetumbler {
+///
+/// When no epoch is available, returns zero loads (magnetic field models
+/// require epoch for ECEF↔ECI rotation and secular variation).
+pub struct BdotDetumbler<F: MagneticFieldModel = TiltedDipole> {
     /// Gain k > 0  [A*m^2*s/(rad*T)]
     gain: f64,
     /// Per-axis maximum magnetic moment [A*m^2]
     max_moment: Vector3<f64>,
     /// Geomagnetic field model
-    field: TiltedDipole,
+    field: F,
 }
 
-impl BdotDetumbler {
+impl<F: MagneticFieldModel> BdotDetumbler<F> {
     /// Create a new B-dot detumbler with custom field model.
     ///
     /// # Panics
     /// Panics if `gain` is negative or any component of `max_moment` is negative.
-    pub fn new(gain: f64, max_moment: Vector3<f64>, field: TiltedDipole) -> Self {
+    pub fn new(gain: f64, max_moment: Vector3<f64>, field: F) -> Self {
         assert!(gain >= 0.0, "gain must be non-negative, got {gain}");
         assert!(
             max_moment[0] >= 0.0 && max_moment[1] >= 0.0 && max_moment[2] >= 0.0,
@@ -46,17 +49,21 @@ impl BdotDetumbler {
     }
 }
 
-impl<S: HasAttitude + HasOrbit> Model<S> for BdotDetumbler {
+impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for BdotDetumbler<F> {
     fn name(&self) -> &str {
         "bdot"
     }
 
     fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+        let Some(epoch) = epoch else {
+            return ExternalLoads::zeros();
+        };
+
         let att = state.attitude();
         let orbit = state.orbit();
 
         // 1. Compute B in ECI (requires epoch for ECEF->ECI rotation)
-        let b_eci = self.field.field_eci(orbit.position(), epoch);
+        let b_eci = self.field.field_eci(&orbit.position_eci(), epoch);
         if b_eci.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
         }
@@ -89,16 +96,18 @@ impl<S: HasAttitude + HasOrbit> Model<S> for BdotDetumbler {
 ///
 /// The `commanded_moment` is held constant (set externally between ODE segments).
 /// Torque is computed as tau = m x B where B is the local geomagnetic field in the body frame.
-pub struct CommandedMagnetorquer {
+///
+/// When no epoch is available, returns zero loads.
+pub struct CommandedMagnetorquer<F: MagneticFieldModel = TiltedDipole> {
     /// Current commanded magnetic moment \[A*m^2\] in body frame.
     pub commanded_moment: Vector3<f64>,
     /// Geomagnetic field model.
-    field: TiltedDipole,
+    field: F,
 }
 
-impl CommandedMagnetorquer {
+impl<F: MagneticFieldModel> CommandedMagnetorquer<F> {
     /// Create a new magnetorquer actuator model.
-    pub fn new(commanded_moment: Vector3<f64>, field: TiltedDipole) -> Self {
+    pub fn new(commanded_moment: Vector3<f64>, field: F) -> Self {
         Self {
             commanded_moment,
             field,
@@ -106,13 +115,16 @@ impl CommandedMagnetorquer {
     }
 }
 
-impl<S: HasAttitude + HasOrbit> Model<S> for CommandedMagnetorquer {
+impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for CommandedMagnetorquer<F> {
     fn name(&self) -> &str {
         "magnetorquer"
     }
 
     fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
-        let b_eci = self.field.field_eci(state.orbit().position(), epoch);
+        let Some(epoch) = epoch else {
+            return ExternalLoads::zeros();
+        };
+        let b_eci = self.field.field_eci(&state.orbit().position_eci(), epoch);
         if b_eci.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
         }
@@ -129,27 +141,24 @@ impl<S: HasAttitude + HasOrbit> Model<S> for CommandedMagnetorquer {
 /// finite difference. This is more realistic (flight software only sees
 /// magnetometer readings) but introduces a one-sample delay and produces
 /// zero command on the first call.
-pub struct BdotFiniteDiff {
+///
+/// When no epoch is available, returns zero command.
+pub struct BdotFiniteDiff<F: MagneticFieldModel = TiltedDipole> {
     gain: f64,
     max_moment: Vector3<f64>,
-    field: TiltedDipole,
+    field: F,
     sample_period: f64,
     prev_b_body: Option<Vector3<f64>>,
     prev_t: f64,
 }
 
-impl BdotFiniteDiff {
+impl<F: MagneticFieldModel> BdotFiniteDiff<F> {
     /// Create a new finite-difference B-dot controller.
     ///
     /// # Panics
     /// Panics if `gain` is negative, any component of `max_moment` is negative,
     /// or `sample_period` is not positive.
-    pub fn new(
-        gain: f64,
-        max_moment: Vector3<f64>,
-        field: TiltedDipole,
-        sample_period: f64,
-    ) -> Self {
+    pub fn new(gain: f64, max_moment: Vector3<f64>, field: F, sample_period: f64) -> Self {
         assert!(gain >= 0.0, "gain must be non-negative, got {gain}");
         assert!(
             max_moment[0] >= 0.0 && max_moment[1] >= 0.0 && max_moment[2] >= 0.0,
@@ -170,7 +179,7 @@ impl BdotFiniteDiff {
     }
 }
 
-impl DiscreteController for BdotFiniteDiff {
+impl<F: MagneticFieldModel> DiscreteController for BdotFiniteDiff<F> {
     type Command = Vector3<f64>;
 
     fn sample_period(&self) -> f64 {
@@ -188,7 +197,10 @@ impl DiscreteController for BdotFiniteDiff {
         orbit: &OrbitalState,
         epoch: Option<&Epoch>,
     ) -> Vector3<f64> {
-        let b_eci = self.field.field_eci(orbit.position(), epoch);
+        let Some(epoch) = epoch else {
+            return Vector3::zeros();
+        };
+        let b_eci = self.field.field_eci(&orbit.position_eci(), epoch);
         if b_eci.magnitude() < 1e-30 {
             return Vector3::zeros();
         }
@@ -221,8 +233,10 @@ mod tests {
     use super::*;
     use crate::OrbitalState;
     use crate::attitude::AttitudeState;
+    use kaname::Eci;
     use kaname::epoch::Epoch;
     use nalgebra::Vector4;
+    use tobari::magnetic::MagneticFieldModel;
 
     fn test_epoch() -> Epoch {
         Epoch::j2000()
@@ -264,7 +278,6 @@ mod tests {
 
     #[test]
     fn torque_opposes_omega_component() {
-        // By Cauchy-Schwarz: omega . tau <= 0 (always)
         let ctrl = BdotDetumbler::new(1e4, Vector3::new(10.0, 10.0, 10.0), TiltedDipole::earth());
         let state = TestState {
             attitude: AttitudeState {
@@ -300,8 +313,7 @@ mod tests {
 
     #[test]
     fn moment_clamping() {
-        // Use a very high gain so the unclamped moment would be huge
-        let max_m = 0.001; // very small max moment
+        let max_m = 0.001;
         let ctrl = BdotDetumbler::new(
             1e10,
             Vector3::new(max_m, max_m, max_m),
@@ -316,10 +328,8 @@ mod tests {
         };
         let epoch = test_epoch();
         let loads = ctrl.eval(0.0, &state, Some(&epoch));
-        // Torque is bounded because moment is clamped: |tau| = |m x B| <= |m| * |B|
-        // With clamped m, |m| <= sqrt(3) * max_m
         let b = TiltedDipole::earth()
-            .field_eci(&Vector3::new(7000.0, 0.0, 0.0), Some(&epoch))
+            .field_eci(&Eci(Vector3::new(7000.0, 0.0, 0.0)), &epoch)
             .magnitude();
         let max_torque = 3.0_f64.sqrt() * max_m * b;
         assert!(
@@ -330,9 +340,9 @@ mod tests {
     }
 
     #[test]
-    fn no_epoch_uses_eci_fixed_fallback() {
-        // Without epoch, TiltedDipole uses ECEF axis as ECI-fixed approximation.
-        // B-dot should still produce non-zero torque (not silently disabled).
+    fn no_epoch_returns_zero_loads() {
+        // Without epoch, magnetic field models cannot compute the field,
+        // so the controller returns zero loads.
         let ctrl = BdotDetumbler::new(1e4, Vector3::new(1.0, 1.0, 1.0), TiltedDipole::earth());
         let state = TestState {
             attitude: AttitudeState {
@@ -343,8 +353,8 @@ mod tests {
         };
         let loads = ctrl.eval(0.0, &state, None);
         assert!(
-            loads.torque_body.magnitude() > 1e-15,
-            "Without epoch, should still produce torque (ECI-fixed fallback)"
+            loads.torque_body.magnitude() < 1e-30,
+            "Without epoch, should return zero loads"
         );
     }
 }

@@ -22,9 +22,6 @@ pub const J4_EARTH: f64 = -1.6199e-6;
 /// Earth rotation rate (rad/s, IERS 2010)
 pub const OMEGA_EARTH: f64 = 7.2921159e-5;
 
-/// Earth magnetic dipole strength [T·m³] (= μ₀/(4π) × 7.94e22 A·m²)
-pub const EARTH_DIPOLE_STRENGTH: f64 = 7.94e15;
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,7 +5,8 @@ use utsuroi::{Integrator, Rk4};
 
 use kaname::constants::{MU_EARTH, R_EARTH};
 use kaname::epoch::Epoch;
-use kaname::magnetic::TiltedDipole;
+use kaname::Eci;
+use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 use orts::attitude::{
     AttitudeState, BdotDetumbler, BdotFiniteDiff, CommandedMagnetorquer, DecoupledAttitudeSystem,
 };
@@ -203,7 +204,7 @@ fn commanded_magnetorquer_torque_is_m_cross_b() {
     let loads = actuator.eval(0.0, &state, Some(&epoch));
 
     // Manually compute expected torque
-    let b_eci = TiltedDipole::earth().field_eci(&Vector3::new(7000.0, 0.0, 0.0), Some(&epoch));
+    let b_eci = TiltedDipole::earth().field_eci(&Eci(Vector3::new(7000.0, 0.0, 0.0)), &epoch);
     let b_body = state.attitude.inertial_to_body() * b_eci;
     let expected_torque = m_cmd.cross(&b_body);
 
