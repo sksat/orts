@@ -61,23 +61,34 @@ impl SurfacePanel {
 /// Spacecraft shape model for aerodynamic force computation.
 ///
 /// Provides a gradation from the simplest attitude-independent model
-/// (`Cannonball`) to fully attitude-dependent panel models (`Panels`).
+/// (`Sphere`) to fully attitude-dependent panel models (`Panels`).
 #[derive(Debug, Clone)]
 pub enum SpacecraftShape {
-    /// Spherical / cannonball model: constant ballistic coefficient,
-    /// attitude-independent.  Equivalent to the existing `AtmosphericDrag`.
-    Cannonball {
-        /// Ballistic coefficient Cd·A/(2m) [m²/kg].
-        ballistic_coeff: f64,
+    /// Attitude-independent model. Carries effective cross-section area and
+    /// surface coefficients. Not limited to geometric spheres — represents
+    /// any isotropic surface model.
+    Sphere {
+        /// Effective cross-sectional area [m²]
+        area: f64,
+        /// Drag coefficient (typically 2.0–2.2)
+        cd: f64,
+        /// Radiation pressure coefficient (1.0 absorber, 2.0 reflector)
+        cr: f64,
     },
     /// Flat-panel model: attitude-dependent.
     Panels(Vec<SurfacePanel>),
 }
 
 impl SpacecraftShape {
-    /// Create a cannonball (sphere) shape with the given ballistic coefficient.
-    pub fn cannonball(ballistic_coeff: f64) -> Self {
-        Self::Cannonball { ballistic_coeff }
+    /// Create a sphere (attitude-independent) shape with the given parameters.
+    ///
+    /// # Panics
+    /// Panics if `area` is not positive or if `cd`/`cr` are negative.
+    pub fn sphere(area: f64, cd: f64, cr: f64) -> Self {
+        assert!(area > 0.0, "area must be positive");
+        assert!(cd >= 0.0, "cd must be non-negative");
+        assert!(cr >= 0.0, "cr must be non-negative");
+        Self::Sphere { area, cd, cr }
     }
 
     /// Create a panel model from an arbitrary set of panels.
@@ -85,54 +96,55 @@ impl SpacecraftShape {
         Self::Panels(panels)
     }
 
-    /// Create a cube with the given half-size and drag coefficient.
+    /// Create a cube with the given half-size, drag coefficient, and radiation
+    /// pressure coefficient.
     ///
     /// Generates 6 panels (±x, ±y, ±z), each with area `(2 * half_size)²` m²
     /// and centre of pressure at the face centre (`half_size` m from CoM along
     /// the face normal).
-    pub fn cube(half_size: f64, cd: f64) -> Self {
+    pub fn cube(half_size: f64, cd: f64, cr: f64) -> Self {
         let face_area = (2.0 * half_size) * (2.0 * half_size);
         let panels = vec![
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(1.0, 0.0, 0.0),
                 cd,
-                cr: 1.5,
+                cr,
                 cp_offset: Vector3::new(half_size, 0.0, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(-1.0, 0.0, 0.0),
                 cd,
-                cr: 1.5,
+                cr,
                 cp_offset: Vector3::new(-half_size, 0.0, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, 1.0, 0.0),
                 cd,
-                cr: 1.5,
+                cr,
                 cp_offset: Vector3::new(0.0, half_size, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, -1.0, 0.0),
                 cd,
-                cr: 1.5,
+                cr,
                 cp_offset: Vector3::new(0.0, -half_size, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, 0.0, 1.0),
                 cd,
-                cr: 1.5,
+                cr,
                 cp_offset: Vector3::new(0.0, 0.0, half_size),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, 0.0, -1.0),
                 cd,
-                cr: 1.5,
+                cr,
                 cp_offset: Vector3::new(0.0, 0.0, -half_size),
             },
         ];
@@ -143,7 +155,7 @@ impl SpacecraftShape {
 /// Attitude-dependent drag model using flat surface panels.
 ///
 /// Implements [`LoadModel`] to produce both translational acceleration and
-/// aerodynamic torque from per-panel drag forces.  For the [`SpacecraftShape::Cannonball`]
+/// aerodynamic torque from per-panel drag forces.  For the [`SpacecraftShape::Sphere`]
 /// variant, behaves identically to the scalar `AtmosphericDrag` in `orts-orbits`.
 pub struct PanelDrag {
     shape: SpacecraftShape,
@@ -229,11 +241,12 @@ impl PanelDrag {
         }
 
         match &self.shape {
-            SpacecraftShape::Cannonball { ballistic_coeff } => {
-                // a = -B * ρ * |v_rel| * v_rel  (same as AtmosphericDrag)
+            SpacecraftShape::Sphere { area, cd, .. } => {
+                // F = -½ ρ Cd A |v_rel| v_rel  [N], where v_rel is in m/s
+                // a = F/m [m/s²]
                 let v_rel_m = v_rel * 1000.0; // km/s → m/s
                 let v_rel_mag_m = v_rel_m.magnitude();
-                let a_drag_m = -ballistic_coeff * rho * v_rel_mag_m * v_rel_m;
+                let a_drag_m = -0.5 * rho * cd * area / mass * v_rel_mag_m * v_rel_m;
                 ExternalLoads {
                     acceleration_inertial: a_drag_m / 1000.0, // m/s² → km/s²
                     torque_body: Vector3::zeros(),
@@ -337,17 +350,37 @@ mod tests {
         assert!((p.cd - 2.1).abs() < 1e-15);
     }
 
-    // ======== SpacecraftShape::cannonball ========
+    // ======== SpacecraftShape::sphere ========
 
     #[test]
-    fn cannonball_variant() {
-        let shape = SpacecraftShape::cannonball(0.01);
+    fn sphere_variant() {
+        let shape = SpacecraftShape::sphere(10.0, 2.2, 1.5);
         match shape {
-            SpacecraftShape::Cannonball { ballistic_coeff } => {
-                assert!((ballistic_coeff - 0.01).abs() < 1e-15);
+            SpacecraftShape::Sphere { area, cd, cr } => {
+                assert!((area - 10.0).abs() < 1e-15);
+                assert!((cd - 2.2).abs() < 1e-15);
+                assert!((cr - 1.5).abs() < 1e-15);
             }
-            _ => panic!("Expected Cannonball variant"),
+            _ => panic!("Expected Sphere variant"),
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "area must be positive")]
+    fn sphere_zero_area_panics() {
+        SpacecraftShape::sphere(0.0, 2.2, 1.5);
+    }
+
+    #[test]
+    #[should_panic(expected = "cd must be non-negative")]
+    fn sphere_negative_cd_panics() {
+        SpacecraftShape::sphere(10.0, -1.0, 1.5);
+    }
+
+    #[test]
+    #[should_panic(expected = "cr must be non-negative")]
+    fn sphere_negative_cr_panics() {
+        SpacecraftShape::sphere(10.0, 2.2, -0.1);
     }
 
     // ======== SpacecraftShape::panels ========
@@ -373,7 +406,7 @@ mod tests {
 
     #[test]
     fn cube_has_six_panels() {
-        let shape = SpacecraftShape::cube(0.5, 2.2);
+        let shape = SpacecraftShape::cube(0.5, 2.2, 1.5);
         match &shape {
             SpacecraftShape::Panels(panels) => {
                 assert_eq!(panels.len(), 6, "Cube should have 6 faces");
@@ -386,7 +419,7 @@ mod tests {
     fn cube_face_area() {
         let half = 0.5;
         let expected_area = (2.0 * half) * (2.0 * half); // 1.0 m²
-        let shape = SpacecraftShape::cube(half, 2.2);
+        let shape = SpacecraftShape::cube(half, 2.2, 1.5);
         if let SpacecraftShape::Panels(panels) = &shape {
             for (i, p) in panels.iter().enumerate() {
                 assert!(
@@ -400,7 +433,7 @@ mod tests {
 
     #[test]
     fn cube_normals_are_unit() {
-        let shape = SpacecraftShape::cube(1.0, 2.0);
+        let shape = SpacecraftShape::cube(1.0, 2.0, 1.5);
         if let SpacecraftShape::Panels(panels) = &shape {
             for (i, p) in panels.iter().enumerate() {
                 assert!(
@@ -414,7 +447,7 @@ mod tests {
 
     #[test]
     fn cube_normals_are_axis_aligned() {
-        let shape = SpacecraftShape::cube(1.0, 2.0);
+        let shape = SpacecraftShape::cube(1.0, 2.0, 1.5);
         if let SpacecraftShape::Panels(panels) = &shape {
             let normals: Vec<_> = panels.iter().map(|p| p.normal).collect();
             let expected = [
@@ -437,7 +470,7 @@ mod tests {
     #[test]
     fn cube_cp_at_face_centre() {
         let half = 0.75;
-        let shape = SpacecraftShape::cube(half, 2.0);
+        let shape = SpacecraftShape::cube(half, 2.0, 1.5);
         if let SpacecraftShape::Panels(panels) = &shape {
             for (i, p) in panels.iter().enumerate() {
                 // CP should be at half_size along the normal direction
@@ -454,7 +487,7 @@ mod tests {
     #[test]
     fn cube_all_same_cd() {
         let cd = 2.2;
-        let shape = SpacecraftShape::cube(0.5, cd);
+        let shape = SpacecraftShape::cube(0.5, cd, 1.5);
         if let SpacecraftShape::Panels(panels) = &shape {
             for (i, p) in panels.iter().enumerate() {
                 assert!(
@@ -468,7 +501,7 @@ mod tests {
 
     #[test]
     fn cube_opposite_normals_cancel() {
-        let shape = SpacecraftShape::cube(1.0, 2.0);
+        let shape = SpacecraftShape::cube(1.0, 2.0, 1.5);
         if let SpacecraftShape::Panels(panels) = &shape {
             let normal_sum: Vector3<f64> = panels.iter().map(|p| p.normal).sum();
             assert!(
@@ -482,13 +515,13 @@ mod tests {
 
     #[test]
     fn panel_drag_name() {
-        let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.01));
+        let drag = PanelDrag::for_earth(SpacecraftShape::sphere(10.0, 2.2, 1.5));
         assert_eq!(Model::<SpacecraftState>::name(&drag), "panel_drag");
     }
 
     #[test]
     fn panel_drag_for_earth_defaults() {
-        let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.01));
+        let drag = PanelDrag::for_earth(SpacecraftShape::sphere(10.0, 2.2, 1.5));
         assert_eq!(drag.body, Some(KnownBody::Earth));
         assert!((drag.body_radius - R_EARTH).abs() < 1e-10);
         assert!((drag.omega_body - OMEGA_EARTH).abs() < 1e-15);
@@ -498,7 +531,7 @@ mod tests {
     fn panel_drag_with_atmosphere_builder() {
         use tobari::HarrisPriester;
 
-        let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.01))
+        let drag = PanelDrag::for_earth(SpacecraftShape::sphere(10.0, 2.2, 1.5))
             .with_atmosphere(Box::new(HarrisPriester::new()));
         // Should compile and not panic — atmosphere model replaced
         assert_eq!(Model::<SpacecraftState>::name(&drag), "panel_drag");
@@ -520,32 +553,32 @@ mod tests {
         }
     }
 
-    // ======== Cannonball branch ========
+    // ======== Sphere branch ========
 
     #[test]
-    fn cannonball_nonzero_drag_at_iss() {
-        let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.005));
+    fn sphere_nonzero_drag_at_iss() {
+        let drag = PanelDrag::for_earth(SpacecraftShape::sphere(5.0, 2.0, 1.5));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert!(
             loads.acceleration_inertial.magnitude() > 0.0,
-            "Cannonball should produce non-zero drag at ISS altitude"
+            "Sphere should produce non-zero drag at ISS altitude"
         );
     }
 
     #[test]
-    fn cannonball_zero_torque() {
-        let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.005));
+    fn sphere_zero_torque() {
+        let drag = PanelDrag::for_earth(SpacecraftShape::sphere(5.0, 2.0, 1.5));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert_eq!(
             loads.torque_body,
             Vector3::zeros(),
-            "Cannonball should produce zero torque"
+            "Sphere should produce zero torque"
         );
     }
 
     #[test]
-    fn cannonball_attitude_independent() {
-        let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.005));
+    fn sphere_attitude_independent() {
+        let drag = PanelDrag::for_earth(SpacecraftShape::sphere(5.0, 2.0, 1.5));
         let s1 = iss_state();
         let mut s2 = iss_state();
         // Rotate 90° about z-axis: q = (cos45, 0, 0, sin45)
@@ -557,13 +590,13 @@ mod tests {
         let l2 = drag.eval(0.0, &s2, None);
         assert!(
             (l1.acceleration_inertial - l2.acceleration_inertial).magnitude() < 1e-15,
-            "Cannonball drag should not depend on attitude"
+            "Sphere drag should not depend on attitude"
         );
     }
 
     #[test]
-    fn cannonball_opposes_velocity() {
-        let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.005));
+    fn sphere_opposes_velocity() {
+        let drag = PanelDrag::for_earth(SpacecraftShape::sphere(5.0, 2.0, 1.5));
         let loads = drag.eval(0.0, &iss_state(), None);
         // v_rel is mostly in +y → drag should be in -y
         assert!(loads.acceleration_inertial.y < 0.0);
@@ -733,13 +766,15 @@ mod tests {
         );
     }
 
-    // ======== Equivalence: Cannonball ↔ AtmosphericDrag ========
+    // ======== Equivalence: Sphere ↔ AtmosphericDrag ========
 
     #[test]
-    fn cannonball_matches_atmospheric_drag() {
+    fn sphere_matches_atmospheric_drag() {
         use crate::perturbations::AtmosphericDrag;
-        let b = 0.005;
-        let panel_drag = PanelDrag::for_earth(SpacecraftShape::cannonball(b));
+        // AtmosphericDrag uses ballistic_coeff = Cd*A/(2m)
+        // Sphere with area=5.0, cd=2.0, mass=500: b = 2.0*5.0/(2*500) = 0.01
+        let b = 0.01;
+        let panel_drag = PanelDrag::for_earth(SpacecraftShape::sphere(5.0, 2.0, 1.5));
         let atmo_drag = AtmosphericDrag::for_earth(Some(b));
 
         let state = iss_state();
@@ -749,43 +784,41 @@ mod tests {
         let diff = (panel_loads.acceleration_inertial - atmo_accel).magnitude();
         assert!(
             diff < 1e-15,
-            "Cannonball PanelDrag should match AtmosphericDrag: diff = {diff:.3e}"
+            "Sphere PanelDrag should match AtmosphericDrag: diff = {diff:.3e}"
         );
     }
 
-    // ======== Equivalence: single panel at CoM (cos θ = 1) ↔ Cannonball ========
+    // ======== Equivalence: single panel at CoM (cos θ = 1) ↔ Sphere ========
 
     #[test]
-    fn single_panel_facing_flow_matches_cannonball() {
+    fn single_panel_facing_flow_matches_sphere() {
         // Single panel at CoM: A=10 m², Cd=2.2, normal facing flow
-        // For cannonball: B = Cd * A / (2 * m) = 2.2 * 10 / (2 * 500) = 0.022
+        // For sphere: b_eff = Cd * A / (2 * m) = 2.2 * 10 / (2 * 500) = 0.022
         // Panel force:  F = -½ ρ Cd A |v|² v̂    → a = F/m = -½ ρ Cd A/m |v|² v̂
-        // Cannonball:   a = -B ρ |v| v  = -(Cd*A/(2m)) ρ |v| v = -½ ρ Cd A/m |v|² v̂
+        // Sphere:       a = -½ ρ Cd A/m |v|² v̂
         // These should be identical when cos θ = 1
         let area = 10.0;
         let cd = 2.2;
-        let mass = 500.0;
-        let b = cd * area / (2.0 * mass);
 
         // Panel facing -y (into the +y flow at identity attitude)
         let panel = SurfacePanel::at_com(area, Vector3::new(0.0, -1.0, 0.0), cd);
         let panel_drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
-        let cannon_drag = PanelDrag::for_earth(SpacecraftShape::cannonball(b));
+        let sphere_drag = PanelDrag::for_earth(SpacecraftShape::sphere(area, cd, 1.5));
 
         let state = iss_state();
         let panel_loads = panel_drag.eval(0.0, &state, None);
-        let cannon_loads = cannon_drag.eval(0.0, &state, None);
+        let sphere_loads = sphere_drag.eval(0.0, &state, None);
 
         // The accelerations should be very close but not exactly identical because:
-        // - Cannonball uses v_rel in inertial frame directly
+        // - Sphere uses v_rel in inertial frame directly
         // - Panels transform to body frame then back
         // With identity attitude, these should be numerically identical
         let diff =
-            (panel_loads.acceleration_inertial - cannon_loads.acceleration_inertial).magnitude();
-        let rel = diff / cannon_loads.acceleration_inertial.magnitude();
+            (panel_loads.acceleration_inertial - sphere_loads.acceleration_inertial).magnitude();
+        let rel = diff / sphere_loads.acceleration_inertial.magnitude();
         assert!(
             rel < 1e-10,
-            "Single panel (cos θ=1) should match cannonball: relative diff = {rel:.3e}"
+            "Single panel (cos θ=1) should match sphere: relative diff = {rel:.3e}"
         );
     }
 
@@ -798,7 +831,7 @@ mod tests {
         // But the other 4 faces (±x, ±z) have cos(θ)=0 for exact +y flow
         // So only -y face contributes, with CP at (0, -half, 0)
         // Force is in -ŷ body: τ = (0,-h,0) × (0,F,0) = 0 (parallel!)
-        let drag = PanelDrag::for_earth(SpacecraftShape::cube(0.5, 2.2));
+        let drag = PanelDrag::for_earth(SpacecraftShape::cube(0.5, 2.2, 1.5));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert!(
             loads.torque_body.magnitude() < 1e-20,
@@ -1006,7 +1039,7 @@ mod tests {
         // At 45° about z: v̂_body = (sin45, cos45, 0) → A_proj = A * (sin45 + cos45) = A * √2
         let half = 0.5;
         let cd = 2.2;
-        let drag = PanelDrag::for_earth(SpacecraftShape::cube(half, cd));
+        let drag = PanelDrag::for_earth(SpacecraftShape::cube(half, cd, 1.5));
 
         let a0 = drag
             .eval(0.0, &iss_state(), None)
@@ -1501,14 +1534,14 @@ mod tests {
     }
 
     #[test]
-    fn cannonball_integrable_with_spacecraft_dynamics() {
+    fn sphere_integrable_with_spacecraft_dynamics() {
         use super::super::SpacecraftDynamics;
         use crate::gravity::PointMass;
         use kaname::constants::MU_EARTH;
         use nalgebra::Matrix3;
         use utsuroi::{Integrator, OdeState, Rk4};
 
-        let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.01));
+        let drag = PanelDrag::for_earth(SpacecraftShape::sphere(10.0, 2.2, 1.5));
         let inertia = Matrix3::from_diagonal(&Vector3::new(10.0, 10.0, 10.0));
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_model(drag);
 

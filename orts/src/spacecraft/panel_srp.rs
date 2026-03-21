@@ -2,9 +2,7 @@ use kaname::epoch::Epoch;
 use kaname::sun;
 use nalgebra::Vector3;
 
-use crate::perturbations::{
-    DEFAULT_AREA_TO_MASS, DEFAULT_CR, SOLAR_RADIATION_PRESSURE, shadow_function,
-};
+use crate::perturbations::{SOLAR_RADIATION_PRESSURE, shadow_function};
 use kaname::constants::R_EARTH;
 
 use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
@@ -14,11 +12,10 @@ use super::{ExternalLoads, SpacecraftShape};
 /// Attitude-dependent solar radiation pressure model using flat surface panels.
 ///
 /// Implements [`LoadModel`] to produce both translational acceleration and
-/// SRP torque from per-panel radiation forces.  For the [`SpacecraftShape::Cannonball`]
-/// variant, behaves identically to the scalar `SolarRadiationPressure` in
-/// `orts::perturbations`.
+/// SRP torque from per-panel radiation forces.  For the [`SpacecraftShape::Sphere`]
+/// variant, the `cr` and `area` are read from the shape itself.
 ///
-/// Per-panel force (simplified cannonball-equivalent per panel):
+/// Per-panel force (simplified per panel):
 ///
 /// ```text
 /// F_panel = -P_sr × Cr × A × cos(θ) × (AU/r_sun)² × ŝ   [N]
@@ -28,97 +25,37 @@ use super::{ExternalLoads, SpacecraftShape};
 /// and `ŝ` is the unit vector from the satellite toward the Sun.
 pub struct PanelSrp {
     shape: SpacecraftShape,
-    /// Radiation pressure coefficient for Cannonball variant.
-    cr: f64,
-    /// Area-to-mass ratio for Cannonball variant [m²/kg].
-    area_to_mass: f64,
     /// Central body radius for cylindrical shadow model [km].
     /// `None` disables shadow computation (always sunlit).
     shadow_body_radius: Option<f64>,
 }
 
 impl PanelSrp {
-    /// Create a cannonball (attitude-independent) SRP model.
-    ///
-    /// This is the preferred constructor for cannonball SRP.
-    /// For panel-based SRP, use [`PanelSrp::panels`].
-    pub fn cannonball(cr: f64, area_to_mass: f64) -> Self {
-        Self {
-            shape: SpacecraftShape::Cannonball {
-                ballistic_coeff: 0.0,
-            },
-            cr,
-            area_to_mass,
-            shadow_body_radius: None,
-        }
-    }
-
     /// Create a panel-based (attitude-dependent) SRP model from surface panels.
-    ///
-    /// For cannonball SRP, use [`PanelSrp::cannonball`].
     pub fn panels(panels: Vec<super::SurfacePanel>) -> Self {
         Self {
             shape: SpacecraftShape::Panels(panels),
-            cr: DEFAULT_CR,
-            area_to_mass: DEFAULT_AREA_TO_MASS,
             shadow_body_radius: None,
         }
     }
 
-    /// Create a cannonball SRP model configured for Earth orbit.
+    /// Create an SRP model for Earth orbit with cylindrical Earth shadow.
     ///
-    /// Uses the given `area_to_mass` (or [`DEFAULT_AREA_TO_MASS`] if `None`),
-    /// [`DEFAULT_CR`], and cylindrical Earth shadow.
-    pub fn cannonball_earth(area_to_mass: Option<f64>) -> Self {
-        Self {
-            shape: SpacecraftShape::Cannonball {
-                ballistic_coeff: 0.0,
-            },
-            cr: DEFAULT_CR,
-            area_to_mass: area_to_mass.unwrap_or(DEFAULT_AREA_TO_MASS),
-            shadow_body_radius: Some(R_EARTH),
-        }
-    }
-
-    /// Create a panel SRP model for Earth orbit.
-    ///
-    /// Uses [`DEFAULT_CR`] (1.5), [`DEFAULT_AREA_TO_MASS`] (0.02),
-    /// and cylindrical Earth shadow by default.
-    ///
-    /// **Note**: For cannonball shapes, prefer [`PanelSrp::cannonball_earth`]
-    /// which does not require constructing a `SpacecraftShape`.
+    /// For the [`SpacecraftShape::Sphere`] variant, `cr` and `area` come from
+    /// the shape. For [`SpacecraftShape::Panels`], each panel carries its own `cr`.
     pub fn for_earth(shape: SpacecraftShape) -> Self {
         Self {
             shape,
-            cr: DEFAULT_CR,
-            area_to_mass: DEFAULT_AREA_TO_MASS,
             shadow_body_radius: Some(R_EARTH),
         }
     }
 
-    /// Create a panel SRP model without shadow.
-    ///
-    /// **Note**: For cannonball shapes, prefer [`PanelSrp::cannonball`].
-    /// For panel-based shapes, prefer [`PanelSrp::panels`].
+    /// Create an SRP model without shadow.
     pub fn new(shape: SpacecraftShape) -> Self {
         Self {
             shape,
-            cr: DEFAULT_CR,
-            area_to_mass: DEFAULT_AREA_TO_MASS,
             shadow_body_radius: None,
         }
-    }
-
-    /// Override the radiation pressure coefficient for cannonball (builder pattern).
-    pub fn with_cr(mut self, cr: f64) -> Self {
-        self.cr = cr;
-        self
-    }
-
-    /// Override the area-to-mass ratio for cannonball (builder pattern).
-    pub fn with_area_to_mass(mut self, area_to_mass: f64) -> Self {
-        self.area_to_mass = area_to_mass;
-        self
     }
 
     /// Set or override the shadow body radius (builder pattern).
@@ -159,12 +96,10 @@ impl PanelSrp {
         let base_pressure = SOLAR_RADIATION_PRESSURE * distance_ratio * distance_ratio; // [N/m²]
 
         match &self.shape {
-            SpacecraftShape::Cannonball { .. } => {
-                // Note: ballistic_coeff (Cd·A/2m) is drag-specific and ignored here.
-                // SRP uses self.cr and self.area_to_mass instead.
+            SpacecraftShape::Sphere { area, cr, .. } => {
                 // a = -base_pressure * Cr * (A/m) * ŝ  [m/s²]
                 // Divide by 1000 to convert to km/s²
-                let a_mag = base_pressure * self.cr * self.area_to_mass / 1000.0;
+                let a_mag = base_pressure * cr * area / mass / 1000.0;
                 ExternalLoads {
                     acceleration_inertial: -a_mag * s_hat,
                     torque_body: Vector3::zeros(),
@@ -254,13 +189,13 @@ mod tests {
 
     #[test]
     fn panel_srp_name() {
-        let srp = PanelSrp::for_earth(SpacecraftShape::cannonball(0.01));
+        let srp = PanelSrp::for_earth(SpacecraftShape::sphere(20.0, 2.2, 1.5));
         assert_eq!(Model::<SpacecraftState>::name(&srp), "panel_srp");
     }
 
     #[test]
     fn no_epoch_returns_zero() {
-        let srp = PanelSrp::for_earth(SpacecraftShape::cannonball(0.01));
+        let srp = PanelSrp::for_earth(SpacecraftShape::sphere(20.0, 2.2, 1.5));
         let loads = srp.eval(0.0, &iss_state(), None);
         assert_eq!(loads.acceleration_inertial, Vector3::zeros());
         assert_eq!(loads.torque_body, Vector3::zeros());
@@ -268,33 +203,31 @@ mod tests {
 
     #[test]
     fn for_earth_defaults() {
-        let srp = PanelSrp::for_earth(SpacecraftShape::cannonball(0.01));
-        assert!((srp.cr - DEFAULT_CR).abs() < 1e-15);
-        assert!((srp.area_to_mass - DEFAULT_AREA_TO_MASS).abs() < 1e-15);
+        let srp = PanelSrp::for_earth(SpacecraftShape::sphere(20.0, 2.2, 1.5));
         assert_eq!(srp.shadow_body_radius, Some(R_EARTH));
     }
 
-    // ======== Cannonball ========
+    // ======== Sphere ========
 
     #[test]
-    fn cannonball_nonzero_srp() {
-        let srp = PanelSrp::for_earth(SpacecraftShape::cannonball(0.01));
+    fn sphere_nonzero_srp() {
+        let srp = PanelSrp::for_earth(SpacecraftShape::sphere(20.0, 2.2, 1.5));
         let epoch = test_epoch();
         let loads = srp.eval(0.0, &iss_state(), Some(&epoch));
         assert!(loads.acceleration_inertial.magnitude() > 0.0);
     }
 
     #[test]
-    fn cannonball_zero_torque() {
-        let srp = PanelSrp::for_earth(SpacecraftShape::cannonball(0.01));
+    fn sphere_zero_torque() {
+        let srp = PanelSrp::for_earth(SpacecraftShape::sphere(20.0, 2.2, 1.5));
         let epoch = test_epoch();
         let loads = srp.eval(0.0, &iss_state(), Some(&epoch));
         assert_eq!(loads.torque_body, Vector3::zeros());
     }
 
     #[test]
-    fn cannonball_attitude_independent() {
-        let srp = PanelSrp::for_earth(SpacecraftShape::cannonball(0.01));
+    fn sphere_attitude_independent() {
+        let srp = PanelSrp::for_earth(SpacecraftShape::sphere(20.0, 2.2, 1.5));
         let epoch = test_epoch();
 
         let s1 = iss_state();
@@ -306,13 +239,13 @@ mod tests {
 
         assert!(
             (l1.acceleration_inertial - l2.acceleration_inertial).magnitude() < 1e-15,
-            "Cannonball SRP should be attitude-independent"
+            "Sphere SRP should be attitude-independent"
         );
     }
 
     #[test]
-    fn cannonball_away_from_sun() {
-        let srp = PanelSrp::new(SpacecraftShape::cannonball(0.01));
+    fn sphere_away_from_sun() {
+        let srp = PanelSrp::new(SpacecraftShape::sphere(20.0, 2.2, 1.5));
         let epoch = test_epoch();
         let loads = srp.eval(0.0, &iss_state(), Some(&epoch));
 
@@ -325,13 +258,12 @@ mod tests {
     }
 
     #[test]
-    fn cannonball_matches_existing_srp() {
+    fn sphere_matches_scalar_srp() {
         let epoch = test_epoch();
-        let state = iss_state();
+        let state = iss_state(); // mass = 1000.0
 
-        let panel_srp = PanelSrp::new(SpacecraftShape::cannonball(0.01))
-            .with_cr(1.5)
-            .with_area_to_mass(0.02);
+        // Sphere: area=20.0, cr=1.5 → area_to_mass = 20.0/1000.0 = 0.02
+        let panel_srp = PanelSrp::new(SpacecraftShape::sphere(20.0, 2.2, 1.5));
 
         let scalar_srp = SolarRadiationPressure {
             cr: 1.5,
@@ -346,7 +278,7 @@ mod tests {
             (panel_loads.acceleration_inertial - scalar_a).magnitude() / scalar_a.magnitude();
         assert!(
             rel_err < 1e-10,
-            "PanelSrp cannonball should match SolarRadiationPressure: rel_err={rel_err:.3e}"
+            "PanelSrp sphere should match SolarRadiationPressure: rel_err={rel_err:.3e}"
         );
     }
 
@@ -831,7 +763,7 @@ mod tests {
 
     #[test]
     fn with_shadow_body_builder() {
-        let srp = PanelSrp::new(SpacecraftShape::cannonball(0.01)).with_shadow_body(R_EARTH);
+        let srp = PanelSrp::new(SpacecraftShape::sphere(20.0, 2.2, 1.5)).with_shadow_body(R_EARTH);
         assert_eq!(srp.shadow_body_radius, Some(R_EARTH));
     }
 
@@ -843,7 +775,7 @@ mod tests {
         // For identity attitude and Sun ≈ +X, the +X face is fully illuminated,
         // while ±Y and ±Z faces get glancing illumination from the Sun's small
         // off-axis components. The -X, and the other back faces get zero.
-        let cube = SpacecraftShape::cube(0.5, 2.2); // 1m cube, half_size=0.5
+        let cube = SpacecraftShape::cube(0.5, 2.2, 1.5); // 1m cube, half_size=0.5
         let srp = PanelSrp::new(cube);
         let epoch = test_epoch();
         let state = iss_state();
