@@ -99,7 +99,7 @@ Rust crate は `orts-` prefix を使用し、ディレクトリ名は prefix な
 |---|---|---|
 | utsuroi | `utsuroi/` | 汎用 ODE ソルバ。OdeState trait、DynamicalSystem trait、RK4、Dormand-Prince 適応刻み、Yoshida シンプレクティック積分 |
 | kaname | `kaname/` | 測地学・天文ライブラリ。詳細は [`kaname/DESIGN.md`](kaname/DESIGN.md) |
-| tobari | `tobari/` | 大気密度モデル・宇宙天気。詳細は [`tobari/DESIGN.md`](tobari/DESIGN.md) |
+| tobari | `tobari/` | 地球周辺環境モデル（大気密度・地磁気・宇宙天気）。詳細は [`tobari/DESIGN.md`](tobari/DESIGN.md) |
 | orts | `orts/` | 軌道力学 + シミュレーション。重力場 (J2+)、ケプラー要素、TLE、摂動モデル (`Model<S>`: 抗力/SRP/第三体)、OrbitalSystem、イベント検出、姿勢力学 (AttitudeState)、SpacecraftState (軌道+姿勢+質量)、capability traits (`HasAttitude`/`HasOrbit`/`HasMass`)、ECS データモデル・Rerun エクスポート |
 | orts-cli | `cli/` | CLI + WebSocket サーバ。run/serve/convert サブコマンド。バイナリ名は `orts` |
 
@@ -123,16 +123,16 @@ kaname              utsuroi               ← 基盤層
 ```
 
 - kaname と utsuroi は独立（ワークスペース内の他クレートに依存しない）
-- tobari は kaname のみに依存し、大気モデルライブラリとして独立性を維持
+- tobari は kaname のみに依存し、地球周辺環境モデル（大気密度 + 地磁気）ライブラリとして独立性を維持
 - orts は integrator, kaname, tobari を利用（軌道力学 + 摂動モデル + 姿勢力学 + 宇宙機統合 + データ記録）
 - orts-cli は orts を利用する薄い CLI ラッパー
 - utsuroi は汎用 ODE ソルバであり、軌道力学・姿勢力学の両方から利用される
 
 ### 設計原則
 
-- **capability-based モデル合成**: state の capability trait (`HasAttitude`, `HasOrbit`, `HasMass`) と統一 `Model<S>` trait により、モデルが必要な state 情報を generic bound で宣言し、対応する system で自動的に使える設計。`GravityField`、`AtmosphereModel` 等の環境 trait は別途維持
+- **capability-based モデル合成**: state の capability trait (`HasAttitude`, `HasOrbit`, `HasMass`) と統一 `Model<S>` trait により、モデルが必要な state 情報を generic bound で宣言し、対応する system で自動的に使える設計。`GravityField`、`AtmosphereModel`、`MagneticFieldModel` 等の環境 trait は別途維持
 - **問題に応じたモデル構成**: ユーザーが OrbitalSystem / SpacecraftDynamics に重力場とモデルを組み合わせる。フルスペック計算は不要な場合がほとんど
-- **責務の分離**: 各 crate は独立テスト可能。座標変換は kaname、大気は tobari、軌道数学は orbits、シミュレーションは orts
+- **責務の分離**: 各 crate は独立テスト可能。座標変換は kaname、環境モデル（大気・磁場）は tobari、シミュレーションは orts
 
 ## 実装済みのアーキテクチャ拡張
 
@@ -376,10 +376,11 @@ Basilisk/Orekit と同様の3層分離を採用:
 **DiscreteController**: 固定サンプル周期で segment-by-segment 積分。制御区間内はコマンド凍結（adaptive solver の内部サブステップでも不変）。共有可変状態（`Arc<Mutex>`）は使わない。
 
 **Phase D-0 実装済み**: DecoupledAttitudeSystem, AttitudeReference, PD制御則
-**Phase D-1**: B-dot デタンブリング（stateless 解析近似）+ 地磁気モデル
-**Phase D-2**: DiscreteController 基盤 + B-dot 有限差分版
-**Phase D-3**: StateEffector + AugmentedState + ReactionWheel
-**Phase D-4**: 統合テスト（PID + RW + 環境トルク）
+**Phase D-1 実装済み**: B-dot デタンブリング（stateless 解析近似）+ 地磁気モデル（TiltedDipole + IGRF-14）
+**Phase D-2 実装済み**: DiscreteController 基盤 + B-dot 有限差分版
+**Phase D-3 実装済み**: StateEffector + AugmentedState + ReactionWheel
+**Phase D-4 実装済み**: 統合テスト（PID + RW + 環境トルク）
+**Phase D-5**: MagneticFieldModel trait 抽象化 + ジェネリクス化（BdotDetumbler\<F\> 等）+ IGRF 球面調和展開
 
 ### ミッション規模と力学モデル
 
