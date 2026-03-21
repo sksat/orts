@@ -65,6 +65,7 @@ fn angular_momentum_conservation_with_rw() {
             angular_velocity: Vector3::new(0.01, -0.02, 0.03),
         },
         aux: system.initial_aux_state(),
+        aux_bounds: system.initial_aux_bounds(),
     };
 
     let l0 = total_angular_momentum(&initial, &inertia, &wheel_axes);
@@ -114,6 +115,7 @@ fn rw_torque_produces_opposite_spacecraft_rotation() {
     let initial = AugmentedState {
         plant: AttitudeState::identity(), // at rest
         aux: system.initial_aux_state(),  // wheels at zero momentum
+        aux_bounds: system.initial_aux_bounds(),
     };
 
     let dt = 0.01;
@@ -189,6 +191,7 @@ fn momentum_saturation_stops_acceleration() {
     let initial = AugmentedState {
         plant: AttitudeState::identity(),
         aux: system.initial_aux_state(),
+        aux_bounds: system.initial_aux_bounds(),
     };
 
     // Time to saturation: h_max / tau_max = 0.5 / 0.1 = 5.0 s
@@ -242,6 +245,7 @@ fn torque_rate_limiting_clamps_acceleration() {
     let initial = AugmentedState {
         plant: AttitudeState::identity(),
         aux: system.initial_aux_state(),
+        aux_bounds: system.initial_aux_bounds(),
     };
 
     let dt = 0.01;

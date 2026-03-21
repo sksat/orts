@@ -51,7 +51,7 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
 /// Run the simulation and return a Recording.
 pub fn run_simulation(params: &SimParams) -> Recording {
     use crate::sim::core::sat_params;
-    use orts::setup::build_orbital_system;
+    use orts::setup::{build_orbital_system, default_third_bodies};
 
     let mut rec = Recording::new();
     let body_path = EntityPath::parse(&format!("/world/{}", params.body.properties().name));
@@ -100,12 +100,14 @@ pub fn run_simulation(params: &SimParams) -> Recording {
     // Track entity paths per satellite for recording
     let sat_paths: Vec<EntityPath> = params.satellites.iter().map(|s| s.entity_path()).collect();
 
+    let third_bodies = default_third_bodies(&params.body);
     for sat in &params.satellites {
         let system = build_orbital_system(
             &params.body,
             params.mu,
             params.epoch,
             &sat_params(sat),
+            &third_bodies,
             params.build_atmosphere_model(),
         );
         let initial = sat.initial_state(params.mu);

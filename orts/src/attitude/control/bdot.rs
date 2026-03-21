@@ -11,17 +11,17 @@ use crate::spacecraft::ExternalLoads;
 /// B-dot detumbling controller using stateless analytical approximation.
 ///
 /// Estimates the time-derivative of the magnetic field in the body frame as
-/// dB_body/dt ≈ −ω × B_body (valid when |ω| >> orbital angular rate),
-/// then commands a magnetic moment m = −k · dB/dt to dissipate rotational
+/// dB_body/dt = -omega x B_body (valid when |omega| >> orbital angular rate),
+/// then commands a magnetic moment m = -k * dB/dt to dissipate rotational
 /// energy.
 ///
-/// The resulting torque τ = m × B always opposes the component of angular
+/// The resulting torque tau = m x B always opposes the component of angular
 /// velocity perpendicular to the local magnetic field (provable via
-/// Cauchy-Schwarz: ω · τ ≤ 0).
+/// Cauchy-Schwarz: omega . tau <= 0).
 pub struct BdotDetumbler {
-    /// Gain k > 0  [A·m²·s/(rad·T)]
+    /// Gain k > 0  [A*m^2*s/(rad*T)]
     gain: f64,
-    /// Per-axis maximum magnetic moment [A·m²]
+    /// Per-axis maximum magnetic moment [A*m^2]
     max_moment: Vector3<f64>,
     /// Geomagnetic field model
     field: TiltedDipole,
@@ -51,23 +51,26 @@ impl<S: HasAttitude + HasOrbit> Model<S> for BdotDetumbler {
         "bdot"
     }
 
-    fn eval(&self, _t: f64, state: &S, _epoch: Option<&Epoch>) -> ExternalLoads {
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
         let att = state.attitude();
         let orbit = state.orbit();
 
-        // 1. Compute B in ECI
-        let b_eci = self.field.field_eci(orbit.position());
+        // 1. Compute B in ECI (requires epoch for ECEF->ECI rotation)
+        let b_eci = self.field.field_eci(orbit.position(), epoch);
+        if b_eci.magnitude() < 1e-30 {
+            return ExternalLoads::zeros();
+        }
 
         // 2. Transform to body frame
         let r_bi = att.inertial_to_body();
         let b_body = r_bi * b_eci;
 
-        // 3. Analytical approximation: dB_body/dt ≈ −ω × B_body
-        //    (valid when |ω| >> orbital angular rate)
+        // 3. Analytical approximation: dB_body/dt = -omega x B_body
+        //    (valid when |omega| >> orbital angular rate)
         let omega = &att.angular_velocity;
         let db_body_dt = -omega.cross(&b_body);
 
-        // 4. Commanded magnetic moment: m = −k · dB/dt = k · (ω × B)
+        // 4. Commanded magnetic moment: m = -k * dB/dt = k * (omega x B)
         let mut m_cmd = -self.gain * db_body_dt;
 
         // 5. Clamp per-axis
@@ -75,7 +78,7 @@ impl<S: HasAttitude + HasOrbit> Model<S> for BdotDetumbler {
             m_cmd[i] = m_cmd[i].clamp(-self.max_moment[i], self.max_moment[i]);
         }
 
-        // 6. Torque: τ = m × B [N·m]
+        // 6. Torque: tau = m x B [N*m]
         let tau = m_cmd.cross(&b_body);
 
         ExternalLoads::torque(tau)
@@ -85,9 +88,9 @@ impl<S: HasAttitude + HasOrbit> Model<S> for BdotDetumbler {
 /// Actuator model that applies a commanded magnetic moment as torque.
 ///
 /// The `commanded_moment` is held constant (set externally between ODE segments).
-/// Torque is computed as τ = m × B where B is the local geomagnetic field in the body frame.
+/// Torque is computed as tau = m x B where B is the local geomagnetic field in the body frame.
 pub struct CommandedMagnetorquer {
-    /// Current commanded magnetic moment \[A·m²\] in body frame.
+    /// Current commanded magnetic moment \[A*m^2\] in body frame.
     pub commanded_moment: Vector3<f64>,
     /// Geomagnetic field model.
     field: TiltedDipole,
@@ -108,8 +111,11 @@ impl<S: HasAttitude + HasOrbit> Model<S> for CommandedMagnetorquer {
         "magnetorquer"
     }
 
-    fn eval(&self, _t: f64, state: &S, _epoch: Option<&Epoch>) -> ExternalLoads {
-        let b_eci = self.field.field_eci(state.orbit().position());
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+        let b_eci = self.field.field_eci(state.orbit().position(), epoch);
+        if b_eci.magnitude() < 1e-30 {
+            return ExternalLoads::zeros();
+        }
         let b_body = state.attitude().inertial_to_body() * b_eci;
         ExternalLoads::torque(self.commanded_moment.cross(&b_body))
     }
@@ -118,7 +124,7 @@ impl<S: HasAttitude + HasOrbit> Model<S> for CommandedMagnetorquer {
 /// B-dot controller using finite-difference dB/dt estimation.
 ///
 /// Unlike [`BdotDetumbler`] which uses the analytical approximation
-/// dB_body/dt ≈ −ω × B_body, this controller measures the actual
+/// dB_body/dt = -omega x B_body, this controller measures the actual
 /// magnetic field at each sample time and computes dB/dt via backward
 /// finite difference. This is more realistic (flight software only sees
 /// magnetometer readings) but introduces a one-sample delay and produces
@@ -180,9 +186,12 @@ impl DiscreteController for BdotFiniteDiff {
         t: f64,
         attitude: &AttitudeState,
         orbit: &OrbitalState,
-        _epoch: Option<&Epoch>,
+        epoch: Option<&Epoch>,
     ) -> Vector3<f64> {
-        let b_eci = self.field.field_eci(orbit.position());
+        let b_eci = self.field.field_eci(orbit.position(), epoch);
+        if b_eci.magnitude() < 1e-30 {
+            return Vector3::zeros();
+        }
         let b_body = attitude.inertial_to_body() * b_eci;
 
         let m_cmd = match self.prev_b_body {
@@ -212,7 +221,12 @@ mod tests {
     use super::*;
     use crate::OrbitalState;
     use crate::attitude::AttitudeState;
+    use kaname::epoch::Epoch;
     use nalgebra::Vector4;
+
+    fn test_epoch() -> Epoch {
+        Epoch::j2000()
+    }
 
     /// Combined state for testing (provides HasAttitude + HasOrbit).
     struct TestState {
@@ -239,7 +253,8 @@ mod tests {
             attitude: AttitudeState::identity(),
             orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
         };
-        let loads = ctrl.eval(0.0, &state, None);
+        let epoch = test_epoch();
+        let loads = ctrl.eval(0.0, &state, Some(&epoch));
         assert!(
             loads.torque_body.magnitude() < 1e-20,
             "Zero omega should give zero torque, got {:?}",
@@ -249,7 +264,7 @@ mod tests {
 
     #[test]
     fn torque_opposes_omega_component() {
-        // By Cauchy-Schwarz: ω · τ ≤ 0 (always)
+        // By Cauchy-Schwarz: omega . tau <= 0 (always)
         let ctrl = BdotDetumbler::new(1e4, Vector3::new(10.0, 10.0, 10.0), TiltedDipole::earth());
         let state = TestState {
             attitude: AttitudeState {
@@ -258,11 +273,12 @@ mod tests {
             },
             orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
         };
-        let loads = ctrl.eval(0.0, &state, None);
+        let epoch = test_epoch();
+        let loads = ctrl.eval(0.0, &state, Some(&epoch));
         let dot = state.attitude.angular_velocity.dot(&loads.torque_body);
         assert!(
             dot <= 0.0,
-            "ω · τ should be ≤ 0 (Cauchy-Schwarz), got {dot:.6e}"
+            "omega . tau should be <= 0 (Cauchy-Schwarz), got {dot:.6e}"
         );
     }
 
@@ -276,7 +292,8 @@ mod tests {
             },
             orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
         };
-        let loads = ctrl.eval(0.0, &state, None);
+        let epoch = test_epoch();
+        let loads = ctrl.eval(0.0, &state, Some(&epoch));
         assert!(loads.acceleration_inertial.magnitude() < 1e-15);
         assert!(loads.mass_rate.abs() < 1e-15);
     }
@@ -297,17 +314,37 @@ mod tests {
             },
             orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
         };
-        let loads = ctrl.eval(0.0, &state, None);
-        // Torque is bounded because moment is clamped: |τ| = |m × B| ≤ |m| * |B|
-        // With clamped m, |m| ≤ sqrt(3) * max_m
+        let epoch = test_epoch();
+        let loads = ctrl.eval(0.0, &state, Some(&epoch));
+        // Torque is bounded because moment is clamped: |tau| = |m x B| <= |m| * |B|
+        // With clamped m, |m| <= sqrt(3) * max_m
         let b = TiltedDipole::earth()
-            .field_eci(&Vector3::new(7000.0, 0.0, 0.0))
+            .field_eci(&Vector3::new(7000.0, 0.0, 0.0), Some(&epoch))
             .magnitude();
         let max_torque = 3.0_f64.sqrt() * max_m * b;
         assert!(
             loads.torque_body.magnitude() <= max_torque * 1.01,
-            "Torque should be bounded by clamped moment: |τ|={:.6e}, bound={max_torque:.6e}",
+            "Torque should be bounded by clamped moment: |tau|={:.6e}, bound={max_torque:.6e}",
             loads.torque_body.magnitude()
+        );
+    }
+
+    #[test]
+    fn no_epoch_uses_eci_fixed_fallback() {
+        // Without epoch, TiltedDipole uses ECEF axis as ECI-fixed approximation.
+        // B-dot should still produce non-zero torque (not silently disabled).
+        let ctrl = BdotDetumbler::new(1e4, Vector3::new(1.0, 1.0, 1.0), TiltedDipole::earth());
+        let state = TestState {
+            attitude: AttitudeState {
+                quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+                angular_velocity: Vector3::new(0.1, 0.2, 0.05),
+            },
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
+        };
+        let loads = ctrl.eval(0.0, &state, None);
+        assert!(
+            loads.torque_body.magnitude() > 1e-15,
+            "Without epoch, should still produce torque (ECI-fixed fallback)"
         );
     }
 }

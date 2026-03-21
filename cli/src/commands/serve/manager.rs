@@ -12,7 +12,7 @@ use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::{SatelliteInfo, SatelliteSpec};
 use crate::sim::core::{accel_breakdown, make_history_state, sat_params};
 use crate::sim::params::SimParams;
-use orts::setup::build_orbital_system;
+use orts::setup::{build_orbital_system, default_third_bodies};
 
 use super::compute::state_message;
 use super::history::HistoryBuffer;
@@ -178,11 +178,13 @@ fn build_info_message(params: &SimParams) -> WsMessage {
         .satellites
         .iter()
         .map(|s| {
+            let third_bodies = default_third_bodies(&params.body);
             let system = build_orbital_system(
                 &params.body,
                 params.mu,
                 params.epoch,
                 &sat_params(s),
+                &third_bodies,
                 params.build_atmosphere_model(),
             );
             SatelliteInfo {
@@ -265,12 +267,14 @@ impl SimLoopContext {
         let mut group = IndependentGroup::new(config).with_event_checker(event_checker);
 
         let mut metas: Vec<SatMeta> = Vec::new();
+        let third_bodies = default_third_bodies(&params.body);
         for spec in &params.satellites {
             let system = build_orbital_system(
                 &params.body,
                 params.mu,
                 params.epoch,
                 &sat_params(spec),
+                &third_bodies,
                 params.build_atmosphere_model(),
             );
             let initial = spec.initial_state(params.mu);
@@ -390,11 +394,13 @@ impl SimLoopContext {
             SimCommand::AddSatellite { satellite, respond } => {
                 let sat_index = self.metas.len();
                 let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
+                let third_bodies = default_third_bodies(&self.params.body);
                 let system = build_orbital_system(
                     &self.params.body,
                     self.params.mu,
                     self.params.epoch,
                     &sat_params(&spec),
+                    &third_bodies,
                     self.params.build_atmosphere_model(),
                 );
                 let initial = spec.initial_state(self.params.mu);

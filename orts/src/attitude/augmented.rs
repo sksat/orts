@@ -116,6 +116,25 @@ impl AugmentedAttitudeSystem {
         vec![0.0; self.registry.total_dim()]
     }
 
+    /// Collect the concatenated aux bounds from all registered effectors.
+    pub fn initial_aux_bounds(&self) -> Vec<(f64, f64)> {
+        let mut bounds = Vec::with_capacity(self.registry.total_dim());
+        for eff in &self.effectors {
+            bounds.extend(eff.aux_bounds());
+        }
+        bounds
+    }
+
+    /// Create an initial [`AugmentedState`] with the given plant state,
+    /// zero auxiliary state, and correct bounds from registered effectors.
+    pub fn initial_augmented_state(&self, plant: AttitudeState) -> AugmentedState<AttitudeState> {
+        AugmentedState {
+            plant,
+            aux: self.initial_aux_state(),
+            aux_bounds: self.initial_aux_bounds(),
+        }
+    }
+
     /// Downcast a state effector to a concrete type for command updates.
     ///
     /// Use this between integration segments to update effector commands
@@ -202,6 +221,7 @@ impl DynamicalSystem for AugmentedAttitudeSystem {
         AugmentedState {
             plant: AttitudeState::from_derivative(q_dot, alpha),
             aux: aux_rates,
+            aux_bounds: state.aux_bounds.clone(),
         }
     }
 }
@@ -229,6 +249,7 @@ mod tests {
                 angular_velocity: Vector3::new(0.1, 0.2, 0.3),
             },
             aux: vec![],
+            aux_bounds: vec![],
         };
         let deriv = system.derivatives(0.0, &state);
         // For symmetric body: ω × (I·ω) = I * (ω × ω) = 0

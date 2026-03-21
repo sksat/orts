@@ -112,6 +112,13 @@ impl<S: HasAttitude + Send + Sync> StateEffector<S> for ReactionWheelAssembly {
         self.wheels.len()
     }
 
+    fn aux_bounds(&self) -> Vec<(f64, f64)> {
+        self.wheels
+            .iter()
+            .map(|w| (-w.max_momentum, w.max_momentum))
+            .collect()
+    }
+
     fn derivatives(
         &self,
         _t: f64,

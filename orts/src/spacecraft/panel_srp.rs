@@ -38,10 +38,55 @@ pub struct PanelSrp {
 }
 
 impl PanelSrp {
+    /// Create a cannonball (attitude-independent) SRP model.
+    ///
+    /// This is the preferred constructor for cannonball SRP.
+    /// For panel-based SRP, use [`PanelSrp::panels`].
+    pub fn cannonball(cr: f64, area_to_mass: f64) -> Self {
+        Self {
+            shape: SpacecraftShape::Cannonball {
+                ballistic_coeff: 0.0,
+            },
+            cr,
+            area_to_mass,
+            shadow_body_radius: None,
+        }
+    }
+
+    /// Create a panel-based (attitude-dependent) SRP model from surface panels.
+    ///
+    /// For cannonball SRP, use [`PanelSrp::cannonball`].
+    pub fn panels(panels: Vec<super::SurfacePanel>) -> Self {
+        Self {
+            shape: SpacecraftShape::Panels(panels),
+            cr: DEFAULT_CR,
+            area_to_mass: DEFAULT_AREA_TO_MASS,
+            shadow_body_radius: None,
+        }
+    }
+
+    /// Create a cannonball SRP model configured for Earth orbit.
+    ///
+    /// Uses the given `area_to_mass` (or [`DEFAULT_AREA_TO_MASS`] if `None`),
+    /// [`DEFAULT_CR`], and cylindrical Earth shadow.
+    pub fn cannonball_earth(area_to_mass: Option<f64>) -> Self {
+        Self {
+            shape: SpacecraftShape::Cannonball {
+                ballistic_coeff: 0.0,
+            },
+            cr: DEFAULT_CR,
+            area_to_mass: area_to_mass.unwrap_or(DEFAULT_AREA_TO_MASS),
+            shadow_body_radius: Some(R_EARTH),
+        }
+    }
+
     /// Create a panel SRP model for Earth orbit.
     ///
     /// Uses [`DEFAULT_CR`] (1.5), [`DEFAULT_AREA_TO_MASS`] (0.02),
     /// and cylindrical Earth shadow by default.
+    ///
+    /// **Note**: For cannonball shapes, prefer [`PanelSrp::cannonball_earth`]
+    /// which does not require constructing a `SpacecraftShape`.
     pub fn for_earth(shape: SpacecraftShape) -> Self {
         Self {
             shape,
@@ -52,6 +97,9 @@ impl PanelSrp {
     }
 
     /// Create a panel SRP model without shadow.
+    ///
+    /// **Note**: For cannonball shapes, prefer [`PanelSrp::cannonball`].
+    /// For panel-based shapes, prefer [`PanelSrp::panels`].
     pub fn new(shape: SpacecraftShape) -> Self {
         Self {
             shape,

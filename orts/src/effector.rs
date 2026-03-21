@@ -43,6 +43,15 @@ pub trait StateEffector<S>: Send + Sync + std::any::Any {
         aux_rates: &mut [f64],
         epoch: Option<&Epoch>,
     ) -> ExternalLoads;
+
+    /// Per-element (min, max) bounds for auxiliary state projection.
+    ///
+    /// By default returns unbounded `(-INF, +INF)` for each element.
+    /// Override to enforce physical constraints (e.g., reaction wheel
+    /// momentum saturation).
+    fn aux_bounds(&self) -> Vec<(f64, f64)> {
+        vec![(f64::NEG_INFINITY, f64::INFINITY); self.state_dim()]
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -54,12 +63,18 @@ pub trait StateEffector<S>: Send + Sync + std::any::Any {
 /// The ODE solver integrates this composite state, where `plant` is the
 /// primary dynamics state (e.g., `AttitudeState`) and `aux` holds the
 /// concatenated auxiliary variables from all registered [`StateEffector`]s.
+///
+/// `aux_bounds` provides per-element `(min, max)` bounds that are enforced
+/// during [`OdeState::project`] (e.g., reaction wheel momentum saturation).
 #[derive(Debug, Clone, PartialEq)]
 pub struct AugmentedState<S: OdeState> {
     /// Primary dynamics state (e.g., attitude quaternion + angular velocity).
     pub plant: S,
     /// Concatenated auxiliary state from all registered effectors.
     pub aux: Vec<f64>,
+    /// Per-element (min, max) bounds for auxiliary state projection.
+    /// Empty means no bounds (unconstrained).
+    pub aux_bounds: Vec<(f64, f64)>,
 }
 
 impl<S: OdeState> OdeState for AugmentedState<S> {
@@ -67,6 +82,7 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
         Self {
             plant: self.plant.zero_like(),
             aux: vec![0.0; self.aux.len()],
+            aux_bounds: self.aux_bounds.clone(),
         }
     }
 
@@ -78,6 +94,7 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
         Self {
             plant: self.plant.axpy(scale, &other.plant),
             aux,
+            aux_bounds: self.aux_bounds.clone(),
         }
     }
 
@@ -85,6 +102,7 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
         Self {
             plant: self.plant.scale(factor),
             aux: self.aux.iter().map(|v| v * factor).collect(),
+            aux_bounds: self.aux_bounds.clone(),
         }
     }
 
@@ -112,7 +130,10 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
 
     fn project(&mut self, t: f64) {
         self.plant.project(t);
-        // No projection needed for aux state (no constraints like quaternion normalization)
+        // Clamp auxiliary state to bounds (e.g., reaction wheel momentum limits)
+        for (i, &(lo, hi)) in self.aux_bounds.iter().enumerate() {
+            self.aux[i] = self.aux[i].clamp(lo, hi);
+        }
     }
 }
 
@@ -217,6 +238,7 @@ mod tests {
                 angular_velocity: Vector3::new(0.1, 0.2, 0.3),
             },
             aux: vec![1.0, 2.0, 3.0],
+            aux_bounds: vec![],
         }
     }
 
@@ -242,10 +264,12 @@ mod tests {
         let s = AugmentedState {
             plant: AttitudeState::identity(),
             aux: vec![1.0, 2.0],
+            aux_bounds: vec![],
         };
         let other = AugmentedState {
             plant: AttitudeState::identity(),
             aux: vec![10.0, 20.0],
+            aux_bounds: vec![],
         };
         let result = s.axpy(0.5, &other);
         assert!((result.aux[0] - 6.0).abs() < 1e-15);
@@ -289,12 +313,26 @@ mod tests {
                 angular_velocity: Vector3::zeros(),
             },
             aux: vec![5.0, 10.0],
+            aux_bounds: vec![],
         };
         s.project(0.0);
         let norm = s.plant.quaternion.magnitude();
         assert!((norm - 1.0).abs() < 1e-15);
-        // Aux should be unchanged
+        // Aux should be unchanged (no bounds set)
         assert_eq!(s.aux, vec![5.0, 10.0]);
+    }
+
+    #[test]
+    fn project_clamps_aux_to_bounds() {
+        let mut s = AugmentedState {
+            plant: AttitudeState::identity(),
+            aux: vec![15.0, -5.0, 3.0],
+            aux_bounds: vec![(-10.0, 10.0), (-2.0, 2.0), (0.0, 100.0)],
+        };
+        s.project(0.0);
+        assert!((s.aux[0] - 10.0).abs() < 1e-15); // clamped from 15 to 10
+        assert!((s.aux[1] - (-2.0)).abs() < 1e-15); // clamped from -5 to -2
+        assert!((s.aux[2] - 3.0).abs() < 1e-15); // within bounds, unchanged
     }
 
     #[test]
@@ -302,6 +340,7 @@ mod tests {
         let s = AugmentedState {
             plant: AttitudeState::identity(),
             aux: vec![],
+            aux_bounds: vec![],
         };
         let y_next = s.clone();
         let error = AugmentedState {
@@ -310,6 +349,7 @@ mod tests {
                 angular_velocity: Vector3::new(1e-8, 1e-8, 1e-8),
             },
             aux: vec![],
+            aux_bounds: vec![],
         };
         let tol = Tolerances {
             atol: 1e-10,
@@ -330,6 +370,7 @@ mod tests {
                 angular_velocity: Vector3::new(1e-8, 1e-8, 1e-8),
             },
             aux: vec![1e-8, 1e-8, 1e-8],
+            aux_bounds: vec![],
         };
         let tol = Tolerances {
             atol: 1e-10,

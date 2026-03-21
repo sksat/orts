@@ -34,8 +34,26 @@ fn build_gravity_field(body: &KnownBody) -> Box<dyn GravityField> {
     }
 }
 
+/// Return the default third-body perturbations for a given central body.
+///
+/// - For Earth: Sun + Moon
+/// - For other bodies: Sun only
+pub fn default_third_bodies(body: &KnownBody) -> Vec<ThirdBodyGravity> {
+    let mut bodies = vec![ThirdBodyGravity::sun()];
+    if *body == KnownBody::Earth {
+        bodies.push(ThirdBodyGravity::moon());
+    }
+    bodies
+}
+
 /// Build an OrbitalSystem for the given body, automatically configuring gravity,
 /// third-body perturbations, drag, and SRP based on the provided parameters.
+///
+/// Assumes a solar-system context. When `epoch` is provided, automatically adds
+/// Sun (and Moon for Earth) third-body gravity perturbations.
+///
+/// Third-body perturbations are specified explicitly via the `third_bodies` parameter.
+/// Use [`default_third_bodies`] to get the standard set for a given central body.
 ///
 /// If `atmosphere` is provided and drag is enabled for Earth, it will be used as the
 /// atmospheric density model. If `None`, the default exponential model is used.
@@ -44,6 +62,7 @@ pub fn build_orbital_system(
     mu: f64,
     epoch: Option<Epoch>,
     sat: &SatelliteParams,
+    third_bodies: &[ThirdBodyGravity],
     atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
 ) -> OrbitalSystem {
     let props = body.properties();
@@ -54,9 +73,12 @@ pub fn build_orbital_system(
     if let Some(epoch) = epoch {
         system = system.with_epoch(epoch);
 
-        system = system.with_model(ThirdBodyGravity::sun());
-        if *body == KnownBody::Earth {
-            system = system.with_model(ThirdBodyGravity::moon());
+        for tb in third_bodies {
+            system = system.with_model(ThirdBodyGravity {
+                name: tb.name,
+                mu_body: tb.mu_body,
+                body_position_fn: tb.body_position_fn,
+            });
         }
     }
 
@@ -86,6 +108,10 @@ pub fn build_orbital_system(
 /// Build a SpacecraftDynamics for the given body, automatically configuring gravity,
 /// third-body perturbations, drag, and SRP based on the provided parameters.
 ///
+/// Assumes a solar-system context. When `epoch` is provided, automatically adds
+/// the explicitly listed third-body gravity perturbations.
+/// Use [`default_third_bodies`] to get the standard set for a given central body.
+///
 /// This mirrors [`build_orbital_system`] but produces a coupled orbit-attitude system.
 /// Force-only models (drag, SRP, third-body) are added via capability-based `Model<S>`.
 pub fn build_spacecraft_dynamics(
@@ -93,6 +119,7 @@ pub fn build_spacecraft_dynamics(
     mu: f64,
     epoch: Option<Epoch>,
     sat: &SatelliteParams,
+    third_bodies: &[ThirdBodyGravity],
     inertia: Matrix3<f64>,
     atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
 ) -> SpacecraftDynamics<Box<dyn GravityField>> {
@@ -105,9 +132,12 @@ pub fn build_spacecraft_dynamics(
     if let Some(epoch) = epoch {
         system = system.with_epoch(epoch);
 
-        system = system.with_model(ThirdBodyGravity::sun());
-        if *body == KnownBody::Earth {
-            system = system.with_model(ThirdBodyGravity::moon());
+        for tb in third_bodies {
+            system = system.with_model(ThirdBodyGravity {
+                name: tb.name,
+                mu_body: tb.mu_body,
+                body_position_fn: tb.body_position_fn,
+            });
         }
     }
 
@@ -147,7 +177,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
         };
-        let system = build_orbital_system(&body, body.properties().mu, None, &sat, None);
+        let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
         assert_eq!(system.body_radius, Some(body.properties().radius));
     }
 
@@ -160,7 +190,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
         };
-        let system = build_orbital_system(&body, body.properties().mu, None, &sat, None);
+        let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
         assert!(system.model_names().contains(&"drag"));
     }
 
@@ -173,7 +203,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
         };
-        let system = build_orbital_system(&body, body.properties().mu, None, &sat, None);
+        let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
         assert!(!system.model_names().contains(&"drag"));
     }
 
@@ -187,7 +217,15 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
         };
-        let system = build_orbital_system(&body, body.properties().mu, Some(epoch), &sat, None);
+        let third_bodies = default_third_bodies(&body);
+        let system = build_orbital_system(
+            &body,
+            body.properties().mu,
+            Some(epoch),
+            &sat,
+            &third_bodies,
+            None,
+        );
         let names = system.model_names();
         assert!(names.contains(&"third_body_sun"));
         assert!(names.contains(&"third_body_moon"));
@@ -203,7 +241,33 @@ mod tests {
             srp_area_to_mass: Some(0.02),
             srp_cr: Some(1.8),
         };
-        let system = build_orbital_system(&body, body.properties().mu, Some(epoch), &sat, None);
+        let third_bodies = default_third_bodies(&body);
+        let system = build_orbital_system(
+            &body,
+            body.properties().mu,
+            Some(epoch),
+            &sat,
+            &third_bodies,
+            None,
+        );
         assert!(system.model_names().contains(&"srp"));
+    }
+
+    #[test]
+    fn build_system_no_third_bodies_when_empty() {
+        let body = KnownBody::Earth;
+        let epoch = Epoch::from_iso8601("2024-03-20T12:00:00Z").unwrap();
+        let sat = SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
+        };
+        // Explicitly pass empty third bodies
+        let system =
+            build_orbital_system(&body, body.properties().mu, Some(epoch), &sat, &[], None);
+        let names = system.model_names();
+        assert!(!names.contains(&"third_body_sun"));
+        assert!(!names.contains(&"third_body_moon"));
     }
 }
