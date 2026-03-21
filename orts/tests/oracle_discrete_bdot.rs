@@ -3,14 +3,14 @@ use std::f64::consts::PI;
 use nalgebra::{Matrix3, Vector3};
 use utsuroi::{Integrator, Rk4};
 
+use kaname::Eci;
 use kaname::constants::{MU_EARTH, R_EARTH};
 use kaname::epoch::Epoch;
-use kaname::Eci;
-use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 use orts::attitude::{
     AttitudeState, BdotDetumbler, BdotFiniteDiff, CommandedMagnetorquer, DecoupledAttitudeSystem,
 };
 use orts::control::DiscreteController;
+use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 
 fn symmetric_inertia(i: f64) -> Matrix3<f64> {
     Matrix3::from_diagonal(&Vector3::new(i, i, i))
