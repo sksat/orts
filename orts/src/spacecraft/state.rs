@@ -35,6 +35,15 @@ impl SpacecraftState {
             mass: mass_rate,
         }
     }
+
+    /// Create from orbital state only (identity attitude, zero angular velocity).
+    pub fn from_orbit(orbit: OrbitalState, mass: f64) -> Self {
+        Self {
+            orbit,
+            attitude: AttitudeState::identity(),
+            mass,
+        }
+    }
 }
 
 impl HasOrbit for SpacecraftState {

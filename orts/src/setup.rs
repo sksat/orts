@@ -1,4 +1,7 @@
-use crate::gravity;
+use nalgebra::Matrix3;
+
+use crate::gravity::{self, GravityField};
+use crate::spacecraft::SpacecraftDynamics;
 use kaname::body::KnownBody;
 use kaname::epoch::Epoch;
 
@@ -17,6 +20,20 @@ pub struct SatelliteParams {
     pub srp_cr: Option<f64>,
 }
 
+/// Build a gravity field model for the given body.
+fn build_gravity_field(body: &KnownBody) -> Box<dyn GravityField> {
+    let props = body.properties();
+    match props.j2 {
+        Some(j2) => Box::new(gravity::ZonalHarmonics {
+            r_body: props.radius,
+            j2,
+            j3: props.j3,
+            j4: props.j4,
+        }),
+        None => Box::new(gravity::PointMass),
+    }
+}
+
 /// Build an OrbitalSystem for the given body, automatically configuring gravity,
 /// third-body perturbations, drag, and SRP based on the provided parameters.
 ///
@@ -30,16 +47,59 @@ pub fn build_orbital_system(
     atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
 ) -> OrbitalSystem {
     let props = body.properties();
-    let gravity_field: Box<dyn gravity::GravityField> = match props.j2 {
-        Some(j2) => Box::new(gravity::ZonalHarmonics {
-            r_body: props.radius,
-            j2,
-            j3: props.j3,
-            j4: props.j4,
-        }),
-        None => Box::new(gravity::PointMass),
-    };
+    let gravity_field = build_gravity_field(body);
     let mut system = OrbitalSystem::new(mu, gravity_field).with_body_radius(props.radius);
+
+    // Third-body gravity (requires epoch for ephemeris)
+    if let Some(epoch) = epoch {
+        system = system.with_epoch(epoch);
+
+        system = system.with_model(ThirdBodyGravity::sun());
+        if *body == KnownBody::Earth {
+            system = system.with_model(ThirdBodyGravity::moon());
+        }
+    }
+
+    // Atmospheric drag (Earth only)
+    if *body == KnownBody::Earth && sat.has_drag {
+        let drag = match atmosphere {
+            Some(model) => AtmosphericDrag::for_earth(sat.ballistic_coeff).with_atmosphere(model),
+            None => AtmosphericDrag::for_earth(sat.ballistic_coeff),
+        };
+        system = system.with_model(drag);
+    }
+
+    // Solar Radiation Pressure (requires epoch for Sun position)
+    if epoch.is_some()
+        && let Some(am) = sat.srp_area_to_mass
+    {
+        let mut srp = SolarRadiationPressure::for_earth(Some(am));
+        if let Some(cr) = sat.srp_cr {
+            srp = srp.with_cr(cr);
+        }
+        system = system.with_model(srp);
+    }
+
+    system
+}
+
+/// Build a SpacecraftDynamics for the given body, automatically configuring gravity,
+/// third-body perturbations, drag, and SRP based on the provided parameters.
+///
+/// This mirrors [`build_orbital_system`] but produces a coupled orbit-attitude system.
+/// Force-only models (drag, SRP, third-body) are added via capability-based `Model<S>`.
+pub fn build_spacecraft_dynamics(
+    body: &KnownBody,
+    mu: f64,
+    epoch: Option<Epoch>,
+    sat: &SatelliteParams,
+    inertia: Matrix3<f64>,
+    atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
+) -> SpacecraftDynamics<Box<dyn GravityField>> {
+    let props = body.properties();
+    let gravity_field = build_gravity_field(body);
+    let mut system =
+        SpacecraftDynamics::new(mu, gravity_field, inertia).with_body_radius(props.radius);
 
     // Third-body gravity (requires epoch for ephemeris)
     if let Some(epoch) = epoch {

@@ -9,6 +9,14 @@ pub trait GravityField: Send + Sync {
     fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vector3<f64>;
 }
 
+// Blanket impl so Box<dyn GravityField> can be used as G in SpacecraftDynamics<G>.
+// This is a builder convenience; performance-critical paths should use concrete types.
+impl GravityField for Box<dyn GravityField> {
+    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vector3<f64> {
+        (**self).acceleration(mu, position)
+    }
+}
+
 /// Point-mass (spherically symmetric) gravity: a = -μ/|r|³ * r
 pub struct PointMass;
 
