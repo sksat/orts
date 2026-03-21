@@ -10,10 +10,18 @@ nalgebra.workspace = true
 kaname.workspace = true
 ureq = { workspace = true, optional = true }
 
+[build-dependencies]
+ureq.workspace = true
+
 [features]
-fetch = ["ureq"]
+default = ["fetch-igrf"]
+fetch = ["dep:ureq"]
+fetch-igrf = []
 
 [dev-dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 kaname = { workspace = true }
+
+[package.metadata.docs.rs]
+no-default-features = true

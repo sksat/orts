@@ -9,8 +9,10 @@
 //! `F: MagneticFieldModel` bounds.
 
 pub mod dipole;
+pub mod igrf;
 
 pub use dipole::TiltedDipole;
+pub use igrf::Igrf;
 
 use kaname::Eci;
 use kaname::epoch::Epoch;
