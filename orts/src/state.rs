@@ -1,6 +1,8 @@
 use nalgebra::Vector3;
 use utsuroi::{OdeState, State, Tolerances};
 
+use crate::model::HasOrbit;
+
 /// Orbital state: position and velocity in 3D space.
 ///
 /// A newtype around [`State<3, 2>`] providing domain-specific accessors
@@ -42,6 +44,12 @@ impl OrbitalState {
     /// - `velocity()` returns acceleration (d(velocity)/dt)
     pub fn from_derivative(velocity: Vector3<f64>, acceleration: Vector3<f64>) -> Self {
         OrbitalState(State::from_derivative(velocity, acceleration))
+    }
+}
+
+impl HasOrbit for OrbitalState {
+    fn orbit(&self) -> &OrbitalState {
+        self
     }
 }
 

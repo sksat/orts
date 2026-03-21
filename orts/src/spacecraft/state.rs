@@ -1,5 +1,6 @@
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
+use crate::model::{HasAttitude, HasMass, HasOrbit};
 use nalgebra::{Vector3, Vector4};
 use utsuroi::{OdeState, Tolerances};
 
@@ -33,6 +34,24 @@ impl SpacecraftState {
             attitude: AttitudeState::from_derivative(q_dot, angular_acceleration),
             mass: mass_rate,
         }
+    }
+}
+
+impl HasOrbit for SpacecraftState {
+    fn orbit(&self) -> &OrbitalState {
+        &self.orbit
+    }
+}
+
+impl HasAttitude for SpacecraftState {
+    fn attitude(&self) -> &AttitudeState {
+        &self.attitude
+    }
+}
+
+impl HasMass for SpacecraftState {
+    fn mass(&self) -> f64 {
+        self.mass
     }
 }
 

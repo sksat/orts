@@ -29,6 +29,24 @@ impl ExternalLoads {
             mass_rate: 0.0,
         }
     }
+
+    /// Create an ExternalLoads with only torque (body frame) [N·m].
+    pub fn torque(t: Vector3<f64>) -> Self {
+        Self {
+            acceleration_inertial: Vector3::zeros(),
+            torque_body: t,
+            mass_rate: 0.0,
+        }
+    }
+
+    /// Create an ExternalLoads with only translational acceleration (inertial frame) [km/s²].
+    pub fn acceleration(a: Vector3<f64>) -> Self {
+        Self {
+            acceleration_inertial: a,
+            torque_body: Vector3::zeros(),
+            mass_rate: 0.0,
+        }
+    }
 }
 
 impl Add for ExternalLoads {

@@ -1,6 +1,8 @@
 use nalgebra::{Matrix3, UnitQuaternion, Vector3, Vector4};
 use utsuroi::{OdeState, Tolerances};
 
+use crate::model::HasAttitude;
+
 /// Attitude state: unit quaternion (orientation) + angular velocity in body frame.
 ///
 /// The quaternion is stored as `[w, x, y, z]` (Hamilton scalar-first convention).
@@ -87,6 +89,12 @@ impl AttitudeState {
     /// Compute the body-frame inertial-to-body rotation matrix.
     pub fn inertial_to_body(&self) -> Matrix3<f64> {
         self.rotation_matrix().transpose() // R_bi = R_ib^T
+    }
+}
+
+impl HasAttitude for AttitudeState {
+    fn attitude(&self) -> &AttitudeState {
+        self
     }
 }
 

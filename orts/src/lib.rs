@@ -3,6 +3,7 @@ pub mod events;
 pub mod gravity;
 pub mod group;
 pub mod kepler;
+pub mod model;
 pub mod orbital_system;
 pub mod perturbations;
 pub mod record;
