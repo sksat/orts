@@ -11,6 +11,7 @@ rerun.workspace = true
 kaname.workspace = true
 utsuroi.workspace = true
 tobari.workspace = true
+log = "0.4.29"
 
 [dev-dependencies]
 proptest = "1.10.0"
