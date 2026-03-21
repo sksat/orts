@@ -17,15 +17,15 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 
 ### Rust (Cargo workspace)
 - `cargo build --workspace` — build all crates
-- `cargo test --workspace` — run all tests (55 tests across 4 crates)
+- `cargo test --workspace` — run all tests
 - `cargo clippy --workspace` — lint all crates
-- `cargo run --bin orts` — run the CLI simulator (outputs CSV)
-- `cargo run --bin orts -- --serve` — start WebSocket server (port 9001)
-- `cargo run --bin orts -- --serve --altitude 800 --dt 5` — custom parameters
-- `cargo run --bin orts -- --serve --dt 1 --output-interval 10` — fine dt with decimated output
+- `cargo run --bin orts -- run` — run a simulation (outputs RRD by default)
+- `cargo run --bin orts -- serve` — start WebSocket server (port 9001)
+- `cargo run --bin orts -- serve --altitude 800 --dt 5` — custom parameters
+- `cargo run --bin orts -- serve --dt 1 --output-interval 10` — fine dt with decimated output
 - `cargo test -p utsuroi` — test only the utsuroi (integrator) crate
-- `cargo test -p orts-orbits` — test only the orbits crate
 - `cargo test -p kaname` — test only the kaname crate
+- `cargo test -p tobari` — test only the tobari (atmosphere models) crate
 - `cargo test -p orts` — test the simulation library (orts crate)
 - `cargo test -p orts-cli` — run CLI E2E tests
 
