@@ -6,7 +6,7 @@ pub mod reference;
 pub mod state;
 pub mod system;
 
-pub use bdot::BdotDetumbler;
+pub use bdot::{BdotDetumbler, BdotFiniteDiff, CommandedMagnetorquer};
 pub use decoupled::{DecoupledAttitudeSystem, DecoupledContext};
 pub use gravity_gradient::GravityGradientTorque;
 pub use pd_controller::{InertialPdController, TrackingPdController};
