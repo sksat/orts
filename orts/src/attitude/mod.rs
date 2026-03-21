@@ -1,3 +1,4 @@
+pub mod augmented;
 pub mod bdot;
 pub mod decoupled;
 pub mod gravity_gradient;
@@ -6,6 +7,7 @@ pub mod reference;
 pub mod state;
 pub mod system;
 
+pub use augmented::AugmentedAttitudeSystem;
 pub use bdot::{BdotDetumbler, BdotFiniteDiff, CommandedMagnetorquer};
 pub use decoupled::{DecoupledAttitudeSystem, DecoupledContext};
 pub use gravity_gradient::GravityGradientTorque;
