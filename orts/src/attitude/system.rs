@@ -2,7 +2,8 @@ use kaname::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
 use utsuroi::DynamicalSystem;
 
-use super::TorqueModel;
+use crate::model::Model;
+
 use super::state::AttitudeState;
 
 /// Attitude dynamics system composing Euler's rotation equation with torque models.
@@ -15,7 +16,7 @@ use super::state::AttitudeState;
 pub struct AttitudeSystem {
     inertia: Matrix3<f64>,
     inertia_inv: Matrix3<f64>,
-    torques: Vec<Box<dyn TorqueModel>>,
+    models: Vec<Box<dyn Model<AttitudeState>>>,
     epoch_0: Option<Epoch>,
 }
 
@@ -31,14 +32,14 @@ impl AttitudeSystem {
         Self {
             inertia,
             inertia_inv,
-            torques: Vec::new(),
+            models: Vec::new(),
             epoch_0: None,
         }
     }
 
-    /// Add a torque model (builder pattern).
-    pub fn with_torque(mut self, torque: Box<dyn TorqueModel>) -> Self {
-        self.torques.push(torque);
+    /// Add a model (builder pattern).
+    pub fn with_model(mut self, model: impl Model<AttitudeState> + 'static) -> Self {
+        self.models.push(Box::new(model));
         self
     }
 
@@ -53,9 +54,9 @@ impl AttitudeSystem {
         &self.inertia
     }
 
-    /// Get the names of all active torque models.
-    pub fn torque_names(&self) -> Vec<&str> {
-        self.torques.iter().map(|t| t.name()).collect()
+    /// Get the names of all active models.
+    pub fn model_names(&self) -> Vec<&str> {
+        self.models.iter().map(|m| m.name()).collect()
     }
 }
 
@@ -70,8 +71,9 @@ impl DynamicalSystem for AttitudeSystem {
 
         // 2. Total torque from all models
         let mut tau = Vector3::zeros();
-        for tm in &self.torques {
-            tau += tm.torque(t, state, epoch.as_ref());
+        for m in &self.models {
+            let loads = m.eval(t, state, epoch.as_ref());
+            tau += loads.torque_body;
         }
 
         // 3. Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
@@ -114,9 +116,9 @@ mod tests {
     }
 
     #[test]
-    fn torque_names_empty() {
+    fn model_names_empty() {
         let system = AttitudeSystem::new(symmetric_inertia(1.0));
-        assert!(system.torque_names().is_empty());
+        assert!(system.model_names().is_empty());
     }
 
     #[test]

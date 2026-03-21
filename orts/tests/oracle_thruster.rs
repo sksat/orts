@@ -20,7 +20,7 @@ use utsuroi::{Integrator, Rk4};
 ///
 /// Uses a tiny μ so gravity is effectively zero, letting us isolate thrust effects.
 fn free_space_dynamics(inertia: Matrix3<f64>, thruster: Thruster) -> SpacecraftDynamics<PointMass> {
-    SpacecraftDynamics::new(1e-30, PointMass, inertia).with_load(Box::new(thruster))
+    SpacecraftDynamics::new(1e-30, PointMass, inertia).with_model(thruster)
 }
 
 fn free_space_multi(
@@ -29,7 +29,7 @@ fn free_space_multi(
 ) -> SpacecraftDynamics<PointMass> {
     let mut dyn_sc = SpacecraftDynamics::new(1e-30, PointMass, inertia);
     for t in thrusters {
-        dyn_sc = dyn_sc.with_load(Box::new(t));
+        dyn_sc = dyn_sc.with_model(t);
     }
     dyn_sc
 }

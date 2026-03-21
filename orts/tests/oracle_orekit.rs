@@ -214,10 +214,10 @@ fn build_system(scenario: &Scenario) -> OrbitalSystem {
 
     // Third-body perturbations
     if fm.third_body_sun {
-        system = system.with_perturbation(Box::new(ThirdBodyGravity::sun()));
+        system = system.with_model(ThirdBodyGravity::sun());
     }
     if fm.third_body_moon {
-        system = system.with_perturbation(Box::new(ThirdBodyGravity::moon()));
+        system = system.with_model(ThirdBodyGravity::moon());
     }
 
     // SRP
@@ -229,7 +229,7 @@ fn build_system(scenario: &Scenario) -> OrbitalSystem {
         if srp_cfg.shadow {
             srp = srp.with_shadow_body(R_EARTH);
         }
-        system = system.with_perturbation(Box::new(srp));
+        system = system.with_model(srp);
     }
 
     // Drag
@@ -255,7 +255,7 @@ fn build_system(scenario: &Scenario) -> OrbitalSystem {
             }
             other => panic!("Unknown drag model: {other}"),
         }
-        system = system.with_perturbation(Box::new(drag));
+        system = system.with_model(drag);
     }
 
     system

@@ -200,7 +200,7 @@ fn gravity_gradient_libration_frequency() {
 
     // Fixed position — no orbital motion, pure gravity gradient oscillation
     let gg = GravityGradientTorque::new(mu, inertia, move |_| Vector3::new(r, 0.0, 0.0));
-    let system = AttitudeSystem::new(inertia).with_torque(Box::new(gg));
+    let system = AttitudeSystem::new(inertia).with_model(gg);
 
     // Initial condition: small pitch angle about z-body, zero angular velocity
     let pitch0 = 0.01; // rad (small angle)

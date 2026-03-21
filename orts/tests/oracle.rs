@@ -430,13 +430,13 @@ fn drag_monotonic_sma_decay() {
             j4: None,
         }),
     );
-    system.perturbations.push(Box::new(AtmosphericDrag {
+    system = system.with_model(AtmosphericDrag {
         body: Some(KnownBody::Earth),
         body_radius: R_EARTH,
         omega_body: orts::perturbations::OMEGA_EARTH,
         ballistic_coeff: 0.005, // physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
         atmosphere: Box::new(tobari::exponential::Exponential),
-    }));
+    });
 
     let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
@@ -507,13 +507,13 @@ fn drag_scaling_with_ballistic_coefficient() {
                 j4: None,
             }),
         );
-        system.perturbations.push(Box::new(AtmosphericDrag {
+        system = system.with_model(AtmosphericDrag {
             body: Some(KnownBody::Earth),
             body_radius: R_EARTH,
             omega_body: orts::perturbations::OMEGA_EARTH,
             ballistic_coeff: b,
             atmosphere: Box::new(tobari::exponential::Exponential),
-        }));
+        });
 
         let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
@@ -637,8 +637,8 @@ fn third_body_geo_inclination_change() {
 
     let mut system = earth_j2_j3_j4_system();
     system = system.with_epoch(epoch);
-    system = system.with_perturbation(Box::new(ThirdBodyGravity::sun()));
-    system = system.with_perturbation(Box::new(ThirdBodyGravity::moon()));
+    system = system.with_model(ThirdBodyGravity::sun());
+    system = system.with_model(ThirdBodyGravity::moon());
 
     // GEO: nearly equatorial, circular orbit
     let initial = OrbitalState::new(vector![a_geo, 0.0, 0.0], vector![0.0, v_geo, 0.0]);
@@ -697,20 +697,20 @@ fn third_body_individual_effects() {
     // Sun only
     let system_sun = earth_j2_j3_j4_system()
         .with_epoch(epoch)
-        .with_perturbation(Box::new(ThirdBodyGravity::sun()));
+        .with_model(ThirdBodyGravity::sun());
     let final_sun = Rk4.integrate(&system_sun, initial.clone(), 0.0, duration, dt, |_, _| {});
 
     // Moon only
     let system_moon = earth_j2_j3_j4_system()
         .with_epoch(epoch)
-        .with_perturbation(Box::new(ThirdBodyGravity::moon()));
+        .with_model(ThirdBodyGravity::moon());
     let final_moon = Rk4.integrate(&system_moon, initial.clone(), 0.0, duration, dt, |_, _| {});
 
     // Both
     let system_both = earth_j2_j3_j4_system()
         .with_epoch(epoch)
-        .with_perturbation(Box::new(ThirdBodyGravity::sun()))
-        .with_perturbation(Box::new(ThirdBodyGravity::moon()));
+        .with_model(ThirdBodyGravity::sun())
+        .with_model(ThirdBodyGravity::moon());
     let final_both = Rk4.integrate(&system_both, initial, 0.0, duration, dt, |_, _| {});
 
     // Each third-body should cause a measurable difference from J2-only
@@ -759,8 +759,8 @@ fn full_model_dt_convergence() {
 
     let system = earth_j2_j3_j4_system()
         .with_epoch(epoch)
-        .with_perturbation(Box::new(ThirdBodyGravity::sun()))
-        .with_perturbation(Box::new(ThirdBodyGravity::moon()));
+        .with_model(ThirdBodyGravity::sun())
+        .with_model(ThirdBodyGravity::moon());
 
     let (pos, vel) = elements.to_state_vector(MU_EARTH);
     let initial = OrbitalState::new(pos, vel);
@@ -1590,13 +1590,13 @@ fn drag_decay_200_orbits() {
     // to observe acceleration (positive feedback from exponential atmosphere).
     // ISS physical B=0.005 decays too slowly over 200 orbits (~1 km) relative
     // to the 58 km scale height for the effect to be measurable.
-    system.perturbations.push(Box::new(AtmosphericDrag {
+    system = system.with_model(AtmosphericDrag {
         body: Some(KnownBody::Earth),
         body_radius: R_EARTH,
         omega_body: orts::perturbations::OMEGA_EARTH,
         ballistic_coeff: orts::perturbations::DEFAULT_BALLISTIC_COEFF,
         atmosphere: Box::new(tobari::exponential::Exponential),
-    }));
+    });
 
     let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 
@@ -1802,13 +1802,13 @@ fn iss_drag_30day_survival() {
     let v = (MU_EARTH / a).sqrt();
 
     let mut system = earth_j2_system();
-    system.perturbations.push(Box::new(AtmosphericDrag {
+    system = system.with_model(AtmosphericDrag {
         body: Some(KnownBody::Earth),
         body_radius: R_EARTH,
         omega_body: orts::perturbations::OMEGA_EARTH,
         ballistic_coeff: 0.005, // Physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
         atmosphere: Box::new(tobari::exponential::Exponential),
-    }));
+    });
 
     let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
 

@@ -3,7 +3,8 @@ use kaname::sun;
 use nalgebra::Vector3;
 
 use crate::OrbitalState;
-use crate::perturbations::ForceModel;
+use crate::model::{HasOrbit, Model};
+use crate::spacecraft::ExternalLoads;
 use kaname::constants::R_EARTH;
 
 /// Solar radiation pressure at 1 AU (N/m²).
@@ -75,7 +76,7 @@ impl SolarRadiationPressure {
 /// The shadow cylinder has radius = `body_radius` and axis along the Earth→Sun direction.
 /// A satellite is in shadow when it is on the anti-Sun side of the central body
 /// and its perpendicular distance to the Sun-Earth line is less than `body_radius`.
-fn shadow_function(
+pub(crate) fn shadow_function(
     sat_position: &Vector3<f64>,
     sun_position: &Vector3<f64>,
     body_radius: f64,
@@ -102,12 +103,9 @@ fn shadow_function(
     }
 }
 
-impl ForceModel for SolarRadiationPressure {
-    fn name(&self) -> &str {
-        "srp"
-    }
-
-    fn acceleration(&self, _t: f64, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
+impl SolarRadiationPressure {
+    /// Compute SRP acceleration [km/s²] from orbital state.
+    pub(crate) fn acceleration(&self, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
         let epoch = match epoch {
             Some(e) => e,
             None => return Vector3::zeros(),
@@ -142,6 +140,16 @@ impl ForceModel for SolarRadiationPressure {
     }
 }
 
+impl<S: HasOrbit> Model<S> for SolarRadiationPressure {
+    fn name(&self) -> &str {
+        "srp"
+    }
+
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+        ExternalLoads::acceleration(self.acceleration(state.orbit(), epoch))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,7 +177,7 @@ mod tests {
         };
         let state = iss_state();
         let epoch = test_epoch();
-        let a = srp.acceleration(0.0, &state, Some(&epoch));
+        let a = srp.acceleration(&state, Some(&epoch));
 
         // Sun direction at equinox is roughly +X, so acceleration should be roughly -X
         let sun_dir = sun::sun_direction_eci(&epoch);
@@ -191,7 +199,7 @@ mod tests {
         };
         let state = iss_state();
         let epoch = test_epoch();
-        let a = srp.acceleration(0.0, &state, Some(&epoch));
+        let a = srp.acceleration(&state, Some(&epoch));
         let expected = SOLAR_RADIATION_PRESSURE / 1000.0; // ≈ 4.54e-9 km/s²
 
         // Distance is approximately 1 AU (satellite offset is negligible)
@@ -219,8 +227,8 @@ mod tests {
             shadow_body_radius: None,
         };
 
-        let a1 = srp1.acceleration(0.0, &state, Some(&epoch)).magnitude();
-        let a2 = srp2.acceleration(0.0, &state, Some(&epoch)).magnitude();
+        let a1 = srp1.acceleration(&state, Some(&epoch)).magnitude();
+        let a2 = srp2.acceleration(&state, Some(&epoch)).magnitude();
         let ratio = a2 / a1;
 
         assert!(
@@ -245,8 +253,8 @@ mod tests {
             shadow_body_radius: None,
         };
 
-        let a1 = srp1.acceleration(0.0, &state, Some(&epoch)).magnitude();
-        let a2 = srp2.acceleration(0.0, &state, Some(&epoch)).magnitude();
+        let a1 = srp1.acceleration(&state, Some(&epoch)).magnitude();
+        let a2 = srp2.acceleration(&state, Some(&epoch)).magnitude();
         let ratio = a2 / a1;
 
         assert!(
@@ -259,7 +267,7 @@ mod tests {
     fn srp_no_epoch_returns_zero() {
         let srp = SolarRadiationPressure::for_earth(None);
         let state = iss_state();
-        let a = srp.acceleration(0.0, &state, None);
+        let a = srp.acceleration(&state, None);
         assert_eq!(a, Vector3::zeros());
     }
 
@@ -274,7 +282,7 @@ mod tests {
         };
         let epoch = test_epoch();
         let state = iss_state();
-        let a_mag = srp.acceleration(0.0, &state, Some(&epoch)).magnitude();
+        let a_mag = srp.acceleration(&state, Some(&epoch)).magnitude();
 
         assert!(
             a_mag > 1e-11 && a_mag < 1e-8,
@@ -342,7 +350,7 @@ mod tests {
             vector![-(R_EARTH + 400.0), 0.0, 0.0],
             vector![0.0, -7.67, 0.0],
         );
-        let a = srp.acceleration(0.0, &state, Some(&epoch));
+        let a = srp.acceleration(&state, Some(&epoch));
         assert_eq!(a, Vector3::zeros(), "SRP should be zero in shadow");
     }
 

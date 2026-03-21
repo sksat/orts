@@ -102,10 +102,10 @@ fn build_iss_system(epoch: Epoch) -> OrbitalSystem {
     OrbitalSystem::new(MU_EARTH, Box::new(gravity))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH)
-        .with_perturbation(Box::new(
+        .with_model(
             AtmosphericDrag::for_earth(Some(0.005)) // ISS physical B ≈ Cd*A/(2m)
                 .with_atmosphere(Box::new(HarrisPriester::new())),
-        ))
+        )
 }
 
 /// Compute osculating SMA from Cartesian state: a = -μ/(2ε), ε = v²/2 - μ/r
@@ -344,10 +344,10 @@ fn build_iss_system_msise(epoch: Epoch, f107: f64, ap: f64) -> OrbitalSystem {
     OrbitalSystem::new(MU_EARTH, Box::new(gravity))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH)
-        .with_perturbation(Box::new(
+        .with_model(
             AtmosphericDrag::for_earth(Some(0.005))
                 .with_atmosphere(Box::new(Nrlmsise00::new(weather))),
-        ))
+        )
 }
 
 fn run_decay_window_msise(window_name: &str, f107: f64, ap: f64, min_ratio: f64, max_ratio: f64) {
@@ -473,10 +473,10 @@ fn build_iss_system_msise_cssi(epoch: Epoch) -> OrbitalSystem {
     OrbitalSystem::new(MU_EARTH, Box::new(gravity))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH)
-        .with_perturbation(Box::new(
+        .with_model(
             AtmosphericDrag::for_earth(Some(0.005))
                 .with_atmosphere(Box::new(Nrlmsise00::new(weather))),
-        ))
+        )
 }
 
 fn run_decay_window_cssi(window_name: &str, min_ratio: f64, max_ratio: f64) {

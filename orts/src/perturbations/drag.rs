@@ -4,7 +4,8 @@ use nalgebra::Vector3;
 use tobari::{AtmosphereModel, Exponential};
 
 use crate::OrbitalState;
-use crate::perturbations::ForceModel;
+use crate::model::{HasOrbit, Model};
+use crate::spacecraft::ExternalLoads;
 use kaname::body::KnownBody;
 use kaname::constants::{OMEGA_EARTH, R_EARTH};
 
@@ -80,12 +81,9 @@ impl AtmosphericDrag {
     }
 }
 
-impl ForceModel for AtmosphericDrag {
-    fn name(&self) -> &str {
-        "drag"
-    }
-
-    fn acceleration(&self, _t: f64, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
+impl AtmosphericDrag {
+    /// Compute drag acceleration [km/s²] from orbital state.
+    pub(crate) fn acceleration(&self, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
         // Check if inside the body (ellipsoid test for Earth, spherical for others)
         let pos = state.position();
         let inside = match self.body {
@@ -131,6 +129,16 @@ impl ForceModel for AtmosphericDrag {
     }
 }
 
+impl<S: HasOrbit> Model<S> for AtmosphericDrag {
+    fn name(&self) -> &str {
+        "drag"
+    }
+
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+        ExternalLoads::acceleration(self.acceleration(state.orbit(), epoch))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,7 +162,7 @@ mod tests {
         let v = (MU_EARTH / r).sqrt();
         let state = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
 
-        let a = drag.acceleration(0.0, &state, None);
+        let a = drag.acceleration(&state, None);
 
         // v_rel = v - ω×r. At (r,0,0), ω×r = (0,0,ω)×(r,0,0) = (0, ω*r, 0)
         // v_rel = (0, v - ω*r, 0)
@@ -188,7 +196,7 @@ mod tests {
         let v = (MU_EARTH / r).sqrt();
         let state = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
 
-        let a = drag.acceleration(0.0, &state, None);
+        let a = drag.acceleration(&state, None);
         let a_mag = a.magnitude();
 
         // At ISS altitude (400km):
@@ -211,8 +219,8 @@ mod tests {
             OrbitalState::new(vector![R_EARTH + 600.0, 0.0, 0.0], vector![0.0, v, 0.0]);
         let state_low = OrbitalState::new(vector![R_EARTH + 300.0, 0.0, 0.0], vector![0.0, v, 0.0]);
 
-        let a_high = drag.acceleration(0.0, &state_high, None).magnitude();
-        let a_low = drag.acceleration(0.0, &state_low, None).magnitude();
+        let a_high = drag.acceleration(&state_high, None).magnitude();
+        let a_low = drag.acceleration(&state_low, None).magnitude();
 
         assert!(
             a_low > a_high * 10.0,
@@ -225,7 +233,7 @@ mod tests {
         let drag = iss_drag();
         let state = OrbitalState::new(vector![R_EARTH + 3000.0, 0.0, 0.0], vector![0.0, 5.0, 0.0]);
 
-        let a = drag.acceleration(0.0, &state, None);
+        let a = drag.acceleration(&state, None);
         assert_eq!(a, Vector3::zeros(), "No drag above atmosphere");
     }
 
@@ -276,8 +284,8 @@ mod tests {
             vector![0.0, v, 0.0], // prograde orbit
         );
 
-        let a_rotating = drag_rotating.acceleration(0.0, &state, None).magnitude();
-        let a_static = drag_static.acceleration(0.0, &state, None).magnitude();
+        let a_rotating = drag_rotating.acceleration(&state, None).magnitude();
+        let a_static = drag_static.acceleration(&state, None).magnitude();
 
         // For prograde orbit, co-rotating atmosphere means lower relative velocity → less drag
         assert!(
@@ -298,7 +306,7 @@ mod tests {
         let state = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
 
         // Without epoch, HP returns average density — should still produce non-zero drag
-        let a = drag.acceleration(0.0, &state, None);
+        let a = drag.acceleration(&state, None);
         assert!(
             a.magnitude() > 0.0,
             "HP drag should be non-zero at ISS altitude"

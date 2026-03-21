@@ -3,13 +3,13 @@ use utsuroi::DynamicalSystem;
 
 use crate::OrbitalState;
 use crate::gravity::GravityField;
-use crate::perturbations::ForceModel;
+use crate::model::Model;
 
 /// Orbital dynamics system combining a gravity field model with perturbation forces.
 pub struct OrbitalSystem {
     pub mu: f64,
     pub gravity: Box<dyn GravityField>,
-    pub perturbations: Vec<Box<dyn ForceModel>>,
+    pub models: Vec<Box<dyn Model<OrbitalState>>>,
     /// Initial epoch corresponding to integration time t=0.
     /// Used to compute absolute epoch for time-dependent perturbations (e.g., third-body).
     pub epoch_0: Option<Epoch>,
@@ -22,14 +22,14 @@ impl OrbitalSystem {
         Self {
             mu,
             gravity,
-            perturbations: Vec::new(),
+            models: Vec::new(),
             epoch_0: None,
             body_radius: None,
         }
     }
 
-    pub fn with_perturbation(mut self, p: Box<dyn ForceModel>) -> Self {
-        self.perturbations.push(p);
+    pub fn with_model(mut self, model: impl Model<OrbitalState> + 'static) -> Self {
+        self.models.push(Box::new(model));
         self
     }
 
@@ -46,7 +46,7 @@ impl OrbitalSystem {
     /// Compute per-force acceleration magnitudes [km/s²].
     ///
     /// Returns a vec of (name, magnitude) pairs: `"gravity"` first,
-    /// then each perturbation by its [`ForceModel::name()`].
+    /// then each model by its [`Model::name()`].
     pub fn acceleration_breakdown(&self, t: f64, state: &OrbitalState) -> Vec<(&str, f64)> {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
         let grav = self
@@ -54,16 +54,16 @@ impl OrbitalSystem {
             .acceleration(self.mu, state.position())
             .magnitude();
         let mut result = vec![("gravity", grav)];
-        for p in &self.perturbations {
-            let a = p.acceleration(t, state, epoch.as_ref()).magnitude();
-            result.push((p.name(), a));
+        for m in &self.models {
+            let loads = m.eval(t, state, epoch.as_ref());
+            result.push((m.name(), loads.acceleration_inertial.magnitude()));
         }
         result
     }
 
-    /// Names of active perturbations (excluding gravity).
-    pub fn perturbation_names(&self) -> Vec<&str> {
-        self.perturbations.iter().map(|p| p.name()).collect()
+    /// Names of active models (excluding gravity).
+    pub fn model_names(&self) -> Vec<&str> {
+        self.models.iter().map(|m| m.name()).collect()
     }
 }
 
@@ -72,8 +72,9 @@ impl DynamicalSystem for OrbitalSystem {
     fn derivatives(&self, t: f64, state: &OrbitalState) -> OrbitalState {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
         let mut accel = self.gravity.acceleration(self.mu, state.position());
-        for p in &self.perturbations {
-            accel += p.acceleration(t, state, epoch.as_ref());
+        for m in &self.models {
+            let loads = m.eval(t, state, epoch.as_ref());
+            accel += loads.acceleration_inertial;
         }
         OrbitalState::from_derivative(*state.velocity(), accel)
     }

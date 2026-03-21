@@ -1,7 +1,9 @@
 use kaname::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
 
-use super::TorqueModel;
+use crate::model::{HasAttitude, Model};
+use crate::spacecraft::ExternalLoads;
+
 use super::state::AttitudeState;
 
 /// Gravity gradient torque on a rigid body in a gravitational field.
@@ -46,12 +48,9 @@ impl GravityGradientTorque {
     }
 }
 
-impl TorqueModel for GravityGradientTorque {
-    fn name(&self) -> &str {
-        "gravity_gradient"
-    }
-
-    fn torque(&self, t: f64, state: &AttitudeState, _epoch: Option<&Epoch>) -> Vector3<f64> {
+impl GravityGradientTorque {
+    /// Compute gravity gradient torque in body frame.
+    pub(crate) fn torque(&self, t: f64, state: &AttitudeState) -> Vector3<f64> {
         let r_eci = (self.position_fn)(t);
         let r_mag = r_eci.magnitude();
         if r_mag < 1e-10 {
@@ -66,6 +65,16 @@ impl TorqueModel for GravityGradientTorque {
         let coeff = 3.0 * self.mu / r_mag.powi(5);
         let i_r = self.inertia * r_body;
         coeff * r_body.cross(&i_r)
+    }
+}
+
+impl<S: HasAttitude> Model<S> for GravityGradientTorque {
+    fn name(&self) -> &str {
+        "gravity_gradient"
+    }
+
+    fn eval(&self, t: f64, state: &S, _epoch: Option<&Epoch>) -> ExternalLoads {
+        ExternalLoads::torque(self.torque(t, state.attitude()))
     }
 }
 
@@ -94,7 +103,7 @@ mod tests {
             quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
             angular_velocity: Vector3::zeros(),
         };
-        let tau = gg.torque(0.0, &state, None);
+        let tau = gg.torque(0.0, &state);
         assert!(tau.magnitude() < 1e-15, "Expected zero torque, got {tau:?}");
     }
 
@@ -111,7 +120,7 @@ mod tests {
         let axis = nalgebra::Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0));
         let uq = UnitQuaternion::from_axis_angle(&axis, PI / 4.0);
         let state = AttitudeState::new(uq, Vector3::zeros());
-        let tau = gg.torque(0.0, &state, None);
+        let tau = gg.torque(0.0, &state);
         assert!(tau.magnitude() > 1e-10, "Expected nonzero torque");
     }
 
@@ -127,8 +136,8 @@ mod tests {
         let gg1 = GravityGradientTorque::new(1.0, inertia, move |_| Vector3::new(r, 0.0, 0.0));
         let gg2 = GravityGradientTorque::new(2.0, inertia, move |_| Vector3::new(r, 0.0, 0.0));
 
-        let tau1 = gg1.torque(0.0, &state, None);
-        let tau2 = gg2.torque(0.0, &state, None);
+        let tau1 = gg1.torque(0.0, &state);
+        let tau2 = gg2.torque(0.0, &state);
 
         // Torque should scale linearly with μ
         let ratio = tau2.magnitude() / tau1.magnitude();
@@ -149,8 +158,8 @@ mod tests {
         let gg1 = GravityGradientTorque::new(mu, inertia, move |_| Vector3::new(r1, 0.0, 0.0));
         let gg2 = GravityGradientTorque::new(mu, inertia, move |_| Vector3::new(r2, 0.0, 0.0));
 
-        let tau1 = gg1.torque(0.0, &state, None);
-        let tau2 = gg2.torque(0.0, &state, None);
+        let tau1 = gg1.torque(0.0, &state);
+        let tau2 = gg2.torque(0.0, &state);
 
         // τ ∝ 1/r³ (r⁵ in denominator, r² from r_body products)
         let expected_ratio = (r1 / r2).powi(3);
@@ -176,7 +185,7 @@ mod tests {
         let uq = UnitQuaternion::from_axis_angle(&axis, 1.234);
         let state = AttitudeState::new(uq, Vector3::zeros());
 
-        let tau = gg.torque(0.0, &state, None);
+        let tau = gg.torque(0.0, &state);
         assert!(
             tau.magnitude() < 1e-10,
             "Symmetric body should have zero GG torque, got {tau:?}"
@@ -193,7 +202,7 @@ mod tests {
         // At t=0, position should be (r, 0, 0)
         let state = AttitudeState::identity();
         // Just verify it doesn't panic and returns a valid torque
-        let tau = gg.torque(0.0, &state, None);
+        let tau = gg.torque(0.0, &state);
         assert!(tau.iter().all(|v| v.is_finite()));
     }
 }

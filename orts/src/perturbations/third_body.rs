@@ -2,7 +2,8 @@ use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 
 use crate::OrbitalState;
-use crate::perturbations::ForceModel;
+use crate::model::{HasOrbit, Model};
+use crate::spacecraft::ExternalLoads;
 
 /// Third-body gravitational perturbation.
 ///
@@ -44,12 +45,9 @@ impl ThirdBodyGravity {
     }
 }
 
-impl ForceModel for ThirdBodyGravity {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    fn acceleration(&self, _t: f64, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
+impl ThirdBodyGravity {
+    /// Compute third-body gravitational acceleration [km/s²] from orbital state.
+    pub(crate) fn acceleration(&self, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
         let epoch = match epoch {
             Some(e) => e,
             None => return Vector3::zeros(),
@@ -63,6 +61,16 @@ impl ForceModel for ThirdBodyGravity {
         // a = μ₃ * [(r_body - r_sat)/d³ - r_body/R³]
         self.mu_body
             * (r_sat_to_body / (d * d * d) - r_body / (r_body_mag * r_body_mag * r_body_mag))
+    }
+}
+
+impl<S: HasOrbit> Model<S> for ThirdBodyGravity {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+        ExternalLoads::acceleration(self.acceleration(state.orbit(), epoch))
     }
 }
 
@@ -88,7 +96,7 @@ mod tests {
         let state = iss_state();
         let epoch = test_epoch();
 
-        let a = tb.acceleration(0.0, &state, Some(&epoch));
+        let a = tb.acceleration(&state, Some(&epoch));
         let a_mag = a.magnitude();
 
         // Sun tidal acceleration on LEO satellite:
@@ -105,7 +113,7 @@ mod tests {
         let state = iss_state();
         let epoch = test_epoch();
 
-        let a = tb.acceleration(0.0, &state, Some(&epoch));
+        let a = tb.acceleration(&state, Some(&epoch));
         let a_mag = a.magnitude();
 
         // Moon tidal acceleration on LEO satellite:
@@ -121,7 +129,7 @@ mod tests {
         let tb = ThirdBodyGravity::sun();
         let state = iss_state();
 
-        let a = tb.acceleration(0.0, &state, None);
+        let a = tb.acceleration(&state, None);
         assert_eq!(
             a,
             Vector3::zeros(),
@@ -136,8 +144,8 @@ mod tests {
         let state = iss_state();
         let epoch = test_epoch();
 
-        let a_sun = tb_sun.acceleration(0.0, &state, Some(&epoch)).magnitude();
-        let a_moon = tb_moon.acceleration(0.0, &state, Some(&epoch)).magnitude();
+        let a_sun = tb_sun.acceleration(&state, Some(&epoch)).magnitude();
+        let a_moon = tb_moon.acceleration(&state, Some(&epoch)).magnitude();
 
         // Central body gravity: μ/r² ≈ 398600/6778² ≈ 8.7e-3 km/s²
         let r = state.position().magnitude();
@@ -169,8 +177,8 @@ mod tests {
         let epoch1 = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let epoch2 = Epoch::from_gregorian(2024, 6, 20, 12, 0, 0.0);
 
-        let a1 = tb.acceleration(0.0, &state, Some(&epoch1));
-        let a2 = tb.acceleration(0.0, &state, Some(&epoch2));
+        let a1 = tb.acceleration(&state, Some(&epoch1));
+        let a2 = tb.acceleration(&state, Some(&epoch2));
 
         // Direction should be very different (perpendicular vs parallel to Sun)
         let cos_angle = a1.normalize().dot(&a2.normalize());
@@ -191,12 +199,8 @@ mod tests {
         let geo_v = (MU_EARTH / geo_r).sqrt();
         let geo_state = OrbitalState::new(vector![geo_r, 0.0, 0.0], vector![0.0, geo_v, 0.0]);
 
-        let a_leo = tb_moon
-            .acceleration(0.0, &leo_state, Some(&epoch))
-            .magnitude();
-        let a_geo = tb_moon
-            .acceleration(0.0, &geo_state, Some(&epoch))
-            .magnitude();
+        let a_leo = tb_moon.acceleration(&leo_state, Some(&epoch)).magnitude();
+        let a_geo = tb_moon.acceleration(&geo_state, Some(&epoch)).magnitude();
 
         // At GEO, satellite is closer to Moon (shorter range) → larger perturbation
         // Also the "indirect" term is larger relative to "direct" term

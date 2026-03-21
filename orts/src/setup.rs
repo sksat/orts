@@ -45,9 +45,9 @@ pub fn build_orbital_system(
     if let Some(epoch) = epoch {
         system = system.with_epoch(epoch);
 
-        system = system.with_perturbation(Box::new(ThirdBodyGravity::sun()));
+        system = system.with_model(ThirdBodyGravity::sun());
         if *body == KnownBody::Earth {
-            system = system.with_perturbation(Box::new(ThirdBodyGravity::moon()));
+            system = system.with_model(ThirdBodyGravity::moon());
         }
     }
 
@@ -57,7 +57,7 @@ pub fn build_orbital_system(
             Some(model) => AtmosphericDrag::for_earth(sat.ballistic_coeff).with_atmosphere(model),
             None => AtmosphericDrag::for_earth(sat.ballistic_coeff),
         };
-        system = system.with_perturbation(Box::new(drag));
+        system = system.with_model(drag);
     }
 
     // Solar Radiation Pressure (requires epoch for Sun position)
@@ -68,7 +68,7 @@ pub fn build_orbital_system(
         if let Some(cr) = sat.srp_cr {
             srp = srp.with_cr(cr);
         }
-        system = system.with_perturbation(Box::new(srp));
+        system = system.with_model(srp);
     }
 
     system
@@ -101,7 +101,7 @@ mod tests {
             srp_cr: None,
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, None);
-        assert!(system.perturbation_names().contains(&"drag"));
+        assert!(system.model_names().contains(&"drag"));
     }
 
     #[test]
@@ -114,7 +114,7 @@ mod tests {
             srp_cr: None,
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, None);
-        assert!(!system.perturbation_names().contains(&"drag"));
+        assert!(!system.model_names().contains(&"drag"));
     }
 
     #[test]
@@ -128,7 +128,7 @@ mod tests {
             srp_cr: None,
         };
         let system = build_orbital_system(&body, body.properties().mu, Some(epoch), &sat, None);
-        let names = system.perturbation_names();
+        let names = system.model_names();
         assert!(names.contains(&"third_body_sun"));
         assert!(names.contains(&"third_body_moon"));
     }
@@ -144,6 +144,6 @@ mod tests {
             srp_cr: Some(1.8),
         };
         let system = build_orbital_system(&body, body.properties().mu, Some(epoch), &sat, None);
-        assert!(system.perturbation_names().contains(&"srp"));
+        assert!(system.model_names().contains(&"srp"));
     }
 }

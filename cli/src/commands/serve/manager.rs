@@ -190,11 +190,7 @@ fn build_info_message(params: &SimParams) -> WsMessage {
                 name: s.name.clone(),
                 altitude: s.altitude(&params.body),
                 period: s.period,
-                perturbations: system
-                    .perturbation_names()
-                    .into_iter()
-                    .map(String::from)
-                    .collect(),
+                perturbations: system.model_names().into_iter().map(String::from).collect(),
             }
         })
         .collect();

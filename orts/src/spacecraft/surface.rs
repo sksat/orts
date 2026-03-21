@@ -1,3 +1,4 @@
+use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
 use crate::perturbations::OMEGA_EARTH;
 use kaname::body::KnownBody;
 use kaname::constants::R_EARTH;
@@ -5,7 +6,7 @@ use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 use tobari::{AtmosphereModel, Exponential};
 
-use super::{ExternalLoads, LoadModel, SpacecraftState};
+use super::ExternalLoads;
 
 /// A flat surface panel on a spacecraft body.
 ///
@@ -24,6 +25,9 @@ pub struct SurfacePanel {
     pub normal: Vector3<f64>,
     /// Drag coefficient (typically 2.0–2.2 for LEO free-molecular flow).
     pub cd: f64,
+    /// Radiation pressure coefficient (1.0 = absorber, 2.0 = reflector).
+    /// Used by SRP panel models; defaults to 1.5.
+    pub cr: f64,
     /// Centre-of-pressure offset from the spacecraft CoM [m, body frame].
     pub cp_offset: Vector3<f64>,
 }
@@ -42,8 +46,15 @@ impl SurfacePanel {
             area,
             normal: n,
             cd,
+            cr: 1.5,
             cp_offset: Vector3::zeros(),
         }
+    }
+
+    /// Override the radiation pressure coefficient (builder pattern).
+    pub fn with_cr(mut self, cr: f64) -> Self {
+        self.cr = cr;
+        self
     }
 }
 
@@ -86,36 +97,42 @@ impl SpacecraftShape {
                 area: face_area,
                 normal: Vector3::new(1.0, 0.0, 0.0),
                 cd,
+                cr: 1.5,
                 cp_offset: Vector3::new(half_size, 0.0, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(-1.0, 0.0, 0.0),
                 cd,
+                cr: 1.5,
                 cp_offset: Vector3::new(-half_size, 0.0, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, 1.0, 0.0),
                 cd,
+                cr: 1.5,
                 cp_offset: Vector3::new(0.0, half_size, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, -1.0, 0.0),
                 cd,
+                cr: 1.5,
                 cp_offset: Vector3::new(0.0, -half_size, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, 0.0, 1.0),
                 cd,
+                cr: 1.5,
                 cp_offset: Vector3::new(0.0, 0.0, half_size),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, 0.0, -1.0),
                 cd,
+                cr: 1.5,
                 cp_offset: Vector3::new(0.0, 0.0, -half_size),
             },
         ];
@@ -180,31 +197,32 @@ impl PanelDrag {
     }
 
     /// Compute relative velocity accounting for atmosphere co-rotation [km/s].
-    fn relative_velocity(&self, state: &SpacecraftState) -> Vector3<f64> {
+    fn relative_velocity_from_orbit(&self, orbit: &crate::OrbitalState) -> Vector3<f64> {
         let omega = Vector3::new(0.0, 0.0, self.omega_body);
-        *state.orbit.velocity() - omega.cross(state.orbit.position())
-    }
-}
-
-impl LoadModel for PanelDrag {
-    fn name(&self) -> &str {
-        "panel_drag"
+        *orbit.velocity() - omega.cross(orbit.position())
     }
 
-    fn loads(&self, _t: f64, state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads {
+    /// Compute loads from full state (using capability trait methods).
+    pub(crate) fn loads_from_state(
+        &self,
+        orbit: &crate::OrbitalState,
+        attitude: &crate::attitude::AttitudeState,
+        mass: f64,
+        epoch: Option<&Epoch>,
+    ) -> ExternalLoads {
         // Inside body → zero
-        if self.is_inside(state.orbit.position()) {
+        if self.is_inside(orbit.position()) {
             return ExternalLoads::zeros();
         }
 
-        let alt = self.altitude(state.orbit.position());
-        let rho = self.atmosphere.density(alt, state.orbit.position(), epoch);
+        let alt = self.altitude(orbit.position());
+        let rho = self.atmosphere.density(alt, orbit.position(), epoch);
         if rho == 0.0 {
             return ExternalLoads::zeros();
         }
 
         // Relative velocity (inertial frame, km/s)
-        let v_rel = self.relative_velocity(state);
+        let v_rel = self.relative_velocity_from_orbit(orbit);
         let v_rel_mag_km = v_rel.magnitude();
         if v_rel_mag_km < 1e-10 {
             return ExternalLoads::zeros();
@@ -224,7 +242,7 @@ impl LoadModel for PanelDrag {
             }
             SpacecraftShape::Panels(panels) => {
                 // Transform flow direction to body frame
-                let r_bi = state.attitude.inertial_to_body();
+                let r_bi = attitude.inertial_to_body();
                 let v_body = r_bi * v_rel; // km/s in body frame
                 let v_body_m = v_body * 1000.0; // m/s
                 let v_body_mag_m = v_body_m.magnitude();
@@ -251,8 +269,8 @@ impl LoadModel for PanelDrag {
                 }
 
                 // a_body [m/s²] → a_inertial [km/s²]
-                let a_body = total_force_body / state.mass; // m/s²
-                let r_ib = state.attitude.rotation_matrix();
+                let a_body = total_force_body / mass; // m/s²
+                let r_ib = attitude.rotation_matrix();
                 let a_inertial = r_ib * a_body / 1000.0; // km/s²
 
                 ExternalLoads {
@@ -265,9 +283,20 @@ impl LoadModel for PanelDrag {
     }
 }
 
+impl<S: HasAttitude + HasOrbit + HasMass> Model<S> for PanelDrag {
+    fn name(&self) -> &str {
+        "panel_drag"
+    }
+
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+        self.loads_from_state(state.orbit(), state.attitude(), state.mass(), epoch)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SpacecraftState;
 
     // ======== SurfacePanel ========
 
@@ -454,7 +483,7 @@ mod tests {
     #[test]
     fn panel_drag_name() {
         let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.01));
-        assert_eq!(drag.name(), "panel_drag");
+        assert_eq!(Model::<SpacecraftState>::name(&drag), "panel_drag");
     }
 
     #[test]
@@ -472,7 +501,7 @@ mod tests {
         let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.01))
             .with_atmosphere(Box::new(HarrisPriester::new()));
         // Should compile and not panic — atmosphere model replaced
-        assert_eq!(drag.name(), "panel_drag");
+        assert_eq!(Model::<SpacecraftState>::name(&drag), "panel_drag");
     }
 
     // ======== PanelDrag loads() — shared helpers ========
@@ -496,7 +525,7 @@ mod tests {
     #[test]
     fn cannonball_nonzero_drag_at_iss() {
         let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.005));
-        let loads = drag.loads(0.0, &iss_state(), None);
+        let loads = drag.eval(0.0, &iss_state(), None);
         assert!(
             loads.acceleration_inertial.magnitude() > 0.0,
             "Cannonball should produce non-zero drag at ISS altitude"
@@ -506,7 +535,7 @@ mod tests {
     #[test]
     fn cannonball_zero_torque() {
         let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.005));
-        let loads = drag.loads(0.0, &iss_state(), None);
+        let loads = drag.eval(0.0, &iss_state(), None);
         assert_eq!(
             loads.torque_body,
             Vector3::zeros(),
@@ -524,8 +553,8 @@ mod tests {
         let s = std::f64::consts::FRAC_PI_4.sin();
         s2.attitude.quaternion = Vector4::new(c, 0.0, 0.0, s);
 
-        let l1 = drag.loads(0.0, &s1, None);
-        let l2 = drag.loads(0.0, &s2, None);
+        let l1 = drag.eval(0.0, &s1, None);
+        let l2 = drag.eval(0.0, &s2, None);
         assert!(
             (l1.acceleration_inertial - l2.acceleration_inertial).magnitude() < 1e-15,
             "Cannonball drag should not depend on attitude"
@@ -535,7 +564,7 @@ mod tests {
     #[test]
     fn cannonball_opposes_velocity() {
         let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.005));
-        let loads = drag.loads(0.0, &iss_state(), None);
+        let loads = drag.eval(0.0, &iss_state(), None);
         // v_rel is mostly in +y → drag should be in -y
         assert!(loads.acceleration_inertial.y < 0.0);
     }
@@ -547,7 +576,7 @@ mod tests {
         // Single panel facing -y (into the +y flow)
         let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
-        let loads = drag.loads(0.0, &iss_state(), None);
+        let loads = drag.eval(0.0, &iss_state(), None);
         assert!(
             loads.acceleration_inertial.magnitude() > 0.0,
             "Panel facing flow should produce drag"
@@ -559,7 +588,7 @@ mod tests {
         // Single panel facing +y (away from the +y flow) — backface
         let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, 1.0, 0.0), 2.2);
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
-        let loads = drag.loads(0.0, &iss_state(), None);
+        let loads = drag.eval(0.0, &iss_state(), None);
         assert_eq!(
             loads.acceleration_inertial,
             Vector3::zeros(),
@@ -571,7 +600,7 @@ mod tests {
     fn panels_drag_opposes_velocity() {
         let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
-        let loads = drag.loads(0.0, &iss_state(), None);
+        let loads = drag.eval(0.0, &iss_state(), None);
         // Drag should oppose velocity (predominantly -y)
         assert!(
             loads.acceleration_inertial.y < 0.0,
@@ -588,7 +617,7 @@ mod tests {
 
         // Identity attitude: panel normal -y faces the +y flow → full drag
         let s1 = iss_state();
-        let l1 = drag.loads(0.0, &s1, None);
+        let l1 = drag.eval(0.0, &s1, None);
 
         // Rotate 90° about z: panel normal rotates from -y to +x in inertial
         // → panel no longer faces the +y flow → different drag
@@ -597,7 +626,7 @@ mod tests {
         let s = std::f64::consts::FRAC_PI_4.sin();
         s2.attitude.quaternion = Vector4::new(c, 0.0, 0.0, s);
 
-        let l2 = drag.loads(0.0, &s2, None);
+        let l2 = drag.eval(0.0, &s2, None);
 
         let diff = (l1.acceleration_inertial - l2.acceleration_inertial).magnitude();
         assert!(
@@ -615,7 +644,7 @@ mod tests {
         let mut state = iss_state();
         // 180° rotation about z: q = (0, 0, 0, 1)
         state.attitude.quaternion = Vector4::new(0.0, 0.0, 0.0, 1.0);
-        let loads = drag.loads(0.0, &state, None);
+        let loads = drag.eval(0.0, &state, None);
 
         assert!(
             loads.acceleration_inertial.magnitude() < 1e-15,
@@ -637,7 +666,7 @@ mod tests {
             attitude: AttitudeState::identity(),
             mass: 500.0,
         };
-        let loads = drag.loads(0.0, &state, None);
+        let loads = drag.eval(0.0, &state, None);
         assert_eq!(loads.acceleration_inertial, Vector3::zeros());
     }
 
@@ -647,7 +676,7 @@ mod tests {
     fn panels_at_com_zero_torque() {
         let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
-        let loads = drag.loads(0.0, &iss_state(), None);
+        let loads = drag.eval(0.0, &iss_state(), None);
         assert_eq!(
             loads.torque_body,
             Vector3::zeros(),
@@ -661,10 +690,11 @@ mod tests {
             area: 10.0,
             normal: Vector3::new(0.0, -1.0, 0.0),
             cd: 2.2,
+            cr: 1.5,
             cp_offset: Vector3::new(1.0, 0.0, 0.0), // 1 m offset in +x
         };
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
-        let loads = drag.loads(0.0, &iss_state(), None);
+        let loads = drag.eval(0.0, &iss_state(), None);
 
         assert!(
             loads.torque_body.magnitude() > 0.0,
@@ -684,6 +714,7 @@ mod tests {
             area: 10.0,
             normal: Vector3::new(0.0, -1.0, 0.0),
             cd: 2.2,
+            cr: 1.5,
             cp_offset: Vector3::new(offset, 0.0, 0.0),
         };
 
@@ -691,8 +722,8 @@ mod tests {
         let drag2 = PanelDrag::for_earth(SpacecraftShape::panels(vec![make_panel(2.0)]));
         let state = iss_state();
 
-        let t1 = drag1.loads(0.0, &state, None).torque_body;
-        let t2 = drag2.loads(0.0, &state, None).torque_body;
+        let t1 = drag1.eval(0.0, &state, None).torque_body;
+        let t2 = drag2.eval(0.0, &state, None).torque_body;
 
         // τ = r × F, so doubling r doubles τ (force is the same)
         let ratio = t2.magnitude() / t1.magnitude();
@@ -707,15 +738,13 @@ mod tests {
     #[test]
     fn cannonball_matches_atmospheric_drag() {
         use crate::perturbations::AtmosphericDrag;
-        use crate::perturbations::ForceModel;
-
         let b = 0.005;
         let panel_drag = PanelDrag::for_earth(SpacecraftShape::cannonball(b));
         let atmo_drag = AtmosphericDrag::for_earth(Some(b));
 
         let state = iss_state();
-        let panel_loads = panel_drag.loads(0.0, &state, None);
-        let atmo_accel = atmo_drag.acceleration(0.0, &state.orbit, None);
+        let panel_loads = panel_drag.eval(0.0, &state, None);
+        let atmo_accel = atmo_drag.acceleration(&state.orbit, None);
 
         let diff = (panel_loads.acceleration_inertial - atmo_accel).magnitude();
         assert!(
@@ -744,8 +773,8 @@ mod tests {
         let cannon_drag = PanelDrag::for_earth(SpacecraftShape::cannonball(b));
 
         let state = iss_state();
-        let panel_loads = panel_drag.loads(0.0, &state, None);
-        let cannon_loads = cannon_drag.loads(0.0, &state, None);
+        let panel_loads = panel_drag.eval(0.0, &state, None);
+        let cannon_loads = cannon_drag.eval(0.0, &state, None);
 
         // The accelerations should be very close but not exactly identical because:
         // - Cannonball uses v_rel in inertial frame directly
@@ -770,7 +799,7 @@ mod tests {
         // So only -y face contributes, with CP at (0, -half, 0)
         // Force is in -ŷ body: τ = (0,-h,0) × (0,F,0) = 0 (parallel!)
         let drag = PanelDrag::for_earth(SpacecraftShape::cube(0.5, 2.2));
-        let loads = drag.loads(0.0, &iss_state(), None);
+        let loads = drag.eval(0.0, &iss_state(), None);
         assert!(
             loads.torque_body.magnitude() < 1e-20,
             "Cube with flow along axis should have zero torque (CP parallel to force)"
@@ -798,11 +827,8 @@ mod tests {
         s45.attitude.quaternion =
             quat_from_axis_angle(Vector3::new(1.0, 0.0, 0.0), std::f64::consts::FRAC_PI_4);
 
-        let a0 = drag.loads(0.0, &s0, None).acceleration_inertial.magnitude();
-        let a45 = drag
-            .loads(0.0, &s45, None)
-            .acceleration_inertial
-            .magnitude();
+        let a0 = drag.eval(0.0, &s0, None).acceleration_inertial.magnitude();
+        let a45 = drag.eval(0.0, &s45, None).acceleration_inertial.magnitude();
 
         let ratio = a45 / a0;
         let expected = std::f64::consts::FRAC_PI_4.cos(); // cos(45°) = √2/2
@@ -823,11 +849,8 @@ mod tests {
         s60.attitude.quaternion =
             quat_from_axis_angle(Vector3::new(1.0, 0.0, 0.0), std::f64::consts::FRAC_PI_3);
 
-        let a0 = drag.loads(0.0, &s0, None).acceleration_inertial.magnitude();
-        let a60 = drag
-            .loads(0.0, &s60, None)
-            .acceleration_inertial
-            .magnitude();
+        let a0 = drag.eval(0.0, &s0, None).acceleration_inertial.magnitude();
+        let a60 = drag.eval(0.0, &s60, None).acceleration_inertial.magnitude();
 
         let ratio = a60 / a0;
         assert!(
@@ -846,10 +869,7 @@ mod tests {
         s90.attitude.quaternion =
             quat_from_axis_angle(Vector3::new(1.0, 0.0, 0.0), std::f64::consts::FRAC_PI_2);
 
-        let a = drag
-            .loads(0.0, &s90, None)
-            .acceleration_inertial
-            .magnitude();
+        let a = drag.eval(0.0, &s90, None).acceleration_inertial.magnitude();
         assert!(a < 1e-20, "90° rotation: expected zero drag, got {a:.3e}");
     }
 
@@ -877,7 +897,7 @@ mod tests {
             let mut state = iss_state();
             state.attitude.quaternion = quat_from_axis_angle(*axis, *angle);
 
-            let loads = drag.loads(0.0, &state, None);
+            let loads = drag.eval(0.0, &state, None);
             let a = loads.acceleration_inertial;
 
             if a.magnitude() < 1e-20 {
@@ -911,7 +931,7 @@ mod tests {
             let mut state = iss_state();
             state.attitude.quaternion = quat_from_axis_angle(Vector3::new(1.0, 1.0, 1.0), angle);
 
-            let loads = drag.loads(0.0, &state, None);
+            let loads = drag.eval(0.0, &state, None);
             let a = loads.acceleration_inertial;
             let v_rel = *state.orbit.velocity()
                 - Vector3::new(0.0, 0.0, OMEGA_EARTH).cross(state.orbit.position());
@@ -935,7 +955,7 @@ mod tests {
 
         // At identity: -y panel faces +y flow → drag
         let a0 = drag
-            .loads(0.0, &iss_state(), None)
+            .eval(0.0, &iss_state(), None)
             .acceleration_inertial
             .magnitude();
         assert!(a0 > 0.0);
@@ -944,7 +964,7 @@ mod tests {
         let mut s180 = iss_state();
         s180.attitude.quaternion = Vector4::new(0.0, 0.0, 0.0, 1.0);
         let a180 = drag
-            .loads(0.0, &s180, None)
+            .eval(0.0, &s180, None)
             .acceleration_inertial
             .magnitude();
         assert!(
@@ -959,10 +979,7 @@ mod tests {
         let mut s45 = iss_state();
         s45.attitude.quaternion =
             quat_from_axis_angle(Vector3::new(1.0, 0.0, 0.0), std::f64::consts::FRAC_PI_4);
-        let a45 = drag
-            .loads(0.0, &s45, None)
-            .acceleration_inertial
-            .magnitude();
+        let a45 = drag.eval(0.0, &s45, None).acceleration_inertial.magnitude();
         let ratio = a45 / a0;
         let expected = std::f64::consts::FRAC_PI_4.cos(); // cos(45°) = √2/2
         assert!(
@@ -974,10 +991,7 @@ mod tests {
         let mut s90 = iss_state();
         s90.attitude.quaternion =
             quat_from_axis_angle(Vector3::new(1.0, 0.0, 0.0), std::f64::consts::FRAC_PI_2);
-        let a90 = drag
-            .loads(0.0, &s90, None)
-            .acceleration_inertial
-            .magnitude();
+        let a90 = drag.eval(0.0, &s90, None).acceleration_inertial.magnitude();
         assert!(
             a90 < 1e-20,
             "Two-sided at 90° about x: both panels perpendicular → zero, got {a90:.3e}"
@@ -995,7 +1009,7 @@ mod tests {
         let drag = PanelDrag::for_earth(SpacecraftShape::cube(half, cd));
 
         let a0 = drag
-            .loads(0.0, &iss_state(), None)
+            .eval(0.0, &iss_state(), None)
             .acceleration_inertial
             .magnitude();
 
@@ -1004,7 +1018,7 @@ mod tests {
         s45z.attitude.quaternion =
             quat_from_axis_angle(Vector3::new(0.0, 0.0, 1.0), std::f64::consts::FRAC_PI_4);
         let a45z = drag
-            .loads(0.0, &s45z, None)
+            .eval(0.0, &s45z, None)
             .acceleration_inertial
             .magnitude();
 
@@ -1025,10 +1039,11 @@ mod tests {
             area: 10.0,
             normal: Vector3::new(0.0, -1.0, 0.0),
             cd: 2.2,
+            cr: 1.5,
             cp_offset: Vector3::new(1.0, 0.0, 0.0),
         };
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
-        let loads = drag.loads(0.0, &iss_state(), None);
+        let loads = drag.eval(0.0, &iss_state(), None);
 
         // Reconstruct F_body from acceleration: F = a_body * mass
         // a_inertial = R_ib * (F_body / mass) / 1000
@@ -1111,6 +1126,7 @@ mod tests {
                 area: 10.0,
                 normal: Vector3::new(0.0, -1.0, 0.0),
                 cd: 2.2,
+                cr: 1.5,
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
             },
             SurfacePanel::at_com(5.0, Vector3::new(1.0, 0.0, 0.0), 2.0),
@@ -1120,7 +1136,7 @@ mod tests {
         // Original state with non-trivial attitude
         let mut s1 = iss_state();
         s1.attitude.quaternion = quat_from_axis_angle(Vector3::new(1.0, 1.0, 0.0), 0.5);
-        let l1 = drag.loads(0.0, &s1, None);
+        let l1 = drag.eval(0.0, &s1, None);
 
         // Apply arbitrary rotation R (37° about (1,2,3))
         let q_r = quat_from_axis_angle(Vector3::new(1.0, 2.0, 3.0), 37.0_f64.to_radians());
@@ -1138,7 +1154,7 @@ mod tests {
             },
             mass: s1.mass,
         };
-        let l2 = drag.loads(0.0, &s2, None);
+        let l2 = drag.eval(0.0, &s2, None);
 
         // a' should equal R · a
         let a1_rotated = r_mat * l1.acceleration_inertial;
@@ -1159,12 +1175,14 @@ mod tests {
                 area: 10.0,
                 normal: Vector3::new(0.0, -1.0, 0.0),
                 cd: 2.2,
+                cr: 1.5,
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
             },
             SurfacePanel {
                 area: 8.0,
                 normal: Vector3::new(1.0, 0.0, 0.0),
                 cd: 2.0,
+                cr: 1.5,
                 cp_offset: Vector3::new(0.0, 0.0, 0.5),
             },
         ];
@@ -1172,7 +1190,7 @@ mod tests {
 
         let mut s1 = iss_state();
         s1.attitude.quaternion = quat_from_axis_angle(Vector3::new(0.0, 1.0, 0.0), 0.8);
-        let l1 = drag.loads(0.0, &s1, None);
+        let l1 = drag.eval(0.0, &s1, None);
 
         // Multiple arbitrary rotations
         let rotations = [
@@ -1201,7 +1219,7 @@ mod tests {
                 },
                 mass: s1.mass,
             };
-            let l2 = drag.loads(0.0, &s2, None);
+            let l2 = drag.eval(0.0, &s2, None);
 
             let tau_rel =
                 (l2.torque_body - l1.torque_body).magnitude() / l1.torque_body.magnitude();
@@ -1230,7 +1248,7 @@ mod tests {
         state.attitude.quaternion =
             quat_from_axis_angle(Vector3::new(0.0, 0.0, 1.0), std::f64::consts::FRAC_PI_2);
 
-        let loads = drag.loads(0.0, &state, None);
+        let loads = drag.eval(0.0, &state, None);
         assert!(
             loads.acceleration_inertial.magnitude() < 1e-20,
             "Convention anchor: +90° yaw with n_b=(1,0,0) should be backface (zero drag), \
@@ -1252,7 +1270,7 @@ mod tests {
         state.attitude.quaternion =
             quat_from_axis_angle(Vector3::new(0.0, 0.0, 1.0), -std::f64::consts::FRAC_PI_2);
 
-        let loads = drag.loads(0.0, &state, None);
+        let loads = drag.eval(0.0, &state, None);
         assert!(
             loads.acceleration_inertial.magnitude() > 1e-20,
             "Convention anchor: -90° yaw with n_b=(1,0,0) should be full drag"
@@ -1262,7 +1280,7 @@ mod tests {
         // (which faces the +y flow at identity). Both should give same exposure.
         let panel_y = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
         let drag_y = mock_drag(SpacecraftShape::panels(vec![panel_y]), 1e-12);
-        let ref_loads = drag_y.loads(0.0, &iss_state(), None);
+        let ref_loads = drag_y.eval(0.0, &iss_state(), None);
 
         let rel = (loads.acceleration_inertial.magnitude()
             - ref_loads.acceleration_inertial.magnitude())
@@ -1283,6 +1301,7 @@ mod tests {
                 area: 10.0,
                 normal: Vector3::new(0.0, -1.0, 0.0),
                 cd: 2.2,
+                cr: 1.5,
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
             },
             SurfacePanel::at_com(5.0, Vector3::new(1.0, 0.0, 0.0), 2.0),
@@ -1295,8 +1314,8 @@ mod tests {
         let mut s2 = s1.clone();
         s2.attitude.quaternion = -s1.attitude.quaternion; // -q
 
-        let l1 = drag.loads(0.0, &s1, None);
-        let l2 = drag.loads(0.0, &s2, None);
+        let l1 = drag.eval(0.0, &s1, None);
+        let l2 = drag.eval(0.0, &s2, None);
 
         assert!(
             (l1.acceleration_inertial - l2.acceleration_inertial).magnitude() < 1e-15,
@@ -1315,6 +1334,7 @@ mod tests {
             area: 10.0,
             normal: Vector3::new(0.0, -1.0, 0.0),
             cd: 2.2,
+            cr: 1.5,
             cp_offset: Vector3::new(1.0, 0.0, 0.0),
         }];
 
@@ -1322,8 +1342,8 @@ mod tests {
         let drag2 = mock_drag(SpacecraftShape::panels(panels), 2e-12);
         let state = iss_state();
 
-        let l1 = drag1.loads(0.0, &state, None);
-        let l2 = drag2.loads(0.0, &state, None);
+        let l1 = drag1.eval(0.0, &state, None);
+        let l2 = drag2.eval(0.0, &state, None);
 
         let a_ratio = l2.acceleration_inertial.magnitude() / l1.acceleration_inertial.magnitude();
         assert!(
@@ -1350,8 +1370,8 @@ mod tests {
         // Scale velocity by 2x (keep position same → same density with mock)
         *s2.orbit.velocity_mut() = *s1.orbit.velocity() * 2.0;
 
-        let a1 = drag.loads(0.0, &s1, None).acceleration_inertial.magnitude();
-        let a2 = drag.loads(0.0, &s2, None).acceleration_inertial.magnitude();
+        let a1 = drag.eval(0.0, &s1, None).acceleration_inertial.magnitude();
+        let a2 = drag.eval(0.0, &s2, None).acceleration_inertial.magnitude();
 
         // a ∝ |v|² → ratio should be 4
         let ratio = a2 / a1;
@@ -1375,7 +1395,7 @@ mod tests {
         let drag = mock_drag(SpacecraftShape::panels(vec![panel]), rho);
 
         let state = iss_state();
-        let loads = drag.loads(0.0, &state, None);
+        let loads = drag.eval(0.0, &state, None);
 
         // With mock (no co-rotation), v_rel = v
         let v_ms = state.orbit.velocity().magnitude() * 1000.0; // m/s
@@ -1405,8 +1425,7 @@ mod tests {
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));
-        let dyn_sc =
-            SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_load(Box::new(drag));
+        let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_model(drag);
 
         let result = Rk4.integrate(&dyn_sc, iss_state(), 0.0, 60.0, 1.0, |_, _| {});
         assert!(
@@ -1428,8 +1447,7 @@ mod tests {
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));
-        let dyn_sc =
-            SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_load(Box::new(drag));
+        let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_model(drag);
 
         let s0 = iss_state();
         let e0 = 0.5 * s0.orbit.velocity().magnitude_squared()
@@ -1458,8 +1476,7 @@ mod tests {
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));
-        let dyn_sc =
-            SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_load(Box::new(drag));
+        let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_model(drag);
 
         // Give it a tumble
         let mut state = iss_state();
@@ -1468,7 +1485,7 @@ mod tests {
         // Collect drag magnitude at several steps to verify it varies
         let mut magnitudes = Vec::new();
         let _ = Rk4.integrate(&dyn_sc, state, 0.0, 60.0, 1.0, |_t, s| {
-            let loads = dyn_sc.load_breakdown(0.0, s);
+            let loads = dyn_sc.model_breakdown(0.0, s);
             if let Some((_, el)) = loads.first() {
                 magnitudes.push(el.acceleration_inertial.magnitude());
             }
@@ -1493,8 +1510,7 @@ mod tests {
 
         let drag = PanelDrag::for_earth(SpacecraftShape::cannonball(0.01));
         let inertia = Matrix3::from_diagonal(&Vector3::new(10.0, 10.0, 10.0));
-        let dyn_sc =
-            SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_load(Box::new(drag));
+        let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_model(drag);
 
         let result = Rk4.integrate(&dyn_sc, iss_state(), 0.0, 60.0, 1.0, |_, _| {});
         assert!(result.is_finite());

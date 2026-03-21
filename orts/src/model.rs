@@ -62,3 +62,15 @@ pub trait Model<S>: Send + Sync {
     /// It is `None` when no initial epoch was provided.
     fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads;
 }
+
+// Blanket impl so Box<dyn Model<S>> also satisfies Model<S>.
+// This allows with_model() to accept both concrete types and boxed trait objects.
+impl<S> Model<S> for Box<dyn Model<S>> {
+    fn name(&self) -> &str {
+        (**self).name()
+    }
+
+    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+        (**self).eval(t, state, epoch)
+    }
+}

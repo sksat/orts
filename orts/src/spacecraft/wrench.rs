@@ -1,9 +1,6 @@
 use std::ops::{Add, AddAssign};
 
-use kaname::epoch::Epoch;
 use nalgebra::Vector3;
-
-use super::SpacecraftState;
 
 /// Acceleration (inertial frame) and torque (body frame) pair.
 ///
@@ -67,16 +64,6 @@ impl AddAssign for ExternalLoads {
         self.torque_body += rhs.torque_body;
         self.mass_rate += rhs.mass_rate;
     }
-}
-
-/// A model that computes both acceleration and torque on a spacecraft.
-///
-/// Unlike `ForceModel` (acceleration only) or `TorqueModel` (torque only),
-/// `LoadModel` has access to the full `SpacecraftState` and can produce
-/// coupled effects (e.g., gravity gradient torque depends on orbital position).
-pub trait LoadModel: Send + Sync {
-    fn name(&self) -> &str;
-    fn loads(&self, t: f64, state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads;
 }
 
 #[cfg(test)]

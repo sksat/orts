@@ -2402,6 +2402,7 @@ version = "0.0.0"
 dependencies = [
  "kaname",
  "nalgebra",
+ "proptest",
  "rerun",
  "serde",
  "serde_json",

@@ -1,6 +1,6 @@
 //! SRP oracle tests: validate solar radiation pressure against analytical predictions.
 //!
-//! These tests verify the SRP `ForceModel` implementation using:
+//! These tests verify the SRP `Model<S>` implementation using:
 //! - Eccentricity vector secular drift (Gauss VOP, cannonball model)
 //! - Scaling linearity (A/m, Cr)
 //! - Semi-major axis stability (no secular drift from SRP)
@@ -40,7 +40,7 @@ fn point_mass_srp_system(
         shadow_body_radius: if with_shadow { Some(R_EARTH) } else { None },
     };
     OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
-        .with_perturbation(Box::new(srp))
+        .with_model(srp)
         .with_epoch(epoch)
 }
 
@@ -328,18 +328,19 @@ fn srp_energy_work_consistency() {
     let total_time = 5.0 * period;
 
     // Accumulate SRP work: ∫ a_srp · v dt
+    use orts::model::Model;
     let srp_model = SolarRadiationPressure {
         cr,
         area_to_mass,
         shadow_body_radius: None,
     };
 
-    use orts::perturbations::ForceModel;
     let mut work_accumulated = 0.0;
 
     let final_state = Rk4.integrate(&system, initial, 0.0, total_time, dt, |t, state| {
         let ep = epoch.add_seconds(t);
-        let a_srp = srp_model.acceleration(t, state, Some(&ep));
+        let loads = srp_model.eval(t, state, Some(&ep));
+        let a_srp = loads.acceleration_inertial;
         work_accumulated += a_srp.dot(state.velocity()) * dt;
     });
 

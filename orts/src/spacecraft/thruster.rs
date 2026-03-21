@@ -1,7 +1,9 @@
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 
-use super::{ExternalLoads, LoadModel, SpacecraftState};
+use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
+
+use super::{ExternalLoads, SpacecraftState};
 
 /// Standard gravitational acceleration [m/s²].
 pub const G0: f64 = 9.80665;
@@ -144,12 +146,14 @@ impl Thruster {
     }
 }
 
-impl LoadModel for Thruster {
-    fn name(&self) -> &str {
-        "thruster"
-    }
-
-    fn loads(&self, t: f64, state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads {
+impl Thruster {
+    /// Compute thruster loads from SpacecraftState.
+    pub(crate) fn loads(
+        &self,
+        t: f64,
+        state: &SpacecraftState,
+        epoch: Option<&Epoch>,
+    ) -> ExternalLoads {
         // Failsafe: propellant exhausted
         if state.mass <= self.dry_mass {
             return ExternalLoads::zeros();
@@ -179,6 +183,22 @@ impl LoadModel for Thruster {
             torque_body,
             mass_rate,
         }
+    }
+}
+
+impl<S: HasAttitude + HasOrbit + HasMass> Model<S> for Thruster {
+    fn name(&self) -> &str {
+        "thruster"
+    }
+
+    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+        // Construct SpacecraftState from capabilities for ThrustProfile compatibility
+        let sc_state = SpacecraftState {
+            orbit: state.orbit().clone(),
+            attitude: state.attitude().clone(),
+            mass: state.mass(),
+        };
+        self.loads(t, &sc_state, epoch)
     }
 }
 
@@ -446,7 +466,7 @@ mod tests {
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(10.0, 10.0, 10.0));
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia)
-            .with_load(Box::new(Thruster::new(10.0, 300.0, Vector3::x())));
+            .with_model(Thruster::new(10.0, 300.0, Vector3::x()));
 
         let state = sample_state();
         let d = dyn_sc.derivatives(0.0, &state);

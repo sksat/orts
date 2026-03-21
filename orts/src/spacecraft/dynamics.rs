@@ -1,9 +1,10 @@
 use crate::gravity::GravityField;
+use crate::model::Model;
 use kaname::epoch::Epoch;
 use nalgebra::Matrix3;
 use utsuroi::DynamicalSystem;
 
-use super::{ExternalLoads, LoadModel, SpacecraftState};
+use super::{ExternalLoads, SpacecraftState};
 
 /// Coupled orbit-attitude dynamics for a rigid spacecraft.
 ///
@@ -21,7 +22,7 @@ pub struct SpacecraftDynamics<G: GravityField> {
     gravity: G,
     inertia: Matrix3<f64>,
     inertia_inv: Matrix3<f64>,
-    loads: Vec<Box<dyn LoadModel>>,
+    models: Vec<Box<dyn Model<SpacecraftState>>>,
     epoch_0: Option<Epoch>,
     body_radius: Option<f64>,
 }
@@ -40,15 +41,15 @@ impl<G: GravityField> SpacecraftDynamics<G> {
             gravity,
             inertia,
             inertia_inv,
-            loads: Vec::new(),
+            models: Vec::new(),
             epoch_0: None,
             body_radius: None,
         }
     }
 
-    /// Add an external load model (builder pattern).
-    pub fn with_load(mut self, load: Box<dyn LoadModel>) -> Self {
-        self.loads.push(load);
+    /// Add an external model (builder pattern).
+    pub fn with_model(mut self, model: impl Model<SpacecraftState> + 'static) -> Self {
+        self.models.push(Box::new(model));
         self
     }
 
@@ -74,17 +75,17 @@ impl<G: GravityField> SpacecraftDynamics<G> {
         self.body_radius
     }
 
-    /// Names of active load models.
-    pub fn load_names(&self) -> Vec<&str> {
-        self.loads.iter().map(|l| l.name()).collect()
+    /// Names of active models.
+    pub fn model_names(&self) -> Vec<&str> {
+        self.models.iter().map(|m| m.name()).collect()
     }
 
     /// Per-model load breakdown at the given state.
-    pub fn load_breakdown(&self, t: f64, state: &SpacecraftState) -> Vec<(&str, ExternalLoads)> {
+    pub fn model_breakdown(&self, t: f64, state: &SpacecraftState) -> Vec<(&str, ExternalLoads)> {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
-        self.loads
+        self.models
             .iter()
-            .map(|l| (l.name(), l.loads(t, state, epoch.as_ref())))
+            .map(|m| (m.name(), m.eval(t, state, epoch.as_ref())))
             .collect()
     }
 }
@@ -100,8 +101,8 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
 
         // Accumulate external loads
         let mut total = ExternalLoads::zeros();
-        for load in &self.loads {
-            total += load.loads(t, state, epoch.as_ref());
+        for model in &self.models {
+            total += model.eval(t, state, epoch.as_ref());
         }
 
         // Total translational acceleration
@@ -129,15 +130,13 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
 mod tests {
     use super::*;
     use crate::OrbitalState;
-    use crate::attitude::{AttitudeState, TorqueModel};
+    use crate::attitude::AttitudeState;
     use crate::gravity::PointMass;
+    use crate::model::Model;
     use crate::orbital_system::OrbitalSystem;
-    use crate::perturbations::ForceModel;
     use kaname::constants::MU_EARTH;
     use nalgebra::{Vector3, Vector4};
     use utsuroi::{Integrator, OdeState, Rk4};
-
-    use super::super::{ForceModelAtCoM, TorqueModelOnly};
 
     // --- Helpers ---
 
@@ -159,41 +158,36 @@ mod tests {
 
     // --- Mock models ---
 
-    struct ConstantForce(Vector3<f64>);
+    struct ConstantAcceleration(Vector3<f64>);
 
-    impl ForceModel for ConstantForce {
+    impl Model<SpacecraftState> for ConstantAcceleration {
         fn name(&self) -> &str {
             "const_force"
         }
-        fn acceleration(
-            &self,
-            _t: f64,
-            _state: &OrbitalState,
-            _epoch: Option<&Epoch>,
-        ) -> Vector3<f64> {
-            self.0
+        fn eval(&self, _t: f64, _state: &SpacecraftState, _epoch: Option<&Epoch>) -> ExternalLoads {
+            ExternalLoads::acceleration(self.0)
         }
     }
 
-    struct ConstantTorque(Vector3<f64>);
+    struct ConstantTorqueModel(Vector3<f64>);
 
-    impl TorqueModel for ConstantTorque {
+    impl Model<SpacecraftState> for ConstantTorqueModel {
         fn name(&self) -> &str {
             "const_torque"
         }
-        fn torque(&self, _t: f64, _state: &AttitudeState, _epoch: Option<&Epoch>) -> Vector3<f64> {
-            self.0
+        fn eval(&self, _t: f64, _state: &SpacecraftState, _epoch: Option<&Epoch>) -> ExternalLoads {
+            ExternalLoads::torque(self.0)
         }
     }
 
     /// Returns different loads depending on whether epoch is Some.
     struct EpochSensitiveLoad;
 
-    impl LoadModel for EpochSensitiveLoad {
+    impl Model<SpacecraftState> for EpochSensitiveLoad {
         fn name(&self) -> &str {
             "epoch_sensitive"
         }
-        fn loads(&self, _t: f64, _state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads {
+        fn eval(&self, _t: f64, _state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads {
             match epoch {
                 Some(e) => ExternalLoads {
                     acceleration_inertial: Vector3::new(e.jd() * 1e-10, 0.0, 0.0),
@@ -273,7 +267,7 @@ mod tests {
         };
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia)
-            .with_load(Box::new(TorqueModelOnly(Box::new(ConstantTorque(torque)))));
+            .with_model(ConstantTorqueModel(torque));
 
         let d = dyn_sc.derivatives(0.0, &sc);
 
@@ -338,15 +332,15 @@ mod tests {
         );
     }
 
-    // ======== Step 3: LoadModel integration ========
+    // ======== Step 3: Model integration ========
 
     #[test]
-    fn force_adapter_adds_acceleration() {
+    fn model_adds_acceleration() {
         let accel = Vector3::new(1e-6, 2e-6, 3e-6);
         let sc = sample_spacecraft();
 
         let dyn_with = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
-            .with_load(Box::new(ForceModelAtCoM(Box::new(ConstantForce(accel)))));
+            .with_model(ConstantAcceleration(accel));
         let d_with = dyn_with.derivatives(0.0, &sc);
 
         let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
@@ -357,12 +351,12 @@ mod tests {
     }
 
     #[test]
-    fn torque_adapter_adds_torque() {
+    fn model_adds_torque() {
         let torque = Vector3::new(0.01, 0.02, 0.03);
         let sc = sample_spacecraft(); // ω = 0 → no gyroscopic term
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
-            .with_load(Box::new(TorqueModelOnly(Box::new(ConstantTorque(torque)))));
+            .with_model(ConstantTorqueModel(torque));
 
         let d = dyn_sc.derivatives(0.0, &sc);
 
@@ -372,14 +366,14 @@ mod tests {
     }
 
     #[test]
-    fn multiple_loads_accumulate() {
+    fn multiple_models_accumulate() {
         let accel = Vector3::new(1e-6, 0.0, 0.0);
         let torque = Vector3::new(0.0, 0.01, 0.0);
         let sc = sample_spacecraft();
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
-            .with_load(Box::new(ForceModelAtCoM(Box::new(ConstantForce(accel)))))
-            .with_load(Box::new(TorqueModelOnly(Box::new(ConstantTorque(torque)))));
+            .with_model(ConstantAcceleration(accel))
+            .with_model(ConstantTorqueModel(torque));
         let d = dyn_sc.derivatives(0.0, &sc);
 
         let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
@@ -396,45 +390,39 @@ mod tests {
     // ======== Step 4: Builder + telemetry ========
 
     #[test]
-    fn builder_with_load_epoch_body_radius() {
+    fn builder_with_model_epoch_body_radius() {
         let epoch = Epoch::from_jd(2460000.5);
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
-            .with_load(Box::new(ForceModelAtCoM(Box::new(ConstantForce(
-                Vector3::zeros(),
-            )))))
+            .with_model(ConstantAcceleration(Vector3::zeros()))
             .with_epoch(epoch)
             .with_body_radius(6378.137);
 
-        assert_eq!(dyn_sc.loads.len(), 1);
+        assert_eq!(dyn_sc.models.len(), 1);
         assert_eq!(dyn_sc.epoch_0, Some(epoch));
         assert_eq!(dyn_sc.body_radius, Some(6378.137));
     }
 
     #[test]
-    fn load_names_returns_all() {
+    fn model_names_returns_all() {
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
-            .with_load(Box::new(ForceModelAtCoM(Box::new(ConstantForce(
-                Vector3::zeros(),
-            )))))
-            .with_load(Box::new(TorqueModelOnly(Box::new(ConstantTorque(
-                Vector3::zeros(),
-            )))));
+            .with_model(ConstantAcceleration(Vector3::zeros()))
+            .with_model(ConstantTorqueModel(Vector3::zeros()));
 
-        let names = dyn_sc.load_names();
+        let names = dyn_sc.model_names();
         assert_eq!(names, vec!["const_force", "const_torque"]);
     }
 
     #[test]
-    fn load_breakdown_per_model() {
+    fn model_breakdown_per_model() {
         let accel = Vector3::new(1e-6, 0.0, 0.0);
         let torque = Vector3::new(0.0, 0.01, 0.0);
         let sc = sample_spacecraft();
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
-            .with_load(Box::new(ForceModelAtCoM(Box::new(ConstantForce(accel)))))
-            .with_load(Box::new(TorqueModelOnly(Box::new(ConstantTorque(torque)))));
+            .with_model(ConstantAcceleration(accel))
+            .with_model(ConstantTorqueModel(torque));
 
-        let breakdown = dyn_sc.load_breakdown(0.0, &sc);
+        let breakdown = dyn_sc.model_breakdown(0.0, &sc);
         assert_eq!(breakdown.len(), 2);
         assert_eq!(breakdown[0].0, "const_force");
         assert_eq!(breakdown[0].1.acceleration_inertial, accel);
@@ -453,7 +441,7 @@ mod tests {
         let sc = sample_spacecraft();
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
-            .with_load(Box::new(EpochSensitiveLoad))
+            .with_model(EpochSensitiveLoad)
             .with_epoch(epoch);
 
         let d = dyn_sc.derivatives(t, &sc);
@@ -477,7 +465,7 @@ mod tests {
     fn epoch_none_no_panic() {
         let sc = sample_spacecraft();
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
-            .with_load(Box::new(EpochSensitiveLoad));
+            .with_model(EpochSensitiveLoad);
 
         // epoch_0 = None → loads get None → EpochSensitiveLoad returns zeros
         let d = dyn_sc.derivatives(0.0, &sc);
