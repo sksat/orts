@@ -64,6 +64,7 @@ impl ReactionWheel {
 ///
 /// The `commanded_torque` field is `pub` so it can be updated between
 /// integration segments (similar to `CommandedMagnetorquer`).
+#[derive(Clone)]
 pub struct ReactionWheelAssembly {
     wheels: Vec<ReactionWheel>,
     /// Desired torque on spacecraft body [N·m] (set externally by controller).
