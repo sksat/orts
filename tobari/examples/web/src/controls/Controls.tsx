@@ -6,6 +6,9 @@ interface ControlsProps {
   onChange: (params: ViewerParams) => void;
   activeTab: string;
   swAvailable?: boolean;
+  isGlobe?: boolean;
+  globeDisplayMode?: "single" | "volume";
+  onDisplayModeChange?: (mode: "single" | "volume") => void;
 }
 
 const SOLAR_PRESETS: Record<string, { f107: number; ap: number }> = {
@@ -67,7 +70,15 @@ function jdToDateString(jd: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-export function Controls({ params, onChange, activeTab, swAvailable = false }: ControlsProps) {
+export function Controls({
+  params,
+  onChange,
+  activeTab,
+  swAvailable = false,
+  isGlobe = false,
+  globeDisplayMode = "volume",
+  onDisplayModeChange,
+}: ControlsProps) {
   const update = (partial: Partial<ViewerParams>) => onChange({ ...params, ...partial });
 
   const showAtmo =
@@ -92,6 +103,21 @@ export function Controls({ params, onChange, activeTab, swAvailable = false }: C
         />
       </div>
 
+      {/* Globe display mode */}
+      {isGlobe && onDisplayModeChange && (
+        <div style={styles.group}>
+          <span style={styles.label}>Display:</span>
+          <select
+            style={styles.select}
+            value={globeDisplayMode}
+            onChange={(e) => onDisplayModeChange(e.target.value as "single" | "volume")}
+          >
+            <option value="single">Single</option>
+            <option value="volume">Volume</option>
+          </select>
+        </div>
+      )}
+
       {/* Altitude */}
       <div style={styles.group}>
         <span style={styles.label}>Alt:</span>
@@ -101,9 +127,12 @@ export function Controls({ params, onChange, activeTab, swAvailable = false }: C
           max={1000}
           step={10}
           value={params.altitudeKm}
+          disabled={isGlobe && globeDisplayMode === "volume"}
           onChange={(e) => update({ altitudeKm: Number(e.target.value) })}
         />
-        <span style={{ color: "#ccc", minWidth: "50px" }}>{params.altitudeKm} km</span>
+        <span style={{ color: "#ccc", minWidth: "50px" }}>
+          {isGlobe && globeDisplayMode === "volume" ? "100-1000 km" : `${params.altitudeKm} km`}
+        </span>
       </div>
 
       {/* Magnetic model & component */}

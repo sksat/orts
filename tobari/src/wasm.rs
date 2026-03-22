@@ -333,6 +333,82 @@ pub fn magnetic_field_latlon_map(
     out
 }
 
+/// Compute 3D magnetic field volume as Float32.
+///
+/// Layout: alt-major `index = iAlt * nLat * nLon + iLat * nLon + iLon`
+/// Returns values (length = n_alt × n_lat × n_lon + 2, with [min, max] appended).
+/// Values in nT for field components, degrees for angles.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn magnetic_field_volume(
+    model: &str,
+    component: &str,
+    alt_min_km: f64,
+    alt_max_km: f64,
+    n_alt: u32,
+    epoch_jd: f64,
+    n_lat: u32,
+    n_lon: u32,
+) -> Vec<f32> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let igrf = Igrf::earth();
+    let dipole = TiltedDipole::earth();
+
+    let total = (n_alt * n_lat * n_lon) as usize;
+    let mut out = Vec::with_capacity(total + 2);
+    let mut min_val = f32::INFINITY;
+    let mut max_val = f32::NEG_INFINITY;
+
+    for i_alt in 0..n_alt {
+        let alt = if n_alt == 1 {
+            alt_min_km
+        } else {
+            alt_min_km + (alt_max_km - alt_min_km) * i_alt as f64 / (n_alt - 1) as f64
+        };
+
+        for i_lat in 0..n_lat {
+            let lat = -90.0 + (i_lat as f64 + 0.5) * 180.0 / n_lat as f64;
+            for i_lon in 0..n_lon {
+                let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
+
+                let pos = geodetic_to_eci(lat, lon, alt, &epoch);
+                let eci_pos = kaname::Eci(pos);
+                let b_eci = match model {
+                    "dipole" => dipole.field_eci(&eci_pos, &epoch),
+                    _ => igrf.field_eci(&eci_pos, &epoch),
+                };
+
+                // Inline field_info to avoid per-point Vec allocation
+                let (bn, be, bd) = eci_to_ned(&b_eci, lat, lon, &epoch);
+                let val = match component {
+                    "north" => bn * 1e9,
+                    "east" => be * 1e9,
+                    "down" => bd * 1e9,
+                    "total" => (bn * bn + be * be + bd * bd).sqrt() * 1e9,
+                    "inclination" => {
+                        let bh = (bn * bn + be * be).sqrt();
+                        bd.atan2(bh).to_degrees()
+                    }
+                    "declination" => be.atan2(bn).to_degrees(),
+                    _ => (bn * bn + be * be + bd * bd).sqrt() * 1e9,
+                } as f32;
+
+                if val < min_val {
+                    min_val = val;
+                }
+                if val > max_val {
+                    max_val = val;
+                }
+                out.push(val);
+            }
+        }
+    }
+
+    out.push(min_val);
+    out.push(max_val);
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Volume data (3D: lat × lon × alt)
 // ---------------------------------------------------------------------------

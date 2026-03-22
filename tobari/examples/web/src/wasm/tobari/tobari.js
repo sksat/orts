@@ -248,6 +248,33 @@ export function magnetic_field_lines(seed_lats, seed_lons, seed_alt_km, epoch_jd
 }
 
 /**
+ * Compute 3D magnetic field volume as Float32.
+ *
+ * Layout: alt-major `index = iAlt * nLat * nLon + iLat * nLon + iLon`
+ * Returns values (length = n_alt × n_lat × n_lon + 2, with [min, max] appended).
+ * Values in nT for field components, degrees for angles.
+ * @param {string} model
+ * @param {string} component
+ * @param {number} alt_min_km
+ * @param {number} alt_max_km
+ * @param {number} n_alt
+ * @param {number} epoch_jd
+ * @param {number} n_lat
+ * @param {number} n_lon
+ * @returns {Float32Array}
+ */
+export function magnetic_field_volume(model, component, alt_min_km, alt_max_km, n_alt, epoch_jd, n_lat, n_lon) {
+    const ptr0 = passStringToWasm0(model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(component, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.magnetic_field_volume(ptr0, len0, ptr1, len1, alt_min_km, alt_max_km, n_alt, epoch_jd, n_lat, n_lon);
+    var v3 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v3;
+}
+
+/**
  * NRLMSISE-00 density [kg/m³] at a geodetic point with constant space weather.
  *
  * `f107`: F10.7 solar radio flux [SFU].

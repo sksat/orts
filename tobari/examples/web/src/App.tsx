@@ -102,6 +102,7 @@ export function App() {
   const [playing, setPlaying] = useState(false);
   const [speedDaysPerSec, setSpeedDaysPerSec] = useState(30);
   const [showRotation, setShowRotation] = useState(false);
+  const [globeDisplayMode, setGlobeDisplayMode] = useState<"single" | "volume">("volume");
   const [swRange, setSwRange] = useState<{ jdFirst: number; jdLast: number } | null>(null);
   const lastFrameRef = useRef<number>(0);
 
@@ -177,6 +178,9 @@ export function App() {
         onChange={handleParamsChange}
         activeTab={controlsTab(activeTab)}
         swAvailable={swRange !== null}
+        isGlobe={isGlobe}
+        globeDisplayMode={globeDisplayMode}
+        onDisplayModeChange={setGlobeDisplayMode}
       />
       <PlaybackBar
         playing={playing}
@@ -207,10 +211,20 @@ export function App() {
 
       <div style={styles.content}>
         {activeTab === "globe-mag" && (
-          <GlobeView params={params} layer="magnetic" earthRotation={rotation} />
+          <GlobeView
+            params={params}
+            layer="magnetic"
+            earthRotation={rotation}
+            displayMode={globeDisplayMode}
+          />
         )}
         {activeTab === "globe-atmo" && (
-          <GlobeView params={params} layer="atmosphere" earthRotation={rotation} />
+          <GlobeView
+            params={params}
+            layer="atmosphere"
+            earthRotation={rotation}
+            displayMode={globeDisplayMode}
+          />
         )}
         {activeTab === "magnetic-map" && <MagneticFieldMap params={params} />}
         {activeTab === "atmosphere-profile" && <AtmosphereProfile params={params} />}

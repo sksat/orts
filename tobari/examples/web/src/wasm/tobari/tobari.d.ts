@@ -100,6 +100,15 @@ export function magnetic_field_latlon_map(model: string, component: string, alti
 export function magnetic_field_lines(seed_lats: Float64Array, seed_lons: Float64Array, seed_alt_km: number, epoch_jd: number, model: string, max_steps: number, step_km: number): Float32Array;
 
 /**
+ * Compute 3D magnetic field volume as Float32.
+ *
+ * Layout: alt-major `index = iAlt * nLat * nLon + iLat * nLon + iLon`
+ * Returns values (length = n_alt × n_lat × n_lon + 2, with [min, max] appended).
+ * Values in nT for field components, degrees for angles.
+ */
+export function magnetic_field_volume(model: string, component: string, alt_min_km: number, alt_max_km: number, n_alt: number, epoch_jd: number, n_lat: number, n_lon: number): Float32Array;
+
+/**
  * NRLMSISE-00 density [kg/m³] at a geodetic point with constant space weather.
  *
  * `f107`: F10.7 solar radio flux [SFU].
@@ -140,6 +149,7 @@ export interface InitOutput {
     readonly igrf_field_at: (a: number, b: number, c: number, d: number) => [number, number];
     readonly dipole_field_at: (a: number, b: number, c: number, d: number) => [number, number];
     readonly magnetic_field_latlon_map: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
+    readonly magnetic_field_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly atmosphere_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly magnetic_field_lines: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly load_space_weather: (a: number, b: number) => number;

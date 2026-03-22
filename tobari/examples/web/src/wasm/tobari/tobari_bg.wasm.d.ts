@@ -6,6 +6,7 @@ export const atmosphere_latlon_map: (a: number, b: number, c: number, d: number,
 export const igrf_field_at: (a: number, b: number, c: number, d: number) => [number, number];
 export const dipole_field_at: (a: number, b: number, c: number, d: number) => [number, number];
 export const magnetic_field_latlon_map: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
+export const magnetic_field_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
 export const atmosphere_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
 export const magnetic_field_lines: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
 export const load_space_weather: (a: number, b: number) => number;

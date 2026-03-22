@@ -7,10 +7,13 @@ import { overlayFrag, overlayVert } from "../shaders/fieldOverlay.js";
 import type { ViewerParams } from "../types.js";
 import { earthRotationAngle, isKanameReady } from "../wasm/kanameInit.js";
 import {
+  atmosphereLatlonMapAsync,
+  atmosphereLatlonMapSwAsync,
   atmosphereVolumeAsync,
   atmosphereVolumeSwAsync,
   magneticFieldLatlonMapAsync,
   magneticFieldLinesAsync,
+  magneticFieldVolumeAsync,
 } from "../wasm/workerClient.js";
 
 interface Props {
@@ -217,47 +220,80 @@ function AtmosphereShells({ params }: { params: ViewerParams }) {
 }
 
 // ---------------------------------------------------------------------------
-// Magnetic single shell
+// Single shell (one altitude, for both atmosphere and magnetic)
 // ---------------------------------------------------------------------------
 
-function MagneticShell({ params }: { params: ViewerParams }) {
+function SingleShell({
+  params,
+  layer,
+}: {
+  params: ViewerParams;
+  layer: "atmosphere" | "magnetic";
+}) {
   const [dataTexture, setDataTexture] = useState<THREE.DataTexture | null>(null);
   const [dataRange, setDataRange] = useState({ min: 0, max: 1 });
-  // Debounce epoch to avoid cancellation storms during animation,
-  // while still updating for manual date changes (1s delay)
-  const debouncedEpoch = useDebouncedValue(params.epochJd, 1000);
+  const rangeRef = useRef<{ min: number; max: number } | null>(null);
+  const prevKeyRef = useRef("");
+  // Debounce epoch for magnetic layer (IGRF barely changes with epoch)
+  const debouncedEpoch = useDebouncedValue(params.epochJd, layer === "magnetic" ? 1000 : 0);
+  const effectEpoch = layer === "magnetic" ? debouncedEpoch : params.epochJd;
 
   useEffect(() => {
     let cancelled = false;
-    const nLon = params.nLat * 2;
+    const nLat = params.nLat;
+    const nLon = nLat * 2;
 
-    magneticFieldLatlonMapAsync(
-      params.magModel,
-      params.fieldComponent,
-      params.altitudeKm,
-      debouncedEpoch,
-      params.nLat,
-      nLon,
-    ).then((data) => {
+    const fetchData =
+      layer === "atmosphere"
+        ? params.spaceWeatherMode === "real"
+          ? atmosphereLatlonMapSwAsync(params.atmoModel, params.altitudeKm, effectEpoch, nLat, nLon)
+          : atmosphereLatlonMapAsync(
+              params.atmoModel,
+              params.altitudeKm,
+              effectEpoch,
+              nLat,
+              nLon,
+              params.f107,
+              params.ap,
+            )
+        : magneticFieldLatlonMapAsync(
+            params.magModel,
+            params.fieldComponent,
+            params.altitudeKm,
+            effectEpoch,
+            nLat,
+            nLon,
+          );
+
+    fetchData.then((data) => {
       if (cancelled || !data) return;
 
-      let min = Number.POSITIVE_INFINITY;
-      let max = Number.NEGATIVE_INFINITY;
       const floats = new Float32Array(data.length);
       for (let i = 0; i < data.length; i++) {
         floats[i] = data[i];
-        if (data[i] < min) min = data[i];
-        if (data[i] > max) max = data[i];
       }
-      setDataRange({ min, max });
 
-      const tex = new THREE.DataTexture(
-        floats,
-        nLon,
-        params.nLat,
-        THREE.RedFormat,
-        THREE.FloatType,
-      );
+      // Fixed range per model/component, not per epoch
+      const key =
+        layer === "atmosphere"
+          ? `atmo:${params.atmoModel}:${params.altitudeKm}:${params.spaceWeatherMode}:${params.f107}:${params.ap}:${nLat}`
+          : `mag:${params.magModel}:${params.fieldComponent}:${params.altitudeKm}:${nLat}`;
+
+      if (!rangeRef.current || key !== prevKeyRef.current) {
+        let min = Number.POSITIVE_INFINITY;
+        let max = Number.NEGATIVE_INFINITY;
+        for (let i = 0; i < data.length; i++) {
+          if (Number.isFinite(data[i])) {
+            if (data[i] < min) min = data[i];
+            if (data[i] > max) max = data[i];
+          }
+        }
+        rangeRef.current = { min, max };
+        prevKeyRef.current = key;
+      }
+      setDataRange(rangeRef.current);
+
+      const tex = new THREE.DataTexture(floats, nLon, nLat, THREE.RedFormat, THREE.FloatType);
       tex.needsUpdate = true;
       tex.wrapS = THREE.RepeatWrapping;
       tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -272,7 +308,29 @@ function MagneticShell({ params }: { params: ViewerParams }) {
     return () => {
       cancelled = true;
     };
-  }, [params.magModel, params.fieldComponent, params.altitudeKm, params.nLat, debouncedEpoch]);
+  }, [
+    layer,
+    params.atmoModel,
+    params.magModel,
+    params.fieldComponent,
+    params.altitudeKm,
+    params.nLat,
+    params.f107,
+    params.ap,
+    params.spaceWeatherMode,
+    effectEpoch,
+  ]);
+
+  // Cleanup on unmount via ref (setState during unmount is unreliable)
+  const texRef = useRef<THREE.DataTexture | null>(null);
+  useEffect(() => {
+    texRef.current = dataTexture;
+  }, [dataTexture]);
+  useEffect(() => {
+    return () => {
+      texRef.current?.dispose();
+    };
+  }, []);
 
   if (!dataTexture) return null;
 
@@ -283,9 +341,122 @@ function MagneticShell({ params }: { params: ViewerParams }) {
       radius={radius}
       dataMin={dataRange.min}
       dataMax={dataRange.max}
-      useLogScale={false}
-      opacity={0.6}
+      useLogScale={layer === "atmosphere"}
+      opacity={0.7}
     />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Magnetic volume shells
+// ---------------------------------------------------------------------------
+
+function MagneticShells({ params }: { params: ViewerParams }) {
+  const [shells, setShells] = useState<ShellData[]>([]);
+  const shellRangesRef = useRef<{ min: number; max: number }[] | null>(null);
+  const prevRangeKeyRef = useRef("");
+  const nLat = Math.min(params.nLat, 45);
+  const nLon = nLat * 2;
+  const debouncedEpoch = useDebouncedValue(params.epochJd, 1000);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    magneticFieldVolumeAsync(
+      params.magModel,
+      params.fieldComponent,
+      100,
+      1000,
+      N_SHELLS,
+      debouncedEpoch,
+      nLat,
+      nLon,
+    ).then((vol) => {
+      if (cancelled || !vol) return;
+
+      const sliceSize = nLat * nLon;
+      const rangeKey = `${params.magModel}:${params.fieldComponent}`;
+      const needNewRanges = !shellRangesRef.current || rangeKey !== prevRangeKeyRef.current;
+
+      const newShells: ShellData[] = [];
+      for (let i = 0; i < N_SHELLS; i++) {
+        const slice = vol.data.slice(i * sliceSize, (i + 1) * sliceSize);
+
+        let sMin: number;
+        let sMax: number;
+        if (needNewRanges) {
+          sMin = Infinity;
+          sMax = -Infinity;
+          for (let j = 0; j < slice.length; j++) {
+            const v = slice[j];
+            if (Number.isFinite(v)) {
+              if (v < sMin) sMin = v;
+              if (v > sMax) sMax = v;
+            }
+          }
+        } else {
+          sMin = shellRangesRef.current![i].min;
+          sMax = shellRangesRef.current![i].max;
+        }
+
+        const tex = new THREE.DataTexture(slice, nLon, nLat, THREE.RedFormat, THREE.FloatType);
+        tex.needsUpdate = true;
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.minFilter = THREE.LinearFilter;
+        tex.magFilter = THREE.LinearFilter;
+        newShells.push({ texture: tex, min: sMin, max: sMax });
+      }
+
+      if (needNewRanges) {
+        shellRangesRef.current = newShells.map((s) => ({ min: s.min, max: s.max }));
+        prevRangeKeyRef.current = rangeKey;
+      }
+
+      setShells((prev) => {
+        for (const s of prev) s.texture.dispose();
+        return newShells;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [params.magModel, params.fieldComponent, debouncedEpoch, nLat, nLon]);
+
+  // Cleanup on unmount via ref
+  const shellsRef = useRef<ShellData[]>([]);
+  useEffect(() => {
+    shellsRef.current = shells;
+  }, [shells]);
+  useEffect(() => {
+    return () => {
+      for (const s of shellsRef.current) s.texture.dispose();
+    };
+  }, []);
+
+  if (shells.length === 0) return null;
+
+  return (
+    <>
+      {shells.map((shell, i) => {
+        const alt = 100 + (900 * i) / (N_SHELLS - 1);
+        const radius = EARTH_RADIUS * (1 + alt / EARTH_RADIUS_KM);
+        const opacity = 0.06 + i * 0.01;
+        return (
+          <ShellMesh
+            // biome-ignore lint/suspicious/noArrayIndexKey: shells have no stable ID
+            key={i}
+            dataTexture={shell.texture}
+            radius={radius}
+            dataMin={shell.min}
+            dataMax={shell.max}
+            useLogScale={false}
+            opacity={Math.max(0.02, opacity)}
+          />
+        );
+      })}
+    </>
   );
 }
 
@@ -296,9 +467,11 @@ function MagneticShell({ params }: { params: ViewerParams }) {
 function FieldLines({
   params,
   earthRotation = 0,
+  seedAltitude,
 }: {
   params: ViewerParams;
   earthRotation?: number;
+  seedAltitude?: number;
 }) {
   const [lines, setLines] = useState<{ vertices: Float32Array; nPoints: number }[]>([]);
   // GMST at the time field lines were computed (ECI reference frame)
@@ -316,10 +489,11 @@ function FieldLines({
       }
     }
 
+    const alt = seedAltitude ?? params.altitudeKm;
     magneticFieldLinesAsync(
       new Float64Array(seedLats),
       new Float64Array(seedLons),
-      params.altitudeKm,
+      alt,
       debouncedEpoch,
       params.magModel,
       500,
@@ -345,7 +519,7 @@ function FieldLines({
     return () => {
       cancelled = true;
     };
-  }, [params.magModel, params.altitudeKm, debouncedEpoch]);
+  }, [params.magModel, seedAltitude, params.altitudeKm, debouncedEpoch]);
 
   const lineObjects = useMemo(() => {
     return lines
@@ -423,7 +597,8 @@ export function GlobeView({
   params,
   layer,
   earthRotation = 0,
-}: Props & { earthRotation?: number }) {
+  displayMode = "volume",
+}: Props & { earthRotation?: number; displayMode?: "single" | "volume" }) {
   return (
     <div style={{ width: "100%", height: "100%" }}>
       <Canvas camera={{ position: [3, 1.5, 2.5], fov: 45 }} gl={{ alpha: false }}>
@@ -435,11 +610,25 @@ export function GlobeView({
           {/* Earth-fixed elements rotate together (ECEF frame) */}
           <group rotation={[0, 0, earthRotation]}>
             <EarthSphere />
-            {layer === "atmosphere" && <AtmosphereShells params={params} />}
-            {layer === "magnetic" && <MagneticShell params={params} />}
+            {layer === "atmosphere" && displayMode === "volume" && (
+              <AtmosphereShells params={params} />
+            )}
+            {layer === "atmosphere" && displayMode === "single" && (
+              <SingleShell params={params} layer="atmosphere" />
+            )}
+            {layer === "magnetic" && displayMode === "volume" && <MagneticShells params={params} />}
+            {layer === "magnetic" && displayMode === "single" && (
+              <SingleShell params={params} layer="magnetic" />
+            )}
           </group>
           {/* Field lines in ECI with differential rotation to follow Earth */}
-          {layer === "magnetic" && <FieldLines params={params} earthRotation={earthRotation} />}
+          {layer === "magnetic" && (
+            <FieldLines
+              params={params}
+              earthRotation={earthRotation}
+              seedAltitude={displayMode === "volume" ? 400 : params.altitudeKm}
+            />
+          )}
         </group>
         <OrbitControls enableDamping dampingFactor={0.1} />
       </Canvas>

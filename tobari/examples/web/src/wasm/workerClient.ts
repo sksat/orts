@@ -187,6 +187,35 @@ export async function magneticFieldLatlonMapAsync(
   ])) as Float64Array | null;
 }
 
+export async function magneticFieldVolumeAsync(
+  model: string,
+  component: string,
+  altMinKm: number,
+  altMaxKm: number,
+  nAlt: number,
+  epochJd: number,
+  nLat: number,
+  nLon: number,
+): Promise<VolumeResult | null> {
+  const raw = (await call("magnetic_field_volume", [
+    model,
+    component,
+    altMinKm,
+    altMaxKm,
+    nAlt,
+    epochJd,
+    nLat,
+    nLon,
+  ])) as Float32Array | null;
+  if (!raw) return null;
+  const total = nAlt * nLat * nLon;
+  return {
+    data: raw.slice(0, total),
+    min: raw[total],
+    max: raw[total + 1],
+  };
+}
+
 export async function magneticFieldLinesAsync(
   seedLats: Float64Array,
   seedLons: Float64Array,
