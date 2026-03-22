@@ -6,13 +6,13 @@
  */
 
 import initTobari, {
+  atmosphere_altitude_profile,
   atmosphere_latlon_map,
   atmosphere_volume,
-  atmosphere_altitude_profile,
+  dipole_field_at,
+  igrf_field_at,
   magnetic_field_latlon_map,
   magnetic_field_lines,
-  igrf_field_at,
-  dipole_field_at,
 } from "./tobari/tobari.js";
 
 let ready = false;

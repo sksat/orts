@@ -87,7 +87,13 @@ export async function atmosphereLatlonMapAsync(
   ap: number,
 ): Promise<Float64Array | null> {
   return (await call("atmosphere_latlon_map", [
-    model, altitudeKm, epochJd, nLat, nLon, f107, ap,
+    model,
+    altitudeKm,
+    epochJd,
+    nLat,
+    nLon,
+    f107,
+    ap,
   ])) as Float64Array | null;
 }
 
@@ -109,7 +115,15 @@ export async function atmosphereVolumeAsync(
   ap: number,
 ): Promise<VolumeResult | null> {
   const raw = (await call("atmosphere_volume", [
-    model, altMinKm, altMaxKm, nAlt, epochJd, nLat, nLon, f107, ap,
+    model,
+    altMinKm,
+    altMaxKm,
+    nAlt,
+    epochJd,
+    nLat,
+    nLon,
+    f107,
+    ap,
   ])) as Float32Array | null;
   if (!raw) return null;
   const total = nAlt * nLat * nLon;
@@ -129,7 +143,12 @@ export async function atmosphereAltitudeProfileAsync(
   ap: number,
 ): Promise<Float64Array | null> {
   return (await call("atmosphere_altitude_profile", [
-    altitudes, latDeg, lonDeg, epochJd, f107, ap,
+    altitudes,
+    latDeg,
+    lonDeg,
+    epochJd,
+    f107,
+    ap,
   ])) as Float64Array | null;
 }
 
@@ -142,7 +161,12 @@ export async function magneticFieldLatlonMapAsync(
   nLon: number,
 ): Promise<Float64Array | null> {
   return (await call("magnetic_field_latlon_map", [
-    model, component, altitudeKm, epochJd, nLat, nLon,
+    model,
+    component,
+    altitudeKm,
+    epochJd,
+    nLat,
+    nLon,
   ])) as Float64Array | null;
 }
 
@@ -156,6 +180,12 @@ export async function magneticFieldLinesAsync(
   stepKm: number,
 ): Promise<Float32Array | null> {
   return (await call("magnetic_field_lines", [
-    seedLats, seedLons, seedAltKm, epochJd, model, maxSteps, stepKm,
+    seedLats,
+    seedLons,
+    seedAltKm,
+    epochJd,
+    model,
+    maxSteps,
+    stepKm,
   ])) as Float32Array | null;
 }

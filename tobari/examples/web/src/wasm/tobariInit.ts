@@ -84,8 +84,8 @@ export function atmosphereLatlonMap(
 
 export interface FieldInfo {
   north: number; // nT
-  east: number;  // nT
-  down: number;  // nT
+  east: number; // nT
+  down: number; // nT
   total: number; // nT
   inclination: number; // deg
   declination: number; // deg
@@ -99,8 +99,12 @@ export function igrfFieldAt(
 ): FieldInfo {
   const arr: Float64Array = wasmModule!.igrf_field_at(latDeg, lonDeg, altitudeKm, epochJd);
   return {
-    north: arr[0], east: arr[1], down: arr[2],
-    total: arr[3], inclination: arr[4], declination: arr[5],
+    north: arr[0],
+    east: arr[1],
+    down: arr[2],
+    total: arr[3],
+    inclination: arr[4],
+    declination: arr[5],
   };
 }
 
@@ -112,8 +116,12 @@ export function dipoleFieldAt(
 ): FieldInfo {
   const arr: Float64Array = wasmModule!.dipole_field_at(latDeg, lonDeg, altitudeKm, epochJd);
   return {
-    north: arr[0], east: arr[1], down: arr[2],
-    total: arr[3], inclination: arr[4], declination: arr[5],
+    north: arr[0],
+    east: arr[1],
+    down: arr[2],
+    total: arr[3],
+    inclination: arr[4],
+    declination: arr[5],
   };
 }
 
@@ -151,7 +159,15 @@ export function atmosphereVolume(
   ap: number,
 ): VolumeResult {
   const raw: Float32Array = wasmModule!.atmosphere_volume(
-    model, altMinKm, altMaxKm, nAlt, epochJd, nLat, nLon, f107, ap,
+    model,
+    altMinKm,
+    altMaxKm,
+    nAlt,
+    epochJd,
+    nLat,
+    nLon,
+    f107,
+    ap,
   );
   const total = nAlt * nLat * nLon;
   return {
@@ -181,7 +197,13 @@ export function magneticFieldLines(
   stepKm: number,
 ): FieldLine[] {
   const raw: Float32Array = wasmModule!.magnetic_field_lines(
-    seedLats, seedLons, seedAltKm, epochJd, model, maxSteps, stepKm,
+    seedLats,
+    seedLons,
+    seedAltKm,
+    epochJd,
+    model,
+    maxSteps,
+    stepKm,
   );
 
   const nLines = raw[0];

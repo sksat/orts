@@ -1,20 +1,15 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { initKaname, earthRotationAngle } from "./wasm/kanameInit.js";
-import { initWorker } from "./wasm/workerClient.js";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Controls } from "./controls/Controls.js";
 import { PlaybackBar } from "./controls/PlaybackBar.js";
+import { AtmosphereMap } from "./panels/AtmosphereMap.js";
+import { AtmosphereProfile } from "./panels/AtmosphereProfile.js";
 import { GlobeView } from "./panels/GlobeView.js";
 import { MagneticFieldMap } from "./panels/MagneticFieldMap.js";
-import { AtmosphereProfile } from "./panels/AtmosphereProfile.js";
-import { AtmosphereMap } from "./panels/AtmosphereMap.js";
 import { dateToJd, type ViewerParams } from "./types.js";
+import { earthRotationAngle, initKaname } from "./wasm/kanameInit.js";
+import { initWorker } from "./wasm/workerClient.js";
 
-type TabId =
-  | "globe-mag"
-  | "globe-atmo"
-  | "magnetic-map"
-  | "atmosphere-profile"
-  | "atmosphere-map";
+type TabId = "globe-mag" | "globe-atmo" | "magnetic-map" | "atmosphere-profile" | "atmosphere-map";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "globe-mag", label: "Globe (Magnetic)" },
@@ -169,7 +164,15 @@ export function App() {
         epochJd={params.epochJd}
       >
         {isGlobe && (
-          <label style={{ display: "flex", alignItems: "center", gap: "4px", color: "#888", cursor: "pointer" }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              color: "#888",
+              cursor: "pointer",
+            }}
+          >
             <input
               type="checkbox"
               checked={showRotation}
@@ -181,8 +184,12 @@ export function App() {
       </PlaybackBar>
 
       <div style={styles.content}>
-        {activeTab === "globe-mag" && <GlobeView params={params} layer="magnetic" earthRotation={rotation} />}
-        {activeTab === "globe-atmo" && <GlobeView params={params} layer="atmosphere" earthRotation={rotation} />}
+        {activeTab === "globe-mag" && (
+          <GlobeView params={params} layer="magnetic" earthRotation={rotation} />
+        )}
+        {activeTab === "globe-atmo" && (
+          <GlobeView params={params} layer="atmosphere" earthRotation={rotation} />
+        )}
         {activeTab === "magnetic-map" && <MagneticFieldMap params={params} />}
         {activeTab === "atmosphere-profile" && <AtmosphereProfile params={params} />}
         {activeTab === "atmosphere-map" && <AtmosphereMap params={params} />}

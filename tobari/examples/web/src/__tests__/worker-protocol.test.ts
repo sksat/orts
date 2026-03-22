@@ -5,7 +5,7 @@
  * without actually spawning a Web Worker (pure unit tests).
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 describe("worker cancellation logic", () => {
   // Simulates the latestId-based cancellation in workerClient.ts
@@ -97,7 +97,7 @@ describe("useEffect cancelled flag pattern", () => {
   });
 
   it("non-cancelled result is applied", async () => {
-    let cancelled = false;
+    const cancelled = false;
     const results: number[] = [];
 
     const result = await Promise.resolve(42);

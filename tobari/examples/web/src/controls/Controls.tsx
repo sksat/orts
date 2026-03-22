@@ -1,5 +1,5 @@
-import { type ViewerParams, dateToJd } from "../types.js";
 import type { AtmoModel, FieldComponent, MagModel } from "../types.js";
+import { dateToJd, type ViewerParams } from "../types.js";
 
 interface ControlsProps {
   params: ViewerParams;
@@ -69,7 +69,8 @@ function jdToDateString(jd: number): string {
 export function Controls({ params, onChange, activeTab }: ControlsProps) {
   const update = (partial: Partial<ViewerParams>) => onChange({ ...params, ...partial });
 
-  const showAtmo = activeTab === "atmosphere-profile" || activeTab === "atmosphere-map" || activeTab === "globe";
+  const showAtmo =
+    activeTab === "atmosphere-profile" || activeTab === "atmosphere-map" || activeTab === "globe";
   const showMag = activeTab === "magnetic-map" || activeTab === "globe";
 
   return (
@@ -82,7 +83,7 @@ export function Controls({ params, onChange, activeTab }: ControlsProps) {
           style={styles.input}
           value={jdToDateString(params.epochJd)}
           onChange={(e) => {
-            const d = new Date(e.target.value + "T00:00:00Z");
+            const d = new Date(`${e.target.value}T00:00:00Z`);
             if (!Number.isNaN(d.getTime())) update({ epochJd: dateToJd(d) });
           }}
         />
@@ -179,12 +180,7 @@ export function Controls({ params, onChange, activeTab }: ControlsProps) {
           </div>
           <div style={styles.group}>
             {Object.entries(SOLAR_PRESETS).map(([name, preset]) => (
-              <button
-                key={name}
-                type="button"
-                style={styles.button}
-                onClick={() => update(preset)}
-              >
+              <button key={name} type="button" style={styles.button} onClick={() => update(preset)}>
                 {name}
               </button>
             ))}

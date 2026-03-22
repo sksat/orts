@@ -23,7 +23,7 @@ const SPEED_OPTIONS = [
 function jdToDisplay(jd: number): string {
   const ms = (jd - 2440587.5) * 86400000;
   const d = new Date(ms);
-  return d.toISOString().slice(0, 19).replace("T", " ") + " UTC";
+  return `${d.toISOString().slice(0, 19).replace("T", " ")} UTC`;
 }
 
 const styles = {

@@ -8,10 +8,10 @@
  * - Field lines originate from the correct geographic positions
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -26,17 +26,13 @@ let tobari: typeof import("../wasm/tobari/tobari.js");
 beforeAll(async () => {
   // Load kaname WASM
   const kanameJs = await import("../wasm/kaname/kaname.js");
-  const kanameWasm = readFileSync(
-    resolve(__dirname, "../wasm/kaname/kaname_bg.wasm"),
-  );
+  const kanameWasm = readFileSync(resolve(__dirname, "../wasm/kaname/kaname_bg.wasm"));
   kanameJs.initSync({ module: kanameWasm });
   kaname = kanameJs;
 
   // Load tobari WASM
   const tobariJs = await import("../wasm/tobari/tobari.js");
-  const tobariWasm = readFileSync(
-    resolve(__dirname, "../wasm/tobari/tobari_bg.wasm"),
-  );
+  const tobariWasm = readFileSync(resolve(__dirname, "../wasm/tobari/tobari_bg.wasm"));
   tobariJs.initSync({ module: tobariWasm });
   tobari = tobariJs;
 });
@@ -285,10 +281,7 @@ describe("globe coordinate consistency", () => {
       // The point in ECI(T0) rotated by delta should equal ECI(T1)
       // because the same geodetic point maps to different ECI positions
       // as Earth rotates, and the difference is exactly delta.
-      const rotated = rotateZ(
-        [eciT0[0], eciT0[1], eciT0[2]],
-        delta,
-      );
+      const rotated = rotateZ([eciT0[0], eciT0[1], eciT0[2]], delta);
 
       // Magnitude must be preserved
       const magOrig = Math.sqrt(eciT0[0] ** 2 + eciT0[1] ** 2 + eciT0[2] ** 2);

@@ -1,9 +1,9 @@
 import { useEffect, useRef } from "react";
 import { useCanvasSize } from "../hooks/useCanvasSize.js";
-import { renderHeatmap } from "../render/heatmap.js";
 import { diverging, viridis } from "../render/colorScale.js";
-import { magneticFieldLatlonMapAsync } from "../wasm/workerClient.js";
+import { renderHeatmap } from "../render/heatmap.js";
 import type { ViewerParams } from "../types.js";
+import { magneticFieldLatlonMapAsync } from "../wasm/workerClient.js";
 
 interface Props {
   params: ViewerParams;
@@ -38,13 +38,20 @@ export function MagneticFieldMap({ params }: Props) {
         params.fieldComponent === "down";
 
       const unitMap: Record<string, string> = {
-        total: "nT", inclination: "°", declination: "°",
-        north: "nT", east: "nT", down: "nT",
+        total: "nT",
+        inclination: "°",
+        declination: "°",
+        north: "nT",
+        east: "nT",
+        down: "nT",
       };
       const labelMap: Record<string, string> = {
-        total: "Total Intensity", inclination: "Inclination",
-        declination: "Declination", north: "North Component",
-        east: "East Component", down: "Down Component",
+        total: "Total Intensity",
+        inclination: "Inclination",
+        declination: "Declination",
+        north: "North Component",
+        east: "East Component",
+        down: "Down Component",
       };
 
       const key = `${params.magModel}:${params.fieldComponent}:${params.altitudeKm}`;
@@ -82,11 +89,22 @@ export function MagneticFieldMap({ params }: Props) {
       });
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [params, size]);
 
   return (
-    <div ref={containerRef} style={{ width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center" }}>
+    <div
+      ref={containerRef}
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+    >
       <canvas
         ref={canvasRef}
         width={size.width}

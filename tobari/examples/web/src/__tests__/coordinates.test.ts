@@ -10,7 +10,7 @@
  * 6. Shell radii are correct for given altitudes
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { dateToJd } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -212,30 +212,30 @@ describe("DataTexture UV mapping", () => {
 
   it("data grid iLat=0 is south pole (lat=-90°), matches V=0", () => {
     const nLat = 90;
-    const lat = -90 + (0 + 0.5) * 180 / nLat;
+    const lat = -90 + ((0 + 0.5) * 180) / nLat;
     expect(lat).toBeCloseTo(-89, 0);
   });
 
   it("data grid iLat=nLat-1 is north pole (lat≈+90°), matches V≈1", () => {
     const nLat = 90;
-    const lat = -90 + (nLat - 1 + 0.5) * 180 / nLat;
+    const lat = -90 + ((nLat - 1 + 0.5) * 180) / nLat;
     expect(lat).toBeCloseTo(89, 0);
   });
 
   it("data grid iLon=nLon/2 is lon=0° (Greenwich), should map to sphere U=0.5", () => {
     const nLon = 180;
-    const lon = -180 + (nLon / 2 + 0.5) * 360 / nLon;
+    const lon = -180 + ((nLon / 2 + 0.5) * 360) / nLon;
     expect(lon).toBeCloseTo(1, 0); // lon ≈ 1° (center of bin)
   });
 
   it("lon=-180° and lon=+180° data wraps correctly with RepeatWrapping", () => {
     // Both edges of the data grid should wrap seamlessly
     const nLon = 180;
-    const lonFirst = -180 + 0.5 * 360 / nLon;
-    const lonLast = -180 + (nLon - 1 + 0.5) * 360 / nLon;
+    const lonFirst = -180 + (0.5 * 360) / nLon;
+    const lonLast = -180 + ((nLon - 1 + 0.5) * 360) / nLon;
     // Gap between last and first (across the date line) should equal one bin width
     const binWidth = 360 / nLon;
-    const gap = (lonFirst + 360) - lonLast;
+    const gap = lonFirst + 360 - lonLast;
     expect(gap).toBeCloseTo(binWidth, 10);
   });
 });
@@ -251,9 +251,8 @@ describe("geodetic → ECEF sanity (pure math)", () => {
   it("north pole (90°,0°,0km) → ECEF z ≈ polar radius, x=y=0", () => {
     // Polar radius ≈ 6356.752 km
     // At geodetic lat=90°, ECEF = (0, 0, b) where b is polar radius
-    const B = 6356.752;
-    // Just check the structure: x=0, y=0, z≈B
-    expect(true).toBe(true); // placeholder — WASM integration test below verifies
+    // Just check structure: x=0, y=0, z≈polar radius (verified by WASM test)
+    expect(true).toBe(true);
   });
 
   it("equator (0°,0°,0km) → ECEF x ≈ equatorial radius, y=z=0", () => {

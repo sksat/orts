@@ -1,17 +1,17 @@
-import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
+import { Canvas } from "@react-three/fiber";
 import { useEffect, useMemo, useState } from "react";
 import * as THREE from "three";
 import { useDebouncedValue } from "../hooks/useDebouncedValue.js";
 import { overlayFrag, overlayVert } from "../shaders/fieldOverlay.js";
+import type { ViewerParams } from "../types.js";
+import { earthRotationAngle, isKanameReady } from "../wasm/kanameInit.js";
 import {
   atmosphereVolumeAsync,
   magneticFieldLatlonMapAsync,
   magneticFieldLinesAsync,
   type VolumeResult,
 } from "../wasm/workerClient.js";
-import { earthRotationAngle, isKanameReady } from "../wasm/kanameInit.js";
-import type { ViewerParams } from "../types.js";
 
 interface Props {
   params: ViewerParams;
@@ -115,8 +115,15 @@ function AtmosphereShells({ params }: { params: ViewerParams }) {
     let cancelled = false;
 
     atmosphereVolumeAsync(
-      params.atmoModel, 100, 1000, N_SHELLS,
-      params.epochJd, nLat, nLon, params.f107, params.ap,
+      params.atmoModel,
+      100,
+      1000,
+      N_SHELLS,
+      params.epochJd,
+      nLat,
+      nLon,
+      params.f107,
+      params.ap,
     ).then((vol) => {
       if (cancelled || !vol) return;
 
@@ -146,7 +153,9 @@ function AtmosphereShells({ params }: { params: ViewerParams }) {
       });
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [params.atmoModel, params.epochJd, params.f107, params.ap, nLat, nLon]);
 
   if (shells.length === 0) return null;
@@ -189,8 +198,12 @@ function MagneticShell({ params }: { params: ViewerParams }) {
     const nLon = params.nLat * 2;
 
     magneticFieldLatlonMapAsync(
-      params.magModel, params.fieldComponent,
-      params.altitudeKm, debouncedEpoch, params.nLat, nLon,
+      params.magModel,
+      params.fieldComponent,
+      params.altitudeKm,
+      debouncedEpoch,
+      params.nLat,
+      nLon,
     ).then((data) => {
       if (cancelled || !data) return;
 
@@ -204,7 +217,13 @@ function MagneticShell({ params }: { params: ViewerParams }) {
       }
       setDataRange({ min, max });
 
-      const tex = new THREE.DataTexture(floats, nLon, params.nLat, THREE.RedFormat, THREE.FloatType);
+      const tex = new THREE.DataTexture(
+        floats,
+        nLon,
+        params.nLat,
+        THREE.RedFormat,
+        THREE.FloatType,
+      );
       tex.needsUpdate = true;
       tex.wrapS = THREE.RepeatWrapping;
       tex.wrapT = THREE.ClampToEdgeWrapping;
@@ -216,7 +235,9 @@ function MagneticShell({ params }: { params: ViewerParams }) {
       });
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [params.magModel, params.fieldComponent, params.altitudeKm, params.nLat, debouncedEpoch]);
 
   if (!dataTexture) return null;
@@ -238,7 +259,13 @@ function MagneticShell({ params }: { params: ViewerParams }) {
 // Field lines (already in ECI coordinates — no pole alignment needed)
 // ---------------------------------------------------------------------------
 
-function FieldLines({ params, earthRotation = 0 }: { params: ViewerParams; earthRotation?: number }) {
+function FieldLines({
+  params,
+  earthRotation = 0,
+}: {
+  params: ViewerParams;
+  earthRotation?: number;
+}) {
   const [lines, setLines] = useState<{ vertices: Float32Array; nPoints: number }[]>([]);
   // GMST at the time field lines were computed (ECI reference frame)
   const [computedGmst, setComputedGmst] = useState(0);
@@ -281,7 +308,9 @@ function FieldLines({ params, earthRotation = 0 }: { params: ViewerParams; earth
       }
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [params.magModel, params.altitudeKm, debouncedEpoch]);
 
   const lineObjects = useMemo(() => {
@@ -355,8 +384,11 @@ function EarthSphere() {
 // Main GlobeView
 // ---------------------------------------------------------------------------
 
-export function GlobeView({ params, layer, earthRotation = 0 }: Props & { earthRotation?: number }) {
-
+export function GlobeView({
+  params,
+  layer,
+  earthRotation = 0,
+}: Props & { earthRotation?: number }) {
   return (
     <div style={{ width: "100%", height: "100%" }}>
       <Canvas camera={{ position: [3, 1.5, 2.5], fov: 45 }} gl={{ alpha: false }}>

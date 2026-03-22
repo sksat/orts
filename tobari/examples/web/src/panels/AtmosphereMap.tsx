@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useCanvasSize } from "../hooks/useCanvasSize.js";
 import { renderHeatmap } from "../render/heatmap.js";
-import { atmosphereLatlonMapAsync } from "../wasm/workerClient.js";
 import type { ViewerParams } from "../types.js";
+import { atmosphereLatlonMapAsync } from "../wasm/workerClient.js";
 
 interface Props {
   params: ViewerParams;
@@ -66,11 +66,22 @@ export function AtmosphereMap({ params }: Props) {
       });
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [params, size]);
 
   return (
-    <div ref={containerRef} style={{ width: "100%", height: "100%", display: "flex", justifyContent: "center", alignItems: "center" }}>
+    <div
+      ref={containerRef}
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+      }}
+    >
       <canvas
         ref={canvasRef}
         width={size.width}

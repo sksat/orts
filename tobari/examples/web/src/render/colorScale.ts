@@ -49,18 +49,10 @@ export const diverging: ColorScale = (t: number) => {
   const clamped = Math.max(0, Math.min(1, t));
   if (clamped < 0.5) {
     const s = clamped * 2; // 0..1
-    return [
-      Math.round(30 + 225 * s),
-      Math.round(60 + 195 * s),
-      Math.round(180 + 75 * s),
-    ];
+    return [Math.round(30 + 225 * s), Math.round(60 + 195 * s), Math.round(180 + 75 * s)];
   }
   const s = (clamped - 0.5) * 2; // 0..1
-  return [
-    Math.round(255 - 25 * s),
-    Math.round(255 - 215 * s),
-    Math.round(255 - 230 * s),
-  ];
+  return [Math.round(255 - 25 * s), Math.round(255 - 215 * s), Math.round(255 - 230 * s)];
 };
 
 /** Normalize a value linearly to [0, 1]. */
