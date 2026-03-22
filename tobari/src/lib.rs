@@ -34,6 +34,7 @@
 
 pub mod cssi;
 pub mod exponential;
+pub mod gfz;
 pub mod harris_priester;
 pub mod magnetic;
 pub mod nrlmsise00;

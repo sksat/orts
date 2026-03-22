@@ -1,0 +1,41 @@
+# PURPOSE: Test fixture for GFZ space weather parser
+# LICENSE: CC BY 4.0, except for the sunspot numbers contained in this file, which have the CC BY-NC 4.0 license
+# SOURCE: Geomagnetic Observatory Niemegk, GFZ Helmholtz Centre for Geosciences
+# PLEASE CITE: Matzka, J., Stolle, C., Yamazaki, Y., Bronkalla, O. and Morschhauser, A., 2021. The geomagnetic Kp index
+# and derived indices of geomagnetic activity. Space Weather, https://doi.org/10.1029/2020SW002641
+#
+# Short file description:
+# 40 header lines, all starting with #
+# ASCII, blank separated and fixed length, missing data indicated by -1.000 for Kp, -1 for ap and SN, -1.0 for F10.7
+# YYYY MM DD is date of UT day
+#
+# The format for each line is (i stands for integer, f for float):
+#iii ii ii iiiii fffff.f iiii ii ff.fff ff.fff ff.fff ff.fff ff.fff ff.fff ff.fff ff.fff iiii iiii iiii iiii iiii iiii iiii iiii  iiii iii ffffff.f ffffff.f i
+# The parameters in each line are:
+#YYY MM DD  days  days_m  Bsr dB    Kp1    Kp2    Kp3    Kp4    Kp5    Kp6    Kp7    Kp8  ap1  ap2  ap3  ap4  ap5  ap6  ap7  ap8    Ap  SN F10.7obs F10.7adj D
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+#
+2024 03 20 33682 33682.5 2600 24  1.000  1.333  2.000  2.333  2.667  2.333  2.000  1.667    4    5    7    9   12    9    7    6     7  45    130.5    129.0 2
+2024 03 21 33683 33683.5 2600 25  1.333  1.667  1.333  1.667  1.333  1.000  1.000  1.000    5    6    5    6    5    4    4    4     5  56    128.7    127.3 2
+2024 03 22 33684 33684.5 2600 26  1.000  0.667  0.333  1.000  0.667  0.333  0.667  0.667    4    3    2    4    3    2    3    3     3  33    126.9    125.5 2
+2025 01 01 33969 33969.5 2610 24  0.667  1.000  1.333  1.667  2.000  1.667  2.333  2.667    3    4    5    6    7    6    9   12     7  42    150.2    148.6 2

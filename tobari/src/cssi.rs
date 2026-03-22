@@ -86,6 +86,15 @@ pub struct CssiData {
 }
 
 impl CssiData {
+    /// Create from records, sorting by date. Used by the GFZ parser.
+    pub(crate) fn from_records(mut records: Vec<CssiDailyRecord>) -> Result<Self, CssiParseError> {
+        if records.is_empty() {
+            return Err(CssiParseError::NoData);
+        }
+        records.sort_by(|a, b| a.jd_midnight.partial_cmp(&b.jd_midnight).unwrap());
+        Ok(Self { records })
+    }
+
     /// Parse CSSI space weather data from text content.
     ///
     /// Accepts the full content of SW-Last5Years.txt or SW-All.txt.
