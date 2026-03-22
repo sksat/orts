@@ -47,6 +47,25 @@ const tobariWebRoot = resolve(repoRoot, "tobari/examples/web");
 const tobariDest = resolve(docsRoot, "public/tobari/examples/earth-visualizer/demo");
 const tobariBase = "/orts/tobari/examples/earth-visualizer/demo/";
 
+// Download space weather data for bundling
+const swDest = resolve(tobariWebRoot, "public/space-weather.txt");
+{
+  console.log("Downloading space weather data...");
+  try {
+    const res = await fetch("https://celestrak.org/SpaceData/SW-Last5Years.txt");
+    if (res.ok) {
+      const { writeFileSync, mkdirSync } = await import("node:fs");
+      mkdirSync(resolve(tobariWebRoot, "public"), { recursive: true });
+      writeFileSync(swDest, await res.text());
+      console.log("Downloaded space weather data.");
+    }
+  } catch {
+    console.log(
+      "Warning: could not download space weather data, Real SW mode will be unavailable.",
+    );
+  }
+}
+
 try {
   // Always rebuild WASM to avoid shipping stale artifacts
   console.log("Building tobari WASM...");

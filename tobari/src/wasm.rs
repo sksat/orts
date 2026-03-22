@@ -590,6 +590,25 @@ pub fn space_weather_date_range() -> Vec<f64> {
     }
 }
 
+/// Get all space weather records as a flat array for charting.
+///
+/// Returns flat `[jd_0, f107_0, ap_0, jd_1, f107_1, ap_1, ...]` (length = N × 3).
+/// Returns empty vec if no data loaded.
+#[wasm_bindgen]
+pub fn space_weather_series() -> Vec<f64> {
+    let Some(provider) = SPACE_WEATHER.get() else {
+        return Vec::new();
+    };
+    let records = provider.data().records();
+    let mut out = Vec::with_capacity(records.len() * 3);
+    for r in records {
+        out.push(r.jd_midnight);
+        out.push(r.f107_obs);
+        out.push(r.ap_daily);
+    }
+    out
+}
+
 /// Compute lat/lon density map using loaded space weather data.
 ///
 /// Like `atmosphere_latlon_map` but uses the loaded CSSI/GFZ data

@@ -257,3 +257,8 @@ export async function atmosphereVolumeSwAsync(
 export async function spaceWeatherLookupAsync(epochJd: number): Promise<Float64Array | null> {
   return (await call("space_weather_lookup", [epochJd])) as Float64Array | null;
 }
+
+/** Get all space weather records for charting. Returns flat [jd, f107, ap, ...]. */
+export async function spaceWeatherSeriesAsync(): Promise<Float64Array | null> {
+  return (await call("space_weather_series", [])) as Float64Array | null;
+}

@@ -18,6 +18,7 @@ import initTobari, {
   magnetic_field_lines,
   space_weather_date_range,
   space_weather_lookup,
+  space_weather_series,
 } from "./tobari/tobari.js";
 
 let ready = false;
@@ -31,7 +32,9 @@ async function init() {
 
     // Try to load bundled space weather data
     try {
-      const res = await fetch("./space-weather.txt");
+      // Use root-relative path — Worker is in assets/ but the file is at build root
+      const base = self.location.href.replace(/\/assets\/.*$/, "/");
+      const res = await fetch(`${base}space-weather.txt`);
       if (res.ok) {
         const text = await res.text();
         swLoaded = load_space_weather(text);
@@ -79,6 +82,7 @@ const FN_MAP: Record<string, (...args: any[]) => unknown> = {
   dipole_field_at,
   space_weather_lookup,
   space_weather_date_range,
+  space_weather_series,
 };
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {

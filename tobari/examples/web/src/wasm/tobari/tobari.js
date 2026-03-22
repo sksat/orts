@@ -50,7 +50,7 @@ export function atmosphere_latlon_map(model, altitude_km, epoch_jd, n_lat, n_lon
  *
  * Like `atmosphere_latlon_map` but uses the loaded CSSI/GFZ data
  * instead of constant F10.7/Ap values.
- * Returns empty vec if no space weather data is loaded.
+ * Falls back to solar moderate conditions if no data is loaded.
  * @param {string} model
  * @param {number} altitude_km
  * @param {number} epoch_jd
@@ -95,6 +95,7 @@ export function atmosphere_volume(model, alt_min_km, alt_max_km, n_alt, epoch_jd
 
 /**
  * Compute 3D atmosphere volume using loaded space weather data.
+ * Falls back to solar moderate conditions if no data is loaded.
  * @param {string} model
  * @param {number} alt_min_km
  * @param {number} alt_max_km
@@ -268,6 +269,7 @@ export function nrlmsise00_density(lat_deg, lon_deg, altitude_km, epoch_jd, f107
  * Get date range of the loaded space weather data.
  *
  * Returns `[jd_first, jd_last]` or empty vec if no data loaded.
+ * `jd_last` includes the full final day (midnight of the day after).
  * @returns {Float64Array}
  */
 export function space_weather_date_range() {
@@ -287,6 +289,20 @@ export function space_weather_date_range() {
  */
 export function space_weather_lookup(epoch_jd) {
     const ret = wasm.space_weather_lookup(epoch_jd);
+    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v1;
+}
+
+/**
+ * Get all space weather records as a flat array for charting.
+ *
+ * Returns flat `[jd_0, f107_0, ap_0, jd_1, f107_1, ap_1, ...]` (length = N × 3).
+ * Returns empty vec if no data loaded.
+ * @returns {Float64Array}
+ */
+export function space_weather_series() {
+    const ret = wasm.space_weather_series();
     var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
     return v1;

@@ -5,13 +5,20 @@ import { AtmosphereMap } from "./panels/AtmosphereMap.js";
 import { AtmosphereProfile } from "./panels/AtmosphereProfile.js";
 import { GlobeView } from "./panels/GlobeView.js";
 import { MagneticFieldMap } from "./panels/MagneticFieldMap.js";
+import { SpaceWeatherChart } from "./panels/SpaceWeatherChart.js";
 import { dateToJd, type ViewerParams } from "./types.js";
 import { earthRotationAngle, initKaname } from "./wasm/kanameInit.js";
 import { initWorker, onSpaceWeatherReady } from "./wasm/workerClient.js";
 
-type TabId = "globe-mag" | "globe-atmo" | "magnetic-map" | "atmosphere-profile" | "atmosphere-map";
+type TabId =
+  | "globe-mag"
+  | "globe-atmo"
+  | "magnetic-map"
+  | "atmosphere-profile"
+  | "atmosphere-map"
+  | "space-weather";
 
-const TABS: { id: TabId; label: string }[] = [
+const BASE_TABS: { id: TabId; label: string }[] = [
   { id: "globe-mag", label: "Globe (Magnetic)" },
   { id: "globe-atmo", label: "Globe (Atmosphere)" },
   { id: "magnetic-map", label: "Magnetic Field Map" },
@@ -95,12 +102,12 @@ export function App() {
   const [playing, setPlaying] = useState(false);
   const [speedDaysPerSec, setSpeedDaysPerSec] = useState(30);
   const [showRotation, setShowRotation] = useState(false);
-  const [swAvailable, setSwAvailable] = useState(false);
+  const [swRange, setSwRange] = useState<{ jdFirst: number; jdLast: number } | null>(null);
   const lastFrameRef = useRef<number>(0);
 
   useEffect(() => {
-    onSpaceWeatherReady(() => {
-      setSwAvailable(true);
+    onSpaceWeatherReady((range) => {
+      setSwRange(range);
     });
     Promise.all([initKaname(), initWorker()])
       .then(() => setReady(true))
@@ -140,6 +147,11 @@ export function App() {
   // Compute Earth rotation via kaname WASM (only when enabled)
   const rotation = showRotation ? earthRotationAngle(params.epochJd) : 0;
 
+  // Show Space Weather tab only when data is available
+  const tabs = swRange
+    ? [...BASE_TABS, { id: "space-weather" as TabId, label: "Space Weather" }]
+    : BASE_TABS;
+
   const isGlobe = activeTab === "globe-mag" || activeTab === "globe-atmo";
 
   return (
@@ -147,7 +159,7 @@ export function App() {
       <div style={styles.header}>
         <span style={styles.title}>tobari</span>
         <div style={styles.tabs}>
-          {TABS.map((tab) => (
+          {tabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -164,7 +176,7 @@ export function App() {
         params={params}
         onChange={handleParamsChange}
         activeTab={controlsTab(activeTab)}
-        swAvailable={swAvailable}
+        swAvailable={swRange !== null}
       />
       <PlaybackBar
         playing={playing}
@@ -203,6 +215,7 @@ export function App() {
         {activeTab === "magnetic-map" && <MagneticFieldMap params={params} />}
         {activeTab === "atmosphere-profile" && <AtmosphereProfile params={params} />}
         {activeTab === "atmosphere-map" && <AtmosphereMap params={params} />}
+        {activeTab === "space-weather" && <SpaceWeatherChart epochJd={params.epochJd} />}
       </div>
     </div>
   );

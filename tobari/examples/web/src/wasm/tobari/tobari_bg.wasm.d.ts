@@ -11,6 +11,7 @@ export const magnetic_field_lines: (a: number, b: number, c: number, d: number, 
 export const load_space_weather: (a: number, b: number) => number;
 export const space_weather_lookup: (a: number) => [number, number];
 export const space_weather_date_range: () => [number, number];
+export const space_weather_series: () => [number, number];
 export const atmosphere_latlon_map_sw: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
 export const atmosphere_volume_sw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
 export const nrlmsise00_density: (a: number, b: number, c: number, d: number, e: number, f: number) => number;

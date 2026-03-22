@@ -22,7 +22,7 @@ export function atmosphere_latlon_map(model: string, altitude_km: number, epoch_
  *
  * Like `atmosphere_latlon_map` but uses the loaded CSSI/GFZ data
  * instead of constant F10.7/Ap values.
- * Returns empty vec if no space weather data is loaded.
+ * Falls back to solar moderate conditions if no data is loaded.
  */
 export function atmosphere_latlon_map_sw(model: string, altitude_km: number, epoch_jd: number, n_lat: number, n_lon: number): Float64Array;
 
@@ -37,6 +37,7 @@ export function atmosphere_volume(model: string, alt_min_km: number, alt_max_km:
 
 /**
  * Compute 3D atmosphere volume using loaded space weather data.
+ * Falls back to solar moderate conditions if no data is loaded.
  */
 export function atmosphere_volume_sw(model: string, alt_min_km: number, alt_max_km: number, n_alt: number, epoch_jd: number, n_lat: number, n_lon: number): Float32Array;
 
@@ -110,6 +111,7 @@ export function nrlmsise00_density(lat_deg: number, lon_deg: number, altitude_km
  * Get date range of the loaded space weather data.
  *
  * Returns `[jd_first, jd_last]` or empty vec if no data loaded.
+ * `jd_last` includes the full final day (midnight of the day after).
  */
 export function space_weather_date_range(): Float64Array;
 
@@ -120,6 +122,14 @@ export function space_weather_date_range(): Float64Array;
  * Returns empty vec if no data is loaded.
  */
 export function space_weather_lookup(epoch_jd: number): Float64Array;
+
+/**
+ * Get all space weather records as a flat array for charting.
+ *
+ * Returns flat `[jd_0, f107_0, ap_0, jd_1, f107_1, ap_1, ...]` (length = N × 3).
+ * Returns empty vec if no data loaded.
+ */
+export function space_weather_series(): Float64Array;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -135,6 +145,7 @@ export interface InitOutput {
     readonly load_space_weather: (a: number, b: number) => number;
     readonly space_weather_lookup: (a: number) => [number, number];
     readonly space_weather_date_range: () => [number, number];
+    readonly space_weather_series: () => [number, number];
     readonly atmosphere_latlon_map_sw: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly atmosphere_volume_sw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly nrlmsise00_density: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
