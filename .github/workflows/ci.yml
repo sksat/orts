@@ -29,6 +29,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
 
+      - name: Clippy (tobari wasm)
+        run: cargo clippy -p tobari --features wasm -- -D warnings
+
       - name: Test
         run: cargo test --workspace
 
@@ -86,6 +89,12 @@ jobs:
 
       - name: Test viewer
         run: pnpm --filter orts-viewer test
+
+      - name: Build tobari-web WASM
+        run: pnpm --filter tobari-web build:wasm:all
+
+      - name: Test tobari-web
+        run: pnpm --filter tobari-web test
 
   uneri-e2e:
     runs-on: ubuntu-latest
