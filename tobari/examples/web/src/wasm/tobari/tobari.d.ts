@@ -18,6 +18,15 @@ export function atmosphere_altitude_profile(altitudes: Float64Array, lat_deg: nu
 export function atmosphere_latlon_map(model: string, altitude_km: number, epoch_jd: number, n_lat: number, n_lon: number, f107: number, ap: number): Float64Array;
 
 /**
+ * Compute lat/lon density map using loaded space weather data.
+ *
+ * Like `atmosphere_latlon_map` but uses the loaded CSSI/GFZ data
+ * instead of constant F10.7/Ap values.
+ * Returns empty vec if no space weather data is loaded.
+ */
+export function atmosphere_latlon_map_sw(model: string, altitude_km: number, epoch_jd: number, n_lat: number, n_lon: number): Float64Array;
+
+/**
  * Compute 3D atmospheric density volume as Float32.
  *
  * Layout: alt-major `index = iAlt * nLat * nLon + iLat * nLon + iLon`
@@ -25,6 +34,11 @@ export function atmosphere_latlon_map(model: string, altitude_km: number, epoch_
  * Also returns `[min, max]` appended at the end (total length = n_alt*n_lat*n_lon + 2).
  */
 export function atmosphere_volume(model: string, alt_min_km: number, alt_max_km: number, n_alt: number, epoch_jd: number, n_lat: number, n_lon: number, f107: number, ap: number): Float32Array;
+
+/**
+ * Compute 3D atmosphere volume using loaded space weather data.
+ */
+export function atmosphere_volume_sw(model: string, alt_min_km: number, alt_max_km: number, n_alt: number, epoch_jd: number, n_lat: number, n_lon: number): Float32Array;
 
 /**
  * Tilted dipole field at a geodetic point.
@@ -51,6 +65,14 @@ export function harris_priester_density(lat_deg: number, lon_deg: number, altitu
  * Returns `[B_north, B_east, B_down, |B|, inclination_deg, declination_deg]` in nT.
  */
 export function igrf_field_at(lat_deg: number, lon_deg: number, altitude_km: number, epoch_jd: number): Float64Array;
+
+/**
+ * Load space weather data from text (CSSI or GFZ format, auto-detected).
+ *
+ * Returns `true` on success. Can only be called once; subsequent calls
+ * return `false` without replacing the existing data.
+ */
+export function load_space_weather(text: string): boolean;
 
 /**
  * Compute lat/lon magnetic field map.
@@ -84,6 +106,21 @@ export function magnetic_field_lines(seed_lats: Float64Array, seed_lons: Float64
  */
 export function nrlmsise00_density(lat_deg: number, lon_deg: number, altitude_km: number, epoch_jd: number, f107: number, ap: number): number;
 
+/**
+ * Get date range of the loaded space weather data.
+ *
+ * Returns `[jd_first, jd_last]` or empty vec if no data loaded.
+ */
+export function space_weather_date_range(): Float64Array;
+
+/**
+ * Look up space weather for an epoch from the loaded dataset.
+ *
+ * Returns `[f107_daily, f107_avg, ap_daily, ap_3h_0..6]` (length = 10).
+ * Returns empty vec if no data is loaded.
+ */
+export function space_weather_lookup(epoch_jd: number): Float64Array;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -95,6 +132,11 @@ export interface InitOutput {
     readonly magnetic_field_latlon_map: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly atmosphere_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly magnetic_field_lines: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
+    readonly load_space_weather: (a: number, b: number) => number;
+    readonly space_weather_lookup: (a: number) => [number, number];
+    readonly space_weather_date_range: () => [number, number];
+    readonly atmosphere_latlon_map_sw: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly atmosphere_volume_sw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly nrlmsise00_density: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly exponential_density: (a: number) => number;
     readonly harris_priester_density: (a: number, b: number, c: number, d: number) => number;

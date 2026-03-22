@@ -46,6 +46,28 @@ export function atmosphere_latlon_map(model, altitude_km, epoch_jd, n_lat, n_lon
 }
 
 /**
+ * Compute lat/lon density map using loaded space weather data.
+ *
+ * Like `atmosphere_latlon_map` but uses the loaded CSSI/GFZ data
+ * instead of constant F10.7/Ap values.
+ * Returns empty vec if no space weather data is loaded.
+ * @param {string} model
+ * @param {number} altitude_km
+ * @param {number} epoch_jd
+ * @param {number} n_lat
+ * @param {number} n_lon
+ * @returns {Float64Array}
+ */
+export function atmosphere_latlon_map_sw(model, altitude_km, epoch_jd, n_lat, n_lon) {
+    const ptr0 = passStringToWasm0(model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.atmosphere_latlon_map_sw(ptr0, len0, altitude_km, epoch_jd, n_lat, n_lon);
+    var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v2;
+}
+
+/**
  * Compute 3D atmospheric density volume as Float32.
  *
  * Layout: alt-major `index = iAlt * nLat * nLon + iLat * nLon + iLon`
@@ -66,6 +88,26 @@ export function atmosphere_volume(model, alt_min_km, alt_max_km, n_alt, epoch_jd
     const ptr0 = passStringToWasm0(model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.atmosphere_volume(ptr0, len0, alt_min_km, alt_max_km, n_alt, epoch_jd, n_lat, n_lon, f107, ap);
+    var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+    return v2;
+}
+
+/**
+ * Compute 3D atmosphere volume using loaded space weather data.
+ * @param {string} model
+ * @param {number} alt_min_km
+ * @param {number} alt_max_km
+ * @param {number} n_alt
+ * @param {number} epoch_jd
+ * @param {number} n_lat
+ * @param {number} n_lon
+ * @returns {Float32Array}
+ */
+export function atmosphere_volume_sw(model, alt_min_km, alt_max_km, n_alt, epoch_jd, n_lat, n_lon) {
+    const ptr0 = passStringToWasm0(model, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.atmosphere_volume_sw(ptr0, len0, alt_min_km, alt_max_km, n_alt, epoch_jd, n_lat, n_lon);
     var v2 = getArrayF32FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
     return v2;
@@ -128,6 +170,21 @@ export function igrf_field_at(lat_deg, lon_deg, altitude_km, epoch_jd) {
     var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
     wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
     return v1;
+}
+
+/**
+ * Load space weather data from text (CSSI or GFZ format, auto-detected).
+ *
+ * Returns `true` on success. Can only be called once; subsequent calls
+ * return `false` without replacing the existing data.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function load_space_weather(text) {
+    const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.load_space_weather(ptr0, len0);
+    return ret !== 0;
 }
 
 /**
@@ -205,6 +262,34 @@ export function magnetic_field_lines(seed_lats, seed_lons, seed_alt_km, epoch_jd
 export function nrlmsise00_density(lat_deg, lon_deg, altitude_km, epoch_jd, f107, ap) {
     const ret = wasm.nrlmsise00_density(lat_deg, lon_deg, altitude_km, epoch_jd, f107, ap);
     return ret;
+}
+
+/**
+ * Get date range of the loaded space weather data.
+ *
+ * Returns `[jd_first, jd_last]` or empty vec if no data loaded.
+ * @returns {Float64Array}
+ */
+export function space_weather_date_range() {
+    const ret = wasm.space_weather_date_range();
+    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v1;
+}
+
+/**
+ * Look up space weather for an epoch from the loaded dataset.
+ *
+ * Returns `[f107_daily, f107_avg, ap_daily, ap_3h_0..6]` (length = 10).
+ * Returns empty vec if no data is loaded.
+ * @param {number} epoch_jd
+ * @returns {Float64Array}
+ */
+export function space_weather_lookup(epoch_jd) {
+    const ret = wasm.space_weather_lookup(epoch_jd);
+    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v1;
 }
 
 function __wbg_get_imports() {

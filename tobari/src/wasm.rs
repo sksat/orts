@@ -10,6 +10,10 @@ use kaname::Geodetic;
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 
+use std::sync::OnceLock;
+
+use crate::cssi::{CssiData, CssiSpaceWeather};
+use crate::gfz::{self, SpaceWeatherFormat};
 use crate::magnetic::{Igrf, MagneticFieldModel, TiltedDipole};
 use crate::nrlmsise00::{Nrlmsise00, Nrlmsise00Input};
 use crate::space_weather::SpaceWeatherProvider;
@@ -524,6 +528,211 @@ pub fn magnetic_field_lines(
 
     out
 }
+
+// ---------------------------------------------------------------------------
+// Space weather (CSSI / GFZ)
+// ---------------------------------------------------------------------------
+
+/// Global space weather provider, loaded once via `load_space_weather`.
+static SPACE_WEATHER: OnceLock<CssiSpaceWeather> = OnceLock::new();
+
+/// Load space weather data from text (CSSI or GFZ format, auto-detected).
+///
+/// Returns `true` on success. Can only be called once; subsequent calls
+/// return `false` without replacing the existing data.
+#[wasm_bindgen]
+pub fn load_space_weather(text: &str) -> bool {
+    let data = match gfz::detect_format(text) {
+        SpaceWeatherFormat::Cssi => match CssiData::parse(text) {
+            Ok(d) => d,
+            Err(_) => return false,
+        },
+        SpaceWeatherFormat::Gfz => match gfz::parse_gfz(text) {
+            Ok(d) => d,
+            Err(_) => return false,
+        },
+    };
+    SPACE_WEATHER.set(CssiSpaceWeather::new(data)).is_ok()
+}
+
+/// Look up space weather for an epoch from the loaded dataset.
+///
+/// Returns `[f107_daily, f107_avg, ap_daily, ap_3h_0..6]` (length = 10).
+/// Returns empty vec if no data is loaded.
+#[wasm_bindgen]
+pub fn space_weather_lookup(epoch_jd: f64) -> Vec<f64> {
+    let Some(provider) = SPACE_WEATHER.get() else {
+        return Vec::new();
+    };
+    let epoch = Epoch::from_jd(epoch_jd);
+    let sw = provider.get(&epoch);
+    let mut out = Vec::with_capacity(10);
+    out.push(sw.f107_daily);
+    out.push(sw.f107_avg);
+    out.push(sw.ap_daily);
+    out.extend_from_slice(&sw.ap_3hour_history);
+    out
+}
+
+/// Get date range of the loaded space weather data.
+///
+/// Returns `[jd_first, jd_last]` or empty vec if no data loaded.
+/// `jd_last` includes the full final day (midnight of the day after).
+#[wasm_bindgen]
+pub fn space_weather_date_range() -> Vec<f64> {
+    let Some(provider) = SPACE_WEATHER.get() else {
+        return Vec::new();
+    };
+    match provider.data().date_range() {
+        // Add 1.0 to last JD so the full final day is included
+        Some((first, last)) => vec![first.jd(), last.jd() + 1.0],
+        None => Vec::new(),
+    }
+}
+
+/// Compute lat/lon density map using loaded space weather data.
+///
+/// Like `atmosphere_latlon_map` but uses the loaded CSSI/GFZ data
+/// instead of constant F10.7/Ap values.
+/// Falls back to solar moderate conditions if no data is loaded.
+#[wasm_bindgen]
+pub fn atmosphere_latlon_map_sw(
+    model: &str,
+    altitude_km: f64,
+    epoch_jd: f64,
+    n_lat: u32,
+    n_lon: u32,
+) -> Vec<f64> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    // Get space weather if available; non-MSIS models don't need it
+    let sw = SPACE_WEATHER
+        .get()
+        .map(|p| p.get(&epoch))
+        .unwrap_or_else(|| ConstantWeather::solar_moderate().get(&epoch));
+    let hp = HarrisPriester::new();
+    let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(sw.f107_daily, sw.ap_daily)));
+
+    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+
+    let n = (n_lat * n_lon) as usize;
+    let mut out = Vec::with_capacity(n);
+
+    for i_lat in 0..n_lat {
+        let lat = -90.0 + (i_lat as f64 + 0.5) * 180.0 / n_lat as f64;
+        for i_lon in 0..n_lon {
+            let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
+
+            let rho = match model {
+                "exponential" => Exponential.density(altitude_km, &Vector3::zeros(), None),
+                "harris-priester" => {
+                    let pos = geodetic_to_eci(lat, lon, altitude_km, &epoch);
+                    hp.density(altitude_km, &pos, Some(&epoch))
+                }
+                _ => {
+                    let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
+                    let input = Nrlmsise00Input {
+                        day_of_year: doy,
+                        ut_seconds: ut_sec,
+                        altitude_km,
+                        latitude_deg: lat,
+                        longitude_deg: lon,
+                        local_solar_time_hours: lst,
+                        f107_daily: sw.f107_daily,
+                        f107_avg: sw.f107_avg,
+                        ap_daily: sw.ap_daily,
+                        ap_array: sw.ap_3hour_history,
+                    };
+                    msis.calculate(&input).total_mass_density
+                }
+            };
+            out.push(rho);
+        }
+    }
+    out
+}
+
+/// Compute 3D atmosphere volume using loaded space weather data.
+/// Falls back to solar moderate conditions if no data is loaded.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn atmosphere_volume_sw(
+    model: &str,
+    alt_min_km: f64,
+    alt_max_km: f64,
+    n_alt: u32,
+    epoch_jd: f64,
+    n_lat: u32,
+    n_lon: u32,
+) -> Vec<f32> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let sw = SPACE_WEATHER
+        .get()
+        .map(|p| p.get(&epoch))
+        .unwrap_or_else(|| ConstantWeather::solar_moderate().get(&epoch));
+    let hp = HarrisPriester::new();
+    let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(sw.f107_daily, sw.ap_daily)));
+
+    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+
+    let total = (n_alt * n_lat * n_lon) as usize;
+    let mut out = Vec::with_capacity(total + 2);
+    let mut min_val = f32::INFINITY;
+    let mut max_val = f32::NEG_INFINITY;
+
+    for i_alt in 0..n_alt {
+        let alt = if n_alt == 1 {
+            alt_min_km
+        } else {
+            alt_min_km + (alt_max_km - alt_min_km) * i_alt as f64 / (n_alt - 1) as f64
+        };
+
+        for i_lat in 0..n_lat {
+            let lat = -90.0 + (i_lat as f64 + 0.5) * 180.0 / n_lat as f64;
+            for i_lon in 0..n_lon {
+                let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
+
+                let rho = match model {
+                    "exponential" => Exponential.density(alt, &Vector3::zeros(), None),
+                    "harris-priester" => {
+                        let pos = geodetic_to_eci(lat, lon, alt, &epoch);
+                        hp.density(alt, &pos, Some(&epoch))
+                    }
+                    _ => {
+                        let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
+                        let input = Nrlmsise00Input {
+                            day_of_year: doy,
+                            ut_seconds: ut_sec,
+                            altitude_km: alt,
+                            latitude_deg: lat,
+                            longitude_deg: lon,
+                            local_solar_time_hours: lst,
+                            f107_daily: sw.f107_daily,
+                            f107_avg: sw.f107_avg,
+                            ap_daily: sw.ap_daily,
+                            ap_array: sw.ap_3hour_history,
+                        };
+                        msis.calculate(&input).total_mass_density
+                    }
+                };
+                let v = rho as f32;
+                if v < min_val {
+                    min_val = v;
+                }
+                if v > max_val {
+                    max_val = v;
+                }
+                out.push(v);
+            }
+        }
+    }
+    out.push(min_val);
+    out.push(max_val);
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Magnetic field lines
+// ---------------------------------------------------------------------------
 
 /// Evaluate magnetic field at an ECI position.
 fn field_at_eci(
