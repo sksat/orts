@@ -5,7 +5,7 @@
  * correct asset references for GitHub Pages deployment.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const DOCS_BASE = "/orts/tobari/examples/earth-visualizer/demo/";
 
