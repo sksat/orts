@@ -1,6 +1,6 @@
 import { OrbitControls } from "@react-three/drei";
 import { Canvas } from "@react-three/fiber";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { useDebouncedValue } from "../hooks/useDebouncedValue.js";
 import { overlayFrag, overlayVert } from "../shaders/fieldOverlay.js";
@@ -108,6 +108,10 @@ interface ShellData {
 
 function AtmosphereShells({ params }: { params: ViewerParams }) {
   const [shells, setShells] = useState<ShellData[]>([]);
+  // Fix shell ranges across epochs so density bulge movement is visible.
+  // Only recalculate when model/altitude/space-weather-mode changes.
+  const shellRangesRef = useRef<{ min: number; max: number }[] | null>(null);
+  const prevRangeKeyRef = useRef("");
   const nLat = Math.min(params.nLat, 45);
   const nLon = nLat * 2;
 
@@ -131,18 +135,29 @@ function AtmosphereShells({ params }: { params: ViewerParams }) {
     fetchVol.then((vol) => {
       if (cancelled || !vol) return;
 
-      // Per-shell min/max so lat/lon variation fills the full color range
       const sliceSize = nLat * nLon;
+      const rangeKey = `${params.atmoModel}:${params.spaceWeatherMode}:${params.f107}:${params.ap}`;
+      const needNewRanges = !shellRangesRef.current || rangeKey !== prevRangeKeyRef.current;
+
       const newShells: ShellData[] = [];
       for (let i = 0; i < N_SHELLS; i++) {
         const slice = vol.data.slice(i * sliceSize, (i + 1) * sliceSize);
-        let sMin = Infinity;
-        let sMax = -Infinity;
-        for (let j = 0; j < slice.length; j++) {
-          const v = slice[j];
-          if (v > 0 && v < sMin) sMin = v;
-          if (v > sMax) sMax = v;
+
+        let sMin: number;
+        let sMax: number;
+        if (needNewRanges) {
+          sMin = Infinity;
+          sMax = -Infinity;
+          for (let j = 0; j < slice.length; j++) {
+            const v = slice[j];
+            if (v > 0 && v < sMin) sMin = v;
+            if (v > sMax) sMax = v;
+          }
+        } else {
+          sMin = shellRangesRef.current![i].min;
+          sMax = shellRangesRef.current![i].max;
         }
+
         const tex = new THREE.DataTexture(slice, nLon, nLat, THREE.RedFormat, THREE.FloatType);
         tex.needsUpdate = true;
         tex.wrapS = THREE.RepeatWrapping;
@@ -151,6 +166,12 @@ function AtmosphereShells({ params }: { params: ViewerParams }) {
         tex.magFilter = THREE.LinearFilter;
         newShells.push({ texture: tex, min: sMin, max: sMax });
       }
+
+      if (needNewRanges) {
+        shellRangesRef.current = newShells.map((s) => ({ min: s.min, max: s.max }));
+        prevRangeKeyRef.current = rangeKey;
+      }
+
       setShells((prev) => {
         for (const s of prev) s.texture.dispose();
         return newShells;
