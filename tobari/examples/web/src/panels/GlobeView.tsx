@@ -8,6 +8,7 @@ import type { ViewerParams } from "../types.js";
 import { earthRotationAngle, isKanameReady } from "../wasm/kanameInit.js";
 import {
   atmosphereVolumeAsync,
+  atmosphereVolumeSwAsync,
   magneticFieldLatlonMapAsync,
   magneticFieldLinesAsync,
 } from "../wasm/workerClient.js";
@@ -113,17 +114,21 @@ function AtmosphereShells({ params }: { params: ViewerParams }) {
   useEffect(() => {
     let cancelled = false;
 
-    atmosphereVolumeAsync(
-      params.atmoModel,
-      100,
-      1000,
-      N_SHELLS,
-      params.epochJd,
-      nLat,
-      nLon,
-      params.f107,
-      params.ap,
-    ).then((vol) => {
+    const fetchVol =
+      params.spaceWeatherMode === "real"
+        ? atmosphereVolumeSwAsync(params.atmoModel, 100, 1000, N_SHELLS, params.epochJd, nLat, nLon)
+        : atmosphereVolumeAsync(
+            params.atmoModel,
+            100,
+            1000,
+            N_SHELLS,
+            params.epochJd,
+            nLat,
+            nLon,
+            params.f107,
+            params.ap,
+          );
+    fetchVol.then((vol) => {
       if (cancelled || !vol) return;
 
       // Per-shell min/max so lat/lon variation fills the full color range
@@ -155,7 +160,15 @@ function AtmosphereShells({ params }: { params: ViewerParams }) {
     return () => {
       cancelled = true;
     };
-  }, [params.atmoModel, params.epochJd, params.f107, params.ap, nLat, nLon]);
+  }, [
+    params.atmoModel,
+    params.epochJd,
+    params.f107,
+    params.ap,
+    params.spaceWeatherMode,
+    nLat,
+    nLon,
+  ]);
 
   if (shells.length === 0) return null;
 

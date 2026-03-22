@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useCanvasSize } from "../hooks/useCanvasSize.js";
 import { renderHeatmap } from "../render/heatmap.js";
 import type { ViewerParams } from "../types.js";
-import { atmosphereLatlonMapAsync } from "../wasm/workerClient.js";
+import { atmosphereLatlonMapAsync, atmosphereLatlonMapSwAsync } from "../wasm/workerClient.js";
 
 interface Props {
   params: ViewerParams;
@@ -20,15 +20,25 @@ export function AtmosphereMap({ params }: Props) {
     let cancelled = false;
 
     const nLon = params.nLat * 2;
-    atmosphereLatlonMapAsync(
-      params.atmoModel,
-      params.altitudeKm,
-      params.epochJd,
-      params.nLat,
-      nLon,
-      params.f107,
-      params.ap,
-    ).then((data) => {
+    const fetchData =
+      params.spaceWeatherMode === "real"
+        ? atmosphereLatlonMapSwAsync(
+            params.atmoModel,
+            params.altitudeKm,
+            params.epochJd,
+            params.nLat,
+            nLon,
+          )
+        : atmosphereLatlonMapAsync(
+            params.atmoModel,
+            params.altitudeKm,
+            params.epochJd,
+            params.nLat,
+            nLon,
+            params.f107,
+            params.ap,
+          );
+    fetchData.then((data) => {
       if (cancelled || !data) return;
 
       const modelChanged = params.atmoModel !== prevModelRef.current;

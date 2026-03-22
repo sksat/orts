@@ -8,6 +8,8 @@ export type FieldComponent = "total" | "inclination" | "declination" | "north" |
 export type AtmoModel = "exponential" | "harris-priester" | "nrlmsise00";
 export type MagModel = "igrf" | "dipole";
 
+export type SpaceWeatherMode = "constant" | "real";
+
 export interface ViewerParams {
   epochJd: number;
   altitudeKm: number;
@@ -18,4 +20,6 @@ export interface ViewerParams {
   magModel: MagModel;
   /** Grid resolution (number of latitude bins). */
   nLat: number;
+  /** Space weather data source. */
+  spaceWeatherMode: SpaceWeatherMode;
 }

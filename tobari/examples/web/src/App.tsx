@@ -7,7 +7,7 @@ import { GlobeView } from "./panels/GlobeView.js";
 import { MagneticFieldMap } from "./panels/MagneticFieldMap.js";
 import { dateToJd, type ViewerParams } from "./types.js";
 import { earthRotationAngle, initKaname } from "./wasm/kanameInit.js";
-import { initWorker } from "./wasm/workerClient.js";
+import { initWorker, onSpaceWeatherReady } from "./wasm/workerClient.js";
 
 type TabId = "globe-mag" | "globe-atmo" | "magnetic-map" | "atmosphere-profile" | "atmosphere-map";
 
@@ -28,6 +28,7 @@ const DEFAULT_PARAMS: ViewerParams = {
   atmoModel: "harris-priester",
   magModel: "igrf",
   nLat: 90,
+  spaceWeatherMode: "constant",
 };
 
 const styles = {
@@ -94,9 +95,13 @@ export function App() {
   const [playing, setPlaying] = useState(false);
   const [speedDaysPerSec, setSpeedDaysPerSec] = useState(30);
   const [showRotation, setShowRotation] = useState(false);
+  const [swAvailable, setSwAvailable] = useState(false);
   const lastFrameRef = useRef<number>(0);
 
   useEffect(() => {
+    onSpaceWeatherReady(() => {
+      setSwAvailable(true);
+    });
     Promise.all([initKaname(), initWorker()])
       .then(() => setReady(true))
       .catch((e) => setError(String(e)));
@@ -155,7 +160,12 @@ export function App() {
         </div>
       </div>
 
-      <Controls params={params} onChange={handleParamsChange} activeTab={controlsTab(activeTab)} />
+      <Controls
+        params={params}
+        onChange={handleParamsChange}
+        activeTab={controlsTab(activeTab)}
+        swAvailable={swAvailable}
+      />
       <PlaybackBar
         playing={playing}
         onTogglePlay={() => setPlaying((p) => !p)}

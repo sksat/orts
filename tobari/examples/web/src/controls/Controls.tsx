@@ -5,6 +5,7 @@ interface ControlsProps {
   params: ViewerParams;
   onChange: (params: ViewerParams) => void;
   activeTab: string;
+  swAvailable?: boolean;
 }
 
 const SOLAR_PRESETS: Record<string, { f107: number; ap: number }> = {
@@ -66,12 +67,14 @@ function jdToDateString(jd: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
-export function Controls({ params, onChange, activeTab }: ControlsProps) {
+export function Controls({ params, onChange, activeTab, swAvailable = false }: ControlsProps) {
   const update = (partial: Partial<ViewerParams>) => onChange({ ...params, ...partial });
 
   const showAtmo =
     activeTab === "atmosphere-profile" || activeTab === "atmosphere-map" || activeTab === "globe";
   const showMag = activeTab === "magnetic-map" || activeTab === "globe";
+  // SW toggle only for views that support _sw API (not profile)
+  const showSwToggle = showAtmo && activeTab !== "atmosphere-profile";
 
   return (
     <div style={styles.panel}>
@@ -154,6 +157,28 @@ export function Controls({ params, onChange, activeTab }: ControlsProps) {
       {/* Solar activity */}
       {showAtmo && (
         <>
+          {swAvailable && showSwToggle && (
+            <div style={styles.group}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  color: "#888",
+                  cursor: "pointer",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={params.spaceWeatherMode === "real"}
+                  onChange={(e) =>
+                    update({ spaceWeatherMode: e.target.checked ? "real" : "constant" })
+                  }
+                />
+                Real SW
+              </label>
+            </div>
+          )}
           <div style={styles.group}>
             <span style={styles.label}>F10.7:</span>
             <input
@@ -162,6 +187,7 @@ export function Controls({ params, onChange, activeTab }: ControlsProps) {
               max={250}
               step={5}
               value={params.f107}
+              disabled={params.spaceWeatherMode === "real"}
               onChange={(e) => update({ f107: Number(e.target.value) })}
             />
             <span style={{ color: "#ccc", minWidth: "30px" }}>{params.f107}</span>
@@ -174,17 +200,25 @@ export function Controls({ params, onChange, activeTab }: ControlsProps) {
               max={100}
               step={1}
               value={params.ap}
+              disabled={params.spaceWeatherMode === "real"}
               onChange={(e) => update({ ap: Number(e.target.value) })}
             />
             <span style={{ color: "#ccc", minWidth: "24px" }}>{params.ap}</span>
           </div>
-          <div style={styles.group}>
-            {Object.entries(SOLAR_PRESETS).map(([name, preset]) => (
-              <button key={name} type="button" style={styles.button} onClick={() => update(preset)}>
-                {name}
-              </button>
-            ))}
-          </div>
+          {params.spaceWeatherMode === "constant" && (
+            <div style={styles.group}>
+              {Object.entries(SOLAR_PRESETS).map(([name, preset]) => (
+                <button
+                  key={name}
+                  type="button"
+                  style={styles.button}
+                  onClick={() => update(preset)}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+          )}
         </>
       )}
 
