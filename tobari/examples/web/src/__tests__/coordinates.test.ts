@@ -170,6 +170,199 @@ describe("field lines (ECI → Three.js, no pole alignment)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Earth rotation ON/OFF consistency
+// ---------------------------------------------------------------------------
+
+describe("rotation OFF (earthRotation=0): everything in ECEF", () => {
+  // When rotation is OFF, earthRotation=0.
+  // Earth texture + shells: no GMST rotation → shown in ECEF
+  // Field lines: ECI, but deltaRotation = 0 - computedGmst = -computedGmst → converted to ECEF
+
+  function rotateZ(v: [number, number, number], angle: number): [number, number, number] {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]];
+  }
+
+  it("earth prime meridian is at +X in ECEF (no rotation)", () => {
+    // SphereGeometry UV U=0 → local +X → POLE_ALIGN → +X (unchanged for X)
+    // With earthRotation=0, no additional rotation
+    // In ECEF, prime meridian (lon=0°) IS at +X
+    const poleAligned = rotateX([1, 0, 0], POLE_ALIGN_ANGLE);
+    expect(poleAligned[0]).toBeCloseTo(1, 10); // +X preserved
+  });
+
+  it("field line at prime meridian (ECEF +X) matches earth texture", () => {
+    const gmst = 1.5; // arbitrary GMST
+    const earthRotation = 0; // rotation OFF
+
+    // Field line point at prime meridian in ECI: rotated by GMST from ECEF +X
+    const eciPoint: [number, number, number] = [Math.cos(gmst), Math.sin(gmst), 0];
+
+    // deltaRotation = earthRotation - computedGmst = 0 - gmst = -gmst
+    const deltaRotation = earthRotation - gmst;
+    const fieldEcef = rotateZ(eciPoint, deltaRotation);
+
+    // Should end up at ECEF +X (prime meridian)
+    expect(fieldEcef[0]).toBeCloseTo(1, 10);
+    expect(fieldEcef[1]).toBeCloseTo(0, 10);
+    expect(fieldEcef[2]).toBeCloseTo(0, 10);
+  });
+
+  it("field line at north pole is unaffected by deltaRotation", () => {
+    const gmst = 2.0;
+    const deltaRotation = 0 - gmst;
+
+    // North pole in ECI
+    const northEci: [number, number, number] = [0, 0, 1];
+    const northAfterDelta = rotateZ(northEci, deltaRotation);
+
+    // Z-axis rotation doesn't affect Z-axis points
+    expect(northAfterDelta[0]).toBeCloseTo(0, 10);
+    expect(northAfterDelta[1]).toBeCloseTo(0, 10);
+    expect(northAfterDelta[2]).toBeCloseTo(1, 10);
+  });
+});
+
+describe("rotation ON (earthRotation=GMST): everything in ECI", () => {
+  function rotateZ(v: [number, number, number], angle: number): [number, number, number] {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]];
+  }
+
+  it("earth prime meridian rotates to correct ECI position", () => {
+    const gmst = 1.5;
+    const earthRotation = gmst; // rotation ON
+
+    // Sphere prime meridian starts at local +X
+    // POLE_ALIGN: X→X (unchanged)
+    // earthRotation: rotate by GMST around Z
+    const ecefPrimeMeridian: [number, number, number] = [1, 0, 0];
+    const eciPosition = rotateZ(ecefPrimeMeridian, earthRotation);
+
+    // Should be at [cos(gmst), sin(gmst), 0] in ECI
+    expect(eciPosition[0]).toBeCloseTo(Math.cos(gmst), 10);
+    expect(eciPosition[1]).toBeCloseTo(Math.sin(gmst), 10);
+  });
+
+  it("field line at prime meridian matches rotated earth", () => {
+    const gmst = 1.5;
+    const computedGmst = gmst; // computed at same epoch
+    const earthRotation = gmst;
+
+    // Field line at prime meridian in ECI
+    const eciPoint: [number, number, number] = [Math.cos(gmst), Math.sin(gmst), 0];
+
+    // deltaRotation = earthRotation - computedGmst = gmst - gmst = 0
+    const deltaRotation = earthRotation - computedGmst;
+    const fieldResult = rotateZ(eciPoint, deltaRotation);
+
+    // No rotation → field line stays at ECI position
+    expect(fieldResult[0]).toBeCloseTo(Math.cos(gmst), 10);
+    expect(fieldResult[1]).toBeCloseTo(Math.sin(gmst), 10);
+
+    // Earth prime meridian after rotation
+    const earthResult = rotateZ([1, 0, 0], earthRotation);
+    expect(fieldResult[0]).toBeCloseTo(earthResult[0], 10);
+    expect(fieldResult[1]).toBeCloseTo(earthResult[1], 10);
+  });
+
+  it("field lines follow earth when epoch advances", () => {
+    const gmst0 = 1.0; // epoch at computation
+    const gmst1 = 1.5; // current epoch (0.5 rad later)
+    const earthRotation = gmst1;
+    const computedGmst = gmst0;
+
+    // Field line at prime meridian in ECI at gmst0
+    const eciPoint: [number, number, number] = [Math.cos(gmst0), Math.sin(gmst0), 0];
+
+    // deltaRotation = gmst1 - gmst0 = 0.5
+    const deltaRotation = earthRotation - computedGmst;
+    const fieldResult = rotateZ(eciPoint, deltaRotation);
+
+    // Earth prime meridian at gmst1
+    const earthResult = rotateZ([1, 0, 0], gmst1);
+
+    // Field line should track earth prime meridian
+    expect(fieldResult[0]).toBeCloseTo(earthResult[0], 10);
+    expect(fieldResult[1]).toBeCloseTo(earthResult[1], 10);
+  });
+});
+
+describe("rotation ON/OFF consistency at poles", () => {
+  function rotateZ(v: [number, number, number], angle: number): [number, number, number] {
+    const c = Math.cos(angle);
+    const s = Math.sin(angle);
+    return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]];
+  }
+
+  function fullTransform(
+    v: [number, number, number],
+    earthRotation: number,
+    isFieldLine: boolean,
+    computedGmst: number,
+  ): [number, number, number] {
+    let result = v;
+    if (isFieldLine) {
+      // Field lines: deltaRotation, then ECI_TO_THREEJS
+      const delta = earthRotation - computedGmst;
+      result = rotateZ(result, delta);
+    } else {
+      // Sphere: POLE_ALIGN, then earthRotation, then ECI_TO_THREEJS
+      result = rotateX(result, POLE_ALIGN_ANGLE);
+      result = rotateZ(result, earthRotation);
+    }
+    return rotateX(result, ECI_TO_THREEJS_ANGLE);
+  }
+
+  it("north pole matches in both modes", () => {
+    const gmst = 1.5;
+
+    // Rotation OFF
+    const sphereOff = fullTransform([0, 1, 0], 0, false, gmst);
+    const fieldOff = fullTransform([0, 0, 1], 0, true, gmst);
+    expect(sphereOff[0]).toBeCloseTo(fieldOff[0], 8);
+    expect(sphereOff[1]).toBeCloseTo(fieldOff[1], 8);
+    expect(sphereOff[2]).toBeCloseTo(fieldOff[2], 8);
+
+    // Rotation ON
+    const sphereOn = fullTransform([0, 1, 0], gmst, false, gmst);
+    const fieldOn = fullTransform([0, 0, 1], gmst, true, gmst);
+    expect(sphereOn[0]).toBeCloseTo(fieldOn[0], 8);
+    expect(sphereOn[1]).toBeCloseTo(fieldOn[1], 8);
+    expect(sphereOn[2]).toBeCloseTo(fieldOn[2], 8);
+
+    // Both modes should produce same final position for north pole
+    expect(sphereOff[0]).toBeCloseTo(sphereOn[0], 8);
+    expect(sphereOff[1]).toBeCloseTo(sphereOn[1], 8);
+    expect(sphereOff[2]).toBeCloseTo(sphereOn[2], 8);
+  });
+
+  it("equatorial point matches in both modes (same epoch)", () => {
+    const gmst = 1.5;
+
+    // Sphere equator point at UV U=0 → local +X → [1,0,0]
+    // Field line at ECEF +X → ECI [cos(gmst), sin(gmst), 0]
+
+    // Rotation OFF: both in ECEF
+    const sphereOff = fullTransform([1, 0, 0], 0, false, gmst);
+    const fieldLineEci: [number, number, number] = [Math.cos(gmst), Math.sin(gmst), 0];
+    const fieldOff = fullTransform(fieldLineEci, 0, true, gmst);
+    expect(sphereOff[0]).toBeCloseTo(fieldOff[0], 8);
+    expect(sphereOff[1]).toBeCloseTo(fieldOff[1], 8);
+    expect(sphereOff[2]).toBeCloseTo(fieldOff[2], 8);
+
+    // Rotation ON: both in ECI
+    const sphereOn = fullTransform([1, 0, 0], gmst, false, gmst);
+    const fieldOn = fullTransform(fieldLineEci, gmst, true, gmst);
+    expect(sphereOn[0]).toBeCloseTo(fieldOn[0], 8);
+    expect(sphereOn[1]).toBeCloseTo(fieldOn[1], 8);
+    expect(sphereOn[2]).toBeCloseTo(fieldOn[2], 8);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Shell radius
 // ---------------------------------------------------------------------------
 
