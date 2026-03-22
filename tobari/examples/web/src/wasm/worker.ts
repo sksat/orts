@@ -31,10 +31,18 @@ async function init() {
     self.postMessage({ type: "ready" });
 
     // Try to load bundled space weather data
+    // Derive base URL from worker location (handles both dev and production)
     try {
-      // Use root-relative path — Worker is in assets/ but the file is at build root
-      const base = self.location.href.replace(/\/assets\/.*$/, "/");
-      const res = await fetch(`${base}space-weather.txt`);
+      let baseUrl: string;
+      const loc = self.location?.href ?? "";
+      if (loc.includes("/assets/")) {
+        // Production: worker is at .../assets/worker-xxx.js
+        baseUrl = loc.substring(0, loc.lastIndexOf("/assets/") + 1);
+      } else {
+        // Dev: worker runs inline, use origin root
+        baseUrl = loc.substring(0, loc.indexOf("/", loc.indexOf("//") + 2) + 1);
+      }
+      const res = await fetch(`${baseUrl}space-weather.txt`);
       if (res.ok) {
         const text = await res.text();
         swLoaded = load_space_weather(text);
