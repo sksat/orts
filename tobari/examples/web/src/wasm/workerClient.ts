@@ -15,6 +15,16 @@ const pending = new Map<number, (result: unknown) => void>();
 /** Tracks the latest request ID per function for cancellation. */
 const latestId = new Map<string, number>();
 
+/** Callback for when space weather data is loaded in the worker. */
+let swReadyCallback: ((range: { jdFirst: number; jdLast: number }) => void) | null = null;
+
+/** Register a callback for when space weather data becomes available. */
+export function onSpaceWeatherReady(
+  cb: (range: { jdFirst: number; jdLast: number }) => void,
+): void {
+  swReadyCallback = cb;
+}
+
 export function initWorker(): Promise<void> {
   if (readyPromise) return readyPromise;
 
@@ -29,6 +39,13 @@ export function initWorker(): Promise<void> {
       }
       if (e.data.type === "error") {
         reject(new Error(e.data.message ?? "Worker WASM init failed"));
+        return;
+      }
+      if (e.data.type === "sw_ready") {
+        swReadyCallback?.({
+          jdFirst: e.data.jdFirst,
+          jdLast: e.data.jdLast,
+        });
         return;
       }
       if (e.data.type === "result") {
@@ -188,4 +205,55 @@ export async function magneticFieldLinesAsync(
     maxSteps,
     stepKm,
   ])) as Float32Array | null;
+}
+
+// ---------------------------------------------------------------------------
+// Space weather APIs (using loaded CSSI/GFZ data)
+// ---------------------------------------------------------------------------
+
+export async function atmosphereLatlonMapSwAsync(
+  model: string,
+  altitudeKm: number,
+  epochJd: number,
+  nLat: number,
+  nLon: number,
+): Promise<Float64Array | null> {
+  return (await call("atmosphere_latlon_map_sw", [
+    model,
+    altitudeKm,
+    epochJd,
+    nLat,
+    nLon,
+  ])) as Float64Array | null;
+}
+
+export async function atmosphereVolumeSwAsync(
+  model: string,
+  altMinKm: number,
+  altMaxKm: number,
+  nAlt: number,
+  epochJd: number,
+  nLat: number,
+  nLon: number,
+): Promise<VolumeResult | null> {
+  const raw = (await call("atmosphere_volume_sw", [
+    model,
+    altMinKm,
+    altMaxKm,
+    nAlt,
+    epochJd,
+    nLat,
+    nLon,
+  ])) as Float32Array | null;
+  if (!raw) return null;
+  const total = nAlt * nLat * nLon;
+  return {
+    data: raw.slice(0, total),
+    min: raw[total],
+    max: raw[total + 1],
+  };
+}
+
+export async function spaceWeatherLookupAsync(epochJd: number): Promise<Float64Array | null> {
+  return (await call("space_weather_lookup", [epochJd])) as Float64Array | null;
 }
