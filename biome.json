@@ -7,7 +7,15 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**", "!viewer/src/wasm/kaname", "!tobari/examples/web/src/wasm/tobari", "!tobari/examples/web/src/wasm/kaname", "!docs/.astro", "!docs/dist"]
+    "includes": [
+      "**",
+      "!viewer/src/wasm/kaname",
+      "!tobari/examples/web/src/wasm/tobari",
+      "!tobari/examples/web/src/wasm/kaname",
+      "!orts/tests/fixtures",
+      "!docs/.astro",
+      "!docs/dist"
+    ]
   },
   "formatter": {
     "enabled": true,

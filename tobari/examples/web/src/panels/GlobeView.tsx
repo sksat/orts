@@ -10,7 +10,6 @@ import {
   atmosphereVolumeAsync,
   magneticFieldLatlonMapAsync,
   magneticFieldLinesAsync,
-  type VolumeResult,
 } from "../wasm/workerClient.js";
 
 interface Props {
@@ -168,6 +167,7 @@ function AtmosphereShells({ params }: { params: ViewerParams }) {
         const opacity = 0.06 + i * 0.01;
         return (
           <ShellMesh
+            // biome-ignore lint/suspicious/noArrayIndexKey: shells have no stable ID
             key={i}
             dataTexture={shell.texture}
             radius={radius}
@@ -345,6 +345,7 @@ function FieldLines({
   return (
     <group rotation={[0, 0, deltaRotation]}>
       {lineObjects.map((obj, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: field lines have no stable ID
         <primitive key={i} object={obj} />
       ))}
     </group>

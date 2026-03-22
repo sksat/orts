@@ -41,6 +41,7 @@ export interface WorkerResponse {
   result: unknown;
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: WASM function signatures vary
 const FN_MAP: Record<string, (...args: any[]) => unknown> = {
   atmosphere_latlon_map,
   atmosphere_volume,
