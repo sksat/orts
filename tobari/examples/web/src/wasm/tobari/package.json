@@ -1,0 +1,20 @@
+{
+  "name": "tobari",
+  "type": "module",
+  "version": "0.0.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sksat/orts"
+  },
+  "files": [
+    "tobari_bg.wasm",
+    "tobari.js",
+    "tobari.d.ts"
+  ],
+  "main": "tobari.js",
+  "types": "tobari.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

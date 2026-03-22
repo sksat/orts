@@ -1,0 +1,541 @@
+//! WebAssembly bindings for tobari Earth environment models.
+//!
+//! Exposes atmospheric density and magnetic field computations to JavaScript
+//! via wasm-bindgen. All functions accept simple scalar types and return
+//! flat arrays for efficient JS↔WASM data exchange.
+
+use wasm_bindgen::prelude::*;
+
+use kaname::Geodetic;
+use kaname::epoch::Epoch;
+use nalgebra::Vector3;
+
+use crate::magnetic::{Igrf, MagneticFieldModel, TiltedDipole};
+use crate::nrlmsise00::{Nrlmsise00, Nrlmsise00Input};
+use crate::space_weather::SpaceWeatherProvider;
+use crate::{AtmosphereModel, ConstantWeather, Exponential, HarrisPriester};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Convert geodetic (lat_deg, lon_deg, altitude_km) + epoch to ECI position.
+fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch: &Epoch) -> Vector3<f64> {
+    let gmst = epoch.gmst();
+    let geod = Geodetic {
+        latitude: lat_deg.to_radians(),
+        longitude: lon_deg.to_radians(),
+        altitude: altitude_km,
+    };
+    geod.to_ecef().to_eci(gmst).0
+}
+
+/// Compute ECI→NED rotation for a magnetic field vector at a geodetic point.
+///
+/// Returns (B_north, B_east, B_down) in Tesla.
+fn eci_to_ned(b_eci: &Vector3<f64>, lat_deg: f64, lon_deg: f64, epoch: &Epoch) -> (f64, f64, f64) {
+    let gmst = epoch.gmst();
+
+    // ECI → ECEF
+    let cos_g = gmst.cos();
+    let sin_g = gmst.sin();
+    let b_ecef = Vector3::new(
+        cos_g * b_eci.x + sin_g * b_eci.y,
+        -sin_g * b_eci.x + cos_g * b_eci.y,
+        b_eci.z,
+    );
+
+    // ECEF → NED
+    let lat = lat_deg.to_radians();
+    let lon = lon_deg.to_radians();
+    let sin_lat = lat.sin();
+    let cos_lat = lat.cos();
+    let sin_lon = lon.sin();
+    let cos_lon = lon.cos();
+
+    let b_north = -sin_lat * cos_lon * b_ecef.x - sin_lat * sin_lon * b_ecef.y + cos_lat * b_ecef.z;
+    let b_east = -sin_lon * b_ecef.x + cos_lon * b_ecef.y;
+    let b_down = -cos_lat * cos_lon * b_ecef.x - cos_lat * sin_lon * b_ecef.y - sin_lat * b_ecef.z;
+
+    (b_north, b_east, b_down)
+}
+
+/// Compute magnetic field info at a point, returning [Bn, Be, Bd, |B|, inc_deg, dec_deg].
+fn field_info(b_eci: &Vector3<f64>, lat_deg: f64, lon_deg: f64, epoch: &Epoch) -> Vec<f64> {
+    let (bn, be, bd) = eci_to_ned(b_eci, lat_deg, lon_deg, epoch);
+    let bh = (bn * bn + be * be).sqrt();
+    let b_total = (bn * bn + be * be + bd * bd).sqrt();
+    let inc_deg = bd.atan2(bh).to_degrees();
+    let dec_deg = be.atan2(bn).to_degrees();
+    // Convert T → nT for output
+    vec![
+        bn * 1e9,
+        be * 1e9,
+        bd * 1e9,
+        b_total * 1e9,
+        inc_deg,
+        dec_deg,
+    ]
+}
+
+// ---------------------------------------------------------------------------
+// Atmospheric density — single point
+// ---------------------------------------------------------------------------
+
+/// Exponential atmosphere density [kg/m³] at the given altitude.
+#[wasm_bindgen]
+pub fn exponential_density(altitude_km: f64) -> f64 {
+    Exponential.density(altitude_km, &Vector3::zeros(), None)
+}
+
+/// Harris-Priester density [kg/m³] at a geodetic point and epoch.
+///
+/// `epoch_jd`: Julian Date of the epoch.
+#[wasm_bindgen]
+pub fn harris_priester_density(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64) -> f64 {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
+    let hp = HarrisPriester::new();
+    hp.density(altitude_km, &pos, Some(&epoch))
+}
+
+/// NRLMSISE-00 density [kg/m³] at a geodetic point with constant space weather.
+///
+/// `f107`: F10.7 solar radio flux [SFU].
+/// `ap`: daily Ap geomagnetic index.
+#[wasm_bindgen]
+pub fn nrlmsise00_density(
+    lat_deg: f64,
+    lon_deg: f64,
+    altitude_km: f64,
+    epoch_jd: f64,
+    f107: f64,
+    ap: f64,
+) -> f64 {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let model = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
+
+    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+    let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon_deg, &epoch);
+    let sw = ConstantWeather::new(f107, ap).get(&epoch);
+
+    let input = Nrlmsise00Input {
+        day_of_year: doy,
+        ut_seconds: ut_sec,
+        altitude_km,
+        latitude_deg: lat_deg,
+        longitude_deg: lon_deg,
+        local_solar_time_hours: lst,
+        f107_daily: sw.f107_daily,
+        f107_avg: sw.f107_avg,
+        ap_daily: sw.ap_daily,
+        ap_array: sw.ap_3hour_history,
+    };
+
+    model.calculate(&input).total_mass_density
+}
+
+// ---------------------------------------------------------------------------
+// Atmospheric density — batch
+// ---------------------------------------------------------------------------
+
+/// Compute altitude profile for all 3 atmosphere models.
+///
+/// Returns flat `[exp_0, hp_0, msis_0, exp_1, hp_1, msis_1, ...]` (length = N×3).
+#[wasm_bindgen]
+pub fn atmosphere_altitude_profile(
+    altitudes: &[f64],
+    lat_deg: f64,
+    lon_deg: f64,
+    epoch_jd: f64,
+    f107: f64,
+    ap: f64,
+) -> Vec<f64> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let hp = HarrisPriester::new();
+    let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
+
+    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+    let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon_deg, &epoch);
+    let sw = ConstantWeather::new(f107, ap).get(&epoch);
+
+    let mut out = Vec::with_capacity(altitudes.len() * 3);
+    for &alt in altitudes {
+        let pos = geodetic_to_eci(lat_deg, lon_deg, alt, &epoch);
+
+        let exp_rho = Exponential.density(alt, &Vector3::zeros(), None);
+        let hp_rho = hp.density(alt, &pos, Some(&epoch));
+
+        let msis_input = Nrlmsise00Input {
+            day_of_year: doy,
+            ut_seconds: ut_sec,
+            altitude_km: alt,
+            latitude_deg: lat_deg,
+            longitude_deg: lon_deg,
+            local_solar_time_hours: lst,
+            f107_daily: sw.f107_daily,
+            f107_avg: sw.f107_avg,
+            ap_daily: sw.ap_daily,
+            ap_array: sw.ap_3hour_history,
+        };
+        let msis_rho = msis.calculate(&msis_input).total_mass_density;
+
+        out.push(exp_rho);
+        out.push(hp_rho);
+        out.push(msis_rho);
+    }
+    out
+}
+
+/// Compute lat/lon density map for a chosen atmosphere model.
+///
+/// `model`: `"exponential"`, `"harris-priester"`, or `"nrlmsise00"`.
+/// Returns flat row-major `[rho_0, rho_1, ...]` (length = n_lat × n_lon).
+/// Latitude ranges from -90 to +90, longitude from -180 to +180.
+#[wasm_bindgen]
+pub fn atmosphere_latlon_map(
+    model: &str,
+    altitude_km: f64,
+    epoch_jd: f64,
+    n_lat: u32,
+    n_lon: u32,
+    f107: f64,
+    ap: f64,
+) -> Vec<f64> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let hp = HarrisPriester::new();
+    let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
+
+    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+    let sw = ConstantWeather::new(f107, ap).get(&epoch);
+
+    let n = (n_lat * n_lon) as usize;
+    let mut out = Vec::with_capacity(n);
+
+    for i_lat in 0..n_lat {
+        let lat = -90.0 + (i_lat as f64 + 0.5) * 180.0 / n_lat as f64;
+        for i_lon in 0..n_lon {
+            let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
+
+            let rho = match model {
+                "exponential" => Exponential.density(altitude_km, &Vector3::zeros(), None),
+                "harris-priester" => {
+                    let pos = geodetic_to_eci(lat, lon, altitude_km, &epoch);
+                    hp.density(altitude_km, &pos, Some(&epoch))
+                }
+                _ => {
+                    let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
+                    let input = Nrlmsise00Input {
+                        day_of_year: doy,
+                        ut_seconds: ut_sec,
+                        altitude_km,
+                        latitude_deg: lat,
+                        longitude_deg: lon,
+                        local_solar_time_hours: lst,
+                        f107_daily: sw.f107_daily,
+                        f107_avg: sw.f107_avg,
+                        ap_daily: sw.ap_daily,
+                        ap_array: sw.ap_3hour_history,
+                    };
+                    msis.calculate(&input).total_mass_density
+                }
+            };
+            out.push(rho);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Magnetic field — single point
+// ---------------------------------------------------------------------------
+
+/// IGRF-14 field at a geodetic point.
+///
+/// Returns `[B_north, B_east, B_down, |B|, inclination_deg, declination_deg]` in nT.
+#[wasm_bindgen]
+pub fn igrf_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64) -> Vec<f64> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
+    let igrf = Igrf::earth();
+    let b_eci = igrf.field_eci(&kaname::Eci(pos), &epoch);
+    field_info(&b_eci, lat_deg, lon_deg, &epoch)
+}
+
+/// Tilted dipole field at a geodetic point.
+///
+/// Returns `[B_north, B_east, B_down, |B|, inclination_deg, declination_deg]` in nT.
+#[wasm_bindgen]
+pub fn dipole_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64) -> Vec<f64> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
+    let dipole = TiltedDipole::earth();
+    let b_eci = dipole.field_eci(&kaname::Eci(pos), &epoch);
+    field_info(&b_eci, lat_deg, lon_deg, &epoch)
+}
+
+// ---------------------------------------------------------------------------
+// Magnetic field — batch
+// ---------------------------------------------------------------------------
+
+/// Compute lat/lon magnetic field map.
+///
+/// `model`: `"igrf"` or `"dipole"`.
+/// `component`: `"total"`, `"inclination"`, `"declination"`, `"north"`, `"east"`, `"down"`.
+/// Returns flat row-major values (length = n_lat × n_lon).
+/// Values in nT for field components, degrees for angles.
+#[wasm_bindgen]
+pub fn magnetic_field_latlon_map(
+    model: &str,
+    component: &str,
+    altitude_km: f64,
+    epoch_jd: f64,
+    n_lat: u32,
+    n_lon: u32,
+) -> Vec<f64> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let igrf = Igrf::earth();
+    let dipole = TiltedDipole::earth();
+
+    let n = (n_lat * n_lon) as usize;
+    let mut out = Vec::with_capacity(n);
+
+    for i_lat in 0..n_lat {
+        let lat = -90.0 + (i_lat as f64 + 0.5) * 180.0 / n_lat as f64;
+        for i_lon in 0..n_lon {
+            let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
+
+            let pos = geodetic_to_eci(lat, lon, altitude_km, &epoch);
+            let eci_pos = kaname::Eci(pos);
+            let b_eci = match model {
+                "dipole" => dipole.field_eci(&eci_pos, &epoch),
+                _ => igrf.field_eci(&eci_pos, &epoch),
+            };
+
+            let info = field_info(&b_eci, lat, lon, &epoch);
+            // info: [Bn, Be, Bd, |B|, inc, dec]
+            let val = match component {
+                "north" => info[0],
+                "east" => info[1],
+                "down" => info[2],
+                "total" => info[3],
+                "inclination" => info[4],
+                "declination" => info[5],
+                _ => info[3], // default: total
+            };
+            out.push(val);
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Volume data (3D: lat × lon × alt)
+// ---------------------------------------------------------------------------
+
+/// Compute 3D atmospheric density volume as Float32.
+///
+/// Layout: alt-major `index = iAlt * nLat * nLon + iLat * nLon + iLon`
+/// Returns `[rho_0, rho_1, ...]` (length = n_alt × n_lat × n_lon).
+/// Also returns `[min, max]` appended at the end (total length = n_alt*n_lat*n_lon + 2).
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn atmosphere_volume(
+    model: &str,
+    alt_min_km: f64,
+    alt_max_km: f64,
+    n_alt: u32,
+    epoch_jd: f64,
+    n_lat: u32,
+    n_lon: u32,
+    f107: f64,
+    ap: f64,
+) -> Vec<f32> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let hp = HarrisPriester::new();
+    let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
+
+    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+    let sw = ConstantWeather::new(f107, ap).get(&epoch);
+
+    let total = (n_alt * n_lat * n_lon) as usize;
+    let mut out = Vec::with_capacity(total + 2);
+    let mut min_val = f32::INFINITY;
+    let mut max_val = f32::NEG_INFINITY;
+
+    for i_alt in 0..n_alt {
+        let alt = if n_alt == 1 {
+            alt_min_km
+        } else {
+            alt_min_km + (alt_max_km - alt_min_km) * i_alt as f64 / (n_alt - 1) as f64
+        };
+
+        for i_lat in 0..n_lat {
+            let lat = -90.0 + (i_lat as f64 + 0.5) * 180.0 / n_lat as f64;
+            for i_lon in 0..n_lon {
+                let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
+
+                let rho = match model {
+                    "exponential" => Exponential.density(alt, &Vector3::zeros(), None),
+                    "harris-priester" => {
+                        let pos = geodetic_to_eci(lat, lon, alt, &epoch);
+                        hp.density(alt, &pos, Some(&epoch))
+                    }
+                    _ => {
+                        let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
+                        let input = Nrlmsise00Input {
+                            day_of_year: doy,
+                            ut_seconds: ut_sec,
+                            altitude_km: alt,
+                            latitude_deg: lat,
+                            longitude_deg: lon,
+                            local_solar_time_hours: lst,
+                            f107_daily: sw.f107_daily,
+                            f107_avg: sw.f107_avg,
+                            ap_daily: sw.ap_daily,
+                            ap_array: sw.ap_3hour_history,
+                        };
+                        msis.calculate(&input).total_mass_density
+                    }
+                };
+                let v = rho as f32;
+                if v < min_val {
+                    min_val = v;
+                }
+                if v > max_val {
+                    max_val = v;
+                }
+                out.push(v);
+            }
+        }
+    }
+    out.push(min_val);
+    out.push(max_val);
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Magnetic field lines
+// ---------------------------------------------------------------------------
+
+/// Integrate magnetic field lines from seed points using RK4.
+///
+/// `seed_lats`, `seed_lons`: geodetic seed points (degrees).
+/// `seed_alt_km`: starting altitude for all seeds.
+/// `model`: `"igrf"` or `"dipole"`.
+/// `max_steps`: max integration steps per line.
+/// `step_km`: step size in km.
+///
+/// Returns flat `[n_lines, n_pts_0, x0,y0,z0, x1,y1,z1, ..., n_pts_1, ...]`
+/// where coordinates are in Earth radii (6371 km).
+#[wasm_bindgen]
+pub fn magnetic_field_lines(
+    seed_lats: &[f64],
+    seed_lons: &[f64],
+    seed_alt_km: f64,
+    epoch_jd: f64,
+    model: &str,
+    max_steps: u32,
+    step_km: f64,
+) -> Vec<f32> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let igrf = Igrf::earth();
+    let dipole = TiltedDipole::earth();
+    let earth_r = 6371.0;
+
+    let n_seeds = seed_lats.len().min(seed_lons.len());
+    let mut out: Vec<f32> = Vec::new();
+    out.push(n_seeds as f32);
+
+    for i in 0..n_seeds {
+        let gmst = epoch.gmst();
+        let geod = Geodetic {
+            latitude: seed_lats[i].to_radians(),
+            longitude: seed_lons[i].to_radians(),
+            altitude: seed_alt_km,
+        };
+        let start_eci = geod.to_ecef().to_eci(gmst).0;
+
+        // Integrate both forward and backward
+        let mut points: Vec<Vector3<f64>> = Vec::new();
+
+        for direction in [-1.0_f64, 1.0] {
+            let mut pos = start_eci;
+            let ds = step_km * direction;
+
+            let start_idx = points.len();
+            if direction > 0.0 {
+                points.push(pos);
+            }
+
+            for _ in 0..max_steps {
+                // RK4 step
+                let b1 = field_at_eci(&pos, &epoch, model, &igrf, &dipole);
+                if b1.magnitude() < 1e-15 {
+                    break;
+                }
+                let b1n = b1.normalize();
+
+                let p2 = pos + b1n * (ds * 0.5);
+                let b2 = field_at_eci(&p2, &epoch, model, &igrf, &dipole);
+                if b2.magnitude() < 1e-15 {
+                    break;
+                }
+                let b2n = b2.normalize();
+
+                let p3 = pos + b2n * (ds * 0.5);
+                let b3 = field_at_eci(&p3, &epoch, model, &igrf, &dipole);
+                if b3.magnitude() < 1e-15 {
+                    break;
+                }
+                let b3n = b3.normalize();
+
+                let p4 = pos + b3n * ds;
+                let b4 = field_at_eci(&p4, &epoch, model, &igrf, &dipole);
+                if b4.magnitude() < 1e-15 {
+                    break;
+                }
+                let b4n = b4.normalize();
+
+                pos += (b1n + 2.0 * b2n + 2.0 * b3n + b4n) * (ds / 6.0);
+
+                // Stop if below surface or too far
+                let r = pos.magnitude();
+                if r < earth_r || r > earth_r + 5000.0 {
+                    break;
+                }
+
+                if direction > 0.0 {
+                    points.push(pos);
+                } else {
+                    points.insert(start_idx, pos);
+                }
+            }
+        }
+
+        // Write points for this line
+        out.push(points.len() as f32);
+        for p in &points {
+            out.push((p.x / earth_r) as f32);
+            out.push((p.y / earth_r) as f32);
+            out.push((p.z / earth_r) as f32);
+        }
+    }
+
+    out
+}
+
+/// Evaluate magnetic field at an ECI position.
+fn field_at_eci(
+    pos: &Vector3<f64>,
+    epoch: &Epoch,
+    model: &str,
+    igrf: &Igrf,
+    dipole: &TiltedDipole,
+) -> Vector3<f64> {
+    let eci = kaname::Eci(*pos);
+    match model {
+        "dipole" => dipole.field_eci(&eci, epoch),
+        _ => igrf.field_eci(&eci, epoch),
+    }
+}

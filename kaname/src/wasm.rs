@@ -106,3 +106,33 @@ pub fn jd_to_utc_string(epoch_jd: f64, t: f64) -> String {
     let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
     epoch.to_datetime().to_string()
 }
+
+/// Geodetic (lat_deg, lon_deg, altitude_km) → ECEF [km].
+///
+/// Returns `[x, y, z]` (3 floats, km).
+#[wasm_bindgen]
+pub fn geodetic_to_ecef(lat_deg: f64, lon_deg: f64, altitude_km: f64) -> Vec<f64> {
+    let geod = crate::Geodetic {
+        latitude: lat_deg.to_radians(),
+        longitude: lon_deg.to_radians(),
+        altitude: altitude_km,
+    };
+    let ecef = geod.to_ecef();
+    vec![ecef.0.x, ecef.0.y, ecef.0.z]
+}
+
+/// Geodetic (lat_deg, lon_deg, altitude_km) → ECI [km] at given epoch.
+///
+/// Returns `[x, y, z]` (3 floats, km).
+#[wasm_bindgen]
+pub fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64) -> Vec<f64> {
+    let epoch = Epoch::from_jd(epoch_jd);
+    let gmst = epoch.gmst();
+    let geod = crate::Geodetic {
+        latitude: lat_deg.to_radians(),
+        longitude: lon_deg.to_radians(),
+        altitude: altitude_km,
+    };
+    let eci = geod.to_ecef().to_eci(gmst);
+    vec![eci.0.x, eci.0.y, eci.0.z]
+}

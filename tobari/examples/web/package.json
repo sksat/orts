@@ -1,0 +1,34 @@
+{
+  "name": "tobari-web",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build:wasm": "wasm-pack build ../.. --target web --out-dir examples/web/src/wasm/tobari --out-name tobari --no-default-features --features wasm",
+    "build:wasm:kaname": "wasm-pack build ../../../kaname --target web --out-dir ../tobari/examples/web/src/wasm/kaname --out-name kaname --features wasm",
+    "build:wasm:all": "pnpm run build:wasm && pnpm run build:wasm:kaname",
+    "dev": "pnpm run build:wasm:all && vite",
+    "build": "pnpm run build:wasm:all && tsc && vite build",
+    "preview": "vite preview",
+    "pretest": "pnpm run build:wasm:all",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "three": "^0.183.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.183.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^8.0.0",
+    "vitest": "^4.0.18"
+  }
+}

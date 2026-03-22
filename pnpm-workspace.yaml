@@ -2,3 +2,4 @@ packages:
   - "uneri"
   - "viewer"
   - "docs"
+  - "tobari/examples/web"

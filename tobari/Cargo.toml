@@ -5,10 +5,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 nalgebra.workspace = true
 kaname.workspace = true
 ureq = { workspace = true, optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
 
 [build-dependencies]
 ureq.workspace = true
@@ -17,6 +21,7 @@ ureq.workspace = true
 default = ["fetch-igrf"]
 fetch = ["dep:ureq"]
 fetch-igrf = []
+wasm = ["wasm-bindgen"]
 
 [dev-dependencies]
 serde = { workspace = true }

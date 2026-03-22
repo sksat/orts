@@ -38,6 +38,8 @@ pub mod harris_priester;
 pub mod magnetic;
 pub mod nrlmsise00;
 pub mod space_weather;
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 pub use cssi::{CssiData, CssiSpaceWeather, OutOfRangeBehavior};
 pub use exponential::Exponential;
