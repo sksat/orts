@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "setup": "node scripts/embed-viewer.mjs",
-    "dev": "ALLOW_MISSING_VIEWER_DIST=1 pnpm run setup && astro dev",
+    "dev": "ALLOW_MISSING_VIEWER_DIST=1 ALLOW_MISSING_TOBARI=1 pnpm run setup && astro dev",
     "prebuild": "pnpm run setup",
     "build": "astro build",
     "preview": "astro preview"

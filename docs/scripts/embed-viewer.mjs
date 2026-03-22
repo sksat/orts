@@ -41,3 +41,38 @@ for (const name of examples) {
   });
 }
 console.log(`Embedded ${examples.length} examples into docs/public/uneri/examples/`);
+
+// Build and embed tobari Earth environment visualizer
+const tobariWebRoot = resolve(repoRoot, "tobari/examples/web");
+const tobariDest = resolve(docsRoot, "public/tobari/examples/earth-visualizer/demo");
+const tobariBase = "/orts/tobari/examples/earth-visualizer/demo/";
+
+try {
+  // Always rebuild WASM to avoid shipping stale artifacts
+  console.log("Building tobari WASM...");
+  execSync("pnpm --filter tobari-web build:wasm:all", {
+    cwd: repoRoot,
+    stdio: "inherit",
+  });
+  console.log("Building tobari-web...");
+  // Build to a temp dir first, then swap — so a failed build doesn't delete an existing demo
+  const tobariTmp = resolve(tobariDest + ".tmp");
+  rmSync(tobariTmp, { recursive: true, force: true });
+  execSync(`npx vite build --base ${tobariBase} --outDir ${tobariTmp}`, {
+    cwd: tobariWebRoot,
+    stdio: "inherit",
+    env: { ...process.env },
+  });
+  rmSync(tobariDest, { recursive: true, force: true });
+  cpSync(tobariTmp, tobariDest, { recursive: true });
+  rmSync(tobariTmp, { recursive: true, force: true });
+  console.log("Embedded tobari-web into docs/public/tobari/examples/earth-visualizer/demo/");
+} catch {
+  if (process.env.ALLOW_MISSING_TOBARI) {
+    console.log("Skipped tobari-web embed (build failed, allowed by ALLOW_MISSING_TOBARI)");
+  } else {
+    console.error("Error: tobari-web build failed. Ensure Rust and wasm-pack are installed.");
+    console.error("Set ALLOW_MISSING_TOBARI=1 to skip this for docs-only development.");
+    process.exit(1);
+  }
+}

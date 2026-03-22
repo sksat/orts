@@ -1,0 +1,34 @@
+---
+title: "Earth Environment Visualizer"
+description: Interactive 3D visualization of atmospheric density and geomagnetic field models
+---
+
+import { Code } from "@astrojs/starlight/components";
+import app from "../../../../../../tobari/examples/web/src/App.tsx?raw";
+import globe from "../../../../../../tobari/examples/web/src/panels/GlobeView.tsx?raw";
+
+Interactive web app for visualizing tobari's Earth environment models.
+All computation runs in WebAssembly — no server required.
+
+**Features:**
+- 3D globe with volumetric atmosphere shells and magnetic field lines
+- 2D equirectangular heatmaps (magnetic field, atmospheric density)
+- Altitude profile chart comparing 3 atmosphere models
+- Playback controls with Earth rotation
+- Web Worker for non-blocking computation
+
+## Live Demo
+
+<iframe
+  src="/orts/tobari/examples/earth-visualizer/demo/index.html"
+  style="width: 100%; height: 900px; border: none; border-radius: 8px;"
+  loading="lazy"
+/>
+
+## App
+
+<Code code={app} lang="tsx" title="tobari/examples/web/src/App.tsx" />
+
+## Globe View
+
+<Code code={globe} lang="tsx" title="tobari/examples/web/src/panels/GlobeView.tsx" />

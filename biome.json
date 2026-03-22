@@ -14,7 +14,8 @@
       "!tobari/examples/web/src/wasm/kaname",
       "!orts/tests/fixtures",
       "!docs/.astro",
-      "!docs/dist"
+      "!docs/dist",
+      "!docs/public"
     ]
   },
   "formatter": {

@@ -21,6 +21,11 @@ export default defineConfig({
       sidebar: [
         { label: "Getting Started", slug: "getting-started" },
         {
+          label: "tobari",
+          collapsed: true,
+          items: [{ label: "Examples", autogenerate: { directory: "tobari/examples" } }],
+        },
+        {
           label: "uneri",
           collapsed: true,
           items: [
