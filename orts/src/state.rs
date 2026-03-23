@@ -51,6 +51,47 @@ impl OrbitalState {
     pub fn from_derivative(velocity: Vector3<f64>, acceleration: Vector3<f64>) -> Self {
         OrbitalState(State::from_derivative(velocity, acceleration))
     }
+
+    /// Apply an impulsive delta-V \[km/s\] in the inertial frame.
+    ///
+    /// Returns a new state with the same position and adjusted velocity.
+    pub fn apply_delta_v(&self, dv: Vector3<f64>) -> Self {
+        OrbitalState::new(*self.position(), *self.velocity() + dv)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nalgebra::vector;
+
+    #[test]
+    fn apply_delta_v_preserves_position() {
+        let state = OrbitalState::new(vector![6778.0, 0.0, 0.0], vector![0.0, 7.67, 0.0]);
+        let dv = vector![0.1, 0.2, 0.0];
+        let new_state = state.apply_delta_v(dv);
+        assert_eq!(new_state.position(), state.position());
+    }
+
+    #[test]
+    fn apply_delta_v_changes_velocity() {
+        let state = OrbitalState::new(vector![6778.0, 0.0, 0.0], vector![0.0, 7.67, 0.0]);
+        let dv = vector![0.1, 0.2, 0.0];
+        let new_state = state.apply_delta_v(dv);
+        let expected = vector![0.1, 7.87, 0.0];
+        assert!(
+            (new_state.velocity() - expected).magnitude() < 1e-14,
+            "velocity should be original + dv"
+        );
+    }
+
+    #[test]
+    fn apply_zero_delta_v_is_identity() {
+        let state = OrbitalState::new(vector![6778.0, 0.0, 0.0], vector![0.0, 7.67, 0.0]);
+        let new_state = state.apply_delta_v(Vector3::zeros());
+        assert_eq!(new_state.position(), state.position());
+        assert_eq!(new_state.velocity(), state.velocity());
+    }
 }
 
 impl HasOrbit for OrbitalState {
