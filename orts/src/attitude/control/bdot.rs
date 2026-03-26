@@ -5,8 +5,8 @@ use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
 use crate::control::DiscreteController;
+use crate::model::ExternalLoads;
 use crate::model::{HasAttitude, HasOrbit, Model};
-use crate::spacecraft::ExternalLoads;
 
 /// B-dot detumbling controller using stateless analytical approximation.
 ///

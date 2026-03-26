@@ -4,8 +4,8 @@ use utsuroi::DynamicalSystem;
 
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
+use crate::model::ExternalLoads;
 use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
-use crate::spacecraft::ExternalLoads;
 
 /// Combined state providing attitude, orbit, and mass for decoupled models.
 ///

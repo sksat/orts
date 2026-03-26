@@ -3,8 +3,8 @@ use kaname::sun;
 use nalgebra::Vector3;
 
 use crate::OrbitalState;
+use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
-use crate::spacecraft::ExternalLoads;
 use kaname::constants::R_EARTH;
 
 /// Solar radiation pressure at 1 AU (N/m²).

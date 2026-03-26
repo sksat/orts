@@ -10,9 +10,9 @@
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 
+use super::ExternalLoads;
 use crate::effector::StateEffector;
 use crate::model::HasAttitude;
-use crate::spacecraft::ExternalLoads;
 
 /// A single reaction wheel with physical limits.
 #[derive(Debug, Clone)]

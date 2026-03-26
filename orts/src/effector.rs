@@ -9,7 +9,7 @@
 use kaname::epoch::Epoch;
 use utsuroi::{OdeState, Tolerances};
 
-use crate::spacecraft::ExternalLoads;
+use crate::model::ExternalLoads;
 
 // ---------------------------------------------------------------------------
 // StateEffector trait

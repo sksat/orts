@@ -2,8 +2,8 @@ use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 
 use crate::OrbitalState;
+use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
-use crate::spacecraft::ExternalLoads;
 
 /// Third-body gravitational perturbation.
 ///

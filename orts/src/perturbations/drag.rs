@@ -4,8 +4,8 @@ use nalgebra::Vector3;
 use tobari::{AtmosphereModel, Exponential};
 
 use crate::OrbitalState;
+use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
-use crate::spacecraft::ExternalLoads;
 use kaname::body::KnownBody;
 use kaname::constants::{OMEGA_EARTH, R_EARTH};
 

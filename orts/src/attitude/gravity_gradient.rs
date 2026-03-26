@@ -1,8 +1,8 @@
 use kaname::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
 
+use crate::model::ExternalLoads;
 use crate::model::{HasAttitude, Model};
-use crate::spacecraft::ExternalLoads;
 
 use super::state::AttitudeState;
 

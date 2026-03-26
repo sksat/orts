@@ -12,8 +12,8 @@ use crate::OrbitalState;
 use crate::attitude::DecoupledContext;
 use crate::attitude::state::AttitudeState;
 use crate::effector::{AugmentedState, AuxRegistry, StateEffector};
+use crate::model::ExternalLoads;
 use crate::model::Model;
-use crate::spacecraft::ExternalLoads;
 
 /// Attitude dynamics with prescribed orbit, supporting both pure models
 /// and state effectors.
