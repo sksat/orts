@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn panel_srp_integrable() {
-        use crate::gravity::PointMass;
+        use crate::orbital::gravity::PointMass;
         use crate::spacecraft::SpacecraftDynamics;
         use utsuroi::{DynamicalSystem, Integrator, Rk4};
 
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn panel_srp_plus_panel_drag_combined() {
-        use crate::gravity::PointMass;
+        use crate::orbital::gravity::PointMass;
         use crate::spacecraft::{PanelDrag, SpacecraftDynamics};
         use utsuroi::DynamicalSystem;
 
@@ -624,7 +624,7 @@ mod tests {
     // ======== Tumbling (time-varying attitude) ========
 
     fn run_tumbling_srp_test(angular_velocity: Vector3<f64>) -> (f64, f64) {
-        use crate::gravity::PointMass;
+        use crate::orbital::gravity::PointMass;
         use crate::spacecraft::SpacecraftDynamics;
         use nalgebra::Matrix3;
         use utsuroi::{Integrator, Rk4};

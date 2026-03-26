@@ -4,7 +4,7 @@ use std::sync::Arc;
 use orts::OrbitalState;
 use orts::group::prop_group::SatId;
 use orts::group::{IndependentGroup, IntegratorConfig};
-use orts::orbital_system::OrbitalSystem;
+use orts::orbital::OrbitalSystem;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::cli::IntegratorChoice;

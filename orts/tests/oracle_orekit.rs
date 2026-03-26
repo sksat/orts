@@ -23,8 +23,8 @@ use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 use orts::OrbitalState;
-use orts::gravity::{PointMass, ZonalHarmonics};
-use orts::orbital_system::OrbitalSystem;
+use orts::orbital::OrbitalSystem;
+use orts::orbital::gravity::{PointMass, ZonalHarmonics};
 use orts::perturbations::AtmosphericDrag;
 use orts::perturbations::SolarRadiationPressure;
 use orts::perturbations::ThirdBodyGravity;
@@ -185,7 +185,7 @@ fn build_system(scenario: &Scenario) -> OrbitalSystem {
     let epoch = parse_epoch(&scenario.epoch_utc);
 
     // Gravity model
-    let gravity: Box<dyn orts::gravity::GravityField> = match fm.gravity.degree {
+    let gravity: Box<dyn orts::orbital::gravity::GravityField> = match fm.gravity.degree {
         0 => Box::new(PointMass),
         2 => Box::new(ZonalHarmonics {
             r_body: R_EARTH,

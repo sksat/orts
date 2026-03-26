@@ -10,7 +10,7 @@
 use nalgebra::{Matrix3, Vector3, Vector4};
 use orts::OrbitalState;
 use orts::attitude::AttitudeState;
-use orts::gravity::PointMass;
+use orts::orbital::gravity::PointMass;
 use orts::spacecraft::{
     BurnWindow, G0, ScheduledBurn, SpacecraftDynamics, SpacecraftState, Thruster,
 };

@@ -19,9 +19,9 @@ use kaname::body::KnownBody;
 use kaname::constants::*;
 use kaname::epoch::Epoch;
 use orts::OrbitalState;
-use orts::gravity::ZonalHarmonics;
-use orts::kepler::KeplerianElements;
-use orts::orbital_system::OrbitalSystem;
+use orts::orbital::OrbitalSystem;
+use orts::orbital::gravity::ZonalHarmonics;
+use orts::orbital::kepler::KeplerianElements;
 use orts::perturbations::ThirdBodyGravity;
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
 use orts::record::components::{BodyRadius, GravitationalParameter};
@@ -423,17 +423,29 @@ fn compute_tei_dv(
         let (alt_m, t_m) = eval(dv_dir, dv_mag + eps);
 
         let j = [
-            [(alt_1 - peri_alt) / eps, (alt_2 - peri_alt) / eps, (alt_m - peri_alt) / eps],
-            [(t_1 - peri_t) / eps, (t_2 - peri_t) / eps, (t_m - peri_t) / eps],
+            [
+                (alt_1 - peri_alt) / eps,
+                (alt_2 - peri_alt) / eps,
+                (alt_m - peri_alt) / eps,
+            ],
+            [
+                (t_1 - peri_t) / eps,
+                (t_2 - peri_t) / eps,
+                (t_m - peri_t) / eps,
+            ],
         ];
 
         // Solve underdetermined 2×3 system via pseudoinverse (minimum-norm solution)
         // J^T (J J^T)^{-1} b, where b = -[alt_err, time_err]
         let jjt = [
-            [j[0][0]*j[0][0] + j[0][1]*j[0][1] + j[0][2]*j[0][2],
-             j[0][0]*j[1][0] + j[0][1]*j[1][1] + j[0][2]*j[1][2]],
-            [j[1][0]*j[0][0] + j[1][1]*j[0][1] + j[1][2]*j[0][2],
-             j[1][0]*j[1][0] + j[1][1]*j[1][1] + j[1][2]*j[1][2]],
+            [
+                j[0][0] * j[0][0] + j[0][1] * j[0][1] + j[0][2] * j[0][2],
+                j[0][0] * j[1][0] + j[0][1] * j[1][1] + j[0][2] * j[1][2],
+            ],
+            [
+                j[1][0] * j[0][0] + j[1][1] * j[0][1] + j[1][2] * j[0][2],
+                j[1][0] * j[1][0] + j[1][1] * j[1][1] + j[1][2] * j[1][2],
+            ],
         ];
         let det = jjt[0][0] * jjt[1][1] - jjt[0][1] * jjt[1][0];
         if det.abs() < 1e-30 {
@@ -853,7 +865,14 @@ fn main() {
 
     let system_lo1 = build_translunar_system(loi_epoch);
     let (state_at_loi2, _, _, new_step) = propagate_and_record(
-        &system_lo1, &post_loi, loi_epoch, loi2_coast, DT, &mut rec, step, mission_t,
+        &system_lo1,
+        &post_loi,
+        loi_epoch,
+        loi2_coast,
+        DT,
+        &mut rec,
+        step,
+        mission_t,
     );
     mission_t += loi2_coast;
     step = new_step;
@@ -865,7 +884,8 @@ fn main() {
     let post_loi2 = state_at_loi2.apply_delta_v(loi2_dv);
     println!(
         "  ΔV = {:.1} m/s (retrograde), Moon-relative: {:.3} → {:.3} km/s",
-        loi2_dv_mag * 1000.0, v_rel_loi2.magnitude(),
+        loi2_dv_mag * 1000.0,
+        v_rel_loi2.magnitude(),
         (post_loi2.velocity() - moon_vel_at_loi2).magnitude()
     );
     println!();
@@ -878,7 +898,14 @@ fn main() {
     let remaining_lo = LOI_TO_TEI_SECONDS - loi2_coast;
     let system_lo = build_translunar_system(loi2_epoch);
     let (state_after_lo, _, _, new_step) = propagate_and_record(
-        &system_lo, &post_loi2, loi2_epoch, remaining_lo, DT, &mut rec, step, mission_t,
+        &system_lo,
+        &post_loi2,
+        loi2_epoch,
+        remaining_lo,
+        DT,
+        &mut rec,
+        step,
+        mission_t,
     );
 
     mission_t += remaining_lo;
@@ -889,7 +916,8 @@ fn main() {
     let moon_dist_lo = (state_after_lo.position() - moon_pos_lo).magnitude();
     println!(
         "  Coasted {:.1} hours (after LOI-2), Moon distance: {:.0} km",
-        remaining_lo / 3600.0, moon_dist_lo
+        remaining_lo / 3600.0,
+        moon_dist_lo
     );
 
     // Verify: spacecraft should remain near the Moon during lunar orbit
@@ -971,8 +999,7 @@ fn main() {
     println!("  ΔV = {tei_dv_actual:.4} km/s (targeted to entry interface, ref: {TEI_DV:.3})");
     println!(
         "  Moon-relative: {:.3} → {:.3} km/s",
-        v_rel_before,
-        v_rel_after
+        v_rel_before, v_rel_after
     );
     println!();
 

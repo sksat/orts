@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use orts::OrbitalState;
-use orts::kepler::KeplerianElements;
-use orts::orbital_system::OrbitalSystem;
+use orts::orbital::OrbitalSystem;
+use orts::orbital::kepler::KeplerianElements;
 use orts::setup::SatelliteParams;
 use serde::{Deserialize, Serialize};
 

@@ -12,9 +12,9 @@
 
 use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
 use orts::OrbitalState;
-use orts::gravity::ZonalHarmonics;
-use orts::kepler::KeplerianElements;
-use orts::orbital_system::OrbitalSystem;
+use orts::orbital::OrbitalSystem;
+use orts::orbital::gravity::ZonalHarmonics;
+use orts::orbital::kepler::KeplerianElements;
 use std::f64::consts::PI;
 use std::ops::ControlFlow;
 use utsuroi::{DormandPrince, IntegrationOutcome, Tolerances};

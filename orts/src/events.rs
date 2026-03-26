@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn suborbital_trajectory_terminates_on_collision() {
-        use crate::two_body::TwoBodySystem;
+        use crate::orbital::two_body::TwoBodySystem;
         use utsuroi::{IntegrationOutcome, Integrator, Rk4};
 
         let system = TwoBodySystem { mu: MU_EARTH };
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn suborbital_trajectory_terminates_on_atmospheric_entry() {
-        use crate::two_body::TwoBodySystem;
+        use crate::orbital::two_body::TwoBodySystem;
         use utsuroi::{IntegrationOutcome, Integrator, Rk4};
 
         let system = TwoBodySystem { mu: MU_EARTH };

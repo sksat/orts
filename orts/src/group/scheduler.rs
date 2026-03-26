@@ -1119,7 +1119,7 @@ mod tests {
 
     use super::super::coupled::MutualGravity;
     use crate::OrbitalState;
-    use crate::two_body::TwoBodySystem;
+    use crate::orbital::two_body::TwoBodySystem;
     use nalgebra::Vector3;
 
     const MU_EARTH: f64 = 398600.4418;

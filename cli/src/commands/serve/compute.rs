@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use orts::OrbitalState;
-use orts::kepler::KeplerianElements;
+use orts::orbital::kepler::KeplerianElements;
 
 use crate::commands::serve::protocol::WsMessage;
 

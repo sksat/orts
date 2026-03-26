@@ -1,11 +1,11 @@
 use nalgebra::Matrix3;
 
-use crate::gravity::{self, GravityField};
+use crate::orbital::gravity::{self, GravityField};
 use crate::spacecraft::SpacecraftDynamics;
 use kaname::body::KnownBody;
 use kaname::epoch::Epoch;
 
-use crate::orbital_system::OrbitalSystem;
+use crate::orbital::OrbitalSystem;
 use crate::perturbations::{AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity};
 
 /// Physical parameters of a satellite relevant to force model construction.

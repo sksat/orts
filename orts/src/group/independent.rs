@@ -441,7 +441,7 @@ where
 mod tests {
     use super::*;
     use crate::OrbitalState;
-    use crate::two_body::TwoBodySystem;
+    use crate::orbital::two_body::TwoBodySystem;
     use nalgebra::Vector3;
     use utsuroi::IntegrationOutcome;
 

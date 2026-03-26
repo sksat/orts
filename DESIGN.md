@@ -257,11 +257,10 @@ orts (orts/)
   src/
     model.rs          # Model<S> trait, ExternalLoads, HasAttitude/HasOrbit/HasMass capability traits
     perturbations/    # AtmosphericDrag, SRP, ThirdBodyGravity (impl<S: HasOrbit> Model<S>)
-    orbital_system.rs # OrbitalSystem (GravityField + Vec<Box<dyn Model<OrbitalState>>>)
+    orbital/          # OrbitalState, OrbitalSystem, GravityField, Kepler, TwoBody
     attitude/         # AttitudeState, AttitudeSystem, GravityGradientTorque
     spacecraft/       # SpacecraftState, SpacecraftDynamics
     group/            # PropGroup, GroupState, InterSatelliteForce
-    scheduler/        # 同期点管理、レジーム遷移
     record/           # Recording, Rerun export (default feature)
     setup.rs          # build_orbital_system(), build_spacecraft_dynamics() ヘルパー
     lib.rs

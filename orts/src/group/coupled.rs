@@ -711,7 +711,7 @@ mod tests {
 
     // ── CoupledGroupDynamics tests ─────────────────────────────────────────
 
-    use crate::two_body::TwoBodySystem;
+    use crate::orbital::two_body::TwoBodySystem;
 
     fn iss_state() -> OrbitalState {
         let r: f64 = 6778.137;

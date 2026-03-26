@@ -1,8 +1,8 @@
 use kaname::epoch::Epoch;
 use utsuroi::DynamicalSystem;
 
+use super::gravity::GravityField;
 use crate::OrbitalState;
-use crate::gravity::GravityField;
 use crate::model::Model;
 
 /// Orbital dynamics system combining a gravity field model with perturbation forces.
@@ -83,9 +83,9 @@ impl DynamicalSystem for OrbitalSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gravity::{PointMass, ZonalHarmonics};
-    use crate::kepler::KeplerianElements;
-    use crate::two_body::TwoBodySystem;
+    use crate::orbital::gravity::{PointMass, ZonalHarmonics};
+    use crate::orbital::kepler::KeplerianElements;
+    use crate::orbital::two_body::TwoBodySystem;
     use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
     use nalgebra::vector;
     use std::f64::consts::PI;

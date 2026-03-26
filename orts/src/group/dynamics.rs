@@ -44,7 +44,7 @@ impl<D: DynamicalSystem> DynamicalSystem for IndependentGroupDynamics<D> {
 mod tests {
     use super::*;
     use crate::OrbitalState;
-    use crate::two_body::TwoBodySystem;
+    use crate::orbital::two_body::TwoBodySystem;
     use nalgebra::Vector3;
     use std::ops::ControlFlow;
     use utsuroi::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};

@@ -1,5 +1,5 @@
-use crate::gravity::GravityField;
 use crate::model::Model;
+use crate::orbital::gravity::GravityField;
 use kaname::epoch::Epoch;
 use nalgebra::Matrix3;
 use utsuroi::DynamicalSystem;
@@ -131,9 +131,9 @@ mod tests {
     use super::*;
     use crate::OrbitalState;
     use crate::attitude::AttitudeState;
-    use crate::gravity::PointMass;
     use crate::model::Model;
-    use crate::orbital_system::OrbitalSystem;
+    use crate::orbital::OrbitalSystem;
+    use crate::orbital::gravity::PointMass;
     use kaname::constants::MU_EARTH;
     use nalgebra::{Vector3, Vector4};
     use utsuroi::{Integrator, OdeState, Rk4};

@@ -3,7 +3,7 @@ use std::fmt;
 
 use kaname::epoch::Epoch;
 
-use crate::kepler::{KeplerianElements, mean_to_true_anomaly};
+use crate::orbital::kepler::{KeplerianElements, mean_to_true_anomaly};
 
 /// Error type for TLE parsing failures.
 #[derive(Debug, Clone)]
