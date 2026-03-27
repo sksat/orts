@@ -42,6 +42,8 @@ pub struct SatelliteSpec {
     pub srp_area_to_mass: Option<f64>,
     /// SRP radiation pressure coefficient (default: 1.5).
     pub srp_cr: Option<f64>,
+    /// Attitude dynamics configuration. When present, SpacecraftDynamics is used.
+    pub attitude_config: Option<crate::config::AttitudeConfig>,
 }
 
 impl SatelliteSpec {
@@ -240,6 +242,7 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         ballistic_coeff,
         srp_area_to_mass,
         srp_cr,
+        attitude_config: None, // CLI --sat does not yet support attitude; use config file
     }
 }
 

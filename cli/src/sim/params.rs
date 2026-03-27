@@ -94,6 +94,7 @@ impl SimParams {
                     ballistic_coeff: None,
                     srp_area_to_mass: None,
                     srp_cr: None,
+                    attitude_config: None,
                 }]
             } else if is_serve
                 && args.altitude == 400.0
@@ -120,6 +121,7 @@ impl SimParams {
                     ballistic_coeff: None,
                     srp_area_to_mass: None,
                     srp_cr: None,
+                    attitude_config: None,
                 }]
             }
         };
@@ -257,6 +259,7 @@ impl SimParams {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            attitude_config: None,
         });
 
         // ISS: try online sources, fall back to embedded TLE
@@ -284,6 +287,7 @@ impl SimParams {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            attitude_config: None,
         });
 
         sats

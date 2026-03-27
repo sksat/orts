@@ -79,6 +79,41 @@ impl Default for IntegratorConfig {
     }
 }
 
+/// Attitude dynamics configuration for a satellite.
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct AttitudeConfig {
+    /// Diagonal inertia tensor [Ixx, Iyy, Izz] kg·m².
+    pub inertia_diag: [f64; 3],
+    /// Off-diagonal inertia elements [Ixy, Ixz, Iyz] (default: all zero).
+    #[serde(default)]
+    pub inertia_off_diag: [f64; 3],
+    /// Spacecraft mass [kg].
+    pub mass: f64,
+    /// Initial quaternion [w, x, y, z] body-to-inertial (default: identity).
+    #[serde(default = "default_identity_quat")]
+    pub initial_quaternion: [f64; 4],
+    /// Initial angular velocity [wx, wy, wz] rad/s body frame (default: zero).
+    #[serde(default)]
+    pub initial_angular_velocity: [f64; 3],
+}
+
+fn default_identity_quat() -> [f64; 4] {
+    [1.0, 0.0, 0.0, 0.0]
+}
+
+impl AttitudeConfig {
+    /// Build the full 3×3 inertia tensor from diagonal and off-diagonal elements.
+    pub fn inertia_matrix(&self) -> nalgebra::Matrix3<f64> {
+        let [ixx, iyy, izz] = self.inertia_diag;
+        let [ixy, ixz, iyz] = self.inertia_off_diag;
+        nalgebra::Matrix3::new(
+            ixx, ixy, ixz, //
+            ixy, iyy, iyz, //
+            ixz, iyz, izz,
+        )
+    }
+}
+
 /// Per-satellite configuration.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct SatelliteConfig {
@@ -88,6 +123,8 @@ pub struct SatelliteConfig {
     pub ballistic_coeff: Option<f64>,
     pub srp_area_to_mass: Option<f64>,
     pub srp_cr: Option<f64>,
+    /// Attitude dynamics configuration. When present, SpacecraftDynamics is used.
+    pub attitude: Option<AttitudeConfig>,
 }
 
 /// Orbit specification in config files.
@@ -229,6 +266,7 @@ impl SatelliteConfig {
             ballistic_coeff: self.ballistic_coeff,
             srp_area_to_mass: self.srp_area_to_mass,
             srp_cr: self.srp_cr,
+            attitude_config: self.attitude.clone(),
         }
     }
 }
@@ -423,6 +461,7 @@ mod tests {
             ballistic_coeff: Some(0.005),
             srp_area_to_mass: None,
             srp_cr: None,
+            attitude: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -453,6 +492,7 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            attitude: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -474,6 +514,7 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            attitude: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -573,6 +614,7 @@ satellites:
                 ballistic_coeff: Some(0.01),
                 srp_area_to_mass: Some(0.02),
                 srp_cr: Some(1.5),
+                attitude: None,
             }],
         };
         let json = serde_json::to_string(&config).unwrap();
@@ -625,6 +667,83 @@ altitude = 400.0
         assert_eq!(config.satellites.len(), 1);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn attitude_config_defaults() {
+        let json = r#"{ "inertia_diag": [100, 100, 50], "mass": 500 }"#;
+        let att: AttitudeConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(att.inertia_diag, [100.0, 100.0, 50.0]);
+        assert_eq!(att.inertia_off_diag, [0.0, 0.0, 0.0]);
+        assert_eq!(att.mass, 500.0);
+        assert_eq!(att.initial_quaternion, [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(att.initial_angular_velocity, [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn attitude_config_full() {
+        let json = r#"{
+            "inertia_diag": [100, 200, 300],
+            "inertia_off_diag": [1.5, 0.5, -0.3],
+            "mass": 1000,
+            "initial_quaternion": [0.707, 0, 0.707, 0],
+            "initial_angular_velocity": [0.01, -0.02, 0.03]
+        }"#;
+        let att: AttitudeConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(att.inertia_off_diag, [1.5, 0.5, -0.3]);
+        assert!((att.initial_quaternion[0] - 0.707).abs() < 1e-9);
+        assert!((att.initial_angular_velocity[2] - 0.03).abs() < 1e-9);
+    }
+
+    #[test]
+    fn attitude_config_inertia_matrix() {
+        let att = AttitudeConfig {
+            inertia_diag: [10.0, 20.0, 30.0],
+            inertia_off_diag: [1.0, 2.0, 3.0],
+            mass: 100.0,
+            initial_quaternion: [1.0, 0.0, 0.0, 0.0],
+            initial_angular_velocity: [0.0, 0.0, 0.0],
+        };
+        let m = att.inertia_matrix();
+        // Diagonal
+        assert_eq!(m[(0, 0)], 10.0);
+        assert_eq!(m[(1, 1)], 20.0);
+        assert_eq!(m[(2, 2)], 30.0);
+        // Symmetric off-diagonal
+        assert_eq!(m[(0, 1)], 1.0);
+        assert_eq!(m[(1, 0)], 1.0);
+        assert_eq!(m[(0, 2)], 2.0);
+        assert_eq!(m[(2, 0)], 2.0);
+        assert_eq!(m[(1, 2)], 3.0);
+        assert_eq!(m[(2, 1)], 3.0);
+    }
+
+    #[test]
+    fn satellite_config_with_attitude() {
+        let json = r#"{
+            "satellites": [{
+                "orbit": { "type": "circular", "altitude": 400 },
+                "attitude": {
+                    "inertia_diag": [100, 100, 50],
+                    "mass": 500
+                }
+            }]
+        }"#;
+        let config: SimConfig = serde_json::from_str(json).unwrap();
+        let att = config.satellites[0].attitude.as_ref().unwrap();
+        assert_eq!(att.mass, 500.0);
+        assert_eq!(att.initial_quaternion, [1.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn satellite_config_without_attitude() {
+        let json = r#"{
+            "satellites": [{
+                "orbit": { "type": "circular", "altitude": 400 }
+            }]
+        }"#;
+        let config: SimConfig = serde_json::from_str(json).unwrap();
+        assert!(config.satellites[0].attitude.is_none());
     }
 
     #[test]

@@ -101,6 +101,7 @@ impl HistoryBuffer {
                             &vel,
                             self.mu,
                             HashMap::new(),
+                            None,
                         ));
                     }
                 }
@@ -168,7 +169,7 @@ mod tests {
     fn make_state(t: f64) -> HistoryState {
         let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
         let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
-        make_history_state("default", t, &pos, &vel, TEST_MU, HashMap::new())
+        make_history_state("default", t, &pos, &vel, TEST_MU, HashMap::new(), None)
     }
 
     fn temp_data_dir(name: &str) -> PathBuf {

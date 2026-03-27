@@ -8,6 +8,6 @@ pub mod system;
 pub use augmented::AugmentedAttitudeSystem;
 pub use control::*;
 pub use decoupled::{DecoupledAttitudeSystem, DecoupledContext};
-pub use gravity_gradient::GravityGradientTorque;
+pub use gravity_gradient::{CoupledGravityGradient, GravityGradientTorque};
 pub use state::AttitudeState;
 pub use system::AttitudeSystem;

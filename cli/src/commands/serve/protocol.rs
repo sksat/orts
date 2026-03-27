@@ -69,6 +69,9 @@ pub enum WsMessage {
         true_anomaly: f64,
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         accelerations: HashMap<String, f64>,
+        /// Attitude telemetry (present only when SpacecraftDynamics is used).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attitude: Option<crate::sim::core::AttitudePayload>,
     },
     /// Downsampled history overview sent on connect.
     #[serde(rename = "history")]
@@ -114,7 +117,7 @@ mod tests {
     fn make_state(t: f64) -> HistoryState {
         let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
         let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
-        make_history_state("default", t, &pos, &vel, TEST_MU, HashMap::new())
+        make_history_state("default", t, &pos, &vel, TEST_MU, HashMap::new(), None)
     }
 
     #[test]
@@ -368,10 +371,43 @@ mod tests {
             argument_of_periapsis: 0.5,
             true_anomaly: 2.1,
             accelerations: HashMap::new(),
+            attitude: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["type"], "state");
         assert_eq!(v["satellite_id"], "iss");
+        // attitude should be absent when None
+        assert!(v.get("attitude").is_none());
+    }
+
+    #[test]
+    fn state_message_with_attitude() {
+        use crate::sim::core::{AttitudePayload, AttitudeSource};
+        let msg = WsMessage::State {
+            satellite_id: "sat1".to_string(),
+            t: 50.0,
+            position: [6778.0, 0.0, 0.0],
+            velocity: [0.0, 7.669, 0.0],
+            semi_major_axis: 6778.0,
+            eccentricity: 0.0,
+            inclination: 0.0,
+            raan: 0.0,
+            argument_of_periapsis: 0.0,
+            true_anomaly: 0.0,
+            accelerations: HashMap::new(),
+            attitude: Some(AttitudePayload {
+                quaternion_wxyz: [0.707, 0.0, 0.707, 0.0],
+                angular_velocity_body: [0.0, 0.01, 0.0],
+                source: AttitudeSource::Propagated,
+            }),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "state");
+        assert!(v.get("attitude").is_some());
+        assert_eq!(v["attitude"]["source"], "propagated");
+        let q = v["attitude"]["quaternion_wxyz"].as_array().unwrap();
+        assert_eq!(q.len(), 4);
     }
 }

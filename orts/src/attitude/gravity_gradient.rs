@@ -2,7 +2,7 @@ use kaname::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
 
 use crate::model::ExternalLoads;
-use crate::model::{HasAttitude, Model};
+use crate::model::{HasAttitude, HasOrbit, Model};
 
 use super::state::AttitudeState;
 
@@ -48,23 +48,70 @@ impl GravityGradientTorque {
     }
 }
 
+/// Compute gravity gradient torque vector in body frame (pure function).
+///
+/// τ_gg = (3μ / r⁵) (r_body × (I · r_body))
+///
+/// Shared between decoupled (`GravityGradientTorque`) and coupled
+/// (`CoupledGravityGradient`) implementations.
+pub(crate) fn gravity_gradient_torque_vector(
+    mu: f64,
+    inertia: &Matrix3<f64>,
+    r_eci: &Vector3<f64>,
+    attitude: &AttitudeState,
+) -> Vector3<f64> {
+    let r_mag = r_eci.magnitude();
+    if r_mag < 1e-10 {
+        return Vector3::zeros();
+    }
+
+    // Transform position to body frame: r_body = R_bi * r_eci
+    let r_bi = attitude.inertial_to_body();
+    let r_body = r_bi * r_eci;
+
+    // τ_gg = (3μ / r⁵) (r_body × (I · r_body))
+    let coeff = 3.0 * mu / r_mag.powi(5);
+    let i_r = inertia * r_body;
+    coeff * r_body.cross(&i_r)
+}
+
 impl GravityGradientTorque {
-    /// Compute gravity gradient torque in body frame.
+    /// Compute gravity gradient torque in body frame (decoupled: position from closure).
     pub(crate) fn torque(&self, t: f64, state: &AttitudeState) -> Vector3<f64> {
         let r_eci = (self.position_fn)(t);
-        let r_mag = r_eci.magnitude();
-        if r_mag < 1e-10 {
-            return Vector3::zeros();
-        }
+        gravity_gradient_torque_vector(self.mu, &self.inertia, &r_eci, state)
+    }
+}
 
-        // Transform position to body frame: r_body = R_bi * r_eci
-        let r_bi = state.inertial_to_body();
-        let r_body = r_bi * r_eci;
+/// Gravity gradient torque for coupled orbit-attitude propagation.
+///
+/// Unlike [`GravityGradientTorque`], this reads the spacecraft position directly
+/// from the state via `HasOrbit`, making it suitable for `SpacecraftDynamics`.
+pub struct CoupledGravityGradient {
+    mu: f64,
+    inertia: Matrix3<f64>,
+}
 
-        // τ_gg = (3μ / r⁵) (r_body × (I · r_body))
-        let coeff = 3.0 * self.mu / r_mag.powi(5);
-        let i_r = self.inertia * r_body;
-        coeff * r_body.cross(&i_r)
+impl CoupledGravityGradient {
+    /// Create with gravitational parameter and inertia tensor.
+    pub fn new(mu: f64, inertia: Matrix3<f64>) -> Self {
+        Self { mu, inertia }
+    }
+}
+
+impl<S: HasAttitude + HasOrbit> Model<S> for CoupledGravityGradient {
+    fn name(&self) -> &str {
+        "gravity_gradient"
+    }
+
+    fn eval(&self, _t: f64, state: &S, _epoch: Option<&Epoch>) -> ExternalLoads {
+        let torque = gravity_gradient_torque_vector(
+            self.mu,
+            &self.inertia,
+            state.orbit().position(),
+            state.attitude(),
+        );
+        ExternalLoads::torque(torque)
     }
 }
 
@@ -204,5 +251,60 @@ mod tests {
         // Just verify it doesn't panic and returns a valid torque
         let tau = gg.torque(0.0, &state);
         assert!(tau.iter().all(|v| v.is_finite()));
+    }
+
+    // ─── CoupledGravityGradient tests ───
+
+    #[test]
+    fn coupled_matches_decoupled() {
+        // CoupledGravityGradient should produce identical results to GravityGradientTorque
+        // for the same position and attitude.
+        let inertia = diagonal_inertia(10.0, 20.0, 30.0);
+        let mu = 398600.4418;
+        let r = 6778.0;
+
+        let axis = nalgebra::Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0));
+        let uq = UnitQuaternion::from_axis_angle(&axis, PI / 4.0);
+        let attitude = AttitudeState::new(uq, Vector3::zeros());
+
+        // Decoupled version
+        let gg_decoupled =
+            GravityGradientTorque::new(mu, inertia, move |_| Vector3::new(r, 0.0, 0.0));
+        let tau_decoupled = gg_decoupled.torque(0.0, &attitude);
+
+        // Coupled version via shared function
+        let r_eci = Vector3::new(r, 0.0, 0.0);
+        let tau_coupled = gravity_gradient_torque_vector(mu, &inertia, &r_eci, &attitude);
+
+        assert!(
+            (tau_decoupled - tau_coupled).magnitude() < 1e-15,
+            "Decoupled and coupled should match: {tau_decoupled:?} vs {tau_coupled:?}"
+        );
+    }
+
+    #[test]
+    fn coupled_gravity_gradient_via_model_trait() {
+        use crate::SpacecraftState;
+        use crate::OrbitalState;
+
+        let inertia = diagonal_inertia(10.0, 20.0, 30.0);
+        let mu = 398600.4418;
+        let r = 6778.0;
+
+        let axis = nalgebra::Unit::new_normalize(Vector3::new(1.0, 0.5, 0.0));
+        let uq = UnitQuaternion::from_axis_angle(&axis, 0.3);
+        let state = SpacecraftState {
+            orbit: OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0)),
+            attitude: AttitudeState::new(uq, Vector3::new(0.01, 0.0, 0.0)),
+            mass: 500.0,
+        };
+
+        let gg = CoupledGravityGradient::new(mu, inertia);
+        let loads = gg.eval(0.0, &state, None);
+
+        // Should produce nonzero torque (tilted body)
+        assert!(loads.torque_body.magnitude() > 1e-15);
+        // Should produce zero acceleration (GG is torque-only)
+        assert!(loads.acceleration_inertial.magnitude() < 1e-15);
     }
 }

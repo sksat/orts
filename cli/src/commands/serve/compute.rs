@@ -4,6 +4,7 @@ use orts::OrbitalState;
 use orts::orbital::kepler::KeplerianElements;
 
 use crate::commands::serve::protocol::WsMessage;
+use crate::sim::core::AttitudePayload;
 
 pub fn state_message(
     satellite_id: &str,
@@ -11,6 +12,7 @@ pub fn state_message(
     state: &OrbitalState,
     mu: f64,
     accelerations: HashMap<String, f64>,
+    attitude: Option<AttitudePayload>,
 ) -> String {
     let elements = KeplerianElements::from_state_vector(state.position(), state.velocity(), mu);
     let msg = WsMessage::State {
@@ -25,6 +27,7 @@ pub fn state_message(
         argument_of_periapsis: elements.argument_of_periapsis,
         true_anomaly: elements.true_anomaly,
         accelerations,
+        attitude,
     };
     serde_json::to_string(&msg).expect("failed to serialize state message")
 }

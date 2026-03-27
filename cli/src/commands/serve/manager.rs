@@ -303,6 +303,7 @@ impl SimLoopContext {
                 entry.state.velocity(),
                 params.mu,
                 accels.clone(),
+                None,
             );
             history.push(hs);
             let msg = state_message(
@@ -311,6 +312,7 @@ impl SimLoopContext {
                 &entry.state,
                 params.mu,
                 accels,
+                None,
             );
             let _ = tx.send(msg);
         }
@@ -434,6 +436,7 @@ impl SimLoopContext {
                     initial.velocity(),
                     self.params.mu,
                     std::collections::HashMap::new(),
+                    None,
                 );
                 self.history.push(hs);
                 let msg = state_message(
@@ -442,6 +445,7 @@ impl SimLoopContext {
                     &initial,
                     self.params.mu,
                     std::collections::HashMap::new(),
+                    None,
                 );
                 let _ = self.tx.send(msg);
 
@@ -523,6 +527,7 @@ impl SimLoopContext {
                     entry.state.velocity(),
                     self.params.mu,
                     accels,
+                    None,
                 );
 
                 if hs.t >= self.metas[i].next_save_t - 1e-9 {
@@ -614,6 +619,7 @@ async fn run_simulation_loop(
                     argument_of_periapsis: out.argument_of_periapsis,
                     true_anomaly: out.true_anomaly,
                     accelerations: out.accelerations.clone(),
+                    attitude: out.attitude.clone(),
                 })
                 .expect("failed to serialize state");
                 let _ = ctx.tx.send(msg);
