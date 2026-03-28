@@ -111,6 +111,17 @@ test.describe("multi-satellite NaN alignment", () => {
     const statusText = page.locator(".ws-status-text");
     await expect(statusText).toHaveText("Connected", { timeout: 5000 });
 
+    // Wait for simInfo to reflect 2 satellites (isMultiSatellite must be true
+    // before useMultiSatelliteStore starts creating DuckDB tables).
+    await expect(async () => {
+      const satCount = await page.evaluate(() => {
+        const sel = document.querySelector(".frame-selector-select");
+        // satellite options = total options - 1 (central body)
+        return sel ? sel.querySelectorAll("option").length - 1 : 0;
+      });
+      expect(satCount).toBeGreaterThanOrEqual(2);
+    }).toPass({ timeout: 10000, intervals: [200, 500, 1000, 2000] });
+
     // Wait for DuckDB tables to be populated (history ingestion + query ticks)
     // Poll instead of fixed timeout — CI can be slow
     await expect(async () => {
@@ -141,7 +152,7 @@ test.describe("multi-satellite NaN alignment", () => {
       });
       expect(counts.sso).toBeGreaterThan(0);
       expect(counts.iss).toBeGreaterThan(0);
-    }).toPass({ timeout: 15000, intervals: [500, 1000, 1000, 2000, 2000] });
+    }).toPass({ timeout: 30000, intervals: [500, 1000, 1000, 2000, 2000, 3000, 5000] });
 
     // Stop streaming: click the viewer's disconnect button.
     // Using the UI button sets manualDisconnectRef, which suppresses

@@ -80,7 +80,7 @@ test.afterAll(async () => {
 });
 
 test("state messages include attitude payload when attitude config is set", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?noAutoConnect=1");
 
   const attitude = await page.evaluate(async (url) => {
     return new Promise<Record<string, unknown>>((resolve) => {
@@ -132,7 +132,7 @@ test("state messages include attitude payload when attitude config is set", asyn
 
 test("state messages without attitude config omit attitude field", async ({ page }) => {
   // Connect to a separate server without attitude config
-  await page.goto("/");
+  await page.goto("/?noAutoConnect=1");
 
   // Start a no-attitude server inline
   const binary = process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");

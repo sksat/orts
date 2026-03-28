@@ -57,18 +57,9 @@ test.afterAll(async () => {
   }
 });
 
-/** Helper: disconnect from auto-connect and connect to the test server. */
+/** Helper: navigate without auto-connect, then connect to the test server. */
 async function connectToTestServer(page: import("@playwright/test").Page) {
-  await page.goto("/");
-
-  // Disconnect from auto-connected default server if needed
-  const disconnectBtn = page.locator(".ws-disconnect-btn");
-  try {
-    await disconnectBtn.waitFor({ state: "visible", timeout: 3000 });
-    await disconnectBtn.click();
-  } catch {
-    // Not connected; continue
-  }
+  await page.goto("/?noAutoConnect=1");
 
   // Connect to the test server
   const urlInput = page.locator(".ws-url-input");
@@ -81,7 +72,7 @@ async function connectToTestServer(page: import("@playwright/test").Page) {
 }
 
 test("raw WebSocket connects and receives messages", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?noAutoConnect=1");
 
   const wsResult = await page.evaluate(async (url) => {
     return new Promise<string>((resolve) => {
@@ -198,7 +189,7 @@ test("charts render with data after streaming starts", async ({ page }) => {
 });
 
 test("state messages include Keplerian elements", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?noAutoConnect=1");
 
   const keplerian = await page.evaluate(async (url) => {
     return new Promise<Record<string, boolean>>((resolve) => {
@@ -239,7 +230,7 @@ test("state messages include Keplerian elements", async ({ page }) => {
 });
 
 test("history message arrives after info before state", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?noAutoConnect=1");
 
   const messageTypes = await page.evaluate(async (url) => {
     return new Promise<string[]>((resolve) => {
