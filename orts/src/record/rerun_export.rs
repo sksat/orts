@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::record::component::Component;
-use crate::record::components::{BodyRadius, GravitationalParameter, Position3D, Velocity3D};
+use crate::record::components::{
+    AngularVelocity3D, BodyRadius, GravitationalParameter, Position3D, Quaternion4D, Velocity3D,
+};
 use crate::record::entity_path::EntityPath;
 use crate::record::recording::{Recording, SimMetadata};
 use crate::record::timeline::{TimeIndex, TimelineName};
@@ -80,6 +82,23 @@ pub fn save_as_rrd(
                 rec.log(format!("{rr_path}/vx"), &rerun::Scalars::new([vel[0]]))?;
                 rec.log(format!("{rr_path}/vy"), &rerun::Scalars::new([vel[1]]))?;
                 rec.log(format!("{rr_path}/vz"), &rerun::Scalars::new([vel[2]]))?;
+
+                // Attitude quaternion + angular velocity (optional)
+                if let Some(q_col) = store.columns.get(&Quaternion4D::component_name()) {
+                    if let Some(q) = q_col.get_row(i) {
+                        rec.log(format!("{rr_path}/qw"), &rerun::Scalars::new([q[0]]))?;
+                        rec.log(format!("{rr_path}/qx"), &rerun::Scalars::new([q[1]]))?;
+                        rec.log(format!("{rr_path}/qy"), &rerun::Scalars::new([q[2]]))?;
+                        rec.log(format!("{rr_path}/qz"), &rerun::Scalars::new([q[3]]))?;
+                    }
+                }
+                if let Some(w_col) = store.columns.get(&AngularVelocity3D::component_name()) {
+                    if let Some(w) = w_col.get_row(i) {
+                        rec.log(format!("{rr_path}/wx"), &rerun::Scalars::new([w[0]]))?;
+                        rec.log(format!("{rr_path}/wy"), &rerun::Scalars::new([w[1]]))?;
+                        rec.log(format!("{rr_path}/wz"), &rerun::Scalars::new([w[2]]))?;
+                    }
+                }
             }
         }
     }
@@ -124,6 +143,10 @@ pub struct RrdRow {
     pub vz: f64,
     /// Entity path this row belongs to (e.g., "world/sat/iss").
     pub entity_path: Option<String>,
+    /// Body-to-inertial quaternion [w, x, y, z] (optional, for attitude-enabled runs).
+    pub quaternion: Option<[f64; 4]>,
+    /// Angular velocity in body frame [rad/s] (optional).
+    pub angular_velocity: Option<[f64; 3]>,
 }
 
 /// Full data loaded from an .rrd file: trajectory rows + simulation metadata.
@@ -257,8 +280,32 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
         // Use x as the reference for row count and time
         let Some(x_data) = x_data else { continue };
 
+        // Attitude components (optional)
+        let qw_data = scalars.get(&format!("{base}/qw"));
+        let qx_data = scalars.get(&format!("{base}/qx"));
+        let qy_data = scalars.get(&format!("{base}/qy"));
+        let qz_data = scalars.get(&format!("{base}/qz"));
+        let wx_data = scalars.get(&format!("{base}/wx"));
+        let wy_data = scalars.get(&format!("{base}/wy"));
+        let wz_data = scalars.get(&format!("{base}/wz"));
+
         for (i, (t_ns, x)) in x_data.iter().enumerate() {
             let t_sec = *t_ns as f64 / 1e9;
+
+            let quaternion = qw_data.and_then(|qw| {
+                let qw = qw.get(i)?.1;
+                let qx = qx_data?.get(i)?.1;
+                let qy = qy_data?.get(i)?.1;
+                let qz = qz_data?.get(i)?.1;
+                Some([qw, qx, qy, qz])
+            });
+            let angular_velocity = wx_data.and_then(|wx| {
+                let wx = wx.get(i)?.1;
+                let wy = wy_data?.get(i)?.1;
+                let wz = wz_data?.get(i)?.1;
+                Some([wx, wy, wz])
+            });
+
             rows.push(RrdRow {
                 t: t_sec,
                 x: *x,
@@ -268,6 +315,8 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                 vy: vy_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
                 vz: vz_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
                 entity_path: Some(base.clone()),
+                quaternion,
+                angular_velocity,
             });
         }
     }

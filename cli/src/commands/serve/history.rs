@@ -7,7 +7,7 @@ use orts::record::entity_path::EntityPath;
 use orts::record::recording::Recording;
 use orts::record::timeline::TimePoint;
 
-use crate::sim::core::{HistoryState, make_history_state};
+use crate::sim::core::{AttitudePayload, AttitudeSource, HistoryState, make_history_state};
 
 /// Bounded buffer that accumulates history states and periodically flushes to .rrd segments.
 pub struct HistoryBuffer {
@@ -61,7 +61,19 @@ impl HistoryBuffer {
                 nalgebra::Vector3::new(hs.position[0], hs.position[1], hs.position[2]),
                 nalgebra::Vector3::new(hs.velocity[0], hs.velocity[1], hs.velocity[2]),
             );
-            rec.log_orbital_state(&sat_path, &tp, &os);
+            let (q, w) = if let Some(att) = &hs.attitude {
+                (
+                    Some(orts::record::components::Quaternion4D(
+                        nalgebra::Vector4::from_row_slice(&att.quaternion_wxyz),
+                    )),
+                    Some(orts::record::components::AngularVelocity3D(
+                        nalgebra::Vector3::from_row_slice(&att.angular_velocity_body),
+                    )),
+                )
+            } else {
+                (None, None)
+            };
+            rec.log_orbital_state_with_attitude(&sat_path, &tp, &os, q.as_ref(), w.as_ref());
         }
 
         let seg_path = self
@@ -94,6 +106,11 @@ impl HistoryBuffer {
                             .as_deref()
                             .and_then(|p| p.rsplit('/').next())
                             .unwrap_or("default");
+                        let attitude = row.quaternion.map(|q| AttitudePayload {
+                            quaternion_wxyz: q,
+                            angular_velocity_body: row.angular_velocity.unwrap_or([0.0; 3]),
+                            source: AttitudeSource::Propagated,
+                        });
                         all.push(make_history_state(
                             sid,
                             row.t,
@@ -101,7 +118,7 @@ impl HistoryBuffer {
                             &vel,
                             self.mu,
                             HashMap::new(),
-                            None,
+                            attitude,
                         ));
                     }
                 }
@@ -368,6 +385,43 @@ mod tests {
 
         let result = buf.query_range(200.0, 300.0, None);
         assert!(result.is_empty());
+
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn flush_preserves_attitude() {
+        let dir = temp_data_dir("flush-attitude");
+        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU);
+
+        for i in 0..5 {
+            let t = i as f64 * 10.0;
+            let pos = nalgebra::Vector3::new(6778.0, 0.0, 0.0);
+            let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
+            let attitude = Some(AttitudePayload {
+                quaternion_wxyz: [0.707, 0.0, 0.707, 0.0],
+                angular_velocity_body: [0.01 * t, 0.0, 0.0],
+                source: AttitudeSource::Propagated,
+            });
+            let hs =
+                make_history_state("att-sat", t, &pos, &vel, TEST_MU, HashMap::new(), attitude);
+            buf.push(hs);
+        }
+
+        assert!(buf.segment_count > 0, "should have flushed");
+
+        let all = buf.load_all();
+        assert_eq!(all.len(), 5);
+        for hs in &all {
+            let att = hs
+                .attitude
+                .as_ref()
+                .expect("attitude should survive flush/load round-trip");
+            assert!(
+                (att.quaternion_wxyz[0] - 0.707).abs() < 1e-9,
+                "quaternion should be preserved"
+            );
+        }
 
         cleanup_dir(&dir);
     }

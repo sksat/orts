@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::record::archetypes::OrbitalState;
 use crate::record::component::{Component, ComponentName};
+use crate::record::components::{AngularVelocity3D, Quaternion4D};
 use crate::record::entity_path::EntityPath;
 use crate::record::timeline::{TimeIndex, TimePoint, TimelineName};
 
@@ -129,6 +130,25 @@ impl Recording {
     ) {
         self.log_temporal(entity, time_point, &state.position);
         self.log_temporal(entity, time_point, &state.velocity);
+    }
+
+    /// Log orbital state with optional attitude components.
+    pub fn log_orbital_state_with_attitude(
+        &mut self,
+        entity: &EntityPath,
+        time_point: &TimePoint,
+        state: &OrbitalState,
+        quaternion: Option<&Quaternion4D>,
+        angular_velocity: Option<&AngularVelocity3D>,
+    ) {
+        self.log_temporal(entity, time_point, &state.position);
+        self.log_temporal(entity, time_point, &state.velocity);
+        if let Some(q) = quaternion {
+            self.log_temporal(entity, time_point, q);
+        }
+        if let Some(w) = angular_velocity {
+            self.log_temporal(entity, time_point, w);
+        }
     }
 
     /// Get the entity store for a given path.

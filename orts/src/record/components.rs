@@ -98,6 +98,60 @@ impl Component for BodyRadius {
     }
 }
 
+/// Body-to-inertial quaternion [w, x, y, z] (Hamilton scalar-first).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Quaternion4D(pub nalgebra::Vector4<f64>);
+
+impl Component for Quaternion4D {
+    fn component_name() -> ComponentName {
+        "orts.Quaternion4D".into()
+    }
+    fn num_scalars() -> usize {
+        4
+    }
+    fn to_scalars(&self) -> Vec<f64> {
+        vec![self.0[0], self.0[1], self.0[2], self.0[3]]
+    }
+    fn from_scalars(data: &[f64]) -> Option<Self> {
+        if data.len() >= 4 {
+            Some(Quaternion4D(nalgebra::Vector4::new(
+                data[0], data[1], data[2], data[3],
+            )))
+        } else {
+            None
+        }
+    }
+    fn field_names() -> Vec<&'static str> {
+        vec!["qw", "qx", "qy", "qz"]
+    }
+}
+
+/// Angular velocity in body frame [rad/s].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AngularVelocity3D(pub Vector3<f64>);
+
+impl Component for AngularVelocity3D {
+    fn component_name() -> ComponentName {
+        "orts.AngularVelocity3D".into()
+    }
+    fn num_scalars() -> usize {
+        3
+    }
+    fn to_scalars(&self) -> Vec<f64> {
+        vec![self.0.x, self.0.y, self.0.z]
+    }
+    fn from_scalars(data: &[f64]) -> Option<Self> {
+        if data.len() >= 3 {
+            Some(AngularVelocity3D(Vector3::new(data[0], data[1], data[2])))
+        } else {
+            None
+        }
+    }
+    fn field_names() -> Vec<&'static str> {
+        vec!["wx", "wy", "wz"]
+    }
+}
+
 /// Classical Keplerian orbital elements.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KeplerianState {
