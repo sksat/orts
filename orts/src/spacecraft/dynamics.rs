@@ -88,6 +88,21 @@ impl<G: GravityField> SpacecraftDynamics<G> {
             .map(|m| (m.name(), m.eval(t, state, epoch.as_ref())))
             .collect()
     }
+
+    /// Acceleration breakdown for telemetry, mirroring [`OrbitalSystem::acceleration_breakdown`].
+    ///
+    /// Returns `("gravity", mag)` followed by per-model acceleration magnitudes.
+    pub fn acceleration_breakdown(&self, t: f64, state: &SpacecraftState) -> Vec<(&str, f64)> {
+        let grav = self
+            .gravity
+            .acceleration(self.mu, state.orbit.position())
+            .magnitude();
+        let mut result = vec![("gravity", grav)];
+        for (name, loads) in self.model_breakdown(t, state) {
+            result.push((name, loads.acceleration_inertial.magnitude()));
+        }
+        result
+    }
 }
 
 impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {

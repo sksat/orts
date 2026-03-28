@@ -91,6 +91,22 @@ pub fn accel_breakdown(
         .collect()
 }
 
+/// Compute acceleration breakdown from a SpacecraftDynamics system.
+///
+/// Uses [`SpacecraftDynamics::acceleration_breakdown`], mirroring
+/// the output format of [`accel_breakdown`] for protocol compatibility.
+pub fn spacecraft_accel_breakdown(
+    dynamics: &orts::spacecraft::SpacecraftDynamics<Box<dyn orts::orbital::gravity::GravityField>>,
+    t: f64,
+    state: &orts::spacecraft::SpacecraftState,
+) -> HashMap<String, f64> {
+    dynamics
+        .acceleration_breakdown(t, state)
+        .into_iter()
+        .map(|(name, mag)| (name.to_string(), mag))
+        .collect()
+}
+
 /// Convert a SatelliteSpec to SatelliteParams for OrbitalSystem construction.
 pub fn sat_params(spec: &SatelliteSpec) -> SatelliteParams {
     let has_tle_drag =

@@ -1,22 +1,161 @@
+use std::collections::HashMap;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use orts::OrbitalState;
-use orts::group::prop_group::SatId;
+use orts::attitude::CoupledGravityGradient;
+use orts::group::prop_group::{PropGroupOutcome, SatId};
 use orts::group::{IndependentGroup, IntegratorConfig};
 use orts::orbital::OrbitalSystem;
+use orts::orbital::gravity::GravityField;
+use orts::spacecraft::{SpacecraftDynamics, SpacecraftState};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::cli::IntegratorChoice;
 use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::{SatelliteInfo, SatelliteSpec};
-use crate::sim::core::{accel_breakdown, make_history_state, sat_params};
+use crate::sim::core::{
+    accel_breakdown, make_history_state, sat_params, spacecraft_accel_breakdown, AttitudePayload,
+    AttitudeSource,
+};
 use crate::sim::params::SimParams;
-use orts::setup::{build_orbital_system, default_third_bodies};
+use orts::setup::{build_orbital_system, build_spacecraft_dynamics, default_third_bodies};
 
 use super::compute::state_message;
 use super::history::HistoryBuffer;
 use super::protocol::WsMessage;
+
+/// Simulation group that dynamically switches between orbit-only and spacecraft modes.
+enum SimGroup {
+    OrbitOnly(IndependentGroup<OrbitalSystem>),
+    Spacecraft(IndependentGroup<SpacecraftDynamics<Box<dyn GravityField>>>),
+}
+
+/// Extracted state from a single satellite for protocol serialization.
+struct SatSnapshot {
+    orbit: OrbitalState,
+    attitude: Option<AttitudePayload>,
+    accels: HashMap<String, f64>,
+}
+
+impl SimGroup {
+    fn propagate_to(&mut self, t: f64) -> Result<PropGroupOutcome, utsuroi::IntegrationError> {
+        match self {
+            SimGroup::OrbitOnly(g) => g.propagate_to(t),
+            SimGroup::Spacecraft(g) => g.propagate_to(t),
+        }
+    }
+
+    /// Number of satellites.
+    fn len(&self) -> usize {
+        match self {
+            SimGroup::OrbitOnly(g) => g.satellites().count(),
+            SimGroup::Spacecraft(g) => g.satellites().count(),
+        }
+    }
+
+    /// Get satellite ID at index.
+    fn sat_id(&self, idx: usize) -> SatId {
+        match self {
+            SimGroup::OrbitOnly(g) => g.satellites().nth(idx).unwrap().id.clone(),
+            SimGroup::Spacecraft(g) => g.satellites().nth(idx).unwrap().id.clone(),
+        }
+    }
+
+    /// Check if satellite at index is terminated.
+    fn is_terminated(&self, idx: usize) -> bool {
+        match self {
+            SimGroup::OrbitOnly(g) => g.satellites().nth(idx).unwrap().terminated,
+            SimGroup::Spacecraft(g) => g.satellites().nth(idx).unwrap().terminated,
+        }
+    }
+
+    /// Get the current time of satellite at index.
+    fn sat_t(&self, idx: usize) -> f64 {
+        match self {
+            SimGroup::OrbitOnly(g) => g.satellites().nth(idx).unwrap().t,
+            SimGroup::Spacecraft(g) => g.satellites().nth(idx).unwrap().t,
+        }
+    }
+
+    /// Extract orbital state for a satellite at index.
+    fn orbit_state(&self, idx: usize) -> OrbitalState {
+        match self {
+            SimGroup::OrbitOnly(g) => g.satellites().nth(idx).unwrap().state.clone(),
+            SimGroup::Spacecraft(g) => g.satellites().nth(idx).unwrap().state.orbit.clone(),
+        }
+    }
+
+    /// Extract snapshot (orbit + optional attitude + accel breakdown) for satellite at index.
+    fn snapshot(&self, idx: usize, t: f64) -> SatSnapshot {
+        match self {
+            SimGroup::OrbitOnly(g) => {
+                let (entry, dyn_sys) = g.satellites_with_dynamics().nth(idx).unwrap();
+                SatSnapshot {
+                    orbit: entry.state.clone(),
+                    attitude: None,
+                    accels: accel_breakdown(dyn_sys, t, &entry.state),
+                }
+            }
+            SimGroup::Spacecraft(g) => {
+                let (entry, dyn_sys) = g.satellites_with_dynamics().nth(idx).unwrap();
+                let q = entry.state.attitude.quaternion;
+                let w = entry.state.attitude.angular_velocity;
+                SatSnapshot {
+                    orbit: entry.state.orbit.clone(),
+                    attitude: Some(AttitudePayload {
+                        quaternion_wxyz: [q[0], q[1], q[2], q[3]],
+                        angular_velocity_body: [w[0], w[1], w[2]],
+                        source: AttitudeSource::Propagated,
+                    }),
+                    accels: spacecraft_accel_breakdown(dyn_sys, t, &entry.state),
+                }
+            }
+        }
+    }
+
+    /// Model names (for SatelliteInfo perturbation list).
+    fn model_names(&self, idx: usize) -> Vec<String> {
+        match self {
+            SimGroup::OrbitOnly(g) => {
+                let (_, dyn_sys) = g.satellites_with_dynamics().nth(idx).unwrap();
+                dyn_sys.model_names().into_iter().map(String::from).collect()
+            }
+            SimGroup::Spacecraft(g) => {
+                let (_, dyn_sys) = g.satellites_with_dynamics().nth(idx).unwrap();
+                dyn_sys.model_names().into_iter().map(String::from).collect()
+            }
+        }
+    }
+
+    /// Reset state for orbit boundary (unperturbed 2-body only, OrbitOnly mode).
+    ///
+    /// In Spacecraft mode this is intentionally a no-op: attitude dynamics
+    /// cannot be meaningfully reset at orbit boundaries, and the coupled
+    /// integrator handles long-duration propagation correctly.
+    fn reset_orbit_state(&mut self, id: &SatId, state: OrbitalState) {
+        match self {
+            SimGroup::OrbitOnly(g) => g.reset_state(id, state),
+            SimGroup::Spacecraft(_) => {}
+        }
+    }
+
+    /// Push a new satellite (orbit-only mode).
+    fn push_orbit_satellite(
+        &mut self,
+        id: &str,
+        state: OrbitalState,
+        t: f64,
+        system: OrbitalSystem,
+    ) {
+        match self {
+            SimGroup::OrbitOnly(g) => g.push_satellite_at(id, state, t, system),
+            SimGroup::Spacecraft(_) => {
+                panic!("Cannot add orbit-only satellite to spacecraft simulation")
+            }
+        }
+    }
+}
 
 /// Command sent from connection handlers to the simulation manager.
 pub(super) enum SimCommand {
@@ -106,6 +245,47 @@ pub(super) async fn simulation_manager_with_params(
     }
 }
 
+/// Validate a SimConfig before starting. Returns Err with a user-facing message
+/// if the config is invalid (e.g., mixed attitude settings).
+fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
+    let body = crate::satellite::parse_body(&config.body);
+    let mu = body.properties().mu;
+    let specs: Vec<_> = config
+        .satellites
+        .iter()
+        .enumerate()
+        .map(|(i, s)| s.to_satellite_spec(i, body, mu))
+        .collect();
+    let any_att = specs.iter().any(|s| s.attitude_config.is_some());
+    let all_att = !specs.is_empty() && specs.iter().all(|s| s.attitude_config.is_some());
+    if any_att && !all_att {
+        return Err(
+            "Mixed attitude config: some satellites have attitude, some don't. \
+             Specify attitude for all satellites or remove it from all."
+                .to_string(),
+        );
+    }
+    // Validate inertia tensors are invertible
+    for spec in &specs {
+        if let Some(att) = &spec.attitude_config {
+            let inertia = att.inertia_matrix();
+            if inertia.determinant().abs() < 1e-30 {
+                return Err(format!(
+                    "Satellite '{}' has singular inertia tensor (not invertible)",
+                    spec.id
+                ));
+            }
+            if att.mass <= 0.0 {
+                return Err(format!(
+                    "Satellite '{}' has non-positive mass: {}",
+                    spec.id, att.mass
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Drain the cmd_rx, handling only GetStatus (as idle) and rejecting others,
 /// until a Start command arrives or the channel disconnects.
 async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig> {
@@ -118,6 +298,11 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig>
                 let _ = respond.send(SimStatusResponse::Idle);
             }
             SimCommand::Start { config, respond } => {
+                // Validate config before acknowledging
+                if let Err(e) = validate_sim_config(&config) {
+                    let _ = respond.send(Err(e));
+                    continue;
+                }
                 let _ = respond.send(Ok(()));
                 return Some(config);
             }
@@ -215,7 +400,7 @@ fn build_info_message(params: &SimParams) -> WsMessage {
 /// Mutable state for the running simulation loop.
 struct SimLoopContext {
     params: Arc<SimParams>,
-    group: IndependentGroup<OrbitalSystem>,
+    group: SimGroup,
     metas: Vec<SatMeta>,
     history: HistoryBuffer,
     tx: broadcast::Sender<String>,
@@ -231,7 +416,7 @@ impl SimLoopContext {
         params: Arc<SimParams>,
         tx: broadcast::Sender<String>,
         mut history: HistoryBuffer,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let config = match params.integrator {
             IntegratorChoice::Rk4 => IntegratorConfig::Rk4 { dt: params.dt },
             IntegratorChoice::Dp45 => IntegratorConfig::Dp45 {
@@ -246,45 +431,129 @@ impl SimLoopContext {
 
         let body_radius = params.body.properties().radius;
         let atmosphere_altitude = params.body.properties().atmosphere_altitude;
-        let event_checker = move |_t: f64, state: &OrbitalState| -> ControlFlow<String> {
-            let r = state.position().magnitude();
-            if r < body_radius {
-                ControlFlow::Break(format!("collision at {:.1} km altitude", r - body_radius))
-            } else if let Some(atm_alt) = atmosphere_altitude {
-                if r < body_radius + atm_alt {
-                    ControlFlow::Break(format!(
-                        "atmospheric entry at {:.1} km altitude",
-                        r - body_radius
-                    ))
-                } else {
-                    ControlFlow::Continue(())
-                }
-            } else {
-                ControlFlow::Continue(())
-            }
-        };
 
-        let mut group = IndependentGroup::new(config).with_event_checker(event_checker);
+        // Determine mode: use SpacecraftDynamics if all satellites have attitude config.
+        // Empty satellite list → orbit-only (to support dynamic add_satellite).
+        let any_attitude = params.satellites.iter().any(|s| s.attitude_config.is_some());
+        let all_attitude =
+            !params.satellites.is_empty()
+                && params
+                    .satellites
+                    .iter()
+                    .all(|s| s.attitude_config.is_some());
+        if any_attitude && !all_attitude {
+            return Err(
+                "Mixed attitude config: some satellites have attitude, some don't. \
+                 Specify attitude for all satellites or remove it from all."
+                    .to_string(),
+            );
+        }
+        let use_spacecraft = all_attitude;
 
         let mut metas: Vec<SatMeta> = Vec::new();
         let third_bodies = default_third_bodies(&params.body);
-        for spec in &params.satellites {
-            let system = build_orbital_system(
-                &params.body,
-                params.mu,
-                params.epoch,
-                &sat_params(spec),
-                &third_bodies,
-                params.build_atmosphere_model(),
-            );
-            let initial = spec.initial_state(params.mu);
-            group = group.add_satellite(spec.id.as_str(), initial, system);
-            metas.push(SatMeta {
-                spec: spec.clone(),
-                orbit_end_t: spec.period,
-                next_save_t: params.output_interval,
-            });
-        }
+
+        let group = if use_spacecraft {
+            let sc_event_checker = move |_t: f64, state: &SpacecraftState| -> ControlFlow<String> {
+                let r = state.orbit.position().magnitude();
+                if r < body_radius {
+                    ControlFlow::Break(format!("collision at {:.1} km altitude", r - body_radius))
+                } else if let Some(atm_alt) = atmosphere_altitude {
+                    if r < body_radius + atm_alt {
+                        ControlFlow::Break(format!(
+                            "atmospheric entry at {:.1} km altitude",
+                            r - body_radius
+                        ))
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                } else {
+                    ControlFlow::Continue(())
+                }
+            };
+            let mut sc_group =
+                IndependentGroup::new(config).with_event_checker(sc_event_checker);
+
+            for spec in &params.satellites {
+                let att = spec.attitude_config.as_ref().unwrap();
+                let inertia = att.inertia_matrix();
+                let mut dynamics = build_spacecraft_dynamics(
+                    &params.body,
+                    params.mu,
+                    params.epoch,
+                    &sat_params(spec),
+                    &third_bodies,
+                    inertia,
+                    params.build_atmosphere_model(),
+                );
+                // Default torque: coupled gravity gradient
+                dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
+
+                let orbit = spec.initial_state(params.mu);
+                let initial = SpacecraftState {
+                    orbit,
+                    attitude: orts::attitude::AttitudeState {
+                        quaternion: nalgebra::Vector4::from_row_slice(
+                            &att.initial_quaternion,
+                        ),
+                        angular_velocity: nalgebra::Vector3::from_row_slice(
+                            &att.initial_angular_velocity,
+                        ),
+                    },
+                    mass: att.mass,
+                };
+                sc_group = sc_group.add_satellite(spec.id.as_str(), initial, dynamics);
+                metas.push(SatMeta {
+                    spec: spec.clone(),
+                    orbit_end_t: spec.period,
+                    next_save_t: params.output_interval,
+                });
+            }
+            SimGroup::Spacecraft(sc_group)
+        } else {
+            let orbit_event_checker =
+                move |_t: f64, state: &OrbitalState| -> ControlFlow<String> {
+                    let r = state.position().magnitude();
+                    if r < body_radius {
+                        ControlFlow::Break(format!(
+                            "collision at {:.1} km altitude",
+                            r - body_radius
+                        ))
+                    } else if let Some(atm_alt) = atmosphere_altitude {
+                        if r < body_radius + atm_alt {
+                            ControlFlow::Break(format!(
+                                "atmospheric entry at {:.1} km altitude",
+                                r - body_radius
+                            ))
+                        } else {
+                            ControlFlow::Continue(())
+                        }
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                };
+            let mut orbit_group =
+                IndependentGroup::new(config).with_event_checker(orbit_event_checker);
+
+            for spec in &params.satellites {
+                let system = build_orbital_system(
+                    &params.body,
+                    params.mu,
+                    params.epoch,
+                    &sat_params(spec),
+                    &third_bodies,
+                    params.build_atmosphere_model(),
+                );
+                let initial = spec.initial_state(params.mu);
+                orbit_group = orbit_group.add_satellite(spec.id.as_str(), initial, system);
+                metas.push(SatMeta {
+                    spec: spec.clone(),
+                    orbit_end_t: spec.period,
+                    next_save_t: params.output_interval,
+                });
+            }
+            SimGroup::OrbitOnly(orbit_group)
+        };
 
         let has_perturbations = params.body.properties().j2.is_some();
 
@@ -294,30 +563,30 @@ impl SimLoopContext {
         let _ = tx.send(info_json.clone());
 
         // Emit initial states
-        for (i, (entry, dyn_sys)) in group.satellites_with_dynamics().enumerate() {
-            let accels = accel_breakdown(dyn_sys, 0.0, &entry.state);
+        for i in 0..group.len() {
+            let snap = group.snapshot(i, 0.0);
             let hs = make_history_state(
                 metas[i].spec.id.as_str(),
                 0.0,
-                entry.state.position(),
-                entry.state.velocity(),
+                snap.orbit.position(),
+                snap.orbit.velocity(),
                 params.mu,
-                accels.clone(),
-                None,
+                snap.accels.clone(),
+                snap.attitude.clone(),
             );
             history.push(hs);
             let msg = state_message(
                 metas[i].spec.id.as_str(),
                 0.0,
-                &entry.state,
+                &snap.orbit,
                 params.mu,
-                accels,
-                None,
+                snap.accels,
+                snap.attitude,
             );
             let _ = tx.send(msg);
         }
 
-        SimLoopContext {
+        Ok(SimLoopContext {
             params,
             group,
             metas,
@@ -328,7 +597,7 @@ impl SimLoopContext {
             paused: false,
             current_t: 0.0,
             has_perturbations,
-        }
+        })
     }
 
     /// Handle a single command from the connection handler.
@@ -394,6 +663,24 @@ impl SimLoopContext {
                 return ControlFlow::Break(());
             }
             SimCommand::AddSatellite { satellite, respond } => {
+                // Dynamic satellite addition only supported in orbit-only mode
+                if matches!(self.group, SimGroup::Spacecraft(_)) {
+                    let _ = respond.send(Err(
+                        "Cannot add satellite to spacecraft dynamics simulation".to_string(),
+                    ));
+                    return ControlFlow::Continue(());
+                }
+
+                // Reject attitude-enabled satellites in orbit-only mode
+                if satellite.attitude.is_some() {
+                    let _ = respond.send(Err(
+                        "Cannot add attitude-enabled satellite to orbit-only simulation. \
+                         Start with attitude config for all satellites to use spacecraft mode."
+                            .to_string(),
+                    ));
+                    return ControlFlow::Continue(());
+                }
+
                 let sat_index = self.metas.len();
                 let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
                 let third_bodies = default_third_bodies(&self.params.body);
@@ -406,7 +693,7 @@ impl SimLoopContext {
                     self.params.build_atmosphere_model(),
                 );
                 let initial = spec.initial_state(self.params.mu);
-                self.group.push_satellite_at(
+                self.group.push_orbit_satellite(
                     spec.id.as_str(),
                     initial.clone(),
                     self.current_t,
@@ -482,16 +769,16 @@ impl SimLoopContext {
         for _ in 0..outputs_per_chunk {
             let target_t = self.current_t + self.params.stream_interval;
 
-            // Orbit boundary reset (only for unperturbed 2-body)
+            // Orbit boundary reset (only for unperturbed 2-body, orbit-only mode)
             if !self.has_perturbations {
-                let resets: Vec<(SatId, OrbitalState)> = self
-                    .group
-                    .satellites_with_dynamics()
-                    .enumerate()
-                    .filter_map(|(i, (entry, _))| {
-                        if !entry.terminated && self.current_t >= self.metas[i].orbit_end_t - 1e-9 {
+                let n = self.group.len();
+                let resets: Vec<(SatId, OrbitalState)> = (0..n)
+                    .filter_map(|i| {
+                        if !self.group.is_terminated(i)
+                            && self.current_t >= self.metas[i].orbit_end_t - 1e-9
+                        {
                             Some((
-                                entry.id.clone(),
+                                self.group.sat_id(i),
                                 self.metas[i].spec.initial_state(self.params.mu),
                             ))
                         } else {
@@ -501,7 +788,7 @@ impl SimLoopContext {
                     .collect();
 
                 for (id, new_state) in &resets {
-                    self.group.reset_state(id, new_state.clone());
+                    self.group.reset_orbit_state(id, new_state.clone());
                     if let Some(i) = self
                         .metas
                         .iter()
@@ -514,20 +801,22 @@ impl SimLoopContext {
 
             let outcome = self.group.propagate_to(target_t).unwrap();
 
-            for (i, (entry, dyn_sys)) in self.group.satellites_with_dynamics().enumerate() {
-                if entry.terminated || entry.t < target_t - 1e-9 {
+            let n = self.group.len();
+            for i in 0..n {
+                if self.group.is_terminated(i) || self.group.sat_t(i) < target_t - 1e-9 {
                     continue;
                 }
 
-                let accels = accel_breakdown(dyn_sys, entry.t, &entry.state);
+                let t = self.group.sat_t(i);
+                let snap = self.group.snapshot(i, t);
                 let hs = make_history_state(
                     self.metas[i].spec.id.as_str(),
-                    entry.t,
-                    entry.state.position(),
-                    entry.state.velocity(),
+                    t,
+                    snap.orbit.position(),
+                    snap.orbit.velocity(),
                     self.params.mu,
-                    accels,
-                    None,
+                    snap.accels,
+                    snap.attitude,
                 );
 
                 if hs.t >= self.metas[i].next_save_t - 1e-9 {
@@ -575,7 +864,16 @@ async fn run_simulation_loop(
     let wall_per_sim_sec = ((params.dt / 100.0).max(0.01)) / params.stream_interval;
     let chunk_wall_time = std::time::Duration::from_secs_f64(chunk_sim_time * wall_per_sim_sec);
 
-    let mut ctx = SimLoopContext::new(params, tx, history);
+    let mut ctx = match SimLoopContext::new(params, tx.clone(), history) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            eprintln!("Simulation startup error: {e}");
+            let err_msg = serde_json::to_string(&WsMessage::Error { message: e })
+                .expect("failed to serialize error");
+            let _ = tx.send(err_msg);
+            return (LoopExit::Terminated, cmd_rx);
+        }
+    };
 
     loop {
         let chunk_start = tokio::time::Instant::now();
