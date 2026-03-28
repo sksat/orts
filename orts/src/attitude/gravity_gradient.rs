@@ -284,8 +284,8 @@ mod tests {
 
     #[test]
     fn coupled_gravity_gradient_via_model_trait() {
-        use crate::SpacecraftState;
         use crate::OrbitalState;
+        use crate::SpacecraftState;
 
         let inertia = diagonal_inertia(10.0, 20.0, 30.0);
         let mu = 398600.4418;

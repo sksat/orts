@@ -101,9 +101,15 @@ export function Satellite({
   const modelConfig = satId ? getSatelliteModelConfig(satId, satName) : null;
 
   if (modelConfig) {
+    // TODO: transform quaternion for non-inertial frames (ECEF: compose ERA rotation,
+    // LVLH: compose inverse LVLH quaternion). Currently correct only in ECI/inertial view.
+    const quaternion: [number, number, number, number] | undefined =
+      position.qw != null
+        ? [position.qw, position.qx!, position.qy!, position.qz!]
+        : undefined;
     return (
       <Suspense fallback={<SphereMarker position={scenePos} color={color} />}>
-        <SatelliteModel position={scenePos} config={modelConfig} />
+        <SatelliteModel position={scenePos} config={modelConfig} quaternion={quaternion} />
       </Suspense>
     );
   }

@@ -4,8 +4,8 @@ import { createOrbitSchema } from "./orbitSchema.js";
 describe("createOrbitSchema", () => {
   const schema = createOrbitSchema();
 
-  it("has 18 base columns (13 orbital + 5 acceleration)", () => {
-    expect(schema.columns).toHaveLength(18);
+  it("has 25 base columns (13 orbital + 5 acceleration + 7 attitude)", () => {
+    expect(schema.columns).toHaveLength(25);
     const names = schema.columns.map((c) => c.name);
     expect(names).toEqual([
       "t",
@@ -26,10 +26,17 @@ describe("createOrbitSchema", () => {
       "accel_srp",
       "accel_third_body_sun",
       "accel_third_body_moon",
+      "qw",
+      "qx",
+      "qy",
+      "qz",
+      "wx",
+      "wy",
+      "wz",
     ]);
   });
 
-  it("toRow returns 18 values matching column count", () => {
+  it("toRow returns 25 values matching column count", () => {
     const point = {
       t: 0,
       x: 6778,

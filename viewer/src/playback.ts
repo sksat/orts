@@ -1,3 +1,4 @@
+import * as THREE from "three";
 import type { OrbitPoint } from "./orbit.js";
 
 /** Playback state snapshot. */
@@ -11,11 +12,11 @@ export interface PlaybackState {
 
 /**
  * Linearly interpolate between two OrbitPoints at the given fraction (0..1)
- * between them.
+ * between them. Quaternion attitude is interpolated via slerp.
  */
 export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoint {
   const inv = 1 - frac;
-  return {
+  const result: OrbitPoint = {
     t: a.t * inv + b.t * frac,
     x: a.x * inv + b.x * frac,
     y: a.y * inv + b.y * frac,
@@ -30,6 +31,27 @@ export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoin
     omega: a.omega * inv + b.omega * frac,
     nu: a.nu * inv + b.nu * frac,
   };
+
+  // Quaternion slerp for attitude interpolation
+  if (a.qw != null && b.qw != null) {
+    const qa = new THREE.Quaternion(a.qx, a.qy, a.qz, a.qw);
+    const qb = new THREE.Quaternion(b.qx, b.qy, b.qz, b.qw);
+    // Ensure shortest-path interpolation
+    if (qa.dot(qb) < 0) {
+      qb.set(-qb.x, -qb.y, -qb.z, -qb.w);
+    }
+    qa.slerp(qb, frac);
+    result.qw = qa.w;
+    result.qx = qa.x;
+    result.qy = qa.y;
+    result.qz = qa.z;
+    // Angular velocity: linear interpolation
+    result.wx = (a.wx ?? 0) * inv + (b.wx ?? 0) * frac;
+    result.wy = (a.wy ?? 0) * inv + (b.wy ?? 0) * frac;
+    result.wz = (a.wz ?? 0) * inv + (b.wz ?? 0) * frac;
+  }
+
+  return result;
 }
 
 /**

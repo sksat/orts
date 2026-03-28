@@ -29,6 +29,13 @@ export function createOrbitSchema(
       { name: "accel_srp", type: "DOUBLE" },
       { name: "accel_third_body_sun", type: "DOUBLE" },
       { name: "accel_third_body_moon", type: "DOUBLE" },
+      { name: "qw", type: "DOUBLE" },
+      { name: "qx", type: "DOUBLE" },
+      { name: "qy", type: "DOUBLE" },
+      { name: "qz", type: "DOUBLE" },
+      { name: "wx", type: "DOUBLE" },
+      { name: "wy", type: "DOUBLE" },
+      { name: "wz", type: "DOUBLE" },
     ],
     derived: [
       // Pass-through: expose base columns for charting
@@ -86,6 +93,14 @@ export function createOrbitSchema(
         sql: "accel_drag + accel_srp + accel_third_body_sun + accel_third_body_moon",
         unit: "km/s²",
       },
+      // Attitude columns (nullable — only present for attitude-enabled runs)
+      { name: "qw", sql: "qw", unit: "-" },
+      { name: "qx", sql: "qx", unit: "-" },
+      { name: "qy", sql: "qy", unit: "-" },
+      { name: "qz", sql: "qz", unit: "-" },
+      { name: "wx", sql: "wx", unit: "rad/s" },
+      { name: "wy", sql: "wy", unit: "rad/s" },
+      { name: "wz", sql: "wz", unit: "rad/s" },
     ],
     toRow: (p: OrbitPoint) => [
       p.t,
@@ -106,6 +121,13 @@ export function createOrbitSchema(
       p.accel_srp ?? 0,
       p.accel_third_body_sun ?? 0,
       p.accel_third_body_moon ?? 0,
+      p.qw ?? Number.NaN,
+      p.qx ?? Number.NaN,
+      p.qy ?? Number.NaN,
+      p.qz ?? Number.NaN,
+      p.wx ?? Number.NaN,
+      p.wy ?? Number.NaN,
+      p.wz ?? Number.NaN,
     ],
   };
 }

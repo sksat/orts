@@ -35,6 +35,15 @@ export interface OrbitPoint {
   accel_srp?: number;
   accel_third_body_sun?: number;
   accel_third_body_moon?: number;
+  /** Body-to-inertial quaternion components (Hamilton scalar-first: w,x,y,z). */
+  qw?: number;
+  qx?: number;
+  qy?: number;
+  qz?: number;
+  /** Angular velocity in body frame [rad/s]. */
+  wx?: number;
+  wy?: number;
+  wz?: number;
 }
 
 /** Metadata parsed from CSV comment headers. */

@@ -31,6 +31,20 @@ export function eci_to_ecef(x: number, y: number, z: number, epoch_jd: number, t
 export function eci_to_ecef_batch(positions: Float32Array, times: Float32Array, epoch_jd: number): Float32Array;
 
 /**
+ * Geodetic (lat_deg, lon_deg, altitude_km) → ECEF [km].
+ *
+ * Returns `[x, y, z]` (3 floats, km).
+ */
+export function geodetic_to_ecef(lat_deg: number, lon_deg: number, altitude_km: number): Float64Array;
+
+/**
+ * Geodetic (lat_deg, lon_deg, altitude_km) → ECI [km] at given epoch.
+ *
+ * Returns `[x, y, z]` (3 floats, km).
+ */
+export function geodetic_to_eci(lat_deg: number, lon_deg: number, altitude_km: number, epoch_jd: number): Float64Array;
+
+/**
  * Convert Julian Date + elapsed sim time to a UTC date/time string.
  *
  * Returns ISO 8601 string like "2024-03-20T12:00:00Z".
@@ -74,6 +88,8 @@ export interface InitOutput {
     readonly sun_direction_from_body: (a: number, b: number, c: number, d: number) => [number, number];
     readonly sun_distance_from_body: (a: number, b: number, c: number, d: number) => number;
     readonly jd_to_utc_string: (a: number, b: number) => [number, number];
+    readonly geodetic_to_ecef: (a: number, b: number, c: number) => [number, number];
+    readonly geodetic_to_eci: (a: number, b: number, c: number, d: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

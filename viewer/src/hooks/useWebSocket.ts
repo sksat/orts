@@ -30,6 +30,13 @@ export interface SimInfo {
   satellites: SatelliteInfo[];
 }
 
+/** Attitude telemetry payload from the server. */
+interface AttitudePayload {
+  quaternion_wxyz: [number, number, number, number];
+  angular_velocity_body: [number, number, number];
+  source: "propagated";
+}
+
 /**
  * Raw state message received over the WebSocket.
  * The server sends position as [x, y, z] and velocity as [vx, vy, vz].
@@ -47,6 +54,7 @@ interface StateMessage {
   argument_of_periapsis: number;
   true_anomaly: number;
   accelerations?: Record<string, number>;
+  attitude?: AttitudePayload;
 }
 
 /** Raw info message received over the WebSocket. */
@@ -82,6 +90,7 @@ interface HistoryStateMsg {
   argument_of_periapsis: number;
   true_anomaly: number;
   accelerations?: Record<string, number>;
+  attitude?: AttitudePayload;
 }
 
 interface HistoryMessage {
@@ -183,6 +192,13 @@ function parseAccelerations(accels?: Record<string, number>) {
   };
 }
 
+function parseAttitude(attitude?: AttitudePayload) {
+  if (!attitude) return {};
+  const [qw, qx, qy, qz] = attitude.quaternion_wxyz;
+  const [wx, wy, wz] = attitude.angular_velocity_body;
+  return { qw, qx, qy, qz, wx, wy, wz };
+}
+
 function parseHistoryPoints(states: HistoryStateMsg[]): OrbitPoint[] {
   return states.map((s) => ({
     satelliteId: s.satellite_id,
@@ -200,6 +216,7 @@ function parseHistoryPoints(states: HistoryStateMsg[]): OrbitPoint[] {
     omega: s.argument_of_periapsis,
     nu: s.true_anomaly,
     ...parseAccelerations(s.accelerations),
+    ...parseAttitude(s.attitude),
   }));
 }
 
@@ -226,6 +243,7 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
       omega: stateMsg.argument_of_periapsis,
       nu: stateMsg.true_anomaly,
       ...parseAccelerations(stateMsg.accelerations),
+      ...parseAttitude(stateMsg.attitude),
     });
   } else if (msg.type === "info") {
     const infoMsg = msg as InfoMessage;

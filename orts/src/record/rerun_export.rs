@@ -84,20 +84,20 @@ pub fn save_as_rrd(
                 rec.log(format!("{rr_path}/vz"), &rerun::Scalars::new([vel[2]]))?;
 
                 // Attitude quaternion + angular velocity (optional)
-                if let Some(q_col) = store.columns.get(&Quaternion4D::component_name()) {
-                    if let Some(q) = q_col.get_row(i) {
-                        rec.log(format!("{rr_path}/qw"), &rerun::Scalars::new([q[0]]))?;
-                        rec.log(format!("{rr_path}/qx"), &rerun::Scalars::new([q[1]]))?;
-                        rec.log(format!("{rr_path}/qy"), &rerun::Scalars::new([q[2]]))?;
-                        rec.log(format!("{rr_path}/qz"), &rerun::Scalars::new([q[3]]))?;
-                    }
+                if let Some(q_col) = store.columns.get(&Quaternion4D::component_name())
+                    && let Some(q) = q_col.get_row(i)
+                {
+                    rec.log(format!("{rr_path}/qw"), &rerun::Scalars::new([q[0]]))?;
+                    rec.log(format!("{rr_path}/qx"), &rerun::Scalars::new([q[1]]))?;
+                    rec.log(format!("{rr_path}/qy"), &rerun::Scalars::new([q[2]]))?;
+                    rec.log(format!("{rr_path}/qz"), &rerun::Scalars::new([q[3]]))?;
                 }
-                if let Some(w_col) = store.columns.get(&AngularVelocity3D::component_name()) {
-                    if let Some(w) = w_col.get_row(i) {
-                        rec.log(format!("{rr_path}/wx"), &rerun::Scalars::new([w[0]]))?;
-                        rec.log(format!("{rr_path}/wy"), &rerun::Scalars::new([w[1]]))?;
-                        rec.log(format!("{rr_path}/wz"), &rerun::Scalars::new([w[2]]))?;
-                    }
+                if let Some(w_col) = store.columns.get(&AngularVelocity3D::component_name())
+                    && let Some(w) = w_col.get_row(i)
+                {
+                    rec.log(format!("{rr_path}/wx"), &rerun::Scalars::new([w[0]]))?;
+                    rec.log(format!("{rr_path}/wy"), &rerun::Scalars::new([w[1]]))?;
+                    rec.log(format!("{rr_path}/wz"), &rerun::Scalars::new([w[2]]))?;
                 }
             }
         }
