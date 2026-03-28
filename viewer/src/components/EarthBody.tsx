@@ -70,8 +70,10 @@ export function EarthBody({
   const [ready, setReady] = useState(false);
 
   // 1. Load 2K textures manually (no Suspense — keeps Canvas interactive)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: uniform values are synced by separate effects below; recreating the material on every uniform change would reload textures unnecessarily.
   useEffect(() => {
     let cancelled = false;
+    setReady(false);
     Promise.all([loadTexture(dayTexturePath), loadTexture(nightTexturePath)]).then(
       ([dayMap, nightMap]) => {
         if (cancelled || !dayMap || !nightMap) return;
@@ -79,7 +81,7 @@ export function EarthBody({
           uniforms: {
             dayMap: { value: dayMap },
             nightMap: { value: nightMap },
-            sunDirection: { value: new THREE.Vector3(0, 0, 1) },
+            sunDirection: { value: sunDirection.clone().normalize() },
             ambientIntensity: { value: ambientIntensity },
             sunIntensity: { value: sunIntensity },
           },
@@ -92,7 +94,7 @@ export function EarthBody({
     return () => {
       cancelled = true;
     };
-  }, [dayTexturePath, nightTexturePath, ambientIntensity, sunIntensity]);
+  }, [dayTexturePath, nightTexturePath]);
 
   // 2. Async upgrade to higher-resolution textures
   useEffect(() => {
@@ -154,24 +156,28 @@ export function EarthBody({
   }, [ready, targetResolution, textureBaseName, nightTextureBaseName]);
 
   // 3. Update uniforms reactively (no material recreation)
-  // `ready` dependency ensures uniforms are set after material creation.
+  // `ready` dependency ensures uniforms are set after material creation
+  // (materialRef is populated asynchronously and not tracked by React).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ready signals that materialRef.current is available.
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.sunDirection.value.copy(sunDirection).normalize();
     }
-  }, [sunDirection]);
+  }, [sunDirection, ready]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ready signals that materialRef.current is available.
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.ambientIntensity.value = ambientIntensity;
     }
-  }, [ambientIntensity]);
+  }, [ambientIntensity, ready]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ready signals that materialRef.current is available.
   useEffect(() => {
     if (materialRef.current) {
       materialRef.current.uniforms.sunIntensity.value = sunIntensity;
     }
-  }, [sunIntensity]);
+  }, [sunIntensity, ready]);
 
   return (
     <group>
