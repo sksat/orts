@@ -105,7 +105,7 @@ export function Satellite({
     // LVLH: compose inverse LVLH quaternion). Currently correct only in ECI/inertial view.
     const quaternion: [number, number, number, number] | undefined =
       position.qw != null
-        ? [position.qw, position.qx!, position.qy!, position.qz!]
+        ? [position.qw, position.qx ?? 0, position.qy ?? 0, position.qz ?? 0]
         : undefined;
     return (
       <Suspense fallback={<SphereMarker position={scenePos} color={color} />}>

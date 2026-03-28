@@ -41,7 +41,7 @@ test.beforeAll(async () => {
   ortsProcess = child;
 
   const port = await new Promise<number>((resolve, reject) => {
-    const rl = createInterface({ input: child.stderr! });
+    const rl = createInterface({ input: child.stderr ?? process.stdin });
     const timeout = setTimeout(() => {
       rl.close();
       reject(new Error("Timed out waiting for orts server to start"));
@@ -95,19 +95,21 @@ test("state messages include attitude payload when attitude config is set", asyn
             ws.close();
             const att = msg.attitude;
             resolve({
-              has_quaternion: Array.isArray(att.quaternion_wxyz) && att.quaternion_wxyz.length === 4,
+              has_quaternion:
+                Array.isArray(att.quaternion_wxyz) && att.quaternion_wxyz.length === 4,
               has_angular_velocity:
                 Array.isArray(att.angular_velocity_body) && att.angular_velocity_body.length === 3,
               has_source: typeof att.source === "string",
               source: att.source,
-              quaternion_is_unit: Math.abs(
-                Math.sqrt(
-                  att.quaternion_wxyz[0] ** 2 +
-                    att.quaternion_wxyz[1] ** 2 +
-                    att.quaternion_wxyz[2] ** 2 +
-                    att.quaternion_wxyz[3] ** 2,
-                ) - 1.0,
-              ) < 0.01,
+              quaternion_is_unit:
+                Math.abs(
+                  Math.sqrt(
+                    att.quaternion_wxyz[0] ** 2 +
+                      att.quaternion_wxyz[1] ** 2 +
+                      att.quaternion_wxyz[2] ** 2 +
+                      att.quaternion_wxyz[3] ** 2,
+                  ) - 1.0,
+                ) < 0.01,
             });
           }
         } catch {
@@ -123,7 +125,9 @@ test("state messages include attitude payload when attitude config is set", asyn
 
   console.log("Attitude payload:", attitude);
   expect(attitude.has_quaternion, "attitude must include quaternion_wxyz[4]").toBe(true);
-  expect(attitude.has_angular_velocity, "attitude must include angular_velocity_body[3]").toBe(true);
+  expect(attitude.has_angular_velocity, "attitude must include angular_velocity_body[3]").toBe(
+    true,
+  );
   expect(attitude.has_source, "attitude must include source").toBe(true);
   expect(attitude.source, "source should be propagated").toBe("propagated");
   expect(attitude.quaternion_is_unit, "quaternion must be unit length").toBe(true);
@@ -134,12 +138,11 @@ test("state messages without attitude config omit attitude field", async ({ page
   await page.goto("/");
 
   // Start a no-attitude server inline
-  const binary =
-    process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");
+  const binary = process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");
   const child = spawn(binary, ["serve", "--port", "0", "--sat", "altitude=400,id=no-att"]);
 
   const port = await new Promise<number>((resolve, reject) => {
-    const rl = createInterface({ input: child.stderr! });
+    const rl = createInterface({ input: child.stderr ?? process.stdin });
     const timeout = setTimeout(() => {
       rl.close();
       reject(new Error("Timed out waiting for no-attitude server"));
