@@ -120,20 +120,10 @@ test.describe("history trail after connect", () => {
       }, 50);
     });
 
-    // Navigate and connect to mock server
-    await page.goto("/");
+    // Navigate with auto-connect suppressed to avoid racing with the CI shared server
+    await page.goto("/?noAutoConnect=1");
 
-    // Disconnect from auto-connected default server if needed
-    // (auto-connect may have connected to ws://localhost:9001)
-    const disconnectBtn = page.locator(".ws-disconnect-btn");
-    try {
-      await disconnectBtn.waitFor({ state: "visible", timeout: 5000 });
-      await disconnectBtn.click();
-    } catch {
-      // Not connected; continue
-    }
-
-    // URL input is now enabled; point to mock server
+    // Connect to mock server
     const urlInput = page.locator(".ws-url-input");
     const mockPort = (wss.address() as AddressInfo).port;
     await urlInput.fill(`ws://localhost:${mockPort}`);

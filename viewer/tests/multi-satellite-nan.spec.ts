@@ -97,16 +97,9 @@ test.describe("multi-satellite NaN alignment", () => {
       }, 20);
     });
 
-    await page.goto("/");
-
-    // Disconnect from auto-connected default server
-    const disconnectBtn = page.locator(".ws-disconnect-btn");
-    try {
-      await disconnectBtn.waitFor({ state: "visible", timeout: 5000 });
-      await disconnectBtn.click();
-    } catch {
-      // Not connected; continue
-    }
+    // noAutoConnect suppresses the default auto-connect, avoiding a race
+    // with the CI shared server and ensuring a clean DuckDB state.
+    await page.goto("/?noAutoConnect=1");
 
     // Connect to mock server
     const urlInput = page.locator(".ws-url-input");

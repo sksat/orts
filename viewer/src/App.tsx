@@ -447,14 +447,16 @@ export function App() {
   // --- Auto-connect ---
   // Use ref for handleConnect to make the effect immune to callback identity changes.
   // The effect only re-fires on actual mode/connection changes.
+  // Suppressed when ?noAutoConnect=1 is in the URL (used by E2E tests with mock servers).
   const handleConnectRef = useRef(handleConnect);
   handleConnectRef.current = handleConnect;
+  const noAutoConnect = new URLSearchParams(window.location.search).has("noAutoConnect");
 
   useEffect(() => {
-    if (mode === "realtime" && !isConnected && !manualDisconnectRef.current) {
+    if (mode === "realtime" && !isConnected && !manualDisconnectRef.current && !noAutoConnect) {
       handleConnectRef.current();
     }
-  }, [mode, isConnected]);
+  }, [mode, isConnected, noAutoConnect]);
 
   // --- Mode switching ---
   const handleModeChange = useCallback(

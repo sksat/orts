@@ -13,11 +13,8 @@ let wsUrl: string;
 let configPath: string;
 
 test.beforeAll(async () => {
-  if (process.env.ORTS_WS_URL) {
-    wsUrl = process.env.ORTS_WS_URL;
-    console.log(`Using existing orts server at ${wsUrl}`);
-    return;
-  }
+  // Always spawn a dedicated server with attitude config — the CI shared
+  // server runs orbit-only and cannot satisfy attitude tests.
 
   // Write a temp config with attitude enabled
   const config = {

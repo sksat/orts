@@ -249,6 +249,7 @@ jobs:
         env:
           VIEWER_PORT: "5173"
           ORTS_WS_URL: "ws://localhost:9001/ws"
+          ORTS_BINARY: "${{ github.workspace }}/bin/orts"
 
       - name: Upload Playwright report
         if: failure()
