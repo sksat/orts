@@ -133,7 +133,9 @@ test.describe("multi-satellite NaN alignment", () => {
     // Debug: log ingest buffer state to diagnose empty DuckDB tables
     const bufferDebug = await page.evaluate(() => {
       const w = window as Record<string, unknown>;
-      const bufs = w.__debug_ingest_buffers as Map<string, { pendingCount: number; latestT: number }> | undefined;
+      const bufs = w.__debug_ingest_buffers as
+        | Map<string, { pendingCount: number; latestT: number }>
+        | undefined;
       const isMulti = w.__debug_is_multi_satellite;
       if (!bufs) return { bufferKeys: [], isMultiSatellite: isMulti, note: "no buffers exposed" };
       const info: Record<string, { pending: number; latestT: number }> = {};
@@ -160,7 +162,7 @@ test.describe("multi-satellite NaN alignment", () => {
           ).query(sql);
         let sso = 0,
           iss = 0;
-        let tables: string[] = [];
+        const tables: string[] = [];
         try {
           const res = await q("SHOW TABLES");
           const col = res.getChildAt(0);
