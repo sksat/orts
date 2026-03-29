@@ -127,12 +127,19 @@ export function App() {
   );
   const { conn, isReady: dbReady } = useDuckDB(orbitSchema);
 
-  // Expose DuckDB connection for E2E testing (dev mode only)
+  // Expose DuckDB connection and debug state for E2E testing (dev mode only)
   useEffect(() => {
     if (import.meta.env.DEV && conn) {
       (window as unknown as Record<string, unknown>).__duckdb_conn = conn;
     }
   }, [conn]);
+
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__debug_ingest_buffers = ingestBuffersRef.current;
+      (window as unknown as Record<string, unknown>).__debug_is_multi_satellite = isMultiSatellite;
+    }
+  });
 
   const detailBufferRef = useRef<OrbitPoint[]>([]);
   const streamingCountRef = useRef(0);

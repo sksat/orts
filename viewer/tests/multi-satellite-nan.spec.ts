@@ -130,6 +130,20 @@ test.describe("multi-satellite NaN alignment", () => {
       expect(hasConn, "DuckDB connection not yet available").toBe(true);
     }).toPass({ timeout: 30000, intervals: [500, 1000, 2000, 3000] });
 
+    // Debug: log ingest buffer state to diagnose empty DuckDB tables
+    const bufferDebug = await page.evaluate(() => {
+      const w = window as Record<string, unknown>;
+      const bufs = w.__debug_ingest_buffers as Map<string, { pendingCount: number; latestT: number }> | undefined;
+      const isMulti = w.__debug_is_multi_satellite;
+      if (!bufs) return { bufferKeys: [], isMultiSatellite: isMulti, note: "no buffers exposed" };
+      const info: Record<string, { pending: number; latestT: number }> = {};
+      for (const [key, buf] of bufs.entries()) {
+        info[key] = { pending: buf.pendingCount, latestT: buf.latestT };
+      }
+      return { bufferKeys: Array.from(bufs.keys()), buffers: info, isMultiSatellite: isMulti };
+    });
+    console.log("IngestBuffer debug:", JSON.stringify(bufferDebug));
+
     // Wait for DuckDB tables to be populated (history ingestion + query ticks)
     // Poll instead of fixed timeout — CI can be slow
     await expect(async () => {
