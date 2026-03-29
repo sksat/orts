@@ -19,7 +19,9 @@ export function buildCreateTableSQL(schema: TableSchema): string {
  */
 export function buildInsertSQL<T extends TimePoint>(schema: TableSchema<T>, points: T[]): string {
   if (points.length === 0) return "";
-  const values = points.map((p) => `(${schema.toRow(p).join(",")})`).join(",");
+  const sqlVal = (v: number | null | undefined): string =>
+    v == null || !Number.isFinite(v) ? "NULL" : String(v);
+  const values = points.map((p) => `(${schema.toRow(p).map(sqlVal).join(",")})`).join(",");
   return `INSERT INTO ${schema.tableName} VALUES ${values}`;
 }
 

@@ -24,7 +24,7 @@ export interface TableSchema<T extends TimePoint = TimePoint> {
   tableName: string;
   columns: ColumnDef[];
   derived: DerivedColumn[];
-  toRow(point: T): number[];
+  toRow(point: T): (number | null)[];
 }
 
 /** Generic chart data: keyed by column name. */

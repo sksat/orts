@@ -189,6 +189,14 @@ export function useMultiSatelliteStore<T extends TimePoint>(
             } catch (e) {
               console.warn(`useMultiSatelliteStore: rebuild failed for ${cfg.id}:`, e);
               buf.markRebuild(rebuildData);
+              // Dev-only: expose the error for E2E diagnostics
+              if (typeof window !== "undefined" && import.meta.env.DEV) {
+                (window as unknown as Record<string, unknown>).__debug_multi_sat_last_error = {
+                  satId: cfg.id,
+                  error: e instanceof Error ? e.message : String(e),
+                  stack: e instanceof Error ? e.stack : undefined,
+                };
+              }
             }
           } else {
             const newPoints = buf.drain();

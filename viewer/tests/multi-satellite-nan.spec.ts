@@ -204,6 +204,9 @@ test.describe("multi-satellite NaN alignment", () => {
         const lastHistory = w.__debug_last_history as
           | { historyLen: number; byIdCounts: Record<string, number> }
           | undefined;
+        const lastError = w.__debug_multi_sat_last_error as
+          | { satId: string; error: string; stack?: string }
+          | undefined;
         return {
           sso,
           iss,
@@ -214,6 +217,7 @@ test.describe("multi-satellite NaN alignment", () => {
           lastTick,
           lastIngest,
           lastHistory,
+          lastError,
         };
       });
       console.log("DuckDB poll:", JSON.stringify(result));

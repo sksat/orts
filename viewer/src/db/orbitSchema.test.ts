@@ -54,7 +54,7 @@ describe("createOrbitSchema", () => {
     };
     const row = schema.toRow(point);
     expect(row).toHaveLength(schema.columns.length);
-    expect(row.every((v) => typeof v === "number")).toBe(true);
+    expect(row.every((v) => typeof v === "number" || v === null)).toBe(true);
   });
 
   it("toRow does not produce undefined for any field", () => {
