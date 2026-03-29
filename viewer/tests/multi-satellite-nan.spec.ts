@@ -193,7 +193,28 @@ test.describe("multi-satellite NaN alignment", () => {
         const lastTick = w.__debug_multi_sat_last_tick as
           | { configIds: string[]; bufferKeys: string[]; missingBufferIds: string[] }
           | undefined;
-        return { sso, iss, tables, connNull: false, tickCount, insertCount, lastTick };
+        const lastIngest = w.__debug_multi_sat_last_ingest as
+          | Array<{
+              id: string;
+              rebuildLen: number | null;
+              drainLen: number;
+              ensureFailed: boolean;
+            }>
+          | undefined;
+        const lastHistory = w.__debug_last_history as
+          | { historyLen: number; byIdCounts: Record<string, number> }
+          | undefined;
+        return {
+          sso,
+          iss,
+          tables,
+          connNull: false,
+          tickCount,
+          insertCount,
+          lastTick,
+          lastIngest,
+          lastHistory,
+        };
       });
       console.log("DuckDB poll:", JSON.stringify(result));
       expect(result.sso).toBeGreaterThan(0);

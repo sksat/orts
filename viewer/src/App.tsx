@@ -247,6 +247,15 @@ export function App() {
     for (const [id, pts] of byId) {
       getOrCreateIngestBuffer(ingestBuffersRef.current, id).markRebuild(pts);
     }
+    // Dev-only: expose history arrival diagnostic for E2E tests
+    if (import.meta.env.DEV) {
+      const byIdCounts: Record<string, number> = {};
+      for (const [id, pts] of byId) byIdCounts[id] = pts.length;
+      (window as unknown as Record<string, unknown>).__debug_last_history = {
+        historyLen: points.length,
+        byIdCounts,
+      };
+    }
     streamingCountRef.current = 0;
   }, []);
 

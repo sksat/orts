@@ -142,13 +142,25 @@ export function useMultiSatelliteStore<T extends TimePoint>(
           w.__debug_multi_sat_last_tick = { configIds, bufferKeys, missingBufferIds };
         }
 
+        // Dev-only: per-tick ingest diagnostics
+        const tickIngest: Array<{
+          id: string;
+          rebuildLen: number | null;
+          drainLen: number;
+          ensureFailed: boolean;
+        }> = [];
+
         for (const cfg of configsRef.current) {
           const buf = buffersRef.current.get(cfg.id);
           if (!buf) continue;
 
           try {
             await ensureTable(cfg.id);
-          } catch {
+          } catch (e) {
+            if (typeof window !== "undefined" && import.meta.env.DEV) {
+              console.warn(`useMultiSatelliteStore: ensureTable failed for ${cfg.id}:`, e);
+            }
+            tickIngest.push({ id: cfg.id, rebuildLen: null, drainLen: 0, ensureFailed: true });
             continue;
           }
 
@@ -156,6 +168,12 @@ export function useMultiSatelliteStore<T extends TimePoint>(
 
           const rebuildData = buf.consumeRebuild();
           if (rebuildData !== null) {
+            tickIngest.push({
+              id: cfg.id,
+              rebuildLen: rebuildData.length,
+              drainLen: 0,
+              ensureFailed: false,
+            });
             try {
               await clearTable(conn, schema);
               await insertPoints(conn, schema, rebuildData);
@@ -174,6 +192,12 @@ export function useMultiSatelliteStore<T extends TimePoint>(
             }
           } else {
             const newPoints = buf.drain();
+            tickIngest.push({
+              id: cfg.id,
+              rebuildLen: null,
+              drainLen: newPoints.length,
+              ensureFailed: false,
+            });
             if (newPoints.length > 0) {
               try {
                 await insertPoints(conn, schema, newPoints);
@@ -184,6 +208,11 @@ export function useMultiSatelliteStore<T extends TimePoint>(
               }
             }
           }
+        }
+
+        // Dev-only: expose per-tick ingest details
+        if (typeof window !== "undefined" && import.meta.env.DEV && tickIngest.length > 0) {
+          (window as unknown as Record<string, unknown>).__debug_multi_sat_last_ingest = tickIngest;
         }
 
         tickCount++;
