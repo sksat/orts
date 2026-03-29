@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  batchEncodeEciHighLow,
   batchTransformToLvlh,
   batchTransformWithOffset,
+  encodeFloat64ToHighLow,
   transformToLvlh,
 } from "./coordTransform.js";
 import type { OrbitPoint } from "./orbit.js";
@@ -266,5 +268,115 @@ describe("batchTransformToLvlh", () => {
     expect(outBuf[0]).toBeCloseTo(single[0], 5);
     expect(outBuf[1]).toBeCloseTo(single[1], 5);
     expect(outBuf[2]).toBeCloseTo(single[2], 5);
+  });
+});
+
+// --- High/Low split encoding tests ---
+
+describe("encodeFloat64ToHighLow", () => {
+  it("round-trips a small value", () => {
+    const [h, l] = encodeFloat64ToHighLow(1.5);
+    expect(h + l).toBeCloseTo(1.5, 14);
+  });
+
+  it("round-trips a large orbital position (LEO ~7000 km)", () => {
+    const value = 7000.123456789;
+    const [h, l] = encodeFloat64ToHighLow(value);
+    expect(h + l).toBeCloseTo(value, 10);
+    expect(h % 65536).toBe(0);
+    expect(Math.abs(l)).toBeLessThan(65536);
+  });
+
+  it("round-trips a GEO distance (~42164 km)", () => {
+    const value = 42164.5;
+    const [h, l] = encodeFloat64ToHighLow(value);
+    expect(h + l).toBeCloseTo(value, 10);
+  });
+
+  it("round-trips negative values", () => {
+    const value = -4231.987654321;
+    const [h, l] = encodeFloat64ToHighLow(value);
+    expect(h + l).toBeCloseTo(value, 10);
+  });
+
+  it("handles zero", () => {
+    const [h, l] = encodeFloat64ToHighLow(0);
+    expect(h).toBe(0);
+    expect(l).toBe(0);
+  });
+
+  it("preserves relative precision for nearby GEO points", () => {
+    const a = 42164.5;
+    const b = 42165.5;
+    const [ah, al] = encodeFloat64ToHighLow(a);
+    const [bh, bl] = encodeFloat64ToHighLow(b);
+    // Simulate shader subtraction: (bh - ah) + (bl - al)
+    const diff = (bh - ah) + (bl - al);
+    expect(diff).toBeCloseTo(1.0, 6);
+  });
+
+  it("preserves relative precision at lunar distance (~384400 km)", () => {
+    const a = 384400.0;
+    const b = 384401.0;
+    const [ah, al] = encodeFloat64ToHighLow(a);
+    const [bh, bl] = encodeFloat64ToHighLow(b);
+    const diff = (bh - ah) + (bl - al);
+    expect(diff).toBeCloseTo(1.0, 4);
+  });
+});
+
+describe("batchEncodeEciHighLow", () => {
+  it("encodes points into dual buffers that reconstruct original values", () => {
+    const points = [
+      makePoint(0, 7000.123, -4231.456, 1500.789),
+      makePoint(10, -2000.321, 6500.654, -800.987),
+    ];
+    const highBuf = new Float32Array(6);
+    const lowBuf = new Float32Array(6);
+    batchEncodeEciHighLow(points, 0, 2, highBuf, lowBuf, 0);
+
+    for (let i = 0; i < 2; i++) {
+      const p = points[i];
+      const off = i * 3;
+      // f64 reconstruction: high + low ≈ original (sub-meter precision at ~7000 km)
+      expect(highBuf[off] + lowBuf[off]).toBeCloseTo(p.x, 3);
+      expect(highBuf[off + 1] + lowBuf[off + 1]).toBeCloseTo(p.y, 3);
+      expect(highBuf[off + 2] + lowBuf[off + 2]).toBeCloseTo(p.z, 3);
+    }
+  });
+
+  it("respects from/to range and outOffset", () => {
+    const points = [
+      makePoint(0, 1000, 2000, 3000),
+      makePoint(10, 4000, 5000, 6000),
+      makePoint(20, 7000, 8000, 9000),
+    ];
+    const highBuf = new Float32Array(12);
+    const lowBuf = new Float32Array(12);
+    batchEncodeEciHighLow(points, 1, 3, highBuf, lowBuf, 1);
+
+    // points[1] written at vertex 1 (offset 3)
+    expect(highBuf[3] + lowBuf[3]).toBeCloseTo(4000, 6);
+    // vertex 0 should be untouched
+    expect(highBuf[0]).toBe(0);
+    expect(lowBuf[0]).toBe(0);
+  });
+
+  it("simulated shader subtraction gives correct relative position", () => {
+    const sat = makePoint(0, 7000, 0, 0);
+    const trail = makePoint(10, 7100, 50, -30);
+    const points = [sat, trail];
+    const highBuf = new Float32Array(6);
+    const lowBuf = new Float32Array(6);
+    batchEncodeEciHighLow(points, 0, 2, highBuf, lowBuf, 0);
+
+    // Simulate shader: (trailHigh - satHigh) + (trailLow - satLow)
+    const dx = (highBuf[3] - highBuf[0]) + (lowBuf[3] - lowBuf[0]);
+    const dy = (highBuf[4] - highBuf[1]) + (lowBuf[4] - lowBuf[1]);
+    const dz = (highBuf[5] - highBuf[2]) + (lowBuf[5] - lowBuf[2]);
+
+    expect(dx).toBeCloseTo(100, 4);
+    expect(dy).toBeCloseTo(50, 4);
+    expect(dz).toBeCloseTo(-30, 4);
   });
 });
