@@ -19,6 +19,7 @@ export {
   buildCompactKeepersSQL,
   buildCreateTableSQL,
   buildDerivedQuery,
+  buildIncrementalQuery,
   buildInsertSQL,
   COMPACT_DEFAULTS,
   clearTable,
@@ -26,7 +27,6 @@ export {
   createTable,
   insertPoints,
   queryDerived,
-  buildIncrementalQuery,
   queryDerivedIncremental,
 } from "./db/store.js";
 export type { UseDuckDBReturn } from "./hooks/useDuckDB.js";
@@ -56,7 +56,6 @@ export type {
   NamedTimeSeries,
 } from "./utils/alignTimeSeries.js";
 export { alignTimeSeries } from "./utils/alignTimeSeries.js";
-export { mergeChartData, trimChartDataLeft } from "./utils/mergeChartData.js";
 // Utilities
 export {
   lowerBound,
@@ -64,3 +63,4 @@ export {
   sliceArrays,
   upperBound,
 } from "./utils/chartViewport.js";
+export { mergeChartData, trimChartDataLeft } from "./utils/mergeChartData.js";

@@ -311,7 +311,7 @@ describe("encodeFloat64ToHighLow", () => {
     const [ah, al] = encodeFloat64ToHighLow(a);
     const [bh, bl] = encodeFloat64ToHighLow(b);
     // Simulate shader subtraction: (bh - ah) + (bl - al)
-    const diff = (bh - ah) + (bl - al);
+    const diff = bh - ah + (bl - al);
     expect(diff).toBeCloseTo(1.0, 6);
   });
 
@@ -320,7 +320,7 @@ describe("encodeFloat64ToHighLow", () => {
     const b = 384401.0;
     const [ah, al] = encodeFloat64ToHighLow(a);
     const [bh, bl] = encodeFloat64ToHighLow(b);
-    const diff = (bh - ah) + (bl - al);
+    const diff = bh - ah + (bl - al);
     expect(diff).toBeCloseTo(1.0, 4);
   });
 });
@@ -371,9 +371,9 @@ describe("batchEncodeEciHighLow", () => {
     batchEncodeEciHighLow(points, 0, 2, highBuf, lowBuf, 0);
 
     // Simulate shader: (trailHigh - satHigh) + (trailLow - satLow)
-    const dx = (highBuf[3] - highBuf[0]) + (lowBuf[3] - lowBuf[0]);
-    const dy = (highBuf[4] - highBuf[1]) + (lowBuf[4] - lowBuf[1]);
-    const dz = (highBuf[5] - highBuf[2]) + (lowBuf[5] - lowBuf[2]);
+    const dx = highBuf[3] - highBuf[0] + (lowBuf[3] - lowBuf[0]);
+    const dy = highBuf[4] - highBuf[1] + (lowBuf[4] - lowBuf[1]);
+    const dz = highBuf[5] - highBuf[2] + (lowBuf[5] - lowBuf[2]);
 
     expect(dx).toBeCloseTo(100, 4);
     expect(dy).toBeCloseTo(50, 4);

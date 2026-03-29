@@ -164,14 +164,7 @@ export function OrbitTrail({
         from,
       );
     } else {
-      batchEncodeEciHighLow(
-        src,
-        from,
-        to,
-        positionHighRef.current,
-        positionLowRef.current,
-        from,
-      );
+      batchEncodeEciHighLow(src, from, to, positionHighRef.current, positionLowRef.current, from);
     }
   }
 
