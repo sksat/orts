@@ -56,6 +56,7 @@ export type {
   NamedTimeSeries,
 } from "./utils/alignTimeSeries.js";
 export { alignTimeSeries } from "./utils/alignTimeSeries.js";
+export { ChartBuffer } from "./utils/ChartBuffer.js";
 // Utilities
 export {
   lowerBound,
