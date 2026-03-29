@@ -41,7 +41,10 @@ export function buildDerivedQuery(
   maxPoints?: number,
   tMax?: number,
 ): string {
-  const whereClause = tMin != null ? `WHERE t >= ${tMin}` : "";
+  const conditions: string[] = [];
+  if (tMin != null) conditions.push(`t >= ${tMin}`);
+  if (tMax != null) conditions.push(`t <= ${tMax}`);
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   const maxPts = maxPoints ?? 0;
 
   // Build the SELECT column list: always include t, plus derived expressions

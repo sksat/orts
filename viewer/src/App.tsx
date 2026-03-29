@@ -10,6 +10,7 @@ import {
   type ChartDataMap,
   IngestBuffer,
   quantizeChartTime,
+  queryDerived,
   sliceArrays,
   type TimeRange,
   useDuckDB,
@@ -199,6 +200,8 @@ export function App() {
   const chartBufferRef = useRef(new ChartBuffer(CHART_COLUMNS, 50000));
   const [chartBufferVersion, setChartBufferVersion] = useState(0);
   const chartDirtyRef = useRef(false);
+  // Result of local DuckDB zoom query (replaces server query_range).
+  const [localZoomData, setLocalZoomData] = useState<ChartDataMap | null>(null);
 
   // --- Multi-satellite detection ---
   const isMultiSatellite = mode === "realtime" && simInfo != null && simInfo.satellites.length > 1;
@@ -473,19 +476,44 @@ export function App() {
           }
         }
 
-        // TODO: query local DuckDB before falling back to server.
-        // For now, fall back to server query_range.
-        const satId = simInfo?.satellites[0]?.id ?? "default";
-        send({
-          type: "query_range",
-          t_min: range.tMin,
-          t_max: range.tMax,
-          max_points: 2000,
-          satellite_id: satId,
-        });
+        // Query local DuckDB instead of server query_range.
+        // Note: DuckDB may lag behind by up to one ingest tick (~250ms)
+        // since data is flushed asynchronously. This is acceptable for
+        // zoom operations where sub-second freshness isn't critical.
+        if (conn) {
+          queryDerived(conn, orbitSchema, range.tMin, 2000, range.tMax)
+            .then((data) => {
+              // Check if this result is still relevant (not superseded by a newer zoom)
+              const current = latestRequestedRangeRef.current;
+              if (current && current.tMin === range.tMin && current.tMax === range.tMax) {
+                setLocalZoomData(data);
+              }
+            })
+            .catch((e) => {
+              console.warn("Local DuckDB zoom query failed, falling back to server:", e);
+              const satId = simInfo?.satellites[0]?.id ?? "default";
+              send({
+                type: "query_range",
+                t_min: range.tMin,
+                t_max: range.tMax,
+                max_points: 2000,
+                satellite_id: satId,
+              });
+            });
+        } else {
+          // No DuckDB connection — fall back to server query_range.
+          const satId = simInfo?.satellites[0]?.id ?? "default";
+          send({
+            type: "query_range",
+            t_min: range.tMin,
+            t_max: range.tMax,
+            max_points: 2000,
+            satellite_id: satId,
+          });
+        }
       }, 200);
     },
-    [send, isMultiSatellite, simInfo, realtimePlayback.snapshot.isLive],
+    [conn, orbitSchema, send, isMultiSatellite, simInfo, realtimePlayback.snapshot.isLive],
   );
 
   // --- Replay: file loading ---
@@ -582,6 +610,7 @@ export function App() {
     setChartBufferVersion((v) => v + 1);
     lastSentRangeRef.current = null;
     latestRequestedRangeRef.current = null;
+    setLocalZoomData(null);
     if (chartZoomTimerRef.current != null) {
       clearTimeout(chartZoomTimerRef.current);
       chartZoomTimerRef.current = null;
@@ -619,6 +648,8 @@ export function App() {
       if (mode === "realtime" && isConnected) disconnect();
       // Reset manual disconnect flag so auto-connect works when switching back to realtime.
       if (newMode === "realtime") manualDisconnectRef.current = false;
+      setLocalZoomData(null);
+      lastSentRangeRef.current = null;
       setMode(newMode);
     },
     [mode, isConnected, disconnect],
@@ -731,6 +762,7 @@ export function App() {
   const prevTimeRangeRef = useRef(timeRange);
   if ((isLive && !prevIsLiveRef.current) || timeRange !== prevTimeRangeRef.current) {
     lastSentRangeRef.current = null;
+    setLocalZoomData(null);
   }
   prevIsLiveRef.current = isLive;
   prevTimeRangeRef.current = timeRange;
@@ -738,9 +770,9 @@ export function App() {
   // Choose data source:
   // 1. Live + no zoom → ChartBuffer (instant)
   // 2. Live + zoom covered by ChartBuffer → ChartBuffer.getWindow (instant)
-  // 3. Live + zoom outside ChartBuffer → DuckDB query_range response
-  // 4. Non-live → DuckDB
-  const visibleChartData = liveChartData ?? duckdbChartData;
+  // 3. Zoom outside ChartBuffer → local DuckDB query result
+  // 4. Non-live / fallback → DuckDB useTimeSeriesStore
+  const visibleChartData = liveChartData ?? localZoomData ?? duckdbChartData;
 
   // --- Derived values ---
   const satellitePosition =
