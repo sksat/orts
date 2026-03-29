@@ -132,10 +132,14 @@ export function useMultiSatelliteStore<T extends TimePoint>(
       const tick = async () => {
         if (cancelled) return;
 
-        // Dev-only: increment tick counter for E2E diagnostics
+        // Dev-only: increment tick counter and expose loop state for E2E diagnostics
         if (typeof window !== "undefined" && import.meta.env.DEV) {
-          (window as unknown as Record<string, unknown>).__debug_multi_sat_tick =
-            ((window as unknown as Record<string, unknown>).__debug_multi_sat_tick as number) + 1;
+          const w = window as unknown as Record<string, unknown>;
+          w.__debug_multi_sat_tick = ((w.__debug_multi_sat_tick as number) ?? 0) + 1;
+          const configIds = configsRef.current.map((c) => c.id);
+          const bufferKeys = Array.from(buffersRef.current.keys());
+          const missingBufferIds = configIds.filter((id) => !buffersRef.current.has(id));
+          w.__debug_multi_sat_last_tick = { configIds, bufferKeys, missingBufferIds };
         }
 
         for (const cfg of configsRef.current) {

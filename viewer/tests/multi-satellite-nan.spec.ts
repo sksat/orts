@@ -190,7 +190,10 @@ test.describe("multi-satellite NaN alignment", () => {
         const w = window as Record<string, unknown>;
         const tickCount = w.__debug_multi_sat_tick as number | undefined;
         const insertCount = w.__debug_multi_sat_inserts as number | undefined;
-        return { sso, iss, tables, connNull: false, tickCount, insertCount };
+        const lastTick = w.__debug_multi_sat_last_tick as
+          | { configIds: string[]; bufferKeys: string[]; missingBufferIds: string[] }
+          | undefined;
+        return { sso, iss, tables, connNull: false, tickCount, insertCount, lastTick };
       });
       console.log("DuckDB poll:", JSON.stringify(result));
       expect(result.sso).toBeGreaterThan(0);
