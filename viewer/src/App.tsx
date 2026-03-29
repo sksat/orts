@@ -134,13 +134,6 @@ export function App() {
     }
   }, [conn]);
 
-  useEffect(() => {
-    if (import.meta.env.DEV) {
-      (window as unknown as Record<string, unknown>).__debug_ingest_buffers = ingestBuffersRef.current;
-      (window as unknown as Record<string, unknown>).__debug_is_multi_satellite = isMultiSatellite;
-    }
-  });
-
   const detailBufferRef = useRef<OrbitPoint[]>([]);
   const streamingCountRef = useRef(0);
 
@@ -153,6 +146,15 @@ export function App() {
 
   // --- Multi-satellite detection ---
   const isMultiSatellite = mode === "realtime" && simInfo != null && simInfo.satellites.length > 1;
+
+  // Expose debug state for E2E testing (dev mode only)
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__debug_ingest_buffers =
+        ingestBuffersRef.current;
+      (window as unknown as Record<string, unknown>).__debug_is_multi_satellite = isMultiSatellite;
+    }
+  }, [isMultiSatellite]);
 
   // Keep singleIngestBufferRef pointing to the first satellite's buffer for single-sat mode
   useEffect(() => {
