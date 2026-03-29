@@ -5,6 +5,7 @@ import {
   buildCompactKeepersSQL,
   buildCreateTableSQL,
   buildDerivedQuery,
+  buildIncrementalQuery,
   buildInsertSQL,
 } from "./store.js";
 
@@ -314,5 +315,37 @@ describe("buildCompactDeleteSQL", () => {
   it("uses the correct cutoff value", () => {
     const sql = buildCompactDeleteSQL("data", 99.9);
     expect(sql).toContain("WHERE t < 99.9");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildIncrementalQuery
+// ---------------------------------------------------------------------------
+
+describe("buildIncrementalQuery", () => {
+  it("generates simple SELECT with derived columns and WHERE t > tAfter", () => {
+    const sql = buildIncrementalQuery(testSchema, 100.5);
+    expect(sql).toBe(
+      "SELECT t, value * 2 AS doubled, value + extra AS sum FROM test_data WHERE t > 100.5 ORDER BY t",
+    );
+  });
+
+  it("handles schema with no derived columns (t only)", () => {
+    const sql = buildIncrementalQuery(noDerivedSchema, 50);
+    expect(sql).toBe("SELECT t FROM raw_data WHERE t > 50 ORDER BY t");
+  });
+
+  it("uses strict inequality (>) not >=", () => {
+    const sql = buildIncrementalQuery(testSchema, 0);
+    expect(sql).toContain("WHERE t > 0");
+    expect(sql).not.toContain(">=");
+  });
+
+  it("does not include downsampling CTEs", () => {
+    const sql = buildIncrementalQuery(testSchema, 100);
+    expect(sql).not.toContain("WITH");
+    expect(sql).not.toContain("ROW_NUMBER");
+    expect(sql).not.toContain("NTILE");
+    expect(sql).not.toContain("bucket");
   });
 });

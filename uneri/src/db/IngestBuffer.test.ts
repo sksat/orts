@@ -213,6 +213,48 @@ describe("IngestBuffer", () => {
     expect(buf.latestT).toBe(500);
   });
 
+  // --- prependMany ---
+
+  it("prependMany inserts at the front of pending", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    buf.push(makePoint(20));
+    buf.push(makePoint(30));
+
+    buf.prependMany([makePoint(0), makePoint(10)]);
+
+    const drained = buf.drain();
+    expect(drained).toHaveLength(4);
+    expect(drained[0].t).toBe(0);
+    expect(drained[1].t).toBe(10);
+    expect(drained[2].t).toBe(20);
+    expect(drained[3].t).toBe(30);
+  });
+
+  it("prependMany preserves order for insert failure re-queue scenario", () => {
+    const buf = new IngestBuffer<TestPoint>();
+
+    // Simulate: drain batch [0,10,20], then new points [30,40] arrive during insert
+    buf.pushMany([makePoint(0), makePoint(10), makePoint(20)]);
+    const batch = buf.drain();
+    expect(batch).toHaveLength(3);
+
+    // New points arrive during async insert
+    buf.push(makePoint(30));
+    buf.push(makePoint(40));
+
+    // Insert fails → re-queue failed batch at front
+    buf.prependMany(batch);
+
+    const retryDrain = buf.drain();
+    expect(retryDrain).toHaveLength(5);
+    // Order must be: failed batch first, then new points
+    expect(retryDrain[0].t).toBe(0);
+    expect(retryDrain[1].t).toBe(10);
+    expect(retryDrain[2].t).toBe(20);
+    expect(retryDrain[3].t).toBe(30);
+    expect(retryDrain[4].t).toBe(40);
+  });
+
   it("works with complex multi-field types", () => {
     interface SensorPoint extends TimePoint {
       t: number;

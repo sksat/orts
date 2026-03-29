@@ -7,21 +7,37 @@ import type { TimePoint } from "../types.js";
  * via `drain()`. The drain pattern decouples data arrival from
  * DuckDB insertion timing (polling interval), avoiding the need
  * for index-based tracking.
+ *
+ * **Contract**: `t` values pushed to this buffer MUST be strictly
+ * monotonically increasing. Out-of-order data will be silently missed
+ * by incremental queries. This is guaranteed by the orts simulator
+ * (simulation time always advances). Consumers using uneri with other
+ * data sources must enforce this property.
  */
 export class IngestBuffer<T extends TimePoint = TimePoint> {
   private pending: T[] = [];
   private _latestT = -Infinity;
   private _rebuildData: T[] | null = null;
 
-  /** Push a single point. */
+  /** Push a single point. Must satisfy t > latestT (strictly increasing). */
   push(point: T): void {
+    if (
+      typeof process !== "undefined" &&
+      process.env.NODE_ENV !== "production" &&
+      this._latestT !== -Infinity &&
+      point.t <= this._latestT
+    ) {
+      console.warn(
+        `IngestBuffer: t=${point.t} is not strictly increasing (latestT=${this._latestT})`,
+      );
+    }
     this.pending.push(point);
     if (point.t > this._latestT) {
       this._latestT = point.t;
     }
   }
 
-  /** Push multiple points at once. */
+  /** Push multiple points at once (appended to end). */
   pushMany(points: T[]): void {
     for (const p of points) {
       this.pending.push(p);
@@ -29,6 +45,16 @@ export class IngestBuffer<T extends TimePoint = TimePoint> {
         this._latestT = p.t;
       }
     }
+  }
+
+  /**
+   * Prepend points to the front of the buffer.
+   * Used for re-queuing failed insert batches: since new points may have
+   * arrived in `pending` during the async insert, appending the failed
+   * batch would break t-monotonicity. Prepending preserves order.
+   */
+  prependMany(points: T[]): void {
+    this.pending.unshift(...points);
   }
 
   /**

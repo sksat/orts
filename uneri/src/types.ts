@@ -12,7 +12,14 @@ export interface ColumnDef {
   type: ColumnType;
 }
 
-/** Defines a derived quantity computed from base columns via SQL. */
+/**
+ * Defines a derived quantity computed from base columns via SQL.
+ *
+ * **Constraint**: `sql` MUST be a row-local expression — it may only
+ * reference columns from the same row. Window functions (LAG, LEAD,
+ * AVG(...) OVER, ROW_NUMBER OVER, etc.) and correlated subqueries are
+ * NOT supported and will produce incorrect results with incremental queries.
+ */
 export interface DerivedColumn {
   name: string;
   sql: string;

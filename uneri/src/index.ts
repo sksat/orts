@@ -26,6 +26,8 @@ export {
   createTable,
   insertPoints,
   queryDerived,
+  buildIncrementalQuery,
+  queryDerivedIncremental,
 } from "./db/store.js";
 export type { UseDuckDBReturn } from "./hooks/useDuckDB.js";
 // Hooks
@@ -54,6 +56,7 @@ export type {
   NamedTimeSeries,
 } from "./utils/alignTimeSeries.js";
 export { alignTimeSeries } from "./utils/alignTimeSeries.js";
+export { mergeChartData, trimChartDataLeft } from "./utils/mergeChartData.js";
 // Utilities
 export {
   lowerBound,

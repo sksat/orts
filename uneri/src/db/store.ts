@@ -177,6 +177,48 @@ export async function queryDerived(
   return map;
 }
 
+// ---------------------------------------------------------------------------
+// Incremental query (no downsampling — for hot path)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a simple SELECT for new rows after `tAfter`, with no downsampling.
+ * Used for the hot path in cold/hot incremental updates.
+ *
+ * Relies on the monotonicity contract: t is strictly increasing, so
+ * `t > tAfter` with strict inequality avoids re-fetching the boundary point.
+ *
+ * Derived columns must be row-local (no window functions or aggregation).
+ */
+export function buildIncrementalQuery(schema: TableSchema, tAfter: number): string {
+  const derivedCols = schema.derived.map((d) => `${d.sql} AS ${d.name}`);
+  const selectCols = derivedCols.length > 0 ? `t, ${derivedCols.join(", ")}` : "t";
+  return `SELECT ${selectCols} FROM ${schema.tableName} WHERE t > ${tAfter} ORDER BY t`;
+}
+
+/**
+ * Run the incremental query and return results as a ChartDataMap.
+ * No downsampling — returns all rows matching the condition.
+ */
+export async function queryDerivedIncremental(
+  conn: AsyncDuckDBConnection,
+  schema: TableSchema,
+  tAfter: number,
+): Promise<ChartDataMap> {
+  const sql = buildIncrementalQuery(schema, tAfter);
+  const result = await conn.query(sql);
+
+  const t = result.getChildAt(0)!.toArray() as Float64Array;
+  const map: ChartDataMap = { t };
+
+  for (let i = 0; i < schema.derived.length; i++) {
+    const col = result.getChildAt(i + 1)!.toArray() as Float64Array;
+    map[schema.derived[i].name] = col;
+  }
+
+  return map;
+}
+
 /** Configuration for periodic DuckDB compaction. */
 export interface CompactOptions {
   /** Compact when total rows exceed this threshold. */
