@@ -443,3 +443,76 @@ SOI 切り替え時の注意点:
 - **Context パターン**: `DynamicalSystem::derivatives()` に渡す環境情報 (暦元、天体暦、大気モデル) は将来的に Context 構造体に統合する可能性がある。現状は各 system のフィールドで保持
 - **trait object ポリシー**: モデルは `Box<dyn Model<ConcreteState>>` で実行時差し替え可能。`GravityField`, `AtmosphereModel` 等の環境 trait も `Box<dyn Trait>` で差し替え可能。`impl GravityField for Box<dyn GravityField>` はビルダーヘルパー用の便利 impl であり、性能クリティカルなパスでは `SpacecraftDynamics<G>` のモノモーフィゼーションを使用する
 - **feature gate**: 重いモデル (NRLMSISE-00, Rerun, WebSocket, CSSI HTTP) は feature flag で分離。Rerun は orts の default feature
+
+## Viewer データフローアーキテクチャ
+
+### 設計原則
+
+- **DuckDB-WASM はローカルキャッシュ**: サーバーへのクエリを減らすための履歴ストア。リアルタイム表示のクリティカルパスには置かない
+- **live 表示は JS バッファが正**: 3D（TrailBuffer）もチャート（ChartBuffer）もサーバーからのストリーミングデータを直接表示。DuckDB を経由しない
+- **derived 値はサーバーで事前計算**: altitude, energy, angular_momentum 等のチャート用 derived 値はサーバーが計算して state メッセージに含める。viewer 側での再計算を排除
+
+### リアルタイムモードのデータフロー
+
+```
+WS state msg (server-computed derived values 込み)
+  ├→ TrailBuffer (3D 用)
+  │    - OrbitPoint 全体を保持、補間・世代管理
+  │    - OrbitTrail GPU shader が直接読み取り
+  │
+  ├→ ChartBuffer (チャート用、列指向 ring buffer)
+  │    - t + metric ごとの Float64Array
+  │    - uPlot.setData() に即時反映（DuckDB バイパス）
+  │
+  └→ IngestBuffer → DuckDB (定期バッチ insert)
+       - 表示には使わない（バックグラウンド蓄積）
+       - 履歴クエリ・replay 用のキャッシュ
+```
+
+### チャートデータソースの切り替え
+
+チャートの描画ソースは UI 状態に基づいて選択する:
+
+| 状態 | データソース | 理由 |
+|---|---|---|
+| live-follow | ChartBuffer (JS) | 最新データを即座に反映 |
+| paused / seek | ChartBuffer の coverage 内なら JS、外なら DuckDB | ローカルで解決 |
+| zoom（過去方向） | DuckDB (downsampled query) | 履歴の長期トレンドを効率的に表示 |
+| replay | DuckDB | CSV ロード → 任意 time-range クエリ |
+
+切り替え条件: `requestedRange ⊆ chartBuffer.coverage` なら JS バッファ、はみ出したら DuckDB にフォールバック。
+
+### DuckDB の役割
+
+1. **履歴キャッシュ**: 全 state データを蓄積。zoom/seek 時のローカルクエリに使用
+2. **downsampling**: 長時間データのバケット分割 + 間引き表示
+3. **query_range の代替**: サーバーへの `query_range` リクエストを削減。DuckDB に保持済みの時間帯はローカルで解決し、未保持の時間帯だけサーバーに問い合わせる
+4. **compaction**: 古いデータを定期的に間引いてメモリ使用量を制御
+
+### JS バッファと DuckDB の一貫性
+
+完全一致は求めない。「live source が正、DuckDB は eventually consistent cache」と定義する:
+
+- ChartBuffer は直近の全データを full-resolution で保持
+- DuckDB は compaction で古いデータが間引かれうる
+- source 切替時は ChartBuffer と DuckDB の overlap 区間で stitch（境界の段差を防止）
+- live 中は ChartBuffer のみを参照するため、DuckDB の状態は表示に影響しない
+
+### サーバー側 state メッセージの derived 値
+
+チャートに必要な derived 値はサーバーで事前計算する。`state`, `history`, `history_detail` で共通の構造を使用:
+
+- 軌道要素: `a`, `e`, `inc`, `raan`, `omega`, `nu`（既に含まれている）
+- derived: `altitude`, `specific_energy`, `angular_momentum`, `velocity_mag`
+- 摂動加速度: 各モデルの加速度ノルム（既に含まれている）
+
+### uneri ライブラリの責務
+
+| 層 | 責務 | 所属 |
+|---|---|---|
+| ChartBuffer | 列指向 ring buffer、append、getWindow | uneri |
+| IngestBuffer | DuckDB ingest 用のステージングバッファ | uneri |
+| DuckDB ingest/query | insert, queryDerived, compact | uneri |
+| TimeSeriesChart | uPlot ラッパー | uneri |
+| source 切替ポリシー | live/paused/zoom でどのソースを使うか | viewer |
+| WS 連携 | state メッセージの受信とルーティング | viewer |
