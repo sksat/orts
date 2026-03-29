@@ -43,6 +43,15 @@ pub struct HistoryState {
     pub raan: f64,
     pub argument_of_periapsis: f64,
     pub true_anomaly: f64,
+    /// Pre-computed derived values for chart display.
+    #[serde(default)]
+    pub altitude: f64,
+    #[serde(default)]
+    pub specific_energy: f64,
+    #[serde(default)]
+    pub angular_momentum: f64,
+    #[serde(default)]
+    pub velocity_mag: f64,
     /// Per-force acceleration magnitudes [km/s²]: "gravity", "drag", "srp", etc.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub accelerations: HashMap<String, f64>,
@@ -51,17 +60,22 @@ pub struct HistoryState {
     pub attitude: Option<AttitudePayload>,
 }
 
-/// Create a HistoryState from position/velocity, computing Keplerian elements.
+/// Create a HistoryState from position/velocity, computing Keplerian elements and derived values.
+#[allow(clippy::too_many_arguments)]
 pub fn make_history_state(
     satellite_id: &str,
     t: f64,
     pos: &nalgebra::Vector3<f64>,
     vel: &nalgebra::Vector3<f64>,
     mu: f64,
+    body_radius: f64,
     accelerations: HashMap<String, f64>,
     attitude: Option<AttitudePayload>,
 ) -> HistoryState {
     let elements = KeplerianElements::from_state_vector(pos, vel, mu);
+    let r_mag = pos.magnitude();
+    let v_mag = vel.magnitude();
+    let h = pos.cross(vel);
     HistoryState {
         satellite_id: satellite_id.to_string(),
         t,
@@ -73,6 +87,10 @@ pub fn make_history_state(
         raan: elements.raan,
         argument_of_periapsis: elements.argument_of_periapsis,
         true_anomaly: elements.true_anomaly,
+        altitude: r_mag - body_radius,
+        specific_energy: v_mag * v_mag / 2.0 - mu / r_mag,
+        angular_momentum: h.magnitude(),
+        velocity_mag: v_mag,
         accelerations,
         attitude,
     }
@@ -124,6 +142,7 @@ mod tests {
     use super::*;
 
     const TEST_MU: f64 = 398600.4418;
+    const TEST_BODY_RADIUS: f64 = 6378.137;
 
     #[test]
     fn history_state_has_satellite_id() {
@@ -133,6 +152,7 @@ mod tests {
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
             TEST_MU,
+            TEST_BODY_RADIUS,
             HashMap::new(),
             None,
         );
@@ -149,6 +169,7 @@ mod tests {
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
             TEST_MU,
+            TEST_BODY_RADIUS,
             HashMap::new(),
             None,
         );
@@ -189,6 +210,7 @@ mod tests {
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
             TEST_MU,
+            TEST_BODY_RADIUS,
             HashMap::new(),
             attitude,
         );
@@ -203,6 +225,7 @@ mod tests {
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
             TEST_MU,
+            TEST_BODY_RADIUS,
             HashMap::new(),
             Some(AttitudePayload {
                 quaternion_wxyz: [0.707, 0.0, 0.707, 0.0],

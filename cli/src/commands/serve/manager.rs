@@ -209,7 +209,8 @@ pub(super) async fn simulation_manager_with_params(
     tx: broadcast::Sender<String>,
 ) {
     let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
-    let history = HistoryBuffer::new(5000, data_dir, params.mu);
+    let body_radius = params.body.properties().radius;
+    let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
     match run_simulation_loop(params, cmd_rx, tx.clone(), history).await {
         (LoopExit::Terminated, mut returned_rx) => {
             // Legacy path: after terminate, go idle and allow restart.
@@ -322,7 +323,8 @@ pub(super) async fn simulation_manager(
     while let Some(config) = next_config {
         let params = Arc::new(SimParams::from_config(&config));
         let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
-        let history = HistoryBuffer::new(5000, data_dir, params.mu);
+        let body_radius = params.body.properties().radius;
+        let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
         eprintln!("Simulation manager: starting simulation...");
         match run_simulation_loop(params, cmd_rx, tx.clone(), history).await {
             (LoopExit::Terminated, returned_rx) => {
@@ -536,6 +538,7 @@ impl SimLoopContext {
         let _ = tx.send(info_json.clone());
 
         // Emit initial states
+        let body_radius = params.body.properties().radius;
         #[allow(clippy::needless_range_loop)]
         for i in 0..group.len() {
             let snap = group.snapshot(i, 0.0);
@@ -545,6 +548,7 @@ impl SimLoopContext {
                 snap.orbit.position(),
                 snap.orbit.velocity(),
                 params.mu,
+                body_radius,
                 snap.accels.clone(),
                 snap.attitude.clone(),
             );
@@ -554,6 +558,7 @@ impl SimLoopContext {
                 0.0,
                 &snap.orbit,
                 params.mu,
+                body_radius,
                 snap.accels,
                 snap.attitude,
             );
@@ -690,12 +695,14 @@ impl SimLoopContext {
                     next_save_t: self.current_t + self.params.output_interval,
                 });
 
+                let body_radius = self.params.body.properties().radius;
                 let hs = make_history_state(
                     &sat_info.id,
                     self.current_t,
                     initial.position(),
                     initial.velocity(),
                     self.params.mu,
+                    body_radius,
                     std::collections::HashMap::new(),
                     None,
                 );
@@ -705,6 +712,7 @@ impl SimLoopContext {
                     self.current_t,
                     &initial,
                     self.params.mu,
+                    body_radius,
                     std::collections::HashMap::new(),
                     None,
                 );
@@ -739,6 +747,7 @@ impl SimLoopContext {
     /// Propagate one chunk of simulation time, collecting outputs.
     fn propagate_chunk(&mut self, outputs_per_chunk: usize) -> Vec<crate::sim::core::HistoryState> {
         let mut all_outputs = Vec::new();
+        let body_radius = self.params.body.properties().radius;
 
         for _ in 0..outputs_per_chunk {
             let target_t = self.current_t + self.params.stream_interval;
@@ -789,6 +798,7 @@ impl SimLoopContext {
                     snap.orbit.position(),
                     snap.orbit.velocity(),
                     self.params.mu,
+                    body_radius,
                     snap.accels,
                     snap.attitude,
                 );
@@ -890,6 +900,10 @@ async fn run_simulation_loop(
                     raan: out.raan,
                     argument_of_periapsis: out.argument_of_periapsis,
                     true_anomaly: out.true_anomaly,
+                    altitude: out.altitude,
+                    specific_energy: out.specific_energy,
+                    angular_momentum: out.angular_momentum,
+                    velocity_mag: out.velocity_mag,
                     accelerations: out.accelerations.clone(),
                     attitude: out.attitude.clone(),
                 })

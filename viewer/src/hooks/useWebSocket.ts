@@ -53,6 +53,10 @@ interface StateMessage {
   raan: number;
   argument_of_periapsis: number;
   true_anomaly: number;
+  altitude?: number;
+  specific_energy?: number;
+  angular_momentum?: number;
+  velocity_mag?: number;
   accelerations?: Record<string, number>;
   attitude?: AttitudePayload;
 }
@@ -89,6 +93,10 @@ interface HistoryStateMsg {
   raan: number;
   argument_of_periapsis: number;
   true_anomaly: number;
+  altitude?: number;
+  specific_energy?: number;
+  angular_momentum?: number;
+  velocity_mag?: number;
   accelerations?: Record<string, number>;
   attitude?: AttitudePayload;
 }
@@ -215,6 +223,10 @@ function parseHistoryPoints(states: HistoryStateMsg[]): OrbitPoint[] {
     raan: s.raan,
     omega: s.argument_of_periapsis,
     nu: s.true_anomaly,
+    altitude: s.altitude,
+    specific_energy: s.specific_energy,
+    angular_momentum: s.angular_momentum,
+    velocity_mag: s.velocity_mag,
     ...parseAccelerations(s.accelerations),
     ...parseAttitude(s.attitude),
   }));
@@ -242,6 +254,10 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
       raan: stateMsg.raan,
       omega: stateMsg.argument_of_periapsis,
       nu: stateMsg.true_anomaly,
+      altitude: stateMsg.altitude,
+      specific_energy: stateMsg.specific_energy,
+      angular_momentum: stateMsg.angular_momentum,
+      velocity_mag: stateMsg.velocity_mag,
       ...parseAccelerations(stateMsg.accelerations),
       ...parseAttitude(stateMsg.attitude),
     });

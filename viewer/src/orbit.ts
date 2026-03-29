@@ -29,6 +29,11 @@ export interface OrbitPoint {
   omega: number;
   /** True anomaly [rad] */
   nu: number;
+  /** Pre-computed derived values from server (for chart display). */
+  altitude?: number;
+  specific_energy?: number;
+  angular_momentum?: number;
+  velocity_mag?: number;
   /** Acceleration magnitudes [km/s²] — 0 when perturbation is inactive. */
   accel_gravity?: number;
   accel_drag?: number;

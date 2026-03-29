@@ -21,10 +21,12 @@ pub struct HistoryBuffer {
     pub segment_count: u32,
     /// Gravitational parameter (for computing Keplerian elements from loaded data).
     pub mu: f64,
+    /// Central body radius [km] (for computing derived values from loaded data).
+    pub body_radius: f64,
 }
 
 impl HistoryBuffer {
-    pub fn new(capacity: usize, data_dir: PathBuf, mu: f64) -> Self {
+    pub fn new(capacity: usize, data_dir: PathBuf, mu: f64, body_radius: f64) -> Self {
         std::fs::create_dir_all(&data_dir).ok();
         HistoryBuffer {
             states: VecDeque::new(),
@@ -32,6 +34,7 @@ impl HistoryBuffer {
             data_dir,
             segment_count: 0,
             mu,
+            body_radius,
         }
     }
 
@@ -117,6 +120,7 @@ impl HistoryBuffer {
                             &pos,
                             &vel,
                             self.mu,
+                            self.body_radius,
                             HashMap::new(),
                             attitude,
                         ));
@@ -182,11 +186,21 @@ mod tests {
     use super::*;
 
     const TEST_MU: f64 = 398600.4418;
+    const TEST_BODY_RADIUS: f64 = 6378.137;
 
     fn make_state(t: f64) -> HistoryState {
         let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
         let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
-        make_history_state("default", t, &pos, &vel, TEST_MU, HashMap::new(), None)
+        make_history_state(
+            "default",
+            t,
+            &pos,
+            &vel,
+            TEST_MU,
+            TEST_BODY_RADIUS,
+            HashMap::new(),
+            None,
+        )
     }
 
     fn temp_data_dir(name: &str) -> PathBuf {
@@ -202,7 +216,7 @@ mod tests {
     #[test]
     fn buffer_push_and_read() {
         let dir = temp_data_dir("push-read");
-        let mut buf = HistoryBuffer::new(100, dir.clone(), TEST_MU);
+        let mut buf = HistoryBuffer::new(100, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
 
         buf.push(make_state(0.0));
         buf.push(make_state(10.0));
@@ -220,7 +234,7 @@ mod tests {
     #[test]
     fn buffer_flush_creates_segment() {
         let dir = temp_data_dir("flush-seg");
-        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU);
+        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
 
         for i in 0..5 {
             buf.push(make_state(i as f64 * 10.0));
@@ -236,7 +250,7 @@ mod tests {
     #[test]
     fn buffer_load_all_includes_flushed_and_buffered() {
         let dir = temp_data_dir("load-all");
-        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU);
+        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
 
         for i in 0..8 {
             buf.push(make_state(i as f64 * 10.0));
@@ -296,7 +310,7 @@ mod tests {
     #[test]
     fn flush_performance() {
         let dir = temp_data_dir("flush-perf");
-        let mut buf = HistoryBuffer::new(10_000, dir.clone(), TEST_MU);
+        let mut buf = HistoryBuffer::new(10_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
 
         for i in 0..5000 {
             buf.states.push_back(make_state(i as f64));
@@ -319,7 +333,7 @@ mod tests {
     #[test]
     fn load_all_performance() {
         let dir = temp_data_dir("load-perf");
-        let mut buf = HistoryBuffer::new(2000, dir.clone(), TEST_MU);
+        let mut buf = HistoryBuffer::new(2000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
 
         for i in 0..10_000 {
             buf.push(make_state(i as f64));
@@ -342,7 +356,7 @@ mod tests {
     #[test]
     fn query_range_filters_by_time() {
         let dir = temp_data_dir("qr-filter");
-        let mut buf = HistoryBuffer::new(100, dir.clone(), TEST_MU);
+        let mut buf = HistoryBuffer::new(100, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
 
         for i in 0..10 {
             buf.push(make_state(i as f64 * 10.0));
@@ -360,7 +374,7 @@ mod tests {
     #[test]
     fn query_range_with_downsample() {
         let dir = temp_data_dir("qr-ds");
-        let mut buf = HistoryBuffer::new(200, dir.clone(), TEST_MU);
+        let mut buf = HistoryBuffer::new(200, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
 
         for i in 0..100 {
             buf.push(make_state(i as f64));
@@ -377,7 +391,7 @@ mod tests {
     #[test]
     fn query_range_empty_range() {
         let dir = temp_data_dir("qr-empty");
-        let mut buf = HistoryBuffer::new(100, dir.clone(), TEST_MU);
+        let mut buf = HistoryBuffer::new(100, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
 
         for i in 0..10 {
             buf.push(make_state(i as f64 * 10.0));
@@ -392,7 +406,7 @@ mod tests {
     #[test]
     fn flush_preserves_attitude() {
         let dir = temp_data_dir("flush-attitude");
-        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU);
+        let mut buf = HistoryBuffer::new(4, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
 
         for i in 0..5 {
             let t = i as f64 * 10.0;
@@ -403,8 +417,16 @@ mod tests {
                 angular_velocity_body: [0.01 * t, 0.0, 0.0],
                 source: AttitudeSource::Propagated,
             });
-            let hs =
-                make_history_state("att-sat", t, &pos, &vel, TEST_MU, HashMap::new(), attitude);
+            let hs = make_history_state(
+                "att-sat",
+                t,
+                &pos,
+                &vel,
+                TEST_MU,
+                TEST_BODY_RADIUS,
+                HashMap::new(),
+                attitude,
+            );
             buf.push(hs);
         }
 

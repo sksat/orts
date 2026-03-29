@@ -67,6 +67,11 @@ pub enum WsMessage {
         raan: f64,
         argument_of_periapsis: f64,
         true_anomaly: f64,
+        /// Pre-computed derived values for chart display (avoids client-side recomputation).
+        altitude: f64,
+        specific_energy: f64,
+        angular_momentum: f64,
+        velocity_mag: f64,
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         accelerations: HashMap<String, f64>,
         /// Attitude telemetry (present only when SpacecraftDynamics is used).
@@ -113,11 +118,21 @@ mod tests {
     use crate::sim::core::make_history_state;
 
     const TEST_MU: f64 = 398600.4418;
+    const TEST_BODY_RADIUS: f64 = 6378.137;
 
     fn make_state(t: f64) -> HistoryState {
         let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
         let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
-        make_history_state("default", t, &pos, &vel, TEST_MU, HashMap::new(), None)
+        make_history_state(
+            "default",
+            t,
+            &pos,
+            &vel,
+            TEST_MU,
+            TEST_BODY_RADIUS,
+            HashMap::new(),
+            None,
+        )
     }
 
     #[test]
@@ -370,6 +385,10 @@ mod tests {
             raan: 1.2,
             argument_of_periapsis: 0.5,
             true_anomaly: 2.1,
+            altitude: 399.863,
+            specific_energy: -0.1,
+            angular_momentum: 51988.882,
+            velocity_mag: 7.669,
             accelerations: HashMap::new(),
             attitude: None,
         };
@@ -395,6 +414,10 @@ mod tests {
             raan: 0.0,
             argument_of_periapsis: 0.0,
             true_anomaly: 0.0,
+            altitude: 399.863,
+            specific_energy: -0.1,
+            angular_momentum: 51988.882,
+            velocity_mag: 7.669,
             accelerations: HashMap::new(),
             attitude: Some(AttitudePayload {
                 quaternion_wxyz: [0.707, 0.0, 0.707, 0.0],
