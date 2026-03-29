@@ -122,12 +122,20 @@ test.describe("multi-satellite NaN alignment", () => {
       expect(satCount).toBeGreaterThanOrEqual(2);
     }).toPass({ timeout: 10000, intervals: [200, 500, 1000, 2000] });
 
+    // Wait for DuckDB connection to be available (WASM init from CDN can be slow)
+    await expect(async () => {
+      const hasConn = await page.evaluate(
+        () => (window as Record<string, unknown>).__duckdb_conn != null,
+      );
+      expect(hasConn, "DuckDB connection not yet available").toBe(true);
+    }).toPass({ timeout: 30000, intervals: [500, 1000, 2000, 3000] });
+
     // Wait for DuckDB tables to be populated (history ingestion + query ticks)
     // Poll instead of fixed timeout — CI can be slow
     await expect(async () => {
-      const counts = await page.evaluate(async () => {
+      const result = await page.evaluate(async () => {
         const conn = (window as Record<string, unknown>).__duckdb_conn;
-        if (!conn) return { sso: 0, iss: 0 };
+        if (!conn) return { sso: 0, iss: 0, connNull: true };
         const q = async (sql: string) =>
           (
             conn as {
@@ -138,6 +146,21 @@ test.describe("multi-satellite NaN alignment", () => {
           ).query(sql);
         let sso = 0,
           iss = 0;
+        let tables: string[] = [];
+        try {
+          const res = await q("SHOW TABLES");
+          const col = res.getChildAt(0);
+          if (col) {
+            // Iterate using get() — length not in the typed interface
+            for (let i = 0; ; i++) {
+              const v = col.get(i);
+              if (v == null) break;
+              tables.push(String(v));
+            }
+          }
+        } catch {
+          /* ignore */
+        }
         try {
           sso = Number((await q("SELECT COUNT(*) FROM orbit_sso")).getChildAt(0)?.get(0));
         } catch {
@@ -148,10 +171,11 @@ test.describe("multi-satellite NaN alignment", () => {
         } catch {
           /* table not yet created */
         }
-        return { sso, iss };
+        return { sso, iss, tables, connNull: false };
       });
-      expect(counts.sso).toBeGreaterThan(0);
-      expect(counts.iss).toBeGreaterThan(0);
+      console.log("DuckDB poll:", JSON.stringify(result));
+      expect(result.sso).toBeGreaterThan(0);
+      expect(result.iss).toBeGreaterThan(0);
     }).toPass({ timeout: 30000, intervals: [500, 1000, 1000, 2000, 2000, 3000, 5000] });
 
     // Stop streaming: click the viewer's disconnect button.
