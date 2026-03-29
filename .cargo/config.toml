@@ -1,9 +1,8 @@
-# wild: cargo install wild-linker
 # mold: sudo apt install mold (or pacman -S mold)
+# wild: cargo install wild-linker
 
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
-# wild (fastest, ~2x faster than mold)
-rustflags = ["-C", "link-args=--ld-path=wild"]
-# mold (use if wild is not installed)
-#rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+# wild (~2x faster than mold)
+#rustflags = ["-C", "link-args=--ld-path=wild"]
