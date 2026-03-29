@@ -457,7 +457,24 @@ export function App() {
         chartZoomTimerRef.current = null;
         const range = latestRequestedRangeRef.current;
         if (!range) return;
+        // Always record the zoom range (used by liveChartData for getWindow).
         lastSentRangeRef.current = range;
+
+        // In live mode, try ChartBuffer first (instant, no server round-trip).
+        // Note: if the zoomed interval later ages out of the ring buffer,
+        // liveChartData returns null and falls back to DuckDB. The user
+        // would need to re-zoom to trigger a fresh query_range in that case.
+        // This is acceptable since the buffer holds ~139h at dt=10s.
+        if (realtimePlayback.snapshot.isLive) {
+          const buf = chartBufferRef.current;
+          if (buf.length > 0 && range.tMin >= buf.earliestT && range.tMax <= buf.latestT) {
+            setChartBufferVersion((v) => v + 1);
+            return;
+          }
+        }
+
+        // TODO: query local DuckDB before falling back to server.
+        // For now, fall back to server query_range.
         const satId = simInfo?.satellites[0]?.id ?? "default";
         send({
           type: "query_range",
@@ -652,6 +669,17 @@ export function App() {
     void chartBufferVersion;
     const buf = chartBufferRef.current;
     if (buf.length === 0) return null;
+
+    // If user has zoomed, check if ChartBuffer covers the range.
+    // If yes, serve from buffer. If no, return null to fall through to DuckDB.
+    const zoomRange = lastSentRangeRef.current;
+    if (zoomRange) {
+      if (zoomRange.tMin >= buf.earliestT && zoomRange.tMax <= buf.latestT) {
+        return buf.getWindow(zoomRange.tMin, zoomRange.tMax);
+      }
+      return null; // Fall through to DuckDB for out-of-range zoom
+    }
+
     if (timeRange != null) {
       const tMax = buf.latestT;
       const tMin = tMax - timeRange;
@@ -660,11 +688,9 @@ export function App() {
     return buf.toChartData();
   }, [isLive, isMultiSatellite, chartBufferVersion, timeRange]);
 
-  // --- DuckDB chart data: used for replay, zoom, and non-live scrubbing ---
+  // --- DuckDB chart data: used for replay, zoom outside ChartBuffer, and non-live scrubbing ---
   const chartArrays = useMemo(() => {
-    // When live but user has zoomed, DuckDB data is still needed for the zoomed view.
-    const userZoomedWhileLive = isLive && lastSentRangeRef.current != null;
-    if (isMultiSatellite || !singleChartData || (isLive && !userZoomedWhileLive)) return null;
+    if (isMultiSatellite || !singleChartData) return null;
     return [
       singleChartData.t,
       singleChartData.altitude,
@@ -698,19 +724,23 @@ export function App() {
     };
   }, [visibleArrays]);
 
-  // When returning to live mode (e.g. user clicks "Live" button), clear the
-  // zoom state so the chart switches back to the live ChartBuffer source.
+  // Clear zoom state when returning to live mode or when the user changes
+  // the time range preset (e.g. "5 min" → "30 min"), so the chart follows
+  // the rolling window instead of staying stuck on a fixed zoom range.
   const prevIsLiveRef = useRef(isLive);
-  if (isLive && !prevIsLiveRef.current) {
+  const prevTimeRangeRef = useRef(timeRange);
+  if ((isLive && !prevIsLiveRef.current) || timeRange !== prevTimeRangeRef.current) {
     lastSentRangeRef.current = null;
   }
   prevIsLiveRef.current = isLive;
+  prevTimeRangeRef.current = timeRange;
 
-  // Choose data source: live → ChartBuffer, otherwise → DuckDB.
-  // If the user has drag-zoomed a chart (lastSentRangeRef is set), fall back to
-  // DuckDB even while live, so the zoomed query result is shown.
-  const userZoomed = lastSentRangeRef.current != null;
-  const visibleChartData = isLive && !userZoomed ? liveChartData : duckdbChartData;
+  // Choose data source:
+  // 1. Live + no zoom → ChartBuffer (instant)
+  // 2. Live + zoom covered by ChartBuffer → ChartBuffer.getWindow (instant)
+  // 3. Live + zoom outside ChartBuffer → DuckDB query_range response
+  // 4. Non-live → DuckDB
+  const visibleChartData = liveChartData ?? duckdbChartData;
 
   // --- Derived values ---
   const satellitePosition =
