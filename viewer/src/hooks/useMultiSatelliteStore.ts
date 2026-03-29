@@ -99,6 +99,12 @@ export function useMultiSatelliteStore<T extends TimePoint>(
     let cancelled = false;
     const timerRef = { current: 0 };
     let tickCount = 0;
+
+    // Dev-only: expose tick counter for E2E diagnostics
+    if (typeof window !== "undefined" && import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__debug_multi_sat_tick = 0;
+      (window as unknown as Record<string, unknown>).__debug_multi_sat_inserts = 0;
+    }
     let queryCount = 0;
     const COMPACT_COOLDOWN_AFTER_REBUILD = 5;
     const compactCooldowns = new Map<string, number>();
@@ -126,6 +132,12 @@ export function useMultiSatelliteStore<T extends TimePoint>(
       const tick = async () => {
         if (cancelled) return;
 
+        // Dev-only: increment tick counter for E2E diagnostics
+        if (typeof window !== "undefined" && import.meta.env.DEV) {
+          (window as unknown as Record<string, unknown>).__debug_multi_sat_tick =
+            ((window as unknown as Record<string, unknown>).__debug_multi_sat_tick as number) + 1;
+        }
+
         for (const cfg of configsRef.current) {
           const buf = buffersRef.current.get(cfg.id);
           if (!buf) continue;
@@ -143,7 +155,14 @@ export function useMultiSatelliteStore<T extends TimePoint>(
             try {
               await clearTable(conn, schema);
               await insertPoints(conn, schema, rebuildData);
-              if (rebuildData.length > 0) hasData.add(cfg.id);
+              if (rebuildData.length > 0) {
+                hasData.add(cfg.id);
+                if (typeof window !== "undefined" && import.meta.env.DEV) {
+                  (window as unknown as Record<string, unknown>).__debug_multi_sat_inserts =
+                    ((window as unknown as Record<string, unknown>)
+                      .__debug_multi_sat_inserts as number) + rebuildData.length;
+                }
+              }
               compactCooldowns.set(cfg.id, COMPACT_COOLDOWN_AFTER_REBUILD);
             } catch (e) {
               console.warn(`useMultiSatelliteStore: rebuild failed for ${cfg.id}:`, e);

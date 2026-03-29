@@ -187,7 +187,10 @@ test.describe("multi-satellite NaN alignment", () => {
         } catch {
           /* table not yet created */
         }
-        return { sso, iss, tables, connNull: false };
+        const w = window as Record<string, unknown>;
+        const tickCount = w.__debug_multi_sat_tick as number | undefined;
+        const insertCount = w.__debug_multi_sat_inserts as number | undefined;
+        return { sso, iss, tables, connNull: false, tickCount, insertCount };
       });
       console.log("DuckDB poll:", JSON.stringify(result));
       expect(result.sso).toBeGreaterThan(0);
