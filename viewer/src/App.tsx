@@ -301,6 +301,13 @@ export function App() {
 
   const handleQueryRangeResponse = useCallback(
     (response: QueryRangeResponse) => {
+      // Discard stale responses: if a newer query_range was requested, ignore
+      // responses that don't match the latest requested range.
+      const latest = latestRequestedRangeRef.current;
+      if (latest && (response.tMin !== latest.tMin || response.tMax !== latest.tMax)) {
+        return;
+      }
+
       const satId = simInfo?.satellites[0]?.id ?? "default";
       const allTrailPoints = getOrCreateTrailBuffer(trailBuffersRef.current, satId).getAll();
       const combined = mergeQueryRangePoints(response.points, allTrailPoints);
@@ -344,18 +351,44 @@ export function App() {
     send({ type: "terminate_simulation" });
   }, [send]);
 
+  // --- query_range dedupe + coalescing ---
+  // Tracks the last sent range to suppress duplicate requests (e.g. from multiple charts
+  // sharing the same onZoom callback, or from programmatic setScale firings).
+  const lastSentRangeRef = useRef<{ tMin: number; tMax: number } | null>(null);
+  // Tracks the latest requested range for in-flight coalescing.
+  // If a query_range_response arrives with a different range, it is stale and discarded.
+  const latestRequestedRangeRef = useRef<{ tMin: number; tMax: number } | null>(null);
+  const chartZoomTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const handleChartZoom = useCallback(
     (tMin: number, tMax: number) => {
-      if (!isMultiSatellite) {
+      if (isMultiSatellite) return;
+
+      // Dedupe: skip if same range as last sent request
+      const last = lastSentRangeRef.current;
+      if (last && last.tMin === tMin && last.tMax === tMax) return;
+
+      // Coalesce: always update the latest desired range
+      latestRequestedRangeRef.current = { tMin, tMax };
+
+      // Trailing debounce: only send after 200ms of quiet
+      if (chartZoomTimerRef.current != null) {
+        clearTimeout(chartZoomTimerRef.current);
+      }
+      chartZoomTimerRef.current = setTimeout(() => {
+        chartZoomTimerRef.current = null;
+        const range = latestRequestedRangeRef.current;
+        if (!range) return;
+        lastSentRangeRef.current = range;
         const satId = simInfo?.satellites[0]?.id ?? "default";
         send({
           type: "query_range",
-          t_min: tMin,
-          t_max: tMax,
+          t_min: range.tMin,
+          t_max: range.tMax,
           max_points: 2000,
           satellite_id: satId,
         });
-      }
+      }, 200);
     },
     [send, isMultiSatellite, simInfo],
   );

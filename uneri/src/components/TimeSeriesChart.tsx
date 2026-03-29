@@ -157,9 +157,12 @@ export function TimeSeriesChart({
   const chartRef = useRef<uPlot | null>(null);
   const onZoomRef = useRef(onZoom);
   onZoomRef.current = onZoom;
-  // Guard: suppress setScale callback during programmatic updates (setData / setSize).
+  // Guard: suppress setScale callback during programmatic updates (setData / setSize / createChart).
   // Only user-initiated drag-zoom should trigger onZoom.
-  const isProgrammaticRef = useRef(false);
+  // Uses a depth counter instead of boolean to handle overlapping programmatic operations
+  // (e.g. setData + setSize in same frame). Each operation increments on start and
+  // decrements via requestAnimationFrame to cover both sync and async setScale firings.
+  const programmaticDepthRef = useRef(0);
   // Track series count to detect when chart needs recreation.
   const seriesCountRef = useRef(0);
 
@@ -214,7 +217,7 @@ export function TimeSeriesChart({
       hooks: {
         setScale: [
           (u: uPlot, scaleKey: string) => {
-            if (isProgrammaticRef.current) return;
+            if (programmaticDepthRef.current > 0) return;
             if (scaleKey === "x") {
               const min = u.scales.x.min;
               const max = u.scales.x.max;
@@ -234,7 +237,11 @@ export function TimeSeriesChart({
     plotData: uPlot.AlignedData,
     seriesConfig: uPlot.Series[],
   ): uPlot {
+    programmaticDepthRef.current++;
     const chart = new uPlot(buildOpts(container, seriesConfig), plotData, container);
+    requestAnimationFrame(() => {
+      programmaticDepthRef.current--;
+    });
     seriesCountRef.current = seriesConfig.length;
 
     // Attach Grafana-style legend isolation for multi-series charts (2+ y-series)
@@ -281,14 +288,16 @@ export function TimeSeriesChart({
       return;
     }
 
-    isProgrammaticRef.current = true;
+    programmaticDepthRef.current++;
     try {
       chartRef.current.setData(plotData);
     } catch {
       chartRef.current!.destroy();
       chartRef.current = createChart(containerRef.current, plotData, seriesConfig);
     }
-    isProgrammaticRef.current = false;
+    requestAnimationFrame(() => {
+      programmaticDepthRef.current--;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createChart, resolveData]);
 
@@ -300,7 +309,7 @@ export function TimeSeriesChart({
       for (const entry of entries) {
         const width = entry.contentRect.width;
         if (chartRef.current && width > 0) {
-          isProgrammaticRef.current = true;
+          programmaticDepthRef.current++;
           try {
             chartRef.current.setSize({ width, height });
           } catch {
@@ -316,7 +325,9 @@ export function TimeSeriesChart({
               chartRef.current = createChart(container, currentData, seriesConfig);
             }
           }
-          isProgrammaticRef.current = false;
+          requestAnimationFrame(() => {
+            programmaticDepthRef.current--;
+          });
         }
       }
     });
