@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { buildSimConfig, PRESETS } from "./SimConfigForm.js";
 
 describe("buildSimConfig", () => {
-  it("builds config from ISS preset", () => {
+  it("builds config from ISS preset with NORAD orbit and attitude", () => {
     const config = buildSimConfig({
       orbitMode: "preset",
-      presetIndex: 0, // ISS-like
+      presetIndex: 0, // ISS
       altitude: 400,
       inclination: 0,
       raan: 0,
@@ -20,16 +20,15 @@ describe("buildSimConfig", () => {
     expect(config.output_interval).toBe(10);
     expect(config.atmosphere).toBe("exponential");
     expect(config.satellites).toHaveLength(1);
-    expect(config.satellites[0].orbit.type).toBe("circular");
 
-    const orbit = config.satellites[0].orbit as {
-      type: "circular";
-      altitude: number;
-      inclination: number;
-      raan: number;
-    };
-    expect(orbit.altitude).toBe(PRESETS[0].altitude);
-    expect(orbit.inclination).toBe(PRESETS[0].inclination);
+    const sat = config.satellites[0];
+    expect(sat.id).toBe("iss");
+    expect(sat.name).toBe("ISS");
+    expect(sat.orbit.type).toBe("norad");
+    expect((sat.orbit as { type: "norad"; norad_id: number }).norad_id).toBe(25544);
+    expect(sat.attitude).toBeDefined();
+    expect(sat.attitude?.mass).toBe(420_000);
+    expect(sat.attitude?.inertia_diag).toEqual([128_913_000, 107_321_000, 201_433_000]);
   });
 
   it("builds config from SSO preset", () => {
@@ -53,6 +52,7 @@ describe("buildSimConfig", () => {
     };
     expect(orbit.altitude).toBe(800);
     expect(orbit.inclination).toBe(98.6);
+    expect(config.satellites[0].attitude).toBeUndefined();
   });
 
   it("builds config from GEO preset", () => {
@@ -153,7 +153,7 @@ describe("buildSimConfig", () => {
 describe("PRESETS", () => {
   it("has ISS, SSO, and GEO presets", () => {
     expect(PRESETS).toHaveLength(3);
-    expect(PRESETS[0].label).toBe("ISS-like");
+    expect(PRESETS[0].label).toBe("ISS");
     expect(PRESETS[1].label).toBe("SSO");
     expect(PRESETS[2].label).toBe("GEO");
   });

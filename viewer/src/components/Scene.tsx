@@ -585,8 +585,8 @@ export function Scene({
         )}
       </SmoothOriginGroup>
 
-      {/* Axes at world origin (= satellite position when satellite-centered) */}
-      <axesHelper args={[2]} />
+      {/* Reference axes: full ECI axes for body-centered, small LVLH reference for satellite-centered */}
+      <axesHelper args={[isSatCentered ? 0.015 : 2]} />
     </Canvas>
   );
 }

@@ -3,7 +3,7 @@ use wasm_bindgen::prelude::*;
 use crate::Eci;
 use crate::epoch::Epoch;
 use crate::sun;
-use nalgebra::Vector3;
+use nalgebra::{UnitQuaternion, Vector3, Vector4};
 
 /// Batch ECI→ECEF transform with per-point time.
 ///
@@ -135,4 +135,36 @@ pub fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f
     };
     let eci = geod.to_ecef().to_eci(gmst);
     vec![eci.0.x, eci.0.y, eci.0.z]
+}
+
+/// Transform a body-to-ECI quaternion into a body-to-LVLH quaternion.
+///
+/// `pos_x/y/z`: satellite position in ECI \[km\]
+/// `vel_x/y/z`: satellite velocity in ECI \[km/s\]
+/// `qw/qx/qy/qz`: body-to-ECI quaternion (Hamilton scalar-first: w,x,y,z)
+///
+/// Returns `[w, x, y, z]` body-to-LVLH quaternion (4 floats, f64).
+/// Returns an empty vec if the LVLH frame cannot be computed (degenerate orbit).
+#[wasm_bindgen]
+pub fn body_quat_eci_to_lvlh(
+    pos_x: f64,
+    pos_y: f64,
+    pos_z: f64,
+    vel_x: f64,
+    vel_y: f64,
+    vel_z: f64,
+    qw: f64,
+    qx: f64,
+    qy: f64,
+    qz: f64,
+) -> Vec<f64> {
+    let pos = Vector3::new(pos_x, pos_y, pos_z);
+    let vel = Vector3::new(vel_x, vel_y, vel_z);
+    let q_body_eci =
+        UnitQuaternion::from_quaternion(nalgebra::Quaternion::from(Vector4::new(qx, qy, qz, qw)));
+
+    match crate::body_quat_eci_to_lvlh(&pos, &vel, &q_body_eci) {
+        Some(q) => vec![q.w, q.i, q.j, q.k],
+        None => vec![],
+    }
 }

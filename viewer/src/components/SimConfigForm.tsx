@@ -2,19 +2,6 @@ import { useCallback, useState } from "react";
 
 export type OrbitMode = "preset" | "circular" | "tle";
 
-export interface PresetDef {
-  label: string;
-  altitude: number;
-  inclination: number;
-  raan: number;
-}
-
-export const PRESETS: PresetDef[] = [
-  { label: "ISS-like", altitude: 420, inclination: 51.6, raan: 0 },
-  { label: "SSO", altitude: 800, inclination: 98.6, raan: 0 },
-  { label: "GEO", altitude: 35786, inclination: 0, raan: 0 },
-];
-
 interface CircularOrbit {
   type: "circular";
   altitude: number;
@@ -28,11 +15,67 @@ interface TleOrbit {
   line2: string;
 }
 
+interface NoradOrbit {
+  type: "norad";
+  norad_id: number;
+}
+
+interface AttitudePayloadConfig {
+  inertia_diag: [number, number, number];
+  mass: number;
+  initial_quaternion?: [number, number, number, number];
+  initial_angular_velocity?: [number, number, number];
+}
+
+export interface SatellitePayload {
+  id?: string;
+  name?: string;
+  orbit: CircularOrbit | TleOrbit | NoradOrbit;
+  attitude?: AttitudePayloadConfig;
+}
+
+export interface PresetDef {
+  label: string;
+  detail: string;
+  satellite: SatellitePayload;
+}
+
+export const PRESETS: PresetDef[] = [
+  {
+    label: "ISS",
+    detail: "NORAD 25544",
+    satellite: {
+      id: "iss",
+      name: "ISS",
+      orbit: { type: "norad", norad_id: 25544 },
+      attitude: {
+        // Approximate ISS inertia tensor [kg·m²] and mass [kg]
+        inertia_diag: [128_913_000, 107_321_000, 201_433_000],
+        mass: 420_000,
+      },
+    },
+  },
+  {
+    label: "SSO",
+    detail: "800 km / 98.6°",
+    satellite: {
+      orbit: { type: "circular", altitude: 800, inclination: 98.6, raan: 0 },
+    },
+  },
+  {
+    label: "GEO",
+    detail: "35786 km / 0°",
+    satellite: {
+      orbit: { type: "circular", altitude: 35786, inclination: 0, raan: 0 },
+    },
+  },
+];
+
 export interface SimConfigPayload {
   dt: number;
   output_interval: number;
   atmosphere: string;
-  satellites: { orbit: CircularOrbit | TleOrbit }[];
+  satellites: SatellitePayload[];
 }
 
 export interface FormState {
@@ -50,24 +93,20 @@ export interface FormState {
 
 /** Pure function: build SimConfig payload from form state. */
 export function buildSimConfig(state: FormState): SimConfigPayload {
-  let orbit: CircularOrbit | TleOrbit;
+  let satellite: SatellitePayload;
 
   if (state.orbitMode === "tle") {
-    orbit = { type: "tle", line1: state.tleLine1, line2: state.tleLine2 };
+    satellite = { orbit: { type: "tle", line1: state.tleLine1, line2: state.tleLine2 } };
   } else if (state.orbitMode === "preset") {
-    const preset = PRESETS[state.presetIndex];
-    orbit = {
-      type: "circular",
-      altitude: preset.altitude,
-      inclination: preset.inclination,
-      raan: preset.raan,
-    };
+    satellite = PRESETS[state.presetIndex].satellite;
   } else {
-    orbit = {
-      type: "circular",
-      altitude: state.altitude,
-      inclination: state.inclination,
-      raan: state.raan,
+    satellite = {
+      orbit: {
+        type: "circular",
+        altitude: state.altitude,
+        inclination: state.inclination,
+        raan: state.raan,
+      },
     };
   }
 
@@ -75,7 +114,7 @@ export function buildSimConfig(state: FormState): SimConfigPayload {
     dt: state.dt,
     output_interval: state.outputInterval,
     atmosphere: state.atmosphere,
-    satellites: [{ orbit }],
+    satellites: [satellite],
   };
 }
 
@@ -157,9 +196,7 @@ export function SimConfigForm({ onStart }: SimConfigFormProps) {
                 onClick={() => setPresetIndex(i)}
               >
                 {p.label}
-                <span className="preset-detail">
-                  {p.altitude} km / {p.inclination}°
-                </span>
+                <span className="preset-detail">{p.detail}</span>
               </button>
             ))}
           </div>

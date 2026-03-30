@@ -4,7 +4,8 @@ import type { OrbitPoint } from "../orbit.js";
 import { isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import type { LvlhAxes } from "../sceneFrame.js";
-import { eci_to_ecef } from "../wasm/kanameInit.js";
+import { body_quat_eci_to_lvlh, eci_to_ecef } from "../wasm/kanameInit.js";
+import { BodyAxes } from "./BodyAxes.js";
 import { SatelliteModel } from "./SatelliteModel.js";
 
 /** Default radius of the sphere fallback marker in scene units. */
@@ -98,22 +99,58 @@ export function Satellite({
     scenePos = [position.x / scaleRadius, position.y / scaleRadius, position.z / scaleRadius];
   }
 
+  // Extract attitude quaternion (body-to-ECI) and transform to display frame
+  const rawQuaternion: [number, number, number, number] | undefined =
+    position.qw != null
+      ? [position.qw, position.qx ?? 0, position.qy ?? 0, position.qz ?? 0]
+      : undefined;
+
+  let displayQuaternion: [number, number, number, number] | undefined;
+  if (rawQuaternion && lvlhAxes != null) {
+    // LVLH view: transform body-to-ECI → body-to-LVLH via kaname WASM
+    displayQuaternion = body_quat_eci_to_lvlh(
+      position.x,
+      position.y,
+      position.z,
+      position.vx,
+      position.vy,
+      position.vz,
+      rawQuaternion[0],
+      rawQuaternion[1],
+      rawQuaternion[2],
+      rawQuaternion[3],
+    );
+  } else {
+    // ECI view: use body-to-ECI as-is
+    displayQuaternion = rawQuaternion;
+  }
+
   const modelConfig = satId ? getSatelliteModelConfig(satId, satName) : null;
 
+  const bodyAxes = displayQuaternion ? (
+    <BodyAxes
+      position={scenePos}
+      quaternion={displayQuaternion}
+      axisLength={modelConfig ? modelConfig.scale * 5 : DEFAULT_SPHERE_RADIUS * 6}
+    />
+  ) : null;
+
   if (modelConfig) {
-    // TODO: transform quaternion for non-inertial frames (ECEF: compose ERA rotation,
-    // LVLH: compose inverse LVLH quaternion). Currently correct only in ECI/inertial view.
-    const quaternion: [number, number, number, number] | undefined =
-      position.qw != null
-        ? [position.qw, position.qx ?? 0, position.qy ?? 0, position.qz ?? 0]
-        : undefined;
     return (
-      <Suspense fallback={<SphereMarker position={scenePos} color={color} />}>
-        <SatelliteModel position={scenePos} config={modelConfig} quaternion={quaternion} />
-      </Suspense>
+      <>
+        <Suspense fallback={<SphereMarker position={scenePos} color={color} />}>
+          <SatelliteModel position={scenePos} config={modelConfig} quaternion={displayQuaternion} />
+        </Suspense>
+        {bodyAxes}
+      </>
     );
   }
 
-  if (hideSphereFallback) return null;
-  return <SphereMarker position={scenePos} color={color} />;
+  if (hideSphereFallback) return bodyAxes;
+  return (
+    <>
+      <SphereMarker position={scenePos} color={color} />
+      {bodyAxes}
+    </>
+  );
 }

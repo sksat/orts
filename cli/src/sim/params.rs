@@ -259,7 +259,13 @@ impl SimParams {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
-            attitude_config: None,
+            attitude_config: Some(crate::config::AttitudeConfig {
+                inertia_diag: [100.0, 200.0, 50.0],
+                inertia_off_diag: [0.0, 0.0, 0.0],
+                mass: 500.0,
+                initial_quaternion: [1.0, 0.0, 0.0, 0.0],
+                initial_angular_velocity: [0.0, 0.0, 0.0],
+            }),
         });
 
         // ISS: try online sources, fall back to embedded TLE
@@ -287,7 +293,14 @@ impl SimParams {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
-            attitude_config: None,
+            attitude_config: Some(crate::config::AttitudeConfig {
+                // Approximate ISS inertia tensor [kg·m²]
+                inertia_diag: [128_913_000.0, 107_321_000.0, 201_433_000.0],
+                inertia_off_diag: [0.0, 0.0, 0.0],
+                mass: 420_000.0,
+                initial_quaternion: [1.0, 0.0, 0.0, 0.0],
+                initial_angular_velocity: [0.0, 0.0, 0.0],
+            }),
         });
 
         sats

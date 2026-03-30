@@ -2,6 +2,18 @@
 /* eslint-disable */
 
 /**
+ * Transform a body-to-ECI quaternion into a body-to-LVLH quaternion.
+ *
+ * `pos_x/y/z`: satellite position in ECI \[km\]
+ * `vel_x/y/z`: satellite velocity in ECI \[km/s\]
+ * `qw/qx/qy/qz`: body-to-ECI quaternion (Hamilton scalar-first: w,x,y,z)
+ *
+ * Returns `[w, x, y, z]` body-to-LVLH quaternion (4 floats, f64).
+ * Returns an empty vec if the LVLH frame cannot be computed (degenerate orbit).
+ */
+export function body_quat_eci_to_lvlh(pos_x: number, pos_y: number, pos_z: number, vel_x: number, vel_y: number, vel_z: number, qw: number, qx: number, qy: number, qz: number): Float64Array;
+
+/**
  * Compute the Earth Rotation Angle (GMST) in radians.
  *
  * `epoch_jd`: Julian Date of the simulation epoch
@@ -90,6 +102,7 @@ export interface InitOutput {
     readonly jd_to_utc_string: (a: number, b: number) => [number, number];
     readonly geodetic_to_ecef: (a: number, b: number, c: number) => [number, number];
     readonly geodetic_to_eci: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly body_quat_eci_to_lvlh: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
