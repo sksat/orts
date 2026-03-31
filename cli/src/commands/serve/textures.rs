@@ -4,10 +4,12 @@
 //! Higher resolutions are downloaded from NASA/USGS in the background on server
 //! start, converted/resized, and cached as JPEG in a tmpfs directory.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use tokio::sync::{broadcast, mpsc};
 
 use axum::body::Body;
 use axum::extract::{Path as AxumPath, State};
@@ -136,10 +138,10 @@ static MOON_DOWNLOADS: &[DownloadTask] = &[
     },
 ];
 
-// Mars: 12GB GeoTIFF → 4k/8k/16k
+// Mars: ~1.1GB GeoTIFF → 4k/8k/16k (928m/pixel, 23040×11520)
 static MARS: DownloadGroup = DownloadGroup {
-    label: "Mars Viking MDIM 2.1 colorized (92160×46080, 12GB)",
-    url: "https://planetarymaps.usgs.gov/mosaic/Mars_Viking_MDIM21_ClrMosaic_global_232m.tif",
+    label: "Mars Viking MDIM 2.1 colorized (23040×11520, ~1.1GB)",
+    url: "https://planetarymaps.usgs.gov/mosaic/Mars_Viking_MDIM21_ClrMosaic_global_928m.tif",
     tasks: &[
         GroupTask {
             filename: "mars_4k.jpg",
@@ -245,7 +247,20 @@ pub async fn texture_handler(
 // Background downloader
 // ---------------------------------------------------------------------------
 
-pub fn spawn_background_downloads(cache: Arc<TextureCache>) {
+/// Channel sender for requesting texture downloads for bodies in the simulation.
+pub type TextureRequestSender = mpsc::Sender<Vec<String>>;
+
+/// Spawn a long-lived texture downloader that downloads high-res textures
+/// on demand when notified of body names via the returned channel.
+///
+/// When downloads for a body complete, broadcasts a `textures_ready` message
+/// to all connected WebSocket clients via `ws_tx`.
+pub fn spawn_texture_downloader(
+    cache: Arc<TextureCache>,
+    ws_tx: broadcast::Sender<String>,
+) -> TextureRequestSender {
+    let (tx, mut rx) = mpsc::channel::<Vec<String>>(8);
+
     tokio::spawn(async move {
         let dir = &cache.cache_dir;
         if let Err(e) = std::fs::create_dir_all(dir) {
@@ -253,21 +268,54 @@ pub fn spawn_background_downloads(cache: Arc<TextureCache>) {
             return;
         }
 
-        // Priority order: Earth → Moon → Sun → Mars (Mars is huge)
-        download_group(dir, &EARTH_DAY).await;
-        download_single(dir, &EARTH_NIGHT_LOW).await;
-        download_group(dir, &EARTH_NIGHT_HIGH).await;
+        let mut downloaded_bodies: HashSet<String> = HashSet::new();
 
-        for task in MOON_DOWNLOADS {
-            download_single(dir, task).await;
+        while let Some(bodies) = rx.recv().await {
+            for body in bodies {
+                if downloaded_bodies.contains(&body) {
+                    continue;
+                }
+                downloaded_bodies.insert(body.clone());
+
+                let had_work = match body.as_str() {
+                    "earth" => {
+                        download_group(dir, &EARTH_DAY).await;
+                        download_single(dir, &EARTH_NIGHT_LOW).await;
+                        download_group(dir, &EARTH_NIGHT_HIGH).await;
+                        true
+                    }
+                    "moon" => {
+                        for task in MOON_DOWNLOADS {
+                            download_single(dir, task).await;
+                        }
+                        true
+                    }
+                    "mars" => {
+                        download_group(dir, &MARS).await;
+                        true
+                    }
+                    "sun" => {
+                        download_single(dir, &SUN).await;
+                        true
+                    }
+                    other => {
+                        eprintln!("No high-res textures available for body: {other}");
+                        false
+                    }
+                };
+
+                if had_work {
+                    eprintln!("Background texture downloads for {body} complete");
+                    let msg = super::protocol::WsMessage::TexturesReady { body: body.clone() };
+                    if let Ok(json) = serde_json::to_string(&msg) {
+                        let _ = ws_tx.send(json);
+                    }
+                }
+            }
         }
-
-        download_single(dir, &SUN).await;
-
-        download_group(dir, &MARS).await;
-
-        eprintln!("Background texture downloads complete");
     });
+
+    tx
 }
 
 async fn download_single(cache_dir: &Path, task: &DownloadTask) {
@@ -373,9 +421,9 @@ fn process_image_data(
     data: &[u8],
     resize: Option<(u32, u32)>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let img = ImageReader::new(Cursor::new(data))
-        .with_guessed_format()?
-        .decode()?;
+    let mut reader = ImageReader::new(Cursor::new(data)).with_guessed_format()?;
+    reader.no_limits(); // default max_alloc (512 MiB) is too small for NASA sources
+    let img = reader.decode()?;
 
     let img = match resize {
         Some((w, h)) => img.resize_exact(w, h, FilterType::Lanczos3),
@@ -406,6 +454,24 @@ mod tests {
     fn unknown_texture_returns_none() {
         let cache = TextureCache::new();
         assert!(cache.get("nonexistent.jpg").is_none());
+    }
+
+    #[test]
+    fn cached_texture_returned_from_disk() {
+        let cache = TextureCache::new();
+        // Write a fake cached texture
+        let _ = std::fs::create_dir_all(&cache.cache_dir);
+        let fake_path = cache.cache_dir.join("test_cached.jpg");
+        std::fs::write(&fake_path, b"\xFF\xD8\xFFfake").unwrap();
+
+        let result = cache.get("test_cached.jpg");
+        match result {
+            Some(TextureData::Cached(path)) => assert_eq!(path, fake_path),
+            _ => panic!("expected Cached variant with matching path"),
+        }
+
+        // Cleanup
+        let _ = std::fs::remove_file(&fake_path);
     }
 
     #[test]

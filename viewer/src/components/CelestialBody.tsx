@@ -23,6 +23,10 @@ interface CelestialBodyProps {
   sunIntensity?: number;
   /** When true, atmosphere uses physical scale. Default false (amplified). */
   physicalScale?: boolean;
+  /** Bumped when server notifies high-res textures are available. Triggers re-upgrade. */
+  textureRevision?: number;
+  /** Base URL for fetching high-res textures. */
+  textureBaseUrl?: string;
 }
 
 const FALLBACK_CHAIN: TextureResolution[] = ["16k", "8k", "4k"];
@@ -45,18 +49,24 @@ function TexturedBody({
   renderInfo,
   radius,
   targetResolution,
+  textureRevision,
+  textureBaseUrl,
 }: {
   renderInfo: BodyRenderInfo;
   radius: number;
   targetResolution?: TextureResolution;
+  textureRevision?: number;
+  textureBaseUrl?: string;
 }) {
   const [texture, setTexture] = useState<THREE.Texture | null>(null);
   const [baseLoaded, setBaseLoaded] = useState(false);
+  const [upgraded, setUpgraded] = useState(false);
 
   // Load base texture
   useEffect(() => {
     let cancelled = false;
     setBaseLoaded(false);
+    setUpgraded(false);
     new THREE.TextureLoader().load(
       renderInfo.texturePath!,
       (tex) => {
@@ -74,13 +84,16 @@ function TexturedBody({
     };
   }, [renderInfo.texturePath]);
 
-  // Upgrade to higher resolution when available (runs once after base loads)
+  // Upgrade to higher resolution — re-runs on textureRevision bump (server notification)
+  // and retries periodically until successful.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: textureRevision is an intentional trigger to re-attempt texture upgrade when server notifies new textures are available.
   useEffect(() => {
     if (!baseLoaded || !renderInfo.textureBaseName) return;
     if (!targetResolution || targetResolution === "2k") return;
+    if (upgraded) return;
 
     let cancelled = false;
-    const basePath = `${import.meta.env.BASE_URL}textures/`;
+    const basePath = textureBaseUrl ?? `${import.meta.env.BASE_URL}textures/`;
     const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);
     const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
 
@@ -98,15 +111,30 @@ function TexturedBody({
             old?.dispose();
             return newTex;
           });
+          setUpgraded(true);
           return;
         }
       }
     }
     tryUpgrade();
+
+    // Periodic retry every 10s until upgrade succeeds or component unmounts.
+    const timer = setInterval(() => {
+      if (!cancelled) tryUpgrade();
+    }, 10_000);
+
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [baseLoaded, targetResolution, renderInfo.textureBaseName]);
+  }, [
+    baseLoaded,
+    targetResolution,
+    renderInfo.textureBaseName,
+    textureRevision,
+    upgraded,
+    textureBaseUrl,
+  ]);
 
   return (
     <group>
@@ -169,6 +197,8 @@ export function CelestialBody({
   ambientIntensity,
   sunIntensity,
   physicalScale,
+  textureRevision,
+  textureBaseUrl,
 }: CelestialBodyProps) {
   const renderInfo = getBodyRenderInfo(bodyId);
   const isSatelliteCentered = lvlhPosition != null;
@@ -190,11 +220,19 @@ export function CelestialBody({
         ambientIntensity={ambientIntensity}
         sunIntensity={sunIntensity}
         physicalScale={physicalScale}
+        textureRevision={textureRevision}
+        textureBaseUrl={textureBaseUrl}
       />
     );
   } else if (renderInfo.texturePath) {
     body = (
-      <TexturedBody renderInfo={renderInfo} radius={radius} targetResolution={targetResolution} />
+      <TexturedBody
+        renderInfo={renderInfo}
+        radius={radius}
+        targetResolution={targetResolution}
+        textureRevision={textureRevision}
+        textureBaseUrl={textureBaseUrl}
+      />
     );
   } else {
     body = <FallbackBody renderInfo={renderInfo} radius={radius} />;

@@ -139,6 +139,11 @@ interface ErrorMessage {
   message: string;
 }
 
+interface TexturesReadyMessage {
+  type: "textures_ready";
+  body: string;
+}
+
 export type ServerMessage =
   | StateMessage
   | InfoMessage
@@ -148,7 +153,8 @@ export type ServerMessage =
   | QueryRangeResponseMessage
   | SimulationTerminatedMessage
   | StatusMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | TexturesReadyMessage;
 
 /** Response data from a query_range request. */
 export interface QueryRangeResponse {
@@ -175,6 +181,8 @@ export interface UseWebSocketOptions {
   onStatus?: (state: string) => void;
   /** Called when the server sends an error message. */
   onError?: (message: string) => void;
+  /** Called when the server notifies that high-res textures are available for a body. */
+  onTexturesReady?: (body: string) => void;
 }
 
 /** Callbacks for message dispatch (subset of UseWebSocketOptions used by dispatchServerMessage). */
@@ -188,6 +196,7 @@ export interface DispatchCallbacks {
   onSimulationTerminated?: (satelliteId: string, t: number, reason: string) => void;
   onStatus?: (state: string) => void;
   onError?: (message: string) => void;
+  onTexturesReady?: (body: string) => void;
 }
 
 function parseAccelerations(accels?: Record<string, number>) {
@@ -305,6 +314,8 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
     callbacks.onStatus?.((msg as StatusMessage).state);
   } else if (msg.type === "error") {
     callbacks.onError?.((msg as ErrorMessage).message);
+  } else if (msg.type === "textures_ready") {
+    callbacks.onTexturesReady?.((msg as TexturesReadyMessage).body);
   }
 }
 
@@ -342,6 +353,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onSimulationTerminated: options.onSimulationTerminated,
     onStatus: options.onStatus,
     onError: options.onError,
+    onTexturesReady: options.onTexturesReady,
   });
   callbacksRef.current = {
     onState: options.onState,
@@ -353,6 +365,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onSimulationTerminated: options.onSimulationTerminated,
     onStatus: options.onStatus,
     onError: options.onError,
+    onTexturesReady: options.onTexturesReady,
   };
 
   const urlRef = useRef(options.url);

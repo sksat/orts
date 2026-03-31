@@ -202,12 +202,33 @@ enum LoopExit {
     Disconnected,
 }
 
+/// Collect all body names in the simulation system (central + third bodies).
+fn system_body_names(params: &SimParams) -> Vec<String> {
+    body_names_for(&params.body)
+}
+
+/// Return the central body name plus all third-body names for the given central body.
+fn body_names_for(body: &kaname::body::KnownBody) -> Vec<String> {
+    let mut names = vec![body.properties().name.to_lowercase()];
+    for tb in &default_third_bodies(body) {
+        // tb.name is like "third_body_sun" → extract the body name after the prefix
+        if let Some(name) = tb.name.strip_prefix("third_body_") {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
 /// Simulation manager that starts with a pre-built SimParams (legacy CLI args path).
 pub(super) async fn simulation_manager_with_params(
     params: Arc<SimParams>,
     cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
+    texture_tx: super::textures::TextureRequestSender,
 ) {
+    // Request texture downloads for all bodies in the system.
+    let _ = texture_tx.send(system_body_names(&params)).await;
+
     let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
     let body_radius = params.body.properties().radius;
     let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
@@ -217,7 +238,7 @@ pub(super) async fn simulation_manager_with_params(
             eprintln!("Simulation manager: idle, waiting for start_simulation...");
             if let Some(config) = idle_loop(&mut returned_rx).await {
                 // Delegate to the standard manager for subsequent runs.
-                simulation_manager(Some(config), returned_rx, tx).await;
+                simulation_manager(Some(config), returned_rx, tx, texture_tx).await;
             }
         }
         (LoopExit::Disconnected, _) => {}
@@ -310,6 +331,7 @@ pub(super) async fn simulation_manager(
     initial_config: Option<SimConfig>,
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
+    texture_tx: super::textures::TextureRequestSender,
 ) {
     // Determine the first config to start with.
     let mut next_config = if let Some(config) = initial_config {
@@ -322,6 +344,10 @@ pub(super) async fn simulation_manager(
     // Main manager loop: start simulation, run until terminated, return to idle.
     while let Some(config) = next_config {
         let params = Arc::new(SimParams::from_config(&config));
+
+        // Request texture downloads for all bodies in the system.
+        let _ = texture_tx.send(system_body_names(&params)).await;
+
         let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
         let body_radius = params.body.properties().radius;
         let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
@@ -921,5 +947,37 @@ async fn run_simulation_loop(
                 tokio::time::sleep(chunk_wall_time - elapsed).await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kaname::body::KnownBody;
+
+    #[test]
+    fn body_names_for_earth_includes_sun_and_moon() {
+        let names = body_names_for(&KnownBody::Earth);
+        assert_eq!(names[0], "earth");
+        assert!(names.contains(&"sun".to_string()));
+        assert!(names.contains(&"moon".to_string()));
+        assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn body_names_for_mars_includes_sun_only() {
+        let names = body_names_for(&KnownBody::Mars);
+        assert_eq!(names[0], "mars");
+        assert!(names.contains(&"sun".to_string()));
+        assert!(!names.contains(&"moon".to_string()));
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn body_names_for_moon_includes_sun_only() {
+        let names = body_names_for(&KnownBody::Moon);
+        assert_eq!(names[0], "moon");
+        assert!(names.contains(&"sun".to_string()));
+        assert_eq!(names.len(), 2);
     }
 }

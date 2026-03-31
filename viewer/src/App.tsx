@@ -202,6 +202,8 @@ export function App() {
   const chartDirtyRef = useRef(false);
   // Result of local DuckDB zoom query (replaces server query_range).
   const [localZoomData, setLocalZoomData] = useState<ChartDataMap | null>(null);
+  // Bumped when server notifies that new high-res textures are available.
+  const [textureRevision, setTextureRevision] = useState(0);
 
   // --- Multi-satellite detection ---
   const isMultiSatellite = mode === "realtime" && simInfo != null && simInfo.satellites.length > 1;
@@ -400,6 +402,10 @@ export function App() {
     [simInfo],
   );
 
+  const handleTexturesReady = useCallback((_body: string) => {
+    setTextureRevision((v) => v + 1);
+  }, []);
+
   const { connect, disconnect, isConnected, send } = useWebSocket({
     url: wsUrl,
     onState: handleState,
@@ -411,6 +417,7 @@ export function App() {
     onSimulationTerminated: handleSimulationTerminated,
     onStatus: handleStatus,
     onError: handleError,
+    onTexturesReady: handleTexturesReady,
   });
 
   const handleStartSimulation = useCallback(
@@ -778,6 +785,17 @@ export function App() {
   const satellitePosition =
     mode === "replay" ? snapshot.satellitePosition : realtimePlayback.snapshot.satellitePosition;
 
+  // Derive texture base URL from the WebSocket URL so that in dev mode
+  // (Vite on a different port) high-res textures are fetched from the orts server.
+  const textureBaseUrl = useMemo(() => {
+    try {
+      const u = new URL(wsUrl.replace(/^ws/, "http"));
+      return `${u.origin}/textures/`;
+    } catch {
+      return `${import.meta.env.BASE_URL}textures/`;
+    }
+  }, [wsUrl]);
+
   const centralBody =
     mode === "realtime"
       ? (simInfo?.central_body ?? "earth")
@@ -876,6 +894,8 @@ export function App() {
         referenceFrame={referenceFrame}
         satelliteNames={satelliteNames}
         physicalScale={false}
+        textureRevision={textureRevision}
+        textureBaseUrl={textureBaseUrl}
       />
 
       {/* UI overlay */}

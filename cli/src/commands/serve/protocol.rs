@@ -107,6 +107,9 @@ pub enum WsMessage {
     /// Confirmation that a satellite was added.
     #[serde(rename = "satellite_added")]
     SatelliteAdded { satellite: SatelliteInfo, t: f64 },
+    /// Notification that high-resolution textures are now available for a body.
+    #[serde(rename = "textures_ready")]
+    TexturesReady { body: String },
     /// Error response.
     #[serde(rename = "error")]
     Error { message: String },
@@ -398,6 +401,17 @@ mod tests {
         assert_eq!(v["satellite_id"], "iss");
         // attitude should be absent when None
         assert!(v.get("attitude").is_none());
+    }
+
+    #[test]
+    fn textures_ready_serialization() {
+        let msg = WsMessage::TexturesReady {
+            body: "earth".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["type"], "textures_ready");
+        assert_eq!(v["body"], "earth");
     }
 
     #[test]

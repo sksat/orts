@@ -252,6 +252,10 @@ interface SceneProps {
   satelliteNames?: Map<string, string | null>;
   /** When true, atmosphere uses physical scale. Default: auto (true for satellite-centered). */
   physicalScale?: boolean;
+  /** Bumped when server notifies high-res textures are available. */
+  textureRevision?: number;
+  /** Base URL for fetching high-res textures (e.g., "http://localhost:9001/textures/"). */
+  textureBaseUrl?: string;
 }
 
 /**
@@ -274,6 +278,8 @@ export function Scene({
   referenceFrame = DEFAULT_FRAME,
   satelliteNames,
   physicalScale,
+  textureRevision,
+  textureBaseUrl,
 }: SceneProps) {
   const isEcef = isLegacyEcef(referenceFrame);
   const isSatCentered = referenceFrame.center.type === "satellite";
@@ -507,6 +513,8 @@ export function Scene({
           ambientIntensity={0.15}
           sunIntensity={sunIntensity}
           physicalScale={physicalScale}
+          textureRevision={textureRevision}
+          textureBaseUrl={textureBaseUrl}
         />
 
         {/* Multi-satellite mode */}

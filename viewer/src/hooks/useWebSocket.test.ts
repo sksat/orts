@@ -193,4 +193,22 @@ describe("dispatchServerMessage", () => {
     expect(onError).toHaveBeenCalledOnce();
     expect(onError).toHaveBeenCalledWith("Simulation is already running");
   });
+
+  it("dispatches textures_ready message", () => {
+    const onTexturesReady = vi.fn();
+    const callbacks = { ...baseCallbacks, onTexturesReady };
+
+    const msg: ServerMessage = { type: "textures_ready", body: "earth" };
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onTexturesReady).toHaveBeenCalledOnce();
+    expect(onTexturesReady).toHaveBeenCalledWith("earth");
+  });
+
+  it("handles textures_ready without callback", () => {
+    const callbacks = { ...baseCallbacks };
+
+    const msg: ServerMessage = { type: "textures_ready", body: "moon" };
+    expect(() => dispatchServerMessage(msg, callbacks)).not.toThrow();
+  });
 });

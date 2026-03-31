@@ -34,6 +34,10 @@ interface EarthBodyProps {
   sunIntensity?: number;
   /** When true, atmosphere uses physical scale (~100km). Default false (amplified). */
   physicalScale?: boolean;
+  /** Bumped when server notifies high-res textures are available. Triggers re-upgrade. */
+  textureRevision?: number;
+  /** Base URL for fetching high-res textures. */
+  textureBaseUrl?: string;
 }
 
 /**
@@ -65,9 +69,12 @@ export function EarthBody({
   ambientIntensity = 0.15,
   sunIntensity = 1.0,
   physicalScale = false,
+  textureRevision,
+  textureBaseUrl,
 }: EarthBodyProps) {
   const materialRef = useRef<THREE.ShaderMaterial | null>(null);
   const [ready, setReady] = useState(false);
+  const [upgraded, setUpgraded] = useState(false);
 
   // 1. Load 2K textures manually (no Suspense — keeps Canvas interactive)
   // biome-ignore lint/correctness/useExhaustiveDependencies: uniform values are synced by separate effects below; recreating the material on every uniform change would reload textures unnecessarily.
@@ -96,15 +103,18 @@ export function EarthBody({
     };
   }, [dayTexturePath, nightTexturePath]);
 
-  // 2. Async upgrade to higher-resolution textures
+  // 2. Async upgrade to higher-resolution textures — re-runs on textureRevision bump
+  //    and retries periodically until successful.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: textureRevision is an intentional trigger to re-attempt texture upgrade when server notifies new textures are available.
   useEffect(() => {
     if (!ready) return;
     if (!targetResolution || targetResolution === "2k" || !textureBaseName || !nightTextureBaseName)
       return;
     if (!materialRef.current) return;
+    if (upgraded) return;
 
     let cancelled = false;
-    const basePath = `${import.meta.env.BASE_URL}textures/`;
+    const basePath = textureBaseUrl ?? `${import.meta.env.BASE_URL}textures/`;
 
     // Build fallback chain starting from target resolution
     const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);
@@ -139,6 +149,7 @@ export function EarthBody({
             oldDay.dispose();
             oldNight.dispose();
           }
+          setUpgraded(true);
           return; // success
         }
 
@@ -150,10 +161,17 @@ export function EarthBody({
     }
 
     tryUpgrade();
+
+    // Periodic retry every 10s until upgrade succeeds or component unmounts.
+    const timer = setInterval(() => {
+      if (!cancelled) tryUpgrade();
+    }, 10_000);
+
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [ready, targetResolution, textureBaseName, nightTextureBaseName]);
+  }, [ready, targetResolution, textureBaseName, nightTextureBaseName, textureRevision, upgraded, textureBaseUrl]);
 
   // 3. Update uniforms reactively (no material recreation)
   // `ready` dependency ensures uniforms are set after material creation

@@ -80,20 +80,29 @@ async fn async_server(sim: &SimArgs, port: u16) {
         None
     };
 
+    let texture_cache = Arc::new(TextureCache::new());
+    let texture_request_tx =
+        textures::spawn_texture_downloader(Arc::clone(&texture_cache), tx.clone());
+
     // Spawn simulation manager
     let mgr_tx = tx.clone();
     if has_explicit_sim_args(sim) && initial_config.is_none() {
         // Legacy path: build SimParams from CLI args directly
         let params = Arc::new(SimParams::from_sim_args(sim, true));
         tokio::spawn(manager::simulation_manager_with_params(
-            params, cmd_rx, mgr_tx,
+            params,
+            cmd_rx,
+            mgr_tx,
+            texture_request_tx.clone(),
         ));
     } else {
-        tokio::spawn(manager::simulation_manager(initial_config, cmd_rx, mgr_tx));
+        tokio::spawn(manager::simulation_manager(
+            initial_config,
+            cmd_rx,
+            mgr_tx,
+            texture_request_tx.clone(),
+        ));
     }
-
-    let texture_cache = Arc::new(TextureCache::new());
-    textures::spawn_background_downloads(Arc::clone(&texture_cache));
 
     let state = AppState {
         tx,
