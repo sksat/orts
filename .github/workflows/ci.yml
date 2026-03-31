@@ -81,8 +81,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Biome lint & format check
-        run: pnpm lint
+      - name: Biome format check
+        run: pnpm format:check
+
+      - name: Biome lint
+        run: pnpm exec biome lint .
 
       - name: Build uneri
         run: pnpm --filter uneri build
