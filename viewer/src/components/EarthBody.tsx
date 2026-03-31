@@ -171,7 +171,15 @@ export function EarthBody({
       cancelled = true;
       clearInterval(timer);
     };
-  }, [ready, targetResolution, textureBaseName, nightTextureBaseName, textureRevision, upgraded, textureBaseUrl]);
+  }, [
+    ready,
+    targetResolution,
+    textureBaseName,
+    nightTextureBaseName,
+    textureRevision,
+    upgraded,
+    textureBaseUrl,
+  ]);
 
   // 3. Update uniforms reactively (no material recreation)
   // `ready` dependency ensures uniforms are set after material creation
