@@ -309,6 +309,29 @@ mod tests {
         );
     }
 
+    /// Generate fixture quaternions for viewer cross-validation tests.
+    /// Run with `cargo test -p kaname generate_fixture -- --nocapture` to see output.
+    #[test]
+    fn generate_fixture_quaternions() {
+        let cases = [
+            ("moon", 2440418.064 + 723374.0 / 86400.0, "apollo11_end"),
+            ("moon", 2440418.064, "apollo11_start"),
+            ("mars", 2451545.0, "j2000"),
+            ("earth", 2451545.0, "j2000"),
+        ];
+        println!("--- IAU orientation fixture ---");
+        for (body, jd, label) in &cases {
+            let model = model_for_body(body).unwrap();
+            let epoch = Epoch::from_jd(*jd);
+            let q = model.orientation(&epoch);
+            println!(
+                r#"  {{ body: "{body}", jd: {jd}, label: "{label}", q: [{:.15}, {:.15}, {:.15}, {:.15}] }},"#,
+                q.w, q.i, q.j, q.k
+            );
+        }
+        println!("---");
+    }
+
     #[test]
     fn moon_near_side_faces_earth() {
         // At any epoch, the Moon's prime meridian (X_body) direction should
