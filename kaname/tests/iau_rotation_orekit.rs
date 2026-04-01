@@ -80,10 +80,9 @@ fn orekit_cross_validation() {
         // Orekit returns ECI→body transform; conjugate to get body→ECI
         // (Orekit's getTransformTo(eci) gives the passive rotation from
         // body-fixed frame to ECI, which is the inverse of our convention.)
-        let orekit_q = UnitQuaternion::from_quaternion(Quaternion::new(
-            f.q[0], f.q[1], f.q[2], f.q[3],
-        ))
-        .conjugate();
+        let orekit_q =
+            UnitQuaternion::from_quaternion(Quaternion::new(f.q[0], f.q[1], f.q[2], f.q[3]))
+                .conjugate();
 
         let angle = quaternion_angle_deg(&our_q, &orekit_q);
         let tol = tolerance_deg(&f.body);
@@ -103,10 +102,7 @@ fn orekit_cross_validation() {
             );
             fail_count += 1;
         } else {
-            eprintln!(
-                "  PASS {}: {} — angle={:.4}°",
-                f.body, f.label, angle
-            );
+            eprintln!("  PASS {}: {} — angle={:.4}°", f.body, f.label, angle);
             pass_count += 1;
         }
     }
