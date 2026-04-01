@@ -215,7 +215,7 @@ pub async fn texture_handler(
     AxumPath(filename): AxumPath<String>,
     State(cache): State<Arc<TextureCache>>,
 ) -> Response {
-    match cache.get(&filename) {
+    let mut resp = match cache.get(&filename) {
         Some(TextureData::Embedded(data)) => {
             let mut resp = (StatusCode::OK, Body::from(data)).into_response();
             resp.headers_mut()
@@ -240,7 +240,13 @@ pub async fn texture_handler(
             Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         },
         None => StatusCode::NOT_FOUND.into_response(),
-    }
+    };
+    // Allow cross-origin requests so the Vite dev server can fetch textures.
+    resp.headers_mut().insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    resp
 }
 
 // ---------------------------------------------------------------------------
