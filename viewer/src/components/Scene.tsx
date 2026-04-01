@@ -25,6 +25,7 @@ import {
   sun_direction_from_body,
   sun_distance_from_body,
 } from "../wasm/kanameInit.js";
+import { entityPathToBodyId, getBodyRadius } from "../bodies.js";
 import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { Satellite } from "./Satellite.js";
@@ -200,14 +201,21 @@ function CameraConfigurator({ profile }: { profile: DisplayScaleProfile }) {
  * Uses the profile's default direction if specified, otherwise keeps current direction.
  * Runs at useFrame priority -2 (before CameraLvlhTracker at -1).
  */
-function CameraDistanceTransition({ profile }: { profile: DisplayScaleProfile }) {
+function CameraDistanceTransition({
+  profile,
+  overrideDistance,
+}: {
+  profile: DisplayScaleProfile;
+  overrideDistance?: number;
+}) {
   const { camera } = useThree();
-  const prevProfileRef = useRef(profile.name);
+  const prevKeyRef = useRef(`${profile.name}:${overrideDistance ?? ""}`);
 
   useFrame(() => {
-    if (profile.name !== prevProfileRef.current) {
-      prevProfileRef.current = profile.name;
-      const d = profile.defaultCameraDistance;
+    const key = `${profile.name}:${overrideDistance ?? ""}`;
+    if (key !== prevKeyRef.current) {
+      prevKeyRef.current = key;
+      const d = overrideDistance ?? profile.defaultCameraDistance;
       if (profile.defaultCameraDirection) {
         const [dx, dy, dz] = profile.defaultCameraDirection;
         camera.position.set(dx * d, dy * d, dz * d);
@@ -221,6 +229,69 @@ function CameraDistanceTransition({ profile }: { profile: DisplayScaleProfile })
   }, -2);
 
   return null;
+}
+
+/**
+ * Renders a secondary celestial body (e.g., Moon) at the correct position
+ * with a textured sphere scaled to its physical radius.
+ */
+function SecondaryBody({
+  bodyId,
+  position,
+  scaleRadius,
+  sunDirection,
+  originPosition = null,
+  lvlhAxes = null,
+  textureRevision,
+  textureBaseUrl,
+}: {
+  bodyId: string;
+  position: OrbitPoint;
+  scaleRadius: number;
+  sunDirection?: THREE.Vector3;
+  originPosition?: [number, number, number] | null;
+  lvlhAxes?: LvlhAxes | null;
+  textureRevision?: number;
+  textureBaseUrl?: string;
+}) {
+  const bodyRadiusKm = getBodyRadius(bodyId);
+  const physicalRadius = bodyRadiusKm != null ? bodyRadiusKm / scaleRadius : 0.01;
+  // Ensure secondary bodies are visible at Earth-Moon scale zoom levels.
+  // Physical Moon radius is ~0.27 scene units but needs to be at least ~0.5
+  // to be visible when the camera is zoomed out to see the full trajectory.
+  const radius = Math.max(physicalRadius, 1.0);
+
+  let scenePos: [number, number, number];
+  if (originPosition != null && lvlhAxes != null) {
+    scenePos = transformToLvlh(
+      position.x,
+      position.y,
+      position.z,
+      originPosition,
+      lvlhAxes,
+      scaleRadius,
+    );
+  } else if (originPosition != null) {
+    scenePos = [
+      (position.x - originPosition[0]) / scaleRadius,
+      (position.y - originPosition[1]) / scaleRadius,
+      (position.z - originPosition[2]) / scaleRadius,
+    ];
+  } else {
+    scenePos = [position.x / scaleRadius, position.y / scaleRadius, position.z / scaleRadius];
+  }
+
+  return (
+    <group position={scenePos}>
+      <CelestialBody
+        bodyId={bodyId}
+        radius={radius}
+        sunDirection={sunDirection}
+        textureRevision={textureRevision}
+        textureBaseUrl={textureBaseUrl}
+      />
+    </group>
+  );
 }
 
 interface SceneProps {
@@ -286,19 +357,33 @@ export function Scene({
   const centeredSatId =
     referenceFrame.center.type === "satellite" ? referenceFrame.center.id : null;
 
+  // Detect if centered entity is a celestial body
+  const centeredBodyId = centeredSatId != null ? entityPathToBodyId(centeredSatId) : null;
+
   // Display scale profile for the current view center
   const displayProfile = useMemo(
     () => getDisplayScaleProfile(referenceFrame.center),
     [referenceFrame.center],
   );
 
+  // Override camera distance when centering on a known body
+  const cameraDistanceOverride = useMemo(() => {
+    if (centeredBodyId == null) return undefined;
+    const bodyRadiusKm = getBodyRadius(centeredBodyId);
+    if (bodyRadiusKm == null) return undefined;
+    // Camera at ~3x body radius in scene units
+    return (bodyRadiusKm / centralBodyRadius) * 3;
+  }, [centeredBodyId, centralBodyRadius]);
+
   // Scene amplification: scale up environment to show correct proportions
   // relative to the satellite's exaggerated model at origin.
   const sceneAmplification = useMemo(() => {
     if (!isSatCentered || centeredSatId == null) return 1;
+    // Body entities (Moon, Sun, etc.) don't need satellite amplification
+    if (centeredBodyId != null) return 1;
     const modelConfig = getSatelliteModelConfig(centeredSatId, satelliteNames?.get(centeredSatId));
     return computeSceneAmplification(modelConfig, centralBodyRadius);
-  }, [isSatCentered, centeredSatId, satelliteNames, centralBodyRadius]);
+  }, [isSatCentered, centeredSatId, centeredBodyId, satelliteNames, centralBodyRadius]);
 
   // Effective scale radius: smaller when amplified, so positions appear larger
   const effectiveScaleRadius = centralBodyRadius / sceneAmplification;
@@ -450,7 +535,7 @@ export function Scene({
       style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
     >
       <CameraConfigurator profile={displayProfile} />
-      <CameraDistanceTransition profile={displayProfile} />
+      <CameraDistanceTransition profile={displayProfile} overrideDistance={cameraDistanceOverride} />
       <OrbitControls
         enableDamping
         dampingFactor={0.1}
@@ -466,7 +551,7 @@ export function Scene({
       <ambientLight intensity={0.15} />
       <directionalLight intensity={3.0 * sunIntensity} position={lightPosition} />
 
-      {/* Centered satellite: always exactly at world origin (0,0,0). */}
+      {/* Centered satellite/body: always exactly at world origin (0,0,0). */}
       {centeredSatId != null &&
         multiSatEntries &&
         (() => {
@@ -474,6 +559,21 @@ export function Scene({
           if (idx < 0) return null;
           const pos = satellitePositions?.get(centeredSatId);
           if (!pos) return null;
+          const centeredBodyId = entityPathToBodyId(centeredSatId);
+          if (centeredBodyId != null) {
+            // Render as CelestialBody at origin with physical radius
+            const bodyRadiusKm = getBodyRadius(centeredBodyId);
+            const bodyRadius = bodyRadiusKm != null ? bodyRadiusKm / centralBodyRadius : 0.01;
+            return (
+              <CelestialBody
+                bodyId={centeredBodyId}
+                radius={bodyRadius}
+                sunDirection={sunDirection}
+                textureRevision={textureRevision}
+                textureBaseUrl={textureBaseUrl}
+              />
+            );
+          }
           return (
             <Satellite
               position={pos}
@@ -524,6 +624,7 @@ export function Scene({
           const pos = satellitePositions?.get(satId);
           const isCenteredSat = satId === centeredSatId;
           const trailScale = lvlhActive ? effectiveScaleRadius : centralBodyRadius;
+          const bodyId = entityPathToBodyId(satId);
           return (
             <group key={satId}>
               <OrbitTrail
@@ -537,7 +638,19 @@ export function Scene({
                 originPosition={lvlhActive ? originPosition : null}
                 lvlhAxes={lvlhActive ? lvlhAxes : null}
               />
-              {pos && !isCenteredSat && (
+              {pos && !isCenteredSat && bodyId != null && (
+                <SecondaryBody
+                  bodyId={bodyId}
+                  position={pos}
+                  scaleRadius={trailScale}
+                  sunDirection={sunDirection}
+                  originPosition={lvlhActive ? originPosition : null}
+                  lvlhAxes={lvlhActive ? lvlhAxes : null}
+                  textureRevision={textureRevision}
+                  textureBaseUrl={textureBaseUrl}
+                />
+              )}
+              {pos && !isCenteredSat && bodyId == null && (
                 <Satellite
                   position={pos}
                   scaleRadius={trailScale}

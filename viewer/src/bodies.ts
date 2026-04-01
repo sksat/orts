@@ -64,6 +64,14 @@ const BODY_REGISTRY: Record<string, BodyRenderInfo> = {
   },
 };
 
+/** Known body radii in km, for rendering secondary bodies at correct scale. */
+const BODY_RADII: Record<string, number> = {
+  earth: 6378.137,
+  moon: 1737.4,
+  sun: 695700,
+  mars: 3389.5,
+};
+
 const UNKNOWN_BODY: BodyRenderInfo = {
   id: "unknown",
   name: "Unknown Body",
@@ -77,4 +85,27 @@ const UNKNOWN_BODY: BodyRenderInfo = {
 /** Look up rendering info for a body by its identifier. */
 export function getBodyRenderInfo(bodyId: string): BodyRenderInfo {
   return BODY_REGISTRY[bodyId] ?? UNKNOWN_BODY;
+}
+
+/**
+ * Extract a known body ID from an entity path, or null if it's a satellite.
+ *
+ * Convention:
+ * - `/world/sat/*` → satellite (returns null)
+ * - `/world/<bodyId>` where bodyId is in BODY_REGISTRY → celestial body
+ */
+/** Get the radius of a known body in km, or null if unknown. */
+export function getBodyRadius(bodyId: string): number | null {
+  return BODY_RADII[bodyId] ?? null;
+}
+
+export function entityPathToBodyId(entityPath: string): string | null {
+  if (entityPath.startsWith("/world/sat/")) return null;
+  const segments = entityPath.split("/").filter(Boolean);
+  // Expected: ["world", "<bodyId>"]
+  if (segments.length >= 2 && segments[0] === "world") {
+    const candidate = segments[segments.length - 1];
+    if (candidate in BODY_REGISTRY) return candidate;
+  }
+  return null;
 }

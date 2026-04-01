@@ -65,7 +65,7 @@ const SATELLITE_CENTERED_PROFILE: DisplayScaleProfile = {
   name: "satellite-centered",
   sphereFallbackRadius: 0.005,
   cameraNear: 1e-4,
-  cameraFar: 10000,
+  cameraFar: 1e6,
   minDistance: 0.005,
   maxDistance: 2000,
   defaultCameraDistance: 0.15,
