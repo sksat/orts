@@ -261,9 +261,7 @@ function SecondaryBody({
   textureBaseUrl?: string;
 }) {
   const bodyRadiusKm = getBodyRadius(bodyId);
-  const physicalRadius = bodyRadiusKm != null ? bodyRadiusKm / scaleRadius : 0.01;
-  // Ensure secondary bodies are visible at Earth-Moon scale zoom levels.
-  const radius = Math.max(physicalRadius, 1.0);
+  const radius = bodyRadiusKm != null ? bodyRadiusKm / scaleRadius : 0.01;
 
   // Position transform: same pipeline as Satellite (ECI → ECEF → LVLH)
   let scenePos: [number, number, number];
