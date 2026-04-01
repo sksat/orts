@@ -290,8 +290,8 @@ function SecondaryBody({
   }
 
   // Body orientation via IAU rotation model (kaname WASM).
-  // Three.js sphere: +Y = north pole, but IAU body frame: +Z = north pole.
-  // We apply pole alignment (π/2 rotation around X) after the IAU quaternion.
+  // IAU quaternion is body-fixed → ECI. For non-inertial display frames
+  // (ECEF, LVLH), we must apply the same frame rotation as positions get.
   const orientation = useMemo(() => {
     if (epochJd == null) return undefined;
     const q = body_orientation(bodyId, epochJd, position.t);
@@ -300,9 +300,16 @@ function SecondaryBody({
     const iauQuat = new THREE.Quaternion(q[1], q[2], q[3], q[0]); // THREE uses (x,y,z,w)
     // Pole alignment: rotate +Y (Three.js pole) → +Z (IAU pole)
     const poleAlign = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
-    // Combined: first align pole, then apply IAU rotation
-    return iauQuat.multiply(poleAlign);
-  }, [bodyId, epochJd, position.t]);
+    // body-fixed → ECI → (optional frame rotation)
+    let combined = iauQuat.multiply(poleAlign);
+    // ECEF: apply inverse Earth rotation (same as position transform)
+    if (isLegacyEcef(referenceFrame) && epochJd != null) {
+      const era = earth_rotation_angle(epochJd, position.t);
+      const ecefRot = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, -era));
+      combined = ecefRot.multiply(combined);
+    }
+    return combined;
+  }, [bodyId, epochJd, position.t, referenceFrame]);
 
   return (
     <group position={scenePos} quaternion={orientation ?? undefined}>
