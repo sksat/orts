@@ -2,6 +2,7 @@ import { OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { entityPathToBodyId, getBodyRadius } from "../bodies.js";
 import { transformToLvlh } from "../coordTransform.js";
 import {
   computeSceneAmplification,
@@ -27,7 +28,6 @@ import {
   sun_direction_from_body,
   sun_distance_from_body,
 } from "../wasm/kanameInit.js";
-import { entityPathToBodyId, getBodyRadius } from "../bodies.js";
 import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { Satellite } from "./Satellite.js";
@@ -565,7 +565,10 @@ export function Scene({
       style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
     >
       <CameraConfigurator profile={displayProfile} />
-      <CameraDistanceTransition profile={displayProfile} overrideDistance={cameraDistanceOverride} />
+      <CameraDistanceTransition
+        profile={displayProfile}
+        overrideDistance={cameraDistanceOverride}
+      />
       <OrbitControls
         enableDamping
         dampingFactor={0.1}
@@ -594,10 +597,12 @@ export function Scene({
             // Render as CelestialBody at origin with physical radius + IAU orientation
             const bodyRadiusKm = getBodyRadius(centeredBodyId);
             const bodyRadius = bodyRadiusKm != null ? bodyRadiusKm / centralBodyRadius : 0.01;
-            const q = epochJd != null ? body_orientation(centeredBodyId, epochJd, pos.t) : undefined;
+            const q =
+              epochJd != null ? body_orientation(centeredBodyId, epochJd, pos.t) : undefined;
             const iauQuat = q
-              ? new THREE.Quaternion(q[1], q[2], q[3], q[0])
-                  .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)))
+              ? new THREE.Quaternion(q[1], q[2], q[3], q[0]).multiply(
+                  new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)),
+                )
               : undefined;
             return (
               <group quaternion={iauQuat ?? undefined}>

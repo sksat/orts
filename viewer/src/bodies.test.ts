@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import * as THREE from "three";
+import { describe, expect, it } from "vitest";
 import { entityPathToBodyId, getBodyRadius } from "./bodies.js";
 
 describe("entityPathToBodyId", () => {
@@ -62,7 +62,7 @@ describe("Moon texture orientation pipeline", () => {
       body: "moon",
       jd: 2440418.064,
       label: "apollo11_start",
-      q: [0.874243020840650, 0.168429893642365, 0.087341875388686, -0.446880194507011],
+      q: [0.87424302084065, 0.168429893642365, 0.087341875388686, -0.446880194507011],
     },
     {
       body: "mars",
