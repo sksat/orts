@@ -147,13 +147,11 @@ pub fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f
 /// Returns an empty vec if the body has no IAU rotation model.
 #[wasm_bindgen]
 pub fn body_orientation(body: &str, epoch_jd: f64, t: f64) -> Vec<f64> {
-    let model = match crate::rotation::model_for_body(body) {
-        Some(m) => m,
-        None => return vec![],
-    };
     let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
-    let q = model.orientation(&epoch);
-    vec![q.w, q.i, q.j, q.k]
+    match crate::rotation::body_orientation(body, &epoch) {
+        Some(q) => vec![q.w, q.i, q.j, q.k],
+        None => vec![],
+    }
 }
 
 /// Transform a body-to-ECI quaternion into a body-to-LVLH quaternion.

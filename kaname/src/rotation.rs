@@ -38,11 +38,10 @@ pub struct IauRotationModel {
     pub wd: f64,
 }
 
-/// IAU 2009 rotation model for the Moon.
+/// IAU 2009 rotation model for the Moon (base linear terms).
 ///
-/// Note: This is the base model without libration terms.
-/// Physical librations add periodic corrections of up to ~6° in longitude
-/// and ~1° in latitude, but are omitted for simplicity.
+/// For higher accuracy, use [`moon_orientation()`] which includes the
+/// 13-term periodic libration corrections from the IAU 2009 report.
 pub const MOON: IauRotationModel = IauRotationModel {
     alpha0: 269.9949,
     alpha1: 0.0031,
@@ -51,6 +50,98 @@ pub const MOON: IauRotationModel = IauRotationModel {
     w0: 38.3213,
     wd: 13.17635815,
 };
+
+/// Compute the 13 nutation/libration arguments E1–E13 for the Moon [radians].
+///
+/// These are linear functions of d (days since J2000) used in the periodic
+/// corrections to the Moon's pole direction and prime meridian.
+/// Reference: Archinal et al. (2011), Table 2.
+fn moon_nutation_args(d: f64) -> [f64; 13] {
+    [
+        (125.045 - 0.0529921 * d).to_radians(),   // E1
+        (250.089 - 0.1059842 * d).to_radians(),   // E2
+        (260.008 + 13.0120009 * d).to_radians(),  // E3
+        (176.625 + 13.3407154 * d).to_radians(),  // E4
+        (357.529 + 0.9856003 * d).to_radians(),   // E5
+        (311.589 + 26.4057084 * d).to_radians(),  // E6
+        (134.963 + 13.0649930 * d).to_radians(),  // E7
+        (276.617 + 0.3287146 * d).to_radians(),   // E8
+        (34.226 + 1.7484877 * d).to_radians(),    // E9
+        (15.134 - 0.1589763 * d).to_radians(),    // E10
+        (119.743 + 0.0036096 * d).to_radians(),   // E11
+        (239.961 + 0.1643573 * d).to_radians(),   // E12
+        (25.053 + 12.9590088 * d).to_radians(),   // E13
+    ]
+}
+
+/// Moon body-fixed → ECI orientation with IAU 2009 libration corrections.
+///
+/// Includes the 13-term periodic corrections to α, δ, and W from
+/// Archinal et al. (2011), Table 3a/3b. These correct for nutation and
+/// precession of the Moon's pole and prime meridian relative to the
+/// mean orientation (ME frame).
+pub fn moon_orientation(epoch: &Epoch) -> UnitQuaternion<f64> {
+    let d = epoch.jd() - 2451545.0;
+    let t = d / 36525.0;
+    let e = moon_nutation_args(d);
+
+    // Base linear terms
+    let mut alpha_deg = 269.9949 + 0.0031 * t;
+    let mut delta_deg = 66.5392 + 0.0130 * t;
+    let mut w_deg = 38.3213 + 13.17635815 * d + (-1.4e-12) * d * d;
+
+    // Periodic corrections to α (right ascension of pole)
+    // Reference: Archinal et al. (2011), Table 3a
+    alpha_deg += -3.8787 * e[0].sin()
+        - 0.1204 * e[1].sin()
+        + 0.0700 * e[2].sin()
+        - 0.0172 * e[3].sin()
+        + 0.0072 * e[5].sin()
+        - 0.0052 * e[9].sin()
+        + 0.0043 * e[12].sin();
+
+    // Periodic corrections to δ (declination of pole)
+    delta_deg += 1.5419 * e[0].cos()
+        + 0.0239 * e[1].cos()
+        - 0.0278 * e[2].cos()
+        + 0.0068 * e[3].cos()
+        - 0.0029 * e[5].cos()
+        + 0.0009 * e[6].cos()
+        + 0.0008 * e[9].cos()
+        - 0.0009 * e[12].cos();
+
+    // Periodic corrections to W (prime meridian)
+    w_deg += 3.5610 * e[0].sin()
+        + 0.1208 * e[1].sin()
+        - 0.0642 * e[2].sin()
+        + 0.0158 * e[3].sin()
+        + 0.0252 * e[4].sin()
+        - 0.0066 * e[5].sin()
+        - 0.0047 * e[6].sin()
+        - 0.0046 * e[7].sin()
+        + 0.0028 * e[8].sin()
+        + 0.0052 * e[9].sin()
+        + 0.0040 * e[10].sin()
+        + 0.0019 * e[11].sin()
+        - 0.0044 * e[12].sin();
+
+    // Convert to radians and build body-fixed → ECI rotation
+    let alpha = alpha_deg.to_radians();
+    let delta = delta_deg.to_radians();
+    let w = w_deg.to_radians();
+
+    let z_body = Vector3::new(
+        alpha.cos() * delta.cos(),
+        alpha.sin() * delta.cos(),
+        delta.sin(),
+    );
+    let node = Vector3::new(-alpha.sin(), alpha.cos(), 0.0);
+    let m = z_body.cross(&node);
+    let x_body = node * w.cos() + m * w.sin();
+    let y_body = z_body.cross(&x_body);
+    let rot = Matrix3::from_columns(&[x_body, y_body, z_body]);
+    UnitQuaternion::from_rotation_matrix(&nalgebra::Rotation3::from_matrix_unchecked(rot))
+}
 
 /// IAU 2009 rotation model for Mars.
 pub const MARS: IauRotationModel = IauRotationModel {
@@ -91,7 +182,9 @@ pub const SUN: IauRotationModel = IauRotationModel {
     wd: 14.1844000,
 };
 
-/// Look up the IAU rotation model for a body by name.
+/// Look up the base IAU rotation model for a body by name.
+///
+/// For the Moon, prefer [`body_orientation()`] which includes libration corrections.
 pub fn model_for_body(name: &str) -> Option<&'static IauRotationModel> {
     match name {
         "earth" => Some(&EARTH),
@@ -99,6 +192,17 @@ pub fn model_for_body(name: &str) -> Option<&'static IauRotationModel> {
         "mars" => Some(&MARS),
         "sun" => Some(&SUN),
         _ => None,
+    }
+}
+
+/// Compute the body-fixed → ECI orientation for a named body.
+///
+/// Uses the best available model: libration-corrected for the Moon,
+/// base IAU model for other bodies. Returns `None` for unknown bodies.
+pub fn body_orientation(name: &str, epoch: &Epoch) -> Option<UnitQuaternion<f64>> {
+    match name {
+        "moon" => Some(moon_orientation(epoch)),
+        _ => model_for_body(name).map(|m| m.orientation(epoch)),
     }
 }
 
@@ -311,6 +415,7 @@ mod tests {
 
     /// Generate fixture quaternions for viewer cross-validation tests.
     /// Run with `cargo test -p kaname generate_fixture -- --nocapture` to see output.
+    /// Moon uses the libration model; other bodies use the base model.
     #[test]
     fn generate_fixture_quaternions() {
         let cases = [
@@ -321,9 +426,8 @@ mod tests {
         ];
         println!("--- IAU orientation fixture ---");
         for (body, jd, label) in &cases {
-            let model = model_for_body(body).unwrap();
             let epoch = Epoch::from_jd(*jd);
-            let q = model.orientation(&epoch);
+            let q = body_orientation(body, &epoch).unwrap();
             println!(
                 r#"  {{ body: "{body}", jd: {jd}, label: "{label}", q: [{:.15}, {:.15}, {:.15}, {:.15}] }},"#,
                 q.w, q.i, q.j, q.k
@@ -333,26 +437,84 @@ mod tests {
     }
 
     #[test]
-    fn moon_near_side_faces_earth() {
-        // At any epoch, the Moon's prime meridian (X_body) direction should
-        // roughly point toward Earth (origin). This is an approximate check
-        // because the IAU model without librations only captures the mean
-        // orientation, not the instantaneous tidal lock.
-        let epoch = Epoch::from_gregorian(1969, 7, 20, 20, 17, 0.0); // Apollo 11 landing
+    fn moon_near_side_faces_earth_base_model() {
+        // Base model (no libration): ~30° tolerance
+        let epoch = Epoch::from_gregorian(1969, 7, 20, 20, 17, 0.0);
         let q = MOON.orientation(&epoch);
-
-        // X_body in ECI = q * (1,0,0)
         let x_body_eci = q * Vector3::new(1.0, 0.0, 0.0);
-
-        // Moon position in ECI
         let moon_pos = crate::moon::moon_position_eci(&epoch);
-        let earth_dir = -moon_pos.normalize(); // direction from Moon to Earth
-
+        let earth_dir = -moon_pos.normalize();
         let angle = x_body_eci.angle(&earth_dir).to_degrees();
-        // Without librations, this should be within ~15° (mean orientation)
         assert!(
             angle < 30.0,
-            "Moon prime meridian should roughly face Earth, angle = {angle:.1}°"
+            "Base model: Moon prime meridian should roughly face Earth, angle = {angle:.1}°"
         );
+    }
+
+    #[test]
+    fn moon_near_side_faces_earth_with_libration() {
+        // With libration corrections: tighter tolerance
+        let epochs = [
+            Epoch::from_gregorian(1969, 7, 20, 20, 17, 0.0), // Apollo 11 landing
+            Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0),
+            Epoch::from_gregorian(2024, 6, 15, 12, 0, 0.0),
+            Epoch::from_gregorian(2000, 1, 1, 12, 0, 0.0), // J2000
+        ];
+        for epoch in &epochs {
+            let q = moon_orientation(epoch);
+            let x_body_eci = q * Vector3::new(1.0, 0.0, 0.0);
+            let moon_pos = crate::moon::moon_position_eci(epoch);
+            let earth_dir = -moon_pos.normalize();
+            let angle = x_body_eci.angle(&earth_dir).to_degrees();
+            assert!(
+                angle < 10.0,
+                "Libration model at JD {:.1}: Moon prime meridian should face Earth within 10°, got {angle:.2}°",
+                epoch.jd()
+            );
+        }
+    }
+
+    #[test]
+    fn libration_differs_from_base_model() {
+        // The libration model should produce a slightly different orientation
+        // from the base model due to periodic corrections.
+        // Note: the IAU Moon frame is Mean Earth (ME), so libration corrections
+        // do NOT necessarily bring the prime meridian closer to the instantaneous
+        // Earth direction. They correct for nutation/precession of the pole and
+        // prime meridian relative to the mean orientation.
+        let epoch = Epoch::from_gregorian(2024, 3, 15, 0, 0, 0.0);
+        let q_base = MOON.orientation(&epoch);
+        let q_lib = moon_orientation(&epoch);
+
+        // The two quaternions should differ (libration is nonzero)
+        let angle_diff = q_base.angle_to(&q_lib).to_degrees();
+        assert!(
+            angle_diff > 0.1,
+            "Libration corrections should produce measurable difference, got {angle_diff:.4}°"
+        );
+        // But not by more than ~10° (libration amplitude is bounded)
+        assert!(
+            angle_diff < 10.0,
+            "Libration corrections should be bounded, got {angle_diff:.2}°"
+        );
+    }
+
+    #[test]
+    fn libration_model_is_orthonormal() {
+        let epochs = [
+            Epoch::from_gregorian(1969, 7, 20, 20, 17, 0.0),
+            Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0),
+            Epoch::from_gregorian(2024, 6, 15, 12, 0, 0.0),
+        ];
+        for epoch in &epochs {
+            let q = moon_orientation(epoch);
+            let rot = q.to_rotation_matrix();
+            let m = rot.matrix();
+            let mtm = m.transpose() * m;
+            let err = (mtm - nalgebra::Matrix3::<f64>::identity()).norm();
+            assert!(err < 1e-10, "libration rotation should be orthogonal, error = {err}");
+            let det = m.determinant();
+            assert!((det - 1.0).abs() < 1e-10, "determinant should be 1, got {det}");
+        }
     }
 }
