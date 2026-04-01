@@ -58,19 +58,19 @@ pub const MOON: IauRotationModel = IauRotationModel {
 /// Reference: Archinal et al. (2011), Table 2.
 fn moon_nutation_args(d: f64) -> [f64; 13] {
     [
-        (125.045 - 0.0529921 * d).to_radians(),   // E1
-        (250.089 - 0.1059842 * d).to_radians(),   // E2
-        (260.008 + 13.0120009 * d).to_radians(),  // E3
-        (176.625 + 13.3407154 * d).to_radians(),  // E4
-        (357.529 + 0.9856003 * d).to_radians(),   // E5
-        (311.589 + 26.4057084 * d).to_radians(),  // E6
-        (134.963 + 13.0649930 * d).to_radians(),  // E7
-        (276.617 + 0.3287146 * d).to_radians(),   // E8
-        (34.226 + 1.7484877 * d).to_radians(),    // E9
-        (15.134 - 0.1589763 * d).to_radians(),    // E10
-        (119.743 + 0.0036096 * d).to_radians(),   // E11
-        (239.961 + 0.1643573 * d).to_radians(),   // E12
-        (25.053 + 12.9590088 * d).to_radians(),   // E13
+        (125.045 - 0.0529921 * d).to_radians(),  // E1
+        (250.089 - 0.1059842 * d).to_radians(),  // E2
+        (260.008 + 13.0120009 * d).to_radians(), // E3
+        (176.625 + 13.3407154 * d).to_radians(), // E4
+        (357.529 + 0.9856003 * d).to_radians(),  // E5
+        (311.589 + 26.4057084 * d).to_radians(), // E6
+        (134.963 + 13.0649930 * d).to_radians(), // E7
+        (276.617 + 0.3287146 * d).to_radians(),  // E8
+        (34.226 + 1.7484877 * d).to_radians(),   // E9
+        (15.134 - 0.1589763 * d).to_radians(),   // E10
+        (119.743 + 0.0036096 * d).to_radians(),  // E11
+        (239.961 + 0.1643573 * d).to_radians(),  // E12
+        (25.053 + 12.9590088 * d).to_radians(),  // E13
     ]
 }
 
@@ -92,18 +92,14 @@ pub fn moon_orientation(epoch: &Epoch) -> UnitQuaternion<f64> {
 
     // Periodic corrections to α (right ascension of pole)
     // Reference: Archinal et al. (2011), Table 3a
-    alpha_deg += -3.8787 * e[0].sin()
-        - 0.1204 * e[1].sin()
-        + 0.0700 * e[2].sin()
+    alpha_deg += -3.8787 * e[0].sin() - 0.1204 * e[1].sin() + 0.0700 * e[2].sin()
         - 0.0172 * e[3].sin()
         + 0.0072 * e[5].sin()
         - 0.0052 * e[9].sin()
         + 0.0043 * e[12].sin();
 
     // Periodic corrections to δ (declination of pole)
-    delta_deg += 1.5419 * e[0].cos()
-        + 0.0239 * e[1].cos()
-        - 0.0278 * e[2].cos()
+    delta_deg += 1.5419 * e[0].cos() + 0.0239 * e[1].cos() - 0.0278 * e[2].cos()
         + 0.0068 * e[3].cos()
         - 0.0029 * e[5].cos()
         + 0.0009 * e[6].cos()
@@ -111,9 +107,7 @@ pub fn moon_orientation(epoch: &Epoch) -> UnitQuaternion<f64> {
         - 0.0009 * e[12].cos();
 
     // Periodic corrections to W (prime meridian)
-    w_deg += 3.5610 * e[0].sin()
-        + 0.1208 * e[1].sin()
-        - 0.0642 * e[2].sin()
+    w_deg += 3.5610 * e[0].sin() + 0.1208 * e[1].sin() - 0.0642 * e[2].sin()
         + 0.0158 * e[3].sin()
         + 0.0252 * e[4].sin()
         - 0.0066 * e[5].sin()
@@ -512,9 +506,15 @@ mod tests {
             let m = rot.matrix();
             let mtm = m.transpose() * m;
             let err = (mtm - nalgebra::Matrix3::<f64>::identity()).norm();
-            assert!(err < 1e-10, "libration rotation should be orthogonal, error = {err}");
+            assert!(
+                err < 1e-10,
+                "libration rotation should be orthogonal, error = {err}"
+            );
             let det = m.determinant();
-            assert!((det - 1.0).abs() < 1e-10, "determinant should be 1, got {det}");
+            assert!(
+                (det - 1.0).abs() < 1e-10,
+                "determinant should be 1, got {det}"
+            );
         }
     }
 }

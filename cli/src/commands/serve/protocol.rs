@@ -224,7 +224,8 @@ mod tests {
 
     #[test]
     fn client_message_query_range_with_entity_path() {
-        let json = r#"{"type":"query_range","t_min":0.0,"t_max":100.0,"entity_path":"/world/sat/iss"}"#;
+        let json =
+            r#"{"type":"query_range","t_min":0.0,"t_max":100.0,"entity_path":"/world/sat/iss"}"#;
         let msg: ClientMessage = serde_json::from_str(json).unwrap();
         match msg {
             ClientMessage::QueryRange { entity_path, .. } => {

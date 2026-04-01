@@ -14,7 +14,7 @@ use orts::record::rerun_export::load_rrd_data;
 
 use crate::commands::serve::protocol::{ClientMessage, WsMessage};
 use crate::satellite::SatelliteInfo;
-use crate::sim::core::{downsample_states, make_history_state, HistoryState};
+use crate::sim::core::{HistoryState, downsample_states, make_history_state};
 
 /// Pre-loaded replay data shared across connections.
 struct ReplayData {
@@ -51,11 +51,7 @@ fn load_replay_data(path: &str) -> ReplayData {
     let meta = &rrd.metadata;
     let mu = meta.mu.unwrap_or(398600.4418);
     let body_radius = meta.body_radius.unwrap_or(6378.137);
-    let central_body = meta
-        .body_name
-        .as_deref()
-        .unwrap_or("earth")
-        .to_lowercase();
+    let central_body = meta.body_name.as_deref().unwrap_or("earth").to_lowercase();
 
     // Convert RRD rows to HistoryState, grouped by entity_path
     let mut states_by_entity: HashMap<String, Vec<HistoryState>> = HashMap::new();
@@ -230,10 +226,7 @@ async fn async_server(data: Arc<ReplayData>, port: u16) {
     bodies.dedup();
     let _ = texture_request_tx.send(bodies).await;
 
-    let state = ReplayAppState {
-        data,
-        ws_tx,
-    };
+    let state = ReplayAppState { data, ws_tx };
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
@@ -250,7 +243,10 @@ async fn async_server(data: Arc<ReplayData>, port: u16) {
     axum::serve(listener, app).await.expect("server error");
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, State(state): State<ReplayAppState>) -> impl IntoResponse {
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<ReplayAppState>,
+) -> impl IntoResponse {
     ws.on_upgrade(move |socket| async move {
         handle_connection(socket, state.data, state.ws_tx).await;
         eprintln!("Client disconnected");
@@ -299,8 +295,7 @@ async fn handle_connection(
                 return;
             }
         }
-        let complete =
-            serde_json::to_string(&WsMessage::HistoryDetailComplete).expect("serialize");
+        let complete = serde_json::to_string(&WsMessage::HistoryDetailComplete).expect("serialize");
         let _ = detail_tx.send(complete).await;
     });
 

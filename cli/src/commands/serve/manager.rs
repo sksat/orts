@@ -844,9 +844,10 @@ impl SimLoopContext {
                     term.satellite_id, term.t, term.reason
                 );
                 let sid_str: &str = term.satellite_id.as_ref();
-                let term_entity_path = orts::record::entity_path::EntityPath::parse(
-                    &format!("/world/sat/{}", sid_str),
-                );
+                let term_entity_path = orts::record::entity_path::EntityPath::parse(&format!(
+                    "/world/sat/{}",
+                    sid_str
+                ));
                 let msg = serde_json::to_string(&WsMessage::SimulationTerminated {
                     entity_path: term_entity_path,
                     t: term.t,
