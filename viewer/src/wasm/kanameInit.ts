@@ -11,6 +11,7 @@ type SunDirectionEci = (epoch_jd: number, t: number) => Float32Array;
 type SunDirectionFromBody = (body: string, epoch_jd: number, t: number) => Float32Array;
 type SunDistanceFromBody = (body: string, epoch_jd: number, t: number) => number;
 type JdToUtcString = (epoch_jd: number, t: number) => string;
+type BodyOrientation = (body: string, epoch_jd: number, t: number) => Float64Array;
 type BodyQuatEciToLvlh = (
   pos_x: number,
   pos_y: number,
@@ -33,6 +34,7 @@ let wasmSunDir: SunDirectionEci | undefined;
 let wasmSunDirFromBody: SunDirectionFromBody | undefined;
 let wasmSunDistFromBody: SunDistanceFromBody | undefined;
 let wasmJdToUtc: JdToUtcString | undefined;
+let wasmBodyOrientation: BodyOrientation | undefined;
 let wasmBodyQuatToLvlh: BodyQuatEciToLvlh | undefined;
 
 /** Initialize the kaname WASM module. Safe to call multiple times. Rejects on failure. */
@@ -49,6 +51,7 @@ export function initKaname(): Promise<void> {
     wasmSunDirFromBody = mod.sun_direction_from_body;
     wasmSunDistFromBody = mod.sun_distance_from_body;
     wasmJdToUtc = mod.jd_to_utc_string;
+    wasmBodyOrientation = mod.body_orientation;
     wasmBodyQuatToLvlh = mod.body_quat_eci_to_lvlh;
     initialized = true;
   });
@@ -104,6 +107,21 @@ export function sun_distance_from_body(body: string, epoch_jd: number, t: number
 /** Convert Julian Date + elapsed sim time to ISO 8601 UTC string via WASM. */
 export function jd_to_utc_string(epoch_jd: number, t: number): string {
   return wasmJdToUtc!(epoch_jd, t);
+}
+
+/**
+ * Body-fixed → ECI orientation quaternion via IAU rotation model.
+ *
+ * Returns [w, x, y, z] (Hamilton scalar-first) or undefined for unknown bodies.
+ */
+export function body_orientation(
+  body: string,
+  epoch_jd: number,
+  t: number,
+): [number, number, number, number] | undefined {
+  const result = wasmBodyOrientation!(body, epoch_jd, t);
+  if (result.length === 0) return undefined;
+  return [result[0], result[1], result[2], result[3]];
 }
 
 /**

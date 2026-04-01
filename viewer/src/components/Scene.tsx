@@ -21,6 +21,7 @@ import {
 } from "../sceneFrame.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
 import {
+  body_orientation,
   earth_rotation_angle,
   eci_to_ecef,
   sun_direction_from_body,
@@ -288,10 +289,23 @@ function SecondaryBody({
     scenePos = [position.x / scaleRadius, position.y / scaleRadius, position.z / scaleRadius];
   }
 
-  // TODO: compute body orientation via kaname WASM (IAU rotation model)
+  // Body orientation via IAU rotation model (kaname WASM).
+  // Three.js sphere: +Y = north pole, but IAU body frame: +Z = north pole.
+  // We apply pole alignment (π/2 rotation around X) after the IAU quaternion.
+  const orientation = useMemo(() => {
+    if (epochJd == null) return undefined;
+    const q = body_orientation(bodyId, epochJd, position.t);
+    if (!q) return undefined;
+    // IAU body-fixed → ECI: q = [w, x, y, z]
+    const iauQuat = new THREE.Quaternion(q[1], q[2], q[3], q[0]); // THREE uses (x,y,z,w)
+    // Pole alignment: rotate +Y (Three.js pole) → +Z (IAU pole)
+    const poleAlign = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+    // Combined: first align pole, then apply IAU rotation
+    return iauQuat.multiply(poleAlign);
+  }, [bodyId, epochJd, position.t]);
 
   return (
-    <group position={scenePos}>
+    <group position={scenePos} quaternion={orientation ?? undefined}>
       <CelestialBody
         bodyId={bodyId}
         radius={radius}
@@ -430,8 +444,10 @@ export function Scene({
     [originPosition, originVelocity],
   );
 
-  // LVLH body-frame mode: active when satellite-centered with valid axes
-  const lvlhActive = isSatCentered && lvlhAxes != null && originPosition != null;
+  // LVLH body-frame mode: active when satellite-centered (not body entity) with valid axes.
+  // Body entities (Moon, Mars) use IAU rotation in ECI, not LVLH.
+  const lvlhActive =
+    isSatCentered && centeredBodyId == null && lvlhAxes != null && originPosition != null;
 
   // Determine sim time for sun direction from first available satellite position
   const firstPosition =
@@ -570,17 +586,24 @@ export function Scene({
           if (!pos) return null;
           const centeredBodyId = entityPathToBodyId(centeredSatId);
           if (centeredBodyId != null) {
-            // Render as CelestialBody at origin with physical radius
+            // Render as CelestialBody at origin with physical radius + IAU orientation
             const bodyRadiusKm = getBodyRadius(centeredBodyId);
             const bodyRadius = bodyRadiusKm != null ? bodyRadiusKm / centralBodyRadius : 0.01;
+            const q = epochJd != null ? body_orientation(centeredBodyId, epochJd, pos.t) : undefined;
+            const iauQuat = q
+              ? new THREE.Quaternion(q[1], q[2], q[3], q[0])
+                  .multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)))
+              : undefined;
             return (
-              <CelestialBody
-                bodyId={centeredBodyId}
-                radius={bodyRadius}
-                sunDirection={sunDirection}
-                textureRevision={textureRevision}
-                textureBaseUrl={textureBaseUrl}
-              />
+              <group quaternion={iauQuat ?? undefined}>
+                <CelestialBody
+                  bodyId={centeredBodyId}
+                  radius={bodyRadius}
+                  sunDirection={sunDirection}
+                  textureRevision={textureRevision}
+                  textureBaseUrl={textureBaseUrl}
+                />
+              </group>
             );
           }
           return (

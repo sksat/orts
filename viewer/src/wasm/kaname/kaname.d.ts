@@ -2,6 +2,18 @@
 /* eslint-disable */
 
 /**
+ * Body-fixed → ECI orientation quaternion using the IAU rotation model.
+ *
+ * `body`: body identifier string (e.g., "moon", "mars", "sun")
+ * `epoch_jd`: Julian Date of the simulation epoch
+ * `t`: elapsed simulation time in seconds
+ *
+ * Returns `[w, x, y, z]` quaternion (4 f64 values, Hamilton scalar-first).
+ * Returns an empty vec if the body has no IAU rotation model.
+ */
+export function body_orientation(body: string, epoch_jd: number, t: number): Float64Array;
+
+/**
  * Transform a body-to-ECI quaternion into a body-to-LVLH quaternion.
  *
  * `pos_x/y/z`: satellite position in ECI \[km\]
@@ -102,11 +114,12 @@ export interface InitOutput {
     readonly jd_to_utc_string: (a: number, b: number) => [number, number];
     readonly geodetic_to_ecef: (a: number, b: number, c: number) => [number, number];
     readonly geodetic_to_eci: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly body_orientation: (a: number, b: number, c: number, d: number) => [number, number];
     readonly body_quat_eci_to_lvlh: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_start: () => void;
 }
 
