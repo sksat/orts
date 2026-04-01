@@ -22,6 +22,7 @@ import {
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
 import {
   earth_rotation_angle,
+  eci_to_ecef,
   sun_direction_from_body,
   sun_distance_from_body,
 } from "../wasm/kanameInit.js";
@@ -240,6 +241,8 @@ function SecondaryBody({
   position,
   scaleRadius,
   sunDirection,
+  referenceFrame = DEFAULT_FRAME,
+  epochJd,
   originPosition = null,
   lvlhAxes = null,
   textureRevision,
@@ -249,6 +252,8 @@ function SecondaryBody({
   position: OrbitPoint;
   scaleRadius: number;
   sunDirection?: THREE.Vector3;
+  referenceFrame?: ReferenceFrame;
+  epochJd?: number | null;
   originPosition?: [number, number, number] | null;
   lvlhAxes?: LvlhAxes | null;
   textureRevision?: number;
@@ -257,12 +262,14 @@ function SecondaryBody({
   const bodyRadiusKm = getBodyRadius(bodyId);
   const physicalRadius = bodyRadiusKm != null ? bodyRadiusKm / scaleRadius : 0.01;
   // Ensure secondary bodies are visible at Earth-Moon scale zoom levels.
-  // Physical Moon radius is ~0.27 scene units but needs to be at least ~0.5
-  // to be visible when the camera is zoomed out to see the full trajectory.
   const radius = Math.max(physicalRadius, 1.0);
 
+  // Position transform: same pipeline as Satellite (ECI → ECEF → LVLH)
   let scenePos: [number, number, number];
-  if (originPosition != null && lvlhAxes != null) {
+  if (isLegacyEcef(referenceFrame) && epochJd != null) {
+    const ecef = eci_to_ecef(position.x, position.y, position.z, epochJd, position.t);
+    scenePos = [ecef[0] / scaleRadius, ecef[1] / scaleRadius, ecef[2] / scaleRadius];
+  } else if (originPosition != null && lvlhAxes != null) {
     scenePos = transformToLvlh(
       position.x,
       position.y,
@@ -644,6 +651,8 @@ export function Scene({
                   position={pos}
                   scaleRadius={trailScale}
                   sunDirection={sunDirection}
+                  referenceFrame={referenceFrame}
+                  epochJd={epochJd}
                   originPosition={lvlhActive ? originPosition : null}
                   lvlhAxes={lvlhActive ? lvlhAxes : null}
                   textureRevision={textureRevision}
