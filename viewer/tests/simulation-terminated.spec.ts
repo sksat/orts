@@ -11,13 +11,13 @@ import { expect, test } from "@playwright/test";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
 
 /** Build a minimal state message for a given satellite. */
-function stateMsg(satelliteId: string, t: number) {
+function stateMsg(entityPath: string, t: number) {
   const r = 6778;
   const v = 7.669;
   const theta = (t / 5554) * 2 * Math.PI;
   return JSON.stringify({
     type: "state",
-    satellite_id: satelliteId,
+    entity_path: entityPath,
     t,
     position: [r * Math.cos(theta), r * Math.sin(theta), 0],
     velocity: [-v * Math.sin(theta), v * Math.cos(theta), 0],
@@ -82,7 +82,7 @@ test.describe("simulation_terminated handling", () => {
           ws.send(
             JSON.stringify({
               type: "simulation_terminated",
-              satellite_id: "leo",
+              entity_path: "leo",
               t: 100,
               reason: "atmospheric_entry",
             }),

@@ -17,6 +17,7 @@ fn main() {
             format,
         } => commands::run::run_simulation_cmd(&sim, &output, format),
         Commands::Serve { sim, port } => commands::serve::run_server(&sim, port),
+        Commands::Replay { input, port } => commands::replay::run_replay(&input, port),
         Commands::Convert {
             input,
             format,

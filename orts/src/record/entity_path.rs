@@ -1,9 +1,24 @@
 /// Hierarchical entity identifier using `/`-separated path segments.
 ///
 /// Examples: "/world/earth", "/world/sat/iss", "/world/station/tanegashima"
+///
+/// Serializes as a `/`-prefixed string (e.g., `"/world/sat/iss"`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EntityPath {
     segments: Vec<String>,
+}
+
+impl serde::Serialize for EntityPath {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for EntityPath {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(EntityPath::parse(&s))
+    }
 }
 
 impl EntityPath {
@@ -49,6 +64,28 @@ impl std::fmt::Display for EntityPath {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json;
+
+    #[test]
+    fn serialize_json() {
+        let path = EntityPath::parse("/world/sat/iss");
+        let json = serde_json::to_string(&path).unwrap();
+        assert_eq!(json, r#""/world/sat/iss""#);
+    }
+
+    #[test]
+    fn deserialize_json() {
+        let path: EntityPath = serde_json::from_str(r#""/world/sat/iss""#).unwrap();
+        assert_eq!(path, EntityPath::parse("/world/sat/iss"));
+    }
+
+    #[test]
+    fn serde_roundtrip() {
+        let original = EntityPath::parse("/world/sat/apollo11");
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: EntityPath = serde_json::from_str(&json).unwrap();
+        assert_eq!(original, restored);
+    }
 
     #[test]
     fn parse_absolute_path() {

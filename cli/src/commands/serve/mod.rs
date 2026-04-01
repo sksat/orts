@@ -4,8 +4,8 @@ mod history;
 mod manager;
 pub mod protocol;
 #[cfg(feature = "viewer")]
-mod spa;
-mod textures;
+pub(crate) mod spa;
+pub(crate) mod textures;
 
 use std::sync::Arc;
 

@@ -17,7 +17,7 @@ describe("dispatchServerMessage", () => {
 
     const msg: ServerMessage = {
       type: "simulation_terminated",
-      satellite_id: "sat-a",
+      entity_path: "sat-a",
       t: 1234.5,
       reason: "atmospheric_entry",
     };
@@ -34,7 +34,7 @@ describe("dispatchServerMessage", () => {
 
     const msg: ServerMessage = {
       type: "state",
-      satellite_id: "sat-a",
+      entity_path: "sat-a",
       t: 10,
       position: [6778, 0, 0],
       velocity: [0, 7.669, 0],
@@ -49,7 +49,7 @@ describe("dispatchServerMessage", () => {
     dispatchServerMessage(msg, callbacks);
 
     expect(onState).toHaveBeenCalledOnce();
-    expect(onState.mock.calls[0][0].satelliteId).toBe("sat-a");
+    expect(onState.mock.calls[0][0].entityPath).toBe("sat-a");
     expect(onState.mock.calls[0][0].t).toBe(10);
   });
 
@@ -69,7 +69,7 @@ describe("dispatchServerMessage", () => {
       type: "history",
       states: [
         {
-          satellite_id: "sat-a",
+          entity_path: "sat-a",
           t: 0,
           position: [6778, 0, 0] as [number, number, number],
           velocity: [0, 7.669, 0] as [number, number, number],
@@ -81,7 +81,7 @@ describe("dispatchServerMessage", () => {
           true_anomaly: 0,
         },
         {
-          satellite_id: "sat-a",
+          entity_path: "sat-a",
           t: 10,
           position: [6770, 500, 0] as [number, number, number],
           velocity: [-0.5, 7.6, 0] as [number, number, number],
@@ -100,7 +100,7 @@ describe("dispatchServerMessage", () => {
     expect(onHistory).toHaveBeenCalledOnce();
     const points = onHistory.mock.calls[0][0];
     expect(points).toHaveLength(2);
-    expect(points[0].satelliteId).toBe("sat-a");
+    expect(points[0].entityPath).toBe("sat-a");
     expect(points[0].t).toBe(0);
     expect(points[0].x).toBe(6778);
     expect(points[0].vy).toBe(7.669);
@@ -117,7 +117,7 @@ describe("dispatchServerMessage", () => {
       type: "history_detail",
       states: [
         {
-          satellite_id: "sat-a",
+          entity_path: "sat-a",
           t: 5,
           position: [6775, 200, 0] as [number, number, number],
           velocity: [-0.2, 7.65, 0] as [number, number, number],

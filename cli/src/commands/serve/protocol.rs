@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use orts::record::entity_path::EntityPath;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{SatelliteConfig, SimConfig};
@@ -15,7 +16,7 @@ pub enum ClientMessage {
         t_min: f64,
         t_max: f64,
         max_points: Option<usize>,
-        satellite_id: Option<String>,
+        entity_path: Option<EntityPath>,
     },
     /// Start a simulation from idle state.
     #[serde(rename = "start_simulation")]
@@ -57,7 +58,7 @@ pub enum WsMessage {
     /// A single simulation state snapshot.
     #[serde(rename = "state")]
     State {
-        satellite_id: String,
+        entity_path: EntityPath,
         t: f64,
         position: [f64; 3],
         velocity: [f64; 3],
@@ -97,7 +98,7 @@ pub enum WsMessage {
     /// Notification that a satellite's simulation has terminated.
     #[serde(rename = "simulation_terminated")]
     SimulationTerminated {
-        satellite_id: String,
+        entity_path: EntityPath,
         t: f64,
         reason: String,
     },
@@ -119,6 +120,7 @@ pub enum WsMessage {
 mod tests {
     use super::*;
     use crate::sim::core::make_history_state;
+    use orts::record::entity_path::EntityPath;
 
     const TEST_MU: f64 = 398600.4418;
     const TEST_BODY_RADIUS: f64 = 6378.137;
@@ -127,7 +129,7 @@ mod tests {
         let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
         let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
         make_history_state(
-            "default",
+            EntityPath::parse("/world/sat/default"),
             t,
             &pos,
             &vel,
@@ -192,12 +194,12 @@ mod tests {
                 t_min,
                 t_max,
                 max_points,
-                satellite_id,
+                entity_path,
             } => {
                 assert!((t_min - 10.0).abs() < 1e-9);
                 assert!((t_max - 50.0).abs() < 1e-9);
                 assert_eq!(max_points, Some(100));
-                assert_eq!(satellite_id, None);
+                assert_eq!(entity_path, None);
             }
             _ => panic!("unexpected variant"),
         }
@@ -210,23 +212,23 @@ mod tests {
         match msg {
             ClientMessage::QueryRange {
                 max_points,
-                satellite_id,
+                entity_path,
                 ..
             } => {
                 assert_eq!(max_points, None);
-                assert_eq!(satellite_id, None);
+                assert_eq!(entity_path, None);
             }
             _ => panic!("unexpected variant"),
         }
     }
 
     #[test]
-    fn client_message_query_range_with_satellite_id() {
-        let json = r#"{"type":"query_range","t_min":0.0,"t_max":100.0,"satellite_id":"iss"}"#;
+    fn client_message_query_range_with_entity_path() {
+        let json = r#"{"type":"query_range","t_min":0.0,"t_max":100.0,"entity_path":"/world/sat/iss"}"#;
         let msg: ClientMessage = serde_json::from_str(json).unwrap();
         match msg {
-            ClientMessage::QueryRange { satellite_id, .. } => {
-                assert_eq!(satellite_id, Some("iss".to_string()));
+            ClientMessage::QueryRange { entity_path, .. } => {
+                assert_eq!(entity_path, Some(EntityPath::parse("/world/sat/iss")));
             }
             _ => panic!("unexpected variant"),
         }
@@ -376,9 +378,9 @@ mod tests {
     }
 
     #[test]
-    fn state_message_has_satellite_id() {
+    fn state_message_has_entity_path() {
         let msg = WsMessage::State {
-            satellite_id: "iss".to_string(),
+            entity_path: EntityPath::parse("/world/sat/iss"),
             t: 100.0,
             position: [6778.0, 0.0, 0.0],
             velocity: [0.0, 7.669, 0.0],
@@ -398,7 +400,7 @@ mod tests {
         let json = serde_json::to_string(&msg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["type"], "state");
-        assert_eq!(v["satellite_id"], "iss");
+        assert_eq!(v["entity_path"], "/world/sat/iss");
         // attitude should be absent when None
         assert!(v.get("attitude").is_none());
     }
@@ -418,7 +420,7 @@ mod tests {
     fn state_message_with_attitude() {
         use crate::sim::core::{AttitudePayload, AttitudeSource};
         let msg = WsMessage::State {
-            satellite_id: "sat1".to_string(),
+            entity_path: EntityPath::parse("/world/sat/sat1"),
             t: 50.0,
             position: [6778.0, 0.0, 0.0],
             velocity: [0.0, 7.669, 0.0],

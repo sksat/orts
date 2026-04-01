@@ -10,14 +10,14 @@ import { expect, test } from "@playwright/test";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
 
 /** Build a state message for a circular orbit at the given time. */
-function stateMsg(satelliteId: string, t: number) {
+function stateMsg(entityPath: string, t: number) {
   const r = 6778;
   const v = 7.669;
   const period = 5554;
   const theta = (t / period) * 2 * Math.PI;
   return JSON.stringify({
     type: "state",
-    satellite_id: satelliteId,
+    entity_path: entityPath,
     t,
     position: [r * Math.cos(theta), r * Math.sin(theta), 0],
     velocity: [-v * Math.sin(theta), v * Math.cos(theta), 0],
@@ -31,13 +31,13 @@ function stateMsg(satelliteId: string, t: number) {
 }
 
 /** Build a history state object (same shape as server HistoryState). */
-function historyState(satelliteId: string, t: number) {
+function historyState(entityPath: string, t: number) {
   const r = 6778;
   const v = 7.669;
   const period = 5554;
   const theta = (t / period) * 2 * Math.PI;
   return {
-    satellite_id: satelliteId,
+    entity_path: entityPath,
     t,
     position: [r * Math.cos(theta), r * Math.sin(theta), 0],
     velocity: [-v * Math.sin(theta), v * Math.cos(theta), 0],

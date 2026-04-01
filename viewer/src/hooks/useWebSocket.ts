@@ -43,7 +43,7 @@ interface AttitudePayload {
  */
 interface StateMessage {
   type: "state";
-  satellite_id: string;
+  entity_path: string;
   t: number;
   position: [number, number, number];
   velocity: [number, number, number];
@@ -83,7 +83,7 @@ interface SatelliteInfoMsg {
 }
 
 interface HistoryStateMsg {
-  satellite_id?: string;
+  entity_path?: string;
   t: number;
   position: [number, number, number];
   velocity: [number, number, number];
@@ -124,7 +124,7 @@ interface QueryRangeResponseMessage {
 
 interface SimulationTerminatedMessage {
   type: "simulation_terminated";
-  satellite_id: string;
+  entity_path: string;
   t: number;
   reason: string;
 }
@@ -176,7 +176,7 @@ export interface UseWebSocketOptions {
   /** Called when the server responds to a query_range request. */
   onQueryRangeResponse?: (response: QueryRangeResponse) => void;
   /** Called when a satellite's simulation terminates (collision, atmospheric entry, etc.). */
-  onSimulationTerminated?: (satelliteId: string, t: number, reason: string) => void;
+  onSimulationTerminated?: (entityPath: string, t: number, reason: string) => void;
   /** Called when the server sends its status (e.g. "idle"). */
   onStatus?: (state: string) => void;
   /** Called when the server sends an error message. */
@@ -193,7 +193,7 @@ export interface DispatchCallbacks {
   onHistoryDetail?: (points: OrbitPoint[]) => void;
   onHistoryDetailComplete?: () => void;
   onQueryRangeResponse?: (response: QueryRangeResponse) => void;
-  onSimulationTerminated?: (satelliteId: string, t: number, reason: string) => void;
+  onSimulationTerminated?: (entityPath: string, t: number, reason: string) => void;
   onStatus?: (state: string) => void;
   onError?: (message: string) => void;
   onTexturesReady?: (body: string) => void;
@@ -218,7 +218,7 @@ function parseAttitude(attitude?: AttitudePayload) {
 
 function parseHistoryPoints(states: HistoryStateMsg[]): OrbitPoint[] {
   return states.map((s) => ({
-    satelliteId: s.satellite_id,
+    entityPath: s.entity_path,
     t: s.t,
     x: s.position[0],
     y: s.position[1],
@@ -249,7 +249,7 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
   if (msg.type === "state") {
     const stateMsg = msg as StateMessage;
     callbacks.onState({
-      satelliteId: stateMsg.satellite_id,
+      entityPath: stateMsg.entity_path,
       t: stateMsg.t,
       x: stateMsg.position[0],
       y: stateMsg.position[1],
@@ -309,7 +309,7 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
     });
   } else if (msg.type === "simulation_terminated") {
     const termMsg = msg as SimulationTerminatedMessage;
-    callbacks.onSimulationTerminated?.(termMsg.satellite_id, termMsg.t, termMsg.reason);
+    callbacks.onSimulationTerminated?.(termMsg.entity_path, termMsg.t, termMsg.reason);
   } else if (msg.type === "status") {
     callbacks.onStatus?.((msg as StatusMessage).state);
   } else if (msg.type === "error") {

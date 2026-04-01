@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use orts::OrbitalState;
 use orts::orbital::kepler::KeplerianElements;
+use orts::record::entity_path::EntityPath;
 
 use crate::commands::serve::protocol::WsMessage;
 use crate::sim::core::AttitudePayload;
@@ -33,7 +34,7 @@ pub fn compute_derived(
 }
 
 pub fn state_message(
-    satellite_id: &str,
+    entity_path: EntityPath,
     t: f64,
     state: &OrbitalState,
     mu: f64,
@@ -44,7 +45,7 @@ pub fn state_message(
     let elements = KeplerianElements::from_state_vector(state.position(), state.velocity(), mu);
     let derived = compute_derived(state.position(), state.velocity(), mu, body_radius);
     let msg = WsMessage::State {
-        satellite_id: satellite_id.to_string(),
+        entity_path,
         t,
         position: [state.position().x, state.position().y, state.position().z],
         velocity: [state.velocity().x, state.velocity().y, state.velocity().z],

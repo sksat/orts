@@ -16,7 +16,7 @@ import { expect, test } from "@playwright/test";
 import { WebSocketServer, type WebSocket as WsSocket } from "ws";
 
 /** Build a state message for a circular orbit. */
-function stateMsg(satelliteId: string, t: number, altitude: number) {
+function stateMsg(entityPath: string, t: number, altitude: number) {
   const r = 6378.137 + altitude;
   const mu = 398600.4418;
   const v = Math.sqrt(mu / r);
@@ -24,13 +24,13 @@ function stateMsg(satelliteId: string, t: number, altitude: number) {
   const theta = (t / period) * 2 * Math.PI;
   return JSON.stringify({
     type: "state",
-    satellite_id: satelliteId,
+    entity_path: entityPath,
     t,
     position: [r * Math.cos(theta), r * Math.sin(theta), 0],
     velocity: [-v * Math.sin(theta), v * Math.cos(theta), 0],
     semi_major_axis: r,
     eccentricity: 0.001,
-    inclination: satelliteId === "sso" ? 1.7209 : 0.9006,
+    inclination: entityPath === "sso" ? 1.7209 : 0.9006,
     raan: 0,
     argument_of_periapsis: 0,
     true_anomaly: theta,
@@ -205,7 +205,7 @@ test.describe("multi-satellite NaN alignment", () => {
           | { historyLen: number; byIdCounts: Record<string, number> }
           | undefined;
         const lastError = w.__debug_multi_sat_last_error as
-          | { satId: string; error: string; stack?: string }
+          | { entityPath: string; error: string; stack?: string }
           | undefined;
         return {
           sso,

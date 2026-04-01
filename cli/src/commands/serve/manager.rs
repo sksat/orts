@@ -156,7 +156,7 @@ pub(super) enum SimCommand {
         t_min: f64,
         t_max: f64,
         max_points: Option<usize>,
-        satellite_id: Option<String>,
+        entity_path: Option<orts::record::entity_path::EntityPath>,
         respond: oneshot::Sender<Vec<crate::sim::core::HistoryState>>,
     },
     /// Pause the simulation.
@@ -379,7 +379,7 @@ fn build_info_message(params: &SimParams) -> WsMessage {
                 params.build_atmosphere_model(),
             );
             SatelliteInfo {
-                id: s.id.clone(),
+                id: s.entity_path().to_string(),
                 name: s.name.clone(),
                 altitude: s.altitude(&params.body),
                 period: s.period,
@@ -569,7 +569,7 @@ impl SimLoopContext {
         for i in 0..group.len() {
             let snap = group.snapshot(i, 0.0);
             let hs = make_history_state(
-                metas[i].spec.id.as_str(),
+                metas[i].spec.entity_path(),
                 0.0,
                 snap.orbit.position(),
                 snap.orbit.velocity(),
@@ -580,7 +580,7 @@ impl SimLoopContext {
             );
             history.push(hs);
             let msg = state_message(
-                metas[i].spec.id.as_str(),
+                metas[i].spec.entity_path(),
                 0.0,
                 &snap.orbit,
                 params.mu,
@@ -706,13 +706,14 @@ impl SimLoopContext {
                 );
 
                 let sat_info = SatelliteInfo {
-                    id: spec.id.clone(),
+                    id: spec.entity_path().to_string(),
                     name: spec.name.clone(),
                     altitude: spec.altitude(&self.params.body),
                     period: spec.period,
                     perturbations: vec![],
                 };
                 let t = self.current_t;
+                let sat_entity_path = spec.entity_path();
 
                 self.metas.push(SatMeta {
                     spec,
@@ -723,7 +724,7 @@ impl SimLoopContext {
 
                 let body_radius = self.params.body.properties().radius;
                 let hs = make_history_state(
-                    &sat_info.id,
+                    sat_entity_path.clone(),
                     self.current_t,
                     initial.position(),
                     initial.velocity(),
@@ -734,7 +735,7 @@ impl SimLoopContext {
                 );
                 self.history.push(hs);
                 let msg = state_message(
-                    &sat_info.id,
+                    sat_entity_path,
                     self.current_t,
                     &initial,
                     self.params.mu,
@@ -757,12 +758,12 @@ impl SimLoopContext {
                 t_min,
                 t_max,
                 max_points,
-                satellite_id,
+                entity_path,
                 respond,
             } => {
                 let mut states = self.history.query_range(t_min, t_max, max_points);
-                if let Some(ref sid) = satellite_id {
-                    states.retain(|s| s.satellite_id == *sid);
+                if let Some(ref ep) = entity_path {
+                    states.retain(|s| s.entity_path == *ep);
                 }
                 let _ = respond.send(states);
             }
@@ -819,7 +820,7 @@ impl SimLoopContext {
                 let t = self.group.sat_t(i);
                 let snap = self.group.snapshot(i, t);
                 let hs = make_history_state(
-                    self.metas[i].spec.id.as_str(),
+                    self.metas[i].spec.entity_path(),
                     t,
                     snap.orbit.position(),
                     snap.orbit.velocity(),
@@ -843,8 +844,11 @@ impl SimLoopContext {
                     term.satellite_id, term.t, term.reason
                 );
                 let sid_str: &str = term.satellite_id.as_ref();
+                let term_entity_path = orts::record::entity_path::EntityPath::parse(
+                    &format!("/world/sat/{}", sid_str),
+                );
                 let msg = serde_json::to_string(&WsMessage::SimulationTerminated {
-                    satellite_id: sid_str.to_string(),
+                    entity_path: term_entity_path,
                     t: term.t,
                     reason: term.reason.clone(),
                 })
@@ -916,7 +920,7 @@ async fn run_simulation_loop(
             for out in &all_outputs {
                 let send_start = tokio::time::Instant::now();
                 let msg = serde_json::to_string(&WsMessage::State {
-                    satellite_id: out.satellite_id.clone(),
+                    entity_path: out.entity_path.clone(),
                     t: out.t,
                     position: out.position,
                     velocity: out.velocity,

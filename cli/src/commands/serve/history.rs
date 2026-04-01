@@ -58,7 +58,7 @@ impl HistoryBuffer {
         let mut rec = Recording::new();
 
         for (i, hs) in to_flush.iter().enumerate() {
-            let sat_path = EntityPath::parse(&format!("/world/sat/{}", hs.satellite_id));
+            let sat_path = hs.entity_path.clone();
             let tp = TimePoint::new().with_sim_time(hs.t).with_step(i as u64);
             let os = OrbitalState::new(
                 nalgebra::Vector3::new(hs.position[0], hs.position[1], hs.position[2]),
@@ -104,18 +104,18 @@ impl HistoryBuffer {
                     for row in rows {
                         let pos = nalgebra::Vector3::new(row.x, row.y, row.z);
                         let vel = nalgebra::Vector3::new(row.vx, row.vy, row.vz);
-                        let sid = row
+                        let entity_path = row
                             .entity_path
                             .as_deref()
-                            .and_then(|p| p.rsplit('/').next())
-                            .unwrap_or("default");
+                            .map(EntityPath::parse)
+                            .unwrap_or_else(|| EntityPath::parse("/world/sat/default"));
                         let attitude = row.quaternion.map(|q| AttitudePayload {
                             quaternion_wxyz: q,
                             angular_velocity_body: row.angular_velocity.unwrap_or([0.0; 3]),
                             source: AttitudeSource::Propagated,
                         });
                         all.push(make_history_state(
-                            sid,
+                            entity_path,
                             row.t,
                             &pos,
                             &vel,
@@ -161,23 +161,7 @@ impl HistoryBuffer {
 
     /// Downsample a list of states to at most `max_points`, always preserving first and last.
     pub fn downsample(states: &[HistoryState], max_points: usize) -> Vec<HistoryState> {
-        let n = states.len();
-        if n <= max_points || max_points < 2 {
-            return states.to_vec();
-        }
-
-        let mut result = Vec::with_capacity(max_points);
-        result.push(states[0].clone());
-
-        // Distribute remaining (max_points - 2) samples evenly across the interior
-        let interior = max_points - 2;
-        for i in 1..=interior {
-            let idx = i * (n - 1) / (interior + 1);
-            result.push(states[idx].clone());
-        }
-
-        result.push(states[n - 1].clone());
-        result
+        crate::sim::core::downsample_states(states, max_points)
     }
 }
 
@@ -192,7 +176,7 @@ mod tests {
         let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
         let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
         make_history_state(
-            "default",
+            EntityPath::parse("/world/sat/default"),
             t,
             &pos,
             &vel,
@@ -418,7 +402,7 @@ mod tests {
                 source: AttitudeSource::Propagated,
             });
             let hs = make_history_state(
-                "att-sat",
+                EntityPath::parse("/world/sat/att-sat"),
                 t,
                 &pos,
                 &vel,

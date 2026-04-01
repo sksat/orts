@@ -220,10 +220,10 @@ async fn main_loop(
                     Some(Ok(Message::Text(text))) => {
                         if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                             let result = match client_msg {
-                                ClientMessage::QueryRange { t_min, t_max, max_points, satellite_id } => {
+                                ClientMessage::QueryRange { t_min, t_max, max_points, entity_path } => {
                                     let (resp_tx, resp_rx) = oneshot::channel();
                                     if cmd_tx.send(SimCommand::QueryRange {
-                                        t_min, t_max, max_points, satellite_id, respond: resp_tx,
+                                        t_min, t_max, max_points, entity_path, respond: resp_tx,
                                     }).await.is_err() {
                                         break;
                                     }

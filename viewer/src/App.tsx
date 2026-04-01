@@ -253,7 +253,7 @@ export function App() {
   );
 
   const handleState = useCallback((point: OrbitPoint) => {
-    const id = point.satelliteId ?? "default";
+    const id = point.entityPath ?? "default";
     getOrCreateIngestBuffer(ingestBuffersRef.current, id).push(point);
     getOrCreateTrailBuffer(trailBuffersRef.current, id).push(point);
     chartBufferRef.current.push(orbitPointToChartRow(point));
@@ -290,11 +290,11 @@ export function App() {
   }, []);
 
   const handleSimulationTerminated = useCallback(
-    (satelliteId: string, t: number, reason: string) => {
-      console.log(`Satellite ${satelliteId} terminated at t=${t.toFixed(2)}s: ${reason}`);
+    (entityPath: string, t: number, reason: string) => {
+      console.log(`Satellite ${entityPath} terminated at t=${t.toFixed(2)}s: ${reason}`);
       setTerminatedSatellites((prev) => {
         const next = new Set(prev);
-        next.add(satelliteId);
+        next.add(entityPath);
         return next;
       });
     },
@@ -308,7 +308,7 @@ export function App() {
     // Seed ChartBuffer with history data (clear first for fresh session)
     chartBufferRef.current.clear();
     for (const point of points) {
-      const id = point.satelliteId ?? "default";
+      const id = point.entityPath ?? "default";
       let arr = byId.get(id);
       if (!arr) {
         arr = [];
@@ -359,7 +359,7 @@ export function App() {
 
     const bySatellite = new Map<string, OrbitPoint[]>();
     for (const p of combined) {
-      const id = p.satelliteId ?? "default";
+      const id = p.entityPath ?? "default";
       let arr = bySatellite.get(id);
       if (!arr) {
         arr = [];
@@ -504,7 +504,7 @@ export function App() {
                 t_min: range.tMin,
                 t_max: range.tMax,
                 max_points: 2000,
-                satellite_id: satId,
+                entity_path: satId,
               });
             });
         } else {
@@ -515,7 +515,7 @@ export function App() {
             t_min: range.tMin,
             t_max: range.tMax,
             max_points: 2000,
-            satellite_id: satId,
+            entity_path: satId,
           });
         }
       }, 200);

@@ -3,10 +3,10 @@ import type { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import { computeLiveSyncTime, computeTrailDrawStarts } from "./useRealtimePlayback.js";
 
-function makePoint(t: number, satelliteId?: string): OrbitPoint {
+function makePoint(t: number, entityPath?: string): OrbitPoint {
   return {
     t,
-    satelliteId,
+    entityPath,
     x: 6778 + t,
     y: t * 0.1,
     z: 0,

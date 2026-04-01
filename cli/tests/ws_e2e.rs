@@ -242,8 +242,8 @@ async fn test_websocket_info_and_state_messages() {
         let (first_state, _) = read_until_type(&mut read, "state", 50).await;
         assert!(first_state["t"].is_f64(), "state.t must be a number");
         assert!(
-            first_state["satellite_id"].is_string(),
-            "state must have satellite_id"
+            first_state["entity_path"].is_string(),
+            "state must have entity_path"
         );
         let position = first_state["position"].as_array().unwrap();
         assert_eq!(position.len(), 3);
@@ -685,13 +685,13 @@ async fn test_websocket_monotonic_time_across_orbits() {
 
         // Collect live state messages and verify per-satellite monotonicity.
         // With multi-satellite, states from different satellites are interleaved,
-        // so we track last_t per satellite_id.
+        // so we track last_t per entity_path.
         let mut last_t_per_sat: std::collections::HashMap<String, f64> =
             std::collections::HashMap::new();
         for i in 0..10 {
             let (state, _) = read_until_type(&mut read, "state", 50).await;
             let t = state["t"].as_f64().unwrap();
-            let sid = state["satellite_id"]
+            let sid = state["entity_path"]
                 .as_str()
                 .unwrap_or("unknown")
                 .to_string();
@@ -740,7 +740,7 @@ async fn test_websocket_terminated_replay_on_late_connect() {
         // (after info, before or interleaved with history/state)
         let (terminated, _) = read_until_type(&mut read, "simulation_terminated", 50).await;
         assert_eq!(
-            terminated["satellite_id"], "low",
+            terminated["entity_path"], "/world/sat/low",
             "should receive termination for 'low' satellite"
         );
         assert!(
@@ -756,7 +756,7 @@ async fn test_websocket_terminated_replay_on_late_connect() {
         for _ in 0..5 {
             let (state, _) = read_until_type(&mut read, "state", 50).await;
             assert_eq!(
-                state["satellite_id"], "high",
+                state["entity_path"], "/world/sat/high",
                 "only 'high' satellite should still stream state messages"
             );
         }
@@ -855,14 +855,14 @@ async fn test_websocket_add_satellite() {
         // Should receive satellite_added among the messages
         let (added, _) = read_until_type(&mut read, "satellite_added", 200).await;
         assert_eq!(added["type"], "satellite_added");
-        assert_eq!(added["satellite"]["id"], "new-sat");
+        assert_eq!(added["satellite"]["id"], "/world/sat/new-sat");
         assert!(added["t"].as_f64().is_some());
 
         // Should now receive state messages for the new satellite
         let mut found_new_sat_state = false;
         for _ in 0..200 {
             let msg = next_json(&mut read).await;
-            if msg["type"] == "state" && msg["satellite_id"] == "new-sat" {
+            if msg["type"] == "state" && msg["entity_path"] == "/world/sat/new-sat" {
                 found_new_sat_state = true;
                 break;
             }

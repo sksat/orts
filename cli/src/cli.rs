@@ -32,6 +32,15 @@ pub enum Commands {
         #[arg(long, default_value_t = 9001)]
         port: u16,
     },
+    /// Replay a recorded simulation file through the WebSocket viewer
+    Replay {
+        /// Path to the .rrd file to replay
+        input: String,
+
+        /// WebSocket server port
+        #[arg(long, default_value_t = 9001)]
+        port: u16,
+    },
     /// Convert between data formats
     Convert {
         /// Input file path

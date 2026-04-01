@@ -49,9 +49,9 @@ export interface UseMultiSatelliteStoreReturn {
 /** Create a per-satellite schema with a unique table name. */
 function makeSatelliteSchema<T extends TimePoint>(
   baseSchema: TableSchema<T>,
-  satelliteId: string,
+  entityPath: string,
 ): TableSchema<T> {
-  const safeName = satelliteId.replace(/[^a-zA-Z0-9_]/g, "_");
+  const safeName = entityPath.replace(/[^a-zA-Z0-9_]/g, "_");
   return { ...baseSchema, tableName: `orbit_${safeName}` };
 }
 
@@ -192,7 +192,7 @@ export function useMultiSatelliteStore<T extends TimePoint>(
               // Dev-only: expose the error for E2E diagnostics
               if (typeof window !== "undefined" && import.meta.env.DEV) {
                 (window as unknown as Record<string, unknown>).__debug_multi_sat_last_error = {
-                  satId: cfg.id,
+                  entityPath: cfg.id,
                   error: e instanceof Error ? e.message : String(e),
                   stack: e instanceof Error ? e.stack : undefined,
                 };

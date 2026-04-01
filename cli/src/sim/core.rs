@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
 use orts::orbital::kepler::KeplerianElements;
+use orts::record::entity_path::EntityPath;
 use orts::setup::SatelliteParams;
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +34,7 @@ pub enum AttitudeSource {
 /// A single state snapshot used in history messages.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct HistoryState {
-    pub satellite_id: String,
+    pub entity_path: EntityPath,
     pub t: f64,
     pub position: [f64; 3],
     pub velocity: [f64; 3],
@@ -63,7 +64,7 @@ pub struct HistoryState {
 /// Create a HistoryState from position/velocity, computing Keplerian elements and derived values.
 #[allow(clippy::too_many_arguments)]
 pub fn make_history_state(
-    satellite_id: &str,
+    entity_path: EntityPath,
     t: f64,
     pos: &nalgebra::Vector3<f64>,
     vel: &nalgebra::Vector3<f64>,
@@ -77,7 +78,7 @@ pub fn make_history_state(
     let v_mag = vel.magnitude();
     let h = pos.cross(vel);
     HistoryState {
-        satellite_id: satellite_id.to_string(),
+        entity_path,
         t,
         position: [pos.x, pos.y, pos.z],
         velocity: [vel.x, vel.y, vel.z],
@@ -94,6 +95,26 @@ pub fn make_history_state(
         accelerations,
         attitude,
     }
+}
+
+/// Downsample a list of states to at most `max_points`, always preserving first and last.
+pub fn downsample_states(states: &[HistoryState], max_points: usize) -> Vec<HistoryState> {
+    let n = states.len();
+    if n <= max_points || max_points < 2 {
+        return states.to_vec();
+    }
+
+    let mut result = Vec::with_capacity(max_points);
+    result.push(states[0].clone());
+
+    let interior = max_points - 2;
+    for i in 1..=interior {
+        let idx = i * (n - 1) / (interior + 1);
+        result.push(states[idx].clone());
+    }
+
+    result.push(states[n - 1].clone());
+    result
 }
 
 /// Compute acceleration breakdown as a HashMap from an OrbitalSystem.
@@ -140,14 +161,15 @@ pub fn sat_params(spec: &SatelliteSpec) -> SatelliteParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use orts::record::entity_path::EntityPath;
 
     const TEST_MU: f64 = 398600.4418;
     const TEST_BODY_RADIUS: f64 = 6378.137;
 
     #[test]
-    fn history_state_has_satellite_id() {
+    fn history_state_has_entity_path() {
         let hs = make_history_state(
-            "test-sat",
+            EntityPath::parse("/world/sat/test-sat"),
             10.0,
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
@@ -156,15 +178,15 @@ mod tests {
             HashMap::new(),
             None,
         );
-        assert_eq!(hs.satellite_id, "test-sat");
+        assert_eq!(hs.entity_path, EntityPath::parse("/world/sat/test-sat"));
         assert!((hs.t - 10.0).abs() < 1e-9);
         assert!(hs.attitude.is_none());
     }
 
     #[test]
-    fn history_state_satellite_id_serialized() {
+    fn history_state_entity_path_serialized() {
         let hs = make_history_state(
-            "my-sat",
+            EntityPath::parse("/world/sat/my-sat"),
             5.0,
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
@@ -175,7 +197,7 @@ mod tests {
         );
         let json = serde_json::to_string(&hs).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["satellite_id"], "my-sat");
+        assert_eq!(v["entity_path"], "/world/sat/my-sat");
         // attitude should be absent (skip_serializing_if)
         assert!(v.get("attitude").is_none());
     }
@@ -205,7 +227,7 @@ mod tests {
             source: AttitudeSource::Propagated,
         });
         let hs = make_history_state(
-            "att-sat",
+            EntityPath::parse("/world/sat/att-sat"),
             20.0,
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),
@@ -220,7 +242,7 @@ mod tests {
 
         // Serialization should include attitude
         let hs2 = make_history_state(
-            "att-sat",
+            EntityPath::parse("/world/sat/att-sat"),
             20.0,
             &nalgebra::Vector3::new(6778.0, 0.0, 0.0),
             &nalgebra::Vector3::new(0.0, 7.669, 0.0),

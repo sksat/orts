@@ -52,7 +52,7 @@ const BODY_CENTERED_PROFILE: DisplayScaleProfile = {
   cameraNear: 0.01,
   cameraFar: 1000,
   minDistance: 1.5,
-  maxDistance: 100,
+  maxDistance: 200,
   defaultCameraDistance: 5.4,
   defaultCameraDirection: null,
 };
