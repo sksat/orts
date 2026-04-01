@@ -288,6 +288,8 @@ function SecondaryBody({
     scenePos = [position.x / scaleRadius, position.y / scaleRadius, position.z / scaleRadius];
   }
 
+  // TODO: compute body orientation via kaname WASM (IAU rotation model)
+
   return (
     <group position={scenePos}>
       <CelestialBody

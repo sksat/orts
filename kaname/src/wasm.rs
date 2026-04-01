@@ -137,6 +137,25 @@ pub fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f
     vec![eci.0.x, eci.0.y, eci.0.z]
 }
 
+/// Body-fixed → ECI orientation quaternion using the IAU rotation model.
+///
+/// `body`: body identifier string (e.g., "moon", "mars", "sun")
+/// `epoch_jd`: Julian Date of the simulation epoch
+/// `t`: elapsed simulation time in seconds
+///
+/// Returns `[w, x, y, z]` quaternion (4 f64 values, Hamilton scalar-first).
+/// Returns an empty vec if the body has no IAU rotation model.
+#[wasm_bindgen]
+pub fn body_orientation(body: &str, epoch_jd: f64, t: f64) -> Vec<f64> {
+    let model = match crate::rotation::model_for_body(body) {
+        Some(m) => m,
+        None => return vec![],
+    };
+    let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
+    let q = model.orientation(&epoch);
+    vec![q.w, q.i, q.j, q.k]
+}
+
 /// Transform a body-to-ECI quaternion into a body-to-LVLH quaternion.
 ///
 /// `pos_x/y/z`: satellite position in ECI \[km\]

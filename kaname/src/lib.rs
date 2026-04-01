@@ -3,6 +3,7 @@ pub mod constants;
 pub mod epoch;
 pub mod moon;
 pub mod planets;
+pub mod rotation;
 pub mod sun;
 
 #[cfg(feature = "wasm")]
