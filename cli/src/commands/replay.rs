@@ -218,9 +218,17 @@ async fn async_server(data: Arc<ReplayData>, port: u16) {
         Arc::clone(&texture_cache),
         ws_tx.clone(),
     );
-    // Request textures for the central body immediately
-    let body = data.central_body.clone();
-    let _ = texture_request_tx.send(vec![body]).await;
+    // Request textures for the central body and any secondary bodies
+    let mut bodies = vec![data.central_body.clone()];
+    for entity_path in data.states_by_entity.keys() {
+        let ep = EntityPath::parse(entity_path);
+        // Non-satellite entities (e.g. /world/moon) are secondary bodies
+        if !entity_path.starts_with("/world/sat/") {
+            bodies.push(ep.name().to_string());
+        }
+    }
+    bodies.dedup();
+    let _ = texture_request_tx.send(bodies).await;
 
     let state = ReplayAppState {
         data,
