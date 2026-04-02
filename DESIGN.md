@@ -17,11 +17,11 @@ TDD を効率化するために、以下のアプローチを取る。
 シミュレータ本体だけでなく、Web ベースのシミュレータの real-time viewer も開発する。
 viewer は React + TypeScript で実装し、Vite による hot reload 開発に対応する。
 
-viewer は以下の2つのモードに対応する:
-- **リプレイモード**: 記録済みの CSV データを読み込み、時間制御（再生/一時停止/速度調整/シーク）付きで再生する
-- **リアルタイムモード**: Rust シミュレータを WebSocket サーバーとして実行し、計算結果をリアルタイムにストリーミング表示する
+viewer は **Source** を primitive とするデータ駆動アーキテクチャを採用する:
+- **WebSocket source**: `orts serve` や `orts replay` に接続し、シミュレーション結果をストリーミング受信
+- **ローカルファイル source**: CSV / RRD ファイルを Web Worker でパースし、チャンク単位で投入
 
-リアルタイムモードでは、Rust 側に WebSocket サーバー機能を追加し、シミュレーション結果を逐次 viewer に送信する。
+viewer にはモード切替の概念はなく、全ての source が同一の TrailBuffer + IngestBuffer パイプラインにデータを流す。SourceAdapter が入力元の差異を吸収し、SourceEvent (discriminated union) を通じて統一的にデータを配信する。将来的には複数 source の同時接続・比較表示にも対応する。
 
 ラフなところから精度を上げていくためにも、はじめはシンプルな2体問題や3体問題を低精度で実装する。
 viewer についてもシンプルなものをまず実装する。
@@ -452,22 +452,31 @@ SOI 切り替え時の注意点:
 - **live 表示は JS バッファが正**: 3D（TrailBuffer）もチャート（ChartBuffer）もサーバーからのストリーミングデータを直接表示。DuckDB を経由しない
 - **derived 値はサーバーで事前計算**: altitude, energy, angular_momentum 等のチャート用 derived 値はサーバーが計算して state メッセージに含める。viewer 側での再計算を排除
 
-### リアルタイムモードのデータフロー
+### SourceAdapter パイプライン
+
+全データ source (WebSocket / CSV / RRD) は SourceAdapter を通じて統一パイプラインに流れる:
 
 ```
-WS state msg (server-computed derived values 込み)
-  ├→ TrailBuffer (3D 用)
-  │    - OrbitPoint 全体を保持、補間・世代管理
-  │    - OrbitTrail GPU shader が直接読み取り
+SourceAdapter (WS / CSV Worker / RRD WASM Worker)
   │
-  ├→ ChartBuffer (チャート用、列指向 ring buffer)
-  │    - t + metric ごとの Float64Array
-  │    - uPlot.setData() に即時反映（DuckDB バイパス）
-  │
-  └→ IngestBuffer → DuckDB (定期バッチ insert)
-       - 表示には使わない（バックグラウンド蓄積）
-       - 履歴クエリ・replay 用のキャッシュ
+  └→ SourceEvent (discriminated union)
+       │
+       useSourceRuntime (event dispatcher)
+         ├→ TrailBuffer (3D 用, ref — push で re-render しない)
+         │    - OrbitPoint 全体を保持、補間・世代管理
+         │    - OrbitTrail GPU shader が直接読み取り
+         │
+         ├→ ChartBuffer (チャート用、列指向 ring buffer)
+         │    - t + metric ごとの Float64Array
+         │    - uPlot.setData() に即時反映（DuckDB バイパス）
+         │
+         └→ IngestBuffer → DuckDB (定期バッチ insert)
+              - markRebuild() で初期データ一括投入
+              - push() でリアルタイム追加 (両者は同一パイプライン内で共存)
+              - 履歴クエリ・zoom 用のキャッシュ
 ```
+
+CSV ファイルは Web Worker でチャンク単位 (5000行/chunk) にパースし、history-chunk イベントとして投入。main thread をブロックしない。
 
 ### チャートデータソースの切り替え
 
@@ -478,7 +487,7 @@ WS state msg (server-computed derived values 込み)
 | live-follow | ChartBuffer (JS) | 最新データを即座に反映 |
 | paused / seek | ChartBuffer の coverage 内なら JS、外なら DuckDB | ローカルで解決 |
 | zoom（過去方向） | DuckDB (downsampled query) | 履歴の長期トレンドを効率的に表示 |
-| replay | DuckDB | CSV ロード → 任意 time-range クエリ |
+| ファイル source | IngestBuffer → DuckDB | markRebuild で一括投入、その後は DuckDB クエリ |
 
 切り替え条件: `requestedRange ⊆ chartBuffer.coverage` なら JS バッファ、はみ出したら DuckDB にフォールバック。
 
@@ -515,4 +524,5 @@ WS state msg (server-computed derived values 込み)
 | DuckDB ingest/query | insert, queryDerived, compact | uneri |
 | TimeSeriesChart | uPlot ラッパー | uneri |
 | source 切替ポリシー | live/paused/zoom でどのソースを使うか | viewer |
-| WS 連携 | state メッセージの受信とルーティング | viewer |
+| SourceAdapter | WS/ファイルの入力差を吸収し SourceEvent に統一 | viewer |
+| useSourceRuntime | adapter 管理、event → buffer routing、source metadata | viewer |
