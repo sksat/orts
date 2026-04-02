@@ -16,12 +16,10 @@ import type { TrailBuffer } from "../utils/TrailBuffer.js";
 const INITIAL_CAPACITY = 2048;
 
 interface OrbitTrailProps {
-  /** Points array for replay mode. */
-  points?: OrbitPoint[];
-  /** Number of vertices to render (replay mode progressive trail). */
+  /** Number of vertices to render. */
   visibleCount?: number;
-  /** TrailBuffer for realtime mode (bounded, generation-based invalidation). */
-  trailBuffer?: TrailBuffer;
+  /** TrailBuffer (bounded, generation-based invalidation). */
+  trailBuffer: TrailBuffer;
   /** Central body radius in km, used as the scale factor. */
   scaleRadius: number;
   /** Trail color (default: 0x00ff88). */
@@ -54,12 +52,9 @@ const IDENTITY_MAT3 = new THREE.Matrix3();
  * rotation are applied in the vertex shader via uniforms, so mode
  * switches (ECI, ECEF, LVLH) are O(1) per frame.
  *
- * Supports two data sources:
- *   - `points` + `visibleCount`: replay mode (progressive trail)
- *   - `trailBuffer`: realtime mode (bounded, generation-based GPU invalidation)
+ * Data flows through TrailBuffer (bounded, generation-based GPU invalidation).
  */
 export function OrbitTrail({
-  points,
   visibleCount,
   trailBuffer,
   scaleRadius,
@@ -76,7 +71,6 @@ export function OrbitTrail({
   const positionLowRef = useRef(new Float32Array(INITIAL_CAPACITY * 3));
   const generationRef = useRef(-1);
   const prevFrameRef = useRef<ReferenceFrame>(referenceFrame);
-  const prevPointsRef = useRef<OrbitPoint[] | undefined>(points);
 
   // --- Geometry with dual high/low attributes ---
   const geometry = useMemo(() => {
@@ -84,7 +78,7 @@ export function OrbitTrail({
     positionLowRef.current = new Float32Array(INITIAL_CAPACITY * 3);
     capacityRef.current = INITIAL_CAPACITY;
     writtenCountRef.current = 0;
-    generationRef.current = trailBuffer ? trailBuffer.generation : -1;
+    generationRef.current = trailBuffer.generation;
 
     const geom = new THREE.BufferGeometry();
     const highAttr = new THREE.BufferAttribute(positionHighRef.current, 3);
@@ -212,48 +206,25 @@ export function OrbitTrail({
       writtenCountRef.current = 0;
     }
 
-    if (trailBuffer) {
-      // --- TrailBuffer mode (realtime) ---
-      const currentGen = trailBuffer.generation;
-      const allPoints = trailBuffer.getAll();
-      const totalPoints = allPoints.length;
+    const currentGen = trailBuffer.generation;
+    const allPoints = trailBuffer.getAll();
+    const totalPoints = allPoints.length;
 
-      // Origin/rotation changes are uniform-only — no full rewrite needed.
-      const needsFullRewrite =
-        currentGen !== generationRef.current || writtenCountRef.current === 0;
+    const needsFullRewrite = currentGen !== generationRef.current || writtenCountRef.current === 0;
 
-      if (needsFullRewrite) {
-        generationRef.current = currentGen;
-        ensureCapacity(totalPoints);
-        writePoints(allPoints, 0, totalPoints);
-        writtenCountRef.current = totalPoints;
-        markAttrsNeedUpdate();
-      } else if (totalPoints > writtenCountRef.current) {
-        appendPoints(allPoints, writtenCountRef.current, totalPoints);
-      }
-
-      const vc = visibleCount != null ? Math.min(visibleCount, totalPoints) : totalPoints;
-      const start = Math.min(drawStart, vc);
-      geometry.setDrawRange(start, vc - start);
-    } else if (points) {
-      // --- Legacy points mode (replay) ---
-      const totalPoints = points.length;
-
-      // Detect when the points array itself changes (different orbit data).
-      const pointsChanged = points !== prevPointsRef.current;
-      if (pointsChanged) {
-        prevPointsRef.current = points;
-        writtenCountRef.current = 0;
-      }
-
-      if (totalPoints > writtenCountRef.current) {
-        appendPoints(points, writtenCountRef.current, totalPoints);
-      }
-
-      const clampedVc = Math.max(0, Math.min(visibleCount ?? totalPoints, totalPoints));
-      const start = Math.min(drawStart, clampedVc);
-      geometry.setDrawRange(start, clampedVc - start);
+    if (needsFullRewrite) {
+      generationRef.current = currentGen;
+      ensureCapacity(totalPoints);
+      writePoints(allPoints, 0, totalPoints);
+      writtenCountRef.current = totalPoints;
+      markAttrsNeedUpdate();
+    } else if (totalPoints > writtenCountRef.current) {
+      appendPoints(allPoints, writtenCountRef.current, totalPoints);
     }
+
+    const vc = visibleCount != null ? Math.min(visibleCount, totalPoints) : totalPoints;
+    const start = Math.min(drawStart, vc);
+    geometry.setDrawRange(start, vc - start);
   });
 
   /** Ensure GPU buffers can hold `needed` points; grows if necessary. */
