@@ -29,8 +29,6 @@ export function computeTMin(timeRange: TimeRange, latestT: number): number | und
 export interface UseTimeSeriesStoreOptions<T extends TimePoint> {
   conn: AsyncDuckDBConnection | null;
   schema: TableSchema<T>;
-  mode: "replay" | "realtime";
-  replayPoints: T[] | null;
   ingestBufferRef: React.RefObject<IngestBuffer<T>>;
   /** Show only last N seconds of data, or null for all history. */
   timeRange?: TimeRange;
@@ -59,8 +57,6 @@ export function useTimeSeriesStore<T extends TimePoint>(
   const {
     conn,
     schema,
-    mode,
-    replayPoints,
     ingestBufferRef,
     timeRange = null,
     maxPoints = DISPLAY_MAX_POINTS,
@@ -84,31 +80,11 @@ export function useTimeSeriesStore<T extends TimePoint>(
   const maxPointsRef = useRef(maxPoints);
   maxPointsRef.current = maxPoints;
 
-  // Replay mode: batch insert all points when data or timeRange changes
+  // IngestBuffer-based: cold snapshot + hot buffer architecture.
+  // All data sources (WS streaming, CSV chunks, etc.) flow through IngestBuffer.
+  // Use markRebuild() for bulk initial data, push() for streaming additions.
   useEffect(() => {
-    if (mode !== "replay" || !conn || !replayPoints) return;
-
-    let cancelled = false;
-    (async () => {
-      setIsLoading(true);
-      await clearTable(conn, schema);
-      await insertPoints(conn, schema, replayPoints);
-      const result = await queryDerived(conn, schema, undefined, maxPoints);
-      if (!cancelled) {
-        setData(result);
-        setIsLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn, mode, replayPoints, schema, maxPoints]);
-
-  // Realtime mode: cold snapshot + hot buffer architecture
-  useEffect(() => {
-    if (mode !== "realtime" || !conn) return;
+    if (!conn) return;
 
     let cancelled = false;
     let coldQueryCount = 0;
@@ -150,6 +126,7 @@ export function useTimeSeriesStore<T extends TimePoint>(
             await clearTable(conn, schemaRef.current);
             await insertPoints(conn, schemaRef.current, rebuildData);
             hasDataRef.current = rebuildData.length > 0;
+            if (!hasDataRef.current) setData(null); // clear chart for empty rebuild
             compactCooldown = COMPACT_COOLDOWN_AFTER_REBUILD;
             coldRefreshNeeded = true;
             hotBuffer = null;
@@ -271,7 +248,7 @@ export function useTimeSeriesStore<T extends TimePoint>(
       clearTimeout(queryTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conn, mode]);
+  }, [conn]);
 
   return { data, isLoading };
 }

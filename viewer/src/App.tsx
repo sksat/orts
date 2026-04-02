@@ -541,6 +541,10 @@ export function App() {
         setReplayPoints(parsed);
         setCsvMetadata(metadata);
 
+        // Feed IngestBuffer so DuckDB charts work without the old replay path
+        singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
+        singleIngestBufferRef.current.markRebuild(parsed);
+
         if (mode === "realtime" && isConnected) {
           disconnect();
         }
@@ -664,10 +668,8 @@ export function App() {
 
   // --- Charts: single-satellite mode (replay or single satellite) ---
   const { data: singleChartData, isLoading: singleChartsLoading } = useTimeSeriesStore({
-    conn,
+    conn: isMultiSatellite ? null : conn, // disable when multi-sat (uses multi-store instead)
     schema: orbitSchema,
-    mode: isMultiSatellite ? "replay" : mode, // disable realtime tick loop when multi-sat
-    replayPoints: isMultiSatellite ? null : replayPoints,
     ingestBufferRef: singleIngestBufferRef,
     timeRange,
   });

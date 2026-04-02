@@ -88,8 +88,6 @@ export function App() {
   const { data } = useTimeSeriesStore({
     conn,
     schema: mixedSchema,
-    mode: "realtime",
-    replayPoints: null,
     ingestBufferRef: bufferRef,
     timeRange,
     tickInterval: 100,

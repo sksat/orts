@@ -75,19 +75,26 @@ export interface RealtimePlaybackSnapshot {
  *                        Paused ←──pause── Playing
  *                        Live   ←──goLive── Paused | Playing
  */
+export interface RealtimePlaybackOptions {
+  /** Initial mode: "live" for streaming sources, "paused" for file sources. */
+  defaultMode?: "live" | "paused";
+}
+
 export function useRealtimePlayback(
   trailBuffers: Map<string, TrailBuffer>,
   terminatedSatellites: Set<string> = new Set(),
   timeRange: TimeRange = null,
+  options?: RealtimePlaybackOptions,
 ) {
-  const modeRef = useRef<RealtimeMode>("live");
+  const defaultMode = options?.defaultMode ?? "live";
+  const modeRef = useRef<RealtimeMode>(defaultMode);
   const currentTimeRef = useRef(0);
   const speedRef = useRef(1);
   const rafRef = useRef(0);
   const prevTimeRef = useRef(0);
 
   const [snapshot, setSnapshot] = useState<RealtimePlaybackSnapshot>({
-    isLive: true,
+    isLive: defaultMode === "live",
     isPlaying: false,
     currentTime: 0,
     fraction: 1,
