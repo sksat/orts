@@ -260,6 +260,9 @@ export function createEventDispatcher(
       }
 
       case "terminated":
+        console.log(
+          `Satellite ${event.entityPath} terminated at t=${event.t.toFixed(2)}s: ${event.reason}`,
+        );
         state.terminatedSatellites = new Set(state.terminatedSatellites);
         state.terminatedSatellites.add(event.entityPath);
         break;
@@ -284,6 +287,7 @@ export function createEventDispatcher(
         break;
 
       case "error":
+        console.error("Source error:", event.message);
         state.connectionState = "error";
         break;
 

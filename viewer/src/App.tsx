@@ -6,7 +6,6 @@ import { initKaname } from "./wasm/kanameInit.js";
 const kanameReady = initKaname();
 
 import {
-  ChartBuffer,
   type ChartDataMap,
   IngestBuffer,
   quantizeChartTime,
@@ -32,8 +31,8 @@ import {
 } from "./hooks/useWebSocket.js";
 import { type OrbitPoint, parseOrbitCSVWithMetadata } from "./orbit.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
+import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { mergeQueryRangePoints } from "./utils/mergeQueryRange.js";
-import { TrailBuffer } from "./utils/TrailBuffer.js";
 import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
 import { jd_to_utc_string } from "./wasm/kanameInit.js";
 
@@ -44,81 +43,13 @@ const DEFAULT_WS_URL: string =
 /** Stable reference for an empty terminated-satellites set.
  *  Avoids creating a new Set object on each handleConnect call,
  *  which would cascade through useRealtimePlayback's dependency chain. */
-const EMPTY_TERMINATED_SET: Set<string> = new Set();
 
 /** Chart color palette matching the 3D scene SATELLITE_COLORS. */
 const SATELLITE_CHART_COLORS = ["#00ff88", "#ff4488", "#44aaff", "#ffaa44", "#aa44ff"];
 
 import { METRIC_NAMES } from "./chartMetrics.js";
 
-/** Chart column names matching the derived column names in orbitSchema. */
-const CHART_COLUMNS = [
-  "t",
-  "altitude",
-  "energy",
-  "angular_momentum",
-  "velocity",
-  "a",
-  "e",
-  "inc_deg",
-  "raan_deg",
-  "accel_gravity",
-  "accel_drag",
-  "accel_srp",
-  "accel_third_body_sun",
-  "accel_third_body_moon",
-  "accel_perturbation_total",
-];
-
-const RAD_TO_DEG = 180.0 / Math.PI;
-
-/** Convert an OrbitPoint (with server-computed derived values) to a chart row. */
-function orbitPointToChartRow(p: OrbitPoint): Record<string, number> {
-  const accelDrag = p.accel_drag ?? 0;
-  const accelSrp = p.accel_srp ?? 0;
-  const accelSun = p.accel_third_body_sun ?? 0;
-  const accelMoon = p.accel_third_body_moon ?? 0;
-  return {
-    t: p.t,
-    altitude: p.altitude ?? 0,
-    energy: p.specific_energy ?? 0,
-    angular_momentum: p.angular_momentum ?? 0,
-    velocity: p.velocity_mag ?? 0,
-    a: p.a,
-    e: p.e,
-    inc_deg: p.inc * RAD_TO_DEG,
-    raan_deg: p.raan * RAD_TO_DEG,
-    accel_gravity: p.accel_gravity ?? 0,
-    accel_drag: accelDrag,
-    accel_srp: accelSrp,
-    accel_third_body_sun: accelSun,
-    accel_third_body_moon: accelMoon,
-    accel_perturbation_total: accelDrag + accelSrp + accelSun + accelMoon,
-  };
-}
-
-/** Helper: get or create a TrailBuffer in a Map. */
-function getOrCreateTrailBuffer(map: Map<string, TrailBuffer>, id: string): TrailBuffer {
-  let buf = map.get(id);
-  if (!buf) {
-    buf = new TrailBuffer(50000);
-    map.set(id, buf);
-  }
-  return buf;
-}
-
-/** Helper: get or create an IngestBuffer in a Map. */
-function getOrCreateIngestBuffer(
-  map: Map<string, IngestBuffer<OrbitPoint>>,
-  id: string,
-): IngestBuffer<OrbitPoint> {
-  let buf = map.get(id);
-  if (!buf) {
-    buf = new IngestBuffer<OrbitPoint>();
-    map.set(id, buf);
-  }
-  return buf;
-}
+// Chart helpers and buffer factories moved to sources/eventDispatcher.ts
 
 export function App() {
   // --- WASM initialization (must complete before rendering ECEF transforms) ---
@@ -146,13 +77,32 @@ export function App() {
     writeTimeRangeParam(timeRange);
   }, [timeRange]);
 
-  // --- Realtime mode state ---
-  const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
-  const [simInfo, setSimInfo] = useState<SimInfo | null>(null);
-  const [terminatedSatellites, setTerminatedSatellites] = useState<Set<string>>(new Set());
+  // --- Source Runtime (manages buffers, state, event dispatch) ---
+  const runtime = useSourceRuntime();
+  const {
+    trailBuffers: trailBuffersMap,
+    ingestBuffers: ingestBuffersMap,
+    chartBuffer: runtimeChartBuffer,
+    simInfo,
+    serverState,
+    terminatedSatellites,
+    textureRevision,
+    chartBufferVersion,
+    handleEvent,
+    setActiveSourceId,
+    resetBuffers,
+  } = runtime;
 
-  type ServerState = "unknown" | "idle" | "running" | "paused";
-  const [serverState, setServerState] = useState<ServerState>("unknown");
+  // --- Refs for backward compat (some code still uses .current pattern) ---
+  const trailBuffersRef = useRef(trailBuffersMap);
+  trailBuffersRef.current = trailBuffersMap;
+  const ingestBuffersRef = useRef(ingestBuffersMap);
+  ingestBuffersRef.current = ingestBuffersMap;
+  const chartBufferRef = useRef(runtimeChartBuffer);
+  chartBufferRef.current = runtimeChartBuffer;
+
+  // --- WS URL + connection state ---
+  const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
 
   // --- DuckDB + Charts ---
   const mu = simInfo?.mu;
@@ -170,28 +120,14 @@ export function App() {
     }
   }, [conn]);
 
-  const detailBufferRef = useRef<OrbitPoint[]>([]);
-  const streamingCountRef = useRef(0);
-
-  // --- Per-satellite buffers ---
-  const trailBuffersRef = useRef(new Map<string, TrailBuffer>());
-  const ingestBuffersRef = useRef(new Map<string, IngestBuffer<OrbitPoint>>());
-
-  // --- Single-satellite IngestBuffer ref (for replay / single-sat mode) ---
+  // --- Single-satellite IngestBuffer ref (for single-sat DuckDB mode) ---
   const singleIngestBufferRef = useRef(new IngestBuffer<OrbitPoint>());
 
-  // --- ChartBuffer for live DuckDB bypass ---
-  // Holds the most recent 50k points for instant chart rendering without DuckDB.
-  // At dt=10s this covers ~139 hours. When the user views a range exceeding the
-  // buffer (e.g. "All" on a very long run), the DuckDB path takes over via
-  // the time-range / zoom fallback logic below.
-  const chartBufferRef = useRef(new ChartBuffer(CHART_COLUMNS, 50000));
-  const [chartBufferVersion, setChartBufferVersion] = useState(0);
-  const chartDirtyRef = useRef(false);
   // Result of local DuckDB zoom query (replaces server query_range).
   const [localZoomData, setLocalZoomData] = useState<ChartDataMap | null>(null);
-  // Bumped when server notifies that new high-res textures are available.
-  const [textureRevision, setTextureRevision] = useState(0);
+  // Local chart version bump for non-event-driven updates (e.g., zoom within ChartBuffer)
+  const [localChartBump, setLocalChartBump] = useState(0);
+  const effectiveChartVersion = chartBufferVersion + localChartBump;
 
   // --- Multi-satellite detection ---
   const isMultiSatellite = simInfo != null && simInfo.satellites.length > 1;
@@ -208,10 +144,8 @@ export function App() {
   // Keep singleIngestBufferRef pointing to the first satellite's buffer for single-sat mode
   useEffect(() => {
     if (simInfo?.satellites.length === 1) {
-      singleIngestBufferRef.current = getOrCreateIngestBuffer(
-        ingestBuffersRef.current,
-        simInfo.satellites[0].id,
-      );
+      const buf = ingestBuffersRef.current.get(simInfo.satellites[0].id);
+      if (buf) singleIngestBufferRef.current = buf as IngestBuffer<OrbitPoint>;
     }
   }, [simInfo]);
 
@@ -240,159 +174,85 @@ export function App() {
     timeRange,
   );
 
-  const handleState = useCallback((point: OrbitPoint) => {
-    const id = point.entityPath ?? "default";
-    getOrCreateIngestBuffer(ingestBuffersRef.current, id).push(point);
-    getOrCreateTrailBuffer(trailBuffersRef.current, id).push(point);
-    chartBufferRef.current.push(orbitPointToChartRow(point));
-    streamingCountRef.current++;
-    // Batch version bumps to at most once per animation frame to avoid
-    // excessive React re-renders at high message rates.
-    if (!chartDirtyRef.current) {
-      chartDirtyRef.current = true;
-      requestAnimationFrame(() => {
-        chartDirtyRef.current = false;
-        setChartBufferVersion((v) => v + 1);
-      });
-    }
-  }, []);
+  // --- WS → SourceEvent bridge ---
+  // useWebSocket callbacks are bridged to useSourceRuntime.handleEvent.
+  // This keeps useWebSocket as the WS lifecycle manager while routing
+  // all data through the unified SourceEvent pipeline.
+  const WS_SOURCE_ID = "ws-0";
 
-  const handleInfo = useCallback((info: SimInfo) => {
-    setSimInfo(info);
-    setServerState("running");
-  }, []);
-
-  const handleStatus = useCallback((state: string) => {
-    if (state === "idle") {
-      setServerState("idle");
-      setSimInfo(null);
-    } else if (state === "paused") {
-      setServerState("paused");
-    } else if (state === "running") {
-      setServerState("running");
-    }
-  }, []);
-
-  const handleError = useCallback((message: string) => {
-    console.error("Server error:", message);
-  }, []);
-
-  const handleSimulationTerminated = useCallback(
-    (entityPath: string, t: number, reason: string) => {
-      console.log(`Satellite ${entityPath} terminated at t=${t.toFixed(2)}s: ${reason}`);
-      setTerminatedSatellites((prev) => {
-        const next = new Set(prev);
-        next.add(entityPath);
-        return next;
-      });
-    },
-    [],
+  const handleState = useCallback(
+    (point: OrbitPoint) => handleEvent(WS_SOURCE_ID, { kind: "state", point }),
+    [handleEvent],
   );
-
-  const handleHistory = useCallback((points: OrbitPoint[]) => {
-    // Group by satellite, then markRebuild so DuckDB tables are fully
-    // replaced.  This clears stale data left over from a prior connection.
-    const byId = new Map<string, OrbitPoint[]>();
-    // Seed ChartBuffer with history data (clear first for fresh session)
-    chartBufferRef.current.clear();
-    for (const point of points) {
-      const id = point.entityPath ?? "default";
-      let arr = byId.get(id);
-      if (!arr) {
-        arr = [];
-        byId.set(id, arr);
+  const handleInfo = useCallback(
+    (info: SimInfo) => handleEvent(WS_SOURCE_ID, { kind: "info", info }),
+    [handleEvent],
+  );
+  const handleStatus = useCallback(
+    (state: string) => handleEvent(WS_SOURCE_ID, { kind: "server-state", state }),
+    [handleEvent],
+  );
+  const handleError = useCallback(
+    (message: string) => handleEvent(WS_SOURCE_ID, { kind: "error", message }),
+    [handleEvent],
+  );
+  const handleSimulationTerminated = useCallback(
+    (entityPath: string, t: number, reason: string) =>
+      handleEvent(WS_SOURCE_ID, { kind: "terminated", entityPath, t, reason }),
+    [handleEvent],
+  );
+  const handleHistory = useCallback(
+    (points: OrbitPoint[]) => {
+      handleEvent(WS_SOURCE_ID, { kind: "history", points });
+      // Dev-only: expose history arrival diagnostic for E2E tests
+      if (import.meta.env.DEV) {
+        const byId = new Map<string, number>();
+        for (const p of points) {
+          const id = p.entityPath ?? "default";
+          byId.set(id, (byId.get(id) ?? 0) + 1);
+        }
+        (window as unknown as Record<string, unknown>).__debug_last_history = {
+          historyLen: points.length,
+          byIdCounts: Object.fromEntries(byId),
+        };
       }
-      arr.push(point);
-      getOrCreateTrailBuffer(trailBuffersRef.current, id).push(point);
-      chartBufferRef.current.push(orbitPointToChartRow(point));
-    }
-    for (const [id, pts] of byId) {
-      getOrCreateIngestBuffer(ingestBuffersRef.current, id).markRebuild(pts);
-    }
-    // Dev-only: expose history arrival diagnostic for E2E tests
-    if (import.meta.env.DEV) {
-      const byIdCounts: Record<string, number> = {};
-      for (const [id, pts] of byId) byIdCounts[id] = pts.length;
-      (window as unknown as Record<string, unknown>).__debug_last_history = {
-        historyLen: points.length,
-        byIdCounts,
-      };
-    }
-    streamingCountRef.current = 0;
-    // Notify live chart that history data is available
-    setChartBufferVersion((v) => v + 1);
-  }, []);
-
-  const handleHistoryDetail = useCallback((points: OrbitPoint[]) => {
-    for (const point of points) {
-      detailBufferRef.current.push(point);
-    }
-  }, []);
-
-  const handleHistoryDetailComplete = useCallback(() => {
-    if (detailBufferRef.current.length === 0) return;
-
-    const detailPoints = detailBufferRef.current;
-    detailBufferRef.current = [];
-
-    const streamingPoints: OrbitPoint[] = [];
-    for (const buf of trailBuffersRef.current.values()) {
-      const allPts = buf.getAll();
-      const safeCount = Math.min(streamingCountRef.current, allPts.length);
-      streamingPoints.push(...allPts.slice(allPts.length - safeCount));
-    }
-
-    const combined = [...detailPoints, ...streamingPoints];
-    combined.sort((a, b) => a.t - b.t);
-
-    const bySatellite = new Map<string, OrbitPoint[]>();
-    for (const p of combined) {
-      const id = p.entityPath ?? "default";
-      let arr = bySatellite.get(id);
-      if (!arr) {
-        arr = [];
-        bySatellite.set(id, arr);
-      }
-      arr.push(p);
-    }
-
-    for (const [id, pts] of bySatellite) {
-      getOrCreateTrailBuffer(trailBuffersRef.current, id).clear();
-      getOrCreateTrailBuffer(trailBuffersRef.current, id).pushMany(pts);
-      getOrCreateIngestBuffer(ingestBuffersRef.current, id).markRebuild(pts);
-    }
-
-    // Sync ChartBuffer with the full-resolution data
-    chartBufferRef.current.clear();
-    for (const point of combined) {
-      chartBufferRef.current.push(orbitPointToChartRow(point));
-    }
-    setChartBufferVersion((v) => v + 1);
-  }, []);
-
+    },
+    [handleEvent],
+  );
+  const handleHistoryDetail = useCallback(
+    (points: OrbitPoint[]) => handleEvent(WS_SOURCE_ID, { kind: "history-detail", points }),
+    [handleEvent],
+  );
+  const handleHistoryDetailComplete = useCallback(
+    () => handleEvent(WS_SOURCE_ID, { kind: "history-detail-complete" }),
+    [handleEvent],
+  );
   const handleQueryRangeResponse = useCallback(
     (response: QueryRangeResponse) => {
-      // Discard stale responses: if a newer query_range was requested, ignore
-      // responses that don't match the latest requested range.
+      // Discard stale responses
       const latest = latestRequestedRangeRef.current;
       if (latest && (response.tMin !== latest.tMin || response.tMax !== latest.tMax)) {
         return;
       }
-
+      // Merge with existing streaming data to avoid position rewind
       const satId = simInfo?.satellites[0]?.id ?? "default";
-      const allTrailPoints = getOrCreateTrailBuffer(trailBuffersRef.current, satId).getAll();
-      const combined = mergeQueryRangePoints(response.points, allTrailPoints);
-
-      getOrCreateIngestBuffer(ingestBuffersRef.current, satId).markRebuild(combined);
-      getOrCreateTrailBuffer(trailBuffersRef.current, satId).clear();
-      getOrCreateTrailBuffer(trailBuffersRef.current, satId).pushMany(combined);
+      const trailBuf = trailBuffersRef.current.get(satId);
+      const merged = trailBuf
+        ? mergeQueryRangePoints(response.points, trailBuf.getAll())
+        : response.points;
+      handleEvent(WS_SOURCE_ID, {
+        kind: "range-response",
+        tMin: response.tMin,
+        tMax: response.tMax,
+        points: merged,
+      });
     },
-    [simInfo],
+    [handleEvent, simInfo],
   );
-
-  const handleTexturesReady = useCallback((_body: string) => {
-    setTextureRevision((v) => v + 1);
-  }, []);
+  const handleTexturesReady = useCallback(
+    (body: string) => handleEvent(WS_SOURCE_ID, { kind: "textures-ready", body }),
+    [handleEvent],
+  );
 
   const { connect, disconnect, isConnected, send } = useWebSocket({
     url: wsUrl,
@@ -466,7 +326,7 @@ export function App() {
         if (realtimePlayback.snapshot.isLive) {
           const buf = chartBufferRef.current;
           if (buf.length > 0 && range.tMin >= buf.earliestT && range.tMax <= buf.latestT) {
-            setChartBufferVersion((v) => v + 1);
+            setLocalChartBump((v) => v + 1);
             return;
           }
         }
@@ -529,52 +389,38 @@ export function App() {
           disconnect();
         }
 
+        // Route CSV data through useSourceRuntime via SourceEvents
+        const CSV_SOURCE_ID = "csv-file";
+        resetBuffers();
+        setActiveSourceId(CSV_SOURCE_ID);
+
         // Build SimInfo from CSV metadata
         const dt = parsed.length >= 2 ? parsed[1].t - parsed[0].t : 10;
-        setSimInfo({
-          mu: metadata.mu ?? 398600.4418,
-          dt,
-          output_interval: dt,
-          stream_interval: dt,
-          central_body: metadata.centralBody ?? "earth",
-          central_body_radius: metadata.centralBodyRadius ?? 6378.137,
-          epoch_jd: metadata.epochJd,
-          satellites: [
-            { id: "default", name: file.name, altitude: 0, period: 0, perturbations: [] },
-          ],
+        handleEvent(CSV_SOURCE_ID, {
+          kind: "info",
+          info: {
+            mu: metadata.mu ?? 398600.4418,
+            dt,
+            output_interval: dt,
+            stream_interval: dt,
+            central_body: metadata.centralBody ?? "earth",
+            central_body_radius: metadata.centralBodyRadius ?? 6378.137,
+            epoch_jd: metadata.epochJd,
+            satellites: [
+              { id: "default", name: file.name, altitude: 0, period: 0, perturbations: [] },
+            ],
+          },
         });
 
-        // Clear existing buffers and push CSV data into TrailBuffer pipeline
-        for (const buf of trailBuffersRef.current.values()) buf.clear();
-        trailBuffersRef.current.clear();
-        chartBufferRef.current.clear();
-
-        const byId = new Map<string, OrbitPoint[]>();
-        for (const point of parsed) {
-          const id = point.entityPath ?? "default";
-          let arr = byId.get(id);
-          if (!arr) {
-            arr = [];
-            byId.set(id, arr);
-          }
-          arr.push(point);
-          getOrCreateTrailBuffer(trailBuffersRef.current, id).push(point);
-          chartBufferRef.current.push(orbitPointToChartRow(point));
-        }
-
-        // Feed IngestBuffer for DuckDB charts
-        singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
-        singleIngestBufferRef.current.markRebuild(parsed);
-        for (const [id, pts] of byId) {
-          getOrCreateIngestBuffer(ingestBuffersRef.current, id).markRebuild(pts);
-        }
+        // Push all CSV data as a history event, then mark complete.
+        // NOTE: Do NOT dispatch server-state "idle" here — the dispatcher
+        // clears simInfo on idle, which would erase the CSV metadata we just set.
+        handleEvent(CSV_SOURCE_ID, { kind: "history", points: parsed });
+        handleEvent(CSV_SOURCE_ID, { kind: "complete" });
 
         setFileSourceActive(true);
-        setServerState("idle"); // not streaming
-        setTerminatedSatellites(EMPTY_TERMINATED_SET);
         // Reset playback to start of file data
         goLiveRef.current();
-        setChartBufferVersion((v) => v + 1);
 
         const duration = parsed[parsed.length - 1].t - parsed[0].t;
         setOrbitInfo(
@@ -583,7 +429,7 @@ export function App() {
       };
       reader.readAsText(file);
     },
-    [isConnected, disconnect],
+    [isConnected, disconnect, handleEvent, resetBuffers, setActiveSourceId],
   );
 
   const handleLoadClick = useCallback(() => {
@@ -637,15 +483,11 @@ export function App() {
 
   const handleConnect = useCallback(() => {
     manualDisconnectRef.current = false;
-    setFileSourceActive(false); // Exit file-source mode on WS connect
-    detailBufferRef.current = [];
-    streamingCountRef.current = 0;
-    for (const buf of trailBuffersRef.current.values()) buf.clear();
-    trailBuffersRef.current.clear();
-    ingestBuffersRef.current.clear();
+    setFileSourceActive(false);
+    resetBuffers();
+    setActiveSourceId(WS_SOURCE_ID);
     singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
-    chartBufferRef.current.clear();
-    setChartBufferVersion((v) => v + 1);
+    setLocalChartBump((v) => v + 1); // Invalidate cached chart data
     lastSentRangeRef.current = null;
     latestRequestedRangeRef.current = null;
     setLocalZoomData(null);
@@ -653,12 +495,9 @@ export function App() {
       clearTimeout(chartZoomTimerRef.current);
       chartZoomTimerRef.current = null;
     }
-    setSimInfo(null);
-    setServerState("unknown");
-    setTerminatedSatellites(EMPTY_TERMINATED_SET);
     goLiveRef.current();
     connect();
-  }, [connect]);
+  }, [connect, resetBuffers, setActiveSourceId]);
 
   const handleDisconnect = useCallback(() => {
     manualDisconnectRef.current = true;
@@ -708,8 +547,8 @@ export function App() {
   const isLive = realtimePlayback.snapshot.isLive;
   const liveChartData = useMemo((): ChartDataMap | null => {
     if (!isLive || isMultiSatellite) return null;
-    // chartBufferVersion triggers re-read from the buffer
-    void chartBufferVersion;
+    // effectiveChartVersion triggers re-read from the buffer
+    void effectiveChartVersion;
     const buf = chartBufferRef.current;
     if (buf.length === 0) return null;
 
@@ -729,7 +568,7 @@ export function App() {
       return buf.getWindow(tMin, tMax);
     }
     return buf.toChartData();
-  }, [isLive, isMultiSatellite, chartBufferVersion, timeRange]);
+  }, [isLive, isMultiSatellite, effectiveChartVersion, timeRange]);
 
   // --- DuckDB chart data: used for replay, zoom outside ChartBuffer, and non-live scrubbing ---
   const chartArrays = useMemo(() => {

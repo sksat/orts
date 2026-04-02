@@ -178,6 +178,7 @@ export function useSourceRuntime() {
     chartBufferRef.current.clear();
     detailBufferRef.current = [];
     streamingCountRef.current = 0;
+    chunkLoadStartedRef.current = false;
     setSimInfo(null);
     setServerState("unknown");
     setTerminatedSatellites(new Set());
