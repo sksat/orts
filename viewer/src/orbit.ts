@@ -57,6 +57,7 @@ export interface CSVMetadata {
   mu: number | null;
   centralBody: string | null;
   centralBodyRadius: number | null;
+  satelliteName: string | null;
 }
 
 /** Result of parsing a CSV file: points + optional metadata. */
@@ -80,6 +81,7 @@ export function parseOrbitCSVWithMetadata(text: string): ParsedCSV {
     mu: null,
     centralBody: null,
     centralBodyRadius: null,
+    satelliteName: null,
   };
 
   for (const rawLine of text.split("\n")) {

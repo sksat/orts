@@ -26,6 +26,12 @@ describe("parseMetadataLine", () => {
     expect(meta.centralBodyRadius).toBe(1737.4);
   });
 
+  it("parses satellite name", () => {
+    const meta = emptyMetadata();
+    expect(parseMetadataLine("# satellite = ISS", meta)).toBe(true);
+    expect(meta.satelliteName).toBe("ISS");
+  });
+
   it("returns false for non-metadata comment", () => {
     const meta = emptyMetadata();
     expect(parseMetadataLine("# This is a comment", meta)).toBe(false);

@@ -33,7 +33,7 @@ export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt
     satellites: [
       {
         id: "default",
-        name: fileName,
+        name: metadata.satelliteName ?? fileName,
         altitude: 0,
         period: 0,
         perturbations: [],

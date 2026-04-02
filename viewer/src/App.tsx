@@ -407,7 +407,13 @@ export function App() {
             central_body_radius: metadata.centralBodyRadius ?? 6378.137,
             epoch_jd: metadata.epochJd,
             satellites: [
-              { id: "default", name: file.name, altitude: 0, period: 0, perturbations: [] },
+              {
+                id: "default",
+                name: metadata.satelliteName ?? file.name,
+                altitude: 0,
+                period: 0,
+                perturbations: [],
+              },
             ],
           },
         });

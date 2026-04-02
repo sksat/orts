@@ -106,6 +106,7 @@ describe("CSVFileAdapter", () => {
         mu: 398600.4418,
         centralBody: "earth",
         centralBodyRadius: 6378.137,
+        satelliteName: null,
       },
     });
     expect(events).toHaveLength(0);

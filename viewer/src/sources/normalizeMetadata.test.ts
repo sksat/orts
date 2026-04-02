@@ -8,9 +8,10 @@ describe("csvMetadataToSimInfo", () => {
     mu: 398600.4418,
     centralBody: "earth",
     centralBodyRadius: 6378.137,
+    satelliteName: null,
   };
 
-  it("converts full metadata to SimInfo", () => {
+  it("converts full metadata to SimInfo with filename fallback", () => {
     const info = csvMetadataToSimInfo(fullMetadata, "test.csv", 10.0);
     expect(info.mu).toBe(398600.4418);
     expect(info.central_body).toBe("earth");
@@ -20,12 +21,19 @@ describe("csvMetadataToSimInfo", () => {
     expect(info.satellites[0].name).toBe("test.csv");
   });
 
+  it("uses satellite name from metadata when available", () => {
+    const withName: CSVMetadata = { ...fullMetadata, satelliteName: "ISS" };
+    const info = csvMetadataToSimInfo(withName, "iss_orbit.csv", 10.0);
+    expect(info.satellites[0].name).toBe("ISS");
+  });
+
   it("uses defaults for null fields", () => {
     const empty: CSVMetadata = {
       epochJd: null,
       mu: null,
       centralBody: null,
       centralBodyRadius: null,
+      satelliteName: null,
     };
     const info = csvMetadataToSimInfo(empty, "orbit.csv", 5.0);
     expect(info.mu).toBe(398600.4418);

@@ -29,6 +29,11 @@ export function parseMetadataLine(line: string, metadata: CSVMetadata): boolean 
     case "central_body_radius":
       metadata.centralBodyRadius = Number(value.trim().split(/\s/)[0]);
       break;
+    case "satellite": {
+      const trimmed = value.trim();
+      if (trimmed) metadata.satelliteName = trimmed;
+      break;
+    }
     default:
       return false;
   }
@@ -79,5 +84,6 @@ export function emptyMetadata(): CSVMetadata {
     mu: null,
     centralBody: null,
     centralBodyRadius: null,
+    satelliteName: null,
   };
 }
