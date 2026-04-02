@@ -23,7 +23,6 @@ import { SimConfigForm, type SimConfigPayload } from "./components/SimConfigForm
 import { SimControlBar } from "./components/SimControlBar.js";
 import { createOrbitSchema } from "./db/orbitSchema.js";
 import { type SatelliteConfig, useMultiSatelliteStore } from "./hooks/useMultiSatelliteStore.js";
-import { usePlayback } from "./hooks/usePlayback.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
 import {
   type QueryRangeResponse,
@@ -31,16 +30,12 @@ import {
   type SimInfo,
   useWebSocket,
 } from "./hooks/useWebSocket.js";
-import { type CSVMetadata, type OrbitPoint, parseOrbitCSVWithMetadata } from "./orbit.js";
+import { type OrbitPoint, parseOrbitCSVWithMetadata } from "./orbit.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
 import { mergeQueryRangePoints } from "./utils/mergeQueryRange.js";
 import { TrailBuffer } from "./utils/TrailBuffer.js";
-import { computeReplayDrawStart } from "./utils/trailDrawStart.js";
 import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
 import { jd_to_utc_string } from "./wasm/kanameInit.js";
-
-/** The two viewer modes. */
-type ViewerMode = "replay" | "realtime";
 
 const DEFAULT_WS_URL: string =
   import.meta.env.VITE_WS_URL ??
@@ -132,20 +127,16 @@ export function App() {
     kanameReady.then(() => setWasmReady(true));
   }, []);
 
-  // --- Mode toggle ---
-  const [mode, setMode] = useState<ViewerMode>("realtime");
-
   // --- Reference frame ---
   const [referenceFrame, setReferenceFrame] = useState<ReferenceFrame>(DEFAULT_FRAME);
 
   const _isSatCentered = referenceFrame.center.type === "satellite";
 
-  // --- Replay mode state ---
-  const [replayPoints, setReplayPoints] = useState<OrbitPoint[] | null>(null);
-  const [csvMetadata, setCsvMetadata] = useState<CSVMetadata | null>(null);
+  // --- File load state (CSV / RRD) ---
   const [orbitInfo, setOrbitInfo] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { snapshot, togglePlayPause, setSpeed, seekToFraction } = usePlayback(replayPoints);
+  /** Tracks whether a local file is the active source (vs WS). */
+  const [fileSourceActive, setFileSourceActive] = useState(false);
 
   // --- Chart time range ---
   const [timeRange, setTimeRange] = useState<TimeRange>(() => readTimeRangeParam());
@@ -164,11 +155,8 @@ export function App() {
   const [serverState, setServerState] = useState<ServerState>("unknown");
 
   // --- DuckDB + Charts ---
-  const mu = mode === "realtime" ? simInfo?.mu : (csvMetadata?.mu ?? undefined);
-  const bodyRadius =
-    mode === "realtime"
-      ? simInfo?.central_body_radius
-      : (csvMetadata?.centralBodyRadius ?? undefined);
+  const mu = simInfo?.mu;
+  const bodyRadius = simInfo?.central_body_radius;
   const orbitSchema = useMemo(
     () => createOrbitSchema(mu ?? 398600.4418, bodyRadius ?? 6378.137),
     [mu, bodyRadius],
@@ -206,7 +194,7 @@ export function App() {
   const [textureRevision, setTextureRevision] = useState(0);
 
   // --- Multi-satellite detection ---
-  const isMultiSatellite = mode === "realtime" && simInfo != null && simInfo.satellites.length > 1;
+  const isMultiSatellite = simInfo != null && simInfo.satellites.length > 1;
 
   // Expose debug state for E2E testing (dev mode only)
   useEffect(() => {
@@ -533,22 +521,60 @@ export function App() {
 
         if (parsed.length === 0) {
           setOrbitInfo("No valid orbit data found in file.");
-          setReplayPoints(null);
-          setCsvMetadata(null);
           return;
         }
 
-        setReplayPoints(parsed);
-        setCsvMetadata(metadata);
-
-        // Feed IngestBuffer so DuckDB charts work without the old replay path
-        singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
-        singleIngestBufferRef.current.markRebuild(parsed);
-
-        if (mode === "realtime" && isConnected) {
+        // Disconnect WS if connected
+        if (isConnected) {
           disconnect();
         }
-        setMode("replay");
+
+        // Build SimInfo from CSV metadata
+        const dt = parsed.length >= 2 ? parsed[1].t - parsed[0].t : 10;
+        setSimInfo({
+          mu: metadata.mu ?? 398600.4418,
+          dt,
+          output_interval: dt,
+          stream_interval: dt,
+          central_body: metadata.centralBody ?? "earth",
+          central_body_radius: metadata.centralBodyRadius ?? 6378.137,
+          epoch_jd: metadata.epochJd,
+          satellites: [
+            { id: "default", name: file.name, altitude: 0, period: 0, perturbations: [] },
+          ],
+        });
+
+        // Clear existing buffers and push CSV data into TrailBuffer pipeline
+        for (const buf of trailBuffersRef.current.values()) buf.clear();
+        trailBuffersRef.current.clear();
+        chartBufferRef.current.clear();
+
+        const byId = new Map<string, OrbitPoint[]>();
+        for (const point of parsed) {
+          const id = point.entityPath ?? "default";
+          let arr = byId.get(id);
+          if (!arr) {
+            arr = [];
+            byId.set(id, arr);
+          }
+          arr.push(point);
+          getOrCreateTrailBuffer(trailBuffersRef.current, id).push(point);
+          chartBufferRef.current.push(orbitPointToChartRow(point));
+        }
+
+        // Feed IngestBuffer for DuckDB charts
+        singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
+        singleIngestBufferRef.current.markRebuild(parsed);
+        for (const [id, pts] of byId) {
+          getOrCreateIngestBuffer(ingestBuffersRef.current, id).markRebuild(pts);
+        }
+
+        setFileSourceActive(true);
+        setServerState("idle"); // not streaming
+        setTerminatedSatellites(EMPTY_TERMINATED_SET);
+        // Reset playback to start of file data
+        goLiveRef.current();
+        setChartBufferVersion((v) => v + 1);
 
         const duration = parsed[parsed.length - 1].t - parsed[0].t;
         setOrbitInfo(
@@ -557,7 +583,7 @@ export function App() {
       };
       reader.readAsText(file);
     },
-    [mode, isConnected, disconnect],
+    [isConnected, disconnect],
   );
 
   const handleLoadClick = useCallback(() => {
@@ -611,6 +637,7 @@ export function App() {
 
   const handleConnect = useCallback(() => {
     manualDisconnectRef.current = false;
+    setFileSourceActive(false); // Exit file-source mode on WS connect
     detailBufferRef.current = [];
     streamingCountRef.current = 0;
     for (const buf of trailBuffersRef.current.values()) buf.clear();
@@ -647,24 +674,10 @@ export function App() {
   const noAutoConnect = new URLSearchParams(window.location.search).has("noAutoConnect");
 
   useEffect(() => {
-    if (mode === "realtime" && !isConnected && !manualDisconnectRef.current && !noAutoConnect) {
+    if (!fileSourceActive && !isConnected && !manualDisconnectRef.current && !noAutoConnect) {
       handleConnectRef.current();
     }
-  }, [mode, isConnected, noAutoConnect]);
-
-  // --- Mode switching ---
-  const handleModeChange = useCallback(
-    (newMode: ViewerMode) => {
-      if (newMode === mode) return;
-      if (mode === "realtime" && isConnected) disconnect();
-      // Reset manual disconnect flag so auto-connect works when switching back to realtime.
-      if (newMode === "realtime") manualDisconnectRef.current = false;
-      setLocalZoomData(null);
-      lastSentRangeRef.current = null;
-      setMode(newMode);
-    },
-    [mode, isConnected, disconnect],
-  );
+  }, [fileSourceActive, isConnected, noAutoConnect]);
 
   // --- Charts: single-satellite mode (replay or single satellite) ---
   const { data: singleChartData, isLoading: singleChartsLoading } = useTimeSeriesStore({
@@ -687,22 +700,12 @@ export function App() {
   const chartsLoading = isMultiSatellite ? multiChartsLoading : singleChartsLoading;
 
   const chartCurrentTime = useMemo(() => {
-    if (mode === "replay") {
-      if (!replayPoints || replayPoints.length === 0) return undefined;
-      return quantizeChartTime(replayPoints[0].t + snapshot.elapsedTime);
-    }
     if (realtimePlayback.snapshot.isLive) return undefined;
     return quantizeChartTime(realtimePlayback.snapshot.currentTime);
-  }, [
-    mode,
-    replayPoints,
-    snapshot.elapsedTime,
-    realtimePlayback.snapshot.isLive,
-    realtimePlayback.snapshot.currentTime,
-  ]);
+  }, [realtimePlayback.snapshot.isLive, realtimePlayback.snapshot.currentTime]);
 
   // --- Live chart data: bypass DuckDB, read directly from ChartBuffer ---
-  const isLive = mode === "realtime" && realtimePlayback.snapshot.isLive;
+  const isLive = realtimePlayback.snapshot.isLive;
   const liveChartData = useMemo((): ChartDataMap | null => {
     if (!isLive || isMultiSatellite) return null;
     // chartBufferVersion triggers re-read from the buffer
@@ -784,8 +787,7 @@ export function App() {
   const visibleChartData = liveChartData ?? localZoomData ?? duckdbChartData;
 
   // --- Derived values ---
-  const satellitePosition =
-    mode === "replay" ? snapshot.satellitePosition : realtimePlayback.snapshot.satellitePosition;
+  const satellitePosition = realtimePlayback.snapshot.satellitePosition;
 
   // Derive texture base URL from the WebSocket URL so that in dev mode
   // (Vite on a different port) high-res textures are fetched from the orts server.
@@ -798,31 +800,13 @@ export function App() {
     }
   }, [wsUrl]);
 
-  const centralBody =
-    mode === "realtime"
-      ? (simInfo?.central_body ?? "earth")
-      : (csvMetadata?.centralBody ?? "earth");
-  const centralBodyRadius =
-    mode === "realtime"
-      ? (simInfo?.central_body_radius ?? 6378.137)
-      : (csvMetadata?.centralBodyRadius ?? 6378.137);
+  const centralBody = simInfo?.central_body ?? "earth";
+  const centralBodyRadius = simInfo?.central_body_radius ?? 6378.137;
+  const epochJd = simInfo?.epoch_jd ?? undefined;
 
-  const epochJd =
-    mode === "realtime" ? (simInfo?.epoch_jd ?? undefined) : (csvMetadata?.epochJd ?? undefined);
-
-  const trailVisibleCount =
-    mode === "replay"
-      ? snapshot.trailVisibleCount
-      : realtimePlayback.snapshot.isLive
-        ? undefined
-        : realtimePlayback.snapshot.trailVisibleCount;
-
-  // Draw start for replay mode time-range clipping
-  const replayTrailDrawStart = useMemo(() => {
-    if (mode !== "replay" || !replayPoints || replayPoints.length === 0) return 0;
-    const currentT = replayPoints[0].t + snapshot.elapsedTime;
-    return computeReplayDrawStart(replayPoints, currentT, timeRange);
-  }, [mode, timeRange, replayPoints, snapshot.elapsedTime]);
+  const trailVisibleCount = realtimePlayback.snapshot.isLive
+    ? undefined
+    : realtimePlayback.snapshot.trailVisibleCount;
 
   // Total points across all satellite buffers
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -832,8 +816,7 @@ export function App() {
     return count;
   }, [realtimePlayback.snapshot.currentTime]);
 
-  const showPlaybackBar =
-    mode === "realtime" ? totalPoints > 0 : replayPoints != null && replayPoints.length > 0;
+  const showPlaybackBar = totalPoints > 0;
 
   // Satellite info display
   const satInfoText = useMemo(() => {
@@ -872,24 +855,14 @@ export function App() {
 
       {/* 3D Scene */}
       <Scene
-        points={mode === "replay" ? replayPoints : undefined}
-        satellitePosition={mode === "replay" ? satellitePosition : undefined}
-        trailVisibleCount={mode === "replay" ? trailVisibleCount : undefined}
-        trailDrawStart={mode === "replay" ? replayTrailDrawStart : undefined}
-        trailBuffers={mode === "realtime" ? trailBuffersRef.current : undefined}
-        satellitePositions={
-          mode === "realtime" ? realtimePlayback.snapshot.satellitePositions : undefined
-        }
+        trailBuffers={trailBuffersRef.current}
+        satellitePositions={realtimePlayback.snapshot.satellitePositions}
         trailVisibleCounts={
-          mode === "realtime" && !realtimePlayback.snapshot.isLive
+          !realtimePlayback.snapshot.isLive
             ? realtimePlayback.snapshot.trailVisibleCounts
             : undefined
         }
-        trailDrawStarts={
-          mode === "realtime" && timeRange != null
-            ? realtimePlayback.snapshot.trailDrawStarts
-            : undefined
-        }
+        trailDrawStarts={timeRange != null ? realtimePlayback.snapshot.trailDrawStarts : undefined}
         centralBody={centralBody}
         centralBodyRadius={centralBodyRadius}
         epochJd={epochJd ?? null}
@@ -902,21 +875,6 @@ export function App() {
 
       {/* UI overlay */}
       <div className="ui-overlay">
-        <div className="mode-toggle">
-          <button
-            className={`mode-toggle-btn ${mode === "replay" ? "active" : ""}`}
-            onClick={() => handleModeChange("replay")}
-          >
-            Replay
-          </button>
-          <button
-            className={`mode-toggle-btn ${mode === "realtime" ? "active" : ""}`}
-            onClick={() => handleModeChange("realtime")}
-          >
-            Realtime
-          </button>
-        </div>
-
         <FrameSelector
           referenceFrame={referenceFrame}
           onChange={setReferenceFrame}
@@ -925,89 +883,83 @@ export function App() {
           centralBody={centralBody}
         />
 
-        {mode === "replay" && (
-          <>
-            <button className="load-csv-btn" onClick={handleLoadClick}>
-              Load Orbit CSV
-            </button>
-            {orbitInfo && <div className="orbit-info">{orbitInfo}</div>}
-          </>
-        )}
+        <button className="load-csv-btn" onClick={handleLoadClick}>
+          Load File
+        </button>
+        {orbitInfo && <div className="orbit-info">{orbitInfo}</div>}
 
-        {mode === "realtime" && (
-          <div className="realtime-controls">
-            <div className="ws-url-row">
-              <input
-                type="text"
-                className="ws-url-input"
-                value={wsUrl}
-                onChange={(e) => setWsUrl(e.target.value)}
-                placeholder="ws://localhost:9001/ws"
-                disabled={isConnected}
-              />
-              {isConnected ? (
-                <button className="ws-btn ws-disconnect-btn" onClick={handleDisconnect}>
-                  Disconnect
-                </button>
-              ) : (
-                <button className="ws-btn ws-connect-btn" onClick={handleConnect}>
-                  Connect
-                </button>
+        <div className="realtime-controls">
+          <div className="ws-url-row">
+            <input
+              type="text"
+              className="ws-url-input"
+              value={wsUrl}
+              onChange={(e) => setWsUrl(e.target.value)}
+              placeholder="ws://localhost:9001/ws"
+              disabled={isConnected}
+            />
+            {isConnected ? (
+              <button className="ws-btn ws-disconnect-btn" onClick={handleDisconnect}>
+                Disconnect
+              </button>
+            ) : (
+              <button className="ws-btn ws-connect-btn" onClick={handleConnect}>
+                Connect
+              </button>
+            )}
+          </div>
+
+          <div className="ws-status">
+            <span className={`ws-status-dot ${isConnected ? "connected" : "disconnected"}`} />
+            <span className="ws-status-text">
+              {isConnected
+                ? serverState === "idle"
+                  ? "Connected (Idle)"
+                  : serverState === "paused"
+                    ? "Connected (Paused)"
+                    : "Connected"
+                : "Disconnected"}
+            </span>
+          </div>
+
+          {isConnected && serverState === "idle" && (
+            <SimConfigForm onStart={handleStartSimulation} />
+          )}
+
+          {isConnected && (serverState === "running" || serverState === "paused") && (
+            <SimControlBar
+              serverState={serverState}
+              onPause={handlePause}
+              onResume={handleResume}
+              onTerminate={handleTerminate}
+            />
+          )}
+
+          {simInfo && (
+            <div className="orbit-info">
+              {satInfoText && (
+                <>
+                  <strong>{satInfoText}</strong> |{" "}
+                </>
+              )}
+              {simInfo.epoch_jd != null && <>{jd_to_utc_string(simInfo.epoch_jd, 0)} | </>}
+              mu={simInfo.mu.toFixed(2)} km^3/s^2 | dt={simInfo.dt.toFixed(1)} s | stream=
+              {simInfo.stream_interval.toFixed(1)} s
+              {activePerturbations.length > 0 && (
+                <span className="pert-tags">
+                  {" | "}
+                  {activePerturbations.map((p) => (
+                    <span key={p} className="pert-tag">
+                      {p}
+                    </span>
+                  ))}
+                </span>
               )}
             </div>
+          )}
 
-            <div className="ws-status">
-              <span className={`ws-status-dot ${isConnected ? "connected" : "disconnected"}`} />
-              <span className="ws-status-text">
-                {isConnected
-                  ? serverState === "idle"
-                    ? "Connected (Idle)"
-                    : serverState === "paused"
-                      ? "Connected (Paused)"
-                      : "Connected"
-                  : "Disconnected"}
-              </span>
-            </div>
-
-            {isConnected && serverState === "idle" && (
-              <SimConfigForm onStart={handleStartSimulation} />
-            )}
-
-            {isConnected && (serverState === "running" || serverState === "paused") && (
-              <SimControlBar
-                serverState={serverState}
-                onPause={handlePause}
-                onResume={handleResume}
-                onTerminate={handleTerminate}
-              />
-            )}
-
-            {simInfo && (
-              <div className="orbit-info">
-                {satInfoText && (
-                  <>
-                    <strong>{satInfoText}</strong> |{" "}
-                  </>
-                )}
-                {simInfo.epoch_jd != null && <>{jd_to_utc_string(simInfo.epoch_jd, 0)} | </>}
-                mu={simInfo.mu.toFixed(2)} km^3/s^2 | dt={simInfo.dt.toFixed(1)} s | stream=
-                {simInfo.stream_interval.toFixed(1)} s
-                {activePerturbations.length > 0 && (
-                  <span className="pert-tags">
-                    {" | "}
-                    {activePerturbations.map((p) => (
-                      <span key={p} className="pert-tag">
-                        {p}
-                      </span>
-                    ))}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {totalPoints > 0 && <div className="orbit-info">{totalPoints} points</div>}
-          </div>
-        )}
+          {totalPoints > 0 && <div className="orbit-info">{totalPoints} points</div>}
+        </div>
       </div>
 
       <input
@@ -1030,32 +982,20 @@ export function App() {
         />
       )}
 
-      {showPlaybackBar &&
-        (mode === "realtime" ? (
-          <PlaybackBar
-            isPlaying={realtimePlayback.snapshot.isPlaying}
-            fraction={realtimePlayback.snapshot.fraction}
-            elapsedTime={realtimePlayback.snapshot.elapsedTime}
-            totalDuration={realtimePlayback.snapshot.totalDuration}
-            onTogglePlayPause={realtimePlayback.togglePlayPause}
-            onSeekFraction={realtimePlayback.seekToFraction}
-            onSpeedChange={realtimePlayback.setSpeed}
-            isLive={realtimePlayback.snapshot.isLive}
-            onGoLive={realtimePlayback.goLive}
-            epochJd={epochJd}
-          />
-        ) : (
-          <PlaybackBar
-            isPlaying={snapshot.isPlaying}
-            fraction={snapshot.fraction}
-            elapsedTime={snapshot.elapsedTime}
-            totalDuration={snapshot.totalDuration}
-            onTogglePlayPause={togglePlayPause}
-            onSeekFraction={seekToFraction}
-            onSpeedChange={setSpeed}
-            epochJd={epochJd}
-          />
-        ))}
+      {showPlaybackBar && (
+        <PlaybackBar
+          isPlaying={realtimePlayback.snapshot.isPlaying}
+          fraction={realtimePlayback.snapshot.fraction}
+          elapsedTime={realtimePlayback.snapshot.elapsedTime}
+          totalDuration={realtimePlayback.snapshot.totalDuration}
+          onTogglePlayPause={realtimePlayback.togglePlayPause}
+          onSeekFraction={realtimePlayback.seekToFraction}
+          onSpeedChange={realtimePlayback.setSpeed}
+          isLive={realtimePlayback.snapshot.isLive}
+          onGoLive={realtimePlayback.goLive}
+          epochJd={epochJd}
+        />
+      )}
     </div>
   );
 }
