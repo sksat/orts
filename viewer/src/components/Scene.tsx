@@ -323,24 +323,14 @@ function SecondaryBody({
 }
 
 interface SceneProps {
-  /** Points array for replay mode. */
-  points?: OrbitPoint[] | null;
-  /** Single satellite position (replay mode). */
-  satellitePosition?: OrbitPoint | null;
-  /** Visible count for replay mode progressive trail. */
-  trailVisibleCount?: number;
-  /** TrailBuffer for single-satellite realtime mode (backward compat). */
-  trailBuffer?: TrailBuffer;
-  /** Per-satellite TrailBuffers for multi-satellite realtime mode. */
+  /** Per-satellite TrailBuffers (all source types). */
   trailBuffers?: Map<string, TrailBuffer>;
-  /** Per-satellite positions for multi-satellite mode. */
+  /** Per-satellite positions. */
   satellitePositions?: Map<string, OrbitPoint | null>;
-  /** Per-satellite visible counts for multi-satellite mode. */
+  /** Per-satellite visible counts (when not live). */
   trailVisibleCounts?: Map<string, number>;
   /** Per-satellite draw start indices for time-range clipping. */
   trailDrawStarts?: Map<string, number>;
-  /** Draw start index for single-satellite replay mode. */
-  trailDrawStart?: number;
   centralBody: string;
   centralBodyRadius: number;
   /** Julian Date of the simulation epoch, or null if not set. */
@@ -362,15 +352,10 @@ interface SceneProps {
  * Contains camera, controls, lights, central body, orbit trail(s), and satellite(s).
  */
 export function Scene({
-  points,
-  satellitePosition,
-  trailVisibleCount,
-  trailBuffer,
   trailBuffers,
   satellitePositions,
   trailVisibleCounts,
   trailDrawStarts,
-  trailDrawStart,
   centralBody,
   centralBodyRadius,
   epochJd,
@@ -420,15 +405,11 @@ export function Scene({
   const originPosition: [number, number, number] | null = useMemo(() => {
     if (!isSatCentered || centeredSatId == null) return null;
 
-    // Try multi-satellite mode first
     const satPos = satellitePositions?.get(centeredSatId);
     if (satPos) return [satPos.x, satPos.y, satPos.z];
 
-    // Fall back to single satellite (replay mode)
-    if (satellitePosition) return [satellitePosition.x, satellitePosition.y, satellitePosition.z];
-
     return null;
-  }, [isSatCentered, centeredSatId, satellitePositions, satellitePosition]);
+  }, [isSatCentered, centeredSatId, satellitePositions]);
 
   // Compute origin velocity for LVLH axes
   const originVelocity: [number, number, number] | null = useMemo(() => {
@@ -437,11 +418,8 @@ export function Scene({
     const satPos = satellitePositions?.get(centeredSatId);
     if (satPos) return [satPos.vx, satPos.vy, satPos.vz];
 
-    if (satellitePosition)
-      return [satellitePosition.vx, satellitePosition.vy, satellitePosition.vz];
-
     return null;
-  }, [isSatCentered, centeredSatId, satellitePositions, satellitePosition]);
+  }, [isSatCentered, centeredSatId, satellitePositions]);
 
   // Compute LVLH axes for body-frame transformation
   const lvlhAxes: LvlhAxes | null = useMemo(
@@ -455,11 +433,9 @@ export function Scene({
     isSatCentered && centeredBodyId == null && lvlhAxes != null && originPosition != null;
 
   // Determine sim time for sun direction from first available satellite position
-  const firstPosition =
-    satellitePosition ??
-    (satellitePositions
-      ? (Array.from(satellitePositions.values()).find((p) => p != null) ?? null)
-      : null);
+  const firstPosition = satellitePositions
+    ? (Array.from(satellitePositions.values()).find((p) => p != null) ?? null)
+    : null;
   const simTime = firstPosition?.t ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
@@ -556,7 +532,9 @@ export function Scene({
     : null;
 
   // Single-satellite backward compat
-  const hasTrailData = trailBuffer ? trailBuffer.length > 0 : points != null && points.length > 0;
+  const hasTrailData = trailBuffers
+    ? Array.from(trailBuffers.values()).some((b) => b.length > 0)
+    : false;
 
   return (
     <Canvas
@@ -630,16 +608,24 @@ export function Scene({
             />
           );
         })()}
-      {!multiSatEntries && isSatCentered && satellitePosition && (
-        <Satellite
-          position={satellitePosition}
-          scaleRadius={centralBodyRadius}
-          referenceFrame={referenceFrame}
-          epochJd={epochJd ?? undefined}
-          originPosition={originPosition}
-          lvlhAxes={lvlhAxes}
-        />
-      )}
+      {!multiSatEntries &&
+        isSatCentered &&
+        (() => {
+          const singlePos = satellitePositions?.values().next().value as
+            | OrbitPoint
+            | null
+            | undefined;
+          return singlePos ? (
+            <Satellite
+              position={singlePos}
+              scaleRadius={centralBodyRadius}
+              referenceFrame={referenceFrame}
+              epochJd={epochJd ?? undefined}
+              originPosition={originPosition}
+              lvlhAxes={lvlhAxes}
+            />
+          ) : null;
+        })()}
 
       {/* All scene objects in a single stable tree — no ternary remounting.
           SmoothOriginGroup handles non-LVLH satellite-centered offset;
@@ -715,23 +701,18 @@ export function Scene({
         {!multiSatEntries &&
           hasTrailData &&
           (() => {
+            // Single-satellite: use first entry from trailBuffers
+            const singleBuf = trailBuffers?.values().next().value as TrailBuffer | undefined;
+            if (!singleBuf) return null;
             const trailScale = lvlhActive ? effectiveScaleRadius : centralBodyRadius;
-            return trailBuffer ? (
+            const firstSatId = trailBuffers?.keys().next().value as string | undefined;
+            const vc = firstSatId ? trailVisibleCounts?.get(firstSatId) : undefined;
+            const ds = firstSatId ? trailDrawStarts?.get(firstSatId) : undefined;
+            return (
               <OrbitTrail
-                trailBuffer={trailBuffer}
-                visibleCount={trailVisibleCount}
-                drawStart={trailDrawStart}
-                scaleRadius={trailScale}
-                referenceFrame={referenceFrame}
-                epochJd={epochJd}
-                originPosition={lvlhActive ? originPosition : null}
-                lvlhAxes={lvlhActive ? lvlhAxes : null}
-              />
-            ) : (
-              <OrbitTrail
-                points={points!}
-                visibleCount={trailVisibleCount ?? points?.length}
-                drawStart={trailDrawStart}
+                trailBuffer={singleBuf}
+                visibleCount={vc}
+                drawStart={ds}
                 scaleRadius={trailScale}
                 referenceFrame={referenceFrame}
                 epochJd={epochJd}
@@ -740,14 +721,21 @@ export function Scene({
               />
             );
           })()}
-        {!multiSatEntries && satellitePosition && !isSatCentered && (
-          <Satellite
-            position={satellitePosition}
-            scaleRadius={centralBodyRadius}
-            referenceFrame={referenceFrame}
-            epochJd={epochJd ?? undefined}
-          />
-        )}
+        {!multiSatEntries &&
+          (() => {
+            const singlePos = satellitePositions?.values().next().value as
+              | OrbitPoint
+              | null
+              | undefined;
+            return singlePos && !isSatCentered ? (
+              <Satellite
+                position={singlePos}
+                scaleRadius={centralBodyRadius}
+                referenceFrame={referenceFrame}
+                epochJd={epochJd ?? undefined}
+              />
+            ) : null;
+          })()}
       </SmoothOriginGroup>
 
       {/* Reference axes: full ECI axes for body-centered, small LVLH reference for satellite-centered */}
