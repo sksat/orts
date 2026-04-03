@@ -224,85 +224,59 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// Generate a small test RRD using orts recording API,
-    /// then verify roundtrip through decode_rrd.
+    /// Small committed fixture (40KB, single satellite, 10 min at dt=60s).
+    const FIXTURE_PATH: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/test_orbit.rrd");
+
+    fn load_fixture() -> ParsedRrd {
+        let bytes = std::fs::read(FIXTURE_PATH).expect("test fixture should exist");
+        decode_rrd(std::io::Cursor::new(&bytes)).expect("fixture should decode")
+    }
+
     #[test]
     fn test_roundtrip_with_fixture() {
-        // Read the apollo11 fixture if it exists
-        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../apollo11.rrd");
-        let Ok(bytes) = std::fs::read(fixture_path) else {
-            eprintln!("Skipping roundtrip test: {fixture_path} not found");
-            return;
-        };
-
-        let data = decode_rrd(std::io::Cursor::new(&bytes)).unwrap();
+        let data = load_fixture();
 
         // Should have metadata
-        assert!(
-            data.metadata.epoch_jd.is_some(),
-            "Expected epoch_jd in metadata"
-        );
-        assert!(data.metadata.mu.is_some(), "Expected mu in metadata");
+        assert!(data.metadata.epoch_jd.is_some(), "Expected epoch_jd");
+        assert!(data.metadata.mu.is_some(), "Expected mu");
 
         // Should have rows
-        assert!(!data.rows.is_empty(), "Expected rows in decoded data");
+        assert!(!data.rows.is_empty(), "Expected rows");
 
         // All rows should have entity_path
         for row in &data.rows {
             assert!(row.entity_path.is_some());
         }
 
-        // Should have multiple entities (apollo11 has spacecraft + moon)
-        let entities: std::collections::BTreeSet<_> = data
-            .rows
-            .iter()
-            .filter_map(|r| r.entity_path.as_deref())
-            .collect();
-        assert!(
-            entities.len() >= 2,
-            "Expected >=2 entities, got {}: {:?}",
-            entities.len(),
-            entities
-        );
-
         // Rows should be sorted by time
         for w in data.rows.windows(2) {
-            assert!(
-                w[0].t <= w[1].t,
-                "Rows not sorted: t={} > t={}",
-                w[0].t,
-                w[1].t
-            );
+            assert!(w[0].t <= w[1].t, "Rows not sorted: {} > {}", w[0].t, w[1].t);
         }
 
         // Position should be non-zero for at least some rows
-        let has_nonzero = data.rows.iter().any(|r| r.x.abs() > 1.0);
-        assert!(has_nonzero, "All positions are near zero");
+        assert!(
+            data.rows.iter().any(|r| r.x.abs() > 1.0),
+            "All positions are near zero"
+        );
 
         eprintln!(
-            "Decoded {} rows, {} entities, epoch_jd={:?}",
+            "Decoded {} rows, epoch_jd={:?}",
             data.rows.len(),
-            entities.len(),
             data.metadata.epoch_jd
         );
     }
 
     #[test]
     fn test_metadata_fields() {
-        let fixture_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../apollo11.rrd");
-        let Ok(bytes) = std::fs::read(fixture_path) else {
-            return;
-        };
-
-        let data = decode_rrd(std::io::Cursor::new(&bytes)).unwrap();
+        let data = load_fixture();
         let m = &data.metadata;
 
-        // Apollo 11 should have earth-moon system metadata
-        if let Some(mu) = m.mu {
-            assert!(mu > 0.0, "mu should be positive");
-        }
-        if let Some(body_radius) = m.body_radius {
-            assert!(body_radius > 0.0, "body_radius should be positive");
-        }
+        assert!(m.mu.unwrap() > 0.0, "mu should be positive");
+        assert!(
+            m.body_radius.unwrap() > 0.0,
+            "body_radius should be positive"
+        );
+        assert!(m.epoch_jd.is_some(), "epoch_jd should be set");
     }
 }
