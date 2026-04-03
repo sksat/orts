@@ -7,9 +7,11 @@ const kanameReady = initKaname();
 
 import type { TimeRange } from "uneri";
 import styles from "./App.module.css";
+import { FrameSelector } from "./components/FrameSelector.js";
 import { GraphPanel } from "./components/GraphPanel.js";
 import { PlaybackBar } from "./components/PlaybackBar.js";
 import { SimConfigModal } from "./components/SimConfigModal.js";
+import { SimInfoBar } from "./components/SimInfoBar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { useFileSource } from "./hooks/useFileSource.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
@@ -302,7 +304,7 @@ export function App() {
         </div>
       )}
 
-      {/* Top status bar (row 1, spans all columns) */}
+      {/* Top status bar (row 1, spans all columns) — minimal */}
       <StatusBar
         isConnected={wsSource.isConnected}
         serverState={serverState}
@@ -313,22 +315,36 @@ export function App() {
         onPause={wsSource.handlePause}
         onResume={wsSource.handleResume}
         onTerminate={wsSource.handleTerminate}
-        simInfo={simInfo}
-        totalPoints={totalPoints}
-        activePerturbations={activePerturbations}
-        epochJd={epochJd}
         onLoadFileClick={fileSource.handleLoadClick}
-        fileInfo={fileSource.orbitInfo}
         onOpenSimConfig={handleOpenSimConfig}
-        referenceFrame={referenceFrame}
-        onFrameChange={setReferenceFrame}
-        satellites={simInfo?.satellites}
-        hasEpoch={epochJd != null}
-        centralBody={centralBody}
       />
 
       {/* 3D Scene (row 2, column 1) */}
       <div className="scene-container">
+        {/* Scene overlay: frame selector + sim info (top-left of canvas) */}
+        <div className={styles.sceneOverlay}>
+          <FrameSelector
+            referenceFrame={referenceFrame}
+            onChange={setReferenceFrame}
+            satellites={simInfo?.satellites}
+            hasEpoch={epochJd != null}
+            centralBody={centralBody}
+          />
+          {fileSource.orbitInfo && (
+            <div className={styles.orbitInfo} data-testid="orbit-info-file">
+              {fileSource.orbitInfo}
+            </div>
+          )}
+          {simInfo && (
+            <SimInfoBar
+              simInfo={simInfo}
+              totalPoints={totalPoints}
+              epochJd={epochJd}
+              activePerturbations={activePerturbations}
+            />
+          )}
+        </div>
+
         <Scene
           trailBuffers={trailBuffersMap}
           satellitePositions={realtimePlayback.snapshot.satellitePositions}

@@ -3,43 +3,23 @@
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: var(--orts-space-md);
+  gap: var(--orts-space-sm);
   padding: var(--orts-space-xs) var(--orts-space-lg);
-  background: var(--orts-bg-panel);
-  backdrop-filter: var(--orts-blur);
+  background: var(--orts-bg-deep);
   border-bottom: 1px solid var(--orts-border-primary);
   color: var(--orts-text-primary);
   font-size: var(--orts-font-size-sm);
-  min-height: 36px;
+  min-height: 32px;
   z-index: 10;
 }
 
-.left {
-  display: flex;
-  align-items: center;
-  gap: var(--orts-space-sm);
-}
-
-.center {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: var(--orts-space-md);
-  overflow: hidden;
-}
-
-.right {
-  display: flex;
-  align-items: center;
-  gap: var(--orts-space-sm);
-}
-
-/* Status dot (reused from App.module.css patterns) */
+/* Status dot */
 .statusDot {
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .connected {
@@ -57,13 +37,7 @@
   white-space: nowrap;
 }
 
-/* WS URL row (shown when disconnected) */
-.wsUrlRow {
-  display: flex;
-  gap: var(--orts-space-sm);
-  align-items: center;
-}
-
+/* WS URL input */
 .wsUrlInput {
   padding: 2px 6px;
   background: var(--orts-bg-input);
@@ -78,6 +52,11 @@
 .wsUrlInput:focus {
   outline: none;
   border-color: var(--orts-border-focus);
+}
+
+/* Spacer pushes right-side items to the end */
+.spacer {
+  flex: 1;
 }
 
 /* Compact buttons */
@@ -127,7 +106,6 @@
   background: var(--orts-button-primary-hover);
 }
 
-/* Sim control buttons (compact) */
 .pauseBtn {
   background: var(--orts-button-warning-bg);
   border-color: rgba(220, 180, 0, 0.6);
@@ -153,40 +131,4 @@
 
 .terminateBtn:hover {
   background: rgba(180, 50, 50, 1);
-}
-
-/* File info */
-.fileInfo {
-  color: var(--orts-text-muted);
-  white-space: nowrap;
-}
-
-/* Sim info (center section) */
-.simInfo {
-  color: var(--orts-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pertTag {
-  display: inline-block;
-  padding: 1px 5px;
-  margin: 0 2px;
-  border-radius: 3px;
-  background: rgba(68, 170, 255, 0.15);
-  border: 1px solid rgba(68, 170, 255, 0.35);
-  font-size: var(--orts-font-size-xs);
-  color: #8cf;
-}
-
-.pointCount {
-  color: var(--orts-text-secondary);
-  white-space: nowrap;
-}
-
-/* Separator between center items */
-.separator {
-  color: var(--orts-text-secondary);
-  opacity: 0.4;
 }
