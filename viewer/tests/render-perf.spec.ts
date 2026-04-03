@@ -35,9 +35,7 @@ test.beforeAll(async () => {
     return;
   }
 
-  const binary =
-    process.env.ORTS_BINARY ??
-    path.resolve(__dirname, "../../target/debug/orts");
+  const binary = process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");
   const child = spawn(binary, [
     "serve",
     "--port",
@@ -80,22 +78,17 @@ test.afterAll(async () => {
   if (ortsProcess && !ortsProcess.killed) ortsProcess.kill("SIGTERM");
 });
 
-test("charts-collapsed FPS stays above 200 at 5000 points", async ({
-  page,
-}) => {
+test("charts-collapsed FPS stays above 200 at 5000 points", async ({ page }) => {
   test.setTimeout(180_000);
   await page.goto("/?noAutoConnect=1");
 
   // Detect software rendering (swiftshader) — skip if no hardware GPU
   const renderer = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
-    const gl =
-      canvas.getContext("webgl2") || canvas.getContext("webgl");
+    const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
     if (!gl) return "none";
     const ext = gl.getExtension("WEBGL_debug_renderer_info");
-    return ext
-      ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)
-      : "unknown";
+    return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "unknown";
   });
   console.log(`GPU renderer: ${renderer}`);
   test.skip(
@@ -106,15 +99,10 @@ test("charts-collapsed FPS stays above 200 at 5000 points", async ({
   await page.waitForTimeout(3000);
 
   // Connect
-  const urlInput = page
-    .locator('[data-testid="ws-url-input"], .ws-url-input')
-    .first();
+  const urlInput = page.locator('[data-testid="ws-url-input"], .ws-url-input').first();
   await urlInput.waitFor({ timeout: 10000 });
   await urlInput.fill(wsUrl);
-  await page
-    .locator('[data-testid="ws-connect-btn"], .ws-connect-btn')
-    .first()
-    .click();
+  await page.locator('[data-testid="ws-connect-btn"], .ws-connect-btn').first().click();
   await page
     .locator('[data-testid="ws-status-text"], .ws-status-text')
     .first()
@@ -122,9 +110,7 @@ test("charts-collapsed FPS stays above 200 at 5000 points", async ({
     .waitFor({ timeout: 10000 });
 
   // Collapse charts
-  const toggle = page
-    .locator('[class*="toggle"], .graph-panel-toggle')
-    .first();
+  const toggle = page.locator('[class*="toggle"], .graph-panel-toggle').first();
   if ((await toggle.count()) > 0) {
     await toggle.click();
     await page.waitForTimeout(500);
