@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { type ChartDataMap, type TimeRange, TimeSeriesChart } from "uneri";
 import type { MultiChartDataMap } from "../hooks/buildMultiChartData.js";
 import styles from "./GraphPanel.module.css";
@@ -61,7 +61,7 @@ interface GraphPanelProps {
   activePerturbations?: string[];
 }
 
-export function GraphPanel({
+export const GraphPanel = memo(function GraphPanel({
   chartData,
   multiChartData,
   isLoading,
@@ -133,4 +133,4 @@ export function GraphPanel({
       )}
     </div>
   );
-}
+});

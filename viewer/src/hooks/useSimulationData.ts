@@ -127,6 +127,8 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
 
   // --- Chart zoom handler ---
   const isLive = playback.isLive;
+  const isLiveRef = useRef(isLive);
+  isLiveRef.current = isLive;
 
   const handleChartZoom = useCallback(
     (tMin: number, tMax: number) => {
@@ -155,7 +157,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
         // liveChartData returns null and falls back to DuckDB. The user
         // would need to re-zoom to trigger a fresh query_range in that case.
         // This is acceptable since the buffer holds ~139h at dt=10s.
-        if (isLive) {
+        if (isLiveRef.current) {
           if (
             chartBuffer.length > 0 &&
             range.tMin >= chartBuffer.earliestT &&
@@ -191,7 +193,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
         }
       }, 200);
     },
-    [conn, orbitSchema, isMultiSatellite, simInfo, isLive, queryRange, chartBuffer],
+    [conn, orbitSchema, isMultiSatellite, simInfo, queryRange, chartBuffer],
   );
 
   // --- Charts: single-satellite mode (replay or single satellite) ---

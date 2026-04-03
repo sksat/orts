@@ -247,13 +247,16 @@ export function App() {
   const centralBodyRadius = simInfo?.central_body_radius ?? 6378.137;
   const epochJd = simInfo?.epoch_jd ?? undefined;
 
-  // Total points across all satellite buffers
+  // Total points across all satellite buffers.
+  // chartBufferVersion bumps on data ingest AND on resetBuffers (clear),
+  // so this recalculates when data arrives or buffers are cleared.
+  // Note: trailBuffersMap is mutated in place, so we can't use it as a dep.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const totalPoints = useMemo(() => {
     let count = 0;
     for (const buf of trailBuffersMap.values()) count += buf.length;
     return count;
-  }, [realtimePlayback.snapshot.currentTime]);
+  }, [chartBufferVersion]);
 
   const showPlaybackBar = totalPoints > 0;
 

@@ -183,19 +183,29 @@ export function useRealtimePlayback(
     });
   }, [trailBuffers, terminatedSatellites, timeRange]);
 
+  // Track last synced tMax to skip redundant syncState in live mode.
+  // Reset when inputs (timeRange, terminatedSatellites) change so that
+  // stale snapshot values are refreshed even without new data arriving.
+  const lastSyncTMaxRef = useRef(-Infinity);
+  useEffect(() => {
+    lastSyncTMaxRef.current = -Infinity;
+  }, [timeRange, terminatedSatellites]);
+
   // Animation loop
   useEffect(() => {
     const tick = (time: number) => {
       const dt = prevTimeRef.current ? (time - prevTimeRef.current) / 1000 : 0;
       prevTimeRef.current = time;
 
-      if (modeRef.current === "playing") {
-        let tMax = -Infinity;
-        for (const buf of trailBuffers.values()) {
-          if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
-        }
-        if (tMax === -Infinity) tMax = 0;
+      let tMax = -Infinity;
+      let totalLength = 0;
+      for (const buf of trailBuffers.values()) {
+        if (buf.latest) tMax = Math.max(tMax, buf.latest.t);
+        totalLength += buf.length;
+      }
+      if (tMax === -Infinity) tMax = 0;
 
+      if (modeRef.current === "playing") {
         currentTimeRef.current += dt * speedRef.current;
         if (currentTimeRef.current >= tMax) {
           currentTimeRef.current = tMax;
@@ -203,12 +213,18 @@ export function useRealtimePlayback(
         }
       }
 
-      // Always sync in RAF to keep slider/position updated
-      let totalLength = 0;
-      for (const buf of trailBuffers.values()) {
-        totalLength += buf.length;
-      }
-      if (totalLength > 0) {
+      // Only sync when data has changed (live) or time is advancing (playing).
+      // In live mode, skip sync if total point count hasn't changed — no new data arrived.
+      // Using totalLength instead of tMax catches multi-satellite updates where
+      // a lagging satellite advances without changing the global tMax.
+      const shouldSync =
+        totalLength > 0 &&
+        (modeRef.current === "playing" ||
+          modeRef.current === "paused" ||
+          totalLength !== lastSyncTMaxRef.current);
+
+      if (shouldSync) {
+        lastSyncTMaxRef.current = totalLength;
         syncState();
       }
 
