@@ -10,6 +10,7 @@
     "includes": [
       "**",
       "!viewer/src/wasm/kaname",
+      "!viewer/src/wasm/rrd-wasm",
       "!tobari/examples/web/src/wasm/tobari",
       "!tobari/examples/web/src/wasm/kaname",
       "!orts/tests/fixtures",
