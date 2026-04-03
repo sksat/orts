@@ -1,0 +1,19 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  background: var(--orts-bg-panel);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--orts-border-primary);
+  border-radius: var(--orts-panel-radius);
+  padding: var(--orts-space-xl);
+  max-width: 400px;
+  width: 90%;
+}

@@ -7,11 +7,10 @@ const kanameReady = initKaname();
 
 import type { TimeRange } from "uneri";
 import styles from "./App.module.css";
-import { ConnectionPanel } from "./components/ConnectionPanel.js";
-import { FrameSelector } from "./components/FrameSelector.js";
 import { GraphPanel } from "./components/GraphPanel.js";
 import { PlaybackBar } from "./components/PlaybackBar.js";
-import { SimInfoBar } from "./components/SimInfoBar.js";
+import { SimConfigModal } from "./components/SimConfigModal.js";
+import { StatusBar } from "./components/StatusBar.js";
 import { useFileSource } from "./hooks/useFileSource.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
 import { useSimulationData } from "./hooks/useSimulationData.js";
@@ -44,6 +43,9 @@ export function App() {
 
   // --- WS URL ---
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
+
+  // --- SimConfig modal ---
+  const [simConfigOpen, setSimConfigOpen] = useState(false);
 
   // --- Source Runtime (manages buffers, state, event dispatch) ---
   const runtime = useSourceRuntime();
@@ -132,6 +134,7 @@ export function App() {
 
   const handleDisconnect = useCallback(() => {
     manualDisconnectRef.current = true;
+    setSimConfigOpen(false);
     wsSource.disconnect();
   }, [wsSource.disconnect]);
 
@@ -264,11 +267,28 @@ export function App() {
     return [...set];
   }, [simInfo]);
 
+  // Auto-close SimConfig modal when leaving idle state or disconnecting
+  useEffect(() => {
+    if (serverState !== "idle" || !wsSource.isConnected) {
+      setSimConfigOpen(false);
+    }
+  }, [serverState, wsSource.isConnected]);
+
+  const handleOpenSimConfig = useCallback(() => {
+    setSimConfigOpen(true);
+  }, []);
+
+  const handleCloseSimConfig = useCallback(() => {
+    setSimConfigOpen(false);
+  }, []);
+
   if (!wasmReady) return null;
+
+  const showGraph = simData.dbReady;
 
   return (
     <div
-      className="app-root"
+      className={`app-root ${showGraph ? "" : "no-graph"}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -279,77 +299,57 @@ export function App() {
         </div>
       )}
 
-      {/* 3D Scene */}
-      <Scene
-        trailBuffers={trailBuffersMap}
-        satellitePositions={realtimePlayback.snapshot.satellitePositions}
-        trailVisibleCounts={
-          !realtimePlayback.snapshot.isLive
-            ? realtimePlayback.snapshot.trailVisibleCounts
-            : undefined
-        }
-        trailDrawStarts={timeRange != null ? realtimePlayback.snapshot.trailDrawStarts : undefined}
-        centralBody={centralBody}
-        centralBodyRadius={centralBodyRadius}
-        epochJd={epochJd ?? null}
+      {/* Top status bar (row 1, spans all columns) */}
+      <StatusBar
+        isConnected={wsSource.isConnected}
+        serverState={serverState}
+        wsUrl={wsUrl}
+        onWsUrlChange={setWsUrl}
+        onConnect={handleConnect}
+        onDisconnect={handleDisconnect}
+        onPause={wsSource.handlePause}
+        onResume={wsSource.handleResume}
+        onTerminate={wsSource.handleTerminate}
+        simInfo={simInfo}
+        totalPoints={totalPoints}
+        activePerturbations={activePerturbations}
+        epochJd={epochJd}
+        onLoadFileClick={fileSource.handleLoadClick}
+        fileInfo={fileSource.orbitInfo}
+        onOpenSimConfig={handleOpenSimConfig}
         referenceFrame={referenceFrame}
-        satelliteNames={satelliteNames}
-        physicalScale={false}
-        textureRevision={textureRevision}
-        textureBaseUrl={textureBaseUrl}
+        onFrameChange={setReferenceFrame}
+        satellites={simInfo?.satellites}
+        hasEpoch={epochJd != null}
+        centralBody={centralBody}
       />
 
-      {/* UI overlay */}
-      <div className={styles.uiOverlay} data-testid="ui-overlay">
-        <FrameSelector
-          referenceFrame={referenceFrame}
-          onChange={setReferenceFrame}
-          satellites={simInfo?.satellites}
-          hasEpoch={epochJd != null}
+      {/* 3D Scene (row 2, column 1) */}
+      <div className="scene-container">
+        <Scene
+          trailBuffers={trailBuffersMap}
+          satellitePositions={realtimePlayback.snapshot.satellitePositions}
+          trailVisibleCounts={
+            !realtimePlayback.snapshot.isLive
+              ? realtimePlayback.snapshot.trailVisibleCounts
+              : undefined
+          }
+          trailDrawStarts={
+            timeRange != null ? realtimePlayback.snapshot.trailDrawStarts : undefined
+          }
           centralBody={centralBody}
+          centralBodyRadius={centralBodyRadius}
+          epochJd={epochJd ?? null}
+          referenceFrame={referenceFrame}
+          satelliteNames={satelliteNames}
+          physicalScale={false}
+          textureRevision={textureRevision}
+          textureBaseUrl={textureBaseUrl}
         />
-
-        <button className={styles.loadBtn} onClick={fileSource.handleLoadClick}>
-          Load File
-        </button>
-        {fileSource.orbitInfo && (
-          <div className={styles.orbitInfo} data-testid="orbit-info-file">
-            {fileSource.orbitInfo}
-          </div>
-        )}
-
-        <ConnectionPanel
-          wsUrl={wsUrl}
-          onWsUrlChange={setWsUrl}
-          isConnected={wsSource.isConnected}
-          serverState={serverState}
-          onConnect={handleConnect}
-          onDisconnect={handleDisconnect}
-          onStartSimulation={wsSource.handleStartSimulation}
-          onPause={wsSource.handlePause}
-          onResume={wsSource.handleResume}
-          onTerminate={wsSource.handleTerminate}
-        />
-
-        {simInfo && (
-          <SimInfoBar
-            simInfo={simInfo}
-            totalPoints={totalPoints}
-            epochJd={epochJd}
-            activePerturbations={activePerturbations}
-          />
-        )}
       </div>
 
-      <input
-        ref={fileSource.fileInputRef}
-        type="file"
-        accept=".csv,.txt,.rrd"
-        style={{ display: "none" }}
-        onChange={handleFileChange}
-      />
-
-      {simData.dbReady && (
+      {/* Graph panel (row 2, column 2) */}
+      {showGraph && (
         <GraphPanel
           chartData={simData.isMultiSatellite ? undefined : simData.visibleChartData}
           multiChartData={simData.isMultiSatellite ? simData.multiChartData : undefined}
@@ -361,6 +361,7 @@ export function App() {
         />
       )}
 
+      {/* Playback bar (row 3, spans all columns) */}
       {showPlaybackBar && (
         <PlaybackBar
           isPlaying={realtimePlayback.snapshot.isPlaying}
@@ -375,6 +376,21 @@ export function App() {
           epochJd={epochJd}
         />
       )}
+
+      {/* SimConfig modal (centered overlay) */}
+      <SimConfigModal
+        isOpen={simConfigOpen && wsSource.isConnected && serverState === "idle"}
+        onStart={wsSource.handleStartSimulation}
+        onClose={handleCloseSimConfig}
+      />
+
+      <input
+        ref={fileSource.fileInputRef}
+        type="file"
+        accept=".csv,.txt,.rrd"
+        style={{ display: "none" }}
+        onChange={handleFileChange}
+      />
     </div>
   );
 }

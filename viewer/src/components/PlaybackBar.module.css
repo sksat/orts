@@ -1,9 +1,6 @@
 .playbackBar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  z-index: 10;
+  grid-row: 3;
+  grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
   gap: var(--orts-space-xs);

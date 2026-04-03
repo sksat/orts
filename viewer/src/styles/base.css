@@ -10,11 +10,25 @@ canvas {
   display: block;
 }
 
-/* === App root layout === */
+/* === App root layout (CSS Grid) === */
 .app-root {
   width: 100vw;
   height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: 1fr auto;
+}
+
+.app-root.no-graph {
+  grid-template-columns: 1fr;
+}
+
+/* Scene container fills the main area */
+.scene-container {
+  grid-row: 2;
+  grid-column: 1;
   position: relative;
+  overflow: hidden;
 }
 
 /* === Drop overlay === */
