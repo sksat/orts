@@ -6,6 +6,7 @@ members = [
     "cli",
     "orts",
     "tobari",
+    "rrd-wasm",
 ]
 
 [workspace.package]

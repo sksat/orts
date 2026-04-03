@@ -1021,6 +1021,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecolor"
+version = "0.33.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71ddb8ac7643d1dba1bb02110e804406dd459a838efcb14011ced10556711a8e"
+dependencies = [
+ "emath",
+]
+
+[[package]]
 name = "econtext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3492,6 +3501,7 @@ dependencies = [
  "arrow",
  "bytemuck",
  "document-features",
+ "ecolor",
  "emath",
  "half",
  "indexmap",
@@ -3778,6 +3788,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rrd-wasm"
+version = "0.0.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "re_chunk",
+ "re_log_encoding",
+ "re_log_types",
+ "re_sdk_types",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4028,6 +4052,17 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
 ]
 
 [[package]]

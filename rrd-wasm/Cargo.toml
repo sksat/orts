@@ -1,0 +1,30 @@
+[package]
+name = "rrd-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Minimal rerun subcrate dependencies for decoding only — no rerun umbrella
+re_log_encoding = { version = "0.30", features = ["decoder"] }
+re_chunk = "0.30"
+re_log_types = "0.30"
+re_sdk_types = "0.30"
+# Required for wasm32 target (getrandom needs js feature for browser)
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+
+[features]
+wasm = ["wasm-bindgen", "serde-wasm-bindgen"]
+
+# Note: dev-dependencies do NOT affect wasm-pack builds (only used for `cargo test`)
+# orts is needed for generating test fixtures via the recording API
+# [dev-dependencies]
+# orts = { path = "../orts" }

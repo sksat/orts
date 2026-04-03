@@ -11,8 +11,9 @@ export {
   setIngestBufferFactory,
   setTrailBufferFactory,
 } from "./eventDispatcher.js";
-export { csvMetadataToSimInfo } from "./normalizeMetadata.js";
+export { csvMetadataToSimInfo, rrdMetadataToSimInfo } from "./normalizeMetadata.js";
 export { emptyMetadata, parseDataLine, parseMetadataLine } from "./parseCSVLine.js";
+export { RrdFileAdapter } from "./RrdFileAdapter.js";
 export type {
   SatelliteInfo,
   SimInfo,

@@ -31,6 +31,7 @@ import {
 } from "./hooks/useWebSocket.js";
 import { type OrbitPoint, parseOrbitCSVWithMetadata } from "./orbit.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
+import { RrdFileAdapter } from "./sources/RrdFileAdapter.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { mergeQueryRangePoints } from "./utils/mergeQueryRange.js";
 import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
@@ -388,6 +389,11 @@ export function App() {
         if (isConnected) {
           disconnect();
         }
+        // Stop any active RRD worker
+        if (rrdAdapterRef.current) {
+          rrdAdapterRef.current.stop();
+          rrdAdapterRef.current = null;
+        }
 
         // Route CSV data through useSourceRuntime via SourceEvents
         const CSV_SOURCE_ID = "csv-file";
@@ -409,7 +415,7 @@ export function App() {
             satellites: [
               {
                 id: "default",
-                name: metadata.satelliteName ?? file.name,
+                name: metadata.satelliteName ?? `${file.name} (1 sat)`,
                 altitude: 0,
                 period: 0,
                 perturbations: [],
@@ -438,6 +444,42 @@ export function App() {
     [isConnected, disconnect, handleEvent, resetBuffers, setActiveSourceId],
   );
 
+  const rrdAdapterRef = useRef<RrdFileAdapter | null>(null);
+  const loadRrdFile = useCallback(
+    (file: File) => {
+      if (isConnected) disconnect();
+      // Stop any previous RRD adapter to prevent stale worker events
+      if (rrdAdapterRef.current) {
+        rrdAdapterRef.current.stop();
+        rrdAdapterRef.current = null;
+      }
+      resetBuffers();
+
+      const RRD_SOURCE_ID = "rrd-file";
+      setActiveSourceId(RRD_SOURCE_ID);
+
+      const adapter = new RrdFileAdapter(RRD_SOURCE_ID, file, handleEvent);
+      rrdAdapterRef.current = adapter;
+      adapter.start();
+      setFileSourceActive(true);
+      goLiveRef.current();
+      setOrbitInfo(`Loading: ${file.name}...`);
+    },
+    [isConnected, disconnect, handleEvent, resetBuffers, setActiveSourceId],
+  );
+
+  /** Route file to appropriate loader based on extension. */
+  const loadFile = useCallback(
+    (file: File) => {
+      if (file.name.endsWith(".rrd")) {
+        loadRrdFile(file);
+      } else {
+        loadCSVFile(file);
+      }
+    },
+    [loadCSVFile, loadRrdFile],
+  );
+
   const handleLoadClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
@@ -446,10 +488,10 @@ export function App() {
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      loadCSVFile(file);
+      loadFile(file);
       e.target.value = "";
     },
-    [loadCSVFile],
+    [loadFile],
   );
 
   // --- Drag & Drop ---
@@ -473,9 +515,9 @@ export function App() {
       e.stopPropagation();
       setIsDragOver(false);
       const file = e.dataTransfer.files[0];
-      if (file) loadCSVFile(file);
+      if (file) loadFile(file);
     },
-    [loadCSVFile],
+    [loadFile],
   );
 
   // --- Realtime: connect / disconnect ---
@@ -490,6 +532,11 @@ export function App() {
   const handleConnect = useCallback(() => {
     manualDisconnectRef.current = false;
     setFileSourceActive(false);
+    // Stop any active RRD worker
+    if (rrdAdapterRef.current) {
+      rrdAdapterRef.current.stop();
+      rrdAdapterRef.current = null;
+    }
     resetBuffers();
     setActiveSourceId(WS_SOURCE_ID);
     singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
@@ -810,7 +857,7 @@ export function App() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv,.txt"
+        accept=".csv,.txt,.rrd"
         style={{ display: "none" }}
         onChange={handleFileChange}
       />

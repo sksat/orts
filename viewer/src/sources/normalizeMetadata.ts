@@ -6,6 +6,7 @@
  */
 
 import type { CSVMetadata } from "../orbit.js";
+import type { RrdMetadata } from "../wasm/rrdWasmInit.js";
 import type { SimInfo } from "./types.js";
 
 /** WGS84 Earth gravitational parameter [km³/s²]. */
@@ -39,5 +40,55 @@ export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt
         perturbations: [],
       },
     ],
+  };
+}
+
+/**
+ * Build a SimInfo from RRD metadata.
+ *
+ * @param metadata - Decoded RRD metadata from WASM
+ * @param fileName - Original file name
+ * @param dt - Estimated time step between data points [s]
+ * @param entityPaths - Distinct entity paths found in the RRD data
+ */
+export function rrdMetadataToSimInfo(
+  metadata: RrdMetadata,
+  fileName: string,
+  dt: number,
+  entityPaths: string[],
+): SimInfo {
+  const satellites = entityPaths.map((path) => {
+    // Extract name from entity path (last segment after /sat/)
+    const satMatch = path.match(/\/sat\/(.+)/);
+    const name = satMatch ? satMatch[1] : path;
+    return {
+      id: path,
+      name,
+      altitude: metadata.altitude ?? 0,
+      period: metadata.period ?? 0,
+      perturbations: [] as string[],
+    };
+  });
+
+  // If no satellite entities found, create a default one
+  if (satellites.length === 0) {
+    satellites.push({
+      id: "default",
+      name: fileName,
+      altitude: 0,
+      period: 0,
+      perturbations: [],
+    });
+  }
+
+  return {
+    mu: metadata.mu ?? DEFAULT_MU,
+    dt,
+    output_interval: dt,
+    stream_interval: dt,
+    central_body: metadata.body_name ?? "earth",
+    central_body_radius: metadata.body_radius ?? DEFAULT_RADIUS,
+    epoch_jd: metadata.epoch_jd ?? undefined,
+    satellites,
   };
 }
