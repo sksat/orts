@@ -401,7 +401,40 @@ export function App() {
         setActiveSourceId(CSV_SOURCE_ID);
 
         // Build SimInfo from CSV metadata
-        const dt = parsed.length >= 2 ? parsed[1].t - parsed[0].t : 10;
+        // For multi-sat, estimate dt from consecutive points of the same entity
+        let dt = 10;
+        if (metadata.satellites && metadata.satellites.length > 0) {
+          // Multi-sat: find dt from same-entity consecutive points
+          for (let i = 1; i < parsed.length; i++) {
+            if (parsed[i].entityPath === parsed[0].entityPath && parsed[i].t > parsed[0].t) {
+              dt = parsed[i].t - parsed[0].t;
+              break;
+            }
+          }
+        } else if (parsed.length >= 2) {
+          dt = parsed[1].t - parsed[0].t;
+        }
+
+        // Build satellites list
+        const satellites =
+          metadata.satellites && metadata.satellites.length > 0
+            ? metadata.satellites.map((id) => ({
+                id,
+                name: id,
+                altitude: 0,
+                period: 0,
+                perturbations: [] as string[],
+              }))
+            : [
+                {
+                  id: "default",
+                  name: metadata.satelliteName ?? `${file.name} (1 sat)`,
+                  altitude: 0,
+                  period: 0,
+                  perturbations: [] as string[],
+                },
+              ];
+
         handleEvent(CSV_SOURCE_ID, {
           kind: "info",
           info: {
@@ -412,15 +445,7 @@ export function App() {
             central_body: metadata.centralBody ?? "earth",
             central_body_radius: metadata.centralBodyRadius ?? 6378.137,
             epoch_jd: metadata.epochJd,
-            satellites: [
-              {
-                id: "default",
-                name: metadata.satelliteName ?? `${file.name} (1 sat)`,
-                altitude: 0,
-                period: 0,
-                perturbations: [],
-              },
-            ],
+            satellites,
           },
         });
 

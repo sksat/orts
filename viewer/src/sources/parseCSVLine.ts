@@ -34,6 +34,13 @@ export function parseMetadataLine(line: string, metadata: CSVMetadata): boolean 
       if (trimmed) metadata.satelliteName = trimmed;
       break;
     }
+    case "satellites": {
+      metadata.satellites = value
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      break;
+    }
     default:
       return false;
   }
@@ -43,14 +50,32 @@ export function parseMetadataLine(line: string, metadata: CSVMetadata): boolean 
 /**
  * Parse a single CSV data line into an OrbitPoint, or return null if invalid.
  *
- * Expected format: `t,x,y,z,vx,vy,vz[,a,e,inc,raan,omega,nu]`
+ * @param line - CSV data line
+ * @param multiSat - If true, first field is satellite_id (string), rest are numeric.
+ *   The presence of `# satellites = ...` header implies the satellite_id column exists,
+ *   even for single-satellite files. This matches `orts run` output format where
+ *   multi-sat CSV always includes the id column regardless of satellite count.
+ *
+ * Single-sat format: `t,x,y,z,vx,vy,vz[,a,e,inc,raan,omega,nu]`
+ * Multi-sat format:  `satellite_id,t,x,y,z,vx,vy,vz[,a,e,inc,raan,omega,nu]`
  * Minimum 7 numeric fields required.
  */
-export function parseDataLine(line: string): OrbitPoint | null {
+export function parseDataLine(line: string, multiSat = false): OrbitPoint | null {
   const parts = line.split(",").map((s) => s.trim());
-  if (parts.length < 7) return null;
 
-  const nums = parts.map(Number);
+  let entityPath: string | undefined;
+  let numericParts: string[];
+
+  if (multiSat) {
+    if (parts.length < 8) return null; // id + 7 numeric
+    entityPath = parts[0];
+    numericParts = parts.slice(1);
+  } else {
+    if (parts.length < 7) return null;
+    numericParts = parts;
+  }
+
+  const nums = numericParts.map(Number);
   if (nums.some(Number.isNaN)) return null;
 
   return {
@@ -67,6 +92,7 @@ export function parseDataLine(line: string): OrbitPoint | null {
     raan: nums[10] ?? 0,
     omega: nums[11] ?? 0,
     nu: nums[12] ?? 0,
+    entityPath,
     accel_gravity: 0,
     accel_drag: 0,
     accel_srp: 0,
@@ -85,5 +111,6 @@ export function emptyMetadata(): CSVMetadata {
     centralBody: null,
     centralBodyRadius: null,
     satelliteName: null,
+    satellites: null,
   };
 }

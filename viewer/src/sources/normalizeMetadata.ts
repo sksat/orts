@@ -23,6 +23,25 @@ const DEFAULT_RADIUS = 6378.137;
  * @param dt - Estimated time step between data points [s]
  */
 export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt: number): SimInfo {
+  const satellites =
+    metadata.satellites && metadata.satellites.length > 0
+      ? metadata.satellites.map((id) => ({
+          id,
+          name: id,
+          altitude: 0,
+          period: 0,
+          perturbations: [] as string[],
+        }))
+      : [
+          {
+            id: "default",
+            name: metadata.satelliteName ?? fileName,
+            altitude: 0,
+            period: 0,
+            perturbations: [] as string[],
+          },
+        ];
+
   return {
     mu: metadata.mu ?? DEFAULT_MU,
     dt,
@@ -31,15 +50,7 @@ export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt
     central_body: metadata.centralBody ?? "earth",
     central_body_radius: metadata.centralBodyRadius ?? DEFAULT_RADIUS,
     epoch_jd: metadata.epochJd,
-    satellites: [
-      {
-        id: "default",
-        name: metadata.satelliteName ?? fileName,
-        altitude: 0,
-        period: 0,
-        perturbations: [],
-      },
-    ],
+    satellites,
   };
 }
 

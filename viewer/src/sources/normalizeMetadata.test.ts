@@ -9,6 +9,7 @@ describe("csvMetadataToSimInfo", () => {
     centralBody: "earth",
     centralBodyRadius: 6378.137,
     satelliteName: null,
+    satellites: null,
   };
 
   it("converts full metadata to SimInfo with filename fallback", () => {
@@ -34,6 +35,7 @@ describe("csvMetadataToSimInfo", () => {
       centralBody: null,
       centralBodyRadius: null,
       satelliteName: null,
+      satellites: null,
     };
     const info = csvMetadataToSimInfo(empty, "orbit.csv", 5.0);
     expect(info.mu).toBe(398600.4418);
@@ -54,5 +56,39 @@ describe("csvMetadataToSimInfo", () => {
     expect(info.satellites[0].id).toBe("default");
     expect(info.satellites[0].name).toBe("apollo11.csv");
     expect(info.satellites[0].perturbations).toEqual([]);
+  });
+
+  it("builds multi-satellite SimInfo from satellites metadata", () => {
+    const multiSat: CSVMetadata = {
+      ...fullMetadata,
+      satellites: ["iss", "sso"],
+    };
+    const info = csvMetadataToSimInfo(multiSat, "constellation.csv", 10.0);
+    expect(info.satellites).toHaveLength(2);
+    expect(info.satellites[0].id).toBe("iss");
+    expect(info.satellites[0].name).toBe("iss");
+    expect(info.satellites[1].id).toBe("sso");
+    expect(info.satellites[1].name).toBe("sso");
+  });
+
+  it("single-entry satellites list produces one satellite with id", () => {
+    const singleSat: CSVMetadata = {
+      ...fullMetadata,
+      satellites: ["iss"],
+    };
+    const info = csvMetadataToSimInfo(singleSat, "iss.csv", 10.0);
+    expect(info.satellites).toHaveLength(1);
+    expect(info.satellites[0].id).toBe("iss");
+    expect(info.satellites[0].name).toBe("iss");
+  });
+
+  it("falls back to single satellite when satellites is empty array", () => {
+    const emptySats: CSVMetadata = {
+      ...fullMetadata,
+      satellites: [],
+    };
+    const info = csvMetadataToSimInfo(emptySats, "test.csv", 10.0);
+    expect(info.satellites).toHaveLength(1);
+    expect(info.satellites[0].id).toBe("default");
   });
 });

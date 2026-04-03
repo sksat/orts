@@ -76,6 +76,43 @@ describe("parseDataLine", () => {
   });
 });
 
+describe("parseMetadataLine — multi-satellite", () => {
+  it("parses satellites list", () => {
+    const meta = emptyMetadata();
+    expect(parseMetadataLine("# satellites = iss, sso", meta)).toBe(true);
+    expect(meta.satellites).toEqual(["iss", "sso"]);
+  });
+
+  it("parses single satellite in satellites list", () => {
+    const meta = emptyMetadata();
+    expect(parseMetadataLine("# satellites = iss", meta)).toBe(true);
+    expect(meta.satellites).toEqual(["iss"]);
+  });
+});
+
+describe("parseDataLine — multi-satellite", () => {
+  it("parses line with satellite_id prefix", () => {
+    const point = parseDataLine(
+      "iss,10.0,7000,100,50,-0.1,7.5,0.01,7100,0.001,97.5,100.0,45.0,30.0",
+      true,
+    );
+    expect(point).not.toBeNull();
+    expect(point!.entityPath).toBe("iss");
+    expect(point!.t).toBe(10.0);
+    expect(point!.x).toBe(7000);
+    expect(point!.a).toBe(7100);
+  });
+
+  it("returns null when multiSat but too few numeric fields", () => {
+    expect(parseDataLine("iss,0.0,7000,0,0,0,7.5", true)).toBeNull();
+  });
+
+  it("single-sat mode ignores string prefix", () => {
+    // In single-sat mode, a line starting with non-numeric is invalid
+    expect(parseDataLine("iss,0.0,7000,0,0,0,7.5,0", false)).toBeNull();
+  });
+});
+
 describe("emptyMetadata", () => {
   it("returns all null fields", () => {
     const meta = emptyMetadata();

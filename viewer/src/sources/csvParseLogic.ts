@@ -57,12 +57,17 @@ export function parseCSVChunked(
   // Emit metadata first
   emit({ type: "metadata", metadata });
 
+  // Detect multi-satellite mode.
+  // When `# satellites = ...` is present, the CSV always has a satellite_id
+  // first column, even for single-satellite files (matches orts run output).
+  const multiSat = metadata.satellites != null && metadata.satellites.length > 0;
+
   // Parse data lines in chunks
   for (let i = dataStart; i < lines.length; i++) {
     const line = lines[i].trim();
     if (line === "" || line.startsWith("#")) continue;
 
-    const point = parseDataLine(line);
+    const point = parseDataLine(line, multiSat);
     if (!point) continue;
 
     chunk.push(point);

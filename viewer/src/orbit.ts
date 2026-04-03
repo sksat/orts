@@ -58,6 +58,8 @@ export interface CSVMetadata {
   centralBody: string | null;
   centralBodyRadius: number | null;
   satelliteName: string | null;
+  /** Multi-satellite CSV: list of satellite IDs from `# satellites = ...` */
+  satellites: string[] | null;
 }
 
 /** Result of parsing a CSV file: points + optional metadata. */
@@ -82,38 +84,69 @@ export function parseOrbitCSVWithMetadata(text: string): ParsedCSV {
     centralBody: null,
     centralBodyRadius: null,
     satelliteName: null,
+    satellites: null,
   };
 
-  for (const rawLine of text.split("\n")) {
+  // First pass: extract metadata from comment lines
+  const lines = text.split("\n");
+  for (const rawLine of lines) {
     const line = rawLine.trim();
     if (line === "") continue;
+    if (!line.startsWith("#")) break;
 
-    if (line.startsWith("#")) {
-      const match = line.match(/^#\s*(\w+)\s*=\s*(.+)/);
-      if (match) {
-        const [, key, value] = match;
-        switch (key) {
-          case "epoch_jd":
-            metadata.epochJd = Number(value.trim());
-            break;
-          case "mu":
-            metadata.mu = Number(value.trim().split(/\s/)[0]);
-            break;
-          case "central_body":
-            metadata.centralBody = value.trim();
-            break;
-          case "central_body_radius":
-            metadata.centralBodyRadius = Number(value.trim().split(/\s/)[0]);
-            break;
+    const match = line.match(/^#\s*(\w+)\s*=\s*(.+)/);
+    if (match) {
+      const [, key, value] = match;
+      switch (key) {
+        case "epoch_jd":
+          metadata.epochJd = Number(value.trim());
+          break;
+        case "mu":
+          metadata.mu = Number(value.trim().split(/\s/)[0]);
+          break;
+        case "central_body":
+          metadata.centralBody = value.trim();
+          break;
+        case "central_body_radius":
+          metadata.centralBodyRadius = Number(value.trim().split(/\s/)[0]);
+          break;
+        case "satellite": {
+          const trimmed = value.trim();
+          if (trimmed) metadata.satelliteName = trimmed;
+          break;
         }
+        case "satellites":
+          metadata.satellites = value
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+          break;
       }
-      continue;
+    }
+  }
+
+  // Detect multi-satellite mode
+  const multiSat = metadata.satellites != null && metadata.satellites.length > 0;
+
+  // Second pass: parse data lines
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#")) continue;
+
+    let entityPath: string | undefined;
+    let numericParts: string[];
+    const parts = line.split(",").map((s) => s.trim());
+
+    if (multiSat) {
+      if (parts.length < 8) continue;
+      entityPath = parts[0];
+      numericParts = parts.slice(1);
+    } else {
+      if (parts.length < 7) continue;
+      numericParts = parts;
     }
 
-    const parts = line.split(",").map((s) => s.trim());
-    if (parts.length < 7) continue;
-
-    const nums = parts.map(Number);
+    const nums = numericParts.map(Number);
     if (nums.some(Number.isNaN)) continue;
 
     points.push({
@@ -130,6 +163,7 @@ export function parseOrbitCSVWithMetadata(text: string): ParsedCSV {
       raan: nums[10] ?? 0,
       omega: nums[11] ?? 0,
       nu: nums[12] ?? 0,
+      entityPath,
       accel_gravity: 0,
       accel_drag: 0,
       accel_srp: 0,
