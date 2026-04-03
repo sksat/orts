@@ -124,15 +124,15 @@ test.describe("history trail after connect", () => {
     await page.goto("/?noAutoConnect=1");
 
     // Connect to mock server
-    const urlInput = page.locator(".ws-url-input");
+    const urlInput = page.locator('[data-testid="ws-url-input"]');
     const mockPort = (wss.address() as AddressInfo).port;
     await urlInput.fill(`ws://localhost:${mockPort}`);
 
-    const connectBtn = page.locator(".ws-connect-btn");
+    const connectBtn = page.locator('[data-testid="ws-connect-btn"]');
     await connectBtn.click();
 
     // Wait for connection
-    const statusText = page.locator(".ws-status-text");
+    const statusText = page.locator('[data-testid="ws-status-text"]');
     await expect(statusText).toHaveText("Connected", { timeout: 5000 });
 
     // Wait for history + some streaming data
@@ -146,7 +146,7 @@ test.describe("history trail after connect", () => {
       // Access the TrailBuffer from the app's internal state.
       // The trailBuffersRef is exposed on the window for E2E testing in dev mode,
       // or we can check the DOM for point count display.
-      const pointsInfo = document.querySelector(".orbit-info:last-of-type");
+      const pointsInfo = document.querySelector('[data-testid="orbit-info-points"]');
       const pointsText = pointsInfo?.textContent ?? "";
       const pointCount = parseInt(pointsText.match(/(\d+)\s+points/)?.[1] ?? "0", 10);
       return { pointCount, pointsText };

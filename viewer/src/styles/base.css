@@ -1,0 +1,58 @@
+/* === Body reset === */
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--orts-bg-deep);
+  font-family: var(--orts-font-ui);
+}
+
+canvas {
+  display: block;
+}
+
+/* === App root layout === */
+.app-root {
+  width: 100vw;
+  height: 100vh;
+  position: relative;
+}
+
+/* === Drop overlay === */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--orts-color-blue-30);
+  border: 3px dashed var(--orts-color-blue-80);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.drop-overlay-text {
+  color: #fff;
+  font-size: 24px;
+  background: rgba(0, 0, 0, 0.6);
+  padding: var(--orts-space-xl) 32px;
+  border-radius: 8px;
+}
+
+/* === uPlot dark theme overrides === */
+.u-wrap {
+  background: transparent;
+}
+
+.u-title {
+  color: var(--orts-text-muted);
+  font-size: var(--orts-font-size-xs);
+}
+
+.u-legend {
+  font-size: 10px;
+  color: var(--orts-text-muted);
+}
+
+.u-select {
+  background: rgba(68, 136, 204, 0.15);
+}

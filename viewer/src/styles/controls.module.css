@@ -1,0 +1,33 @@
+/* === Mode toggle (shared by FrameSelector and SimConfigForm) === */
+.modeToggle {
+  display: flex;
+  gap: 0;
+  border-radius: var(--orts-panel-radius);
+  overflow: hidden;
+  border: 1px solid rgba(68, 136, 204, 0.5);
+}
+
+.modeToggleBtn {
+  padding: 6px 16px;
+  background: var(--orts-toggle-inactive-bg);
+  color: var(--orts-text-secondary);
+  border: none;
+  cursor: pointer;
+  font-size: var(--orts-font-size-md);
+  transition: background var(--orts-transition-fast), color var(--orts-transition-fast);
+}
+
+.modeToggleBtn:hover {
+  background: rgba(34, 55, 100, 0.85);
+  color: #bbc;
+}
+
+.modeToggleBtn.active {
+  background: var(--orts-toggle-active-bg);
+  color: #fff;
+}
+
+.modeToggleBtn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}

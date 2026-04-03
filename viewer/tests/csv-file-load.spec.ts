@@ -65,18 +65,18 @@ test("CSV file load populates trail and charts", async ({ page }) => {
   await fileInput.setInputFiles(csvPath);
 
   // Verify file load info text
-  const orbitInfo = page.locator(".orbit-info").first();
+  const orbitInfo = page.locator('[data-testid="orbit-info-file"]');
   await expect(orbitInfo).toContainText(`${NUM_POINTS} points`, { timeout: 5000 });
   await expect(orbitInfo).toContainText(`Duration: ${EXPECTED_DURATION}.0 s`);
 
   // Verify SimInfo is set from CSV metadata
-  const simInfoText = page.locator(".orbit-info").nth(1);
+  const simInfoText = page.locator('[data-testid="orbit-info-sim"]');
   await expect(simInfoText).toContainText("mu=398600.44", { timeout: 5000 });
   await expect(simInfoText).toContainText("dt=10.0");
   await expect(simInfoText).toContainText("2000-01-01"); // epoch_jd = 2451545.0 = J2000
 
   // Verify total points displayed matches
-  const pointsInfo = page.locator(".orbit-info").nth(2);
+  const pointsInfo = page.locator('[data-testid="orbit-info-points"]');
   await expect(pointsInfo).toContainText(`${NUM_POINTS} points`, { timeout: 5000 });
 
   // Verify TrailBuffer has correct data via debug state

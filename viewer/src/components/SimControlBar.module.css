@@ -1,0 +1,41 @@
+.controlBar {
+  display: flex;
+  gap: var(--orts-space-sm);
+  margin-top: var(--orts-space-sm);
+}
+
+.controlBtn {
+  padding: var(--orts-space-sm) 14px;
+  color: #fff;
+  border-radius: var(--orts-panel-radius);
+  cursor: pointer;
+  font-size: var(--orts-font-size-md);
+  font-weight: bold;
+}
+
+.pauseBtn {
+  background: var(--orts-button-warning-bg);
+  border: 1px solid rgba(220, 180, 0, 0.6);
+}
+
+.pauseBtn:hover {
+  background: var(--orts-button-warning-hover);
+}
+
+.resumeBtn {
+  background: var(--orts-button-success-bg);
+  border: 1px solid rgba(0, 180, 100, 0.6);
+}
+
+.resumeBtn:hover {
+  background: var(--orts-button-success-hover);
+}
+
+.terminateBtn {
+  background: rgba(160, 40, 40, 0.85);
+  border: 1px solid rgba(200, 60, 60, 0.6);
+}
+
+.terminateBtn:hover {
+  background: rgba(180, 50, 50, 1.0);
+}

@@ -1,0 +1,33 @@
+.frameSelector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--orts-space-xs);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--orts-space-md);
+}
+
+.label {
+  color: var(--orts-text-secondary);
+  font-size: var(--orts-font-size-sm);
+  min-width: 42px;
+}
+
+.select {
+  flex: 1;
+  padding: 5px var(--orts-space-md);
+  background: var(--orts-bg-input);
+  color: var(--orts-text-primary);
+  border: 1px solid var(--orts-border-subtle);
+  border-radius: var(--orts-panel-radius);
+  font-size: var(--orts-font-size-md);
+  cursor: pointer;
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--orts-border-focus);
+}

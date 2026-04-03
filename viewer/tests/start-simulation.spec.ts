@@ -59,7 +59,7 @@ async function connectToIdleServer(page: import("@playwright/test").Page) {
   await page.goto("/");
 
   // Disconnect from auto-connected default server if needed
-  const disconnectBtn = page.locator(".ws-disconnect-btn");
+  const disconnectBtn = page.locator('[data-testid="ws-disconnect-btn"]');
   try {
     await disconnectBtn.waitFor({ state: "visible", timeout: 3000 });
     await disconnectBtn.click();
@@ -67,9 +67,9 @@ async function connectToIdleServer(page: import("@playwright/test").Page) {
     // Not connected; continue
   }
 
-  const urlInput = page.locator(".ws-url-input");
+  const urlInput = page.locator('[data-testid="ws-url-input"]');
   await urlInput.fill(wsUrl);
-  const connectBtn = page.locator(".ws-connect-btn");
+  const connectBtn = page.locator('[data-testid="ws-connect-btn"]');
   await connectBtn.click();
 }
 
@@ -77,19 +77,19 @@ test("idle server sends status message and viewer shows idle state", async ({ pa
   await connectToIdleServer(page);
 
   // Should show "Connected (Idle)"
-  const statusText = page.locator(".ws-status-text");
+  const statusText = page.locator('[data-testid="ws-status-text"]');
   await expect(statusText).toHaveText("Connected (Idle)", { timeout: 10000 });
 
   // SimConfigForm should be visible
-  const form = page.locator(".sim-config-form");
+  const form = page.locator('[data-testid="sim-config-form"]');
   await expect(form).toBeVisible({ timeout: 5000 });
 
   // Preset buttons should exist
-  const presetBtns = page.locator(".preset-btn");
+  const presetBtns = page.locator('[data-testid="preset-btn"]');
   expect(await presetBtns.count()).toBe(3);
 
   // Start button should exist
-  const startBtn = page.locator(".sim-config-start-btn");
+  const startBtn = page.locator('[data-testid="sim-config-start-btn"]');
   await expect(startBtn).toBeVisible();
   await expect(startBtn).toHaveText("Start Simulation");
 });
@@ -98,39 +98,39 @@ test("start simulation from preset transitions to running state", async ({ page 
   await connectToIdleServer(page);
 
   // Wait for idle state
-  const statusText = page.locator(".ws-status-text");
+  const statusText = page.locator('[data-testid="ws-status-text"]');
   await expect(statusText).toHaveText("Connected (Idle)", { timeout: 10000 });
 
   // Select ISS preset (first one, should be active by default)
-  const presetBtns = page.locator(".preset-btn");
-  await expect(presetBtns.first()).toHaveClass(/active/);
+  const presetBtns = page.locator('[data-testid="preset-btn"]');
+  await expect(presetBtns.first()).toHaveAttribute('data-state', 'active');
 
   // Click start
-  const startBtn = page.locator(".sim-config-start-btn");
+  const startBtn = page.locator('[data-testid="sim-config-start-btn"]');
   await startBtn.click();
 
   // Should transition to "Connected" (running)
   await expect(statusText).toHaveText("Connected", { timeout: 10000 });
 
   // SimConfigForm should disappear
-  const form = page.locator(".sim-config-form");
+  const form = page.locator('[data-testid="sim-config-form"]');
   await expect(form).not.toBeVisible({ timeout: 5000 });
 
   // orbit-info should appear with simulation metadata
-  const orbitInfo = page.locator(".orbit-info");
-  await expect(orbitInfo.first()).toBeVisible({ timeout: 10000 });
+  const orbitInfo = page.locator('[data-testid="orbit-info-sim"]');
+  await expect(orbitInfo).toBeVisible({ timeout: 10000 });
 });
 
 test("pause and resume simulation", async ({ page }) => {
   // Server is running from the previous test
   await connectToIdleServer(page);
 
-  const statusText = page.locator(".ws-status-text");
+  const statusText = page.locator('[data-testid="ws-status-text"]');
   // Server should be running (not idle) from the previous test
   await expect(statusText).toHaveText("Connected", { timeout: 10000 });
 
   // Pause button should be visible
-  const pauseBtn = page.locator(".sim-pause-btn");
+  const pauseBtn = page.locator('[data-testid="sim-pause-btn"]');
   await expect(pauseBtn).toBeVisible({ timeout: 5000 });
 
   // Click pause
@@ -140,7 +140,7 @@ test("pause and resume simulation", async ({ page }) => {
   await expect(statusText).toHaveText("Connected (Paused)", { timeout: 10000 });
 
   // Resume button should appear
-  const resumeBtn = page.locator(".sim-resume-btn");
+  const resumeBtn = page.locator('[data-testid="sim-resume-btn"]');
   await expect(resumeBtn).toBeVisible({ timeout: 5000 });
 
   // Click resume
@@ -157,11 +157,11 @@ test("terminate simulation returns to idle and allows restart", async ({ page })
   // Server is running from the previous tests
   await connectToIdleServer(page);
 
-  const statusText = page.locator(".ws-status-text");
+  const statusText = page.locator('[data-testid="ws-status-text"]');
   await expect(statusText).toHaveText("Connected", { timeout: 10000 });
 
   // Click stop/terminate
-  const terminateBtn = page.locator(".sim-terminate-btn");
+  const terminateBtn = page.locator('[data-testid="sim-terminate-btn"]');
   await expect(terminateBtn).toBeVisible({ timeout: 5000 });
   await terminateBtn.click();
 
@@ -169,11 +169,11 @@ test("terminate simulation returns to idle and allows restart", async ({ page })
   await expect(statusText).toHaveText("Connected (Idle)", { timeout: 10000 });
 
   // SimConfigForm should be visible again
-  const form = page.locator(".sim-config-form");
+  const form = page.locator('[data-testid="sim-config-form"]');
   await expect(form).toBeVisible({ timeout: 5000 });
 
   // Start a new simulation
-  const startBtn = page.locator(".sim-config-start-btn");
+  const startBtn = page.locator('[data-testid="sim-config-start-btn"]');
   await startBtn.click();
 
   // Should transition back to running

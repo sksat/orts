@@ -1,0 +1,328 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ChartDataMap,
+  type ChartBuffer,
+  IngestBuffer,
+  quantizeChartTime,
+  queryDerived,
+  sliceArrays,
+  type TimeRange,
+  useDuckDB,
+  useTimeSeriesStore,
+} from "uneri";
+import type { IngestBuffer as IngestBufferType } from "uneri";
+import { METRIC_NAMES } from "../chartMetrics.js";
+import { createOrbitSchema } from "../db/orbitSchema.js";
+import type { OrbitPoint } from "../orbit.js";
+import type { MultiChartDataMap } from "./buildMultiChartData.js";
+import type { SatelliteConfig } from "./useMultiSatelliteStore.js";
+import { useMultiSatelliteStore } from "./useMultiSatelliteStore.js";
+import type { SatelliteInfo, SimInfo } from "./useWebSocket.js";
+
+/** Chart color palette matching the 3D scene SATELLITE_COLORS. */
+const SATELLITE_CHART_COLORS = ["#00ff88", "#ff4488", "#44aaff", "#ffaa44", "#aa44ff"];
+
+export interface UseSimulationDataOptions {
+  simInfo: SimInfo | null;
+  ingestBuffers: Map<string, IngestBufferType<OrbitPoint>>;
+  chartBuffer: ChartBuffer;
+  chartBufferVersion: number;
+  playback: {
+    isLive: boolean;
+    currentTime: number;
+  };
+  timeRange: TimeRange;
+  /** Fallback for DuckDB query failure — sends query_range to server */
+  queryRange: (satId: string, tMin: number, tMax: number, maxPoints: number) => void;
+}
+
+export interface SimulationDataResult {
+  dbReady: boolean;
+  visibleChartData: ChartDataMap | null;
+  multiChartData: MultiChartDataMap | null;
+  chartsLoading: boolean;
+  isMultiSatellite: boolean;
+  satelliteConfigs: SatelliteConfig[];
+  handleChartZoom: (tMin: number, tMax: number) => void;
+  /** Clear zoom/query state (call on source switch to avoid stale data). */
+  resetZoomState: () => void;
+  /** Expose the latestRequestedRangeRef for WS staleness check */
+  latestRequestedRangeRef: React.RefObject<{ tMin: number; tMax: number } | null>;
+}
+
+export function useSimulationData(options: UseSimulationDataOptions): SimulationDataResult {
+  const {
+    simInfo,
+    ingestBuffers,
+    chartBuffer,
+    chartBufferVersion,
+    playback,
+    timeRange,
+    queryRange,
+  } = options;
+
+  // --- DuckDB connection ---
+  const mu = simInfo?.mu;
+  const bodyRadius = simInfo?.central_body_radius;
+  const orbitSchema = useMemo(
+    () => createOrbitSchema(mu ?? 398600.4418, bodyRadius ?? 6378.137),
+    [mu, bodyRadius],
+  );
+  const { conn, isReady: dbReady } = useDuckDB(orbitSchema);
+
+  // Expose DuckDB connection and debug state for E2E testing (dev mode only)
+  useEffect(() => {
+    if (import.meta.env.DEV && conn) {
+      (window as unknown as Record<string, unknown>).__duckdb_conn = conn;
+    }
+  }, [conn]);
+
+  // Expose debug state for E2E testing (dev mode only)
+  const isMultiSatellite = simInfo != null && simInfo.satellites.length > 1;
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__debug_ingest_buffers = ingestBuffers;
+      (window as unknown as Record<string, unknown>).__debug_is_multi_satellite = isMultiSatellite;
+    }
+  }, [isMultiSatellite, ingestBuffers]);
+
+  // --- Single-satellite IngestBuffer ref (for single-sat DuckDB mode) ---
+  const singleIngestBufferRef = useRef(new IngestBuffer<OrbitPoint>());
+
+  // Keep singleIngestBufferRef pointing to the first satellite's buffer for single-sat mode
+  useEffect(() => {
+    if (simInfo?.satellites.length === 1) {
+      const buf = ingestBuffers.get(simInfo.satellites[0].id);
+      if (buf) singleIngestBufferRef.current = buf as IngestBuffer<OrbitPoint>;
+    }
+  }, [simInfo, ingestBuffers]);
+
+  // --- Zoom state ---
+  const [localZoomData, setLocalZoomData] = useState<ChartDataMap | null>(null);
+  const [localChartBump, setLocalChartBump] = useState(0);
+  const effectiveChartVersion = chartBufferVersion + localChartBump;
+
+  const lastSentRangeRef = useRef<{ tMin: number; tMax: number } | null>(null);
+  const latestRequestedRangeRef = useRef<{ tMin: number; tMax: number } | null>(null);
+  const chartZoomTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (chartZoomTimerRef.current != null) {
+        clearTimeout(chartZoomTimerRef.current);
+      }
+    };
+  }, []);
+
+  // --- Multi-satellite configs ---
+  const satelliteConfigs = useMemo((): SatelliteConfig[] => {
+    if (!simInfo) return [];
+    return simInfo.satellites.map((sat: SatelliteInfo, i: number) => ({
+      id: sat.id,
+      label: sat.name ?? sat.id,
+      color: SATELLITE_CHART_COLORS[i % SATELLITE_CHART_COLORS.length],
+    }));
+  }, [simInfo]);
+
+  // --- Chart zoom handler ---
+  const isLive = playback.isLive;
+
+  const handleChartZoom = useCallback(
+    (tMin: number, tMax: number) => {
+      if (isMultiSatellite) return;
+
+      // Dedupe: skip if same range as last sent request
+      const last = lastSentRangeRef.current;
+      if (last && last.tMin === tMin && last.tMax === tMax) return;
+
+      // Coalesce: always update the latest desired range
+      latestRequestedRangeRef.current = { tMin, tMax };
+
+      // Trailing debounce: only send after 200ms of quiet
+      if (chartZoomTimerRef.current != null) {
+        clearTimeout(chartZoomTimerRef.current);
+      }
+      chartZoomTimerRef.current = setTimeout(() => {
+        chartZoomTimerRef.current = null;
+        const range = latestRequestedRangeRef.current;
+        if (!range) return;
+        // Always record the zoom range (used by liveChartData for getWindow).
+        lastSentRangeRef.current = range;
+
+        // In live mode, try ChartBuffer first (instant, no server round-trip).
+        // Note: if the zoomed interval later ages out of the ring buffer,
+        // liveChartData returns null and falls back to DuckDB. The user
+        // would need to re-zoom to trigger a fresh query_range in that case.
+        // This is acceptable since the buffer holds ~139h at dt=10s.
+        if (isLive) {
+          if (
+            chartBuffer.length > 0 &&
+            range.tMin >= chartBuffer.earliestT &&
+            range.tMax <= chartBuffer.latestT
+          ) {
+            setLocalChartBump((v) => v + 1);
+            return;
+          }
+        }
+
+        // Query local DuckDB instead of server query_range.
+        // Note: DuckDB may lag behind by up to one ingest tick (~250ms)
+        // since data is flushed asynchronously. This is acceptable for
+        // zoom operations where sub-second freshness isn't critical.
+        if (conn) {
+          queryDerived(conn, orbitSchema, range.tMin, 2000, range.tMax)
+            .then((data) => {
+              // Check if this result is still relevant (not superseded by a newer zoom)
+              const current = latestRequestedRangeRef.current;
+              if (current && current.tMin === range.tMin && current.tMax === range.tMax) {
+                setLocalZoomData(data);
+              }
+            })
+            .catch((e) => {
+              console.warn("Local DuckDB zoom query failed, falling back to server:", e);
+              const satId = simInfo?.satellites[0]?.id ?? "default";
+              queryRange(satId, range.tMin, range.tMax, 2000);
+            });
+        } else {
+          // No DuckDB connection — fall back to server query_range.
+          const satId = simInfo?.satellites[0]?.id ?? "default";
+          queryRange(satId, range.tMin, range.tMax, 2000);
+        }
+      }, 200);
+    },
+    [conn, orbitSchema, isMultiSatellite, simInfo, isLive, queryRange, chartBuffer],
+  );
+
+  // --- Charts: single-satellite mode (replay or single satellite) ---
+  const { data: singleChartData, isLoading: singleChartsLoading } = useTimeSeriesStore({
+    conn: isMultiSatellite ? null : conn, // disable when multi-sat (uses multi-store instead)
+    schema: orbitSchema,
+    ingestBufferRef: singleIngestBufferRef,
+    timeRange,
+  });
+
+  // --- Charts: multi-satellite mode ---
+  const { data: multiChartData, isLoading: multiChartsLoading } = useMultiSatelliteStore({
+    conn: isMultiSatellite ? conn : null, // only active in multi-sat mode
+    baseSchema: orbitSchema,
+    satelliteConfigs,
+    ingestBuffers,
+    metricNames: METRIC_NAMES,
+    timeRange,
+  });
+
+  const chartsLoading = isMultiSatellite ? multiChartsLoading : singleChartsLoading;
+
+  // --- Chart current time ---
+  const chartCurrentTime = useMemo(() => {
+    if (isLive) return undefined;
+    return quantizeChartTime(playback.currentTime);
+  }, [isLive, playback.currentTime]);
+
+  // --- Live chart data: bypass DuckDB, read directly from ChartBuffer ---
+  const liveChartData = useMemo((): ChartDataMap | null => {
+    if (!isLive || isMultiSatellite) return null;
+    // effectiveChartVersion triggers re-read from the buffer
+    void effectiveChartVersion;
+    if (chartBuffer.length === 0) return null;
+
+    // If user has zoomed, check if ChartBuffer covers the range.
+    // If yes, serve from buffer. If no, return null to fall through to DuckDB.
+    const zoomRange = lastSentRangeRef.current;
+    if (zoomRange) {
+      if (zoomRange.tMin >= chartBuffer.earliestT && zoomRange.tMax <= chartBuffer.latestT) {
+        return chartBuffer.getWindow(zoomRange.tMin, zoomRange.tMax);
+      }
+      return null; // Fall through to DuckDB for out-of-range zoom
+    }
+
+    if (timeRange != null) {
+      const tMax = chartBuffer.latestT;
+      const tMin = tMax - timeRange;
+      return chartBuffer.getWindow(tMin, tMax);
+    }
+    return chartBuffer.toChartData();
+  }, [isLive, isMultiSatellite, effectiveChartVersion, timeRange, chartBuffer]);
+
+  // --- DuckDB chart data: used for replay, zoom outside ChartBuffer, and non-live scrubbing ---
+  const chartArrays = useMemo(() => {
+    if (isMultiSatellite || !singleChartData) return null;
+    return [
+      singleChartData.t,
+      singleChartData.altitude,
+      singleChartData.energy,
+      singleChartData.angular_momentum,
+      singleChartData.velocity,
+      singleChartData.a,
+      singleChartData.e,
+      singleChartData.inc_deg,
+      singleChartData.raan_deg,
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMultiSatellite, singleChartData, isLive]);
+
+  const visibleArrays = useMemo(
+    () => sliceArrays(chartArrays, chartCurrentTime, timeRange),
+    [chartArrays, chartCurrentTime, timeRange],
+  );
+
+  const duckdbChartData = useMemo((): ChartDataMap | null => {
+    if (!visibleArrays) return null;
+    return {
+      t: visibleArrays[0],
+      altitude: visibleArrays[1],
+      energy: visibleArrays[2],
+      angular_momentum: visibleArrays[3],
+      velocity: visibleArrays[4],
+      a: visibleArrays[5],
+      e: visibleArrays[6],
+      inc_deg: visibleArrays[7],
+      raan_deg: visibleArrays[8],
+    };
+  }, [visibleArrays]);
+
+  // --- Zoom reset: clear when returning to live or when time range changes ---
+  const prevIsLiveRef = useRef(isLive);
+  const prevTimeRangeRef = useRef(timeRange);
+  useEffect(() => {
+    if ((isLive && !prevIsLiveRef.current) || timeRange !== prevTimeRangeRef.current) {
+      lastSentRangeRef.current = null;
+      setLocalZoomData(null);
+    }
+    prevIsLiveRef.current = isLive;
+    prevTimeRangeRef.current = timeRange;
+  }, [isLive, timeRange]);
+
+  // Choose data source:
+  // 1. Live + no zoom → ChartBuffer (instant)
+  // 2. Live + zoom covered by ChartBuffer → ChartBuffer.getWindow (instant)
+  // 3. Zoom outside ChartBuffer → local DuckDB query result
+  // 4. Non-live / fallback → DuckDB useTimeSeriesStore
+  const visibleChartData = liveChartData ?? localZoomData ?? duckdbChartData;
+
+  const resetZoomState = useCallback(() => {
+    lastSentRangeRef.current = null;
+    latestRequestedRangeRef.current = null;
+    setLocalZoomData(null);
+    setLocalChartBump((v) => v + 1);
+    if (chartZoomTimerRef.current != null) {
+      clearTimeout(chartZoomTimerRef.current);
+      chartZoomTimerRef.current = null;
+    }
+    // Reset single-satellite ingest buffer to avoid stale chart data after reconnect
+    singleIngestBufferRef.current = new IngestBuffer<OrbitPoint>();
+  }, []);
+
+  return {
+    dbReady,
+    visibleChartData,
+    multiChartData,
+    chartsLoading,
+    isMultiSatellite,
+    satelliteConfigs,
+    handleChartZoom,
+    resetZoomState,
+    latestRequestedRangeRef,
+  };
+}

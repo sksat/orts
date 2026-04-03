@@ -1,0 +1,77 @@
+.graphPanel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--orts-graph-panel-width);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  background: var(--orts-bg-panel);
+  backdrop-filter: var(--orts-blur);
+  border-left: 1px solid var(--orts-border-primary);
+  overflow-y: auto;
+  transition: width 0.2s ease;
+}
+
+.collapsed {
+  width: 40px;
+  overflow: hidden;
+}
+
+.toggle {
+  padding: var(--orts-space-md);
+  background: var(--orts-color-blue-60);
+  color: #fff;
+  border: none;
+  border-bottom: 1px solid var(--orts-border-primary);
+  cursor: pointer;
+  font-size: var(--orts-font-size-sm);
+  text-align: center;
+}
+
+.toggle:hover {
+  background: var(--orts-color-blue-85);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--orts-space-xs);
+  padding: var(--orts-space-md);
+}
+
+.loading {
+  color: var(--orts-text-secondary);
+  font-size: var(--orts-font-size-sm);
+  text-align: center;
+  padding: var(--orts-space-lg);
+}
+
+.timeRangeSelector {
+  display: flex;
+  gap: var(--orts-space-xs);
+  padding: 0 0 var(--orts-space-xs);
+}
+
+.timeRangeBtn {
+  flex: 1;
+  padding: 3px 0;
+  font-size: var(--orts-font-size-xs);
+  background: rgba(255, 255, 255, 0.08);
+  color: #aaa;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.timeRangeBtn.active {
+  background: var(--orts-color-blue-60);
+  color: #fff;
+  border-color: var(--orts-color-blue-60);
+}
+
+.timeRangeBtn:hover {
+  background: rgba(34, 85, 170, 0.4);
+  color: #ddd;
+}

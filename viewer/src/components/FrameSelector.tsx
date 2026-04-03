@@ -1,5 +1,7 @@
 import type { SatelliteInfo } from "../hooks/useWebSocket.js";
 import type { FrameCenter, FrameOrientation, ReferenceFrame } from "../referenceFrame.js";
+import styles from "./FrameSelector.module.css";
+import controlStyles from "../styles/controls.module.css";
 
 interface FrameSelectorProps {
   referenceFrame: ReferenceFrame;
@@ -61,10 +63,10 @@ export function FrameSelector({
   }
 
   return (
-    <div className="frame-selector">
-      <div className="frame-selector-row">
-        <label className="frame-selector-label">Center</label>
-        <select className="frame-selector-select" value={centerKey} onChange={handleCenterChange}>
+    <div className={styles.frameSelector}>
+      <div className={styles.row}>
+        <label className={styles.label}>Center</label>
+        <select className={styles.select} data-testid="frame-selector-select" value={centerKey} onChange={handleCenterChange}>
           <option value="central_body">Central Body</option>
           {satellites.map((sat) => (
             <option key={sat.id} value={`satellite:${sat.id}`}>
@@ -74,15 +76,15 @@ export function FrameSelector({
         </select>
       </div>
 
-      <div className="mode-toggle" style={{ marginTop: "4px" }}>
+      <div className={controlStyles.modeToggle} style={{ marginTop: "4px" }}>
         <button
-          className={`mode-toggle-btn ${referenceFrame.orientation === "inertial" ? "active" : ""}`}
+          className={`${controlStyles.modeToggleBtn} ${referenceFrame.orientation === "inertial" ? controlStyles.active : ""}`}
           onClick={() => handleOrientationChange("inertial")}
         >
           {labels.inertial}
         </button>
         <button
-          className={`mode-toggle-btn ${referenceFrame.orientation === "body_fixed" ? "active" : ""}`}
+          className={`${controlStyles.modeToggleBtn} ${referenceFrame.orientation === "body_fixed" ? controlStyles.active : ""}`}
           onClick={() => handleOrientationChange("body_fixed")}
           disabled={isSatCentered || !hasEpoch}
           title={

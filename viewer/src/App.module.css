@@ -1,0 +1,132 @@
+.uiOverlay {
+  position: absolute;
+  top: var(--orts-space-lg);
+  left: var(--orts-space-lg);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--orts-space-md);
+}
+
+.loadBtn {
+  padding: var(--orts-space-md) var(--orts-space-xl);
+  background: var(--orts-button-primary-bg);
+  color: #fff;
+  border: 1px solid var(--orts-color-blue-60);
+  border-radius: var(--orts-panel-radius);
+  cursor: pointer;
+  font-size: var(--orts-font-size-lg);
+}
+
+.loadBtn:hover {
+  background: var(--orts-button-primary-hover);
+}
+
+.orbitInfo {
+  color: var(--orts-text-muted);
+  font-size: var(--orts-font-size-sm);
+  background: rgba(0, 0, 0, 0.5);
+  padding: var(--orts-space-xs) var(--orts-space-md);
+  border-radius: var(--orts-panel-radius);
+}
+
+.pertTag {
+  display: inline-block;
+  padding: 1px 5px;
+  margin: 0 2px;
+  border-radius: 3px;
+  background: rgba(68, 170, 255, 0.15);
+  border: 1px solid rgba(68, 170, 255, 0.35);
+  font-size: var(--orts-font-size-xs);
+  color: #8cf;
+}
+
+.realtimeControls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--orts-space-sm);
+}
+
+.wsUrlRow {
+  display: flex;
+  gap: var(--orts-space-sm);
+  align-items: center;
+}
+
+.wsUrlInput {
+  flex: 1;
+  padding: var(--orts-space-sm) 10px;
+  background: var(--orts-bg-input);
+  color: var(--orts-text-primary);
+  border: 1px solid var(--orts-border-subtle);
+  border-radius: var(--orts-panel-radius);
+  font-size: var(--orts-font-size-md);
+  font-family: var(--orts-font-mono);
+  min-width: 200px;
+}
+
+.wsUrlInput:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wsUrlInput:focus {
+  outline: none;
+  border-color: var(--orts-border-focus);
+}
+
+.wsBtn {
+  padding: var(--orts-space-sm) 14px;
+  border: 1px solid;
+  border-radius: var(--orts-panel-radius);
+  cursor: pointer;
+  font-size: var(--orts-font-size-md);
+  white-space: nowrap;
+}
+
+.wsConnectBtn {
+  background: var(--orts-button-success-bg);
+  color: #fff;
+  border-color: rgba(0, 180, 100, 0.6);
+}
+
+.wsConnectBtn:hover {
+  background: var(--orts-button-success-hover);
+}
+
+.wsDisconnectBtn {
+  background: var(--orts-button-danger-bg);
+  color: #fff;
+  border-color: rgba(200, 60, 60, 0.6);
+}
+
+.wsDisconnectBtn:hover {
+  background: var(--orts-button-danger-hover);
+}
+
+.wsStatus {
+  display: flex;
+  align-items: center;
+  gap: var(--orts-space-sm);
+}
+
+.wsStatusDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.connected {
+  background: var(--orts-status-connected);
+  box-shadow: 0 0 4px var(--orts-status-connected);
+}
+
+.disconnected {
+  background: var(--orts-status-disconnected);
+}
+
+.wsStatusText {
+  color: var(--orts-text-secondary);
+  font-size: var(--orts-font-size-sm);
+}

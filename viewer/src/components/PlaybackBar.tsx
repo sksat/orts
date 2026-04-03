@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { jd_to_utc_string } from "../wasm/kanameInit.js";
+import styles from "./PlaybackBar.module.css";
 
 interface PlaybackBarProps {
   isPlaying: boolean;
@@ -89,11 +90,12 @@ export function PlaybackBar({
     : "Replay";
 
   return (
-    <div className="playback-bar visible">
-      <div className="playback-slider-row">
+    <div className={styles.playbackBar}>
+      <div className={styles.sliderRow}>
         <input
           type="range"
-          className="time-slider"
+          className={styles.timeSlider}
+          data-testid="time-slider"
           min={0}
           max={1000}
           step={1}
@@ -103,31 +105,31 @@ export function PlaybackBar({
           onTouchEnd={handleSliderChange}
         />
       </div>
-      <div className="playback-controls-row">
-        <button className="play-pause-btn" onClick={handlePlayPause}>
+      <div className={styles.controlsRow}>
+        <button className={styles.playPauseBtn} data-testid="play-pause-btn" onClick={handlePlayPause}>
           {isPlaying || isLive ? "Pause" : "Play"}
         </button>
-        <select className="speed-select" defaultValue="1" onChange={handleSpeedChange}>
+        <select className={styles.speedSelect} defaultValue="1" onChange={handleSpeedChange}>
           {SPEED_OPTIONS.map((s) => (
             <option key={s} value={s}>
               {s}x
             </option>
           ))}
         </select>
-        <span className="time-display">
+        <span className={styles.timeDisplay}>
           {epochJd != null && <>{jd_to_utc_string(epochJd, elapsedTime)} | </>}
           T+{formatTime(elapsedTime)} / {formatTime(totalDuration)}
         </span>
         {isRealtimeMode && (
           <button
-            className={`live-btn ${isLive ? "active" : ""}`}
+            className={`${styles.liveBtn} ${isLive ? styles.active : ""}`}
             onClick={onGoLive}
             disabled={isLive}
           >
             Live
           </button>
         )}
-        <span className={`mode-indicator ${isLive ? "live" : ""}`}>{modeLabel}</span>
+        <span className={`${styles.modeIndicator} ${isLive ? styles.live : ""}`}>{modeLabel}</span>
       </div>
     </div>
   );

@@ -102,20 +102,20 @@ test.describe("multi-satellite NaN alignment", () => {
     await page.goto("/?noAutoConnect=1");
 
     // Connect to mock server
-    const urlInput = page.locator(".ws-url-input");
+    const urlInput = page.locator('[data-testid="ws-url-input"]');
     const mockPort = (wss.address() as AddressInfo).port;
     await urlInput.fill(`ws://localhost:${mockPort}`);
-    const connectBtn = page.locator(".ws-connect-btn");
+    const connectBtn = page.locator('[data-testid="ws-connect-btn"]');
     await connectBtn.click();
 
-    const statusText = page.locator(".ws-status-text");
+    const statusText = page.locator('[data-testid="ws-status-text"]');
     await expect(statusText).toHaveText("Connected", { timeout: 5000 });
 
     // Wait for simInfo to reflect 2 satellites (isMultiSatellite must be true
     // before useMultiSatelliteStore starts creating DuckDB tables).
     await expect(async () => {
       const satCount = await page.evaluate(() => {
-        const sel = document.querySelector(".frame-selector-select");
+        const sel = document.querySelector('[data-testid="frame-selector-select"]');
         // satellite options = total options - 1 (central body)
         return sel ? sel.querySelectorAll("option").length - 1 : 0;
       });
@@ -230,7 +230,7 @@ test.describe("multi-satellite NaN alignment", () => {
     // auto-reconnect.  Server-side close would trigger auto-reconnect →
     // handleConnect → setSimInfo(null) → CREATE OR REPLACE TABLE, wiping
     // the DuckDB tables before the final query.
-    await page.locator(".ws-disconnect-btn").click();
+    await page.locator('[data-testid="ws-disconnect-btn"]').click();
     // Wait for tick loop to drain any remaining buffered data
     await page.waitForTimeout(2000);
 

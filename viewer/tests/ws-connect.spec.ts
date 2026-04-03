@@ -62,12 +62,12 @@ async function connectToTestServer(page: import("@playwright/test").Page) {
   await page.goto("/?noAutoConnect=1");
 
   // Connect to the test server
-  const urlInput = page.locator(".ws-url-input");
+  const urlInput = page.locator('[data-testid="ws-url-input"]');
   await urlInput.fill(wsUrl);
-  const connectBtn = page.locator(".ws-connect-btn");
+  const connectBtn = page.locator('[data-testid="ws-connect-btn"]');
   await connectBtn.click();
 
-  const statusText = page.locator(".ws-status-text");
+  const statusText = page.locator('[data-testid="ws-status-text"]');
   await expect(statusText).toHaveText("Connected", { timeout: 30000 });
 }
 
@@ -123,7 +123,7 @@ test("realtime mode connects and streams orbit data", async ({ page }) => {
   await page.screenshot({ path: "/tmp/viewer-connected.png" });
 
   // Check if the page crashed (UI overlay gone)
-  const uiOverlay = page.locator(".ui-overlay");
+  const uiOverlay = page.locator('[data-testid="ui-overlay"]');
   const overlayCount = await uiOverlay.count();
   console.log("UI overlay elements:", overlayCount);
 

@@ -1,0 +1,18 @@
+.infoBar {
+  color: var(--orts-text-muted);
+  font-size: var(--orts-font-size-sm);
+  background: rgba(0, 0, 0, 0.5);
+  padding: var(--orts-space-xs) var(--orts-space-md);
+  border-radius: var(--orts-panel-radius);
+}
+
+.pertTag {
+  display: inline-block;
+  padding: 1px 5px;
+  margin: 0 2px;
+  border-radius: 3px;
+  background: rgba(68, 170, 255, 0.15);
+  border: 1px solid rgba(68, 170, 255, 0.35);
+  font-size: var(--orts-font-size-xs);
+  color: #8cf;
+}

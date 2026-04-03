@@ -1,0 +1,72 @@
+:root {
+  /* === Primitive colors === */
+  --orts-color-black: #000;
+  --orts-color-navy-85: rgba(0, 0, 10, 0.85);
+  --orts-color-navy-input: rgba(20, 20, 40, 0.85);
+  --orts-color-navy-deep: rgba(10, 10, 30, 0.85);
+  --orts-color-blue-30: rgba(68, 136, 204, 0.3);
+  --orts-color-blue-40: rgba(68, 136, 204, 0.4);
+  --orts-color-blue-60: rgba(68, 136, 204, 0.6);
+  --orts-color-blue-80: rgba(68, 136, 204, 0.8);
+  --orts-color-blue-85: rgba(34, 85, 170, 0.85);
+  --orts-color-blue-100: rgba(34, 85, 170, 1.0);
+  --orts-color-green: #00ff88;
+  --orts-color-green-bg: rgba(0, 140, 80, 0.85);
+  --orts-color-green-hover: rgba(0, 160, 90, 1.0);
+  --orts-color-red-bg: rgba(170, 50, 50, 0.85);
+  --orts-color-red-hover: rgba(190, 60, 60, 1.0);
+  --orts-color-amber-bg: rgba(180, 140, 0, 0.85);
+  --orts-color-amber-hover: rgba(200, 160, 0, 1.0);
+
+  /* === Semantic tokens === */
+  --orts-bg-deep: var(--orts-color-black);
+  --orts-bg-panel: var(--orts-color-navy-85);
+  --orts-bg-input: var(--orts-color-navy-input);
+  --orts-bg-input-deep: var(--orts-color-navy-deep);
+  --orts-border-primary: var(--orts-color-blue-30);
+  --orts-border-subtle: var(--orts-color-blue-40);
+  --orts-border-focus: var(--orts-color-blue-80);
+
+  --orts-button-primary-bg: var(--orts-color-blue-85);
+  --orts-button-primary-hover: var(--orts-color-blue-100);
+  --orts-button-success-bg: var(--orts-color-green-bg);
+  --orts-button-success-hover: var(--orts-color-green-hover);
+  --orts-button-danger-bg: var(--orts-color-red-bg);
+  --orts-button-danger-hover: var(--orts-color-red-hover);
+  --orts-button-warning-bg: var(--orts-color-amber-bg);
+  --orts-button-warning-hover: var(--orts-color-amber-hover);
+
+  --orts-toggle-active-bg: var(--orts-color-blue-85);
+  --orts-toggle-inactive-bg: var(--orts-color-navy-input);
+
+  --orts-status-connected: #0c6;
+  --orts-status-disconnected: #666;
+  --orts-status-live-fg: #0d6;
+  --orts-status-live-bg: rgba(0, 200, 100, 0.35);
+
+  --orts-text-primary: #ccd;
+  --orts-text-secondary: #8899bb;
+  --orts-text-muted: #aac;
+  --orts-text-data: #8af;
+
+  /* === Typography === */
+  --orts-font-ui: sans-serif;
+  --orts-font-mono: monospace;
+  --orts-font-size-xs: 11px;
+  --orts-font-size-sm: 12px;
+  --orts-font-size-md: 13px;
+  --orts-font-size-lg: 14px;
+
+  /* === Spacing === */
+  --orts-space-xs: 4px;
+  --orts-space-sm: 6px;
+  --orts-space-md: 8px;
+  --orts-space-lg: 12px;
+  --orts-space-xl: 16px;
+
+  /* === Effects === */
+  --orts-blur: blur(6px);
+  --orts-transition-fast: 0.15s ease;
+  --orts-panel-radius: 4px;
+  --orts-graph-panel-width: 360px;
+}

@@ -102,15 +102,15 @@ test.describe("simulation_terminated handling", () => {
     await page.goto("/?noAutoConnect=1");
 
     // Connect to mock server
-    const urlInput = page.locator(".ws-url-input");
+    const urlInput = page.locator('[data-testid="ws-url-input"]');
     const mockPort = (wss.address() as AddressInfo).port;
     await urlInput.fill(`ws://localhost:${mockPort}`);
 
-    const connectBtn = page.locator(".ws-connect-btn");
+    const connectBtn = page.locator('[data-testid="ws-connect-btn"]');
     await connectBtn.click();
 
     // Wait for connection
-    const statusText = page.locator(".ws-status-text");
+    const statusText = page.locator('[data-testid="ws-status-text"]');
     await expect(statusText).toHaveText("Connected", { timeout: 5000 });
 
     // Wait for the termination to happen and more data to stream
@@ -122,11 +122,11 @@ test.describe("simulation_terminated handling", () => {
     expect(terminationLog).toContain("atmospheric_entry");
 
     // Verify the viewer didn't crash (UI overlay still exists)
-    const uiOverlay = page.locator(".ui-overlay");
+    const uiOverlay = page.locator('[data-testid="ui-overlay"]');
     await expect(uiOverlay).toBeVisible();
 
     // Verify data is still being displayed (points counter should be > 0 and growing)
-    const pointsInfo = page.locator(".orbit-info").last();
+    const pointsInfo = page.locator('[data-testid="orbit-info-points"]');
     const pointsText = await pointsInfo.textContent();
     expect(pointsText).toContain("points");
 

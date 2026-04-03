@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { type ChartDataMap, type TimeRange, TimeSeriesChart } from "uneri";
 import type { MultiChartDataMap } from "../hooks/buildMultiChartData.js";
+import styles from "./GraphPanel.module.css";
 
 const TIME_RANGE_OPTIONS: { label: string; value: TimeRange }[] = [
   { label: "All", value: null },
@@ -99,18 +100,18 @@ export function GraphPanel({
   }, [chartData, allDefs]);
 
   return (
-    <div className={`graph-panel ${collapsed ? "collapsed" : ""}`}>
-      <button className="graph-panel-toggle" onClick={() => setCollapsed((c) => !c)}>
+    <div className={`${styles.graphPanel} ${collapsed ? styles.collapsed : ""}`}>
+      <button className={styles.toggle} onClick={() => setCollapsed((c) => !c)}>
         {collapsed ? "\u25C0 Graphs" : "\u25B6"}
       </button>
       {!collapsed && (
-        <div className="graph-panel-content">
-          {isLoading && <div className="graph-loading">Loading DuckDB...</div>}
-          <div className="time-range-selector">
+        <div className={styles.content}>
+          {isLoading && <div className={styles.loading}>Loading DuckDB...</div>}
+          <div className={styles.timeRangeSelector}>
             {TIME_RANGE_OPTIONS.map((opt) => (
               <button
                 key={opt.label}
-                className={`time-range-btn ${timeRange === opt.value ? "active" : ""}`}
+                className={`${styles.timeRangeBtn} ${timeRange === opt.value ? styles.active : ""}`}
                 onClick={() => onTimeRangeChange(opt.value)}
               >
                 {opt.label}

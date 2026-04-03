@@ -86,12 +86,12 @@ test("no query_range feedback loop during live streaming", async ({ page }) => {
   });
 
   // Connect to the test server
-  const urlInput = page.locator(".ws-url-input");
+  const urlInput = page.locator('[data-testid="ws-url-input"]');
   await urlInput.fill(wsUrl);
-  const connectBtn = page.locator(".ws-connect-btn");
+  const connectBtn = page.locator('[data-testid="ws-connect-btn"]');
   await connectBtn.click();
 
-  const statusText = page.locator(".ws-status-text");
+  const statusText = page.locator('[data-testid="ws-status-text"]');
   await expect(statusText).toHaveText("Connected", { timeout: 30000 });
 
   // Wait for DuckDB + charts to initialize and data to stream
