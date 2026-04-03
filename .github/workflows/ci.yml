@@ -77,7 +77,7 @@ jobs:
           shared-key: rust-native
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build (test targets)
+      - name: Build workspace
         run: cargo test --workspace --no-run
 
       - name: Upload CLI binary
@@ -107,6 +107,9 @@ jobs:
         with:
           shared-key: rust-native
           save-if: false
+
+      - name: Build (test targets)
+        run: cargo test --workspace --no-run
 
       - name: Test
         run: cargo test --workspace
@@ -143,6 +146,13 @@ jobs:
 
       - name: Build CLI with embedded viewer
         run: cargo build -p orts-cli
+
+      - name: Upload CLI binary (with viewer)
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: orts-with-viewer
+          path: target/debug/orts
+          retention-days: 1
 
   uneri:
     runs-on: ubuntu-latest
