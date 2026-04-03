@@ -48,7 +48,32 @@ jobs:
           path: target/debug/orts
           retention-days: 1
 
-  typescript:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4.4.0
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.3.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm exec biome lint .
+
+  viewer:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
@@ -81,28 +106,55 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Biome format check
-        run: pnpm format:check
-
-      - name: Biome lint
-        run: pnpm exec biome lint .
-
       - name: Build uneri
         run: pnpm --filter uneri build
-
-      - name: Build viewer
-        run: pnpm --filter orts-viewer build
 
       - name: Test uneri
         run: pnpm --filter uneri test
 
+      - name: Build viewer
+        run: pnpm --filter orts-viewer build
+
       - name: Test viewer
         run: pnpm --filter orts-viewer test
 
-      - name: Build tobari-web WASM
-        run: pnpm --filter tobari-web build:wasm:all
+  tobari-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
 
-      - name: Test tobari-web
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4.4.0
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.3.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter tobari-web build
+
+      - name: Test
         run: pnpm --filter tobari-web test
 
   uneri-e2e:
