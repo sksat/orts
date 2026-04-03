@@ -458,7 +458,18 @@ export function App() {
       const RRD_SOURCE_ID = "rrd-file";
       setActiveSourceId(RRD_SOURCE_ID);
 
-      const adapter = new RrdFileAdapter(RRD_SOURCE_ID, file, handleEvent);
+      let totalPoints = 0;
+      const rrdHandleEvent: typeof handleEvent = (sourceId, event) => {
+        handleEvent(sourceId, event);
+        if (event.kind === "history-chunk") {
+          totalPoints += event.points.length;
+        }
+        if (event.kind === "complete") {
+          setOrbitInfo(`Loaded: ${file.name} | ${totalPoints} points`);
+        }
+      };
+
+      const adapter = new RrdFileAdapter(RRD_SOURCE_ID, file, rrdHandleEvent);
       rrdAdapterRef.current = adapter;
       adapter.start();
       setFileSourceActive(true);
