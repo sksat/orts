@@ -1,5 +1,4 @@
 import styles from "../App.module.css";
-import type { SimInfo } from "../hooks/useWebSocket.js";
 import type { ServerState } from "../sources/eventDispatcher.js";
 import type { SimConfigPayload } from "./SimConfigForm.js";
 import { SimConfigForm } from "./SimConfigForm.js";
@@ -44,6 +43,7 @@ export function ConnectionPanel({
         />
         {isConnected ? (
           <button
+            type="button"
             className={`${styles.wsBtn} ${styles.wsDisconnectBtn}`}
             data-testid="ws-disconnect-btn"
             onClick={onDisconnect}
@@ -52,6 +52,7 @@ export function ConnectionPanel({
           </button>
         ) : (
           <button
+            type="button"
             className={`${styles.wsBtn} ${styles.wsConnectBtn}`}
             data-testid="ws-connect-btn"
             onClick={onConnect}

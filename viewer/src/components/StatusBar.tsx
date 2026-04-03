@@ -61,6 +61,7 @@ export function StatusBar({
             placeholder="ws://localhost:9001/ws"
           />
           <button
+            type="button"
             className={`${styles.btn} ${styles.connectBtn}`}
             data-testid="ws-connect-btn"
             onClick={onConnect}
@@ -73,6 +74,7 @@ export function StatusBar({
       {/* Disconnect (when connected) */}
       {isConnected && (
         <button
+          type="button"
           className={`${styles.btn} ${styles.disconnectBtn}`}
           data-testid="ws-disconnect-btn"
           onClick={onDisconnect}
@@ -89,6 +91,7 @@ export function StatusBar({
         <>
           {serverState === "running" ? (
             <button
+              type="button"
               className={`${styles.btn} ${styles.pauseBtn}`}
               data-testid="sim-pause-btn"
               onClick={onPause}
@@ -97,6 +100,7 @@ export function StatusBar({
             </button>
           ) : (
             <button
+              type="button"
               className={`${styles.btn} ${styles.resumeBtn}`}
               data-testid="sim-resume-btn"
               onClick={onResume}
@@ -105,6 +109,7 @@ export function StatusBar({
             </button>
           )}
           <button
+            type="button"
             className={`${styles.btn} ${styles.terminateBtn}`}
             data-testid="sim-terminate-btn"
             onClick={onTerminate}
@@ -116,13 +121,17 @@ export function StatusBar({
 
       {/* Configure (when idle) */}
       {isConnected && serverState === "idle" && (
-        <button className={`${styles.btn} ${styles.configureBtn}`} onClick={onOpenSimConfig}>
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.configureBtn}`}
+          onClick={onOpenSimConfig}
+        >
           Configure
         </button>
       )}
 
       {/* Load File */}
-      <button className={`${styles.btn} ${styles.loadBtn}`} onClick={onLoadFileClick}>
+      <button type="button" className={`${styles.btn} ${styles.loadBtn}`} onClick={onLoadFileClick}>
         Load File
       </button>
     </div>
