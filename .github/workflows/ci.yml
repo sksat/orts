@@ -74,6 +74,7 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.1
         with:
+          shared-key: rust-native
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build (test targets)
@@ -86,11 +87,10 @@ jobs:
           path: target/debug/orts
           retention-days: 1
 
-  # Independent test execution — rebuilds from cargo cache, not from
-  # rust-build artifacts (target dir is ~19GB, too large for artifacts).
-  # Runs in parallel so it doesn't affect the critical path.
+  # Reuses cargo cache from rust-build via shared-key to skip recompilation.
   rust-test:
     runs-on: ubuntu-latest
+    needs: [rust-build]
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -105,6 +105,7 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.1
         with:
+          shared-key: rust-native
           save-if: false
 
       - name: Test
