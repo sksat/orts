@@ -1,7 +1,7 @@
 import type { SatelliteInfo } from "../hooks/useWebSocket.js";
 import type { FrameCenter, FrameOrientation, ReferenceFrame } from "../referenceFrame.js";
-import styles from "./FrameSelector.module.css";
 import controlStyles from "../styles/controls.module.css";
+import styles from "./FrameSelector.module.css";
 
 interface FrameSelectorProps {
   referenceFrame: ReferenceFrame;
@@ -66,7 +66,12 @@ export function FrameSelector({
     <div className={styles.frameSelector}>
       <div className={styles.row}>
         <label className={styles.label}>Center</label>
-        <select className={styles.select} data-testid="frame-selector-select" value={centerKey} onChange={handleCenterChange}>
+        <select
+          className={styles.select}
+          data-testid="frame-selector-select"
+          value={centerKey}
+          onChange={handleCenterChange}
+        >
           <option value="central_body">Central Body</option>
           {satellites.map((sat) => (
             <option key={sat.id} value={`satellite:${sat.id}`}>

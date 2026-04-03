@@ -103,7 +103,7 @@ test("start simulation from preset transitions to running state", async ({ page 
 
   // Select ISS preset (first one, should be active by default)
   const presetBtns = page.locator('[data-testid="preset-btn"]');
-  await expect(presetBtns.first()).toHaveAttribute('data-state', 'active');
+  await expect(presetBtns.first()).toHaveAttribute("data-state", "active");
 
   // Click start
   const startBtn = page.locator('[data-testid="sim-config-start-btn"]');

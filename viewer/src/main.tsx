@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
-import './styles/tokens.css';
-import './styles/base.css';
+import "./styles/tokens.css";
+import "./styles/base.css";
 import "uneri/style.css";
 import { App } from "./App.js";
 

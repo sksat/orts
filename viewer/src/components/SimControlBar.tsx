@@ -11,15 +11,27 @@ export function SimControlBar({ serverState, onPause, onResume, onTerminate }: S
   return (
     <div className={styles.controlBar}>
       {serverState === "running" ? (
-        <button className={`${styles.controlBtn} ${styles.pauseBtn}`} data-testid="sim-pause-btn" onClick={onPause}>
+        <button
+          className={`${styles.controlBtn} ${styles.pauseBtn}`}
+          data-testid="sim-pause-btn"
+          onClick={onPause}
+        >
           Pause
         </button>
       ) : (
-        <button className={`${styles.controlBtn} ${styles.resumeBtn}`} data-testid="sim-resume-btn" onClick={onResume}>
+        <button
+          className={`${styles.controlBtn} ${styles.resumeBtn}`}
+          data-testid="sim-resume-btn"
+          onClick={onResume}
+        >
           Resume
         </button>
       )}
-      <button className={`${styles.controlBtn} ${styles.terminateBtn}`} data-testid="sim-terminate-btn" onClick={onTerminate}>
+      <button
+        className={`${styles.controlBtn} ${styles.terminateBtn}`}
+        data-testid="sim-terminate-btn"
+        onClick={onTerminate}
+      >
         Stop
       </button>
     </div>

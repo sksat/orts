@@ -106,7 +106,11 @@ export function PlaybackBar({
         />
       </div>
       <div className={styles.controlsRow}>
-        <button className={styles.playPauseBtn} data-testid="play-pause-btn" onClick={handlePlayPause}>
+        <button
+          className={styles.playPauseBtn}
+          data-testid="play-pause-btn"
+          onClick={handlePlayPause}
+        >
           {isPlaying || isLive ? "Pause" : "Play"}
         </button>
         <select className={styles.speedSelect} defaultValue="1" onChange={handleSpeedChange}>

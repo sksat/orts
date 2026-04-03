@@ -15,9 +15,7 @@ export function SimInfoBar({
   epochJd,
   activePerturbations,
 }: SimInfoBarProps) {
-  const satNames = simInfo.satellites
-    .map((sat) => sat.name ?? sat.id)
-    .join(" | ");
+  const satNames = simInfo.satellites.map((sat) => sat.name ?? sat.id).join(" | ");
 
   return (
     <>

@@ -9,14 +9,14 @@
   --orts-color-blue-60: rgba(68, 136, 204, 0.6);
   --orts-color-blue-80: rgba(68, 136, 204, 0.8);
   --orts-color-blue-85: rgba(34, 85, 170, 0.85);
-  --orts-color-blue-100: rgba(34, 85, 170, 1.0);
+  --orts-color-blue-100: rgba(34, 85, 170, 1);
   --orts-color-green: #00ff88;
   --orts-color-green-bg: rgba(0, 140, 80, 0.85);
-  --orts-color-green-hover: rgba(0, 160, 90, 1.0);
+  --orts-color-green-hover: rgba(0, 160, 90, 1);
   --orts-color-red-bg: rgba(170, 50, 50, 0.85);
-  --orts-color-red-hover: rgba(190, 60, 60, 1.0);
+  --orts-color-red-hover: rgba(190, 60, 60, 1);
   --orts-color-amber-bg: rgba(180, 140, 0, 0.85);
-  --orts-color-amber-hover: rgba(200, 160, 0, 1.0);
+  --orts-color-amber-hover: rgba(200, 160, 0, 1);
 
   /* === Semantic tokens === */
   --orts-bg-deep: var(--orts-color-black);

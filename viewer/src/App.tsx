@@ -65,11 +65,7 @@ export function App() {
   const fileSource = useFileSource({ handleEvent });
 
   // --- Realtime playback (history scrubbing) ---
-  const realtimePlayback = useRealtimePlayback(
-    trailBuffersMap,
-    terminatedSatellites,
-    timeRange,
-  );
+  const realtimePlayback = useRealtimePlayback(trailBuffersMap, terminatedSatellites, timeRange);
 
   // Use ref for goLive to avoid including it in handleConnect deps.
   const goLiveRef = useRef(realtimePlayback.goLive);
@@ -77,18 +73,15 @@ export function App() {
 
   // --- queryRange callback for useSimulationData fallback ---
   const sendRef = useRef<(msg: unknown) => void>(() => {});
-  const queryRange = useCallback(
-    (satId: string, tMin: number, tMax: number, maxPoints: number) => {
-      sendRef.current({
-        type: "query_range",
-        t_min: tMin,
-        t_max: tMax,
-        max_points: maxPoints,
-        entity_path: satId,
-      });
-    },
-    [],
-  );
+  const queryRange = useCallback((satId: string, tMin: number, tMax: number, maxPoints: number) => {
+    sendRef.current({
+      type: "query_range",
+      t_min: tMin,
+      t_max: tMax,
+      max_points: maxPoints,
+      entity_path: satId,
+    });
+  }, []);
 
   // --- Simulation data (DuckDB + chart pipeline) ---
   const simData = useSimulationData({
@@ -128,7 +121,14 @@ export function App() {
     simData.resetZoomState();
     goLiveRef.current();
     wsSource.connect();
-  }, [wsSource.connect, resetBuffers, setActiveSourceId, fileSource.stopRrdAdapter, fileSource.clearFileSourceActive, simData.resetZoomState]);
+  }, [
+    wsSource.connect,
+    resetBuffers,
+    setActiveSourceId,
+    fileSource.stopRrdAdapter,
+    fileSource.clearFileSourceActive,
+    simData.resetZoomState,
+  ]);
 
   const handleDisconnect = useCallback(() => {
     manualDisconnectRef.current = true;
@@ -159,7 +159,15 @@ export function App() {
         // it won't fire while a file source is active.
       });
     },
-    [wsSource.isConnected, wsSource.disconnect, fileSource.stopRrdAdapter, fileSource.loadFile, resetBuffers, setActiveSourceId, simData.resetZoomState],
+    [
+      wsSource.isConnected,
+      wsSource.disconnect,
+      fileSource.stopRrdAdapter,
+      fileSource.loadFile,
+      resetBuffers,
+      setActiveSourceId,
+      simData.resetZoomState,
+    ],
   );
 
   // --- Drag & Drop ---
@@ -205,7 +213,12 @@ export function App() {
   const noAutoConnect = new URLSearchParams(window.location.search).has("noAutoConnect");
 
   useEffect(() => {
-    if (!fileSource.fileSourceActive && !wsSource.isConnected && !manualDisconnectRef.current && !noAutoConnect) {
+    if (
+      !fileSource.fileSourceActive &&
+      !wsSource.isConnected &&
+      !manualDisconnectRef.current &&
+      !noAutoConnect
+    ) {
       handleConnectRef.current();
     }
   }, [fileSource.fileSourceActive, wsSource.isConnected, noAutoConnect]);

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { IngestBuffer as IngestBufferType } from "uneri";
 import {
-  type ChartDataMap,
   type ChartBuffer,
+  type ChartDataMap,
   IngestBuffer,
   quantizeChartTime,
   queryDerived,
@@ -10,7 +11,6 @@ import {
   useDuckDB,
   useTimeSeriesStore,
 } from "uneri";
-import type { IngestBuffer as IngestBufferType } from "uneri";
 import { METRIC_NAMES } from "../chartMetrics.js";
 import { createOrbitSchema } from "../db/orbitSchema.js";
 import type { OrbitPoint } from "../orbit.js";

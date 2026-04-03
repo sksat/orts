@@ -1,4 +1,4 @@
-import { type OrbitPoint, lerpPoint } from "../orbit.js";
+import { lerpPoint, type OrbitPoint } from "../orbit.js";
 
 /**
  * Bounded buffer for orbit trail rendering.

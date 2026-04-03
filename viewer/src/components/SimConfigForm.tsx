@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
-import styles from "./SimConfigForm.module.css";
 import controlStyles from "../styles/controls.module.css";
+import styles from "./SimConfigForm.module.css";
 
 export type OrbitMode = "preset" | "circular" | "tle";
 

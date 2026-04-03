@@ -1,7 +1,7 @@
-import type { SimConfigPayload } from "./SimConfigForm.js";
-import type { ServerState } from "../sources/eventDispatcher.js";
-import type { SimInfo } from "../hooks/useWebSocket.js";
 import styles from "../App.module.css";
+import type { SimInfo } from "../hooks/useWebSocket.js";
+import type { ServerState } from "../sources/eventDispatcher.js";
+import type { SimConfigPayload } from "./SimConfigForm.js";
 import { SimConfigForm } from "./SimConfigForm.js";
 import { SimControlBar } from "./SimControlBar.js";
 
@@ -76,9 +76,7 @@ export function ConnectionPanel({
         </span>
       </div>
 
-      {isConnected && serverState === "idle" && (
-        <SimConfigForm onStart={onStartSimulation} />
-      )}
+      {isConnected && serverState === "idle" && <SimConfigForm onStart={onStartSimulation} />}
 
       {isConnected && (serverState === "running" || serverState === "paused") && (
         <SimControlBar

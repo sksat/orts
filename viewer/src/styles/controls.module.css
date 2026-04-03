@@ -14,7 +14,9 @@
   border: none;
   cursor: pointer;
   font-size: var(--orts-font-size-md);
-  transition: background var(--orts-transition-fast), color var(--orts-transition-fast);
+  transition:
+    background var(--orts-transition-fast),
+    color var(--orts-transition-fast);
 }
 
 .modeToggleBtn:hover {
