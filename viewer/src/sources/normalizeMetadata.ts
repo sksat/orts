@@ -88,7 +88,7 @@ export function rrdMetadataToSimInfo(
     stream_interval: dt,
     central_body: metadata.body_name ?? "earth",
     central_body_radius: metadata.body_radius ?? DEFAULT_RADIUS,
-    epoch_jd: metadata.epoch_jd ?? undefined,
+    epoch_jd: metadata.epoch_jd ?? null,
     satellites,
   };
 }
