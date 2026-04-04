@@ -10,7 +10,7 @@ import { useCallback, useRef } from "react";
 import type { SimConfigPayload } from "../components/SimConfigForm.js";
 import { type QueryRangeResponse, type SimInfo, useWebSocket } from "../hooks/useWebSocket.js";
 import type { OrbitPoint } from "../orbit.js";
-import { mergeQueryRangePoints } from "../utils/mergeQueryRange.js";
+import { mergeQueryRangePoints, pickTrailBufferForResponse } from "../utils/mergeQueryRange.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
 import type { SourceEvent } from "./types.js";
 
@@ -110,9 +110,16 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
           return;
         }
       }
-      // Merge with existing streaming data to avoid position rewind
-      const satId = simInfoRef.current?.satellites[0]?.id ?? "default";
-      const trailBuf = trailBuffersRef.current.get(satId);
+      // Merge with existing streaming tail for *the same satellite* so
+      // the 3D position does not rewind. Using a hard-coded fallback
+      // (satellites[0]) would contaminate sat B's trail with sat A's
+      // tail in multi-sat sims.
+      const fallbackSatId = simInfoRef.current?.satellites[0]?.id ?? null;
+      const trailBuf = pickTrailBufferForResponse(
+        response.points,
+        trailBuffersRef.current,
+        fallbackSatId,
+      );
       const merged = trailBuf
         ? mergeQueryRangePoints(response.points, trailBuf.getAll())
         : response.points;
