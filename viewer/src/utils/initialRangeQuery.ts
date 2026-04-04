@@ -31,38 +31,45 @@ export interface PlanInitialRangeQueryInput {
 }
 
 /**
- * Decide whether the viewer should proactively fire a `query_range`
- * request after (re)connecting, and if so, what parameters to use.
+ * Decide whether the viewer should proactively fire `query_range`
+ * requests after (re)connecting, and if so, what parameters to use for
+ * each satellite.
  *
  * The contract with the server is: on connect, the server ships a small
  * bounded overview of the full simulation history. That is fast to
  * transfer and render, but too sparse for detailed chart zoom within a
  * finite display window. When the user has a finite `timeRange` selected
- * (e.g. "1 hour"), this helper plans a pull request for higher-resolution
- * data within that window. In "All" mode (`timeRange = null`) the overview
- * is considered sufficient and this returns `null`.
+ * (e.g. "1 hour"), this helper plans one pull request **per satellite**
+ * for higher-resolution data within that window. In "All" mode
+ * (`timeRange = null`) the overview is considered sufficient and this
+ * returns an empty array.
  *
- * Returns `null` when no query should be fired.
+ * Returns an empty array when no query should be fired.
  */
-export function planInitialRangeQuery(input: PlanInitialRangeQueryInput): InitialRangeQuery | null {
+export function planInitialRangeQuery(
+  input: PlanInitialRangeQueryInput,
+): InitialRangeQuery[] {
   const { simInfo, timeRange, latestT, alreadyQueried } = input;
 
-  if (alreadyQueried) return null;
-  if (!simInfo) return null;
+  if (alreadyQueried) return [];
+  if (!simInfo) return [];
   // "All" mode: the server overview is intended to be the full view; no
   // proactive enrichment. Follow-up detail still flows via handleChartZoom.
-  if (timeRange == null) return null;
+  if (timeRange == null) return [];
   // No history has arrived yet — nothing to anchor the window on.
-  if (latestT <= 0) return null;
-  if (simInfo.satellites.length === 0) return null;
+  if (latestT <= 0) return [];
+  if (simInfo.satellites.length === 0) return [];
 
-  const satId = simInfo.satellites[0].id;
-  return {
-    satId,
-    tMin: Math.max(0, latestT - timeRange),
-    tMax: latestT,
-    // 2000 is the same density the chart zoom path requests — enough to
-    // render a smooth line across a 1h window at 1.8s resolution.
-    maxPoints: 2000,
-  };
+  const tMin = Math.max(0, latestT - timeRange);
+  const tMax = latestT;
+  // 2000 is the same density the chart zoom path requests — enough to
+  // render a smooth line across a 1h window at 1.8s resolution.
+  const maxPoints = 2000;
+
+  return simInfo.satellites.map((sat) => ({
+    satId: sat.id,
+    tMin,
+    tMax,
+    maxPoints,
+  }));
 }

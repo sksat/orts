@@ -127,11 +127,11 @@ export function App() {
   // connection is a distinct object, so this fires exactly once per
   // connect without needing manual reset logic.
   const firedInitialQueryForSimInfoRef = useRef<typeof simInfo>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: chartBufferVersion
-  // is an observational trigger — trailBuffersMap is a Map held in a ref and
-  // does not trigger re-renders on mutation, so we depend on chartBufferVersion
-  // (bumped by the event dispatcher on new data) to re-run this effect once
-  // history has actually arrived and latestT can be computed.
+  // `trailBuffersMap` is mutated in place (it is a ref-held `Map`) so it
+  // cannot be a real dep; `chartBufferVersion` is the observational
+  // trigger bumped by the event dispatcher when new data arrives, and is
+  // what actually makes this effect re-run after history lands.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: chartBufferVersion is the observational trigger; trailBuffersMap is read via a stable ref.
   useEffect(() => {
     if (!simInfo) {
       firedInitialQueryForSimInfoRef.current = null;
@@ -148,14 +148,16 @@ export function App() {
       }
     }
 
-    const plan = planInitialRangeQuery({
+    const plans = planInitialRangeQuery({
       simInfo,
       timeRange,
       latestT,
       alreadyQueried: false,
     });
-    if (plan) {
-      queryRange(plan.satId, plan.tMin, plan.tMax, plan.maxPoints);
+    if (plans.length > 0) {
+      for (const plan of plans) {
+        queryRange(plan.satId, plan.tMin, plan.tMax, plan.maxPoints);
+      }
       firedInitialQueryForSimInfoRef.current = simInfo;
     }
   }, [simInfo, timeRange, chartBufferVersion, queryRange]);

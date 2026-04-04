@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
-import type { SimInfo } from "../hooks/useWebSocket.js";
+import type { SatelliteInfo, SimInfo } from "../hooks/useWebSocket.js";
 import { planInitialRangeQuery } from "./initialRangeQuery.js";
 
-function makeSimInfo(satId = "test"): SimInfo {
+function makeSatellite(id: string): SatelliteInfo {
+  return {
+    id,
+    name: null,
+    altitude: 400,
+    period: 5554,
+    perturbations: [],
+  };
+}
+
+function makeSimInfo(...satIds: string[]): SimInfo {
+  const ids = satIds.length > 0 ? satIds : ["test"];
   return {
     mu: 398600.4418,
     dt: 10,
@@ -11,20 +22,12 @@ function makeSimInfo(satId = "test"): SimInfo {
     central_body: "earth",
     central_body_radius: 6378.137,
     epoch_jd: null,
-    satellites: [
-      {
-        id: satId,
-        name: null,
-        altitude: 400,
-        period: 5554,
-        perturbations: [],
-      },
-    ],
+    satellites: ids.map(makeSatellite),
   };
 }
 
 describe("planInitialRangeQuery", () => {
-  it("returns null when simInfo is null", () => {
+  it("returns empty array when simInfo is null", () => {
     expect(
       planInitialRangeQuery({
         simInfo: null,
@@ -32,10 +35,10 @@ describe("planInitialRangeQuery", () => {
         latestT: 100,
         alreadyQueried: false,
       }),
-    ).toBeNull();
+    ).toEqual([]);
   });
 
-  it("returns null when timeRange is null (All mode)", () => {
+  it("returns empty array when timeRange is null (All mode)", () => {
     // In "All" mode the overview itself is the full view — no proactive
     // enrichment is needed. The user can pull detail via chart zoom.
     expect(
@@ -45,10 +48,10 @@ describe("planInitialRangeQuery", () => {
         latestT: 3600,
         alreadyQueried: false,
       }),
-    ).toBeNull();
+    ).toEqual([]);
   });
 
-  it("returns null when no history has arrived yet (latestT <= 0)", () => {
+  it("returns empty array when no history has arrived yet (latestT <= 0)", () => {
     expect(
       planInitialRangeQuery({
         simInfo: makeSimInfo(),
@@ -56,10 +59,10 @@ describe("planInitialRangeQuery", () => {
         latestT: 0,
         alreadyQueried: false,
       }),
-    ).toBeNull();
+    ).toEqual([]);
   });
 
-  it("returns null when already queried for this connection", () => {
+  it("returns empty array when already queried for this connection", () => {
     expect(
       planInitialRangeQuery({
         simInfo: makeSimInfo(),
@@ -67,10 +70,10 @@ describe("planInitialRangeQuery", () => {
         latestT: 10_000,
         alreadyQueried: true,
       }),
-    ).toBeNull();
+    ).toEqual([]);
   });
 
-  it("returns null when simInfo has no satellites", () => {
+  it("returns empty array when simInfo has no satellites", () => {
     const info = makeSimInfo();
     info.satellites = [];
     expect(
@@ -80,34 +83,54 @@ describe("planInitialRangeQuery", () => {
         latestT: 10_000,
         alreadyQueried: false,
       }),
-    ).toBeNull();
+    ).toEqual([]);
   });
 
-  it("returns a query for the last timeRange seconds when all conditions are met", () => {
-    const plan = planInitialRangeQuery({
+  it("returns one query per satellite for a single-sat sim", () => {
+    const plans = planInitialRangeQuery({
       simInfo: makeSimInfo("sso"),
       timeRange: 3600,
       latestT: 86_400,
       alreadyQueried: false,
     });
-    if (plan == null) throw new Error("expected non-null plan");
+    expect(plans).toHaveLength(1);
+    const [plan] = plans;
     expect(plan.satId).toBe("sso");
     expect(plan.tMin).toBeCloseTo(86_400 - 3600, 6);
     expect(plan.tMax).toBeCloseTo(86_400, 6);
     expect(plan.maxPoints).toBeGreaterThanOrEqual(1000);
   });
 
+  it("returns one query per satellite for a multi-sat sim (regression: M3)", () => {
+    // Without this fix, the initial range query only enriched
+    // satellites[0], leaving the other sats stuck at overview density
+    // after reconnect.
+    const plans = planInitialRangeQuery({
+      simInfo: makeSimInfo("iss", "hubble", "starlink-1"),
+      timeRange: 1800,
+      latestT: 50_000,
+      alreadyQueried: false,
+    });
+    expect(plans).toHaveLength(3);
+    expect(plans.map((p) => p.satId)).toEqual(["iss", "hubble", "starlink-1"]);
+    // All plans share the same window anchored at the current sim time.
+    for (const plan of plans) {
+      expect(plan.tMin).toBeCloseTo(50_000 - 1800, 6);
+      expect(plan.tMax).toBeCloseTo(50_000, 6);
+    }
+  });
+
   it("clamps tMin to 0 when latestT is smaller than timeRange", () => {
     // Sim has only been running for 300 s but timeRange = 1h: the window
     // should clamp at 0, not produce a negative tMin.
-    const plan = planInitialRangeQuery({
+    const plans = planInitialRangeQuery({
       simInfo: makeSimInfo(),
       timeRange: 3600,
       latestT: 300,
       alreadyQueried: false,
     });
-    if (plan == null) throw new Error("expected non-null plan");
-    expect(plan.tMin).toBe(0);
-    expect(plan.tMax).toBeCloseTo(300, 6);
+    expect(plans).toHaveLength(1);
+    expect(plans[0].tMin).toBe(0);
+    expect(plans[0].tMax).toBeCloseTo(300, 6);
   });
 });
