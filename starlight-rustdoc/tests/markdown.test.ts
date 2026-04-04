@@ -148,6 +148,106 @@ describe("plain struct field rendering", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Enum variant rendering
+// ---------------------------------------------------------------------------
+
+describe("enum variant rendering", () => {
+  it("renders all three variant kinds: unit, tuple, and struct", () => {
+    // pub enum Outcome<Y, B> {
+    //   Completed(Y),
+    //   Terminated { state: Y, t: f64, reason: B },
+    //   Unknown,
+    // }
+    const crate = makeCrate({
+      root: 0,
+      index: {
+        "0": makeItem(0, "mycrate", {
+          module: { is_crate: true, items: [1] },
+        }),
+        "1": makeItem(1, "Outcome", {
+          enum: {
+            generics: {
+              params: [
+                { name: "Y", kind: { type: { bounds: [], default: null, is_synthetic: false } } },
+                { name: "B", kind: { type: { bounds: [], default: null, is_synthetic: false } } },
+              ],
+              where_predicates: [],
+            },
+            variants: [10, 11, 12],
+            impls: [],
+          },
+        }),
+        // Tuple variant: Completed(Y)
+        "10": {
+          ...makeItem(10, "Completed", {
+            variant: {
+              kind: { tuple: [20] },
+              discriminant: null,
+            },
+          }),
+          docs: "Completed successfully.",
+        },
+        "20": makeItem(20, "0", { struct_field: { generic: "Y" } }),
+        // Struct variant: Terminated { state: Y, t: f64, reason: B }
+        "11": {
+          ...makeItem(11, "Terminated", {
+            variant: {
+              kind: { struct: { fields: [30, 31, 32], has_stripped_fields: false } },
+              discriminant: null,
+            },
+          }),
+          docs: "Terminated early.",
+        },
+        "30": makeItem(30, "state", { struct_field: { generic: "Y" } }),
+        "31": makeItem(31, "t", { struct_field: { primitive: "f64" } }),
+        "32": makeItem(32, "reason", { struct_field: { generic: "B" } }),
+        // Unit variant: Unknown
+        "12": {
+          ...makeItem(12, "Unknown", {
+            variant: { kind: "plain", discriminant: null },
+          }),
+          docs: "Unknown outcome.",
+        },
+      },
+    });
+
+    const crates = new Map([["mycrate", crate]]);
+    const resolver = new LinkResolver(crates, "/orts");
+    const items = collectApiItems(crate, "mycrate");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
+    try {
+      generateCratePages("mycrate", items, crate, resolver, {
+        contentDir: tmpDir,
+        basePath: "/orts",
+      });
+
+      const page = readFileSync(join(tmpDir, "mycrate/api/enums/outcome.md"), "utf-8");
+
+      // Code block should show all variants
+      expect(page).toContain("Completed(Y)");
+      expect(page).toContain("Terminated {");
+      expect(page).toContain("state: Y");
+      expect(page).toContain("t: f64");
+      expect(page).toContain("reason: B");
+      expect(page).toContain("Unknown,");
+
+      // Variants section should show docs
+      expect(page).toContain("Completed successfully.");
+      expect(page).toContain("Terminated early.");
+      expect(page).toContain("Unknown outcome.");
+
+      // Struct variant fields should be listed
+      expect(page).toContain("**state**: Y");
+      expect(page).toContain("**t**: f64");
+      expect(page).toContain("**reason**: B");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // firstSentence
 // ---------------------------------------------------------------------------
 

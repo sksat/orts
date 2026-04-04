@@ -377,12 +377,29 @@ function generateEnumPage(
 ): void {
   const enumData = (apiItem.item.inner as { enum: EnumItem }).enum;
 
-  // Enum signature
   const generics = renderGenericParams(enumData.generics.params, crate, resolver);
   const where = renderWhereClause(enumData.generics.where_predicates, crate, resolver);
+
+  // Collect variants
+  const variants = enumData.variants
+    .map((vid) => crate.index[String(vid)])
+    .filter((v): v is Item => v != null);
+
+  // Enum signature with variants in code block
   lines.push("");
   lines.push("```rust");
-  lines.push(`pub enum ${apiItem.displayName}${generics} ${where}`);
+  const whereStr = where ? ` ${where}` : "";
+  if (variants.length > 0) {
+    lines.push(`pub enum ${apiItem.displayName}${generics}${whereStr} {`);
+    for (const variant of variants) {
+      const variantData = (variant.inner as { variant?: VariantItem }).variant;
+      const variantSig = renderVariantSignature(variant.name!, variantData, crate, resolver);
+      lines.push(`    ${variantSig},`);
+    }
+    lines.push("}");
+  } else {
+    lines.push(`pub enum ${apiItem.displayName}${generics}${whereStr}`);
+  }
   lines.push("```");
   lines.push("");
 
@@ -392,11 +409,7 @@ function generateEnumPage(
     lines.push("");
   }
 
-  // Variants
-  const variants = enumData.variants
-    .map((vid) => crate.index[String(vid)])
-    .filter((v): v is Item => v != null);
-
+  // Variants detail section
   if (variants.length > 0) {
     lines.push("## Variants");
     lines.push("");
@@ -407,6 +420,7 @@ function generateEnumPage(
       if (variantData) {
         const kind = variantData.kind;
         if (typeof kind === "object" && "tuple" in kind) {
+          // Tuple variant: Completed(Y)
           const fields = (kind.tuple as (Id | null)[])
             .map((fid) => (fid != null ? crate.index[String(fid)] : null))
             .filter((f): f is Item => f != null);
@@ -416,6 +430,21 @@ function generateEnumPage(
               return ft ? renderType(ft as import("./types.js").Type, crate, resolver) : "_";
             });
             lines.push(`> ${variant.name}(${types.join(", ")})`);
+            lines.push("");
+          }
+        } else if (typeof kind === "object" && "struct" in kind) {
+          // Struct variant: Terminated { state: Y, t: f64, reason: B }
+          const structFields = kind.struct.fields
+            .map((fid: Id) => crate.index[String(fid)])
+            .filter((f): f is Item => f != null);
+          if (structFields.length > 0) {
+            for (const field of structFields) {
+              const ft = (field.inner as { struct_field?: unknown }).struct_field;
+              const typeStr = ft
+                ? renderType(ft as import("./types.js").Type, crate, resolver)
+                : "?";
+              lines.push(`> **${field.name}**: ${typeStr}`);
+            }
             lines.push("");
           }
         }
@@ -555,6 +584,46 @@ function renderTraitImplLink(
   } else {
     lines.push(`- ${ti.traitName}`);
   }
+}
+
+function renderVariantSignature(
+  name: string,
+  variantData: VariantItem | undefined,
+  crate: Crate,
+  resolver: LinkResolver,
+): string {
+  if (!variantData) return name;
+  const kind = variantData.kind;
+
+  if (typeof kind === "string") {
+    // Unit variant: "plain"
+    return name;
+  }
+
+  if ("tuple" in kind) {
+    const fields = (kind.tuple as (Id | null)[])
+      .map((fid) => (fid != null ? crate.index[String(fid)] : null))
+      .filter((f): f is Item => f != null);
+    const types = fields.map((f) => {
+      const ft = (f.inner as { struct_field?: unknown }).struct_field;
+      return ft ? renderType(ft as import("./types.js").Type, crate, resolver, true) : "_";
+    });
+    return `${name}(${types.join(", ")})`;
+  }
+
+  if ("struct" in kind) {
+    const fields = kind.struct.fields
+      .map((fid: Id) => crate.index[String(fid)])
+      .filter((f): f is Item => f != null);
+    const fieldStrs = fields.map((f) => {
+      const ft = (f.inner as { struct_field?: unknown }).struct_field;
+      const typeStr = ft ? renderType(ft as import("./types.js").Type, crate, resolver, true) : "?";
+      return `${f.name}: ${typeStr}`;
+    });
+    return `${name} { ${fieldStrs.join(", ")} }`;
+  }
+
+  return name;
 }
 
 // ---------------------------------------------------------------------------
