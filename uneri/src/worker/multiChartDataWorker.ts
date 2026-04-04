@@ -108,17 +108,23 @@ function computeUnifiedTMin(): number | undefined {
   return max - timeRange;
 }
 
-/** Serialize MultiChartDataMap → transferable message. */
-function sendMultiChartData(
+/**
+ * Build the serialized multi-series payload from per-satellite
+ * `ChartDataMap` results. Shared between the periodic tick loop and
+ * one-shot zoom queries.
+ */
+function buildMultiSeriesPayload(
   perSatData: Map<string, ChartDataMap>,
   configs: WorkerSatelliteConfig[],
   metrics: string[],
-) {
+): { metrics: SerializedMultiSeriesData[]; transfers: ArrayBuffer[] } {
   const activeSats = configs.filter((cfg) => perSatData.has(cfg.id));
-  if (activeSats.length === 0) return;
-
   const serializedMetrics: SerializedMultiSeriesData[] = [];
   const allTransfers: ArrayBuffer[] = [];
+
+  if (activeSats.length === 0) {
+    return { metrics: serializedMetrics, transfers: allTransfers };
+  }
 
   for (const metric of metrics) {
     const inputs: NamedTimeSeries[] = [];
@@ -154,9 +160,57 @@ function sendMultiChartData(
     serializedMetrics.push({ metricName: metric, seriesLabels, seriesColors, buffers });
   }
 
+  return { metrics: serializedMetrics, transfers: allTransfers };
+}
+
+/** Serialize MultiChartDataMap → transferable tick broadcast. */
+function sendMultiChartData(
+  perSatData: Map<string, ChartDataMap>,
+  configs: WorkerSatelliteConfig[],
+  metrics: string[],
+) {
+  const { metrics: serializedMetrics, transfers } = buildMultiSeriesPayload(
+    perSatData,
+    configs,
+    metrics,
+  );
   if (serializedMetrics.length > 0) {
-    post({ type: "multi-chart-data", metrics: serializedMetrics }, allTransfers);
+    post({ type: "multi-chart-data", metrics: serializedMetrics }, transfers);
   }
+}
+
+/**
+ * Run an ad-hoc zoom query for the absolute window `[tMin, tMax]` against
+ * every satellite's DuckDB table and post a one-shot `multi-zoom-result`
+ * correlated by `id`. Empty results still post (with no metrics) so the
+ * client-side promise always resolves.
+ */
+async function handleMultiZoomQuery(id: number, tMin: number, tMax: number, zoomMaxPoints: number) {
+  if (!conn || !baseSchema) {
+    post({ type: "multi-zoom-result", id, metrics: [] });
+    return;
+  }
+
+  const perSatData = new Map<string, ChartDataMap>();
+  for (const satId of hasData) {
+    const tableName = makeSatelliteTableName(satId);
+    const schema = toTableSchema(tableName);
+    try {
+      const result = await queryDerived(conn, schema, tMin, zoomMaxPoints, tMax);
+      if (result.t.length > 0) {
+        perSatData.set(satId, result);
+      }
+    } catch (e) {
+      console.warn(`multiChartDataWorker: zoom query failed for ${satId}:`, e);
+    }
+  }
+
+  const { metrics: serializedMetrics, transfers } = buildMultiSeriesPayload(
+    perSatData,
+    satelliteConfigs,
+    metricNames,
+  );
+  post({ type: "multi-zoom-result", id, metrics: serializedMetrics }, transfers);
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +387,16 @@ self.onmessage = async (e: MessageEvent<MultiMainToWorkerMessage>) => {
     case "multi-update-configs": {
       satelliteConfigs = msg.satelliteConfigs;
       metricNames = msg.metricNames;
+      break;
+    }
+
+    case "multi-zoom-query": {
+      try {
+        await handleMultiZoomQuery(msg.id, msg.tMin, msg.tMax, msg.maxPoints);
+      } catch (e) {
+        console.warn("multiChartDataWorker: multi-zoom-query failed:", e);
+        post({ type: "multi-zoom-result", id: msg.id, metrics: [] });
+      }
       break;
     }
 

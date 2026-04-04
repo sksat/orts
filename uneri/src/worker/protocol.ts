@@ -78,6 +78,19 @@ export type MultiMainToWorkerMessage =
       satelliteConfigs: WorkerSatelliteConfig[];
       metricNames: string[];
     }
+  | {
+      /**
+       * Ad-hoc zoom query: return aligned multi-series data for the absolute
+       * time window `[tMin, tMax]`, bypassing the configured `timeRange`.
+       * Each satellite's DuckDB is queried for the same window; results
+       * are aligned and returned as a one-shot response keyed by `id`.
+       */
+      type: "multi-zoom-query";
+      id: number;
+      tMin: number;
+      tMax: number;
+      maxPoints: number;
+    }
   | { type: "dispose" };
 
 /**
@@ -97,6 +110,12 @@ export type MultiWorkerToMainMessage =
   | {
       type: "multi-chart-data";
       /** One entry per metric that has data. */
+      metrics: SerializedMultiSeriesData[];
+    }
+  | {
+      /** One-shot response to a `multi-zoom-query`, correlated by `id`. */
+      type: "multi-zoom-result";
+      id: number;
       metrics: SerializedMultiSeriesData[];
     }
   | { type: "error"; message: string };

@@ -7,6 +7,7 @@ import type {
   MultiMainToWorkerMessage,
   MultiWorkerToMainMessage,
   RowTuple,
+  SerializedMultiSeriesData,
   WorkerSatelliteConfig,
   WorkerTableSchema,
 } from "./protocol.js";
@@ -31,6 +32,10 @@ export class MultiChartDataWorkerClient {
   private onDataCallback: ((data: MultiChartDataResult) => void) | null = null;
   private onErrorCallback: ((message: string) => void) | null = null;
 
+  // Ad-hoc zoom query: pending promise resolvers keyed by request id.
+  private queryId = 0;
+  private zoomResolvers = new Map<number, (value: MultiChartDataResult) => void>();
+
   constructor() {
     this.worker = new Worker(new URL("./multiChartDataWorker.ts", import.meta.url), {
       type: "module",
@@ -40,6 +45,7 @@ export class MultiChartDataWorkerClient {
     };
     this.worker.onerror = (e) => {
       this.onErrorCallback?.(`Worker error: ${e.message}`);
+      this.resolveAllPending();
     };
   }
 
@@ -75,6 +81,21 @@ export class MultiChartDataWorkerClient {
     this.send({ type: "multi-update-configs", satelliteConfigs, metricNames });
   }
 
+  /**
+   * Ad-hoc zoom query: request aligned multi-series data for the absolute
+   * time window `[tMin, tMax]`, bypassing the tick loop's configured
+   * `timeRange`. Returns a Promise that resolves with the same
+   * `MultiChartDataResult` shape as `onData`.
+   */
+  zoomQuery(tMin: number, tMax: number, maxPoints: number): Promise<MultiChartDataResult> {
+    if (this.disposed) return Promise.resolve({});
+    return new Promise((resolve) => {
+      const id = this.queryId++;
+      this.zoomResolvers.set(id, resolve);
+      this.send({ type: "multi-zoom-query", id, tMin, tMax, maxPoints });
+    });
+  }
+
   onData(callback: (data: MultiChartDataResult) => void): void {
     this.onDataCallback = callback;
   }
@@ -87,6 +108,7 @@ export class MultiChartDataWorkerClient {
     if (this.disposed) return;
     this.disposed = true;
     this.send({ type: "dispose" });
+    this.resolveAllPending();
     this.pendingMessages = [];
     setTimeout(() => {
       this.worker.terminate();
@@ -96,6 +118,14 @@ export class MultiChartDataWorkerClient {
   // -----------------------------------------------------------------------
   // Private
   // -----------------------------------------------------------------------
+
+  /** Resolve all pending zoom promises so callers do not hang on disposal. */
+  private resolveAllPending(): void {
+    for (const resolver of this.zoomResolvers.values()) {
+      resolver({});
+    }
+    this.zoomResolvers.clear();
+  }
 
   private send(msg: MultiMainToWorkerMessage): void {
     if (this.disposed && msg.type !== "dispose") return;
@@ -119,21 +149,16 @@ export class MultiChartDataWorkerClient {
       }
 
       case "multi-chart-data": {
-        // Deserialize transferred ArrayBuffers into MultiChartDataResult
-        const result: MultiChartDataResult = {};
-        for (const metric of msg.metrics) {
-          const t = new Float64Array(metric.buffers[0]);
-          const values: Float64Array[] = [];
-          for (let i = 1; i < metric.buffers.length; i++) {
-            values.push(new Float64Array(metric.buffers[i]));
-          }
-          const series = metric.seriesLabels.map((label, i) => ({
-            label,
-            color: metric.seriesColors[i],
-          }));
-          result[metric.metricName] = { t, values, series };
+        this.onDataCallback?.(deserializeMultiResult(msg.metrics));
+        break;
+      }
+
+      case "multi-zoom-result": {
+        const resolver = this.zoomResolvers.get(msg.id);
+        if (resolver) {
+          this.zoomResolvers.delete(msg.id);
+          resolver(deserializeMultiResult(msg.metrics));
         }
-        this.onDataCallback?.(result);
         break;
       }
 
@@ -143,4 +168,26 @@ export class MultiChartDataWorkerClient {
       }
     }
   }
+}
+
+/**
+ * Deserialize the wire format (transferred `ArrayBuffer` arrays) into a
+ * `MultiChartDataResult`. Shared between the tick-broadcast
+ * `multi-chart-data` path and the one-shot `multi-zoom-result` path.
+ */
+function deserializeMultiResult(metrics: SerializedMultiSeriesData[]): MultiChartDataResult {
+  const result: MultiChartDataResult = {};
+  for (const metric of metrics) {
+    const t = new Float64Array(metric.buffers[0]);
+    const values: Float64Array[] = [];
+    for (let i = 1; i < metric.buffers.length; i++) {
+      values.push(new Float64Array(metric.buffers[i]));
+    }
+    const series = metric.seriesLabels.map((label, i) => ({
+      label,
+      color: metric.seriesColors[i],
+    }));
+    result[metric.metricName] = { t, values, series };
+  }
+  return result;
 }
