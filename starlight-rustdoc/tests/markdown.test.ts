@@ -157,13 +157,15 @@ describe("firstSentence", () => {
   });
 
   it("does not split on period inside numbers like F10.7", () => {
-    expect(firstSentence("Constant space weather — returns the same F10.7 and Ap for all epochs."))
-      .toBe("Constant space weather — returns the same F10.7 and Ap for all epochs.");
+    expect(
+      firstSentence("Constant space weather — returns the same F10.7 and Ap for all epochs."),
+    ).toBe("Constant space weather — returns the same F10.7 and Ap for all epochs.");
   });
 
   it("does not split on period inside version numbers like 0.25", () => {
-    expect(firstSentence("Uses nalgebra 0.34 for vectors. Next sentence."))
-      .toBe("Uses nalgebra 0.34 for vectors.");
+    expect(firstSentence("Uses nalgebra 0.34 for vectors. Next sentence.")).toBe(
+      "Uses nalgebra 0.34 for vectors.",
+    );
   });
 
   it("falls back to first line when no period", () => {

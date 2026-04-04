@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import type { Crate, Type } from "../src/types.js";
-import { renderType, renderGenericParams, renderFunctionSig, renderWhereClause } from "../src/render.js";
+import {
+  renderType,
+  renderGenericParams,
+  renderFunctionSig,
+  renderWhereClause,
+} from "../src/render.js";
 import { LinkResolver } from "../src/resolve.js";
 
 function makeCrate(overrides: Partial<Crate> = {}): Crate {
@@ -68,19 +73,15 @@ describe("renderType", () => {
   it("renders tuples", () => {
     expect(renderType({ tuple: [] }, crate, resolver)).toBe("()");
     expect(
-      renderType(
-        { tuple: [{ primitive: "f64" }, { primitive: "f64" }] },
-        crate,
-        resolver,
-      ),
+      renderType({ tuple: [{ primitive: "f64" }, { primitive: "f64" }] }, crate, resolver),
     ).toBe("(f64, f64)");
   });
 
   it("renders slices and arrays", () => {
     expect(renderType({ slice: { primitive: "u8" } }, crate, resolver)).toBe("[u8]");
-    expect(
-      renderType({ array: { type: { primitive: "f64" }, len: "7" } }, crate, resolver),
-    ).toBe("[f64; 7]");
+    expect(renderType({ array: { type: { primitive: "f64" }, len: "7" } }, crate, resolver)).toBe(
+      "[f64; 7]",
+    );
   });
 
   it("renders raw pointers", () => {
@@ -92,11 +93,7 @@ describe("renderType", () => {
       ),
     ).toBe("*const u8");
     expect(
-      renderType(
-        { raw_pointer: { is_mutable: true, type: { primitive: "u8" } } },
-        crate,
-        resolver,
-      ),
+      renderType({ raw_pointer: { is_mutable: true, type: { primitive: "u8" } } }, crate, resolver),
     ).toBe("*mut u8");
   });
 

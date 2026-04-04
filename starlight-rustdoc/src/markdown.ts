@@ -289,14 +289,18 @@ function generateStructPage(
       return `${vis}${typeStr}`;
     });
     const whereStr = where ? ` ${where}` : "";
-    lines.push(`pub struct ${apiItem.displayName}${generics}(${fieldTypes.join(", ")})${whereStr};`);
+    lines.push(
+      `pub struct ${apiItem.displayName}${generics}(${fieldTypes.join(", ")})${whereStr};`,
+    );
   } else if (isPlain && plainFields.length > 0) {
     // Named fields: pub struct Foo { pub x: f64, ... }
     const whereStr = where ? `\n${where}` : "";
     lines.push(`pub struct ${apiItem.displayName}${generics}${whereStr} {`);
     for (const field of plainFields) {
       const fieldType = (field.inner as { struct_field?: unknown }).struct_field;
-      const typeStr = fieldType ? renderType(fieldType as import("./types.js").Type, crate, resolver, true) : "?";
+      const typeStr = fieldType
+        ? renderType(fieldType as import("./types.js").Type, crate, resolver, true)
+        : "?";
       lines.push(`    pub ${field.name}: ${typeStr},`);
     }
     if (isPlain && kindObj.plain.has_stripped_fields) {
@@ -321,7 +325,9 @@ function generateStructPage(
     lines.push("");
     for (const field of plainFields) {
       const fieldType = (field.inner as { struct_field?: unknown }).struct_field;
-      const typeStr = fieldType ? renderType(fieldType as import("./types.js").Type, crate, resolver) : "";
+      const typeStr = fieldType
+        ? renderType(fieldType as import("./types.js").Type, crate, resolver)
+        : "";
       lines.push(`### ${field.name}`);
       lines.push("");
       lines.push(`> **${field.name}**: ${typeStr}`);
@@ -627,7 +633,14 @@ function categoryLabel(category: ApiItemCategory): string {
 }
 
 function groupByCategory(items: ApiItem[]): [ApiItemCategory, ApiItem[]][] {
-  const order: ApiItemCategory[] = ["trait", "struct", "enum", "function", "type_alias", "constant"];
+  const order: ApiItemCategory[] = [
+    "trait",
+    "struct",
+    "enum",
+    "function",
+    "type_alias",
+    "constant",
+  ];
   const map = new Map<ApiItemCategory, ApiItem[]>();
   for (const item of items) {
     const list = map.get(item.category) ?? [];

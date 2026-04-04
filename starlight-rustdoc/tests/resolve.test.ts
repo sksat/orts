@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import type { Crate, Id } from "../src/types.js";
-import { LinkResolver, collectApiItems, collectTraitImpls, resolveTraitImplUrl } from "../src/resolve.js";
+import {
+  LinkResolver,
+  collectApiItems,
+  collectTraitImpls,
+  resolveTraitImplUrl,
+} from "../src/resolve.js";
 
 // ---------------------------------------------------------------------------
 // Helpers to build minimal Crate fixtures
@@ -52,7 +57,10 @@ describe("LinkResolver.resolveId", () => {
     // When resolving from utsuroi context, ID 158 should be Rk4
     const utsuroi = makeCrate();
     const kaname = makeCrate();
-    const crates = new Map([["utsuroi", utsuroi], ["kaname", kaname]]);
+    const crates = new Map([
+      ["utsuroi", utsuroi],
+      ["kaname", kaname],
+    ]);
     const resolver = new LinkResolver(crates, "/base");
 
     // Register both pages — same numeric ID but from different crates
@@ -99,7 +107,10 @@ describe("LinkResolver.resolveId", () => {
         "5": { name: "serde", html_root_url: null },
       },
     });
-    const crates = new Map([["crateA", crateA], ["crateB", crateB]]);
+    const crates = new Map([
+      ["crateA", crateA],
+      ["crateB", crateB],
+    ]);
     const resolver = new LinkResolver(crates, "/base");
 
     const url = resolver.resolveId(200, crateA);
@@ -118,7 +129,10 @@ describe("LinkResolver.resolveId", () => {
         "10": { name: "kaname", html_root_url: null },
       },
     });
-    const crates = new Map([["kaname", kanameCrate], ["orts", ortsCrate]]);
+    const crates = new Map([
+      ["kaname", kanameCrate],
+      ["orts", ortsCrate],
+    ]);
     const resolver = new LinkResolver(crates, "/base");
     resolver.registerPage(999, "/base/kaname/api/structs/epoch/", "Epoch", "kaname");
 
@@ -169,7 +183,12 @@ describe("LinkResolver.resolvePath", () => {
     const crates = new Map<string, Crate>();
     const resolver = new LinkResolver(crates, "/base");
     resolver.registerPage(1, "/base/crate/api/structs/nrlmsise00/", "Nrlmsise00", "crate");
-    resolver.registerPage(2, "/base/crate/api/structs/nrlmsise00output/", "Nrlmsise00Output", "crate");
+    resolver.registerPage(
+      2,
+      "/base/crate/api/structs/nrlmsise00output/",
+      "Nrlmsise00Output",
+      "crate",
+    );
 
     // Should match Nrlmsise00 exactly, NOT Nrlmsise00Output
     expect(resolver.resolvePath("Nrlmsise00")).toBe("/base/crate/api/structs/nrlmsise00/");
@@ -318,7 +337,12 @@ describe("resolveTraitImplUrl", () => {
     resolver.registerPage(50, "/base/mycrate/api/traits/odestate/", "OdeState", "mycrate");
 
     const url = resolveTraitImplUrl(
-      { traitName: "OdeState", traitId: 50, fullPath: ["utsuroi", "state", "OdeState"], crateId: 0 },
+      {
+        traitName: "OdeState",
+        traitId: 50,
+        fullPath: ["utsuroi", "state", "OdeState"],
+        crateId: 0,
+      },
       crate,
       resolver,
     );

@@ -26,7 +26,12 @@ import type { LinkResolver } from "./resolve.js";
 // Type rendering
 // ---------------------------------------------------------------------------
 
-export function renderType(type: Type, crate: Crate, resolver: LinkResolver, plain = false): string {
+export function renderType(
+  type: Type,
+  crate: Crate,
+  resolver: LinkResolver,
+  plain = false,
+): string {
   if ("primitive" in type) {
     return type.primitive;
   }
@@ -80,7 +85,9 @@ export function renderType(type: Type, crate: Crate, resolver: LinkResolver, pla
   }
 
   if ("dyn_trait" in type) {
-    const traits = type.dyn_trait.traits.map((t) => renderTypePath(t.trait, crate, resolver, plain));
+    const traits = type.dyn_trait.traits.map((t) =>
+      renderTypePath(t.trait, crate, resolver, plain),
+    );
     const lt = type.dyn_trait.lifetime ? ` + ${type.dyn_trait.lifetime}` : "";
     return `dyn ${traits.join(" + ")}${lt}`;
   }
@@ -118,7 +125,12 @@ function renderTypePath(tp: TypePath, crate: Crate, resolver: LinkResolver, plai
   return rendered;
 }
 
-function renderQualifiedPath(qp: QualifiedPath, crate: Crate, resolver: LinkResolver, plain = false): string {
+function renderQualifiedPath(
+  qp: QualifiedPath,
+  crate: Crate,
+  resolver: LinkResolver,
+  plain = false,
+): string {
   const selfType = renderType(qp.self_type, crate, resolver, plain);
   const args = qp.args ? renderGenericArgs(qp.args, crate, resolver, plain) : "";
 
@@ -147,7 +159,12 @@ function resolveTraitName(id: number, crate: Crate): string {
 // Generic args
 // ---------------------------------------------------------------------------
 
-function renderGenericArgs(args: GenericArgs, crate: Crate, resolver: LinkResolver, plain = false): string {
+function renderGenericArgs(
+  args: GenericArgs,
+  crate: Crate,
+  resolver: LinkResolver,
+  plain = false,
+): string {
   if ("angle_bracketed" in args) {
     const ab = args.angle_bracketed;
     const parts: string[] = [];
@@ -175,7 +192,12 @@ function renderGenericArgs(args: GenericArgs, crate: Crate, resolver: LinkResolv
   return "";
 }
 
-function renderGenericArg(arg: GenericArg, crate: Crate, resolver: LinkResolver, plain = false): string {
+function renderGenericArg(
+  arg: GenericArg,
+  crate: Crate,
+  resolver: LinkResolver,
+  plain = false,
+): string {
   if ("type" in arg) return renderType(arg.type, crate, resolver, plain);
   if ("lifetime" in arg) return arg.lifetime;
   if ("const" in arg) return arg.const.expr;
@@ -200,7 +222,11 @@ function renderTypeBindingConstraint(
 // Generic params & bounds
 // ---------------------------------------------------------------------------
 
-export function renderGenericParams(params: GenericParam[], crate: Crate, resolver: LinkResolver): string {
+export function renderGenericParams(
+  params: GenericParam[],
+  crate: Crate,
+  resolver: LinkResolver,
+): string {
   if (params.length === 0) return "";
 
   const parts = params
@@ -242,7 +268,11 @@ function renderGenericParam(param: GenericParam, crate: Crate, resolver: LinkRes
   return param.name;
 }
 
-export function renderGenericBound(bound: GenericBound, crate: Crate, resolver: LinkResolver): string {
+export function renderGenericBound(
+  bound: GenericBound,
+  crate: Crate,
+  resolver: LinkResolver,
+): string {
   if ("trait_bound" in bound) {
     return renderTraitBound(bound.trait_bound, crate, resolver);
   }
@@ -268,7 +298,11 @@ function renderTraitBound(tb: TraitBound, crate: Crate, resolver: LinkResolver):
 // Where predicates
 // ---------------------------------------------------------------------------
 
-export function renderWhereClause(predicates: WherePredicate[], crate: Crate, resolver: LinkResolver): string {
+export function renderWhereClause(
+  predicates: WherePredicate[],
+  crate: Crate,
+  resolver: LinkResolver,
+): string {
   if (predicates.length === 0) return "";
 
   const parts = predicates.map((p) => renderWherePredicate(p, crate, resolver));

@@ -15,13 +15,7 @@ import type {
 // Collected item — a public API item that will get its own page
 // ---------------------------------------------------------------------------
 
-export type ApiItemCategory =
-  | "trait"
-  | "struct"
-  | "enum"
-  | "function"
-  | "type_alias"
-  | "constant";
+export type ApiItemCategory = "trait" | "struct" | "enum" | "function" | "type_alias" | "constant";
 
 export interface ApiItem {
   /** The resolved Item from the index (follows re-exports) */
@@ -230,10 +224,7 @@ export interface CollectedImpl {
   methods: Item[];
 }
 
-export function collectInherentImpls(
-  crate: Crate,
-  implIds: Id[],
-): CollectedImpl[] {
+export function collectInherentImpls(crate: Crate, implIds: Id[]): CollectedImpl[] {
   const result: CollectedImpl[] = [];
 
   for (const implId of implIds) {
@@ -260,8 +251,14 @@ export function collectInherentImpls(
 
 // Auto-traits and compiler-internal traits that clutter the listing
 const AUTO_TRAITS = new Set([
-  "Send", "Sync", "Unpin", "Freeze", "UnsafeUnpin",
-  "UnwindSafe", "RefUnwindSafe", "StructuralPartialEq",
+  "Send",
+  "Sync",
+  "Unpin",
+  "Freeze",
+  "UnsafeUnpin",
+  "UnwindSafe",
+  "RefUnwindSafe",
+  "StructuralPartialEq",
 ]);
 
 export interface TraitImplInfo {
@@ -338,10 +335,7 @@ export function resolveTraitImplUrl(
 }
 
 /** Find which types implement a given trait */
-export function collectImplementors(
-  crate: Crate,
-  traitImplIds: Id[],
-): { name: string; id: Id }[] {
+export function collectImplementors(crate: Crate, traitImplIds: Id[]): { name: string; id: Id }[] {
   const result: { name: string; id: Id }[] = [];
 
   for (const implId of traitImplIds) {

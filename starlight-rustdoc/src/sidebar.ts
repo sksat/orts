@@ -60,9 +60,7 @@ export function buildCrateSidebar(
     pages.filter((p) => p.name !== "overview").map((p) => p.category),
   );
 
-  const apiItems: SidebarItem[] = [
-    { label: "Overview", slug: `${crateName}/api/overview` },
-  ];
+  const apiItems: SidebarItem[] = [{ label: "Overview", slug: `${crateName}/api/overview` }];
 
   for (const category of CATEGORY_ORDER) {
     if (!categoriesWithPages.has(category)) continue;

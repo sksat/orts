@@ -22,7 +22,11 @@ interface StarlightPlugin {
       astroConfig: { root: URL | string; base?: string };
       command: string;
       isRestart: boolean;
-      logger: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+      logger: {
+        info: (msg: string) => void;
+        warn: (msg: string) => void;
+        error: (msg: string) => void;
+      };
     }) => void | Promise<void>;
   };
 }
@@ -80,7 +84,9 @@ export default function starlightRustdoc(options: StarlightRustdocOptions): Star
               toolchain: options.toolchain,
             });
             crateJsons.set(spec.name, json);
-            logger.info(`  format_version=${json.format_version}, items=${Object.keys(json.index).length}`);
+            logger.info(
+              `  format_version=${json.format_version}, items=${Object.keys(json.index).length}`,
+            );
           } catch (e) {
             logger.error(`Failed to generate rustdoc JSON for ${spec.name}: ${e}`);
             throw e;

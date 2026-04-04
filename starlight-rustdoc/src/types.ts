@@ -59,7 +59,11 @@ export interface Item {
   span: Span | null;
 }
 
-export type Visibility = "public" | "default" | "crate" | { restricted: { parent: Id; path: string } };
+export type Visibility =
+  | "public"
+  | "default"
+  | "crate"
+  | { restricted: { parent: Id; path: string } };
 
 export interface Deprecation {
   since: string | null;
@@ -255,10 +259,7 @@ export type GenericParamKind =
   | { lifetime: { outlives: string[] } }
   | { const: { type: Type; default: string | null } };
 
-export type GenericBound =
-  | { trait_bound: TraitBound }
-  | { outlives: string }
-  | { use: string[] };
+export type GenericBound = { trait_bound: TraitBound } | { outlives: string } | { use: string[] };
 
 export interface TraitBound {
   trait: TypePath;
