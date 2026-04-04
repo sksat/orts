@@ -95,11 +95,11 @@ pub(super) async fn handle_connection(
                 }
             }
 
-            // Send bounded overview history. The manager has already applied
-            // the client-requested window and downsampled the payload to a
-            // server-enforced cap, so there is no full-resolution detail
-            // stream to replay: clients that need higher resolution issue
-            // targeted `query_range` requests instead.
+            // Send the bounded history overview. The manager returned an
+            // incrementally-maintained, downsampled summary of the full
+            // history from memory (no disk I/O, no time-range parameter)
+            // — clients that want higher resolution for a specific
+            // display window issue follow-up `query_range` requests.
             let history_msg = WsMessage::History {
                 states: history_states,
             };

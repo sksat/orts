@@ -29,9 +29,19 @@ pub const OVERVIEW_MAX_POINTS_PER_ENTITY: usize = 1000;
 /// single shared buffer with stride-based halving would systematically bias
 /// against some satellites depending on their push order parity — this
 /// per-entity split eliminates that failure mode.
+/// Invariant: `buffer.back()` is always the most recent push for this
+/// entity, even when that push did not fall on a sampling boundary. This
+/// is maintained by the "tail overwrite" trick in
+/// [`HistoryBuffer::push`]: non-sampling pushes replace the trailing
+/// slot in place instead of being discarded, so reconnecting clients see
+/// "where this sat is right now" regardless of where the sample rate
+/// happens to land. `halve()` preserves the same invariant by explicitly
+/// keeping the last element after the stride pass.
 struct EntityOverview {
     buffer: VecDeque<HistoryState>,
-    /// Only every Nth `push()` for this entity contributes to the buffer.
+    /// Only every Nth `push()` for this entity opens a *new* slot in the
+    /// buffer. Non-sampling pushes in between overwrite the trailing slot
+    /// to maintain the "back = most recent push" invariant.
     sample_rate: usize,
     /// Counter for sample-rate divisibility.
     push_counter: usize,
@@ -111,6 +121,12 @@ impl HistoryBuffer {
 
     /// Push a state into the buffer. Flushes to .rrd if capacity is exceeded,
     /// and incrementally updates the per-entity overview buffers.
+    ///
+    /// Clone cost: non-sampling pushes perform one `state.clone()` into
+    /// the trailing overview slot (the tail-overwrite that preserves the
+    /// "back = most recent push" invariant). This is a tiny regression
+    /// compared to a pure sample-and-skip approach but keeps the overview
+    /// useful on reconnect without a separate "latest per sat" slot.
     pub fn push(&mut self, state: HistoryState) {
         // Update the per-entity overview first. We always ensure the entity's
         // buffer ends with the most recent push for that entity, so
@@ -541,6 +557,69 @@ mod tests {
              (must not touch disk, must not call load_all)",
             elapsed.as_millis(),
             buf.segment_count
+        );
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn overview_multi_entity_cost_is_bounded() {
+        // The per-entity overview design flattens every entity buffer into
+        // a Vec and sorts by `t` on each read. For realistic constellation
+        // sizes (10+ sats) the sort cost must stay comfortably under the
+        // perf gate — this test guards against accidental O(N^2) or
+        // disk-touching regressions if `OVERVIEW_MAX_POINTS_PER_ENTITY` is
+        // bumped, or if `overview()` grows auxiliary computation.
+        let dir = temp_data_dir("overview-multi-perf");
+        // Small capacity keeps `flush()` I/O bounded during setup; the
+        // per-entity overview fills up regardless of flush cadence.
+        let mut buf = HistoryBuffer::new(500, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let sats = [
+            "sat-0", "sat-1", "sat-2", "sat-3", "sat-4", "sat-5", "sat-6", "sat-7", "sat-8",
+            "sat-9",
+        ];
+        // 10 sats × 2500 interleaved pushes = 25_000 total. Each sat
+        // exceeds OVERVIEW_MAX_POINTS_PER_ENTITY (1000), triggering one
+        // halving per entity and reaching the steady-state shape we want
+        // to measure.
+        for i in 0..25_000 {
+            let sat = sats[i % sats.len()];
+            buf.push(make_state_for(sat, i as f64));
+        }
+
+        let start = std::time::Instant::now();
+        let ov = buf.overview();
+        let elapsed = start.elapsed();
+
+        // Size bound: at most num_entities × cap points.
+        assert!(
+            ov.len() <= sats.len() * OVERVIEW_MAX_POINTS_PER_ENTITY,
+            "overview size must be bounded, got {}",
+            ov.len()
+        );
+        // Every satellite must appear.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for s in &ov {
+            seen.insert(s.entity_path.to_string());
+        }
+        for sat in &sats {
+            let key = format!("/world/sat/{sat}");
+            assert!(seen.contains(&key), "missing satellite {sat}");
+        }
+        // The final Vec must be chronologically sorted (multi-entity
+        // flatten + sort contract).
+        let mut prev = f64::NEG_INFINITY;
+        for s in &ov {
+            assert!(s.t >= prev, "overview must be sorted by t");
+            prev = s.t;
+        }
+        // Perf gate: flatten + sort of ~10k points in a Vec is expected
+        // to run in a few ms. 50ms is a loose CI-safe ceiling that still
+        // catches order-of-magnitude regressions.
+        assert!(
+            elapsed.as_millis() < 50,
+            "multi-entity overview() took {}ms for {} sats, expected < 50ms",
+            elapsed.as_millis(),
+            sats.len()
         );
         cleanup_dir(&dir);
     }

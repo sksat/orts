@@ -79,11 +79,17 @@ pub enum WsMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         attitude: Option<crate::sim::core::AttitudePayload>,
     },
-    /// Bounded history overview sent on connect. The server applies the
-    /// client's requested time window (via the `?history=<seconds>` query
-    /// parameter) and downsamples the result to a server-enforced cap, so
-    /// payload size stays proportional to what the client intends to display
-    /// rather than to how long the simulation has been running.
+    /// Bounded history overview sent on connect.
+    ///
+    /// The server is deliberately time-range-agnostic: it ships a fixed
+    /// downsampled overview of the full simulation (capped at
+    /// `OVERVIEW_MAX_POINTS_PER_ENTITY` per satellite) regardless of how
+    /// long it has been running. Clients that need higher-resolution data
+    /// for a specific display window pull it via a follow-up
+    /// [`ClientMessage::QueryRange`] request. See
+    /// [`HistoryBuffer::overview`](crate::commands::serve::history::HistoryBuffer::overview)
+    /// for the incrementally-maintained cache that makes the handshake
+    /// O(1) in sim duration.
     #[serde(rename = "history")]
     History { states: Vec<HistoryState> },
     /// Response to a client query_range request.
