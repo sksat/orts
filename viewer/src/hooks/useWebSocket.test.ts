@@ -7,8 +7,6 @@ describe("dispatchServerMessage", () => {
     onState: noop,
     onInfo: noop,
     onHistory: noop,
-    onHistoryDetail: noop,
-    onHistoryDetailComplete: noop,
   } as const;
 
   it("dispatches simulation_terminated message", () => {
@@ -106,48 +104,6 @@ describe("dispatchServerMessage", () => {
     expect(points[0].vy).toBe(7.669);
     expect(points[1].t).toBe(10);
     expect(points[1].x).toBe(6770);
-  });
-
-  it("dispatches history_detail separately from history", () => {
-    const onHistory = vi.fn();
-    const onHistoryDetail = vi.fn();
-    const callbacks = { ...baseCallbacks, onHistory, onHistoryDetail };
-
-    const msg: ServerMessage = {
-      type: "history_detail",
-      states: [
-        {
-          entity_path: "sat-a",
-          t: 5,
-          position: [6775, 200, 0] as [number, number, number],
-          velocity: [-0.2, 7.65, 0] as [number, number, number],
-          semi_major_axis: 6778,
-          eccentricity: 0,
-          inclination: 0.9,
-          raan: 0,
-          argument_of_periapsis: 0,
-          true_anomaly: 0.005,
-        },
-      ],
-    };
-
-    dispatchServerMessage(msg, callbacks);
-
-    expect(onHistory).not.toHaveBeenCalled();
-    expect(onHistoryDetail).toHaveBeenCalledOnce();
-    const points = onHistoryDetail.mock.calls[0][0];
-    expect(points).toHaveLength(1);
-    expect(points[0].t).toBe(5);
-  });
-
-  it("dispatches history_detail_complete", () => {
-    const onComplete = vi.fn();
-    const callbacks = { ...baseCallbacks, onHistoryDetailComplete: onComplete };
-
-    const msg: ServerMessage = { type: "history_detail_complete" };
-    dispatchServerMessage(msg, callbacks);
-
-    expect(onComplete).toHaveBeenCalledOnce();
   });
 
   it("dispatches status message", () => {

@@ -19,6 +19,7 @@ import { useSimulationData } from "./hooks/useSimulationData.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
+import { planInitialRangeQuery } from "./utils/initialRangeQuery.js";
 import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
 
 const DEFAULT_WS_URL: string =
@@ -112,6 +113,52 @@ export function App() {
 
   // Keep sendRef in sync with wsSource.send
   sendRef.current = wsSource.send;
+
+  // --- Proactive initial range query ---
+  //
+  // The server's connect-time history is a bounded, sparse overview of the
+  // entire simulation. For a client with a finite `timeRange` selected
+  // (e.g. "last hour"), that overview is too sparse to render a smooth
+  // chart. We compensate by pulling a higher-resolution slice of the
+  // current display window via the existing `query_range` path, once per
+  // WebSocket connection.
+  //
+  // Keyed off of `simInfo` identity: each new Info message from a fresh
+  // connection is a distinct object, so this fires exactly once per
+  // connect without needing manual reset logic.
+  const firedInitialQueryForSimInfoRef = useRef<typeof simInfo>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: chartBufferVersion
+  // is an observational trigger — trailBuffersMap is a Map held in a ref and
+  // does not trigger re-renders on mutation, so we depend on chartBufferVersion
+  // (bumped by the event dispatcher on new data) to re-run this effect once
+  // history has actually arrived and latestT can be computed.
+  useEffect(() => {
+    if (!simInfo) {
+      firedInitialQueryForSimInfoRef.current = null;
+      return;
+    }
+    if (firedInitialQueryForSimInfoRef.current === simInfo) return;
+
+    // Anchor the window on the most recent point we currently hold.
+    let latestT = 0;
+    for (const buf of trailBuffersMap.values()) {
+      if (buf.length > 0) {
+        const last = buf.getAll()[buf.length - 1];
+        if (last && last.t > latestT) latestT = last.t;
+      }
+    }
+
+    const plan = planInitialRangeQuery({
+      simInfo,
+      timeRange,
+      latestT,
+      alreadyQueried: false,
+    });
+    if (plan) {
+      queryRange(plan.satId, plan.tMin, plan.tMax, plan.maxPoints);
+      firedInitialQueryForSimInfoRef.current = simInfo;
+    }
+  }, [simInfo, timeRange, chartBufferVersion, queryRange]);
 
   // --- Coordinator: connect ---
   const manualDisconnectRef = useRef(false);

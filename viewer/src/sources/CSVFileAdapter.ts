@@ -27,7 +27,6 @@ export class CSVFileAdapter implements SourceAdapter {
     live: false,
     control: false,
     rangeQuery: false,
-    backfill: false,
   };
 
   private worker: Worker | null = null;

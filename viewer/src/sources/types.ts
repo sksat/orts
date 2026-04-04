@@ -34,8 +34,6 @@ export type SourceEvent =
   | { kind: "state"; point: OrbitPoint }
   | { kind: "history"; points: OrbitPoint[] }
   | { kind: "history-chunk"; points: OrbitPoint[]; done: boolean }
-  | { kind: "history-detail"; points: OrbitPoint[] }
-  | { kind: "history-detail-complete" }
   | {
       kind: "range-response";
       tMin: number;
@@ -61,8 +59,6 @@ export interface SourceCapabilities {
   control: boolean;
   /** Supports query_range requests. */
   rangeQuery: boolean;
-  /** Supports history_detail backfill. */
-  backfill: boolean;
 }
 
 export type SourceConnectionState =

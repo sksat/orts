@@ -5,12 +5,13 @@ import {
   type ChartBufferLike,
   createEventDispatcher,
   type IngestBufferLike,
+  isDataBumpEvent,
   type RuntimeBuffers,
   type RuntimeState,
   setIngestBufferFactory,
   setTrailBufferFactory,
 } from "./eventDispatcher.js";
-import type { SimInfo } from "./types.js";
+import type { SimInfo, SourceEvent } from "./types.js";
 
 /** Minimal ChartBuffer stub. No Worker dependency. */
 class ChartBufferStub implements ChartBufferLike {
@@ -100,7 +101,6 @@ function createTestBuffers(): RuntimeBuffers {
       IngestBufferLike<OrbitPoint>
     >() as RuntimeBuffers["ingestBuffers"],
     chartBuffer: new ChartBufferStub(),
-    detailBuffer: [] as OrbitPoint[],
     streamingCount: 0,
     chunkLoadStarted: false,
   };
@@ -169,34 +169,6 @@ describe("createEventDispatcher", () => {
     expect(buffers.trailBuffers.get("sat1")?.length).toBe(3);
     // After done, IngestBuffer should have rebuild data
     expect(buffers.ingestBuffers.get("sat1")?.latestT).toBe(20);
-  });
-
-  it("history-detail + history-detail-complete merges with streaming", () => {
-    const buffers = createTestBuffers();
-    const state = createTestState();
-    const dispatch = createEventDispatcher(buffers, state, "ws-0");
-
-    // First, push some history
-    dispatch("ws-0", { kind: "history", points: [makePoint(0, "sat1"), makePoint(5, "sat1")] });
-    // Then stream a point
-    dispatch("ws-0", { kind: "state", point: makePoint(10, "sat1") });
-    expect(buffers.streamingCount).toBe(1);
-
-    // Then receive detail (higher resolution)
-    dispatch("ws-0", {
-      kind: "history-detail",
-      points: [
-        makePoint(0, "sat1"),
-        makePoint(2, "sat1"),
-        makePoint(4, "sat1"),
-        makePoint(6, "sat1"),
-        makePoint(8, "sat1"),
-      ],
-    });
-    dispatch("ws-0", { kind: "history-detail-complete" });
-
-    // Should have detail (5) + streaming (1) = 6 points
-    expect(buffers.trailBuffers.get("sat1")?.length).toBe(6);
   });
 
   it("terminated event adds to set", () => {
@@ -273,5 +245,118 @@ describe("createEventDispatcher", () => {
 
     expect(buffers.trailBuffers.get("sat1")?.length).toBe(2);
     expect(buffers.trailBuffers.get("sat2")?.length).toBe(2);
+  });
+
+  it("range-response updates chartBuffer so live chart reflects enriched data (regression: I-A)", () => {
+    // Before the I-A fix, range-response only wrote to trailBuffers and
+    // ingestBuffers, leaving chartBuffer untouched. The chartBufferVersion
+    // bump (I3 fix) then re-ran the live chart memo, which re-read the
+    // same stale chartBuffer — a silent no-op.
+    //
+    // After the fix, range-response clear-and-rebuilds chartBuffer from
+    // the (pre-merged) response points so the live-mode chart path sees
+    // the enriched data on the next re-render.
+    const buffers = createTestBuffers();
+    const state = createTestState();
+    const dispatch = createEventDispatcher(buffers, state, "ws-0");
+
+    // Seed chartBuffer with sparse overview-equivalent points first.
+    dispatch("ws-0", {
+      kind: "history",
+      points: [makePoint(0, "sat1"), makePoint(100, "sat1"), makePoint(200, "sat1")],
+    });
+    const chartBuf = buffers.chartBuffer as ChartBufferStub;
+    const seededPushCount = chartBuf.pushCount;
+    expect(seededPushCount).toBe(3);
+
+    // A denser range-response for the same window. useWebSocketSource
+    // pre-merges these with any recent streaming tail before dispatching.
+    const dense = [
+      makePoint(0, "sat1"),
+      makePoint(50, "sat1"),
+      makePoint(100, "sat1"),
+      makePoint(150, "sat1"),
+      makePoint(200, "sat1"),
+    ];
+    dispatch("ws-0", { kind: "range-response", tMin: 0, tMax: 200, points: dense });
+
+    // chartBuffer must have been cleared and re-populated with the dense
+    // response. Before the fix, seededPushCount would remain unchanged.
+    expect(chartBuf.pushCount).toBe(dense.length);
+
+    // Trail buffer sanity: the range-response path has always updated it.
+    expect(buffers.trailBuffers.get("sat1")?.length).toBe(dense.length);
+  });
+});
+
+describe("isDataBumpEvent", () => {
+  // Events that modify trail/ingest/chart buffers must trigger a chart
+  // re-render, otherwise data arrives silently in refs and the UI goes
+  // stale. Notably `range-response` — the payload of both the proactive
+  // initial query_range and user chart-zoom requests — must be included.
+
+  it("returns true for state events", () => {
+    const event: SourceEvent = {
+      kind: "state",
+      point: {
+        t: 0,
+        x: 0,
+        y: 0,
+        z: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        a: 0,
+        e: 0,
+        inc: 0,
+        raan: 0,
+        omega: 0,
+        nu: 0,
+      },
+    };
+    expect(isDataBumpEvent(event)).toBe(true);
+  });
+
+  it("returns true for history events", () => {
+    expect(isDataBumpEvent({ kind: "history", points: [] })).toBe(true);
+  });
+
+  it("returns true for history-chunk events", () => {
+    expect(isDataBumpEvent({ kind: "history-chunk", points: [], done: false })).toBe(true);
+  });
+
+  it("returns true for range-response events (regression: I3)", () => {
+    // The initial proactive query_range response and user chart-zoom
+    // responses both arrive as range-response events. Without this, the
+    // UI would not re-render after receiving enriched historical data.
+    expect(isDataBumpEvent({ kind: "range-response", tMin: 0, tMax: 100, points: [] })).toBe(true);
+  });
+
+  it("returns false for info events", () => {
+    const info: SimInfo = {
+      mu: 398600,
+      dt: 10,
+      output_interval: 10,
+      stream_interval: 10,
+      central_body: "earth",
+      central_body_radius: 6378,
+      epoch_jd: null,
+      satellites: [],
+    };
+    expect(isDataBumpEvent({ kind: "info", info })).toBe(false);
+  });
+
+  it("returns false for terminated events", () => {
+    expect(
+      isDataBumpEvent({ kind: "terminated", entityPath: "/sat/a", t: 0, reason: "test" }),
+    ).toBe(false);
+  });
+
+  it("returns false for server-state events", () => {
+    expect(isDataBumpEvent({ kind: "server-state", state: "paused" })).toBe(false);
+  });
+
+  it("returns false for textures-ready events", () => {
+    expect(isDataBumpEvent({ kind: "textures-ready", body: "earth" })).toBe(false);
   });
 });

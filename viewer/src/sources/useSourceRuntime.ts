@@ -12,6 +12,7 @@ import type { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import {
   createEventDispatcher,
+  isDataBumpEvent,
   type RuntimeBuffers,
   type RuntimeState,
   type ServerState,
@@ -60,7 +61,6 @@ export function useSourceRuntime() {
   const trailBuffersRef = useRef(new Map<string, TrailBuffer>());
   const ingestBuffersRef = useRef(new Map<string, IngestBuffer<OrbitPoint>>());
   const chartBufferRef = useRef(new ChartBuffer(CHART_COLUMNS, 50000));
-  const detailBufferRef = useRef<OrbitPoint[]>([]);
   const streamingCountRef = useRef(0);
   const chunkLoadStartedRef = useRef(false);
   const chartDirtyRef = useRef(false);
@@ -106,7 +106,6 @@ export function useSourceRuntime() {
         trailBuffers: trailBuffersRef.current,
         ingestBuffers: ingestBuffersRef.current,
         chartBuffer: chartBufferRef.current,
-        detailBuffer: detailBufferRef.current,
         streamingCount: streamingCountRef.current,
         chunkLoadStarted: chunkLoadStartedRef.current,
       };
@@ -125,7 +124,6 @@ export function useSourceRuntime() {
       dispatch(sourceId, event);
 
       // Sync back mutable buffer state
-      detailBufferRef.current = buffers.detailBuffer;
       streamingCountRef.current = buffers.streamingCount;
       chunkLoadStartedRef.current = buffers.chunkLoadStarted;
 
@@ -159,13 +157,8 @@ export function useSourceRuntime() {
           break;
       }
 
-      // Bump chart version for data events
-      if (
-        event.kind === "state" ||
-        event.kind === "history" ||
-        event.kind === "history-chunk" ||
-        event.kind === "history-detail-complete"
-      ) {
+      // Bump chart version for events that modify buffers.
+      if (isDataBumpEvent(event)) {
         bumpChartVersion();
       }
     },
@@ -176,7 +169,6 @@ export function useSourceRuntime() {
     trailBuffersRef.current.clear();
     ingestBuffersRef.current.clear();
     chartBufferRef.current.clear();
-    detailBufferRef.current = [];
     streamingCountRef.current = 0;
     chunkLoadStartedRef.current = false;
     chartDirtyRef.current = false;

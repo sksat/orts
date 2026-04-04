@@ -63,7 +63,6 @@ export interface RuntimeBuffers {
   trailBuffers: Map<string, TrailBuffer>;
   ingestBuffers: Map<string, IngestBufferLike<OrbitPoint>>;
   chartBuffer: ChartBufferLike;
-  detailBuffer: OrbitPoint[];
   streamingCount: number;
   /** Tracks whether a chunked load has started (to clear stale data on first chunk). */
   chunkLoadStarted: boolean;
@@ -117,6 +116,30 @@ function getOrCreateIngestBuffer(
   id: string,
 ): IngestBufferLike<OrbitPoint> {
   return getOrCreate(map, id, () => ingestBufferFactory(id));
+}
+
+// ---------------------------------------------------------------------------
+// Event classification
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true for `SourceEvent` kinds that modify trail/ingest/chart
+ * buffers and therefore require a chart re-render (via the runtime's
+ * `chartBufferVersion` bump).
+ *
+ * Notably includes `range-response`: both the proactive initial
+ * `query_range` and user chart-zoom requests deliver enriched historical
+ * data through range-response events. Omitting this kind would leave the
+ * chart stale until the next streaming state message arrived — visible as
+ * "I zoomed in but the chart didn't update until new data arrived".
+ */
+export function isDataBumpEvent(event: SourceEvent): boolean {
+  return (
+    event.kind === "state" ||
+    event.kind === "history" ||
+    event.kind === "history-chunk" ||
+    event.kind === "range-response"
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -208,57 +231,6 @@ export function createEventDispatcher(
         break;
       }
 
-      case "history-detail":
-        for (const point of event.points) {
-          buffers.detailBuffer.push(point);
-        }
-        break;
-
-      case "history-detail-complete": {
-        if (buffers.detailBuffer.length === 0) break;
-
-        const detailPoints = buffers.detailBuffer;
-        buffers.detailBuffer = [];
-
-        // Collect recent streaming points from TrailBuffers.
-        // NOTE: streamingCount is a global counter, not per-satellite.
-        // In multi-sat sessions this may include tail points from satellites
-        // that had no new streamed data. A per-satellite counter would fix
-        // this, but matches the existing App.tsx behavior.
-        const streamingPoints: OrbitPoint[] = [];
-        for (const buf of buffers.trailBuffers.values()) {
-          const allPts = buf.getAll();
-          const safeCount = Math.min(buffers.streamingCount, allPts.length);
-          streamingPoints.push(...allPts.slice(allPts.length - safeCount));
-        }
-
-        const combined = [...detailPoints, ...streamingPoints];
-        combined.sort((a, b) => a.t - b.t);
-
-        const bySatellite = new Map<string, OrbitPoint[]>();
-        for (const p of combined) {
-          const id = p.entityPath ?? "default";
-          let arr = bySatellite.get(id);
-          if (!arr) {
-            arr = [];
-            bySatellite.set(id, arr);
-          }
-          arr.push(p);
-        }
-
-        for (const [id, pts] of bySatellite) {
-          getOrCreateTrailBuffer(buffers.trailBuffers, id).clear();
-          getOrCreateTrailBuffer(buffers.trailBuffers, id).pushMany(pts);
-          getOrCreateIngestBuffer(buffers.ingestBuffers, id).markRebuild(pts);
-        }
-
-        buffers.chartBuffer.clear();
-        for (const point of combined) {
-          buffers.chartBuffer.push(orbitPointToChartRow(point));
-        }
-        break;
-      }
-
       case "terminated":
         console.log(
           `Satellite ${event.entityPath} terminated at t=${event.t.toFixed(2)}s: ${event.reason}`,
@@ -292,14 +264,29 @@ export function createEventDispatcher(
         break;
 
       case "range-response":
-        // Store for App.tsx zoom logic to consume. Basic handling:
-        // merge response points into trail/ingest buffers.
+        // Merge response points into trail/ingest/chart buffers. The
+        // caller (useWebSocketSource.handleQueryRangeResponse) has
+        // already merged the raw server response with any streaming tail
+        // points via `mergeQueryRangePoints`, so `event.points` is the
+        // authoritative post-merge view — it is safe to clear-and-rebuild
+        // each buffer from it.
+        //
+        // Updating chartBuffer here is load-bearing for the live-mode
+        // chart path in useSimulationData: without it, the
+        // `chartBufferVersion` bump on this event would re-run the chart
+        // memo against unchanged chartBuffer data (a silent no-op),
+        // leaving the live chart sparse until the next streaming state
+        // message arrived.
         if (event.points.length > 0) {
           const rangeId = event.points[0].entityPath ?? "default";
           const trailBuf = getOrCreateTrailBuffer(buffers.trailBuffers, rangeId);
           trailBuf.clear();
           trailBuf.pushMany(event.points);
           getOrCreateIngestBuffer(buffers.ingestBuffers, rangeId).markRebuild(event.points);
+          buffers.chartBuffer.clear();
+          for (const point of event.points) {
+            buffers.chartBuffer.push(orbitPointToChartRow(point));
+          }
         }
         break;
 

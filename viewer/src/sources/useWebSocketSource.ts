@@ -101,14 +101,6 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
     },
     [handleEvent],
   );
-  const handleHistoryDetail = useCallback(
-    (points: OrbitPoint[]) => handleEvent(WS_SOURCE_ID, { kind: "history-detail", points }),
-    [handleEvent],
-  );
-  const handleHistoryDetailComplete = useCallback(
-    () => handleEvent(WS_SOURCE_ID, { kind: "history-detail-complete" }),
-    [handleEvent],
-  );
   const handleQueryRangeResponse = useCallback(
     (response: QueryRangeResponse) => {
       // Discard stale responses
@@ -145,8 +137,6 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
     onState: handleState,
     onInfo: handleInfo,
     onHistory: handleHistory,
-    onHistoryDetail: handleHistoryDetail,
-    onHistoryDetailComplete: handleHistoryDetailComplete,
     onQueryRangeResponse: handleQueryRangeResponse,
     onSimulationTerminated: handleSimulationTerminated,
     onStatus: handleStatus,

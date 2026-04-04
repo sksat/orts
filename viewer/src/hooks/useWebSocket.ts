@@ -106,15 +106,6 @@ interface HistoryMessage {
   states: HistoryStateMsg[];
 }
 
-interface HistoryDetailMessage {
-  type: "history_detail";
-  states: HistoryStateMsg[];
-}
-
-interface HistoryDetailCompleteMessage {
-  type: "history_detail_complete";
-}
-
 interface QueryRangeResponseMessage {
   type: "query_range_response";
   t_min: number;
@@ -148,8 +139,6 @@ export type ServerMessage =
   | StateMessage
   | InfoMessage
   | HistoryMessage
-  | HistoryDetailMessage
-  | HistoryDetailCompleteMessage
   | QueryRangeResponseMessage
   | SimulationTerminatedMessage
   | StatusMessage
@@ -171,8 +160,6 @@ export interface UseWebSocketOptions {
   /** Called when the server sends simulation metadata (on connect). */
   onInfo: (info: SimInfo) => void;
   onHistory: (points: OrbitPoint[]) => void;
-  onHistoryDetail: (points: OrbitPoint[]) => void;
-  onHistoryDetailComplete: () => void;
   /** Called when the server responds to a query_range request. */
   onQueryRangeResponse?: (response: QueryRangeResponse) => void;
   /** Called when a satellite's simulation terminates (collision, atmospheric entry, etc.). */
@@ -190,8 +177,6 @@ export interface DispatchCallbacks {
   onState: (state: OrbitPoint) => void;
   onInfo?: (info: SimInfo) => void;
   onHistory?: (points: OrbitPoint[]) => void;
-  onHistoryDetail?: (points: OrbitPoint[]) => void;
-  onHistoryDetailComplete?: () => void;
   onQueryRangeResponse?: (response: QueryRangeResponse) => void;
   onSimulationTerminated?: (entityPath: string, t: number, reason: string) => void;
   onStatus?: (state: string) => void;
@@ -289,16 +274,10 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
       epoch_jd: infoMsg.epoch_jd ?? null,
       satellites,
     });
-  } else if (msg.type === "history" || msg.type === "history_detail") {
-    const histMsg = msg as HistoryMessage | HistoryDetailMessage;
+  } else if (msg.type === "history") {
+    const histMsg = msg as HistoryMessage;
     const points = parseHistoryPoints(histMsg.states);
-    if (msg.type === "history") {
-      callbacks.onHistory?.(points);
-    } else {
-      callbacks.onHistoryDetail?.(points);
-    }
-  } else if (msg.type === "history_detail_complete") {
-    callbacks.onHistoryDetailComplete?.();
+    callbacks.onHistory?.(points);
   } else if (msg.type === "query_range_response") {
     const qrMsg = msg as QueryRangeResponseMessage;
     const points = parseHistoryPoints(qrMsg.states);
@@ -347,8 +326,6 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onState: options.onState,
     onInfo: options.onInfo,
     onHistory: options.onHistory,
-    onHistoryDetail: options.onHistoryDetail,
-    onHistoryDetailComplete: options.onHistoryDetailComplete,
     onQueryRangeResponse: options.onQueryRangeResponse,
     onSimulationTerminated: options.onSimulationTerminated,
     onStatus: options.onStatus,
@@ -359,8 +336,6 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onState: options.onState,
     onInfo: options.onInfo,
     onHistory: options.onHistory,
-    onHistoryDetail: options.onHistoryDetail,
-    onHistoryDetailComplete: options.onHistoryDetailComplete,
     onQueryRangeResponse: options.onQueryRangeResponse,
     onSimulationTerminated: options.onSimulationTerminated,
     onStatus: options.onStatus,

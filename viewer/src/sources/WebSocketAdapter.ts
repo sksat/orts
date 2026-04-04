@@ -28,7 +28,6 @@ export class WebSocketAdapter implements SourceAdapter {
     live: true,
     control: true,
     rangeQuery: true,
-    backfill: true,
   };
 
   private ws: WebSocket | null = null;
@@ -108,8 +107,6 @@ export class WebSocketAdapter implements SourceAdapter {
       onState: (point) => emit(id, { kind: "state", point }),
       onInfo: (info) => emit(id, { kind: "info", info }),
       onHistory: (points) => emit(id, { kind: "history", points }),
-      onHistoryDetail: (points) => emit(id, { kind: "history-detail", points }),
-      onHistoryDetailComplete: () => emit(id, { kind: "history-detail-complete" }),
       onQueryRangeResponse: (response) =>
         emit(id, {
           kind: "range-response",
