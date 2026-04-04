@@ -1,5 +1,20 @@
+use std::collections::BTreeSet;
+
 use crate::cli::OutputFormat;
 
+/// Convert an .rrd file to another format (currently CSV only).
+///
+/// ## CSV format
+///
+/// Follows the same convention as `orts run`:
+///
+/// - **Single entity**: `t,x,y,z,vx,vy,vz` (no entity column)
+/// - **Multiple entities**: `satellite_id,t,x,y,z,vx,vy,vz` with a
+///   `# satellites = id1, id2, ...` metadata header
+///
+/// The viewer's CSV import (`viewer/src/sources/`) uses the `# satellites`
+/// header to switch between single-sat and multi-sat parsing.  If you
+/// change the format here, update the viewer parser as well.
 pub fn run_convert(input: &str, format: OutputFormat, output: Option<&str>) {
     match format {
         OutputFormat::Csv => {
@@ -7,6 +22,14 @@ pub fn run_convert(input: &str, format: OutputFormat, output: Option<&str>) {
                 eprintln!("Error reading {input}: {e}");
                 std::process::exit(1);
             });
+
+            // Collect unique entity paths to decide single-/multi-sat mode.
+            let entities: BTreeSet<&str> = data
+                .rows
+                .iter()
+                .filter_map(|r| r.entity_path.as_deref())
+                .collect();
+            let multi_sat = entities.len() > 1;
 
             let write_csv = |w: &mut dyn std::io::Write| -> std::io::Result<()> {
                 writeln!(w, "# Converted from {input}")?;
@@ -23,13 +46,34 @@ pub fn run_convert(input: &str, format: OutputFormat, output: Option<&str>) {
                 if let Some(radius) = meta.body_radius {
                     writeln!(w, "# central_body_radius = {} km", radius)?;
                 }
-                writeln!(w, "# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s]")?;
-                for row in &data.rows {
+
+                if multi_sat {
                     writeln!(
                         w,
-                        "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
-                        row.t, row.x, row.y, row.z, row.vx, row.vy, row.vz,
+                        "# satellites = {}",
+                        entities.iter().copied().collect::<Vec<_>>().join(", ")
                     )?;
+                    writeln!(
+                        w,
+                        "# satellite_id,t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s]"
+                    )?;
+                    for row in &data.rows {
+                        let entity = row.entity_path.as_deref().unwrap_or("");
+                        writeln!(
+                            w,
+                            "{},{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+                            entity, row.t, row.x, row.y, row.z, row.vx, row.vy, row.vz,
+                        )?;
+                    }
+                } else {
+                    writeln!(w, "# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s]")?;
+                    for row in &data.rows {
+                        writeln!(
+                            w,
+                            "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+                            row.t, row.x, row.y, row.z, row.vx, row.vy, row.vz,
+                        )?;
+                    }
                 }
                 Ok(())
             };
