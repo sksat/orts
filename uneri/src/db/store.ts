@@ -1,5 +1,6 @@
 import type { AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
 import type { ChartDataMap, TableSchema, TimePoint } from "../types.js";
+import type { RowTuple } from "../worker/protocol.js";
 
 // ---------------------------------------------------------------------------
 // SQL builders (pure functions, testable without DuckDB)
@@ -13,16 +14,30 @@ export function buildCreateTableSQL(schema: TableSchema): string {
   return `CREATE OR REPLACE TABLE ${schema.tableName} (${cols})`;
 }
 
+const sqlVal = (v: number | null | undefined): string =>
+  v == null || !Number.isFinite(v) ? "NULL" : String(v);
+
+/**
+ * Generate an INSERT INTO ... VALUES statement from pre-converted row tuples.
+ * This is the core SQL builder used by both `buildInsertSQL` (with toRow)
+ * and the chart data Worker (which receives already-converted tuples).
+ * Returns an empty string when the batch is empty.
+ */
+export function buildInsertSQLFromRows(tableName: string, rows: RowTuple[]): string {
+  if (rows.length === 0) return "";
+  const values = rows.map((r) => `(${r.map(sqlVal).join(",")})`).join(",");
+  return `INSERT INTO ${tableName} VALUES ${values}`;
+}
+
 /**
  * Generate an INSERT INTO ... VALUES statement for a batch of points.
+ * Delegates to `buildInsertSQLFromRows` after converting via `schema.toRow()`.
  * Returns an empty string when the batch is empty.
  */
 export function buildInsertSQL<T extends TimePoint>(schema: TableSchema<T>, points: T[]): string {
   if (points.length === 0) return "";
-  const sqlVal = (v: number | null | undefined): string =>
-    v == null || !Number.isFinite(v) ? "NULL" : String(v);
-  const values = points.map((p) => `(${schema.toRow(p).map(sqlVal).join(",")})`).join(",");
-  return `INSERT INTO ${schema.tableName} VALUES ${values}`;
+  const rows = points.map((p) => schema.toRow(p));
+  return buildInsertSQLFromRows(schema.tableName, rows);
 }
 
 /**

@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { IngestBuffer as IngestBufferType } from "uneri";
+import type { ChartDataWorkerClient, IngestBuffer as IngestBufferType } from "uneri";
 import {
   type ChartBuffer,
   type ChartDataMap,
   IngestBuffer,
   quantizeChartTime,
-  queryDerived,
   sliceArrays,
   type TimeRange,
   useDuckDB,
-  useTimeSeriesStore,
+  useTimeSeriesStoreWorker,
 } from "uneri";
 import { METRIC_NAMES } from "../chartMetrics.js";
 import { createOrbitSchema } from "../db/orbitSchema.js";
@@ -86,8 +85,9 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     }
   }, [isMultiSatellite, ingestBuffers]);
 
-  // --- Single-satellite IngestBuffer ref (for single-sat DuckDB mode) ---
+  // --- Single-satellite IngestBuffer ref and Worker client ref ---
   const singleIngestBufferRef = useRef(new IngestBuffer<OrbitPoint>());
+  const workerClientRef = useRef<ChartDataWorkerClient | null>(null);
 
   // Keep singleIngestBufferRef pointing to the first satellite's buffer for single-sat mode
   useEffect(() => {
@@ -168,40 +168,42 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
           }
         }
 
-        // Query local DuckDB instead of server query_range.
-        // Note: DuckDB may lag behind by up to one ingest tick (~250ms)
-        // since data is flushed asynchronously. This is acceptable for
-        // zoom operations where sub-second freshness isn't critical.
-        if (conn) {
-          queryDerived(conn, orbitSchema, range.tMin, 2000, range.tMax)
+        // Query via Worker's DuckDB (data only exists in Worker).
+        // Falls back to server query_range if Worker is not available.
+        const client = workerClientRef.current;
+        if (client) {
+          client
+            .zoomQuery(range.tMin, range.tMax, 2000)
             .then((data) => {
-              // Check if this result is still relevant (not superseded by a newer zoom)
               const current = latestRequestedRangeRef.current;
               if (current && current.tMin === range.tMin && current.tMax === range.tMax) {
-                setLocalZoomData(data);
+                setLocalZoomData(data.t.length > 0 ? data : null);
               }
             })
             .catch((e) => {
-              console.warn("Local DuckDB zoom query failed, falling back to server:", e);
+              console.warn("Worker zoom query failed, falling back to server:", e);
               const satId = simInfo?.satellites[0]?.id ?? "default";
               queryRange(satId, range.tMin, range.tMax, 2000);
             });
         } else {
-          // No DuckDB connection — fall back to server query_range.
+          // No Worker client — fall back to server query_range.
           const satId = simInfo?.satellites[0]?.id ?? "default";
           queryRange(satId, range.tMin, range.tMax, 2000);
         }
       }, 200);
     },
-    [conn, orbitSchema, isMultiSatellite, simInfo, queryRange, chartBuffer],
+    [isMultiSatellite, simInfo, queryRange, chartBuffer],
   );
 
-  // --- Charts: single-satellite mode (replay or single satellite) ---
-  const { data: singleChartData, isLoading: singleChartsLoading } = useTimeSeriesStore({
-    conn: isMultiSatellite ? null : conn, // disable when multi-sat (uses multi-store instead)
+  // --- Charts: single-satellite mode (Worker-based) ---
+  // DuckDB tick loop runs entirely in a Web Worker, keeping the main thread free.
+  // Disabled in multi-satellite mode (uses useMultiSatelliteStore instead).
+  const { data: singleChartData, isLoading: singleChartsLoading } = useTimeSeriesStoreWorker({
     schema: orbitSchema,
     ingestBufferRef: singleIngestBufferRef,
     timeRange,
+    enabled: !isMultiSatellite,
+    clientRef: workerClientRef,
   });
 
   // --- Charts: multi-satellite mode ---

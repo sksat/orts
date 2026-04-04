@@ -4,8 +4,7 @@ import {
   type TableSchema,
   type TimeRange,
   TimeSeriesChart,
-  useDuckDB,
-  useTimeSeriesStore,
+  useTimeSeriesStoreWorker,
 } from "../../src/index.js";
 
 interface SinePoint {
@@ -34,7 +33,6 @@ const sineSchema: TableSchema<SinePoint> = {
 };
 
 export function App() {
-  const { conn } = useDuckDB(sineSchema);
   const bufferRef = useRef(new IngestBuffer<SinePoint>());
   const [timeRange, setTimeRange] = useState<TimeRange>(null);
 
@@ -63,13 +61,11 @@ export function App() {
     return () => ws.close();
   }, []);
 
-  const { data } = useTimeSeriesStore({
-    conn,
+  const { data } = useTimeSeriesStoreWorker({
     schema: sineSchema,
     ingestBufferRef: bufferRef,
     timeRange,
-    tickInterval: 100,
-    queryEveryN: 1,
+    drainInterval: 100,
   });
 
   // Slice data for individual charts
@@ -95,11 +91,17 @@ export function App() {
         minHeight: "100vh",
       }}
     >
-      <h1>uneri Example: Sine Wave</h1>
+      <h1>uneri Example: Sine Wave (Worker)</h1>
       <div style={{ marginBottom: "1rem" }}>
-        <button onClick={() => setTimeRange(null)}>All</button>
-        <button onClick={() => setTimeRange(30)}>30s</button>
-        <button onClick={() => setTimeRange(60)}>60s</button>
+        <button type="button" onClick={() => setTimeRange(null)}>
+          All
+        </button>
+        <button type="button" onClick={() => setTimeRange(30)}>
+          30s
+        </button>
+        <button type="button" onClick={() => setTimeRange(60)}>
+          60s
+        </button>
       </div>
       <TimeSeriesChart title="sin(t)" yLabel="" data={sineData} color="#4af" />
       <TimeSeriesChart title="cos(t)" yLabel="" data={cosineData} color="#f84" />

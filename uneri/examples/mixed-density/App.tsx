@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  type ChartDataWorkerClient,
   IngestBuffer,
   type TableSchema,
   type TimeRange,
   TimeSeriesChart,
-  useDuckDB,
-  useTimeSeriesStore,
+  useTimeSeriesStoreWorker,
 } from "../../src/index.js";
 
 interface MixedPoint {
@@ -44,10 +44,10 @@ declare global {
 }
 
 export function App() {
-  const { conn } = useDuckDB(mixedSchema);
   const bufferRef = useRef(new IngestBuffer<MixedPoint>());
   const [timeRange, setTimeRange] = useState<TimeRange>(null);
   const [pointsReceived, setPointsReceived] = useState(0);
+  const workerClientRef = useRef<ChartDataWorkerClient | null>(null);
 
   // Data source: WebSocket or mock (when ?mock is in URL)
   useEffect(() => {
@@ -85,29 +85,29 @@ export function App() {
     return () => ws.close();
   }, []);
 
-  const { data } = useTimeSeriesStore({
-    conn,
+  const { data } = useTimeSeriesStoreWorker({
     schema: mixedSchema,
     ingestBufferRef: bufferRef,
     timeRange,
+    drainInterval: 100,
     tickInterval: 100,
-    queryEveryN: 1,
+    coldRefreshEveryN: 1,
+    clientRef: workerClientRef,
   });
 
   // Expose debug data on window for Playwright tests
-  const queryRowCount = useCallback(async () => {
-    if (!conn) return 0;
-    const result = await conn.query(`SELECT COUNT(*) AS cnt FROM ${mixedSchema.tableName}`);
-    return Number(result.getChildAt(0)!.toArray()[0]);
-  }, [conn]);
-
+  // queryRowCount now goes through the Worker client instead of direct conn.query()
   useEffect(() => {
     window.__uneriDebug = {
       chartData: data,
       rowCount: pointsReceived,
-      queryRowCount,
+      queryRowCount: async () => {
+        const client = workerClientRef.current;
+        if (!client) return 0;
+        return client.queryRowCount();
+      },
     };
-  }, [data, pointsReceived, queryRowCount]);
+  }, [data, pointsReceived]);
 
   // Slice data for individual charts
   const sineData = useMemo(
@@ -132,15 +132,21 @@ export function App() {
         minHeight: "100vh",
       }}
     >
-      <h1>uneri: Mixed-Density Test</h1>
+      <h1>uneri: Mixed-Density Test (Worker)</h1>
       <p data-testid="points-received">
         Points received: {pointsReceived} | Chart points: {data?.t?.length ?? 0} | Buffer latestT:{" "}
         {bufferRef.current.latestT.toFixed(1)}
       </p>
       <div style={{ marginBottom: "1rem" }}>
-        <button onClick={() => setTimeRange(null)}>All</button>
-        <button onClick={() => setTimeRange(30)}>30s</button>
-        <button onClick={() => setTimeRange(60)}>60s</button>
+        <button type="button" onClick={() => setTimeRange(null)}>
+          All
+        </button>
+        <button type="button" onClick={() => setTimeRange(30)}>
+          30s
+        </button>
+        <button type="button" onClick={() => setTimeRange(60)}>
+          60s
+        </button>
       </div>
       <TimeSeriesChart title="sine" yLabel="" data={sineData} color="#4af" />
       <TimeSeriesChart title="cosine" yLabel="" data={cosineData} color="#f84" />

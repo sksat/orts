@@ -7,6 +7,7 @@ import {
   buildDerivedQuery,
   buildIncrementalQuery,
   buildInsertSQL,
+  buildInsertSQLFromRows,
 } from "./store.js";
 
 // --- Test schema ---
@@ -97,6 +98,48 @@ describe("buildInsertSQL", () => {
   it("returns empty string for empty batch", () => {
     const sql = buildInsertSQL(testSchema, []);
     expect(sql).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildInsertSQLFromRows
+// ---------------------------------------------------------------------------
+
+describe("buildInsertSQLFromRows", () => {
+  it("generates correct VALUES from row tuples", () => {
+    const rows = [
+      [0, 1.5, 2.5],
+      [1, 3.0, 4.0],
+    ];
+    const sql = buildInsertSQLFromRows("test_data", rows);
+    expect(sql).toContain("INSERT INTO test_data VALUES");
+    expect(sql).toContain("(0,1.5,2.5)");
+    expect(sql).toContain("(1,3,4)");
+  });
+
+  it("returns empty string for empty rows", () => {
+    expect(buildInsertSQLFromRows("test_data", [])).toBe("");
+  });
+
+  it("handles null values", () => {
+    const sql = buildInsertSQLFromRows("t", [[1, null, 3]]);
+    expect(sql).toBe("INSERT INTO t VALUES (1,NULL,3)");
+  });
+
+  it("handles NaN and Infinity as NULL", () => {
+    const sql = buildInsertSQLFromRows("t", [[1, NaN, Infinity]]);
+    expect(sql).toBe("INSERT INTO t VALUES (1,NULL,NULL)");
+  });
+
+  it("produces same SQL as buildInsertSQL for equivalent input", () => {
+    const points = [
+      { t: 0, value: 1.5, extra: 2.5 },
+      { t: 1, value: 3.0, extra: 4.0 },
+    ];
+    const sqlA = buildInsertSQL(testSchema, points);
+    const rows = points.map((p) => testSchema.toRow(p));
+    const sqlB = buildInsertSQLFromRows(testSchema.tableName, rows);
+    expect(sqlA).toBe(sqlB);
   });
 });
 

@@ -21,6 +21,7 @@ export {
   buildDerivedQuery,
   buildIncrementalQuery,
   buildInsertSQL,
+  buildInsertSQLFromRows,
   COMPACT_DEFAULTS,
   clearTable,
   compactTable,
@@ -42,6 +43,8 @@ export {
   DISPLAY_MAX_POINTS,
   useTimeSeriesStore,
 } from "./hooks/useTimeSeriesStore.js";
+export type { UseTimeSeriesStoreWorkerOptions } from "./hooks/useTimeSeriesStoreWorker.js";
+export { useTimeSeriesStoreWorker } from "./hooks/useTimeSeriesStoreWorker.js";
 // Types
 export type {
   ChartDataMap,
@@ -65,3 +68,6 @@ export {
   upperBound,
 } from "./utils/chartViewport.js";
 export { mergeChartData, trimChartDataLeft } from "./utils/mergeChartData.js";
+// Worker
+export { ChartDataWorkerClient } from "./worker/chartDataWorkerClient.js";
+export type { RowTuple, WorkerTableSchema } from "./worker/protocol.js";
