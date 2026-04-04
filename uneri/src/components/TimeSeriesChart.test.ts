@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildMultiSeriesConfig, computeLegendIsolation, float64NanToNull, safeYRange } from "./TimeSeriesChart.js";
+import {
+  buildMultiSeriesConfig,
+  computeLegendIsolation,
+  float64NanToNull,
+  safeYRange,
+} from "./TimeSeriesChart.js";
 
 const mockU = {} as any;
 
