@@ -2,6 +2,7 @@ import react from "@astrojs/react";
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 import starlightTypeDoc from "starlight-typedoc";
+import starlightRustdoc from "starlight-rustdoc";
 
 export default defineConfig({
   base: "/orts",
@@ -16,6 +17,13 @@ export default defineConfig({
           entryPoints: ["../uneri/src/index.ts"],
           tsconfig: "../uneri/tsconfig.json",
           output: "uneri/api",
+        }),
+        starlightRustdoc({
+          crates: ["utsuroi", "kaname", "tobari", "orts"],
+          workspace: "..",
+          sourceLinks: {
+            repository: "https://github.com/sksat/orts",
+          },
         }),
       ],
       sidebar: [

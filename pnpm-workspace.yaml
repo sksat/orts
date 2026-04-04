@@ -3,3 +3,4 @@ packages:
   - "viewer"
   - "docs"
   - "tobari/examples/web"
+  - "starlight-rustdoc"

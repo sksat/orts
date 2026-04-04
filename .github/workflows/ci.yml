@@ -154,6 +154,31 @@ jobs:
           path: target/debug/orts
           retention-days: 1
 
+  starlight-rustdoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4.4.0
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.3.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm --filter starlight-rustdoc build
+
+      - name: Test
+        run: pnpm --filter starlight-rustdoc test
+
   uneri:
     runs-on: ubuntu-latest
     steps:
