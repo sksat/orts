@@ -40,6 +40,7 @@ let workerDisposed = false;
 let timeRange: TimeRange = null;
 let maxPoints: number = DISPLAY_MAX_POINTS;
 let latestT = -Infinity;
+let earliestT = Infinity;
 let tickTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Cold/hot state (mirroring useTimeSeriesStore)
@@ -54,6 +55,8 @@ let hasData = false;
 let TICK_INTERVAL = 250;
 let COLD_REFRESH_EVERY_N = 20;
 let HOT_ROW_BUDGET = 500;
+/** True when coldRefreshEveryN was not explicitly set by the caller. */
+let useAdaptiveAllMode = true;
 const COMPACT_EVERY_N = 5;
 const COMPACT_COOLDOWN_AFTER_REBUILD = 5;
 let compactCooldown = 0;
@@ -107,6 +110,47 @@ function toTableSchema(ws: WorkerTableSchema): TableSchema {
 }
 
 // ---------------------------------------------------------------------------
+// Adaptive refresh for "All" mode
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the effective cold refresh interval (in ticks) based on the
+ * current time range span. In windowed mode (timeRange != null), use
+ * the configured COLD_REFRESH_EVERY_N. In "All" mode, scale the
+ * interval so that refreshes are less frequent as the time span grows.
+ *
+ * Rationale: with an 800px-wide chart, 1 second of new data at
+ * elapsed=3600s shifts < 0.25 pixels. Refreshing every 250ms is
+ * wasteful — we only need to refresh when enough new data has
+ * accumulated to be visually distinguishable.
+ *
+ * Heuristic: refresh interval ≈ max(baseInterval, elapsed / 200).
+ * This means roughly 1 refresh per 0.5% time-range growth:
+ *   - 0–60s elapsed:   every 5s   (20 ticks at 250ms)
+ *   - 10 min elapsed:  every 3s   (12 ticks)
+ *   - 1 hour elapsed:  every 18s  (72 ticks)
+ *   - 24 hours elapsed: every 7m  (~1700 ticks)
+ */
+function computeEffectiveColdEveryN(range: TimeRange): number {
+  // Windowed mode or explicitly configured: use configured interval
+  if (range != null || !useAdaptiveAllMode) return COLD_REFRESH_EVERY_N;
+
+  // "All" mode: scale based on total time span
+  const span = latestT - earliestT;
+  if (!Number.isFinite(span) || span <= 0) return COLD_REFRESH_EVERY_N;
+
+  // Convert span to tick count: span / 200 / (TICK_INTERVAL / 1000)
+  // At TICK_INTERVAL=250ms this simplifies to span/50. Examples:
+  //   60s span  → 1 tick  → use base (20 ticks = 5s)
+  //   10 min    → 12      → use base (20 ticks = 5s)
+  //   17 min    → 20      → adaptive kicks in at ~5s
+  //   1 hour    → 72 ticks → ~18s
+  //   24 hours  → 1728 ticks → ~7 min
+  const adaptiveTicks = Math.ceil(span / 200 / (TICK_INTERVAL / 1000));
+  return Math.max(COLD_REFRESH_EVERY_N, adaptiveTicks);
+}
+
+// ---------------------------------------------------------------------------
 // Tick loop (cold/hot query cycle)
 // ---------------------------------------------------------------------------
 
@@ -153,9 +197,17 @@ async function tick() {
   ticksSinceCold++;
   const derivedNames = schema.derived.map((d) => d.name);
 
+  // --- "All" mode adaptive refresh ---
+  // In "All" mode (timeRange === null), the chart's time range grows
+  // continuously. As it widens, a single new data point shifts fewer
+  // and fewer pixels on screen — refreshing every 250ms is wasteful.
+  // We scale the cold refresh interval based on the elapsed time span
+  // so that updates happen only as often as they're visually meaningful.
+  const effectiveColdEveryN = computeEffectiveColdEveryN(timeRange);
+
   const needsCold =
     coldRefreshNeeded ||
-    ticksSinceCold >= COLD_REFRESH_EVERY_N ||
+    ticksSinceCold >= effectiveColdEveryN ||
     (hotBuffer != null && hotBuffer.t.length > HOT_ROW_BUDGET);
 
   if (needsCold) {
@@ -179,8 +231,11 @@ async function tick() {
     } catch (e) {
       console.warn("chartDataWorker: cold query failed:", e);
     }
-  } else {
-    // HOT PATH: incremental query
+  } else if (timeRange != null) {
+    // HOT PATH: incremental query (only for windowed mode).
+    // In "All" mode, skip hot queries — the downsampled cold snapshot
+    // already covers the full range, and incremental additions are
+    // sub-pixel and don't justify the query + render cost.
     try {
       const tMin = computeTMin(timeRange, latestT);
       const hotLowerBound = tMin != null ? Math.max(coldTMax, tMin) : coldTMax;
@@ -229,7 +284,10 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMessage>) => {
       try {
         schema = msg.schema;
         if (msg.tickInterval != null) TICK_INTERVAL = msg.tickInterval;
-        if (msg.coldRefreshEveryN != null) COLD_REFRESH_EVERY_N = msg.coldRefreshEveryN;
+        if (msg.coldRefreshEveryN != null) {
+          COLD_REFRESH_EVERY_N = msg.coldRefreshEveryN;
+          useAdaptiveAllMode = false;
+        }
         if (msg.hotRowBudget != null) HOT_ROW_BUDGET = msg.hotRowBudget;
         const db = await initDuckDB();
         conn = await db.connect();
@@ -251,6 +309,10 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMessage>) => {
     case "ingest": {
       ingestQueue = ingestQueue.concat(msg.rows);
       latestT = msg.latestT;
+      // Track earliest t from first row of first ingest
+      if (earliestT === Infinity && msg.rows.length > 0 && msg.rows[0][0] != null) {
+        earliestT = msg.rows[0][0];
+      }
       break;
     }
 
@@ -266,6 +328,9 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMessage>) => {
         }
         hasData = msg.rows.length > 0;
         latestT = msg.latestT;
+        if (msg.rows.length > 0 && msg.rows[0][0] != null) {
+          earliestT = msg.rows[0][0];
+        }
         compactCooldown = COMPACT_COOLDOWN_AFTER_REBUILD;
         coldRefreshNeeded = true;
         hotBuffer = null;
