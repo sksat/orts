@@ -20,6 +20,14 @@ export interface UseMultiSatelliteStoreWorkerOptions<T extends TimePoint> {
   maxPoints?: number;
   drainInterval?: number;
   enabled?: boolean;
+  /**
+   * Optional caller-supplied ref that the hook populates with the live
+   * worker client once the dynamic import finishes. Mirrors the
+   * single-sat `useTimeSeriesStoreWorker`'s `clientRef` pattern so the
+   * consumer can read `.current` from an earlier-declared handler
+   * (e.g. `handleChartZoom`) and fire ad-hoc `zoomQuery` requests.
+   */
+  clientRef?: React.RefObject<MultiChartDataWorkerClient | null>;
 }
 
 export interface UseMultiSatelliteStoreWorkerReturn {
@@ -68,6 +76,7 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
     maxPoints = 2000,
     drainInterval = 500,
     enabled = true,
+    clientRef: externalClientRef,
   } = options;
 
   const [data, setData] = useState<MultiChartDataMap | null>(null);
@@ -113,6 +122,9 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
 
       const client = new ClientClass();
       clientRef.current = client;
+      if (externalClientRef) {
+        externalClientRef.current = client;
+      }
 
       client.onData((result) => {
         setData(toMultiChartDataMap(result));
@@ -177,6 +189,9 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
       clearTimeout(drainTimer);
       clientRef.current?.dispose();
       clientRef.current = null;
+      if (externalClientRef) {
+        externalClientRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

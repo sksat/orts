@@ -9,6 +9,7 @@ import {
   type TimeRange,
   useTimeSeriesStoreWorker,
 } from "uneri";
+import type { MultiChartDataResult, MultiChartDataWorkerClient } from "uneri/multiWorkerClient";
 import { METRIC_NAMES } from "../chartMetrics.js";
 import { createOrbitSchema } from "../db/orbitSchema.js";
 import type { OrbitPoint } from "../orbit.js";
@@ -82,6 +83,10 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
   // --- Single-satellite IngestBuffer ref and Worker client ref ---
   const singleIngestBufferRef = useRef(new IngestBuffer<OrbitPoint>());
   const workerClientRef = useRef<ChartDataWorkerClient | null>(null);
+  // Multi-sat worker client ref. Populated by `useMultiSatelliteStoreWorker`
+  // once the dynamic import finishes. Declared here (before
+  // `handleChartZoom`) so the zoom handler's closure can read it.
+  const multiWorkerClientRef = useRef<MultiChartDataWorkerClient | null>(null);
 
   // Keep singleIngestBufferRef pointing to the first satellite's buffer for single-sat mode
   useEffect(() => {
@@ -93,6 +98,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
 
   // --- Zoom state ---
   const [localZoomData, setLocalZoomData] = useState<ChartDataMap | null>(null);
+  const [localMultiZoomData, setLocalMultiZoomData] = useState<MultiChartDataMap | null>(null);
   const [localChartBump, setLocalChartBump] = useState(0);
   const effectiveChartVersion = chartBufferVersion + localChartBump;
 
@@ -126,8 +132,6 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
 
   const handleChartZoom = useCallback(
     (tMin: number, tMax: number) => {
-      if (isMultiSatellite) return;
-
       // Dedupe: skip if same range as last sent request
       const last = lastSentRangeRef.current;
       if (last && last.tMin === tMin && last.tMax === tMax) return;
@@ -146,11 +150,54 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
         // Always record the zoom range (used by liveChartData for getWindow).
         lastSentRangeRef.current = range;
 
-        // In live mode, try ChartBuffer first (instant, no server round-trip).
-        // Note: if the zoomed interval later ages out of the ring buffer,
-        // liveChartData returns null and falls back to DuckDB. The user
-        // would need to re-zoom to trigger a fresh query_range in that case.
-        // This is acceptable since the buffer holds ~139h at dt=10s.
+        /** Server fallback: fire one `query_range` per satellite so every
+         * sat's trail/chart buffers get enriched for the window. Mirrors
+         * the M3 proactive-initial-query pattern. */
+        const serverFallback = () => {
+          if (!simInfo) return;
+          for (const sat of simInfo.satellites) {
+            queryRange(sat.id, range.tMin, range.tMax, 2000);
+          }
+        };
+
+        if (isMultiSatellite) {
+          // Multi-sat: ask the multi-sat worker for an aligned zoom
+          // window across every satellite's DuckDB. If the worker has
+          // the data, the result renders immediately; otherwise fall
+          // back to pulling detail from the server.
+          const multiClient = multiWorkerClientRef.current;
+          if (multiClient) {
+            multiClient
+              .zoomQuery(range.tMin, range.tMax, 2000)
+              .then((data: MultiChartDataResult) => {
+                const current = latestRequestedRangeRef.current;
+                if (!current || current.tMin !== range.tMin || current.tMax !== range.tMax) {
+                  return;
+                }
+                // Accept the result if any metric has data; otherwise
+                // fall back to a server pull per sat.
+                const hasData = Object.values(data).some(
+                  (series) => series != null && series.t.length > 0,
+                );
+                if (hasData) {
+                  setLocalMultiZoomData(data);
+                } else {
+                  setLocalMultiZoomData(null);
+                  serverFallback();
+                }
+              })
+              .catch((e: unknown) => {
+                console.warn("Multi-sat zoom query failed, falling back to server:", e);
+                serverFallback();
+              });
+          } else {
+            serverFallback();
+          }
+          return;
+        }
+
+        // Single-sat path: live ChartBuffer fast path → worker DuckDB
+        // zoom query → server query_range fallback.
         if (isLiveRef.current) {
           if (
             chartBuffer.length > 0 &&
@@ -162,8 +209,6 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
           }
         }
 
-        // Query via Worker's DuckDB (data only exists in Worker).
-        // Falls back to server query_range if Worker is not available.
         const client = workerClientRef.current;
         if (client) {
           client
@@ -186,6 +231,8 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
         }
       }, 200);
     },
+    // multiWorkerClientRef / workerClientRef are stable `useRef` objects,
+    // read via `.current` at call time.
     [isMultiSatellite, simInfo, queryRange, chartBuffer],
   );
 
@@ -201,14 +248,20 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
   });
 
   // --- Charts: multi-satellite mode (Worker-based) ---
-  const { data: multiChartData, isLoading: multiChartsLoading } = useMultiSatelliteStoreWorker({
+  const { data: multiChartDataRaw, isLoading: multiChartsLoading } = useMultiSatelliteStoreWorker({
     baseSchema: orbitSchema,
     satelliteConfigs,
     ingestBuffers,
     metricNames: METRIC_NAMES,
     timeRange,
     enabled: isMultiSatellite,
+    clientRef: multiWorkerClientRef,
   });
+
+  // When the user zooms, the one-shot multi-zoom-query result takes
+  // precedence over the tick-broadcast data. Clearing falls back to the
+  // normal timeRange view.
+  const multiChartData: MultiChartDataMap | null = localMultiZoomData ?? multiChartDataRaw;
 
   const chartsLoading = isMultiSatellite ? multiChartsLoading : singleChartsLoading;
 
@@ -287,6 +340,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     if ((isLive && !prevIsLiveRef.current) || timeRange !== prevTimeRangeRef.current) {
       lastSentRangeRef.current = null;
       setLocalZoomData(null);
+      setLocalMultiZoomData(null);
     }
     prevIsLiveRef.current = isLive;
     prevTimeRangeRef.current = timeRange;
@@ -303,6 +357,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     lastSentRangeRef.current = null;
     latestRequestedRangeRef.current = null;
     setLocalZoomData(null);
+    setLocalMultiZoomData(null);
     setLocalChartBump((v) => v + 1);
     if (chartZoomTimerRef.current != null) {
       clearTimeout(chartZoomTimerRef.current);
