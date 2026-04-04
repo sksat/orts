@@ -29,7 +29,9 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "example:sine-wave": "npx tsx examples/sine-wave/server.ts & npx vite --config vite.example.config.ts --port 5174",
-    "example:mixed-density": "npx tsx examples/mixed-density/server.ts & npx vite --config vite.mixed-density.config.ts --port 5175"
+    "example:mixed-density": "npx tsx examples/mixed-density/server.ts & npx vite --config vite.mixed-density.config.ts --port 5175",
+    "example:multi-series": "npx tsx examples/multi-series/server.ts & npx vite --config vite.multi-series.config.ts --port 5176",
+    "example:multi-table": "npx tsx examples/multi-table/server.ts & npx vite --config vite.multi-table.config.ts --port 5177"
   },
   "peerDependencies": {
     "react": ">=18.0.0",

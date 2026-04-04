@@ -38,6 +38,22 @@ export function safeYRange(
   return uPlot.rangeNum(min, max, 0.1, false);
 }
 
+/**
+ * Convert Float64Array to a regular array, replacing NaN with null.
+ *
+ * uPlot cannot recognise NaN inside Float64Array as gaps — it only handles
+ * null/undefined in plain arrays.  alignTimeSeries() returns Float64Array
+ * with NaN for missing points, so this bridge is needed before handing
+ * the data to uPlot.
+ */
+export function float64NanToNull(arr: Float64Array): (number | null)[] {
+  const out: (number | null)[] = new Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    out[i] = Number.isNaN(arr[i]) ? null : arr[i];
+  }
+  return out;
+}
+
 /** Configuration for a single series in a multi-series chart. */
 export interface SeriesConfig {
   label: string;
@@ -81,7 +97,13 @@ export function computeLegendIsolation(clickedIndex: number, currentShow: boolea
   return currentShow.map((_, i) => i === 0 || i === clickedIndex);
 }
 
-/** Build uPlot series config array from SeriesConfig[]. */
+/**
+ * Build uPlot series config array from SeriesConfig[].
+ *
+ * spanGaps is enabled because aligned multi-series data contains null gaps
+ * (from float64NanToNull) at time points where a series has no value.
+ * Each series should render as a continuous line across those gaps.
+ */
 export function buildMultiSeriesConfig(configs: SeriesConfig[]): uPlot.Series[] {
   const result: uPlot.Series[] = [{}]; // x-axis placeholder
   for (const cfg of configs) {
@@ -89,6 +111,7 @@ export function buildMultiSeriesConfig(configs: SeriesConfig[]): uPlot.Series[] 
       label: cfg.label,
       stroke: cfg.color,
       width: 1.5,
+      spanGaps: true,
     });
   }
   return result;
@@ -173,7 +196,7 @@ export function TimeSeriesChart({
   } | null {
     if (multiData && multiData.series.length > 0 && multiData.t.length >= 2) {
       return {
-        plotData: [multiData.t, ...multiData.values] as uPlot.AlignedData,
+        plotData: [multiData.t, ...multiData.values.map(float64NanToNull)] as uPlot.AlignedData,
         seriesConfig: buildMultiSeriesConfig(multiData.series),
       };
     }

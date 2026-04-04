@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMultiSeriesConfig, computeLegendIsolation, safeYRange } from "./TimeSeriesChart.js";
+import { buildMultiSeriesConfig, computeLegendIsolation, float64NanToNull, safeYRange } from "./TimeSeriesChart.js";
 
 const mockU = {} as any;
 
@@ -64,6 +64,7 @@ describe("buildMultiSeriesConfig", () => {
       label: "SSO",
       stroke: "#f00",
       width: 1.5,
+      spanGaps: true,
     });
   });
 
@@ -77,16 +78,51 @@ describe("buildMultiSeriesConfig", () => {
     expect(result[0]).toEqual({});
     expect(result[1].label).toBe("A");
     expect(result[1].stroke).toBe("#f00");
+    expect(result[1].spanGaps).toBe(true);
     expect(result[2].label).toBe("B");
     expect(result[2].stroke).toBe("#0f0");
+    expect(result[2].spanGaps).toBe(true);
     expect(result[3].label).toBe("C");
     expect(result[3].stroke).toBe("#00f");
+    expect(result[3].spanGaps).toBe(true);
   });
 
   it("preserves color and label exactly", () => {
     const result = buildMultiSeriesConfig([{ label: "ISS (ZARYA)", color: "rgba(255,0,0,0.8)" }]);
     expect(result[1].label).toBe("ISS (ZARYA)");
     expect(result[1].stroke).toBe("rgba(255,0,0,0.8)");
+  });
+});
+
+describe("float64NanToNull", () => {
+  it("converts NaN to null for uPlot compatibility", () => {
+    const input = new Float64Array([0.1, NaN, 0.3, NaN, 0.5]);
+    const result = float64NanToNull(input);
+    expect(result).toEqual([0.1, null, 0.3, null, 0.5]);
+  });
+
+  it("preserves all values when no NaN present", () => {
+    const input = new Float64Array([1.0, 2.0, 3.0]);
+    const result = float64NanToNull(input);
+    expect(result).toEqual([1.0, 2.0, 3.0]);
+  });
+
+  it("handles empty array", () => {
+    const input = new Float64Array([]);
+    const result = float64NanToNull(input);
+    expect(result).toEqual([]);
+  });
+
+  it("handles all-NaN array", () => {
+    const input = new Float64Array([NaN, NaN, NaN]);
+    const result = float64NanToNull(input);
+    expect(result).toEqual([null, null, null]);
+  });
+
+  it("passes Infinity through unchanged", () => {
+    const input = new Float64Array([1.0, Infinity, -Infinity, NaN]);
+    const result = float64NanToNull(input);
+    expect(result).toEqual([1.0, Infinity, -Infinity, null]);
   });
 });
 
