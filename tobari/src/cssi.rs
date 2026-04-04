@@ -260,6 +260,23 @@ impl CssiData {
     pub fn records(&self) -> &[CssiDailyRecord] {
         &self.records
     }
+
+    /// Return a new `CssiData` containing only records up to (and including)
+    /// the given epoch's calendar day.
+    ///
+    /// Useful for simulating "what data was available at time T" by discarding
+    /// future observations. When used with [`CssiSpaceWeather`] in `Clamp` mode,
+    /// queries after the cutoff will repeat the last available day's values.
+    pub fn truncate_after(&self, epoch: &Epoch) -> Self {
+        let jd_cutoff = epoch.jd();
+        let records: Vec<CssiDailyRecord> = self
+            .records
+            .iter()
+            .filter(|r| r.jd_midnight <= jd_cutoff)
+            .cloned()
+            .collect();
+        CssiData { records }
+    }
 }
 
 /// Behavior when the requested epoch is outside the data range.
@@ -307,6 +324,13 @@ impl CssiSpaceWeather {
     /// Access the underlying data.
     pub fn data(&self) -> &CssiData {
         &self.data
+    }
+
+    /// Consume the provider and return the inner data.
+    ///
+    /// If other references to the data exist (via `Clone`), returns a clone.
+    pub fn into_data(self) -> CssiData {
+        Arc::try_unwrap(self.data).unwrap_or_else(|arc| (*arc).clone())
     }
 }
 
