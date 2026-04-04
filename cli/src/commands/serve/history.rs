@@ -286,25 +286,29 @@ impl HistoryBuffer {
     /// Without the fast path, every reconnect would stall the sim loop on
     /// a full segment read, undoing the O(1) handshake cost won by the
     /// overview cache.
+    ///
+    /// When `entity_path` is `Some`, only states belonging to that
+    /// entity are returned. The filter is applied **before**
+    /// `max_points` downsampling so the budget goes entirely to the
+    /// target entity instead of being diluted across every interleaved
+    /// satellite in the window.
     pub fn query_range(
         &self,
         t_min: f64,
         t_max: f64,
         max_points: Option<usize>,
+        entity_path: Option<&EntityPath>,
     ) -> Vec<HistoryState> {
         let in_memory_sufficient = self.states.front().is_some_and(|oldest| oldest.t <= t_min);
 
+        let matches = |s: &HistoryState| {
+            s.t >= t_min && s.t <= t_max && entity_path.is_none_or(|ep| s.entity_path == *ep)
+        };
+
         let filtered: Vec<HistoryState> = if in_memory_sufficient {
-            self.states
-                .iter()
-                .filter(|s| s.t >= t_min && s.t <= t_max)
-                .cloned()
-                .collect()
+            self.states.iter().filter(|s| matches(s)).cloned().collect()
         } else {
-            self.load_all()
-                .into_iter()
-                .filter(|s| s.t >= t_min && s.t <= t_max)
-                .collect()
+            self.load_all().into_iter().filter(matches).collect()
         };
 
         match max_points {
@@ -654,7 +658,7 @@ mod tests {
         let t_min = oldest_in_memory + 10.0;
 
         let start = std::time::Instant::now();
-        let result = buf.query_range(t_min, latest, Some(500));
+        let result = buf.query_range(t_min, latest, Some(500), None);
         let elapsed = start.elapsed();
 
         assert!(!result.is_empty(), "result should contain in-window points");
@@ -690,7 +694,7 @@ mod tests {
             "precondition: tail starts past t=300"
         );
 
-        let result = buf.query_range(100.0, 200.0, None);
+        let result = buf.query_range(100.0, 200.0, None, None);
         assert!(
             !result.is_empty(),
             "historical window should return data from disk"
@@ -703,6 +707,114 @@ mod tests {
         let max_t = result.iter().map(|s| s.t).fold(f64::NEG_INFINITY, f64::max);
         assert!(min_t < 150.0, "should include early part of window");
         assert!(max_t > 150.0, "should include late part of window");
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn query_range_entity_filter_applied_before_downsample() {
+        // Regression: when `SimCommand::QueryRange` downsampled to
+        // `max_points` *before* filtering by `entity_path`, multi-sat
+        // windows shared the downsample budget across every satellite.
+        // With 3 sats and `max_points = 300`, each sat ended up with
+        // only ~100 of its own points instead of the full 300 budget.
+        // The fix pushes the entity filter down into `query_range` so
+        // the budget applies to the already-filtered set.
+        let dir = temp_data_dir("query-range-entity-filter");
+        let mut buf = HistoryBuffer::new(5_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let sats = ["sat-a", "sat-b", "sat-c"];
+        // 300 points per sat (900 total), all in the in-memory tail.
+        for i in 0..900 {
+            let sat = sats[i % sats.len()];
+            buf.push(make_state_for(sat, i as f64));
+        }
+
+        let sat_a_path = EntityPath::parse("/world/sat/sat-a");
+        let result = buf.query_range(0.0, 900.0, Some(300), Some(&sat_a_path));
+
+        // Every returned point must belong to sat-a.
+        for s in &result {
+            assert_eq!(
+                s.entity_path.to_string(),
+                "/world/sat/sat-a",
+                "entity filter must apply before downsample"
+            );
+        }
+        // The downsample budget (300) applies to the filtered set: sat-a
+        // has exactly 300 points in the window, max_points=300, and
+        // `downsample_states` returns the input unchanged when
+        // `n <= max_points`, so the result is deterministically 300
+        // points. Pre-fix ("downsample 900 interleaved → 300, then keep
+        // ~1/3 as sat-a") yielded ~100.
+        assert_eq!(
+            result.len(),
+            300,
+            "sat-a should get the full 300-point budget after entity filter",
+        );
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn query_range_entity_filter_applied_on_slow_path() {
+        // The slow path (`load_all()` + filter) must also respect the
+        // entity_path argument. The fast-path test above only exercises
+        // the in-memory branch; this one forces the slow path by
+        // requesting a window older than the in-memory tail, on a
+        // multi-sat buffer that has flushed segments.
+        let dir = temp_data_dir("query-range-entity-slow");
+        let mut buf = HistoryBuffer::new(500, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let sats = ["sat-a", "sat-b", "sat-c"];
+        // 1500 interleaved pushes → ~3 flushes, in-memory tail covers
+        // only the last ~500 points; the early window goes to disk.
+        for i in 0..1500 {
+            let sat = sats[i % sats.len()];
+            buf.push(make_state_for(sat, i as f64));
+        }
+        assert!(
+            buf.segment_count > 0,
+            "precondition: flushes should have occurred"
+        );
+        let oldest_in_memory = buf.states.front().expect("non-empty tail").t;
+        assert!(
+            oldest_in_memory > 100.0,
+            "precondition: in-memory tail should start past t=100"
+        );
+
+        // Window [0, 100] is entirely inside a flushed segment.
+        let sat_b_path = EntityPath::parse("/world/sat/sat-b");
+        let result = buf.query_range(0.0, 100.0, None, Some(&sat_b_path));
+
+        assert!(
+            !result.is_empty(),
+            "slow path should return sat-b points from disk"
+        );
+        for s in &result {
+            assert_eq!(
+                s.entity_path.to_string(),
+                "/world/sat/sat-b",
+                "slow-path entity filter must drop other sats"
+            );
+            assert!(s.t >= 0.0 && s.t <= 100.0);
+        }
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn query_range_entity_filter_none_returns_all_entities() {
+        // Sanity: passing `None` for `entity_path` preserves the old
+        // behaviour of returning every entity's points in the window.
+        let dir = temp_data_dir("query-range-entity-none");
+        let mut buf = HistoryBuffer::new(5_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        for i in 0..300 {
+            let sat = ["sat-a", "sat-b"][i % 2];
+            buf.push(make_state_for(sat, i as f64));
+        }
+
+        let result = buf.query_range(0.0, 300.0, None, None);
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for s in &result {
+            seen.insert(s.entity_path.to_string());
+        }
+        assert_eq!(seen.len(), 2, "both sats should be present");
         cleanup_dir(&dir);
     }
 
@@ -721,7 +833,7 @@ mod tests {
         // Window that straddles the disk/memory boundary.
         let t_min = oldest_in_memory - 500.0;
         let t_max = oldest_in_memory + 500.0;
-        let result = buf.query_range(t_min, t_max, None);
+        let result = buf.query_range(t_min, t_max, None, None);
 
         assert!(
             !result.is_empty(),
@@ -889,7 +1001,7 @@ mod tests {
             buf.push(make_state(i as f64 * 10.0));
         }
 
-        let result = buf.query_range(20.0, 60.0, None);
+        let result = buf.query_range(20.0, 60.0, None, None);
         assert!(result.len() >= 4, "should include t=20,30,40,50,60");
         for s in &result {
             assert!(s.t >= 20.0 && s.t <= 60.0, "t={} out of range", s.t);
@@ -907,7 +1019,7 @@ mod tests {
             buf.push(make_state(i as f64));
         }
 
-        let result = buf.query_range(0.0, 99.0, Some(10));
+        let result = buf.query_range(0.0, 99.0, Some(10), None);
         assert_eq!(result.len(), 10);
         assert!((result[0].t - 0.0).abs() < 1e-9);
         assert!((result[9].t - 99.0).abs() < 1e-9);
@@ -924,7 +1036,7 @@ mod tests {
             buf.push(make_state(i as f64 * 10.0));
         }
 
-        let result = buf.query_range(200.0, 300.0, None);
+        let result = buf.query_range(200.0, 300.0, None, None);
         assert!(result.is_empty());
 
         cleanup_dir(&dir);

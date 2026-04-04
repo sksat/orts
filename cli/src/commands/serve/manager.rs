@@ -787,10 +787,12 @@ impl SimLoopContext {
                 entity_path,
                 respond,
             } => {
-                let mut states = self.history.query_range(t_min, t_max, max_points);
-                if let Some(ref ep) = entity_path {
-                    states.retain(|s| s.entity_path == *ep);
-                }
+                // Filter happens inside `query_range` (before downsampling)
+                // so the `max_points` budget applies to the target entity
+                // only, not to the multi-sat interleaved superset.
+                let states =
+                    self.history
+                        .query_range(t_min, t_max, max_points, entity_path.as_ref());
                 let _ = respond.send(states);
             }
         }
