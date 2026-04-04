@@ -16,7 +16,9 @@
       "types": "./dist/index.d.ts"
     },
     "./style.css": "./dist/index.css",
-    "./align": "./src/utils/alignTimeSeries.ts"
+    "./align": "./src/utils/alignTimeSeries.ts",
+    "./multiWorkerClient": "./src/worker/multiChartDataWorkerClient.ts",
+    "./workerProtocol": "./src/worker/protocol.ts"
   },
   "files": [
     "dist"

@@ -7,7 +7,6 @@ import {
   quantizeChartTime,
   sliceArrays,
   type TimeRange,
-  useDuckDB,
   useTimeSeriesStoreWorker,
 } from "uneri";
 import { METRIC_NAMES } from "../chartMetrics.js";
@@ -15,7 +14,7 @@ import { createOrbitSchema } from "../db/orbitSchema.js";
 import type { OrbitPoint } from "../orbit.js";
 import type { MultiChartDataMap } from "./buildMultiChartData.js";
 import type { SatelliteConfig } from "./useMultiSatelliteStore.js";
-import { useMultiSatelliteStore } from "./useMultiSatelliteStore.js";
+import { useMultiSatelliteStoreWorker } from "./useMultiSatelliteStoreWorker.js";
 import type { SatelliteInfo, SimInfo } from "./useWebSocket.js";
 
 /** Chart color palette matching the 3D scene SATELLITE_COLORS. */
@@ -60,21 +59,16 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     queryRange,
   } = options;
 
-  // --- DuckDB connection ---
+  // --- Orbit schema (shared by single & multi-satellite Workers) ---
   const mu = simInfo?.mu;
   const bodyRadius = simInfo?.central_body_radius;
   const orbitSchema = useMemo(
     () => createOrbitSchema(mu ?? 398600.4418, bodyRadius ?? 6378.137),
     [mu, bodyRadius],
   );
-  const { conn, isReady: dbReady } = useDuckDB(orbitSchema);
 
-  // Expose DuckDB connection and debug state for E2E testing (dev mode only)
-  useEffect(() => {
-    if (import.meta.env.DEV && conn) {
-      (window as unknown as Record<string, unknown>).__duckdb_conn = conn;
-    }
-  }, [conn]);
+  // DuckDB is fully managed inside Workers (no main-thread instance).
+  const dbReady = true;
 
   // Expose debug state for E2E testing (dev mode only)
   const isMultiSatellite = simInfo != null && simInfo.satellites.length > 1;
@@ -197,7 +191,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
 
   // --- Charts: single-satellite mode (Worker-based) ---
   // DuckDB tick loop runs entirely in a Web Worker, keeping the main thread free.
-  // Disabled in multi-satellite mode (uses useMultiSatelliteStore instead).
+  // Disabled in multi-satellite mode (uses useMultiSatelliteStoreWorker instead).
   const { data: singleChartData, isLoading: singleChartsLoading } = useTimeSeriesStoreWorker({
     schema: orbitSchema,
     ingestBufferRef: singleIngestBufferRef,
@@ -206,14 +200,14 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     clientRef: workerClientRef,
   });
 
-  // --- Charts: multi-satellite mode ---
-  const { data: multiChartData, isLoading: multiChartsLoading } = useMultiSatelliteStore({
-    conn: isMultiSatellite ? conn : null, // only active in multi-sat mode
+  // --- Charts: multi-satellite mode (Worker-based) ---
+  const { data: multiChartData, isLoading: multiChartsLoading } = useMultiSatelliteStoreWorker({
     baseSchema: orbitSchema,
     satelliteConfigs,
     ingestBuffers,
     metricNames: METRIC_NAMES,
     timeRange,
+    enabled: isMultiSatellite,
   });
 
   const chartsLoading = isMultiSatellite ? multiChartsLoading : singleChartsLoading;
