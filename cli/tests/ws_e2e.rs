@@ -468,8 +468,15 @@ async fn test_websocket_history_grows_over_time() {
     result.expect("test timed out after 30 seconds");
 }
 
+/// After the initial bounded overview, the server transitions directly to
+/// the live state stream. The old contract spawned a background detail
+/// replay (`history_detail` chunks + `history_detail_complete` marker); that
+/// machinery has been removed, so those message types must never appear on
+/// the wire. The dedicated assertion lives in `test_websocket_no_history_detail_sent`;
+/// this test doubles as a smoke check that the `info → history → state`
+/// handshake still works end-to-end after the simplification.
 #[tokio::test]
-async fn test_websocket_history_detail_follows() {
+async fn test_websocket_info_history_state_handshake() {
     let port = test_port() + 4;
     let mut server = Server::spawn(port);
 
@@ -481,53 +488,219 @@ async fn test_websocket_history_detail_follows() {
         let (ws, _) = connect_async(&url).await.expect("failed to connect");
         let (_write, mut read) = ws.split();
 
-        // info → history
+        // info → history → (eventually) state
         let info = next_json(&mut read).await;
         assert_eq!(info["type"], "info");
         let history = next_json(&mut read).await;
         assert_eq!(history["type"], "history");
 
-        // Read messages until we find history_detail_complete
-        let mut found_detail = false;
-        let mut found_complete = false;
+        // Every message from here on must be a state (or another protocol
+        // message), never history_detail*.
         let mut found_state = false;
-        for _ in 0..200 {
+        for _ in 0..100 {
             let msg = next_json(&mut read).await;
-            match msg["type"].as_str().unwrap() {
-                "history_detail" => {
-                    found_detail = true;
-                    let states = msg["states"].as_array().unwrap();
-                    assert!(!states.is_empty(), "detail chunk should not be empty");
-                }
-                "history_detail_complete" => {
-                    found_complete = true;
-                    if found_state {
-                        break;
-                    }
-                    // Continue to collect state messages after detail complete
-                }
-                "state" => {
-                    found_state = true;
-                    if found_complete {
-                        break;
-                    }
-                }
-                other => {
-                    panic!("unexpected message type: {other}");
-                }
+            let ty = msg["type"].as_str().unwrap();
+            assert_ne!(ty, "history_detail", "history_detail must not be emitted");
+            assert_ne!(
+                ty, "history_detail_complete",
+                "history_detail_complete must not be emitted"
+            );
+            if ty == "state" {
+                found_state = true;
+                break;
             }
         }
-
-        assert!(found_detail, "should receive at least one history_detail");
-        assert!(found_complete, "should receive history_detail_complete");
-        assert!(
-            found_state,
-            "should receive state messages (before or after detail)"
-        );
+        assert!(found_state, "should receive a live state message");
     })
     .await;
 
     server.kill();
+    result.expect("test timed out after 30 seconds");
+}
+
+/// After removing the unbounded full-resolution `HistoryDetail` background replay,
+/// a fresh client must only receive `info` + `history` (downsampled overview) before
+/// the live `state` stream begins. No `history_detail` / `history_detail_complete`
+/// messages should ever arrive.
+/// After removing the unbounded full-resolution `HistoryDetail` background replay,
+/// a fresh client must only receive `info` + `history` (downsampled overview) before
+/// the live `state` stream begins. No `history_detail` / `history_detail_complete`
+/// messages should ever arrive, even after observing many subsequent frames.
+#[tokio::test]
+async fn test_websocket_no_history_detail_sent() {
+    let port = test_port() + 20;
+    // Use dt=1 output_interval=1 so history accumulates fast enough that the
+    // old code path would actually chunk detail replay (rather than ship an
+    // empty HistoryDetailComplete marker immediately).
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let mut child = Command::new(binary)
+        .args([
+            "serve",
+            "--port",
+            &port.to_string(),
+            "--dt",
+            "1",
+            "--output-interval",
+            "1",
+            "--sat",
+            "altitude=400,id=test",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn orts");
+    let stderr = child.stderr.take().expect("stderr");
+    let (tx, rx) = mpsc::channel::<()>();
+    let _stderr_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        let mut notified = false;
+        for line in reader.lines() {
+            let line = line.expect("stderr line");
+            eprintln!("[server stderr] {line}");
+            if !notified && line.contains("Server listening on") {
+                let _ = tx.send(());
+                notified = true;
+            }
+        }
+        if !notified {
+            let _ = tx.send(());
+        }
+    });
+    rx.recv_timeout(Duration::from_secs(10))
+        .expect("server did not start");
+
+    // Let several history outputs accumulate.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    let result = tokio::time::timeout(Duration::from_secs(20), async {
+        let url = format!("ws://localhost:{port}/ws");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
+        let (_write, mut read) = ws.split();
+
+        // info → history
+        let info = next_json(&mut read).await;
+        assert_eq!(info["type"], "info");
+        let history = next_json(&mut read).await;
+        assert_eq!(history["type"], "history");
+        let history_states = history["states"].as_array().unwrap();
+        assert!(
+            !history_states.is_empty(),
+            "precondition: history overview should be non-empty so the old code \
+             path would have actually queued detail chunks"
+        );
+
+        // Collect messages for a meaningful window, not stopping early on the
+        // first `state` message. If the old background HistoryDetail pipeline
+        // is still wired up, at least one `history_detail` or
+        // `history_detail_complete` frame will appear in the first N messages.
+        let mut seen_state = false;
+        for _ in 0..100 {
+            let msg = next_json(&mut read).await;
+            let ty = msg["type"].as_str().unwrap();
+            assert_ne!(
+                ty, "history_detail",
+                "history_detail must not be sent (removed by design)"
+            );
+            assert_ne!(
+                ty, "history_detail_complete",
+                "history_detail_complete must not be sent (removed by design)"
+            );
+            if ty == "state" {
+                seen_state = true;
+            }
+        }
+        assert!(
+            seen_state,
+            "should have observed at least one live state message in the sample"
+        );
+    })
+    .await;
+
+    let _ = child.kill();
+    let _ = child.wait();
+    result.expect("test timed out after 20 seconds");
+}
+
+/// The connect-time history overview must be bounded regardless of how long
+/// the simulation has been running. This is the core regression test for the
+/// "viewer blank after reload" problem on long-running sims — the server's
+/// handshake cost and the wire payload must both stay constant in sim
+/// duration. Any client-side time-range display concern is handled via
+/// follow-up `query_range` requests, not baked into the handshake.
+#[tokio::test]
+async fn test_websocket_history_overview_payload_is_bounded() {
+    let port = test_port() + 21;
+    // dt=1 output_interval=1 accumulates 1 history point per wall-clock second.
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let mut child = Command::new(binary)
+        .args([
+            "serve",
+            "--port",
+            &port.to_string(),
+            "--dt",
+            "1",
+            "--output-interval",
+            "1",
+            "--sat",
+            "altitude=400,id=test",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn orts");
+
+    let stderr = child.stderr.take().expect("failed to capture stderr");
+    let (tx, rx) = mpsc::channel::<()>();
+    let _stderr_thread = std::thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        let mut notified = false;
+        for line in reader.lines() {
+            let line = line.expect("failed to read stderr line");
+            eprintln!("[server stderr] {line}");
+            if !notified && line.contains("Server listening on") {
+                let _ = tx.send(());
+                notified = true;
+            }
+        }
+        if !notified {
+            let _ = tx.send(());
+        }
+    });
+    rx.recv_timeout(Duration::from_secs(10))
+        .expect("server did not start");
+
+    // Let the sim accumulate well past the server's overview cap (1000
+    // points). The sim loop often produces bursts of >1 output per wall
+    // second, so 8 seconds is enough to comfortably exceed the cap on any
+    // reasonable machine while keeping the test fast.
+    tokio::time::sleep(Duration::from_secs(8)).await;
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}/ws");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
+        let (_write, mut read) = ws.split();
+
+        let info = next_json(&mut read).await;
+        assert_eq!(info["type"], "info");
+
+        let history = next_json(&mut read).await;
+        assert_eq!(history["type"], "history");
+        let states = history["states"].as_array().expect("states array");
+
+        // Core assertion: payload is bounded by the server-side cap, no
+        // matter how many history points the simulation has accumulated.
+        // The old code path returned ~N points where N scaled with sim
+        // duration — regressing back to that would blow past this limit.
+        assert!(
+            states.len() <= 1000,
+            "history overview must be bounded to OVERVIEW_MAX_POINTS (1000), got {}",
+            states.len()
+        );
+    })
+    .await;
+
+    let _ = child.kill();
+    let _ = child.wait();
     result.expect("test timed out after 30 seconds");
 }
 

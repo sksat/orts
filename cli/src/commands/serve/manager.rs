@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
@@ -135,6 +135,21 @@ impl SimGroup {
     }
 }
 
+/// Maximum number of replay-able `simulation_terminated` events the server
+/// retains for late-connecting clients. Without a cap, long-running sims with
+/// many deorbiting satellites would grow this vector unbounded, and every new
+/// client would pay the replay cost.
+pub(super) const TERMINATED_EVENTS_CAP: usize = 1024;
+
+/// Push a serialized `simulation_terminated` message into a ring-buffered
+/// event queue, dropping the oldest entries once the cap is reached.
+pub(super) fn push_terminated_capped(events: &mut VecDeque<String>, msg: String) {
+    events.push_back(msg);
+    while events.len() > TERMINATED_EVENTS_CAP {
+        events.pop_front();
+    }
+}
+
 /// Command sent from connection handlers to the simulation manager.
 pub(super) enum SimCommand {
     /// Start a simulation from idle state.
@@ -148,6 +163,12 @@ pub(super) enum SimCommand {
         respond: oneshot::Sender<Result<(SatelliteInfo, f64), String>>,
     },
     /// Query the current simulation status.
+    ///
+    /// The returned history is always a bounded, downsampled overview of the
+    /// full simulation, so re-connects to long-running sims never ship an
+    /// unbounded payload. Clients that need higher-resolution data for a
+    /// specific time window issue a follow-up [`SimCommand::QueryRange`]
+    /// request — the connection handshake itself is time-range-agnostic.
     GetStatus {
         respond: oneshot::Sender<SimStatusResponse>,
     },
@@ -294,7 +315,7 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig>
             return None; // All senders dropped
         };
         match cmd {
-            SimCommand::GetStatus { respond } => {
+            SimCommand::GetStatus { respond, .. } => {
                 let _ = respond.send(SimStatusResponse::Idle);
             }
             SimCommand::Start { config, respond } => {
@@ -411,7 +432,10 @@ struct SimLoopContext {
     history: HistoryBuffer,
     tx: broadcast::Sender<String>,
     info_json: String,
-    terminated_events: Vec<String>,
+    /// Ring-buffered queue of `simulation_terminated` payloads, replayed to
+    /// late-connecting clients. Bounded by [`TERMINATED_EVENTS_CAP`] to avoid
+    /// unbounded growth in long-running sims with many deorbiting satellites.
+    terminated_events: VecDeque<String>,
     paused: bool,
     current_t: f64,
     has_perturbations: bool,
@@ -598,7 +622,7 @@ impl SimLoopContext {
             history,
             tx,
             info_json,
-            terminated_events: Vec::new(),
+            terminated_events: VecDeque::new(),
             paused: false,
             current_t: 0.0,
             has_perturbations,
@@ -610,18 +634,20 @@ impl SimLoopContext {
     fn handle_command(&mut self, cmd: SimCommand) -> ControlFlow<()> {
         match cmd {
             SimCommand::GetStatus { respond } => {
-                let all_states = self.history.load_all();
+                let history_states = self.history_overview_for_client();
+                let terminated_events: Vec<String> =
+                    self.terminated_events.iter().cloned().collect();
                 let response = if self.paused {
                     SimStatusResponse::Paused {
                         info_json: self.info_json.clone(),
-                        terminated_events: self.terminated_events.clone(),
-                        history_states: all_states,
+                        terminated_events,
+                        history_states,
                     }
                 } else {
                     SimStatusResponse::Running {
                         info_json: self.info_json.clone(),
-                        terminated_events: self.terminated_events.clone(),
-                        history_states: all_states,
+                        terminated_events,
+                        history_states,
                     }
                 };
                 let _ = respond.send(response);
@@ -855,7 +881,7 @@ impl SimLoopContext {
                 })
                 .expect("failed to serialize termination message");
                 let _ = self.tx.send(msg.clone());
-                self.terminated_events.push(msg);
+                push_terminated_capped(&mut self.terminated_events, msg);
             }
 
             self.current_t = target_t;
@@ -863,6 +889,25 @@ impl SimLoopContext {
 
         all_outputs.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
         all_outputs
+    }
+
+    /// Build the bounded history overview that is replayed to a (re)connecting
+    /// client.
+    ///
+    /// The old behaviour was to ship the entire simulation history plus a
+    /// full-resolution background detail stream on every connect. On
+    /// long-running simulations this dominated reconnect latency and was the
+    /// root cause of the "viewer blank after reload" problem.
+    ///
+    /// Current contract: delegate to [`HistoryBuffer::overview`], which
+    /// returns an incrementally-maintained bounded overview in O(1) time
+    /// regardless of sim duration — no `load_all()`, no disk I/O, no sort.
+    /// The server is deliberately time-range-agnostic: any display window
+    /// the client cares about is served from its own local buffers plus
+    /// follow-up `QueryRange` requests, not baked into the connect
+    /// handshake.
+    fn history_overview_for_client(&self) -> Vec<crate::sim::core::HistoryState> {
+        self.history.overview()
     }
 }
 
@@ -959,6 +1004,35 @@ async fn run_simulation_loop(
 mod tests {
     use super::*;
     use kaname::body::KnownBody;
+
+    #[test]
+    fn terminated_events_ring_buffer_caps_at_limit() {
+        let mut events: VecDeque<String> = VecDeque::new();
+        for i in 0..(TERMINATED_EVENTS_CAP + 250) {
+            push_terminated_capped(&mut events, format!("event-{i}"));
+        }
+        assert_eq!(
+            events.len(),
+            TERMINATED_EVENTS_CAP,
+            "ring buffer must stay at cap after overflow"
+        );
+        // Oldest entries must be dropped first, newest preserved.
+        let first = events.front().unwrap();
+        let last = events.back().unwrap();
+        assert_eq!(first, &format!("event-{}", 250));
+        assert_eq!(last, &format!("event-{}", TERMINATED_EVENTS_CAP + 249));
+    }
+
+    #[test]
+    fn terminated_events_below_cap_keeps_all() {
+        let mut events: VecDeque<String> = VecDeque::new();
+        for i in 0..10 {
+            push_terminated_capped(&mut events, format!("event-{i}"));
+        }
+        assert_eq!(events.len(), 10);
+        assert_eq!(events.front().unwrap(), "event-0");
+        assert_eq!(events.back().unwrap(), "event-9");
+    }
 
     #[test]
     fn body_names_for_earth_includes_sun_and_moon() {

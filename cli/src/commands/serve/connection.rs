@@ -4,7 +4,6 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use super::history::HistoryBuffer;
 use super::manager::{SimCommand, SimStatusResponse};
 use super::protocol::{ClientMessage, WsMessage};
 
@@ -18,7 +17,10 @@ pub(super) async fn handle_connection(
 ) {
     let (mut ws_sender, mut ws_receiver): (WsSender, WsReceiver) = socket.split();
 
-    // 1. Query current status from the manager
+    // 1. Query current status from the manager. The manager returns a
+    //    bounded downsampled history overview regardless of how long the
+    //    simulation has been running; any windowed detail is the client's
+    //    concern via subsequent `query_range` requests.
     let (status_tx, status_rx) = oneshot::channel();
     if cmd_tx
         .send(SimCommand::GetStatus { respond: status_tx })
@@ -93,9 +95,14 @@ pub(super) async fn handle_connection(
                 }
             }
 
-            // Send overview history
-            let overview = HistoryBuffer::downsample(&history_states, 1000);
-            let history_msg = WsMessage::History { states: overview };
+            // Send bounded overview history. The manager has already applied
+            // the client-requested window and downsampled the payload to a
+            // server-enforced cap, so there is no full-resolution detail
+            // stream to replay: clients that need higher resolution issue
+            // targeted `query_range` requests instead.
+            let history_msg = WsMessage::History {
+                states: history_states,
+            };
             let history_json =
                 serde_json::to_string(&history_msg).expect("failed to serialize history");
             if ws_sender
@@ -106,39 +113,13 @@ pub(super) async fn handle_connection(
                 return;
             }
 
-            // Send full detail in background
-            let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel::<String>(16);
-            tokio::spawn(async move {
-                let chunk_size = 1000;
-                for chunk in history_states.chunks(chunk_size) {
-                    let msg = WsMessage::HistoryDetail {
-                        states: chunk.to_vec(),
-                    };
-                    let json =
-                        serde_json::to_string(&msg).expect("failed to serialize detail chunk");
-                    if detail_tx.send(json).await.is_err() {
-                        return;
-                    }
-                }
-                let complete = serde_json::to_string(&WsMessage::HistoryDetailComplete)
-                    .expect("failed to serialize detail complete");
-                let _ = detail_tx.send(complete).await;
-            });
-
-            main_loop(
-                &mut ws_sender,
-                &mut ws_receiver,
-                &mut rx,
-                &cmd_tx,
-                Some(&mut detail_rx),
-            )
-            .await;
+            main_loop(&mut ws_sender, &mut ws_receiver, &mut rx, &cmd_tx).await;
             return;
         }
     }
 
     // Idle client: main loop (waiting for start_simulation or other messages)
-    main_loop(&mut ws_sender, &mut ws_receiver, &mut rx, &cmd_tx, None).await;
+    main_loop(&mut ws_sender, &mut ws_receiver, &mut rx, &cmd_tx).await;
 }
 
 /// Send a command to the simulation manager, await the response, and send
@@ -172,7 +153,6 @@ async fn main_loop(
     ws_receiver: &mut WsReceiver,
     rx: &mut broadcast::Receiver<String>,
     cmd_tx: &mpsc::Sender<SimCommand>,
-    mut detail_rx: Option<&mut tokio::sync::mpsc::Receiver<String>>,
 ) {
     loop {
         tokio::select! {
@@ -193,26 +173,6 @@ async fn main_loop(
                     Err(broadcast::error::RecvError::Closed) => {
                         break;
                     }
-                }
-            }
-            detail = async {
-                if let Some(ref mut drx) = detail_rx {
-                    drx.recv().await
-                } else {
-                    std::future::pending::<Option<String>>().await
-                }
-            } => {
-                if let Some(json) = detail {
-                    if ws_sender
-                        .send(Message::Text(json.into()))
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                } else {
-                    // Detail sender finished
-                    detail_rx = None;
                 }
             }
             ws_msg = ws_receiver.next() => {

@@ -79,15 +79,13 @@ pub enum WsMessage {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         attitude: Option<crate::sim::core::AttitudePayload>,
     },
-    /// Downsampled history overview sent on connect.
+    /// Bounded history overview sent on connect. The server applies the
+    /// client's requested time window (via the `?history=<seconds>` query
+    /// parameter) and downsamples the result to a server-enforced cap, so
+    /// payload size stays proportional to what the client intends to display
+    /// rather than to how long the simulation has been running.
     #[serde(rename = "history")]
     History { states: Vec<HistoryState> },
-    /// Full-resolution history chunk sent in background.
-    #[serde(rename = "history_detail")]
-    HistoryDetail { states: Vec<HistoryState> },
-    /// Marker indicating all detail chunks have been sent.
-    #[serde(rename = "history_detail_complete")]
-    HistoryDetailComplete,
     /// Response to a client query_range request.
     #[serde(rename = "query_range_response")]
     QueryRangeResponse {
@@ -163,26 +161,6 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["type"], "history");
         assert_eq!(v["states"].as_array().unwrap().len(), 0);
-    }
-
-    #[test]
-    fn history_detail_message_serialization() {
-        let msg = WsMessage::HistoryDetail {
-            states: vec![make_state(5.0)],
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["type"], "history_detail");
-        assert_eq!(v["states"].as_array().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn history_detail_complete_serialization() {
-        let msg = WsMessage::HistoryDetailComplete;
-        let json = serde_json::to_string(&msg).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["type"], "history_detail_complete");
-        assert!(v.get("states").is_none());
     }
 
     #[test]

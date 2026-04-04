@@ -270,7 +270,10 @@ async fn handle_connection(
         return;
     }
 
-    // 2. Send overview history (per-entity downsampled)
+    // 2. Send bounded overview history (per-entity downsampled). We no
+    //    longer stream a full-resolution detail dump on connect — if a client
+    //    needs higher resolution for a specific range, it issues a targeted
+    //    `query_range` request (same contract as `orts serve`).
     let overview = build_overview(&data, 1000);
     let history_msg =
         serde_json::to_string(&WsMessage::History { states: overview }).expect("serialize");
@@ -282,38 +285,9 @@ async fn handle_connection(
         return;
     }
 
-    // 3. Send full detail in chunks
-    let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel::<String>(16);
-    let all_states = data.all_states.clone();
-    tokio::spawn(async move {
-        for chunk in all_states.chunks(1000) {
-            let msg = WsMessage::HistoryDetail {
-                states: chunk.to_vec(),
-            };
-            let json = serde_json::to_string(&msg).expect("serialize");
-            if detail_tx.send(json).await.is_err() {
-                return;
-            }
-        }
-        let complete = serde_json::to_string(&WsMessage::HistoryDetailComplete).expect("serialize");
-        let _ = detail_tx.send(complete).await;
-    });
-
-    // 4. Main loop: send detail chunks + forward texture_ready + handle client messages
+    // 3. Main loop: forward texture_ready + handle client messages
     loop {
         tokio::select! {
-            detail = detail_rx.recv() => {
-                match detail {
-                    Some(json) => {
-                        if sender.send(Message::Text(json.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                    None => {
-                        // All detail sent, continue listening for query_range
-                    }
-                }
-            }
             texture_msg = texture_rx.recv() => {
                 if let Ok(json) = texture_msg
                     && sender.send(Message::Text(json.into())).await.is_err()

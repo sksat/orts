@@ -9,6 +9,66 @@ use orts::record::timeline::TimePoint;
 
 use crate::sim::core::{AttitudePayload, AttitudeSource, HistoryState, make_history_state};
 
+/// Maximum number of overview points retained per satellite (entity path).
+///
+/// Each distinct `EntityPath` in the history gets its own adaptively-sampled
+/// overview buffer, so the total overview returned on connect scales as
+/// `num_satellites * OVERVIEW_MAX_POINTS_PER_ENTITY`. This is still O(1)
+/// with respect to sim duration, which is the property that matters for
+/// reconnect latency.
+///
+/// Sized so the JSON payload stays well under a MiB for typical constellations
+/// (1–10 sats) and deserializes in a handful of milliseconds on the client,
+/// regardless of how long the simulation has been running.
+pub const OVERVIEW_MAX_POINTS_PER_ENTITY: usize = 1000;
+
+/// Per-entity adaptively-sampled overview buffer.
+///
+/// Each entity gets its own sample-rate + counter so that satellites pushed
+/// at different cadences (or counts) are all given fair time coverage. A
+/// single shared buffer with stride-based halving would systematically bias
+/// against some satellites depending on their push order parity — this
+/// per-entity split eliminates that failure mode.
+struct EntityOverview {
+    buffer: VecDeque<HistoryState>,
+    /// Only every Nth `push()` for this entity contributes to the buffer.
+    sample_rate: usize,
+    /// Counter for sample-rate divisibility.
+    push_counter: usize,
+}
+
+impl EntityOverview {
+    fn new() -> Self {
+        Self {
+            buffer: VecDeque::with_capacity(OVERVIEW_MAX_POINTS_PER_ENTITY + 1),
+            sample_rate: 1,
+            push_counter: 0,
+        }
+    }
+
+    /// Halve the buffer in-place: keep every other point, always retain the
+    /// most recent one so the client sees "where this sat is right now" on
+    /// reconnect. Doubles the sample rate so subsequent pushes are ingested
+    /// at the new coarser cadence.
+    fn halve(&mut self) {
+        let n = self.buffer.len();
+        if n == 0 {
+            return;
+        }
+        let last_idx = n - 1;
+        let mut new_buffer = VecDeque::with_capacity(OVERVIEW_MAX_POINTS_PER_ENTITY + 1);
+        for i in (0..n).step_by(2) {
+            if i == last_idx {
+                continue;
+            }
+            new_buffer.push_back(self.buffer[i].clone());
+        }
+        new_buffer.push_back(self.buffer[last_idx].clone());
+        self.buffer = new_buffer;
+        self.sample_rate *= 2;
+    }
+}
+
 /// Bounded buffer that accumulates history states and periodically flushes to .rrd segments.
 pub struct HistoryBuffer {
     /// Recent states kept in memory.
@@ -23,6 +83,16 @@ pub struct HistoryBuffer {
     pub mu: f64,
     /// Central body radius [km] (for computing derived values from loaded data).
     pub body_radius: f64,
+
+    // --- Incremental per-entity overview -----------------------------------
+    //
+    // Maintained in O(1) amortized per `push()` call, read in
+    // O(num_entities * OVERVIEW_MAX_POINTS_PER_ENTITY) with no disk I/O.
+    // This lets re-connects to long-running simulations return the history
+    // overview instantly, without re-reading every .rrd segment from disk
+    // on the manager task. Per-entity bookkeeping ensures every satellite
+    // gets fair coverage regardless of push order or count.
+    overview_per_entity: HashMap<EntityPath, EntityOverview>,
 }
 
 impl HistoryBuffer {
@@ -35,15 +105,57 @@ impl HistoryBuffer {
             segment_count: 0,
             mu,
             body_radius,
+            overview_per_entity: HashMap::new(),
         }
     }
 
-    /// Push a state into the buffer. Flushes to .rrd if capacity is exceeded.
+    /// Push a state into the buffer. Flushes to .rrd if capacity is exceeded,
+    /// and incrementally updates the per-entity overview buffers.
     pub fn push(&mut self, state: HistoryState) {
+        // Update the per-entity overview first. We always ensure the entity's
+        // buffer ends with the most recent push for that entity, so
+        // reconnecting clients see "where the sat is right now" even if the
+        // most recent push did not fall on a sampling boundary. Non-sampling
+        // pushes overwrite the tail slot in place; sampling boundaries
+        // append a new slot and may trigger a halve.
+        let entry = self
+            .overview_per_entity
+            .entry(state.entity_path.clone())
+            .or_insert_with(EntityOverview::new);
+        entry.push_counter += 1;
+        let on_sampling_boundary = entry.push_counter.is_multiple_of(entry.sample_rate);
+        if on_sampling_boundary || entry.buffer.is_empty() {
+            entry.buffer.push_back(state.clone());
+            if entry.buffer.len() > OVERVIEW_MAX_POINTS_PER_ENTITY {
+                entry.halve();
+            }
+        } else if let Some(slot) = entry.buffer.back_mut() {
+            // Between sampling boundaries, replace the trailing slot so
+            // `buffer.back()` invariantly holds the entity's latest push.
+            *slot = state.clone();
+        }
+
         self.states.push_back(state);
         if self.states.len() > self.capacity {
             self.flush();
         }
+    }
+
+    /// Return a snapshot of the overview: the union of every entity's
+    /// bounded adaptive-sample buffer, sorted chronologically.
+    ///
+    /// Reads from memory only: does not touch disk, does not call
+    /// `load_all()`. Cost is
+    /// O(num_entities * OVERVIEW_MAX_POINTS_PER_ENTITY) regardless of how
+    /// many points have been pushed or how many segments have been flushed.
+    pub fn overview(&self) -> Vec<HistoryState> {
+        let mut all: Vec<HistoryState> = self
+            .overview_per_entity
+            .values()
+            .flat_map(|e| e.buffer.iter().cloned())
+            .collect();
+        all.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+        all
     }
 
     /// Flush the oldest half of the buffer to a .rrd segment file.
@@ -142,17 +254,43 @@ impl HistoryBuffer {
     }
 
     /// Query states within a time range, optionally downsampled.
+    ///
+    /// Two-tier read path:
+    /// - **Fast path (no disk I/O)**: if `t_min` is newer than the oldest
+    ///   point currently in the in-memory tail (`self.states`), every state
+    ///   in the requested window must already be in memory. Filter the
+    ///   tail and skip reading any `.rrd` segments.
+    /// - **Slow path (full load)**: otherwise, the window reaches into
+    ///   flushed segments on disk; fall back to `load_all()` + filter.
+    ///
+    /// The fast path is what makes the viewer's proactive initial
+    /// `query_range` on (re)connect cheap: the client typically asks for
+    /// "the last `timeRange` seconds", which for any sane `timeRange`
+    /// fits entirely inside the in-memory tail (bounded by `capacity`).
+    /// Without the fast path, every reconnect would stall the sim loop on
+    /// a full segment read, undoing the O(1) handshake cost won by the
+    /// overview cache.
     pub fn query_range(
         &self,
         t_min: f64,
         t_max: f64,
         max_points: Option<usize>,
     ) -> Vec<HistoryState> {
-        let all = self.load_all();
-        let filtered: Vec<HistoryState> = all
-            .into_iter()
-            .filter(|s| s.t >= t_min && s.t <= t_max)
-            .collect();
+        let in_memory_sufficient = self.states.front().is_some_and(|oldest| oldest.t <= t_min);
+
+        let filtered: Vec<HistoryState> = if in_memory_sufficient {
+            self.states
+                .iter()
+                .filter(|s| s.t >= t_min && s.t <= t_max)
+                .cloned()
+                .collect()
+        } else {
+            self.load_all()
+                .into_iter()
+                .filter(|s| s.t >= t_min && s.t <= t_max)
+                .collect()
+        };
+
         match max_points {
             Some(mp) => Self::downsample(&filtered, mp),
             None => filtered,
@@ -195,6 +333,332 @@ mod tests {
 
     fn cleanup_dir(dir: &PathBuf) {
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // --- Incremental overview buffer -----------------------------------
+    //
+    // The `overview()` method must return a bounded, time-spanning summary
+    // of the full simulation history in constant time, independent of how
+    // many points have been pushed or how many segments have been flushed
+    // to disk. This is the regression gate for the "viewer blank after
+    // reload" problem on long-running sims.
+
+    #[test]
+    fn overview_empty_buffer() {
+        let dir = temp_data_dir("overview-empty");
+        let buf = HistoryBuffer::new(5000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        assert_eq!(buf.overview().len(), 0);
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn overview_returns_all_points_below_cap() {
+        let dir = temp_data_dir("overview-below-cap");
+        let mut buf = HistoryBuffer::new(5000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        for i in 0..500 {
+            buf.push(make_state(i as f64));
+        }
+        let ov = buf.overview();
+        assert_eq!(ov.len(), 500);
+        assert!((ov[0].t - 0.0).abs() < 1e-9);
+        assert!((ov[499].t - 499.0).abs() < 1e-9);
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn overview_is_bounded_above_cap() {
+        let dir = temp_data_dir("overview-bounded");
+        let mut buf = HistoryBuffer::new(5000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        for i in 0..5_000 {
+            buf.push(make_state(i as f64));
+        }
+        let ov = buf.overview();
+        assert!(
+            ov.len() <= OVERVIEW_MAX_POINTS_PER_ENTITY,
+            "single-entity overview should be bounded at {OVERVIEW_MAX_POINTS_PER_ENTITY}, got {}",
+            ov.len()
+        );
+        // Most recent push must always be retained so the client can render
+        // "where the sim is right now" immediately after (re)connect.
+        let last = ov.last().expect("non-empty");
+        assert!(
+            (last.t - 4999.0).abs() < 1e-9,
+            "last overview point must be the most recent push, got t={}",
+            last.t
+        );
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn overview_survives_many_flushes() {
+        // Small in-memory capacity so flush() fires many times. Overview
+        // must still give full time coverage and remain bounded.
+        let dir = temp_data_dir("overview-flushes");
+        let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        for i in 0..20_000 {
+            buf.push(make_state(i as f64));
+        }
+        assert!(
+            buf.segment_count > 0,
+            "precondition: many flushes should have occurred"
+        );
+        let ov = buf.overview();
+        assert!(ov.len() <= OVERVIEW_MAX_POINTS_PER_ENTITY);
+        let last = ov.last().expect("non-empty");
+        assert!((last.t - 19_999.0).abs() < 1e-9);
+        // Earliest retained point should span the full time range — it must
+        // come from early in the sim, not from the most-recent in-memory
+        // window. Adaptive sampling drops in-between points, but the
+        // leading edge should still be near the start.
+        assert!(
+            ov[0].t < 1_000.0,
+            "overview must cover the full sim time range; earliest t={} is too late",
+            ov[0].t
+        );
+        cleanup_dir(&dir);
+    }
+
+    /// Push a state for a specific satellite id. The overview buffer must
+    /// give fair coverage to each distinct `entity_path`, even when
+    /// satellites push interleaved into the same buffer. Without per-entity
+    /// bookkeeping, a stride-based halving systematically drops one of the
+    /// satellites on each halve (especially with an even number of sats).
+    fn make_state_for(sat_id: &str, t: f64) -> HistoryState {
+        let pos = nalgebra::Vector3::new(6778.0 + t, t * 0.1, 0.0);
+        let vel = nalgebra::Vector3::new(0.0, 7.669, 0.0);
+        make_history_state(
+            EntityPath::parse(&format!("/world/sat/{sat_id}")),
+            t,
+            &pos,
+            &vel,
+            TEST_MU,
+            TEST_BODY_RADIUS,
+            HashMap::new(),
+            None,
+        )
+    }
+
+    #[test]
+    fn overview_preserves_coverage_for_multiple_satellites() {
+        // Two interleaved satellites for many pushes. A naive stride-based
+        // halving drops one of them entirely (indices 0, 2, 4, ... all
+        // belong to sat-a when the push order is a,b,a,b,...). Per-entity
+        // overview bookkeeping keeps both represented.
+        let dir = temp_data_dir("overview-multisat");
+        let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let sats = ["sat-a", "sat-b"];
+        for i in 0..20_000 {
+            let sat = sats[i % sats.len()];
+            buf.push(make_state_for(sat, i as f64));
+        }
+        assert!(
+            buf.segment_count > 0,
+            "precondition: flushes should have occurred"
+        );
+
+        let ov = buf.overview();
+        assert!(!ov.is_empty(), "overview must not be empty");
+
+        // Count coverage per satellite. Each sat should have a substantial
+        // number of points — not just 1 (the boundary retention) and
+        // certainly not 0.
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for s in &ov {
+            *counts.entry(s.entity_path.to_string()).or_insert(0) += 1;
+        }
+        for sat in &sats {
+            let key = format!("/world/sat/{sat}");
+            let count = counts.get(&key).copied().unwrap_or(0);
+            assert!(
+                count >= 100,
+                "satellite {sat} should have substantial overview coverage, \
+                 got {count} points; full counts = {counts:?}",
+            );
+        }
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn overview_preserves_most_recent_per_satellite() {
+        // Each satellite's most recent push must survive halving so the
+        // client can render "where each sat is right now" on reconnect.
+        let dir = temp_data_dir("overview-recent-per-sat");
+        let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        let sats = ["sat-a", "sat-b", "sat-c"];
+        for i in 0..10_000 {
+            let sat = sats[i % sats.len()];
+            buf.push(make_state_for(sat, i as f64));
+        }
+        let ov = buf.overview();
+        // Compute expected most-recent t per sat from the push schedule.
+        // Last push index per sat in 0..10_000 is the largest i where
+        // i % sats.len() == sat_idx.
+        for (sat_idx, sat) in sats.iter().enumerate() {
+            let last_i = (0..10_000)
+                .rev()
+                .find(|i| i % sats.len() == sat_idx)
+                .unwrap();
+            let expected_t = last_i as f64;
+            let key = format!("/world/sat/{sat}");
+            let actual_max_t = ov
+                .iter()
+                .filter(|s| s.entity_path.to_string() == key)
+                .map(|s| s.t)
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                (actual_max_t - expected_t).abs() < 1e-9,
+                "satellite {sat}: expected max t={expected_t}, got {actual_max_t}"
+            );
+        }
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn overview_cost_is_constant_regardless_of_disk_segments() {
+        // Regression gate. With the old `load_all()` based implementation
+        // this test fails because the cost scales with the number of
+        // flushed segments (disk I/O + decode + sort). The incremental
+        // overview buffer must answer from memory in ~O(OVERVIEW_MAX_POINTS_PER_ENTITY)
+        // time regardless of how many segments exist.
+        let dir = temp_data_dir("overview-perf");
+        let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        for i in 0..20_000 {
+            buf.push(make_state(i as f64));
+        }
+        assert!(
+            buf.segment_count >= 10,
+            "precondition: enough flushes to make load_all expensive"
+        );
+
+        let start = std::time::Instant::now();
+        let ov = buf.overview();
+        let elapsed = start.elapsed();
+
+        assert!(ov.len() <= OVERVIEW_MAX_POINTS_PER_ENTITY);
+        assert!(
+            elapsed.as_millis() < 20,
+            "overview() took {}ms with {} flushed segments; expected < 20ms \
+             (must not touch disk, must not call load_all)",
+            elapsed.as_millis(),
+            buf.segment_count
+        );
+        cleanup_dir(&dir);
+    }
+
+    // --- query_range in-memory fast path ---------------------------------
+    //
+    // The proactive initial `query_range` the viewer fires on every connect
+    // asks for "the last N seconds" of history. For any reasonable N that
+    // fits inside the in-memory tail (bounded by `capacity`), this must not
+    // touch disk — otherwise every reconnect stalls the sim loop on full
+    // segment reads, undoing the overview cache's O(1) handshake cost.
+
+    #[test]
+    fn query_range_recent_window_skips_disk() {
+        // Push enough to trigger many flushes, then query a window small
+        // enough to be fully covered by the in-memory tail. The query must
+        // complete in ~memory-speed time regardless of how many segments
+        // sit on disk.
+        let dir = temp_data_dir("query-range-recent");
+        let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        for i in 0..20_000 {
+            buf.push(make_state(i as f64));
+        }
+        assert!(
+            buf.segment_count >= 10,
+            "precondition: enough flushes to make load_all expensive"
+        );
+        let oldest_in_memory = buf.states.front().expect("non-empty tail").t;
+        let latest = 19_999.0;
+
+        // Ask for a window fully inside the in-memory tail.
+        let t_min = oldest_in_memory + 10.0;
+
+        let start = std::time::Instant::now();
+        let result = buf.query_range(t_min, latest, Some(500));
+        let elapsed = start.elapsed();
+
+        assert!(!result.is_empty(), "result should contain in-window points");
+        assert!(
+            result.iter().all(|s| s.t >= t_min && s.t <= latest),
+            "all returned states must lie in the requested window"
+        );
+        assert!(
+            elapsed.as_millis() < 10,
+            "query_range on a recent window fully covered by the in-memory \
+             tail should not touch disk; took {}ms with {} segments on disk",
+            elapsed.as_millis(),
+            buf.segment_count
+        );
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn query_range_historical_window_falls_back_to_disk() {
+        // A query reaching back before the in-memory tail must still
+        // return the correct data, even if that means reading segments.
+        // This guards against the fast path being too aggressive.
+        let dir = temp_data_dir("query-range-historical");
+        let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        for i in 0..20_000 {
+            buf.push(make_state(i as f64));
+        }
+        // Pick a window that is definitely inside an early flushed segment
+        // (t=100..200 is long before the in-memory tail starts).
+        let oldest_in_memory = buf.states.front().expect("non-empty tail").t;
+        assert!(
+            oldest_in_memory > 300.0,
+            "precondition: tail starts past t=300"
+        );
+
+        let result = buf.query_range(100.0, 200.0, None);
+        assert!(
+            !result.is_empty(),
+            "historical window should return data from disk"
+        );
+        assert!(
+            result.iter().all(|s| s.t >= 100.0 && s.t <= 200.0),
+            "all returned states must be in range"
+        );
+        let min_t = result.iter().map(|s| s.t).fold(f64::INFINITY, f64::min);
+        let max_t = result.iter().map(|s| s.t).fold(f64::NEG_INFINITY, f64::max);
+        assert!(min_t < 150.0, "should include early part of window");
+        assert!(max_t > 150.0, "should include late part of window");
+        cleanup_dir(&dir);
+    }
+
+    #[test]
+    fn query_range_window_spanning_both_tiers_returns_full_coverage() {
+        // Window partially in flushed segments and partially in the
+        // in-memory tail must return the union (no gap, no duplicates).
+        let dir = temp_data_dir("query-range-spanning");
+        let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+        for i in 0..10_000 {
+            buf.push(make_state(i as f64));
+        }
+        let oldest_in_memory = buf.states.front().expect("non-empty tail").t;
+        assert!(oldest_in_memory > 0.0 && oldest_in_memory < 9_999.0);
+
+        // Window that straddles the disk/memory boundary.
+        let t_min = oldest_in_memory - 500.0;
+        let t_max = oldest_in_memory + 500.0;
+        let result = buf.query_range(t_min, t_max, None);
+
+        assert!(
+            !result.is_empty(),
+            "straddling window should return coverage from both tiers"
+        );
+        for s in &result {
+            assert!(s.t >= t_min && s.t <= t_max);
+        }
+        // Points from both sides of the boundary should be present.
+        let has_pre_boundary = result.iter().any(|s| s.t < oldest_in_memory);
+        let has_post_boundary = result.iter().any(|s| s.t >= oldest_in_memory);
+        assert!(
+            has_pre_boundary && has_post_boundary,
+            "result must span both flushed segment and in-memory tail"
+        );
+        cleanup_dir(&dir);
     }
 
     #[test]
