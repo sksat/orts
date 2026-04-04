@@ -155,12 +155,22 @@ export function App() {
       alreadyQueried: false,
     });
     if (plans.length > 0) {
+      // Tell the query_range staleness check that this window is what we
+      // are currently asking for. Every plan in a multi-sat batch shares
+      // the same (tMin, tMax) window, so a single update is enough. If
+      // the user zooms before all responses arrive, `handleChartZoom`
+      // will overwrite this with the zoom range and the in-flight
+      // proactive responses are correctly dropped as stale.
+      simData.latestRequestedRangeRef.current = {
+        tMin: plans[0].tMin,
+        tMax: plans[0].tMax,
+      };
       for (const plan of plans) {
         queryRange(plan.satId, plan.tMin, plan.tMax, plan.maxPoints);
       }
       firedInitialQueryForSimInfoRef.current = simInfo;
     }
-  }, [simInfo, timeRange, chartBufferVersion, queryRange]);
+  }, [simInfo, timeRange, chartBufferVersion, queryRange, simData.latestRequestedRangeRef]);
 
   // --- Coordinator: connect ---
   const manualDisconnectRef = useRef(false);
