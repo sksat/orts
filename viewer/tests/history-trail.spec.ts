@@ -1,8 +1,17 @@
 /**
- * E2E test: orbit trail includes history data after connecting to a running simulation.
+ * E2E test: orbit trail is enriched after connecting to a running simulation.
  *
- * Uses a mock WebSocket server to send controlled history + streaming messages,
- * verifying the viewer's TrailBuffer contains pre-connection history points.
+ * Contract under test (post-HistoryDetail removal):
+ * 1. On connect the server ships a small bounded `history` overview.
+ * 2. The viewer, when it has a finite `timeRange` selected, proactively
+ *    fires a `query_range` request for the display window.
+ * 3. The server responds with higher-resolution data for that window.
+ * 4. The viewer clears + rebuilds the trail buffer from the merged
+ *    (response + streaming tail) points, so the TrailBuffer ends up with
+ *    substantially more points than the sparse overview would give on
+ *    its own.
+ *
+ * Uses a mock WebSocket server that speaks the new protocol.
  */
 
 import type { AddressInfo } from "node:net";
@@ -61,20 +70,32 @@ test.describe("history trail after connect", () => {
     wss.close();
   });
 
-  test("TrailBuffer includes history points after connecting to running simulation", async ({
+  test("TrailBuffer is enriched with history + query_range response on connect", async ({
     page,
   }) => {
     const consoleLogs: string[] = [];
     page.on("console", (msg) => consoleLogs.push(msg.text()));
 
     // Simulate a server that already has 200 history points (t=0..1990),
-    // then streams live data starting at t=2000.
+    // then streams live data starting at t=2000. The initial bounded
+    // overview is 50 points; the viewer's proactive query_range on
+    // connect should pull a denser set for the current time range.
     const HISTORY_COUNT = 200;
     const HISTORY_DT = 10;
     const STREAM_START = HISTORY_COUNT * HISTORY_DT; // t=2000
+    const OVERVIEW_COUNT = 50;
+
+    // Full-resolution points the server will return to a query_range
+    // request. 200 dense points covering the pre-streaming window.
+    const detailStates: ReturnType<typeof historyState>[] = [];
+    for (let i = 0; i < HISTORY_COUNT; i++) {
+      detailStates.push(historyState("sat1", i * HISTORY_DT));
+    }
+
+    let queryRangeRequestSeen = false;
 
     wss.on("connection", (ws: WsSocket) => {
-      // 1. info message
+      // 1. info
       ws.send(
         JSON.stringify({
           type: "info",
@@ -89,24 +110,38 @@ test.describe("history trail after connect", () => {
         }),
       );
 
-      // 2. history overview (downsampled to 50 points)
+      // 2. history (bounded downsampled overview — no HistoryDetail follow-up)
       const overviewStates = [];
-      for (let i = 0; i < 50; i++) {
-        const t = Math.floor((i / 49) * (HISTORY_COUNT - 1)) * HISTORY_DT;
+      for (let i = 0; i < OVERVIEW_COUNT; i++) {
+        const t = Math.floor((i / (OVERVIEW_COUNT - 1)) * (HISTORY_COUNT - 1)) * HISTORY_DT;
         overviewStates.push(historyState("sat1", t));
       }
       ws.send(JSON.stringify({ type: "history", states: overviewStates }));
 
-      // 3. history detail (full resolution, in chunks)
-      const allDetailStates = [];
-      for (let i = 0; i < HISTORY_COUNT; i++) {
-        allDetailStates.push(historyState("sat1", i * HISTORY_DT));
-      }
-      // Send in 2 chunks
-      const mid = Math.floor(allDetailStates.length / 2);
-      ws.send(JSON.stringify({ type: "history_detail", states: allDetailStates.slice(0, mid) }));
-      ws.send(JSON.stringify({ type: "history_detail", states: allDetailStates.slice(mid) }));
-      ws.send(JSON.stringify({ type: "history_detail_complete" }));
+      // 3. respond to client query_range requests with the full-resolution
+      //    slice for the requested window (the viewer's proactive initial
+      //    query hits this path).
+      ws.on("message", (data) => {
+        let msg: { type?: string; t_min?: number; t_max?: number };
+        try {
+          msg = JSON.parse(data.toString());
+        } catch {
+          return;
+        }
+        if (msg.type !== "query_range") return;
+        queryRangeRequestSeen = true;
+        const tMin = msg.t_min ?? 0;
+        const tMax = msg.t_max ?? Number.POSITIVE_INFINITY;
+        const states = detailStates.filter((s) => s.t >= tMin && s.t <= tMax);
+        ws.send(
+          JSON.stringify({
+            type: "query_range_response",
+            t_min: tMin,
+            t_max: tMax,
+            states,
+          }),
+        );
+      });
 
       // 4. Stream live state messages
       let t = STREAM_START;
@@ -120,8 +155,10 @@ test.describe("history trail after connect", () => {
       }, 50);
     });
 
-    // Navigate with auto-connect suppressed to avoid racing with the CI shared server
-    await page.goto("/?noAutoConnect=1");
+    // Navigate with auto-connect suppressed and a finite time range so
+    // the proactive query_range fires. 10000s is larger than the mock
+    // sim history (2000s) so the request covers everything.
+    await page.goto("/?noAutoConnect=1&timeRange=10000");
 
     // Connect to mock server
     const urlInput = page.locator('[data-testid="ws-url-input"]');
@@ -135,17 +172,10 @@ test.describe("history trail after connect", () => {
     const statusText = page.locator('[data-testid="ws-status-text"]');
     await expect(statusText).toHaveText("Connected", { timeout: 5000 });
 
-    // Wait for history + some streaming data
+    // Wait for history + query_range response + some streaming data.
     await page.waitForTimeout(3000);
 
-    // Verify TrailBuffer contains history points by checking the earliest point time.
-    // History starts at t=0; streaming starts at t=2000.
-    // If TrailBuffer only has post-connect data, earliest t would be ~2000.
-    // If history is loaded, earliest t should be 0.
     const trailInfo = await page.evaluate(() => {
-      // Access the TrailBuffer from the app's internal state.
-      // The trailBuffersRef is exposed on the window for E2E testing in dev mode,
-      // or we can check the DOM for point count display.
       const pointsInfo = document.querySelector('[data-testid="orbit-info-points"]');
       const pointsText = pointsInfo?.textContent ?? "";
       const pointCount = parseInt(pointsText.match(/(\d+)\s+points/)?.[1] ?? "0", 10);
@@ -154,13 +184,21 @@ test.describe("history trail after connect", () => {
 
     console.log("Trail info:", trailInfo);
 
-    // The TrailBuffer should have substantially more points than just streaming
-    // (200 history + streaming points). Without history, only streaming points
-    // would exist (~60 points at 50ms intervals over 3 seconds).
+    // The server-side proactive query_range must have been issued.
+    expect(
+      queryRangeRequestSeen,
+      "client should proactively send query_range after overview arrives",
+    ).toBe(true);
+
+    // After the query_range response + streaming, the TrailBuffer should
+    // contain the 200 dense detail points plus any streaming points that
+    // arrived after the response. The sparse-overview-only path would
+    // leave us at ~50 + ~60 streaming = 110 points; the denser path puts
+    // us well above that.
     expect(
       trailInfo.pointCount,
-      "TrailBuffer should contain history + streaming points (not just streaming)",
-    ).toBeGreaterThan(100);
+      "TrailBuffer should contain the query_range detail + streaming points",
+    ).toBeGreaterThan(150);
 
     // Verify no "Maximum update depth exceeded" warnings
     const depthWarnings = consoleLogs.filter((l) => l.includes("Maximum update depth"));
