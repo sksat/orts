@@ -46,9 +46,7 @@ export interface PlanInitialRangeQueryInput {
  *
  * Returns an empty array when no query should be fired.
  */
-export function planInitialRangeQuery(
-  input: PlanInitialRangeQueryInput,
-): InitialRangeQuery[] {
+export function planInitialRangeQuery(input: PlanInitialRangeQueryInput): InitialRangeQuery[] {
   const { simInfo, timeRange, latestT, alreadyQueried } = input;
 
   if (alreadyQueried) return [];
