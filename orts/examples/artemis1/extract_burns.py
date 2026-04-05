@@ -362,11 +362,20 @@ def print_rust(events: Sequence[BurnEvent]) -> None:
         )
         print("    Maneuver {")
         print(f'        label: "burn{i}",')
-        print(f'        midpoint_iso: "{mid_iso}",')
+        # NOTE: the surrounding Rust struct in main.rs calls these
+        # `raw_dv_eci_ms` / `raw_magnitude_ms` because the values we
+        # emit here are the raw endpoint-difference Δv (propulsive +
+        # gravitational drift), not the corrected propulsive-only Δv.
+        # main.rs' `verify_burn` reconstructs the true propulsive Δv
+        # at runtime via Method B, using these raw values only for
+        # diagnostic comparison.
+        print(f'        mid_epoch_iso: "{mid_iso}",')
         # Always use fixed 6-decimal format so the array reads uniformly;
         # Python's ".6" general spec mixes fixed and exponential notation.
-        print(f"        dv_eci_ms: [{dvx_ms:.6f}, {dvy_ms:.6f}, {dvz_ms:.6f}],")
-        print(f"        magnitude_ms: {ev.dv_mag_ms:.6f},")
+        print(
+            f"        raw_dv_eci_ms: [{dvx_ms:.6f}, {dvy_ms:.6f}, {dvz_ms:.6f}],"
+        )
+        print(f"        raw_magnitude_ms: {ev.dv_mag_ms:.6f},")
         print("    },")
     print("];")
     print()
