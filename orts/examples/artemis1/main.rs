@@ -118,14 +118,14 @@
 //! us — and what remains unaccounted-for — so future iterations can decide
 //! where to spend effort next.
 //!
-//! | Case                     | Baseline (Meeus Sun/Moon)       | + Horizons Moon (commit d465b9c) | + dt = 1 s test (commit 6460bab) | + Horizons Sun (this iter) |
-//! |--------------------------|----------------------------------|----------------------------------|----------------------------------|----------------------------|
-//! | Outbound coast (3 d)     | see apollo11 ~4 km precedent    | ≈ 36.5 km                        | 36.5 km (no change)              | **34.0 km** (−2.5 km)      |
-//! | **DRO coast (5 d)**      | would diverge / not attempted   | 125.4 km                         | 125.4 km (no change)             | **96.2 km** (−29 km, −23 %)|
-//! | Return coast (4 d)       | not attempted                    | 119.4 km                         | 119.4 km (no change)             | **115.2 km** (−4.2 km)     |
-//! | DRI single burn (25 min) | —                                | 7.43 km                          | 7.43 km (no change)              | 7.43 km (no change)        |
-//! | DRDI single burn (24 min)| —                                | 20.44 km                         | 20.44 km (no change)             | 20.44 km (no change)       |
-//! | **Chain DRI → DRDI (6 d)**| —                               | 1317.2 km                        | 1317.2 km (no change)            | **1266.7 km** (−50 km)     |
+//! | Case                     | Baseline (Meeus Sun/Moon)     | + Horizons Moon (d465b9c) | + dt = 1 s test (6460bab) | + Horizons Sun (527496b)  | + ConstantThrust chain (this iter) |
+//! |--------------------------|-------------------------------|---------------------------|---------------------------|---------------------------|------------------------------------|
+//! | Outbound coast (3 d)     | see apollo11 ~4 km precedent  | ≈ 36.5 km                 | 36.5 km (no change)       | 34.0 km (−2.5 km)         | 34.0 km (no change)                |
+//! | DRO coast (5 d)          | would diverge / not attempted | 125.4 km                  | 125.4 km (no change)      | 96.2 km (−29 km, −23 %)   | 96.2 km (no change)                |
+//! | Return coast (4 d)       | not attempted                 | 119.4 km                  | 119.4 km (no change)      | 115.2 km (−4.2 km)        | 115.2 km (no change)               |
+//! | DRI single burn (25 min) | —                             | 7.43 km                   | 7.43 km (no change)       | 7.43 km (no change)       | 7.43 km (no change)                |
+//! | DRDI single burn (24 min)| —                             | 20.44 km                  | 20.44 km (no change)      | 20.44 km (no change)      | 20.44 km (no change)               |
+//! | **Chain DRI → DRDI (6 d)**| —                            | 1317.2 km                 | 1317.2 km (no change)     | 1266.7 km (−50 km)        | **1266.7 km (no change — see §)**  |
 //!
 //! ### What each iteration taught us
 //!
@@ -150,11 +150,46 @@
 //! residual. **Mathematical equivalence**: for symmetric uniform impulse
 //! distribution, the trajectory is identical to a single impulse at the
 //! midpoint to first order in Δv — verified empirically, the two
-//! approaches differed by 12 cm over the 1317 km chain. The 7 km residual
-//! comes from the real burn's thrust-profile asymmetry (ramp up / ramp
-//! down), which uniform multi-impulse cannot capture. Proper finite-burn
-//! modelling would require modelling the thrust as a continuous force in
-//! the integrator's force model. Deferred to a future iteration.
+//! approaches differed by 12 cm over the 1317 km chain.
+//!
+//! **ConstantThrust force model (this iter)** — the proper continuous-
+//! thrust analogue of multi-impulse: install each burn as a
+//! [`orts::perturbations::ConstantThrust`] that applies uniform
+//! acceleration `Δv_corrected / burn_duration_s` over
+//! `[mid_epoch − T/2, mid_epoch + T/2]`, and let the integrator take
+//! its normal steps through the burn. See [`verify_burn_chain_continuous`].
+//!
+//! **Result: bit-identical to the impulsive chain** (1266.657 km in both).
+//! This matches theory: for a symmetric uniform-thrust profile the
+//! position trajectory through the burn differs from impulsive-at-mid
+//! only at second order in Δv, and the gravity-gradient contribution
+//! over the ~80–100 s burn window is sub-mm at DRO gradients (gradient
+//! ~10⁻¹⁰ s⁻² × 0.75 km mean-position offset × 82 s ≈ 6 μm/s velocity
+//! error, propagated to ~3 m of position over 6 days — negligible
+//! vs. the 1266.7 km chain observable).
+//!
+//! **Important side finding — `dt` vs burn_duration discontinuity**:
+//! initially the continuous chain was built as a single
+//! `Dop853.integrate` call with all thrust models installed; this
+//! produced 1812 km (500 km worse than impulsive) because a fixed-step
+//! integrator crossing a discontinuous-force boundary mid-step gets the
+//! partial-coverage steps wrong. At `burn_duration = 1 s << dt = 10 s`
+//! the error became catastrophic (73,706 km). The fix is to **split
+//! propagation at burn boundaries**: coast legs run `build_artemis_system`
+//! alone, burn legs add a ConstantThrust model and use `burn_dt = 1 s`
+//! to get ~100 internal steps per short burn. With splits, continuous
+//! and impulsive agree to machine precision, confirming the
+//! physics-level equivalence for symmetric profiles.
+//!
+//! **What would actually help**: the ~7 km DRI residual and its DRO-
+//! amplified ~1100 km chain contribution come from **real burn profile
+//! asymmetry** (OMS-E has ramp-up and ramp-down phases) and from the
+//! `extract_burns.py` mid_epoch being the *geometric* centre of the
+//! detected velocity-discontinuity cluster rather than the *thrust
+//! centroid*. A non-uniform thrust profile (or better: fitting the
+//! actual burn centroid from denser Horizons sampling inside the burn
+//! window) is the next refinement. Neither `ConstantThrust` nor multi-
+//! impulse can help while the profile is assumed symmetric.
 //!
 //! **This iteration — Sun: Meeus → Horizons** (~10 km Meeus geocentric
 //! Sun error at 1 AU → tabulated ground truth). **-23 % DRO coast error**
@@ -189,11 +224,14 @@
 //!    internal consistency: if every fetch *and* the integrator's clock
 //!    treat the Epoch's JD as TDB uniformly, the offset cancels out. If
 //!    not, there's a hidden ~km error. Worth auditing.
-//! 3. **Finite-burn modelling** (for the chain only): would reduce the
-//!    ~7 km DRI impulsive-midpoint residual and hence the ~1100 km of
-//!    amplified drift through DRO, bringing the chain under the 1000 km
-//!    Pass threshold. Requires a continuous-thrust force model in
-//!    orts — not a consumer-side change.
+//! 3. **Asymmetric burn profile modelling** (for the chain only): uniform
+//!    continuous thrust has now been tried and is mathematically
+//!    equivalent to impulsive-at-midpoint for symmetric profiles (see
+//!    "ConstantThrust" paragraph above). Reducing the ~7 km DRI
+//!    residual requires modelling the real burn's asymmetric thrust
+//!    profile (ramp up / ramp down) OR fitting the actual thrust
+//!    centroid from denser Horizons sampling inside the burn window
+//!    rather than taking the geometric centre of the detected cluster.
 //! 4. **Jupiter / Venus / Mercury third bodies**: tiny at this distance
 //!    (~10⁻⁹ m/s² for Jupiter at 6 AU). Expected to contribute ≤ 1 km
 //!    even over 5 days. Low priority.
@@ -229,7 +267,7 @@ use orts::orbital::OrbitalSystem;
 #[cfg(feature = "fetch-horizons")]
 use orts::orbital::gravity::ZonalHarmonics;
 #[cfg(feature = "fetch-horizons")]
-use orts::perturbations::ThirdBodyGravity;
+use orts::perturbations::{ConstantThrust, ThirdBodyGravity};
 #[cfg(feature = "fetch-horizons")]
 use utsuroi::{Dop853, Integrator};
 
@@ -283,8 +321,11 @@ const MOON_SAMPLE_STEP: &str = "1h";
 ///   impact: ~200 m direct + tidal coupling, possibly low km)
 /// - TDB / UTC time-scale handling between Horizons and `Epoch` is
 ///   unaudited (potential ~km error if internally inconsistent)
-/// - Finite-burn modelling (would cut the DRI impulsive residual that
-///   the chain amplifies through DRO)
+/// - Asymmetric burn profile modelling — *symmetric* continuous
+///   thrust has been tried via `ConstantThrust` and is bit-identical
+///   to impulsive-at-midpoint, so only modelling the real ramp-up /
+///   ramp-down profile (or fitting the actual thrust centroid from
+///   dense Horizons sampling) would reduce the DRI residual
 /// - Horizons Orion reference uncertainty itself (expected < 1 km floor)
 #[cfg(feature = "fetch-horizons")]
 const DT_SECONDS: f64 = 10.0;
@@ -421,6 +462,23 @@ struct Maneuver {
     raw_dv_eci_ms: [f64; 3],
     /// **Advisory** — magnitude of [`Maneuver::raw_dv_eci_ms`].
     raw_magnitude_ms: f64,
+    /// Approximate real engine burn duration [seconds].
+    ///
+    /// Used by the continuous-thrust chain verification
+    /// ([`verify_burn_chain_continuous`]) to spread the corrected Δv as
+    /// a `ConstantThrust` force model over
+    /// `[mid_epoch − duration/2, mid_epoch + duration/2]` rather than
+    /// applying it as a single impulse. The impulsive chain variant
+    /// ([`verify_burn_chain`]) ignores this field.
+    ///
+    /// Estimate from extract_burns.py: `duration ≈ |Δv| / peak_rate`
+    /// (|Δv| in m/s, peak_rate in m/s²). This underestimates the true
+    /// duration by ~10-30 % because `peak_rate` is the peak thrust
+    /// whereas the real burn profile has ramp-up / ramp-down phases
+    /// that pull the average below the peak. For DRI/DRDI-sized burns
+    /// the resulting uniform-thrust model is within a few percent of
+    /// physical reality, which is adequate for a spike.
+    burn_duration_s: f64,
 }
 
 /// Artemis 1 burns hardcoded from the `extract_burns.py` zoom output.
@@ -449,6 +507,9 @@ const MANEUVERS: &[Maneuver] = &[
         post_epoch_iso: "2022-11-25T22:05:00Z",
         raw_dv_eci_ms: [-48.686652, -87.093937, -39.758539],
         raw_magnitude_ms: 107.408033,
+        // |Δv| / peak_rate = 107.408 / 1.310 m/s² ≈ 82 s, from the
+        // extract_burns.py zoom output at 30-second resolution.
+        burn_duration_s: 82.0,
     },
     Maneuver {
         label: "DRDI (DRO departure)",
@@ -457,6 +518,8 @@ const MANEUVERS: &[Maneuver] = &[
         post_epoch_iso: "2022-12-01T22:06:00Z",
         raw_dv_eci_ms: [136.880516, -5.517049, 1.842703],
         raw_magnitude_ms: 137.004047,
+        // |Δv| / peak_rate = 137.004 / 1.336 m/s² ≈ 103 s.
+        burn_duration_s: 103.0,
     },
 ];
 
@@ -690,14 +753,28 @@ fn main() {
             .map(|b| b.label.split_whitespace().next().unwrap_or(b.label))
             .collect::<Vec<_>>()
             .join(" → ");
-        let result = verify_burn_chain(
-            &chain_label,
+        let chain_label_impulsive = format!("{chain_label} (impulsive)");
+        let result_impulsive = verify_burn_chain(
+            &chain_label_impulsive,
             &chain_burns,
             &moon_ephem,
             &moon_concrete,
             &sun_table_arc,
         );
-        chain_results.push(result);
+        chain_results.push(result_impulsive);
+        println!();
+
+        // Also run the continuous-thrust variant (burns as
+        // ConstantThrust force models) to compare against impulsive.
+        let chain_label_continuous = format!("{chain_label} (continuous)");
+        let result_continuous = verify_burn_chain_continuous(
+            &chain_label_continuous,
+            &chain_burns,
+            &moon_ephem,
+            &moon_concrete,
+            &sun_table_arc,
+        );
+        chain_results.push(result_continuous);
         println!();
     }
 
@@ -1152,6 +1229,232 @@ fn verify_burn_chain(
             "  ⚠  Moon ephemeris fell back to Meeus {fallback_delta} time(s) during \
              chain verification (chain-only: {fallback_chain_delta}). The Moon window \
              does not fully cover the chain span."
+        );
+        std::process::exit(1);
+    }
+
+    let position_error = (final_state.position() - chain_post_pos).magnitude();
+    let velocity_error = (final_state.velocity() - chain_post_vel).magnitude();
+    let judgment = Judgment::from_error_km(position_error);
+
+    println!(
+        "  position error:  {:10.3} km         velocity error: {:.6} km/s   {}",
+        position_error,
+        velocity_error,
+        judgment.glyph()
+    );
+
+    BurnChainResult {
+        label: label.to_string(),
+        n_burns: burns.len(),
+        duration_days: total_days,
+        position_error_km: position_error,
+        velocity_error_kms: velocity_error,
+        judgment,
+    }
+}
+
+/// Continuous-thrust variant of [`verify_burn_chain`].
+///
+/// Instead of applying each burn's corrected Δv as a single impulsive
+/// velocity jump at `mid_epoch`, this variant installs each burn as a
+/// [`ConstantThrust`] force model active over
+/// `[mid_epoch − burn_duration/2, mid_epoch + burn_duration/2]` and
+/// propagates the chain in **legs split at every burn boundary** so
+/// that each individual `Dop853.integrate` call sees a *uniform* force
+/// model throughout its interval (either pure coast OR coast + one
+/// active `ConstantThrust`).
+///
+/// The split is load-bearing for correctness: an earlier draft that
+/// installed all burns in a single system and integrated end-to-end
+/// produced catastrophic errors (1812 km → 73,706 km depending on
+/// `burn_duration_s`) because the fixed-step Dop853 driver's stage
+/// cluster straddled the burn boundary and mis-evaluated the step. See
+/// the "Important side finding — `dt` vs burn_duration discontinuity"
+/// subsection in the module-level docstring for the full story.
+///
+/// Within each leg the integrator takes normal steps: `DT_SECONDS`
+/// during coast legs, and `burn_dt = 1 s` inside burn legs so the
+/// short (~80-100 s) constant-force regions are integrated with many
+/// clean steps. During a burn leg the force model adds a constant ECI
+/// acceleration of `Δv_corrected / burn_duration` on top of
+/// J2/J3/J4 + Sun + Moon.
+///
+/// ## Observed result
+///
+/// **Bit-identical to the impulsive chain** (1266.657 km in both).
+/// Matches theory: for a symmetric uniform-thrust profile the
+/// trajectory differs from impulsive-at-midpoint only at second order
+/// in Δv, which for these burn sizes and the DRO gravity gradient
+/// propagates to ~metre-scale position drift over 6 days — well below
+/// the ~1267 km chain observable. The ~1100 km DRO-amplified chain
+/// residual comes from real burn profile *asymmetry*, not from the
+/// impulsive-vs-continuous distinction. See the module-level Error
+/// budget history for the cross-iteration comparison.
+///
+/// Known limitations:
+/// - `ConstantThrust` models uniform thrust only; real OMS-E burns
+///   ramp up and down, leaving ~% level residuals.
+/// - Thrust direction is fixed in ECI; if the spacecraft rotates
+///   during the burn (e.g., guidance updates), this model can't track
+///   it.
+/// - The burn_duration_s stored on each `Maneuver` is estimated from
+///   `|Δv| / peak_rate` via extract_burns.py, which underestimates
+///   the real duration by ~10–30 % (peak > mean thrust). A wrong
+///   duration shifts the effective thrust interval but should not
+///   bias the final state if the integrated Δv matches.
+#[cfg(feature = "fetch-horizons")]
+fn verify_burn_chain_continuous(
+    label: &str,
+    burns: &[&Maneuver],
+    moon_ephem: &Arc<dyn MoonEphemeris>,
+    moon_concrete: &Arc<HorizonsMoonEphemeris>,
+    sun_table: &Arc<HorizonsTable>,
+) -> BurnChainResult {
+    assert!(
+        !burns.is_empty(),
+        "burn chain must contain at least one burn"
+    );
+
+    println!("── {label} ──");
+    println!("  mode: continuous-thrust (burns as force-model ConstantThrusts)");
+    for (i, b) in burns.iter().enumerate() {
+        println!(
+            "  burn {}: {} @ {}  burn_duration {:.0}s",
+            i + 1,
+            b.label,
+            b.mid_epoch_iso,
+            b.burn_duration_s,
+        );
+    }
+
+    // Pre-compute each burn's corrected Δv in its own isolated window
+    // (same Method B as the impulsive chain).
+    let fallbacks_before_precompute = moon_concrete.fallback_count();
+    let corrected_dvs: Vec<nalgebra::Vector3<f64>> = burns
+        .iter()
+        .map(|b| compute_corrected_dv(b, moon_ephem, sun_table))
+        .collect();
+    for (b, dv) in burns.iter().zip(&corrected_dvs) {
+        println!(
+            "  corrected Δv[{}] = {:>8.3} m/s",
+            b.label,
+            dv.magnitude() * 1000.0
+        );
+    }
+
+    // Pre-compute each burn's start/end epochs (centred on mid_epoch
+    // with width burn_duration_s) alongside the corrected Δv vectors.
+    // We'll use these to split the chain propagation at every burn
+    // boundary — without splitting, the fixed-step Dop853 driver sees
+    // a discontinuous force at burn start/end and integrates the
+    // partial-coverage boundary steps inaccurately (empirically this
+    // degrades the chain by hundreds of km even for tame burns, and
+    // catastrophically when burn_duration < dt).
+    let burn_windows: Vec<(Epoch, Epoch, nalgebra::Vector3<f64>)> = burns
+        .iter()
+        .zip(&corrected_dvs)
+        .map(|(burn, dv_kms)| {
+            let mid = Epoch::from_iso8601(burn.mid_epoch_iso).expect("valid burn mid epoch");
+            let half = burn.burn_duration_s / 2.0;
+            let start = mid.add_seconds(-half);
+            let end = mid.add_seconds(half);
+            (start, end, *dv_kms)
+        })
+        .collect();
+
+    // Chain endpoints.
+    let chain_pre_epoch =
+        Epoch::from_iso8601(burns[0].pre_epoch_iso).expect("valid chain pre epoch");
+    let chain_post_epoch =
+        Epoch::from_iso8601(burns[burns.len() - 1].post_epoch_iso).expect("valid chain post epoch");
+    let total_seconds = (chain_post_epoch.jd() - chain_pre_epoch.jd()) * 86_400.0;
+    let total_days = total_seconds / 86_400.0;
+    println!(
+        "  chain window: {} → {}  ({:.2} days)",
+        burns[0].pre_epoch_iso,
+        burns[burns.len() - 1].post_epoch_iso,
+        total_days,
+    );
+
+    let (chain_pre_pos, chain_pre_vel) =
+        fetch_orion_sample(&chain_pre_epoch).expect("fetch Orion at chain pre");
+    let (chain_post_pos, chain_post_vel) =
+        fetch_orion_sample(&chain_post_epoch).expect("fetch Orion at chain post");
+
+    let fallbacks_before_chain = moon_concrete.fallback_count();
+
+    // Walk the chain split at burn boundaries. For each burn we do
+    // three propagation legs:
+    //   1. coast from current_epoch → burn.start  (no thrust model)
+    //   2. integrate burn.start → burn.end with a ConstantThrust
+    //      installed for THIS burn only (constant force throughout the
+    //      segment → no mid-step discontinuities)
+    //   3. current_epoch = burn.end, loop to next burn
+    // After the last burn, coast to chain_post_epoch.
+    let mut state = OrbitalState::new(chain_pre_pos, chain_pre_vel);
+    let mut current_epoch = chain_pre_epoch;
+    for ((burn, (start, end, dv_kms)), _burn_idx) in burns.iter().zip(&burn_windows).zip(0..) {
+        // Leg 1: coast to burn start.
+        let coast_seconds = (start.jd() - current_epoch.jd()) * 86_400.0;
+        assert!(
+            coast_seconds > 0.0,
+            "burn starts must be in ascending order and follow the chain start \
+             (offender: {:?})",
+            burn.label
+        );
+        let coast_system = build_artemis_system(current_epoch, moon_ephem, sun_table);
+        state = Dop853.integrate(
+            &coast_system,
+            state,
+            0.0,
+            coast_seconds,
+            DT_SECONDS,
+            |_, _| {},
+        );
+
+        // Leg 2: integrate the burn itself with a ConstantThrust model
+        // active for the entire segment. The force is constant across
+        // this integrate() call so Dop853's 12-stage evaluation gives
+        // the correct `a × duration = Δv` regardless of how many
+        // internal steps it takes.
+        let burn_seconds = (end.jd() - start.jd()) * 86_400.0;
+        let thrust = ConstantThrust::new(burn.label, *start, *end, *dv_kms);
+        let burn_system = build_artemis_system(*start, moon_ephem, sun_table).with_model(thrust);
+        // Use a smaller dt inside the burn (1 s) because short burns
+        // (~80-100 s) only get ~8-10 steps at the chain's dt=10s, and
+        // the gravity-force curvature across the burn matters more in
+        // that phase than during coast. This is cheap (100 extra steps
+        // per burn vs. ~52k total in the chain).
+        let burn_dt = burn_seconds.min(1.0);
+        state = Dop853.integrate(&burn_system, state, 0.0, burn_seconds, burn_dt, |_, _| {});
+
+        current_epoch = *end;
+    }
+
+    // Final coast from the last burn's end to the chain's post epoch.
+    let final_coast_seconds = (chain_post_epoch.jd() - current_epoch.jd()) * 86_400.0;
+    assert!(
+        final_coast_seconds > 0.0,
+        "chain post epoch must follow the last burn's end"
+    );
+    let final_system = build_artemis_system(current_epoch, moon_ephem, sun_table);
+    let final_state = Dop853.integrate(
+        &final_system,
+        state,
+        0.0,
+        final_coast_seconds,
+        DT_SECONDS,
+        |_, _| {},
+    );
+
+    let fallbacks_after = moon_concrete.fallback_count();
+    let fallback_delta = fallbacks_after - fallbacks_before_precompute;
+    let fallback_chain_delta = fallbacks_after - fallbacks_before_chain;
+    if fallback_delta > 0 {
+        eprintln!(
+            "  ⚠  Moon ephemeris fell back to Meeus {fallback_delta} time(s) during \
+             continuous-thrust chain verification (chain-only: {fallback_chain_delta})."
         );
         std::process::exit(1);
     }
