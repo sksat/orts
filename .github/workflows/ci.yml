@@ -18,10 +18,14 @@ jobs:
       - name: Install mold linker
         run: sudo apt-get install -y mold
 
-      - name: Install Rust stable
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: clippy, rustfmt
 
       - name: Cache Cargo artifacts
@@ -66,10 +70,14 @@ jobs:
       - name: Install mold linker
         run: sudo apt-get install -y mold
 
-      - name: Install Rust stable
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.1
@@ -97,10 +105,14 @@ jobs:
       - name: Install mold linker
         run: sudo apt-get install -y mold
 
-      - name: Install Rust stable
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.1
@@ -128,10 +140,14 @@ jobs:
       - name: Install mold linker
         run: sudo apt-get install -y mold
 
-      - name: Install Rust stable
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.1
@@ -218,10 +234,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - name: Install Rust stable
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
@@ -271,10 +291,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - name: Install Rust stable
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
@@ -366,10 +390,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
-      - name: Install Rust stable
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack

@@ -373,8 +373,7 @@ mod fetch_impl {
 
             let start_iso = epoch_to_iso(start);
             let stop_iso = epoch_to_iso(stop);
-            let cache_key =
-                cache_key_for(target, center, &start_iso, &stop_iso, step, TIME_TYPE);
+            let cache_key = cache_key_for(target, center, &start_iso, &stop_iso, step, TIME_TYPE);
             let cache_path =
                 cache_file_path(&cache_key).map_err(|e| HorizonsError::Io(e.to_string()))?;
 

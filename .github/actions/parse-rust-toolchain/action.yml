@@ -1,0 +1,33 @@
+name: Parse rust-toolchain.toml
+description: Read fields from rust-toolchain.toml (currently the channel).
+
+inputs:
+  path:
+    description: Path to rust-toolchain.toml (default points to the repository root).
+    required: false
+    default: rust-toolchain.toml
+
+outputs:
+  channel:
+    description: The Rust toolchain channel (e.g. "1.91.0", "stable").
+    value: ${{ steps.parse.outputs.channel }}
+
+runs:
+  using: composite
+  steps:
+    - name: Parse rust-toolchain.toml
+      id: parse
+      shell: bash
+      env:
+        TOOLCHAIN_PATH: ${{ inputs.path }}
+      run: |
+        if [ ! -f "$TOOLCHAIN_PATH" ]; then
+          echo "error: rust-toolchain.toml not found at '$TOOLCHAIN_PATH'" >&2
+          exit 1
+        fi
+        channel=$(awk -F'"' '/^channel[[:space:]]*=/ {print $2; exit}' "$TOOLCHAIN_PATH")
+        if [ -z "$channel" ]; then
+          echo "error: could not read 'channel' from '$TOOLCHAIN_PATH'" >&2
+          exit 1
+        fi
+        echo "channel=$channel" >> "$GITHUB_OUTPUT"
