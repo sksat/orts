@@ -31,6 +31,9 @@ pub mod controller;
 pub mod error;
 pub mod observation;
 
+#[cfg(feature = "plugin-wasm")]
+pub mod wasm;
+
 pub use actuators::ActuatorBundle;
 pub use command::Command;
 pub use controller::PluginController;

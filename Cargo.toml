@@ -35,3 +35,21 @@ toml = "1.0"
 serde_yaml = "0.9"
 rust-embed = { version = "8", features = ["mime-guess", "include-exclude"] }
 thiserror = "2"
+
+# wasmtime: Pulley single-backend + Component Model. Cranelift is
+# enabled for runtime compile path (plugin-wasm default), runtime-only
+# deployments that load pre-compiled .cwasm artefacts are built by
+# turning off `cranelift`/`wat`/`anyhow` via cargo feature unification.
+# `anyhow` is required because wasmtime's public API (e.g. Module::new,
+# Engine::precompile_component) returns `anyhow::Error`.
+# See DESIGN.md Phase P for the rationale. Version pinned exactly to
+# keep CI deterministic against Cranelift optimizer churn (orts/plan).
+wasmtime = { version = "=43.0.0", default-features = false, features = [
+    "runtime",
+    "cranelift",
+    "pulley",
+    "component-model",
+    "std",
+    "wat",
+    "anyhow",
+] }
