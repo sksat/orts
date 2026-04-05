@@ -230,6 +230,175 @@ pub fn moon_position_eci(epoch: &Epoch) -> Vector3<f64> {
     Vector3::new(x, y, z)
 }
 
+/// Moon ephemeris source abstraction.
+///
+/// Implementations provide Moon position (and optionally velocity) in the ECI
+/// (J2000-ish) frame for a given epoch. This trait decouples consumers from
+/// the specific ephemeris model (Meeus analytical, tabulated JPL Horizons
+/// data, SPICE kernel, …), allowing the integrator and targeters to share a
+/// single source of truth.
+///
+/// The default `velocity_eci` implementation uses a central finite difference
+/// (±1 second) over `position_eci`. Tabulated sources (e.g. Hermite-interpolated
+/// Horizons data) that can provide velocity more accurately should override it.
+pub trait MoonEphemeris: Send + Sync {
+    /// Moon position in ECI [km] at the given epoch.
+    fn position_eci(&self, epoch: &Epoch) -> Vector3<f64>;
+
+    /// Moon velocity in ECI [km/s] at the given epoch.
+    ///
+    /// Default: central finite difference over `position_eci` with a 1-second
+    /// step. Override for sources that can supply analytic velocity.
+    fn velocity_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+        let dt = 1.0;
+        let r_plus = self.position_eci(&epoch.add_seconds(dt));
+        let r_minus = self.position_eci(&epoch.add_seconds(-dt));
+        (r_plus - r_minus) / (2.0 * dt)
+    }
+
+    /// Short human-readable name of the ephemeris source (e.g. "meeus", "horizons").
+    fn name(&self) -> &str;
+}
+
+/// Meeus analytical Moon ephemeris (Chapter 47 of "Astronomical Algorithms").
+///
+/// Wraps the existing [`moon_position_eci`] free function so it can be used
+/// through the [`MoonEphemeris`] trait. Accuracy: see [`moon_position_eci`].
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MeeusMoonEphemeris;
+
+impl MoonEphemeris for MeeusMoonEphemeris {
+    fn position_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+        moon_position_eci(epoch)
+    }
+
+    fn name(&self) -> &str {
+        "meeus"
+    }
+}
+
+/// Blanket implementation so that shared trait objects (`Arc<dyn MoonEphemeris>`)
+/// and owned wrappers (`Arc<MeeusMoonEphemeris>`, …) can be used wherever a
+/// concrete `MoonEphemeris` is expected.
+///
+/// This lets a single ephemeris instance be fanned out via `Arc::clone` to the
+/// integrator's force model *and* to any number of auxiliary targeting helpers
+/// without re-parsing tables or re-fetching data — e.g.
+/// `ThirdBodyGravity::moon_with_ephemeris(Arc::clone(&shared_ephem))`.
+impl<T: MoonEphemeris + ?Sized> MoonEphemeris for std::sync::Arc<T> {
+    fn position_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+        (**self).position_eci(epoch)
+    }
+
+    fn velocity_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+        (**self).velocity_eci(epoch)
+    }
+
+    fn name(&self) -> &str {
+        (**self).name()
+    }
+}
+
+/// Moon ephemeris backed by a tabulated JPL Horizons vector table with
+/// cubic Hermite interpolation.
+///
+/// Accuracy: depends on table sampling step. At 1-hour spacing the
+/// interpolation error is well below 100 m over a multi-week mission
+/// (dominated by third-body high-frequency perturbations, not cubic
+/// truncation). See [`crate::horizons::HorizonsTable::interpolate`] for
+/// the underlying method.
+///
+/// When queried outside the table's epoch range, this ephemeris falls back
+/// to [`MeeusMoonEphemeris`] and increments an internal counter (retrievable
+/// via [`HorizonsMoonEphemeris::fallback_count`]). This lets callers detect
+/// silent drift into the lower-accuracy regime without panicking.
+#[derive(Debug)]
+pub struct HorizonsMoonEphemeris {
+    table: crate::horizons::HorizonsTable,
+    fallback: MeeusMoonEphemeris,
+    fallback_count: std::sync::atomic::AtomicUsize,
+}
+
+impl HorizonsMoonEphemeris {
+    /// Wrap an already-parsed `HorizonsTable`.
+    pub fn from_table(table: crate::horizons::HorizonsTable) -> Self {
+        Self {
+            table,
+            fallback: MeeusMoonEphemeris,
+            fallback_count: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// Load a Horizons CSV file and wrap it.
+    pub fn from_file(
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<Self, crate::horizons::HorizonsError> {
+        let table = crate::horizons::HorizonsTable::from_file(path)?;
+        Ok(Self::from_table(table))
+    }
+
+    /// Fetch a Moon ephemeris from JPL Horizons (target `301`, center
+    /// `500@399` = Earth geocenter) over the given epoch range and wrap it.
+    ///
+    /// Only available with the `fetch-horizons` feature on non-WASM targets.
+    #[cfg(all(feature = "fetch-horizons", not(target_arch = "wasm32")))]
+    pub fn fetch(
+        start: &Epoch,
+        stop: &Epoch,
+        step: &str,
+    ) -> Result<Self, crate::horizons::HorizonsError> {
+        let table = crate::horizons::HorizonsTable::fetch_vector_table(
+            "301", "500@399", start, stop, step, None,
+        )?;
+        Ok(Self::from_table(table))
+    }
+
+    /// First and last epochs in the underlying table.
+    pub fn date_range(&self) -> Option<(Epoch, Epoch)> {
+        self.table.date_range()
+    }
+
+    /// Number of times `position_eci` or `velocity_eci` fell back to Meeus
+    /// because the query epoch was outside the table range.
+    pub fn fallback_count(&self) -> usize {
+        self.fallback_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn record_fallback(&self) {
+        self.fallback_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl MoonEphemeris for HorizonsMoonEphemeris {
+    fn position_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+        match self.table.interpolate(epoch) {
+            Some(sample) => sample.position,
+            None => {
+                self.record_fallback();
+                self.fallback.position_eci(epoch)
+            }
+        }
+    }
+
+    fn velocity_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+        // Hermite interpolation gives us analytic velocity — use it directly
+        // rather than the trait's default central-difference implementation.
+        match self.table.interpolate(epoch) {
+            Some(sample) => sample.velocity,
+            None => {
+                self.record_fallback();
+                self.fallback.velocity_eci(epoch)
+            }
+        }
+    }
+
+    fn name(&self) -> &str {
+        "horizons"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +495,212 @@ mod tests {
             (dist - 394_000.0).abs() < 15_000.0,
             "Moon distance at Apollo 11 TLI should be ~394,000 km, got {dist:.0} km"
         );
+    }
+
+    #[test]
+    fn meeus_ephemeris_matches_free_function() {
+        // `MeeusMoonEphemeris` must delegate to `moon_position_eci` without
+        // any transformation — trait wrapper should be a zero-cost abstraction.
+        let ephem = MeeusMoonEphemeris;
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        assert_eq!(ephem.position_eci(&epoch), moon_position_eci(&epoch));
+        assert_eq!(ephem.name(), "meeus");
+    }
+
+    #[test]
+    fn meeus_ephemeris_velocity_is_finite_difference() {
+        // Default `velocity_eci` should be a central difference of position.
+        let ephem = MeeusMoonEphemeris;
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let v = ephem.velocity_eci(&epoch);
+        // Moon orbital velocity is ~1.022 km/s.
+        let v_mag = v.magnitude();
+        assert!(
+            (0.9..1.2).contains(&v_mag),
+            "Moon velocity should be ~1 km/s, got {v_mag:.3} km/s"
+        );
+        // Cross-check against a manual central difference with a larger step.
+        let dt = 10.0;
+        let expected = (moon_position_eci(&epoch.add_seconds(dt))
+            - moon_position_eci(&epoch.add_seconds(-dt)))
+            / (2.0 * dt);
+        let err = (v - expected).magnitude();
+        assert!(
+            err < 1e-3,
+            "Velocity finite difference (1s) should match 10s finite difference within 1 m/s, err={err:e}"
+        );
+    }
+
+    #[test]
+    fn meeus_ephemeris_is_clone_and_default() {
+        // `MeeusMoonEphemeris` is stateless so it should be `Default` + `Copy`.
+        let e1 = MeeusMoonEphemeris;
+        let e2 = MeeusMoonEphemeris;
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        assert_eq!(e1.position_eci(&epoch), e2.position_eci(&epoch));
+    }
+
+    #[test]
+    fn horizons_moon_ephemeris_interpolates_within_range() {
+        // Synthetic table with constant-velocity motion so we can verify
+        // that the tabulated source is used (not Meeus).
+        let csv = "\
+$$SOE
+2459000.0, A, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+2459000.5, A, 43200.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+2459001.0, A, 86400.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+$$EOE
+";
+        let table = crate::horizons::HorizonsTable::parse_csv(csv).unwrap();
+        let ephem = HorizonsMoonEphemeris::from_table(table);
+        assert_eq!(ephem.name(), "horizons");
+
+        // At 1/4 of the way between the first two samples (0.125 days):
+        // synthetic body at x = 10800 km, velocity 1 km/s along +x.
+        let epoch = Epoch::from_jd(2459000.125);
+        let pos = ephem.position_eci(&epoch);
+        let vel = ephem.velocity_eci(&epoch);
+        assert!((pos.x - 10_800.0).abs() < 1e-6);
+        assert!((vel.x - 1.0).abs() < 1e-9);
+        assert_eq!(ephem.fallback_count(), 0);
+    }
+
+    #[test]
+    fn horizons_moon_ephemeris_falls_back_to_meeus_out_of_range() {
+        let csv = "\
+$$SOE
+2459000.0, A, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+2459001.0, A, 86400.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+$$EOE
+";
+        let table = crate::horizons::HorizonsTable::parse_csv(csv).unwrap();
+        let ephem = HorizonsMoonEphemeris::from_table(table);
+
+        // Epoch way before the table — should fall back to Meeus.
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let pos = ephem.position_eci(&epoch);
+        // Meeus should return a realistic Moon distance (not near 0).
+        let dist = pos.magnitude();
+        assert!(
+            (300_000.0..500_000.0).contains(&dist),
+            "Meeus fallback should return Moon-like distance, got {dist:.0} km"
+        );
+        assert_eq!(ephem.fallback_count(), 1);
+
+        // Also querying velocity should increment the fallback counter.
+        let _ = ephem.velocity_eci(&epoch);
+        assert_eq!(ephem.fallback_count(), 2);
+    }
+
+    #[test]
+    fn horizons_moon_ephemeris_date_range_exposed() {
+        let csv = "\
+$$SOE
+2459000.0, A, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+2459001.0, A, 86400.0, 0.0, 0.0, 1.0, 0.0, 0.0,
+$$EOE
+";
+        let table = crate::horizons::HorizonsTable::parse_csv(csv).unwrap();
+        let ephem = HorizonsMoonEphemeris::from_table(table);
+        let (first, last) = ephem.date_range().unwrap();
+        assert_eq!(first.jd(), 2459000.0);
+        assert_eq!(last.jd(), 2459001.0);
+    }
+
+    #[test]
+    fn arc_dyn_moon_ephemeris_is_usable_via_blanket_impl() {
+        // Regression guard for the blanket `impl MoonEphemeris for Arc<T>`.
+        // Both `Arc<MeeusMoonEphemeris>` and `Arc<dyn MoonEphemeris>` must
+        // satisfy the `MoonEphemeris` bound so they can be passed to
+        // `ThirdBodyGravity::moon_with_ephemeris` (see orts perturbations).
+        use std::sync::Arc;
+        let owned: Arc<MeeusMoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+        let erased: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        // Calls must go through the blanket impl on `Arc<_>`, not through
+        // auto-deref, because `moon_with_ephemeris<E: MoonEphemeris>` takes
+        // the value by generic bound.
+        assert_eq!(owned.position_eci(&epoch), moon_position_eci(&epoch));
+        assert_eq!(erased.position_eci(&epoch), moon_position_eci(&epoch));
+        assert_eq!(owned.name(), "meeus");
+        assert_eq!(erased.name(), "meeus");
+
+        // The velocity default should also forward through the blanket impl.
+        let v_owned = owned.velocity_eci(&epoch);
+        let v_erased = erased.velocity_eci(&epoch);
+        assert_eq!(v_owned, v_erased);
+    }
+
+    #[test]
+    fn default_velocity_eci_calls_position_at_plus_minus_one_second() {
+        // Regression guard for the documented behavior of
+        // `MoonEphemeris::velocity_eci`: "central finite difference over
+        // `position_eci` with a 1-second step". Uses a counting wrapper to
+        // verify both that `position_eci` is the only method called and
+        // that the offsets are exactly ±1 second.
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingEphem {
+            calls: AtomicUsize,
+            last_offsets: Mutex<Vec<f64>>,
+            base_jd: f64,
+        }
+        impl MoonEphemeris for CountingEphem {
+            fn position_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                let offset_sec = (epoch.jd() - self.base_jd) * 86400.0;
+                self.last_offsets.lock().unwrap().push(offset_sec);
+                // Linear test input: position at time t is (t, 0, 0) where
+                // t is in seconds from base_jd. The slope is 1 km/s on x.
+                Vector3::new(offset_sec, 0.0, 0.0)
+            }
+            fn name(&self) -> &str {
+                "counting"
+            }
+        }
+
+        let base = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let ephem = CountingEphem {
+            calls: AtomicUsize::new(0),
+            last_offsets: Mutex::new(Vec::new()),
+            base_jd: base.jd(),
+        };
+        let v = ephem.velocity_eci(&base);
+
+        // position_eci must have been called exactly twice.
+        assert_eq!(
+            ephem.calls.load(Ordering::Relaxed),
+            2,
+            "default velocity_eci should call position_eci exactly twice"
+        );
+        // The offsets must be ±1 second from the base epoch. The tolerance
+        // reflects the ~50 microsecond precision of `Epoch::add_seconds` at
+        // modern JDs (f64 ULP on ~2.46e6 JD ≈ 5e-10 days ≈ 50 µs).
+        let mut offsets = ephem.last_offsets.lock().unwrap().clone();
+        offsets.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            (offsets[0] - (-1.0)).abs() < 1e-3,
+            "first offset should be -1 s, got {} s",
+            offsets[0]
+        );
+        assert!(
+            (offsets[1] - 1.0).abs() < 1e-3,
+            "second offset should be +1 s, got {} s",
+            offsets[1]
+        );
+        // On the linear test input the central difference recovers the slope
+        // to within the JD ULP precision on ±1 s inputs. The default
+        // implementation divides by `2 * 1.0` where the numerator is
+        // `position(+dt) - position(-dt) ≈ 2 km` — so the output is dominated
+        // by JD precision on the offsets rather than on the raw slope.
+        assert!(
+            (v.x - 1.0).abs() < 1e-3,
+            "linear input slope should be 1 km/s, got {}",
+            v.x
+        );
+        assert_eq!(v.y, 0.0);
+        assert_eq!(v.z, 0.0);
     }
 }

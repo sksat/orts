@@ -5,7 +5,12 @@ pub const MU_EARTH: f64 = 398600.4418;
 pub const MU_SUN: f64 = 132712440018.0;
 
 /// Moon gravitational parameter (km^3/s^2)
-pub const MU_MOON: f64 = 4902.8;
+///
+/// Source: IAU 2015 / JPL DE440. The extra significant digits (`.800066`)
+/// beyond the nominal `4902.8` matter for long-duration lunar missions such
+/// as Apollo 11 and Artemis 1, where the integrated effect of the tiny
+/// fractional change accumulates over days of propagation.
+pub const MU_MOON: f64 = 4902.800066;
 
 /// Earth equatorial radius (km, WGS84)
 pub const R_EARTH: f64 = 6378.137;
