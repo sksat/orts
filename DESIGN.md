@@ -436,28 +436,70 @@ env snapshot (magnetic field B, sun direction, atmospheric density, current epoc
 
 モード切替 (Detumble → Nadir → Burn) は host が guest を差し替えるのではなく、guest 1 つの内部で分岐する。guest が `current_mode()` で現在モードを observability として公開し、host/viewer がそれを拾う。
 
-##### 第一 backend: wasmtime + Pulley single-backend
+##### 第一 backend: WASM (wasmtime + Pulley)
 
-WASM ランタイム調査 (wasmtime / wasmer / wasmi / stitch / wasm3 / extism / Cranelift 直接) の結果、以下を採用:
+`DiscreteController` trait には複数の backend 実装を接続できる (NativeController / 将来の Rhai / PyO3 等)。第一候補として採用するのは **WASM backend**。以下はその WASM backend の内部設計。
 
-- **ランタイム**: wasmtime (Bytecode Alliance)
-- **バックエンド**: Pulley single-backend (pure Rust portable interpreter)
-- **設定**: `wasmtime = { version = "=x.y.z", default-features = false, features = ["pulley", "runtime", "component-model"] }`
+###### インターフェース層: Component Model + WIT
+
+orts と宇宙機プラグインの「契約」を定義する層。`SpacecraftState` record、`Command` enum、`Observation` struct、env import などを `.wit` に宣言的に記述し、`wit-bindgen` が Rust / C / JS / Python / Go の guest bindings を自動生成する。**orts の長期的な API 契約として安定化させる対象**はここ。
+
+- core wasm (i32/i64/f32/f64) の上に record / variant / list / string / resource 等の高級型を乗せる上位レイヤ
+- wit-bindgen は 0.X 系で semver 破壊的変更頻発 → `=x.y.z` で厳格 pin 必須
+- `jco` で `.component.wasm` → ES module に transpile 可能。viewer (ブラウザ) で同じ guest を動かす余地を残す
+
+Phase P1 では WIT に記述したインターフェースを固定し、guest を常に Component として扱う (wasmi を採用しない理由もここ — wasmi は Component Model 非対応)。
+
+###### 配布フォーマット: `.wasm` / `.cwasm`
+
+同じ component を、portable な標準バイナリ (`.wasm`) として配布するか、wasmtime 固有の事前コンパイル済みアーティファクト (`.cwasm`) として配布するかを選べる。**インターフェース契約には影響せず**、「起動時間 / 配布バイナリサイズ / portability」のトレードオフ。同じ 1 つの component から `cargo component` で `.wasm` を、`Engine::precompile_component` で `.cwasm` を両方生成できる。
+
+| 配布形式 | 生成 | 読み込み | 特徴 |
+|---|---|---|---|
+| `.wasm` (標準バイナリ) | `cargo component build` / `wasm-tools component new` | `Component::new(&engine, bytes)` で実行時コンパイル | portable。どの wasm ランタイムでも読めるが、実行時に compile 層 (Cranelift) が必要 |
+| `.cwasm` (wasmtime 固有) | `Engine::precompile_component(&component_bytes)` | `unsafe { Component::deserialize_file(&engine, path) }` | deserialize のみで即起動。ランタイムに compile 層が不要。wasmtime バージョン一致が必須 |
+
+**Pulley target の `.cwasm` は Pulley bytecode をシリアライズしているだけ** なので ISA-independent。ビルドマシンと実行マシンの CPU が違っても動く (wasmtime バージョン一致は必須)。
+
+SAFETY: `Component::deserialize_*` は `unsafe`。untrusted な `.cwasm` ロードは任意コード実行リスク、信頼できるビルドパイプライン前提。
+
+想定する運用パターン:
+- 開発中: `.wasm` を直接差し替え、compile 層込みの orts-cli で実行
+- production 配布: CI で `.cwasm` を事前生成、end-user には軽量 orts-cli + `.cwasm` を配る
+- 第三者プラグイン: `.wasm` 配布 (wasmtime バージョン依存を避ける)
+
+補足: wasmtime の API では `Module::*` (core wasm) と `Component::*` (Component Model) が並行分離している。Phase P1 では guest を常に Component として扱うので、本設計では `Component::*` 系のみ使う。
+
+###### 実装基盤: wasmtime + Pulley
+
+WASM ランタイム調査 (wasmtime / wasmer / wasmi / stitch / wasm3 / extism / Cranelift 直接) + Phase P0 smoke test の結果、wasmtime を採用する。
+
+wasmtime 内部の役割分担:
+- **Cranelift**: wasm → Pulley bytecode への compile 層。`Component::new` / `Engine::precompile_component` が内部で利用
+- **Pulley**: pure Rust portable interpreter (wasmtime 内蔵)。`Config::target("pulley64")` で compile target として選択すると、Cranelift は機械語ではなく Pulley bytecode を emit し、実行は Pulley interpreter が行う
+- 注: Pulley は wasmtime の `Strategy` enum には存在せず、target triple で選ぶ方式
 
 採用理由:
-- バイナリサイズ +〜5 MB (Cranelift JIT を含めると +15〜30 MB)
-- Pulley は pure Rust interpreter なので決定論性を config 調整なしで担保 (wasmi 同等の性質)
-- Component Model / wit-bindgen を最初から使える → 将来 C++/Python/JS guest や viewer (jco) 互換性の余地を開く
-- Cranelift feature を後付け追加で native 性能に上げられる (tick が 100 Hz+ になった場合用)
+- Component Model / wit-bindgen を first-class で使える
+- Pulley interpreter は pure Rust なので **決定論性を config 調整なしで担保** (JIT 最適化の非決定性が実行層に入らない)
+- Cranelift を有効化すれば実行時コンパイルもできる → `.wasm` 配布と `.cwasm` 配布の両方を同じ実装基盤で扱える
 
-Component Model と WIT:
-- core wasm (i32/i64/f32/f64) の上に record/variant/list/string/resource を乗せる上位レイヤ
-- WIT (`.wit` ファイル) でインタフェースを宣言的に記述、`wit-bindgen` が Rust/JS/Python/Go/C# の bindings を自動生成
-- wit-bindgen は 0.X 系で semver 破壊的変更頻発 → `=x.y.z` で厳格 pin 必須
-- `jco` で `.component.wasm` → ES module → viewer (ブラウザ) で実行可能
+###### 2 段 feature 構成
 
-複数衛星 lifecycle:
-- 1 衛星 = 1 `Store<HostState>` + 1 Instance、Engine/Component は Arc で共有
+配布フォーマットの選択をビルド時に決めるための feature。
+
+| feature | wasmtime features | 用途 |
+|---|---|---|
+| `plugin-wasm` (default ON) | `runtime` + `cranelift` + `pulley` + `component-model` + `std` + `wat` + `anyhow` | `.wasm` と `.cwasm` の両方を扱える。実行時コンパイル可能でユーザーが guest を差し替えて試行錯誤できる。Cranelift 分バイナリが大きい |
+| `plugin-wasm-runtime-only` (opt-in) | `runtime` + `pulley` + `component-model` + `std` | 事前生成 `.cwasm` の deserialize のみ。Cranelift を落として配布サイズを最小化 |
+
+両 feature とも実行層は Pulley interpreter で共通、インターフェース層は Component Model で共通。差は wasmtime 内の compile 層 (Cranelift) を有効化するかどうかの 1 点のみ。
+
+Phase P0 smoke test で core wasm path (`Module::*`) と Component Model path (`Component::*`) の両方で precompile / deserialize ラウンドトリップを実測確認済み。runtime-only バイナリでの deserialize も含む (実測値は plan 参照)。
+
+###### 複数衛星 lifecycle
+
+- 1 衛星 = 1 `Store<HostState>` + 1 Instance、Engine / Component は Arc で共有
 - instantiate cost ~5 µs、100 衛星までは pooling なしで OK
 - 1000+ 衛星で pooling allocator を導入 (Phase C)
 
@@ -473,7 +515,7 @@ Component Model と WIT:
 
 | フェーズ | 内容 |
 |---|---|
-| Phase P0 | 調査・方針決定 (完了、調査レポートを `/home/sksat/.claude/plans/pure-drifting-hickey.md` に保存) |
+| Phase P0 | 調査・方針決定 **実装済み**。DESIGN.md 更新 + rust-toolchain.toml pin + smoke test で core wasm / Component Model 両 path の precompile/deserialize ラウンドトリップを確認 (実測値は plan 参照) |
 | Phase P0.5 | `NativeController` で trait + adapter + oracle の経路を validation (guest ランタイムを触る前) |
 | Phase P1 | wasmtime (Pulley) backend + Detumbling guest (`BdotFiniteDiff` と 1e-12 bit 近似一致) |
 | Phase P2 | 第 2 backend 追加 (pure Rust embedded script 系を候補として評価。Phase P1 完了後に選定) |
@@ -490,9 +532,10 @@ Component Model と WIT:
 
 ##### feature gate
 
-- orts library: `plugin-wasm` (default OFF)
-- orts-cli: `plugin-wasm` を **default feature に含める** (配布バイナリに +〜5 MB は十分許容)
-- CI matrix は `{no-plugin, plugin-wasm (=CLI default), all-plugins}` + wasmtime バージョン pin 回帰ジョブ
+- orts library: `plugin-wasm` (default OFF)、`plugin-wasm-runtime-only` (opt-in 代替、Cranelift を抜いた minimal runtime)
+- orts-cli: `plugin-wasm` を **default feature に含める**。小サイズ配布したいユーザーは `cargo build --no-default-features --features plugin-wasm-runtime-only` で opt-out 可能
+- CI matrix は `{no-plugin, plugin-wasm (=CLI default), plugin-wasm-runtime-only, all-plugins}` + wasmtime バージョン pin 回帰ジョブ
+- Rust toolchain は `rust-toolchain.toml` で wasmtime の MSRV に pin
 
 ### ミッション規模と力学モデル
 
