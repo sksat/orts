@@ -114,15 +114,48 @@ Chain 誤差は DRO の gravity gradient による増幅が支配的。内訳:
 
 | 成分 | 推定寄与 | 根拠 |
 |---|---|---|
-| DRI impulsive-at-midpoint 近似限界 | ~2.7 km (burn 直後) | `|Δv| × τ / √12` = 108.6 m/s × 81 s / √12 ≈ **2.54 km**。有限時間 burn を impulse で代用する理論限界と一致 |
-| DRDI impulsive-at-midpoint 近似限界 | ~4.0 km (burn 直後) | `|Δv| × τ / √12` = 136.2 m/s × 101 s / √12 ≈ **3.97 km** |
-| DRDI 追加残差 (profile asymmetry or Moon-vicinity ephemeris) | ~11 km | DRDI verify_burn 単独実測 15.11 km − finite-burn scale 3.97 km = ~11 km 残差 |
+| DRI 単独 verify_burn 残差 | ~2.7 km (burn 直後) | 実測。要因は下記の **"DRI 2.7 km の再検証"** 参照 |
+| DRDI 単独 verify_burn 残差 | ~15 km (burn 直後) | 実測 |
 | DRO 5 日間の coast 誤差 | ~96-125 km (DRO 単独 verify) | Moon ephemeris 補間 + Moon SOI proximity の integrator precision。完全に独立 `verify_coast` の DRO phase で実測 125.63 km |
 | **DRO gravity gradient 増幅** | **× 約 8** | DRO 入口の ~2.7 km error が 5 日間の月周回で ~1000 km に増幅。DRO の Jacobi 積分エネルギーに対する sensitivity 係数 |
 
 Error panel (log scale) では DRI 直後に ~3 km の spike、次に DRO 期間で緩やかな monotonic 成長、DRDI 直後に再び急上昇して ~1037 km に達する。components panel では Δy (green) が dominant で 800 km 以上の負値、orbital plane に対して垂直方向の誤差が伸びていることが読み取れる。
 
-**次 iteration の優先候補**: DRI verify_burn で既に判明した通り、残差の約 2.5 km 分は `|Δv|·τ/√12` の finite-burn approximation 由来なので、`ConstantThrust` force model 経由で verify_burn を書き直せば直接削減可能。DRDI の +11 km 残差と DRO 8× 増幅は別個に調査する必要あり。
+#### DRI 2.7 km の再検証 (falsified hypothesis)
+
+iteration 5 (commit 5867382) のコミットメッセージと初版 README は、DRI 2.686 km 残差を `|Δv|·τ/√12` = 108.6 m/s × 81 s / √12 ≈ **2.54 km** と一致させて「impulsive-at-midpoint 近似の理論限界」と解釈した。**これは誤り**だった。
+
+後続 iteration で `verify_burn_continuous` (ConstantThrust force model 経由の有限時間 burn) を追加し、impulsive と side-by-side 比較したところ:
+
+| Burn | impulsive 残差 | continuous 残差 | 改善 |
+|---|---|---|---|
+| DRI | 2.686 km | 2.686 km | **0.0 km (bit-identical)** |
+| DRDI | 15.113 km | 15.113 km | **0.0 km (bit-identical)** |
+
+**対称 uniform-thrust burn は、burn 終了後の位置で impulsive-at-midpoint と完全に等価**。直接積分で示せる:
+
+```
+uniform thrust [mid−τ/2, mid+τ/2], a = Δv/τ:
+  r(mid+τ/2) = r(mid−τ/2) + v₀·τ + ½·Δv·τ
+  r(t) = r(mid+τ/2) + (v₀ + Δv)·(t − mid − τ/2)   (t > mid+τ/2)
+       = r₀ + v₀·t + Δv·(t − mid)
+
+impulsive at mid:
+  r(t) = r(mid) + (v₀ + Δv)·(t − mid)             (t > mid)
+       = r₀ + v₀·t + Δv·(t − mid)
+```
+
+両者一致。`|Δv|·τ/√12` formula は非対称 profile の centroid 不確かさ (thrust-weighted mean がどれだけ geometric midpoint からずれ得るかの RMS) を表すもので、対称 uniform では centroid ≡ midpoint なので寄与ゼロ。2.54 km と 2.686 km が近いのは**偶然の一致**だった。
+
+**したがって DRI 2.686 km の真の原因は impulsive 近似ではない**。次候補:
+- Moon ephemeris 補間精度 (Horizons 1h sampling の burn 中の補間残差)
+- Method B の pure-coast reference 精度
+- 真の burn profile の非対称性 (OMS-E engine の ramp-up / ramp-down)
+- Third-body tidal term の burn window 内 gradient
+
+これらは follow-up iteration で diagnose 予定。
+
+DRDI 15.113 km も同様に impulsive 由来ではなく、さらに大きな別要因 (Moon SOI proximity など) を含む。
 
 ## Return coast phase
 
@@ -155,7 +188,7 @@ components panel では Δz (blue) が dominant で最終 -100 km、軌道面と
 2. `Δv_corrected = v_horizons(post) − v_pure_coast(post)` — 真の推進成分だけが残る
 3. `pre → mid → apply(Δv_corrected) → mid → post` の順で再伝播し Horizons post と比較
 
-これで DRI/DRDI の個別検証は時刻系バグ修正 + Hermite 補間 fix 後 ~2.7 / 15.1 km まで下がった。残差の主成分は `|Δv| × burn_duration / √12` の finite-burn impulsive-approximation error — 詳細は Error budget 節。
+これで DRI/DRDI の個別検証は時刻系バグ修正 + Hermite 補間 fix 後 ~2.7 / 15.1 km まで下がった。残差の真の原因は [chain section の "DRI 2.7 km の再検証 (falsified hypothesis)"](#dri--drdi-chain) 参照 — 以前は `|Δv| × burn_duration / √12` の finite-burn impulsive-approximation error が主成分と解釈していたが、`verify_burn_continuous` 追加後に impulsive と continuous が bit-identical と判明し、この仮説は棄却された。
 
 ## Error budget history (iterations)
 
@@ -167,11 +200,11 @@ components panel では Δz (blue) が dominant で最終 -100 km、軌道面と
 | 8fdf486 | `fetch_orion_sample` を Hermite 補間化 | 3.965 | 16.288 | 1196.257 | 30 s tie-break bias 除去 |
 | 4619519 | `cache_key_for` に TIME_TYPE 追加 | 3.965 | 16.288 | 1196.257 | defensive (将来の stale cache 防止) |
 | 2ede30f | Horizons 時刻系を UT/UTC に統一 | **2.686** | **15.113** | **1037.633** | extract_burns.py + kaname TIME_TYPE 両方修正 |
+| (pending) | `verify_burn_continuous` 追加 (falsification) | 2.686 | 15.113 | 1037.633 | impulsive と bit-identical。impulsive 近似仮説を棄却 (誤差 0 改善) |
 
 ### 残留誤差の出所
 
-- **DRI 2.69 km ≈ `|Δv|·τ/√12`** = 108.6 m/s × 81 s / √12 ≈ **2.54 km**。impulsive-at-midpoint 近似の理論限界と一致 (`git show 2ede30f` のコミットメッセージ参照)。解消には burn verification を `ConstantThrust` force model 経由にする必要あり。
-- **DRDI 15.11 km** > finite-burn scale (~3.97 km)。profile asymmetry か Moon SOI 近傍の ephemeris 補間誤差が主因と推定。follow-up で diagnose 予定。
+- **DRI 2.69 km / DRDI 15.11 km — impulsive-vs-continuous は原因ではない**: 当初「impulsive-at-midpoint 近似の `|Δv|·τ/√12` 理論限界」と解釈していたが、`verify_burn_continuous` (ConstantThrust force model) を追加して検証した結果、impulsive と continuous は **bit-identical** (対称 uniform thrust の数学的帰結)。詳細は [chain section の "DRI 2.7 km の再検証"](#dri--drdi-chain) 参照。真の原因は Moon ephemeris 補間精度 / Method B reference 精度 / 真の burn profile 非対称性 / Moon SOI proximity などを調査予定。
 - **DRO coast 96 → 125 km の悪化** (iteration 8fdf486 で顕在化): nearest-neighbor の 30 s bias が別の誤差源を偶然マスクしていた。Moon ephemeris の近月点補間特性か、integrator 精度要因の候補がある。
 - **6 日 chain 1037 km**: DRO 期間の coast 誤差 ~125 km × 月周回の gravity gradient amplification がドミナント。DRI/DRDI 個別誤差の貢献は DRI ~3 km + DRDI ~15 km。
 

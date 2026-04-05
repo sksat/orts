@@ -499,9 +499,18 @@ struct Maneuver {
     label: &'static str,
     /// ISO-8601 epoch where the impulsive Δv is applied.
     ///
-    /// Chosen as the burn midpoint reported by `extract_burns.py`. The
-    /// impulsive-at-midpoint approximation has an irreducible position
-    /// error floor — see [`BURN_THRESHOLD_PASS_KM`] for the bound.
+    /// Chosen as the burn midpoint reported by `extract_burns.py`.
+    /// An earlier iteration of this docstring claimed this had an
+    /// "irreducible position error floor of order |Δv|·τ/√12" from
+    /// the impulsive-at-midpoint approximation; that was falsified
+    /// by [`verify_burn_continuous`] which showed impulsive and
+    /// ConstantThrust continuous-uniform burns produce bit-identical
+    /// post-burn positions (direct integration; see that function's
+    /// docstring for the derivation). The current ~2.7 / 15.1 km
+    /// verify_burn residuals come from other sources (Moon ephemeris
+    /// interpolation across the burn window, Method B pure-coast
+    /// reference precision, real burn profile asymmetry, etc),
+    /// discussed in `BURN_THRESHOLD_PASS_KM`'s docstring.
     mid_epoch_iso: &'static str,
     /// ISO-8601 epoch to use as the initial state (Horizons fetch point
     /// that predates the burn by several minutes so the integrator can
@@ -648,24 +657,40 @@ const BURN_CHAIN_INDICES: &[usize] = &[0, 1];
 /// window is intentionally short (~10 minutes), so any position error has
 /// not had time to accumulate from e.g. ephemeris inaccuracies.
 ///
-/// ## Irreducible impulsive-midpoint floor
+/// ## Sources of burn residual (not an irreducible impulsive-midpoint floor)
 ///
-/// Method B guarantees **velocity** match at `post_epoch` by construction,
-/// but the **position** match is bounded below by the error of treating a
-/// real multi-minute burn as a point event at `mid_epoch`. For an ideally
-/// symmetric constant-thrust burn the first-order endpoint offset is zero;
-/// the observed residual comes from (a) thrust-profile asymmetry shifting
-/// the effective centroid away from `mid_epoch`, (b) ECI frame rotation
-/// during the burn, and (c) position-dependence of the gravity field over
-/// the burn's spatial extent. Empirically this is of order `V × Δt / 10`
-/// km per burn, where `V` is the Δv magnitude in km/s and `Δt` is the
-/// burn duration in seconds. For DRI (|Δv| ≈ 110 m/s, Δt ≈ 300 s) the
-/// observed residual is ~7 km.
+/// Method B guarantees **velocity** match at `post_epoch` by construction.
+/// An earlier iteration of this docstring claimed the **position** match
+/// was bounded below by an "irreducible impulsive-midpoint floor" of order
+/// `|Δv| × τ / √12`, suggesting that modelling the burn as a finite
+/// ConstantThrust would reduce it. **That claim was falsified** (see
+/// [`verify_burn_continuous`] docstring for the derivation and the
+/// empirical side-by-side comparison): for a symmetric uniform-thrust
+/// burn the continuous trajectory and the impulsive-at-midpoint trajectory
+/// produce bit-identical positions for all `t > mid_epoch + τ/2`, so the
+/// finite-burn model contributes no improvement on its own.
 ///
-/// The thresholds are calibrated for DRI-sized burns. Larger burns
+/// The observed DRI ~2.7 km / DRDI ~15.1 km residuals (post commit 2ede30f)
+/// therefore come from elsewhere. Best-guess attribution, pending
+/// follow-up diagnosis:
+/// - Moon ephemeris Hermite interpolation across the ~80 / 100 s burn
+///   window (Horizons Moon table is sampled at 1 h; the interpolation
+///   residual couples into the third-body tidal term).
+/// - Method B pure-coast reference propagation precision over the
+///   ~25-minute pre → post window (the `dv_corrected` depends on it).
+/// - Real OMS-E thrust profile asymmetry (ramp-up / ramp-down): if the
+///   physical thrust centroid differs from the geometric burn midpoint,
+///   the uniform-constant model applied at `mid_epoch` shifts position
+///   post-burn by `|Δv| × centroid_offset`.
+/// - Moon-vicinity gravity gradient during DRDI (DRO departure is the
+///   closest lunar approach in the chain).
+/// - Integration step during the burn leg (`burn_dt = 1 s` for the
+///   continuous path, `dt = 10 s` for the impulsive path — the latter
+///   is the default propagation step since the impulse is instantaneous).
+///
+/// The thresholds are calibrated for DRI/DRDI-sized burns. Larger burns
 /// (TLI at ~3200 m/s, RPF at ~330 m/s) will produce proportionally
-/// larger residuals; `BURN_THRESHOLD_PASS_KM` may need to be raised
-/// or the burn modelled as a finite thrust to stay inside bounds.
+/// larger residuals if the same error sources dominate.
 #[cfg(feature = "fetch-horizons")]
 const BURN_THRESHOLD_PASS_KM: f64 = 10.0;
 #[cfg(feature = "fetch-horizons")]
@@ -680,7 +705,15 @@ struct BurnResult {
     /// extractor. The raw magnitude is reported separately in the
     /// per-burn log but not retained in this struct.
     magnitude_ms: f64,
+    /// Pre→mid and mid→post leg durations in seconds. Carried here
+    /// mostly for per-burn stdout logs inside `verify_burn` /
+    /// `verify_burn_continuous`; `print_burn_summary` does not
+    /// include them in the interleaved impulsive-vs-continuous table
+    /// (the table is already wide and per-burn timing is repeated in
+    /// the detailed log above).
+    #[allow(dead_code)]
     pre_to_mid_seconds: f64,
+    #[allow(dead_code)]
     mid_to_post_seconds: f64,
     position_error_km: f64,
     velocity_error_kms: f64,
@@ -810,10 +843,18 @@ fn main() {
         println!();
     }
 
-    let mut burn_results: Vec<BurnResult> = Vec::new();
+    let mut burn_results_impulsive: Vec<BurnResult> = Vec::new();
+    let mut burn_results_continuous: Vec<BurnResult> = Vec::new();
     for burn in MANEUVERS {
-        let result = verify_burn(burn, &moon_ephem, &moon_concrete, &sun_table_arc);
-        burn_results.push(result);
+        let result_impulsive = verify_burn(burn, &moon_ephem, &moon_concrete, &sun_table_arc);
+        burn_results_impulsive.push(result_impulsive);
+        println!();
+        // Continuous-thrust variant immediately after so the reader
+        // sees the impulsive residual and the finite-burn-modelled
+        // residual side-by-side in the stdout log for each burn.
+        let result_continuous =
+            verify_burn_continuous(burn, &moon_ephem, &moon_concrete, &sun_table_arc);
+        burn_results_continuous.push(result_continuous);
         println!();
     }
 
@@ -1032,8 +1073,8 @@ fn main() {
 
     // ----- Summary tables -----
     print_summary(&results);
-    if !burn_results.is_empty() {
-        print_burn_summary(&burn_results);
+    if !burn_results_impulsive.is_empty() {
+        print_burn_summary(&burn_results_impulsive, &burn_results_continuous);
     }
     if !chain_results.is_empty() {
         print_chain_summary(&chain_results);
@@ -1296,6 +1337,257 @@ fn verify_burn(
     println!(
         "  |Δv| corrected (true): {:>7.3} m/s    raw→corrected: Δmag {:+.3} m/s, angle {:.3}°",
         dv_corrected_mag_ms, raw_vs_corrected_mag_diff_ms, raw_vs_corrected_angle_deg,
+    );
+    println!(
+        "  position error:  {:10.3} km         velocity error: {:.6} km/s   {}",
+        position_error,
+        velocity_error,
+        judgment.glyph()
+    );
+
+    BurnResult {
+        label: burn.label,
+        magnitude_ms: dv_corrected_mag_ms,
+        pre_to_mid_seconds,
+        mid_to_post_seconds,
+        position_error_km: position_error,
+        velocity_error_kms: velocity_error,
+        judgment,
+    }
+}
+
+/// Continuous-thrust variant of [`verify_burn`]: integrates the
+/// corrected Δv as a [`ConstantThrust`] force model active over
+/// `[mid_epoch − burn_duration/2, mid_epoch + burn_duration/2]`
+/// instead of applying it as a single impulsive velocity jump at
+/// `mid_epoch`.
+///
+/// ## What it **does not** do: reduce the post-burn residual
+///
+/// This function was added to falsify a widely-cited-internally
+/// hypothesis that the DRI / DRDI `verify_burn` residuals (2.686 km
+/// and 15.113 km as of commit 5867382) were dominated by the
+/// impulsive-at-midpoint approximation error — i.e., that switching
+/// to a finite-duration force model would reduce them to ~0. The
+/// `|Δv| · τ / √12` scale (≈ 2.54 km for DRI, ≈ 3.97 km for DRDI)
+/// was quoted in previous commit messages and the README as the
+/// expected theoretical floor from this approximation.
+///
+/// **That hypothesis is wrong.** For a uniform-thrust burn window
+/// `[mid − τ/2, mid + τ/2]` with constant acceleration
+/// `a = Δv / τ`, direct integration gives
+///
+///     r(mid + τ/2) = r(mid − τ/2) + v₀ · τ + ½ · Δv · τ
+///     r(t)         = r(mid + τ/2) + (v₀ + Δv) · (t − mid − τ/2)      (for t > mid + τ/2)
+///                  = r₀ + v₀ · t + Δv · (t − mid)
+///
+/// Meanwhile the impulsive-at-midpoint trajectory is
+///
+///     r(t) = r₀ + v₀ · t + Δv · (t − mid)      (for t > mid)
+///
+/// **The two are bit-identical for all t > mid + τ/2.** The
+/// `|Δv| · τ / √12` formula describes the RMS position error between
+/// an impulse at an *uncertain* centroid (σ_centroid = τ / √12 for a
+/// uniform time distribution) and the true centroid — which is
+/// relevant only if the burn profile is *asymmetric* so the thrust
+/// centroid differs from the geometric midpoint. For a symmetric
+/// uniform burn the centroid is exactly the midpoint and the formula
+/// gives the trivial zero — any resemblance between 2.54 km and the
+/// DRI residual was a numerical coincidence.
+///
+/// Running the spike after adding this function confirmed the
+/// analytical prediction: impulsive and continuous produce
+/// bit-identical `position_error_km` for both DRI and DRDI, down to
+/// the printed precision.
+///
+/// ## Why keep the function at all?
+///
+/// 1. **Hypothesis falsification**: the side-by-side stdout output
+///    from [`print_burn_summary`] makes it immediately obvious to
+///    future readers that the residual is **not** from the
+///    impulsive-vs-continuous distinction and that effort should be
+///    directed at other error sources (Moon ephemeris interpolation
+///    inside the burn window, Method B reference precision, real
+///    burn profile asymmetry, integrator step during the burn leg).
+/// 2. **Eventual non-uniform thrust**: a future iteration that
+///    models the real OMS-E ramp-up / ramp-down profile (or any
+///    asymmetric thrust model) will use the same leg-splitting
+///    skeleton this function establishes.
+/// 3. **Lock-step with chain verification**: the single-burn
+///    continuous path uses exactly the same `ConstantThrust`
+///    construction and leg-splitting as
+///    [`verify_burn_chain_continuous`], so it doubles as a
+///    single-burn unit test of the chain path's burn leg.
+///
+/// ## Lock-step with `verify_burn_chain_continuous`
+///
+/// This function uses the same leg-splitting pattern and force-model
+/// construction as [`verify_burn_chain_continuous`]'s inner burn leg,
+/// so the single-burn and chain paths produce numerically identical
+/// trajectories through each burn window. Corrected Δv is computed
+/// via the same Method B pass as the impulsive [`verify_burn`] so
+/// side-by-side comparison of the two functions isolates the
+/// approximation effect (impulsive vs finite uniform thrust) from
+/// everything else.
+#[cfg(feature = "fetch-horizons")]
+fn verify_burn_continuous(
+    burn: &Maneuver,
+    moon_ephem: &Arc<dyn MoonEphemeris>,
+    moon_concrete: &Arc<HorizonsMoonEphemeris>,
+    sun_table: &Arc<HorizonsTable>,
+) -> BurnResult {
+    println!("── {} (continuous) ──", burn.label);
+    println!(
+        "  pre → mid → post: {}  {}  {}    burn_duration: {:.0} s",
+        burn.pre_epoch_iso, burn.mid_epoch_iso, burn.post_epoch_iso, burn.burn_duration_s
+    );
+
+    let pre_epoch = Epoch::from_iso8601(burn.pre_epoch_iso).expect("valid pre epoch");
+    let mid_epoch = Epoch::from_iso8601(burn.mid_epoch_iso).expect("valid mid epoch");
+    let post_epoch = Epoch::from_iso8601(burn.post_epoch_iso).expect("valid post epoch");
+    let pre_to_mid_seconds = (mid_epoch.jd() - pre_epoch.jd()) * 86_400.0;
+    let mid_to_post_seconds = (post_epoch.jd() - mid_epoch.jd()) * 86_400.0;
+    let pre_to_post_seconds = pre_to_mid_seconds + mid_to_post_seconds;
+    assert!(
+        pre_to_mid_seconds > 0.0 && mid_to_post_seconds > 0.0,
+        "burn epochs out of order: pre={} mid={} post={}",
+        burn.pre_epoch_iso,
+        burn.mid_epoch_iso,
+        burn.post_epoch_iso,
+    );
+
+    // Burn window centred on `mid_epoch`, identical to the chain's
+    // per-burn window construction in `verify_burn_chain_continuous`.
+    let half = burn.burn_duration_s / 2.0;
+    let burn_start = mid_epoch.add_seconds(-half);
+    let burn_end = mid_epoch.add_seconds(half);
+    let pre_to_burn_start_seconds = (burn_start.jd() - pre_epoch.jd()) * 86_400.0;
+    let burn_seconds = (burn_end.jd() - burn_start.jd()) * 86_400.0;
+    let burn_end_to_post_seconds = (post_epoch.jd() - burn_end.jd()) * 86_400.0;
+    assert!(
+        pre_to_burn_start_seconds > 0.0 && burn_end_to_post_seconds > 0.0,
+        "verify_burn_continuous {:?}: burn window [{}, {}] (± {:.0} s around mid) \
+         must fit strictly inside [{}, {}]",
+        burn.label,
+        iso_short(&burn_start),
+        iso_short(&burn_end),
+        half,
+        burn.pre_epoch_iso,
+        burn.post_epoch_iso,
+    );
+
+    // Fetch Horizons endpoints (same as impulsive verify_burn).
+    let (pre_pos, pre_vel) = fetch_orion_sample(&pre_epoch).expect("fetch Orion at burn pre");
+    let (post_pos, post_vel) = fetch_orion_sample(&post_epoch).expect("fetch Orion at burn post");
+
+    let fallbacks_before = moon_concrete.fallback_count();
+
+    // ----- Method B: same pure-coast Δv extraction as verify_burn --
+    let initial_state = OrbitalState::new(pre_pos, pre_vel);
+    let pure_coast_system = build_artemis_system(pre_epoch, moon_ephem, sun_table);
+    let pure_coast_state = Dop853.integrate(
+        &pure_coast_system,
+        initial_state.clone(),
+        0.0,
+        pre_to_post_seconds,
+        DT_SECONDS,
+        |_, _| {},
+    );
+    let dv_corrected_kms = post_vel - pure_coast_state.velocity();
+    let dv_corrected_mag_ms = dv_corrected_kms.magnitude() * 1000.0;
+
+    // ----- Actual run: 3 legs split at the burn-window boundaries --
+    //
+    // Leg 1: coast pre → burn_start (no thrust).
+    // Leg 2: integrate burn_start → burn_end with ConstantThrust
+    //        installed so the whole leg sees a uniform force
+    //        (Dop853's 12-stage cluster is only well-behaved when
+    //        the force is uniform across the step; straddling the
+    //        burn-window boundary produces catastrophic per-step
+    //        errors — see the chain path's module-level docstring).
+    // Leg 3: coast burn_end → post (no thrust).
+    //
+    // `build_artemis_system` is rebuilt at each leg start epoch so
+    // the Moon/Sun third-body closures see an `epoch_0` that matches
+    // the leg's own local-t=0; otherwise the Moon position would be
+    // queried at `pre_epoch + t` throughout even during the mid→post
+    // leg, mis-offsetting the lunar ECI position by ~800 km at DRO
+    // distance (same issue `verify_burn` guards against with its
+    // `system_after` rebuild).
+    let leg1_system = build_artemis_system(pre_epoch, moon_ephem, sun_table);
+    let state_at_burn_start = Dop853.integrate(
+        &leg1_system,
+        initial_state,
+        0.0,
+        pre_to_burn_start_seconds,
+        DT_SECONDS,
+        |_, _| {},
+    );
+
+    let thrust = ConstantThrust::new(burn.label, burn_start, burn_end, dv_corrected_kms);
+    let burn_system = build_artemis_system(burn_start, moon_ephem, sun_table).with_model(thrust);
+    // Small integrator step inside the burn: the burn is only
+    // ~80–100 s, so the default 10 s step would only give 8–10
+    // stages through the uniform-force region. 1 s gives ~100 steps
+    // per burn with negligible total cost.
+    let burn_dt = burn_seconds.min(1.0);
+    let state_at_burn_end = Dop853.integrate(
+        &burn_system,
+        state_at_burn_start,
+        0.0,
+        burn_seconds,
+        burn_dt,
+        |_, _| {},
+    );
+
+    let leg3_system = build_artemis_system(burn_end, moon_ephem, sun_table);
+    let final_state = Dop853.integrate(
+        &leg3_system,
+        state_at_burn_end,
+        0.0,
+        burn_end_to_post_seconds,
+        DT_SECONDS,
+        |_, _| {},
+    );
+
+    // Fallback sanity check (same shape as impulsive verify_burn).
+    let fallbacks_after = moon_concrete.fallback_count();
+    let fallback_delta = fallbacks_after - fallbacks_before;
+    if fallback_delta > 0 {
+        eprintln!(
+            "  ⚠  Moon ephemeris fell back to Meeus {fallback_delta} time(s) during \
+             {} continuous-burn verification.",
+            burn.label
+        );
+        std::process::exit(1);
+    }
+
+    let position_error = (final_state.position() - post_pos).magnitude();
+    let velocity_error = (final_state.velocity() - post_vel).magnitude();
+    let judgment = Judgment::from_burn_error_km(position_error);
+
+    // Print the uniform-burn RMS centroid scale `|Δv| · τ / √12` as
+    // a *hypothetical ceiling* for the position error contributed by
+    // thrust-profile asymmetry (only realised if the real burn
+    // profile is maximally asymmetric). The function docstring
+    // explains why the impulsive and continuous residuals are in
+    // fact bit-identical for a symmetric uniform profile; this
+    // printed number is retained because it is useful when an
+    // asymmetric thrust model is eventually introduced.
+    let finite_burn_scale_km =
+        (dv_corrected_mag_ms / 1000.0) * burn.burn_duration_s / 12.0_f64.sqrt();
+    println!(
+        "  |Δv| corrected:  {:>7.3} m/s    burn leg: [{}, {}]  ({:.0} s, dt = {:.1} s)",
+        dv_corrected_mag_ms,
+        iso_short(&burn_start),
+        iso_short(&burn_end),
+        burn_seconds,
+        burn_dt,
+    );
+    println!(
+        "  |Δv|·τ/√12 = {:.3} km  (centroid-uncertainty ceiling for profile asymmetry, \
+         *not* the impulsive-vs-uniform floor — see verify_burn_continuous docstring)",
+        finite_burn_scale_km,
     );
     println!(
         "  position error:  {:10.3} km         velocity error: {:.6} km/s   {}",
@@ -2042,16 +2334,9 @@ fn record_chain_trajectory(
             build_artemis_system(*burn_start, moon_ephem, sun_table).with_model(thrust);
         let burn_dt = burn_seconds.min(1.0);
         let burn_leg_start = current_epoch;
-        state = Dop853.integrate(
-            &burn_system,
-            state,
-            0.0,
-            burn_seconds,
-            burn_dt,
-            |t, s| {
-                recording.maybe_log(t, s, burn_leg_start, moon_ephem.as_ref());
-            },
-        );
+        state = Dop853.integrate(&burn_system, state, 0.0, burn_seconds, burn_dt, |t, s| {
+            recording.maybe_log(t, s, burn_leg_start, moon_ephem.as_ref());
+        });
         recording.advance_leg(burn_seconds);
         current_epoch = *burn_end;
     }
@@ -2124,16 +2409,10 @@ fn record_coast_phase(
     // distinguish samples from neighbouring phases.
     recording.force_log(0.0, &state, start_epoch, moon_ephem.as_ref());
 
-    let _final_state = Dop853.integrate(
-        &system,
-        state,
-        0.0,
-        duration_seconds,
-        DT_SECONDS,
-        |t, s| {
+    let _final_state =
+        Dop853.integrate(&system, state, 0.0, duration_seconds, DT_SECONDS, |t, s| {
             recording.maybe_log(t, s, start_epoch, moon_ephem.as_ref());
-        },
-    );
+        });
 }
 
 #[cfg(feature = "fetch-horizons")]
@@ -2174,26 +2453,73 @@ fn angle_between_deg(a: &nalgebra::Vector3<f64>, b: &nalgebra::Vector3<f64>) -> 
 }
 
 #[cfg(feature = "fetch-horizons")]
-fn print_burn_summary(results: &[BurnResult]) {
+fn print_burn_summary(results_impulsive: &[BurnResult], results_continuous: &[BurnResult]) {
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("Burn summary");
+    println!("Burn summary (impulsive-at-midpoint vs continuous-thrust force model)");
     println!("═══════════════════════════════════════════════════════════════════");
     println!(
-        "{:<24}  {:>11}  {:>11}  {:>11}  {:>12}  {:>12}  {}",
-        "Burn", "|Δv| m/s", "pre→mid s", "mid→post s", "Pos err km", "Vel err km/s", "Judgment"
+        "{:<24}  {:<11}  {:>11}  {:>12}  {:>12}  {}",
+        "Burn", "mode", "|Δv| m/s", "Pos err km", "Vel err km/s", "Judgment"
     );
-    println!("{}", "-".repeat(105));
-    for r in results {
+    println!("{}", "-".repeat(92));
+    // Interleave impulsive and continuous rows per burn so the reader
+    // immediately sees the improvement from finite-burn modelling.
+    // The two vectors are expected to have equal length (one call per
+    // maneuver) but we defensively zip the shorter one.
+    for (i, (r_imp, r_cont)) in results_impulsive
+        .iter()
+        .zip(results_continuous.iter())
+        .enumerate()
+    {
+        // First row: impulsive (with the burn label).
         println!(
-            "{:<24}  {:>11.3}  {:>11.0}  {:>11.0}  {:>12.3}  {:>12.6}  {}",
-            r.label,
-            r.magnitude_ms,
-            r.pre_to_mid_seconds,
-            r.mid_to_post_seconds,
-            r.position_error_km,
-            r.velocity_error_kms,
-            r.judgment.glyph(),
+            "{:<24}  {:<11}  {:>11.3}  {:>12.3}  {:>12.6}  {}",
+            r_imp.label,
+            "impulsive",
+            r_imp.magnitude_ms,
+            r_imp.position_error_km,
+            r_imp.velocity_error_kms,
+            r_imp.judgment.glyph(),
         );
+        // Second row: continuous (blank label column for alignment).
+        println!(
+            "{:<24}  {:<11}  {:>11.3}  {:>12.3}  {:>12.6}  {}",
+            "",
+            "continuous",
+            r_cont.magnitude_ms,
+            r_cont.position_error_km,
+            r_cont.velocity_error_kms,
+            r_cont.judgment.glyph(),
+        );
+        // Improvement delta on a third row so the verdict is obvious
+        // without arithmetic in the reader's head. For a symmetric
+        // uniform-thrust burn (the common case in this spike), the
+        // two trajectories are bit-identical post-burn by direct
+        // integration — see `verify_burn_continuous` docstring — so
+        // "equivalent" is the expected label and "× better/worse" is
+        // reserved for asymmetric thrust models (future iterations).
+        let improvement = r_imp.position_error_km - r_cont.position_error_km;
+        let verdict = if improvement.abs() < 1e-6 {
+            "equivalent".to_string()
+        } else if improvement > 0.0 {
+            format!(
+                "{:.2}× better",
+                r_imp.position_error_km / r_cont.position_error_km
+            )
+        } else {
+            format!(
+                "{:.2}× worse",
+                r_cont.position_error_km / r_imp.position_error_km
+            )
+        };
+        println!(
+            "{:<24}  {:<11}  {:>11}  {:>+12.3}  {:>12}  {}",
+            "", "(Δ)", "", improvement, "", verdict,
+        );
+        // Small separator between burns except for the last one.
+        if i + 1 < results_impulsive.len() {
+            println!("{}", "-".repeat(92));
+        }
     }
     println!();
     println!(
