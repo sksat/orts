@@ -323,11 +323,32 @@ mod fetch_impl {
     /// 2. Which time scale the JD column in the CSV response uses
     ///    (`JDTDB` vs `JDUT`).
     ///
+    /// We fix this to `"UT"` because [`Epoch::from_iso8601`] is a
+    /// UTC-only parser (it has no concept of TDB) and
+    /// [`epoch_to_iso`] renders epochs via `DateTime`'s display which
+    /// the same parser round-trips with UTC semantics. Horizons in UT
+    /// mode interprets the strings we send as UTC wall clocks and
+    /// returns JDUT samples whose numerical JD matches the
+    /// literal-wall-clock JD that `kaname::Epoch` computes via
+    /// `from_gregorian`, so cached interpolation lookups land on the
+    /// **physical state the caller actually asked for** rather than a
+    /// state 69 s off.
+    ///
+    /// A previous revision used `"TDB"` here which made Horizons
+    /// interpret the same strings as TDB wall clocks, producing states
+    /// systematically 69 s earlier in physical time than the caller
+    /// intended. That was invisible in coast phases but added
+    /// |Δv| × 69 s ≈ 7-10 km of position error to every Artemis 1
+    /// impulsive burn verification.
+    ///
     /// Because the same wall-clock ISO string maps to **different
     /// physical instants** under different `TIME_TYPE` values (TDB − UTC
     /// ≈ 69.184 s for modern epochs), the cached CSV content depends on
-    /// this value — so [`cache_key_for`] must include it in the hash.
-    const TIME_TYPE: &str = "TDB";
+    /// this value — so [`cache_key_for`] includes it in the hash so a
+    /// hypothetical future switch back to TDB (or addition of a runtime
+    /// choice) does not silently serve wrong-scale data from an old
+    /// cache entry.
+    const TIME_TYPE: &str = "UT";
 
     impl HorizonsTable {
         /// Fetch a vector table from JPL Horizons with disk caching.

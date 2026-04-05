@@ -99,7 +99,21 @@ def fetch_horizons(
         "CSV_FORMAT": "YES",
         "REF_SYSTEM": "ICRF",
         "REF_PLANE": "FRAME",
-        "TIME_TYPE": "TDB",
+        # TIME_TYPE=UT: the `mid_epoch_iso` strings emitted by
+        # `print_rust` feed straight into the Rust `MANEUVERS` table,
+        # which in turn is parsed by `kaname::Epoch::from_iso8601` as UTC
+        # (the only scale `Epoch` understands). Asking Horizons for UT
+        # output here makes the JDUT column numerically equal the JD of
+        # the burn event's **UTC** wall clock, so `jd_to_iso` below can
+        # hand the value straight to `time.gmtime` (which expects Unix
+        # UTC seconds) without any TDB − UTC correction. An earlier
+        # version used `TIME_TYPE=TDB` and then fed JDTDB values through
+        # the same Unix-based renderer, which produced strings whose
+        # wall-clock digits were the TDB wall clock dressed with a `Z`
+        # suffix — a ~69 s systematic mislabel that interacted with
+        # Method B burn verification to inject |Δv| × 69 s ≈ 7 km of
+        # position error per burn in the Artemis 1 spike.
+        "TIME_TYPE": "UT",
     }
     url = f"{HORIZONS_API}?{urlencode(params)}"
     print(
@@ -122,7 +136,7 @@ def fetch_horizons(
 
 @dataclass
 class Sample:
-    jd: float  # JD TDB
+    jd: float  # JD UT (matches `TIME_TYPE=UT` above)
     calendar: str
     x: float
     y: float
@@ -308,11 +322,26 @@ def cluster_burns(
 
 
 def jd_to_iso(jd: float) -> str:
-    """Convert JD (UTC-approximated) to ISO string.
+    """Convert a JDUT value (from a `TIME_TYPE=UT` Horizons response) to
+    an ISO-8601 UTC string.
 
-    Horizons JDTDB differs from UTC by ~69 seconds, which does not matter
-    for human-readable output here. For Rust simulation, use the JD value
-    directly.
+    The arithmetic below — `mjd = jd - 2400000.5`, `unix = (mjd - 40587) *
+    86400`, then `time.gmtime(unix)` — implicitly assumes the input JD is
+    a **UTC-linearised** Julian Date: i.e., JD where one day equals 86400
+    Unix UTC seconds, matching the MJD Unix epoch offset of 40587 days.
+    That assumption is valid if and only if Horizons is queried with
+    `TIME_TYPE=UT`, which `fetch_horizons` above now enforces.
+
+    A previous revision ran the same arithmetic on JDTDB values (from a
+    `TIME_TYPE=TDB` response) and produced strings whose wall-clock
+    digits were the burn event's **TDB** wall clock dressed with a `Z`
+    suffix — a silent 69 s mislabel relative to true UTC. Downstream the
+    Rust `MANEUVERS` table ingested those strings with
+    `kaname::Epoch::from_iso8601` (UTC-only parser), so the impulse in
+    `verify_burn` was applied 69 s before the real burn midpoint in
+    physical time and produced |Δv| × 69 s ≈ 7 km of post-burn position
+    error per burn. Switching this function and the Horizons query to
+    UT throughout is the coherent fix.
     """
     # Julian Day at 2000-01-01 12:00:00 UTC = 2451545.0.
     # 1 day = 86400 seconds. Using calendar epoch Nov 17, 1858 (MJD epoch):

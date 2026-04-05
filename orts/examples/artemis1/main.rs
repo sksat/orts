@@ -500,26 +500,47 @@ struct Maneuver {
 /// [`verify_burn`] for details.
 #[cfg(feature = "fetch-horizons")]
 const MANEUVERS: &[Maneuver] = &[
+    // DRI values regenerated via
+    //   `extract_burns.py --zoom 2022-11-25T21:50:00Z --window-min 30
+    //    --zoom-step-seconds 30 --rust`
+    // after `extract_burns.py` was switched to `TIME_TYPE=UT`. Under the
+    // old `TIME_TYPE=TDB` query, the same extraction emitted
+    // `mid_epoch_iso: "2022-11-25T21:53:45Z"` — a string whose digits
+    // were the burn event's **TDB** wall clock dressed as UTC. Parsed
+    // as UTC by `kaname::Epoch::from_iso8601` (the only time scale
+    // `Epoch` understands) that label sat 69 s after the real physical
+    // burn midpoint, so `verify_burn`'s impulsive Δv landed in the
+    // wrong place and produced |Δv| × 69 s ≈ 7 km of position error per
+    // burn. The UT values below carry the correct UTC wall clock.
     Maneuver {
         label: "DRI (DRO insertion)",
         pre_epoch_iso: "2022-11-25T21:40:00Z",
-        mid_epoch_iso: "2022-11-25T21:53:45Z",
+        mid_epoch_iso: "2022-11-25T21:52:45Z",
         post_epoch_iso: "2022-11-25T22:05:00Z",
-        raw_dv_eci_ms: [-48.686652, -87.093937, -39.758539],
-        raw_magnitude_ms: 107.408033,
-        // |Δv| / peak_rate = 107.408 / 1.310 m/s² ≈ 82 s, from the
+        raw_dv_eci_ms: [-49.186835, -88.041098, -40.193547],
+        raw_magnitude_ms: 108.563811,
+        // |Δv| / peak_rate = 108.564 / 1.341 m/s² ≈ 81 s, from the
         // extract_burns.py zoom output at 30-second resolution.
-        burn_duration_s: 82.0,
+        burn_duration_s: 81.0,
     },
+    // DRDI values regenerated via
+    //   `extract_burns.py --zoom 2022-12-01T21:54:00Z --window-min 30
+    //    --zoom-step-seconds 30 --rust`
+    // (UT mode, same reasoning as DRI above). Old `TIME_TYPE=TDB`
+    // values: mid `21:54:00Z`, |Δv| 137.004 m/s, peak_rate 1.336 m/s².
+    // `extract_burns.py --rust` emitted `21:52:59.999Z`; we round to
+    // `21:53:00Z` here for readability — the 1 ms shift produces at
+    // most |Δv| × 1 ms ≈ 14 cm of position error, well below the
+    // ~15 km residual on this burn.
     Maneuver {
         label: "DRDI (DRO departure)",
         pre_epoch_iso: "2022-12-01T21:42:00Z",
-        mid_epoch_iso: "2022-12-01T21:54:00Z",
+        mid_epoch_iso: "2022-12-01T21:53:00Z",
         post_epoch_iso: "2022-12-01T22:06:00Z",
-        raw_dv_eci_ms: [136.880516, -5.517049, 1.842703],
-        raw_magnitude_ms: 137.004047,
-        // |Δv| / peak_rate = 137.004 / 1.336 m/s² ≈ 103 s.
-        burn_duration_s: 103.0,
+        raw_dv_eci_ms: [136.053068, -5.478211, 1.835707],
+        raw_magnitude_ms: 136.175688,
+        // |Δv| / peak_rate = 136.176 / 1.353 m/s² ≈ 101 s.
+        burn_duration_s: 101.0,
     },
 ];
 
