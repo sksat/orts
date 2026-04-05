@@ -1,0 +1,9 @@
+[project]
+name = "artemis1-viz"
+version = "0.1.0"
+description = "Artemis 1 trajectory visualization scripts"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "matplotlib>=3.8",
+]

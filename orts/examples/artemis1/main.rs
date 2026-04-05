@@ -269,6 +269,16 @@ use orts::orbital::gravity::ZonalHarmonics;
 #[cfg(feature = "fetch-horizons")]
 use orts::perturbations::{ConstantThrust, ThirdBodyGravity};
 #[cfg(feature = "fetch-horizons")]
+use orts::record::archetypes::OrbitalState as RecordOrbitalState;
+#[cfg(feature = "fetch-horizons")]
+use orts::record::components::{BodyRadius, GravitationalParameter};
+#[cfg(feature = "fetch-horizons")]
+use orts::record::entity_path::EntityPath;
+#[cfg(feature = "fetch-horizons")]
+use orts::record::recording::Recording;
+#[cfg(feature = "fetch-horizons")]
+use orts::record::timeline::TimePoint;
+#[cfg(feature = "fetch-horizons")]
 use utsuroi::{Dop853, Integrator};
 
 // ============================================================
@@ -329,6 +339,51 @@ const MOON_SAMPLE_STEP: &str = "1h";
 /// - Horizons Orion reference uncertainty itself (expected < 1 km floor)
 #[cfg(feature = "fetch-horizons")]
 const DT_SECONDS: f64 = 10.0;
+
+/// RRD recording output interval [seconds].
+///
+/// The integrator runs at `DT_SECONDS = 10 s` but we subsample to
+/// 60-second output for the Rerun recording. Logging every integrator
+/// step for a 6-day chain (~52k steps × multiple entities) bloats the
+/// RRD to several GB and adds no visual information — adjacent
+/// subsamples differ by < 1 m of drift. 60 s matches Apollo 11's
+/// `OUTPUT_INTERVAL` and gives ~8,600 samples for the chain window
+/// (smooth trajectory visible in Rerun's 3D view, fine enough to
+/// resolve burn onset / DRO loop shape).
+#[cfg(feature = "fetch-horizons")]
+const OUTPUT_INTERVAL: f64 = 60.0;
+
+/// Dense Orion reference step for the chain-window Horizons fetch.
+///
+/// [`record_chain_trajectory`] logs the Horizons reference trajectory
+/// alongside the propagated state at every [`OUTPUT_INTERVAL`]. Rather
+/// than hitting Horizons once per output step (hundreds of HTTP
+/// round-trips that also saturate the disk cache with tiny 2-sample
+/// files), we fetch one dense table covering the whole chain window
+/// at 1-minute resolution and Hermite-interpolate it in memory. The
+/// cubic Hermite error at 60 s sample spacing is O(h^4) ≈ sub-metre for
+/// Orion's smooth trajectory near the DRI/DRDI burns — below the
+/// display resolution of any imaginable plot.
+#[cfg(feature = "fetch-horizons")]
+const ORION_REF_STEP: &str = "1m";
+
+/// Output path for the Rerun RRD file produced at the end of `main`.
+///
+/// Matches the `apollo11.rrd` convention alongside the companion
+/// example and is `.gitignore`d via the top-level ignore list.
+#[cfg(feature = "fetch-horizons")]
+const RRD_OUTPUT_PATH: &str = "orts/examples/artemis1/artemis1.rrd";
+
+/// Mission epoch used as the `sim_time = 0` reference for the RRD
+/// recording.
+///
+/// The recorded phases (outbound coast, DRI→DRDI chain, return coast)
+/// sit on a continuous timeline whose origin is the first logged
+/// sample. Using `COAST_PHASES[0]`'s start keeps the `sim_time` axis
+/// readable (first sample at t = 0 days, last sample at ~22.96 days)
+/// and matches the "outbound coast" phase the reader sees first.
+#[cfg(feature = "fetch-horizons")]
+const MISSION_EPOCH_ISO: &str = "2022-11-17T00:00:00Z";
 
 /// Moon ephemeris window covering all three coast phases, padded ±1 h for
 /// the Hermite interpolator's bracketing requirement.
@@ -798,6 +853,182 @@ fn main() {
         chain_results.push(result_continuous);
         println!();
     }
+
+    // ----- Emit Rerun RRD for visualization -----
+    //
+    // Re-propagate the three verification phases (outbound coast,
+    // DRI→DRDI chain, return coast) with recording hooks and save
+    // one consolidated RRD. The second propagation is a negligible
+    // CPU cost compared to the Horizons fetches the spike already
+    // performs, and keeps the verification code above clean of
+    // visualization concerns.
+    //
+    // `sim_time = 0` corresponds to `MISSION_EPOCH_ISO`; each phase
+    // sets its own mission-elapsed-time base via
+    // `recording.reset_for_phase` before propagating. The three
+    // phases occupy disjoint windows on the sim_time axis with
+    // unlogged gaps between them (verify_coast / verify_burn already
+    // have their own stdout summaries for those gaps, and rendering
+    // the omitted ~5-day coasts would triple the RRD size for no
+    // visual benefit).
+    println!("── Building Rerun RRD visualization ──");
+    let mission_epoch = Epoch::from_iso8601(MISSION_EPOCH_ISO).expect("valid mission epoch");
+
+    // Fetch one dense Orion reference table covering the **whole**
+    // recorded span (outbound start → return end). A single fetch
+    // lets `HorizonsTable::interpolate` handle every recorded phase
+    // from memory with no per-step HTTP calls, and the cached CSV
+    // (~5 MB for ~23 days × 1 min) is reused on subsequent runs.
+    let ref_start_iso = COAST_PHASES[0].1; // outbound start
+    let ref_stop_iso = COAST_PHASES[COAST_PHASES.len() - 1].2; // return end
+    let ref_start = Epoch::from_iso8601(ref_start_iso)
+        .expect("valid outbound start")
+        .add_seconds(-60.0);
+    let ref_stop = Epoch::from_iso8601(ref_stop_iso)
+        .expect("valid return end")
+        .add_seconds(60.0);
+    println!("  fetching dense Orion reference table ({ORION_REF_STEP} spacing)…");
+    let orion_ref_table = HorizonsTable::fetch_vector_table(
+        ORION_TARGET,
+        EARTH_GEOCENTER,
+        &ref_start,
+        &ref_stop,
+        ORION_REF_STEP,
+        None,
+    )
+    .expect("fetch Orion reference table");
+    println!(
+        "  {} Orion reference samples over {} → {}",
+        orion_ref_table.samples().len(),
+        iso_short(&ref_start),
+        iso_short(&ref_stop),
+    );
+
+    // Build the recording skeleton. Earth and Moon mu / radius come
+    // from `KnownBody::properties()` so the two entities use the same
+    // source of truth; any future correction (e.g. switching to DE441
+    // GM_EARTH) lands in both places at once.
+    let mut rec = Recording::new();
+    let earth_props = kaname::body::KnownBody::Earth.properties();
+    let earth_path = EntityPath::parse("/world/earth");
+    rec.log_static(&earth_path, &GravitationalParameter(earth_props.mu));
+    rec.log_static(&earth_path, &BodyRadius(earth_props.radius));
+    let moon_path = EntityPath::parse("/world/moon");
+    let moon_props = kaname::body::KnownBody::Moon.properties();
+    rec.log_static(&moon_path, &GravitationalParameter(moon_props.mu));
+    rec.log_static(&moon_path, &BodyRadius(moon_props.radius));
+
+    let mut chain_recording = ChainRecording::new(&mut rec, &orion_ref_table);
+
+    // Helper closure: record a pure-coast phase into a phase-specific
+    // slot of the entity tree. The `phase_key` becomes the final
+    // path segment (`/world/sat/artemis1/<phase_key>`) so downstream
+    // per-phase slicing in plot_trajectory.py can filter by entity
+    // path, avoiding the sim_time-boundary collision problem.
+    let record_fill = |phase_key: &'static str,
+                       label: &'static str,
+                       start_iso: &'static str,
+                       end_iso: &'static str,
+                       chain_recording: &mut ChainRecording| {
+        let phase_start = Epoch::from_iso8601(start_iso).expect("valid fill start");
+        let met = (phase_start.jd() - mission_epoch.jd()) * 86_400.0;
+        chain_recording.reset_for_phase(met, phase_key);
+        record_coast_phase(
+            label,
+            start_iso,
+            end_iso,
+            &moon_ephem,
+            &sun_table_arc,
+            chain_recording,
+        );
+    };
+
+    // --- Phase sequence (covering the whole 2022-11-17 → 2022-12-10
+    //     recorded mission window with no gaps) ---
+    //
+    // 1. Outbound coast (verified)          2022-11-17 → 2022-11-20
+    // 2. Outbound-to-chain fill (unmodelled OPF on 2022-11-21 inside)
+    //                                       2022-11-20 → 2022-11-25T21:40
+    // 3. DRI → DRDI chain (verified)        2022-11-25T21:40 → 2022-12-01T22:06
+    // 4. Chain-to-return fill (unmodelled RPF on 2022-12-05 inside)
+    //                                       2022-12-01T22:06 → 2022-12-06
+    // 5. Return coast (verified)            2022-12-06 → 2022-12-10
+    //
+    // Each phase starts fresh from the Horizons reference state at
+    // its own start epoch so upstream errors do not accumulate into
+    // the next phase; the fills 2 and 4 will visibly diverge from
+    // the Horizons reference at ~1 day past their start because the
+    // powered flyby Δv is missing from the force model.
+    record_fill(
+        "outbound",
+        COAST_PHASES[0].0,
+        COAST_PHASES[0].1,
+        COAST_PHASES[0].2,
+        &mut chain_recording,
+    );
+
+    if BURN_CHAIN_INDICES.len() >= 2 {
+        let chain_burns: Vec<&Maneuver> =
+            BURN_CHAIN_INDICES.iter().map(|&i| &MANEUVERS[i]).collect();
+        let chain_pre_iso = chain_burns[0].pre_epoch_iso;
+        let chain_post_iso = chain_burns[chain_burns.len() - 1].post_epoch_iso;
+
+        // Fill between outbound end and chain pre. Contains the OPF
+        // (Outbound Powered Flyby, 2022-11-21, ~210 m/s) which the
+        // force model does not carry — the plot will show divergence
+        // starting around MET ~5 days.
+        record_fill(
+            "opf_fill",
+            "Outbound → chain fill (contains OPF 2022-11-21)",
+            COAST_PHASES[0].2, // outbound end
+            chain_pre_iso,
+            &mut chain_recording,
+        );
+
+        let chain_pre = Epoch::from_iso8601(chain_pre_iso).expect("valid chain pre epoch");
+        let met = (chain_pre.jd() - mission_epoch.jd()) * 86_400.0;
+        chain_recording.reset_for_phase(met, "chain");
+        println!("  recording DRI → DRDI chain ({chain_pre_iso} → {chain_post_iso})");
+        record_chain_trajectory(
+            &chain_burns,
+            &moon_ephem,
+            &sun_table_arc,
+            &mut chain_recording,
+        );
+
+        // Fill between chain post and return start. Contains the RPF
+        // (Return Powered Flyby, 2022-12-05, ~328 m/s) which the
+        // force model also does not carry — divergence starts ~4
+        // days after the fill begins.
+        if COAST_PHASES.len() >= 3 {
+            record_fill(
+                "rpf_fill",
+                "Chain → return fill (contains RPF 2022-12-05)",
+                chain_post_iso,
+                COAST_PHASES[2].1, // return start
+                &mut chain_recording,
+            );
+        }
+    }
+
+    if COAST_PHASES.len() >= 3 {
+        record_fill(
+            "return",
+            COAST_PHASES[2].0,
+            COAST_PHASES[2].1,
+            COAST_PHASES[2].2,
+            &mut chain_recording,
+        );
+    }
+
+    // Drop the ChainRecording so its mutable borrow of `rec` ends
+    // before the save call below takes `&rec`.
+    drop(chain_recording);
+
+    println!("  saving RRD to {RRD_OUTPUT_PATH}");
+    orts::record::rerun_export::save_as_rrd(&rec, "orts-artemis1", RRD_OUTPUT_PATH)
+        .expect("save artemis1 RRD");
+    println!();
 
     // ----- Summary tables -----
     print_summary(&results);
@@ -1332,6 +1563,13 @@ fn verify_burn_chain_continuous(
     moon_concrete: &Arc<HorizonsMoonEphemeris>,
     sun_table: &Arc<HorizonsTable>,
 ) -> BurnChainResult {
+    // MUST stay in lock-step with `record_chain_trajectory` below —
+    // same integrator step sizes (`DT_SECONDS` / `burn_dt = 1 s`),
+    // same burn-window construction (centred on `mid_epoch`), same
+    // Method B precomputation of `corrected_dvs`, same leg splitting.
+    // If you touch any of these here, mirror the change there so the
+    // RRD visualization continues to represent exactly what the
+    // verification function validated.
     assert!(
         !burns.is_empty(),
         "burn chain must contain at least one burn"
@@ -1499,6 +1737,403 @@ fn verify_burn_chain_continuous(
         velocity_error_kms: velocity_error,
         judgment,
     }
+}
+
+// ============================================================
+// Rerun RRD visualization
+// ============================================================
+
+/// Accumulated recording state for a chain propagation.
+///
+/// Holds the entity paths, the reference trajectory table, and the
+/// time-step bookkeeping that threads through each
+/// `Dop853.integrate` callback. `sim_t_offset` is the cumulative
+/// wall-clock time at the start of the current leg so the `sim_time`
+/// timeline index is continuous across the coast / burn / coast /
+/// burn / coast legs of the chain (the integrator itself restarts
+/// `t = 0` on each leg).
+///
+/// Logging is throttled by [`OUTPUT_INTERVAL`]: the integrator ticks
+/// at `DT_SECONDS` (10 s) but the RRD only records every
+/// `OUTPUT_INTERVAL` (60 s). This keeps the RRD file size manageable
+/// without losing visible trajectory resolution — at DRO distances the
+/// spacecraft moves < 60 m per integrator step, which is below the
+/// screen pixel even in a close-up Earth view.
+#[cfg(feature = "fetch-horizons")]
+struct ChainRecording<'a> {
+    rec: &'a mut Recording,
+    orion_ref: &'a HorizonsTable,
+    /// Per-phase entity paths. Updated by [`reset_for_phase`] so
+    /// each mission phase logs into its own slot
+    /// (`/world/sat/artemis1/<phase_key>` etc). This is load-bearing
+    /// for downstream per-phase slicing: two adjacent phases whose
+    /// throttled `maybe_log` cadence happens to align with the phase
+    /// boundary would otherwise emit samples at exactly the same
+    /// `sim_time`, and a `sim_time`-based slice cannot tell them
+    /// apart. Using distinct entity paths makes the "which phase
+    /// owns this sample" question trivially resolvable.
+    sat_path: EntityPath,
+    ref_path: EntityPath,
+    err_path: EntityPath,
+    moon_path: EntityPath,
+    step: u64,
+    /// Last logged `sim_time` in seconds. Initialized to a negative
+    /// number larger than `OUTPUT_INTERVAL` so the very first call
+    /// fires immediately regardless of the throttle.
+    last_log_sim_t: f64,
+    /// Cumulative sim_time in seconds at the start of the current
+    /// integration leg. [`advance_leg`] bumps this by the leg's
+    /// duration so the next leg's local `t` stacks on top.
+    sim_t_offset: f64,
+}
+
+#[cfg(feature = "fetch-horizons")]
+impl<'a> ChainRecording<'a> {
+    fn new(rec: &'a mut Recording, orion_ref: &'a HorizonsTable) -> Self {
+        Self {
+            rec,
+            orion_ref,
+            // These placeholder paths are never written to — the
+            // first `reset_for_phase` call updates them before any
+            // force_log fires. Using dummy leaves the fields
+            // non-Option and keeps the log_* call sites clean.
+            sat_path: EntityPath::parse("/world/sat/artemis1/_placeholder"),
+            ref_path: EntityPath::parse("/world/ref/artemis1/_placeholder"),
+            err_path: EntityPath::parse("/world/analysis/error_km/_placeholder"),
+            moon_path: EntityPath::parse("/world/moon/_placeholder"),
+            step: 0,
+            last_log_sim_t: f64::NEG_INFINITY,
+            sim_t_offset: 0.0,
+        }
+    }
+
+    /// Reset the per-phase bookkeeping before a new propagation
+    /// segment. Sets `sim_t_offset` to the given mission-elapsed-time
+    /// base (seconds since [`MISSION_EPOCH_ISO`] at the phase start),
+    /// rewinds `last_log_sim_t` so the first callback of the phase
+    /// unconditionally logs, and swaps the entity paths to
+    /// phase-specific slots so per-phase slicing in the Python
+    /// visualization can simply filter by entity path. The `step`
+    /// counter is **not** reset so every entity gets monotonically
+    /// increasing step indices across the whole mission timeline —
+    /// Rerun uses that as a secondary index alongside `sim_time`.
+    fn reset_for_phase(&mut self, mission_elapsed_seconds: f64, phase_key: &str) {
+        self.sat_path = EntityPath::parse(&format!("/world/sat/artemis1/{phase_key}"));
+        self.ref_path = EntityPath::parse(&format!("/world/ref/artemis1/{phase_key}"));
+        self.err_path = EntityPath::parse(&format!("/world/analysis/error_km/{phase_key}"));
+        self.moon_path = EntityPath::parse(&format!("/world/moon/{phase_key}"));
+        self.sim_t_offset = mission_elapsed_seconds;
+        self.last_log_sim_t = f64::NEG_INFINITY;
+    }
+
+    /// Rate-limited log: emits a frame only when at least
+    /// `OUTPUT_INTERVAL` seconds of sim time have passed since the
+    /// previous frame. Called from inside the integrator's callback.
+    fn maybe_log(
+        &mut self,
+        local_t: f64,
+        state: &OrbitalState,
+        leg_start_epoch: Epoch,
+        moon_ephem: &dyn MoonEphemeris,
+    ) {
+        let sim_t = self.sim_t_offset + local_t;
+        if sim_t - self.last_log_sim_t < OUTPUT_INTERVAL {
+            return;
+        }
+        self.force_log(local_t, state, leg_start_epoch, moon_ephem);
+    }
+
+    /// Unconditional log: bypasses the `OUTPUT_INTERVAL` throttle.
+    /// Used for the very first and last samples of the chain so the
+    /// endpoints are always present in the RRD regardless of where
+    /// they land relative to the throttle cadence.
+    ///
+    /// Every entity is logged as a full [`RecordOrbitalState`]
+    /// (position + velocity), not a bare `Position3D`, because
+    /// `orts::record::rerun_export::save_as_rrd` only emits temporal
+    /// time-series for entities that have **both** Position3D **and**
+    /// Velocity3D columns populated. A Position3D-only entity is
+    /// written to the RRD as static metadata only — its time series
+    /// would silently vanish. The Moon has a real ECI velocity
+    /// (numerical central difference of the Horizons ephemeris); the
+    /// error vector carries the propagation's velocity residual which
+    /// is independently interesting in Rerun's chart view.
+    fn force_log(
+        &mut self,
+        local_t: f64,
+        state: &OrbitalState,
+        leg_start_epoch: Epoch,
+        moon_ephem: &dyn MoonEphemeris,
+    ) {
+        let sim_t = self.sim_t_offset + local_t;
+        let epoch = leg_start_epoch.add_seconds(local_t);
+        let tp = TimePoint::new().with_sim_time(sim_t).with_step(self.step);
+
+        // Propagated spacecraft state.
+        let os = RecordOrbitalState::new(*state.position(), *state.velocity());
+        self.rec.log_orbital_state(&self.sat_path, &tp, &os);
+
+        // Horizons reference via Hermite interpolation over the dense
+        // ±1-minute chain-window table fetched once at `main` startup.
+        // `interpolate` returns `None` only if the epoch falls outside
+        // the table range, which is impossible here because we padded
+        // the fetch window by ±1 minute in `main`.
+        if let Some(sample) = self.orion_ref.interpolate(&epoch) {
+            let ref_os = RecordOrbitalState::new(sample.position, sample.velocity);
+            self.rec.log_orbital_state(&self.ref_path, &tp, &ref_os);
+
+            // Error vector = (propagated − reference) in (km, km/s).
+            // Logged as a full OrbitalState so both the position
+            // residual and the velocity residual become time-series
+            // channels in Rerun (rerun_export skips entities that are
+            // position-only, see force_log docstring above). Magnitude
+            // is derivable in the viewer via a computed field on the
+            // individual x/y/z components.
+            let err_pos = *state.position() - sample.position;
+            let err_vel = *state.velocity() - sample.velocity;
+            let err_os = RecordOrbitalState::new(err_pos, err_vel);
+            self.rec.log_orbital_state(&self.err_path, &tp, &err_os);
+        }
+
+        // Moon trajectory. Logged on the same timeline as the
+        // spacecraft so Rerun's 3D view can animate them together.
+        // ECI velocity is numerically estimated by central difference
+        // so the resulting entity satisfies rerun_export's
+        // Position3D+Velocity3D presence requirement. The velocity
+        // itself is not consumed by any visualization consumer
+        // downstream but the column has to exist for the time series
+        // to be emitted at all.
+        let moon_pos = moon_ephem.position_eci(&epoch);
+        let moon_vel = {
+            let dt = 1.0; // seconds
+            let before = moon_ephem.position_eci(&epoch.add_seconds(-dt));
+            let after = moon_ephem.position_eci(&epoch.add_seconds(dt));
+            (after - before) / (2.0 * dt)
+        };
+        let moon_os = RecordOrbitalState::new(moon_pos, moon_vel);
+        self.rec.log_orbital_state(&self.moon_path, &tp, &moon_os);
+
+        self.step += 1;
+        self.last_log_sim_t = sim_t;
+    }
+
+    /// Bump `sim_t_offset` by the completed leg's duration. Called
+    /// once after each `Dop853.integrate` call in
+    /// [`record_chain_trajectory`].
+    fn advance_leg(&mut self, leg_seconds: f64) {
+        self.sim_t_offset += leg_seconds;
+    }
+}
+
+/// Re-run the continuous-thrust DRI→DRDI chain propagation for
+/// visualization, emitting Rerun log entries for the spacecraft
+/// trajectory, the Horizons reference trajectory, the error vector,
+/// and the Moon position alongside the integration.
+///
+/// ## Why a second propagation?
+///
+/// [`verify_burn_chain_continuous`] above already walks the same chain
+/// for the error-budget summary, but it is structured around the
+/// verification judgment (`BurnChainResult`) and does not carry any
+/// recording state. Threading an optional `Recording` through it would
+/// clutter the verification code path without benefit. The visualization
+/// propagation is a few hundred milliseconds of extra wall clock
+/// (6 days / 10 s / 2 = ~25,000 steps), which is negligible next to
+/// the Horizons fetches the spike already performs.
+///
+/// ## What gets logged
+///
+/// - `/world/sat/artemis1` — propagated `OrbitalState` every
+///   [`OUTPUT_INTERVAL`] (60 s).
+/// - `/world/ref/artemis1` — Horizons reference `OrbitalState` at the
+///   same epochs, via Hermite interpolation of the dense pre-fetched
+///   chain-window table.
+/// - `/world/analysis/error_km` — propagation error as an
+///   `OrbitalState` archetype carrying (Δposition [km], Δvelocity
+///   [km/s]). Both channels are necessary to satisfy
+///   `rerun_export::save_as_rrd`'s "Position3D + Velocity3D present"
+///   precondition; the Δvelocity axis is also independently useful in
+///   Rerun's chart view for diagnosing burn residuals vs. coast drift.
+/// - `/world/moon` — Moon `OrbitalState` at the same epochs (position
+///   from the ephemeris, velocity by central finite difference), so
+///   the 3D view can animate Moon motion alongside the spacecraft.
+///
+/// Earth is logged as static in `main` (body radius + µ) outside this
+/// function because it never moves in the ECI frame.
+#[cfg(feature = "fetch-horizons")]
+fn record_chain_trajectory(
+    burns: &[&Maneuver],
+    moon_ephem: &Arc<dyn MoonEphemeris>,
+    sun_table: &Arc<HorizonsTable>,
+    recording: &mut ChainRecording,
+) {
+    // MUST stay in lock-step with `verify_burn_chain_continuous` above —
+    // same integrator step sizes (`DT_SECONDS` / `burn_dt = 1 s`),
+    // same burn-window construction (centred on `mid_epoch`), same
+    // Method B precomputation of `corrected_dvs`, same leg splitting.
+    // The RRD visualization is only useful as long as it represents
+    // exactly what the verification path above validated against
+    // Horizons.
+    assert!(
+        !burns.is_empty(),
+        "record_chain_trajectory: burn chain must contain at least one burn"
+    );
+
+    // Recompute each burn's corrected Δv (Method B, same short window
+    // as the verification path so the chain stays numerically
+    // identical to `verify_burn_chain_continuous`).
+    let corrected_dvs: Vec<nalgebra::Vector3<f64>> = burns
+        .iter()
+        .map(|b| compute_corrected_dv(b, moon_ephem, sun_table))
+        .collect();
+
+    let burn_windows: Vec<(Epoch, Epoch, nalgebra::Vector3<f64>)> = burns
+        .iter()
+        .zip(&corrected_dvs)
+        .map(|(burn, dv_kms)| {
+            let mid = Epoch::from_iso8601(burn.mid_epoch_iso).expect("valid burn mid epoch");
+            let half = burn.burn_duration_s / 2.0;
+            (mid.add_seconds(-half), mid.add_seconds(half), *dv_kms)
+        })
+        .collect();
+
+    let chain_pre_epoch =
+        Epoch::from_iso8601(burns[0].pre_epoch_iso).expect("valid chain pre epoch");
+    let chain_post_epoch =
+        Epoch::from_iso8601(burns[burns.len() - 1].post_epoch_iso).expect("valid chain post epoch");
+
+    let (chain_pre_pos, chain_pre_vel) =
+        fetch_orion_sample(&chain_pre_epoch).expect("fetch Orion at chain pre");
+
+    let mut state = OrbitalState::new(chain_pre_pos, chain_pre_vel);
+    let mut current_epoch = chain_pre_epoch;
+
+    // Anchor the phase start with an unconditional log so the RRD's
+    // first chain sample sits exactly at `chain_pre_epoch`. Caller
+    // is expected to have already called `recording.reset_for_phase`
+    // with the chain's mission-elapsed-time base.
+    recording.force_log(0.0, &state, current_epoch, moon_ephem.as_ref());
+
+    // Walk legs in lock-step with `verify_burn_chain_continuous` —
+    // coast → burn → coast → burn → … → final coast.
+    for (burn, (burn_start, burn_end, dv_kms)) in burns.iter().zip(&burn_windows) {
+        // Leg A: coast to burn start.
+        let coast_seconds = (burn_start.jd() - current_epoch.jd()) * 86_400.0;
+        let coast_system = build_artemis_system(current_epoch, moon_ephem, sun_table);
+        let leg_start = current_epoch;
+        state = Dop853.integrate(
+            &coast_system,
+            state,
+            0.0,
+            coast_seconds,
+            DT_SECONDS,
+            |t, s| {
+                recording.maybe_log(t, s, leg_start, moon_ephem.as_ref());
+            },
+        );
+        recording.advance_leg(coast_seconds);
+        current_epoch = *burn_start;
+
+        // Leg B: burn window with ConstantThrust installed. Small
+        // integrator step (1 s) because the burn is only ~80–100 s.
+        let burn_seconds = (burn_end.jd() - burn_start.jd()) * 86_400.0;
+        let thrust = ConstantThrust::new(burn.label, *burn_start, *burn_end, *dv_kms);
+        let burn_system =
+            build_artemis_system(*burn_start, moon_ephem, sun_table).with_model(thrust);
+        let burn_dt = burn_seconds.min(1.0);
+        let burn_leg_start = current_epoch;
+        state = Dop853.integrate(
+            &burn_system,
+            state,
+            0.0,
+            burn_seconds,
+            burn_dt,
+            |t, s| {
+                recording.maybe_log(t, s, burn_leg_start, moon_ephem.as_ref());
+            },
+        );
+        recording.advance_leg(burn_seconds);
+        current_epoch = *burn_end;
+    }
+
+    // Final coast to the chain post epoch. As with `record_coast_phase`
+    // we intentionally skip a force_log of the endpoint — any phase
+    // that follows this one (the RPF fill, in main's sequence) will
+    // force_log its own start at the same sim_time and providing the
+    // boundary sample from both sides would poison per-phase slicers
+    // in plot_trajectory.py.
+    let final_coast_seconds = (chain_post_epoch.jd() - current_epoch.jd()) * 86_400.0;
+    let final_system = build_artemis_system(current_epoch, moon_ephem, sun_table);
+    let final_leg_start = current_epoch;
+    let _final_state = Dop853.integrate(
+        &final_system,
+        state,
+        0.0,
+        final_coast_seconds,
+        DT_SECONDS,
+        |t, s| {
+            recording.maybe_log(t, s, final_leg_start, moon_ephem.as_ref());
+        },
+    );
+}
+
+/// Re-run a single coast phase (outbound or return) for
+/// visualization, recording the trajectory into `recording` alongside
+/// the Horizons reference, Moon, and error vector.
+///
+/// This is the pure-coast counterpart to [`record_chain_trajectory`]:
+/// one leg, no burns, one [`Dop853::integrate`] call. The function
+/// assumes `recording.reset_for_phase(...)` has been called by the
+/// caller to set the mission-elapsed-time base for this phase.
+///
+/// Like [`record_chain_trajectory`] this is a second propagation
+/// alongside [`verify_coast`] above; threading a `Recording` through
+/// verify_coast would leak visualization concerns into the
+/// verification code, and the extra ~few hundred millisecond CPU cost
+/// is negligible next to the Horizons fetches.
+#[cfg(feature = "fetch-horizons")]
+fn record_coast_phase(
+    label: &str,
+    start_iso: &str,
+    end_iso: &str,
+    moon_ephem: &Arc<dyn MoonEphemeris>,
+    sun_table: &Arc<HorizonsTable>,
+    recording: &mut ChainRecording,
+) {
+    println!("  recording coast phase: {label} ({start_iso} → {end_iso})");
+    let start_epoch = Epoch::from_iso8601(start_iso).expect("valid coast phase start");
+    let end_epoch = Epoch::from_iso8601(end_iso).expect("valid coast phase end");
+    let duration_seconds = (end_epoch.jd() - start_epoch.jd()) * 86_400.0;
+    assert!(
+        duration_seconds > 0.0,
+        "coast phase end must follow start ({start_iso} → {end_iso})"
+    );
+
+    let (start_pos, start_vel) =
+        fetch_orion_sample(&start_epoch).expect("fetch Orion at coast phase start");
+    let state = OrbitalState::new(start_pos, start_vel);
+
+    let system = build_artemis_system(start_epoch, moon_ephem, sun_table);
+
+    // Anchor the phase start unconditionally so the RRD carries a
+    // sample at exactly `start_epoch` for the first frame. We do
+    // **not** force_log the endpoint here: if another phase follows
+    // this one, its own `force_log` at start provides the exact
+    // boundary sample, and having both ends duplicate the boundary
+    // sim_time would poison per-phase slicers that can't otherwise
+    // distinguish samples from neighbouring phases.
+    recording.force_log(0.0, &state, start_epoch, moon_ephem.as_ref());
+
+    let _final_state = Dop853.integrate(
+        &system,
+        state,
+        0.0,
+        duration_seconds,
+        DT_SECONDS,
+        |t, s| {
+            recording.maybe_log(t, s, start_epoch, moon_ephem.as_ref());
+        },
+    );
 }
 
 #[cfg(feature = "fetch-horizons")]

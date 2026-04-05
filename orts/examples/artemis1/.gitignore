@@ -1,0 +1,14 @@
+# artemis1 example — generated artifact ignore list.
+#
+# Unlike the companion apollo11 example (which `.gitignore`s `*.png`
+# and hosts visualization media via GitHub user-attachments), this
+# example **commits the plot PNGs** because README.md references them
+# directly (`![...](artemis1_*.png)`) and a committed copy makes the
+# GitHub rendering work out-of-the-box without external hosting. The
+# PNGs are small (< 320 KB each, ~1 MB total for the 4 files) and
+# deterministically regenerable via `plot_trajectory.py`.
+
+*.rrd
+.cache/
+.venv/
+__pycache__/
