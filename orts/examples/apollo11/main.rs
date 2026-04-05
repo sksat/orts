@@ -12,12 +12,15 @@
 //! Run: `cargo run --example apollo11 -p orts`
 //! Test: `cargo test --example apollo11 -p orts`
 
+use std::sync::Arc;
+
 use nalgebra::Vector3;
 
 use kaname::Geodetic;
 use kaname::body::KnownBody;
 use kaname::constants::*;
 use kaname::epoch::Epoch;
+use kaname::moon::{MeeusMoonEphemeris, MoonEphemeris};
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
 use orts::orbital::gravity::ZonalHarmonics;
@@ -238,25 +241,21 @@ fn post_tli_state() -> OrbitalState {
     OrbitalState::new(pos, vel)
 }
 
-/// Moon velocity in ECI [km/s] via central difference of ephemeris.
-fn moon_velocity_eci(epoch: &Epoch) -> Vector3<f64> {
-    let dt = 1.0; // 1-second central difference
-    let r1 = kaname::moon::moon_position_eci(&epoch.add_seconds(-dt));
-    let r2 = kaname::moon::moon_position_eci(&epoch.add_seconds(dt));
-    (r2 - r1) / (2.0 * dt)
-}
-
 /// Compute the closest Moon approach distance [km] for a given state.
+///
+/// All Moon position queries go through `moon_ephem` so that the integrator
+/// and the targeter share a single source of truth for lunar ephemeris.
 fn moon_pericynthion(
     system: &OrbitalSystem,
     state: &OrbitalState,
     epoch: Epoch,
     duration: f64,
+    moon_ephem: &dyn MoonEphemeris,
 ) -> f64 {
     let mut min_dist = f64::MAX;
     Dop853.integrate(system, state.clone(), 0.0, duration, DT, |t, s| {
         let ep = epoch.add_seconds(t);
-        let moon_pos = kaname::moon::moon_position_eci(&ep);
+        let moon_pos = moon_ephem.position_eci(&ep);
         let d = (s.position() - moon_pos).magnitude();
         if d < min_dist {
             min_dist = d;
@@ -269,7 +268,9 @@ fn moon_pericynthion(
 ///
 /// Uses the same linearized sensitivity approach as Apollo's RTCC:
 /// numerically differentiate ∂r_peri/∂V, then compute the minimum-norm ΔV
-/// to achieve the desired pericynthion distance.
+/// to achieve the desired pericynthion distance. `moon_ephem` provides the
+/// Moon position used by the pericynthion computation so that the gradient
+/// is consistent with the integrator's third-body model.
 fn compute_mcc_dv(
     system: &OrbitalSystem,
     state: &OrbitalState,
@@ -277,6 +278,7 @@ fn compute_mcc_dv(
     duration: f64,
     desired_r_peri: f64,
     max_dv: f64,
+    moon_ephem: &dyn MoonEphemeris,
 ) -> Vector3<f64> {
     let eps = 0.0001; // 0.1 m/s perturbation for finite differences [km/s]
 
@@ -284,7 +286,7 @@ fn compute_mcc_dv(
     let mut total_dv = Vector3::zeros();
 
     for iteration in 0..6 {
-        let r_peri_0 = moon_pericynthion(system, &current, epoch, duration);
+        let r_peri_0 = moon_pericynthion(system, &current, epoch, duration, moon_ephem);
         let delta_r = desired_r_peri - r_peri_0;
 
         if delta_r.abs() < 10.0 {
@@ -297,7 +299,7 @@ fn compute_mcc_dv(
             let mut v_pert = *current.velocity();
             v_pert[i] += eps;
             let perturbed = OrbitalState::new(*current.position(), v_pert);
-            let r_peri_i = moon_pericynthion(system, &perturbed, epoch, duration);
+            let r_peri_i = moon_pericynthion(system, &perturbed, epoch, duration, moon_ephem);
             grad[i] = (r_peri_i - r_peri_0) / eps;
         }
 
@@ -366,6 +368,7 @@ fn compute_tei_dv(
     state: &OrbitalState,
     epoch: Epoch,
     tei_mission_t: f64,
+    moon_ephem: &dyn MoonEphemeris,
 ) -> Vector3<f64> {
     // Target perigee at ~30 km (ensures passage through 122 km entry interface).
     // The entry interface at 122 km is a *crossing* altitude, not the perigee.
@@ -380,7 +383,7 @@ fn compute_tei_dv(
     let eps = 0.001; // 1 m/s perturbation for finite differences [km/s]
 
     // Start with prograde (Moon-relative) as initial guess, TEI_DV as initial magnitude
-    let moon_vel = moon_velocity_eci(&epoch);
+    let moon_vel = moon_ephem.velocity_eci(&epoch);
     let v_rel = state.velocity() - moon_vel;
     let mut dv_dir = v_rel.normalize();
     let mut dv_mag = TEI_DV;
@@ -502,7 +505,15 @@ fn specific_energy(state: &OrbitalState, mu: f64) -> f64 {
 }
 
 /// Build the Earth-centered dynamical system for translunar trajectory.
-fn build_translunar_system(epoch: Epoch) -> OrbitalSystem {
+///
+/// `moon_ephem` provides the Moon position for the third-body perturbation.
+/// Sharing the same handle between the integrator and the targeting helpers
+/// ensures both see an identical lunar ephemeris (critical for finite-
+/// difference gradient consistency). The blanket
+/// `impl<T> MoonEphemeris for Arc<T>` in [`kaname::moon`] makes the
+/// `ThirdBodyGravity::moon_with_ephemeris` constructor accept the shared
+/// handle directly — no manual closure plumbing needed.
+fn build_translunar_system(epoch: Epoch, moon_ephem: &Arc<dyn MoonEphemeris>) -> OrbitalSystem {
     let earth = KnownBody::Earth;
     let props = earth.properties();
 
@@ -517,13 +528,25 @@ fn build_translunar_system(epoch: Epoch) -> OrbitalSystem {
     )
     .with_epoch(epoch)
     .with_model(ThirdBodyGravity::sun())
-    .with_model(ThirdBodyGravity::moon())
+    .with_model(ThirdBodyGravity::moon_with_ephemeris(Arc::clone(
+        moon_ephem,
+    )))
     .with_body_radius(props.radius)
 }
 
 /// Propagate and record orbital state. Returns (final_state, min_moon_distance, min_moon_dist_time).
 ///
 /// `t_offset` shifts the recording timeline so phases are continuous in the rrd.
+/// `moon_ephem` provides the Moon position used for distance tracking — must
+/// match the ephemeris used by `system` for consistency.
+///
+/// The argument count is over the Clippy threshold because each phase
+/// (parking → TLI → translunar → lunar orbit → TEI → entry) needs all of
+/// these values. A follow-up refactor will extract a
+/// `PropagationContext { rec, moon_ephem, step_offset, t_offset }` struct so
+/// that the signature shrinks and artemis1 can inherit the same shape
+/// without re-allowing the lint. Tracked for PR 5 / Artemis 1 migration.
+#[allow(clippy::too_many_arguments)]
 fn propagate_and_record(
     system: &OrbitalSystem,
     initial: &OrbitalState,
@@ -533,6 +556,7 @@ fn propagate_and_record(
     rec: &mut Recording,
     step_offset: u64,
     t_offset: f64,
+    moon_ephem: &dyn MoonEphemeris,
 ) -> (OrbitalState, f64, f64, u64) {
     let sat_path = EntityPath::parse("/world/sat/apollo11");
 
@@ -544,7 +568,7 @@ fn propagate_and_record(
     let final_state = Dop853.integrate(system, initial.clone(), 0.0, duration, dt, |t, state| {
         // Track Moon distance
         let current_epoch = epoch.add_seconds(t);
-        let moon_pos = kaname::moon::moon_position_eci(&current_epoch);
+        let moon_pos = moon_ephem.position_eci(&current_epoch);
         let moon_dist = (state.position() - moon_pos).magnitude();
         if moon_dist < min_moon_dist {
             min_moon_dist = moon_dist;
@@ -582,7 +606,13 @@ fn main() {
     println!();
 
     let parking_epoch = Epoch::from_iso8601(PARKING_EPOCH_ISO).unwrap();
-    let system = build_translunar_system(parking_epoch);
+
+    // Moon ephemeris — single source of truth for both the integrator's
+    // third-body force model and the targeting helpers. Defaults to the
+    // Meeus analytical model, matching apollo11's historical behavior.
+    let moon_ephem: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+
+    let system = build_translunar_system(parking_epoch, &moon_ephem);
 
     // Build recording
     let mut rec = Recording::new();
@@ -639,6 +669,7 @@ fn main() {
         &mut rec,
         step,
         mission_t,
+        &*moon_ephem,
     );
     step = new_step;
 
@@ -696,7 +727,7 @@ fn main() {
     // Reset mission time to TLI SECO epoch for accurate propagation
     let tli_epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
     mission_t = PARKING_TO_TLI;
-    let system_tli = build_translunar_system(tli_epoch);
+    let system_tli = build_translunar_system(tli_epoch, &moon_ephem);
 
     let energy_at_tli = specific_energy(&post_tli, MU_EARTH);
 
@@ -710,6 +741,7 @@ fn main() {
         &mut rec,
         step,
         mission_t,
+        &*moon_ephem,
     );
     mission_t += MCC2_TIME_AFTER_TLI;
     step = new_step;
@@ -726,7 +758,7 @@ fn main() {
     // MCC-2: compute burn direction using scalar pericynthion gradient targeting
     // (simplified version of Apollo RTCC's B-plane targeting)
     let mcc2_epoch = tli_epoch.add_seconds(MCC2_TIME_AFTER_TLI);
-    let system_mcc2 = build_translunar_system(mcc2_epoch);
+    let system_mcc2 = build_translunar_system(mcc2_epoch, &moon_ephem);
     let coast_remaining = TRANSLUNAR_DURATION - MCC2_TIME_AFTER_TLI;
     let desired_pericynthion = 1850.0; // ~113 km altitude above Moon surface [km from center]
 
@@ -738,6 +770,7 @@ fn main() {
         coast_remaining,
         desired_pericynthion,
         MCC2_DV,
+        &*moon_ephem,
     );
     let post_mcc2 = state_at_mcc2.apply_delta_v(mcc2_dv);
     println!(
@@ -758,7 +791,7 @@ fn main() {
         DT,
         |t, state| {
             let ep = mcc2_epoch.add_seconds(t);
-            let moon_pos = kaname::moon::moon_position_eci(&ep);
+            let moon_pos = moon_ephem.position_eci(&ep);
             let d = (state.position() - moon_pos).magnitude();
             if d < min_moon_dist {
                 min_moon_dist = d;
@@ -803,6 +836,7 @@ fn main() {
         &mut rec,
         step,
         mission_t,
+        &*moon_ephem,
     );
 
     mission_t += min_moon_dist_t;
@@ -824,8 +858,8 @@ fn main() {
     println!("Phase 4: Lunar Orbit Insertion (LOI-1)");
 
     let loi_epoch = parking_epoch.add_seconds(mission_t);
-    let moon_pos_at_loi = kaname::moon::moon_position_eci(&loi_epoch);
-    let moon_vel_at_loi = moon_velocity_eci(&loi_epoch);
+    let moon_pos_at_loi = moon_ephem.position_eci(&loi_epoch);
+    let moon_vel_at_loi = moon_ephem.velocity_eci(&loi_epoch);
 
     // Compute velocity relative to Moon, apply retrograde ΔV in that frame
     let v_rel_moon = state_at_loi.velocity() - moon_vel_at_loi;
@@ -863,7 +897,7 @@ fn main() {
     let loi2_coast = 4.4 * 3600.0; // seconds until LOI-2
     let loi2_dv_mag = 0.0485; // 48.5 m/s [km/s]
 
-    let system_lo1 = build_translunar_system(loi_epoch);
+    let system_lo1 = build_translunar_system(loi_epoch, &moon_ephem);
     let (state_at_loi2, _, _, new_step) = propagate_and_record(
         &system_lo1,
         &post_loi,
@@ -873,12 +907,13 @@ fn main() {
         &mut rec,
         step,
         mission_t,
+        &*moon_ephem,
     );
     mission_t += loi2_coast;
     step = new_step;
 
     let loi2_epoch = parking_epoch.add_seconds(mission_t);
-    let moon_vel_at_loi2 = moon_velocity_eci(&loi2_epoch);
+    let moon_vel_at_loi2 = moon_ephem.velocity_eci(&loi2_epoch);
     let v_rel_loi2 = state_at_loi2.velocity() - moon_vel_at_loi2;
     let loi2_dv = v_rel_loi2.normalize() * (-loi2_dv_mag);
     let post_loi2 = state_at_loi2.apply_delta_v(loi2_dv);
@@ -896,7 +931,7 @@ fn main() {
     println!("Phase 5: Lunar Orbit");
 
     let remaining_lo = LOI_TO_TEI_SECONDS - loi2_coast;
-    let system_lo = build_translunar_system(loi2_epoch);
+    let system_lo = build_translunar_system(loi2_epoch, &moon_ephem);
     let (state_after_lo, _, _, new_step) = propagate_and_record(
         &system_lo,
         &post_loi2,
@@ -906,13 +941,14 @@ fn main() {
         &mut rec,
         step,
         mission_t,
+        &*moon_ephem,
     );
 
     mission_t += remaining_lo;
     step = new_step;
 
     let lo_end_epoch = parking_epoch.add_seconds(mission_t);
-    let moon_pos_lo = kaname::moon::moon_position_eci(&lo_end_epoch);
+    let moon_pos_lo = moon_ephem.position_eci(&lo_end_epoch);
     let moon_dist_lo = (state_after_lo.position() - moon_pos_lo).magnitude();
     println!(
         "  Coasted {:.1} hours (after LOI-2), Moon distance: {:.0} km",
@@ -927,7 +963,7 @@ fn main() {
     );
 
     // Find the next far-side point (local max of Earth distance) for TEI
-    let system_tei_search = build_translunar_system(lo_end_epoch);
+    let system_tei_search = build_translunar_system(lo_end_epoch, &moon_ephem);
     let mut max_earth_dist = 0.0_f64;
     let mut max_earth_t = 0.0;
     let mut found_far_side = false;
@@ -968,6 +1004,7 @@ fn main() {
         &mut rec,
         step,
         mission_t,
+        &*moon_ephem,
     );
 
     mission_t += max_earth_t;
@@ -983,17 +1020,23 @@ fn main() {
     );
 
     let tei_epoch = parking_epoch.add_seconds(mission_t);
-    let system_te = build_translunar_system(tei_epoch);
+    let system_te = build_translunar_system(tei_epoch, &moon_ephem);
 
     // TEI: optimize ΔV direction to target Apollo 11 entry interface.
     // The magnitude is fixed at TEI_DV (1.001 km/s from mission report);
     // the direction is adjusted to match the historical perigee altitude
     // and arrival time (GET 195:03:05.7, alt 122 km).
-    let tei_dv_vec = compute_tei_dv(&system_te, &state_at_tei, tei_epoch, mission_t);
+    let tei_dv_vec = compute_tei_dv(
+        &system_te,
+        &state_at_tei,
+        tei_epoch,
+        mission_t,
+        &*moon_ephem,
+    );
     let post_tei = state_at_tei.apply_delta_v(tei_dv_vec);
 
     let tei_dv_actual = tei_dv_vec.magnitude();
-    let moon_vel_at_tei = moon_velocity_eci(&tei_epoch);
+    let moon_vel_at_tei = moon_ephem.velocity_eci(&tei_epoch);
     let v_rel_before = (state_at_tei.velocity() - moon_vel_at_tei).magnitude();
     let v_rel_after = (post_tei.velocity() - moon_vel_at_tei).magnitude();
     println!("  ΔV = {tei_dv_actual:.4} km/s (targeted to entry interface, ref: {TEI_DV:.3})");
@@ -1200,7 +1243,7 @@ fn main() {
     for i in 0..=n_moon_steps {
         let t = i as f64 * OUTPUT_INTERVAL;
         let moon_epoch = parking_epoch.add_seconds(t);
-        let moon_pos = kaname::moon::moon_position_eci(&moon_epoch);
+        let moon_pos = moon_ephem.position_eci(&moon_epoch);
         let tp = TimePoint::new().with_sim_time(t).with_step(i);
         let os = RecordOrbitalState::new(moon_pos, Vector3::zeros());
         rec.log_orbital_state(&moon_path, &tp, &os);
@@ -1260,7 +1303,8 @@ mod tests {
     fn run_translunar_propagation() -> (OrbitalState, f64, f64) {
         let epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
         let initial = post_tli_state();
-        let system = build_translunar_system(epoch);
+        let moon_ephem: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+        let system = build_translunar_system(epoch, &moon_ephem);
 
         let mut min_moon_dist = f64::MAX;
         let mut min_moon_dist_t = 0.0;
@@ -1273,7 +1317,7 @@ mod tests {
             60.0,
             |t, state| {
                 let current_epoch = epoch.add_seconds(t);
-                let moon_pos = kaname::moon::moon_position_eci(&current_epoch);
+                let moon_pos = moon_ephem.position_eci(&current_epoch);
                 let moon_dist = (state.position() - moon_pos).magnitude();
                 if moon_dist < min_moon_dist {
                     min_moon_dist = moon_dist;
@@ -1308,7 +1352,8 @@ mod tests {
     fn translunar_trajectory_leaves_leo() {
         let epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
         let initial = post_tli_state();
-        let system = build_translunar_system(epoch);
+        let moon_ephem: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+        let system = build_translunar_system(epoch, &moon_ephem);
 
         // After 1 hour, spacecraft should be well beyond LEO
         let state_1h = Dop853.integrate(&system, initial, 0.0, 3600.0, 60.0, |_, _| {});
@@ -1324,7 +1369,8 @@ mod tests {
     fn translunar_trajectory_leaves_geo() {
         let epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
         let initial = post_tli_state();
-        let system = build_translunar_system(epoch);
+        let moon_ephem: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+        let system = build_translunar_system(epoch, &moon_ephem);
 
         // After 6 hours, spacecraft should be beyond GEO (42,164 km geocentric)
         let state_6h = Dop853.integrate(&system, initial, 0.0, 6.0 * 3600.0, 60.0, |_, _| {});
@@ -1339,7 +1385,8 @@ mod tests {
     fn translunar_outbound_velocity_decreases() {
         let epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
         let initial = post_tli_state();
-        let system = build_translunar_system(epoch);
+        let moon_ephem: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+        let system = build_translunar_system(epoch, &moon_ephem);
 
         let v_initial = initial.velocity().magnitude();
 
@@ -1359,7 +1406,8 @@ mod tests {
     #[test]
     fn translunar_system_has_third_body_models() {
         let epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
-        let system = build_translunar_system(epoch);
+        let moon_ephem: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+        let system = build_translunar_system(epoch, &moon_ephem);
         let names = system.model_names();
         assert!(
             names.contains(&"third_body_sun"),
@@ -1374,7 +1422,8 @@ mod tests {
     #[test]
     fn translunar_system_has_body_radius() {
         let epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
-        let system = build_translunar_system(epoch);
+        let moon_ephem: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+        let system = build_translunar_system(epoch, &moon_ephem);
         assert_eq!(system.body_radius, Some(R_EARTH));
     }
 
@@ -1385,7 +1434,8 @@ mod tests {
     #[test]
     fn tli_gravity_dominates_acceleration() {
         let epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
-        let system = build_translunar_system(epoch);
+        let moon_ephem: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+        let system = build_translunar_system(epoch, &moon_ephem);
         let state = post_tli_state();
         let breakdown = system.acceleration_breakdown(0.0, &state);
 
@@ -1415,7 +1465,8 @@ mod tests {
     #[test]
     fn tli_gravity_magnitude() {
         let epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
-        let system = build_translunar_system(epoch);
+        let moon_ephem: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+        let system = build_translunar_system(epoch, &moon_ephem);
         let state = post_tli_state();
         let breakdown = system.acceleration_breakdown(0.0, &state);
 
