@@ -74,11 +74,7 @@ pub fn build_orbital_system(
         system = system.with_epoch(epoch);
 
         for tb in third_bodies {
-            system = system.with_model(ThirdBodyGravity {
-                name: tb.name,
-                mu_body: tb.mu_body,
-                body_position_fn: tb.body_position_fn,
-            });
+            system = system.with_model(tb.clone());
         }
     }
 
@@ -133,11 +129,7 @@ pub fn build_spacecraft_dynamics(
         system = system.with_epoch(epoch);
 
         for tb in third_bodies {
-            system = system.with_model(ThirdBodyGravity {
-                name: tb.name,
-                mu_body: tb.mu_body,
-                body_position_fn: tb.body_position_fn,
-            });
+            system = system.with_model(tb.clone());
         }
     }
 

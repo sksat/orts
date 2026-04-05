@@ -16,6 +16,7 @@ serde.workspace = true
 
 [features]
 fetch-weather = ["tobari/fetch"]
+fetch-horizons = ["kaname/fetch-horizons"]
 
 [dev-dependencies]
 proptest = "1.10.0"

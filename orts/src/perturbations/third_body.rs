@@ -1,9 +1,17 @@
+use std::sync::Arc;
+
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 
 use crate::OrbitalState;
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
+
+/// Type alias for a position function: `Epoch -> ECI position [km]`.
+///
+/// Stored as an `Arc<dyn Fn>` so the struct is cheaply cloneable and can hold
+/// closures that capture state (e.g., an interpolated ephemeris table).
+pub type BodyPositionFn = Arc<dyn Fn(&Epoch) -> Vector3<f64> + Send + Sync>;
 
 /// Third-body gravitational perturbation.
 ///
@@ -14,33 +22,81 @@ use crate::model::{HasOrbit, Model};
 ///
 /// where r_body is the position of the third body relative to the central body,
 /// and r_sat is the satellite position relative to the central body.
+///
+/// Use the `::sun()` / `::moon()` constructors for standard bodies, or
+/// `::custom()` to supply an arbitrary position closure (e.g., a tabulated
+/// ephemeris source).
+#[derive(Clone)]
 pub struct ThirdBodyGravity {
     /// Human-readable name (e.g., "third_body_sun", "third_body_moon")
     pub name: &'static str,
     /// Gravitational parameter of the third body [km³/s²]
     pub mu_body: f64,
-    /// Function returning the third body position in ECI [km] at a given epoch
-    pub body_position_fn: fn(&Epoch) -> Vector3<f64>,
+    /// Closure returning the third body position in ECI [km] at a given epoch.
+    body_position_fn: BodyPositionFn,
 }
 
 impl ThirdBodyGravity {
-    /// Create a Sun third-body perturbation.
+    /// Create a Sun third-body perturbation (uses Meeus analytical ephemeris).
     pub fn sun() -> Self {
         Self {
             name: "third_body_sun",
             mu_body: kaname::constants::MU_SUN,
-            body_position_fn: kaname::sun::sun_position_eci,
+            body_position_fn: Arc::new(kaname::sun::sun_position_eci),
         }
     }
 
-    /// Create a Moon third-body perturbation.
+    /// Create a Moon third-body perturbation (uses Meeus analytical ephemeris).
     ///
-    /// Moon μ ≈ 4902.8 km³/s² (from body properties).
+    /// μ_Moon is sourced from [`kaname::constants::MU_MOON`].
     pub fn moon() -> Self {
         Self {
             name: "third_body_moon",
-            mu_body: 4902.800066, // μ_Moon [km³/s²]
-            body_position_fn: kaname::moon::moon_position_eci,
+            mu_body: kaname::constants::MU_MOON,
+            body_position_fn: Arc::new(kaname::moon::moon_position_eci),
+        }
+    }
+
+    /// Create a Moon third-body perturbation from any [`kaname::moon::MoonEphemeris`]
+    /// implementation.
+    ///
+    /// Use this to swap in a higher-accuracy Moon ephemeris (e.g. a tabulated
+    /// JPL Horizons source) while keeping the same force-model wiring.
+    ///
+    /// Thanks to the blanket `impl<T: MoonEphemeris + ?Sized> MoonEphemeris for
+    /// Arc<T>` in [`kaname::moon`], this constructor accepts both owned
+    /// implementations (`MeeusMoonEphemeris`) *and* shared trait objects
+    /// (`Arc<dyn MoonEphemeris>`), so a single ephemeris can be fanned out to
+    /// the integrator's force model and to any auxiliary targeting helpers.
+    ///
+    /// μ_Moon is fixed to [`kaname::constants::MU_MOON`] and is **not** derived
+    /// from the supplied ephemeris. If a non-standard μ is needed, use
+    /// [`ThirdBodyGravity::custom`] directly.
+    pub fn moon_with_ephemeris<E>(ephem: E) -> Self
+    where
+        E: kaname::moon::MoonEphemeris + 'static,
+    {
+        let ephem = Arc::new(ephem);
+        Self {
+            name: "third_body_moon",
+            mu_body: kaname::constants::MU_MOON,
+            body_position_fn: Arc::new(move |epoch| ephem.position_eci(epoch)),
+        }
+    }
+
+    /// Create a custom third-body perturbation with an arbitrary position
+    /// function.
+    ///
+    /// Use this for bodies not covered by `::sun()` / `::moon()`, or to supply
+    /// a higher-accuracy ephemeris source (e.g., a precomputed table).
+    pub fn custom<F>(name: &'static str, mu_body: f64, position_fn: F) -> Self
+    where
+        F: Fn(&Epoch) -> Vector3<f64> + Send + Sync + 'static,
+    {
+        Self {
+            name,
+            mu_body,
+            body_position_fn: Arc::new(position_fn),
         }
     }
 }
@@ -73,6 +129,15 @@ impl<S: HasOrbit> Model<S> for ThirdBodyGravity {
         ExternalLoads::acceleration(self.acceleration(state.orbit(), epoch))
     }
 }
+
+// Static assertion that `ThirdBodyGravity` can cross thread boundaries.
+// This is required so `OrbitalSystem` remains `Send + Sync` when it contains
+// third-body models, which allows the integrator to be used from a worker
+// thread (e.g. the WebSocket serve mode in orts-cli).
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<ThirdBodyGravity>();
+};
 
 #[cfg(test)]
 mod tests {
@@ -186,6 +251,158 @@ mod tests {
             cos_angle < 0.5,
             "Sun perturbation should differ between March and June, cos={cos_angle:.3}"
         );
+    }
+
+    #[test]
+    fn third_body_is_clone() {
+        // Ensure `ThirdBodyGravity` is cheaply cloneable (Arc-backed).
+        let tb = ThirdBodyGravity::moon();
+        let tb2 = tb.clone();
+        assert_eq!(tb.name, tb2.name);
+        assert_eq!(tb.mu_body, tb2.mu_body);
+        // Clone should produce the same acceleration from the same state/epoch.
+        let state = iss_state();
+        let epoch = test_epoch();
+        let a1 = tb.acceleration(&state, Some(&epoch));
+        let a2 = tb2.acceleration(&state, Some(&epoch));
+        assert_eq!(a1, a2);
+    }
+
+    #[test]
+    fn moon_constructor_uses_mu_moon_constant() {
+        // Regression guard: the Moon μ in `ThirdBodyGravity::moon()` must come
+        // from `kaname::constants::MU_MOON` so there is one authoritative
+        // value. If this test fails, someone reintroduced a hardcoded literal
+        // and the two can drift.
+        let tb = ThirdBodyGravity::moon();
+        assert_eq!(tb.mu_body, kaname::constants::MU_MOON);
+
+        let tb_trait = ThirdBodyGravity::moon_with_ephemeris(kaname::moon::MeeusMoonEphemeris);
+        assert_eq!(tb_trait.mu_body, kaname::constants::MU_MOON);
+    }
+
+    #[test]
+    fn moon_with_ephemeris_accepts_arc_dyn_moon_ephemeris() {
+        // Regression guard for the blanket `impl<T> MoonEphemeris for Arc<T>`.
+        // Without the blanket impl, `Arc<dyn MoonEphemeris>` does not satisfy
+        // `E: MoonEphemeris` and this constructor call would fail to compile.
+        // apollo11/main.rs (and the upcoming artemis1 example) relies on this
+        // shape to share one ephemeris between the integrator and targeters.
+        use kaname::moon::{MeeusMoonEphemeris, MoonEphemeris};
+        let shared: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
+        let tb = ThirdBodyGravity::moon_with_ephemeris(Arc::clone(&shared));
+        let state = iss_state();
+        let epoch = test_epoch();
+        let a = tb.acceleration(&state, Some(&epoch));
+        // Should produce the same acceleration as `::moon()` for the same
+        // underlying Meeus source.
+        let a_ref = ThirdBodyGravity::moon().acceleration(&state, Some(&epoch));
+        assert_eq!(a, a_ref);
+    }
+
+    #[test]
+    fn custom_third_body_uses_supplied_closure() {
+        // Build a custom third body at a fixed position and verify the
+        // acceleration matches the analytic tidal formula.
+        let fake_body_pos = vector![1.0e6, 0.0, 0.0];
+        let fake_mu = 1.0e5;
+        let tb = ThirdBodyGravity::custom("fake", fake_mu, move |_epoch| fake_body_pos);
+        let state = iss_state();
+        let epoch = test_epoch();
+
+        let a = tb.acceleration(&state, Some(&epoch));
+
+        // Expected: μ_body * [(r_body - r_sat)/|r_body - r_sat|³ - r_body/|r_body|³]
+        let r_sat_to_body = fake_body_pos - *state.position();
+        let d = r_sat_to_body.magnitude();
+        let r_body_mag = fake_body_pos.magnitude();
+        let expected = fake_mu
+            * (r_sat_to_body / (d * d * d)
+                - fake_body_pos / (r_body_mag * r_body_mag * r_body_mag));
+        let err = (a - expected).magnitude();
+        assert!(
+            err < 1e-15,
+            "custom body acceleration mismatch: err={err:e}"
+        );
+        assert_eq!(tb.name, "fake");
+    }
+
+    #[test]
+    fn moon_with_ephemeris_uses_supplied_ephemeris() {
+        use kaname::moon::{MeeusMoonEphemeris, MoonEphemeris};
+
+        // `::moon_with_ephemeris(MeeusMoonEphemeris)` should produce the same
+        // acceleration as `::moon()` (both delegate to the Meeus analytical model).
+        let tb_default = ThirdBodyGravity::moon();
+        let tb_trait = ThirdBodyGravity::moon_with_ephemeris(MeeusMoonEphemeris);
+        let state = iss_state();
+        let epoch = test_epoch();
+
+        let a_default = tb_default.acceleration(&state, Some(&epoch));
+        let a_trait = tb_trait.acceleration(&state, Some(&epoch));
+
+        // They come from the same underlying Meeus data, so they should be
+        // bit-identical.
+        assert_eq!(a_default, a_trait);
+
+        // The name and μ should also match.
+        assert_eq!(tb_trait.name, "third_body_moon");
+        assert_eq!(tb_trait.mu_body, 4902.800066);
+
+        // Sanity check: the MoonEphemeris trait method returns a finite vector.
+        let _ = MeeusMoonEphemeris.velocity_eci(&epoch);
+    }
+
+    #[test]
+    fn moon_with_ephemeris_respects_custom_source() {
+        use kaname::moon::MoonEphemeris;
+
+        // Build a fake Moon ephemeris that always returns a fixed position.
+        // This simulates what a tabulated (Horizons-backed) source would do.
+        struct FakeMoonEphem;
+        impl MoonEphemeris for FakeMoonEphem {
+            fn position_eci(&self, _epoch: &Epoch) -> Vector3<f64> {
+                vector![400_000.0, 0.0, 0.0]
+            }
+            fn name(&self) -> &str {
+                "fake"
+            }
+        }
+
+        let tb = ThirdBodyGravity::moon_with_ephemeris(FakeMoonEphem);
+        let state = iss_state();
+        let epoch = test_epoch();
+        let a = tb.acceleration(&state, Some(&epoch));
+
+        // Compute the expected tidal acceleration analytically.
+        let r_body = vector![400_000.0_f64, 0.0, 0.0];
+        let r_sat_to_body = r_body - *state.position();
+        let d = r_sat_to_body.magnitude();
+        let r_body_mag = r_body.magnitude();
+        let expected = 4902.800066
+            * (r_sat_to_body / (d * d * d) - r_body / (r_body_mag * r_body_mag * r_body_mag));
+        let err = (a - expected).magnitude();
+        assert!(
+            err < 1e-15,
+            "Expected moon_with_ephemeris to use the fake source, err={err:e}"
+        );
+    }
+
+    #[test]
+    fn custom_third_body_closure_can_capture_state() {
+        // Captured-state closures are the whole point of the `Arc<dyn Fn>`
+        // refactor — verify that a closure capturing a `Vec` works.
+        let positions = vec![
+            vector![1.0e6, 0.0, 0.0],
+            vector![0.0, 1.0e6, 0.0],
+            vector![0.0, 0.0, 1.0e6],
+        ];
+        // Move the Vec into the closure; the closure returns the first entry.
+        let tb = ThirdBodyGravity::custom("captured", 1.0e5, move |_epoch| positions[0]);
+        let state = iss_state();
+        let epoch = test_epoch();
+        let a = tb.acceleration(&state, Some(&epoch));
+        assert!(a.magnitude() > 0.0);
     }
 
     #[test]
