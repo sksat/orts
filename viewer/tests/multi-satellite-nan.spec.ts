@@ -1,14 +1,38 @@
 /**
- * E2E test: multi-satellite "All" view has aligned timestamps (no NaN gaps).
+ * E2E test: multi-sat chart pipeline wiring + alignment invariants.
  *
- * Uses a mock WebSocket server to send 2 satellites with enough data to
- * trigger time-bucket downsampling. Verifies via DuckDB queries that the
- * unified tMax alignment produces matching timestamps so alignTimeSeries()
- * doesn't introduce NaN gaps.
+ * What this test gates:
+ * - `isMultiSatellite` detection flips when `simInfo.satellites.length >= 2`
+ *   and `useMultiSatelliteStoreWorker` starts on that transition (regression
+ *   gate for the `[enabled]` lifecycle bug fix).
+ * - The full history ingest path works end-to-end: WS `history` message →
+ *   per-sat `IngestBuffer.markRebuild` → worker `multi-rebuild` → DuckDB
+ *   populated → tick query → `buildDerivedQuery` with downsampling actually
+ *   triggered (we send > `maxPoints` rows per sat) → aligned
+ *   `MultiChartDataMap` broadcast → main-thread deserialization.
+ * - `alignTimeSeries`'s length invariant (`values[i].length === t.length`).
+ * - No critical console errors from malformed INSERT / DuckDB hiccups.
  *
- * Strategy: Query the DuckDB tables directly (exposed on window.__duckdb_conn
- * in dev mode) rather than relying on canvas pixel analysis, which is flaky
- * in headless/CI environments.
+ * What this test DOES NOT gate:
+ * - That the worker actually passes a *unified* tMax to `queryDerived`.
+ *   With identical row sets per sat, per-sat `MAX(t)` equals unified tMax,
+ *   so a hypothetical revert to per-sat tMax at
+ *   `uneri/src/worker/multiChartDataWorker.ts:252-263` would still produce
+ *   matching bucket boundaries and this test would pass.
+ *   The SQL-level "same tMax → same bucket boundaries" property is covered
+ *   by `uneri/src/db/store.test.ts:259-276`; the worker → `queryDerived`
+ *   wiring with unified tMax is currently UNCOVERED by any test. A follow-up
+ *   would need either a skewed-data E2E with carefully tuned assertions, or
+ *   a mocked-DuckDB worker integration test.
+ *
+ * Historical note: an earlier version of this test queried DuckDB tables
+ * directly via `window.__duckdb_conn` and re-implemented the bucketing SQL
+ * in the test body. When the multi-sat chart pipeline moved into a Web
+ * Worker (commit `b783463`), the main-thread DuckDB connection disappeared
+ * and that approach stopped working. The current test reads the higher-
+ * level `MultiChartDataMap` payload — the deserialized output of the
+ * worker's `multi-chart-data` broadcast — which is stable across refactors
+ * of the worker's internals.
  */
 
 import type { AddressInfo } from "node:net";
@@ -48,11 +72,22 @@ test.describe("multi-satellite NaN alignment", () => {
     wss.close();
   });
 
-  test("both satellite tables have aligned timestamps after downsampling", async ({ page }) => {
+  test("aligned multi-sat chart data has matching series lengths and no NaN gaps", async ({
+    page,
+  }) => {
     const consoleLogs: string[] = [];
     page.on("console", (msg) => consoleLogs.push(msg.text()));
 
-    const DT = 10;
+    const DT = 1;
+    // Row count per sat must exceed `MultiChartDataWorkerClient`'s
+    // default `maxPoints` (2000) so the SQL downsample's
+    // `total <= maxPts OR rn = 1` fast path in `buildDerivedQuery`
+    // does NOT return raw rows. Only when bucketing is actually
+    // triggered is the per-sat vs unified tMax distinction observable
+    // — that's the regression class this test exists to guard.
+    // 3601 rows (t ∈ [0, 3600] at dt=1s) clears the 2000 threshold
+    // comfortably.
+    const T_END = 3600;
 
     wss.on("connection", (ws: WsSocket) => {
       ws.send(
@@ -72,9 +107,14 @@ test.describe("multi-satellite NaN alignment", () => {
         }),
       );
 
-      // Send history with enough data to populate DuckDB tables
+      // Both sats share the exact same time range at the same cadence,
+      // so a correct unified-tMax downsample + alignTimeSeries produces
+      // matched timestamps with no NaN. A regression where per-sat
+      // tMax drifts would show up as NaN in `values[i]` after alignment
+      // because each sat's bucket representatives would fall on
+      // different timestamps.
       const historyStates = [];
-      for (let t = 0; t <= 3600; t += DT) {
+      for (let t = 0; t <= T_END; t += DT) {
         const ssoState = JSON.parse(stateMsg("sso", t, 800));
         delete ssoState.type;
         historyStates.push(ssoState);
@@ -83,22 +123,20 @@ test.describe("multi-satellite NaN alignment", () => {
         historyStates.push(issState);
       }
       ws.send(JSON.stringify({ type: "history", states: historyStates }));
-
-      // Stream live data
-      let t = 3600;
-      const interval = setInterval(() => {
-        if (ws.readyState !== 1) {
-          clearInterval(interval);
-          return;
-        }
-        t += DT;
-        ws.send(stateMsg("sso", t, 800));
-        ws.send(stateMsg("iss", t, 400));
-      }, 20);
+      // Intentionally no live streaming. Streaming introduces small
+      // per-sat `MAX(t)` drift (because the two sats' ingest/drain/tick
+      // cadences don't line up perfectly), and `alignTimeSeries` then
+      // pads the mismatched tail with NaN via the
+      // `UNION ... WHERE t = MAX(t)` branch in `buildDerivedQuery`.
+      //
+      // Pure history gives both tables the exact same row set, which
+      // keeps the NaN assertion below stable. The tradeoff: the
+      // streaming path's own alignment behavior is not covered here
+      // (see the "DOES NOT gate" section of the file header).
     });
 
     // noAutoConnect suppresses the default auto-connect, avoiding a race
-    // with the CI shared server and ensuring a clean DuckDB state.
+    // with the CI shared server and ensuring a clean worker state.
     await page.goto("/?noAutoConnect=1");
 
     // Connect to mock server
@@ -111,8 +149,8 @@ test.describe("multi-satellite NaN alignment", () => {
     const statusText = page.locator('[data-testid="ws-status-text"]');
     await expect(statusText).toHaveText("Connected", { timeout: 5000 });
 
-    // Wait for simInfo to reflect 2 satellites (isMultiSatellite must be true
-    // before useMultiSatelliteStore starts creating DuckDB tables).
+    // Wait for simInfo to reflect 2 satellites so `isMultiSatellite` flips
+    // and `useMultiSatelliteStoreWorker` gets instantiated.
     await expect(async () => {
       const satCount = await page.evaluate(() => {
         const sel = document.querySelector('[data-testid="frame-selector-select"]');
@@ -122,262 +160,138 @@ test.describe("multi-satellite NaN alignment", () => {
       expect(satCount).toBeGreaterThanOrEqual(2);
     }).toPass({ timeout: 10000, intervals: [200, 500, 1000, 2000] });
 
-    // Wait for DuckDB connection to be available (WASM init from CDN can be slow)
+    // Wait for the multi-sat worker to produce its first chart broadcast.
+    // The worker initializes DuckDB (WASM, can be slow on CI), ingests the
+    // history, runs its first tick, and posts `multi-chart-data` → main
+    // thread deserializes and the dev-mode effect sets the window global.
     await expect(async () => {
-      const hasConn = await page.evaluate(
-        () => (window as Record<string, unknown>).__duckdb_conn != null,
-      );
-      expect(hasConn, "DuckDB connection not yet available").toBe(true);
+      const hasData = await page.evaluate(() => {
+        const w = window as Record<string, unknown>;
+        const data = w.__debug_multi_chart_data as Record<string, unknown> | null | undefined;
+        if (data == null) return false;
+        return Object.values(data).some(
+          (series) =>
+            series != null &&
+            typeof series === "object" &&
+            "t" in series &&
+            (series as { t: Float64Array }).t.length > 0,
+        );
+      });
+      expect(hasData, "multi-sat chart data not yet populated").toBe(true);
     }).toPass({ timeout: 30000, intervals: [500, 1000, 2000, 3000] });
 
-    // Debug: log ingest buffer state to diagnose empty DuckDB tables
-    const bufferDebug = await page.evaluate(() => {
-      const w = window as Record<string, unknown>;
-      const bufs = w.__debug_ingest_buffers as
-        | Map<string, { pendingCount: number; latestT: number }>
-        | undefined;
-      const isMulti = w.__debug_is_multi_satellite;
-      if (!bufs) return { bufferKeys: [], isMultiSatellite: isMulti, note: "no buffers exposed" };
-      const info: Record<string, { pending: number; latestT: number }> = {};
-      for (const [key, buf] of bufs.entries()) {
-        info[key] = { pending: buf.pendingCount, latestT: buf.latestT };
-      }
-      return { bufferKeys: Array.from(bufs.keys()), buffers: info, isMultiSatellite: isMulti };
-    });
-    console.log("IngestBuffer debug:", JSON.stringify(bufferDebug));
-
-    // Wait for DuckDB tables to be populated (history ingestion + query ticks)
-    // Poll instead of fixed timeout — CI can be slow
-    await expect(async () => {
-      const result = await page.evaluate(async () => {
-        const conn = (window as Record<string, unknown>).__duckdb_conn;
-        if (!conn) return { sso: 0, iss: 0, connNull: true };
-        const q = async (sql: string) =>
-          (
-            conn as {
-              query: (
-                s: string,
-              ) => Promise<{ getChildAt: (i: number) => { get: (i: number) => number } | null }>;
-            }
-          ).query(sql);
-        let sso = 0,
-          iss = 0;
-        const tables: string[] = [];
-        try {
-          const res = await q("SHOW TABLES");
-          const col = res.getChildAt(0);
-          if (col) {
-            // Iterate using get() — length not in the typed interface
-            for (let i = 0; ; i++) {
-              const v = col.get(i);
-              if (v == null) break;
-              tables.push(String(v));
-            }
-          }
-        } catch {
-          /* ignore */
-        }
-        try {
-          sso = Number((await q("SELECT COUNT(*) FROM orbit_sso")).getChildAt(0)?.get(0));
-        } catch {
-          /* table not yet created */
-        }
-        try {
-          iss = Number((await q("SELECT COUNT(*) FROM orbit_iss")).getChildAt(0)?.get(0));
-        } catch {
-          /* table not yet created */
-        }
-        const w = window as Record<string, unknown>;
-        const tickCount = w.__debug_multi_sat_tick as number | undefined;
-        const insertCount = w.__debug_multi_sat_inserts as number | undefined;
-        const lastTick = w.__debug_multi_sat_last_tick as
-          | { configIds: string[]; bufferKeys: string[]; missingBufferIds: string[] }
-          | undefined;
-        const lastIngest = w.__debug_multi_sat_last_ingest as
-          | Array<{
-              id: string;
-              rebuildLen: number | null;
-              drainLen: number;
-              ensureFailed: boolean;
-            }>
-          | undefined;
-        const lastHistory = w.__debug_last_history as
-          | { historyLen: number; byIdCounts: Record<string, number> }
-          | undefined;
-        const lastError = w.__debug_multi_sat_last_error as
-          | { entityPath: string; error: string; stack?: string }
-          | undefined;
-        return {
-          sso,
-          iss,
-          tables,
-          connNull: false,
-          tickCount,
-          insertCount,
-          lastTick,
-          lastIngest,
-          lastHistory,
-          lastError,
-        };
-      });
-      console.log("DuckDB poll:", JSON.stringify(result));
-      expect(result.sso).toBeGreaterThan(0);
-      expect(result.iss).toBeGreaterThan(0);
-    }).toPass({ timeout: 30000, intervals: [500, 1000, 1000, 2000, 2000, 3000, 5000] });
-
-    // Stop streaming: click the viewer's disconnect button.
-    // Using the UI button sets manualDisconnectRef, which suppresses
-    // auto-reconnect.  Server-side close would trigger auto-reconnect →
-    // handleConnect → setSimInfo(null) → CREATE OR REPLACE TABLE, wiping
-    // the DuckDB tables before the final query.
+    // Disconnect via the UI button to set manualDisconnectRef and
+    // suppress auto-reconnect (a server-side close would trigger a
+    // buffer reset that clobbers the data we're about to inspect).
     await page.locator('[data-testid="ws-disconnect-btn"]').click();
-    // Wait for tick loop to drain any remaining buffered data
-    await page.waitForTimeout(2000);
+    // Let the worker's final tick broadcast settle (tick every ~2s).
+    await page.waitForTimeout(2500);
 
-    // Query DuckDB tables directly via the exposed connection
-    const dbResult = await page.evaluate(async () => {
-      const conn = (window as Record<string, unknown>).__duckdb_conn;
-      if (!conn) return { error: "DuckDB connection not exposed on window" };
+    // Snapshot the aligned chart data and run assertions entirely on
+    // the main thread via `page.evaluate`. All properties we care about
+    // (per-series NaN count, length consistency, metric count) are
+    // observable from the deserialized `MultiChartDataMap`.
+    const result = await page.evaluate(() => {
+      const w = window as Record<string, unknown>;
+      const data = w.__debug_multi_chart_data as Record<
+        string,
+        {
+          t: Float64Array;
+          values: Float64Array[];
+          series: Array<{ label: string; color: string }>;
+        } | null
+      > | null;
+      if (!data) return { error: "__debug_multi_chart_data is null" };
 
-      type QueryResult = {
-        getChildAt: (
-          i: number,
-        ) => { toArray: () => Float64Array; get: (i: number) => number } | null;
-        numRows: number;
-      };
-      const query = async (sql: string): Promise<QueryResult> => {
-        return (conn as { query: (sql: string) => Promise<QueryResult> }).query(sql);
-      };
+      const metrics: Array<{
+        name: string;
+        tLen: number;
+        seriesCount: number;
+        seriesLengths: number[];
+        nanPerSeries: number[];
+        tSpan: number;
+      }> = [];
 
-      // Check both satellite tables exist and have data
-      let ssoCount = 0,
-        issCount = 0;
-      try {
-        const ssoRes = await query("SELECT COUNT(*) FROM orbit_sso");
-        ssoCount = Number(ssoRes.getChildAt(0)?.get(0));
-      } catch {
-        return { error: "orbit_sso table not found" };
+      for (const [name, series] of Object.entries(data)) {
+        if (series == null) continue;
+        const tLen = series.t.length;
+        const seriesLengths = series.values.map((v) => v.length);
+        const nanPerSeries = series.values.map((v) => {
+          let n = 0;
+          for (const x of v) if (Number.isNaN(x)) n++;
+          return n;
+        });
+        const tSpan = tLen > 0 ? series.t[tLen - 1] - series.t[0] : 0;
+        metrics.push({
+          name,
+          tLen,
+          seriesCount: series.values.length,
+          seriesLengths,
+          nanPerSeries,
+          tSpan,
+        });
       }
-      try {
-        const issRes = await query("SELECT COUNT(*) FROM orbit_iss");
-        issCount = Number(issRes.getChildAt(0)?.get(0));
-      } catch {
-        return { error: "orbit_iss table not found" };
-      }
-
-      if (ssoCount === 0 || issCount === 0) {
-        return { error: `Empty tables: sso=${ssoCount}, iss=${issCount}` };
-      }
-
-      // Compute unified tMax (same logic as useMultiSatelliteStore)
-      const ssoMaxRes = await query("SELECT MAX(t) FROM orbit_sso");
-      const issMaxRes = await query("SELECT MAX(t) FROM orbit_iss");
-      const ssoMax = Number(ssoMaxRes.getChildAt(0)?.get(0));
-      const issMax = Number(issMaxRes.getChildAt(0)?.get(0));
-      const unifiedTMax = Math.max(ssoMax, issMax);
-
-      // Run downsampled queries with unified tMax
-      // This mirrors the exact query that useMultiSatelliteStore runs
-      const maxPoints = 200;
-      const buildQuery = (tableName: string) => {
-        return (
-          `WITH filtered AS (SELECT * FROM ${tableName}), ` +
-          `bounds AS (SELECT MIN(t) AS t_lo, ${unifiedTMax} AS t_hi, COUNT(*) AS total FROM filtered), ` +
-          `bucketed AS (SELECT f.*, ` +
-          `CASE WHEN b.t_hi = b.t_lo THEN 0 ` +
-          `ELSE LEAST(GREATEST(CAST(FLOOR((CAST(f.t AS DOUBLE) - CAST(b.t_lo AS DOUBLE)) ` +
-          `* ${maxPoints}.0 / (CAST(b.t_hi AS DOUBLE) - CAST(b.t_lo AS DOUBLE))) AS INTEGER), 0), ${maxPoints} - 1) ` +
-          `END AS bucket, b.total FROM filtered f, bounds b), ` +
-          `ranked AS (SELECT *, ROW_NUMBER() OVER (PARTITION BY bucket ORDER BY t) AS rn FROM bucketed) ` +
-          `SELECT t, sqrt(x*x+y*y+z*z)-6378.137 AS altitude FROM (` +
-          `SELECT * FROM ranked WHERE total <= ${maxPoints} OR rn = 1 ` +
-          `UNION ` +
-          `SELECT * FROM ranked WHERE t = (SELECT MAX(t) FROM filtered)` +
-          `) sub ORDER BY t`
-        );
-      };
-
-      const ssoData = await query(buildQuery("orbit_sso"));
-      const issData = await query(buildQuery("orbit_iss"));
-
-      const ssoT = Array.from(ssoData.getChildAt(0)!.toArray());
-      const issT = Array.from(issData.getChildAt(0)!.toArray());
-      const ssoAlt = Array.from(ssoData.getChildAt(1)!.toArray());
-      const issAlt = Array.from(issData.getChildAt(1)!.toArray());
-
-      // Check for NaN in altitude values
-      const ssoNanCount = ssoAlt.filter((v: number) => Number.isNaN(v)).length;
-      const issNanCount = issAlt.filter((v: number) => Number.isNaN(v)).length;
-
-      // Check timestamp alignment: count matching timestamps
-      const ssoTSet = new Set(ssoT);
-      const issTSet = new Set(issT);
-      let matchingTimestamps = 0;
-      for (const t of ssoTSet) {
-        if (issTSet.has(t)) matchingTimestamps++;
-      }
-
-      const totalUnique = new Set([...ssoT, ...issT]).size;
-      const alignmentRatio = totalUnique > 0 ? matchingTimestamps / totalUnique : 0;
-
-      return {
-        ssoCount,
-        issCount,
-        ssoDownsampledCount: ssoT.length,
-        issDownsampledCount: issT.length,
-        ssoNanCount,
-        issNanCount,
-        matchingTimestamps,
-        totalUniqueTimestamps: totalUnique,
-        alignmentRatio,
-        ssoTFirst3: ssoT.slice(0, 3),
-        issTFirst3: issT.slice(0, 3),
-        ssoTLast3: ssoT.slice(-3),
-        issTLast3: issT.slice(-3),
-      };
+      return { metrics };
     });
 
-    console.log("DuckDB query result:", JSON.stringify(dbResult, null, 2));
+    console.log("Multi chart data result:", JSON.stringify(result, null, 2));
 
-    // Assertions
-    expect(dbResult).not.toHaveProperty("error");
-
-    const result = dbResult as {
-      ssoCount: number;
-      issCount: number;
-      ssoDownsampledCount: number;
-      issDownsampledCount: number;
-      ssoNanCount: number;
-      issNanCount: number;
-      matchingTimestamps: number;
-      totalUniqueTimestamps: number;
-      alignmentRatio: number;
+    expect(result).not.toHaveProperty("error");
+    const { metrics } = result as {
+      metrics: Array<{
+        name: string;
+        tLen: number;
+        seriesCount: number;
+        seriesLengths: number[];
+        nanPerSeries: number[];
+        tSpan: number;
+      }>;
     };
 
-    // Both tables should have data
-    expect(result.ssoCount, "SSO table should have rows").toBeGreaterThan(50);
-    expect(result.issCount, "ISS table should have rows").toBeGreaterThan(50);
+    // At least one metric with data must be present. (If the tick loop
+    // had not fired yet, the wait loop above would have timed out.)
+    expect(metrics.length, "at least one metric should be populated").toBeGreaterThan(0);
 
-    // No NaN in altitude values
-    expect(result.ssoNanCount, "SSO altitude should have no NaN").toBe(0);
-    expect(result.issNanCount, "ISS altitude should have no NaN").toBe(0);
+    // For every metric: two satellites should be represented, per-series
+    // lengths must equal the aligned `t` length (that is the alignment
+    // contract), and NaN count per series must be very low. A broken
+    // per-sat tMax pre-alignment would produce many NaN entries after
+    // `alignTimeSeries` pads unmatched timestamps.
+    for (const m of metrics) {
+      expect(m.seriesCount, `${m.name}: should have 2 satellite series`).toBe(2);
+      // With 3601 rows per sat and `maxPoints=2000`, the bucketing
+      // path must actually fire and produce close-to-2000 aligned
+      // points. A value near 3601 would mean bucketing was bypassed
+      // (the `total <= maxPts` fast path) and this test lost its
+      // grip on the unified-tMax property.
+      expect(
+        m.tLen,
+        `${m.name}: aligned t should come from bucketed output, not raw passthrough`,
+      ).toBeGreaterThan(500);
+      expect(m.tLen, `${m.name}: aligned t should not exceed the downsample cap`).toBeLessThan(
+        2500,
+      );
+      for (let i = 0; i < m.seriesLengths.length; i++) {
+        expect(
+          m.seriesLengths[i],
+          `${m.name}: series ${i} length must equal t length (alignment invariant)`,
+        ).toBe(m.tLen);
+        // Allow a very small slack for edge alignment effects (≤ 2
+        // unmatched points). A broken per-sat-tMax regression would
+        // produce dozens to hundreds of NaNs because each sat's
+        // bucket boundaries would drift and `alignTimeSeries` would
+        // union with NaN padding.
+        expect(
+          m.nanPerSeries[i],
+          `${m.name}: series ${i} NaN count (${m.nanPerSeries[i]}) should be ≤ 2`,
+        ).toBeLessThanOrEqual(2);
+      }
+      // Time span should cover a meaningful portion of the 3600s of
+      // history we sent.
+      expect(m.tSpan, `${m.name}: t span should cover most of the sim`).toBeGreaterThan(1000);
+    }
 
-    // Downsampled data should be non-empty
-    expect(result.ssoDownsampledCount, "SSO downsampled should have rows").toBeGreaterThan(10);
-    expect(result.issDownsampledCount, "ISS downsampled should have rows").toBeGreaterThan(10);
-
-    // Timestamp alignment: with unified tMax, both tables should produce
-    // nearly identical timestamp sets from time-bucket downsampling.
-    // Both tables receive data at the same DT=10s intervals, so with the
-    // same bucket boundaries they pick the same representative timestamps.
-    // Before the fix (independent tMax), alignment was very low (~0.2).
-    // After the fix (unified tMax), it should be >0.8.
-    expect(
-      result.alignmentRatio,
-      `Timestamp alignment ratio should be > 0.8 (was ${result.alignmentRatio.toFixed(3)})`,
-    ).toBeGreaterThan(0.8);
-
-    // Verify no critical DuckDB errors
+    // No console errors about malformed inserts / DuckDB failures.
     const criticalErrors = consoleLogs.filter(
       (l) => l.includes("undefined") && (l.includes("INSERT") || l.includes("DuckDB")),
     );

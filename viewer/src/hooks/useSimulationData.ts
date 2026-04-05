@@ -263,6 +263,17 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
   // normal timeRange view.
   const multiChartData: MultiChartDataMap | null = localMultiZoomData ?? multiChartDataRaw;
 
+  // Expose the latest deserialized multi-sat chart data for E2E tests
+  // (dev mode only). This is the post-`alignTimeSeries` output that the
+  // charts actually render, so tests can assert properties like
+  // NaN counts, per-series length consistency, and timestamp span
+  // without reaching into the Worker's DuckDB directly.
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      (window as unknown as Record<string, unknown>).__debug_multi_chart_data = multiChartData;
+    }
+  }, [multiChartData]);
+
   const chartsLoading = isMultiSatellite ? multiChartsLoading : singleChartsLoading;
 
   // --- Chart current time ---
