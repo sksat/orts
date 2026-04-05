@@ -159,6 +159,18 @@ const MOON_TARGET: &str = "301";
 const MOON_SAMPLE_STEP: &str = "1h";
 
 /// Dop853 propagation step size (same as apollo11).
+///
+/// Note: `Dop853::integrate` is a fixed-step driver (no adaptive error
+/// control). Dop853 is 8th-order accurate per step, so local truncation
+/// error is ~(dt/τ)^9 × orbital scale. For DRO at ~70,000 km from the
+/// Moon with τ ≈ 10 days and `dt = 10 s`, this is ~10⁻⁴⁶ — far below
+/// any other error source. An empirical test confirmed that reducing
+/// `dt` from 10 s to 1 s does **not** change the coast or chain
+/// verification results to 3-decimal km precision, so step-size
+/// truncation is not the bottleneck. The observed ~125 km coast error
+/// and ~1317 km chain error come from elsewhere (candidates: Meeus
+/// analytical Sun ephemeris, missing SRP force, TDB/UTC time-scale
+/// handling, Horizons reference-trajectory uncertainty).
 #[cfg(feature = "fetch-horizons")]
 const DT_SECONDS: f64 = 10.0;
 
