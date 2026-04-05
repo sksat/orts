@@ -13,6 +13,7 @@ utsuroi.workspace = true
 tobari.workspace = true
 log = "0.4.29"
 serde.workspace = true
+thiserror.workspace = true
 
 [features]
 fetch-weather = ["tobari/fetch"]

@@ -6,6 +6,7 @@ pub mod group;
 pub mod model;
 pub mod orbital;
 pub mod perturbations;
+pub mod plugin;
 pub mod record;
 pub mod setup;
 pub mod spacecraft;
