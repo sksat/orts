@@ -74,8 +74,11 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
   timeRangeRef.current = timeRange;
   const maxPointsRef = useRef(maxPoints);
   maxPointsRef.current = maxPoints;
-  const enabledRef = useRef(enabled);
-  enabledRef.current = enabled;
+  // `enabled` is depended on directly in the effect below so the worker
+  // can be started/stopped as the hook transitions between enabled and
+  // disabled states. The ref pattern used for the other props (refs for
+  // "capture-once" values) does not apply here because this is a
+  // lifecycle gate, not a drain-time read.
 
   // Track previous config to detect changes
   const prevTimeRange = useRef(timeRange);
@@ -84,7 +87,7 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
   const clientRef = useRef<ChartDataWorkerClient | null>(null);
 
   useEffect(() => {
-    if (!enabledRef.current) return;
+    if (!enabled) return;
 
     const client = new ChartDataWorkerClient();
     clientRef.current = client;
@@ -157,8 +160,11 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
       clientRef.current = null;
       if (externalClientRef) externalClientRef.current = null;
     };
+    // Everything else inside the effect is accessed via refs so their
+    // identity changes do not re-create the worker; `enabled` is the
+    // only lifecycle gate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [enabled]);
 
   return { data, isLoading };
 }

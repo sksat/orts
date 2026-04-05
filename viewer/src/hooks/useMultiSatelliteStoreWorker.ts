@@ -94,8 +94,9 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
   timeRangeRef.current = timeRange;
   const maxPointsRef = useRef(maxPoints);
   maxPointsRef.current = maxPoints;
-  const enabledRef = useRef(enabled);
-  enabledRef.current = enabled;
+  // `enabled` is depended on directly by the effect below (it is a
+  // lifecycle gate, not a drain-time read), so no ref snapshot is
+  // needed.
 
   const prevTimeRange = useRef(timeRange);
   const prevMaxPoints = useRef(maxPoints);
@@ -103,8 +104,15 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
 
   const clientRef = useRef<MultiChartDataWorkerClient | null>(null);
 
+  // Note: this effect depends on `enabled` so the worker is (re)started
+  // when the viewer transitions from single-sat / idle into multi-sat
+  // mode (e.g. connecting to a sim with 2+ satellites AFTER the hook
+  // has mounted). A previous version had `[]` deps and read
+  // `enabledRef.current` at mount time, which meant the worker never
+  // started unless `enabled` was already true at mount — breaking
+  // every `noAutoConnect` entry flow.
   useEffect(() => {
-    if (!enabledRef.current) return;
+    if (!enabled) return;
 
     // Dynamic import to avoid bundling the Worker when not used
     let cancelled = false;
@@ -193,8 +201,11 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
         externalClientRef.current = null;
       }
     };
+    // Everything else inside the effect is accessed via refs so their
+    // identity changes don't re-run this effect; only `enabled` gates
+    // (re)start of the worker lifecycle.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [enabled]);
 
   return { data, isLoading };
 }
