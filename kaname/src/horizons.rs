@@ -400,13 +400,21 @@ mod fetch_impl {
     }
 
     /// Render an Epoch as an ISO-8601 string Horizons understands:
-    /// `YYYY-MM-DD HH:MM:SS.sss` in the JD-inferred calendar (UTC-ish).
+    /// `YYYY-MM-DD HH:MM:SS` in the JD-inferred calendar (UTC-ish).
+    ///
+    /// Uses `DateTime`'s `Display` formatter so that sub-microsecond JD
+    /// round-off (≈50 µs at modern epochs) does not produce nonsense like
+    /// `HH:59:60` by carrying overflow into the next minute/hour/day.
+    /// Horizons accepts second precision; padding on either side of the
+    /// requested window handles the rounding.
     fn epoch_to_iso(epoch: &Epoch) -> String {
         let dt = epoch.to_datetime();
-        format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:06.3}",
-            dt.year, dt.month, dt.day, dt.hour, dt.min, dt.sec
-        )
+        // Reuse DateTime's Display (`YYYY-MM-DDTHH:MM:SSZ`) and strip the
+        // trailing `Z` + swap the `T` for a space to match the legacy
+        // Horizons textual format.
+        let iso = format!("{dt}");
+        // Expected format: "2022-11-26T00:00:00Z" (20 chars).
+        iso.replace('T', " ").trim_end_matches('Z').to_string()
     }
 
     /// Deterministic cache key derived from the query parameters.
@@ -433,6 +441,63 @@ mod fetch_impl {
             .join("orts")
             .join("horizons")
             .join(format!("{key}.csv")))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn epoch_to_iso_round_midnight() {
+            // A clean ISO epoch should render identically (modulo the space
+            // separator and dropped `Z`) — this is the common case used by
+            // the Artemis 1 DRO spike.
+            let epoch = Epoch::from_iso8601("2022-11-26T00:00:00Z").unwrap();
+            assert_eq!(epoch_to_iso(&epoch), "2022-11-26 00:00:00");
+        }
+
+        #[test]
+        fn epoch_to_iso_regression_second_overflow_carries_to_minute() {
+            // Regression guard for the bug that blocked the DRO spike:
+            // `DateTime::sec = 59.9999999` formatted with the old custom
+            // `{:06.3}` specifier became `60.000`, producing illegal
+            // strings like `HH:59:60` that Horizons rejected.
+            //
+            // We test `DateTime::Display` directly (not via an
+            // `Epoch` round-trip) so the test exercises the carry logic
+            // in isolation, regardless of how JD-to-DateTime conversion
+            // accumulates round-off on any particular input.
+            let dt = crate::epoch::DateTime::new(2024, 6, 15, 12, 59, 59.9999999);
+            let formatted = format!("{dt}");
+            // Must carry into the minute: 12:59:60 is illegal, the
+            // correct result is 13:00:00.
+            assert!(
+                !formatted.contains(":60"),
+                "DateTime::Display failed to carry sec=59.9999999: {formatted:?}"
+            );
+            // And must specifically normalise to the next minute/hour.
+            assert_eq!(formatted, "2024-06-15T13:00:00Z");
+
+            // And when fed through `epoch_to_iso`'s string-munging, the
+            // result is still carry-safe (the munging only strips the
+            // trailing `Z` and swaps `T` for a space — it does not
+            // reintroduce the carry bug).
+            let epoch = crate::epoch::Epoch::from_iso8601("2024-06-15T13:00:00Z").unwrap();
+            assert_eq!(epoch_to_iso(&epoch), "2024-06-15 13:00:00");
+        }
+
+        #[test]
+        fn epoch_to_iso_near_hour_boundary_after_add_seconds() {
+            // End-to-end regression: the `add_seconds(3600.0)` the spike
+            // uses for Moon-ephemeris padding must produce a cleanly
+            // formatted "HH:MM:00" string. JD ULP at 2022 epochs is ~50 µs
+            // which should round cleanly, but we assert the *exact* output
+            // so a future regression in either `add_seconds` or the
+            // formatter is caught loudly.
+            let base = Epoch::from_iso8601("2022-12-01T00:00:00Z").unwrap();
+            let one_hour_later = base.add_seconds(3600.0);
+            assert_eq!(epoch_to_iso(&one_hour_later), "2022-12-01 01:00:00");
+        }
     }
 }
 
