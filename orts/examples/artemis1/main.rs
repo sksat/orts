@@ -1,4 +1,5 @@
-//! Artemis 1 simulation example — currently a DRO feasibility spike.
+//! Artemis 1 simulation example — currently a multi-phase coast feasibility
+//! spike.
 //!
 //! ## Current status (Phase 1.5)
 //!
@@ -6,9 +7,9 @@
 //! mission reconstruction. Before committing to the full mission scaffold
 //! (25 days, ~15 burns, OPF/DRI/DRDI/RPF targeting), we need to answer one
 //! concrete question: can an Earth-centric `Dop853` integrator with a
-//! `J2 + Sun + HorizonsMoon` force model propagate a Distant Retrograde
-//! Orbit (DRO) for several days to within acceptable accuracy of the real
-//! Orion trajectory?
+//! `J2/J3/J4 + Sun + HorizonsMoon` force model propagate Orion's three
+//! major coast phases to within acceptable accuracy of the real Horizons
+//! trajectory?
 //!
 //! The DRO regime is where this architecture is most stressed: the
 //! spacecraft orbits the Moon at ~70,000 km while Earth-centric coordinates
@@ -18,27 +19,55 @@
 //! based on, only spends ~2.5 days in low lunar orbit and already documents
 //! degraded accuracy near the Moon.
 //!
+//! ## Coast phases exercised
+//!
+//! | Phase    | Window (UTC, round epochs)         | Regime                                |
+//! |----------|------------------------------------|---------------------------------------|
+//! | Outbound | 2022-11-17 00:00 → 2022-11-20 00:00 | Trans-lunar cruise, far from Moon     |
+//! | DRO      | 2022-11-26 00:00 → 2022-12-01 00:00 | Retrograde loop at ~70,000 km lunar   |
+//! | Return   | 2022-12-06 00:00 → 2022-12-10 00:00 | Trans-Earth cruise, moving away       |
+//!
+//! Each window is chosen to sit **between major burns** so the result
+//! isolates integrator-plus-ephemeris accuracy from the big propulsive
+//! events. Rough Artemis 1 burn epochs for context:
+//!
+//! - TLI: 2022-11-16 ~08:24 UTC
+//! - OPF (Outbound Powered Flyby): 2022-11-21 ~12:44 UTC
+//! - DRI (DRO Insertion): 2022-11-25 ~22:52 UTC
+//! - DRDI (DRO Departure): 2022-12-01 ~21:27 UTC
+//! - RPF (Return Powered Flyby): 2022-12-05 ~16:42 UTC
+//! - EI (Entry Interface): 2022-12-11 ~17:20 UTC
+//!
+//! **Caveat**: small (<1 m/s) trajectory-correction burns (OTC-2..4 during
+//! outbound, RTC-1..n during return) may fall inside the Outbound and
+//! Return windows. Their integrated effect on position is O(10 km) over a
+//! few days — large enough to see in the error budget but far below the
+//! 1000 km PASS threshold, so the overall judgment is unaffected. The DRO
+//! window is clean (no scheduled station-keeping during Artemis 1's 6-day
+//! retrograde loop).
+//!
 //! ## What this example does
 //!
-//! 1. Fetches the real Orion spacecraft state vector from JPL Horizons
-//!    (target `-1023`, center `500@399` Earth geocenter) at the DRO
-//!    insertion epoch and the DRO departure epoch.
-//! 2. Fetches the Moon ephemeris (target `301`) over the ~5-day window at
-//!    1-hour spacing to drive the third-body force model.
-//! 3. Propagates forward from the DRI state using `Dop853` with
-//!    `dt = 10 s`, `J2_EARTH + J3_EARTH + J4_EARTH`, Sun third-body
-//!    (Meeus), and Moon third-body (Horizons-interpolated).
-//! 4. Compares the propagated final state to the Horizons DRDI reference.
-//! 5. Reports the position error envelope and issues a judgment about
-//!    whether to proceed with Earth-centric propagation for the full
-//!    Artemis 1 mission.
+//! 1. Fetches a single Moon ephemeris (target `301`) from JPL Horizons that
+//!    covers all three coast windows, at 1-hour spacing.
+//! 2. For each coast window, fetches the real Orion state vector (target
+//!    `-1023`) at both endpoints.
+//! 3. Propagates the start state forward to the end epoch using `Dop853`
+//!    with `dt = 10 s`, `J2/J3/J4`, Sun (Meeus), Moon (Horizons-interpolated).
+//! 4. Compares the propagated final state to the Horizons reference.
+//! 5. Asserts that no Horizons-Moon table lookups fell back to Meeus — a
+//!    silent fallback would hide the whole point of this spike.
+//! 6. Prints a summary table with each window's error envelope and a
+//!    overall pass/conditional/fail judgment.
 //!
-//! ## Judgment criteria (see plan in `.claude/plans/zippy-pondering-pearl.md`)
+//! ## Judgment criteria
 //!
 //! - `< 1000 km`: **Pass** — proceed with Earth-centric architecture.
 //! - `1000-10000 km`: **Conditional** — re-run with tighter tolerances.
 //! - `>= 10000 km`: **Fail** — switch to Moon-centric SOI switching,
-//!   higher-order integrator, or reduce scope (drop DRO phase).
+//!   higher-order integrator, or reduce scope (drop the failing phase).
+//!
+//! The overall judgment is the worst of the three phases.
 //!
 //! ## Running
 //!
@@ -73,7 +102,7 @@ use orts::perturbations::ThirdBodyGravity;
 use utsuroi::{Dop853, Integrator};
 
 // ============================================================
-// Mission constants (Artemis 1, NASA Artemis 1 press kit)
+// Mission constants
 // ============================================================
 
 /// Orion spacecraft JPL Horizons target ID.
@@ -88,24 +117,6 @@ const EARTH_GEOCENTER: &str = "500@399";
 #[cfg(feature = "fetch-horizons")]
 const MOON_TARGET: &str = "301";
 
-/// DRO Insertion epoch (DRI, 2022-11-25 22:52 UTC — post-burn).
-///
-/// Source: NASA Artemis 1 DRO insertion burn was executed at roughly
-/// this time; for a feasibility spike we use a round epoch that falls
-/// cleanly within the DRO coast phase.
-#[cfg(feature = "fetch-horizons")]
-const DRI_EPOCH_ISO: &str = "2022-11-26T00:00:00Z";
-
-/// DRO Departure epoch approximation (real DRDI was 2022-12-01 21:27 UTC).
-///
-/// Target for the propagation comparison. We use `00:00:00` rather than the
-/// exact departure time to work with clean round epochs; the 5-day coast
-/// window this produces is enough to stress-test the architecture. The
-/// eventual full-mission example will extend to the real 2022-12-01T21:27Z
-/// departure and include the RPF powered flyby that follows.
-#[cfg(feature = "fetch-horizons")]
-const DRDI_EPOCH_ISO: &str = "2022-12-01T00:00:00Z";
-
 /// Horizons sample spacing for the Moon ephemeris table.
 #[cfg(feature = "fetch-horizons")]
 const MOON_SAMPLE_STEP: &str = "1h";
@@ -113,6 +124,85 @@ const MOON_SAMPLE_STEP: &str = "1h";
 /// Dop853 propagation step size (same as apollo11).
 #[cfg(feature = "fetch-horizons")]
 const DT_SECONDS: f64 = 10.0;
+
+/// Moon ephemeris window covering all three coast phases, padded ±1 h for
+/// the Hermite interpolator's bracketing requirement.
+#[cfg(feature = "fetch-horizons")]
+const MOON_WINDOW_START_ISO: &str = "2022-11-16T23:00:00Z";
+#[cfg(feature = "fetch-horizons")]
+const MOON_WINDOW_STOP_ISO: &str = "2022-12-11T01:00:00Z";
+
+/// Coast phases to verify. Each is a `(label, start_iso, end_iso)` tuple,
+/// deliberately chosen to sit between burns so the result isolates coast
+/// accuracy from burn-application accuracy.
+#[cfg(feature = "fetch-horizons")]
+const COAST_PHASES: &[(&str, &str, &str)] = &[
+    (
+        "Outbound (trans-lunar)",
+        "2022-11-17T00:00:00Z",
+        "2022-11-20T00:00:00Z",
+    ),
+    (
+        "DRO (retrograde loop)",
+        "2022-11-26T00:00:00Z",
+        "2022-12-01T00:00:00Z",
+    ),
+    (
+        "Return (trans-Earth)",
+        "2022-12-06T00:00:00Z",
+        "2022-12-10T00:00:00Z",
+    ),
+];
+
+/// Thresholds for the per-phase judgment (km of final position error).
+#[cfg(feature = "fetch-horizons")]
+const THRESHOLD_PASS_KM: f64 = 1000.0;
+#[cfg(feature = "fetch-horizons")]
+const THRESHOLD_CONDITIONAL_KM: f64 = 10_000.0;
+
+// ============================================================
+// Phase result (used by the summary table)
+// ============================================================
+
+#[cfg(feature = "fetch-horizons")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Judgment {
+    Pass,
+    Conditional,
+    Fail,
+}
+
+#[cfg(feature = "fetch-horizons")]
+impl Judgment {
+    fn from_error_km(position_error_km: f64) -> Self {
+        if position_error_km < THRESHOLD_PASS_KM {
+            Self::Pass
+        } else if position_error_km < THRESHOLD_CONDITIONAL_KM {
+            Self::Conditional
+        } else {
+            Self::Fail
+        }
+    }
+
+    fn glyph(self) -> &'static str {
+        match self {
+            Self::Pass => "✓ PASS",
+            Self::Conditional => "? COND",
+            Self::Fail => "✗ FAIL",
+        }
+    }
+}
+
+#[cfg(feature = "fetch-horizons")]
+struct PhaseResult {
+    label: &'static str,
+    duration_days: f64,
+    position_error_km: f64,
+    velocity_error_kms: f64,
+    min_moon_distance_km: f64,
+    max_earth_distance_km: f64,
+    judgment: Judgment,
+}
 
 // ============================================================
 // Main
@@ -135,43 +225,25 @@ fn main() {
 #[cfg(feature = "fetch-horizons")]
 fn main() {
     println!("═══════════════════════════════════════════════════════════════════");
-    println!("Artemis 1 DRO Feasibility Spike");
+    println!("Artemis 1 Coast Feasibility Spike");
     println!("═══════════════════════════════════════════════════════════════════");
     println!();
     println!("Goal: determine whether an Earth-centric Dop853 integrator with");
-    println!("J2/J3/J4 + Sun + Horizons-Moon can propagate a multi-day DRO coast");
-    println!("to within 1000 km of the real Orion trajectory.");
+    println!("J2/J3/J4 + Sun + Horizons-Moon can propagate Orion's three coast");
+    println!("phases (outbound, DRO, return) to within 1000 km of Horizons.");
     println!();
 
-    // ----- Parse epoch bounds -----
-    let dri_epoch = Epoch::from_iso8601(DRI_EPOCH_ISO).expect("valid DRI epoch");
-    let drdi_epoch = Epoch::from_iso8601(DRDI_EPOCH_ISO).expect("valid DRDI epoch");
-    let duration_seconds = (drdi_epoch.jd() - dri_epoch.jd()) * 86_400.0;
-    println!(
-        "Propagation window: {DRI_EPOCH_ISO} → {DRDI_EPOCH_ISO}  ({:.2} days)",
-        duration_seconds / 86_400.0
-    );
-    println!();
-
-    // ----- Fetch Orion reference at DRI and DRDI -----
-    println!("[1/3] Fetching Orion reference state vectors from Horizons...");
-    let orion_dri = fetch_orion_sample(&dri_epoch).expect("fetch Orion at DRI");
-    let orion_drdi = fetch_orion_sample(&drdi_epoch).expect("fetch Orion at DRDI");
-    print_state("  DRI initial", &dri_epoch, &orion_dri.0, &orion_dri.1);
-    print_state("  DRDI target", &drdi_epoch, &orion_drdi.0, &orion_drdi.1);
-    println!();
-
-    // ----- Fetch Moon ephemeris over the window -----
-    println!("[2/3] Fetching Moon ephemeris ({MOON_SAMPLE_STEP} spacing) from Horizons...");
-    // Horizons requires stop > start + step, so pad the window by one step on
-    // each side to give the Hermite interpolator a clean interval.
-    let moon_start = dri_epoch.add_seconds(-3600.0);
-    let moon_stop = drdi_epoch.add_seconds(3600.0);
+    // ----- Fetch one Moon ephemeris covering the whole mission -----
+    println!("[1/3] Fetching Moon ephemeris ({MOON_SAMPLE_STEP} spacing) from Horizons...");
+    let moon_window_start =
+        Epoch::from_iso8601(MOON_WINDOW_START_ISO).expect("valid Moon window start");
+    let moon_window_stop =
+        Epoch::from_iso8601(MOON_WINDOW_STOP_ISO).expect("valid Moon window stop");
     let moon_table = HorizonsTable::fetch_vector_table(
         MOON_TARGET,
         EARTH_GEOCENTER,
-        &moon_start,
-        &moon_stop,
+        &moon_window_start,
+        &moon_window_stop,
         MOON_SAMPLE_STEP,
         None,
     )
@@ -179,26 +251,72 @@ fn main() {
     println!(
         "  {} samples over {} → {}",
         moon_table.samples().len(),
-        iso_short(&moon_start),
-        iso_short(&moon_stop),
+        iso_short(&moon_window_start),
+        iso_short(&moon_window_stop),
     );
-    // Keep a concretely-typed handle so we can read `fallback_count` after
-    // propagation. The dynamically-typed `Arc<dyn MoonEphemeris>` is what
-    // the force model and helpers consume.
+    // Concretely-typed handle so `fallback_count` is readable after each
+    // phase; the dynamically-typed handle is what the force model consumes.
     let moon_concrete: Arc<HorizonsMoonEphemeris> =
         Arc::new(HorizonsMoonEphemeris::from_table(moon_table));
     let moon_ephem: Arc<dyn MoonEphemeris> = moon_concrete.clone();
     println!();
 
-    // ----- Build force model and propagate -----
-    println!(
-        "[3/3] Propagating DRI state for {:.2} days...",
-        duration_seconds / 86_400.0
-    );
-    let system = build_dro_system(dri_epoch, &moon_ephem);
-    let initial_state = OrbitalState::new(orion_dri.0, orion_dri.1);
+    // ----- Fetch Orion state vectors at every phase endpoint -----
+    println!("[2/3] Fetching Orion reference state vectors at each phase endpoint...");
+    println!();
 
-    // Track closest Moon approach and maximum Earth distance during the coast.
+    // ----- Verify each coast phase -----
+    println!("[3/3] Propagating each coast phase and comparing to Horizons...");
+    println!();
+
+    let mut results: Vec<PhaseResult> = Vec::new();
+    for (label, start_iso, end_iso) in COAST_PHASES {
+        let result = verify_coast(label, start_iso, end_iso, &moon_ephem, &moon_concrete);
+        results.push(result);
+        println!();
+    }
+
+    // ----- Summary table -----
+    print_summary(&results);
+}
+
+// ============================================================
+// Coast verification
+// ============================================================
+
+/// Propagate a single coast phase from `start_iso` to `end_iso`, compare
+/// to the Horizons reference at `end_iso`, and return a `PhaseResult`.
+///
+/// `moon_concrete` is the same underlying ephemeris as `moon_ephem`; it's
+/// passed separately so we can read `fallback_count` after integration to
+/// detect silent drop-through to Meeus.
+#[cfg(feature = "fetch-horizons")]
+fn verify_coast(
+    label: &'static str,
+    start_iso: &str,
+    end_iso: &str,
+    moon_ephem: &Arc<dyn MoonEphemeris>,
+    moon_concrete: &Arc<HorizonsMoonEphemeris>,
+) -> PhaseResult {
+    println!("── {label} ──");
+    println!("  window: {start_iso}  →  {end_iso}");
+
+    let start_epoch = Epoch::from_iso8601(start_iso).expect("valid phase start");
+    let end_epoch = Epoch::from_iso8601(end_iso).expect("valid phase end");
+    let duration_seconds = (end_epoch.jd() - start_epoch.jd()) * 86_400.0;
+    let duration_days = duration_seconds / 86_400.0;
+
+    let (start_pos, start_vel) =
+        fetch_orion_sample(&start_epoch).expect("fetch Orion at phase start");
+    let (end_pos, end_vel) = fetch_orion_sample(&end_epoch).expect("fetch Orion at phase end");
+
+    // Record the fallback count before this phase so the post-propagation
+    // delta is attributable to this call alone (not the whole mission).
+    let fallbacks_before = moon_concrete.fallback_count();
+
+    let system = build_artemis_system(start_epoch, moon_ephem);
+    let initial_state = OrbitalState::new(start_pos, start_vel);
+
     let mut min_moon_distance = f64::MAX;
     let mut max_earth_distance: f64 = 0.0;
     let final_state = Dop853.integrate(
@@ -208,7 +326,7 @@ fn main() {
         duration_seconds,
         DT_SECONDS,
         |t, state| {
-            let epoch = dri_epoch.add_seconds(t);
+            let epoch = start_epoch.add_seconds(t);
             let moon_pos = moon_ephem.position_eci(&epoch);
             let moon_distance = (state.position() - moon_pos).magnitude();
             if moon_distance < min_moon_distance {
@@ -220,64 +338,101 @@ fn main() {
             }
         },
     );
-    println!("  closest Moon approach: {:10.1} km", min_moon_distance);
-    println!("  max Earth distance:    {:10.1} km", max_earth_distance);
 
-    // Sanity check: the propagation should stay inside the Horizons Moon
-    // table range. Any out-of-range query silently falls back to the Meeus
-    // analytical model (`MoonEphemeris` trait doc), which would hide the
-    // whole point of this spike. Assert the counter is still zero.
-    let fallbacks = moon_concrete.fallback_count();
-    if fallbacks > 0 {
+    // Fallback sanity check — this phase must not have silently dropped
+    // through to Meeus. Any nonzero delta means the Moon ephemeris window
+    // was too narrow for the propagation.
+    let fallbacks_after = moon_concrete.fallback_count();
+    let fallback_delta = fallbacks_after - fallbacks_before;
+    if fallback_delta > 0 {
         eprintln!(
-            "  ⚠  Moon ephemeris fell back to Meeus {fallbacks} time(s) — \
-             spike result is contaminated by analytical Moon. Widen the \
-             Horizons table padding and rerun."
+            "  ⚠  Moon ephemeris fell back to Meeus {fallback_delta} time(s) during {label} \
+             — result is contaminated by analytical Moon. Widen MOON_WINDOW_* and rerun."
         );
         std::process::exit(1);
     }
-    println!("  Horizons Moon fallbacks: 0 (table fully covered the propagation)");
-    println!();
 
-    // ----- Compare against Horizons reference -----
-    let position_error = (final_state.position() - orion_drdi.0).magnitude();
-    let velocity_error = (final_state.velocity() - orion_drdi.1).magnitude();
+    let position_error = (final_state.position() - end_pos).magnitude();
+    let velocity_error = (final_state.velocity() - end_vel).magnitude();
+    let judgment = Judgment::from_error_km(position_error);
 
-    println!("═══════════════════════════════════════════════════════════════════");
-    println!("Results");
-    println!("═══════════════════════════════════════════════════════════════════");
-    print_state(
-        "Propagated (DRDI)",
-        &drdi_epoch,
-        final_state.position(),
-        final_state.velocity(),
+    println!(
+        "  duration: {:.2} days    samples: dt = {:.0}s",
+        duration_days, DT_SECONDS
     );
-    print_state(
-        "Horizons   (DRDI)",
-        &drdi_epoch,
-        &orion_drdi.0,
-        &orion_drdi.1,
+    println!(
+        "  closest Moon approach: {:10.1} km    max Earth distance: {:10.1} km",
+        min_moon_distance, max_earth_distance
     );
-    println!();
-    println!("Position error: {:12.3} km", position_error);
-    println!("Velocity error: {:12.6} km/s", velocity_error);
+    println!(
+        "  position error:  {:10.3} km         velocity error: {:.6} km/s   {}",
+        position_error,
+        velocity_error,
+        judgment.glyph()
+    );
+
+    PhaseResult {
+        label,
+        duration_days,
+        position_error_km: position_error,
+        velocity_error_kms: velocity_error,
+        min_moon_distance_km: min_moon_distance,
+        max_earth_distance_km: max_earth_distance,
+        judgment,
+    }
+}
+
+#[cfg(feature = "fetch-horizons")]
+fn print_summary(results: &[PhaseResult]) {
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("Summary");
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!(
+        "{:<24}  {:>8}  {:>12}  {:>12}  {:>11}  {:>11}  {}",
+        "Phase", "Days", "Pos err km", "Vel err km/s", "Min moon km", "Max earth km", "Judgment"
+    );
+    println!("{}", "-".repeat(100));
+    for r in results {
+        println!(
+            "{:<24}  {:>8.2}  {:>12.3}  {:>12.6}  {:>11.0}  {:>11.0}  {}",
+            r.label,
+            r.duration_days,
+            r.position_error_km,
+            r.velocity_error_kms,
+            r.min_moon_distance_km,
+            r.max_earth_distance_km,
+            r.judgment.glyph(),
+        );
+    }
     println!();
 
-    // ----- Judgment -----
-    print!("Judgment: ");
-    if position_error < 1000.0 {
-        println!("✓ PASS  (error < 1000 km — proceed with Earth-centric architecture)");
-    } else if position_error < 10_000.0 {
-        println!(
-            "? CONDITIONAL  ({:.0} km — retry with tighter tolerances / investigate)",
-            position_error
-        );
-    } else {
-        println!(
-            "✗ FAIL  ({:.0} km — architecture change required: Moon-centric SOI switch, \
-             higher-order integrator, or scope reduction)",
-            position_error
-        );
+    // Overall judgment = worst per-phase.
+    let overall = results
+        .iter()
+        .map(|r| r.judgment)
+        .max_by_key(|j| match j {
+            Judgment::Pass => 0,
+            Judgment::Conditional => 1,
+            Judgment::Fail => 2,
+        })
+        .unwrap_or(Judgment::Pass);
+
+    print!("Overall judgment: ");
+    match overall {
+        Judgment::Pass => println!(
+            "✓ PASS — all coast phases under {THRESHOLD_PASS_KM:.0} km. \
+             Proceed with Earth-centric architecture for the full Artemis 1 example."
+        ),
+        Judgment::Conditional => println!(
+            "? CONDITIONAL — at least one phase between {THRESHOLD_PASS_KM:.0} km and \
+             {THRESHOLD_CONDITIONAL_KM:.0} km. Try tighter integrator tolerances before \
+             proceeding."
+        ),
+        Judgment::Fail => println!(
+            "✗ FAIL — at least one phase exceeds {THRESHOLD_CONDITIONAL_KM:.0} km. \
+             Architecture change required (SOI switching, higher-order integrator, or \
+             scope reduction)."
+        ),
     }
     println!();
 }
@@ -340,7 +495,7 @@ fn fetch_orion_sample(
 }
 
 #[cfg(feature = "fetch-horizons")]
-fn build_dro_system(epoch: Epoch, moon_ephem: &Arc<dyn MoonEphemeris>) -> OrbitalSystem {
+fn build_artemis_system(epoch: Epoch, moon_ephem: &Arc<dyn MoonEphemeris>) -> OrbitalSystem {
     use kaname::body::KnownBody;
     use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH};
 
@@ -362,30 +517,6 @@ fn build_dro_system(epoch: Epoch, moon_ephem: &Arc<dyn MoonEphemeris>) -> Orbita
         moon_ephem,
     )))
     .with_body_radius(props.radius)
-}
-
-#[cfg(feature = "fetch-horizons")]
-fn print_state(
-    label: &str,
-    epoch: &Epoch,
-    position: &nalgebra::Vector3<f64>,
-    velocity: &nalgebra::Vector3<f64>,
-) {
-    println!("  {} @ {}", label, iso_short(epoch));
-    println!(
-        "    r = [{:12.3}, {:12.3}, {:12.3}] km    |r| = {:.3} km",
-        position.x,
-        position.y,
-        position.z,
-        position.magnitude()
-    );
-    println!(
-        "    v = [{:12.6}, {:12.6}, {:12.6}] km/s  |v| = {:.6} km/s",
-        velocity.x,
-        velocity.y,
-        velocity.z,
-        velocity.magnitude()
-    );
 }
 
 #[cfg(feature = "fetch-horizons")]
