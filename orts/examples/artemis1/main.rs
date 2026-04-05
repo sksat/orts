@@ -1610,8 +1610,8 @@ fn print_summary(results: &[PhaseResult]) {
 fn fetch_orion_sample(
     epoch: &Epoch,
 ) -> Result<(nalgebra::Vector3<f64>, nalgebra::Vector3<f64>), kaname::horizons::HorizonsError> {
-    // Horizons requires start != stop; request a 1-minute bracket and pick
-    // the sample closest to the requested epoch.
+    // Horizons requires start != stop; request a 1-minute bracket so
+    // Hermite interpolation below has two samples to work with.
     let start = epoch.add_seconds(-30.0);
     let stop = epoch.add_seconds(30.0);
     let table = HorizonsTable::fetch_vector_table(
@@ -1623,38 +1623,110 @@ fn fetch_orion_sample(
         None,
     )?;
 
-    // `parse_csv` already errors out on an empty ephemeris block, so this
-    // branch is defensive-only.
-    let samples = table.samples();
-    if samples.is_empty() {
-        return Err(kaname::horizons::HorizonsError::NoData);
-    }
-
-    // Pick the sample whose JD is closest to the requested epoch. For round
-    // epochs Horizons snaps to a step boundary and the first sample is at
-    // the requested time; for non-round epochs the nearest-sample picks the
-    // best of the ≤ 2 candidates.
-    let sample = samples
-        .iter()
-        .min_by(|a, b| {
-            let da = (a.epoch.jd() - epoch.jd()).abs();
-            let db = (b.epoch.jd() - epoch.jd()).abs();
-            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .expect("non-empty samples");
-
-    // Alignment assertion: fail loudly if Horizons returned a sample outside
-    // the ±30 s window we requested. This would indicate that step-boundary
-    // snapping is more aggressive than expected or the query parameters are
-    // being misinterpreted.
-    let dt_seconds = (sample.epoch.jd() - epoch.jd()).abs() * 86_400.0;
-    assert!(
-        dt_seconds < 60.0,
-        "Horizons sample at JD {:.9} is {:.1} s away from requested epoch JD {:.9}",
-        sample.epoch.jd(),
-        dt_seconds,
-        epoch.jd(),
+    // Use Hermite interpolation to get the state EXACTLY at `epoch`.
+    //
+    // ## Why not `iter().min_by` nearest-neighbor?
+    //
+    // The previous implementation picked the sample whose JD was closest
+    // to `epoch.jd()` and returned it verbatim. That looked reasonable
+    // but had a subtle failure mode:
+    //
+    //   * We request `epoch ± 30 s` with `step=1m`. For this 1-minute
+    //     range Horizons snaps sampling to the window boundaries and
+    //     returns exactly two samples at `epoch − 30 s` and
+    //     `epoch + 30 s` — with **no** sample at the exact epoch.
+    //   * Both candidates are 30 s away from `epoch`. In floating-point
+    //     the two `|Δt|` values are either bitwise equal (a true tie) or
+    //     differ by a sub-ULP asymmetry. Either way the observed result
+    //     is deterministic: the chronologically earlier sample is picked.
+    //       - On a true tie, [`Iterator::min_by`] has the documented
+    //         contract *"If several elements are equally minimum, the
+    //         first element is returned"* — and for a `HorizonsTable`
+    //         whose samples are sorted ascending by epoch (enforced by
+    //         `parse_csv`), "first" means the chronologically earlier
+    //         sample.
+    //       - On a sub-ULP asymmetry, the direction still favours the
+    //         earlier sample because Horizons emits the `epoch − 30 s`
+    //         row first and the JD text precision biases the comparison
+    //         consistently.
+    //   * Result: every round-minute fetch returned a state that was
+    //     **always 30 s earlier** in physical time than what the caller
+    //     asked for — a systematic bias, not a random jitter. This was
+    //     verified empirically with debug prints: every single call to
+    //     this function during a full spike run reported a −30.000 s
+    //     offset between the requested epoch and the picked sample.
+    //
+    // That 30 s offset is invisible to pure coast propagation (it just
+    // shifts everything by 30 s in parallel), but it interacts with
+    // Method B burn verification: the impulsive Δv is applied at integer
+    // t = pre_to_mid_seconds after a state whose physical time is 30 s
+    // older than the label suggests, so the impulse lands 30 s before
+    // the `mid_epoch` label in physical time. For a burn with
+    // |Δv| ≈ 110 m/s the resulting post-burn position error is
+    // |Δv| × 30 s ≈ 3 km per burn — on the right order of magnitude
+    // for the 7.4 km / 20.4 km DRI/DRDI residuals observed before this
+    // fix (the rest of those residuals is the burn-profile-asymmetry
+    // floor discussed in `MANEUVERS` and the impulsive-at-midpoint
+    // approximation error).
+    //
+    // ## Why interpolate is correct
+    //
+    // `HorizonsTable::interpolate` does a cubic Hermite interpolation
+    // using position **and** velocity at the two bracketing samples.
+    // For smooth ballistic motion (our case — Orion in coast phases near
+    // the DRI/DRDI burn windows) the error is O(h^4) where h is the
+    // sample spacing; with h = 60 s this is numerically exact for
+    // kilometre-scale verification. The interpolated state is the state
+    // **at exactly the requested epoch**, eliminating the 30 s bias.
+    //
+    // ## Observed effect
+    //
+    // Running `cargo run --release --example artemis1 -p orts
+    // --features fetch-horizons` with `TIME_TYPE=TDB` and a clean cache:
+    //
+    //   |                    | nearest-neighbor | interpolate |
+    //   | DRI burn error     |       7.432 km   |   3.965 km  |
+    //   | DRDI burn error    |      20.440 km   |  16.288 km  |
+    //   | 6-day chain error  |    1266.657 km   | 1196.257 km |
+    //   | Return coast (4d)  |     115.150 km   | 105.873 km  |
+    //
+    // DRI / DRDI improve as expected (≈ |Δv| × 30 s removed from the
+    // burn floor). `Return coast` also improves because the same 30 s
+    // bias on pre/post was nudging the pure-coast drift. `DRO coast`
+    // **regresses** slightly (96 → 125 km, still within the ≤ 1000 km
+    // `THRESHOLD_PASS_KM` bucket so the Summary Judgment is unchanged);
+    // the 30 s bias was accidentally masking a separate DRO-phase error
+    // source that is now exposed. Investigating that is future work —
+    // the bias itself was wrong and needed removing regardless.
+    //
+    // A panic from `HorizonsTable::interpolate` is impossible here
+    // because the samples are guaranteed to bracket `epoch` — we
+    // explicitly fetched a ±30 s window around it, and `parse_csv`
+    // guarantees non-empty ascending samples on the `Ok` path. The
+    // `debug_assert!` below gives an additional loud signal in case
+    // Horizons' response shape ever degenerates to a single sample.
+    debug_assert!(
+        table.len() >= 2,
+        "Horizons returned {} sample(s) for a 1-minute window; \
+         Hermite interpolation requires ≥ 2 samples",
+        table.len()
     );
+    let sample = table.interpolate(epoch).unwrap_or_else(|| {
+        let (first_jd, last_jd) = table
+            .date_range()
+            .map(|(a, b)| (a.jd(), b.jd()))
+            .unwrap_or((f64::NAN, f64::NAN));
+        panic!(
+            "HorizonsTable::interpolate returned None: requested JD {:.9} ({}), \
+             table range [{:.9}, {:.9}] ({} samples). This should be impossible \
+             for a ±30 s fetch window — Horizons response shape may have changed.",
+            epoch.jd(),
+            iso_short(epoch),
+            first_jd,
+            last_jd,
+            table.len(),
+        )
+    });
 
     Ok((sample.position, sample.velocity))
 }
