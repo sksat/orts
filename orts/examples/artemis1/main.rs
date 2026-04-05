@@ -48,12 +48,16 @@
 //!
 //! ## What this example does
 //!
-//! 1. Fetches a single Moon ephemeris (target `301`) from JPL Horizons that
-//!    covers all three coast windows, at 1-hour spacing.
+//! 1. Fetches a single Moon ephemeris (target `301`) and a single Sun
+//!    ephemeris (target `10`) from JPL Horizons, both centred on Earth
+//!    geocentre and sampled at 1-hour spacing over the full mission
+//!    window. Both are used as tabulated sources for the third-body
+//!    force model, replacing kaname's Meeus analytical models.
 //! 2. For each coast window, fetches the real Orion state vector (target
 //!    `-1023`) at both endpoints.
 //! 3. Propagates the start state forward to the end epoch using `Dop853`
-//!    with `dt = 10 s`, `J2/J3/J4`, Sun (Meeus), Moon (Horizons-interpolated).
+//!    with `dt = 10 s`, `J2/J3/J4`, Sun (Horizons-interpolated),
+//!    Moon (Horizons-interpolated).
 //! 4. Compares the propagated final state to the Horizons reference.
 //! 5. Asserts that no Horizons-Moon table lookups fell back to Meeus — a
 //!    silent fallback would hide the whole point of this spike.
@@ -106,6 +110,97 @@
 //!
 //! The overall judgment is the worst of the three phases.
 //!
+//! ## Error budget history
+//!
+//! Each row in the table below records the observed position error for a
+//! given verification case after a specific iteration of the spike. The
+//! goal is to track, with honest numbers, what each change actually bought
+//! us — and what remains unaccounted-for — so future iterations can decide
+//! where to spend effort next.
+//!
+//! | Case                     | Baseline (Meeus Sun/Moon)       | + Horizons Moon (commit d465b9c) | + dt = 1 s test (commit 6460bab) | + Horizons Sun (this iter) |
+//! |--------------------------|----------------------------------|----------------------------------|----------------------------------|----------------------------|
+//! | Outbound coast (3 d)     | see apollo11 ~4 km precedent    | ≈ 36.5 km                        | 36.5 km (no change)              | **34.0 km** (−2.5 km)      |
+//! | **DRO coast (5 d)**      | would diverge / not attempted   | 125.4 km                         | 125.4 km (no change)             | **96.2 km** (−29 km, −23 %)|
+//! | Return coast (4 d)       | not attempted                    | 119.4 km                         | 119.4 km (no change)             | **115.2 km** (−4.2 km)     |
+//! | DRI single burn (25 min) | —                                | 7.43 km                          | 7.43 km (no change)              | 7.43 km (no change)        |
+//! | DRDI single burn (24 min)| —                                | 20.44 km                         | 20.44 km (no change)             | 20.44 km (no change)       |
+//! | **Chain DRI → DRDI (6 d)**| —                               | 1317.2 km                        | 1317.2 km (no change)            | **1266.7 km** (−50 km)     |
+//!
+//! ### What each iteration taught us
+//!
+//! **d465b9c — Moon: Meeus → Horizons** (≈ 4,000–15,000 km Meeus distance
+//! error → tabulated ground truth with ~m level Hermite interp error).
+//! Got the baseline architecture off the ground: without this, the DRO
+//! phase would have diverged — the Meeus Moon is too coarse for the 6-day
+//! coast at ~70,000 km lunar distance where third-body tidal terms are
+//! dominant. This switch is what made the feasibility spike viable at all.
+//!
+//! **6460bab — dt = 1 s empirical test** (8th-order Dop853, expected per-
+//! step truncation ≈ `(dt/τ)^9` ≈ 10⁻⁴⁶ for DRO dynamics). **Negative
+//! result**: halving dt changes coast / chain errors by less than 1 m.
+//! Step-size truncation is many orders of magnitude below any other error
+//! source in the stack — tightening the integrator gains nothing. This
+//! steered the next iteration away from Dop853 tuning and toward missing
+//! physics.
+//!
+//! **Multi-impulse burn application (abandoned)**: tried splitting each
+//! corrected Δv into `n=10` sub-impulses uniformly spread across the real
+//! burn duration, expecting to reduce the ~7 km impulsive-midpoint
+//! residual. **Mathematical equivalence**: for symmetric uniform impulse
+//! distribution, the trajectory is identical to a single impulse at the
+//! midpoint to first order in Δv — verified empirically, the two
+//! approaches differed by 12 cm over the 1317 km chain. The 7 km residual
+//! comes from the real burn's thrust-profile asymmetry (ramp up / ramp
+//! down), which uniform multi-impulse cannot capture. Proper finite-burn
+//! modelling would require modelling the thrust as a continuous force in
+//! the integrator's force model. Deferred to a future iteration.
+//!
+//! **This iteration — Sun: Meeus → Horizons** (~10 km Meeus geocentric
+//! Sun error at 1 AU → tabulated ground truth). **-23 % DRO coast error**
+//! (125 → 96 km). The Sun enters the dynamics through its tidal term
+//! (`a = μ_sun [(r_body − r_sat)/|…|³ − r_body/|r_body|³]`), which at
+//! DRO's ~400,000 km Earth distance contributes ≈ 5×10⁻⁷ m/s² × 5 days
+//! ≈ 5 m/s velocity drift and ~50 km position drift. The Meeus-vs-Horizons
+//! discrepancy of ~10 km in Sun position translates to a proportional
+//! fraction of that drift, roughly matching the observed 29 km
+//! improvement. Individual burn verifications are unchanged because their
+//! 24-minute windows are too short for solar-tidal effects to accumulate.
+//!
+//! ### What's still unaccounted for
+//!
+//! After all of the above, the DRO coast still sits at **96 km over
+//! 5 days** (≈ 19 km/day) and the chain at **1267 km** (dominated by
+//! DRI impulsive residual × DRO stability amplification, not coast
+//! propagation). Remaining candidate sources in rough order of expected
+//! impact:
+//!
+//! 1. **Solar Radiation Pressure (SRP)**: Orion has an effective area /
+//!    mass ratio around 8×10⁻⁴ m²/kg, giving SRP ≈ 5×10⁻⁹ m/s². Over 5
+//!    days that's ~200 m position drift on direct integration, but the
+//!    tidal coupling and repeated integration through the eclipse /
+//!    illumination boundary could push this into the low-km range.
+//!    Currently missing from the force model entirely.
+//! 2. **TDB / UTC time-scale handling**: Horizons queries use
+//!    `TIME_TYPE=TDB` while our `Epoch` parses ISO 8601 strings as if
+//!    they were UTC. TDB − UTC ≈ 69 s for modern epochs; at orbital
+//!    velocity ~1 km/s that's ~69 km of position offset at the Horizons
+//!    reference endpoints. Whether this actually produces error depends on
+//!    internal consistency: if every fetch *and* the integrator's clock
+//!    treat the Epoch's JD as TDB uniformly, the offset cancels out. If
+//!    not, there's a hidden ~km error. Worth auditing.
+//! 3. **Finite-burn modelling** (for the chain only): would reduce the
+//!    ~7 km DRI impulsive-midpoint residual and hence the ~1100 km of
+//!    amplified drift through DRO, bringing the chain under the 1000 km
+//!    Pass threshold. Requires a continuous-thrust force model in
+//!    orts — not a consumer-side change.
+//! 4. **Jupiter / Venus / Mercury third bodies**: tiny at this distance
+//!    (~10⁻⁹ m/s² for Jupiter at 6 AU). Expected to contribute ≤ 1 km
+//!    even over 5 days. Low priority.
+//! 5. **Horizons Orion reference-trajectory uncertainty**: JPL's post-
+//!    flight reconstruction is expected to be sub-km. This is a floor,
+//!    not a bug: even a perfect propagator would not land at 0 km.
+//!
 //! ## Running
 //!
 //! The HTTP fetch requires the `fetch-horizons` feature:
@@ -154,6 +249,15 @@ const EARTH_GEOCENTER: &str = "500@399";
 #[cfg(feature = "fetch-horizons")]
 const MOON_TARGET: &str = "301";
 
+/// Sun JPL Horizons target ID.
+///
+/// The Sun's position is fetched from Horizons for the same reason
+/// the Moon is: the kaname analytical Sun ephemeris (Meeus-based) is
+/// only ~10 km accurate at 1 AU, and that accumulates through the
+/// third-body tidal term over multi-day propagation.
+#[cfg(feature = "fetch-horizons")]
+const SUN_TARGET: &str = "10";
+
 /// Horizons sample spacing for the Moon ephemeris table.
 #[cfg(feature = "fetch-horizons")]
 const MOON_SAMPLE_STEP: &str = "1h";
@@ -164,13 +268,24 @@ const MOON_SAMPLE_STEP: &str = "1h";
 /// control). Dop853 is 8th-order accurate per step, so local truncation
 /// error is ~(dt/τ)^9 × orbital scale. For DRO at ~70,000 km from the
 /// Moon with τ ≈ 10 days and `dt = 10 s`, this is ~10⁻⁴⁶ — far below
-/// any other error source. An empirical test confirmed that reducing
-/// `dt` from 10 s to 1 s does **not** change the coast or chain
-/// verification results to 3-decimal km precision, so step-size
-/// truncation is not the bottleneck. The observed ~125 km coast error
-/// and ~1317 km chain error come from elsewhere (candidates: Meeus
-/// analytical Sun ephemeris, missing SRP force, TDB/UTC time-scale
-/// handling, Horizons reference-trajectory uncertainty).
+/// any other error source. An empirical test (commit 6460bab) confirmed
+/// that reducing `dt` from 10 s to 1 s does **not** change the coast or
+/// chain verification results to 3-decimal km precision, so step-size
+/// truncation is not the bottleneck.
+///
+/// The currently observed errors (DRO coast ~96 km over 5 days, chain
+/// DRI→DRDI ~1267 km over 6 days) come from sources other than
+/// integrator precision. See the "Error budget history" section in the
+/// module-level docstring for the running list of what's been addressed
+/// and what remains. Short version of what's left:
+///
+/// - Solar radiation pressure is not in the force model (expected
+///   impact: ~200 m direct + tidal coupling, possibly low km)
+/// - TDB / UTC time-scale handling between Horizons and `Epoch` is
+///   unaudited (potential ~km error if internally inconsistent)
+/// - Finite-burn modelling (would cut the DRI impulsive residual that
+///   the chain amplifies through DRO)
+/// - Horizons Orion reference uncertainty itself (expected < 1 km floor)
 #[cfg(feature = "fetch-horizons")]
 const DT_SECONDS: f64 = 10.0;
 
@@ -503,6 +618,31 @@ fn main() {
     let moon_ephem: Arc<dyn MoonEphemeris> = moon_concrete.clone();
     println!();
 
+    // ----- Fetch one Sun ephemeris covering the whole mission -----
+    // Mirrors the Moon fetch: the kaname analytical Sun (Meeus) is
+    // only ~10-km accurate at 1 AU and contributes to observed coast /
+    // chain error via the third-body tidal term. Using a Horizons
+    // table here aligns the Sun position with JPL's reference
+    // trajectory for the same reason the Moon was switched.
+    println!("[1b/4] Fetching Sun ephemeris ({MOON_SAMPLE_STEP} spacing) from Horizons...");
+    let sun_table = HorizonsTable::fetch_vector_table(
+        SUN_TARGET,
+        EARTH_GEOCENTER,
+        &moon_window_start,
+        &moon_window_stop,
+        MOON_SAMPLE_STEP,
+        None,
+    )
+    .expect("fetch Sun ephemeris");
+    println!(
+        "  {} samples over {} → {}",
+        sun_table.samples().len(),
+        iso_short(&moon_window_start),
+        iso_short(&moon_window_stop),
+    );
+    let sun_table_arc: Arc<HorizonsTable> = Arc::new(sun_table);
+    println!();
+
     // ----- Fetch Orion state vectors at every phase endpoint -----
     println!("[2/4] Fetching Orion reference state vectors at each phase endpoint...");
     println!();
@@ -513,7 +653,14 @@ fn main() {
 
     let mut results: Vec<PhaseResult> = Vec::new();
     for (label, start_iso, end_iso) in COAST_PHASES {
-        let result = verify_coast(label, start_iso, end_iso, &moon_ephem, &moon_concrete);
+        let result = verify_coast(
+            label,
+            start_iso,
+            end_iso,
+            &moon_ephem,
+            &moon_concrete,
+            &sun_table_arc,
+        );
         results.push(result);
         println!();
     }
@@ -526,7 +673,7 @@ fn main() {
 
     let mut burn_results: Vec<BurnResult> = Vec::new();
     for burn in MANEUVERS {
-        let result = verify_burn(burn, &moon_ephem, &moon_concrete);
+        let result = verify_burn(burn, &moon_ephem, &moon_concrete, &sun_table_arc);
         burn_results.push(result);
         println!();
     }
@@ -543,7 +690,13 @@ fn main() {
             .map(|b| b.label.split_whitespace().next().unwrap_or(b.label))
             .collect::<Vec<_>>()
             .join(" → ");
-        let result = verify_burn_chain(&chain_label, &chain_burns, &moon_ephem, &moon_concrete);
+        let result = verify_burn_chain(
+            &chain_label,
+            &chain_burns,
+            &moon_ephem,
+            &moon_concrete,
+            &sun_table_arc,
+        );
         chain_results.push(result);
         println!();
     }
@@ -575,6 +728,7 @@ fn verify_coast(
     end_iso: &str,
     moon_ephem: &Arc<dyn MoonEphemeris>,
     moon_concrete: &Arc<HorizonsMoonEphemeris>,
+    sun_table: &Arc<HorizonsTable>,
 ) -> PhaseResult {
     println!("── {label} ──");
     println!("  window: {start_iso}  →  {end_iso}");
@@ -592,7 +746,7 @@ fn verify_coast(
     // delta is attributable to this call alone (not the whole mission).
     let fallbacks_before = moon_concrete.fallback_count();
 
-    let system = build_artemis_system(start_epoch, moon_ephem);
+    let system = build_artemis_system(start_epoch, moon_ephem, sun_table);
     let initial_state = OrbitalState::new(start_pos, start_vel);
 
     let mut min_moon_distance = f64::MAX;
@@ -692,6 +846,7 @@ fn verify_burn(
     burn: &Maneuver,
     moon_ephem: &Arc<dyn MoonEphemeris>,
     moon_concrete: &Arc<HorizonsMoonEphemeris>,
+    sun_table: &Arc<HorizonsTable>,
 ) -> BurnResult {
     println!("── {} ──", burn.label);
     println!(
@@ -724,7 +879,7 @@ fn verify_burn(
     // Used to derive the propulsive Δv by comparing to the Horizons post
     // state: the difference is exactly what the burn contributed above and
     // beyond the gravitational drift the integrator already captures.
-    let system = build_artemis_system(pre_epoch, moon_ephem);
+    let system = build_artemis_system(pre_epoch, moon_ephem, sun_table);
     let initial_state = OrbitalState::new(pre_pos, pre_vel);
     let pure_coast_state = Dop853.integrate(
         &system,
@@ -778,7 +933,7 @@ fn verify_burn(
     // be queried at `pre_epoch + t` during the mid→post leg — i.e., they
     // would return Moon positions from ~13 minutes earlier, offsetting
     // the lunar ECI position by ~800 km at DRO distance.
-    let system_after = build_artemis_system(mid_epoch, moon_ephem);
+    let system_after = build_artemis_system(mid_epoch, moon_ephem, sun_table);
     let final_state = Dop853.integrate(
         &system_after,
         state_after_burn,
@@ -843,6 +998,7 @@ fn verify_burn(
 fn compute_corrected_dv(
     burn: &Maneuver,
     moon_ephem: &Arc<dyn MoonEphemeris>,
+    sun_table: &Arc<HorizonsTable>,
 ) -> nalgebra::Vector3<f64> {
     let pre_epoch = Epoch::from_iso8601(burn.pre_epoch_iso).expect("valid pre epoch");
     let post_epoch = Epoch::from_iso8601(burn.post_epoch_iso).expect("valid post epoch");
@@ -851,7 +1007,7 @@ fn compute_corrected_dv(
     let (pre_pos, pre_vel) = fetch_orion_sample(&pre_epoch).expect("fetch Orion at burn pre");
     let (_post_pos, post_vel) = fetch_orion_sample(&post_epoch).expect("fetch Orion at burn post");
 
-    let system = build_artemis_system(pre_epoch, moon_ephem);
+    let system = build_artemis_system(pre_epoch, moon_ephem, sun_table);
     let pure_coast_state = Dop853.integrate(
         &system,
         OrbitalState::new(pre_pos, pre_vel),
@@ -900,6 +1056,7 @@ fn verify_burn_chain(
     burns: &[&Maneuver],
     moon_ephem: &Arc<dyn MoonEphemeris>,
     moon_concrete: &Arc<HorizonsMoonEphemeris>,
+    sun_table: &Arc<HorizonsTable>,
 ) -> BurnChainResult {
     assert!(
         !burns.is_empty(),
@@ -921,7 +1078,7 @@ fn verify_burn_chain(
     let fallbacks_before_precompute = moon_concrete.fallback_count();
     let corrected_dvs: Vec<nalgebra::Vector3<f64>> = burns
         .iter()
-        .map(|b| compute_corrected_dv(b, moon_ephem))
+        .map(|b| compute_corrected_dv(b, moon_ephem, sun_table))
         .collect();
     for (b, dv) in burns.iter().zip(&corrected_dvs) {
         println!(
@@ -965,7 +1122,7 @@ fn verify_burn_chain(
             burn.label
         );
 
-        let system = build_artemis_system(current_epoch, moon_ephem);
+        let system = build_artemis_system(current_epoch, moon_ephem, sun_table);
         state = Dop853.integrate(&system, state, 0.0, coast_seconds, DT_SECONDS, |_, _| {});
         state = state.apply_delta_v(*dv_kms);
         current_epoch = mid_epoch;
@@ -977,7 +1134,7 @@ fn verify_burn_chain(
         final_coast_seconds > 0.0,
         "chain post epoch must follow last burn mid"
     );
-    let final_system = build_artemis_system(current_epoch, moon_ephem);
+    let final_system = build_artemis_system(current_epoch, moon_ephem, sun_table);
     let final_state = Dop853.integrate(
         &final_system,
         state,
@@ -1200,12 +1357,68 @@ fn fetch_orion_sample(
 }
 
 #[cfg(feature = "fetch-horizons")]
-fn build_artemis_system(epoch: Epoch, moon_ephem: &Arc<dyn MoonEphemeris>) -> OrbitalSystem {
+/// Build the Earth-centred `OrbitalSystem` used by every coast and burn
+/// verification in this spike.
+///
+/// Force model components:
+/// - J2/J3/J4 zonal harmonics (from kaname constants)
+/// - Sun as a third-body, using the Horizons-tabulated ephemeris
+///   (closure over [`HorizonsTable`])
+/// - Moon as a third-body, using the [`MoonEphemeris`] trait object
+///
+/// The Moon and Sun are handled asymmetrically by intent:
+///
+/// - The Moon is plumbed through [`ThirdBodyGravity::moon_with_ephemeris`]
+///   and the [`MoonEphemeris`] trait because [`HorizonsMoonEphemeris`]
+///   carries a fallback counter that each phase verifier inspects
+///   (`fallbacks_before` / `fallbacks_after` checks). That counter is the
+///   single most important guardrail against silent accuracy regressions
+///   — if the Horizons Moon table ever fails to cover the propagation
+///   window, the verifier exits loudly instead of silently rolling back
+///   to the Meeus approximation.
+/// - The Sun, in contrast, is plumbed through [`ThirdBodyGravity::custom`]
+///   with an inline closure over the raw `HorizonsTable`. No trait, no
+///   counter — see the closure comment below for the silent-fallback
+///   caveat.
+///
+/// The asymmetry is historical: the Moon ephemeris trait was already in
+/// place for the earlier Moon migration, and cloning the same pattern
+/// for the Sun would require a new `SunEphemeris` trait + type in
+/// kaname. For a research spike the closure path is adequate and keeps
+/// the change consumer-side only.
+#[cfg(feature = "fetch-horizons")]
+fn build_artemis_system(
+    epoch: Epoch,
+    moon_ephem: &Arc<dyn MoonEphemeris>,
+    sun_table: &Arc<HorizonsTable>,
+) -> OrbitalSystem {
     use kaname::body::KnownBody;
-    use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH};
+    use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, MU_SUN};
 
     let earth = KnownBody::Earth;
     let props = earth.properties();
+
+    // Build a custom Sun third-body model whose position closure looks
+    // up the Horizons table via Hermite interpolation. If the query
+    // epoch falls outside the table range, the closure **silently**
+    // falls back to the kaname Meeus analytical Sun. This fallback
+    // should not fire during normal runs — the Sun table is fetched
+    // over the same mission window as the Moon table (moon_window_*),
+    // with 1-hour padding — but unlike the Moon, there is no fallback
+    // counter. If a future iteration narrows the fetch window or
+    // shortens the padding, the Sun could silently drop to Meeus during
+    // a phase verification and revert the ~29 km / ~23 % DRO coast
+    // improvement without any diagnostic signal. If that ever happens,
+    // add a counter here mirroring `HorizonsMoonEphemeris`, or replace
+    // this closure with a dedicated `SunEphemeris` trait + type in
+    // kaname.
+    let sun_table_for_closure: Arc<HorizonsTable> = Arc::clone(sun_table);
+    let sun_model = ThirdBodyGravity::custom("third_body_sun", MU_SUN, move |e| {
+        sun_table_for_closure
+            .interpolate(e)
+            .map(|s| s.position)
+            .unwrap_or_else(|| kaname::sun::sun_position_eci(e))
+    });
 
     OrbitalSystem::new(
         MU_EARTH,
@@ -1217,7 +1430,7 @@ fn build_artemis_system(epoch: Epoch, moon_ephem: &Arc<dyn MoonEphemeris>) -> Or
         }),
     )
     .with_epoch(epoch)
-    .with_model(ThirdBodyGravity::sun())
+    .with_model(sun_model)
     .with_model(ThirdBodyGravity::moon_with_ephemeris(Arc::clone(
         moon_ephem,
     )))
