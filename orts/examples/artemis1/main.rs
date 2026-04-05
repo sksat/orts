@@ -62,6 +62,15 @@
 //! 7. **For each modelled burn**: applies an impulsive Δv derived via
 //!    Method B (see below) at the burn midpoint and verifies the
 //!    post-burn state against Horizons.
+//! 8. **Runs a multi-burn chain**: propagates `DRI → 6-day DRO coast →
+//!    DRDI` end-to-end with each burn's pre-computed Method B Δv
+//!    applied at the right midpoint, then verifies the chain's final
+//!    state against Horizons. See [`verify_burn_chain`] for details.
+//!
+//! The "Overall judgment" printed by [`print_summary`] covers the
+//! **coast phases only**. The individual-burn and chain summary tables
+//! are independent quality reports, so a Conditional burn/chain result
+//! does not invalidate a Pass overall judgment.
 //!
 //! ## Method B: reverse-engineering the propulsive Δv
 //!
@@ -305,14 +314,67 @@ struct Maneuver {
 /// reconstructs the true propulsive Δv at runtime. See [`Maneuver`] and
 /// [`verify_burn`] for details.
 #[cfg(feature = "fetch-horizons")]
-const MANEUVERS: &[Maneuver] = &[Maneuver {
-    label: "DRI (DRO insertion)",
-    pre_epoch_iso: "2022-11-25T21:40:00Z",
-    mid_epoch_iso: "2022-11-25T21:53:45Z",
-    post_epoch_iso: "2022-11-25T22:05:00Z",
-    raw_dv_eci_ms: [-48.686652, -87.093937, -39.758539],
-    raw_magnitude_ms: 107.408033,
-}];
+const MANEUVERS: &[Maneuver] = &[
+    Maneuver {
+        label: "DRI (DRO insertion)",
+        pre_epoch_iso: "2022-11-25T21:40:00Z",
+        mid_epoch_iso: "2022-11-25T21:53:45Z",
+        post_epoch_iso: "2022-11-25T22:05:00Z",
+        raw_dv_eci_ms: [-48.686652, -87.093937, -39.758539],
+        raw_magnitude_ms: 107.408033,
+    },
+    Maneuver {
+        label: "DRDI (DRO departure)",
+        pre_epoch_iso: "2022-12-01T21:42:00Z",
+        mid_epoch_iso: "2022-12-01T21:54:00Z",
+        post_epoch_iso: "2022-12-01T22:06:00Z",
+        raw_dv_eci_ms: [136.880516, -5.517049, 1.842703],
+        raw_magnitude_ms: 137.004047,
+    },
+];
+
+/// Burn chain: verify DRI + DRO coast (~6 days) + DRDI as a single
+/// continuous propagation.
+///
+/// The chain stresses the multi-burn pipeline end-to-end: two impulsive
+/// burns with a multi-day coast segment in between. Each burn's corrected
+/// Δv is computed via Method B in its own isolated short window (so the
+/// computation stays clean even when the overall chain spans ~6 days).
+/// The chain propagation then applies both at the appropriate midpoints
+/// and compares the final state to Horizons.
+///
+/// ## Observed error breakdown (~6-day chain)
+///
+/// Running this chain produces ~1300 km total position error, roughly
+/// decomposed as:
+///
+/// - ~7 km initial position offset from DRI's impulsive-midpoint
+///   approximation
+/// - That 7 km grows into ~1100 km over 6 days of DRO propagation
+///   because the DRO phase space amplifies small perturbations along
+///   unstable eigendirections (DRO is a marginally stable orbit in
+///   three-body mechanics, not a perfectly stable attractor)
+/// - ~125 km baseline DRO coast error from the integrator + ephemeris
+///   (measured independently in the DRO coast phase verification)
+/// - ~20 km from DRDI's impulsive-midpoint approximation
+/// - Residual velocity error ~14 m/s at the chain endpoint: the
+///   per-burn Method B is only exact at each burn's own narrow window,
+///   so applying the pre-computed Δv inside a chain does not guarantee
+///   velocity match at the chain's terminal epoch.
+///
+/// The chain lands at ~1300 km, just over the 1000 km Pass threshold
+/// (result: Conditional). The architecture is viable; reducing the
+/// error further would require modelling the burns as finite-duration
+/// thrust rather than instantaneous impulses, which is a separate
+/// iteration.
+///
+/// ## Thresholds
+///
+/// Uses the coast thresholds (1000 km Pass / 10000 km Conditional)
+/// rather than the tight burn thresholds, because the chain
+/// accumulates coast drift on top of each impulsive residual.
+#[cfg(feature = "fetch-horizons")]
+const BURN_CHAIN_INDICES: &[usize] = &[0, 1];
 
 /// Thresholds for burn verification (km of position error at post_epoch).
 ///
@@ -457,10 +519,30 @@ fn main() {
         println!();
     }
 
+    // ----- Verify burn chains (end-to-end multi-burn propagation) -----
+    let mut chain_results: Vec<BurnChainResult> = Vec::new();
+    if BURN_CHAIN_INDICES.len() >= 2 {
+        println!("── Burn chain verification ──");
+        println!();
+        let chain_burns: Vec<&Maneuver> =
+            BURN_CHAIN_INDICES.iter().map(|&i| &MANEUVERS[i]).collect();
+        let chain_label = chain_burns
+            .iter()
+            .map(|b| b.label.split_whitespace().next().unwrap_or(b.label))
+            .collect::<Vec<_>>()
+            .join(" → ");
+        let result = verify_burn_chain(&chain_label, &chain_burns, &moon_ephem, &moon_concrete);
+        chain_results.push(result);
+        println!();
+    }
+
     // ----- Summary tables -----
     print_summary(&results);
     if !burn_results.is_empty() {
         print_burn_summary(&burn_results);
+    }
+    if !chain_results.is_empty() {
+        print_chain_summary(&chain_results);
     }
 }
 
@@ -735,6 +817,219 @@ fn verify_burn(
         velocity_error_kms: velocity_error,
         judgment,
     }
+}
+
+// ============================================================
+// Burn chain verification
+// ============================================================
+
+/// Helper that pre-computes a single maneuver's corrected Δv in its own
+/// isolated Method B pass. Used by [`verify_burn_chain`] so each burn's
+/// Δv is derived from a tight window around that burn even when the
+/// chain as a whole spans multiple days.
+#[cfg(feature = "fetch-horizons")]
+fn compute_corrected_dv(
+    burn: &Maneuver,
+    moon_ephem: &Arc<dyn MoonEphemeris>,
+) -> nalgebra::Vector3<f64> {
+    let pre_epoch = Epoch::from_iso8601(burn.pre_epoch_iso).expect("valid pre epoch");
+    let post_epoch = Epoch::from_iso8601(burn.post_epoch_iso).expect("valid post epoch");
+    let window_seconds = (post_epoch.jd() - pre_epoch.jd()) * 86_400.0;
+
+    let (pre_pos, pre_vel) = fetch_orion_sample(&pre_epoch).expect("fetch Orion at burn pre");
+    let (_post_pos, post_vel) = fetch_orion_sample(&post_epoch).expect("fetch Orion at burn post");
+
+    let system = build_artemis_system(pre_epoch, moon_ephem);
+    let pure_coast_state = Dop853.integrate(
+        &system,
+        OrbitalState::new(pre_pos, pre_vel),
+        0.0,
+        window_seconds,
+        DT_SECONDS,
+        |_, _| {},
+    );
+    // Return in km/s (same units as OrbitalState).
+    post_vel - pure_coast_state.velocity()
+}
+
+#[cfg(feature = "fetch-horizons")]
+struct BurnChainResult {
+    label: String,
+    n_burns: usize,
+    duration_days: f64,
+    position_error_km: f64,
+    velocity_error_kms: f64,
+    judgment: Judgment,
+}
+
+/// Propagate a chain of maneuvers end-to-end through multiple coast
+/// segments and verify the final state against Horizons.
+///
+/// Each burn's corrected Δv is computed independently via Method B using
+/// its own tight pre/post window (see [`compute_corrected_dv`]) so the
+/// Δv values stay clean even when the chain as a whole spans many days.
+///
+/// The actual chain propagation then:
+///
+/// 1. Fetches the initial state at `burns[0].pre_epoch_iso`.
+/// 2. Coasts forward to `burns[0].mid_epoch_iso` and applies the
+///    pre-computed Δv for burn 0.
+/// 3. Coasts to `burns[1].mid_epoch_iso` and applies burn 1, etc.
+/// 4. After the last burn, coasts to `burns[last].post_epoch_iso`.
+/// 5. Compares the final state to Horizons at that epoch.
+///
+/// Uses the coast-phase thresholds (`THRESHOLD_PASS_KM` = 1000 km) rather
+/// than the tight burn thresholds because the chain accumulates
+/// coast-propagation error over multi-day segments on top of each
+/// burn's impulsive residual.
+#[cfg(feature = "fetch-horizons")]
+fn verify_burn_chain(
+    label: &str,
+    burns: &[&Maneuver],
+    moon_ephem: &Arc<dyn MoonEphemeris>,
+    moon_concrete: &Arc<HorizonsMoonEphemeris>,
+) -> BurnChainResult {
+    assert!(
+        !burns.is_empty(),
+        "burn chain must contain at least one burn"
+    );
+
+    println!("── {label} ──");
+    for (i, b) in burns.iter().enumerate() {
+        println!(
+            "  burn {}: {} @ {}  →  post {}",
+            i + 1,
+            b.label,
+            b.mid_epoch_iso,
+            b.post_epoch_iso
+        );
+    }
+
+    // Pre-compute each burn's corrected Δv in its own isolated window.
+    let fallbacks_before_precompute = moon_concrete.fallback_count();
+    let corrected_dvs: Vec<nalgebra::Vector3<f64>> = burns
+        .iter()
+        .map(|b| compute_corrected_dv(b, moon_ephem))
+        .collect();
+    for (b, dv) in burns.iter().zip(&corrected_dvs) {
+        println!(
+            "  corrected Δv[{}] = {:>8.3} m/s",
+            b.label,
+            dv.magnitude() * 1000.0
+        );
+    }
+
+    // Chain endpoints.
+    let chain_pre_epoch =
+        Epoch::from_iso8601(burns[0].pre_epoch_iso).expect("valid chain pre epoch");
+    let chain_post_epoch =
+        Epoch::from_iso8601(burns[burns.len() - 1].post_epoch_iso).expect("valid chain post epoch");
+    let total_seconds = (chain_post_epoch.jd() - chain_pre_epoch.jd()) * 86_400.0;
+    let total_days = total_seconds / 86_400.0;
+    println!(
+        "  chain window: {} → {}  ({:.2} days)",
+        burns[0].pre_epoch_iso,
+        burns[burns.len() - 1].post_epoch_iso,
+        total_days,
+    );
+
+    let (chain_pre_pos, chain_pre_vel) =
+        fetch_orion_sample(&chain_pre_epoch).expect("fetch Orion at chain pre");
+    let (chain_post_pos, chain_post_vel) =
+        fetch_orion_sample(&chain_post_epoch).expect("fetch Orion at chain post");
+
+    let fallbacks_before_chain = moon_concrete.fallback_count();
+
+    // Walk the chain: coast to each burn's mid, apply corrected Δv, rebuild
+    // system with the new reference epoch for the next segment.
+    let mut state = OrbitalState::new(chain_pre_pos, chain_pre_vel);
+    let mut current_epoch = chain_pre_epoch;
+    for (burn, dv_kms) in burns.iter().zip(&corrected_dvs) {
+        let mid_epoch = Epoch::from_iso8601(burn.mid_epoch_iso).expect("valid burn mid epoch");
+        let coast_seconds = (mid_epoch.jd() - current_epoch.jd()) * 86_400.0;
+        assert!(
+            coast_seconds > 0.0,
+            "burns must be in ascending mid_epoch order (offender: {:?})",
+            burn.label
+        );
+
+        let system = build_artemis_system(current_epoch, moon_ephem);
+        state = Dop853.integrate(&system, state, 0.0, coast_seconds, DT_SECONDS, |_, _| {});
+        state = state.apply_delta_v(*dv_kms);
+        current_epoch = mid_epoch;
+    }
+
+    // Final coast from the last burn's midpoint to the chain's post epoch.
+    let final_coast_seconds = (chain_post_epoch.jd() - current_epoch.jd()) * 86_400.0;
+    assert!(
+        final_coast_seconds > 0.0,
+        "chain post epoch must follow last burn mid"
+    );
+    let final_system = build_artemis_system(current_epoch, moon_ephem);
+    let final_state = Dop853.integrate(
+        &final_system,
+        state,
+        0.0,
+        final_coast_seconds,
+        DT_SECONDS,
+        |_, _| {},
+    );
+
+    let fallbacks_after = moon_concrete.fallback_count();
+    let fallback_delta = fallbacks_after - fallbacks_before_precompute;
+    let fallback_chain_delta = fallbacks_after - fallbacks_before_chain;
+    if fallback_delta > 0 {
+        eprintln!(
+            "  ⚠  Moon ephemeris fell back to Meeus {fallback_delta} time(s) during \
+             chain verification (chain-only: {fallback_chain_delta}). The Moon window \
+             does not fully cover the chain span."
+        );
+        std::process::exit(1);
+    }
+
+    let position_error = (final_state.position() - chain_post_pos).magnitude();
+    let velocity_error = (final_state.velocity() - chain_post_vel).magnitude();
+    let judgment = Judgment::from_error_km(position_error);
+
+    println!(
+        "  position error:  {:10.3} km         velocity error: {:.6} km/s   {}",
+        position_error,
+        velocity_error,
+        judgment.glyph()
+    );
+
+    BurnChainResult {
+        label: label.to_string(),
+        n_burns: burns.len(),
+        duration_days: total_days,
+        position_error_km: position_error,
+        velocity_error_kms: velocity_error,
+        judgment,
+    }
+}
+
+#[cfg(feature = "fetch-horizons")]
+fn print_chain_summary(results: &[BurnChainResult]) {
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!("Burn chain summary");
+    println!("═══════════════════════════════════════════════════════════════════");
+    println!(
+        "{:<28}  {:>7}  {:>8}  {:>12}  {:>12}  {}",
+        "Chain", "#burns", "Days", "Pos err km", "Vel err km/s", "Judgment"
+    );
+    println!("{}", "-".repeat(90));
+    for r in results {
+        println!(
+            "{:<28}  {:>7}  {:>8.2}  {:>12.3}  {:>12.6}  {}",
+            r.label,
+            r.n_burns,
+            r.duration_days,
+            r.position_error_km,
+            r.velocity_error_kms,
+            r.judgment.glyph(),
+        );
+    }
+    println!();
 }
 
 /// Return the unsigned angle between two vectors in degrees. Uses a
