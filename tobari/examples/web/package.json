@@ -5,8 +5,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build:wasm": "wasm-pack build ../.. --target web --out-dir examples/web/src/wasm/tobari --out-name tobari --no-default-features --features wasm",
-    "build:wasm:kaname": "wasm-pack build ../../../kaname --target web --out-dir ../tobari/examples/web/src/wasm/kaname --out-name kaname --features wasm",
+    "build:wasm": "wasm-pack build ../.. --target web --out-dir examples/web/src/wasm/tobari --out-name tobari -- --locked --no-default-features --features wasm",
+    "build:wasm:kaname": "wasm-pack build ../../../kaname --target web --out-dir ../tobari/examples/web/src/wasm/kaname --out-name kaname -- --locked --features wasm",
     "build:wasm:all": "pnpm run build:wasm && pnpm run build:wasm:kaname",
     "dev": "pnpm run build:wasm:all && vite",
     "build": "pnpm run build:wasm:all && tsc && vite build",
