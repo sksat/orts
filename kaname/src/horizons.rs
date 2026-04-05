@@ -314,6 +314,21 @@ mod fetch_impl {
     /// JPL Horizons API endpoint (REST).
     const HORIZONS_API: &str = "https://ssd.jpl.nasa.gov/api/horizons.api";
 
+    /// Horizons `TIME_TYPE` parameter value.
+    ///
+    /// Controls two things about the Horizons response that matter for
+    /// downstream correctness:
+    /// 1. How `START_TIME` / `STOP_TIME` query strings are interpreted
+    ///    (as TDB wall clock or UT wall clock).
+    /// 2. Which time scale the JD column in the CSV response uses
+    ///    (`JDTDB` vs `JDUT`).
+    ///
+    /// Because the same wall-clock ISO string maps to **different
+    /// physical instants** under different `TIME_TYPE` values (TDB − UTC
+    /// ≈ 69.184 s for modern epochs), the cached CSV content depends on
+    /// this value — so [`cache_key_for`] must include it in the hash.
+    const TIME_TYPE: &str = "TDB";
+
     impl HorizonsTable {
         /// Fetch a vector table from JPL Horizons with disk caching.
         ///
@@ -337,7 +352,8 @@ mod fetch_impl {
 
             let start_iso = epoch_to_iso(start);
             let stop_iso = epoch_to_iso(stop);
-            let cache_key = cache_key_for(target, center, &start_iso, &stop_iso, step);
+            let cache_key =
+                cache_key_for(target, center, &start_iso, &stop_iso, step, TIME_TYPE);
             let cache_path =
                 cache_file_path(&cache_key).map_err(|e| HorizonsError::Io(e.to_string()))?;
 
@@ -376,7 +392,7 @@ mod fetch_impl {
                 .query("CSV_FORMAT", "YES")
                 .query("REF_SYSTEM", "ICRF")
                 .query("REF_PLANE", "FRAME")
-                .query("TIME_TYPE", "TDB")
+                .query("TIME_TYPE", TIME_TYPE)
                 .call()
                 .map_err(|e| HorizonsError::Fetch(format!("HTTP request failed: {e}")))?;
 
@@ -418,12 +434,23 @@ mod fetch_impl {
     }
 
     /// Deterministic cache key derived from the query parameters.
+    ///
+    /// `time_type` is included because the same `(target, center, start,
+    /// stop, step)` tuple produces **different** state vectors under
+    /// different `TIME_TYPE` values: the START / STOP ISO strings are
+    /// interpreted in the given time scale, so the returned samples
+    /// correspond to physical instants that differ by the TDB − UTC
+    /// offset (~69 s). A cache entry tagged only by the first five
+    /// fields would silently serve the wrong-scale data across a switch
+    /// and mask the bug behind cache hits. Including the time scale in
+    /// the hash makes each scale live in its own cache slot.
     fn cache_key_for(
         target: &str,
         center: &str,
         start_iso: &str,
         stop_iso: &str,
         step: &str,
+        time_type: &str,
     ) -> String {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         target.hash(&mut hasher);
@@ -431,6 +458,7 @@ mod fetch_impl {
         start_iso.hash(&mut hasher);
         stop_iso.hash(&mut hasher);
         step.hash(&mut hasher);
+        time_type.hash(&mut hasher);
         format!("{:016x}", hasher.finish())
     }
 
@@ -497,6 +525,63 @@ mod fetch_impl {
             let base = Epoch::from_iso8601("2022-12-01T00:00:00Z").unwrap();
             let one_hour_later = base.add_seconds(3600.0);
             assert_eq!(epoch_to_iso(&one_hour_later), "2022-12-01 01:00:00");
+        }
+
+        #[test]
+        fn cache_key_is_deterministic_for_identical_params() {
+            // The on-disk cache is keyed by this hash, so two consecutive
+            // calls with identical parameters must produce identical
+            // strings — otherwise the cache is write-only and every
+            // request re-fetches. This trivially-passing test guards
+            // against a future refactor breaking that property.
+            let a = cache_key_for(
+                "301",
+                "500@399",
+                "2022-11-26 00:00:00",
+                "2022-11-27 00:00:00",
+                "1h",
+                "TDB",
+            );
+            let b = cache_key_for(
+                "301",
+                "500@399",
+                "2022-11-26 00:00:00",
+                "2022-11-27 00:00:00",
+                "1h",
+                "TDB",
+            );
+            assert_eq!(a, b);
+        }
+
+        #[test]
+        fn cache_key_changes_with_time_type() {
+            // Regression guard for the bug this test was added to prevent:
+            // a previous version of `cache_key_for` hashed only five
+            // fields and left `TIME_TYPE` out. Because the same ISO
+            // window returns physically different state vectors under
+            // TDB vs UT (states shift by TDB − UTC ≈ 69 s), sharing a
+            // cache entry across time types silently serves wrong-scale
+            // data.
+            let tdb = cache_key_for(
+                "301",
+                "500@399",
+                "2022-11-26 00:00:00",
+                "2022-11-27 00:00:00",
+                "1h",
+                "TDB",
+            );
+            let ut = cache_key_for(
+                "301",
+                "500@399",
+                "2022-11-26 00:00:00",
+                "2022-11-27 00:00:00",
+                "1h",
+                "UT",
+            );
+            assert_ne!(
+                tdb, ut,
+                "TIME_TYPE must participate in cache key to prevent cross-scale cache pollution"
+            );
         }
     }
 }
