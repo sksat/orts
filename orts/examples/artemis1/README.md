@@ -58,7 +58,7 @@ rerun orts/examples/artemis1/artemis1.rrd
 
 Rerun の 3D view で各フェーズのトグルができる。sim_time は 2022-11-17T00:00:00Z = 0 s origin で全フェーズ共通。
 
-> **Note**: 全エンティティは `OrbitalState` (Position3D + Velocity3D) で log している。`orts::record::rerun_export::save_as_rrd` が Position3D 単独のエンティティを time-series 出力から silently 脱落させる制約 (要両軸揃い) があるため、Moon は central-difference で速度を推定、error_km は Δ位置 + Δ速度 を両方保持している。
+> **Note**: Moon は Position3D のみ、それ以外のエンティティは `OrbitalState` (Position3D + Velocity3D) で log している。`save_as_rrd` は任意の Component を generic に書き出すため、コンポーネントの組み合わせに制約はない。
 
 ### 静的 PNG (matplotlib)
 

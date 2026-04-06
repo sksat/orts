@@ -71,11 +71,22 @@ pub struct SimMetadata {
     pub period: Option<f64>,
 }
 
+/// Schema information for a registered component type.
+#[derive(Debug, Clone)]
+pub struct ComponentFieldInfo {
+    /// Number of f64 values per instance.
+    pub scalars_per_row: usize,
+    /// Column names for each scalar (e.g. ["x", "y", "z"] for Position3D).
+    pub field_names: Vec<String>,
+}
+
 /// The top-level simulation recording. Holds all entities and their data.
 #[derive(Debug, Default)]
 pub struct Recording {
     entities: HashMap<EntityPath, EntityStore>,
     pub metadata: SimMetadata,
+    /// Registry of component schemas, populated automatically by log_temporal/log_static.
+    pub component_registry: HashMap<ComponentName, ComponentFieldInfo>,
 }
 
 impl Recording {
@@ -83,6 +94,7 @@ impl Recording {
         Recording {
             entities: HashMap::new(),
             metadata: SimMetadata::default(),
+            component_registry: HashMap::new(),
         }
     }
 
@@ -92,9 +104,35 @@ impl Recording {
         store
             .static_data
             .insert(C::component_name(), component.to_scalars());
+
+        // Register component schema
+        self.component_registry
+            .entry(C::component_name())
+            .or_insert_with(|| ComponentFieldInfo {
+                scalars_per_row: C::num_scalars(),
+                field_names: C::field_names().iter().map(|s| s.to_string()).collect(),
+            });
+    }
+
+    /// Look up the field names for a component by its name.
+    /// Returns the component name as a single-element fallback if not registered.
+    /// In practice, all components logged via `log_temporal`/`log_static` are
+    /// automatically registered, so the fallback only applies to manually
+    /// constructed `EntityStore` data.
+    pub fn lookup_component_fields(&self, name: &ComponentName) -> Vec<String> {
+        if let Some(info) = self.component_registry.get(name) {
+            info.field_names.clone()
+        } else {
+            vec![name.to_string()]
+        }
     }
 
     /// Log temporal component data at a specific time point.
+    ///
+    /// When multiple components are logged at the same time point (e.g. via
+    /// [`log_orbital_state`](Self::log_orbital_state)), the timeline indices
+    /// are pushed only once per logical time step, keeping
+    /// `timelines[*].len() == num_rows` invariant.
     pub fn log_temporal<C: Component>(
         &mut self,
         entity: &EntityPath,
@@ -103,6 +141,14 @@ impl Recording {
     ) {
         let store = self.entities.entry(entity.clone()).or_default();
 
+        // Register component schema for generic export
+        self.component_registry
+            .entry(C::component_name())
+            .or_insert_with(|| ComponentFieldInfo {
+                scalars_per_row: C::num_scalars(),
+                field_names: C::field_names().iter().map(|s| s.to_string()).collect(),
+            });
+
         let column = store
             .columns
             .entry(C::component_name())
@@ -110,15 +156,32 @@ impl Recording {
 
         column.push(&component.to_scalars());
 
-        for (timeline_name, time_index) in time_point.indices() {
-            store
-                .timelines
-                .entry(timeline_name.clone())
-                .or_default()
-                .push(*time_index);
-        }
+        // Push timeline indices only once per logical time step.
+        // After pushing component data, if any column has more rows than
+        // there are timeline entries, this is a new logical row.
+        let max_component_rows = store
+            .columns
+            .values()
+            .map(|c| c.num_rows())
+            .max()
+            .unwrap_or(0);
+        let timeline_len = store
+            .timelines
+            .values()
+            .map(|tl| tl.len())
+            .max()
+            .unwrap_or(0);
 
-        store.num_rows += 1;
+        if max_component_rows > timeline_len {
+            for (timeline_name, time_index) in time_point.indices() {
+                store
+                    .timelines
+                    .entry(timeline_name.clone())
+                    .or_default()
+                    .push(*time_index);
+            }
+            store.num_rows += 1;
+        }
     }
 
     /// Convenience: log an OrbitalState archetype (position + velocity).
@@ -315,5 +378,119 @@ mod tests {
         let rec = Recording::new();
         assert_eq!(rec.entity_paths().count(), 0);
         assert!(rec.entity(&EntityPath::parse("/anything")).is_none());
+    }
+
+    #[test]
+    fn log_orbital_state_timelines_match_num_rows() {
+        // Verify the timeline invariant: timelines.len() == num_rows
+        // after log_orbital_state (which logs P+V at the same time point).
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/iss");
+
+        for i in 0..5u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64 * 10.0).with_step(i);
+            let os = OrbitalState::new(
+                Vector3::new(6778.0, 0.0, 0.0),
+                Vector3::new(0.0, 7.669, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+        }
+
+        let store = rec.entity(&sat).unwrap();
+        let sim_times = &store.timelines[&TimelineName::SimTime];
+        let steps = &store.timelines[&TimelineName::Step];
+
+        // Timeline entries must equal logical row count, not 2x
+        assert_eq!(
+            sim_times.len(),
+            5,
+            "sim_times should have 5 entries, not 10"
+        );
+        assert_eq!(steps.len(), 5);
+        assert_eq!(store.num_rows, 5);
+
+        // Each component column also has 5 rows
+        assert_eq!(store.columns[&Position3D::component_name()].num_rows(), 5);
+        assert_eq!(store.columns[&Velocity3D::component_name()].num_rows(), 5);
+    }
+
+    #[test]
+    fn log_orbital_state_with_attitude_timelines_match() {
+        // Verify the timeline invariant holds even with 4 components per step.
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/default");
+
+        for i in 0..3u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = OrbitalState::new(
+                Vector3::new(6778.0, 0.0, 0.0),
+                Vector3::new(0.0, 7.669, 0.0),
+            );
+            let q = Quaternion4D(nalgebra::Vector4::new(1.0, 0.0, 0.0, 0.0));
+            let w = AngularVelocity3D(Vector3::new(0.0, 0.0, 0.01));
+            rec.log_orbital_state_with_attitude(&sat, &tp, &os, Some(&q), Some(&w));
+        }
+
+        let store = rec.entity(&sat).unwrap();
+        let sim_times = &store.timelines[&TimelineName::SimTime];
+
+        // Timeline entries must be 3, not 3*4=12
+        assert_eq!(sim_times.len(), 3);
+        assert_eq!(store.num_rows, 3);
+        assert_eq!(store.columns[&Position3D::component_name()].num_rows(), 3);
+        assert_eq!(store.columns[&Velocity3D::component_name()].num_rows(), 3);
+        assert_eq!(store.columns[&Quaternion4D::component_name()].num_rows(), 3);
+        assert_eq!(
+            store.columns[&AngularVelocity3D::component_name()].num_rows(),
+            3
+        );
+    }
+
+    #[test]
+    fn log_position_only_entity() {
+        // Verify that Position3D can be logged without Velocity3D.
+        // This is the core requirement for fixing the artemis1 Moon workaround.
+        let mut rec = Recording::new();
+        let moon = EntityPath::parse("/world/moon");
+
+        for i in 0..4u64 {
+            let tp = TimePoint::new()
+                .with_sim_time(i as f64 * 100.0)
+                .with_step(i);
+            let pos = Position3D(Vector3::new(-384400.0, i as f64 * 10.0, 0.0));
+            rec.log_temporal(&moon, &tp, &pos);
+        }
+
+        let store = rec.entity(&moon).unwrap();
+        assert_eq!(store.num_rows, 4);
+        assert_eq!(store.timelines[&TimelineName::SimTime].len(), 4);
+        assert_eq!(store.columns[&Position3D::component_name()].num_rows(), 4);
+        assert!(!store.columns.contains_key(&Velocity3D::component_name()));
+    }
+
+    #[test]
+    fn component_registry_populated() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/default");
+
+        let tp = TimePoint::new().with_sim_time(0.0);
+        let pos = Position3D(Vector3::new(6778.0, 0.0, 0.0));
+        rec.log_temporal(&sat, &tp, &pos);
+
+        // Registry should have Position3D
+        let info = rec
+            .component_registry
+            .get(&Position3D::component_name())
+            .unwrap();
+        assert_eq!(info.scalars_per_row, 3);
+        assert_eq!(info.field_names, vec!["x", "y", "z"]);
+
+        // lookup_component_fields should return the same
+        let fields = rec.lookup_component_fields(&Position3D::component_name());
+        assert_eq!(fields, vec!["x", "y", "z"]);
+
+        // Unknown component returns component name as fallback
+        let unknown = rec.lookup_component_fields(&"orts.Unknown".into());
+        assert_eq!(unknown, vec!["orts.Unknown"]);
     }
 }

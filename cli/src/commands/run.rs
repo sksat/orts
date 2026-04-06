@@ -301,7 +301,7 @@ pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with
     let id = id.rsplit('/').next().unwrap_or("default");
 
     for i in 0..pos_col.num_rows() {
-        let t = match sim_times.get(i * 2) {
+        let t = match sim_times.get(i) {
             Some(orts::record::timeline::TimeIndex::Seconds(s)) => *s,
             _ => 0.0,
         };

@@ -271,7 +271,7 @@ use orts::perturbations::{ConstantThrust, ThirdBodyGravity};
 #[cfg(feature = "fetch-horizons")]
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
 #[cfg(feature = "fetch-horizons")]
-use orts::record::components::{BodyRadius, GravitationalParameter};
+use orts::record::components::{BodyRadius, GravitationalParameter, Position3D};
 #[cfg(feature = "fetch-horizons")]
 use orts::record::entity_path::EntityPath;
 #[cfg(feature = "fetch-horizons")]
@@ -2140,16 +2140,10 @@ impl<'a> ChainRecording<'a> {
     /// endpoints are always present in the RRD regardless of where
     /// they land relative to the throttle cadence.
     ///
-    /// Every entity is logged as a full [`RecordOrbitalState`]
-    /// (position + velocity), not a bare `Position3D`, because
-    /// `orts::record::rerun_export::save_as_rrd` only emits temporal
-    /// time-series for entities that have **both** Position3D **and**
-    /// Velocity3D columns populated. A Position3D-only entity is
-    /// written to the RRD as static metadata only — its time series
-    /// would silently vanish. The Moon has a real ECI velocity
-    /// (numerical central difference of the Horizons ephemeris); the
-    /// error vector carries the propagation's velocity residual which
-    /// is independently interesting in Rerun's chart view.
+    /// Spacecraft and reference orbits are logged as
+    /// [`RecordOrbitalState`] (position + velocity). Moon is logged
+    /// as Position3D only since only its trajectory is needed.
+    /// The error vector carries both Δ-position and Δ-velocity.
     fn force_log(
         &mut self,
         local_t: f64,
@@ -2189,21 +2183,11 @@ impl<'a> ChainRecording<'a> {
 
         // Moon trajectory. Logged on the same timeline as the
         // spacecraft so Rerun's 3D view can animate them together.
-        // ECI velocity is numerically estimated by central difference
-        // so the resulting entity satisfies rerun_export's
-        // Position3D+Velocity3D presence requirement. The velocity
-        // itself is not consumed by any visualization consumer
-        // downstream but the column has to exist for the time series
-        // to be emitted at all.
+        // Only Position3D is needed — the generic column export no
+        // longer requires a Position3D+Velocity3D pair.
         let moon_pos = moon_ephem.position_eci(&epoch);
-        let moon_vel = {
-            let dt = 1.0; // seconds
-            let before = moon_ephem.position_eci(&epoch.add_seconds(-dt));
-            let after = moon_ephem.position_eci(&epoch.add_seconds(dt));
-            (after - before) / (2.0 * dt)
-        };
-        let moon_os = RecordOrbitalState::new(moon_pos, moon_vel);
-        self.rec.log_orbital_state(&self.moon_path, &tp, &moon_os);
+        self.rec
+            .log_temporal(&self.moon_path, &tp, &Position3D(moon_pos));
 
         self.step += 1;
         self.last_log_sim_t = sim_t;

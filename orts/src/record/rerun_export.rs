@@ -1,14 +1,19 @@
 use std::collections::BTreeMap;
 
 use crate::record::component::Component;
-use crate::record::components::{
-    AngularVelocity3D, BodyRadius, GravitationalParameter, Position3D, Quaternion4D, Velocity3D,
-};
+use crate::record::components::Position3D;
 use crate::record::entity_path::EntityPath;
 use crate::record::recording::{Recording, SimMetadata};
 use crate::record::timeline::{TimeIndex, TimelineName};
 
 /// Save a Recording to a .rrd file using the Rerun SDK.
+///
+/// All registered component types are exported generically via their
+/// `field_names()`, so any `Component` logged through `log_temporal` or
+/// `log_static` will appear in the output — no hard-coded component list.
+///
+/// As a convenience for Rerun 3D Viewer, entities that contain a
+/// `Position3D` component also get a `Points3D` archetype logged.
 pub fn save_as_rrd(
     recording: &Recording,
     app_id: &str,
@@ -20,84 +25,60 @@ pub fn save_as_rrd(
         let store = recording.entity(entity_path).unwrap();
         let rr_path = to_rerun_path(entity_path);
 
-        // Log static data
-        for (name, scalars) in &store.static_data {
-            if *name == GravitationalParameter::component_name() {
-                rec.log_static(format!("{rr_path}/mu"), &rerun::Scalars::new([scalars[0]]))?;
-            } else if *name == BodyRadius::component_name() {
-                rec.log_static(
-                    format!("{rr_path}/radius"),
-                    &rerun::Scalars::new([scalars[0]]),
-                )?;
+        // Log static data (generic: uses component_registry for field names)
+        for (comp_name, scalars) in &store.static_data {
+            let fields = recording.lookup_component_fields(comp_name);
+            for (k, field) in fields.iter().enumerate() {
+                if let Some(&val) = scalars.get(k) {
+                    rec.log_static(format!("{rr_path}/{field}"), &rerun::Scalars::new([val]))?;
+                }
             }
         }
 
-        // Log temporal data (position + velocity)
-        let pos_col = store.columns.get(&Position3D::component_name());
-        let vel_col = store.columns.get(&Velocity3D::component_name());
+        // Log temporal data (generic: iterate all component columns)
+        let sim_times = store.timelines.get(&TimelineName::SimTime);
+        let steps = store.timelines.get(&TimelineName::Step);
 
-        if let (Some(pos_col), Some(vel_col)) = (pos_col, vel_col) {
-            let n = pos_col.num_rows();
-            debug_assert_eq!(n, vel_col.num_rows());
+        // Determine number of logical time rows from timelines (no stride hack needed)
+        let n_rows = sim_times.or(steps).map(|tl| tl.len()).unwrap_or(0);
 
-            let sim_times = store.timelines.get(&TimelineName::SimTime);
-            let steps = store.timelines.get(&TimelineName::Step);
-
-            // Each log_orbital_state logs 2 components (position, velocity),
-            // so the timeline has 2*n entries. The stride between logical rows is:
-            let stride = sim_times
-                .or(steps)
-                .map(|tl| if n > 0 { tl.len() / n } else { 1 })
-                .unwrap_or(1);
-
-            for i in 0..n {
-                let tl_idx = i * stride;
-
+        if n_rows > 0 {
+            for i in 0..n_rows {
+                // Set timeline for this row (1:1 mapping, no stride)
                 if let Some(sim_times) = sim_times
-                    && let Some(TimeIndex::Seconds(t)) = sim_times.get(tl_idx)
+                    && let Some(TimeIndex::Seconds(t)) = sim_times.get(i)
                 {
                     rec.set_duration_secs("sim_time", *t);
                 }
                 if let Some(steps) = steps
-                    && let Some(TimeIndex::Sequence(s)) = steps.get(tl_idx)
+                    && let Some(TimeIndex::Sequence(s)) = steps.get(i)
                 {
                     rec.set_time_sequence("step", *s as i64);
                 }
 
-                let pos = pos_col.get_row(i).unwrap();
-                let vel = vel_col.get_row(i).unwrap();
-
-                // Points3D for 3D visualization in Rerun Viewer (f32 precision)
-                rec.log(
-                    rr_path.clone(),
-                    &rerun::Points3D::new([[pos[0], pos[1], pos[2]]]),
-                )?;
-
-                // Position as f64 Scalars for data preservation
-                rec.log(format!("{rr_path}/x"), &rerun::Scalars::new([pos[0]]))?;
-                rec.log(format!("{rr_path}/y"), &rerun::Scalars::new([pos[1]]))?;
-                rec.log(format!("{rr_path}/z"), &rerun::Scalars::new([pos[2]]))?;
-
-                // Velocity as f64 Scalars
-                rec.log(format!("{rr_path}/vx"), &rerun::Scalars::new([vel[0]]))?;
-                rec.log(format!("{rr_path}/vy"), &rerun::Scalars::new([vel[1]]))?;
-                rec.log(format!("{rr_path}/vz"), &rerun::Scalars::new([vel[2]]))?;
-
-                // Attitude quaternion + angular velocity (optional)
-                if let Some(q_col) = store.columns.get(&Quaternion4D::component_name())
-                    && let Some(q) = q_col.get_row(i)
-                {
-                    rec.log(format!("{rr_path}/qw"), &rerun::Scalars::new([q[0]]))?;
-                    rec.log(format!("{rr_path}/qx"), &rerun::Scalars::new([q[1]]))?;
-                    rec.log(format!("{rr_path}/qy"), &rerun::Scalars::new([q[2]]))?;
-                    rec.log(format!("{rr_path}/qz"), &rerun::Scalars::new([q[3]]))?;
+                // Export all component columns as f64 Scalars
+                for (comp_name, column) in &store.columns {
+                    if let Some(row) = column.get_row(i) {
+                        let fields = recording.lookup_component_fields(comp_name);
+                        for (k, field) in fields.iter().enumerate() {
+                            if let Some(&val) = row.get(k) {
+                                rec.log(format!("{rr_path}/{field}"), &rerun::Scalars::new([val]))?;
+                            }
+                        }
+                    }
                 }
-                if let Some(w_col) = store.columns.get(&AngularVelocity3D::component_name())
-                    && let Some(w) = w_col.get_row(i)
+
+                // Orthogonal: if Position3D exists, also log Points3D for
+                // Rerun 3D Viewer visualization. This intentionally duplicates the
+                // position data already logged as f64 Scalars above — Points3D uses
+                // f32 internally and is only consumed by the 3D spatial view.
+                if let Some(pos_col) = store.columns.get(&Position3D::component_name())
+                    && let Some(pos) = pos_col.get_row(i)
                 {
-                    rec.log(format!("{rr_path}/wx"), &rerun::Scalars::new([w[0]]))?;
-                    rec.log(format!("{rr_path}/wy"), &rerun::Scalars::new([w[1]]))?;
-                    rec.log(format!("{rr_path}/wz"), &rerun::Scalars::new([w[2]]))?;
+                    rec.log(
+                        rr_path.clone(),
+                        &rerun::Points3D::new([[pos[0], pos[1], pos[2]]]),
+                    )?;
                 }
             }
         }
@@ -341,6 +322,7 @@ fn to_rerun_path(path: &EntityPath) -> String {
 mod tests {
     use super::*;
     use crate::record::archetypes::OrbitalState;
+    use crate::record::components::{BodyRadius, GravitationalParameter};
     use crate::record::timeline::TimePoint;
     use nalgebra::Vector3;
 
@@ -516,6 +498,75 @@ mod tests {
 
         save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
 
+        assert!(path.exists());
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert!(metadata.len() > 0);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_position3d_only_entity() {
+        // Position3D without Velocity3D must survive the generic export.
+        // This was impossible before the stride hack fix.
+        use crate::record::components::Position3D;
+
+        let mut rec = Recording::new();
+        let moon = EntityPath::parse("/world/moon");
+
+        for i in 0..5u64 {
+            let tp = TimePoint::new()
+                .with_sim_time(i as f64 * 100.0)
+                .with_step(i);
+            let pos = Position3D(Vector3::new(-384400.0, i as f64 * 1000.0, 0.0));
+            rec.log_temporal(&moon, &tp, &pos);
+        }
+
+        let path = std::env::temp_dir().join("test_orts_pos_only.rrd");
+        let path_str = path.to_str().unwrap();
+
+        save_as_rrd(&rec, "test-orts", path_str).expect("Position3D-only entity should save");
+        assert!(path.exists());
+
+        // Load and verify we get rows (x/y/z present, vx/vy/vz default to 0)
+        let data = load_rrd_data(path_str).expect("should load");
+        assert_eq!(
+            data.rows.len(),
+            5,
+            "expected 5 rows for Position3D-only entity"
+        );
+
+        let row0 = &data.rows[0];
+        assert!((row0.x - (-384400.0)).abs() < 1e-6);
+        assert!(row0.y.abs() < 1e-6);
+        // vx/vy/vz should be 0 (no Velocity3D logged)
+        assert!(row0.vx.abs() < 1e-9);
+        assert!(row0.vy.abs() < 1e-9);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn save_quaternion_only_entity() {
+        // Quaternion4D without Position3D must be written to the RRD file.
+        // Note: `load_rrd_data` won't read this entity back because it only
+        // looks for x/y/z/vx/vy/vz sub-entities. This test verifies the
+        // *write* path doesn't panic or silently skip non-positional entities.
+        use crate::record::components::Quaternion4D;
+
+        let mut rec = Recording::new();
+        let sensor = EntityPath::parse("/world/sensor");
+
+        for i in 0..3u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let q = Quaternion4D(nalgebra::Vector4::new(1.0, 0.0, 0.0, 0.0));
+            rec.log_temporal(&sensor, &tp, &q);
+        }
+
+        let path = std::env::temp_dir().join("test_orts_quat_only.rrd");
+        let path_str = path.to_str().unwrap();
+
+        save_as_rrd(&rec, "test-orts", path_str).expect("Quaternion4D-only entity should save");
         assert!(path.exists());
         let metadata = std::fs::metadata(&path).unwrap();
         assert!(metadata.len() > 0);
