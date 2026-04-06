@@ -1,3 +1,4 @@
+use crate::effector::{AugmentedState, AuxRegistry, StateEffector};
 use crate::model::Model;
 use crate::orbital::gravity::GravityField;
 use kaname::epoch::Epoch;
@@ -8,21 +9,28 @@ use super::{ExternalLoads, SpacecraftState};
 
 /// Coupled orbit-attitude dynamics for a rigid spacecraft.
 ///
-/// Composes a gravitational field, inertia tensor, and external load models
-/// into a [`DynamicalSystem`] for the 14-dimensional [`SpacecraftState`].
+/// Composes a gravitational field, inertia tensor, external load models,
+/// and state effectors (e.g. reaction wheels) into a [`DynamicalSystem`]
+/// for the augmented spacecraft state.
 ///
-/// The gravity model `G` is resolved statically; load models remain trait objects
-/// since they form a heterogeneous collection.
+/// The state type is `AugmentedState<SpacecraftState>` — the 14D plant
+/// state (orbit 6D + attitude 7D + mass 1D) plus concatenated auxiliary
+/// variables from registered [`StateEffector`]s (e.g. RW angular
+/// momentum). When no effectors are registered, `aux` is empty and the
+/// dynamics are equivalent to the pre-effector version.
 ///
 /// Equations of motion:
 /// - Translation: dr/dt = v, dv/dt = a_gravity + Σ a_loads
 /// - Rotation: dq/dt = ½ q ⊗ (0,ω), dω/dt = I⁻¹(τ − ω × Iω)
+/// - Auxiliary: daux/dt from registered effectors
 pub struct SpacecraftDynamics<G: GravityField> {
     mu: f64,
     gravity: G,
     inertia: Matrix3<f64>,
     inertia_inv: Matrix3<f64>,
     models: Vec<Box<dyn Model<SpacecraftState>>>,
+    effectors: Vec<Box<dyn StateEffector<SpacecraftState>>>,
+    registry: AuxRegistry,
     epoch_0: Option<Epoch>,
     body_radius: Option<f64>,
 }
@@ -42,6 +50,8 @@ impl<G: GravityField> SpacecraftDynamics<G> {
             inertia,
             inertia_inv,
             models: Vec::new(),
+            effectors: Vec::new(),
+            registry: AuxRegistry::new(),
             epoch_0: None,
             body_radius: None,
         }
@@ -50,6 +60,20 @@ impl<G: GravityField> SpacecraftDynamics<G> {
     /// Add an external model (builder pattern).
     pub fn with_model(mut self, model: impl Model<SpacecraftState> + 'static) -> Self {
         self.models.push(Box::new(model));
+        self
+    }
+
+    /// Add a state effector (builder pattern).
+    ///
+    /// Effectors have auxiliary state (e.g. RW angular momentum) that
+    /// is integrated alongside the plant state.
+    pub fn with_effector(
+        mut self,
+        effector: impl StateEffector<SpacecraftState> + 'static,
+    ) -> Self {
+        let dim = effector.state_dim();
+        self.registry.register(effector.name(), dim);
+        self.effectors.push(Box::new(effector));
         self
     }
 
@@ -63,6 +87,42 @@ impl<G: GravityField> SpacecraftDynamics<G> {
     pub fn with_body_radius(mut self, radius: f64) -> Self {
         self.body_radius = Some(radius);
         self
+    }
+
+    /// Create an initial augmented state with the given plant state.
+    ///
+    /// Auxiliary state is initialized to zeros; bounds are collected
+    /// from all registered effectors.
+    pub fn initial_augmented_state(
+        &self,
+        plant: SpacecraftState,
+    ) -> AugmentedState<SpacecraftState> {
+        let mut bounds = Vec::with_capacity(self.registry.total_dim());
+        for eff in &self.effectors {
+            bounds.extend(eff.aux_bounds());
+        }
+        AugmentedState {
+            plant,
+            aux: vec![0.0; self.registry.total_dim()],
+            aux_bounds: bounds,
+        }
+    }
+
+    /// Downcast a state effector to a concrete type for mutation between
+    /// integration segments (e.g. updating `commanded_torque` on a
+    /// `ReactionWheelAssembly`).
+    pub fn effector_mut<T: StateEffector<SpacecraftState> + 'static>(
+        &mut self,
+        index: usize,
+    ) -> Option<&mut T> {
+        self.effectors
+            .get_mut(index)
+            .and_then(|e| (e.as_mut() as &mut dyn std::any::Any).downcast_mut::<T>())
+    }
+
+    /// Get the auxiliary state registry.
+    pub fn registry(&self) -> &AuxRegistry {
+        &self.registry
     }
 
     /// Get the inertia tensor.
@@ -89,9 +149,7 @@ impl<G: GravityField> SpacecraftDynamics<G> {
             .collect()
     }
 
-    /// Acceleration breakdown for telemetry, mirroring [`OrbitalSystem::acceleration_breakdown`].
-    ///
-    /// Returns `("gravity", mag)` followed by per-model acceleration magnitudes.
+    /// Acceleration breakdown for telemetry.
     pub fn acceleration_breakdown(&self, t: f64, state: &SpacecraftState) -> Vec<(&str, f64)> {
         let grav = self
             .gravity
@@ -106,38 +164,57 @@ impl<G: GravityField> SpacecraftDynamics<G> {
 }
 
 impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
-    type State = SpacecraftState;
+    type State = AugmentedState<SpacecraftState>;
 
-    fn derivatives(&self, t: f64, state: &SpacecraftState) -> SpacecraftState {
+    fn derivatives(
+        &self,
+        t: f64,
+        state: &AugmentedState<SpacecraftState>,
+    ) -> AugmentedState<SpacecraftState> {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
 
         // Gravitational acceleration
-        let grav_accel = self.gravity.acceleration(self.mu, state.orbit.position());
+        let grav_accel = self
+            .gravity
+            .acceleration(self.mu, state.plant.orbit.position());
 
-        // Accumulate external loads
+        // Accumulate external loads from models
         let mut total = ExternalLoads::zeros();
         for model in &self.models {
-            total += model.eval(t, state, epoch.as_ref());
+            total += model.eval(t, &state.plant, epoch.as_ref());
+        }
+
+        // Evaluate state effectors
+        let mut aux_rates = vec![0.0; self.registry.total_dim()];
+        for (i, eff) in self.effectors.iter().enumerate() {
+            let entry = &self.registry.entries()[i];
+            let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
+            let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
+            total += eff.derivatives(t, &state.plant, aux_slice, rates_slice, epoch.as_ref());
         }
 
         // Total translational acceleration
         let total_accel = grav_accel + total.acceleration_inertial;
 
         // Quaternion kinematics: dq/dt = ½ q ⊗ (0, ω)
-        let q_dot = state.attitude.q_dot();
+        let q_dot = state.plant.attitude.q_dot();
 
         // Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
-        let iw = self.inertia * state.attitude.angular_velocity;
-        let alpha =
-            self.inertia_inv * (total.torque_body - state.attitude.angular_velocity.cross(&iw));
+        let iw = self.inertia * state.plant.attitude.angular_velocity;
+        let alpha = self.inertia_inv
+            * (total.torque_body - state.plant.attitude.angular_velocity.cross(&iw));
 
-        SpacecraftState::from_derivative(
-            *state.orbit.velocity(),
-            total_accel,
-            q_dot,
-            alpha,
-            total.mass_rate,
-        )
+        AugmentedState {
+            plant: SpacecraftState::from_derivative(
+                *state.plant.orbit.velocity(),
+                total_accel,
+                q_dot,
+                alpha,
+                total.mass_rate,
+            ),
+            aux: aux_rates,
+            aux_bounds: state.aux_bounds.clone(),
+        }
     }
 }
 
@@ -171,6 +248,15 @@ mod tests {
         }
     }
 
+    /// Wrap a plant state as an augmented state with no effectors.
+    fn augment(plant: SpacecraftState) -> AugmentedState<SpacecraftState> {
+        AugmentedState {
+            plant,
+            aux: vec![],
+            aux_bounds: vec![],
+        }
+    }
+
     // --- Mock models ---
 
     struct ConstantAcceleration(Vector3<f64>);
@@ -195,7 +281,6 @@ mod tests {
         }
     }
 
-    /// Returns different loads depending on whether epoch is Some.
     struct EpochSensitiveLoad;
 
     impl Model<SpacecraftState> for EpochSensitiveLoad {
@@ -222,21 +307,19 @@ mod tests {
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
         let dyn_orb = OrbitalSystem::new(MU_EARTH, Box::new(PointMass));
 
-        let d_sc = dyn_sc.derivatives(0.0, &sc);
+        let d_sc = dyn_sc.derivatives(0.0, &augment(sc.clone()));
         let d_orb = dyn_orb.derivatives(0.0, &sc.orbit);
 
-        // Translational acceleration should match
-        assert!((d_sc.orbit.velocity() - d_orb.velocity()).magnitude() < 1e-15);
+        assert!((d_sc.plant.orbit.velocity() - d_orb.velocity()).magnitude() < 1e-15);
     }
 
     #[test]
     fn gravity_only_velocity_derivative() {
         let sc = sample_spacecraft();
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc.clone()));
 
-        // Position derivative = input velocity
-        assert_eq!(*d.orbit.position(), *sc.orbit.velocity());
+        assert_eq!(*d.plant.orbit.position(), *sc.orbit.velocity());
     }
 
     #[test]
@@ -250,26 +333,23 @@ mod tests {
             mass: 500.0,
         };
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc));
 
-        // Symmetric inertia + no torque → gyroscopic term vanishes → α = 0
-        assert!(d.attitude.angular_velocity.magnitude() < 1e-15);
+        assert!(d.plant.attitude.angular_velocity.magnitude() < 1e-15);
     }
 
     #[test]
     fn mass_rate_always_zero() {
         let sc = sample_spacecraft();
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let d = dyn_sc.derivatives(0.0, &sc);
-        assert_eq!(d.mass, 0.0);
+        let d = dyn_sc.derivatives(0.0, &augment(sc));
+        assert_eq!(d.plant.mass, 0.0);
     }
 
     // ======== Step 2: Euler equation ========
 
     #[test]
     fn euler_diagonal_inertia_known_torque() {
-        // I = diag(10, 20, 30), ω = 0, τ = (1, 2, 3)
-        // α = I⁻¹ τ = (0.1, 0.1, 0.1)
         let inertia = Matrix3::from_diagonal(&Vector3::new(10.0, 20.0, 30.0));
         let torque = Vector3::new(1.0, 2.0, 3.0);
         let sc = SpacecraftState {
@@ -284,18 +364,14 @@ mod tests {
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia)
             .with_model(ConstantTorqueModel(torque));
 
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc));
 
         let expected_alpha = Vector3::new(0.1, 0.1, 0.1);
-        assert!((d.attitude.angular_velocity - expected_alpha).magnitude() < 1e-14);
+        assert!((d.plant.attitude.angular_velocity - expected_alpha).magnitude() < 1e-14);
     }
 
     #[test]
     fn euler_gyroscopic_term() {
-        // I = diag(10, 20, 30), ω = (1, 1, 0), no torque
-        // Iω = (10, 20, 0)
-        // ω × Iω = (1,1,0) × (10,20,0) = (0, 0, 1·20-1·10) = (0, 0, 10)
-        // α = I⁻¹ (0 - (0,0,10)) = (0, 0, -10/30) = (0, 0, -1/3)
         let inertia = Matrix3::from_diagonal(&Vector3::new(10.0, 20.0, 30.0));
         let sc = SpacecraftState {
             orbit: sample_orbit(),
@@ -307,25 +383,18 @@ mod tests {
         };
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia);
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc));
 
         let expected_alpha = Vector3::new(0.0, 0.0, -1.0 / 3.0);
         assert!(
-            (d.attitude.angular_velocity - expected_alpha).magnitude() < 1e-14,
+            (d.plant.attitude.angular_velocity - expected_alpha).magnitude() < 1e-14,
             "Expected α = {expected_alpha:?}, got {:?}",
-            d.attitude.angular_velocity
+            d.plant.attitude.angular_velocity
         );
     }
 
     #[test]
     fn euler_non_diagonal_inertia() {
-        // I = [[4,1,0],[1,4,0],[0,0,6]], ω = (1, 0, 1), τ = 0
-        // Iω = (4, 1, 6)
-        // ω × Iω = (1,0,1) × (4,1,6) = (0·6-1·1, 1·4-1·6, 1·1-0·4) = (-1, -2, 1)
-        // α = I⁻¹(0 - (-1,-2,1)) = I⁻¹(1, 2, -1)
-        // I⁻¹ = (1/90)[[24,-6,0],[-6,24,0],[0,0,15]]
-        // I⁻¹(1,2,-1) = (1/90)(24-12, -6+48, -15) = (12/90, 42/90, -15/90)
-        //             = (2/15, 7/15, -1/6)
         let inertia = Matrix3::new(4.0, 1.0, 0.0, 1.0, 4.0, 0.0, 0.0, 0.0, 6.0);
         let sc = SpacecraftState {
             orbit: sample_orbit(),
@@ -337,13 +406,13 @@ mod tests {
         };
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia);
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc));
 
         let expected_alpha = Vector3::new(2.0 / 15.0, 7.0 / 15.0, -1.0 / 6.0);
         assert!(
-            (d.attitude.angular_velocity - expected_alpha).magnitude() < 1e-13,
+            (d.plant.attitude.angular_velocity - expected_alpha).magnitude() < 1e-13,
             "Expected α = {expected_alpha:?}, got {:?}",
-            d.attitude.angular_velocity
+            d.plant.attitude.angular_velocity
         );
     }
 
@@ -356,28 +425,27 @@ mod tests {
 
         let dyn_with = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
             .with_model(ConstantAcceleration(accel));
-        let d_with = dyn_with.derivatives(0.0, &sc);
+        let d_with = dyn_with.derivatives(0.0, &augment(sc.clone()));
 
         let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let d_grav = dyn_grav.derivatives(0.0, &sc);
+        let d_grav = dyn_grav.derivatives(0.0, &augment(sc));
 
-        let diff = d_with.orbit.velocity() - d_grav.orbit.velocity();
+        let diff = d_with.plant.orbit.velocity() - d_grav.plant.orbit.velocity();
         assert!((diff - accel).magnitude() < 1e-15);
     }
 
     #[test]
     fn model_adds_torque() {
         let torque = Vector3::new(0.01, 0.02, 0.03);
-        let sc = sample_spacecraft(); // ω = 0 → no gyroscopic term
+        let sc = sample_spacecraft();
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
             .with_model(ConstantTorqueModel(torque));
 
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc));
 
-        // α = I⁻¹ τ = τ / 10
         let expected_alpha = torque / 10.0;
-        assert!((d.attitude.angular_velocity - expected_alpha).magnitude() < 1e-15);
+        assert!((d.plant.attitude.angular_velocity - expected_alpha).magnitude() < 1e-15);
     }
 
     #[test]
@@ -389,17 +457,14 @@ mod tests {
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
             .with_model(ConstantAcceleration(accel))
             .with_model(ConstantTorqueModel(torque));
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc.clone()));
 
         let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let d_grav = dyn_grav.derivatives(0.0, &sc);
+        let d_grav = dyn_grav.derivatives(0.0, &augment(sc));
 
-        // Force contribution
-        let accel_diff = d.orbit.velocity() - d_grav.orbit.velocity();
+        let accel_diff = d.plant.orbit.velocity() - d_grav.plant.orbit.velocity();
         assert!((accel_diff - accel).magnitude() < 1e-15);
-
-        // Torque contribution (ω = 0 → α = I⁻¹ τ = τ / 10)
-        assert!((d.attitude.angular_velocity - torque / 10.0).magnitude() < 1e-15);
+        assert!((d.plant.attitude.angular_velocity - torque / 10.0).magnitude() < 1e-15);
     }
 
     // ======== Step 4: Builder + telemetry ========
@@ -459,15 +524,14 @@ mod tests {
             .with_model(EpochSensitiveLoad)
             .with_epoch(epoch);
 
-        let d = dyn_sc.derivatives(t, &sc);
+        let d = dyn_sc.derivatives(t, &augment(sc.clone()));
 
-        // EpochSensitiveLoad returns accel.x = epoch.jd() * 1e-10 when epoch is Some
         let expected_epoch = epoch.add_seconds(t);
         let expected_accel_x = expected_epoch.jd() * 1e-10;
 
         let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let d_grav = dyn_grav.derivatives(t, &sc);
-        let diff_x = d.orbit.velocity()[0] - d_grav.orbit.velocity()[0];
+        let d_grav = dyn_grav.derivatives(t, &augment(sc));
+        let diff_x = d.plant.orbit.velocity()[0] - d_grav.plant.orbit.velocity()[0];
 
         let rel_err = (diff_x - expected_accel_x).abs() / expected_accel_x.abs();
         assert!(
@@ -482,22 +546,21 @@ mod tests {
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
             .with_model(EpochSensitiveLoad);
 
-        // epoch_0 = None → loads get None → EpochSensitiveLoad returns zeros
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc.clone()));
 
         let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let d_grav = dyn_grav.derivatives(0.0, &sc);
+        let d_grav = dyn_grav.derivatives(0.0, &augment(sc));
 
-        assert!((d.orbit.velocity() - d_grav.orbit.velocity()).magnitude() < 1e-15);
+        assert!((d.plant.orbit.velocity() - d_grav.plant.orbit.velocity()).magnitude() < 1e-15);
     }
 
     #[test]
     fn integrable_with_rk4() {
         let sc = sample_spacecraft();
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let result = Rk4.integrate(&dyn_sc, sc, 0.0, 60.0, 10.0, |_, _| {});
+        let result = Rk4.integrate(&dyn_sc, augment(sc), 0.0, 60.0, 10.0, |_, _| {});
 
-        assert!(result.orbit.position().magnitude() > 0.0);
+        assert!(result.plant.orbit.position().magnitude() > 0.0);
         assert!(result.is_finite());
     }
 
@@ -511,7 +574,6 @@ mod tests {
 
     #[test]
     fn derivative_preserves_two_body_energy() {
-        // dE/dt = v · a + (μ/r³)(r · v) = 0 for point-mass gravity
         let sc = SpacecraftState {
             orbit: OrbitalState::new(
                 Vector3::new(7000.0, 1000.0, 500.0),
@@ -522,11 +584,11 @@ mod tests {
         };
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc.clone()));
 
         let r = sc.orbit.position();
         let v = sc.orbit.velocity();
-        let a = d.orbit.velocity(); // acceleration
+        let a = d.plant.orbit.velocity();
         let r_mag = r.magnitude();
 
         let de_dt = v.dot(a) + MU_EARTH / (r_mag.powi(3)) * r.dot(v);
@@ -535,7 +597,6 @@ mod tests {
 
     #[test]
     fn derivative_preserves_angular_momentum() {
-        // dL/dt = r × a = 0 for central gravity
         let sc = SpacecraftState {
             orbit: OrbitalState::new(
                 Vector3::new(7000.0, 1000.0, 500.0),
@@ -546,10 +607,10 @@ mod tests {
         };
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc.clone()));
 
         let r = sc.orbit.position();
-        let a = d.orbit.velocity();
+        let a = d.plant.orbit.velocity();
         let dl_dt = r.cross(a);
 
         assert!(
@@ -561,7 +622,6 @@ mod tests {
 
     #[test]
     fn derivative_preserves_rotational_energy() {
-        // dT/dt = ω · I·α = 0 for torque-free system
         let inertia = Matrix3::from_diagonal(&Vector3::new(10.0, 20.0, 30.0));
         let omega = Vector3::new(0.1, 0.2, 0.3);
         let sc = SpacecraftState {
@@ -574,9 +634,9 @@ mod tests {
         };
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia);
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc));
 
-        let alpha = &d.attitude.angular_velocity;
+        let alpha = &d.plant.attitude.angular_velocity;
         let dt_rot = omega.dot(&(inertia * alpha));
 
         assert!(
@@ -587,7 +647,6 @@ mod tests {
 
     #[test]
     fn derivative_preserves_quaternion_norm() {
-        // d/dt(|q|²) = 2 q · q̇ = 0 (skew-symmetric kinematic matrix)
         let sc = SpacecraftState {
             orbit: sample_orbit(),
             attitude: AttitudeState {
@@ -598,15 +657,69 @@ mod tests {
         };
 
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
-        let d = dyn_sc.derivatives(0.0, &sc);
+        let d = dyn_sc.derivatives(0.0, &augment(sc.clone()));
 
         let q = &sc.attitude.quaternion;
-        let q_dot = &d.attitude.quaternion;
+        let q_dot = &d.plant.attitude.quaternion;
         let d_norm_sq = 2.0 * q.dot(q_dot);
 
         assert!(
             d_norm_sq.abs() < 1e-15,
             "d/dt(|q|²) should be ≈ 0, got {d_norm_sq:.3e}"
         );
+    }
+
+    // ======== Step 7: StateEffector integration ========
+
+    #[test]
+    fn with_effector_registers_aux() {
+        use crate::spacecraft::ReactionWheelAssembly;
+        let rw = ReactionWheelAssembly::three_axis(0.01, 1.0, 0.5);
+        let dyn_sc =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0)).with_effector(rw);
+
+        assert_eq!(dyn_sc.registry().total_dim(), 3);
+        let state = dyn_sc.initial_augmented_state(sample_spacecraft());
+        assert_eq!(state.aux.len(), 3);
+        assert_eq!(state.aux, vec![0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn effector_mut_downcasts() {
+        use crate::spacecraft::ReactionWheelAssembly;
+        let rw = ReactionWheelAssembly::three_axis(0.01, 1.0, 0.5);
+        let mut dyn_sc =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0)).with_effector(rw);
+
+        let rw_ref = dyn_sc
+            .effector_mut::<ReactionWheelAssembly>(0)
+            .expect("should downcast");
+        rw_ref.commanded_torque = Vector3::new(0.1, 0.0, 0.0);
+    }
+
+    #[test]
+    fn rw_effector_integrates_with_spacecraft() {
+        use crate::spacecraft::ReactionWheelAssembly;
+        let rw = ReactionWheelAssembly::three_axis(0.01, 1.0, 0.5);
+        let mut dyn_sc =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0)).with_effector(rw);
+
+        // Command a small torque on the x-axis.
+        dyn_sc
+            .effector_mut::<ReactionWheelAssembly>(0)
+            .unwrap()
+            .commanded_torque = Vector3::new(0.01, 0.0, 0.0);
+
+        let state = dyn_sc.initial_augmented_state(sample_spacecraft());
+        let result = Rk4.integrate(&dyn_sc, state, 0.0, 10.0, 0.1, |_, _| {});
+
+        // RW x-axis wheel should have accumulated momentum.
+        assert!(result.aux[0].abs() > 0.01, "RW momentum should change");
+        // Spacecraft should have reacted (angular velocity change).
+        assert!(
+            result.plant.attitude.angular_velocity.magnitude() > 1e-6,
+            "spacecraft should react to RW torque"
+        );
+        assert!(result.is_finite());
     }
 }

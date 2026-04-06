@@ -562,13 +562,13 @@ mod tests {
             .with_epoch(test_epoch());
 
         let state = iss_state();
-        let dy = dynamics.derivatives(0.0, &state);
-        assert!(dy.orbit.position().magnitude().is_finite());
+        let dy = dynamics.derivatives(0.0, &state.clone().into());
+        assert!(dy.plant.orbit.position().magnitude().is_finite());
 
         // One RK4 step
-        let next = Rk4.step(&dynamics, 0.0, &state, 10.0);
-        assert!(next.orbit.position().magnitude().is_finite());
-        assert!(next.attitude.quaternion.magnitude() > 0.99);
+        let next = Rk4.step(&dynamics, 0.0, &state.into(), 10.0);
+        assert!(next.plant.orbit.position().magnitude().is_finite());
+        assert!(next.plant.attitude.quaternion.magnitude() > 0.99);
     }
 
     #[test]
@@ -589,8 +589,8 @@ mod tests {
             .with_epoch(test_epoch());
 
         let state = iss_state();
-        let dy = dynamics.derivatives(0.0, &state);
-        assert!(dy.orbit.position().magnitude().is_finite());
+        let dy = dynamics.derivatives(0.0, &state.into());
+        assert!(dy.plant.orbit.position().magnitude().is_finite());
     }
 
     // ======== Order of magnitude ========
@@ -644,8 +644,8 @@ mod tests {
 
         // Collect SRP magnitude at each step
         let mut magnitudes = Vec::new();
-        let _ = Rk4.integrate(&dyn_sc, state, 0.0, 60.0, 1.0, |t, s| {
-            let loads = dyn_sc.model_breakdown(t, s);
+        let _ = Rk4.integrate(&dyn_sc, state.into(), 0.0, 60.0, 1.0, |t, s| {
+            let loads = dyn_sc.model_breakdown(t, &s.plant);
             if let Some((_, el)) = loads.first() {
                 magnitudes.push(el.acceleration_inertial.magnitude());
             }

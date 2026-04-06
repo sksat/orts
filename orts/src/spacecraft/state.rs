@@ -64,6 +64,27 @@ impl HasMass for SpacecraftState {
     }
 }
 
+// Delegate capability traits for AugmentedState<SpacecraftState>.
+use crate::effector::AugmentedState;
+
+impl HasOrbit for AugmentedState<SpacecraftState> {
+    fn orbit(&self) -> &OrbitalState {
+        &self.plant.orbit
+    }
+}
+
+impl HasAttitude for AugmentedState<SpacecraftState> {
+    fn attitude(&self) -> &AttitudeState {
+        &self.plant.attitude
+    }
+}
+
+impl HasMass for AugmentedState<SpacecraftState> {
+    fn mass(&self) -> f64 {
+        self.plant.mass
+    }
+}
+
 impl OdeState for SpacecraftState {
     fn zero_like(&self) -> Self {
         Self {

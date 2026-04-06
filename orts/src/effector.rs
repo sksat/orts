@@ -77,6 +77,17 @@ pub struct AugmentedState<S: OdeState> {
     pub aux_bounds: Vec<(f64, f64)>,
 }
 
+impl<S: OdeState> From<S> for AugmentedState<S> {
+    /// Wrap a plant state as augmented with no effectors (empty aux).
+    fn from(plant: S) -> Self {
+        Self {
+            plant,
+            aux: vec![],
+            aux_bounds: vec![],
+        }
+    }
+}
+
 impl<S: OdeState> OdeState for AugmentedState<S> {
     fn zero_like(&self) -> Self {
         Self {

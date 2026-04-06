@@ -73,9 +73,9 @@ fn tsiolkovsky_constant_thrust() {
 
     let dt = 0.1;
     let state0 = identity_spacecraft(m0);
-    let result = Rk4.integrate(&dynamics, state0, 0.0, burn_time, dt, |_, _| {});
+    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, burn_time, dt, |_, _| {});
 
-    let dv_numerical = result.orbit.velocity().magnitude();
+    let dv_numerical = result.plant.orbit.velocity().magnitude();
     let rel_err = (dv_numerical - dv_analytical).abs() / dv_analytical;
 
     assert!(
@@ -84,11 +84,11 @@ fn tsiolkovsky_constant_thrust() {
     );
 
     // Also verify final mass
-    let mass_rel_err = (result.mass - mf).abs() / mf;
+    let mass_rel_err = (result.plant.mass - mf).abs() / mf;
     assert!(
         mass_rel_err < 1e-8,
         "Final mass: numerical={:.4}, analytical={mf:.4}, rel_err={mass_rel_err:.3e}",
-        result.mass
+        result.plant.mass
     );
 }
 
@@ -111,13 +111,20 @@ fn mass_depletion_linear() {
 
     // Check mass at several intermediate times
     for &check_t in &[10.0, 50.0, 100.0, 200.0] {
-        let result = Rk4.integrate(&dynamics, state0.clone(), 0.0, check_t, dt, |_, _| {});
+        let result = Rk4.integrate(
+            &dynamics,
+            state0.clone().into(),
+            0.0,
+            check_t,
+            dt,
+            |_, _| {},
+        );
         let m_analytical = m0 - mass_rate * check_t;
-        let rel_err = (result.mass - m_analytical).abs() / m_analytical;
+        let rel_err = (result.plant.mass - m_analytical).abs() / m_analytical;
         assert!(
             rel_err < 1e-8,
             "t={check_t}: mass numerical={:.6}, analytical={m_analytical:.6}, rel_err={rel_err:.3e}",
-            result.mass
+            result.plant.mass
         );
     }
 }
@@ -144,13 +151,13 @@ fn propellant_exhaustion_stops_thrust() {
     let total_time = burn_time * 3.0;
     let dt = 0.01;
     let state0 = identity_spacecraft(m0);
-    let result = Rk4.integrate(&dynamics, state0, 0.0, total_time, dt, |_, _| {});
+    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, total_time, dt, |_, _| {});
 
     // Mass should be near dry_mass (not below)
     assert!(
-        result.mass >= dry_mass - 0.1,
+        result.plant.mass >= dry_mass - 0.1,
         "Mass should not drop significantly below dry_mass: got {}, dry_mass={}",
-        result.mass,
+        result.plant.mass,
         dry_mass
     );
 
@@ -160,8 +167,15 @@ fn propellant_exhaustion_stops_thrust() {
         Thruster::new(thrust, isp, Vector3::x()).with_dry_mass(dry_mass),
     );
     let state0b = identity_spacecraft(m0);
-    let r2 = Rk4.integrate(&dynamics2, state0b, 0.0, burn_time * 2.0, dt, |_, _| {});
-    let v_diff = (*result.orbit.velocity() - *r2.orbit.velocity()).magnitude();
+    let r2 = Rk4.integrate(
+        &dynamics2,
+        state0b.into(),
+        0.0,
+        burn_time * 2.0,
+        dt,
+        |_, _| {},
+    );
+    let v_diff = (*result.plant.orbit.velocity() - *r2.plant.orbit.velocity()).magnitude();
     assert!(
         v_diff < 1e-10,
         "Velocity should not increase after propellant exhaustion: |v(3T)-v(2T)| = {v_diff:.3e}"
@@ -189,27 +203,27 @@ fn torque_spin_up() {
     let dt = 0.01;
     // Start with zero angular velocity
     let state0 = identity_spacecraft(500.0);
-    let result = Rk4.integrate(&dynamics, state0, 0.0, t_final, dt, |_, _| {});
+    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, t_final, dt, |_, _| {});
 
     // Expected: ωz = -F * t / I (constant torque, approximately — mass changes slightly)
     // For small mass change ratio, this is very close to linear
     let expected_omega_z = -thrust * t_final / inertia_val;
-    let rel_err =
-        (result.attitude.angular_velocity[2] - expected_omega_z).abs() / expected_omega_z.abs();
+    let rel_err = (result.plant.attitude.angular_velocity[2] - expected_omega_z).abs()
+        / expected_omega_z.abs();
 
     assert!(
         rel_err < 1e-3,
         "ωz: numerical={:.6e}, expected={expected_omega_z:.6e}, rel_err={rel_err:.3e}",
-        result.attitude.angular_velocity[2]
+        result.plant.attitude.angular_velocity[2]
     );
 
     // ωx and ωy should be ~0
     assert!(
-        result.attitude.angular_velocity[0].abs() < 1e-10,
+        result.plant.attitude.angular_velocity[0].abs() < 1e-10,
         "ωx should be ~0"
     );
     assert!(
-        result.attitude.angular_velocity[1].abs() < 1e-10,
+        result.plant.attitude.angular_velocity[1].abs() < 1e-10,
         "ωy should be ~0"
     );
 }
@@ -236,8 +250,8 @@ fn dt_convergence_tsiolkovsky() {
         let thruster = Thruster::new(thrust, isp, Vector3::x());
         let dynamics = free_space_dynamics(symmetric_inertia(10.0), thruster);
         let state0 = identity_spacecraft(m0);
-        let result = Rk4.integrate(&dynamics, state0, 0.0, burn_time, dt, |_, _| {});
-        let dv = result.orbit.velocity().magnitude();
+        let result = Rk4.integrate(&dynamics, state0.into(), 0.0, burn_time, dt, |_, _| {});
+        let dv = result.plant.orbit.velocity().magnitude();
         errors.push((dv - dv_exact).abs());
     }
 
@@ -281,9 +295,9 @@ fn scheduled_burn_delta_v() {
     let dt = 0.01;
     let state0 = identity_spacecraft(m0);
     // Integrate past the burn end to verify coast
-    let result = Rk4.integrate(&dynamics, state0, 0.0, 200.0, dt, |_, _| {});
+    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, 200.0, dt, |_, _| {});
 
-    let dv = result.orbit.velocity().magnitude();
+    let dv = result.plant.orbit.velocity().magnitude();
     let rel_err = (dv - dv_analytical).abs() / dv_analytical;
 
     assert!(
@@ -293,11 +307,11 @@ fn scheduled_burn_delta_v() {
 
     // Mass should not change after burn end (boundary effect may cause small error)
     let mass_after_burn = m0 - mass_rate * burn_duration;
-    let mass_rel_err = (result.mass - mass_after_burn).abs() / mass_after_burn;
+    let mass_rel_err = (result.plant.mass - mass_after_burn).abs() / mass_after_burn;
     assert!(
         mass_rel_err < 1e-6,
         "Mass after coast: {:.10} vs expected {mass_after_burn:.10}, rel_err={mass_rel_err:.3e}",
-        result.mass
+        result.plant.mass
     );
 }
 
@@ -328,20 +342,20 @@ fn tsiolkovsky_velocity_vector_direction() {
     };
 
     let dt = 0.1;
-    let result = Rk4.integrate(&dynamics, state0, 0.0, burn_time, dt, |_, _| {});
+    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, burn_time, dt, |_, _| {});
 
     // X velocity should be unchanged (no thrust along X)
     assert!(
-        (result.orbit.velocity()[0] - 1.0).abs() < 1e-10,
+        (result.plant.orbit.velocity()[0] - 1.0).abs() < 1e-10,
         "vx should remain ~1.0, got {}",
-        result.orbit.velocity()[0]
+        result.plant.orbit.velocity()[0]
     );
 
     // Y velocity should be ~0
     assert!(
-        result.orbit.velocity()[1].abs() < 1e-10,
+        result.plant.orbit.velocity()[1].abs() < 1e-10,
         "vy should remain ~0, got {}",
-        result.orbit.velocity()[1]
+        result.plant.orbit.velocity()[1]
     );
 
     // Z velocity should match Tsiolkovsky (positive, along thrust direction)
@@ -349,11 +363,11 @@ fn tsiolkovsky_velocity_vector_direction() {
     let mf = m0 - mass_rate * burn_time;
     let dv_z_analytical = isp * G0 * (m0 / mf).ln() / 1000.0;
 
-    let rel_err = (result.orbit.velocity()[2] - dv_z_analytical).abs() / dv_z_analytical;
+    let rel_err = (result.plant.orbit.velocity()[2] - dv_z_analytical).abs() / dv_z_analytical;
     assert!(
         rel_err < 1e-4,
         "vz: numerical={:.6e}, analytical={dv_z_analytical:.6e}, rel_err={rel_err:.3e}",
-        result.orbit.velocity()[2]
+        result.plant.orbit.velocity()[2]
     );
 }
 
@@ -376,23 +390,23 @@ fn opposing_thrusters_superposition() {
 
     let state0 = identity_spacecraft(m0);
     let dt = 0.1;
-    let result = Rk4.integrate(&dynamics, state0, 0.0, burn_time, dt, |_, _| {});
+    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, burn_time, dt, |_, _| {});
 
     // Net acceleration should be ~0 → velocity stays ~0
     assert!(
-        result.orbit.velocity().magnitude() < 1e-12,
+        result.plant.orbit.velocity().magnitude() < 1e-12,
         "Opposing thrusters should cancel: |v| = {:.3e}",
-        result.orbit.velocity().magnitude()
+        result.plant.orbit.velocity().magnitude()
     );
 
     // Mass rate should be double (both consume propellant)
     let single_mass_rate = thrust / (isp * G0);
     let expected_mass = m0 - 2.0 * single_mass_rate * burn_time;
-    let mass_rel_err = (result.mass - expected_mass).abs() / expected_mass;
+    let mass_rel_err = (result.plant.mass - expected_mass).abs() / expected_mass;
     assert!(
         mass_rel_err < 1e-8,
         "Mass should deplete at 2x rate: numerical={:.6}, expected={expected_mass:.6}, rel_err={mass_rel_err:.3e}",
-        result.mass
+        result.plant.mass
     );
 }
 
@@ -428,7 +442,7 @@ fn rotating_spacecraft_thrust_integration() {
     };
 
     let dt = 0.001; // small dt for accuracy with rotation
-    let result = Rk4.integrate(&dynamics, state0, 0.0, t_final, dt, |_, _| {});
+    let result = Rk4.integrate(&dynamics, state0.into(), 0.0, t_final, dt, |_, _| {});
 
     // Analytical (constant mass approximation):
     // a = F / (m * 1000) [km/s²]
@@ -436,28 +450,28 @@ fn rotating_spacecraft_thrust_integration() {
     let expected_vx = a_mag * (omega_z * t_final).sin() / omega_z;
     let expected_vy = a_mag * (1.0 - (omega_z * t_final).cos()) / omega_z;
 
-    let vx_err = (result.orbit.velocity()[0] - expected_vx).abs();
-    let vy_err = (result.orbit.velocity()[1] - expected_vy).abs();
+    let vx_err = (result.plant.orbit.velocity()[0] - expected_vx).abs();
+    let vy_err = (result.plant.orbit.velocity()[1] - expected_vy).abs();
 
     // Tolerance: constant-mass approximation introduces small error from mass change
     let v_scale = a_mag * t_final; // characteristic velocity scale
     assert!(
         vx_err / v_scale < 1e-3,
         "vx: numerical={:.6e}, expected={expected_vx:.6e}, err/scale={:.3e}",
-        result.orbit.velocity()[0],
+        result.plant.orbit.velocity()[0],
         vx_err / v_scale
     );
     assert!(
         vy_err / v_scale < 1e-3,
         "vy: numerical={:.6e}, expected={expected_vy:.6e}, err/scale={:.3e}",
-        result.orbit.velocity()[1],
+        result.plant.orbit.velocity()[1],
         vy_err / v_scale
     );
 
     // vz should be ~0 (no thrust component along Z)
     assert!(
-        result.orbit.velocity()[2].abs() < 1e-12,
+        result.plant.orbit.velocity()[2].abs() < 1e-12,
         "vz should be ~0, got {:.3e}",
-        result.orbit.velocity()[2]
+        result.plant.orbit.velocity()[2]
     );
 }

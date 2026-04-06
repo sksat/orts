@@ -39,6 +39,12 @@ impl HasPosition for crate::SpacecraftState {
     }
 }
 
+impl HasPosition for crate::effector::AugmentedState<crate::SpacecraftState> {
+    fn position(&self) -> Vector3<f64> {
+        *self.plant.orbit.position()
+    }
+}
+
 /// Create a derivative-form state containing only translational acceleration.
 ///
 /// In the ODE formulation, the derivative state has the same type as the state.

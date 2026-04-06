@@ -469,15 +469,19 @@ mod tests {
             .with_model(Thruster::new(10.0, 300.0, Vector3::x()));
 
         let state = sample_state();
-        let d = dyn_sc.derivatives(0.0, &state);
+        let d = dyn_sc.derivatives(0.0, &state.into());
 
         // mass derivative should be negative (propellant consumption)
-        assert!(d.mass < 0.0, "mass_rate should be negative, got {}", d.mass);
+        assert!(
+            d.plant.mass < 0.0,
+            "mass_rate should be negative, got {}",
+            d.plant.mass
+        );
         let expected = -10.0 / (300.0 * G0);
         assert!(
-            (d.mass - expected).abs() < 1e-12,
+            (d.plant.mass - expected).abs() < 1e-12,
             "got {}, expected {}",
-            d.mass,
+            d.plant.mass,
             expected
         );
     }

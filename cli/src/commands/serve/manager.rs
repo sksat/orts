@@ -91,16 +91,17 @@ impl SimGroup {
             }
             SimGroup::Spacecraft(g) => {
                 let (entry, dyn_sys) = g.satellites_with_dynamics().nth(idx).unwrap();
-                let q = entry.state.attitude.quaternion;
-                let w = entry.state.attitude.angular_velocity;
+                let sc = &entry.state.plant;
+                let q = sc.attitude.quaternion;
+                let w = sc.attitude.angular_velocity;
                 SatSnapshot {
-                    orbit: entry.state.orbit.clone(),
+                    orbit: sc.orbit.clone(),
                     attitude: Some(AttitudePayload {
                         quaternion_wxyz: [q[0], q[1], q[2], q[3]],
                         angular_velocity_body: [w[0], w[1], w[2]],
                         source: AttitudeSource::Propagated,
                     }),
-                    accels: spacecraft_accel_breakdown(dyn_sys, t, &entry.state),
+                    accels: spacecraft_accel_breakdown(dyn_sys, t, sc),
                 }
             }
         }
@@ -486,8 +487,12 @@ impl SimLoopContext {
         let third_bodies = default_third_bodies(&params.body);
 
         let group = if use_spacecraft {
-            let sc_event_checker = move |_t: f64, state: &SpacecraftState| -> ControlFlow<String> {
-                let r = state.orbit.position().magnitude();
+            let sc_event_checker = move |_t: f64,
+                                         state: &orts::effector::AugmentedState<
+                SpacecraftState,
+            >|
+                  -> ControlFlow<String> {
+                let r = state.plant.orbit.position().magnitude();
                 if r < body_radius {
                     ControlFlow::Break(format!("collision at {:.1} km altitude", r - body_radius))
                 } else if let Some(atm_alt) = atmosphere_altitude {
@@ -521,7 +526,7 @@ impl SimLoopContext {
                 dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
 
                 let orbit = spec.initial_state(params.mu);
-                let initial = SpacecraftState {
+                let plant = SpacecraftState {
                     orbit,
                     attitude: orts::attitude::AttitudeState {
                         quaternion: nalgebra::Vector4::from_row_slice(&att.initial_quaternion),
@@ -531,6 +536,7 @@ impl SimLoopContext {
                     },
                     mass: att.mass,
                 };
+                let initial = dynamics.initial_augmented_state(plant);
                 sc_group = sc_group.add_satellite(spec.id.as_str(), initial, dynamics);
                 metas.push(SatMeta {
                     spec: spec.clone(),

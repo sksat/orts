@@ -1460,12 +1460,12 @@ mod tests {
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_model(drag);
 
-        let result = Rk4.integrate(&dyn_sc, iss_state(), 0.0, 60.0, 1.0, |_, _| {});
+        let result = Rk4.integrate(&dyn_sc, iss_state().into(), 0.0, 60.0, 1.0, |_, _| {});
         assert!(
             result.is_finite(),
             "State should remain finite after 60s integration"
         );
-        assert!(result.orbit.position().magnitude() > 0.0);
+        assert!(result.plant.orbit.position().magnitude() > 0.0);
     }
 
     #[test]
@@ -1486,9 +1486,9 @@ mod tests {
         let e0 = 0.5 * s0.orbit.velocity().magnitude_squared()
             - MU_EARTH / s0.orbit.position().magnitude();
 
-        let s1 = Rk4.integrate(&dyn_sc, s0, 0.0, 300.0, 1.0, |_, _| {});
-        let e1 = 0.5 * s1.orbit.velocity().magnitude_squared()
-            - MU_EARTH / s1.orbit.position().magnitude();
+        let s1 = Rk4.integrate(&dyn_sc, s0.into(), 0.0, 300.0, 1.0, |_, _| {});
+        let e1 = 0.5 * s1.plant.orbit.velocity().magnitude_squared()
+            - MU_EARTH / s1.plant.orbit.position().magnitude();
 
         assert!(
             e1 < e0,
@@ -1517,8 +1517,8 @@ mod tests {
 
         // Collect drag magnitude at several steps to verify it varies
         let mut magnitudes = Vec::new();
-        let _ = Rk4.integrate(&dyn_sc, state, 0.0, 60.0, 1.0, |_t, s| {
-            let loads = dyn_sc.model_breakdown(0.0, s);
+        let _ = Rk4.integrate(&dyn_sc, state.into(), 0.0, 60.0, 1.0, |_t, s| {
+            let loads = dyn_sc.model_breakdown(0.0, &s.plant);
             if let Some((_, el)) = loads.first() {
                 magnitudes.push(el.acceleration_inertial.magnitude());
             }
@@ -1545,7 +1545,7 @@ mod tests {
         let inertia = Matrix3::from_diagonal(&Vector3::new(10.0, 10.0, 10.0));
         let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, inertia).with_model(drag);
 
-        let result = Rk4.integrate(&dyn_sc, iss_state(), 0.0, 60.0, 1.0, |_, _| {});
+        let result = Rk4.integrate(&dyn_sc, iss_state().into(), 0.0, 60.0, 1.0, |_, _| {});
         assert!(result.is_finite());
     }
 }
