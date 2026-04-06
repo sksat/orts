@@ -56,8 +56,14 @@ impl WasmController {
     ///
     /// `pre` is the pre-linked component obtained from
     /// [`Self::prepare`]. `label` is a human-readable satellite
-    /// identifier used for log routing.
-    pub fn new(pre: &PluginPre<HostState>, label: impl Into<String>) -> Result<Self, PluginError> {
+    /// identifier used for log routing. `config` is a backend-
+    /// specific configuration blob (typically JSON) passed to the
+    /// guest's `init` function; pass `""` to accept guest defaults.
+    pub fn new(
+        pre: &PluginPre<HostState>,
+        label: impl Into<String>,
+        config: &str,
+    ) -> Result<Self, PluginError> {
         let label = label.into();
         let engine = pre.engine();
         let host_state = HostState::new(&label);
@@ -67,6 +73,15 @@ impl WasmController {
             .map_err(|e| PluginError::Init(format!("instantiate failed for '{label}': {e}")))?;
 
         let guest = plugin.orts_plugin_controller();
+
+        // Call guest init with the config blob.
+        if !config.is_empty() {
+            guest
+                .call_init(&mut store, config)
+                .map_err(|e| PluginError::Init(format!("init trap for '{label}': {e}")))?
+                .map_err(|e| PluginError::Init(format!("init error for '{label}': {e}")))?;
+        }
+
         let sample_period = guest
             .call_sample_period_s(&mut store)
             .map_err(|e| PluginError::Init(format!("sample-period-s call failed: {e}")))?;

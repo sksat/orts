@@ -34,6 +34,10 @@ fetch-horizons = ["kaname/fetch-horizons"]
 # wasmtime + Pulley interpreter. See `orts::plugin::wasm`.
 plugin-wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
 
+[[example]]
+name = "wasm_bdot_simulate"
+required-features = ["plugin-wasm"]
+
 [dev-dependencies]
 proptest = "1.10.0"
 serde_json.workspace = true

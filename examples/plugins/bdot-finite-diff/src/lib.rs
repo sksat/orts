@@ -49,8 +49,35 @@ impl Guest for Component {
     }
 
     fn init(config: String) -> Result<(), String> {
-        // Phase P1-c: accept defaults only.
-        let _ = config;
+        if config.is_empty() {
+            return Ok(());
+        }
+        // JSON config: {"gain": 1e4, "max_moment": 10.0, "sample_period": 1.0}
+        // All fields optional (defaults apply if omitted).
+        #[derive(serde::Deserialize)]
+        #[serde(default)]
+        struct Config {
+            gain: f64,
+            max_moment: f64,
+            sample_period: f64,
+        }
+        impl Default for Config {
+            fn default() -> Self {
+                Self {
+                    gain: 1e4,
+                    max_moment: 10.0,
+                    sample_period: 1.0,
+                }
+            }
+        }
+        let cfg: Config =
+            serde_json::from_str(&config).map_err(|e| format!("config parse error: {e}"))?;
+        STATE.with(|state| {
+            let mut s = state.borrow_mut();
+            s.gain = cfg.gain;
+            s.max_moment = [cfg.max_moment, cfg.max_moment, cfg.max_moment];
+            s.sample_period = cfg.sample_period;
+        });
         Ok(())
     }
 
@@ -78,8 +105,7 @@ impl Guest for Component {
             };
 
             // Query the host's geomagnetic field model via host-env import.
-            let b_eci =
-                host_env::magnetic_field_eci(obs.spacecraft.orbit.position, epoch);
+            let b_eci = host_env::magnetic_field_eci(obs.spacecraft.orbit.position, epoch);
 
             let b_mag_sq = b_eci.x * b_eci.x + b_eci.y * b_eci.y + b_eci.z * b_eci.z;
             // Threshold 1e-60 (native uses 1e-30 on magnitude, equivalent

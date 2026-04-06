@@ -124,7 +124,7 @@ fn run_wasm(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
     let wasm_bytes = guest_wasm_bytes();
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component must compile");
     let pre = WasmController::prepare(&engine, &component).expect("prepare must succeed");
-    let mut ctrl = WasmController::new(&pre, "oracle-bdot").expect("new must succeed");
+    let mut ctrl = WasmController::new(&pre, "oracle-bdot", "").expect("new must succeed");
 
     let mut bundle = ActuatorBundle::new();
     bundle

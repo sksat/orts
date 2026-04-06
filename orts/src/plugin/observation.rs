@@ -38,6 +38,7 @@ pub struct EnvSnapshot {
     /// requires at least one field (Component Model / wit-bindgen 0.41+
     /// rule). Phase P3 will replace this with meaningful pre-computed
     /// environment values (magnetic field, sun direction, etc.).
+    #[allow(dead_code)] // placeholder for WIT compat, never read
     pub(crate) reserved: bool,
 }
 
