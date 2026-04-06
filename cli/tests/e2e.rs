@@ -461,15 +461,25 @@ fn test_cli_config_file_mars() {
 #[cfg(feature = "plugin-wasm")]
 fn run_cli_config_csv(config_path: &str) -> std::process::Output {
     let binary = env!("CARGO_BIN_EXE_orts");
-    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let plugin_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
+        .unwrap()
+        .join(
+            std::path::Path::new(config_path)
+                .parent()
+                .unwrap_or(std::path::Path::new(".")),
+        );
+    let config_name = std::path::Path::new(config_path)
+        .file_name()
+        .unwrap()
+        .to_str()
         .unwrap();
     Command::new(binary)
-        .current_dir(workspace_root)
+        .current_dir(plugin_dir)
         .args([
             "run",
             "--config",
-            config_path,
+            config_name,
             "--output",
             "stdout",
             "--format",
@@ -486,7 +496,7 @@ fn run_cli_config_csv(config_path: &str) -> std::process::Output {
 #[test]
 #[cfg(feature = "plugin-wasm")]
 fn test_controlled_simulation_via_config() {
-    let output = run_cli_config_csv("plugins/pd-rw-control/mission.yaml");
+    let output = run_cli_config_csv("plugins/pd-rw-control/orts.toml");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "CLI failed: {stderr}");

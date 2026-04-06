@@ -28,22 +28,16 @@ cargo +1.91.0 component build --release
 
 ## シミュレーション実行
 
-ビルドした `.wasm` をホスト側 example から読み込んで実行する:
+TOML config でシミュレーションを実行:
 
 ```sh
-# orts workspace root から
-cargo run --example wasm_pd_rw_simulate --features plugin-wasm --release
+cd plugins/pd-rw-control
+orts run --config orts.toml --format csv
 ```
 
-example は以下の `.wasm` を読み込む:
+`orts.toml` に宇宙機パラメータ、WASM プラグインパス、センサ、RW を全て記述。Rust の再コンパイルなしに `.wasm` と config だけで制御則を差し替えられる。
 
-```
-plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm
-```
-
-初期姿勢誤差 30°（複合軸）、初期角速度あり、重力傾斜外乱込みで 120 秒のシミュレーション。CSV を `plugins/pd-rw-control/sim_pd_rw.csv` に出力する。
-
-**将来的には** `orts run --config mission.yaml` で WASM パスを config に指定して実行できるようになる予定 (Phase P6)。
+初期姿勢誤差 30°（複合軸）、初期角速度あり、重力傾斜外乱込みで 120 秒のシミュレーション。
 
 ## プロット
 
