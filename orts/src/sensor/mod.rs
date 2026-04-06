@@ -1,9 +1,9 @@
-//! Spacecraft sensors (Phase P1).
+//! Spacecraft sensors.
 //!
-//! This module provides ideal sensor models that convert the simulator's
-//! true spacecraft state into measurement values a real onboard computer
-//! would see. Sensor readings are collected by [`SensorBundle`] and
-//! handed to plugin controllers via
+//! This module provides sensor models that convert the simulator's
+//! true spacecraft state into measurement values a real onboard
+//! computer would see. Sensor readings are collected by
+//! [`SensorBundle`] and handed to plugin controllers via
 //! [`crate::plugin::tick_input::Sensors`].
 //!
 //! ## Current sensors
@@ -13,25 +13,22 @@
 //!
 //! ## Noise injection
 //!
-//! All sensors in this module are **ideal** (zero noise). A `NoiseModel`
-//! trait and concrete noise types (Gaussian white noise, bias, etc.)
-//! will be added in a follow-up phase. The sensor structs are designed
-//! so that noise can be composed in without changing their public API
-//! shape.
+//! Each sensor accepts an optional [`noise::NoiseModel`]. Ideal
+//! sensors (no noise) are constructed with `::new()`, noisy sensors
+//! with `::with_noise(model)`. See [`noise`] for available models.
 //!
 //! ## Why no `Sensor` trait?
 //!
 //! A generic `trait Sensor { type Measurement; fn measure(...) }` is
 //! intentionally deferred. With only two concrete sensors that produce
-//! the same type (`Vector3<f64>`) and feed into a fixed
-//! `Sensors` struct, a trait would add abstraction without value.
-//! When the sensor count grows (sun sensor, star tracker, GPS, ...) a
-//! trait will become useful for `Vec<Box<dyn Sensor>>` iteration; at
-//! that point the existing structs can implement it without breaking
-//! changes.
+//! the same type (`Vector3<f64>`) and feed into a fixed `Sensors`
+//! struct, a trait would add abstraction without value. When the
+//! sensor count grows (sun sensor, star tracker, GPS, ...) a trait
+//! will become useful for `Vec<Box<dyn Sensor>>` iteration.
 
 mod gyroscope;
 mod magnetometer;
+pub mod noise;
 
 use kaname::epoch::Epoch;
 
@@ -66,12 +63,13 @@ impl SensorBundle {
         }
     }
 
-    /// Evaluate all configured sensors at the given state and epoch,
-    /// producing immutable [`Sensors`] for the current tick.
-    pub fn evaluate(&self, state: &SpacecraftState, epoch: &Epoch) -> Sensors {
+    /// Evaluate all configured sensors at the given state and epoch.
+    ///
+    /// `&mut self` because noise models mutate their internal RNG.
+    pub fn evaluate(&mut self, state: &SpacecraftState, epoch: &Epoch) -> Sensors {
         Sensors {
-            magnetic_field_body: self.magnetometer.as_ref().map(|m| m.measure(state, epoch)),
-            angular_velocity_body: self.gyroscope.as_ref().map(|g| g.measure(state, epoch)),
+            magnetic_field_body: self.magnetometer.as_mut().map(|m| m.measure(state, epoch)),
+            angular_velocity_body: self.gyroscope.as_mut().map(|g| g.measure(state, epoch)),
         }
     }
 }
@@ -104,7 +102,7 @@ mod tests {
 
     #[test]
     fn empty_bundle_produces_none_fields() {
-        let bundle = SensorBundle::new();
+        let mut bundle = SensorBundle::new();
         let epoch = Epoch::j2000();
         let state = make_state();
         let readings = bundle.evaluate(&state, &epoch);
@@ -114,7 +112,7 @@ mod tests {
 
     #[test]
     fn full_bundle_produces_some_fields() {
-        let bundle = SensorBundle {
+        let mut bundle = SensorBundle {
             magnetometer: Some(Magnetometer::new(Arc::new(TiltedDipole::earth()))),
             gyroscope: Some(Gyroscope::new()),
         };
