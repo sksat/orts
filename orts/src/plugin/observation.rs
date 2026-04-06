@@ -34,11 +34,15 @@ use crate::SpacecraftState;
 /// call back into the host for environment values mid-tick.
 #[derive(Debug, Clone, Default)]
 pub struct EnvSnapshot {
-    // intentionally empty in Phase P0.5; populated in Phase P1.
+    /// Placeholder field to match the WIT `env-snapshot` record which
+    /// requires at least one field (Component Model / wit-bindgen 0.41+
+    /// rule). Phase P3 will replace this with meaningful pre-computed
+    /// environment values (magnetic field, sun direction, etc.).
+    pub(crate) reserved: bool,
 }
 
 impl EnvSnapshot {
-    /// Construct an empty snapshot (Phase P0.5 placeholder).
+    /// Construct an empty snapshot (all placeholder fields at default).
     pub fn empty() -> Self {
         Self::default()
     }

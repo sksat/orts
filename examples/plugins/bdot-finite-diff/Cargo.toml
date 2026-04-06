@@ -1,0 +1,25 @@
+[package]
+name = "orts-example-plugin-bdot-finite-diff"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Independent workspace so this crate is not pulled into the parent
+# orts workspace. wasm32-wasip2 target would break `cargo build
+# --workspace` at the orts root.
+[workspace]
+
+[dependencies]
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "component:orts-example-plugin-bdot-finite-diff"
+
+[package.metadata.component.target]
+# Point to the orts crate's WIT definitions. The path is relative to
+# this crate's Cargo.toml.
+path = "../../../orts/wit/v1"
+world = "plugin"

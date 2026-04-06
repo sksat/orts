@@ -25,13 +25,14 @@ log = "0.4.29"
 serde.workspace = true
 thiserror.workspace = true
 wasmtime = { workspace = true, optional = true }
+wasmtime-wasi = { workspace = true, optional = true }
 
 [features]
 fetch-weather = ["tobari/fetch"]
 fetch-horizons = ["kaname/fetch-horizons"]
 # Phase P1: load WASM Component guest controllers at runtime via
 # wasmtime + Pulley interpreter. See `orts::plugin::wasm`.
-plugin-wasm = ["dep:wasmtime"]
+plugin-wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
 
 [dev-dependencies]
 proptest = "1.10.0"

@@ -16,6 +16,9 @@ use super::bindings::orts::plugin::types as wit;
 impl wit::Host for HostState {}
 
 /// Per-satellite host state stored inside each `wasmtime::Store`.
+///
+/// Holds the WASI context (required by Rust std-based guests), the
+/// geomagnetic field model, and a human-readable label for logging.
 pub struct HostState {
     /// Human-readable satellite / controller label for log messages.
     pub label: String,
@@ -24,14 +27,32 @@ pub struct HostState {
     /// D-5 will replace this with an IGRF spherical-harmonic model
     /// (or a `Box<dyn MagneticFieldModel>` for configurability).
     field: TiltedDipole,
+    /// WASI context: provides sandboxed stdio / env / filesystem to
+    /// the guest. Our controllers don't use these, but Rust std's
+    /// runtime startup requires `wasi:cli/*` imports to be present.
+    wasi: wasmtime_wasi::WasiCtx,
+    /// Resource table for WASI resources.
+    table: wasmtime_wasi::ResourceTable,
 }
 
 impl HostState {
-    /// Create a new host state with default field model.
+    /// Create a new host state with default field model and a
+    /// sandboxed (no I/O) WASI context.
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
             field: TiltedDipole::earth(),
+            wasi: wasmtime_wasi::WasiCtxBuilder::new().build(),
+            table: wasmtime_wasi::ResourceTable::new(),
+        }
+    }
+}
+
+impl wasmtime_wasi::WasiView for HostState {
+    fn ctx(&mut self) -> wasmtime_wasi::WasiCtxView<'_> {
+        wasmtime_wasi::WasiCtxView {
+            ctx: &mut self.wasi,
+            table: &mut self.table,
         }
     }
 }
@@ -56,11 +77,7 @@ impl host_env::Host for HostState {
         }
     }
 
-    fn magnetic_field_eci(
-        &mut self,
-        position_eci_km: wit::Vec3,
-        epoch: wit::Epoch,
-    ) -> wit::Vec3 {
+    fn magnetic_field_eci(&mut self, position_eci_km: wit::Vec3, epoch: wit::Epoch) -> wit::Vec3 {
         let pos = kaname::Eci(Vector3::new(
             position_eci_km.x,
             position_eci_km.y,
@@ -78,8 +95,8 @@ impl host_env::Host for HostState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::host_env::Host as _;
+    use super::*;
 
     #[test]
     fn magnetic_field_returns_finite_nonzero_for_leo() {

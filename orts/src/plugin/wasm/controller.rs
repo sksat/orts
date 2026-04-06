@@ -90,6 +90,11 @@ impl WasmController {
         component: &Component,
     ) -> Result<PluginPre<HostState>, PluginError> {
         let mut linker = wasmtime::component::Linker::new(engine.inner());
+        // Register WASI CLI imports (Rust std-based guests require
+        // wasi:cli/environment, wasi:cli/exit, etc. even if the
+        // controller itself never does I/O).
+        wasmtime_wasi::p2::add_to_linker_sync(&mut linker)
+            .map_err(|e| PluginError::Init(format!("WASI add_to_linker failed: {e}")))?;
         Plugin::add_to_linker::<HostState, HostState>(&mut linker, |state| state)
             .map_err(|e| PluginError::Init(format!("add_to_linker failed: {e}")))?;
         let instance_pre = linker

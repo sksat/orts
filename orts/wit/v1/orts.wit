@@ -119,7 +119,12 @@ interface types {
     /// once third-party guests exist we will freeze the layout and
     /// add fields via a new wit version.
     record env-snapshot {
-        // intentionally empty in Phase P1-b1 — see doc above
+        /// Placeholder to satisfy the Component Model rule that records
+        /// must have at least one field (wit-bindgen 0.41+ enforces
+        /// this). Phase P3 will replace this with meaningful
+        /// pre-computed environment fields (magnetic field, sun
+        /// direction, atmospheric density).
+        reserved: bool,
     }
 
     /// Per-tick observation handed to `controller.update`. This is

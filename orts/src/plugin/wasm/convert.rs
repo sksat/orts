@@ -68,8 +68,7 @@ fn epoch_to_wit(e: &kaname::epoch::Epoch) -> wit::Epoch {
 }
 
 fn env_snapshot_to_wit(_env: &EnvSnapshot) -> wit::EnvSnapshot {
-    // Phase P1-b1: empty record → empty struct.
-    wit::EnvSnapshot {}
+    wit::EnvSnapshot { reserved: false }
 }
 
 fn vec3_to_wit(v: &Vector3<f64>) -> wit::Vec3 {
