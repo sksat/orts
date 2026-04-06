@@ -114,6 +114,46 @@ impl AttitudeConfig {
     }
 }
 
+/// コントローラ設定。
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(tag = "type")]
+pub enum ControllerConfig {
+    /// WASM Component ゲストプラグイン。
+    #[serde(rename = "wasm")]
+    Wasm {
+        /// `.wasm` ファイルのパス。
+        path: String,
+        /// ゲストの `init` に渡す設定 (JSON value)。
+        #[serde(default)]
+        config: serde_json::Value,
+    },
+}
+
+/// センサ選択。
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SensorChoice {
+    Magnetometer,
+    Gyroscope,
+    StarTracker,
+}
+
+/// リアクションホイール設定。
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(tag = "type")]
+pub enum ReactionWheelConfig {
+    /// 直交 3 軸配置。
+    #[serde(rename = "three_axis")]
+    ThreeAxis {
+        /// ホイール慣性モーメント [kg·m²]。
+        inertia: f64,
+        /// 最大角運動量 [N·m·s]。
+        max_momentum: f64,
+        /// 最大トルク [N·m]。
+        max_torque: f64,
+    },
+}
+
 /// Per-satellite configuration.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct SatelliteConfig {
@@ -125,6 +165,12 @@ pub struct SatelliteConfig {
     pub srp_cr: Option<f64>,
     /// Attitude dynamics configuration. When present, SpacecraftDynamics is used.
     pub attitude: Option<AttitudeConfig>,
+    /// プラグインコントローラ設定。
+    pub controller: Option<ControllerConfig>,
+    /// 有効にするセンサ一覧。
+    pub sensors: Option<Vec<SensorChoice>>,
+    /// リアクションホイール設定。
+    pub reaction_wheels: Option<ReactionWheelConfig>,
 }
 
 /// Orbit specification in config files.
@@ -267,6 +313,9 @@ impl SatelliteConfig {
             srp_area_to_mass: self.srp_area_to_mass,
             srp_cr: self.srp_cr,
             attitude_config: self.attitude.clone(),
+            controller_config: self.controller.clone(),
+            sensor_choices: self.sensors.clone(),
+            rw_config: self.reaction_wheels.clone(),
         }
     }
 }
@@ -462,6 +511,9 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
             attitude: None,
+            controller: None,
+            sensors: None,
+            reaction_wheels: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -493,6 +545,9 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
             attitude: None,
+            controller: None,
+            sensors: None,
+            reaction_wheels: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -515,6 +570,9 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
             attitude: None,
+            controller: None,
+            sensors: None,
+            reaction_wheels: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -615,6 +673,9 @@ satellites:
                 srp_area_to_mass: Some(0.02),
                 srp_cr: Some(1.5),
                 attitude: None,
+                controller: None,
+                sensors: None,
+                reaction_wheels: None,
             }],
         };
         let json = serde_json::to_string(&config).unwrap();
@@ -744,6 +805,62 @@ altitude = 400.0
         }"#;
         let config: SimConfig = serde_json::from_str(json).unwrap();
         assert!(config.satellites[0].attitude.is_none());
+    }
+
+    #[test]
+    fn deserialize_controller_config() {
+        let yaml = r#"
+satellites:
+  - orbit: { type: circular, altitude: 400 }
+    attitude: { inertia_diag: [10, 10, 10], mass: 500 }
+    controller:
+      type: wasm
+      path: plugins/pd-rw-control/target/plugin.wasm
+      config:
+        kp: 1.0
+        kd: 2.0
+    sensors: [gyroscope, star_tracker]
+    reaction_wheels:
+      type: three_axis
+      inertia: 0.01
+      max_momentum: 1.0
+      max_torque: 0.5
+"#;
+        let config: SimConfig = serde_yaml::from_str(yaml).unwrap();
+        let sat = &config.satellites[0];
+
+        // Controller
+        let ctrl = sat.controller.as_ref().unwrap();
+        assert!(
+            matches!(ctrl, ControllerConfig::Wasm { path, .. } if path.contains("plugin.wasm"))
+        );
+
+        // Sensors
+        let sensors = sat.sensors.as_ref().unwrap();
+        assert_eq!(sensors.len(), 2);
+        assert!(sensors.contains(&SensorChoice::Gyroscope));
+        assert!(sensors.contains(&SensorChoice::StarTracker));
+
+        // Reaction wheels
+        let rw = sat.reaction_wheels.as_ref().unwrap();
+        assert!(matches!(
+            rw,
+            ReactionWheelConfig::ThreeAxis { inertia, max_momentum, max_torque }
+            if (*inertia - 0.01).abs() < 1e-9
+            && (*max_momentum - 1.0).abs() < 1e-9
+            && (*max_torque - 0.5).abs() < 1e-9
+        ));
+    }
+
+    #[test]
+    fn controller_config_absent_by_default() {
+        let json = r#"{
+            "satellites": [{ "orbit": { "type": "circular", "altitude": 400 } }]
+        }"#;
+        let config: SimConfig = serde_json::from_str(json).unwrap();
+        assert!(config.satellites[0].controller.is_none());
+        assert!(config.satellites[0].sensors.is_none());
+        assert!(config.satellites[0].reaction_wheels.is_none());
     }
 
     #[test]

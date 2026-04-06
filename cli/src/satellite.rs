@@ -44,6 +44,15 @@ pub struct SatelliteSpec {
     pub srp_cr: Option<f64>,
     /// Attitude dynamics configuration. When present, SpacecraftDynamics is used.
     pub attitude_config: Option<crate::config::AttitudeConfig>,
+    /// Plugin controller configuration (used in Step 3: controlled.rs).
+    #[allow(dead_code)]
+    pub controller_config: Option<crate::config::ControllerConfig>,
+    /// Enabled sensors (used in Step 3: controlled.rs).
+    #[allow(dead_code)]
+    pub sensor_choices: Option<Vec<crate::config::SensorChoice>>,
+    /// Reaction wheel configuration (used in Step 3: controlled.rs).
+    #[allow(dead_code)]
+    pub rw_config: Option<crate::config::ReactionWheelConfig>,
 }
 
 impl SatelliteSpec {
@@ -243,6 +252,9 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         srp_area_to_mass,
         srp_cr,
         attitude_config: None, // CLI --sat does not yet support attitude; use config file
+        controller_config: None,
+        sensor_choices: None,
+        rw_config: None,
     }
 }
 

@@ -95,6 +95,9 @@ impl SimParams {
                     srp_area_to_mass: None,
                     srp_cr: None,
                     attitude_config: None,
+                    controller_config: None,
+                    sensor_choices: None,
+                    rw_config: None,
                 }]
             } else if is_serve
                 && args.altitude == 400.0
@@ -122,6 +125,9 @@ impl SimParams {
                     srp_area_to_mass: None,
                     srp_cr: None,
                     attitude_config: None,
+                    controller_config: None,
+                    sensor_choices: None,
+                    rw_config: None,
                 }]
             }
         };
@@ -266,6 +272,9 @@ impl SimParams {
                 initial_quaternion: [1.0, 0.0, 0.0, 0.0],
                 initial_angular_velocity: [0.0, 0.0, 0.0],
             }),
+            controller_config: None,
+            sensor_choices: None,
+            rw_config: None,
         });
 
         // ISS: try online sources, fall back to embedded TLE
@@ -301,6 +310,9 @@ impl SimParams {
                 initial_quaternion: [1.0, 0.0, 0.0, 0.0],
                 initial_angular_velocity: [0.0, 0.0, 0.0],
             }),
+            controller_config: None,
+            sensor_choices: None,
+            rw_config: None,
         });
 
         sats
