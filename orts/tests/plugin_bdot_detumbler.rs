@@ -1,6 +1,6 @@
 //! Phase P0.5 sanity: plugin-layer B-dot **detumbling** implementation
 //! that uses the rate-gyro (`angular_velocity`) reading from
-//! `Observation::spacecraft.attitude`.
+//! `TickInput::spacecraft.attitude`.
 //!
 //! Unlike the finite-difference variant tested in
 //! `plugin_bdot_finitediff.rs`, this controller is **stateless** and
@@ -9,7 +9,7 @@
 //!     m = -k · (ω × B_body)
 //!
 //! clamped component-wise to `±max_moment`. This exercises a
-//! different Observation path — the plugin controller reads
+//! different TickInput path — the plugin controller reads
 //! `obs.spacecraft.attitude.angular_velocity` directly, validating
 //! that the plugin layer can deliver rate-gyro information to guest
 //! controllers. Phase P1 WASM guests will use the same field.
@@ -36,9 +36,7 @@ use utsuroi::{Integrator, Rk4};
 use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, CommandedMagnetorquer, DecoupledAttitudeSystem};
-use orts::plugin::{
-    ActuatorBundle, Command, EnvSnapshot, Observation, PluginController, PluginError,
-};
+use orts::plugin::{ActuatorBundle, Command, PluginController, PluginError, Sensors, TickInput};
 
 const MASS: f64 = 50.0;
 const ALT_KM: f64 = 500.0;
@@ -104,7 +102,7 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
     fn initial_command(&self) -> Command {
         Command::MagneticMoment(Vector3::zeros())
     }
-    fn update(&mut self, obs: &Observation<'_>) -> Result<Command, PluginError> {
+    fn update(&mut self, obs: &TickInput<'_>) -> Result<Command, PluginError> {
         let Some(epoch) = obs.epoch else {
             return Ok(Command::MagneticMoment(Vector3::zeros()));
         };
@@ -117,7 +115,7 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
         let b_body = obs.spacecraft.attitude.inertial_to_body() * b_eci;
         // Read the rate-gyro measurement directly from the observation.
         // This is the entire point of the detumbler variant: it
-        // exercises the Observation -> plugin path for angular velocity.
+        // exercises the TickInput -> plugin path for angular velocity.
         let omega = &obs.spacecraft.attitude.angular_velocity;
         let db_body_dt = -omega.cross(&b_body);
         let mut m_cmd = -self.gain * db_body_dt;
@@ -172,7 +170,7 @@ fn run(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
         .apply(&ctrl.initial_command())
         .expect("initial command must be finite");
 
-    let env = EnvSnapshot::empty();
+    let sensors = Sensors::empty();
     let mut state = initial;
     let mut t = 0.0;
 
@@ -199,11 +197,11 @@ fn run(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
             attitude: state.clone(),
             mass: MASS,
         };
-        let obs = Observation {
+        let obs = TickInput {
             t,
             spacecraft: &snapshot,
             epoch: Some(&current_epoch),
-            env: &env,
+            sensors: &sensors,
         };
         let cmd = ctrl
             .update(&obs)
@@ -252,7 +250,7 @@ fn plugin_bdot_detumbler_uses_angular_velocity_from_observation() {
         SAMPLE_PERIOD,
     );
     let epoch = Epoch::j2000();
-    let env = EnvSnapshot::empty();
+    let sensors = Sensors::empty();
     let spacecraft = SpacecraftState {
         orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0)),
         attitude: AttitudeState {
@@ -261,11 +259,11 @@ fn plugin_bdot_detumbler_uses_angular_velocity_from_observation() {
         },
         mass: MASS,
     };
-    let obs = Observation {
+    let obs = TickInput {
         t: 0.0,
         spacecraft: &spacecraft,
         epoch: Some(&epoch),
-        env: &env,
+        sensors: &sensors,
     };
     let cmd = ctrl.update(&obs).unwrap();
     assert_eq!(cmd.as_magnetic_moment(), Some(Vector3::zeros()));

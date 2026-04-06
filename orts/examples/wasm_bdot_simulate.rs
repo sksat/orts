@@ -33,7 +33,7 @@ use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, CommandedMagnetorquer, DecoupledAttitudeSystem};
 use orts::plugin::wasm::{WasmController, WasmEngine};
-use orts::plugin::{ActuatorBundle, EnvSnapshot, Observation, PluginController};
+use orts::plugin::{ActuatorBundle, PluginController, Sensors, TickInput};
 
 const MASS: f64 = 50.0;
 const ALT_KM: f64 = 500.0;
@@ -129,7 +129,7 @@ fn run_case(
     let mut bundle = ActuatorBundle::new();
     bundle.apply(&ctrl.initial_command()).unwrap();
 
-    let env = EnvSnapshot::empty();
+    let sensors = Sensors::empty();
     let mut state = initial;
     let mut t = 0.0;
     let mut trajectory = Vec::new();
@@ -160,11 +160,11 @@ fn run_case(
             attitude: state.clone(),
             mass: MASS,
         };
-        let obs = Observation {
+        let obs = TickInput {
             t,
             spacecraft: &snapshot,
             epoch: Some(&current_epoch),
-            env: &env,
+            sensors: &sensors,
         };
         let cmd = ctrl.update(&obs).expect("WASM update must succeed");
         bundle.apply(&cmd).expect("command must be finite");

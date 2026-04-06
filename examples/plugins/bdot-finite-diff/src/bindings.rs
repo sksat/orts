@@ -5,19 +5,17 @@
 #[allow(dead_code, clippy::all)]
 pub mod orts {
     pub mod plugin {
-        /// Physics primitives exchanged between host and guest.
+        /// ホストとゲスト間で交換する物理量プリミティブ。
         ///
-        /// All vector / quaternion / state types use the orts project
-        /// conventions: km and km/s for orbital state, rad and rad/s for
-        /// attitude, A·m² for magnetic moment, Hamilton quaternions with
-        /// scalar-first layout, ECI-based vectors unless a component name
-        /// says otherwise.
+        /// 全てのベクトル / クォータニオン / 状態型は orts の規約に従う:
+        /// 軌道状態は km / km/s、姿勢は rad / rad/s、磁気モーメントは
+        /// A·m²、Hamilton クォータニオン (スカラー先頭)、ECI 基準。
         #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
         pub mod types {
             #[used]
             #[doc(hidden)]
             static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
-            /// 3-component real vector.
+            /// 3 成分実数ベクトル。
             #[repr(C)]
             #[derive(Clone, Copy)]
             pub struct Vec3 {
@@ -37,7 +35,7 @@ pub mod orts {
                         .finish()
                 }
             }
-            /// Hamilton quaternion, scalar-first `(w, x, y, z)`.
+            /// Hamilton クォータニオン、スカラー先頭 `(w, x, y, z)`。
             #[repr(C)]
             #[derive(Clone, Copy)]
             pub struct Quat {
@@ -59,8 +57,7 @@ pub mod orts {
                         .finish()
                 }
             }
-            /// Orbital state in the Earth-centred inertial (ECI) frame.
-            /// Position in km, velocity in km/s.
+            /// ECI 座標系での軌道状態。位置 [km]、速度 [km/s]。
             #[repr(C)]
             #[derive(Clone, Copy)]
             pub struct OrbitalState {
@@ -78,8 +75,8 @@ pub mod orts {
                         .finish()
                 }
             }
-            /// Rigid-body attitude: orientation (body→inertial) plus angular
-            /// velocity expressed in the body frame \[rad/s\].
+            /// 剛体姿勢: 姿勢クォータニオン (body→inertial) と
+            /// 機体座標系での角速度 \[rad/s\]。
             #[repr(C)]
             #[derive(Clone, Copy)]
             pub struct AttitudeState {
@@ -97,15 +94,14 @@ pub mod orts {
                         .finish()
                 }
             }
-            /// Complete spacecraft state handed to a plugin controller at
-            /// every sample tick. Matches the host-side
-            /// `orts::SpacecraftState` layout.
+            /// サンプル tick ごとにプラグインコントローラに渡される宇宙機状態。
+            /// ホスト側 `orts::SpacecraftState` と対応。
             #[repr(C)]
             #[derive(Clone, Copy)]
             pub struct SpacecraftState {
                 pub orbit: OrbitalState,
                 pub attitude: AttitudeState,
-                /// Spacecraft mass \[kg\].
+                /// 宇宙機質量 \[kg\]。
                 pub mass: f64,
             }
             impl ::core::fmt::Debug for SpacecraftState {
@@ -120,19 +116,15 @@ pub mod orts {
                         .finish()
                 }
             }
-            /// Astronomical epoch, serialised as a raw Julian Date (JD) so
-            /// it maps bit-for-bit to `kaname::epoch::Epoch { jd }`.
+            /// 天文暦元。Julian Date (JD) として直接シリアライズ。
+            /// `kaname::epoch::Epoch { jd }` と bit-for-bit 対応。
             ///
-            /// **Timescale note**: Phase P1 of `kaname::Epoch` does not
-            /// strictly distinguish UTC / TAI / TT. The `J2000_JD` constant
-            /// is the TT J2000 (`2451545.0`), but `from_gregorian(...)`
-            /// folds UTC components onto that timeline without leap-second
-            /// bookkeeping. Guests that need "seconds since J2000" should
-            /// compute `(julian-date - 2451545.0) * 86400.0` on their side
-            /// and treat the result as a pragmatic TT-ish second count.
-            /// Phase P2 may tighten the host-side timescale definition; the
-            /// WIT `julian-date` field name is neutral enough to survive
-            /// that change without renaming.
+            /// **タイムスケール注意**: Phase P1 の `kaname::Epoch` は
+            /// UTC / TAI / TT を厳密に区別しない。`J2000_JD` 定数は
+            /// TT J2000 (`2451545.0`) だが、`from_gregorian(...)` は
+            /// うるう秒なしで UTC をそのタイムラインに載せる。
+            /// "J2000 からの秒数" が必要なゲストは
+            /// `(julian-date - 2451545.0) * 86400.0` を自分で計算すること。
             #[repr(C)]
             #[derive(Clone, Copy)]
             pub struct Epoch {
@@ -148,82 +140,78 @@ pub mod orts {
                         .finish()
                 }
             }
-            /// Environment snapshot evaluated once at the tick instant and
-            /// passed to the guest.
+            /// tick 時点で評価されたセンサ読み値。
             ///
-            /// **Phase P1-b1**: shipped empty on purpose. Phase P1-b3 will
-            /// populate it with pre-computed fields that guests care about
-            /// (magnetic field in the body frame, sun direction in ECI,
-            /// atmospheric density, ...). Adding fields to this record is
-            /// **ABI-breaking under Canonical ABI**: guests built against
-            /// v0.1.0 MUST be recompiled when the record layout grows. We
-            /// accept this because Phase P1 ships host and guest lockstep;
-            /// once third-party guests exist we will freeze the layout and
-            /// add fields via a new wit version.
+            /// ホスト側センサモデル (`orts::sensor`) による事前計算結果。
+            /// 各フィールドは `option` — 宇宙機にそのセンサがなければ `none`。
+            ///
+            /// このレコードへのフィールド追加は **Canonical ABI 破壊的変更**。
+            /// Phase P1 では host/guest を lockstep で開発するため許容。
+            /// サードパーティゲストが出た段階でレイアウトを凍結し、
+            /// 新フィールドは新 wit バージョンで追加する。
             #[repr(C)]
             #[derive(Clone, Copy)]
-            pub struct EnvSnapshot {
-                /// Placeholder to satisfy the Component Model rule that records
-                /// must have at least one field (wit-bindgen 0.41+ enforces
-                /// this). Phase P3 will replace this with meaningful
-                /// pre-computed environment fields (magnetic field, sun
-                /// direction, atmospheric density).
-                pub reserved: bool,
+            pub struct Sensors {
+                /// 磁力計で計測した機体座標系の磁場 \[T\]。
+                /// tick ごとに 1 回事前評価、ホスト呼び出しオーバーヘッドなし。
+                /// 任意位置/エポックの磁場が必要なら
+                /// `host-env.magnetic-field-eci` を使う。
+                pub magnetic_field_body: Option<Vec3>,
+                /// ジャイロスコープで計測した機体座標系の角速度 \[rad/s\]。
+                pub angular_velocity_body: Option<Vec3>,
             }
-            impl ::core::fmt::Debug for EnvSnapshot {
+            impl ::core::fmt::Debug for Sensors {
                 fn fmt(
                     &self,
                     f: &mut ::core::fmt::Formatter<'_>,
                 ) -> ::core::fmt::Result {
-                    f.debug_struct("EnvSnapshot")
-                        .field("reserved", &self.reserved)
+                    f.debug_struct("Sensors")
+                        .field("magnetic-field-body", &self.magnetic_field_body)
+                        .field("angular-velocity-body", &self.angular_velocity_body)
                         .finish()
                 }
             }
-            /// Per-tick observation handed to `controller.update`. This is
-            /// the WIT counterpart of the host-side
-            /// `orts::plugin::Observation<'a>` struct.
+            /// `controller.update` に渡される tick ごとの入力。
+            /// ホスト側 `orts::plugin::TickInput<'a>` と対応。
             #[repr(C)]
             #[derive(Clone, Copy)]
-            pub struct Observation {
-                /// Simulation time \[s\], measured from the controller's
-                /// reference t=0 (not wall clock).
+            pub struct TickInput {
+                /// シミュレーション時刻 \[s\]、コントローラの t=0 からの経過秒。
                 pub t: f64,
+                /// 宇宙機の真値状態（デバッグ・ログ用）。
                 pub spacecraft: SpacecraftState,
-                /// Absolute epoch, if the simulation is bound to a
-                /// wall-clock timebase.
+                /// 暦元（暦表・磁場モデル等で必要な場合）。
                 pub epoch: Option<Epoch>,
-                pub env: EnvSnapshot,
+                /// センサ読み値。将来ノイズが乗る可能性がある。
+                pub sensors: Sensors,
             }
-            impl ::core::fmt::Debug for Observation {
+            impl ::core::fmt::Debug for TickInput {
                 fn fmt(
                     &self,
                     f: &mut ::core::fmt::Formatter<'_>,
                 ) -> ::core::fmt::Result {
-                    f.debug_struct("Observation")
+                    f.debug_struct("TickInput")
                         .field("t", &self.t)
                         .field("spacecraft", &self.spacecraft)
                         .field("epoch", &self.epoch)
-                        .field("env", &self.env)
+                        .field("sensors", &self.sensors)
                         .finish()
                 }
             }
-            /// Logical actuator command returned by the controller.
+            /// コントローラが返す論理アクチュエータ指令。
             ///
-            /// Phase P1 only carries the `magnetic-moment` variant so that
-            /// the first guest (B-dot) can do a full end-to-end run. Later
-            /// phases append `reaction-wheel`, `throttle`, and
-            /// `impulsive-dv` variants; adding variants is non-breaking
-            /// because callers (Rust host) consume the value through a
-            /// `#[non_exhaustive]` enum that can always fall through.
-            ///
-            /// Renaming, removing, or reordering existing variants is
-            /// **breaking** and must ship under `wit/v2/`.
+            /// Phase P1 は `magnetic-moment` と `rw-torque` を定義。
+            /// 後続フェーズで `throttle`, `impulsive-dv` 等を追加。
+            /// variant の追加は非破壊的（ホスト側は `#[non_exhaustive]` enum）。
+            /// 既存 variant のリネーム・削除・並べ替えは破壊的変更
+            /// → `wit/v1/` で対応。
             #[derive(Clone, Copy)]
             pub enum Command {
-                /// Commanded magnetic dipole moment in the body frame
-                /// \[A·m²\].
+                /// 機体座標系での指令磁気ダイポールモーメント \[A·m²\]。
                 MagneticMoment(Vec3),
+                /// RW アセンブリへの指令トルク \[N·m\]、機体座標系。
+                /// ホスト側 RW モデルが各ホイール軸への投影を行う。
+                RwTorque(Vec3),
             }
             impl ::core::fmt::Debug for Command {
                 fn fmt(
@@ -234,21 +222,17 @@ pub mod orts {
                         Command::MagneticMoment(e) => {
                             f.debug_tuple("Command::MagneticMoment").field(e).finish()
                         }
+                        Command::RwTorque(e) => {
+                            f.debug_tuple("Command::RwTorque").field(e).finish()
+                        }
                     }
                 }
             }
         }
-        /// Host-side services imported by the guest.
+        /// ゲストがホストに対して呼び出せるサービス（host import）。
         ///
-        /// These functions are the only legal way for a guest to reach back
-        /// into host state during an `update` call. Every function is
-        /// expected to be cheap and side-effect-free (`log` aside) because
-        /// the host may call a controller multiple times per second across
-        /// many satellites.
-        ///
-        /// The interface name is `host-env` rather than plain `env` to
-        /// avoid visual collision with the `env-snapshot` record under
-        /// `interface types`.
+        /// `update` 呼び出し中にゲストがホスト状態にアクセスする唯一の
+        /// 合法的な手段。全関数は安価で副作用なし（`log` を除く）であること。
         #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
         pub mod host_env {
             #[used]
@@ -257,11 +241,7 @@ pub mod orts {
             use super::super::super::_rt;
             pub type Vec3 = super::super::super::orts::plugin::types::Vec3;
             pub type Epoch = super::super::super::orts::plugin::types::Epoch;
-            /// Logging severity levels, matching the `tracing` crate levels
-            /// used throughout orts. `warn` and `error` guest messages are
-            /// always routed to the host's current `tracing` subscriber;
-            /// lower levels are filtered according to the subscriber's
-            /// configuration.
+            /// ログレベル。orts 全体で使用する `tracing` crate のレベルと対応。
             #[repr(u8)]
             #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
             pub enum LogLevel {
@@ -302,7 +282,7 @@ pub mod orts {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            /// Emit a log record from the guest.
+            /// ゲストからログレコードを出力する。
             pub fn log(level: LogLevel, message: &str) -> () {
                 unsafe {
                     let vec0 = message;
@@ -322,12 +302,15 @@ pub mod orts {
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
-            /// Evaluate the geomagnetic field at a given ECI position and
-            /// epoch. Returns the field vector in ECI coordinates \[T\].
+            /// 指定 ECI 位置・エポックでの地磁気ベクトルを ECI 座標系で返す \[T\]。
             ///
-            /// Phase P1 wires this to the host's default magnetic model
-            /// (`tobari::magnetic::TiltedDipole`). Phase D-5 upgrades this
-            /// to IGRF spherical harmonics.
+            /// 宇宙機の現在位置・姿勢での機体座標系磁場が欲しい場合は
+            /// `sensors.magnetic-field-body` を使う方がオーバーヘッドがない。
+            /// このインポートは任意位置/エポックの磁場が必要な場合
+            /// （予測・計画等）の "escape hatch"。
+            ///
+            /// Phase P1 では `tobari::magnetic::TiltedDipole` に接続。
+            /// Phase D-5 で IGRF 球面調和モデルへ移行予定。
             pub fn magnetic_field_eci(position_eci_km: Vec3, e: Epoch) -> Vec3 {
                 unsafe {
                     #[repr(align(8))]
@@ -386,19 +369,18 @@ pub mod orts {
 pub mod exports {
     pub mod orts {
         pub mod plugin {
-            /// Guest-side entry points exported to the host.
+            /// ゲスト側のエントリーポイント（host が呼び出す export）。
             ///
-            /// A plugin implements this interface once; the host then creates
-            /// one `wasmtime::component::Instance` per satellite and drives it
-            /// through `initial-command` + repeated `update` calls at the
-            /// controller's sample period.
+            /// プラグインはこのインターフェースを 1 回実装する。ホストは衛星ごとに
+            /// `wasmtime::component::Instance` を 1 つ作成し、`initial-command` +
+            /// `update` 呼び出しをコントローラのサンプル周期で繰り返す。
             #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
             pub mod controller {
                 #[used]
                 #[doc(hidden)]
                 static __FORCE_SECTION_REF: fn() = super::super::super::super::__link_custom_section_describing_imports;
                 use super::super::super::super::_rt;
-                pub type Observation = super::super::super::super::orts::plugin::types::Observation;
+                pub type TickInput = super::super::super::super::orts::plugin::types::TickInput;
                 pub type Command = super::super::super::super::orts::plugin::types::Command;
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -461,9 +443,9 @@ pub mod exports {
                     #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
                     let result0 = T::initial_command();
                     let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
-                    use super::super::super::super::orts::plugin::types::Command as V3;
+                    use super::super::super::super::orts::plugin::types::Command as V4;
                     match result0 {
-                        V3::MagneticMoment(e) => {
+                        V4::MagneticMoment(e) => {
                             *ptr1.add(0).cast::<u8>() = (0i32) as u8;
                             let super::super::super::super::orts::plugin::types::Vec3 {
                                 x: x2,
@@ -473,6 +455,17 @@ pub mod exports {
                             *ptr1.add(8).cast::<f64>() = _rt::as_f64(x2);
                             *ptr1.add(16).cast::<f64>() = _rt::as_f64(y2);
                             *ptr1.add(24).cast::<f64>() = _rt::as_f64(z2);
+                        }
+                        V4::RwTorque(e) => {
+                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
+                            let super::super::super::super::orts::plugin::types::Vec3 {
+                                x: x3,
+                                y: y3,
+                                z: z3,
+                            } = e;
+                            *ptr1.add(8).cast::<f64>() = _rt::as_f64(x3);
+                            *ptr1.add(16).cast::<f64>() = _rt::as_f64(y3);
+                            *ptr1.add(24).cast::<f64>() = _rt::as_f64(z3);
                         }
                     }
                     ptr1
@@ -498,7 +491,8 @@ pub mod exports {
                     let l14 = *arg0.add(112).cast::<f64>();
                     let l15 = i32::from(*arg0.add(120).cast::<u8>());
                     let l17 = i32::from(*arg0.add(136).cast::<u8>());
-                    let result18 = T::update(super::super::super::super::orts::plugin::types::Observation {
+                    let l21 = i32::from(*arg0.add(168).cast::<u8>());
+                    let result25 = T::update(super::super::super::super::orts::plugin::types::TickInput {
                         t: l0,
                         spacecraft: super::super::super::super::orts::plugin::types::SpacecraftState {
                             orbit: super::super::super::super::orts::plugin::types::OrbitalState {
@@ -541,43 +535,87 @@ pub mod exports {
                             }
                             _ => _rt::invalid_enum_discriminant(),
                         },
-                        env: super::super::super::super::orts::plugin::types::EnvSnapshot {
-                            reserved: _rt::bool_lift(l17 as u8),
+                        sensors: super::super::super::super::orts::plugin::types::Sensors {
+                            magnetic_field_body: match l17 {
+                                0 => None,
+                                1 => {
+                                    let e = {
+                                        let l18 = *arg0.add(144).cast::<f64>();
+                                        let l19 = *arg0.add(152).cast::<f64>();
+                                        let l20 = *arg0.add(160).cast::<f64>();
+                                        super::super::super::super::orts::plugin::types::Vec3 {
+                                            x: l18,
+                                            y: l19,
+                                            z: l20,
+                                        }
+                                    };
+                                    Some(e)
+                                }
+                                _ => _rt::invalid_enum_discriminant(),
+                            },
+                            angular_velocity_body: match l21 {
+                                0 => None,
+                                1 => {
+                                    let e = {
+                                        let l22 = *arg0.add(176).cast::<f64>();
+                                        let l23 = *arg0.add(184).cast::<f64>();
+                                        let l24 = *arg0.add(192).cast::<f64>();
+                                        super::super::super::super::orts::plugin::types::Vec3 {
+                                            x: l22,
+                                            y: l23,
+                                            z: l24,
+                                        }
+                                    };
+                                    Some(e)
+                                }
+                                _ => _rt::invalid_enum_discriminant(),
+                            },
                         },
                     });
-                    _rt::cabi_dealloc(arg0, 144, 8);
-                    let ptr19 = (&raw mut _RET_AREA.0).cast::<u8>();
-                    match result18 {
+                    _rt::cabi_dealloc(arg0, 200, 8);
+                    let ptr26 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result25 {
                         Ok(e) => {
-                            *ptr19.add(0).cast::<u8>() = (0i32) as u8;
-                            use super::super::super::super::orts::plugin::types::Command as V21;
+                            *ptr26.add(0).cast::<u8>() = (0i32) as u8;
+                            use super::super::super::super::orts::plugin::types::Command as V29;
                             match e {
-                                V21::MagneticMoment(e) => {
-                                    *ptr19.add(8).cast::<u8>() = (0i32) as u8;
+                                V29::MagneticMoment(e) => {
+                                    *ptr26.add(8).cast::<u8>() = (0i32) as u8;
                                     let super::super::super::super::orts::plugin::types::Vec3 {
-                                        x: x20,
-                                        y: y20,
-                                        z: z20,
+                                        x: x27,
+                                        y: y27,
+                                        z: z27,
                                     } = e;
-                                    *ptr19.add(16).cast::<f64>() = _rt::as_f64(x20);
-                                    *ptr19.add(24).cast::<f64>() = _rt::as_f64(y20);
-                                    *ptr19.add(32).cast::<f64>() = _rt::as_f64(z20);
+                                    *ptr26.add(16).cast::<f64>() = _rt::as_f64(x27);
+                                    *ptr26.add(24).cast::<f64>() = _rt::as_f64(y27);
+                                    *ptr26.add(32).cast::<f64>() = _rt::as_f64(z27);
+                                }
+                                V29::RwTorque(e) => {
+                                    *ptr26.add(8).cast::<u8>() = (1i32) as u8;
+                                    let super::super::super::super::orts::plugin::types::Vec3 {
+                                        x: x28,
+                                        y: y28,
+                                        z: z28,
+                                    } = e;
+                                    *ptr26.add(16).cast::<f64>() = _rt::as_f64(x28);
+                                    *ptr26.add(24).cast::<f64>() = _rt::as_f64(y28);
+                                    *ptr26.add(32).cast::<f64>() = _rt::as_f64(z28);
                                 }
                             }
                         }
                         Err(e) => {
-                            *ptr19.add(0).cast::<u8>() = (1i32) as u8;
-                            let vec22 = (e.into_bytes()).into_boxed_slice();
-                            let ptr22 = vec22.as_ptr().cast::<u8>();
-                            let len22 = vec22.len();
-                            ::core::mem::forget(vec22);
-                            *ptr19
+                            *ptr26.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec30 = (e.into_bytes()).into_boxed_slice();
+                            let ptr30 = vec30.as_ptr().cast::<u8>();
+                            let len30 = vec30.len();
+                            ::core::mem::forget(vec30);
+                            *ptr26
                                 .add(8 + 1 * ::core::mem::size_of::<*const u8>())
-                                .cast::<usize>() = len22;
-                            *ptr19.add(8).cast::<*mut u8>() = ptr22.cast_mut();
+                                .cast::<usize>() = len30;
+                            *ptr26.add(8).cast::<*mut u8>() = ptr30.cast_mut();
                         }
                     };
-                    ptr19
+                    ptr26
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -638,32 +676,25 @@ pub mod exports {
                     }
                 }
                 pub trait Guest {
-                    /// Fixed sample period \[s\] at which the host should call
-                    /// `update`. Queried once at instantiation.
+                    /// ホストが `update` を呼ぶ固定サンプル周期 \[s\]。
+                    /// インスタンス生成時に 1 回だけ問い合わせる。
                     fn sample_period_s() -> f64;
-                    /// Optional one-time initialisation called by the host with a
-                    /// backend-specific configuration blob. Phase P1 hosts default
-                    /// to JSON encoding of the backend-specific parameters but do
-                    /// not enforce it; guests that want TOML / YAML / plain-string
-                    /// config can interpret the blob however they like.
+                    /// ホストからバックエンド固有の設定文字列を渡す初期化関数。
+                    /// Phase P1 では JSON を想定するが強制しない。
                     fn init(config: _rt::String) -> Result<(), _rt::String>;
-                    /// Command to apply during the very first zero-order-hold
-                    /// segment, before any `update` call has happened. Normally a
-                    /// safe zero / identity command.
+                    /// 最初の `update` 前に適用する初期コマンド。
+                    /// 通常はゼロモーメント / ゼロトルク等の安全なデフォルト。
                     fn initial_command() -> Command;
-                    /// Advance the controller by one sample tick and return the
-                    /// command to apply for the next zero-order-hold segment.
+                    /// 1 サンプル tick 分進めて、次の ZOH 区間に適用する
+                    /// コマンドを返す。
                     ///
-                    /// The error channel uses a plain `string` for Phase P1 to
-                    /// match the host's `PluginError::Runtime(String)` fallback.
-                    /// Phase P2 may upgrade this to a structured
-                    /// `variant plugin-error { ... }`, which is ABI-breaking and
-                    /// would ship under `wit/v2/`.
-                    fn update(obs: Observation) -> Result<Command, _rt::String>;
-                    /// Human-readable name of the controller's currently active
-                    /// mode (detumble / nadir / burn / ...). Returns `none` if the
-                    /// controller does not model discrete modes, which is distinct
-                    /// from returning `some("")`.
+                    /// Phase P1 ではエラーチャネルに plain `string` を使用。
+                    /// Phase P2 で構造化 `variant plugin-error { ... }` に
+                    /// 昇格する可能性あり（ABI 破壊的変更 → `wit/v1/`）。
+                    fn update(input: TickInput) -> Result<Command, _rt::String>;
+                    /// コントローラの現在のミッションモード名
+                    /// (detumble / nadir / burn 等)。
+                    /// モードマシンを持たないコントローラは `none` を返す。
                     fn current_mode() -> Option<_rt::String>;
                 }
                 #[doc(hidden)]
@@ -760,17 +791,6 @@ mod _rt {
             unsafe { core::hint::unreachable_unchecked() }
         }
     }
-    pub unsafe fn bool_lift(val: u8) -> bool {
-        if cfg!(debug_assertions) {
-            match val {
-                0 => false,
-                1 => true,
-                _ => panic!("invalid bool discriminant"),
-            }
-        } else {
-            val != 0
-        }
-    }
     extern crate alloc as alloc_crate;
     pub use alloc_crate::alloc;
 }
@@ -805,33 +825,36 @@ macro_rules! __export_plugin_impl {
 #[doc(inline)]
 pub(crate) use __export_plugin_impl as export;
 #[cfg(target_arch = "wasm32")]
-#[unsafe(link_section = "component-type:wit-bindgen:0.41.0:orts:plugin@0.1.0:plugin:encoded world")]
+#[unsafe(
+    link_section = "component-type:wit-bindgen:0.41.0:orts:plugin@0.1.0:plugin:encoded world"
+)]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 965] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xc8\x06\x01A\x02\x01\
-A\x0a\x01B\x13\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1013] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf8\x06\x01A\x02\x01\
+A\x0a\x01B\x14\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01\
 xu\x01yu\x01zu\x04\0\x04quat\x03\0\x02\x01r\x02\x08position\x01\x08velocity\x01\x04\
 \0\x0dorbital-state\x03\0\x04\x01r\x02\x0borientation\x03\x10angular-velocity\x01\
 \x04\0\x0eattitude-state\x03\0\x06\x01r\x03\x05orbit\x05\x08attitude\x07\x04mass\
 u\x04\0\x10spacecraft-state\x03\0\x08\x01r\x01\x0bjulian-dateu\x04\0\x05epoch\x03\
-\0\x0a\x01r\x01\x08reserved\x7f\x04\0\x0cenv-snapshot\x03\0\x0c\x01k\x0b\x01r\x04\
-\x01tu\x0aspacecraft\x09\x05epoch\x0e\x03env\x0d\x04\0\x0bobservation\x03\0\x0f\x01\
-q\x01\x0fmagnetic-moment\x01\x01\0\x04\0\x07command\x03\0\x11\x03\0\x17orts:plug\
-in/types@0.1.0\x05\0\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\
-\x01\x01\x04\0\x04vec3\x03\0\0\x02\x03\x02\x01\x02\x04\0\x05epoch\x03\0\x02\x01m\
-\x05\x05trace\x05debug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01\
-@\x02\x05level\x05\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-e\
-ci-km\x01\x01e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugi\
-n/host-env@0.1.0\x05\x03\x02\x03\0\0\x0bobservation\x02\x03\0\0\x07command\x01B\x11\
-\x02\x03\x02\x01\x04\x04\0\x0bobservation\x03\0\0\x02\x03\x02\x01\x05\x04\0\x07c\
-ommand\x03\0\x02\x01@\0\0u\x04\0\x0fsample-period-s\x01\x04\x01j\0\x01s\x01@\x01\
-\x06configs\0\x05\x04\0\x04init\x01\x06\x01@\0\0\x03\x04\0\x0finitial-command\x01\
-\x07\x01j\x01\x03\x01s\x01@\x01\x03obs\x01\0\x08\x04\0\x06update\x01\x09\x01ks\x01\
-@\0\0\x0a\x04\0\x0ccurrent-mode\x01\x0b\x04\0\x1corts:plugin/controller@0.1.0\x05\
-\x06\x04\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06plugin\x03\0\0\0G\x09\
-producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rus\
-t\x060.41.0";
+\0\x0a\x01k\x01\x01r\x02\x13magnetic-field-body\x0c\x15angular-velocity-body\x0c\
+\x04\0\x07sensors\x03\0\x0d\x01k\x0b\x01r\x04\x01tu\x0aspacecraft\x09\x05epoch\x0f\
+\x07sensors\x0e\x04\0\x0atick-input\x03\0\x10\x01q\x02\x0fmagnetic-moment\x01\x01\
+\0\x09rw-torque\x01\x01\0\x04\0\x07command\x03\0\x12\x03\0\x17orts:plugin/types@\
+0.1.0\x05\0\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\x01\
+\x04\0\x04vec3\x03\0\0\x02\x03\x02\x01\x02\x04\0\x05epoch\x03\0\x02\x01m\x05\x05\
+trace\x05debug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\x05\
+level\x05\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\x01\
+\x01e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugin/host-en\
+v@0.1.0\x05\x03\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07command\x01B\x11\x02\x03\
+\x02\x01\x04\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\x05\x04\0\x07command\x03\
+\0\x02\x01@\0\0u\x04\0\x0fsample-period-s\x01\x04\x01j\0\x01s\x01@\x01\x06config\
+s\0\x05\x04\0\x04init\x01\x06\x01@\0\0\x03\x04\0\x0finitial-command\x01\x07\x01j\
+\x01\x03\x01s\x01@\x01\x05input\x01\0\x08\x04\0\x06update\x01\x09\x01ks\x01@\0\0\
+\x0a\x04\0\x0ccurrent-mode\x01\x0b\x04\0\x1corts:plugin/controller@0.1.0\x05\x06\
+\x04\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06plugin\x03\0\0\0G\x09p\
+roducers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\
+\x060.41.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

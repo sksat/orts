@@ -23,5 +23,5 @@ package = "component:orts-example-plugin-bdot-finite-diff"
 [package.metadata.component.target]
 # Point to the orts crate's WIT definitions. The path is relative to
 # this crate's Cargo.toml.
-path = "../../../orts/wit/v1"
+path = "../../../orts/wit/v0"
 world = "plugin"

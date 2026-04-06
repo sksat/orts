@@ -2,7 +2,7 @@
 //! native `BdotFiniteDiff` (used by `oracle_discrete_bdot.rs`) and an
 //! independent reimplementation of the same finite-difference B-dot
 //! control law written purely against the plugin layer
-//! (`PluginController` / `Observation` / `Command`).
+//! (`PluginController` / `TickInput` / `Command`).
 //!
 //! Both implementations share the same math, so the oracle is
 //! bit-exact: the final spacecraft state after a fixed-horizon
@@ -12,7 +12,7 @@
 //!
 //! Bit-exact agreement validates two things:
 //!
-//! 1. The plugin layer (`Observation` / `Command` / `ActuatorBundle`)
+//! 1. The plugin layer (`TickInput` / `Command` / `ActuatorBundle`)
 //!    carries enough information end-to-end for a real stateful
 //!    attitude controller.
 //! 2. The plugin-layer reimplementation of `BdotFiniteDiff` is
@@ -32,9 +32,7 @@ use orts::attitude::{
     AttitudeState, BdotFiniteDiff as NativeBdot, CommandedMagnetorquer, DecoupledAttitudeSystem,
 };
 use orts::control::DiscreteController;
-use orts::plugin::{
-    ActuatorBundle, Command, EnvSnapshot, Observation, PluginController, PluginError,
-};
+use orts::plugin::{ActuatorBundle, Command, PluginController, PluginError, Sensors, TickInput};
 
 const MASS: f64 = 50.0;
 const ALT_KM: f64 = 500.0;
@@ -88,7 +86,7 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotFiniteDiff<F> {
     fn initial_command(&self) -> Command {
         Command::MagneticMoment(Vector3::zeros())
     }
-    fn update(&mut self, obs: &Observation<'_>) -> Result<Command, PluginError> {
+    fn update(&mut self, obs: &TickInput<'_>) -> Result<Command, PluginError> {
         let Some(epoch) = obs.epoch else {
             return Ok(Command::MagneticMoment(Vector3::zeros()));
         };
@@ -184,7 +182,7 @@ fn run_native_path(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
 }
 
 /// Drive the plugin-layer `PluginBdotFiniteDiff` through
-/// `PluginController::update(&Observation)` with `ActuatorBundle` in
+/// `PluginController::update(&TickInput)` with `ActuatorBundle` in
 /// between.
 fn run_plugin_path(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
     let mu = MU_EARTH;
@@ -201,7 +199,7 @@ fn run_plugin_path(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
         .apply(&ctrl.initial_command())
         .expect("initial command must be finite");
 
-    let env = EnvSnapshot::empty();
+    let sensors = Sensors::empty();
     let mut state = initial;
     let mut t = 0.0;
 
@@ -220,11 +218,11 @@ fn run_plugin_path(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
             attitude: state.clone(),
             mass: MASS,
         };
-        let obs = Observation {
+        let obs = TickInput {
             t,
             spacecraft: &snapshot,
             epoch: Some(&current_epoch),
-            env: &env,
+            sensors: &sensors,
         };
         let cmd = ctrl
             .update(&obs)
@@ -280,7 +278,7 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
     let mut bundle = ActuatorBundle::new();
     bundle.apply(&ctrl.initial_command()).unwrap();
 
-    let env = EnvSnapshot::empty();
+    let sensors = Sensors::empty();
     let initial = initial_attitude();
 
     let actuator = CommandedMagnetorquer::new(bundle.magnetic_moment(), TiltedDipole::earth());
@@ -295,11 +293,11 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
         attitude: state1.clone(),
         mass: MASS,
     };
-    let obs1 = Observation {
+    let obs1 = TickInput {
         t: SAMPLE_PERIOD,
         spacecraft: &snapshot1,
         epoch: Some(&epoch1),
-        env: &env,
+        sensors: &sensors,
     };
     let cmd1 = ctrl.update(&obs1).unwrap();
     bundle.apply(&cmd1).unwrap();
@@ -325,11 +323,11 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
         attitude: state2,
         mass: MASS,
     };
-    let obs2 = Observation {
+    let obs2 = TickInput {
         t: 2.0 * SAMPLE_PERIOD,
         spacecraft: &snapshot2,
         epoch: Some(&epoch2),
-        env: &env,
+        sensors: &sensors,
     };
     let cmd2 = ctrl.update(&obs2).unwrap();
     let m = cmd2

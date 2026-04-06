@@ -2,11 +2,11 @@
 //!
 //! This module defines the host-side glue between the orts simulator and
 //! "guest" controllers that implement spacecraft attitude / thrust / mode
-//! logic in external code. The intended use cases are:
+//! logic in external code.
 //!
 //! The plugin layer intentionally ships **only** the host-side
 //! interfaces and infrastructure — [`PluginController`], [`Command`],
-//! [`Observation`], [`ActuatorBundle`], [`PluginError`]. It does NOT
+//! [`TickInput`], [`ActuatorBundle`], [`PluginError`]. It does NOT
 //! ship any concrete controllers. Test-time reference implementations
 //! (e.g. the plugin-layer B-dot used by the P0.5 oracle) live inline
 //! as private modules inside each `orts/tests/plugin_bdot_*.rs`
@@ -29,7 +29,7 @@ pub mod actuators;
 pub mod command;
 pub mod controller;
 pub mod error;
-pub mod observation;
+pub mod tick_input;
 
 #[cfg(feature = "plugin-wasm")]
 pub mod wasm;
@@ -38,4 +38,4 @@ pub use actuators::ActuatorBundle;
 pub use command::Command;
 pub use controller::PluginController;
 pub use error::PluginError;
-pub use observation::{EnvSnapshot, Observation};
+pub use tick_input::{Sensors, TickInput};

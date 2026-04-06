@@ -1,0 +1,216 @@
+// Phase P1: orts 宇宙機プラグインインターフェース v1
+//
+// orts シミュレータと外部の宇宙機制御プラグイン間の長期的な API 契約。
+// Phase P1 では B-dot デタンブリングコントローラを WASM Component
+// ゲストで動かすのに必要な最小の型とエントリーポイントのみを定義。
+// 後続フェーズで `host-env`（大気密度、太陽方向等）と `command`
+// （スラスタ、impulsive dv 等）を追加拡張する。
+//
+// ## バージョニング
+//
+// この world は `wit/v0/` 以下に配置。record フィールド、enum variant、
+// import/export 関数シグネチャの破壊的変更は `wit/v1/` への移行が必要。
+// 追加的変更（新しい host-env 関数、デフォルト付き新 command variant）
+// は既存ゲストを壊さない範囲でこのファイル内で行える。
+//
+// ## WIT world に反映しないホスト側メソッド
+//
+// ホスト側 `PluginController` trait の以下のメソッドは WIT には含めない:
+//
+// - `api_version`: WIT パッケージバージョン (`orts:plugin@0.1.0`) で
+//   カバー。ホストはロード時に component の WIT メタデータを読んで
+//   バージョン不一致を検出する。
+// - `snapshot_state` / `restore_state`: Phase P6 ホットリロード用。
+//   非破壊的な追加拡張として別 interface で追加するか、`wit/v1/` で対応。
+//
+// ## 命名規則
+//
+// - 座標系: `eci` (Earth-centred inertial), `ecef`, `body`
+// - 単位は doc comment に記載。フィールド名接尾辞は `-km`, `-kms`,
+//   `-kgm3` 等のリーフスカラーのみ。`-t` (Tesla) は "time" と衝突
+//   するため避ける。
+// - クォータニオンは Hamilton、スカラー先頭 `(w, x, y, z)`。
+
+package orts:plugin@0.1.0;
+
+/// ホストとゲスト間で交換する物理量プリミティブ。
+///
+/// 全てのベクトル / クォータニオン / 状態型は orts の規約に従う:
+/// 軌道状態は km / km/s、姿勢は rad / rad/s、磁気モーメントは
+/// A·m²、Hamilton クォータニオン (スカラー先頭)、ECI 基準。
+interface types {
+    /// 3 成分実数ベクトル。
+    record vec3 {
+        x: f64,
+        y: f64,
+        z: f64,
+    }
+
+    /// Hamilton クォータニオン、スカラー先頭 `(w, x, y, z)`。
+    record quat {
+        w: f64,
+        x: f64,
+        y: f64,
+        z: f64,
+    }
+
+    /// ECI 座標系での軌道状態。位置 [km]、速度 [km/s]。
+    record orbital-state {
+        position: vec3,
+        velocity: vec3,
+    }
+
+    /// 剛体姿勢: 姿勢クォータニオン (body→inertial) と
+    /// 機体座標系での角速度 \[rad/s\]。
+    record attitude-state {
+        orientation: quat,
+        angular-velocity: vec3,
+    }
+
+    /// サンプル tick ごとにプラグインコントローラに渡される宇宙機状態。
+    /// ホスト側 `orts::SpacecraftState` と対応。
+    record spacecraft-state {
+        orbit: orbital-state,
+        attitude: attitude-state,
+        /// 宇宙機質量 \[kg\]。
+        mass: f64,
+    }
+
+    /// 天文暦元。Julian Date (JD) として直接シリアライズ。
+    /// `kaname::epoch::Epoch { jd }` と bit-for-bit 対応。
+    ///
+    /// **タイムスケール注意**: Phase P1 の `kaname::Epoch` は
+    /// UTC / TAI / TT を厳密に区別しない。`J2000_JD` 定数は
+    /// TT J2000 (`2451545.0`) だが、`from_gregorian(...)` は
+    /// うるう秒なしで UTC をそのタイムラインに載せる。
+    /// "J2000 からの秒数" が必要なゲストは
+    /// `(julian-date - 2451545.0) * 86400.0` を自分で計算すること。
+    record epoch {
+        julian-date: f64,
+    }
+
+    /// tick 時点で評価されたセンサ読み値。
+    ///
+    /// ホスト側センサモデル (`orts::sensor`) による事前計算結果。
+    /// 各フィールドは `option` — 宇宙機にそのセンサがなければ `none`。
+    ///
+    /// このレコードへのフィールド追加は **Canonical ABI 破壊的変更**。
+    /// Phase P1 では host/guest を lockstep で開発するため許容。
+    /// サードパーティゲストが出た段階でレイアウトを凍結し、
+    /// 新フィールドは新 wit バージョンで追加する。
+    record sensors {
+        /// 磁力計で計測した機体座標系の磁場 \[T\]。
+        /// tick ごとに 1 回事前評価、ホスト呼び出しオーバーヘッドなし。
+        /// 任意位置/エポックの磁場が必要なら
+        /// `host-env.magnetic-field-eci` を使う。
+        magnetic-field-body: option<vec3>,
+
+        /// ジャイロスコープで計測した機体座標系の角速度 \[rad/s\]。
+        angular-velocity-body: option<vec3>,
+    }
+
+    /// `controller.update` に渡される tick ごとの入力。
+    /// ホスト側 `orts::plugin::TickInput<'a>` と対応。
+    record tick-input {
+        /// シミュレーション時刻 \[s\]、コントローラの t=0 からの経過秒。
+        t: f64,
+        /// 宇宙機の真値状態（デバッグ・ログ用）。
+        spacecraft: spacecraft-state,
+        /// 暦元（暦表・磁場モデル等で必要な場合）。
+        epoch: option<epoch>,
+        /// センサ読み値。将来ノイズが乗る可能性がある。
+        sensors: sensors,
+    }
+
+    /// コントローラが返す論理アクチュエータ指令。
+    ///
+    /// Phase P1 は `magnetic-moment` と `rw-torque` を定義。
+    /// 後続フェーズで `throttle`, `impulsive-dv` 等を追加。
+    /// variant の追加は非破壊的（ホスト側は `#[non_exhaustive]` enum）。
+    /// 既存 variant のリネーム・削除・並べ替えは破壊的変更
+    /// → `wit/v1/` で対応。
+    variant command {
+        /// 機体座標系での指令磁気ダイポールモーメント \[A·m²\]。
+        magnetic-moment(vec3),
+
+        /// RW アセンブリへの指令トルク \[N·m\]、機体座標系。
+        /// ホスト側 RW モデルが各ホイール軸への投影を行う。
+        rw-torque(vec3),
+    }
+}
+
+/// ゲストがホストに対して呼び出せるサービス（host import）。
+///
+/// `update` 呼び出し中にゲストがホスト状態にアクセスする唯一の
+/// 合法的な手段。全関数は安価で副作用なし（`log` を除く）であること。
+interface host-env {
+    use types.{vec3, epoch};
+
+    /// ログレベル。orts 全体で使用する `tracing` crate のレベルと対応。
+    enum log-level {
+        trace,
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    /// ゲストからログレコードを出力する。
+    log: func(level: log-level, message: string);
+
+    /// 指定 ECI 位置・エポックでの地磁気ベクトルを ECI 座標系で返す \[T\]。
+    ///
+    /// 宇宙機の現在位置・姿勢での機体座標系磁場が欲しい場合は
+    /// `sensors.magnetic-field-body` を使う方がオーバーヘッドがない。
+    /// このインポートは任意位置/エポックの磁場が必要な場合
+    /// （予測・計画等）の "escape hatch"。
+    ///
+    /// Phase P1 では `tobari::magnetic::TiltedDipole` に接続。
+    /// Phase D-5 で IGRF 球面調和モデルへ移行予定。
+    magnetic-field-eci: func(
+        position-eci-km: vec3,
+        e: epoch,
+    ) -> vec3;
+}
+
+/// ゲスト側のエントリーポイント（host が呼び出す export）。
+///
+/// プラグインはこのインターフェースを 1 回実装する。ホストは衛星ごとに
+/// `wasmtime::component::Instance` を 1 つ作成し、`initial-command` +
+/// `update` 呼び出しをコントローラのサンプル周期で繰り返す。
+interface controller {
+    use types.{tick-input, command};
+
+    /// ホストが `update` を呼ぶ固定サンプル周期 \[s\]。
+    /// インスタンス生成時に 1 回だけ問い合わせる。
+    sample-period-s: func() -> f64;
+
+    /// ホストからバックエンド固有の設定文字列を渡す初期化関数。
+    /// Phase P1 では JSON を想定するが強制しない。
+    init: func(config: string) -> result<_, string>;
+
+    /// 最初の `update` 前に適用する初期コマンド。
+    /// 通常はゼロモーメント / ゼロトルク等の安全なデフォルト。
+    initial-command: func() -> command;
+
+    /// 1 サンプル tick 分進めて、次の ZOH 区間に適用する
+    /// コマンドを返す。
+    ///
+    /// Phase P1 ではエラーチャネルに plain `string` を使用。
+    /// Phase P2 で構造化 `variant plugin-error { ... }` に
+    /// 昇格する可能性あり（ABI 破壊的変更 → `wit/v1/`）。
+    update: func(input: tick-input) -> result<command, string>;
+
+    /// コントローラの現在のミッションモード名
+    /// (detumble / nadir / burn 等)。
+    /// モードマシンを持たないコントローラは `none` を返す。
+    current-mode: func() -> option<string>;
+}
+
+/// トップレベル world。`host-env`（ホスト→ゲスト import）と
+/// `controller`（ゲスト→ホスト export）をリンク。
+/// プラグインは `cargo component` でこの world をターゲットにビルドする。
+world plugin {
+    import host-env;
+    export controller;
+}

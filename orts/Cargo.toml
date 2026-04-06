@@ -7,7 +7,7 @@ repository.workspace = true
 # Phase P1: include WIT files so `cargo publish` ships them with
 # the crate. Without this, downstream users who enable the
 # `plugin-wasm` feature would fail to compile (the `bindgen!` macro
-# reads `wit/v1/orts.wit` at build time).
+# reads `wit/v0/orts.wit` at build time).
 include = [
     "src/**/*",
     "wit/**/*.wit",

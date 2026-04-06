@@ -15,18 +15,18 @@ use super::bindings::orts::plugin::types as wit;
 use crate::SpacecraftState;
 use crate::attitude::AttitudeState;
 use crate::orbital::OrbitalState;
-use crate::plugin::observation::{EnvSnapshot, Observation};
+use crate::plugin::tick_input::{Sensors, TickInput};
 use crate::plugin::{Command, PluginError};
 
-// ───────────────────── host → guest (Observation) ─────────────────────
+// ───────────────────── host → guest (TickInput) ─────────────────────
 
-/// Convert a host `Observation<'_>` to the WIT `observation` record.
-pub fn observation_to_wit(obs: &Observation<'_>) -> wit::Observation {
-    wit::Observation {
+/// Convert a host `TickInput<'_>` to the WIT `tick-input` record.
+pub fn tick_input_to_wit(obs: &TickInput<'_>) -> wit::TickInput {
+    wit::TickInput {
         t: obs.t,
         spacecraft: spacecraft_to_wit(obs.spacecraft),
         epoch: obs.epoch.map(epoch_to_wit),
-        env: env_snapshot_to_wit(obs.env),
+        sensors: sensor_readings_to_wit(obs.sensors),
     }
 }
 
@@ -67,8 +67,11 @@ fn epoch_to_wit(e: &kaname::epoch::Epoch) -> wit::Epoch {
     }
 }
 
-fn env_snapshot_to_wit(_env: &EnvSnapshot) -> wit::EnvSnapshot {
-    wit::EnvSnapshot { reserved: false }
+fn sensor_readings_to_wit(s: &Sensors) -> wit::Sensors {
+    wit::Sensors {
+        magnetic_field_body: s.magnetic_field_body.map(|v| vec3_to_wit(&v)),
+        angular_velocity_body: s.angular_velocity_body.map(|v| vec3_to_wit(&v)),
+    }
 }
 
 fn vec3_to_wit(v: &Vector3<f64>) -> wit::Vec3 {
@@ -87,6 +90,7 @@ fn vec3_to_wit(v: &Vector3<f64>) -> wit::Vec3 {
 pub fn command_from_wit(cmd: wit::Command) -> Result<Command, PluginError> {
     let result = match cmd {
         wit::Command::MagneticMoment(v) => Command::MagneticMoment(Vector3::new(v.x, v.y, v.z)),
+        wit::Command::RwTorque(v) => Command::RwTorque(Vector3::new(v.x, v.y, v.z)),
     };
     if !result.is_finite() {
         return Err(PluginError::BadCommand(format!("{result:?}")));
@@ -114,14 +118,17 @@ mod tests {
     fn observation_roundtrip_preserves_values() {
         let spacecraft = make_spacecraft();
         let epoch = kaname::epoch::Epoch::j2000();
-        let env = EnvSnapshot::empty();
-        let obs = Observation {
+        let sensors = Sensors {
+            magnetic_field_body: Some(Vector3::new(1e-5, 2e-5, -3e-5)),
+            angular_velocity_body: Some(Vector3::new(0.1, 0.05, -0.03)),
+        };
+        let obs = TickInput {
             t: 42.0,
             spacecraft: &spacecraft,
             epoch: Some(&epoch),
-            env: &env,
+            sensors: &sensors,
         };
-        let wit_obs = observation_to_wit(&obs);
+        let wit_obs = tick_input_to_wit(&obs);
         assert_eq!(wit_obs.t, 42.0);
         assert_eq!(wit_obs.spacecraft.mass, 50.0);
         assert_eq!(wit_obs.spacecraft.orbit.position.x, 7000.0);
@@ -129,6 +136,29 @@ mod tests {
         assert_eq!(wit_obs.spacecraft.attitude.angular_velocity.x, 0.1);
         let wit_epoch = wit_obs.epoch.expect("epoch must be Some");
         assert_eq!(wit_epoch.julian_date, epoch.jd());
+        // Sensor fields.
+        let b = wit_obs.sensors.magnetic_field_body.expect("B must be Some");
+        assert_eq!(b.x, 1e-5);
+        let omega = wit_obs
+            .sensors
+            .angular_velocity_body
+            .expect("omega must be Some");
+        assert_eq!(omega.x, 0.1);
+    }
+
+    #[test]
+    fn observation_empty_sensors() {
+        let spacecraft = make_spacecraft();
+        let sensors = Sensors::empty();
+        let obs = TickInput {
+            t: 0.0,
+            spacecraft: &spacecraft,
+            epoch: None,
+            sensors: &sensors,
+        };
+        let wit_obs = tick_input_to_wit(&obs);
+        assert!(wit_obs.sensors.magnetic_field_body.is_none());
+        assert!(wit_obs.sensors.angular_velocity_body.is_none());
     }
 
     #[test]
@@ -143,10 +173,31 @@ mod tests {
     }
 
     #[test]
+    fn command_roundtrip_rw_torque() {
+        let wit_cmd = wit::Command::RwTorque(wit::Vec3 {
+            x: 0.01,
+            y: -0.02,
+            z: 0.03,
+        });
+        let cmd = command_from_wit(wit_cmd).unwrap();
+        assert_eq!(cmd.as_rw_torque(), Some(Vector3::new(0.01, -0.02, 0.03)));
+    }
+
+    #[test]
     fn command_from_wit_rejects_nan() {
         let wit_cmd = wit::Command::MagneticMoment(wit::Vec3 {
             x: 1.0,
             y: f64::NAN,
+            z: 0.0,
+        });
+        assert!(command_from_wit(wit_cmd).is_err());
+    }
+
+    #[test]
+    fn command_from_wit_rejects_nan_rw() {
+        let wit_cmd = wit::Command::RwTorque(wit::Vec3 {
+            x: f64::INFINITY,
+            y: 0.0,
             z: 0.0,
         });
         assert!(command_from_wit(wit_cmd).is_err());

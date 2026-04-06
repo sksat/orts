@@ -89,7 +89,7 @@ impl Guest for Component {
         })
     }
 
-    fn update(obs: Observation) -> Result<Command, String> {
+    fn update(obs: TickInput) -> Result<Command, String> {
         STATE.with(|state| {
             let mut s = state.borrow_mut();
 

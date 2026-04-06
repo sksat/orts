@@ -2,7 +2,7 @@
 //!
 //! `PluginController` is the host-visible interface that every backend
 //! (native Rust / WASM / Rhai / PyO3 / ...) implements. A controller
-//! receives an [`Observation`] snapshot at each sample tick and returns
+//! receives an [`TickInput`] snapshot at each sample tick and returns
 //! a logical [`Command`] to be applied by the host's actuator bridge.
 //!
 //! This is separate from the existing
@@ -11,7 +11,7 @@
 //! `Vector3<f64>`) and takes `(attitude, orbit, epoch)` as positional
 //! arguments. The plugin trait fixes `Command` to the
 //! [`super::Command`] enum and bundles all inputs into a single
-//! `Observation` struct so that WASM guests can share the same shape
+//! `TickInput` struct so that WASM guests can share the same shape
 //! with native implementations. A future phase may unify the two once
 //! every native controller has migrated; Phase P0.5 deliberately keeps
 //! them side by side so that no existing oracle tests have to change.
@@ -22,14 +22,14 @@
 
 use super::command::Command;
 use super::error::PluginError;
-use super::observation::Observation;
+use super::tick_input::TickInput;
 
 /// A controller backend exposed through the plugin layer.
 ///
 /// Implementors are either native Rust controllers (`BdotFiniteDiff`,
 /// `InertialPdController`, ...) or guest runtimes wrapping a WASM
 /// component / Rhai script / Python callable. In both cases the
-/// contract is the same: given an observation, produce a command.
+/// contract is the same: given a tick input, produce a command.
 ///
 /// `Send` is required so individual satellite simulations (each
 /// holding its own controller instance) can be driven on worker
@@ -82,7 +82,7 @@ pub trait PluginController: Send {
     /// variant) tells the host to halt the simulation: the command
     /// cannot be trusted, and the host should fall back to safemode or
     /// abort rather than propagating bad state into the ODE.
-    fn update(&mut self, obs: &Observation<'_>) -> Result<Command, PluginError>;
+    fn update(&mut self, obs: &TickInput<'_>) -> Result<Command, PluginError>;
 
     /// Currently-active mission mode, if the controller exposes a
     /// mode machine (detumble / nadir-point / burn / ...).

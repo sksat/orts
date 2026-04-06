@@ -5,10 +5,9 @@
 //! return high-level actuator commands that the host translates into
 //! physical loads via `ActuatorBundle`.
 //!
-//! Phase P0.5 starts with a single variant (`MagneticMoment`) to exercise
-//! the `BdotFiniteDiff` -> plugin layer adapter. Subsequent phases extend
-//! the enum as needed:
-//! - P3: reaction wheel commands
+//! The variant set grows incrementally with each phase:
+//! - P0.5: `MagneticMoment` (B-dot detumbling)
+//! - P1: `RwTorque` (reaction wheel torque command)
 //! - P4: thrust throttle / impulsive delta-v
 //! - P5: composite commands for coupled attitude + thrust guest
 //!
@@ -29,6 +28,18 @@ pub enum Command {
     /// frame \[A·m²\]. Consumed by
     /// [`crate::attitude::CommandedMagnetorquer`].
     MagneticMoment(Vector3<f64>),
+
+    /// Commanded torque on the spacecraft body from the reaction wheel
+    /// assembly \[N·m\], expressed in the body frame. Consumed by
+    /// [`crate::spacecraft::ReactionWheelAssembly`] via its
+    /// `commanded_torque` field.
+    ///
+    /// The host-side `ReactionWheelAssembly` performs axis-projection
+    /// torque allocation internally (projects this 3D vector onto each
+    /// wheel's spin axis). For orthogonal wheel arrangements this is
+    /// exact; non-orthogonal layouts may need a separate torque
+    /// allocation layer in a future phase.
+    RwTorque(Vector3<f64>),
 }
 
 impl Command {
@@ -42,23 +53,25 @@ impl Command {
     pub fn is_finite(&self) -> bool {
         match self {
             Self::MagneticMoment(m) => m.iter().all(|x| x.is_finite()),
+            Self::RwTorque(t) => t.iter().all(|x| x.is_finite()),
         }
     }
 
     /// Extract the commanded magnetic dipole moment \[A·m²\], if this
     /// command is a [`Command::MagneticMoment`].
-    ///
-    /// This accessor exists so integration tests and host-side
-    /// dispatch code can query specific variants without writing
-    /// `let Command::MagneticMoment(m) = cmd else { ... };` boilerplate
-    /// at every call site. The enum is `#[non_exhaustive]`, so
-    /// exhaustive `match` from external crates is not allowed anyway.
-    ///
-    /// Returns `None` for any future variant that is not
-    /// `MagneticMoment`.
     pub fn as_magnetic_moment(&self) -> Option<Vector3<f64>> {
         match self {
             Self::MagneticMoment(m) => Some(*m),
+            _ => None,
+        }
+    }
+
+    /// Extract the commanded reaction wheel torque \[N·m\], if this
+    /// command is a [`Command::RwTorque`].
+    pub fn as_rw_torque(&self) -> Option<Vector3<f64>> {
+        match self {
+            Self::RwTorque(t) => Some(*t),
+            _ => None,
         }
     }
 }
@@ -77,5 +90,25 @@ mod tests {
 
         let inf = Command::MagneticMoment(Vector3::new(f64::INFINITY, 0.0, 0.0));
         assert!(!inf.is_finite());
+    }
+
+    #[test]
+    fn rw_torque_finite_detects_nan() {
+        let good = Command::RwTorque(Vector3::new(0.01, -0.02, 0.0));
+        assert!(good.is_finite());
+
+        let nan = Command::RwTorque(Vector3::new(f64::NAN, 0.0, 0.0));
+        assert!(!nan.is_finite());
+    }
+
+    #[test]
+    fn as_accessors() {
+        let mm = Command::MagneticMoment(Vector3::new(1.0, 2.0, 3.0));
+        assert!(mm.as_magnetic_moment().is_some());
+        assert!(mm.as_rw_torque().is_none());
+
+        let rw = Command::RwTorque(Vector3::new(0.1, 0.2, 0.3));
+        assert!(rw.as_magnetic_moment().is_none());
+        assert!(rw.as_rw_torque().is_some());
     }
 }

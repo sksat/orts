@@ -8,6 +8,7 @@ pub mod orbital;
 pub mod perturbations;
 pub mod plugin;
 pub mod record;
+pub mod sensor;
 pub mod setup;
 pub mod spacecraft;
 pub mod tle;

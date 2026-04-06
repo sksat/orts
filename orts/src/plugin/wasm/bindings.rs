@@ -1,4 +1,4 @@
-//! Host-side type-safe bindings for `wit/v1/orts.wit`.
+//! Host-side type-safe bindings for `wit/v0/orts.wit`.
 //!
 //! `wasmtime::component::bindgen!` parses the WIT world at compile
 //! time and emits:
@@ -23,7 +23,7 @@
 //! generated types to downstream crates.
 
 // Path is relative to the crate root (`orts/Cargo.toml`), so
-// `wit/v1/orts.wit` resolves to `orts/wit/v1/orts.wit`. The WIT
+// `wit/v0/orts.wit` resolves to `orts/wit/v0/orts.wit`. The WIT
 // definition lives inside the crate rather than at the workspace
 // root so the crate is self-contained and the `bindgen!` macro does
 // not reach out of its own source tree.
@@ -37,6 +37,6 @@
 // `Result<_, wasmtime::Error>` and trap the guest cleanly on
 // failure instead of propagating a panic.
 wasmtime::component::bindgen!({
-    path: "wit/v1/orts.wit",
+    path: "wit/v0/orts.wit",
     world: "plugin",
 });
