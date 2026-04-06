@@ -18,6 +18,7 @@ pub struct SimParams {
     pub output_interval: f64,
     pub stream_interval: f64,
     pub epoch: Option<Epoch>,
+    pub duration: Option<f64>,
     pub satellites: Vec<SatelliteSpec>,
     pub integrator: IntegratorChoice,
     pub tolerances: Tolerances,
@@ -158,6 +159,7 @@ impl SimParams {
             output_interval,
             stream_interval,
             epoch,
+            duration: args.duration,
             satellites,
             integrator: args.integrator,
             tolerances: Tolerances {
@@ -215,6 +217,7 @@ impl SimParams {
             output_interval,
             stream_interval,
             epoch,
+            duration: config.duration,
             satellites,
             integrator: config.integrator_choice(),
             tolerances: Tolerances {

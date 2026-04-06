@@ -25,8 +25,16 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
         SimParams::from_sim_args(sim, false)
     };
 
-    // Determine effective format: stdout defaults to csv if format not explicitly set.
-    let rec = run_simulation(&params);
+    // Controller 付き衛星があれば制御ループへディスパッチ。
+    let has_controller = params
+        .satellites
+        .iter()
+        .any(|s| s.controller_config.is_some());
+    let rec = if has_controller {
+        run_controlled_simulation(&params)
+    } else {
+        run_simulation(&params)
+    };
 
     match (output, format) {
         ("stdout", OutputFormat::Csv) | (_, OutputFormat::Csv) => {
@@ -347,4 +355,87 @@ pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with
             );
         }
     }
+}
+
+/// 制御付きシミュレーション（プラグインコントローラ + RW + センサ）。
+fn run_controlled_simulation(params: &SimParams) -> Recording {
+    use crate::sim::controlled::{build_controlled_satellite, step_controlled};
+
+    let duration = params.duration.unwrap_or_else(|| {
+        // フォールバック: 最初の衛星の軌道周期。
+        params
+            .satellites
+            .first()
+            .map(|s| s.period)
+            .unwrap_or(3600.0)
+    });
+
+    let mut rec = Recording::new();
+    let body_path = EntityPath::parse(&format!("/world/{}", params.body.properties().name));
+    rec.log_static(&body_path, &GravitationalParameter(params.mu));
+    rec.log_static(&body_path, &BodyRadius(params.body.properties().radius));
+
+    let sat_paths: Vec<EntityPath> = params.satellites.iter().map(|s| s.entity_path()).collect();
+
+    // 制御付き衛星を構築。
+    let mut satellites = Vec::new();
+    for spec in &params.satellites {
+        let sat = build_controlled_satellite(spec, params).unwrap_or_else(|e| {
+            eprintln!("Error building controlled satellite '{}': {e}", spec.id);
+            std::process::exit(1);
+        });
+        satellites.push(sat);
+    }
+
+    // 初期状態を記録。
+    for (i, sat) in satellites.iter().enumerate() {
+        let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
+        let orbit = &sat.state.plant.orbit;
+        let os = RecordOrbitalState::new(*orbit.position(), *orbit.velocity());
+        rec.log_orbital_state(&sat_paths[i], &tp, &os);
+    }
+
+    let dt_ctrl = satellites
+        .first()
+        .map(|sat| sat.controller.sample_period())
+        .unwrap_or(0.1);
+    let dt_ode = params.dt.min(dt_ctrl);
+
+    let mut t = 0.0;
+    let mut step: u64 = 1;
+    let mut next_output_t = params.output_interval;
+
+    while t < duration - 1e-12 {
+        let dt = dt_ctrl.min(duration - t);
+
+        for sat in &mut satellites {
+            step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref()).unwrap_or_else(|e| {
+                eprintln!("Simulation error at t={t:.3}: {e}");
+                std::process::exit(1);
+            });
+        }
+
+        t += dt;
+
+        if t >= next_output_t - 1e-12 {
+            for (i, sat) in satellites.iter().enumerate() {
+                let tp = TimePoint::new().with_sim_time(t).with_step(step);
+                let orbit = &sat.state.plant.orbit;
+                let os = RecordOrbitalState::new(*orbit.position(), *orbit.velocity());
+                rec.log_orbital_state(&sat_paths[i], &tp, &os);
+            }
+            step += 1;
+            next_output_t += params.output_interval;
+        }
+    }
+
+    rec.metadata = orts::record::recording::SimMetadata {
+        epoch_jd: params.epoch.map(|e| e.jd()),
+        mu: Some(params.mu),
+        body_radius: Some(params.body.properties().radius),
+        body_name: Some(params.body.properties().name.to_string()),
+        ..Default::default()
+    };
+
+    rec
 }

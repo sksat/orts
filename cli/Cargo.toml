@@ -14,6 +14,7 @@ path = "src/main.rs"
 [features]
 default = ["viewer"]
 viewer = ["dep:rust-embed"]
+plugin-wasm = ["orts/plugin-wasm", "dep:wasmtime"]
 
 [dependencies]
 nalgebra.workspace = true
@@ -32,6 +33,7 @@ image.workspace = true
 toml.workspace = true
 serde_yaml.workspace = true
 rust-embed = { workspace = true, optional = true }
+wasmtime = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio-tungstenite.workspace = true
