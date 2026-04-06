@@ -40,6 +40,10 @@ plugin-wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
 name = "wasm_bdot_simulate"
 required-features = ["plugin-wasm"]
 
+[[example]]
+name = "wasm_pd_rw_simulate"
+required-features = ["plugin-wasm"]
+
 [dev-dependencies]
 proptest = "1.10.0"
 serde_json.workspace = true
