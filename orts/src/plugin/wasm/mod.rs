@@ -16,6 +16,7 @@
 //!
 //! [wasm-component-model]: https://component-model.bytecodealliance.org/
 
+pub mod bindings;
 pub mod engine;
 
 pub use engine::WasmEngine;
