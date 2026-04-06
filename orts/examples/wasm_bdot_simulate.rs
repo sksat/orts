@@ -133,6 +133,7 @@ fn run_case(
     let mut sensor_bundle = SensorBundle {
         magnetometer: Some(Magnetometer::new(Arc::clone(&field_model))),
         gyroscope: Some(Gyroscope::new()),
+        star_tracker: None,
     };
     let mut state = initial;
     let mut t = 0.0;

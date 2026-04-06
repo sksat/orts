@@ -4,10 +4,10 @@
 //! optionally with noise models applied.
 
 use kaname::epoch::Epoch;
-use nalgebra::Vector3;
 
 use super::noise::NoiseModel;
 use crate::SpacecraftState;
+use crate::plugin::tick_input::AngularVelocityBody;
 
 /// Three-axis rate gyroscope.
 ///
@@ -39,13 +39,13 @@ impl Gyroscope {
         self
     }
 
-    /// Measure the angular velocity in the body frame \[rad/s\].
-    pub fn measure(&mut self, state: &SpacecraftState, _epoch: &Epoch) -> Vector3<f64> {
+    /// Measure the angular velocity in the body frame.
+    pub fn measure(&mut self, state: &SpacecraftState, _epoch: &Epoch) -> AngularVelocityBody {
         let mut omega = state.attitude.angular_velocity;
         for n in &mut self.noise {
             omega = n.apply(omega);
         }
-        omega
+        AngularVelocityBody::new(omega)
     }
 }
 
@@ -61,7 +61,7 @@ mod tests {
     use crate::attitude::AttitudeState;
     use crate::orbital::OrbitalState;
     use crate::sensor::noise::{BiasRandomWalk, GaussianNoise};
-    use nalgebra::Vector4;
+    use nalgebra::{Vector3, Vector4};
 
     fn make_state(omega: Vector3<f64>) -> SpacecraftState {
         SpacecraftState {
@@ -80,7 +80,7 @@ mod tests {
         let omega = Vector3::new(0.1, 0.05, -0.03);
         let state = make_state(omega);
         let epoch = Epoch::j2000();
-        assert_eq!(gyro.measure(&state, &epoch), omega);
+        assert_eq!(gyro.measure(&state, &epoch).into_inner(), omega);
     }
 
     #[test]
@@ -89,7 +89,7 @@ mod tests {
         let omega = Vector3::new(0.1, 0.05, -0.03);
         let state = make_state(omega);
         let epoch = Epoch::j2000();
-        let measured = gyro.measure(&state, &epoch);
+        let measured = gyro.measure(&state, &epoch).into_inner();
         assert!((measured - omega).magnitude() > 0.0);
         assert!((measured - omega).magnitude() < 0.1);
     }
@@ -102,8 +102,8 @@ mod tests {
         let omega = Vector3::new(0.1, 0.05, -0.03);
         let state = make_state(omega);
         let epoch = Epoch::j2000();
-        let m1 = gyro.measure(&state, &epoch);
-        let m2 = gyro.measure(&state, &epoch);
+        let m1 = gyro.measure(&state, &epoch).into_inner();
+        let m2 = gyro.measure(&state, &epoch).into_inner();
         // Bias drift accumulates, so consecutive measurements differ.
         assert_ne!(m1, m2);
     }

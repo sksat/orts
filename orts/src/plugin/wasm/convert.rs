@@ -69,8 +69,31 @@ fn epoch_to_wit(e: &kaname::epoch::Epoch) -> wit::Epoch {
 
 fn sensor_readings_to_wit(s: &Sensors) -> wit::Sensors {
     wit::Sensors {
-        magnetic_field_body: s.magnetic_field_body.map(|v| vec3_to_wit(&v)),
-        angular_velocity_body: s.angular_velocity_body.map(|v| vec3_to_wit(&v)),
+        magnetometer: s.magnetometer.map(|m| {
+            let v = m.into_inner();
+            wit::MagneticFieldBody {
+                x: v.x,
+                y: v.y,
+                z: v.z,
+            }
+        }),
+        gyroscope: s.gyroscope.map(|g| {
+            let v = g.into_inner();
+            wit::AngularVelocityBody {
+                x: v.x,
+                y: v.y,
+                z: v.z,
+            }
+        }),
+        star_tracker: s.star_tracker.map(|a| {
+            let q = a.into_inner();
+            wit::AttitudeBodyToInertial {
+                w: q[0],
+                x: q[1],
+                y: q[2],
+                z: q[3],
+            }
+        }),
     }
 }
 
@@ -118,15 +141,21 @@ mod tests {
     fn observation_roundtrip_preserves_values() {
         let spacecraft = make_spacecraft();
         let epoch = kaname::epoch::Epoch::j2000();
+        use crate::plugin::tick_input::{
+            AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody,
+        };
         let sensors = Sensors {
-            magnetic_field_body: Some(Vector3::new(1e-5, 2e-5, -3e-5)),
-            angular_velocity_body: Some(Vector3::new(0.1, 0.05, -0.03)),
+            magnetometer: Some(MagneticFieldBody::new(Vector3::new(1e-5, 2e-5, -3e-5))),
+            gyroscope: Some(AngularVelocityBody::new(Vector3::new(0.1, 0.05, -0.03))),
+            star_tracker: Some(AttitudeBodyToInertial::new(Vector4::new(
+                1.0, 0.0, 0.0, 0.0,
+            ))),
         };
         let obs = TickInput {
             t: 42.0,
-            spacecraft: &spacecraft,
             epoch: Some(&epoch),
             sensors: &sensors,
+            spacecraft: &spacecraft,
         };
         let wit_obs = tick_input_to_wit(&obs);
         assert_eq!(wit_obs.t, 42.0);
@@ -137,13 +166,12 @@ mod tests {
         let wit_epoch = wit_obs.epoch.expect("epoch must be Some");
         assert_eq!(wit_epoch.julian_date, epoch.jd());
         // Sensor fields.
-        let b = wit_obs.sensors.magnetic_field_body.expect("B must be Some");
+        let b = wit_obs.sensors.magnetometer.expect("B must be Some");
         assert_eq!(b.x, 1e-5);
-        let omega = wit_obs
-            .sensors
-            .angular_velocity_body
-            .expect("omega must be Some");
+        let omega = wit_obs.sensors.gyroscope.expect("omega must be Some");
         assert_eq!(omega.x, 0.1);
+        let att = wit_obs.sensors.star_tracker.expect("att must be Some");
+        assert_eq!(att.w, 1.0);
     }
 
     #[test]
@@ -157,8 +185,9 @@ mod tests {
             sensors: &sensors,
         };
         let wit_obs = tick_input_to_wit(&obs);
-        assert!(wit_obs.sensors.magnetic_field_body.is_none());
-        assert!(wit_obs.sensors.angular_velocity_body.is_none());
+        assert!(wit_obs.sensors.magnetometer.is_none());
+        assert!(wit_obs.sensors.gyroscope.is_none());
+        assert!(wit_obs.sensors.star_tracker.is_none());
     }
 
     #[test]

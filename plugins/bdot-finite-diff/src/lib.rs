@@ -1,6 +1,6 @@
 //! B-dot finite-difference detumbling controller — WASM Component guest.
 //!
-//! The guest reads `sensors.magnetic-field-body` from the tick input
+//! The guest reads `sensors.magnetometer` from the tick input
 //! (pre-evaluated by the host's magnetometer sensor) and computes the
 //! finite-difference dB/dt approximation.
 
@@ -83,7 +83,7 @@ impl Guest for Component {
 
             let b_body = input
                 .sensors
-                .magnetic_field_body
+                .magnetometer
                 .ok_or("magnetometer sensor not available")?;
 
             let b_mag_sq = b_body.x * b_body.x + b_body.y * b_body.y + b_body.z * b_body.z;

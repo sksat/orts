@@ -149,16 +149,80 @@ pub mod orts {
             /// Phase P1 では host/guest を lockstep で開発するため許容。
             /// サードパーティゲストが出た段階でレイアウトを凍結し、
             /// 新フィールドは新 wit バージョンで追加する。
+            /// 機体座標系の磁場 \[T\]。
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct MagneticFieldBody {
+                pub x: f64,
+                pub y: f64,
+                pub z: f64,
+            }
+            impl ::core::fmt::Debug for MagneticFieldBody {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("MagneticFieldBody")
+                        .field("x", &self.x)
+                        .field("y", &self.y)
+                        .field("z", &self.z)
+                        .finish()
+                }
+            }
+            /// 機体座標系の角速度 \[rad/s\]。
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct AngularVelocityBody {
+                pub x: f64,
+                pub y: f64,
+                pub z: f64,
+            }
+            impl ::core::fmt::Debug for AngularVelocityBody {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("AngularVelocityBody")
+                        .field("x", &self.x)
+                        .field("y", &self.y)
+                        .field("z", &self.z)
+                        .finish()
+                }
+            }
+            /// 姿勢クォータニオン body→inertial (Hamilton scalar-first)。
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct AttitudeBodyToInertial {
+                pub w: f64,
+                pub x: f64,
+                pub y: f64,
+                pub z: f64,
+            }
+            impl ::core::fmt::Debug for AttitudeBodyToInertial {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("AttitudeBodyToInertial")
+                        .field("w", &self.w)
+                        .field("x", &self.x)
+                        .field("y", &self.y)
+                        .field("z", &self.z)
+                        .finish()
+                }
+            }
+            /// tick 時点で評価されたセンサ読み値。
+            /// フィールド名 = センサ名、型 = 物理量 + 座標系。
             #[repr(C)]
             #[derive(Clone, Copy)]
             pub struct Sensors {
-                /// 磁力計で計測した機体座標系の磁場 \[T\]。
-                /// tick ごとに 1 回事前評価、ホスト呼び出しオーバーヘッドなし。
-                /// 任意位置/エポックの磁場が必要なら
+                /// 磁力計。任意位置/エポックの磁場が必要なら
                 /// `host-env.magnetic-field-eci` を使う。
-                pub magnetic_field_body: Option<Vec3>,
-                /// ジャイロスコープで計測した機体座標系の角速度 \[rad/s\]。
-                pub angular_velocity_body: Option<Vec3>,
+                pub magnetometer: Option<MagneticFieldBody>,
+                /// ジャイロスコープ。
+                pub gyroscope: Option<AngularVelocityBody>,
+                /// スタートラッカ。
+                pub star_tracker: Option<AttitudeBodyToInertial>,
             }
             impl ::core::fmt::Debug for Sensors {
                 fn fmt(
@@ -166,8 +230,9 @@ pub mod orts {
                     f: &mut ::core::fmt::Formatter<'_>,
                 ) -> ::core::fmt::Result {
                     f.debug_struct("Sensors")
-                        .field("magnetic-field-body", &self.magnetic_field_body)
-                        .field("angular-velocity-body", &self.angular_velocity_body)
+                        .field("magnetometer", &self.magnetometer)
+                        .field("gyroscope", &self.gyroscope)
+                        .field("star-tracker", &self.star_tracker)
                         .finish()
                 }
             }
@@ -305,7 +370,7 @@ pub mod orts {
             /// 指定 ECI 位置・エポックでの地磁気ベクトルを ECI 座標系で返す \[T\]。
             ///
             /// 宇宙機の現在位置・姿勢での機体座標系磁場が欲しい場合は
-            /// `sensors.magnetic-field-body` を使う方がオーバーヘッドがない。
+            /// `sensors.magnetometer` を使う方がオーバーヘッドがない。
             /// このインポートは任意位置/エポックの磁場が必要な場合
             /// （予測・計画等）の "escape hatch"。
             ///
@@ -492,7 +557,8 @@ pub mod exports {
                     let l15 = i32::from(*arg0.add(120).cast::<u8>());
                     let l17 = i32::from(*arg0.add(136).cast::<u8>());
                     let l21 = i32::from(*arg0.add(168).cast::<u8>());
-                    let result25 = T::update(super::super::super::super::orts::plugin::types::TickInput {
+                    let l25 = i32::from(*arg0.add(200).cast::<u8>());
+                    let result30 = T::update(super::super::super::super::orts::plugin::types::TickInput {
                         t: l0,
                         spacecraft: super::super::super::super::orts::plugin::types::SpacecraftState {
                             orbit: super::super::super::super::orts::plugin::types::OrbitalState {
@@ -536,14 +602,14 @@ pub mod exports {
                             _ => _rt::invalid_enum_discriminant(),
                         },
                         sensors: super::super::super::super::orts::plugin::types::Sensors {
-                            magnetic_field_body: match l17 {
+                            magnetometer: match l17 {
                                 0 => None,
                                 1 => {
                                     let e = {
                                         let l18 = *arg0.add(144).cast::<f64>();
                                         let l19 = *arg0.add(152).cast::<f64>();
                                         let l20 = *arg0.add(160).cast::<f64>();
-                                        super::super::super::super::orts::plugin::types::Vec3 {
+                                        super::super::super::super::orts::plugin::types::MagneticFieldBody {
                                             x: l18,
                                             y: l19,
                                             z: l20,
@@ -553,14 +619,14 @@ pub mod exports {
                                 }
                                 _ => _rt::invalid_enum_discriminant(),
                             },
-                            angular_velocity_body: match l21 {
+                            gyroscope: match l21 {
                                 0 => None,
                                 1 => {
                                     let e = {
                                         let l22 = *arg0.add(176).cast::<f64>();
                                         let l23 = *arg0.add(184).cast::<f64>();
                                         let l24 = *arg0.add(192).cast::<f64>();
-                                        super::super::super::super::orts::plugin::types::Vec3 {
+                                        super::super::super::super::orts::plugin::types::AngularVelocityBody {
                                             x: l22,
                                             y: l23,
                                             z: l24,
@@ -570,52 +636,71 @@ pub mod exports {
                                 }
                                 _ => _rt::invalid_enum_discriminant(),
                             },
+                            star_tracker: match l25 {
+                                0 => None,
+                                1 => {
+                                    let e = {
+                                        let l26 = *arg0.add(208).cast::<f64>();
+                                        let l27 = *arg0.add(216).cast::<f64>();
+                                        let l28 = *arg0.add(224).cast::<f64>();
+                                        let l29 = *arg0.add(232).cast::<f64>();
+                                        super::super::super::super::orts::plugin::types::AttitudeBodyToInertial {
+                                            w: l26,
+                                            x: l27,
+                                            y: l28,
+                                            z: l29,
+                                        }
+                                    };
+                                    Some(e)
+                                }
+                                _ => _rt::invalid_enum_discriminant(),
+                            },
                         },
                     });
-                    _rt::cabi_dealloc(arg0, 200, 8);
-                    let ptr26 = (&raw mut _RET_AREA.0).cast::<u8>();
-                    match result25 {
+                    _rt::cabi_dealloc(arg0, 240, 8);
+                    let ptr31 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result30 {
                         Ok(e) => {
-                            *ptr26.add(0).cast::<u8>() = (0i32) as u8;
-                            use super::super::super::super::orts::plugin::types::Command as V29;
+                            *ptr31.add(0).cast::<u8>() = (0i32) as u8;
+                            use super::super::super::super::orts::plugin::types::Command as V34;
                             match e {
-                                V29::MagneticMoment(e) => {
-                                    *ptr26.add(8).cast::<u8>() = (0i32) as u8;
+                                V34::MagneticMoment(e) => {
+                                    *ptr31.add(8).cast::<u8>() = (0i32) as u8;
                                     let super::super::super::super::orts::plugin::types::Vec3 {
-                                        x: x27,
-                                        y: y27,
-                                        z: z27,
+                                        x: x32,
+                                        y: y32,
+                                        z: z32,
                                     } = e;
-                                    *ptr26.add(16).cast::<f64>() = _rt::as_f64(x27);
-                                    *ptr26.add(24).cast::<f64>() = _rt::as_f64(y27);
-                                    *ptr26.add(32).cast::<f64>() = _rt::as_f64(z27);
+                                    *ptr31.add(16).cast::<f64>() = _rt::as_f64(x32);
+                                    *ptr31.add(24).cast::<f64>() = _rt::as_f64(y32);
+                                    *ptr31.add(32).cast::<f64>() = _rt::as_f64(z32);
                                 }
-                                V29::RwTorque(e) => {
-                                    *ptr26.add(8).cast::<u8>() = (1i32) as u8;
+                                V34::RwTorque(e) => {
+                                    *ptr31.add(8).cast::<u8>() = (1i32) as u8;
                                     let super::super::super::super::orts::plugin::types::Vec3 {
-                                        x: x28,
-                                        y: y28,
-                                        z: z28,
+                                        x: x33,
+                                        y: y33,
+                                        z: z33,
                                     } = e;
-                                    *ptr26.add(16).cast::<f64>() = _rt::as_f64(x28);
-                                    *ptr26.add(24).cast::<f64>() = _rt::as_f64(y28);
-                                    *ptr26.add(32).cast::<f64>() = _rt::as_f64(z28);
+                                    *ptr31.add(16).cast::<f64>() = _rt::as_f64(x33);
+                                    *ptr31.add(24).cast::<f64>() = _rt::as_f64(y33);
+                                    *ptr31.add(32).cast::<f64>() = _rt::as_f64(z33);
                                 }
                             }
                         }
                         Err(e) => {
-                            *ptr26.add(0).cast::<u8>() = (1i32) as u8;
-                            let vec30 = (e.into_bytes()).into_boxed_slice();
-                            let ptr30 = vec30.as_ptr().cast::<u8>();
-                            let len30 = vec30.len();
-                            ::core::mem::forget(vec30);
-                            *ptr26
+                            *ptr31.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec35 = (e.into_bytes()).into_boxed_slice();
+                            let ptr35 = vec35.as_ptr().cast::<u8>();
+                            let len35 = vec35.len();
+                            ::core::mem::forget(vec35);
+                            *ptr31
                                 .add(8 + 1 * ::core::mem::size_of::<*const u8>())
-                                .cast::<usize>() = len30;
-                            *ptr26.add(8).cast::<*mut u8>() = ptr30.cast_mut();
+                                .cast::<usize>() = len35;
+                            *ptr31.add(8).cast::<*mut u8>() = ptr35.cast_mut();
                         }
                     };
-                    ptr26
+                    ptr31
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -828,31 +913,33 @@ pub(crate) use __export_plugin_impl as export;
 #[unsafe(link_section = "component-type:wit-bindgen:0.41.0:orts:plugin@0.1.0:plugin:encoded world")]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1013] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf8\x06\x01A\x02\x01\
-A\x0a\x01B\x14\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1136] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf3\x07\x01A\x02\x01\
+A\x0a\x01B\x1c\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01\
 xu\x01yu\x01zu\x04\0\x04quat\x03\0\x02\x01r\x02\x08position\x01\x08velocity\x01\x04\
 \0\x0dorbital-state\x03\0\x04\x01r\x02\x0borientation\x03\x10angular-velocity\x01\
 \x04\0\x0eattitude-state\x03\0\x06\x01r\x03\x05orbit\x05\x08attitude\x07\x04mass\
 u\x04\0\x10spacecraft-state\x03\0\x08\x01r\x01\x0bjulian-dateu\x04\0\x05epoch\x03\
-\0\x0a\x01k\x01\x01r\x02\x13magnetic-field-body\x0c\x15angular-velocity-body\x0c\
-\x04\0\x07sensors\x03\0\x0d\x01k\x0b\x01r\x04\x01tu\x0aspacecraft\x09\x05epoch\x0f\
-\x07sensors\x0e\x04\0\x0atick-input\x03\0\x10\x01q\x02\x0fmagnetic-moment\x01\x01\
-\0\x09rw-torque\x01\x01\0\x04\0\x07command\x03\0\x12\x03\0\x17orts:plugin/types@\
-0.1.0\x05\0\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\x01\
-\x04\0\x04vec3\x03\0\0\x02\x03\x02\x01\x02\x04\0\x05epoch\x03\0\x02\x01m\x05\x05\
-trace\x05debug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\x05\
-level\x05\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\x01\
-\x01e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugin/host-en\
-v@0.1.0\x05\x03\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07command\x01B\x11\x02\x03\
-\x02\x01\x04\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\x05\x04\0\x07command\x03\
-\0\x02\x01@\0\0u\x04\0\x0fsample-period-s\x01\x04\x01j\0\x01s\x01@\x01\x06config\
-s\0\x05\x04\0\x04init\x01\x06\x01@\0\0\x03\x04\0\x0finitial-command\x01\x07\x01j\
-\x01\x03\x01s\x01@\x01\x05input\x01\0\x08\x04\0\x06update\x01\x09\x01ks\x01@\0\0\
-\x0a\x04\0\x0ccurrent-mode\x01\x0b\x04\0\x1corts:plugin/controller@0.1.0\x05\x06\
-\x04\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06plugin\x03\0\0\0G\x09p\
-roducers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\
-\x060.41.0";
+\0\x0a\x01r\x03\x01xu\x01yu\x01zu\x04\0\x13magnetic-field-body\x03\0\x0c\x01r\x03\
+\x01xu\x01yu\x01zu\x04\0\x15angular-velocity-body\x03\0\x0e\x01r\x04\x01wu\x01xu\
+\x01yu\x01zu\x04\0\x19attitude-body-to-inertial\x03\0\x10\x01k\x0d\x01k\x0f\x01k\
+\x11\x01r\x03\x0cmagnetometer\x12\x09gyroscope\x13\x0cstar-tracker\x14\x04\0\x07\
+sensors\x03\0\x15\x01k\x0b\x01r\x04\x01tu\x0aspacecraft\x09\x05epoch\x17\x07sens\
+ors\x16\x04\0\x0atick-input\x03\0\x18\x01q\x02\x0fmagnetic-moment\x01\x01\0\x09r\
+w-torque\x01\x01\0\x04\0\x07command\x03\0\x1a\x03\0\x17orts:plugin/types@0.1.0\x05\
+\0\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\x01\x04\0\x04\
+vec3\x03\0\0\x02\x03\x02\x01\x02\x04\0\x05epoch\x03\0\x02\x01m\x05\x05trace\x05d\
+ebug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\x05level\x05\
+\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\x01\x01e\x03\
+\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugin/host-env@0.1.0\x05\
+\x03\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07command\x01B\x11\x02\x03\x02\x01\x04\
+\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\x05\x04\0\x07command\x03\0\x02\x01@\
+\0\0u\x04\0\x0fsample-period-s\x01\x04\x01j\0\x01s\x01@\x01\x06configs\0\x05\x04\
+\0\x04init\x01\x06\x01@\0\0\x03\x04\0\x0finitial-command\x01\x07\x01j\x01\x03\x01\
+s\x01@\x01\x05input\x01\0\x08\x04\0\x06update\x01\x09\x01ks\x01@\0\0\x0a\x04\0\x0c\
+current-mode\x01\x0b\x04\0\x1corts:plugin/controller@0.1.0\x05\x06\x04\0\x18orts\
+:plugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06plugin\x03\0\0\0G\x09producers\x01\x0c\
+processed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\x060.41.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

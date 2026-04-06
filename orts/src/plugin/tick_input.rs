@@ -4,47 +4,89 @@
 //! compute a [`super::Command`]: simulation time, epoch, sensor
 //! readings, and (optionally) the true spacecraft state for
 //! debugging.
-//!
-//! Using a single struct instead of multiple positional arguments
-//! makes it cheap to add new fields later without breaking every
-//! backend.
 
 use kaname::epoch::Epoch;
-use nalgebra::Vector3;
+use nalgebra::{Vector3, Vector4};
 
 use crate::SpacecraftState;
 
+// ─── sensor output newtypes ──────────────────────────────────────
+
+/// Magnetic field in the body frame \[T\].
+///
+/// Newtype wrapper that encodes the physical quantity (magnetic field),
+/// coordinate frame (body), and units (Tesla) at the type level.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MagneticFieldBody(Vector3<f64>);
+
+impl MagneticFieldBody {
+    /// Wrap a raw vector as a body-frame magnetic field.
+    pub fn new(v: Vector3<f64>) -> Self {
+        Self(v)
+    }
+    /// Borrow the inner vector.
+    pub fn inner(&self) -> &Vector3<f64> {
+        &self.0
+    }
+    /// Consume and return the inner vector.
+    pub fn into_inner(self) -> Vector3<f64> {
+        self.0
+    }
+}
+
+/// Angular velocity in the body frame \[rad/s\].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AngularVelocityBody(Vector3<f64>);
+
+impl AngularVelocityBody {
+    pub fn new(v: Vector3<f64>) -> Self {
+        Self(v)
+    }
+    pub fn inner(&self) -> &Vector3<f64> {
+        &self.0
+    }
+    pub fn into_inner(self) -> Vector3<f64> {
+        self.0
+    }
+}
+
+/// Attitude quaternion representing the rotation from the body frame
+/// to the inertial (ECI) frame. Hamilton convention, scalar-first
+/// `[w, x, y, z]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AttitudeBodyToInertial(Vector4<f64>);
+
+impl AttitudeBodyToInertial {
+    pub fn new(v: Vector4<f64>) -> Self {
+        Self(v)
+    }
+    pub fn inner(&self) -> &Vector4<f64> {
+        &self.0
+    }
+    pub fn into_inner(self) -> Vector4<f64> {
+        self.0
+    }
+}
+
+// ─── sensor readings ─────────────────────────────────────────────
+
 /// Sensor readings evaluated at the current tick instant.
 ///
-/// Contains measurements from the host-side sensor models
-/// (see [`crate::sensor`]). Each field is `Option`-wrapped because
-/// a spacecraft may not carry every sensor type — `None` means
-/// the sensor is not configured (or not available this tick).
+/// Each field is `Option`-wrapped — `None` means the sensor is not
+/// configured or not available this tick.
 ///
-/// ## True state vs sensor readings
-///
-/// [`TickInput`] provides both the **true state** (via
-/// `spacecraft.attitude.angular_velocity`, etc.) and **sensor
-/// readings** (via these `Sensors` fields). For ideal sensors
-/// these are identical; when noise models are added (future phase),
-/// they will diverge. Controllers that want physical realism should
-/// use the sensor readings; controllers that need ground-truth for
-/// debugging can use the true state directly.
+/// Field names are sensor names; types encode the physical quantity,
+/// coordinate frame, and units.
 #[derive(Debug, Clone, Default)]
 pub struct Sensors {
-    /// Magnetic field in the body frame \[T\], as measured by the
-    /// magnetometer. `None` if no magnetometer is configured.
-    ///
-    /// This is the "fast path" for guests that need B_body: it is
-    /// pre-evaluated once per tick with no host-call overhead. The
-    /// `host-env.magnetic-field-eci` WIT import remains available as
-    /// an "escape hatch" for guests that need B at arbitrary
-    /// positions/epochs (e.g. for prediction/planning).
-    pub magnetic_field_body: Option<Vector3<f64>>,
+    /// Magnetometer reading. Pre-evaluated once per tick.
+    pub magnetometer: Option<MagneticFieldBody>,
 
-    /// Angular velocity in the body frame \[rad/s\], as measured by
-    /// the rate gyroscope. `None` if no gyroscope is configured.
-    pub angular_velocity_body: Option<Vector3<f64>>,
+    /// Gyroscope reading.
+    pub gyroscope: Option<AngularVelocityBody>,
+
+    /// Star tracker reading.
+    pub star_tracker: Option<AttitudeBodyToInertial>,
 }
 
 impl Sensors {
@@ -53,6 +95,8 @@ impl Sensors {
         Self::default()
     }
 }
+
+// ─── tick input ──────────────────────────────────────────────────
 
 /// Per-tick input handed to a plugin controller's `update` call.
 ///
@@ -67,11 +111,10 @@ pub struct TickInput<'a> {
     /// Absolute epoch, if the simulation is bound to a wall-clock time
     /// base (e.g. for ephemeris / magnetic-field models).
     pub epoch: Option<&'a Epoch>,
-    /// Sensor readings evaluated at this tick. May contain noise in
-    /// future phases; use `spacecraft` for ground-truth.
+    /// Sensor readings evaluated at this tick. May contain noise;
+    /// use `spacecraft` for ground-truth.
     pub sensors: &'a Sensors,
     /// True spacecraft state: orbit + attitude + mass. This is the
-    /// simulation ground-truth, not a sensor measurement. Useful for
-    /// debugging and for controllers that don't need sensor realism.
+    /// simulation ground-truth, not a sensor measurement.
     pub spacecraft: &'a SpacecraftState,
 }

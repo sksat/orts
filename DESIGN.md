@@ -516,8 +516,8 @@ Phase P0 smoke test で core wasm path (`Module::*`) と Component Model path (`
 | フェーズ | 内容 |
 |---|---|
 | Phase P0 | 調査・方針決定 **実装済み**。DESIGN.md 更新 + rust-toolchain.toml pin + smoke test で core wasm / Component Model 両 path の precompile/deserialize ラウンドトリップを確認 (実測値は plan 参照) |
-| Phase P0.5 | `NativeController` で trait + adapter + oracle の経路を validation (guest ランタイムを触る前) |
-| Phase P1 | wasmtime (Pulley) backend + Detumbling guest (`BdotFiniteDiff` と 1e-12 bit 近似一致) |
+| Phase P0.5 | `NativeController` で trait + adapter + oracle の経路を validation **実装済み** |
+| Phase P1 | wasmtime (Pulley) backend + Detumbling guest + 理想センサ (Magnetometer/Gyroscope) + RW コマンド + ノイズモデル **実装済み** (`BdotFiniteDiff` と 1e-12 bit 近似一致) |
 | Phase P2 | 第 2 backend 追加 (pure Rust embedded script 系を候補として評価。Phase P1 完了後に選定) |
 | Phase P3 | PD 姿勢制御 + モードマシン (detumble → nadir 切替) |
 | Phase P4 | 推進 (throttle / impulsive / finite burn) |

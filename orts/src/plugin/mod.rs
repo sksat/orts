@@ -38,4 +38,6 @@ pub use actuators::ActuatorBundle;
 pub use command::Command;
 pub use controller::PluginController;
 pub use error::PluginError;
-pub use tick_input::{Sensors, TickInput};
+pub use tick_input::{
+    AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody, Sensors, TickInput,
+};

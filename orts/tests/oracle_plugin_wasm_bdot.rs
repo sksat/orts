@@ -138,6 +138,7 @@ fn run_wasm(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
     let mut sensor_bundle = SensorBundle {
         magnetometer: Some(Magnetometer::new(Arc::clone(&field_model))),
         gyroscope: Some(Gyroscope::new()),
+        star_tracker: None,
     };
     let mut state = initial;
     let mut t = 0.0;
@@ -181,7 +182,7 @@ fn wasm_bdot_matches_native() {
     let wasm_state = run_wasm(initial, epoch);
 
     // The WASM guest reimplements the same finite-diff B-dot math but
-    // reads B_body from sensors.magnetic-field-body (pre-evaluated by
+    // reads B_body from sensors.magnetometer (pre-evaluated by
     // the host's Magnetometer sensor) rather than computing it inline.
     // Float operation order may differ, so we allow a small tolerance
     // rather than demanding bit-exact match.

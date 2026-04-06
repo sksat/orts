@@ -29,6 +29,7 @@
 mod gyroscope;
 mod magnetometer;
 pub mod noise;
+mod star_tracker;
 
 use kaname::epoch::Epoch;
 
@@ -37,6 +38,7 @@ use crate::plugin::tick_input::Sensors;
 
 pub use gyroscope::Gyroscope;
 pub use magnetometer::Magnetometer;
+pub use star_tracker::StarTracker;
 
 /// Aggregates all sensor instances for a single spacecraft and
 /// produces [`Sensors`] from the current true state.
@@ -52,6 +54,7 @@ pub use magnetometer::Magnetometer;
 pub struct SensorBundle {
     pub magnetometer: Option<Magnetometer>,
     pub gyroscope: Option<Gyroscope>,
+    pub star_tracker: Option<StarTracker>,
 }
 
 impl SensorBundle {
@@ -60,6 +63,7 @@ impl SensorBundle {
         Self {
             magnetometer: None,
             gyroscope: None,
+            star_tracker: None,
         }
     }
 
@@ -68,8 +72,9 @@ impl SensorBundle {
     /// `&mut self` because noise models mutate their internal RNG.
     pub fn evaluate(&mut self, state: &SpacecraftState, epoch: &Epoch) -> Sensors {
         Sensors {
-            magnetic_field_body: self.magnetometer.as_mut().map(|m| m.measure(state, epoch)),
-            angular_velocity_body: self.gyroscope.as_mut().map(|g| g.measure(state, epoch)),
+            magnetometer: self.magnetometer.as_mut().map(|m| m.measure(state, epoch)),
+            gyroscope: self.gyroscope.as_mut().map(|g| g.measure(state, epoch)),
+            star_tracker: self.star_tracker.as_mut().map(|s| s.measure(state, epoch)),
         }
     }
 }
@@ -106,8 +111,8 @@ mod tests {
         let epoch = Epoch::j2000();
         let state = make_state();
         let readings = bundle.evaluate(&state, &epoch);
-        assert!(readings.magnetic_field_body.is_none());
-        assert!(readings.angular_velocity_body.is_none());
+        assert!(readings.magnetometer.is_none());
+        assert!(readings.gyroscope.is_none());
     }
 
     #[test]
@@ -115,11 +120,12 @@ mod tests {
         let mut bundle = SensorBundle {
             magnetometer: Some(Magnetometer::new(Arc::new(TiltedDipole::earth()))),
             gyroscope: Some(Gyroscope::new()),
+            star_tracker: None,
         };
         let epoch = Epoch::j2000();
         let state = make_state();
         let readings = bundle.evaluate(&state, &epoch);
-        assert!(readings.magnetic_field_body.is_some());
-        assert!(readings.angular_velocity_body.is_some());
+        assert!(readings.magnetometer.is_some());
+        assert!(readings.gyroscope.is_some());
     }
 }

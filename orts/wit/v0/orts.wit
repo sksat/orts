@@ -98,15 +98,33 @@ interface types {
     /// Phase P1 では host/guest を lockstep で開発するため許容。
     /// サードパーティゲストが出た段階でレイアウトを凍結し、
     /// 新フィールドは新 wit バージョンで追加する。
-    record sensors {
-        /// 磁力計で計測した機体座標系の磁場 \[T\]。
-        /// tick ごとに 1 回事前評価、ホスト呼び出しオーバーヘッドなし。
-        /// 任意位置/エポックの磁場が必要なら
-        /// `host-env.magnetic-field-eci` を使う。
-        magnetic-field-body: option<vec3>,
+    /// 機体座標系の磁場 \[T\]。
+    record magnetic-field-body {
+        x: f64, y: f64, z: f64,
+    }
 
-        /// ジャイロスコープで計測した機体座標系の角速度 \[rad/s\]。
-        angular-velocity-body: option<vec3>,
+    /// 機体座標系の角速度 \[rad/s\]。
+    record angular-velocity-body {
+        x: f64, y: f64, z: f64,
+    }
+
+    /// 姿勢クォータニオン body→inertial (Hamilton scalar-first)。
+    record attitude-body-to-inertial {
+        w: f64, x: f64, y: f64, z: f64,
+    }
+
+    /// tick 時点で評価されたセンサ読み値。
+    /// フィールド名 = センサ名、型 = 物理量 + 座標系。
+    record sensors {
+        /// 磁力計。任意位置/エポックの磁場が必要なら
+        /// `host-env.magnetic-field-eci` を使う。
+        magnetometer: option<magnetic-field-body>,
+
+        /// ジャイロスコープ。
+        gyroscope: option<angular-velocity-body>,
+
+        /// スタートラッカ。
+        star-tracker: option<attitude-body-to-inertial>,
     }
 
     /// `controller.update` に渡される tick ごとの入力。
@@ -161,7 +179,7 @@ interface host-env {
     /// 指定 ECI 位置・エポックでの地磁気ベクトルを ECI 座標系で返す \[T\]。
     ///
     /// 宇宙機の現在位置・姿勢での機体座標系磁場が欲しい場合は
-    /// `sensors.magnetic-field-body` を使う方がオーバーヘッドがない。
+    /// `sensors.magnetometer` を使う方がオーバーヘッドがない。
     /// このインポートは任意位置/エポックの磁場が必要な場合
     /// （予測・計画等）の "escape hatch"。
     ///
