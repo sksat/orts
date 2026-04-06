@@ -6,13 +6,13 @@
 //!
 //! ```sh
 //! # Build the guest first:
-//! cd examples/plugins/bdot-finite-diff && cargo +1.91.0 component build --release && cd -
+//! cd plugins/bdot-finite-diff && cargo +1.91.0 component build --release && cd -
 //!
 //! # Run the simulation sweep:
 //! cargo run --example wasm_bdot_simulate --features plugin-wasm --release
 //! ```
 //!
-//! Outputs CSV files in `examples/plugins/bdot-finite-diff/`:
+//! Outputs CSV files in `plugins/bdot-finite-diff/`:
 //!
 //! - `sim_gain_<gain>_omega_<omega>.csv`
 //!
@@ -66,24 +66,21 @@ fn main() {
     // Set up WASM engine + component (shared across all cases).
     let engine = Arc::new(WasmEngine::new().expect("WasmEngine must init"));
     let wasm_path = format!(
-        "{}/../examples/plugins/bdot-finite-diff/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
+        "{}/../plugins/bdot-finite-diff/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
     let wasm_bytes = std::fs::read(&wasm_path).unwrap_or_else(|e| {
         panic!(
             "Guest WASM not found at {wasm_path}: {e}\n\
-             Build it first:\n  cd examples/plugins/bdot-finite-diff\n  \
+             Build it first:\n  cd plugins/bdot-finite-diff\n  \
              cargo +1.91.0 component build --release"
         )
     });
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component compile failed");
     let pre = WasmController::prepare(&engine, &component).expect("prepare failed");
 
-    let output_dir: PathBuf = format!(
-        "{}/../examples/plugins/bdot-finite-diff",
-        env!("CARGO_MANIFEST_DIR")
-    )
-    .into();
+    let output_dir: PathBuf =
+        format!("{}/../plugins/bdot-finite-diff", env!("CARGO_MANIFEST_DIR")).into();
 
     for case in &cases {
         println!("Running: {} ...", case.label);
@@ -101,7 +98,7 @@ fn main() {
     }
 
     println!("\nDone. CSV files written to {}", output_dir.display());
-    println!("Plot with: cd examples/plugins/bdot-finite-diff && python plot.py");
+    println!("Plot with: cd plugins/bdot-finite-diff && python plot.py");
 }
 
 /// (t, |ω|, ω_x, ω_y, ω_z)

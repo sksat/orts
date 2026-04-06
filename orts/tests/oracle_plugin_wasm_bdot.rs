@@ -10,7 +10,7 @@
 //! **Prerequisites**: the guest must be built before running this test:
 //!
 //! ```sh
-//! cd examples/plugins/bdot-finite-diff
+//! cd plugins/bdot-finite-diff
 //! cargo +1.91.0 component build --release
 //! ```
 //!
@@ -53,13 +53,13 @@ fn guest_wasm_bytes() -> Vec<u8> {
     // version switches the target directory to `wasm32-wasip2/`, this
     // path will need updating.
     let path = format!(
-        "{}/../examples/plugins/bdot-finite-diff/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
+        "{}/../plugins/bdot-finite-diff/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
     std::fs::read(&path).unwrap_or_else(|e| {
         panic!(
             "Could not read guest WASM at {path}: {e}\n\
-             Build it first: cd examples/plugins/bdot-finite-diff && \
+             Build it first: cd plugins/bdot-finite-diff && \
              cargo +1.91.0 component build --release"
         )
     })

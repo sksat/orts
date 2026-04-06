@@ -46,7 +46,7 @@ This sweeps gain × initial angular velocity (3×3 = 9 conditions) over 600 s of
 ## Plotting
 
 ```sh
-cd examples/plugins/bdot-finite-diff
+cd plugins/bdot-finite-diff
 uv run plot.py
 ```
 
