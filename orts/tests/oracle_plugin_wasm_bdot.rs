@@ -35,7 +35,8 @@ use orts::attitude::{
 };
 use orts::control::DiscreteController;
 use orts::plugin::wasm::{WasmController, WasmEngine};
-use orts::plugin::{ActuatorBundle, PluginController, Sensors, TickInput};
+use orts::plugin::{ActuatorBundle, PluginController, TickInput};
+use orts::sensor::{Gyroscope, Magnetometer, SensorBundle};
 
 const MASS: f64 = 50.0;
 const ALT_KM: f64 = 500.0;
@@ -126,12 +127,18 @@ fn run_wasm(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
     let pre = WasmController::prepare(&engine, &component).expect("prepare must succeed");
     let mut ctrl = WasmController::new(&pre, "oracle-bdot", "").expect("new must succeed");
 
+    let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> =
+        Arc::new(TiltedDipole::earth());
+
     let mut bundle = ActuatorBundle::new();
     bundle
         .apply(&ctrl.initial_command())
         .expect("initial command must be finite");
 
-    let sensors = Sensors::empty();
+    let mut sensor_bundle = SensorBundle {
+        magnetometer: Some(Magnetometer::new(Arc::clone(&field_model))),
+        gyroscope: Some(Gyroscope::new()),
+    };
     let mut state = initial;
     let mut t = 0.0;
 
@@ -150,14 +157,15 @@ fn run_wasm(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
             attitude: state.clone(),
             mass: MASS,
         };
-        let obs = TickInput {
+        let sensors = sensor_bundle.evaluate(&snapshot, &current_epoch);
+        let input = TickInput {
             t,
-            spacecraft: &snapshot,
             epoch: Some(&current_epoch),
             sensors: &sensors,
+            spacecraft: &snapshot,
         };
         let cmd = ctrl
-            .update(&obs)
+            .update(&input)
             .expect("WASM controller must return a valid command");
         bundle.apply(&cmd).expect("WASM command must be finite");
     }
@@ -173,10 +181,10 @@ fn wasm_bdot_matches_native() {
     let wasm_state = run_wasm(initial, epoch);
 
     // The WASM guest reimplements the same finite-diff B-dot math but
-    // uses its own quaternion rotation (hand-rolled) and gets magnetic
-    // field from the host import rather than directly calling
-    // TiltedDipole::field_eci. Float operation order may differ, so
-    // we allow a small tolerance rather than demanding bit-exact match.
+    // reads B_body from sensors.magnetic-field-body (pre-evaluated by
+    // the host's Magnetometer sensor) rather than computing it inline.
+    // Float operation order may differ, so we allow a small tolerance
+    // rather than demanding bit-exact match.
     let q_diff = (native_state.quaternion - wasm_state.quaternion).norm();
     let w_diff = (native_state.angular_velocity - wasm_state.angular_velocity).norm();
 

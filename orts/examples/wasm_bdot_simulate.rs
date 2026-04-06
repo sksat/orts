@@ -33,7 +33,8 @@ use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, CommandedMagnetorquer, DecoupledAttitudeSystem};
 use orts::plugin::wasm::{WasmController, WasmEngine};
-use orts::plugin::{ActuatorBundle, PluginController, Sensors, TickInput};
+use orts::plugin::{ActuatorBundle, PluginController, TickInput};
+use orts::sensor::{Gyroscope, Magnetometer, SensorBundle};
 
 const MASS: f64 = 50.0;
 const ALT_KM: f64 = 500.0;
@@ -121,12 +122,18 @@ fn run_case(
         angular_velocity: Vector3::new(omega0, omega0, -omega0),
     };
 
+    let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> =
+        Arc::new(TiltedDipole::earth());
+
     let mut ctrl =
         WasmController::new(pre, &case.label, &config).expect("WasmController::new failed");
     let mut bundle = ActuatorBundle::new();
     bundle.apply(&ctrl.initial_command()).unwrap();
 
-    let sensors = Sensors::empty();
+    let mut sensor_bundle = SensorBundle {
+        magnetometer: Some(Magnetometer::new(Arc::clone(&field_model))),
+        gyroscope: Some(Gyroscope::new()),
+    };
     let mut state = initial;
     let mut t = 0.0;
     let mut trajectory = Vec::new();
@@ -157,11 +164,12 @@ fn run_case(
             attitude: state.clone(),
             mass: MASS,
         };
+        let sensors = sensor_bundle.evaluate(&snapshot, &current_epoch);
         let obs = TickInput {
             t,
-            spacecraft: &snapshot,
             epoch: Some(&current_epoch),
             sensors: &sensors,
+            spacecraft: &snapshot,
         };
         let cmd = ctrl.update(&obs).expect("WASM update must succeed");
         bundle.apply(&cmd).expect("command must be finite");

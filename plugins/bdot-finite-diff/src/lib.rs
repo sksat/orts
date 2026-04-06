@@ -1,21 +1,13 @@
 //! B-dot finite-difference detumbling controller — WASM Component guest.
 //!
-//! This is the **third independent implementation** of the same control
-//! law: after `orts::attitude::BdotFiniteDiff` (native) and the plugin-
-//! layer test-only reference in `orts/tests/plugin_bdot_finitediff.rs`.
-//! Bit-exact agreement between these three implementations is the Phase
-//! P1 determinism oracle.
-//!
-//! The guest uses the WIT `host-env.magnetic-field-eci` import to
-//! evaluate the geomagnetic field at each sample tick, transforms it
-//! to the body frame, and computes the finite-difference dB/dt
-//! approximation.
+//! The guest reads `sensors.magnetic-field-body` from the tick input
+//! (pre-evaluated by the host's magnetometer sensor) and computes the
+//! finite-difference dB/dt approximation.
 
 #[allow(warnings)]
 mod bindings;
 
 use bindings::exports::orts::plugin::controller::Guest;
-use bindings::orts::plugin::host_env;
 use bindings::orts::plugin::types::*;
 
 /// Internal state for the finite-difference B-dot controller.
@@ -27,8 +19,6 @@ struct BdotFiniteDiff {
     prev_t: f64,
 }
 
-/// Global singleton. Component Model guests are single-instance so
-/// we use a `RefCell` for interior mutability (WASM is single-threaded).
 use core::cell::RefCell;
 
 thread_local! {
@@ -52,8 +42,6 @@ impl Guest for Component {
         if config.is_empty() {
             return Ok(());
         }
-        // JSON config: {"gain": 1e4, "max_moment": 10.0, "sample_period": 1.0}
-        // All fields optional (defaults apply if omitted).
         #[derive(serde::Deserialize)]
         #[serde(default)]
         struct Config {
@@ -89,49 +77,25 @@ impl Guest for Component {
         })
     }
 
-    fn update(obs: TickInput) -> Result<Command, String> {
+    fn update(input: TickInput) -> Result<Command, String> {
         STATE.with(|state| {
             let mut s = state.borrow_mut();
 
-            let epoch = match obs.epoch {
-                Some(e) => e,
-                None => {
-                    return Ok(Command::MagneticMoment(Vec3 {
-                        x: 0.0,
-                        y: 0.0,
-                        z: 0.0,
-                    }));
-                }
-            };
+            let b_body = input
+                .sensors
+                .magnetic_field_body
+                .ok_or("magnetometer sensor not available")?;
 
-            // Query the host's geomagnetic field model via host-env import.
-            let b_eci = host_env::magnetic_field_eci(obs.spacecraft.orbit.position, epoch);
-
-            let b_mag_sq = b_eci.x * b_eci.x + b_eci.y * b_eci.y + b_eci.z * b_eci.z;
-            // Threshold 1e-60 (native uses 1e-30 on magnitude, equivalent
-            // to 1e-60 on squared magnitude). Both are far below any
-            // realistic geomagnetic field so the difference is cosmetic.
+            let b_mag_sq = b_body.x * b_body.x + b_body.y * b_body.y + b_body.z * b_body.z;
             if b_mag_sq < 1e-60 {
-                return Ok(Command::MagneticMoment(Vec3 {
-                    x: 0.0,
-                    y: 0.0,
-                    z: 0.0,
-                }));
+                return Ok(zero_moment());
             }
-
-            // Transform B from ECI to body frame using the attitude quaternion.
-            let q = &obs.spacecraft.attitude.orientation;
-            let b_body = quat_rotate_inverse(q, &b_eci);
 
             let m_cmd = match s.prev_b_body {
                 Some(prev_b) => {
-                    let dt = obs.t - s.prev_t;
+                    let dt = input.t - s.prev_t;
                     if dt < 1e-15 {
-                        return Ok(Command::MagneticMoment(Vec3 {
-                            x: 0.0,
-                            y: 0.0,
-                            z: 0.0,
-                        }));
+                        return Ok(zero_moment());
                     }
                     let db_x = (b_body.x - prev_b[0]) / dt;
                     let db_y = (b_body.y - prev_b[1]) / dt;
@@ -145,7 +109,7 @@ impl Guest for Component {
             };
 
             s.prev_b_body = Some([b_body.x, b_body.y, b_body.z]);
-            s.prev_t = obs.t;
+            s.prev_t = input.t;
 
             Ok(Command::MagneticMoment(Vec3 {
                 x: m_cmd[0],
@@ -162,30 +126,12 @@ impl Guest for Component {
 
 bindings::export!(Component with_types_in bindings);
 
-// ─── helpers ────────────────────────────────────────────────────
-
-/// Rotate a vector from the inertial frame to the body frame using
-/// the conjugate of the given quaternion (body→inertial).
-///
-/// q is Hamilton scalar-first (w, x, y, z).
-/// v_body = q* · v_eci · q  (passive rotation).
-fn quat_rotate_inverse(q: &Quat, v: &Vec3) -> Vec3 {
-    // Conjugate: negate the vector part.
-    let qw = q.w;
-    let qx = -q.x;
-    let qy = -q.y;
-    let qz = -q.z;
-
-    // t = 2 * (q_vec × v)
-    let tx = 2.0 * (qy * v.z - qz * v.y);
-    let ty = 2.0 * (qz * v.x - qx * v.z);
-    let tz = 2.0 * (qx * v.y - qy * v.x);
-
-    Vec3 {
-        x: v.x + qw * tx + (qy * tz - qz * ty),
-        y: v.y + qw * ty + (qz * tx - qx * tz),
-        z: v.z + qw * tz + (qx * ty - qy * tx),
-    }
+fn zero_moment() -> Command {
+    Command::MagneticMoment(Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    })
 }
 
 fn clamp(val: f64, lo: f64, hi: f64) -> f64 {
