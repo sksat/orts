@@ -2824,6 +2824,7 @@ dependencies = [
  "futures-util",
  "image",
  "kaname",
+ "log",
  "nalgebra",
  "orts",
  "rust-embed",
@@ -2836,6 +2837,7 @@ dependencies = [
  "toml",
  "ureq 3.2.0",
  "utsuroi",
+ "wasmtime",
 ]
 
 [[package]]
