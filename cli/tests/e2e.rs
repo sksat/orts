@@ -452,3 +452,78 @@ fn test_cli_config_file_mars() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// ──────────────────────────────────────────────────
+// Plugin-controlled simulation via config file
+// ──────────────────────────────────────────────────
+
+/// Run `orts run --config <path> --format csv` and return stdout.
+#[cfg(feature = "plugin-wasm")]
+fn run_cli_config_csv(config_path: &str) -> std::process::Output {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    Command::new(binary)
+        .current_dir(workspace_root)
+        .args([
+            "run",
+            "--config",
+            config_path,
+            "--output",
+            "stdout",
+            "--format",
+            "csv",
+        ])
+        .output()
+        .expect("failed to execute orts")
+}
+
+/// E2E: `orts run --config mission.yaml` runs PD+RW controlled simulation.
+///
+/// Requires the WASM guest to be pre-built:
+///   cd plugins/pd-rw-control && cargo +1.91.0 component build --release
+#[test]
+#[cfg(feature = "plugin-wasm")]
+fn test_controlled_simulation_via_config() {
+    let output = run_cli_config_csv("plugins/pd-rw-control/mission.yaml");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "CLI failed: {stderr}");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let data_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+
+    // 120s / 1.0s output_interval ≈ 121 lines (including t=0).
+    assert!(
+        data_lines.len() > 100,
+        "Expected >100 data lines, got {}",
+        data_lines.len()
+    );
+
+    // Each line should have CSV fields (at least 7: t, x, y, z, vx, vy, vz).
+    for line in &data_lines[..3] {
+        let fields: Vec<&str> = line.split(',').collect();
+        assert!(
+            fields.len() >= 7,
+            "Expected >=7 CSV fields, got {}: {line}",
+            fields.len()
+        );
+    }
+
+    // Verify the orbit stays reasonable (LEO, ~6778 km radius).
+    let last_line = data_lines.last().unwrap();
+    let fields: Vec<f64> = last_line
+        .split(',')
+        .take(4)
+        .map(|s| s.parse().unwrap())
+        .collect();
+    let r = (fields[1] * fields[1] + fields[2] * fields[2] + fields[3] * fields[3]).sqrt();
+    assert!(
+        r > 6700.0 && r < 6900.0,
+        "Final orbital radius {r:.1} km out of LEO range"
+    );
+}
