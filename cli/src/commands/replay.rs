@@ -70,6 +70,7 @@ fn load_replay_data(path: &str) -> ReplayData {
             quaternion_wxyz: q,
             angular_velocity_body: row.angular_velocity.unwrap_or([0.0; 3]),
             source: crate::sim::core::AttitudeSource::Propagated,
+            rw_momentum: None,
         });
 
         let hs = make_history_state(

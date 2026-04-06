@@ -22,6 +22,9 @@ pub struct AttitudePayload {
     pub angular_velocity_body: [f64; 3],
     /// How this attitude was produced.
     pub source: AttitudeSource,
+    /// Reaction wheel angular momentum [N·m·s] per wheel (if RW is present).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rw_momentum: Option<Vec<f64>>,
 }
 
 /// How the attitude data was produced.
@@ -208,6 +211,7 @@ mod tests {
             quaternion_wxyz: [1.0, 0.0, 0.0, 0.0],
             angular_velocity_body: [0.01, -0.02, 0.03],
             source: AttitudeSource::Propagated,
+            rw_momentum: None,
         };
         let json = serde_json::to_string(&payload).unwrap();
         let deserialized: AttitudePayload = serde_json::from_str(&json).unwrap();
@@ -225,6 +229,7 @@ mod tests {
             quaternion_wxyz: [0.707, 0.0, 0.707, 0.0],
             angular_velocity_body: [0.0, 0.1, 0.0],
             source: AttitudeSource::Propagated,
+            rw_momentum: None,
         });
         let hs = make_history_state(
             EntityPath::parse("/world/sat/att-sat"),
@@ -253,6 +258,7 @@ mod tests {
                 quaternion_wxyz: [0.707, 0.0, 0.707, 0.0],
                 angular_velocity_body: [0.0, 0.1, 0.0],
                 source: AttitudeSource::Propagated,
+                rw_momentum: None,
             }),
         );
         let json = serde_json::to_string(&hs2).unwrap();

@@ -241,6 +241,7 @@ impl HistoryBuffer {
                             quaternion_wxyz: q,
                             angular_velocity_body: row.angular_velocity.unwrap_or([0.0; 3]),
                             source: AttitudeSource::Propagated,
+                            rw_momentum: None,
                         });
                         all.push(make_history_state(
                             entity_path,
@@ -1055,6 +1056,7 @@ mod tests {
                 quaternion_wxyz: [0.707, 0.0, 0.707, 0.0],
                 angular_velocity_body: [0.01 * t, 0.0, 0.0],
                 source: AttitudeSource::Propagated,
+                rw_momentum: None,
             });
             let hs = make_history_state(
                 EntityPath::parse("/world/sat/att-sat"),

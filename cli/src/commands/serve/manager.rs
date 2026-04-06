@@ -145,22 +145,30 @@ impl SimGroup {
                         quaternion_wxyz: [q[0], q[1], q[2], q[3]],
                         angular_velocity_body: [w[0], w[1], w[2]],
                         source: AttitudeSource::Propagated,
+                        rw_momentum: None,
                     }),
                     accels: spacecraft_accel_breakdown(dyn_sys, t, sc),
                 }
             }
             SimGroup::Controlled(sats) => {
-                let sc = &sats[idx].state.plant;
+                let sat = &sats[idx];
+                let sc = &sat.state.plant;
                 let q = sc.attitude.quaternion;
                 let w = sc.attitude.angular_velocity;
+                let rw_mom = if sat.has_rw && !sat.state.aux.is_empty() {
+                    Some(sat.state.aux.clone())
+                } else {
+                    None
+                };
                 SatSnapshot {
                     orbit: sc.orbit.clone(),
                     attitude: Some(AttitudePayload {
                         quaternion_wxyz: [q[0], q[1], q[2], q[3]],
                         angular_velocity_body: [w[0], w[1], w[2]],
                         source: AttitudeSource::Propagated,
+                        rw_momentum: rw_mom,
                     }),
-                    accels: HashMap::new(), // TODO: acceleration breakdown for controlled
+                    accels: HashMap::new(),
                 }
             }
         }

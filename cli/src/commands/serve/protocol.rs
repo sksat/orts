@@ -424,6 +424,7 @@ mod tests {
                 quaternion_wxyz: [0.707, 0.0, 0.707, 0.0],
                 angular_velocity_body: [0.0, 0.01, 0.0],
                 source: AttitudeSource::Propagated,
+                rw_momentum: None,
             }),
         };
         let json = serde_json::to_string(&msg).unwrap();
