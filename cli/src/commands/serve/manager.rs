@@ -25,10 +25,14 @@ use super::compute::state_message;
 use super::history::HistoryBuffer;
 use super::protocol::WsMessage;
 
-/// Simulation group that dynamically switches between orbit-only and spacecraft modes.
+use crate::sim::controlled::ControlledSatellite;
+
+/// Simulation group that dynamically switches between orbit-only, spacecraft, and controlled modes.
 enum SimGroup {
     OrbitOnly(IndependentGroup<OrbitalSystem>),
     Spacecraft(IndependentGroup<SpacecraftDynamics<Box<dyn GravityField>>>),
+    /// Plugin-controlled satellites (direct integration, no IndependentGroup).
+    Controlled(Vec<ControlledSatellite>),
 }
 
 /// Extracted state from a single satellite for protocol serialization.
@@ -43,6 +47,33 @@ impl SimGroup {
         match self {
             SimGroup::OrbitOnly(g) => g.propagate_to(t),
             SimGroup::Spacecraft(g) => g.propagate_to(t),
+            SimGroup::Controlled(_) => {
+                // Controlled satellites are stepped via step_controlled_to(),
+                // not through IndependentGroup::propagate_to.
+                Ok(PropGroupOutcome {
+                    terminations: vec![],
+                })
+            }
+        }
+    }
+
+    /// Step controlled satellites up to target time `t` in dt_ctrl increments.
+    fn step_controlled_to(&mut self, current_t: f64, target_t: f64, params: &SimParams) {
+        let SimGroup::Controlled(sats) = self else {
+            return;
+        };
+        for sat in sats.iter_mut() {
+            let dt_ctrl = sat.controller.sample_period();
+            let dt_ode = params.dt.min(dt_ctrl);
+            let mut t = current_t;
+            while t < target_t - 1e-12 {
+                let dt = dt_ctrl.min(target_t - t);
+                crate::sim::controlled::step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref())
+                    .unwrap_or_else(|e| {
+                        log::error!("controlled simulation error at t={t:.3}: {e}");
+                    });
+                t += dt;
+            }
         }
     }
 
@@ -51,6 +82,7 @@ impl SimGroup {
         match self {
             SimGroup::OrbitOnly(g) => g.satellites().count(),
             SimGroup::Spacecraft(g) => g.satellites().count(),
+            SimGroup::Controlled(sats) => sats.len(),
         }
     }
 
@@ -59,7 +91,16 @@ impl SimGroup {
         match self {
             SimGroup::OrbitOnly(g) => g.satellites().nth(idx).unwrap().id.clone(),
             SimGroup::Spacecraft(g) => g.satellites().nth(idx).unwrap().id.clone(),
+            SimGroup::Controlled(_) => SatId::from(self.controlled_meta_id(idx)),
         }
+    }
+
+    /// Helper: get the satellite ID string for controlled satellites.
+    fn controlled_meta_id(&self, _idx: usize) -> &str {
+        // Controlled satellites don't have SatId in the group; the ID is in
+        // SatMeta which is outside SimGroup. Return a placeholder; the caller
+        // (propagate_chunk) uses metas[i] for the real ID.
+        "controlled"
     }
 
     /// Check if satellite at index is terminated.
@@ -67,6 +108,7 @@ impl SimGroup {
         match self {
             SimGroup::OrbitOnly(g) => g.satellites().nth(idx).unwrap().terminated,
             SimGroup::Spacecraft(g) => g.satellites().nth(idx).unwrap().terminated,
+            SimGroup::Controlled(_) => false, // controlled sats don't terminate via event checker
         }
     }
 
@@ -75,6 +117,9 @@ impl SimGroup {
         match self {
             SimGroup::OrbitOnly(g) => g.satellites().nth(idx).unwrap().t,
             SimGroup::Spacecraft(g) => g.satellites().nth(idx).unwrap().t,
+            // Controlled satellites don't track per-sat time in the group.
+            // propagate_chunk uses target_t directly for these.
+            SimGroup::Controlled(_) => f64::MAX,
         }
     }
 
@@ -104,6 +149,20 @@ impl SimGroup {
                     accels: spacecraft_accel_breakdown(dyn_sys, t, sc),
                 }
             }
+            SimGroup::Controlled(sats) => {
+                let sc = &sats[idx].state.plant;
+                let q = sc.attitude.quaternion;
+                let w = sc.attitude.angular_velocity;
+                SatSnapshot {
+                    orbit: sc.orbit.clone(),
+                    attitude: Some(AttitudePayload {
+                        quaternion_wxyz: [q[0], q[1], q[2], q[3]],
+                        angular_velocity_body: [w[0], w[1], w[2]],
+                        source: AttitudeSource::Propagated,
+                    }),
+                    accels: HashMap::new(), // TODO: acceleration breakdown for controlled
+                }
+            }
         }
     }
 
@@ -115,7 +174,7 @@ impl SimGroup {
     fn reset_orbit_state(&mut self, id: &SatId, state: OrbitalState) {
         match self {
             SimGroup::OrbitOnly(g) => g.reset_state(id, state),
-            SimGroup::Spacecraft(_) => {}
+            SimGroup::Spacecraft(_) | SimGroup::Controlled(_) => {}
         }
     }
 
@@ -129,8 +188,8 @@ impl SimGroup {
     ) {
         match self {
             SimGroup::OrbitOnly(g) => g.push_satellite_at(id, state, t, system),
-            SimGroup::Spacecraft(_) => {
-                panic!("Cannot add orbit-only satellite to spacecraft simulation")
+            SimGroup::Spacecraft(_) | SimGroup::Controlled(_) => {
+                panic!("Cannot add orbit-only satellite to spacecraft/controlled simulation")
             }
         }
     }
@@ -482,11 +541,30 @@ impl SimLoopContext {
             );
         }
         let use_spacecraft = all_attitude;
+        let has_controller = params
+            .satellites
+            .iter()
+            .any(|s| s.controller_config.is_some());
 
         let mut metas: Vec<SatMeta> = Vec::new();
         let third_bodies = default_third_bodies(&params.body);
 
-        let group = if use_spacecraft {
+        let group = if has_controller {
+            // Plugin-controlled mode: direct integration with step_controlled.
+            let mut controlled_sats = Vec::new();
+            for spec in &params.satellites {
+                let sat = crate::sim::controlled::build_controlled_satellite(spec, &params)
+                    .map_err(|e| format!("controlled satellite '{}': {e}", spec.id))?;
+                controlled_sats.push(sat);
+                metas.push(SatMeta {
+                    spec: spec.clone(),
+                    orbit_end_t: spec.period,
+                    next_save_t: params.output_interval,
+                });
+            }
+
+            SimGroup::Controlled(controlled_sats)
+        } else if use_spacecraft {
             let sc_event_checker = move |_t: f64,
                                          state: &orts::effector::AugmentedState<
                 SpacecraftState,
@@ -701,9 +779,12 @@ impl SimLoopContext {
             }
             SimCommand::AddSatellite { satellite, respond } => {
                 // Dynamic satellite addition only supported in orbit-only mode
-                if matches!(self.group, SimGroup::Spacecraft(_)) {
+                if matches!(
+                    self.group,
+                    SimGroup::Spacecraft(_) | SimGroup::Controlled(_)
+                ) {
                     let _ = respond.send(Err(
-                        "Cannot add satellite to spacecraft dynamics simulation".to_string(),
+                        "Cannot add satellite to spacecraft/controlled simulation".to_string(),
                     ));
                     return ControlFlow::Continue(());
                 }
@@ -843,15 +924,24 @@ impl SimLoopContext {
                 }
             }
 
+            // Controlled satellites: step in dt_ctrl increments up to target_t.
+            self.group
+                .step_controlled_to(self.current_t, target_t, &self.params);
+
             let outcome = self.group.propagate_to(target_t).unwrap();
 
             let n = self.group.len();
+            let is_controlled = matches!(self.group, SimGroup::Controlled(_));
             for i in 0..n {
-                if self.group.is_terminated(i) || self.group.sat_t(i) < target_t - 1e-9 {
+                if self.group.is_terminated(i) {
                     continue;
                 }
 
-                let t = self.group.sat_t(i);
+                let t = if is_controlled {
+                    target_t
+                } else {
+                    self.group.sat_t(i)
+                };
                 let snap = self.group.snapshot(i, t);
                 let hs = make_history_state(
                     self.metas[i].spec.entity_path(),
