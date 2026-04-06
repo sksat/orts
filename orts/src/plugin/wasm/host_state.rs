@@ -4,10 +4,9 @@
 //! Each satellite's `WasmController` owns a `Store<HostState>`, and
 //! the `HostState` is where the guest can reach back into the host
 //! via the `host-env` interface imports (`log`, `magnetic-field-eci`).
-//!
-//! Phase P1-b2 provides a minimal `HostState` with `log` → `tracing`
-//! forwarding and a `todo!()` stub for `magnetic-field-eci`. Phase
-//! P1-b3 will wire the magnetic field to `tobari::magnetic`.
+
+use nalgebra::Vector3;
+use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 
 use super::bindings::orts::plugin::host_env;
 use super::bindings::orts::plugin::types as wit;
@@ -20,6 +19,21 @@ impl wit::Host for HostState {}
 pub struct HostState {
     /// Human-readable satellite / controller label for log messages.
     pub label: String,
+    /// Geomagnetic field model used by the `magnetic-field-eci` host
+    /// import. Phase P1 defaults to `TiltedDipole::earth()`; Phase
+    /// D-5 will replace this with an IGRF spherical-harmonic model
+    /// (or a `Box<dyn MagneticFieldModel>` for configurability).
+    field: TiltedDipole,
+}
+
+impl HostState {
+    /// Create a new host state with default field model.
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            field: TiltedDipole::earth(),
+        }
+    }
 }
 
 /// Required by wasmtime's `bindgen!`-generated `add_to_linker`.
@@ -29,14 +43,6 @@ pub struct HostState {
 /// The standard pattern is `Data<'a> = &'a mut Self`.
 impl wasmtime::component::HasData for HostState {
     type Data<'a> = &'a mut HostState;
-}
-
-impl HostState {
-    pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-        }
-    }
 }
 
 impl host_env::Host for HostState {
@@ -50,10 +56,56 @@ impl host_env::Host for HostState {
         }
     }
 
-    fn magnetic_field_eci(&mut self, _position_eci_km: wit::Vec3, _e: wit::Epoch) -> wit::Vec3 {
-        // Phase P1-b3 will wire this to tobari::magnetic::TiltedDipole
-        // (or a configurable MagneticFieldModel trait object).
-        // For now, guests that call this import will get a panic.
-        todo!("magnetic-field-eci host import not yet wired (Phase P1-b3)")
+    fn magnetic_field_eci(
+        &mut self,
+        position_eci_km: wit::Vec3,
+        epoch: wit::Epoch,
+    ) -> wit::Vec3 {
+        let pos = kaname::Eci(Vector3::new(
+            position_eci_km.x,
+            position_eci_km.y,
+            position_eci_km.z,
+        ));
+        let epoch = kaname::epoch::Epoch::from_jd(epoch.julian_date);
+        let b = self.field.field_eci(&pos, &epoch);
+        wit::Vec3 {
+            x: b.x,
+            y: b.y,
+            z: b.z,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::host_env::Host as _;
+
+    #[test]
+    fn magnetic_field_returns_finite_nonzero_for_leo() {
+        let mut state = HostState::new("test");
+        // LEO position: ~7000 km from Earth centre, on the x-axis.
+        let pos = wit::Vec3 {
+            x: 7000.0,
+            y: 0.0,
+            z: 0.0,
+        };
+        // J2000 epoch.
+        let epoch = wit::Epoch {
+            julian_date: 2451545.0,
+        };
+        let b = state.magnetic_field_eci(pos, epoch);
+        assert!(b.x.is_finite());
+        assert!(b.y.is_finite());
+        assert!(b.z.is_finite());
+        let magnitude = (b.x * b.x + b.y * b.y + b.z * b.z).sqrt();
+        // LEO geomagnetic field magnitude is ~20-60 µT = 2e-5 to 6e-5 T.
+        // We assert a slightly wider band (1e-5 to 1e-4) to absorb
+        // model variation while still catching conversion errors that
+        // would produce wildly wrong values.
+        assert!(
+            magnitude > 1e-5 && magnitude < 1e-4,
+            "expected LEO-range magnetic field (~20-60 µT), got {magnitude:.3e} T"
+        );
     }
 }
