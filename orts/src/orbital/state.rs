@@ -24,7 +24,7 @@ impl OrbitalState {
 
     /// Position as an ECI coordinate (km).
     pub fn position_eci(&self) -> Eci {
-        Eci(*self.0.y())
+        Eci::from_raw(*self.0.y())
     }
 
     /// Velocity vector (km/s).

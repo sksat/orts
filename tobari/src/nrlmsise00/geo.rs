@@ -13,7 +13,7 @@ use nalgebra::Vector3;
 /// via Bowring iteration (delegated to `kaname::Ecef::to_geodetic()`).
 pub fn eci_to_geodetic_latlon(position: &Vector3<f64>, epoch: &Epoch) -> (f64, f64) {
     let gmst_rad = epoch.gmst();
-    let ecef = Eci(*position).to_ecef(gmst_rad);
+    let ecef = Eci::from_raw(*position).to_ecef(gmst_rad);
     let geod = ecef.to_geodetic();
     (geod.latitude.to_degrees(), geod.longitude.to_degrees())
 }
@@ -189,7 +189,7 @@ mod tests {
         };
         let eci = geod.to_ecef().to_eci(gmst);
 
-        let (lat_deg, lon_deg) = eci_to_geodetic_latlon(&eci.0, &epoch);
+        let (lat_deg, lon_deg) = eci_to_geodetic_latlon(eci.inner(), &epoch);
 
         assert!(
             (lat_deg - expected_lat).abs() < 0.01,
@@ -217,7 +217,7 @@ mod tests {
         };
         let eci = geod.to_ecef().to_eci(gmst);
 
-        let (lat_deg, lon_deg) = eci_to_geodetic_latlon(&eci.0, &epoch);
+        let (lat_deg, lon_deg) = eci_to_geodetic_latlon(eci.inner(), &epoch);
 
         assert!(
             (lat_deg - expected_lat).abs() < 0.01,

@@ -82,7 +82,7 @@ fn compute_density_via_eci(
     let eci = geod.to_ecef().to_eci(gmst);
 
     model
-        .density_with_composition(alt_km, &eci.0, epoch)
+        .density_with_composition(alt_km, eci.inner(), epoch)
         .total_mass_density
 }
 

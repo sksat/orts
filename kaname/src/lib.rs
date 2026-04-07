@@ -13,13 +13,17 @@ pub mod wasm;
 
 use nalgebra::{Matrix3, Rotation3, UnitQuaternion, Vector3};
 
-/// Earth-Centered Inertial (ECI/J2000) frame position
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Eci(pub Vector3<f64>);
+/// Earth-Centered Inertial (ECI/J2000) frame position.
+///
+/// Type alias for `frame::Vec3<frame::Eci>`. Constructed via
+/// `Eci::new(x, y, z)` or `Eci::from_raw(vector3)`.
+pub type Eci = frame::Vec3<frame::Eci>;
 
-/// Earth-Centered Earth-Fixed (ECEF) frame position
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Ecef(pub Vector3<f64>);
+/// Earth-Centered Earth-Fixed (ECEF) frame position.
+///
+/// Type alias for `frame::Vec3<frame::Ecef>`. Constructed via
+/// `Ecef::new(x, y, z)` or `Ecef::from_raw(vector3)`.
+pub type Ecef = frame::Vec3<frame::Ecef>;
 
 /// Geodetic coordinates (WGS84)
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,8 +38,8 @@ impl Eci {
     pub fn to_ecef(&self, gmst: f64) -> Ecef {
         let cos_g = gmst.cos();
         let sin_g = gmst.sin();
-        let v = &self.0;
-        Ecef(Vector3::new(
+        let v = self.inner();
+        Ecef::from_raw(Vector3::new(
             cos_g * v.x + sin_g * v.y,
             -sin_g * v.x + cos_g * v.y,
             v.z,
@@ -48,8 +52,8 @@ impl Ecef {
     pub fn to_eci(&self, gmst: f64) -> Eci {
         let cos_g = gmst.cos();
         let sin_g = gmst.sin();
-        let v = &self.0;
-        Eci(Vector3::new(
+        let v = self.inner();
+        Eci::from_raw(Vector3::new(
             cos_g * v.x - sin_g * v.y,
             sin_g * v.x + cos_g * v.y,
             v.z,
@@ -58,7 +62,7 @@ impl Ecef {
 
     /// Convert ECEF position to geodetic coordinates using iterative Bowring method (WGS84).
     pub fn to_geodetic(&self) -> Geodetic {
-        let v = &self.0;
+        let v = self.inner();
         let p = (v.x * v.x + v.y * v.y).sqrt();
         let longitude = v.y.atan2(v.x);
 
@@ -202,7 +206,7 @@ impl Geodetic {
 
         let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
 
-        Ecef(Vector3::new(
+        Ecef::from_raw(Vector3::new(
             (n + self.altitude) * cos_lat * cos_lon,
             (n + self.altitude) * cos_lat * sin_lon,
             (n * (1.0 - WGS84_E2) + self.altitude) * sin_lat,
@@ -216,44 +220,44 @@ mod tests {
 
     #[test]
     fn test_eci_construction() {
-        let eci = Eci(Vector3::new(1.0, 2.0, 3.0));
-        assert_eq!(eci.0.x, 1.0);
-        assert_eq!(eci.0.y, 2.0);
-        assert_eq!(eci.0.z, 3.0);
+        let eci = Eci::new(1.0, 2.0, 3.0);
+        assert_eq!(eci.x(), 1.0);
+        assert_eq!(eci.y(), 2.0);
+        assert_eq!(eci.z(), 3.0);
     }
 
     #[test]
     fn test_eci_clone() {
-        let eci = Eci(Vector3::new(1.0, 2.0, 3.0));
+        let eci = Eci::new(1.0, 2.0, 3.0);
         let eci2 = eci.clone();
         assert_eq!(eci, eci2);
     }
 
     #[test]
     fn test_eci_debug() {
-        let eci = Eci(Vector3::new(1.0, 2.0, 3.0));
+        let eci = Eci::new(1.0, 2.0, 3.0);
         let debug_str = format!("{:?}", eci);
         assert!(debug_str.contains("Eci"));
     }
 
     #[test]
     fn test_ecef_construction() {
-        let ecef = Ecef(Vector3::new(4.0, 5.0, 6.0));
-        assert_eq!(ecef.0.x, 4.0);
-        assert_eq!(ecef.0.y, 5.0);
-        assert_eq!(ecef.0.z, 6.0);
+        let ecef = Ecef::new(4.0, 5.0, 6.0);
+        assert_eq!(ecef.x(), 4.0);
+        assert_eq!(ecef.y(), 5.0);
+        assert_eq!(ecef.z(), 6.0);
     }
 
     #[test]
     fn test_ecef_clone() {
-        let ecef = Ecef(Vector3::new(4.0, 5.0, 6.0));
+        let ecef = Ecef::new(4.0, 5.0, 6.0);
         let ecef2 = ecef.clone();
         assert_eq!(ecef, ecef2);
     }
 
     #[test]
     fn test_ecef_debug() {
-        let ecef = Ecef(Vector3::new(4.0, 5.0, 6.0));
+        let ecef = Ecef::new(4.0, 5.0, 6.0);
         let debug_str = format!("{:?}", ecef);
         assert!(debug_str.contains("Ecef"));
     }
@@ -296,18 +300,18 @@ mod tests {
 
     #[test]
     fn test_eci_ecef_zero_gmst() {
-        let eci = Eci(Vector3::new(7000.0, 1000.0, 500.0));
+        let eci = Eci::new(7000.0, 1000.0, 500.0);
         let ecef = eci.to_ecef(0.0);
         let eps = 1e-10;
-        assert!((ecef.0.x - eci.0.x).abs() < eps);
-        assert!((ecef.0.y - eci.0.y).abs() < eps);
-        assert!((ecef.0.z - eci.0.z).abs() < eps);
+        assert!((ecef.x() - eci.x()).abs() < eps);
+        assert!((ecef.y() - eci.y()).abs() < eps);
+        assert!((ecef.z() - eci.z()).abs() < eps);
     }
 
     #[test]
     fn test_eci_ecef_90deg() {
         let gmst = std::f64::consts::FRAC_PI_2;
-        let eci = Eci(Vector3::new(1.0, 0.0, 0.0));
+        let eci = Eci::new(1.0, 0.0, 0.0);
         let ecef = eci.to_ecef(gmst);
         let eps = 1e-10;
         // x_eci -> y_ecef (with sign flip: -sin(pi/2)*x = -1 for y? No.)
@@ -317,38 +321,38 @@ mod tests {
         // Actually: a point along x_eci, when Earth has rotated pi/2,
         // should appear at -y_ecef direction.
         // ecef_x = 0, ecef_y = -1 for unit vector along x_eci
-        assert!(ecef.0.x.abs() < eps);
-        assert!((ecef.0.y - (-1.0)).abs() < eps);
-        assert!(ecef.0.z.abs() < eps);
+        assert!(ecef.x().abs() < eps);
+        assert!((ecef.y() - (-1.0)).abs() < eps);
+        assert!(ecef.z().abs() < eps);
 
         // y_eci -> x_ecef at GMST=pi/2
-        let eci2 = Eci(Vector3::new(0.0, 1.0, 0.0));
+        let eci2 = Eci::new(0.0, 1.0, 0.0);
         let ecef2 = eci2.to_ecef(gmst);
         // ecef_x = cos(pi/2)*0 + sin(pi/2)*1 = 1
         // ecef_y = -sin(pi/2)*0 + cos(pi/2)*1 = 0
-        assert!((ecef2.0.x - 1.0).abs() < eps);
-        assert!(ecef2.0.y.abs() < eps);
-        assert!(ecef2.0.z.abs() < eps);
+        assert!((ecef2.x() - 1.0).abs() < eps);
+        assert!(ecef2.y().abs() < eps);
+        assert!(ecef2.z().abs() < eps);
     }
 
     #[test]
     fn test_eci_ecef_roundtrip() {
-        let original = Eci(Vector3::new(6700.0, 1500.0, 3200.0));
+        let original = Eci::new(6700.0, 1500.0, 3200.0);
         let gmst = 1.234;
         let roundtrip = original.to_ecef(gmst).to_eci(gmst);
         let eps = 1e-10;
-        assert!((roundtrip.0.x - original.0.x).abs() < eps);
-        assert!((roundtrip.0.y - original.0.y).abs() < eps);
-        assert!((roundtrip.0.z - original.0.z).abs() < eps);
+        assert!((roundtrip.x() - original.x()).abs() < eps);
+        assert!((roundtrip.y() - original.y()).abs() < eps);
+        assert!((roundtrip.z() - original.z()).abs() < eps);
     }
 
     #[test]
     fn test_eci_ecef_magnitude_preserved() {
-        let eci = Eci(Vector3::new(6700.0, 1500.0, 3200.0));
+        let eci = Eci::new(6700.0, 1500.0, 3200.0);
         let gmst = 2.5;
         let ecef = eci.to_ecef(gmst);
         let eps = 1e-10;
-        assert!((eci.0.norm() - ecef.0.norm()).abs() < eps);
+        assert!((eci.magnitude() - ecef.magnitude()).abs() < eps);
     }
 
     // Geodetic <-> ECEF conversion tests
@@ -362,9 +366,9 @@ mod tests {
         };
         let ecef = geo.to_ecef();
         let eps = 1e-10;
-        assert!((ecef.0.x - WGS84_A).abs() < eps);
-        assert!(ecef.0.y.abs() < eps);
-        assert!(ecef.0.z.abs() < eps);
+        assert!((ecef.x() - WGS84_A).abs() < eps);
+        assert!(ecef.y().abs() < eps);
+        assert!(ecef.z().abs() < eps);
     }
 
     #[test]
@@ -376,9 +380,9 @@ mod tests {
         };
         let ecef = geo.to_ecef();
         let eps = 1e-10;
-        assert!(ecef.0.x.abs() < eps);
-        assert!((ecef.0.y - WGS84_A).abs() < eps);
-        assert!(ecef.0.z.abs() < eps);
+        assert!(ecef.x().abs() < eps);
+        assert!((ecef.y() - WGS84_A).abs() < eps);
+        assert!(ecef.z().abs() < eps);
     }
 
     #[test]
@@ -390,9 +394,9 @@ mod tests {
         };
         let ecef = geo.to_ecef();
         let eps = 1e-6;
-        assert!(ecef.0.x.abs() < eps);
-        assert!(ecef.0.y.abs() < eps);
-        assert!((ecef.0.z - WGS84_B).abs() < eps);
+        assert!(ecef.x().abs() < eps);
+        assert!(ecef.y().abs() < eps);
+        assert!((ecef.z() - WGS84_B).abs() < eps);
     }
 
     #[test]
@@ -468,7 +472,7 @@ mod tests {
         };
         let ecef = geo.to_ecef();
         let expected = ecef.to_geodetic().altitude;
-        let actual = geodetic_altitude(&ecef.0);
+        let actual = geodetic_altitude(ecef.inner());
         assert!(
             (actual - expected).abs() < 1e-9,
             "45° lat: to_geodetic={expected}, geodetic_altitude={actual}"
@@ -486,9 +490,9 @@ mod tests {
             altitude: 400.0,
         };
         let ecef = geo.to_ecef();
-        let r = ecef.0.magnitude();
+        let r = ecef.magnitude();
         let spherical_alt = r - WGS84_A;
-        let geodetic_alt = geodetic_altitude(&ecef.0);
+        let geodetic_alt = geodetic_altitude(ecef.inner());
 
         let diff = spherical_alt - geodetic_alt;
         // Spherical altitude is lower than geodetic at high latitudes
@@ -851,8 +855,8 @@ mod tests {
         let ecef_alt = geo_alt.to_ecef();
         let eps = 1e-10;
         // At equator/prime meridian, altitude adds directly to x
-        assert!((ecef_alt.0.x - ecef_surface.0.x - alt).abs() < eps);
-        assert!(ecef_alt.0.y.abs() < eps);
-        assert!(ecef_alt.0.z.abs() < eps);
+        assert!((ecef_alt.x() - ecef_surface.x() - alt).abs() < eps);
+        assert!(ecef_alt.y().abs() < eps);
+        assert!(ecef_alt.z().abs() < eps);
     }
 }

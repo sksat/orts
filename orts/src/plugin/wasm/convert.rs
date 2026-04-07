@@ -39,10 +39,8 @@ fn spacecraft_to_wit(s: &SpacecraftState) -> wit::SpacecraftState {
 }
 
 fn orbital_to_wit(o: &OrbitalState) -> wit::OrbitalState {
-    // `position_eci()` / `velocity_eci()` return `Eci(Vector3<f64>)`
-    // newtypes; unwrap via `.0`.
     wit::OrbitalState {
-        position: vec3_to_wit(&o.position_eci().0),
+        position: vec3_to_wit(o.position_eci().inner()),
         velocity: vec3_to_wit(o.velocity()),
     }
 }

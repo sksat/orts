@@ -629,13 +629,13 @@ mod tests {
         let epoch = Epoch::from_gregorian(2024, 6, 21, 12, 0, 0.0);
         let gmst = epoch.gmst();
 
-        let eci = Eci(nalgebra::Vector3::new(7000.0, 1000.0, 500.0));
+        let eci = Eci::new(7000.0, 1000.0, 500.0);
         let ecef = eci.to_ecef(gmst);
         let roundtrip = ecef.to_eci(gmst);
 
         let eps = 1e-10;
-        assert!((roundtrip.0.x - eci.0.x).abs() < eps);
-        assert!((roundtrip.0.y - eci.0.y).abs() < eps);
-        assert!((roundtrip.0.z - eci.0.z).abs() < eps);
+        assert!((roundtrip.x() - eci.x()).abs() < eps);
+        assert!((roundtrip.y() - eci.y()).abs() < eps);
+        assert!((roundtrip.z() - eci.z()).abs() < eps);
     }
 }

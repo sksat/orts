@@ -31,7 +31,7 @@ fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch: &Epoch) 
         longitude: lon_deg.to_radians(),
         altitude: altitude_km,
     };
-    geod.to_ecef().to_eci(gmst).0
+    geod.to_ecef().to_eci(gmst).into_inner()
 }
 
 /// Compute ECI→NED rotation for a magnetic field vector at a geodetic point.
@@ -262,7 +262,7 @@ pub fn igrf_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64
     let epoch = Epoch::from_jd(epoch_jd);
     let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
     let igrf = Igrf::earth();
-    let b_eci = igrf.field_eci(&kaname::Eci(pos), &epoch);
+    let b_eci = igrf.field_eci(&kaname::Eci::from_raw(pos), &epoch);
     field_info(&b_eci, lat_deg, lon_deg, &epoch)
 }
 
@@ -274,7 +274,7 @@ pub fn dipole_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f
     let epoch = Epoch::from_jd(epoch_jd);
     let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
     let dipole = TiltedDipole::earth();
-    let b_eci = dipole.field_eci(&kaname::Eci(pos), &epoch);
+    let b_eci = dipole.field_eci(&kaname::Eci::from_raw(pos), &epoch);
     field_info(&b_eci, lat_deg, lon_deg, &epoch)
 }
 
@@ -310,7 +310,7 @@ pub fn magnetic_field_latlon_map(
             let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
             let pos = geodetic_to_eci(lat, lon, altitude_km, &epoch);
-            let eci_pos = kaname::Eci(pos);
+            let eci_pos = kaname::Eci::from_raw(pos);
             let b_eci = match model {
                 "dipole" => dipole.field_eci(&eci_pos, &epoch),
                 _ => igrf.field_eci(&eci_pos, &epoch),
@@ -372,7 +372,7 @@ pub fn magnetic_field_volume(
                 let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
                 let pos = geodetic_to_eci(lat, lon, alt, &epoch);
-                let eci_pos = kaname::Eci(pos);
+                let eci_pos = kaname::Eci::from_raw(pos);
                 let b_eci = match model {
                     "dipole" => dipole.field_eci(&eci_pos, &epoch),
                     _ => igrf.field_eci(&eci_pos, &epoch),
@@ -534,7 +534,7 @@ pub fn magnetic_field_lines(
             longitude: seed_lons[i].to_radians(),
             altitude: seed_alt_km,
         };
-        let start_eci = geod.to_ecef().to_eci(gmst).0;
+        let start_eci = geod.to_ecef().to_eci(gmst).into_inner();
 
         // Integrate both forward and backward
         let mut points: Vec<Vector3<f64>> = Vec::new();
@@ -837,7 +837,7 @@ fn field_at_eci(
     igrf: &Igrf,
     dipole: &TiltedDipole,
 ) -> Vector3<f64> {
-    let eci = kaname::Eci(*pos);
+    let eci = kaname::Eci::from_raw(*pos);
     match model {
         "dipole" => dipole.field_eci(&eci, epoch),
         _ => igrf.field_eci(&eci, epoch),

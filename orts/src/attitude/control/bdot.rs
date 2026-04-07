@@ -329,7 +329,7 @@ mod tests {
         let epoch = test_epoch();
         let loads = ctrl.eval(0.0, &state, Some(&epoch));
         let b = TiltedDipole::earth()
-            .field_eci(&Eci(Vector3::new(7000.0, 0.0, 0.0)), &epoch)
+            .field_eci(&Eci::new(7000.0, 0.0, 0.0), &epoch)
             .magnitude();
         let max_torque = 3.0_f64.sqrt() * max_m * b;
         assert!(

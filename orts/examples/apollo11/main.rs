@@ -200,7 +200,7 @@ fn entry_interface_state_eci(epoch: &Epoch) -> OrbitalState {
         altitude: EI_ALT_KM,
     };
     let gmst = epoch.gmst();
-    let pos_eci = geod.to_ecef().to_eci(gmst).0;
+    let pos_eci = geod.to_ecef().to_eci(gmst).into_inner();
 
     // Velocity: decompose (speed, FPA, azimuth) in the local topocentric frame at pos_eci.
     //
@@ -1169,7 +1169,7 @@ fn main() {
     if let Some((t_cross, ref state_122)) = state_at_122km {
         let get_122 = mission_t + t_cross;
         let epoch_122 = parking_epoch.add_seconds(get_122);
-        let geod_122 = kaname::Eci(*state_122.position())
+        let geod_122 = kaname::Eci::from_raw(*state_122.position())
             .to_ecef(epoch_122.gmst())
             .to_geodetic();
         let pos_err = (state_122.position() - ei_ref.position()).magnitude();
@@ -1198,7 +1198,7 @@ fn main() {
     if let Some((t_get, ref state_get)) = state_at_ei_get {
         let get_t = mission_t + t_get;
         let epoch_get = parking_epoch.add_seconds(get_t);
-        let geod_get = kaname::Eci(*state_get.position())
+        let geod_get = kaname::Eci::from_raw(*state_get.position())
             .to_ecef(epoch_get.gmst())
             .to_geodetic();
         let pos_err = (state_get.position() - ei_ref.position()).magnitude();

@@ -101,7 +101,7 @@ impl MagneticFieldModel for Igrf {
 
         // ECI → ECEF
         let ecef = position_eci.to_ecef(gmst);
-        let (x, y, z) = (ecef.0.x, ecef.0.y, ecef.0.z);
+        let (x, y, z) = (ecef.x(), ecef.y(), ecef.z());
 
         // Cartesian → geocentric spherical
         let r_km = (x * x + y * y + z * z).sqrt();
@@ -140,7 +140,7 @@ impl MagneticFieldModel for Igrf {
         );
 
         // ECEF → ECI
-        Ecef(b_ecef).to_eci(gmst).0
+        Ecef::from_raw(b_ecef).to_eci(gmst).into_inner()
     }
 }
 
@@ -422,7 +422,7 @@ mod tests {
     fn igrf_field_magnitude_at_equatorial_leo() {
         // At equatorial LEO (7000 km from centre), expect |B| ~ 20-50 uT
         let igrf = Igrf::earth();
-        let pos = Eci(Vector3::new(7000.0, 0.0, 0.0));
+        let pos = Eci::new(7000.0, 0.0, 0.0);
         let epoch = epoch_2025();
         let b = igrf.field_eci(&pos, &epoch);
         let b_micro_t = b.magnitude() * 1e6;
@@ -438,7 +438,7 @@ mod tests {
         // Near north pole, expect stronger field ~50-60 uT
         let igrf = Igrf::earth();
         let r = 6771.0; // ~400km altitude at pole
-        let pos = Eci(Vector3::new(0.0, 0.0, r));
+        let pos = Eci::new(0.0, 0.0, r);
         let epoch = epoch_2025();
         let b = igrf.field_eci(&pos, &epoch);
         let b_micro_t = b.magnitude() * 1e6;
@@ -455,10 +455,10 @@ mod tests {
         let igrf = Igrf::earth();
         let epoch = epoch_2025();
         let b1 = igrf
-            .field_eci(&Eci(Vector3::new(20000.0, 0.0, 0.0)), &epoch)
+            .field_eci(&Eci::new(20000.0, 0.0, 0.0), &epoch)
             .magnitude();
         let b2 = igrf
-            .field_eci(&Eci(Vector3::new(40000.0, 0.0, 0.0)), &epoch)
+            .field_eci(&Eci::new(40000.0, 0.0, 0.0), &epoch)
             .magnitude();
 
         let ratio = b1 / b2;
@@ -480,7 +480,7 @@ mod tests {
 
         // South Atlantic Anomaly region (~-30° lat, -50° lon in ECEF)
         // Use a position that will be roughly there at some epoch
-        let pos = Eci(Vector3::new(4000.0, -4000.0, -3500.0));
+        let pos = Eci::new(4000.0, -4000.0, -3500.0);
 
         let b_igrf = igrf.field_eci(&pos, &epoch).magnitude();
         let b_dipole = dipole.field_eci(&pos, &epoch).magnitude();
@@ -502,7 +502,7 @@ mod tests {
         let epoch = epoch_2025();
 
         let geo_r = 42164.0; // GEO radius in km
-        let pos = Eci(Vector3::new(geo_r, 0.0, 0.0));
+        let pos = Eci::new(geo_r, 0.0, 0.0);
 
         let b_igrf = igrf.field_eci(&pos, &epoch).magnitude();
         let b_dipole = dipole.field_eci(&pos, &epoch).magnitude();
@@ -520,7 +520,7 @@ mod tests {
     fn igrf_zero_inside_earth() {
         let igrf = Igrf::earth();
         let epoch = epoch_2025();
-        let b = igrf.field_eci(&Eci(Vector3::new(0.5, 0.0, 0.0)), &epoch);
+        let b = igrf.field_eci(&Eci::new(0.5, 0.0, 0.0), &epoch);
         assert_eq!(b, Vector3::zeros());
     }
 
@@ -528,7 +528,7 @@ mod tests {
     fn igrf_field_is_finite() {
         let igrf = Igrf::earth();
         let epoch = epoch_2025();
-        let b = igrf.field_eci(&Eci(Vector3::new(6778.0, 0.0, 0.0)), &epoch);
+        let b = igrf.field_eci(&Eci::new(6778.0, 0.0, 0.0), &epoch);
         assert!(
             b.iter().all(|v| v.is_finite()),
             "Field must be finite: {b:?}"
@@ -539,7 +539,7 @@ mod tests {
     fn igrf_secular_variation() {
         // Field should change between 2020 and 2025
         let igrf = Igrf::earth();
-        let pos = Eci(Vector3::new(7000.0, 0.0, 0.0));
+        let pos = Eci::new(7000.0, 0.0, 0.0);
 
         let e2020 = Epoch::from_gregorian(2020, 1, 1, 0, 0, 0.0);
         let e2025 = epoch_2025();
@@ -560,7 +560,7 @@ mod tests {
         let igrf13 = Igrf::earth();
         let epoch = epoch_2025();
 
-        let pos = Eci(Vector3::new(7000.0, 0.0, 0.0));
+        let pos = Eci::new(7000.0, 0.0, 0.0);
         let b1 = igrf1.field_eci(&pos, &epoch).magnitude();
         let b13 = igrf13.field_eci(&pos, &epoch).magnitude();
 

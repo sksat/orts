@@ -218,7 +218,7 @@ mod tests {
         };
         let eci = geod.to_ecef().to_eci(gmst);
         let eci_density = model
-            .density_with_composition(alt_km, &eci.0, &epoch)
+            .density_with_composition(alt_km, eci.inner(), &epoch)
             .total_mass_density;
 
         let rel_err = (eci_density - direct_density).abs() / direct_density;
