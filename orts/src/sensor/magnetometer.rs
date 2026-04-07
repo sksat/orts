@@ -60,7 +60,7 @@ impl Magnetometer {
         for n in &mut self.noise {
             b_body = n.apply(b_body);
         }
-        MagneticFieldBody::new(b_body)
+        MagneticFieldBody::new(kaname::frame::Vec3::from_raw(b_body))
     }
 }
 
@@ -90,7 +90,7 @@ mod tests {
         let state = leo_state();
         let epoch = Epoch::j2000();
         let b_body = mag.measure(&state, &epoch).into_inner();
-        assert!(b_body.iter().all(|x| x.is_finite()));
+        assert!(b_body.is_finite());
         let magnitude = b_body.magnitude();
         assert!(
             magnitude > 1e-5 && magnitude < 1e-4,
@@ -108,7 +108,7 @@ mod tests {
         let b_eci = field_model
             .field_eci(&state.orbit.position_eci(), &epoch)
             .into_inner();
-        assert!((b_body - b_eci).magnitude() < 1e-15);
+        assert!((b_body.into_inner() - b_eci).magnitude() < 1e-15);
     }
 
     #[test]

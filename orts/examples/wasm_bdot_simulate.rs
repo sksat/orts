@@ -145,7 +145,10 @@ fn run_case(
 
     while t < T_END - 1e-12 {
         let t_next = (t + SAMPLE_PERIOD).min(T_END);
-        let actuator = CommandedMagnetorquer::new(bundle.magnetic_moment(), TiltedDipole::earth());
+        let actuator = CommandedMagnetorquer::new(
+            bundle.magnetic_moment().into_inner(),
+            TiltedDipole::earth(),
+        );
         let system = DecoupledAttitudeSystem::circular_orbit(inertia, mu, radius, MASS)
             .with_model(actuator)
             .with_epoch(epoch);

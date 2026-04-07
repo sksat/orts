@@ -74,9 +74,9 @@ impl DynamicalSystem for OrbitalSystem {
         let mut accel = self.gravity.acceleration(self.mu, state.position());
         for m in &self.models {
             let loads = m.eval(t, state, epoch.as_ref());
-            accel += loads.acceleration_inertial.into_inner();
+            accel += loads.acceleration_inertial;
         }
-        OrbitalState::from_derivative(*state.velocity(), accel)
+        OrbitalState::from_derivative(*state.velocity(), accel.into_inner())
     }
 }
 

@@ -125,7 +125,7 @@ pub fn step_controlled(
             .dynamics
             .effector_by_name_mut::<ReactionWheelAssembly>("reaction_wheels")
     {
-        rw.commanded_torque = sat.actuators.rw_torque();
+        rw.commanded_torque = sat.actuators.rw_torque().into_inner();
     }
 
     // 結合伝播（軌道 + 姿勢 + RW）。

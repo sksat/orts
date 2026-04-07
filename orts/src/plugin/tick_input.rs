@@ -6,7 +6,8 @@
 //! debugging.
 
 use kaname::epoch::Epoch;
-use nalgebra::{Vector3, Vector4};
+use kaname::frame::{Body, Vec3};
+use nalgebra::Vector4;
 
 use crate::SpacecraftState;
 
@@ -17,35 +18,35 @@ use crate::SpacecraftState;
 /// Newtype wrapper that encodes the physical quantity (magnetic field),
 /// coordinate frame (body), and units (Tesla) at the type level.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MagneticFieldBody(Vector3<f64>);
+pub struct MagneticFieldBody(Vec3<Body>);
 
 impl MagneticFieldBody {
-    /// Wrap a raw vector as a body-frame magnetic field.
-    pub fn new(v: Vector3<f64>) -> Self {
+    /// Wrap a typed body-frame vector as a body-frame magnetic field.
+    pub fn new(v: Vec3<Body>) -> Self {
         Self(v)
     }
     /// Borrow the inner vector.
-    pub fn inner(&self) -> &Vector3<f64> {
+    pub fn inner(&self) -> &Vec3<Body> {
         &self.0
     }
     /// Consume and return the inner vector.
-    pub fn into_inner(self) -> Vector3<f64> {
+    pub fn into_inner(self) -> Vec3<Body> {
         self.0
     }
 }
 
 /// Angular velocity in the body frame \[rad/s\].
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AngularVelocityBody(Vector3<f64>);
+pub struct AngularVelocityBody(Vec3<Body>);
 
 impl AngularVelocityBody {
-    pub fn new(v: Vector3<f64>) -> Self {
+    pub fn new(v: Vec3<Body>) -> Self {
         Self(v)
     }
-    pub fn inner(&self) -> &Vector3<f64> {
+    pub fn inner(&self) -> &Vec3<Body> {
         &self.0
     }
-    pub fn into_inner(self) -> Vector3<f64> {
+    pub fn into_inner(self) -> Vec3<Body> {
         self.0
     }
 }

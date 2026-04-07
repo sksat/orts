@@ -8,6 +8,7 @@
 //! makes it easy to audit precision / ordering when the WIT record
 //! layout changes.
 
+use kaname::frame::{Body, Vec3};
 use nalgebra::Vector3;
 
 use super::bindings::orts::plugin::types as wit;
@@ -68,7 +69,7 @@ fn epoch_to_wit(e: &kaname::epoch::Epoch) -> wit::Epoch {
 fn sensor_readings_to_wit(s: &Sensors) -> wit::Sensors {
     wit::Sensors {
         magnetometer: s.magnetometer.map(|m| {
-            let v = m.into_inner();
+            let v = m.into_inner().into_inner();
             wit::MagneticFieldBody {
                 x: v.x,
                 y: v.y,
@@ -76,7 +77,7 @@ fn sensor_readings_to_wit(s: &Sensors) -> wit::Sensors {
             }
         }),
         gyroscope: s.gyroscope.map(|g| {
-            let v = g.into_inner();
+            let v = g.into_inner().into_inner();
             wit::AngularVelocityBody {
                 x: v.x,
                 y: v.y,
@@ -110,8 +111,10 @@ fn vec3_to_wit(v: &Vector3<f64>) -> wit::Vec3 {
 /// Returns `PluginError::BadCommand` if any numeric field is NaN / Inf.
 pub fn command_from_wit(cmd: wit::Command) -> Result<Command, PluginError> {
     let result = match cmd {
-        wit::Command::MagneticMoment(v) => Command::MagneticMoment(Vector3::new(v.x, v.y, v.z)),
-        wit::Command::RwTorque(v) => Command::RwTorque(Vector3::new(v.x, v.y, v.z)),
+        wit::Command::MagneticMoment(v) => {
+            Command::MagneticMoment(Vec3::<Body>::new(v.x, v.y, v.z))
+        }
+        wit::Command::RwTorque(v) => Command::RwTorque(Vec3::<Body>::new(v.x, v.y, v.z)),
     };
     if !result.is_finite() {
         return Err(PluginError::BadCommand(format!("{result:?}")));
@@ -143,8 +146,8 @@ mod tests {
             AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody,
         };
         let sensors = Sensors {
-            magnetometer: Some(MagneticFieldBody::new(Vector3::new(1e-5, 2e-5, -3e-5))),
-            gyroscope: Some(AngularVelocityBody::new(Vector3::new(0.1, 0.05, -0.03))),
+            magnetometer: Some(MagneticFieldBody::new(Vec3::new(1e-5, 2e-5, -3e-5))),
+            gyroscope: Some(AngularVelocityBody::new(Vec3::new(0.1, 0.05, -0.03))),
             star_tracker: Some(AttitudeBodyToInertial::new(Vector4::new(
                 1.0, 0.0, 0.0, 0.0,
             ))),
@@ -196,7 +199,10 @@ mod tests {
             z: 0.5,
         });
         let cmd = command_from_wit(wit_cmd).unwrap();
-        assert_eq!(cmd.as_magnetic_moment(), Some(Vector3::new(1.0, -2.0, 0.5)));
+        assert_eq!(
+            cmd.as_magnetic_moment(),
+            Some(Vec3::<Body>::new(1.0, -2.0, 0.5))
+        );
     }
 
     #[test]
@@ -207,7 +213,10 @@ mod tests {
             z: 0.03,
         });
         let cmd = command_from_wit(wit_cmd).unwrap();
-        assert_eq!(cmd.as_rw_torque(), Some(Vector3::new(0.01, -0.02, 0.03)));
+        assert_eq!(
+            cmd.as_rw_torque(),
+            Some(Vec3::<Body>::new(0.01, -0.02, 0.03))
+        );
     }
 
     #[test]

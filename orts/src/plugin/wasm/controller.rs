@@ -134,7 +134,7 @@ impl PluginController for WasmController {
         // `PluginController::initial_command` is `&self`. Phase P1-c
         // will call the guest in `new()` and cache the result here.
         // Until then, return a safe default (zero magnetic moment).
-        Command::MagneticMoment(nalgebra::Vector3::zeros())
+        Command::MagneticMoment(kaname::frame::Vec3::zeros())
     }
 
     fn update(&mut self, obs: &TickInput<'_>) -> Result<Command, PluginError> {

@@ -45,7 +45,7 @@ impl Gyroscope {
         for n in &mut self.noise {
             omega = n.apply(omega);
         }
-        AngularVelocityBody::new(omega)
+        AngularVelocityBody::new(kaname::frame::Vec3::from_raw(omega))
     }
 }
 
@@ -80,7 +80,10 @@ mod tests {
         let omega = Vector3::new(0.1, 0.05, -0.03);
         let state = make_state(omega);
         let epoch = Epoch::j2000();
-        assert_eq!(gyro.measure(&state, &epoch).into_inner(), omega);
+        assert_eq!(
+            gyro.measure(&state, &epoch).into_inner().into_inner(),
+            omega
+        );
     }
 
     #[test]
@@ -89,7 +92,7 @@ mod tests {
         let omega = Vector3::new(0.1, 0.05, -0.03);
         let state = make_state(omega);
         let epoch = Epoch::j2000();
-        let measured = gyro.measure(&state, &epoch).into_inner();
+        let measured = gyro.measure(&state, &epoch).into_inner().into_inner();
         assert!((measured - omega).magnitude() > 0.0);
         assert!((measured - omega).magnitude() < 0.1);
     }

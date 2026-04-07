@@ -1,4 +1,5 @@
 use kaname::Eci;
+use kaname::frame;
 use nalgebra::Vector3;
 use utsuroi::{OdeState, State, Tolerances};
 
@@ -30,6 +31,11 @@ impl OrbitalState {
     /// Velocity vector (km/s).
     pub fn velocity(&self) -> &Vector3<f64> {
         self.0.dy()
+    }
+
+    /// Velocity as an ECI vector (km/s).
+    pub fn velocity_eci(&self) -> frame::Vec3<frame::Eci> {
+        frame::Vec3::from_raw(*self.0.dy())
     }
 
     /// Mutable access to the position vector.

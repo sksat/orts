@@ -14,7 +14,7 @@
 //! See DESIGN.md Phase P, D2 ("Command enum は最小 variant から始めて
 //! phase ごとに拡張する").
 
-use nalgebra::Vector3;
+use kaname::frame::{Body, Vec3};
 
 /// Logical command emitted by a controller backend.
 ///
@@ -27,7 +27,7 @@ pub enum Command {
     /// Commanded magnetic dipole moment, expressed in the spacecraft body
     /// frame \[A·m²\]. Consumed by
     /// [`crate::attitude::CommandedMagnetorquer`].
-    MagneticMoment(Vector3<f64>),
+    MagneticMoment(Vec3<Body>),
 
     /// Commanded torque on the spacecraft body from the reaction wheel
     /// assembly \[N·m\], expressed in the body frame. Consumed by
@@ -39,7 +39,7 @@ pub enum Command {
     /// wheel's spin axis). For orthogonal wheel arrangements this is
     /// exact; non-orthogonal layouts may need a separate torque
     /// allocation layer in a future phase.
-    RwTorque(Vector3<f64>),
+    RwTorque(Vec3<Body>),
 }
 
 impl Command {
@@ -52,14 +52,14 @@ impl Command {
     /// the whole trajectory.
     pub fn is_finite(&self) -> bool {
         match self {
-            Self::MagneticMoment(m) => m.iter().all(|x| x.is_finite()),
-            Self::RwTorque(t) => t.iter().all(|x| x.is_finite()),
+            Self::MagneticMoment(m) => m.is_finite(),
+            Self::RwTorque(t) => t.is_finite(),
         }
     }
 
     /// Extract the commanded magnetic dipole moment \[A·m²\], if this
     /// command is a [`Command::MagneticMoment`].
-    pub fn as_magnetic_moment(&self) -> Option<Vector3<f64>> {
+    pub fn as_magnetic_moment(&self) -> Option<Vec3<Body>> {
         match self {
             Self::MagneticMoment(m) => Some(*m),
             _ => None,
@@ -68,7 +68,7 @@ impl Command {
 
     /// Extract the commanded reaction wheel torque \[N·m\], if this
     /// command is a [`Command::RwTorque`].
-    pub fn as_rw_torque(&self) -> Option<Vector3<f64>> {
+    pub fn as_rw_torque(&self) -> Option<Vec3<Body>> {
         match self {
             Self::RwTorque(t) => Some(*t),
             _ => None,
@@ -82,32 +82,32 @@ mod tests {
 
     #[test]
     fn magnetic_moment_finite_detects_nan() {
-        let good = Command::MagneticMoment(Vector3::new(1.0, -2.0, 0.0));
+        let good = Command::MagneticMoment(Vec3::new(1.0, -2.0, 0.0));
         assert!(good.is_finite());
 
-        let nan = Command::MagneticMoment(Vector3::new(1.0, f64::NAN, 0.0));
+        let nan = Command::MagneticMoment(Vec3::new(1.0, f64::NAN, 0.0));
         assert!(!nan.is_finite());
 
-        let inf = Command::MagneticMoment(Vector3::new(f64::INFINITY, 0.0, 0.0));
+        let inf = Command::MagneticMoment(Vec3::new(f64::INFINITY, 0.0, 0.0));
         assert!(!inf.is_finite());
     }
 
     #[test]
     fn rw_torque_finite_detects_nan() {
-        let good = Command::RwTorque(Vector3::new(0.01, -0.02, 0.0));
+        let good = Command::RwTorque(Vec3::new(0.01, -0.02, 0.0));
         assert!(good.is_finite());
 
-        let nan = Command::RwTorque(Vector3::new(f64::NAN, 0.0, 0.0));
+        let nan = Command::RwTorque(Vec3::new(f64::NAN, 0.0, 0.0));
         assert!(!nan.is_finite());
     }
 
     #[test]
     fn as_accessors() {
-        let mm = Command::MagneticMoment(Vector3::new(1.0, 2.0, 3.0));
+        let mm = Command::MagneticMoment(Vec3::new(1.0, 2.0, 3.0));
         assert!(mm.as_magnetic_moment().is_some());
         assert!(mm.as_rw_torque().is_none());
 
-        let rw = Command::RwTorque(Vector3::new(0.1, 0.2, 0.3));
+        let rw = Command::RwTorque(Vec3::new(0.1, 0.2, 0.3));
         assert!(rw.as_magnetic_moment().is_none());
         assert!(rw.as_rw_torque().is_some());
     }
