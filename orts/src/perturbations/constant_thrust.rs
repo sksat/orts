@@ -202,7 +202,7 @@ mod tests {
         let thrust = ConstantThrust::new("bf", start, end, vector![0.05, 0.0, 0.0]);
         let probe = epoch_seconds_from_j2000(50.0);
         let loads = thrust.eval(0.0, &test_state(), Some(&probe));
-        assert_eq!(loads.acceleration_inertial, Vector3::zeros());
+        assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
     }
 
     #[test]
@@ -212,7 +212,7 @@ mod tests {
         let thrust = ConstantThrust::new("af", start, end, vector![0.05, 0.0, 0.0]);
         let probe = epoch_seconds_from_j2000(300.0);
         let loads = thrust.eval(0.0, &test_state(), Some(&probe));
-        assert_eq!(loads.acceleration_inertial, Vector3::zeros());
+        assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
     }
 
     #[test]
@@ -225,7 +225,7 @@ mod tests {
         for probe_sec in [100.0, 120.0, 150.0, 180.0, 200.0] {
             let probe = epoch_seconds_from_j2000(probe_sec);
             let loads = thrust.eval(0.0, &test_state(), Some(&probe));
-            let a = loads.acceleration_inertial;
+            let a = loads.acceleration_inertial.into_inner();
             // 1e-8 tolerance accounts for JD round-trip precision in
             // the 100-s duration (see `new_computes_correct_acceleration`).
             assert!(
@@ -244,7 +244,7 @@ mod tests {
             vector![0.05, 0.0, 0.0],
         );
         let loads = thrust.eval(0.0, &test_state(), None);
-        assert_eq!(loads.acceleration_inertial, Vector3::zeros());
+        assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
     }
 
     #[test]
@@ -257,8 +257,8 @@ mod tests {
 
         let loads_start = thrust.eval(0.0, &test_state(), Some(&start));
         let loads_end = thrust.eval(0.0, &test_state(), Some(&end));
-        assert!((loads_start.acceleration_inertial - expected).magnitude() < 1e-8);
-        assert!((loads_end.acceleration_inertial - expected).magnitude() < 1e-8);
+        assert!((loads_start.acceleration_inertial.into_inner() - expected).magnitude() < 1e-8);
+        assert!((loads_end.acceleration_inertial.into_inner() - expected).magnitude() < 1e-8);
     }
 
     #[test]

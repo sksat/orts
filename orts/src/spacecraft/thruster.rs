@@ -179,8 +179,8 @@ impl Thruster {
         let mass_rate = -(self.thrust_n * throttle) / (self.isp_s * G0);
 
         ExternalLoads {
-            acceleration_inertial: a_inertial,
-            torque_body,
+            acceleration_inertial: kaname::frame::Vec3::from_raw(a_inertial),
+            torque_body: kaname::frame::Vec3::from_raw(torque_body),
             mass_rate,
         }
     }
@@ -348,7 +348,7 @@ mod tests {
         // Identity attitude: body +X = inertial +X
         let t = Thruster::new(1.0, 300.0, Vector3::x());
         let loads = t.loads(0.0, &sample_state(), None);
-        let a = loads.acceleration_inertial;
+        let a = loads.acceleration_inertial.into_inner();
         assert!(a[0] > 0.0);
         assert!(a[1].abs() < 1e-15);
         assert!(a[2].abs() < 1e-15);
@@ -359,7 +359,7 @@ mod tests {
         // 90° about Z: body +X → inertial +Y
         let t = Thruster::new(1.0, 300.0, Vector3::x());
         let loads = t.loads(0.0, &rotated_90z_state(), None);
-        let a = loads.acceleration_inertial;
+        let a = loads.acceleration_inertial.into_inner();
         assert!(a[0].abs() < 1e-10, "expected ~0 x-component, got {}", a[0]);
         assert!(a[1] > 0.0, "expected positive y-component, got {}", a[1]);
         assert!(a[2].abs() < 1e-15);
@@ -371,13 +371,14 @@ mod tests {
         let thrust = 10.0;
         let t = Thruster::new(thrust, 300.0, Vector3::x()).with_offset(Vector3::new(0.0, 1.0, 0.0));
         let loads = t.loads(0.0, &sample_state(), None);
-        assert!((loads.torque_body[0]).abs() < 1e-15, "τx should be 0");
-        assert!((loads.torque_body[1]).abs() < 1e-15, "τy should be 0");
+        let tb = loads.torque_body.into_inner();
+        assert!((tb[0]).abs() < 1e-15, "τx should be 0");
+        assert!((tb[1]).abs() < 1e-15, "τy should be 0");
         assert!(
-            (loads.torque_body[2] - (-thrust)).abs() < 1e-12,
+            (tb[2] - (-thrust)).abs() < 1e-12,
             "τz should be -F={}, got {}",
             -thrust,
-            loads.torque_body[2]
+            tb[2]
         );
     }
 
@@ -408,8 +409,8 @@ mod tests {
             windows: vec![BurnWindow::full(100.0, 200.0)],
         }));
         let loads = t.loads(0.0, &sample_state(), None);
-        assert_eq!(loads.acceleration_inertial, Vector3::zeros());
-        assert_eq!(loads.torque_body, Vector3::zeros());
+        assert_eq!(loads.acceleration_inertial, kaname::frame::Vec3::zeros());
+        assert_eq!(loads.torque_body, kaname::frame::Vec3::zeros());
         assert_eq!(loads.mass_rate, 0.0);
     }
 
@@ -419,7 +420,7 @@ mod tests {
         let t = Thruster::new(1.0, 300.0, Vector3::x()).with_dry_mass(100.0);
         let loads = t.loads(0.0, &state_with_mass(100.0), None);
         assert_eq!(loads.mass_rate, 0.0);
-        assert_eq!(loads.acceleration_inertial, Vector3::zeros());
+        assert_eq!(loads.acceleration_inertial, kaname::frame::Vec3::zeros());
     }
 
     #[test]

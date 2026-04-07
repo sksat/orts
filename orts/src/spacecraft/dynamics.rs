@@ -205,7 +205,7 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
         }
 
         // Total translational acceleration
-        let total_accel = grav_accel + total.acceleration_inertial;
+        let total_accel = grav_accel + total.acceleration_inertial.into_inner();
 
         // Quaternion kinematics: dq/dt = ½ q ⊗ (0, ω)
         let q_dot = state.plant.attitude.q_dot();
@@ -213,7 +213,7 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
         // Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
         let iw = self.inertia * state.plant.attitude.angular_velocity;
         let alpha = self.inertia_inv
-            * (total.torque_body - state.plant.attitude.angular_velocity.cross(&iw));
+            * (total.torque_body.into_inner() - state.plant.attitude.angular_velocity.cross(&iw));
 
         AugmentedState {
             plant: SpacecraftState::from_derivative(
@@ -301,8 +301,8 @@ mod tests {
         fn eval(&self, _t: f64, _state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads {
             match epoch {
                 Some(e) => ExternalLoads {
-                    acceleration_inertial: Vector3::new(e.jd() * 1e-10, 0.0, 0.0),
-                    torque_body: Vector3::zeros(),
+                    acceleration_inertial: kaname::frame::Vec3::new(e.jd() * 1e-10, 0.0, 0.0),
+                    torque_body: kaname::frame::Vec3::zeros(),
                     mass_rate: 0.0,
                 },
                 None => ExternalLoads::zeros(),
@@ -516,11 +516,20 @@ mod tests {
         let breakdown = dyn_sc.model_breakdown(0.0, &sc);
         assert_eq!(breakdown.len(), 2);
         assert_eq!(breakdown[0].0, "const_force");
-        assert_eq!(breakdown[0].1.acceleration_inertial, accel);
-        assert_eq!(breakdown[0].1.torque_body, Vector3::zeros());
+        assert_eq!(
+            breakdown[0].1.acceleration_inertial,
+            kaname::frame::Vec3::from_raw(accel)
+        );
+        assert_eq!(breakdown[0].1.torque_body, kaname::frame::Vec3::zeros());
         assert_eq!(breakdown[1].0, "const_torque");
-        assert_eq!(breakdown[1].1.acceleration_inertial, Vector3::zeros());
-        assert_eq!(breakdown[1].1.torque_body, torque);
+        assert_eq!(
+            breakdown[1].1.acceleration_inertial,
+            kaname::frame::Vec3::zeros()
+        );
+        assert_eq!(
+            breakdown[1].1.torque_body,
+            kaname::frame::Vec3::from_raw(torque)
+        );
     }
 
     // ======== Step 5: Epoch + integration + edge cases ========

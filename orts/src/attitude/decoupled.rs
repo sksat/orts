@@ -154,7 +154,8 @@ impl DynamicalSystem for DecoupledAttitudeSystem {
 
         // 5. Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
         let iw = self.inertia * state.angular_velocity;
-        let alpha = self.inertia_inv * (total.torque_body - state.angular_velocity.cross(&iw));
+        let alpha =
+            self.inertia_inv * (total.torque_body.into_inner() - state.angular_velocity.cross(&iw));
 
         AttitudeState::from_derivative(q_dot, alpha)
     }

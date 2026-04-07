@@ -73,7 +73,7 @@ impl DynamicalSystem for AttitudeSystem {
         let mut tau = Vector3::zeros();
         for m in &self.models {
             let loads = m.eval(t, state, epoch.as_ref());
-            tau += loads.torque_body;
+            tau += loads.torque_body.into_inner();
         }
 
         // 3. Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))

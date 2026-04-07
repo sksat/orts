@@ -297,7 +297,10 @@ mod tests {
         };
         let epoch = test_epoch();
         let loads = ctrl.eval(0.0, &state, Some(&epoch));
-        let dot = state.attitude.angular_velocity.dot(&loads.torque_body);
+        let dot = state
+            .attitude
+            .angular_velocity
+            .dot(&loads.torque_body.into_inner());
         assert!(
             dot <= 0.0,
             "omega . tau should be <= 0 (Cauchy-Schwarz), got {dot:.6e}"

@@ -208,7 +208,7 @@ fn commanded_magnetorquer_torque_is_m_cross_b() {
     let b_body = state.attitude.inertial_to_body() * b_eci.into_inner();
     let expected_torque = m_cmd.cross(&b_body);
 
-    let diff = (loads.torque_body - expected_torque).magnitude();
+    let diff = (loads.torque_body.into_inner() - expected_torque).magnitude();
     assert!(
         diff < 1e-20,
         "Torque should be m x B, difference: {diff:.2e}"

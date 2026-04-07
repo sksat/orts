@@ -179,14 +179,14 @@ mod tests {
         let loads = ctrl.eval(0.0, &state, None);
         // Torque should be negative about Z (restoring)
         assert!(
-            loads.torque_body[2] < 0.0,
+            loads.torque_body.z() < 0.0,
             "Expected restoring torque, got {:?}",
             loads.torque_body
         );
 
         // Magnitude should be approximately kp * angle for small angles
         let expected_mag = kp * angle;
-        let actual_mag = loads.torque_body[2].abs();
+        let actual_mag = loads.torque_body.z().abs();
         let rel_err = ((actual_mag - expected_mag) / expected_mag).abs();
         assert!(
             rel_err < 0.01,
@@ -209,7 +209,7 @@ mod tests {
         let loads = ctrl.eval(0.0, &state, None);
         // Damping torque = -kd * omega
         let expected = -kd * omega;
-        let err = (loads.torque_body - expected).magnitude();
+        let err = (loads.torque_body.into_inner() - expected).magnitude();
         assert!(
             err < 1e-14,
             "Expected damping torque {expected:?}, got {:?}",
@@ -232,7 +232,7 @@ mod tests {
         // Should produce torque for the short path (+10°), not the long path (-350°)
         // Short path would give positive torque about Z (rotating back +10°)
         assert!(
-            loads.torque_body[2] > 0.0,
+            loads.torque_body.z() > 0.0,
             "Expected positive torque (short path), got {:?}",
             loads.torque_body
         );
@@ -240,7 +240,7 @@ mod tests {
         // Magnitude should be small (~10° worth), not large (~350° worth)
         let short_angle = (2.0 * PI - angle).abs();
         assert!(
-            loads.torque_body[2].abs() < short_angle * 2.0,
+            loads.torque_body.z().abs() < short_angle * 2.0,
             "Torque magnitude too large for short path"
         );
     }

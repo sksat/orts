@@ -215,8 +215,8 @@ impl DynamicalSystem for AugmentedAttitudeSystem {
 
         // 5. Euler's rotation equation: dω/dt = I⁻¹(τ − ω × (I·ω))
         let iw = self.inertia * state.plant.angular_velocity;
-        let alpha =
-            self.inertia_inv * (total.torque_body - state.plant.angular_velocity.cross(&iw));
+        let alpha = self.inertia_inv
+            * (total.torque_body.into_inner() - state.plant.angular_velocity.cross(&iw));
 
         AugmentedState {
             plant: AttitudeState::from_derivative(q_dot, alpha),

@@ -223,7 +223,7 @@ mod tests {
         assert!((rates[2] - (-0.05)).abs() < 1e-15);
 
         // Body torque should be +Z as commanded
-        assert!((loads.torque_body[2] - 0.05).abs() < 1e-15);
+        assert!((loads.torque_body.z() - 0.05).abs() < 1e-15);
     }
 
     #[test]
@@ -301,9 +301,10 @@ mod tests {
         let loads = rw.derivatives(0.0, &state, &aux, &mut rates, None);
 
         // Reaction torque should be opposite to wheel acceleration
+        let tb = loads.torque_body.into_inner();
         for i in 0..3 {
             assert!(
-                (loads.torque_body[i] + rates[i]).abs() < 1e-15,
+                (tb[i] + rates[i]).abs() < 1e-15,
                 "Reaction torque[{i}] should equal -rates[{i}]"
             );
         }
@@ -329,19 +330,19 @@ mod tests {
         // gyroscopic torque = -omega x H_rw = [0, -5, 0]
         // No commanded torque, so dH/dt = 0, total torque should be [0, -5, 0]
         assert!(
-            (loads.torque_body[0]).abs() < 1e-15,
+            (loads.torque_body.x()).abs() < 1e-15,
             "tau_x should be 0, got {}",
-            loads.torque_body[0]
+            loads.torque_body.x()
         );
         assert!(
-            (loads.torque_body[1] - (-5.0)).abs() < 1e-15,
+            (loads.torque_body.y() - (-5.0)).abs() < 1e-15,
             "tau_y should be -5, got {}",
-            loads.torque_body[1]
+            loads.torque_body.y()
         );
         assert!(
-            (loads.torque_body[2]).abs() < 1e-15,
+            (loads.torque_body.z()).abs() < 1e-15,
             "tau_z should be 0, got {}",
-            loads.torque_body[2]
+            loads.torque_body.z()
         );
     }
 }

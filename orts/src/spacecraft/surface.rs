@@ -248,8 +248,8 @@ impl PanelDrag {
                 let v_rel_mag_m = v_rel_m.magnitude();
                 let a_drag_m = -0.5 * rho * cd * area / mass * v_rel_mag_m * v_rel_m;
                 ExternalLoads {
-                    acceleration_inertial: a_drag_m / 1000.0, // m/s² → km/s²
-                    torque_body: Vector3::zeros(),
+                    acceleration_inertial: kaname::frame::Vec3::from_raw(a_drag_m / 1000.0), // m/s² → km/s²
+                    torque_body: kaname::frame::Vec3::zeros(),
                     mass_rate: 0.0,
                 }
             }
@@ -287,8 +287,8 @@ impl PanelDrag {
                 let a_inertial = r_ib * a_body / 1000.0; // km/s²
 
                 ExternalLoads {
-                    acceleration_inertial: a_inertial,
-                    torque_body: total_torque_body,
+                    acceleration_inertial: kaname::frame::Vec3::from_raw(a_inertial),
+                    torque_body: kaname::frame::Vec3::from_raw(total_torque_body),
                     mass_rate: 0.0,
                 }
             }
@@ -570,7 +570,7 @@ mod tests {
         let drag = PanelDrag::for_earth(SpacecraftShape::sphere(5.0, 2.0, 1.5));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert_eq!(
-            loads.torque_body,
+            loads.torque_body.into_inner(),
             Vector3::zeros(),
             "Sphere should produce zero torque"
         );
@@ -599,7 +599,7 @@ mod tests {
         let drag = PanelDrag::for_earth(SpacecraftShape::sphere(5.0, 2.0, 1.5));
         let loads = drag.eval(0.0, &iss_state(), None);
         // v_rel is mostly in +y → drag should be in -y
-        assert!(loads.acceleration_inertial.y < 0.0);
+        assert!(loads.acceleration_inertial.y() < 0.0);
     }
 
     // ======== Panels branch — acceleration ========
@@ -623,7 +623,7 @@ mod tests {
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert_eq!(
-            loads.acceleration_inertial,
+            loads.acceleration_inertial.into_inner(),
             Vector3::zeros(),
             "Panel facing away from flow should produce zero drag"
         );
@@ -636,7 +636,7 @@ mod tests {
         let loads = drag.eval(0.0, &iss_state(), None);
         // Drag should oppose velocity (predominantly -y)
         assert!(
-            loads.acceleration_inertial.y < 0.0,
+            loads.acceleration_inertial.y() < 0.0,
             "Panel drag should oppose velocity"
         );
     }
@@ -700,7 +700,7 @@ mod tests {
             mass: 500.0,
         };
         let loads = drag.eval(0.0, &state, None);
-        assert_eq!(loads.acceleration_inertial, Vector3::zeros());
+        assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
     }
 
     // ======== Panels branch — torque ========
@@ -711,7 +711,7 @@ mod tests {
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert_eq!(
-            loads.torque_body,
+            loads.torque_body.into_inner(),
             Vector3::zeros(),
             "Panel at CoM should produce zero torque"
         );
@@ -736,7 +736,7 @@ mod tests {
         // Force is in -y body frame (opposing +y flow), CP offset in +x
         // τ = r × F = (1,0,0) × (0,F_y,0) = (0,0,F_y) → z-component
         assert!(
-            loads.torque_body.z.abs() > loads.torque_body.x.abs(),
+            loads.torque_body.z().abs() > loads.torque_body.x().abs(),
             "Torque should be primarily about z-axis"
         );
     }
@@ -781,7 +781,7 @@ mod tests {
         let panel_loads = panel_drag.eval(0.0, &state, None);
         let atmo_accel = atmo_drag.acceleration(&state.orbit, None);
 
-        let diff = (panel_loads.acceleration_inertial - atmo_accel).magnitude();
+        let diff = (panel_loads.acceleration_inertial.into_inner() - atmo_accel).magnitude();
         assert!(
             diff < 1e-15,
             "Sphere PanelDrag should match AtmosphericDrag: diff = {diff:.3e}"
@@ -931,7 +931,7 @@ mod tests {
             state.attitude.quaternion = quat_from_axis_angle(*axis, *angle);
 
             let loads = drag.eval(0.0, &state, None);
-            let a = loads.acceleration_inertial;
+            let a = loads.acceleration_inertial.into_inner();
 
             if a.magnitude() < 1e-20 {
                 continue; // backface, direction undefined
@@ -965,7 +965,7 @@ mod tests {
             state.attitude.quaternion = quat_from_axis_angle(Vector3::new(1.0, 1.0, 1.0), angle);
 
             let loads = drag.eval(0.0, &state, None);
-            let a = loads.acceleration_inertial;
+            let a = loads.acceleration_inertial.into_inner();
             let v_rel = *state.orbit.velocity()
                 - Vector3::new(0.0, 0.0, OMEGA_EARTH).cross(state.orbit.position());
 
@@ -1081,24 +1081,24 @@ mod tests {
         // Reconstruct F_body from acceleration: F = a_body * mass
         // a_inertial = R_ib * (F_body / mass) / 1000
         // At identity: R_ib = I, so a_inertial = F_body / (mass * 1000)
-        let f_body_y = loads.acceleration_inertial.y * iss_state().mass * 1000.0; // N
+        let f_body_y = loads.acceleration_inertial.y() * iss_state().mass * 1000.0; // N
 
         // Expected torque: τ = r × F = (1,0,0) × (0,F_y,0) = (0, 0, F_y)
         assert!(
-            loads.torque_body.x.abs() < 1e-20,
+            loads.torque_body.x().abs() < 1e-20,
             "τ_x should be 0, got {:.3e}",
-            loads.torque_body.x
+            loads.torque_body.x()
         );
         assert!(
-            loads.torque_body.y.abs() < 1e-20,
+            loads.torque_body.y().abs() < 1e-20,
             "τ_y should be 0, got {:.3e}",
-            loads.torque_body.y
+            loads.torque_body.y()
         );
-        let rel_err = (loads.torque_body.z - f_body_y).abs() / f_body_y.abs();
+        let rel_err = (loads.torque_body.z() - f_body_y).abs() / f_body_y.abs();
         assert!(
             rel_err < 1e-10,
             "τ_z should equal F_y ({f_body_y:.6e}), got {:.6e}, rel_err={rel_err:.3e}",
-            loads.torque_body.z
+            loads.torque_body.z()
         );
     }
 
@@ -1190,8 +1190,8 @@ mod tests {
         let l2 = drag.eval(0.0, &s2, None);
 
         // a' should equal R · a
-        let a1_rotated = r_mat * l1.acceleration_inertial;
-        let a_rel = (l2.acceleration_inertial - a1_rotated).magnitude()
+        let a1_rotated = r_mat * l1.acceleration_inertial.into_inner();
+        let a_rel = (l2.acceleration_inertial.into_inner() - a1_rotated).magnitude()
             / l1.acceleration_inertial.magnitude();
         assert!(
             a_rel < 1e-10,

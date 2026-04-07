@@ -101,8 +101,8 @@ impl PanelSrp {
                 // Divide by 1000 to convert to km/s²
                 let a_mag = base_pressure * cr * area / mass / 1000.0;
                 ExternalLoads {
-                    acceleration_inertial: -a_mag * s_hat,
-                    torque_body: Vector3::zeros(),
+                    acceleration_inertial: kaname::frame::Vec3::from_raw(-a_mag * s_hat),
+                    torque_body: kaname::frame::Vec3::zeros(),
                     mass_rate: 0.0,
                 }
             }
@@ -135,8 +135,8 @@ impl PanelSrp {
                 let a_inertial = r_ib * a_body / 1000.0; // km/s²
 
                 ExternalLoads {
-                    acceleration_inertial: a_inertial,
-                    torque_body: total_torque_body,
+                    acceleration_inertial: kaname::frame::Vec3::from_raw(a_inertial),
+                    torque_body: kaname::frame::Vec3::from_raw(total_torque_body),
                     mass_rate: 0.0,
                 }
             }
@@ -197,8 +197,8 @@ mod tests {
     fn no_epoch_returns_zero() {
         let srp = PanelSrp::for_earth(SpacecraftShape::sphere(20.0, 2.2, 1.5));
         let loads = srp.eval(0.0, &iss_state(), None);
-        assert_eq!(loads.acceleration_inertial, Vector3::zeros());
-        assert_eq!(loads.torque_body, Vector3::zeros());
+        assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
+        assert_eq!(loads.torque_body.into_inner(), Vector3::zeros());
     }
 
     #[test]
@@ -222,7 +222,7 @@ mod tests {
         let srp = PanelSrp::for_earth(SpacecraftShape::sphere(20.0, 2.2, 1.5));
         let epoch = test_epoch();
         let loads = srp.eval(0.0, &iss_state(), Some(&epoch));
-        assert_eq!(loads.torque_body, Vector3::zeros());
+        assert_eq!(loads.torque_body.into_inner(), Vector3::zeros());
     }
 
     #[test]
@@ -250,7 +250,11 @@ mod tests {
         let loads = srp.eval(0.0, &iss_state(), Some(&epoch));
 
         let sun_dir = sun::sun_direction_eci(&epoch);
-        let cos_angle = loads.acceleration_inertial.normalize().dot(&sun_dir);
+        let cos_angle = loads
+            .acceleration_inertial
+            .into_inner()
+            .normalize()
+            .dot(&sun_dir);
         assert!(
             cos_angle < -0.5,
             "SRP should point away from Sun, cos_angle={cos_angle:.3}"
@@ -274,8 +278,8 @@ mod tests {
         let panel_loads = panel_srp.eval(0.0, &state, Some(&epoch));
         let scalar_a = scalar_srp.acceleration(&state.orbit, Some(&epoch));
 
-        let rel_err =
-            (panel_loads.acceleration_inertial - scalar_a).magnitude() / scalar_a.magnitude();
+        let rel_err = (panel_loads.acceleration_inertial.into_inner() - scalar_a).magnitude()
+            / scalar_a.magnitude();
         assert!(
             rel_err < 1e-10,
             "PanelSrp sphere should match SolarRadiationPressure: rel_err={rel_err:.3e}"
@@ -310,7 +314,14 @@ mod tests {
 
         // Direction should be away from Sun (roughly -X)
         let sun_dir = sun::sun_direction_eci(&epoch);
-        assert!(loads.acceleration_inertial.normalize().dot(&sun_dir) < -0.5);
+        assert!(
+            loads
+                .acceleration_inertial
+                .into_inner()
+                .normalize()
+                .dot(&sun_dir)
+                < -0.5
+        );
 
         // No torque (panel at CoM)
         assert!(loads.torque_body.magnitude() < 1e-20);
@@ -425,7 +436,7 @@ mod tests {
 
         let loads = srp.eval(0.0, &state, Some(&epoch));
         assert_eq!(
-            loads.acceleration_inertial,
+            loads.acceleration_inertial.into_inner(),
             Vector3::zeros(),
             "Should be zero in shadow"
         );
@@ -470,7 +481,7 @@ mod tests {
         ]));
         let loads_shadow = srp_with_shadow.eval(0.0, &state, Some(&epoch));
         assert_eq!(
-            loads_shadow.acceleration_inertial,
+            loads_shadow.acceleration_inertial.into_inner(),
             Vector3::zeros(),
             "With shadow body, same satellite should be in shadow"
         );
@@ -531,20 +542,20 @@ mod tests {
         // τ = (0,1,0) × F where F is mostly along -X → (0,0,-F_x) with F_x < 0
         // so z-component depends on the Sun direction body-frame projection
         assert!(
-            loads.torque_body.z.abs() > loads.torque_body.x.abs(),
+            loads.torque_body.z().abs() > loads.torque_body.x().abs(),
             "Torque should be primarily about z-axis"
         );
         assert!(
-            loads.torque_body.z.abs() > loads.torque_body.y.abs(),
+            loads.torque_body.z().abs() > loads.torque_body.y().abs(),
             "Torque should be primarily about z-axis"
         );
         // Force is in -ŝ direction (away from Sun). Sun ≈ +X at equinox,
         // so force ≈ -X in body. τ_z = r_x*F_y - r_y*F_x = 0 - 1*F_x.
         // F_x < 0, so τ_z = -F_x > 0.
         assert!(
-            loads.torque_body.z > 0.0,
+            loads.torque_body.z() > 0.0,
             "Torque z-component should be positive: τ_z={:.3e}",
-            loads.torque_body.z
+            loads.torque_body.z()
         );
     }
 
@@ -698,8 +709,8 @@ mod tests {
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![]));
         let epoch = test_epoch();
         let loads = srp.eval(0.0, &iss_state(), Some(&epoch));
-        assert_eq!(loads.acceleration_inertial, Vector3::zeros());
-        assert_eq!(loads.torque_body, Vector3::zeros());
+        assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
+        assert_eq!(loads.torque_body.into_inner(), Vector3::zeros());
     }
 
     // ======== Mass scaling ========

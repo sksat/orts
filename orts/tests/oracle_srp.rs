@@ -340,7 +340,7 @@ fn srp_energy_work_consistency() {
     let final_state = Rk4.integrate(&system, initial, 0.0, total_time, dt, |t, state| {
         let ep = epoch.add_seconds(t);
         let loads = srp_model.eval(t, state, Some(&ep));
-        let a_srp = loads.acceleration_inertial;
+        let a_srp = loads.acceleration_inertial.into_inner();
         work_accumulated += a_srp.dot(state.velocity()) * dt;
     });
 

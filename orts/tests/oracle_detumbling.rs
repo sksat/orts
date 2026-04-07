@@ -196,10 +196,13 @@ fn bdot_instantaneous_torque_opposes_omega() {
             &state,
             Some(&epoch),
         );
-        let dot = omega.dot(&(uq.inverse() * loads.torque_body));
+        let dot = omega.dot(&(uq.inverse() * loads.torque_body.into_inner()));
         // Since torque is in body frame and omega is in body frame,
         // we can just dot them directly.
-        let dot_body = state.attitude.angular_velocity.dot(&loads.torque_body);
+        let dot_body = state
+            .attitude
+            .angular_velocity
+            .dot(&loads.torque_body.into_inner());
         assert!(
             dot_body <= 1e-20, // allow tiny positive due to floating point
             "omega . tau should be <= 0 for omega={omega:?}, pos={pos:?}: got {dot_body:.6e}"
