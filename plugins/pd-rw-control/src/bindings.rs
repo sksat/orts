@@ -15,7 +15,7 @@ pub mod orts {
             #[used]
             #[doc(hidden)]
             static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
-            /// 3 成分実数ベクトル。
+            /// 3 成分実数ベクトル（汎用、フレーム未指定）。
             #[repr(C)]
             #[derive(Clone, Copy)]
             pub struct Vec3 {
@@ -57,12 +57,52 @@ pub mod orts {
                         .finish()
                 }
             }
-            /// ECI 座標系での軌道状態。位置 [km]、速度 [km/s]。
+            /// ECI 座標系での位置 \[km\]。
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct PositionEciKm {
+                pub x: f64,
+                pub y: f64,
+                pub z: f64,
+            }
+            impl ::core::fmt::Debug for PositionEciKm {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("PositionEciKm")
+                        .field("x", &self.x)
+                        .field("y", &self.y)
+                        .field("z", &self.z)
+                        .finish()
+                }
+            }
+            /// ECI 座標系での速度 \[km/s\]。
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct VelocityEciKms {
+                pub x: f64,
+                pub y: f64,
+                pub z: f64,
+            }
+            impl ::core::fmt::Debug for VelocityEciKms {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("VelocityEciKms")
+                        .field("x", &self.x)
+                        .field("y", &self.y)
+                        .field("z", &self.z)
+                        .finish()
+                }
+            }
+            /// ECI 座標系での軌道状態。
             #[repr(C)]
             #[derive(Clone, Copy)]
             pub struct OrbitalState {
-                pub position: Vec3,
-                pub velocity: Vec3,
+                pub position: PositionEciKm,
+                pub velocity: VelocityEciKms,
             }
             impl ::core::fmt::Debug for OrbitalState {
                 fn fmt(
@@ -562,12 +602,12 @@ pub mod exports {
                         t: l0,
                         spacecraft: super::super::super::super::orts::plugin::types::SpacecraftState {
                             orbit: super::super::super::super::orts::plugin::types::OrbitalState {
-                                position: super::super::super::super::orts::plugin::types::Vec3 {
+                                position: super::super::super::super::orts::plugin::types::PositionEciKm {
                                     x: l1,
                                     y: l2,
                                     z: l3,
                                 },
-                                velocity: super::super::super::super::orts::plugin::types::Vec3 {
+                                velocity: super::super::super::super::orts::plugin::types::VelocityEciKms {
                                     x: l4,
                                     y: l5,
                                     z: l6,
@@ -915,33 +955,35 @@ pub(crate) use __export_plugin_impl as export;
 )]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1136] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf3\x07\x01A\x02\x01\
-A\x0a\x01B\x1c\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01\
-xu\x01yu\x01zu\x04\0\x04quat\x03\0\x02\x01r\x02\x08position\x01\x08velocity\x01\x04\
-\0\x0dorbital-state\x03\0\x04\x01r\x02\x0borientation\x03\x10angular-velocity\x01\
-\x04\0\x0eattitude-state\x03\0\x06\x01r\x03\x05orbit\x05\x08attitude\x07\x04mass\
-u\x04\0\x10spacecraft-state\x03\0\x08\x01r\x01\x0bjulian-dateu\x04\0\x05epoch\x03\
-\0\x0a\x01r\x03\x01xu\x01yu\x01zu\x04\0\x13magnetic-field-body\x03\0\x0c\x01r\x03\
-\x01xu\x01yu\x01zu\x04\0\x15angular-velocity-body\x03\0\x0e\x01r\x04\x01wu\x01xu\
-\x01yu\x01zu\x04\0\x19attitude-body-to-inertial\x03\0\x10\x01k\x0d\x01k\x0f\x01k\
-\x11\x01r\x03\x0cmagnetometer\x12\x09gyroscope\x13\x0cstar-tracker\x14\x04\0\x07\
-sensors\x03\0\x15\x01k\x0b\x01r\x04\x01tu\x0aspacecraft\x09\x05epoch\x17\x07sens\
-ors\x16\x04\0\x0atick-input\x03\0\x18\x01q\x02\x0fmagnetic-moment\x01\x01\0\x09r\
-w-torque\x01\x01\0\x04\0\x07command\x03\0\x1a\x03\0\x17orts:plugin/types@0.1.0\x05\
-\0\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\x01\x04\0\x04\
-vec3\x03\0\0\x02\x03\x02\x01\x02\x04\0\x05epoch\x03\0\x02\x01m\x05\x05trace\x05d\
-ebug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\x05level\x05\
-\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\x01\x01e\x03\
-\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugin/host-env@0.1.0\x05\
-\x03\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07command\x01B\x11\x02\x03\x02\x01\x04\
-\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\x05\x04\0\x07command\x03\0\x02\x01@\
-\0\0u\x04\0\x0fsample-period-s\x01\x04\x01j\0\x01s\x01@\x01\x06configs\0\x05\x04\
-\0\x04init\x01\x06\x01@\0\0\x03\x04\0\x0finitial-command\x01\x07\x01j\x01\x03\x01\
-s\x01@\x01\x05input\x01\0\x08\x04\0\x06update\x01\x09\x01ks\x01@\0\0\x0a\x04\0\x0c\
-current-mode\x01\x0b\x04\0\x1corts:plugin/controller@0.1.0\x05\x06\x04\0\x18orts\
-:plugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06plugin\x03\0\0\0G\x09producers\x01\x0c\
-processed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\x060.41.0";
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1203] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb6\x08\x01A\x02\x01\
+A\x0a\x01B\x20\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01\
+xu\x01yu\x01zu\x04\0\x04quat\x03\0\x02\x01r\x03\x01xu\x01yu\x01zu\x04\0\x0fposit\
+ion-eci-km\x03\0\x04\x01r\x03\x01xu\x01yu\x01zu\x04\0\x10velocity-eci-kms\x03\0\x06\
+\x01r\x02\x08position\x05\x08velocity\x07\x04\0\x0dorbital-state\x03\0\x08\x01r\x02\
+\x0borientation\x03\x10angular-velocity\x01\x04\0\x0eattitude-state\x03\0\x0a\x01\
+r\x03\x05orbit\x09\x08attitude\x0b\x04massu\x04\0\x10spacecraft-state\x03\0\x0c\x01\
+r\x01\x0bjulian-dateu\x04\0\x05epoch\x03\0\x0e\x01r\x03\x01xu\x01yu\x01zu\x04\0\x13\
+magnetic-field-body\x03\0\x10\x01r\x03\x01xu\x01yu\x01zu\x04\0\x15angular-veloci\
+ty-body\x03\0\x12\x01r\x04\x01wu\x01xu\x01yu\x01zu\x04\0\x19attitude-body-to-ine\
+rtial\x03\0\x14\x01k\x11\x01k\x13\x01k\x15\x01r\x03\x0cmagnetometer\x16\x09gyros\
+cope\x17\x0cstar-tracker\x18\x04\0\x07sensors\x03\0\x19\x01k\x0f\x01r\x04\x01tu\x0a\
+spacecraft\x0d\x05epoch\x1b\x07sensors\x1a\x04\0\x0atick-input\x03\0\x1c\x01q\x02\
+\x0fmagnetic-moment\x01\x01\0\x09rw-torque\x01\x01\0\x04\0\x07command\x03\0\x1e\x03\
+\0\x17orts:plugin/types@0.1.0\x05\0\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01\
+B\x0a\x02\x03\x02\x01\x01\x04\0\x04vec3\x03\0\0\x02\x03\x02\x01\x02\x04\0\x05epo\
+ch\x03\0\x02\x01m\x05\x05trace\x05debug\x04info\x04warn\x05error\x04\0\x09log-le\
+vel\x03\0\x04\x01@\x02\x05level\x05\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\
+\x0fposition-eci-km\x01\x01e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\
+\x1aorts:plugin/host-env@0.1.0\x05\x03\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07\
+command\x01B\x11\x02\x03\x02\x01\x04\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\
+\x05\x04\0\x07command\x03\0\x02\x01@\0\0u\x04\0\x0fsample-period-s\x01\x04\x01j\0\
+\x01s\x01@\x01\x06configs\0\x05\x04\0\x04init\x01\x06\x01@\0\0\x03\x04\0\x0finit\
+ial-command\x01\x07\x01j\x01\x03\x01s\x01@\x01\x05input\x01\0\x08\x04\0\x06updat\
+e\x01\x09\x01ks\x01@\0\0\x0a\x04\0\x0ccurrent-mode\x01\x0b\x04\0\x1corts:plugin/\
+controller@0.1.0\x05\x06\x04\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06\
+plugin\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227\
+.1\x10wit-bindgen-rust\x060.41.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

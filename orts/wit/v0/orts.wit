@@ -39,7 +39,7 @@ package orts:plugin@0.1.0;
 /// 軌道状態は km / km/s、姿勢は rad / rad/s、磁気モーメントは
 /// A·m²、Hamilton クォータニオン (スカラー先頭)、ECI 基準。
 interface types {
-    /// 3 成分実数ベクトル。
+    /// 3 成分実数ベクトル（汎用、フレーム未指定）。
     record vec3 {
         x: f64,
         y: f64,
@@ -54,10 +54,20 @@ interface types {
         z: f64,
     }
 
-    /// ECI 座標系での軌道状態。位置 [km]、速度 [km/s]。
+    /// ECI 座標系での位置 \[km\]。
+    record position-eci-km {
+        x: f64, y: f64, z: f64,
+    }
+
+    /// ECI 座標系での速度 \[km/s\]。
+    record velocity-eci-kms {
+        x: f64, y: f64, z: f64,
+    }
+
+    /// ECI 座標系での軌道状態。
     record orbital-state {
-        position: vec3,
-        velocity: vec3,
+        position: position-eci-km,
+        velocity: velocity-eci-kms,
     }
 
     /// 剛体姿勢: 姿勢クォータニオン (body→inertial) と

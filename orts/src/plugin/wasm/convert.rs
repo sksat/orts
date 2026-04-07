@@ -40,9 +40,19 @@ fn spacecraft_to_wit(s: &SpacecraftState) -> wit::SpacecraftState {
 }
 
 fn orbital_to_wit(o: &OrbitalState) -> wit::OrbitalState {
+    let pos = o.position_eci();
+    let vel = o.velocity();
     wit::OrbitalState {
-        position: vec3_to_wit(o.position_eci().inner()),
-        velocity: vec3_to_wit(o.velocity()),
+        position: wit::PositionEciKm {
+            x: pos.x(),
+            y: pos.y(),
+            z: pos.z(),
+        },
+        velocity: wit::VelocityEciKms {
+            x: vel.x,
+            y: vel.y,
+            z: vel.z,
+        },
     }
 }
 
