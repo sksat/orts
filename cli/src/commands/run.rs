@@ -25,11 +25,12 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
         SimParams::from_sim_args(sim, false)
     };
 
-    // Controller 付き衛星があれば制御ループへディスパッチ。
-    let has_controller = params
-        .satellites
-        .iter()
-        .any(|s| s.controller_config.is_some());
+    // 全衛星が controller 付きなら制御ループへディスパッチ。
+    let has_controller = !params.satellites.is_empty()
+        && params
+            .satellites
+            .iter()
+            .all(|s| s.controller_config.is_some());
     let rec = if has_controller {
         run_controlled_simulation(&params)
     } else {
@@ -395,15 +396,17 @@ fn run_controlled_simulation(params: &SimParams) -> Recording {
         rec.log_orbital_state(&sat_paths[i], &tp, &os);
     }
 
+    // 全衛星の sample_period の最小値をグローバル tick に使う。
     let dt_ctrl = satellites
-        .first()
+        .iter()
         .map(|sat| sat.controller.sample_period())
-        .unwrap_or(0.1);
+        .fold(f64::INFINITY, f64::min);
     let dt_ode = params.dt.min(dt_ctrl);
 
     let mut t = 0.0;
     let mut step: u64 = 1;
     let mut next_output_t = params.output_interval;
+    let mut last_output_t = 0.0;
 
     while t < duration - 1e-12 {
         let dt = dt_ctrl.min(duration - t);
@@ -425,7 +428,18 @@ fn run_controlled_simulation(params: &SimParams) -> Recording {
                 rec.log_orbital_state(&sat_paths[i], &tp, &os);
             }
             step += 1;
+            last_output_t = t;
             next_output_t += params.output_interval;
+        }
+    }
+
+    // 最終状態を記録（output_interval と duration が割り切れない場合）。
+    if (t - last_output_t) > 1e-9 {
+        for (i, sat) in satellites.iter().enumerate() {
+            let tp = TimePoint::new().with_sim_time(t).with_step(step);
+            let orbit = &sat.state.plant.orbit;
+            let os = RecordOrbitalState::new(*orbit.position(), *orbit.velocity());
+            rec.log_orbital_state(&sat_paths[i], &tp, &os);
         }
     }
 

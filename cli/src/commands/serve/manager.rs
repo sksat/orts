@@ -549,10 +549,11 @@ impl SimLoopContext {
             );
         }
         let use_spacecraft = all_attitude;
-        let has_controller = params
-            .satellites
-            .iter()
-            .any(|s| s.controller_config.is_some());
+        let has_controller = !params.satellites.is_empty()
+            && params
+                .satellites
+                .iter()
+                .all(|s| s.controller_config.is_some());
 
         let mut metas: Vec<SatMeta> = Vec::new();
         let third_bodies = default_third_bodies(&params.body);

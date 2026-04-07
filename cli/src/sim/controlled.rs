@@ -121,7 +121,9 @@ pub fn step_controlled(
 
     // 前 tick のコマンドで RW を設定。
     if sat.has_rw
-        && let Some(rw) = sat.dynamics.effector_mut::<ReactionWheelAssembly>(0)
+        && let Some(rw) = sat
+            .dynamics
+            .effector_by_name_mut::<ReactionWheelAssembly>("reaction_wheels")
     {
         rw.commanded_torque = sat.actuators.rw_torque();
     }

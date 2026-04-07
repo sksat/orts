@@ -108,9 +108,7 @@ impl<G: GravityField> SpacecraftDynamics<G> {
         }
     }
 
-    /// Downcast a state effector to a concrete type for mutation between
-    /// integration segments (e.g. updating `commanded_torque` on a
-    /// `ReactionWheelAssembly`).
+    /// Downcast a state effector by index.
     pub fn effector_mut<T: StateEffector<SpacecraftState> + 'static>(
         &mut self,
         index: usize,
@@ -118,6 +116,19 @@ impl<G: GravityField> SpacecraftDynamics<G> {
         self.effectors
             .get_mut(index)
             .and_then(|e| (e.as_mut() as &mut dyn std::any::Any).downcast_mut::<T>())
+    }
+
+    /// Find and downcast a state effector by name.
+    pub fn effector_by_name_mut<T: StateEffector<SpacecraftState> + 'static>(
+        &mut self,
+        name: &str,
+    ) -> Option<&mut T> {
+        let idx = self
+            .registry
+            .entries()
+            .iter()
+            .position(|e| e.name == name)?;
+        self.effector_mut(idx)
     }
 
     /// Get the auxiliary state registry.
