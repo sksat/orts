@@ -1,4 +1,5 @@
-use nalgebra::{Matrix3, UnitQuaternion, Vector3, Vector4};
+use kaname::frame::{self, Rotation};
+use nalgebra::{UnitQuaternion, Vector3, Vector4};
 use utsuroi::{OdeState, Tolerances};
 
 use crate::model::HasAttitude;
@@ -44,9 +45,14 @@ impl AttitudeState {
         UnitQuaternion::from_quaternion(q)
     }
 
-    /// Get the rotation matrix (body-to-inertial DCM).
-    pub fn rotation_matrix(&self) -> Matrix3<f64> {
-        *self.orientation().to_rotation_matrix().matrix()
+    /// Typed rotation: body frame → ECI (inertial).
+    pub fn rotation_to_eci(&self) -> Rotation<frame::Body, frame::Eci> {
+        Rotation::from_raw(self.orientation())
+    }
+
+    /// Typed rotation: ECI (inertial) → body frame.
+    pub fn rotation_to_body(&self) -> Rotation<frame::Eci, frame::Body> {
+        self.rotation_to_eci().inverse()
     }
 
     /// Quaternion kinematic equation: dq/dt = 0.5 * q ⊗ (0, ω).
@@ -84,11 +90,6 @@ impl AttitudeState {
             quaternion: q_dot,
             angular_velocity: angular_acceleration,
         }
-    }
-
-    /// Compute the body-frame inertial-to-body rotation matrix.
-    pub fn inertial_to_body(&self) -> Matrix3<f64> {
-        self.rotation_matrix().transpose() // R_bi = R_ib^T
     }
 }
 

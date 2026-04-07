@@ -1,4 +1,5 @@
 use kaname::epoch::Epoch;
+use kaname::frame::{self, Vec3};
 use nalgebra::{Matrix3, Vector3};
 
 use crate::model::ExternalLoads;
@@ -66,8 +67,10 @@ pub(crate) fn gravity_gradient_torque_vector(
     }
 
     // Transform position to body frame: r_body = R_bi * r_eci
-    let r_bi = attitude.inertial_to_body();
-    let r_body = r_bi * r_eci;
+    let r_body = attitude
+        .rotation_to_body()
+        .transform(&Vec3::<frame::Eci>::from_raw(*r_eci))
+        .into_inner();
 
     // τ_gg = (3μ / r⁵) (r_body × (I · r_body))
     let coeff = 3.0 * mu / r_mag.powi(5);

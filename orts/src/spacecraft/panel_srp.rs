@@ -108,8 +108,10 @@ impl PanelSrp {
             }
             SpacecraftShape::Panels(panels) => {
                 // Transform Sun direction to body frame
-                let r_bi = attitude.inertial_to_body();
-                let s_body = r_bi * s_hat;
+                let s_body = attitude
+                    .rotation_to_body()
+                    .transform(&kaname::frame::Vec3::from_raw(s_hat))
+                    .into_inner();
 
                 let mut total_force_body = Vector3::zeros(); // [N]
                 let mut total_torque_body = Vector3::zeros(); // [N·m]
@@ -130,12 +132,11 @@ impl PanelSrp {
                 }
 
                 // a_body [m/s²] → a_inertial [km/s²]
-                let a_body = total_force_body / mass; // m/s²
-                let r_ib = attitude.rotation_matrix();
-                let a_inertial = r_ib * a_body / 1000.0; // km/s²
+                let a_body = kaname::frame::Vec3::from_raw(total_force_body / mass);
+                let a_inertial = attitude.rotation_to_eci().transform(&a_body) / 1000.0;
 
                 ExternalLoads {
-                    acceleration_inertial: kaname::frame::Vec3::from_raw(a_inertial),
+                    acceleration_inertial: a_inertial,
                     torque_body: kaname::frame::Vec3::from_raw(total_torque_body),
                     mass_rate: 0.0,
                 }

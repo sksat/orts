@@ -35,8 +35,11 @@ fn total_angular_momentum(
     }
 
     // Transform total body-frame angular momentum to inertial frame
-    let r_ib = state.plant.rotation_matrix();
-    r_ib * (l_body_sc + l_body_rw)
+    state
+        .plant
+        .rotation_to_eci()
+        .transform(&kaname::frame::Vec3::from_raw(l_body_sc + l_body_rw))
+        .into_inner()
 }
 
 // ──────────────────────────────────────────────────────

@@ -255,8 +255,10 @@ impl PanelDrag {
             }
             SpacecraftShape::Panels(panels) => {
                 // Transform flow direction to body frame
-                let r_bi = attitude.inertial_to_body();
-                let v_body = r_bi * v_rel; // km/s in body frame
+                let v_body = attitude
+                    .rotation_to_body()
+                    .transform(&kaname::frame::Vec3::from_raw(v_rel))
+                    .into_inner(); // km/s in body frame
                 let v_body_m = v_body * 1000.0; // m/s
                 let v_body_mag_m = v_body_m.magnitude();
                 let v_hat_body = v_body_m / v_body_mag_m;
@@ -282,12 +284,11 @@ impl PanelDrag {
                 }
 
                 // a_body [m/s²] → a_inertial [km/s²]
-                let a_body = total_force_body / mass; // m/s²
-                let r_ib = attitude.rotation_matrix();
-                let a_inertial = r_ib * a_body / 1000.0; // km/s²
+                let a_body = kaname::frame::Vec3::from_raw(total_force_body / mass);
+                let a_inertial = attitude.rotation_to_eci().transform(&a_body) / 1000.0;
 
                 ExternalLoads {
-                    acceleration_inertial: kaname::frame::Vec3::from_raw(a_inertial),
+                    acceleration_inertial: a_inertial,
                     torque_body: kaname::frame::Vec3::from_raw(total_torque_body),
                     mass_rate: 0.0,
                 }
@@ -1173,11 +1174,11 @@ mod tests {
 
         // Apply arbitrary rotation R (37° about (1,2,3))
         let q_r = quat_from_axis_angle(Vector3::new(1.0, 2.0, 3.0), 37.0_f64.to_radians());
-        let r_mat = AttitudeState {
+        let att_tmp = AttitudeState {
             quaternion: q_r,
             angular_velocity: Vector3::zeros(),
-        }
-        .rotation_matrix();
+        };
+        let r_mat = *att_tmp.orientation().to_rotation_matrix().matrix();
 
         let s2 = SpacecraftState {
             orbit: OrbitalState::new(r_mat * *s1.orbit.position(), r_mat * *s1.orbit.velocity()),
@@ -1235,11 +1236,11 @@ mod tests {
 
         for (axis, angle_deg) in &rotations {
             let q_r = quat_from_axis_angle(*axis, angle_deg.to_radians());
-            let r_mat = AttitudeState {
+            let att_tmp = AttitudeState {
                 quaternion: q_r,
                 angular_velocity: Vector3::zeros(),
-            }
-            .rotation_matrix();
+            };
+            let r_mat = *att_tmp.orientation().to_rotation_matrix().matrix();
 
             let s2 = SpacecraftState {
                 orbit: OrbitalState::new(

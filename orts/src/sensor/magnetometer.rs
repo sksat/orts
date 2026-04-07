@@ -56,7 +56,8 @@ impl Magnetometer {
         let b_eci = self
             .field_model
             .field_eci(&state.orbit.position_eci(), epoch);
-        let mut b_body = state.attitude.inertial_to_body() * b_eci.into_inner();
+        let b_body_typed = state.attitude.rotation_to_body().transform(&b_eci);
+        let mut b_body = b_body_typed.into_inner();
         for n in &mut self.noise {
             b_body = n.apply(b_body);
         }

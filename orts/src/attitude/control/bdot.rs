@@ -1,4 +1,5 @@
 use kaname::epoch::Epoch;
+use kaname::frame::{self, Vec3};
 use nalgebra::Vector3;
 use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 
@@ -72,8 +73,10 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for BdotDetumble
         }
 
         // 2. Transform to body frame
-        let r_bi = att.inertial_to_body();
-        let b_body = r_bi * b_eci;
+        let b_body = att
+            .rotation_to_body()
+            .transform(&Vec3::<frame::Eci>::from_raw(b_eci))
+            .into_inner();
 
         // 3. Analytical approximation: dB_body/dt = -omega x B_body
         //    (valid when |omega| >> orbital angular rate)
@@ -134,7 +137,11 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for CommandedMag
         if b_eci.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
         }
-        let b_body = state.attitude().inertial_to_body() * b_eci;
+        let b_body = state
+            .attitude()
+            .rotation_to_body()
+            .transform(&Vec3::<frame::Eci>::from_raw(b_eci))
+            .into_inner();
         ExternalLoads::torque(self.commanded_moment.cross(&b_body))
     }
 }
@@ -213,7 +220,10 @@ impl<F: MagneticFieldModel> DiscreteController for BdotFiniteDiff<F> {
         if b_eci.magnitude() < 1e-30 {
             return Vector3::zeros();
         }
-        let b_body = attitude.inertial_to_body() * b_eci;
+        let b_body = attitude
+            .rotation_to_body()
+            .transform(&Vec3::<frame::Eci>::from_raw(b_eci))
+            .into_inner();
 
         let m_cmd = match self.prev_b_body {
             Some(prev_b) => {

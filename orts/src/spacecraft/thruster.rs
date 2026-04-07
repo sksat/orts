@@ -172,14 +172,14 @@ impl Thruster {
 
         // Acceleration: body → inertial [km/s²]
         // F [N] / mass [kg] = [m/s²], / 1000 = [km/s²]
-        let r_ib = state.attitude.rotation_matrix();
-        let a_inertial = r_ib * (f_body_n / state.mass) / 1000.0;
+        let a_body = kaname::frame::Vec3::from_raw(f_body_n / state.mass / 1000.0);
+        let a_inertial = state.attitude.rotation_to_eci().transform(&a_body);
 
         // Mass flow rate [kg/s]
         let mass_rate = -(self.thrust_n * throttle) / (self.isp_s * G0);
 
         ExternalLoads {
-            acceleration_inertial: kaname::frame::Vec3::from_raw(a_inertial),
+            acceleration_inertial: a_inertial,
             torque_body: kaname::frame::Vec3::from_raw(torque_body),
             mass_rate,
         }

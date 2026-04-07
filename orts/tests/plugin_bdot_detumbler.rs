@@ -114,7 +114,12 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
         if b_eci.magnitude() < 1e-30 {
             return Ok(Command::MagneticMoment(Vec3::zeros()));
         }
-        let b_body = obs.spacecraft.attitude.inertial_to_body() * b_eci;
+        let b_body = obs
+            .spacecraft
+            .attitude
+            .rotation_to_body()
+            .transform(&kaname::frame::Vec3::from_raw(b_eci))
+            .into_inner();
         // Read the rate-gyro measurement directly from the observation.
         // This is the entire point of the detumbler variant: it
         // exercises the TickInput -> plugin path for angular velocity.
