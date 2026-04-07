@@ -1,6 +1,7 @@
 //! IGRF-14 spherical harmonic magnetic field model.
 
 use kaname::epoch::Epoch;
+use kaname::frame;
 use kaname::{Ecef, Eci};
 use nalgebra::Vector3;
 
@@ -96,7 +97,7 @@ impl Igrf {
 }
 
 impl MagneticFieldModel for Igrf {
-    fn field_eci(&self, position_eci: &Eci, epoch: &Epoch) -> Vector3<f64> {
+    fn field_eci(&self, position_eci: &Eci, epoch: &Epoch) -> frame::Vec3<frame::Eci> {
         let gmst = epoch.gmst();
 
         // ECI → ECEF
@@ -106,7 +107,7 @@ impl MagneticFieldModel for Igrf {
         // Cartesian → geocentric spherical
         let r_km = (x * x + y * y + z * z).sqrt();
         if r_km < 1.0 {
-            return Vector3::zeros();
+            return frame::Vec3::zeros();
         }
         let p = (x * x + y * y).sqrt(); // distance from z-axis
         let cos_theta = z / r_km;
@@ -140,7 +141,7 @@ impl MagneticFieldModel for Igrf {
         );
 
         // ECEF → ECI
-        Ecef::from_raw(b_ecef).to_eci(gmst).into_inner()
+        Ecef::from_raw(b_ecef).to_eci(gmst)
     }
 }
 
@@ -521,7 +522,7 @@ mod tests {
         let igrf = Igrf::earth();
         let epoch = epoch_2025();
         let b = igrf.field_eci(&Eci::new(0.5, 0.0, 0.0), &epoch);
-        assert_eq!(b, Vector3::zeros());
+        assert_eq!(b, frame::Vec3::<frame::Eci>::zeros());
     }
 
     #[test]
@@ -529,10 +530,7 @@ mod tests {
         let igrf = Igrf::earth();
         let epoch = epoch_2025();
         let b = igrf.field_eci(&Eci::new(6778.0, 0.0, 0.0), &epoch);
-        assert!(
-            b.iter().all(|v| v.is_finite()),
-            "Field must be finite: {b:?}"
-        );
+        assert!(b.is_finite(), "Field must be finite: {b:?}");
     }
 
     #[test]

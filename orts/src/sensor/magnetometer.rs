@@ -56,7 +56,7 @@ impl Magnetometer {
         let b_eci = self
             .field_model
             .field_eci(&state.orbit.position_eci(), epoch);
-        let mut b_body = state.attitude.inertial_to_body() * b_eci;
+        let mut b_body = state.attitude.inertial_to_body() * b_eci.into_inner();
         for n in &mut self.noise {
             b_body = n.apply(b_body);
         }
@@ -105,7 +105,9 @@ mod tests {
         let state = leo_state();
         let epoch = Epoch::j2000();
         let b_body = mag.measure(&state, &epoch).into_inner();
-        let b_eci = field_model.field_eci(&state.orbit.position_eci(), &epoch);
+        let b_eci = field_model
+            .field_eci(&state.orbit.position_eci(), &epoch)
+            .into_inner();
         assert!((b_body - b_eci).magnitude() < 1e-15);
     }
 

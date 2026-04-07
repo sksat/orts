@@ -16,7 +16,7 @@ pub use igrf::Igrf;
 
 use kaname::Eci;
 use kaname::epoch::Epoch;
-use nalgebra::Vector3;
+use kaname::frame;
 
 /// A geomagnetic field model.
 ///
@@ -32,5 +32,5 @@ pub trait MagneticFieldModel: Send + Sync {
     /// # Returns
     /// Magnetic field vector in the ECI (J2000) frame, in Tesla.
     /// The caller is responsible for frame transformations (e.g., ECI → body).
-    fn field_eci(&self, position_eci: &Eci, epoch: &Epoch) -> Vector3<f64>;
+    fn field_eci(&self, position_eci: &Eci, epoch: &Epoch) -> frame::Vec3<frame::Eci>;
 }

@@ -108,7 +108,8 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
         };
         let b_eci = self
             .field
-            .field_eci(&obs.spacecraft.orbit.position_eci(), epoch);
+            .field_eci(&obs.spacecraft.orbit.position_eci(), epoch)
+            .into_inner();
         if b_eci.magnitude() < 1e-30 {
             return Ok(Command::MagneticMoment(Vector3::zeros()));
         }

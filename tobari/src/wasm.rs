@@ -263,7 +263,7 @@ pub fn igrf_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64
     let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
     let igrf = Igrf::earth();
     let b_eci = igrf.field_eci(&kaname::Eci::from_raw(pos), &epoch);
-    field_info(&b_eci, lat_deg, lon_deg, &epoch)
+    field_info(b_eci.inner(), lat_deg, lon_deg, &epoch)
 }
 
 /// Tilted dipole field at a geodetic point.
@@ -275,7 +275,7 @@ pub fn dipole_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f
     let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
     let dipole = TiltedDipole::earth();
     let b_eci = dipole.field_eci(&kaname::Eci::from_raw(pos), &epoch);
-    field_info(&b_eci, lat_deg, lon_deg, &epoch)
+    field_info(b_eci.inner(), lat_deg, lon_deg, &epoch)
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +316,7 @@ pub fn magnetic_field_latlon_map(
                 _ => igrf.field_eci(&eci_pos, &epoch),
             };
 
-            let info = field_info(&b_eci, lat, lon, &epoch);
+            let info = field_info(b_eci.inner(), lat, lon, &epoch);
             // info: [Bn, Be, Bd, |B|, inc, dec]
             let val = match component {
                 "north" => info[0],
@@ -379,7 +379,7 @@ pub fn magnetic_field_volume(
                 };
 
                 // Inline field_info to avoid per-point Vec allocation
-                let (bn, be, bd) = eci_to_ned(&b_eci, lat, lon, &epoch);
+                let (bn, be, bd) = eci_to_ned(b_eci.inner(), lat, lon, &epoch);
                 let val = match component {
                     "north" => bn * 1e9,
                     "east" => be * 1e9,
@@ -839,7 +839,7 @@ fn field_at_eci(
 ) -> Vector3<f64> {
     let eci = kaname::Eci::from_raw(*pos);
     match model {
-        "dipole" => dipole.field_eci(&eci, epoch),
-        _ => igrf.field_eci(&eci, epoch),
+        "dipole" => dipole.field_eci(&eci, epoch).into_inner(),
+        _ => igrf.field_eci(&eci, epoch).into_inner(),
     }
 }

@@ -63,7 +63,10 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for BdotDetumble
         let orbit = state.orbit();
 
         // 1. Compute B in ECI (requires epoch for ECEF->ECI rotation)
-        let b_eci = self.field.field_eci(&orbit.position_eci(), epoch);
+        let b_eci = self
+            .field
+            .field_eci(&orbit.position_eci(), epoch)
+            .into_inner();
         if b_eci.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
         }
@@ -124,7 +127,10 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for CommandedMag
         let Some(epoch) = epoch else {
             return ExternalLoads::zeros();
         };
-        let b_eci = self.field.field_eci(&state.orbit().position_eci(), epoch);
+        let b_eci = self
+            .field
+            .field_eci(&state.orbit().position_eci(), epoch)
+            .into_inner();
         if b_eci.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
         }
@@ -200,7 +206,10 @@ impl<F: MagneticFieldModel> DiscreteController for BdotFiniteDiff<F> {
         let Some(epoch) = epoch else {
             return Vector3::zeros();
         };
-        let b_eci = self.field.field_eci(&orbit.position_eci(), epoch);
+        let b_eci = self
+            .field
+            .field_eci(&orbit.position_eci(), epoch)
+            .into_inner();
         if b_eci.magnitude() < 1e-30 {
             return Vector3::zeros();
         }

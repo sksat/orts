@@ -5,7 +5,6 @@
 //! the `HostState` is where the guest can reach back into the host
 //! via the `host-env` interface imports (`log`, `magnetic-field-eci`).
 
-use nalgebra::Vector3;
 use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 
 use super::bindings::orts::plugin::host_env;
@@ -82,9 +81,9 @@ impl host_env::Host for HostState {
         let epoch = kaname::epoch::Epoch::from_jd(epoch.julian_date);
         let b = self.field.field_eci(&pos, &epoch);
         wit::Vec3 {
-            x: b.x,
-            y: b.y,
-            z: b.z,
+            x: b.x(),
+            y: b.y(),
+            z: b.z(),
         }
     }
 }

@@ -205,7 +205,7 @@ fn commanded_magnetorquer_torque_is_m_cross_b() {
 
     // Manually compute expected torque
     let b_eci = TiltedDipole::earth().field_eci(&Eci::new(7000.0, 0.0, 0.0), &epoch);
-    let b_body = state.attitude.inertial_to_body() * b_eci;
+    let b_body = state.attitude.inertial_to_body() * b_eci.into_inner();
     let expected_torque = m_cmd.cross(&b_body);
 
     let diff = (loads.torque_body - expected_torque).magnitude();

@@ -1,5 +1,6 @@
 use kaname::Eci;
 use kaname::epoch::Epoch;
+use kaname::frame;
 use nalgebra::Vector3;
 
 use super::MagneticFieldModel;
@@ -87,8 +88,8 @@ impl TiltedDipole {
 }
 
 impl MagneticFieldModel for TiltedDipole {
-    fn field_eci(&self, position_eci: &Eci, epoch: &Epoch) -> Vector3<f64> {
-        self.compute_field(position_eci.inner(), epoch.gmst())
+    fn field_eci(&self, position_eci: &Eci, epoch: &Epoch) -> frame::Vec3<frame::Eci> {
+        frame::Vec3::from_raw(self.compute_field(position_eci.inner(), epoch.gmst()))
     }
 }
 
@@ -155,7 +156,7 @@ mod tests {
         let pos = Eci::new(0.5, 0.0, 0.0);
         let epoch = j2000_epoch();
         let b = dipole.field_eci(&pos, &epoch);
-        assert_eq!(b, Vector3::zeros());
+        assert_eq!(b, frame::Vec3::<frame::Eci>::zeros());
     }
 
     #[test]
@@ -163,7 +164,7 @@ mod tests {
         let dipole = TiltedDipole::earth();
         let epoch = j2000_epoch();
         let b = dipole.field_eci(&Eci::zeros(), &epoch);
-        assert_eq!(b, Vector3::zeros());
+        assert_eq!(b, frame::Vec3::<frame::Eci>::zeros());
     }
 
     #[test]
@@ -172,7 +173,7 @@ mod tests {
         let pos = Eci::new(6778.0, 0.0, 0.0);
         let epoch = j2000_epoch();
         let b = dipole.field_eci(&pos, &epoch);
-        assert!(b.iter().all(|v| v.is_finite()));
+        assert!(b.is_finite());
     }
 
     #[test]
