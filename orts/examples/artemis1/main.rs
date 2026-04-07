@@ -1129,7 +1129,7 @@ fn verify_coast(
         DT_SECONDS,
         |t, state| {
             let epoch = start_epoch.add_seconds(t);
-            let moon_pos = moon_ephem.position_eci(&epoch);
+            let moon_pos = moon_ephem.position_eci(&epoch).into_inner();
             let moon_distance = (state.position() - moon_pos).magnitude();
             if moon_distance < min_moon_distance {
                 min_moon_distance = moon_distance;
@@ -2185,7 +2185,7 @@ impl<'a> ChainRecording<'a> {
         // spacecraft so Rerun's 3D view can animate them together.
         // Only Position3D is needed — the generic column export no
         // longer requires a Position3D+Velocity3D pair.
-        let moon_pos = moon_ephem.position_eci(&epoch);
+        let moon_pos = moon_ephem.position_eci(&epoch).into_inner();
         self.rec
             .log_temporal(&self.moon_path, &tp, &Position3D(moon_pos));
 
@@ -2757,7 +2757,7 @@ fn build_artemis_system(
     let sun_model = ThirdBodyGravity::custom("third_body_sun", MU_SUN, move |e| {
         sun_table_for_closure
             .interpolate(e)
-            .map(|s| s.position)
+            .map(|s| kaname::frame::Vec3::from_raw(s.position))
             .unwrap_or_else(|| kaname::sun::sun_position_eci(e))
     });
 

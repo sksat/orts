@@ -348,7 +348,7 @@ mod tests {
 
         let epoch = Epoch::from_gregorian(2024, 6, 21, 12, 0, 0.0);
         let earth_helio = heliocentric_position_ecliptic("earth", &epoch).unwrap();
-        let sun_dir = sun::sun_direction_eci(&epoch);
+        let sun_dir = sun::sun_direction_eci(&epoch).into_inner();
 
         // Convert Earth heliocentric to equatorial for comparison
         let epsilon = obliquity(&epoch);

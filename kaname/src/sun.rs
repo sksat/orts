@@ -1,6 +1,7 @@
 use nalgebra::Vector3;
 
 use crate::epoch::Epoch;
+use crate::frame::{self, Vec3};
 use crate::planets;
 
 /// Solar orbital elements at epoch.
@@ -49,7 +50,7 @@ fn solar_elements(epoch: &Epoch) -> SolarElements {
 /// Accuracy is ~1 arcminute, sufficient for visualization purposes.
 ///
 /// Reference: Meeus, "Astronomical Algorithms", Chapter 25.
-pub fn sun_direction_eci(epoch: &Epoch) -> Vector3<f64> {
+pub fn sun_direction_eci(epoch: &Epoch) -> Vec3<frame::Eci> {
     let el = solar_elements(epoch);
 
     // Sun direction in ECI (equatorial coordinates)
@@ -57,7 +58,7 @@ pub fn sun_direction_eci(epoch: &Epoch) -> Vector3<f64> {
     let y = el.epsilon_rad.cos() * el.lambda_rad.sin();
     let z = el.epsilon_rad.sin() * el.lambda_rad.sin();
 
-    Vector3::new(x, y, z).normalize()
+    Vec3::from_raw(Vector3::new(x, y, z).normalize())
 }
 
 /// Equation of Time [hours].
@@ -115,7 +116,7 @@ pub fn sun_distance_km(epoch: &Epoch) -> f64 {
 /// Sun position vector in ECI (J2000) frame [km].
 ///
 /// Returns the geocentric position of the Sun. Combines direction and distance.
-pub fn sun_position_eci(epoch: &Epoch) -> Vector3<f64> {
+pub fn sun_position_eci(epoch: &Epoch) -> Vec3<frame::Eci> {
     let direction = sun_direction_eci(epoch);
     let distance = sun_distance_km(epoch);
     direction * distance
@@ -142,7 +143,7 @@ pub fn sun_distance_from_body(body: &str, epoch: &Epoch) -> f64 {
 /// - Unknown bodies: fallback to +X direction (vernal equinox)
 ///
 /// The returned vector points FROM the body TOWARD the Sun.
-pub fn sun_direction_from_body(body: &str, epoch: &Epoch) -> Vector3<f64> {
+pub fn sun_direction_from_body(body: &str, epoch: &Epoch) -> Vec3<frame::Eci> {
     match body {
         "earth" | "moon" => sun_direction_eci(epoch),
         _ => {
@@ -150,10 +151,10 @@ pub fn sun_direction_from_body(body: &str, epoch: &Epoch) -> Vector3<f64> {
                 // Sun is at origin in heliocentric frame, so direction to sun = -body_pos
                 let sun_dir_ecl = -body_pos_ecl;
                 let epsilon = planets::obliquity(epoch);
-                planets::ecliptic_to_equatorial(&sun_dir_ecl, epsilon).normalize()
+                Vec3::from_raw(planets::ecliptic_to_equatorial(&sun_dir_ecl, epsilon).normalize())
             } else {
                 // Unknown body: fallback to +X (vernal equinox direction)
-                Vector3::new(1.0, 0.0, 0.0)
+                Vec3::new(1.0, 0.0, 0.0)
             }
         }
     }
@@ -225,7 +226,7 @@ mod tests {
         ];
         for epoch in &dates {
             let dir = sun_direction_eci(epoch);
-            let norm = dir.norm();
+            let norm = dir.magnitude();
             assert!(
                 (norm - 1.0).abs() < 1e-10,
                 "Not unit vector at JD {}: norm = {norm}",
@@ -241,17 +242,21 @@ mod tests {
         let dir = sun_direction_eci(&epoch);
 
         // X should be dominant and positive
-        assert!(dir.x > 0.9, "March equinox: x={:.3} should be > 0.9", dir.x);
+        assert!(
+            dir.x() > 0.9,
+            "March equinox: x={:.3} should be > 0.9",
+            dir.x()
+        );
         // Y and Z should be small
         assert!(
-            dir.y.abs() < 0.2,
+            dir.y().abs() < 0.2,
             "March equinox: y={:.3} should be near 0",
-            dir.y
+            dir.y()
         );
         assert!(
-            dir.z.abs() < 0.1,
+            dir.z().abs() < 0.1,
             "March equinox: z={:.3} should be near 0",
-            dir.z
+            dir.z()
         );
     }
 
@@ -263,21 +268,21 @@ mod tests {
 
         // Z should be positive and near sin(23.44°) ≈ 0.398
         assert!(
-            dir.z > 0.35,
+            dir.z() > 0.35,
             "June solstice: z={:.3} should be > 0.35",
-            dir.z
+            dir.z()
         );
         // X should be near 0 (RA ≈ 90°)
         assert!(
-            dir.x.abs() < 0.15,
+            dir.x().abs() < 0.15,
             "June solstice: x={:.3} should be near 0",
-            dir.x
+            dir.x()
         );
         // Y should be dominant and positive
         assert!(
-            dir.y > 0.85,
+            dir.y() > 0.85,
             "June solstice: y={:.3} should be > 0.85",
-            dir.y
+            dir.y()
         );
     }
 
@@ -289,20 +294,20 @@ mod tests {
 
         // X should be dominant and negative
         assert!(
-            dir.x < -0.9,
+            dir.x() < -0.9,
             "September equinox: x={:.3} should be < -0.9",
-            dir.x
+            dir.x()
         );
         // Y and Z should be small
         assert!(
-            dir.y.abs() < 0.2,
+            dir.y().abs() < 0.2,
             "September equinox: y={:.3} should be near 0",
-            dir.y
+            dir.y()
         );
         assert!(
-            dir.z.abs() < 0.1,
+            dir.z().abs() < 0.1,
             "September equinox: z={:.3} should be near 0",
-            dir.z
+            dir.z()
         );
     }
 
@@ -314,15 +319,15 @@ mod tests {
 
         // Z should be negative and near -sin(23.44°) ≈ -0.398
         assert!(
-            dir.z < -0.35,
+            dir.z() < -0.35,
             "December solstice: z={:.3} should be < -0.35",
-            dir.z
+            dir.z()
         );
         // Y should be negative (RA ≈ 270°)
         assert!(
-            dir.y < -0.85,
+            dir.y() < -0.85,
             "December solstice: y={:.3} should be < -0.85",
-            dir.y
+            dir.y()
         );
     }
 
@@ -430,7 +435,7 @@ mod tests {
         ];
         for epoch in &dates {
             let dir = sun_direction_from_body("mars", epoch);
-            let norm = dir.norm();
+            let norm = dir.magnitude();
             assert!(
                 (norm - 1.0).abs() < 1e-10,
                 "Mars sun direction should be unit vector, norm={norm}"
@@ -456,11 +461,11 @@ mod tests {
         let epoch = Epoch::from_gregorian(2024, 1, 1, 12, 0, 0.0);
         let dir = sun_direction_from_body("pluto", &epoch);
         assert!(
-            (dir.x - 1.0).abs() < 1e-10 && dir.y.abs() < 1e-10 && dir.z.abs() < 1e-10,
+            (dir.x() - 1.0).abs() < 1e-10 && dir.y().abs() < 1e-10 && dir.z().abs() < 1e-10,
             "Unknown body should return +X fallback, got ({}, {}, {})",
-            dir.x,
-            dir.y,
-            dir.z
+            dir.x(),
+            dir.y(),
+            dir.z()
         );
     }
 

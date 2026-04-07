@@ -255,7 +255,7 @@ fn moon_pericynthion(
     let mut min_dist = f64::MAX;
     Dop853.integrate(system, state.clone(), 0.0, duration, DT, |t, s| {
         let ep = epoch.add_seconds(t);
-        let moon_pos = moon_ephem.position_eci(&ep);
+        let moon_pos = moon_ephem.position_eci(&ep).into_inner();
         let d = (s.position() - moon_pos).magnitude();
         if d < min_dist {
             min_dist = d;
@@ -383,7 +383,7 @@ fn compute_tei_dv(
     let eps = 0.001; // 1 m/s perturbation for finite differences [km/s]
 
     // Start with prograde (Moon-relative) as initial guess, TEI_DV as initial magnitude
-    let moon_vel = moon_ephem.velocity_eci(&epoch);
+    let moon_vel = moon_ephem.velocity_eci(&epoch).into_inner();
     let v_rel = state.velocity() - moon_vel;
     let mut dv_dir = v_rel.normalize();
     let mut dv_mag = TEI_DV;
@@ -568,7 +568,7 @@ fn propagate_and_record(
     let final_state = Dop853.integrate(system, initial.clone(), 0.0, duration, dt, |t, state| {
         // Track Moon distance
         let current_epoch = epoch.add_seconds(t);
-        let moon_pos = moon_ephem.position_eci(&current_epoch);
+        let moon_pos = moon_ephem.position_eci(&current_epoch).into_inner();
         let moon_dist = (state.position() - moon_pos).magnitude();
         if moon_dist < min_moon_dist {
             min_moon_dist = moon_dist;
@@ -791,7 +791,7 @@ fn main() {
         DT,
         |t, state| {
             let ep = mcc2_epoch.add_seconds(t);
-            let moon_pos = moon_ephem.position_eci(&ep);
+            let moon_pos = moon_ephem.position_eci(&ep).into_inner();
             let d = (state.position() - moon_pos).magnitude();
             if d < min_moon_dist {
                 min_moon_dist = d;
@@ -858,8 +858,8 @@ fn main() {
     println!("Phase 4: Lunar Orbit Insertion (LOI-1)");
 
     let loi_epoch = parking_epoch.add_seconds(mission_t);
-    let moon_pos_at_loi = moon_ephem.position_eci(&loi_epoch);
-    let moon_vel_at_loi = moon_ephem.velocity_eci(&loi_epoch);
+    let moon_pos_at_loi = moon_ephem.position_eci(&loi_epoch).into_inner();
+    let moon_vel_at_loi = moon_ephem.velocity_eci(&loi_epoch).into_inner();
 
     // Compute velocity relative to Moon, apply retrograde ΔV in that frame
     let v_rel_moon = state_at_loi.velocity() - moon_vel_at_loi;
@@ -913,7 +913,7 @@ fn main() {
     step = new_step;
 
     let loi2_epoch = parking_epoch.add_seconds(mission_t);
-    let moon_vel_at_loi2 = moon_ephem.velocity_eci(&loi2_epoch);
+    let moon_vel_at_loi2 = moon_ephem.velocity_eci(&loi2_epoch).into_inner();
     let v_rel_loi2 = state_at_loi2.velocity() - moon_vel_at_loi2;
     let loi2_dv = v_rel_loi2.normalize() * (-loi2_dv_mag);
     let post_loi2 = state_at_loi2.apply_delta_v(loi2_dv);
@@ -948,7 +948,7 @@ fn main() {
     step = new_step;
 
     let lo_end_epoch = parking_epoch.add_seconds(mission_t);
-    let moon_pos_lo = moon_ephem.position_eci(&lo_end_epoch);
+    let moon_pos_lo = moon_ephem.position_eci(&lo_end_epoch).into_inner();
     let moon_dist_lo = (state_after_lo.position() - moon_pos_lo).magnitude();
     println!(
         "  Coasted {:.1} hours (after LOI-2), Moon distance: {:.0} km",
@@ -1036,7 +1036,7 @@ fn main() {
     let post_tei = state_at_tei.apply_delta_v(tei_dv_vec);
 
     let tei_dv_actual = tei_dv_vec.magnitude();
-    let moon_vel_at_tei = moon_ephem.velocity_eci(&tei_epoch);
+    let moon_vel_at_tei = moon_ephem.velocity_eci(&tei_epoch).into_inner();
     let v_rel_before = (state_at_tei.velocity() - moon_vel_at_tei).magnitude();
     let v_rel_after = (post_tei.velocity() - moon_vel_at_tei).magnitude();
     println!("  ΔV = {tei_dv_actual:.4} km/s (targeted to entry interface, ref: {TEI_DV:.3})");
@@ -1243,7 +1243,7 @@ fn main() {
     for i in 0..=n_moon_steps {
         let t = i as f64 * OUTPUT_INTERVAL;
         let moon_epoch = parking_epoch.add_seconds(t);
-        let moon_pos = moon_ephem.position_eci(&moon_epoch);
+        let moon_pos = moon_ephem.position_eci(&moon_epoch).into_inner();
         let tp = TimePoint::new().with_sim_time(t).with_step(i);
         let os = RecordOrbitalState::new(moon_pos, Vector3::zeros());
         rec.log_orbital_state(&moon_path, &tp, &os);
@@ -1317,7 +1317,7 @@ mod tests {
             60.0,
             |t, state| {
                 let current_epoch = epoch.add_seconds(t);
-                let moon_pos = moon_ephem.position_eci(&current_epoch);
+                let moon_pos = moon_ephem.position_eci(&current_epoch).into_inner();
                 let moon_dist = (state.position() - moon_pos).magnitude();
                 if moon_dist < min_moon_dist {
                     min_moon_dist = moon_dist;

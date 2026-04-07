@@ -7,6 +7,7 @@
 //! Reference: Montenbruck & Gill, "Satellite Orbits" (2000), Section 3.5.2.
 
 use kaname::epoch::Epoch;
+use kaname::frame;
 use kaname::sun;
 use nalgebra::Vector3;
 
@@ -296,7 +297,7 @@ pub struct HarrisPriester {
     /// Default: π/6 ≈ 30° (~2 hours in local solar time).
     pub lag_angle: f64,
     /// Function returning the Sun direction (unit vector) in ECI at a given epoch.
-    sun_direction_fn: fn(&Epoch) -> Vector3<f64>,
+    sun_direction_fn: fn(&Epoch) -> frame::Vec3<frame::Eci>,
 }
 
 impl HarrisPriester {
@@ -324,7 +325,7 @@ impl HarrisPriester {
     }
 
     /// Override the Sun direction function (for testing).
-    pub fn with_sun_direction_fn(mut self, f: fn(&Epoch) -> Vector3<f64>) -> Self {
+    pub fn with_sun_direction_fn(mut self, f: fn(&Epoch) -> frame::Vec3<frame::Eci>) -> Self {
         self.sun_direction_fn = f;
         self
     }
@@ -341,9 +342,9 @@ impl HarrisPriester {
         let sin_lag = self.lag_angle.sin();
         // Counter-clockwise rotation about Z-axis by +lag_angle
         Vector3::new(
-            cos_lag * sun_dir.x - sin_lag * sun_dir.y,
-            sin_lag * sun_dir.x + cos_lag * sun_dir.y,
-            sun_dir.z,
+            cos_lag * sun_dir.x() - sin_lag * sun_dir.y(),
+            sin_lag * sun_dir.x() + cos_lag * sun_dir.y(),
+            sun_dir.z(),
         )
         .normalize()
     }
@@ -432,7 +433,7 @@ mod tests {
 
     /// Helper: create a Harris-Priester model with a fixed sun direction (+X).
     fn hp_fixed_sun() -> HarrisPriester {
-        HarrisPriester::new().with_sun_direction_fn(|_| Vector3::new(1.0, 0.0, 0.0))
+        HarrisPriester::new().with_sun_direction_fn(|_| frame::Vec3::new(1.0, 0.0, 0.0))
     }
 
     fn dummy_epoch() -> Epoch {

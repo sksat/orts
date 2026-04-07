@@ -239,6 +239,28 @@ impl<From, To> Rotation<From, To> {
     }
 }
 
+// ─── ECI↔ECEF 便利コンストラクタ ──────────────────────────────────
+
+impl Rotation<Eci, Ecef> {
+    /// GMST 角 (ラジアン) から ECI→ECEF 回転を構築。
+    ///
+    /// Z 軸まわりに −GMST 回す: ECEF = R_z(−GMST) × ECI。
+    pub fn from_gmst(gmst: f64) -> Self {
+        let axis = nalgebra::Unit::new_normalize(Vector3::z());
+        Self::from_raw(UnitQuaternion::from_axis_angle(&axis, -gmst))
+    }
+}
+
+impl Rotation<Ecef, Eci> {
+    /// GMST 角 (ラジアン) から ECEF→ECI 回転を構築。
+    ///
+    /// Z 軸まわりに +GMST 回す: ECI = R_z(+GMST) × ECEF。
+    pub fn from_gmst(gmst: f64) -> Self {
+        let axis = nalgebra::Unit::new_normalize(Vector3::z());
+        Self::from_raw(UnitQuaternion::from_axis_angle(&axis, gmst))
+    }
+}
+
 impl<From, To> std::fmt::Debug for Rotation<From, To> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let from = std::any::type_name::<From>()
@@ -396,5 +418,71 @@ mod tests {
         let s = format!("{v:?}");
         assert!(s.contains("Eci"));
         assert!(s.contains("1"));
+    }
+
+    // ─── Rotation<Eci, Ecef> from_gmst tests ────────────────────
+
+    #[test]
+    fn from_gmst_zero_is_identity() {
+        let r = Rotation::<Eci, Ecef>::from_gmst(0.0);
+        let v = Vec3::<Eci>::new(1.0, 2.0, 3.0);
+        let result = r.transform(&v);
+        assert!((result.x() - 1.0).abs() < 1e-14);
+        assert!((result.y() - 2.0).abs() < 1e-14);
+        assert!((result.z() - 3.0).abs() < 1e-14);
+    }
+
+    #[test]
+    fn from_gmst_90deg() {
+        let r = Rotation::<Eci, Ecef>::from_gmst(PI / 2.0);
+        let v = Vec3::<Eci>::new(1.0, 0.0, 0.0);
+        let result = r.transform(&v);
+        // ECEF = R_z(-GMST) × ECI: with GMST=90°, +X_ECI → −Y_ECEF
+        assert!(result.x().abs() < 1e-14);
+        assert!((result.y() + 1.0).abs() < 1e-14);
+        assert!(result.z().abs() < 1e-14);
+    }
+
+    #[test]
+    fn from_gmst_roundtrip() {
+        let gmst = 1.234;
+        let r_ei = Rotation::<Eci, Ecef>::from_gmst(gmst);
+        let r_ie = Rotation::<Ecef, Eci>::from_gmst(gmst);
+
+        let v = Vec3::<Eci>::new(100.0, 200.0, 300.0);
+        let ecef = r_ei.transform(&v);
+        let back = r_ie.transform(&ecef);
+        assert!((back.x() - v.x()).abs() < 1e-10);
+        assert!((back.y() - v.y()).abs() < 1e-10);
+        assert!((back.z() - v.z()).abs() < 1e-10);
+    }
+
+    #[test]
+    fn from_gmst_matches_manual_eci_to_ecef() {
+        // Cross-check: from_gmst should produce the same result as
+        // the manual Eci::to_ecef method in lib.rs.
+        let gmst = 0.7;
+        let eci = Vec3::<Eci>::new(6778.0, 0.0, 0.0);
+        let ecef_manual = crate::Eci::to_ecef(&eci, gmst);
+        let ecef_rotation = Rotation::<Eci, Ecef>::from_gmst(gmst).transform(&eci);
+
+        assert!(
+            (ecef_rotation.x() - ecef_manual.x()).abs() < 1e-10,
+            "x mismatch: {} vs {}",
+            ecef_rotation.x(),
+            ecef_manual.x()
+        );
+        assert!(
+            (ecef_rotation.y() - ecef_manual.y()).abs() < 1e-10,
+            "y mismatch: {} vs {}",
+            ecef_rotation.y(),
+            ecef_manual.y()
+        );
+        assert!(
+            (ecef_rotation.z() - ecef_manual.z()).abs() < 1e-10,
+            "z mismatch: {} vs {}",
+            ecef_rotation.z(),
+            ecef_manual.z()
+        );
     }
 }

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use kaname::epoch::Epoch;
+use kaname::frame::{self, Vec3};
 use nalgebra::Vector3;
 
 use crate::OrbitalState;
@@ -11,7 +12,7 @@ use crate::model::{HasOrbit, Model};
 ///
 /// Stored as an `Arc<dyn Fn>` so the struct is cheaply cloneable and can hold
 /// closures that capture state (e.g., an interpolated ephemeris table).
-pub type BodyPositionFn = Arc<dyn Fn(&Epoch) -> Vector3<f64> + Send + Sync>;
+pub type BodyPositionFn = Arc<dyn Fn(&Epoch) -> Vec3<frame::Eci> + Send + Sync>;
 
 /// Third-body gravitational perturbation.
 ///
@@ -91,7 +92,7 @@ impl ThirdBodyGravity {
     /// a higher-accuracy ephemeris source (e.g., a precomputed table).
     pub fn custom<F>(name: &'static str, mu_body: f64, position_fn: F) -> Self
     where
-        F: Fn(&Epoch) -> Vector3<f64> + Send + Sync + 'static,
+        F: Fn(&Epoch) -> Vec3<frame::Eci> + Send + Sync + 'static,
     {
         Self {
             name,
@@ -109,7 +110,7 @@ impl ThirdBodyGravity {
             None => return Vector3::zeros(),
         };
 
-        let r_body = (self.body_position_fn)(epoch);
+        let r_body = (self.body_position_fn)(epoch).into_inner();
         let r_sat_to_body = r_body - *state.position();
         let d = r_sat_to_body.magnitude();
         let r_body_mag = r_body.magnitude();
@@ -304,7 +305,7 @@ mod tests {
     fn custom_third_body_uses_supplied_closure() {
         // Build a custom third body at a fixed position and verify the
         // acceleration matches the analytic tidal formula.
-        let fake_body_pos = vector![1.0e6, 0.0, 0.0];
+        let fake_body_pos = Vec3::<frame::Eci>::new(1.0e6, 0.0, 0.0);
         let fake_mu = 1.0e5;
         let tb = ThirdBodyGravity::custom("fake", fake_mu, move |_epoch| fake_body_pos);
         let state = iss_state();
@@ -313,12 +314,13 @@ mod tests {
         let a = tb.acceleration(&state, Some(&epoch));
 
         // Expected: μ_body * [(r_body - r_sat)/|r_body - r_sat|³ - r_body/|r_body|³]
-        let r_sat_to_body = fake_body_pos - *state.position();
+        let fake_body_raw = fake_body_pos.into_inner();
+        let r_sat_to_body = fake_body_raw - *state.position();
         let d = r_sat_to_body.magnitude();
-        let r_body_mag = fake_body_pos.magnitude();
+        let r_body_mag = fake_body_raw.magnitude();
         let expected = fake_mu
             * (r_sat_to_body / (d * d * d)
-                - fake_body_pos / (r_body_mag * r_body_mag * r_body_mag));
+                - fake_body_raw / (r_body_mag * r_body_mag * r_body_mag));
         let err = (a - expected).magnitude();
         assert!(
             err < 1e-15,
@@ -361,8 +363,8 @@ mod tests {
         // This simulates what a tabulated (Horizons-backed) source would do.
         struct FakeMoonEphem;
         impl MoonEphemeris for FakeMoonEphem {
-            fn position_eci(&self, _epoch: &Epoch) -> Vector3<f64> {
-                vector![400_000.0, 0.0, 0.0]
+            fn position_eci(&self, _epoch: &Epoch) -> Vec3<frame::Eci> {
+                Vec3::new(400_000.0, 0.0, 0.0)
             }
             fn name(&self) -> &str {
                 "fake"
@@ -393,9 +395,9 @@ mod tests {
         // Captured-state closures are the whole point of the `Arc<dyn Fn>`
         // refactor — verify that a closure capturing a `Vec` works.
         let positions = vec![
-            vector![1.0e6, 0.0, 0.0],
-            vector![0.0, 1.0e6, 0.0],
-            vector![0.0, 0.0, 1.0e6],
+            Vec3::<frame::Eci>::new(1.0e6, 0.0, 0.0),
+            Vec3::<frame::Eci>::new(0.0, 1.0e6, 0.0),
+            Vec3::<frame::Eci>::new(0.0, 0.0, 1.0e6),
         ];
         // Move the Vec into the closure; the closure returns the first entry.
         let tb = ThirdBodyGravity::custom("captured", 1.0e5, move |_epoch| positions[0]);

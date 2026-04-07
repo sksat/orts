@@ -71,7 +71,7 @@ pub fn earth_rotation_angle(epoch_jd: f64, t: f64) -> f64 {
 pub fn sun_direction_eci(epoch_jd: f64, t: f64) -> Vec<f32> {
     let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
     let dir = sun::sun_direction_eci(&epoch);
-    vec![dir.x as f32, dir.y as f32, dir.z as f32]
+    vec![dir.x() as f32, dir.y() as f32, dir.z() as f32]
 }
 
 /// Sun direction (unit vector) as seen from a given central body, in J2000 equatorial frame.
@@ -84,7 +84,7 @@ pub fn sun_direction_eci(epoch_jd: f64, t: f64) -> Vec<f32> {
 pub fn sun_direction_from_body(body: &str, epoch_jd: f64, t: f64) -> Vec<f32> {
     let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
     let dir = sun::sun_direction_from_body(body, &epoch);
-    vec![dir.x as f32, dir.y as f32, dir.z as f32]
+    vec![dir.x() as f32, dir.y() as f32, dir.z() as f32]
 }
 
 /// Sun distance [km] from a given central body.

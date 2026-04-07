@@ -1,6 +1,5 @@
-use nalgebra::Vector3;
-
 use crate::epoch::Epoch;
+use crate::frame::{self, Vec3};
 
 /// Moon position vector in ECI (J2000) frame [km].
 ///
@@ -9,7 +8,7 @@ use crate::epoch::Epoch;
 /// E correction factor, and planetary perturbation corrections.
 ///
 /// Accuracy: ~10" in ecliptic longitude, ~1% in distance (~4,000 km).
-pub fn moon_position_eci(epoch: &Epoch) -> Vector3<f64> {
+pub fn moon_position_eci(epoch: &Epoch) -> Vec3<frame::Eci> {
     let t = epoch.centuries_since_j2000();
     let t2 = t * t;
     let t3 = t2 * t;
@@ -227,7 +226,7 @@ pub fn moon_position_eci(epoch: &Epoch) -> Vector3<f64> {
     let y = distance_km * (cos_eps * cos_beta * sin_lam - sin_eps * sin_beta);
     let z = distance_km * (sin_eps * cos_beta * sin_lam + cos_eps * sin_beta);
 
-    Vector3::new(x, y, z)
+    Vec3::new(x, y, z)
 }
 
 /// Moon ephemeris source abstraction.
@@ -243,13 +242,13 @@ pub fn moon_position_eci(epoch: &Epoch) -> Vector3<f64> {
 /// Horizons data) that can provide velocity more accurately should override it.
 pub trait MoonEphemeris: Send + Sync {
     /// Moon position in ECI [km] at the given epoch.
-    fn position_eci(&self, epoch: &Epoch) -> Vector3<f64>;
+    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci>;
 
     /// Moon velocity in ECI [km/s] at the given epoch.
     ///
     /// Default: central finite difference over `position_eci` with a 1-second
     /// step. Override for sources that can supply analytic velocity.
-    fn velocity_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+    fn velocity_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
         let dt = 1.0;
         let r_plus = self.position_eci(&epoch.add_seconds(dt));
         let r_minus = self.position_eci(&epoch.add_seconds(-dt));
@@ -268,7 +267,7 @@ pub trait MoonEphemeris: Send + Sync {
 pub struct MeeusMoonEphemeris;
 
 impl MoonEphemeris for MeeusMoonEphemeris {
-    fn position_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
         moon_position_eci(epoch)
     }
 
@@ -286,11 +285,11 @@ impl MoonEphemeris for MeeusMoonEphemeris {
 /// without re-parsing tables or re-fetching data — e.g.
 /// `ThirdBodyGravity::moon_with_ephemeris(Arc::clone(&shared_ephem))`.
 impl<T: MoonEphemeris + ?Sized> MoonEphemeris for std::sync::Arc<T> {
-    fn position_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
         (**self).position_eci(epoch)
     }
 
-    fn velocity_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+    fn velocity_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
         (**self).velocity_eci(epoch)
     }
 
@@ -372,9 +371,9 @@ impl HorizonsMoonEphemeris {
 }
 
 impl MoonEphemeris for HorizonsMoonEphemeris {
-    fn position_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
         match self.table.interpolate(epoch) {
-            Some(sample) => sample.position,
+            Some(sample) => Vec3::from_raw(sample.position),
             None => {
                 self.record_fallback();
                 self.fallback.position_eci(epoch)
@@ -382,11 +381,11 @@ impl MoonEphemeris for HorizonsMoonEphemeris {
         }
     }
 
-    fn velocity_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+    fn velocity_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
         // Hermite interpolation gives us analytic velocity — use it directly
         // rather than the trait's default central-difference implementation.
         match self.table.interpolate(epoch) {
-            Some(sample) => sample.velocity,
+            Some(sample) => Vec3::from_raw(sample.velocity),
             None => {
                 self.record_fallback();
                 self.fallback.velocity_eci(epoch)
@@ -470,13 +469,13 @@ mod tests {
     fn moon_not_in_ecliptic() {
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let pos = moon_position_eci(&epoch);
-        let z_frac = pos.z.abs() / pos.magnitude();
+        let z_frac = pos.z().abs() / pos.magnitude();
 
         let mut max_z_frac = 0.0_f64;
         for i in 0..28 {
             let ep = epoch.add_seconds(i as f64 * 86400.0);
             let p = moon_position_eci(&ep);
-            max_z_frac = max_z_frac.max(p.z.abs() / p.magnitude());
+            max_z_frac = max_z_frac.max(p.z().abs() / p.magnitude());
         }
         assert!(
             max_z_frac > 0.1,
@@ -560,8 +559,8 @@ $$EOE
         let epoch = Epoch::from_jd(2459000.125);
         let pos = ephem.position_eci(&epoch);
         let vel = ephem.velocity_eci(&epoch);
-        assert!((pos.x - 10_800.0).abs() < 1e-6);
-        assert!((vel.x - 1.0).abs() < 1e-9);
+        assert!((pos.x() - 10_800.0).abs() < 1e-6);
+        assert!((vel.x() - 1.0).abs() < 1e-9);
         assert_eq!(ephem.fallback_count(), 0);
     }
 
@@ -648,13 +647,13 @@ $$EOE
             base_jd: f64,
         }
         impl MoonEphemeris for CountingEphem {
-            fn position_eci(&self, epoch: &Epoch) -> Vector3<f64> {
+            fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
                 self.calls.fetch_add(1, Ordering::Relaxed);
                 let offset_sec = (epoch.jd() - self.base_jd) * 86400.0;
                 self.last_offsets.lock().unwrap().push(offset_sec);
                 // Linear test input: position at time t is (t, 0, 0) where
                 // t is in seconds from base_jd. The slope is 1 km/s on x.
-                Vector3::new(offset_sec, 0.0, 0.0)
+                Vec3::new(offset_sec, 0.0, 0.0)
             }
             fn name(&self) -> &str {
                 "counting"
@@ -696,11 +695,11 @@ $$EOE
         // `position(+dt) - position(-dt) ≈ 2 km` — so the output is dominated
         // by JD precision on the offsets rather than on the raw slope.
         assert!(
-            (v.x - 1.0).abs() < 1e-3,
+            (v.x() - 1.0).abs() < 1e-3,
             "linear input slope should be 1 km/s, got {}",
-            v.x
+            v.x()
         );
-        assert_eq!(v.y, 0.0);
-        assert_eq!(v.z, 0.0);
+        assert_eq!(v.y(), 0.0);
+        assert_eq!(v.z(), 0.0);
     }
 }

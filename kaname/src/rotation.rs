@@ -436,7 +436,7 @@ mod tests {
         let epoch = Epoch::from_gregorian(1969, 7, 20, 20, 17, 0.0);
         let q = MOON.orientation(&epoch);
         let x_body_eci = q * Vector3::new(1.0, 0.0, 0.0);
-        let moon_pos = crate::moon::moon_position_eci(&epoch);
+        let moon_pos = crate::moon::moon_position_eci(&epoch).into_inner();
         let earth_dir = -moon_pos.normalize();
         let angle = x_body_eci.angle(&earth_dir).to_degrees();
         assert!(
@@ -457,7 +457,7 @@ mod tests {
         for epoch in &epochs {
             let q = moon_orientation(epoch);
             let x_body_eci = q * Vector3::new(1.0, 0.0, 0.0);
-            let moon_pos = crate::moon::moon_position_eci(epoch);
+            let moon_pos = crate::moon::moon_position_eci(epoch).into_inner();
             let earth_dir = -moon_pos.normalize();
             let angle = x_body_eci.angle(&earth_dir).to_degrees();
             assert!(

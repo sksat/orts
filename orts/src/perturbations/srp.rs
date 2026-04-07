@@ -111,7 +111,7 @@ impl SolarRadiationPressure {
             None => return Vector3::zeros(),
         };
 
-        let sun_pos = sun::sun_position_eci(epoch);
+        let sun_pos = sun::sun_position_eci(epoch).into_inner();
         let sat_to_sun = sun_pos - *state.position();
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
@@ -180,7 +180,7 @@ mod tests {
         let a = srp.acceleration(&state, Some(&epoch));
 
         // Sun direction at equinox is roughly +X, so acceleration should be roughly -X
-        let sun_dir = sun::sun_direction_eci(&epoch);
+        let sun_dir = sun::sun_direction_eci(&epoch).into_inner();
         let cos_angle = a.normalize().dot(&sun_dir);
         // Acceleration should point away from Sun (cos < -0.5)
         assert!(
