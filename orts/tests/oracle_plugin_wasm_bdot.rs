@@ -2,8 +2,8 @@
 //!
 //! This test loads the `orts-example-plugin-bdot-finite-diff` WASM
 //! Component and drives it through the full host pipeline
-//! (`WasmEngine` → `Component` → `WasmController` → `PluginController`
-//! → `ActuatorBundle` → `CommandedMagnetorquer` → ODE integration).
+//! (`WasmEngine` -> `Component` -> `WasmController` -> `PluginController`
+//! -> `ActuatorBundle` -> `CommandedMagnetorquer` -> ODE integration).
 //! The resulting trajectory is compared against the pre-existing
 //! native `BdotFiniteDiff` controller.
 //!
@@ -49,7 +49,7 @@ const MAX_MOMENT: f64 = 10.0;
 fn guest_wasm_bytes() -> Vec<u8> {
     // `cargo component build` places the output under `wasm32-wasip1/`
     // even though the Component Model uses WASI preview 2 internally.
-    // This is because `cargo-component` applies a wasip1→component
+    // This is because `cargo-component` applies a wasip1->component
     // adapter as a post-build step. If a future `cargo-component`
     // version switches the target directory to `wasm32-wasip2/`, this
     // path will need updating.
@@ -131,9 +131,6 @@ fn run_wasm(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
         Arc::new(TiltedDipole::earth());
 
     let mut bundle = ActuatorBundle::new();
-    bundle
-        .apply(&ctrl.initial_command())
-        .expect("initial command must be finite");
 
     let mut sensor_bundle = SensorBundle {
         magnetometer: Some(Magnetometer::new(Arc::clone(&field_model))),
@@ -168,10 +165,12 @@ fn run_wasm(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
             sensors: &sensors,
             spacecraft: &snapshot,
         };
-        let cmd = ctrl
+        if let Some(cmd) = ctrl
             .update(&input)
-            .expect("WASM controller must return a valid command");
-        bundle.apply(&cmd).expect("WASM command must be finite");
+            .expect("WASM controller must return a valid command")
+        {
+            bundle.apply(&cmd).expect("WASM command must be finite");
+        }
     }
     state
 }

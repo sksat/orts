@@ -1,15 +1,15 @@
-//! PD attitude controller with reaction wheel output — WASM Component guest.
+//! PD attitude controller with reaction wheel output -- WASM Component guest.
 //!
 //! Reads star tracker (attitude) and gyroscope (angular velocity) from
-//! sensor readings, computes PD torque command, and returns
-//! `Command::RwTorque`.
+//! sensor readings, computes PD torque command, and returns a `Command`
+//! with `rw_torque` set.
 //!
 //! Control law (left-invariant quaternion error):
 //!
 //! ```text
 //! q_err = q_target^{-1} * q_current
-//! θ_error ≈ 2 * q_err.vector_part  (hemisphere-selected)
-//! τ = -Kp * θ_error - Kd * ω
+//! theta_error ~ 2 * q_err.vector_part  (hemisphere-selected)
+//! tau = -Kp * theta_error - Kd * omega
 //! ```
 
 #[allow(warnings)]
@@ -77,15 +77,7 @@ impl Guest for Component {
         Ok(())
     }
 
-    fn initial_command() -> Command {
-        Command::RwTorque(Vec3 {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-        })
-    }
-
-    fn update(input: TickInput) -> Result<Command, String> {
+    fn update(input: TickInput) -> Result<Option<Command>, String> {
         STATE.with(|state| {
             let s = state.borrow();
 
@@ -113,21 +105,24 @@ impl Guest for Component {
                 q_err
             };
 
-            // Body-frame angular error: θ ≈ 2 * q_err.vector_part
+            // Body-frame angular error: theta ~ 2 * q_err.vector_part
             let theta_x = 2.0 * ex;
             let theta_y = 2.0 * ey;
             let theta_z = 2.0 * ez;
             let _ = ew; // scalar part unused
 
-            // PD torque: τ = -Kp * θ_error - Kd * ω
+            // PD torque: tau = -Kp * theta_error - Kd * omega
             let tx = -s.kp * theta_x - s.kd * omega.x;
             let ty = -s.kp * theta_y - s.kd * omega.y;
             let tz = -s.kp * theta_z - s.kd * omega.z;
 
-            Ok(Command::RwTorque(Vec3 {
-                x: tx,
-                y: ty,
-                z: tz,
+            Ok(Some(Command {
+                magnetic_moment: None,
+                rw_torque: Some(CommandedRwTorque {
+                    x: tx,
+                    y: ty,
+                    z: tz,
+                }),
             }))
         })
     }
@@ -139,7 +134,7 @@ impl Guest for Component {
 
 bindings::export!(Component with_types_in bindings);
 
-// ─── quaternion helpers ──────────────────────────────────────────
+// --- quaternion helpers --------------------------------------------------
 
 /// Compute q_a^{-1} * q_b where q_a is a unit quaternion (inverse = conjugate).
 /// Returns (w, x, y, z).

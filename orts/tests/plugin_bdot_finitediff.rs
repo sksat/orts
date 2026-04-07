@@ -84,19 +84,16 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotFiniteDiff<F> {
     fn sample_period(&self) -> f64 {
         self.sample_period
     }
-    fn initial_command(&self) -> Command {
-        Command::MagneticMoment(Vec3::zeros())
-    }
-    fn update(&mut self, obs: &TickInput<'_>) -> Result<Command, PluginError> {
+    fn update(&mut self, obs: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
         let Some(epoch) = obs.epoch else {
-            return Ok(Command::MagneticMoment(Vec3::zeros()));
+            return Ok(Some(Command::magnetic_moment(Vec3::zeros())));
         };
         let b_eci = self
             .field
             .field_eci(&obs.spacecraft.orbit.position_eci(), epoch)
             .into_inner();
         if b_eci.magnitude() < 1e-30 {
-            return Ok(Command::MagneticMoment(Vec3::zeros()));
+            return Ok(Some(Command::magnetic_moment(Vec3::zeros())));
         }
         let b_body = obs
             .spacecraft
@@ -109,7 +106,7 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotFiniteDiff<F> {
             Some(prev_b) => {
                 let dt = obs.t - self.prev_t;
                 if dt < 1e-15 {
-                    return Ok(Command::MagneticMoment(Vec3::zeros()));
+                    return Ok(Some(Command::magnetic_moment(Vec3::zeros())));
                 }
                 let db_dt = (b_body - prev_b) / dt;
                 let mut m = -self.gain * db_dt;
@@ -124,11 +121,11 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotFiniteDiff<F> {
         self.prev_b_body = Some(b_body);
         self.prev_t = obs.t;
 
-        let cmd = Command::MagneticMoment(Vec3::from_raw(m_cmd));
+        let cmd = Command::magnetic_moment(Vec3::from_raw(m_cmd));
         if !cmd.is_finite() {
             return Err(PluginError::BadCommand(format!("{cmd:?}")));
         }
-        Ok(cmd)
+        Ok(Some(cmd))
     }
 }
 
@@ -202,9 +199,6 @@ fn run_plugin_path(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
         SAMPLE_PERIOD,
     );
     let mut bundle = ActuatorBundle::new();
-    bundle
-        .apply(&ctrl.initial_command())
-        .expect("initial command must be finite");
 
     let sensors = Sensors::empty();
     let mut state = initial;
@@ -236,7 +230,8 @@ fn run_plugin_path(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
         };
         let cmd = ctrl
             .update(&obs)
-            .expect("plugin controller must return a valid command");
+            .expect("plugin controller must return a valid command")
+            .expect("plugin controller must return Some command");
         bundle.apply(&cmd).expect("plugin command must be finite");
     }
 
@@ -286,7 +281,6 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
         SAMPLE_PERIOD,
     );
     let mut bundle = ActuatorBundle::new();
-    bundle.apply(&ctrl.initial_command()).unwrap();
 
     let sensors = Sensors::empty();
     let initial = initial_attitude();
@@ -310,10 +304,10 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
         epoch: Some(&epoch1),
         sensors: &sensors,
     };
-    let cmd1 = ctrl.update(&obs1).unwrap();
+    let cmd1 = ctrl.update(&obs1).unwrap().expect("must return Some");
     bundle.apply(&cmd1).unwrap();
     // First tick: no finite-difference history => zero command.
-    assert_eq!(cmd1.as_magnetic_moment(), Some(Vec3::<Body>::zeros()));
+    assert_eq!(cmd1.magnetic_moment, Some(Vec3::<Body>::zeros()));
 
     let actuator2 =
         CommandedMagnetorquer::new(bundle.magnetic_moment().into_inner(), TiltedDipole::earth());
@@ -341,9 +335,9 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
         epoch: Some(&epoch2),
         sensors: &sensors,
     };
-    let cmd2 = ctrl.update(&obs2).unwrap();
+    let cmd2 = ctrl.update(&obs2).unwrap().expect("must return Some");
     let m = cmd2
-        .as_magnetic_moment()
+        .magnetic_moment
         .expect("controller must emit a magnetic moment command");
     assert!(
         m.magnitude() > 0.0,

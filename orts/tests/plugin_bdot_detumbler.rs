@@ -6,10 +6,10 @@
 //! `plugin_bdot_finitediff.rs`, this controller is **stateless** and
 //! computes the commanded magnetic moment analytically:
 //!
-//!     m = -k · (ω × B_body)
+//!     m = -k * (omega x B_body)
 //!
-//! clamped component-wise to `±max_moment`. This exercises a
-//! different TickInput path — the plugin controller reads
+//! clamped component-wise to `+-max_moment`. This exercises a
+//! different TickInput path -- the plugin controller reads
 //! `obs.spacecraft.attitude.angular_velocity` directly, validating
 //! that the plugin layer can deliver rate-gyro information to guest
 //! controllers. Phase P1 WASM guests will use the same field.
@@ -23,7 +23,7 @@
 //!
 //! 1. Every command returned by the plugin controller is finite.
 //! 2. The simulation does not diverge numerically.
-//! 3. Detumbling actually happens — the final angular-velocity
+//! 3. Detumbling actually happens -- the final angular-velocity
 //!    magnitude is strictly smaller than the initial one, by a
 //!    margin that would not be reached without a working controller.
 
@@ -44,24 +44,24 @@ const ALT_KM: f64 = 500.0;
 const SAMPLE_PERIOD: f64 = 0.5;
 const ODE_DT: f64 = 0.1;
 const T_END: f64 = 600.0;
-// B-dot detumbling time constant is `τ ≈ 4·I / (k · |B|²)`. With a
-// 1 kg·m² inertia and a TiltedDipole-level field (`|B| ≈ 2e-5 T` in
-// LEO), a `k = 5e4` gain gives `τ ≈ 2·10^5 s` (~55 h), which only
+// B-dot detumbling time constant is `tau ~ 4*I / (k * |B|^2)`. With a
+// 1 kg*m^2 inertia and a TiltedDipole-level field (`|B| ~ 2e-5 T` in
+// LEO), a `k = 5e4` gain gives `tau ~ 2*10^5 s` (~55 h), which only
 // damps a few percent over 600 s of wall-clock simulation. We bump
 // `k` by two orders of magnitude to get a ~2000 s time constant so
-// that the 600 s test window sees a measurable reduction — this is
+// that the 600 s test window sees a measurable reduction -- this is
 // not a physically realistic magnetorquer gain, just a test knob.
 const GAIN: f64 = 5e6;
-// Max commanded moment per axis. With `GAIN = 5e6`, `|ω| ≈ 0.1`, and
-// `|B| ≈ 2e-5 T`, the unclamped command magnitude is roughly
-// `k · |ω| · |B| ≈ 10 A·m²`. A real CubeSat magnetorquer tops out at
-// 1–3 A·m², but for the test we pick 50 to keep clamping rare so
+// Max commanded moment per axis. With `GAIN = 5e6`, `|omega| ~ 0.1`, and
+// `|B| ~ 2e-5 T`, the unclamped command magnitude is roughly
+// `k * |omega| * |B| ~ 10 A*m^2`. A real CubeSat magnetorquer tops out at
+// 1-3 A*m^2, but for the test we pick 50 to keep clamping rare so
 // that the observed damping reflects the control law rather than
 // saturation behaviour.
 const MAX_MOMENT: f64 = 50.0;
 const INITIAL_OMEGA: [f64; 3] = [0.08, 0.05, -0.04];
 // Expect at least 10% damping over the 600 s run. A broken
-// controller (always zero command) leaves |ω| essentially unchanged
+// controller (always zero command) leaves |omega| essentially unchanged
 // because gravity gradient on a near-spherical inertia dissipates
 // far less than 1% over this horizon.
 const DAMPING_FLOOR: f64 = 0.10;
@@ -69,7 +69,7 @@ const DAMPING_FLOOR: f64 = 0.10;
 // =============================================================
 // Plugin-layer Detumbler (analytic, stateless)
 //
-// m = -k · (ω × B_body), clamped per-axis.
+// m = -k * (omega x B_body), clamped per-axis.
 // =============================================================
 
 struct PluginBdotDetumbler<F: MagneticFieldModel = TiltedDipole> {
@@ -100,19 +100,16 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
     fn sample_period(&self) -> f64 {
         self.sample_period
     }
-    fn initial_command(&self) -> Command {
-        Command::MagneticMoment(Vec3::zeros())
-    }
-    fn update(&mut self, obs: &TickInput<'_>) -> Result<Command, PluginError> {
+    fn update(&mut self, obs: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
         let Some(epoch) = obs.epoch else {
-            return Ok(Command::MagneticMoment(Vec3::zeros()));
+            return Ok(Some(Command::magnetic_moment(Vec3::zeros())));
         };
         let b_eci = self
             .field
             .field_eci(&obs.spacecraft.orbit.position_eci(), epoch)
             .into_inner();
         if b_eci.magnitude() < 1e-30 {
-            return Ok(Command::MagneticMoment(Vec3::zeros()));
+            return Ok(Some(Command::magnetic_moment(Vec3::zeros())));
         }
         let b_body = obs
             .spacecraft
@@ -129,11 +126,11 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
         for i in 0..3 {
             m_cmd[i] = m_cmd[i].clamp(-self.max_moment[i], self.max_moment[i]);
         }
-        let cmd = Command::MagneticMoment(Vec3::from_raw(m_cmd));
+        let cmd = Command::magnetic_moment(Vec3::from_raw(m_cmd));
         if !cmd.is_finite() {
             return Err(PluginError::BadCommand(format!("{cmd:?}")));
         }
-        Ok(cmd)
+        Ok(Some(cmd))
     }
 }
 
@@ -173,9 +170,6 @@ fn run(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
         SAMPLE_PERIOD,
     );
     let mut bundle = ActuatorBundle::new();
-    bundle
-        .apply(&ctrl.initial_command())
-        .expect("initial command must be finite");
 
     let sensors = Sensors::empty();
     let mut state = initial;
@@ -215,7 +209,8 @@ fn run(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
         };
         let cmd = ctrl
             .update(&obs)
-            .expect("plugin controller must return a valid command");
+            .expect("plugin controller must return a valid command")
+            .expect("plugin controller must return Some command");
         bundle.apply(&cmd).expect("plugin command must be finite");
     }
 
@@ -241,7 +236,7 @@ fn plugin_bdot_detumbler_reduces_angular_velocity() {
     assert!(
         reduction > DAMPING_FLOOR,
         "expected >{:.0}% damping, got {:.2}% \
-         (|ω_initial|={initial_magnitude:.6}, |ω_final|={final_magnitude:.6})",
+         (|omega_initial|={initial_magnitude:.6}, |omega_final|={final_magnitude:.6})",
         DAMPING_FLOOR * 100.0,
         reduction * 100.0,
     );
@@ -251,7 +246,7 @@ fn plugin_bdot_detumbler_reduces_angular_velocity() {
 fn plugin_bdot_detumbler_uses_angular_velocity_from_observation() {
     // Sanity check: when we pass in zero angular velocity, the
     // stateless detumbler must return a zero command. This is what
-    // distinguishes it from the finite-difference variant — the
+    // distinguishes it from the finite-difference variant -- the
     // detumbler depends *only* on the rate-gyro reading.
     let mut ctrl = PluginBdotDetumbler::new(
         GAIN,
@@ -275,6 +270,6 @@ fn plugin_bdot_detumbler_uses_angular_velocity_from_observation() {
         epoch: Some(&epoch),
         sensors: &sensors,
     };
-    let cmd = ctrl.update(&obs).unwrap();
-    assert_eq!(cmd.as_magnetic_moment(), Some(Vec3::<Body>::zeros()));
+    let cmd = ctrl.update(&obs).unwrap().expect("must return Some");
+    assert_eq!(cmd.magnetic_moment, Some(Vec3::<Body>::zeros()));
 }

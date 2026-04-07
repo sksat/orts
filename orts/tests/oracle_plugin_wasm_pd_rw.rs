@@ -7,7 +7,7 @@
 //! 4. Same initial condition (10 deg error about Z)
 //!
 //! The native path evaluates the PD law inline; the WASM path reads
-//! star tracker + gyroscope sensors and returns `Command::RwTorque`.
+//! star tracker + gyroscope sensors and returns `Command::rw_torque`.
 //!
 //! **Prerequisites**: build the guest first:
 //!
@@ -140,9 +140,6 @@ fn run_wasm(initial: AttitudeState) -> AugmentedState<AttitudeState> {
     let rw = ReactionWheelAssembly::three_axis(RW_INERTIA, RW_MAX_MOMENTUM, RW_MAX_TORQUE);
 
     let mut bundle = ActuatorBundle::new();
-    bundle
-        .apply(&ctrl.initial_command())
-        .expect("initial command must be finite");
 
     let mut sensor_bundle = SensorBundle {
         magnetometer: None,
@@ -185,10 +182,12 @@ fn run_wasm(initial: AttitudeState) -> AugmentedState<AttitudeState> {
             sensors: &sensors,
             spacecraft: &snapshot,
         };
-        let cmd = ctrl
+        if let Some(cmd) = ctrl
             .update(&input)
-            .expect("WASM controller must return a valid command");
-        bundle.apply(&cmd).expect("WASM command must be finite");
+            .expect("WASM controller must return a valid command")
+        {
+            bundle.apply(&cmd).expect("WASM command must be finite");
+        }
     }
 
     state

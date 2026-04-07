@@ -90,7 +90,7 @@ fn main() {
         write_csv(&csv_path, &trajectory);
         let final_omega = trajectory.last().unwrap().1;
         println!(
-            "  {} → |ω| {:.6} → {:.6} rad/s ({:.1}% reduction)",
+            "  {} -> |omega| {:.6} -> {:.6} rad/s ({:.1}% reduction)",
             case.label,
             case.initial_omega_mag,
             final_omega,
@@ -102,7 +102,7 @@ fn main() {
     println!("Plot with: cd plugins/bdot-finite-diff && python plot.py");
 }
 
-/// (t, |ω|, ω_x, ω_y, ω_z)
+/// (t, |omega|, omega_x, omega_y, omega_z)
 type TrajectoryPoint = (f64, f64, f64, f64, f64);
 
 fn run_case(
@@ -128,7 +128,6 @@ fn run_case(
     let mut ctrl =
         WasmController::new(pre, &case.label, &config).expect("WasmController::new failed");
     let mut bundle = ActuatorBundle::new();
-    bundle.apply(&ctrl.initial_command()).unwrap();
 
     let mut sensor_bundle = SensorBundle {
         magnetometer: Some(Magnetometer::new(Arc::clone(&field_model))),
@@ -175,8 +174,9 @@ fn run_case(
             sensors: &sensors,
             spacecraft: &snapshot,
         };
-        let cmd = ctrl.update(&obs).expect("WASM update must succeed");
-        bundle.apply(&cmd).expect("command must be finite");
+        if let Some(cmd) = ctrl.update(&obs).expect("WASM update must succeed") {
+            bundle.apply(&cmd).expect("command must be finite");
+        }
 
         let w = &state.angular_velocity;
         trajectory.push((t, w.magnitude(), w.x, w.y, w.z));

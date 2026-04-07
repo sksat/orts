@@ -1,7 +1,7 @@
 //! 離散制御 + ZOH 積分ループ。
 //!
 //! Config から宇宙機ダイナミクス + プラグインコントローラ + センサ + RW を
-//! 組み立て、制御サンプル周期ごとに積分 → センサ評価 → プラグイン呼び出し →
+//! 組み立て、制御サンプル周期ごとに積分 -> センサ評価 -> プラグイン呼び出し ->
 //! アクチュエータ更新 を繰り返す。`orts run` と `orts serve` の両方から使う。
 
 use std::sync::Arc;
@@ -94,10 +94,7 @@ pub fn build_controlled_satellite(
     // センサを構築。
     let sensors = build_sensor_bundle(spec.sensor_choices.as_deref());
 
-    let mut actuators = ActuatorBundle::new();
-    actuators
-        .apply(&controller.initial_command())
-        .map_err(|e| format!("initial command error: {e}"))?;
+    let actuators = ActuatorBundle::new();
 
     Ok(ControlledSatellite {
         dynamics,
@@ -149,18 +146,20 @@ pub fn step_controlled(
         sensors: &sensors,
         spacecraft: &sat.state.plant,
     };
-    let cmd = sat
+    if let Some(cmd) = sat
         .controller
         .update(&input)
-        .map_err(|e| format!("controller error at t={t_next:.3}: {e}"))?;
-    sat.actuators
-        .apply(&cmd)
-        .map_err(|e| format!("actuator error at t={t_next:.3}: {e}"))?;
+        .map_err(|e| format!("controller error at t={t_next:.3}: {e}"))?
+    {
+        sat.actuators
+            .apply(&cmd)
+            .map_err(|e| format!("actuator error at t={t_next:.3}: {e}"))?;
+    }
 
     Ok(())
 }
 
-// ─── builder helpers ─────────────────────────────────────────────
+// --- builder helpers ---------------------------------------------------------
 
 fn build_controller(config: &ControllerConfig) -> Result<Box<dyn PluginController>, String> {
     match config {

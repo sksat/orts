@@ -76,7 +76,6 @@ fn main() {
         Arc::new(tobari::magnetic::TiltedDipole::earth());
 
     let mut bundle = ActuatorBundle::new();
-    bundle.apply(&ctrl.initial_command()).unwrap();
 
     let mut sensor_bundle = SensorBundle {
         magnetometer: Some(orts::sensor::Magnetometer::new(Arc::clone(&field_model))),
@@ -126,8 +125,9 @@ fn main() {
             sensors: &sensors,
             spacecraft: &snapshot,
         };
-        let cmd = ctrl.update(&input).expect("WASM update must succeed");
-        bundle.apply(&cmd).expect("command must be finite");
+        if let Some(cmd) = ctrl.update(&input).expect("WASM update must succeed") {
+            bundle.apply(&cmd).expect("command must be finite");
+        }
 
         rows.push(record(&state, t, &target_q));
     }
@@ -139,7 +139,7 @@ fn main() {
 
     let last = rows.last().unwrap();
     println!(
-        "Done. {:.0}s simulated, final attitude error: {:.4} deg, |ω|: {:.6} rad/s",
+        "Done. {:.0}s simulated, final attitude error: {:.4} deg, |omega|: {:.6} rad/s",
         T_END, last.angle_error_deg, last.omega_mag
     );
     println!("CSV written to {}", csv_path.display());

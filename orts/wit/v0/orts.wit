@@ -150,20 +150,29 @@ interface types {
         sensors: sensors,
     }
 
+    /// 機体座標系の磁気ダイポールモーメント指令 \[A·m²\]。
+    record commanded-magnetic-moment {
+        x: f64, y: f64, z: f64,
+    }
+
+    /// 機体座標系の RW トルク指令 \[N·m\]。
+    record commanded-rw-torque {
+        x: f64, y: f64, z: f64,
+    }
+
     /// コントローラが返す論理アクチュエータ指令。
     ///
     /// Phase P1 は `magnetic-moment` と `rw-torque` を定義。
     /// 後続フェーズで `throttle`, `impulsive-dv` 等を追加。
-    /// variant の追加は非破壊的（ホスト側は `#[non_exhaustive]` enum）。
-    /// 既存 variant のリネーム・削除・並べ替えは破壊的変更
-    /// → `wit/v1/` で対応。
-    variant command {
+    /// `None` のフィールドはそのアクチュエータに対するコマンドなし
+    /// (前回値が ZOH で保持される)。
+    record command {
         /// 機体座標系での指令磁気ダイポールモーメント \[A·m²\]。
-        magnetic-moment(vec3),
+        magnetic-moment: option<commanded-magnetic-moment>,
 
         /// RW アセンブリへの指令トルク \[N·m\]、機体座標系。
         /// ホスト側 RW モデルが各ホイール軸への投影を行う。
-        rw-torque(vec3),
+        rw-torque: option<commanded-rw-torque>,
     }
 }
 
@@ -204,8 +213,8 @@ interface host-env {
 /// ゲスト側のエントリーポイント（host が呼び出す export）。
 ///
 /// プラグインはこのインターフェースを 1 回実装する。ホストは衛星ごとに
-/// `wasmtime::component::Instance` を 1 つ作成し、`initial-command` +
-/// `update` 呼び出しをコントローラのサンプル周期で繰り返す。
+/// `wasmtime::component::Instance` を 1 つ作成し、`update` 呼び出しを
+/// コントローラのサンプル周期で繰り返す。
 interface controller {
     use types.{tick-input, command};
 
@@ -217,17 +226,14 @@ interface controller {
     /// Phase P1 では JSON を想定するが強制しない。
     init: func(config: string) -> result<_, string>;
 
-    /// 最初の `update` 前に適用する初期コマンド。
-    /// 通常はゼロモーメント / ゼロトルク等の安全なデフォルト。
-    initial-command: func() -> command;
-
     /// 1 サンプル tick 分進めて、次の ZOH 区間に適用する
-    /// コマンドを返す。
+    /// コマンドを返す。`none` はこの tick ではコマンドなし
+    /// (アクチュエータは前回値を ZOH で保持)。
     ///
     /// Phase P1 ではエラーチャネルに plain `string` を使用。
     /// Phase P2 で構造化 `variant plugin-error { ... }` に
     /// 昇格する可能性あり（ABI 破壊的変更 → `wit/v1/`）。
-    update: func(input: tick-input) -> result<command, string>;
+    update: func(input: tick-input) -> result<option<command>, string>;
 
     /// コントローラの現在のミッションモード名
     /// (detumble / nadir / burn 等)。

@@ -30,9 +30,9 @@ pub enum PluginError {
     #[error("plugin returned a non-finite command: {0}")]
     BadCommand(String),
 
-    /// The actuator bridge was asked to apply a command variant that the
+    /// The actuator bridge was asked to apply a command field that the
     /// current `ActuatorBundle` does not have a target for (e.g. a
-    /// `Command::MagneticMoment` when no magnetorquer is configured).
+    /// `magnetic_moment` command when no magnetorquer is configured).
     #[error("actuator for {command} is not configured")]
     MissingActuator {
         /// Human-readable label of the command variant.

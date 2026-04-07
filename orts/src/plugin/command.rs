@@ -5,9 +5,9 @@
 //! return high-level actuator commands that the host translates into
 //! physical loads via `ActuatorBundle`.
 //!
-//! The variant set grows incrementally with each phase:
-//! - P0.5: `MagneticMoment` (B-dot detumbling)
-//! - P1: `RwTorque` (reaction wheel torque command)
+//! The field set grows incrementally with each phase:
+//! - P0.5: `magnetic_moment` (B-dot detumbling)
+//! - P1: `rw_torque` (reaction wheel torque command)
 //! - P4: thrust throttle / impulsive delta-v
 //! - P5: composite commands for coupled attitude + thrust guest
 //!
@@ -18,16 +18,20 @@ use kaname::frame::{Body, Vec3};
 
 /// Logical command emitted by a controller backend.
 ///
-/// The variants intentionally start minimal and will grow across phases.
-/// The representation is `#[non_exhaustive]` so adding a variant later is
-/// not a breaking change for downstream code that matches on `Command`.
+/// Each field corresponds to one actuator channel. `Some` means the
+/// controller is issuing a command for that actuator; `None` means the
+/// controller has nothing to say about it this tick (the actuator
+/// retains its previous value via zero-order hold).
+///
+/// "No command at all" (i.e. the controller has nothing to do this
+/// tick) is represented by `Option<Command>` being `None` at the call
+/// site, not by an all-`None` `Command` struct.
 #[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub enum Command {
+pub struct Command {
     /// Commanded magnetic dipole moment, expressed in the spacecraft body
     /// frame \[A·m²\]. Consumed by
     /// [`crate::attitude::CommandedMagnetorquer`].
-    MagneticMoment(Vec3<Body>),
+    pub magnetic_moment: Option<Vec3<Body>>,
 
     /// Commanded torque on the spacecraft body from the reaction wheel
     /// assembly \[N·m\], expressed in the body frame. Consumed by
@@ -39,10 +43,26 @@ pub enum Command {
     /// wheel's spin axis). For orthogonal wheel arrangements this is
     /// exact; non-orthogonal layouts may need a separate torque
     /// allocation layer in a future phase.
-    RwTorque(Vec3<Body>),
+    pub rw_torque: Option<Vec3<Body>>,
 }
 
 impl Command {
+    /// Create a command that only sets the magnetic dipole moment.
+    pub fn magnetic_moment(m: Vec3<Body>) -> Self {
+        Self {
+            magnetic_moment: Some(m),
+            rw_torque: None,
+        }
+    }
+
+    /// Create a command that only sets the reaction wheel torque.
+    pub fn rw_torque(t: Vec3<Body>) -> Self {
+        Self {
+            magnetic_moment: None,
+            rw_torque: Some(t),
+        }
+    }
+
     /// Returns `true` if every numeric component in the command is
     /// finite (not NaN / +-Inf).
     ///
@@ -51,28 +71,9 @@ impl Command {
     /// spacecraft state through `axpy` on the next ODE step and destroy
     /// the whole trajectory.
     pub fn is_finite(&self) -> bool {
-        match self {
-            Self::MagneticMoment(m) => m.is_finite(),
-            Self::RwTorque(t) => t.is_finite(),
-        }
-    }
-
-    /// Extract the commanded magnetic dipole moment \[A·m²\], if this
-    /// command is a [`Command::MagneticMoment`].
-    pub fn as_magnetic_moment(&self) -> Option<Vec3<Body>> {
-        match self {
-            Self::MagneticMoment(m) => Some(*m),
-            _ => None,
-        }
-    }
-
-    /// Extract the commanded reaction wheel torque \[N·m\], if this
-    /// command is a [`Command::RwTorque`].
-    pub fn as_rw_torque(&self) -> Option<Vec3<Body>> {
-        match self {
-            Self::RwTorque(t) => Some(*t),
-            _ => None,
-        }
+        let mm_ok = self.magnetic_moment.is_none_or(|m| m.is_finite());
+        let rw_ok = self.rw_torque.is_none_or(|t| t.is_finite());
+        mm_ok && rw_ok
     }
 }
 
@@ -82,33 +83,53 @@ mod tests {
 
     #[test]
     fn magnetic_moment_finite_detects_nan() {
-        let good = Command::MagneticMoment(Vec3::new(1.0, -2.0, 0.0));
+        let good = Command::magnetic_moment(Vec3::new(1.0, -2.0, 0.0));
         assert!(good.is_finite());
 
-        let nan = Command::MagneticMoment(Vec3::new(1.0, f64::NAN, 0.0));
+        let nan = Command::magnetic_moment(Vec3::new(1.0, f64::NAN, 0.0));
         assert!(!nan.is_finite());
 
-        let inf = Command::MagneticMoment(Vec3::new(f64::INFINITY, 0.0, 0.0));
+        let inf = Command::magnetic_moment(Vec3::new(f64::INFINITY, 0.0, 0.0));
         assert!(!inf.is_finite());
     }
 
     #[test]
     fn rw_torque_finite_detects_nan() {
-        let good = Command::RwTorque(Vec3::new(0.01, -0.02, 0.0));
+        let good = Command::rw_torque(Vec3::new(0.01, -0.02, 0.0));
         assert!(good.is_finite());
 
-        let nan = Command::RwTorque(Vec3::new(f64::NAN, 0.0, 0.0));
+        let nan = Command::rw_torque(Vec3::new(f64::NAN, 0.0, 0.0));
         assert!(!nan.is_finite());
     }
 
     #[test]
-    fn as_accessors() {
-        let mm = Command::MagneticMoment(Vec3::new(1.0, 2.0, 3.0));
-        assert!(mm.as_magnetic_moment().is_some());
-        assert!(mm.as_rw_torque().is_none());
+    fn field_access() {
+        let mm = Command::magnetic_moment(Vec3::new(1.0, 2.0, 3.0));
+        assert!(mm.magnetic_moment.is_some());
+        assert!(mm.rw_torque.is_none());
 
-        let rw = Command::RwTorque(Vec3::new(0.1, 0.2, 0.3));
-        assert!(rw.as_magnetic_moment().is_none());
-        assert!(rw.as_rw_torque().is_some());
+        let rw = Command::rw_torque(Vec3::new(0.1, 0.2, 0.3));
+        assert!(rw.magnetic_moment.is_none());
+        assert!(rw.rw_torque.is_some());
+    }
+
+    #[test]
+    fn both_fields_set() {
+        let cmd = Command {
+            magnetic_moment: Some(Vec3::new(1.0, 0.0, 0.0)),
+            rw_torque: Some(Vec3::new(0.0, 0.1, 0.0)),
+        };
+        assert!(cmd.is_finite());
+        assert!(cmd.magnetic_moment.is_some());
+        assert!(cmd.rw_torque.is_some());
+    }
+
+    #[test]
+    fn both_fields_nan_in_one() {
+        let cmd = Command {
+            magnetic_moment: Some(Vec3::new(f64::NAN, 0.0, 0.0)),
+            rw_torque: Some(Vec3::new(0.0, 0.1, 0.0)),
+        };
+        assert!(!cmd.is_finite());
     }
 }

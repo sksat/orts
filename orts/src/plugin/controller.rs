@@ -3,14 +3,14 @@
 //! `PluginController` is the host-visible interface that every backend
 //! (native Rust / WASM / Rhai / PyO3 / ...) implements. A controller
 //! receives an [`TickInput`] snapshot at each sample tick and returns
-//! a logical [`Command`] to be applied by the host's actuator bridge.
+//! an optional logical [`Command`] to be applied by the host's actuator bridge.
 //!
 //! This is separate from the existing
 //! [`crate::control::DiscreteController`] trait on purpose: the legacy
 //! trait is parameterised over a concrete `type Command` (e.g.
 //! `Vector3<f64>`) and takes `(attitude, orbit, epoch)` as positional
 //! arguments. The plugin trait fixes `Command` to the
-//! [`super::Command`] enum and bundles all inputs into a single
+//! [`super::Command`] struct and bundles all inputs into a single
 //! `TickInput` struct so that WASM guests can share the same shape
 //! with native implementations. A future phase may unify the two once
 //! every native controller has migrated; Phase P0.5 deliberately keeps
@@ -29,7 +29,7 @@ use super::tick_input::TickInput;
 /// Implementors are either native Rust controllers (`BdotFiniteDiff`,
 /// `InertialPdController`, ...) or guest runtimes wrapping a WASM
 /// component / Rhai script / Python callable. In both cases the
-/// contract is the same: given a tick input, produce a command.
+/// contract is the same: given a tick input, optionally produce a command.
 ///
 /// `Send` is required so individual satellite simulations (each
 /// holding its own controller instance) can be driven on worker
@@ -67,22 +67,16 @@ pub trait PluginController: Send {
         Ok(())
     }
 
-    /// Initial command emitted before the first `update` call.
-    ///
-    /// This is what the host's [`super::ActuatorBundle`] holds during
-    /// the very first zero-order-hold segment (usually a zero moment /
-    /// zero throttle / identity quaternion, depending on the actuator).
-    fn initial_command(&self) -> Command;
-
     /// Advance the controller's internal state by one sample tick and
     /// return the command to apply during the next zero-order-hold
-    /// segment.
+    /// segment, or `None` if the controller has nothing to command
+    /// this tick.
     ///
     /// Returning `Err(PluginError::BadCommand(_))` (or any other
     /// variant) tells the host to halt the simulation: the command
     /// cannot be trusted, and the host should fall back to safemode or
     /// abort rather than propagating bad state into the ODE.
-    fn update(&mut self, obs: &TickInput<'_>) -> Result<Command, PluginError>;
+    fn update(&mut self, input: &TickInput<'_>) -> Result<Option<Command>, PluginError>;
 
     /// Currently-active mission mode, if the controller exposes a
     /// mode machine (detumble / nadir-point / burn / ...).

@@ -19,7 +19,7 @@ use crate::orbital::OrbitalState;
 use crate::plugin::tick_input::{Sensors, TickInput};
 use crate::plugin::{Command, PluginError};
 
-// ───────────────────── host → guest (TickInput) ─────────────────────
+// ───────────────────── host -> guest (TickInput) ─────────────────────
 
 /// Convert a host `TickInput<'_>` to the WIT `tick-input` record.
 pub fn tick_input_to_wit(obs: &TickInput<'_>) -> wit::TickInput {
@@ -114,17 +114,17 @@ fn vec3_to_wit(v: &Vector3<f64>) -> wit::Vec3 {
     }
 }
 
-// ───────────────────── guest → host (Command) ─────────────────────
+// ───────────────────── guest -> host (Command) ─────────────────────
 
-/// Convert a WIT `command` variant to the plugin-layer `Command` enum.
+/// Convert a WIT `command` record to the plugin-layer `Command` struct.
 ///
 /// Returns `PluginError::BadCommand` if any numeric field is NaN / Inf.
 pub fn command_from_wit(cmd: wit::Command) -> Result<Command, PluginError> {
-    let result = match cmd {
-        wit::Command::MagneticMoment(v) => {
-            Command::MagneticMoment(Vec3::<Body>::new(v.x, v.y, v.z))
-        }
-        wit::Command::RwTorque(v) => Command::RwTorque(Vec3::<Body>::new(v.x, v.y, v.z)),
+    let result = Command {
+        magnetic_moment: cmd
+            .magnetic_moment
+            .map(|v| Vec3::<Body>::new(v.x, v.y, v.z)),
+        rw_torque: cmd.rw_torque.map(|v| Vec3::<Body>::new(v.x, v.y, v.z)),
     };
     if !result.is_finite() {
         return Err(PluginError::BadCommand(format!("{result:?}")));
@@ -203,49 +203,57 @@ mod tests {
 
     #[test]
     fn command_roundtrip_magnetic_moment() {
-        let wit_cmd = wit::Command::MagneticMoment(wit::Vec3 {
-            x: 1.0,
-            y: -2.0,
-            z: 0.5,
-        });
+        let wit_cmd = wit::Command {
+            magnetic_moment: Some(wit::CommandedMagneticMoment {
+                x: 1.0,
+                y: -2.0,
+                z: 0.5,
+            }),
+            rw_torque: None,
+        };
         let cmd = command_from_wit(wit_cmd).unwrap();
-        assert_eq!(
-            cmd.as_magnetic_moment(),
-            Some(Vec3::<Body>::new(1.0, -2.0, 0.5))
-        );
+        assert_eq!(cmd.magnetic_moment, Some(Vec3::<Body>::new(1.0, -2.0, 0.5)));
+        assert_eq!(cmd.rw_torque, None);
     }
 
     #[test]
     fn command_roundtrip_rw_torque() {
-        let wit_cmd = wit::Command::RwTorque(wit::Vec3 {
-            x: 0.01,
-            y: -0.02,
-            z: 0.03,
-        });
+        let wit_cmd = wit::Command {
+            magnetic_moment: None,
+            rw_torque: Some(wit::CommandedRwTorque {
+                x: 0.01,
+                y: -0.02,
+                z: 0.03,
+            }),
+        };
         let cmd = command_from_wit(wit_cmd).unwrap();
-        assert_eq!(
-            cmd.as_rw_torque(),
-            Some(Vec3::<Body>::new(0.01, -0.02, 0.03))
-        );
+        assert_eq!(cmd.magnetic_moment, None);
+        assert_eq!(cmd.rw_torque, Some(Vec3::<Body>::new(0.01, -0.02, 0.03)));
     }
 
     #[test]
     fn command_from_wit_rejects_nan() {
-        let wit_cmd = wit::Command::MagneticMoment(wit::Vec3 {
-            x: 1.0,
-            y: f64::NAN,
-            z: 0.0,
-        });
+        let wit_cmd = wit::Command {
+            magnetic_moment: Some(wit::CommandedMagneticMoment {
+                x: 1.0,
+                y: f64::NAN,
+                z: 0.0,
+            }),
+            rw_torque: None,
+        };
         assert!(command_from_wit(wit_cmd).is_err());
     }
 
     #[test]
     fn command_from_wit_rejects_nan_rw() {
-        let wit_cmd = wit::Command::RwTorque(wit::Vec3 {
-            x: f64::INFINITY,
-            y: 0.0,
-            z: 0.0,
-        });
+        let wit_cmd = wit::Command {
+            magnetic_moment: None,
+            rw_torque: Some(wit::CommandedRwTorque {
+                x: f64::INFINITY,
+                y: 0.0,
+                z: 0.0,
+            }),
+        };
         assert!(command_from_wit(wit_cmd).is_err());
     }
 

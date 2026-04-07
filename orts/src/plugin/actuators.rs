@@ -2,7 +2,7 @@
 //!
 //! `ActuatorBundle` holds the most recent command emitted by a
 //! controller backend, decomposed into per-actuator fields. The host
-//! uses this struct to translate the plugin-layer `Command` enum into
+//! uses this struct to translate the plugin-layer `Command` struct into
 //! concrete physical actuator models (`CommandedMagnetorquer`,
 //! `DynamicThrottle` + `Thruster`, `ReactionWheelAssembly`) when
 //! assembling the ODE system for the next zero-order-hold segment.
@@ -16,12 +16,11 @@
 //!
 //! ## Multi-command semantics
 //!
-//! Each `apply()` call updates exactly the actuator that matches the
-//! command variant. Other actuators retain their last value (zero-order
-//! hold). If a guest alternates between `MagneticMoment` and
-//! `RwTorque` across ticks, both actuators stay armed with their most
-//! recent command — the host applies them simultaneously during ODE
-//! integration.
+//! Each `apply()` call updates the actuators for which the `Command`
+//! has `Some` fields. Other actuators retain their last value
+//! (zero-order hold). If a guest sets both `magnetic_moment` and
+//! `rw_torque` in a single `Command`, both actuators are updated
+//! simultaneously.
 
 use kaname::frame::{Body, Vec3};
 
@@ -32,11 +31,11 @@ use super::error::PluginError;
 #[derive(Debug, Clone, Default)]
 pub struct ActuatorBundle {
     /// Magnetorquer commanded dipole moment, body frame \[A·m²\].
-    /// `None` until `apply()` receives a `Command::MagneticMoment`.
+    /// `None` until `apply()` receives a `Command` with `magnetic_moment`.
     commanded_magnetic_moment: Option<Vec3<Body>>,
 
     /// Reaction wheel assembly commanded torque, body frame \[N·m\].
-    /// `None` until `apply()` receives a `Command::RwTorque`.
+    /// `None` until `apply()` receives a `Command` with `rw_torque`.
     commanded_rw_torque: Option<Vec3<Body>>,
 }
 
@@ -46,24 +45,23 @@ impl ActuatorBundle {
         Self::default()
     }
 
-    /// Apply a command, updating the corresponding actuator's state.
+    /// Apply a command, updating the corresponding actuator(s)' state.
     ///
     /// Rejects non-finite commands before they can poison downstream
     /// actuator models (NaN guard, see DESIGN.md Phase P 落とし穴リスト).
     ///
-    /// Only the actuator matching the command variant is updated; other
-    /// actuators retain their previous value (zero-order hold).
+    /// Only actuators for which the `Command` has `Some` fields are
+    /// updated; other actuators retain their previous value (zero-order
+    /// hold).
     pub fn apply(&mut self, cmd: &Command) -> Result<(), PluginError> {
         if !cmd.is_finite() {
             return Err(PluginError::BadCommand(format!("{cmd:?}")));
         }
-        match cmd {
-            Command::MagneticMoment(m) => {
-                self.commanded_magnetic_moment = Some(*m);
-            }
-            Command::RwTorque(t) => {
-                self.commanded_rw_torque = Some(*t);
-            }
+        if let Some(m) = cmd.magnetic_moment {
+            self.commanded_magnetic_moment = Some(m);
+        }
+        if let Some(t) = cmd.rw_torque {
+            self.commanded_rw_torque = Some(t);
         }
         Ok(())
     }
@@ -75,7 +73,7 @@ impl ActuatorBundle {
         self.commanded_magnetic_moment.unwrap_or_else(Vec3::zeros)
     }
 
-    /// Returns `true` if a `Command::MagneticMoment` has been applied
+    /// Returns `true` if a magnetic moment command has been applied
     /// at least once. Useful for oracle tests that want to distinguish
     /// "default zero" from "controller has spoken".
     pub fn has_magnetic_moment_command(&self) -> bool {
@@ -88,7 +86,7 @@ impl ActuatorBundle {
         self.commanded_rw_torque.unwrap_or_else(Vec3::zeros)
     }
 
-    /// Returns `true` if a `Command::RwTorque` has been applied
+    /// Returns `true` if a reaction wheel torque command has been applied
     /// at least once.
     pub fn has_rw_torque_command(&self) -> bool {
         self.commanded_rw_torque.is_some()
@@ -106,7 +104,7 @@ mod tests {
         assert_eq!(bundle.magnetic_moment(), Vec3::zeros());
 
         let m = Vec3::new(1.0, -2.0, 3.0);
-        bundle.apply(&Command::MagneticMoment(m)).unwrap();
+        bundle.apply(&Command::magnetic_moment(m)).unwrap();
         assert!(bundle.has_magnetic_moment_command());
         assert_eq!(bundle.magnetic_moment(), m);
     }
@@ -118,7 +116,7 @@ mod tests {
         assert_eq!(bundle.rw_torque(), Vec3::zeros());
 
         let t = Vec3::new(0.01, -0.02, 0.03);
-        bundle.apply(&Command::RwTorque(t)).unwrap();
+        bundle.apply(&Command::rw_torque(t)).unwrap();
         assert!(bundle.has_rw_torque_command());
         assert_eq!(bundle.rw_torque(), t);
     }
@@ -126,7 +124,7 @@ mod tests {
     #[test]
     fn apply_rejects_nan() {
         let mut bundle = ActuatorBundle::new();
-        let bad = Command::MagneticMoment(Vec3::new(1.0, f64::NAN, 0.0));
+        let bad = Command::magnetic_moment(Vec3::new(1.0, f64::NAN, 0.0));
         let err = bundle.apply(&bad).unwrap_err();
         match err {
             PluginError::BadCommand(_) => {}
@@ -139,7 +137,7 @@ mod tests {
     #[test]
     fn apply_rw_rejects_nan() {
         let mut bundle = ActuatorBundle::new();
-        let bad = Command::RwTorque(Vec3::new(0.0, f64::INFINITY, 0.0));
+        let bad = Command::rw_torque(Vec3::new(0.0, f64::INFINITY, 0.0));
         assert!(bundle.apply(&bad).is_err());
         assert!(!bundle.has_rw_torque_command());
     }
@@ -148,12 +146,24 @@ mod tests {
     fn multi_command_retains_both() {
         let mut bundle = ActuatorBundle::new();
         bundle
-            .apply(&Command::MagneticMoment(Vec3::new(1.0, 0.0, 0.0)))
+            .apply(&Command::magnetic_moment(Vec3::new(1.0, 0.0, 0.0)))
             .unwrap();
         bundle
-            .apply(&Command::RwTorque(Vec3::new(0.0, 0.1, 0.0)))
+            .apply(&Command::rw_torque(Vec3::new(0.0, 0.1, 0.0)))
             .unwrap();
         // Both actuators should retain their values.
+        assert_eq!(bundle.magnetic_moment(), Vec3::new(1.0, 0.0, 0.0));
+        assert_eq!(bundle.rw_torque(), Vec3::new(0.0, 0.1, 0.0));
+    }
+
+    #[test]
+    fn single_command_with_both_fields() {
+        let mut bundle = ActuatorBundle::new();
+        let cmd = Command {
+            magnetic_moment: Some(Vec3::new(1.0, 0.0, 0.0)),
+            rw_torque: Some(Vec3::new(0.0, 0.1, 0.0)),
+        };
+        bundle.apply(&cmd).unwrap();
         assert_eq!(bundle.magnetic_moment(), Vec3::new(1.0, 0.0, 0.0));
         assert_eq!(bundle.rw_torque(), Vec3::new(0.0, 0.1, 0.0));
     }

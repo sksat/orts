@@ -1,4 +1,4 @@
-//! B-dot finite-difference detumbling controller — WASM Component guest.
+//! B-dot finite-difference detumbling controller -- WASM Component guest.
 //!
 //! The guest reads `sensors.magnetometer` from the tick input
 //! (pre-evaluated by the host's magnetometer sensor) and computes the
@@ -69,15 +69,7 @@ impl Guest for Component {
         Ok(())
     }
 
-    fn initial_command() -> Command {
-        Command::MagneticMoment(Vec3 {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-        })
-    }
-
-    fn update(input: TickInput) -> Result<Command, String> {
+    fn update(input: TickInput) -> Result<Option<Command>, String> {
         STATE.with(|state| {
             let mut s = state.borrow_mut();
 
@@ -88,14 +80,14 @@ impl Guest for Component {
 
             let b_mag_sq = b_body.x * b_body.x + b_body.y * b_body.y + b_body.z * b_body.z;
             if b_mag_sq < 1e-60 {
-                return Ok(zero_moment());
+                return Ok(Some(zero_moment()));
             }
 
             let m_cmd = match s.prev_b_body {
                 Some(prev_b) => {
                     let dt = input.t - s.prev_t;
                     if dt < 1e-15 {
-                        return Ok(zero_moment());
+                        return Ok(Some(zero_moment()));
                     }
                     let db_x = (b_body.x - prev_b[0]) / dt;
                     let db_y = (b_body.y - prev_b[1]) / dt;
@@ -111,10 +103,13 @@ impl Guest for Component {
             s.prev_b_body = Some([b_body.x, b_body.y, b_body.z]);
             s.prev_t = input.t;
 
-            Ok(Command::MagneticMoment(Vec3 {
-                x: m_cmd[0],
-                y: m_cmd[1],
-                z: m_cmd[2],
+            Ok(Some(Command {
+                magnetic_moment: Some(CommandedMagneticMoment {
+                    x: m_cmd[0],
+                    y: m_cmd[1],
+                    z: m_cmd[2],
+                }),
+                rw_torque: None,
             }))
         })
     }
@@ -127,11 +122,14 @@ impl Guest for Component {
 bindings::export!(Component with_types_in bindings);
 
 fn zero_moment() -> Command {
-    Command::MagneticMoment(Vec3 {
-        x: 0.0,
-        y: 0.0,
-        z: 0.0,
-    })
+    Command {
+        magnetic_moment: Some(CommandedMagneticMoment {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        }),
+        rw_torque: None,
+    }
 }
 
 fn clamp(val: f64, lo: f64, hi: f64) -> f64 {

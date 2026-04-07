@@ -303,34 +303,70 @@ pub mod orts {
                         .finish()
                 }
             }
+            /// 機体座標系の磁気ダイポールモーメント指令 \[A·m²\]。
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct CommandedMagneticMoment {
+                pub x: f64,
+                pub y: f64,
+                pub z: f64,
+            }
+            impl ::core::fmt::Debug for CommandedMagneticMoment {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("CommandedMagneticMoment")
+                        .field("x", &self.x)
+                        .field("y", &self.y)
+                        .field("z", &self.z)
+                        .finish()
+                }
+            }
+            /// 機体座標系の RW トルク指令 \[N·m\]。
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct CommandedRwTorque {
+                pub x: f64,
+                pub y: f64,
+                pub z: f64,
+            }
+            impl ::core::fmt::Debug for CommandedRwTorque {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("CommandedRwTorque")
+                        .field("x", &self.x)
+                        .field("y", &self.y)
+                        .field("z", &self.z)
+                        .finish()
+                }
+            }
             /// コントローラが返す論理アクチュエータ指令。
             ///
             /// Phase P1 は `magnetic-moment` と `rw-torque` を定義。
             /// 後続フェーズで `throttle`, `impulsive-dv` 等を追加。
-            /// variant の追加は非破壊的（ホスト側は `#[non_exhaustive]` enum）。
-            /// 既存 variant のリネーム・削除・並べ替えは破壊的変更
-            /// → `wit/v1/` で対応。
+            /// `None` のフィールドはそのアクチュエータに対するコマンドなし
+            /// (前回値が ZOH で保持される)。
+            #[repr(C)]
             #[derive(Clone, Copy)]
-            pub enum Command {
+            pub struct Command {
                 /// 機体座標系での指令磁気ダイポールモーメント \[A·m²\]。
-                MagneticMoment(Vec3),
+                pub magnetic_moment: Option<CommandedMagneticMoment>,
                 /// RW アセンブリへの指令トルク \[N·m\]、機体座標系。
                 /// ホスト側 RW モデルが各ホイール軸への投影を行う。
-                RwTorque(Vec3),
+                pub rw_torque: Option<CommandedRwTorque>,
             }
             impl ::core::fmt::Debug for Command {
                 fn fmt(
                     &self,
                     f: &mut ::core::fmt::Formatter<'_>,
                 ) -> ::core::fmt::Result {
-                    match self {
-                        Command::MagneticMoment(e) => {
-                            f.debug_tuple("Command::MagneticMoment").field(e).finish()
-                        }
-                        Command::RwTorque(e) => {
-                            f.debug_tuple("Command::RwTorque").field(e).finish()
-                        }
-                    }
+                    f.debug_struct("Command")
+                        .field("magnetic-moment", &self.magnetic_moment)
+                        .field("rw-torque", &self.rw_torque)
+                        .finish()
                 }
             }
         }
@@ -477,8 +513,8 @@ pub mod exports {
             /// ゲスト側のエントリーポイント（host が呼び出す export）。
             ///
             /// プラグインはこのインターフェースを 1 回実装する。ホストは衛星ごとに
-            /// `wasmtime::component::Instance` を 1 つ作成し、`initial-command` +
-            /// `update` 呼び出しをコントローラのサンプル周期で繰り返す。
+            /// `wasmtime::component::Instance` を 1 つ作成し、`update` 呼び出しを
+            /// コントローラのサンプル周期で繰り返す。
             #[allow(dead_code, async_fn_in_trait, unused_imports, clippy::all)]
             pub mod controller {
                 #[used]
@@ -541,39 +577,6 @@ pub mod exports {
                             _rt::cabi_dealloc(l1, l2, 1);
                         }
                     }
-                }
-                #[doc(hidden)]
-                #[allow(non_snake_case)]
-                pub unsafe fn _export_initial_command_cabi<T: Guest>() -> *mut u8 {
-                    #[cfg(target_arch = "wasm32")] _rt::run_ctors_once();
-                    let result0 = T::initial_command();
-                    let ptr1 = (&raw mut _RET_AREA.0).cast::<u8>();
-                    use super::super::super::super::orts::plugin::types::Command as V4;
-                    match result0 {
-                        V4::MagneticMoment(e) => {
-                            *ptr1.add(0).cast::<u8>() = (0i32) as u8;
-                            let super::super::super::super::orts::plugin::types::Vec3 {
-                                x: x2,
-                                y: y2,
-                                z: z2,
-                            } = e;
-                            *ptr1.add(8).cast::<f64>() = _rt::as_f64(x2);
-                            *ptr1.add(16).cast::<f64>() = _rt::as_f64(y2);
-                            *ptr1.add(24).cast::<f64>() = _rt::as_f64(z2);
-                        }
-                        V4::RwTorque(e) => {
-                            *ptr1.add(0).cast::<u8>() = (1i32) as u8;
-                            let super::super::super::super::orts::plugin::types::Vec3 {
-                                x: x3,
-                                y: y3,
-                                z: z3,
-                            } = e;
-                            *ptr1.add(8).cast::<f64>() = _rt::as_f64(x3);
-                            *ptr1.add(16).cast::<f64>() = _rt::as_f64(y3);
-                            *ptr1.add(24).cast::<f64>() = _rt::as_f64(z3);
-                        }
-                    }
-                    ptr1
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -702,31 +705,50 @@ pub mod exports {
                     match result30 {
                         Ok(e) => {
                             *ptr31.add(0).cast::<u8>() = (0i32) as u8;
-                            use super::super::super::super::orts::plugin::types::Command as V34;
                             match e {
-                                V34::MagneticMoment(e) => {
-                                    *ptr31.add(8).cast::<u8>() = (0i32) as u8;
-                                    let super::super::super::super::orts::plugin::types::Vec3 {
-                                        x: x32,
-                                        y: y32,
-                                        z: z32,
-                                    } = e;
-                                    *ptr31.add(16).cast::<f64>() = _rt::as_f64(x32);
-                                    *ptr31.add(24).cast::<f64>() = _rt::as_f64(y32);
-                                    *ptr31.add(32).cast::<f64>() = _rt::as_f64(z32);
-                                }
-                                V34::RwTorque(e) => {
+                                Some(e) => {
                                     *ptr31.add(8).cast::<u8>() = (1i32) as u8;
-                                    let super::super::super::super::orts::plugin::types::Vec3 {
-                                        x: x33,
-                                        y: y33,
-                                        z: z33,
+                                    let super::super::super::super::orts::plugin::types::Command {
+                                        magnetic_moment: magnetic_moment32,
+                                        rw_torque: rw_torque32,
                                     } = e;
-                                    *ptr31.add(16).cast::<f64>() = _rt::as_f64(x33);
-                                    *ptr31.add(24).cast::<f64>() = _rt::as_f64(y33);
-                                    *ptr31.add(32).cast::<f64>() = _rt::as_f64(z33);
+                                    match magnetic_moment32 {
+                                        Some(e) => {
+                                            *ptr31.add(16).cast::<u8>() = (1i32) as u8;
+                                            let super::super::super::super::orts::plugin::types::CommandedMagneticMoment {
+                                                x: x33,
+                                                y: y33,
+                                                z: z33,
+                                            } = e;
+                                            *ptr31.add(24).cast::<f64>() = _rt::as_f64(x33);
+                                            *ptr31.add(32).cast::<f64>() = _rt::as_f64(y33);
+                                            *ptr31.add(40).cast::<f64>() = _rt::as_f64(z33);
+                                        }
+                                        None => {
+                                            *ptr31.add(16).cast::<u8>() = (0i32) as u8;
+                                        }
+                                    };
+                                    match rw_torque32 {
+                                        Some(e) => {
+                                            *ptr31.add(48).cast::<u8>() = (1i32) as u8;
+                                            let super::super::super::super::orts::plugin::types::CommandedRwTorque {
+                                                x: x34,
+                                                y: y34,
+                                                z: z34,
+                                            } = e;
+                                            *ptr31.add(56).cast::<f64>() = _rt::as_f64(x34);
+                                            *ptr31.add(64).cast::<f64>() = _rt::as_f64(y34);
+                                            *ptr31.add(72).cast::<f64>() = _rt::as_f64(z34);
+                                        }
+                                        None => {
+                                            *ptr31.add(48).cast::<u8>() = (0i32) as u8;
+                                        }
+                                    };
                                 }
-                            }
+                                None => {
+                                    *ptr31.add(8).cast::<u8>() = (0i32) as u8;
+                                }
+                            };
                         }
                         Err(e) => {
                             *ptr31.add(0).cast::<u8>() = (1i32) as u8;
@@ -807,16 +829,14 @@ pub mod exports {
                     /// ホストからバックエンド固有の設定文字列を渡す初期化関数。
                     /// Phase P1 では JSON を想定するが強制しない。
                     fn init(config: _rt::String) -> Result<(), _rt::String>;
-                    /// 最初の `update` 前に適用する初期コマンド。
-                    /// 通常はゼロモーメント / ゼロトルク等の安全なデフォルト。
-                    fn initial_command() -> Command;
                     /// 1 サンプル tick 分進めて、次の ZOH 区間に適用する
-                    /// コマンドを返す。
+                    /// コマンドを返す。`none` はこの tick ではコマンドなし
+                    /// (アクチュエータは前回値を ZOH で保持)。
                     ///
                     /// Phase P1 ではエラーチャネルに plain `string` を使用。
                     /// Phase P2 で構造化 `variant plugin-error { ... }` に
                     /// 昇格する可能性あり（ABI 破壊的変更 → `wit/v1/`）。
-                    fn update(input: TickInput) -> Result<Command, _rt::String>;
+                    fn update(input: TickInput) -> Result<Option<Command>, _rt::String>;
                     /// コントローラの現在のミッションモード名
                     /// (detumble / nadir / burn 等)。
                     /// モードマシンを持たないコントローラは `none` を返す。
@@ -836,10 +856,6 @@ pub mod exports {
                         = "cabi_post_orts:plugin/controller@0.1.0#init")] unsafe extern
                         "C" fn _post_return_init(arg0 : * mut u8,) { unsafe {
                         $($path_to_types)*:: __post_return_init::<$ty > (arg0) } }
-                        #[unsafe (export_name =
-                        "orts:plugin/controller@0.1.0#initial-command")] unsafe extern
-                        "C" fn export_initial_command() -> * mut u8 { unsafe {
-                        $($path_to_types)*:: _export_initial_command_cabi::<$ty > () } }
                         #[unsafe (export_name = "orts:plugin/controller@0.1.0#update")]
                         unsafe extern "C" fn export_update(arg0 : * mut u8,) -> * mut u8
                         { unsafe { $($path_to_types)*:: _export_update_cabi::<$ty >
@@ -861,9 +877,9 @@ pub mod exports {
                 #[doc(hidden)]
                 pub(crate) use __export_orts_plugin_controller_0_1_0_cabi;
                 #[repr(align(8))]
-                struct _RetArea([::core::mem::MaybeUninit<u8>; 40]);
+                struct _RetArea([::core::mem::MaybeUninit<u8>; 80]);
                 static mut _RET_AREA: _RetArea = _RetArea(
-                    [::core::mem::MaybeUninit::uninit(); 40],
+                    [::core::mem::MaybeUninit::uninit(); 80],
                 );
             }
         }
@@ -955,11 +971,11 @@ pub(crate) use __export_plugin_impl as export;
 )]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1203] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb6\x08\x01A\x02\x01\
-A\x0a\x01B\x20\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01\
-xu\x01yu\x01zu\x04\0\x04quat\x03\0\x02\x01r\x03\x01xu\x01yu\x01zu\x04\0\x0fposit\
-ion-eci-km\x03\0\x04\x01r\x03\x01xu\x01yu\x01zu\x04\0\x10velocity-eci-kms\x03\0\x06\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1263] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf2\x08\x01A\x02\x01\
+A\x0a\x01B&\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01x\
+u\x01yu\x01zu\x04\0\x04quat\x03\0\x02\x01r\x03\x01xu\x01yu\x01zu\x04\0\x0fpositi\
+on-eci-km\x03\0\x04\x01r\x03\x01xu\x01yu\x01zu\x04\0\x10velocity-eci-kms\x03\0\x06\
 \x01r\x02\x08position\x05\x08velocity\x07\x04\0\x0dorbital-state\x03\0\x08\x01r\x02\
 \x0borientation\x03\x10angular-velocity\x01\x04\0\x0eattitude-state\x03\0\x0a\x01\
 r\x03\x05orbit\x09\x08attitude\x0b\x04massu\x04\0\x10spacecraft-state\x03\0\x0c\x01\
@@ -968,22 +984,23 @@ magnetic-field-body\x03\0\x10\x01r\x03\x01xu\x01yu\x01zu\x04\0\x15angular-veloci
 ty-body\x03\0\x12\x01r\x04\x01wu\x01xu\x01yu\x01zu\x04\0\x19attitude-body-to-ine\
 rtial\x03\0\x14\x01k\x11\x01k\x13\x01k\x15\x01r\x03\x0cmagnetometer\x16\x09gyros\
 cope\x17\x0cstar-tracker\x18\x04\0\x07sensors\x03\0\x19\x01k\x0f\x01r\x04\x01tu\x0a\
-spacecraft\x0d\x05epoch\x1b\x07sensors\x1a\x04\0\x0atick-input\x03\0\x1c\x01q\x02\
-\x0fmagnetic-moment\x01\x01\0\x09rw-torque\x01\x01\0\x04\0\x07command\x03\0\x1e\x03\
-\0\x17orts:plugin/types@0.1.0\x05\0\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01\
-B\x0a\x02\x03\x02\x01\x01\x04\0\x04vec3\x03\0\0\x02\x03\x02\x01\x02\x04\0\x05epo\
-ch\x03\0\x02\x01m\x05\x05trace\x05debug\x04info\x04warn\x05error\x04\0\x09log-le\
-vel\x03\0\x04\x01@\x02\x05level\x05\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\
-\x0fposition-eci-km\x01\x01e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\
-\x1aorts:plugin/host-env@0.1.0\x05\x03\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07\
-command\x01B\x11\x02\x03\x02\x01\x04\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\
-\x05\x04\0\x07command\x03\0\x02\x01@\0\0u\x04\0\x0fsample-period-s\x01\x04\x01j\0\
-\x01s\x01@\x01\x06configs\0\x05\x04\0\x04init\x01\x06\x01@\0\0\x03\x04\0\x0finit\
-ial-command\x01\x07\x01j\x01\x03\x01s\x01@\x01\x05input\x01\0\x08\x04\0\x06updat\
-e\x01\x09\x01ks\x01@\0\0\x0a\x04\0\x0ccurrent-mode\x01\x0b\x04\0\x1corts:plugin/\
-controller@0.1.0\x05\x06\x04\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06\
-plugin\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227\
-.1\x10wit-bindgen-rust\x060.41.0";
+spacecraft\x0d\x05epoch\x1b\x07sensors\x1a\x04\0\x0atick-input\x03\0\x1c\x01r\x03\
+\x01xu\x01yu\x01zu\x04\0\x19commanded-magnetic-moment\x03\0\x1e\x01r\x03\x01xu\x01\
+yu\x01zu\x04\0\x13commanded-rw-torque\x03\0\x20\x01k\x1f\x01k!\x01r\x02\x0fmagne\
+tic-moment\"\x09rw-torque#\x04\0\x07command\x03\0$\x03\0\x17orts:plugin/types@0.\
+1.0\x05\0\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\x01\x04\
+\0\x04vec3\x03\0\0\x02\x03\x02\x01\x02\x04\0\x05epoch\x03\0\x02\x01m\x05\x05trac\
+e\x05debug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\x05lev\
+el\x05\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\x01\x01\
+e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugin/host-env@0.\
+1.0\x05\x03\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07command\x01B\x10\x02\x03\x02\
+\x01\x04\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\x05\x04\0\x07command\x03\0\x02\
+\x01@\0\0u\x04\0\x0fsample-period-s\x01\x04\x01j\0\x01s\x01@\x01\x06configs\0\x05\
+\x04\0\x04init\x01\x06\x01k\x03\x01j\x01\x07\x01s\x01@\x01\x05input\x01\0\x08\x04\
+\0\x06update\x01\x09\x01ks\x01@\0\0\x0a\x04\0\x0ccurrent-mode\x01\x0b\x04\0\x1co\
+rts:plugin/controller@0.1.0\x05\x06\x04\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\x0c\
+\x01\0\x06plugin\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-componen\
+t\x070.227.1\x10wit-bindgen-rust\x060.41.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {
