@@ -137,6 +137,15 @@ interface types {
         star-tracker: option<attitude-body-to-inertial>,
     }
 
+    /// アクチュエータのテレメトリ（状態フィードバック）。
+    ///
+    /// RW 角運動量などアクチュエータの現在状態をゲストに提供する。
+    /// 各フィールドは `option` — アクチュエータが存在しなければ `none`。
+    record actuator-state {
+        /// RW 各ホイールの角運動量 \[N·m·s\]。
+        rw-momentum: option<list<f64>>,
+    }
+
     /// `controller.update` に渡される tick ごとの入力。
     /// ホスト側 `orts::plugin::TickInput<'a>` と対応。
     record tick-input {
@@ -148,6 +157,8 @@ interface types {
         epoch: option<epoch>,
         /// センサ読み値。将来ノイズが乗る可能性がある。
         sensors: sensors,
+        /// アクチュエータ状態フィードバック。
+        actuators: actuator-state,
     }
 
     /// 機体座標系の磁気ダイポールモーメント指令 \[A·m²\]。

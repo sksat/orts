@@ -35,7 +35,7 @@ use orts::attitude::{
 };
 use orts::control::DiscreteController;
 use orts::plugin::wasm::{WasmController, WasmEngine};
-use orts::plugin::{ActuatorBundle, PluginController, TickInput};
+use orts::plugin::{ActuatorBundle, ActuatorState, PluginController, TickInput};
 use orts::sensor::{Gyroscope, Magnetometer, SensorBundle};
 
 const MASS: f64 = 50.0;
@@ -159,10 +159,12 @@ fn run_wasm(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
             mass: MASS,
         };
         let sensors = sensor_bundle.evaluate(&snapshot, &current_epoch);
+        let actuator_state = ActuatorState::default();
         let input = TickInput {
             t,
             epoch: Some(&current_epoch),
             sensors: &sensors,
+            actuators: &actuator_state,
             spacecraft: &snapshot,
         };
         if let Some(cmd) = ctrl

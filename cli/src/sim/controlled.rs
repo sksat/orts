@@ -10,7 +10,7 @@ use kaname::epoch::Epoch;
 use orts::attitude::CoupledGravityGradient;
 use orts::effector::AugmentedState;
 use orts::orbital::gravity::GravityField;
-use orts::plugin::{ActuatorBundle, PluginController, TickInput};
+use orts::plugin::{ActuatorBundle, ActuatorState, PluginController, TickInput};
 use orts::sensor::{Gyroscope, Magnetometer, SensorBundle, StarTracker};
 use orts::setup::{build_spacecraft_dynamics, default_third_bodies};
 
@@ -140,10 +140,18 @@ pub fn step_controlled(
     let sensors = sat
         .sensors
         .evaluate(&sat.state.plant, &current_epoch.unwrap_or(Epoch::j2000()));
+    let actuator_state = ActuatorState {
+        rw_momentum: if sat.has_rw {
+            Some(sat.state.aux.clone())
+        } else {
+            None
+        },
+    };
     let input = TickInput {
         t: t_next,
         epoch: current_epoch.as_ref(),
         sensors: &sensors,
+        actuators: &actuator_state,
         spacecraft: &sat.state.plant,
     };
     if let Some(cmd) = sat

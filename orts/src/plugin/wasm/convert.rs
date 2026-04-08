@@ -16,7 +16,7 @@ use super::bindings::orts::plugin::types as wit;
 use crate::SpacecraftState;
 use crate::attitude::AttitudeState;
 use crate::orbital::OrbitalState;
-use crate::plugin::tick_input::{Sensors, TickInput};
+use crate::plugin::tick_input::{ActuatorState, Sensors, TickInput};
 use crate::plugin::{Command, PluginError};
 
 // ───────────────────── host -> guest (TickInput) ─────────────────────
@@ -28,6 +28,13 @@ pub fn tick_input_to_wit(obs: &TickInput<'_>) -> wit::TickInput {
         spacecraft: spacecraft_to_wit(obs.spacecraft),
         epoch: obs.epoch.map(epoch_to_wit),
         sensors: sensor_readings_to_wit(obs.sensors),
+        actuators: actuator_state_to_wit(obs.actuators),
+    }
+}
+
+fn actuator_state_to_wit(a: &ActuatorState) -> wit::ActuatorState {
+    wit::ActuatorState {
+        rw_momentum: a.rw_momentum.clone(),
     }
 }
 
@@ -162,10 +169,12 @@ mod tests {
                 1.0, 0.0, 0.0, 0.0,
             ))),
         };
+        let actuators = ActuatorState::default();
         let obs = TickInput {
             t: 42.0,
             epoch: Some(&epoch),
             sensors: &sensors,
+            actuators: &actuators,
             spacecraft: &spacecraft,
         };
         let wit_obs = tick_input_to_wit(&obs);
@@ -189,11 +198,13 @@ mod tests {
     fn observation_empty_sensors() {
         let spacecraft = make_spacecraft();
         let sensors = Sensors::empty();
+        let actuators = ActuatorState::default();
         let obs = TickInput {
             t: 0.0,
             spacecraft: &spacecraft,
             epoch: None,
             sensors: &sensors,
+            actuators: &actuators,
         };
         let wit_obs = tick_input_to_wit(&obs);
         assert!(wit_obs.sensors.magnetometer.is_none());

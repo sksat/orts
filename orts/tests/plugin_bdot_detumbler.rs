@@ -37,7 +37,9 @@ use utsuroi::{Integrator, Rk4};
 use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, CommandedMagnetorquer, DecoupledAttitudeSystem};
-use orts::plugin::{ActuatorBundle, Command, PluginController, PluginError, Sensors, TickInput};
+use orts::plugin::{
+    ActuatorBundle, ActuatorState, Command, PluginController, PluginError, Sensors, TickInput,
+};
 
 const MASS: f64 = 50.0;
 const ALT_KM: f64 = 500.0;
@@ -172,6 +174,7 @@ fn run(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
     let mut bundle = ActuatorBundle::new();
 
     let sensors = Sensors::empty();
+    let actuator_state = ActuatorState::default();
     let mut state = initial;
     let mut t = 0.0;
 
@@ -206,6 +209,7 @@ fn run(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
             spacecraft: &snapshot,
             epoch: Some(&current_epoch),
             sensors: &sensors,
+            actuators: &actuator_state,
         };
         let cmd = ctrl
             .update(&obs)
@@ -256,6 +260,7 @@ fn plugin_bdot_detumbler_uses_angular_velocity_from_observation() {
     );
     let epoch = Epoch::j2000();
     let sensors = Sensors::empty();
+    let actuator_state = ActuatorState::default();
     let spacecraft = SpacecraftState {
         orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0)),
         attitude: AttitudeState {
@@ -269,6 +274,7 @@ fn plugin_bdot_detumbler_uses_angular_velocity_from_observation() {
         spacecraft: &spacecraft,
         epoch: Some(&epoch),
         sensors: &sensors,
+        actuators: &actuator_state,
     };
     let cmd = ctrl.update(&obs).unwrap().expect("must return Some");
     assert_eq!(cmd.magnetic_moment, Some(Vec3::<Body>::zeros()));

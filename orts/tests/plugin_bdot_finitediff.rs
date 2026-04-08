@@ -33,7 +33,9 @@ use orts::attitude::{
     AttitudeState, BdotFiniteDiff as NativeBdot, CommandedMagnetorquer, DecoupledAttitudeSystem,
 };
 use orts::control::DiscreteController;
-use orts::plugin::{ActuatorBundle, Command, PluginController, PluginError, Sensors, TickInput};
+use orts::plugin::{
+    ActuatorBundle, ActuatorState, Command, PluginController, PluginError, Sensors, TickInput,
+};
 
 const MASS: f64 = 50.0;
 const ALT_KM: f64 = 500.0;
@@ -201,6 +203,7 @@ fn run_plugin_path(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
     let mut bundle = ActuatorBundle::new();
 
     let sensors = Sensors::empty();
+    let actuator_state = ActuatorState::default();
     let mut state = initial;
     let mut t = 0.0;
 
@@ -227,6 +230,7 @@ fn run_plugin_path(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
             spacecraft: &snapshot,
             epoch: Some(&current_epoch),
             sensors: &sensors,
+            actuators: &actuator_state,
         };
         let cmd = ctrl
             .update(&obs)
@@ -283,6 +287,7 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
     let mut bundle = ActuatorBundle::new();
 
     let sensors = Sensors::empty();
+    let actuator_state = ActuatorState::default();
     let initial = initial_attitude();
 
     let actuator =
@@ -303,6 +308,7 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
         spacecraft: &snapshot1,
         epoch: Some(&epoch1),
         sensors: &sensors,
+        actuators: &actuator_state,
     };
     let cmd1 = ctrl.update(&obs1).unwrap().expect("must return Some");
     bundle.apply(&cmd1).unwrap();
@@ -334,6 +340,7 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
         spacecraft: &snapshot2,
         epoch: Some(&epoch2),
         sensors: &sensors,
+        actuators: &actuator_state,
     };
     let cmd2 = ctrl.update(&obs2).unwrap().expect("must return Some");
     let m = cmd2

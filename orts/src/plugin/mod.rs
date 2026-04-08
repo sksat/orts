@@ -39,5 +39,6 @@ pub use command::Command;
 pub use controller::PluginController;
 pub use error::PluginError;
 pub use tick_input::{
-    AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody, Sensors, TickInput,
+    ActuatorState, AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody, Sensors,
+    TickInput,
 };

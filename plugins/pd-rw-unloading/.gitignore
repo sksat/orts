@@ -1,0 +1,4 @@
+target/
+.venv/
+sim_*.csv
+uv.lock

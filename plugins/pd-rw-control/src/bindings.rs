@@ -15,6 +15,7 @@ pub mod orts {
             #[used]
             #[doc(hidden)]
             static __FORCE_SECTION_REF: fn() = super::super::super::__link_custom_section_describing_imports;
+            use super::super::super::_rt;
             /// 3 成分実数ベクトル（汎用、フレーム未指定）。
             #[repr(C)]
             #[derive(Clone, Copy)]
@@ -276,10 +277,28 @@ pub mod orts {
                         .finish()
                 }
             }
+            /// アクチュエータのテレメトリ（状態フィードバック）。
+            ///
+            /// RW 角運動量などアクチュエータの現在状態をゲストに提供する。
+            /// 各フィールドは `option` — アクチュエータが存在しなければ `none`。
+            #[derive(Clone)]
+            pub struct ActuatorState {
+                /// RW 各ホイールの角運動量 \[N·m·s\]。
+                pub rw_momentum: Option<_rt::Vec<f64>>,
+            }
+            impl ::core::fmt::Debug for ActuatorState {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("ActuatorState")
+                        .field("rw-momentum", &self.rw_momentum)
+                        .finish()
+                }
+            }
             /// `controller.update` に渡される tick ごとの入力。
             /// ホスト側 `orts::plugin::TickInput<'a>` と対応。
-            #[repr(C)]
-            #[derive(Clone, Copy)]
+            #[derive(Clone)]
             pub struct TickInput {
                 /// シミュレーション時刻 \[s\]、コントローラの t=0 からの経過秒。
                 pub t: f64,
@@ -289,6 +308,8 @@ pub mod orts {
                 pub epoch: Option<Epoch>,
                 /// センサ読み値。将来ノイズが乗る可能性がある。
                 pub sensors: Sensors,
+                /// アクチュエータ状態フィードバック。
+                pub actuators: ActuatorState,
             }
             impl ::core::fmt::Debug for TickInput {
                 fn fmt(
@@ -300,6 +321,7 @@ pub mod orts {
                         .field("spacecraft", &self.spacecraft)
                         .field("epoch", &self.epoch)
                         .field("sensors", &self.sensors)
+                        .field("actuators", &self.actuators)
                         .finish()
                 }
             }
@@ -601,7 +623,8 @@ pub mod exports {
                     let l17 = i32::from(*arg0.add(136).cast::<u8>());
                     let l21 = i32::from(*arg0.add(168).cast::<u8>());
                     let l25 = i32::from(*arg0.add(200).cast::<u8>());
-                    let result30 = T::update(super::super::super::super::orts::plugin::types::TickInput {
+                    let l30 = i32::from(*arg0.add(240).cast::<u8>());
+                    let result34 = T::update(super::super::super::super::orts::plugin::types::TickInput {
                         t: l0,
                         spacecraft: super::super::super::super::orts::plugin::types::SpacecraftState {
                             orbit: super::super::super::super::orts::plugin::types::OrbitalState {
@@ -699,70 +722,93 @@ pub mod exports {
                                 _ => _rt::invalid_enum_discriminant(),
                             },
                         },
+                        actuators: super::super::super::super::orts::plugin::types::ActuatorState {
+                            rw_momentum: match l30 {
+                                0 => None,
+                                1 => {
+                                    let e = {
+                                        let l31 = *arg0
+                                            .add(240 + 1 * ::core::mem::size_of::<*const u8>())
+                                            .cast::<*mut u8>();
+                                        let l32 = *arg0
+                                            .add(240 + 2 * ::core::mem::size_of::<*const u8>())
+                                            .cast::<usize>();
+                                        let len33 = l32;
+                                        _rt::Vec::from_raw_parts(l31.cast(), len33, len33)
+                                    };
+                                    Some(e)
+                                }
+                                _ => _rt::invalid_enum_discriminant(),
+                            },
+                        },
                     });
-                    _rt::cabi_dealloc(arg0, 240, 8);
-                    let ptr31 = (&raw mut _RET_AREA.0).cast::<u8>();
-                    match result30 {
+                    _rt::cabi_dealloc(
+                        arg0,
+                        248 + 2 * ::core::mem::size_of::<*const u8>(),
+                        8,
+                    );
+                    let ptr35 = (&raw mut _RET_AREA.0).cast::<u8>();
+                    match result34 {
                         Ok(e) => {
-                            *ptr31.add(0).cast::<u8>() = (0i32) as u8;
+                            *ptr35.add(0).cast::<u8>() = (0i32) as u8;
                             match e {
                                 Some(e) => {
-                                    *ptr31.add(8).cast::<u8>() = (1i32) as u8;
+                                    *ptr35.add(8).cast::<u8>() = (1i32) as u8;
                                     let super::super::super::super::orts::plugin::types::Command {
-                                        magnetic_moment: magnetic_moment32,
-                                        rw_torque: rw_torque32,
+                                        magnetic_moment: magnetic_moment36,
+                                        rw_torque: rw_torque36,
                                     } = e;
-                                    match magnetic_moment32 {
+                                    match magnetic_moment36 {
                                         Some(e) => {
-                                            *ptr31.add(16).cast::<u8>() = (1i32) as u8;
+                                            *ptr35.add(16).cast::<u8>() = (1i32) as u8;
                                             let super::super::super::super::orts::plugin::types::CommandedMagneticMoment {
-                                                x: x33,
-                                                y: y33,
-                                                z: z33,
+                                                x: x37,
+                                                y: y37,
+                                                z: z37,
                                             } = e;
-                                            *ptr31.add(24).cast::<f64>() = _rt::as_f64(x33);
-                                            *ptr31.add(32).cast::<f64>() = _rt::as_f64(y33);
-                                            *ptr31.add(40).cast::<f64>() = _rt::as_f64(z33);
+                                            *ptr35.add(24).cast::<f64>() = _rt::as_f64(x37);
+                                            *ptr35.add(32).cast::<f64>() = _rt::as_f64(y37);
+                                            *ptr35.add(40).cast::<f64>() = _rt::as_f64(z37);
                                         }
                                         None => {
-                                            *ptr31.add(16).cast::<u8>() = (0i32) as u8;
+                                            *ptr35.add(16).cast::<u8>() = (0i32) as u8;
                                         }
                                     };
-                                    match rw_torque32 {
+                                    match rw_torque36 {
                                         Some(e) => {
-                                            *ptr31.add(48).cast::<u8>() = (1i32) as u8;
+                                            *ptr35.add(48).cast::<u8>() = (1i32) as u8;
                                             let super::super::super::super::orts::plugin::types::CommandedRwTorque {
-                                                x: x34,
-                                                y: y34,
-                                                z: z34,
+                                                x: x38,
+                                                y: y38,
+                                                z: z38,
                                             } = e;
-                                            *ptr31.add(56).cast::<f64>() = _rt::as_f64(x34);
-                                            *ptr31.add(64).cast::<f64>() = _rt::as_f64(y34);
-                                            *ptr31.add(72).cast::<f64>() = _rt::as_f64(z34);
+                                            *ptr35.add(56).cast::<f64>() = _rt::as_f64(x38);
+                                            *ptr35.add(64).cast::<f64>() = _rt::as_f64(y38);
+                                            *ptr35.add(72).cast::<f64>() = _rt::as_f64(z38);
                                         }
                                         None => {
-                                            *ptr31.add(48).cast::<u8>() = (0i32) as u8;
+                                            *ptr35.add(48).cast::<u8>() = (0i32) as u8;
                                         }
                                     };
                                 }
                                 None => {
-                                    *ptr31.add(8).cast::<u8>() = (0i32) as u8;
+                                    *ptr35.add(8).cast::<u8>() = (0i32) as u8;
                                 }
                             };
                         }
                         Err(e) => {
-                            *ptr31.add(0).cast::<u8>() = (1i32) as u8;
-                            let vec35 = (e.into_bytes()).into_boxed_slice();
-                            let ptr35 = vec35.as_ptr().cast::<u8>();
-                            let len35 = vec35.len();
-                            ::core::mem::forget(vec35);
-                            *ptr31
+                            *ptr35.add(0).cast::<u8>() = (1i32) as u8;
+                            let vec39 = (e.into_bytes()).into_boxed_slice();
+                            let ptr39 = vec39.as_ptr().cast::<u8>();
+                            let len39 = vec39.len();
+                            ::core::mem::forget(vec39);
+                            *ptr35
                                 .add(8 + 1 * ::core::mem::size_of::<*const u8>())
-                                .cast::<usize>() = len35;
-                            *ptr31.add(8).cast::<*mut u8>() = ptr35.cast_mut();
+                                .cast::<usize>() = len39;
+                            *ptr35.add(8).cast::<*mut u8>() = ptr39.cast_mut();
                         }
                     };
-                    ptr31
+                    ptr35
                 }
                 #[doc(hidden)]
                 #[allow(non_snake_case)]
@@ -888,6 +934,7 @@ pub mod exports {
 #[rustfmt::skip]
 mod _rt {
     #![allow(dead_code, clippy::all)]
+    pub use alloc_crate::vec::Vec;
     pub fn as_f64<T: AsF64>(t: T) -> f64 {
         t.as_f64()
     }
@@ -909,7 +956,6 @@ mod _rt {
     pub fn run_ctors_once() {
         wit_bindgen_rt::run_ctors_once();
     }
-    pub use alloc_crate::vec::Vec;
     pub unsafe fn string_lift(bytes: Vec<u8>) -> String {
         if cfg!(debug_assertions) {
             String::from_utf8(bytes).unwrap()
@@ -971,9 +1017,9 @@ pub(crate) use __export_plugin_impl as export;
 )]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1263] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xf2\x08\x01A\x02\x01\
-A\x0a\x01B&\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01x\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1316] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xa7\x09\x01A\x02\x01\
+A\x0a\x01B*\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01x\
 u\x01yu\x01zu\x04\0\x04quat\x03\0\x02\x01r\x03\x01xu\x01yu\x01zu\x04\0\x0fpositi\
 on-eci-km\x03\0\x04\x01r\x03\x01xu\x01yu\x01zu\x04\0\x10velocity-eci-kms\x03\0\x06\
 \x01r\x02\x08position\x05\x08velocity\x07\x04\0\x0dorbital-state\x03\0\x08\x01r\x02\
@@ -983,24 +1029,25 @@ r\x01\x0bjulian-dateu\x04\0\x05epoch\x03\0\x0e\x01r\x03\x01xu\x01yu\x01zu\x04\0\
 magnetic-field-body\x03\0\x10\x01r\x03\x01xu\x01yu\x01zu\x04\0\x15angular-veloci\
 ty-body\x03\0\x12\x01r\x04\x01wu\x01xu\x01yu\x01zu\x04\0\x19attitude-body-to-ine\
 rtial\x03\0\x14\x01k\x11\x01k\x13\x01k\x15\x01r\x03\x0cmagnetometer\x16\x09gyros\
-cope\x17\x0cstar-tracker\x18\x04\0\x07sensors\x03\0\x19\x01k\x0f\x01r\x04\x01tu\x0a\
-spacecraft\x0d\x05epoch\x1b\x07sensors\x1a\x04\0\x0atick-input\x03\0\x1c\x01r\x03\
-\x01xu\x01yu\x01zu\x04\0\x19commanded-magnetic-moment\x03\0\x1e\x01r\x03\x01xu\x01\
-yu\x01zu\x04\0\x13commanded-rw-torque\x03\0\x20\x01k\x1f\x01k!\x01r\x02\x0fmagne\
-tic-moment\"\x09rw-torque#\x04\0\x07command\x03\0$\x03\0\x17orts:plugin/types@0.\
-1.0\x05\0\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\x01\x04\
-\0\x04vec3\x03\0\0\x02\x03\x02\x01\x02\x04\0\x05epoch\x03\0\x02\x01m\x05\x05trac\
-e\x05debug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\x05lev\
-el\x05\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\x01\x01\
-e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugin/host-env@0.\
-1.0\x05\x03\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07command\x01B\x10\x02\x03\x02\
-\x01\x04\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\x05\x04\0\x07command\x03\0\x02\
-\x01@\0\0u\x04\0\x0fsample-period-s\x01\x04\x01j\0\x01s\x01@\x01\x06configs\0\x05\
-\x04\0\x04init\x01\x06\x01k\x03\x01j\x01\x07\x01s\x01@\x01\x05input\x01\0\x08\x04\
-\0\x06update\x01\x09\x01ks\x01@\0\0\x0a\x04\0\x0ccurrent-mode\x01\x0b\x04\0\x1co\
-rts:plugin/controller@0.1.0\x05\x06\x04\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\x0c\
-\x01\0\x06plugin\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-componen\
-t\x070.227.1\x10wit-bindgen-rust\x060.41.0";
+cope\x17\x0cstar-tracker\x18\x04\0\x07sensors\x03\0\x19\x01pu\x01k\x1b\x01r\x01\x0b\
+rw-momentum\x1c\x04\0\x0eactuator-state\x03\0\x1d\x01k\x0f\x01r\x05\x01tu\x0aspa\
+cecraft\x0d\x05epoch\x1f\x07sensors\x1a\x09actuators\x1e\x04\0\x0atick-input\x03\
+\0\x20\x01r\x03\x01xu\x01yu\x01zu\x04\0\x19commanded-magnetic-moment\x03\0\"\x01\
+r\x03\x01xu\x01yu\x01zu\x04\0\x13commanded-rw-torque\x03\0$\x01k#\x01k%\x01r\x02\
+\x0fmagnetic-moment&\x09rw-torque'\x04\0\x07command\x03\0(\x03\0\x17orts:plugin/\
+types@0.1.0\x05\0\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\
+\x01\x04\0\x04vec3\x03\0\0\x02\x03\x02\x01\x02\x04\0\x05epoch\x03\0\x02\x01m\x05\
+\x05trace\x05debug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\
+\x05level\x05\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\
+\x01\x01e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugin/hos\
+t-env@0.1.0\x05\x03\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07command\x01B\x10\x02\
+\x03\x02\x01\x04\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\x05\x04\0\x07comman\
+d\x03\0\x02\x01@\0\0u\x04\0\x0fsample-period-s\x01\x04\x01j\0\x01s\x01@\x01\x06c\
+onfigs\0\x05\x04\0\x04init\x01\x06\x01k\x03\x01j\x01\x07\x01s\x01@\x01\x05input\x01\
+\0\x08\x04\0\x06update\x01\x09\x01ks\x01@\0\0\x0a\x04\0\x0ccurrent-mode\x01\x0b\x04\
+\0\x1corts:plugin/controller@0.1.0\x05\x06\x04\0\x18orts:plugin/plugin@0.1.0\x04\
+\0\x0b\x0c\x01\0\x06plugin\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwi\
+t-component\x070.227.1\x10wit-bindgen-rust\x060.41.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

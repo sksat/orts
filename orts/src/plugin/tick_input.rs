@@ -97,6 +97,19 @@ impl Sensors {
     }
 }
 
+// ─── actuator state ──────────────────────────────────────────────
+
+/// アクチュエータのテレメトリ（状態フィードバック）。
+///
+/// Each field is `Option`-wrapped — `None` means the actuator is
+/// not present or the host has not populated this tick's telemetry.
+#[derive(Debug, Clone, Default)]
+pub struct ActuatorState {
+    /// RW 各ホイールの角運動量 \[N·m·s\]。
+    pub rw_momentum: Option<Vec<f64>>,
+    // 将来: pub fuel_mass: Option<f64>,
+}
+
 // ─── tick input ──────────────────────────────────────────────────
 
 /// Per-tick input handed to a plugin controller's `update` call.
@@ -104,7 +117,7 @@ impl Sensors {
 /// Borrowed references keep this zero-copy in the native path. The
 /// WASM backend serializes the matching shape via WIT Canonical ABI
 /// across the guest boundary.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct TickInput<'a> {
     /// Current simulation time \[s\] (seconds from the controller's
     /// reference t=0, not wall clock).
@@ -115,6 +128,8 @@ pub struct TickInput<'a> {
     /// Sensor readings evaluated at this tick. May contain noise;
     /// use `spacecraft` for ground-truth.
     pub sensors: &'a Sensors,
+    /// Actuator state feedback (e.g. RW momentum) at this tick.
+    pub actuators: &'a ActuatorState,
     /// True spacecraft state: orbit + attitude + mass. This is the
     /// simulation ground-truth, not a sensor measurement.
     pub spacecraft: &'a SpacecraftState,

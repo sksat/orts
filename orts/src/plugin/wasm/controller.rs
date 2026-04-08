@@ -133,7 +133,7 @@ impl PluginController for WasmController {
         let wit_obs = convert::tick_input_to_wit(obs);
         let guest = self.plugin.orts_plugin_controller();
         let result = guest
-            .call_update(&mut self.store, wit_obs)
+            .call_update(&mut self.store, &wit_obs)
             .map_err(|e| PluginError::Runtime(format!("guest update trapped: {e}")))?;
         match result {
             Ok(Some(wit_cmd)) => convert::command_from_wit(wit_cmd).map(Some),
