@@ -1,10 +1,6 @@
-//! PD attitude controller with reaction wheel output -- WASM Component guest.
+//! PD attitude controller with reaction wheel output — コールバック型。
 //!
-//! Reads star tracker (attitude) and gyroscope (angular velocity) from
-//! sensor readings, computes PD torque command, and returns a `Command`
-//! with `rw_torque` set.
-//!
-//! Control law (left-invariant quaternion error):
+//! 制御則 (left-invariant quaternion error):
 //!
 //! ```text
 //! q_err = q_target^{-1} * q_current
@@ -15,141 +11,102 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::orts::plugin::controller::Guest;
 use bindings::orts::plugin::types::*;
+use nalgebra::{UnitQuaternion, Vector3};
+use orts_plugin_sdk::orts_plugin;
 
-use core::cell::RefCell;
-
-struct PdRwState {
+struct PdRwControl {
     kp: f64,
     kd: f64,
-    target_q: [f64; 4], // [w, x, y, z]
+    target_q: UnitQuaternion<f64>,
     sample_period: f64,
 }
 
-thread_local! {
-    static STATE: RefCell<PdRwState> = RefCell::new(PdRwState {
-        kp: 1.0,
-        kd: 2.0,
-        target_q: [1.0, 0.0, 0.0, 0.0], // identity
-        sample_period: 0.1,
-    });
-}
-
-struct Component;
-
-impl Guest for Component {
-    fn sample_period_s() -> f64 {
-        STATE.with(|s| s.borrow().sample_period)
+impl PdRwControl {
+    fn sample_period(&self) -> f64 {
+        self.sample_period
     }
 
-    fn init(config: String) -> Result<(), String> {
-        if config.is_empty() {
-            return Ok(());
-        }
-        #[derive(serde::Deserialize)]
-        #[serde(default)]
-        struct Config {
-            kp: f64,
-            kd: f64,
-            target_q: [f64; 4],
-            sample_period: f64,
-        }
-        impl Default for Config {
-            fn default() -> Self {
-                Self {
-                    kp: 1.0,
-                    kd: 2.0,
-                    target_q: [1.0, 0.0, 0.0, 0.0],
-                    sample_period: 0.1,
-                }
-            }
-        }
-        let cfg: Config =
-            serde_json::from_str(&config).map_err(|e| format!("config parse error: {e}"))?;
-        STATE.with(|state| {
-            let mut s = state.borrow_mut();
-            s.kp = cfg.kp;
-            s.kd = cfg.kd;
-            s.target_q = cfg.target_q;
-            s.sample_period = cfg.sample_period;
-        });
-        Ok(())
-    }
-
-    fn update(input: TickInput) -> Result<Option<Command>, String> {
-        STATE.with(|state| {
-            let s = state.borrow();
-
-            // Read sensors.
-            let att = input
-                .sensors
-                .star_tracker
-                .ok_or("star tracker sensor not available")?;
-            let omega = input
-                .sensors
-                .gyroscope
-                .ok_or("gyroscope sensor not available")?;
-
-            // Target quaternion.
-            let tq = &s.target_q;
-
-            // Left-invariant quaternion error: q_err = q_target^{-1} * q_current
-            // q_target^{-1} = conjugate (unit quaternion)
-            let q_err = quat_mul_conj_left(tq, &att);
-
-            // Hemisphere selection (shortest path).
-            let (ew, ex, ey, ez) = if q_err.0 < 0.0 {
-                (-q_err.0, -q_err.1, -q_err.2, -q_err.3)
-            } else {
-                q_err
-            };
-
-            // Body-frame angular error: theta ~ 2 * q_err.vector_part
-            let theta_x = 2.0 * ex;
-            let theta_y = 2.0 * ey;
-            let theta_z = 2.0 * ez;
-            let _ = ew; // scalar part unused
-
-            // PD torque: tau = -Kp * theta_error - Kd * omega
-            let tx = -s.kp * theta_x - s.kd * omega.x;
-            let ty = -s.kp * theta_y - s.kd * omega.y;
-            let tz = -s.kp * theta_z - s.kd * omega.z;
-
-            Ok(Some(Command {
-                magnetic_moment: None,
-                rw_torque: Some(CommandedRwTorque {
-                    x: tx,
-                    y: ty,
-                    z: tz,
-                }),
-            }))
+    fn init(config: &str) -> Result<Self, String> {
+        let cfg: Config = if config.is_empty() {
+            Config::default()
+        } else {
+            serde_json::from_str(config).map_err(|e| format!("config parse error: {e}"))?
+        };
+        Ok(Self {
+            kp: cfg.kp,
+            kd: cfg.kd,
+            target_q: UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+                cfg.target_q[0],
+                cfg.target_q[1],
+                cfg.target_q[2],
+                cfg.target_q[3],
+            )),
+            sample_period: cfg.sample_period,
         })
     }
 
-    fn current_mode() -> Option<String> {
-        None
+    fn update(&mut self, input: &TickInput) -> Result<Option<Command>, String> {
+        let att = input
+            .sensors
+            .star_tracker
+            .ok_or("star tracker sensor not available")?;
+        let omega = input
+            .sensors
+            .gyroscope
+            .ok_or("gyroscope sensor not available")?;
+
+        // Current attitude as UnitQuaternion (Hamilton scalar-first).
+        let q_current = UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+            att.w, att.x, att.y, att.z,
+        ));
+
+        // Left-invariant quaternion error: q_err = q_target^{-1} * q_current
+        let q_err = self.target_q.inverse() * q_current;
+
+        // Hemisphere selection (shortest path).
+        let q_err = if q_err.w < 0.0 {
+            UnitQuaternion::from_quaternion(-q_err.into_inner())
+        } else {
+            q_err
+        };
+
+        // Body-frame angular error: theta ~ 2 * q_err.vector_part
+        let theta = 2.0 * q_err.vector();
+        let omega_body = Vector3::new(omega.x, omega.y, omega.z);
+
+        // PD torque: tau = -Kp * theta - Kd * omega
+        let tau = -self.kp * theta - self.kd * omega_body;
+
+        Ok(Some(Command {
+            rw_torque: Some(CommandedRwTorque {
+                x: tau.x,
+                y: tau.y,
+                z: tau.z,
+            }),
+            magnetic_moment: None,
+        }))
     }
 }
 
-bindings::export!(Component with_types_in bindings);
+orts_plugin!(PdRwControl);
 
-// --- quaternion helpers --------------------------------------------------
+#[derive(serde::Deserialize)]
+#[serde(default)]
+struct Config {
+    kp: f64,
+    kd: f64,
+    target_q: [f64; 4],
+    sample_period: f64,
+}
 
-/// Compute q_a^{-1} * q_b where q_a is a unit quaternion (inverse = conjugate).
-/// Returns (w, x, y, z).
-fn quat_mul_conj_left(
-    qa: &[f64; 4],
-    qb: &AttitudeBodyToInertial,
-) -> (f64, f64, f64, f64) {
-    // qa_inv = conjugate = (w, -x, -y, -z)
-    let (aw, ax, ay, az) = (qa[0], -qa[1], -qa[2], -qa[3]);
-    let (bw, bx, by, bz) = (qb.w, qb.x, qb.y, qb.z);
-
-    // Hamilton product
-    let w = aw * bw - ax * bx - ay * by - az * bz;
-    let x = aw * bx + ax * bw + ay * bz - az * by;
-    let y = aw * by - ax * bz + ay * bw + az * bx;
-    let z = aw * bz + ax * by - ay * bx + az * bw;
-    (w, x, y, z)
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            kp: 1.0,
+            kd: 2.0,
+            target_q: [1.0, 0.0, 0.0, 0.0],
+            sample_period: 0.1,
+        }
+    }
 }

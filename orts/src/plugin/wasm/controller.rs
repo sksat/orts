@@ -74,13 +74,12 @@ impl WasmController {
 
         let guest = plugin.orts_plugin_controller();
 
-        // Call guest init with the config blob.
-        if !config.is_empty() {
-            guest
-                .call_init(&mut store, config)
-                .map_err(|e| PluginError::Init(format!("init trap for '{label}': {e}")))?
-                .map_err(|e| PluginError::Init(format!("init error for '{label}': {e}")))?;
-        }
+        // Always call guest init — even with empty config so that
+        // SDK-based guests can initialise their state with defaults.
+        guest
+            .call_init(&mut store, config)
+            .map_err(|e| PluginError::Init(format!("init trap for '{label}': {e}")))?
+            .map_err(|e| PluginError::Init(format!("init error for '{label}': {e}")))?;
 
         let sample_period = guest
             .call_sample_period_s(&mut store)

@@ -10,7 +10,9 @@ publish = false
 [workspace]
 
 [dependencies]
+orts-plugin-sdk = { path = "../orts-plugin-sdk" }
 wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+nalgebra = { version = "0.33", default-features = false, features = ["libm"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
