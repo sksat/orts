@@ -23,7 +23,7 @@ mod bindings;
 
 use bindings::orts::plugin::types::*;
 use nalgebra::{UnitQuaternion, Vector3};
-use orts_plugin_sdk::orts_plugin;
+use orts_plugin_sdk::{Plugin, orts_plugin};
 
 struct PdRwUnloading {
     kp: f64,
@@ -33,7 +33,7 @@ struct PdRwUnloading {
     sample_period: f64,
 }
 
-impl PdRwUnloading {
+impl Plugin<TickInput, Command> for PdRwUnloading {
     fn sample_period(&self) -> f64 {
         self.sample_period
     }

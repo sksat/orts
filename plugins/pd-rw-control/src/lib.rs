@@ -13,7 +13,7 @@ mod bindings;
 
 use bindings::orts::plugin::types::*;
 use nalgebra::{UnitQuaternion, Vector3};
-use orts_plugin_sdk::orts_plugin;
+use orts_plugin_sdk::{Plugin, orts_plugin};
 
 struct PdRwControl {
     kp: f64,
@@ -22,7 +22,7 @@ struct PdRwControl {
     sample_period: f64,
 }
 
-impl PdRwControl {
+impl Plugin<TickInput, Command> for PdRwControl {
     fn sample_period(&self) -> f64 {
         self.sample_period
     }
