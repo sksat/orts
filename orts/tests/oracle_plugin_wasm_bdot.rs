@@ -46,7 +46,13 @@ const T_END: f64 = 20.0;
 const GAIN: f64 = 1e4;
 const MAX_MOMENT: f64 = 10.0;
 
-fn guest_wasm_bytes() -> Vec<u8> {
+/// Try to load the guest WASM. Returns `None` when the component
+/// has not been built yet, so the tests can soft-skip (matches the
+/// `wasm_async_backend` / `plugin_backend_e2e` convention). The
+/// `rust-test-plugin-wasm` CI job builds this guest explicitly and
+/// relies on the tests actually running; callers must check the
+/// return value and skip if it is `None`.
+fn try_guest_wasm_bytes() -> Option<Vec<u8>> {
     // `cargo component build` places the output under `wasm32-wasip1/`
     // even though the Component Model uses WASI preview 2 internally.
     // This is because `cargo-component` applies a wasip1->component
@@ -57,13 +63,17 @@ fn guest_wasm_bytes() -> Vec<u8> {
         "{}/../plugins/bdot-finite-diff/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
-    std::fs::read(&path).unwrap_or_else(|e| {
-        panic!(
-            "Could not read guest WASM at {path}: {e}\n\
-             Build it first: cd plugins/bdot-finite-diff && \
-             cargo +1.91.0 component build --release"
-        )
-    })
+    match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(_) => {
+            eprintln!(
+                "WASM not found: {path}\n\
+                 Build: cd plugins/bdot-finite-diff && cargo +1.91.0 component build --release\n\
+                 Skipping this test."
+            );
+            None
+        }
+    }
 }
 
 fn inertia() -> Matrix3<f64> {
@@ -117,27 +127,34 @@ fn run_native(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
 }
 
 /// Run the WASM Component guest path via WasmController (sync backend).
-fn run_wasm(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
+///
+/// Returns `None` when the guest component is not built (CI jobs
+/// without a WASM toolchain soft-skip in that case).
+fn run_wasm(initial: AttitudeState, epoch: Epoch) -> Option<AttitudeState> {
+    let wasm_bytes = try_guest_wasm_bytes()?;
     let engine = Arc::new(WasmEngine::new().expect("WasmEngine must init"));
-    let wasm_bytes = guest_wasm_bytes();
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component must compile");
     let pre = WasmController::prepare(&engine, &component).expect("prepare must succeed");
     let ctrl = WasmController::new(&pre, "oracle-bdot", "").expect("new must succeed");
-    drive_wasm(Box::new(ctrl), initial, epoch)
+    Some(drive_wasm(Box::new(ctrl), initial, epoch))
 }
 
 /// Run the WASM Component guest path via the async backend.
 #[cfg(feature = "plugin-wasm-async")]
-fn run_wasm_async(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
-    let mut cache = WasmPluginCache::new().expect("cache init");
+fn run_wasm_async(initial: AttitudeState, epoch: Epoch) -> Option<AttitudeState> {
     let path = std::path::PathBuf::from(format!(
         "{}/../plugins/bdot-finite-diff/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
         env!("CARGO_MANIFEST_DIR")
     ));
+    if !path.exists() {
+        eprintln!("WASM not found: {}\nSkipping this test.", path.display());
+        return None;
+    }
+    let mut cache = WasmPluginCache::new().expect("cache init");
     let ctrl = cache
         .build_async_controller(&path, "oracle-bdot-async", "")
         .expect("build_async_controller");
-    drive_wasm(Box::new(ctrl), initial, epoch)
+    Some(drive_wasm(Box::new(ctrl), initial, epoch))
 }
 
 fn drive_wasm(
@@ -203,8 +220,10 @@ fn wasm_bdot_matches_native() {
     let epoch = Epoch::j2000();
     let initial = initial_attitude();
 
-    let native_state = run_native(initial.clone(), epoch);
-    let wasm_state = run_wasm(initial, epoch);
+    let Some(wasm_state) = run_wasm(initial.clone(), epoch) else {
+        return;
+    };
+    let native_state = run_native(initial, epoch);
 
     // The WASM guest reimplements the same finite-diff B-dot math but
     // reads B_body from sensors.magnetometer (pre-evaluated by
@@ -234,8 +253,12 @@ fn wasm_bdot_sync_matches_async_bit_exact() {
     let epoch = Epoch::j2000();
     let initial = initial_attitude();
 
-    let sync_state = run_wasm(initial.clone(), epoch);
-    let async_state = run_wasm_async(initial, epoch);
+    let Some(sync_state) = run_wasm(initial.clone(), epoch) else {
+        return;
+    };
+    let Some(async_state) = run_wasm_async(initial, epoch) else {
+        return;
+    };
 
     assert_eq!(
         sync_state.quaternion.as_slice(),

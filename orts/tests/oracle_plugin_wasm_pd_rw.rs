@@ -106,18 +106,26 @@ fn run_native(initial: AttitudeState) -> AugmentedState<AttitudeState> {
     state
 }
 
-fn guest_wasm_bytes() -> Vec<u8> {
+/// Try to load the guest WASM. Returns `None` when the component
+/// is not built yet so the tests can soft-skip (matches the
+/// `wasm_async_backend` / `plugin_backend_e2e` convention). The
+/// `rust-test-plugin-wasm` CI job builds this guest explicitly.
+fn try_guest_wasm_bytes() -> Option<Vec<u8>> {
     let path = format!(
         "{}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
-    std::fs::read(&path).unwrap_or_else(|e| {
-        panic!(
-            "Could not read guest WASM at {path}: {e}\n\
-             Build it first: cd plugins/pd-rw-control && \
-             cargo +1.91.0 component build --release"
-        )
-    })
+    match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(_) => {
+            eprintln!(
+                "WASM not found: {path}\n\
+                 Build: cd plugins/pd-rw-control && cargo +1.91.0 component build --release\n\
+                 Skipping this test."
+            );
+            None
+        }
+    }
 }
 
 fn pd_rw_config() -> String {
@@ -128,28 +136,34 @@ fn pd_rw_config() -> String {
 }
 
 /// WASM PD+RW path via the sync `WasmController`.
-fn run_wasm(initial: AttitudeState) -> AugmentedState<AttitudeState> {
+///
+/// Returns `None` when the guest component is not built.
+fn run_wasm(initial: AttitudeState) -> Option<AugmentedState<AttitudeState>> {
+    let wasm_bytes = try_guest_wasm_bytes()?;
     let engine = Arc::new(WasmEngine::new().expect("WasmEngine must init"));
-    let wasm_bytes = guest_wasm_bytes();
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component must compile");
     let pre = WasmController::prepare(&engine, &component).expect("prepare must succeed");
     let ctrl =
         WasmController::new(&pre, "oracle-pd-rw", &pd_rw_config()).expect("new must succeed");
-    drive_wasm(Box::new(ctrl), initial)
+    Some(drive_wasm(Box::new(ctrl), initial))
 }
 
 /// WASM PD+RW path via the async `AsyncWasmController`.
 #[cfg(feature = "plugin-wasm-async")]
-fn run_wasm_async(initial: AttitudeState) -> AugmentedState<AttitudeState> {
-    let mut cache = WasmPluginCache::new().expect("cache init");
+fn run_wasm_async(initial: AttitudeState) -> Option<AugmentedState<AttitudeState>> {
     let path = std::path::PathBuf::from(format!(
         "{}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
         env!("CARGO_MANIFEST_DIR")
     ));
+    if !path.exists() {
+        eprintln!("WASM not found: {}\nSkipping this test.", path.display());
+        return None;
+    }
+    let mut cache = WasmPluginCache::new().expect("cache init");
     let ctrl = cache
         .build_async_controller(&path, "oracle-pd-rw-async", &pd_rw_config())
         .expect("build_async_controller");
-    drive_wasm(Box::new(ctrl), initial)
+    Some(drive_wasm(Box::new(ctrl), initial))
 }
 
 fn drive_wasm(
@@ -227,8 +241,12 @@ fn drive_wasm(
 fn wasm_pd_rw_sync_matches_async_bit_exact() {
     let initial = initial_attitude();
 
-    let sync_state = run_wasm(initial.clone());
-    let async_state = run_wasm_async(initial);
+    let Some(sync_state) = run_wasm(initial.clone()) else {
+        return;
+    };
+    let Some(async_state) = run_wasm_async(initial) else {
+        return;
+    };
 
     assert_eq!(
         sync_state.plant.quaternion.as_slice(),
@@ -250,8 +268,10 @@ fn wasm_pd_rw_sync_matches_async_bit_exact() {
 fn wasm_pd_rw_matches_native() {
     let initial = initial_attitude();
 
-    let native_state = run_native(initial.clone());
-    let wasm_state = run_wasm(initial);
+    let Some(wasm_state) = run_wasm(initial.clone()) else {
+        return;
+    };
+    let native_state = run_native(initial);
 
     // The WASM guest implements the same PD math but with hand-rolled
     // quaternion multiplication (different float op order from nalgebra).
@@ -284,7 +304,9 @@ fn wasm_pd_rw_matches_native() {
 #[test]
 fn wasm_pd_rw_converges() {
     let initial = initial_attitude();
-    let state = run_wasm(initial);
+    let Some(state) = run_wasm(initial) else {
+        return;
+    };
 
     let target_q = UnitQuaternion::identity();
     let q_err = target_q.inverse() * state.plant.orientation();
