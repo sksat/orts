@@ -1,11 +1,18 @@
-//! Benchmark: per-tick cost of WASM plugin on Pulley.
+//! Benchmark: per-tick cost of WASM plugin update() on Pulley,
+//! comparing the sync worker-thread backend and the async fiber
+//! backend.
 //!
-//! Measures the full round-trip of `WasmController::update()`:
-//! outer API → worker-thread channel → guest `wait_tick` resume →
-//! guest control logic → guest `send_command` → channel → return.
+//! Both benches drive the same `pd-rw-control` guest through the
+//! public `PluginController::update` API, so numbers are directly
+//! comparable. The sync path measures the round-trip through the
+//! worker-thread channel; the async path measures the round-trip
+//! through a shared tokio runtime + fiber suspension.
 //!
-//! Prerequisites (build the guest first):
+//! Prerequisites:
 //!   cd plugins/pd-rw-control && cargo +1.91.0 component build --release
+//!
+//! Run:
+//!   cargo bench -p orts --features plugin-wasm-async
 
 #![cfg(feature = "plugin-wasm")]
 
@@ -35,11 +42,17 @@ fn dummy_spacecraft() -> SpacecraftState {
 
 fn dummy_sensors() -> Sensors {
     use kaname::frame::{Body, Vec3};
-    use orts::plugin::tick_input::MagneticFieldBody;
+    use orts::plugin::tick_input::{
+        AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody,
+    };
     Sensors {
         magnetometer: Some(MagneticFieldBody::new(Vec3::<Body>::new(2e-5, -1e-5, 3e-5))),
-        gyroscope: None,
-        star_tracker: None,
+        gyroscope: Some(AngularVelocityBody::new(Vec3::<Body>::new(
+            0.1, 0.05, -0.03,
+        ))),
+        star_tracker: Some(AttitudeBodyToInertial::new(Vector4::new(
+            1.0, 0.0, 0.0, 0.0,
+        ))),
     }
 }
 
@@ -61,25 +74,27 @@ fn try_read_wasm(plugin: &str, binary: &str) -> Option<Vec<u8>> {
     }
 }
 
-fn bench_update(c: &mut Criterion) {
+const PD_RW_CONFIG: &str = r#"{"kp":1.0,"kd":2.0,"sample_period":0.1}"#;
+
+/// Sync backend: `WasmController` + worker thread per satellite.
+fn bench_sync_update(c: &mut Criterion) {
     let Some(wasm_bytes) = try_read_wasm("pd-rw-control", "orts_example_plugin_pd_rw_control")
     else {
         return;
     };
 
-    let engine = Arc::new(WasmEngine::new().expect("WasmEngine"));
+    let engine = Arc::new(WasmEngine::new_sync().expect("WasmEngine::new_sync"));
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component compile");
     let pre = WasmController::prepare(&engine, &component).expect("prepare");
 
-    let config = r#"{"kp":1.0,"kd":2.0,"sample_period":0.1}"#;
-    let mut ctrl = WasmController::new(&pre, "bench", config).expect("new");
+    let mut ctrl = WasmController::new(&pre, "bench-sync", PD_RW_CONFIG).expect("new");
 
     let spacecraft = dummy_spacecraft();
     let sensors = dummy_sensors();
     let actuators = ActuatorState::default();
     let mut t = 0.0;
 
-    c.bench_function("plugin_update", |b| {
+    c.bench_function("plugin_update_sync", |b| {
         b.iter(|| {
             t += 0.1;
             let input = TickInput {
@@ -89,10 +104,59 @@ fn bench_update(c: &mut Criterion) {
                 sensors: &sensors,
                 actuators: &actuators,
             };
-            let _ = ctrl.update(&input);
+            let cmd = ctrl.update(&input).expect("update must succeed");
+            assert!(cmd.is_some());
         })
     });
 }
 
-criterion_group!(benches, bench_update);
+/// Async backend: `AsyncWasmController` on a shared tokio runtime.
+#[cfg(feature = "plugin-wasm-async")]
+fn bench_async_update(c: &mut Criterion) {
+    use orts::plugin::wasm::WasmPluginCache;
+
+    let path = std::path::PathBuf::from(format!(
+        "{}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
+        env!("CARGO_MANIFEST_DIR")
+    ));
+    if !path.exists() {
+        eprintln!(
+            "WASM not found: {}\nBuild: cd plugins/pd-rw-control && cargo +1.91.0 component build --release",
+            path.display()
+        );
+        return;
+    }
+
+    let mut cache = WasmPluginCache::new().expect("cache");
+    let mut ctrl = cache
+        .build_async_controller(&path, "bench-async", PD_RW_CONFIG)
+        .expect("build_async_controller");
+
+    let spacecraft = dummy_spacecraft();
+    let sensors = dummy_sensors();
+    let actuators = ActuatorState::default();
+    let mut t = 0.0;
+
+    c.bench_function("plugin_update_async", |b| {
+        b.iter(|| {
+            t += 0.1;
+            let input = TickInput {
+                t,
+                epoch: None,
+                spacecraft: &spacecraft,
+                sensors: &sensors,
+                actuators: &actuators,
+            };
+            let cmd = ctrl.update(&input).expect("update must succeed");
+            assert!(cmd.is_some());
+        })
+    });
+}
+
+#[cfg(feature = "plugin-wasm-async")]
+criterion_group!(benches, bench_sync_update, bench_async_update);
+
+#[cfg(not(feature = "plugin-wasm-async"))]
+criterion_group!(benches, bench_sync_update);
+
 criterion_main!(benches);

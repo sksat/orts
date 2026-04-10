@@ -532,10 +532,44 @@ Phase P0 smoke test で core wasm path (`Module::*`) と Component Model path (`
 
 ##### feature gate
 
-- orts library: `plugin-wasm` (default OFF)、`plugin-wasm-runtime-only` (opt-in 代替、Cranelift を抜いた minimal runtime)
-- orts-cli: `plugin-wasm` を **default feature に含める**。小サイズ配布したいユーザーは `cargo build --no-default-features --features plugin-wasm-runtime-only` で opt-out 可能
-- CI matrix は `{no-plugin, plugin-wasm (=CLI default), plugin-wasm-runtime-only, all-plugins}` + wasmtime バージョン pin 回帰ジョブ
+- orts library: `plugin-wasm` (default OFF)、`plugin-wasm-async` (opt-in、fiber backend)、`plugin-wasm-runtime-only` (opt-in 代替、Cranelift を抜いた minimal runtime)
+- orts-cli: `plugin-wasm-async` を **default feature に含める**。小サイズ配布したいユーザーは `cargo build --no-default-features --features plugin-wasm-runtime-only` で opt-out 可能
+- CI matrix は `{no-plugin, plugin-wasm (sync only), plugin-wasm-async (=CLI default), plugin-wasm-runtime-only, all-plugins}` + wasmtime バージョン pin 回帰ジョブ
 - Rust toolchain は `rust-toolchain.toml` で wasmtime の MSRV に pin
+
+##### sync / async デュアルバックエンド
+
+WASM guest を駆動するホスト実装は 2 つ並存する。どちらも `PluginController` trait を実装するので、呼び出し側からは透過。
+
+| | sync backend | async backend |
+|---|---|---|
+| module | `orts::plugin::wasm::sync_controller` | `orts::plugin::wasm::async_controller` |
+| 1 sat あたり | OS スレッド 1 本 + std mpsc | tokio task + tokio mpsc |
+| 中断方式 | `wait_tick` で worker thread を channel recv に block | wasmtime fiber + async bindgen で future yield |
+| feature | `plugin-wasm` | `plugin-wasm-async` (`plugin-wasm` + `tokio` + `wasmtime/async`) |
+| 決定論性 | 順次呼び出し前提で決定論的 | `worker_threads(1)` 契約 + 順次呼び出し前提で決定論的 |
+| 衛星数スケール | ~300 まで快適 (OS thread 数依存) | 1000+ 快適 (task 多重化) |
+| per-tick コスト | ~13 µs (pd-rw-control, release) | ~13 µs (pd-rw-control, release) |
+
+per-tick 実測では sync / async の差は測定ノイズの範囲。async の優位性は **per-satellite メモリ**（OS thread 1 本 ≒ 8-16 MB stack vs tokio task 数 KB）。
+
+###### 選択ロジック
+
+- CLI: `--plugin-backend sync|async|auto` (default: `auto`) + `--plugin-backend-threshold N`
+- auto は `n_sats > threshold` で async を選ぶ（境界は sync）
+- threshold のデフォルトは `available_parallelism() * 32`（8 コアマシンで 256）
+- 同一入力に対して **sync / async は bit-for-bit 同じ結果** を出す（oracle テストで常時検証）
+
+###### 決定論モードと throughput モード
+
+- 現状の async backend は `worker_threads(1)` 固定で**決定論モード**契約を守る
+- 将来 multi-worker の throughput モードを足す場合は別 backend variant として追加する（既存 sync/async の決定論契約は崩さない）
+
+###### 呼び出しコンテキスト制約
+
+- `AsyncWasmController::update` は内部で `Handle::block_on` を使うので、**tokio async タスクの中から直接呼ぶと panic**
+- 安全: 平のシンクコード、`tokio::task::spawn_blocking` からの呼び出し
+- `orts serve` の sim loop は `spawn_blocking` で blocking thread に退避済みのため、async backend でも serve が正常動作する
 
 ### ミッション規模と力学モデル
 

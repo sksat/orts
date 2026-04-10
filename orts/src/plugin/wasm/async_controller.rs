@@ -20,12 +20,16 @@
 //!
 //! ## Trade-offs
 //!
-//! - **Dispatch overhead**: ~4-7× slower per `update()` call than
-//!   the sync backend (~21 µs vs ~3 µs in release on Pulley),
-//!   because each call does a channel round-trip plus fiber
-//!   suspend/resume. For fleets <~300 sats the sync backend is
-//!   faster on total wall-clock. Above that the OS thread footprint
-//!   makes sync impractical and async wins.
+//! - **Dispatch overhead**: roughly on par with the sync backend
+//!   per `update()` call on a realistic guest (measured ~13-14 µs
+//!   for `pd-rw-control` in release on Pulley, both backends).
+//!   The per-tick cost is dominated by guest computation through
+//!   the Pulley interpreter, so the channel round-trip / fiber
+//!   suspend-resume overhead is not a practical differentiator.
+//! - **Memory per satellite**: dramatic win for async. Sync spawns
+//!   one OS thread per controller (~8-16 MB of reserved stack each);
+//!   async spawns a tokio task (~few KB). This is what makes 1000+
+//!   satellites feasible.
 //! - **Isolation**: a misbehaving guest (infinite loop, runaway
 //!   computation) can stall the single worker thread and starve all
 //!   other satellites on it. Mitigation: future work with
