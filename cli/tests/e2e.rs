@@ -491,11 +491,26 @@ fn run_cli_config_csv(config_path: &str) -> std::process::Output {
 
 /// E2E: `orts run --config mission.yaml` runs PD+RW controlled simulation.
 ///
-/// Requires the WASM guest to be pre-built:
-///   cd plugins/pd-rw-control && cargo +1.91.0 component build --release
+/// Soft-skips when the guest WASM is not built — CI's
+/// `cli-plugin-backend-e2e` and `rust-test-plugin-wasm` jobs build
+/// the guest explicitly, while the plain `rust-test` job does not.
 #[test]
 #[cfg(feature = "plugin-wasm")]
 fn test_controlled_simulation_via_config() {
+    let guest_wasm = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm");
+    if !guest_wasm.exists() {
+        eprintln!(
+            "WASM not found: {}\n\
+             Build: cd plugins/pd-rw-control && cargo +1.91.0 component build --release\n\
+             Skipping this test.",
+            guest_wasm.display()
+        );
+        return;
+    }
+
     let output = run_cli_config_csv("plugins/pd-rw-control/orts.toml");
 
     let stderr = String::from_utf8_lossy(&output.stderr);

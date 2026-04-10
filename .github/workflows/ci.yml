@@ -298,6 +298,7 @@ jobs:
         run: |
           cargo test --locked -p orts-cli --test plugin_backend_e2e
           cargo test --locked -p orts-cli --test serve_dynamic_controlled_add_e2e
+          cargo test --locked -p orts-cli --test e2e test_controlled_simulation_via_config
 
   # Build CLI with embedded viewer SPA (main only).
   # On PRs, build.rs falls back to a placeholder — viewer embedding
