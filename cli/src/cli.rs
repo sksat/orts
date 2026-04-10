@@ -182,16 +182,21 @@ pub struct SimArgs {
 
     /// Async backend execution mode (`orts run` only).
     ///
-    /// - `deterministic` (default): single tokio worker thread, bit-
-    ///   for-bit reproducible. Used by oracle tests.
-    /// - `throughput`: multi-worker tokio runtime, `orts run` fans
-    ///   the per-satellite `step_controlled` out across CPU cores
-    ///   via rayon. Higher wall-clock throughput at the cost of
-    ///   bit-for-bit reproducibility.
+    /// - `throughput` (default): multi-worker tokio runtime,
+    ///   `orts run` fans the per-satellite `step_controlled` out
+    ///   across CPU cores via rayon. Measurably faster on any
+    ///   multi-core host. Since each satellite's `step_controlled`
+    ///   is independent (no shared mutable state between sats),
+    ///   the result is byte-for-byte identical to deterministic
+    ///   mode — the speedup comes for free.
+    /// - `deterministic`: single tokio worker thread, strictly
+    ///   sequential. Pick this if you need a hard scheduling-order
+    ///   guarantee (e.g. for future features that introduce
+    ///   cross-satellite side effects or shared mutable host state).
     ///
     /// Ignored when `--plugin-backend=sync`. `orts serve` currently
-    /// always runs in deterministic mode.
-    #[arg(long, value_enum, default_value = "deterministic")]
+    /// always runs in deterministic mode regardless of this flag.
+    #[arg(long, value_enum, default_value = "throughput")]
     pub plugin_backend_async_mode: PluginAsyncModeChoice,
 }
 
