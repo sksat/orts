@@ -39,6 +39,7 @@ toml.workspace = true
 serde_yaml.workspace = true
 rust-embed = { workspace = true, optional = true }
 wasmtime = { workspace = true, optional = true }
+rayon = "1"
 
 [dev-dependencies]
 tokio-tungstenite.workspace = true

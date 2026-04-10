@@ -28,6 +28,7 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
     // `orts run --config … --plugin-backend=sync|async` works.
     params.plugin_backend_choice = sim.plugin_backend;
     params.plugin_backend_threshold = sim.plugin_backend_threshold;
+    params.plugin_backend_async_mode = sim.plugin_backend_async_mode;
 
     // 全衛星が controller 付きなら制御ループへディスパッチ。
     let has_controller = !params.satellites.is_empty()
@@ -387,12 +388,39 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
 
     // WASM plugin cache（複数衛星で共有する engine + compiled component）。
     #[cfg(feature = "plugin-wasm")]
-    let mut wasm_cache = orts::plugin::wasm::WasmPluginCache::new().unwrap_or_else(|e| {
-        eprintln!("Error initializing WASM plugin cache: {e}");
-        std::process::exit(1);
-    });
-    #[cfg(feature = "plugin-wasm")]
     let plugin_backend = params.resolve_plugin_backend();
+    #[cfg(feature = "plugin-wasm-async")]
+    let async_mode = params.resolve_async_mode();
+    #[cfg(feature = "plugin-wasm")]
+    let mut wasm_cache = {
+        #[cfg(feature = "plugin-wasm-async")]
+        {
+            orts::plugin::wasm::WasmPluginCache::new_with_async_mode(async_mode).unwrap_or_else(
+                |e| {
+                    eprintln!("Error initializing WASM plugin cache: {e}");
+                    std::process::exit(1);
+                },
+            )
+        }
+        #[cfg(not(feature = "plugin-wasm-async"))]
+        {
+            orts::plugin::wasm::WasmPluginCache::new().unwrap_or_else(|e| {
+                eprintln!("Error initializing WASM plugin cache: {e}");
+                std::process::exit(1);
+            })
+        }
+    };
+    // Only use rayon parallelism for the sim loop when the user
+    // explicitly asked for the throughput async backend. Deterministic
+    // mode (and the sync backend) stay on the sequential `for` loop so
+    // that oracle tests keep their bit-exact guarantees.
+    #[cfg(feature = "plugin-wasm-async")]
+    let parallel_step = matches!(
+        plugin_backend,
+        crate::sim::params::ResolvedPluginBackend::Async
+    ) && async_mode == orts::plugin::wasm::AsyncMode::Throughput;
+    #[cfg(not(feature = "plugin-wasm-async"))]
+    let parallel_step = false;
 
     // 制御付き衛星を構築。
     let mut satellites = Vec::new();
@@ -436,11 +464,21 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
     while t < duration - 1e-12 {
         let dt = dt_ctrl.min(duration - t);
 
-        for sat in &mut satellites {
-            step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref()).unwrap_or_else(|e| {
-                eprintln!("Simulation error at t={t:.3}: {e}");
-                std::process::exit(1);
+        if parallel_step {
+            use rayon::prelude::*;
+            satellites.par_iter_mut().for_each(|sat| {
+                step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref()).unwrap_or_else(|e| {
+                    eprintln!("Simulation error at t={t:.3}: {e}");
+                    std::process::exit(1);
+                });
             });
+        } else {
+            for sat in &mut satellites {
+                step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref()).unwrap_or_else(|e| {
+                    eprintln!("Simulation error at t={t:.3}: {e}");
+                    std::process::exit(1);
+                });
+            }
         }
 
         t += dt;

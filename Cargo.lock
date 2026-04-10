@@ -2927,6 +2927,7 @@ dependencies = [
  "log",
  "nalgebra",
  "orts",
+ "rayon",
  "rust-embed",
  "serde",
  "serde_json",

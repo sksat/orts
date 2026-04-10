@@ -49,4 +49,4 @@ pub mod async_runtime;
 #[cfg(feature = "plugin-wasm-async")]
 pub use async_controller::{AsyncPluginPreBuilt, AsyncWasmController};
 #[cfg(feature = "plugin-wasm-async")]
-pub use async_runtime::AsyncRuntime;
+pub use async_runtime::{AsyncMode, AsyncRuntime};

@@ -48,7 +48,7 @@ use crate::plugin::error::PluginError;
 #[cfg(feature = "plugin-wasm-async")]
 use super::async_controller::{AsyncPluginPreBuilt, AsyncWasmController};
 #[cfg(feature = "plugin-wasm-async")]
-use super::async_runtime::AsyncRuntime;
+use super::async_runtime::{AsyncMode, AsyncRuntime};
 
 /// Cache of compiled WASM plugins and their pre-linked instances.
 ///
@@ -61,6 +61,11 @@ pub struct WasmPluginCache {
     sync_engine: Arc<WasmEngine>,
     sync_plugins: HashMap<PathBuf, CachedSyncPlugin>,
 
+    /// Execution mode used when the `AsyncRuntime` is lazily created.
+    /// Set at construction and immutable afterwards; the runtime is
+    /// only built once, so the mode is locked in after first async use.
+    #[cfg(feature = "plugin-wasm-async")]
+    async_mode: AsyncMode,
     #[cfg(feature = "plugin-wasm-async")]
     async_state: Option<AsyncCacheState>,
 }
@@ -82,7 +87,11 @@ struct AsyncCacheState {
 }
 
 impl WasmPluginCache {
-    /// Create a new empty cache with a fresh sync Pulley-target engine.
+    /// Create a new empty cache with a fresh sync Pulley-target
+    /// engine. When `plugin-wasm-async` is enabled the async runtime
+    /// defaults to [`AsyncMode::Deterministic`]; use
+    /// [`new_with_async_mode`](Self::new_with_async_mode) to opt into
+    /// the throughput-optimised variant.
     ///
     /// The async engine and runtime are **not** created here even
     /// when the `plugin-wasm-async` feature is enabled — they are
@@ -94,6 +103,21 @@ impl WasmPluginCache {
             sync_engine,
             sync_plugins: HashMap::new(),
             #[cfg(feature = "plugin-wasm-async")]
+            async_mode: AsyncMode::Deterministic,
+            #[cfg(feature = "plugin-wasm-async")]
+            async_state: None,
+        })
+    }
+
+    /// Create a new cache that, on first async use, will build an
+    /// `AsyncRuntime` in the given [`AsyncMode`].
+    #[cfg(feature = "plugin-wasm-async")]
+    pub fn new_with_async_mode(async_mode: AsyncMode) -> Result<Self, PluginError> {
+        let sync_engine = Arc::new(WasmEngine::new_sync()?);
+        Ok(Self {
+            sync_engine,
+            sync_plugins: HashMap::new(),
+            async_mode,
             async_state: None,
         })
     }
@@ -185,7 +209,7 @@ impl WasmPluginCache {
     fn ensure_async_state(&mut self) -> Result<(), PluginError> {
         if self.async_state.is_none() {
             let engine = Arc::new(WasmEngine::new_async()?);
-            let runtime = Arc::new(AsyncRuntime::new()?);
+            let runtime = Arc::new(AsyncRuntime::new(self.async_mode)?);
             self.async_state = Some(AsyncCacheState {
                 engine,
                 runtime,

@@ -179,6 +179,29 @@ pub struct SimArgs {
     /// thread count becomes problematic.
     #[arg(long)]
     pub plugin_backend_threshold: Option<usize>,
+
+    /// Async backend execution mode (`orts run` only).
+    ///
+    /// - `deterministic` (default): single tokio worker thread, bit-
+    ///   for-bit reproducible. Used by oracle tests.
+    /// - `throughput`: multi-worker tokio runtime, `orts run` fans
+    ///   the per-satellite `step_controlled` out across CPU cores
+    ///   via rayon. Higher wall-clock throughput at the cost of
+    ///   bit-for-bit reproducibility.
+    ///
+    /// Ignored when `--plugin-backend=sync`. `orts serve` currently
+    /// always runs in deterministic mode.
+    #[arg(long, value_enum, default_value = "deterministic")]
+    pub plugin_backend_async_mode: PluginAsyncModeChoice,
+}
+
+/// Async WASM backend execution mode.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum PluginAsyncModeChoice {
+    /// Bit-for-bit reproducible, single worker thread.
+    Deterministic,
+    /// Parallel, multi-worker runtime + rayon-driven sim loop.
+    Throughput,
 }
 
 /// Explicit backend choice from CLI.

@@ -5,7 +5,9 @@ use kaname::epoch::Epoch;
 use orts::tle::Tle;
 use utsuroi::Tolerances;
 
-use crate::cli::{AtmosphereChoice, IntegratorChoice, PluginBackendChoice, SimArgs};
+use crate::cli::{
+    AtmosphereChoice, IntegratorChoice, PluginAsyncModeChoice, PluginBackendChoice, SimArgs,
+};
 use crate::config::SimConfig;
 use crate::satellite::{OrbitSpec, SatelliteSpec, parse_body, parse_sat_spec};
 use crate::tle::{fetch_tle_by_norad_id, try_fetch_tle_by_norad_id};
@@ -107,6 +109,11 @@ pub struct SimParams {
     /// Optional threshold override from the CLI.
     #[cfg_attr(not(feature = "plugin-wasm"), allow(dead_code))]
     pub plugin_backend_threshold: Option<usize>,
+    /// Async backend execution mode (deterministic vs throughput).
+    /// Only consulted when `plugin-wasm-async` is enabled and the
+    /// resolved backend is async.
+    #[cfg_attr(not(feature = "plugin-wasm-async"), allow(dead_code))]
+    pub plugin_backend_async_mode: PluginAsyncModeChoice,
 }
 
 impl SimParams {
@@ -119,6 +126,16 @@ impl SimParams {
             self.plugin_backend_threshold,
             self.satellites.len(),
         )
+    }
+
+    /// Resolve the async-backend execution mode requested by the CLI.
+    /// Only meaningful when the resolved backend is async.
+    #[cfg(feature = "plugin-wasm-async")]
+    pub fn resolve_async_mode(&self) -> orts::plugin::wasm::AsyncMode {
+        match self.plugin_backend_async_mode {
+            PluginAsyncModeChoice::Deterministic => orts::plugin::wasm::AsyncMode::Deterministic,
+            PluginAsyncModeChoice::Throughput => orts::plugin::wasm::AsyncMode::Throughput,
+        }
     }
 }
 
@@ -266,6 +283,7 @@ impl SimParams {
             space_weather_provider: Self::load_space_weather(args.space_weather.as_deref()),
             plugin_backend_choice: args.plugin_backend,
             plugin_backend_threshold: args.plugin_backend_threshold,
+            plugin_backend_async_mode: args.plugin_backend_async_mode,
         }
     }
 
@@ -328,6 +346,7 @@ impl SimParams {
             // auto selection logic falls back to its derived threshold.
             plugin_backend_choice: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         }
     }
 
@@ -484,6 +503,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
@@ -517,6 +537,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.dt - 1.0).abs() < 1e-9);
@@ -550,6 +571,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.stream_interval - 5.0).abs() < 1e-9);
@@ -578,6 +600,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params2 = SimParams::from_sim_args(&args2, false);
         assert!((params2.stream_interval - 10.0).abs() < 1e-9);
@@ -608,6 +631,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!(params.epoch.is_some());
@@ -646,6 +670,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         SimParams::from_sim_args(&args, false);
     }
@@ -679,6 +704,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -728,6 +754,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
         let state = params.satellites[0].initial_state(params.mu);
@@ -770,6 +797,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -810,6 +838,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -849,6 +878,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert_eq!(params.satellites.len(), 2);
@@ -882,6 +912,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert_eq!(params.satellites.len(), 1);
@@ -914,6 +945,7 @@ mod tests {
             config: None,
             plugin_backend: PluginBackendChoice::Auto,
             plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, true);
         // Should have at least SSO satellite
