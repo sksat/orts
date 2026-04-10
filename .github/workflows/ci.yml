@@ -123,6 +123,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
+      # Same reason as rust-build: restoring the cargo cache + running
+      # test binaries on the default runner can still exhaust disk
+      # during the test link/run phase. Keep the same keep/reclaim
+      # policy as rust-build.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
       - name: Install mold linker
         run: sudo apt-get install -y mold
 
