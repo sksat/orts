@@ -5,10 +5,11 @@
 //! builds many satellites that share the same controller WASM file, we
 //! don't want to recompile the component N times. This cache holds:
 //!
-//! - a single shared [`WasmEngine`] (Pulley target),
-//! - per-path compiled [`Component`]s,
-//! - per-path pre-linked [`PluginPre`] instances ready for
-//!   [`WasmController::new`].
+//! - a single shared sync [`WasmEngine`] (Pulley target),
+//! - optionally, a single shared async [`WasmEngine`] and
+//!   [`AsyncRuntime`] (feature `plugin-wasm-async`),
+//! - per-path compiled sync + async [`Component`]s and their
+//!   pre-linked instances.
 //!
 //! Typical usage:
 //!
@@ -17,7 +18,7 @@
 //! # fn main() -> Result<(), orts::plugin::PluginError> {
 //! let mut cache = WasmPluginCache::new()?;
 //! for i in 0..1000 {
-//!     let ctrl = cache.build_controller(
+//!     let ctrl = cache.build_sync_controller(
 //!         "plugins/bdot-finite-diff/target/wasm32-wasip1/release/guest.wasm".as_ref(),
 //!         &format!("sat{i}"),
 //!         "",
@@ -44,72 +45,172 @@ use super::sync_host_state::HostState;
 
 use crate::plugin::error::PluginError;
 
+#[cfg(feature = "plugin-wasm-async")]
+use super::async_controller::{AsyncPluginPreBuilt, AsyncWasmController};
+#[cfg(feature = "plugin-wasm-async")]
+use super::async_runtime::AsyncRuntime;
+
 /// Cache of compiled WASM plugins and their pre-linked instances.
 ///
-/// Holds a single `WasmEngine` and a map of `wasm path → cached
-/// component + pre-link`. Satellites are built against the cached
-/// entries by calling [`WasmPluginCache::build_controller`].
+/// Holds a single sync `WasmEngine` and, when the
+/// `plugin-wasm-async` feature is enabled, a single async
+/// `WasmEngine` + `AsyncRuntime` that are created lazily on first
+/// async use. Plugin components are compiled per backend and cached
+/// by file path.
 pub struct WasmPluginCache {
-    engine: Arc<WasmEngine>,
-    plugins: HashMap<PathBuf, CachedPlugin>,
+    sync_engine: Arc<WasmEngine>,
+    sync_plugins: HashMap<PathBuf, CachedSyncPlugin>,
+
+    #[cfg(feature = "plugin-wasm-async")]
+    async_state: Option<AsyncCacheState>,
 }
 
-/// A compiled component and its pre-linked instance, kept alive
+/// A compiled component and its pre-linked sync instance, kept alive
 /// together so that the pre stays valid.
-struct CachedPlugin {
+struct CachedSyncPlugin {
     /// Kept alive for the pre to reference.
     #[allow(dead_code)]
     component: Component,
     pre: PluginPre<HostState>,
 }
 
+#[cfg(feature = "plugin-wasm-async")]
+struct AsyncCacheState {
+    engine: Arc<WasmEngine>,
+    runtime: Arc<AsyncRuntime>,
+    plugins: HashMap<PathBuf, AsyncPluginPreBuilt>,
+}
+
 impl WasmPluginCache {
-    /// Create a new empty cache with a fresh Pulley-target engine.
+    /// Create a new empty cache with a fresh sync Pulley-target engine.
+    ///
+    /// The async engine and runtime are **not** created here even
+    /// when the `plugin-wasm-async` feature is enabled — they are
+    /// started lazily on the first call to
+    /// [`build_async_controller`](Self::build_async_controller).
     pub fn new() -> Result<Self, PluginError> {
-        let engine = Arc::new(WasmEngine::new()?);
+        let sync_engine = Arc::new(WasmEngine::new_sync()?);
         Ok(Self {
-            engine,
-            plugins: HashMap::new(),
+            sync_engine,
+            sync_plugins: HashMap::new(),
+            #[cfg(feature = "plugin-wasm-async")]
+            async_state: None,
         })
     }
 
-    /// Borrow the underlying shared engine.
-    pub fn engine(&self) -> &Arc<WasmEngine> {
-        &self.engine
+    /// Borrow the underlying shared sync engine.
+    pub fn sync_engine(&self) -> &Arc<WasmEngine> {
+        &self.sync_engine
     }
 
-    /// Build a controller for the plugin at `path`, reusing the cached
-    /// component + pre-link if available.
+    /// Build a sync controller for the plugin at `path`, reusing the
+    /// cached component + pre-link if available.
     ///
     /// On first call for a given path, this reads the WASM bytes,
     /// compiles them to a `Component`, and prepares a `PluginPre`.
     /// Subsequent calls for the same path skip all three steps.
+    pub fn build_sync_controller(
+        &mut self,
+        path: &Path,
+        label: &str,
+        config: &str,
+    ) -> Result<WasmController, PluginError> {
+        let pre = self.get_or_load_sync(path)?;
+        WasmController::new(pre, label, config)
+    }
+
+    /// Legacy alias for [`build_sync_controller`](Self::build_sync_controller).
     pub fn build_controller(
         &mut self,
         path: &Path,
         label: &str,
         config: &str,
     ) -> Result<WasmController, PluginError> {
-        let pre = self.get_or_load(path)?;
-        WasmController::new(pre, label, config)
+        self.build_sync_controller(path, label, config)
     }
 
-    fn get_or_load(&mut self, path: &Path) -> Result<&PluginPre<HostState>, PluginError> {
-        if !self.plugins.contains_key(path) {
+    fn get_or_load_sync(&mut self, path: &Path) -> Result<&PluginPre<HostState>, PluginError> {
+        if !self.sync_plugins.contains_key(path) {
             let bytes = std::fs::read(path).map_err(|e| {
                 PluginError::Init(format!("cannot read WASM at '{}': {e}", path.display()))
             })?;
-            let component = Component::new(self.engine.inner(), &bytes).map_err(|e| {
+            let component = Component::new(self.sync_engine.inner(), &bytes).map_err(|e| {
                 PluginError::Init(format!("WASM compile failed for '{}': {e}", path.display()))
             })?;
-            let pre = WasmController::prepare(&self.engine, &component)?;
-            self.plugins
-                .insert(path.to_path_buf(), CachedPlugin { component, pre });
+            let pre = WasmController::prepare(&self.sync_engine, &component)?;
+            self.sync_plugins
+                .insert(path.to_path_buf(), CachedSyncPlugin { component, pre });
         }
         Ok(&self
-            .plugins
+            .sync_plugins
             .get(path)
             .expect("just inserted if missing")
             .pre)
+    }
+}
+
+#[cfg(feature = "plugin-wasm-async")]
+impl WasmPluginCache {
+    /// Build an async controller for the plugin at `path`.
+    ///
+    /// On first async use, this also creates the shared async engine
+    /// and the background `AsyncRuntime` thread. On subsequent calls
+    /// for the same path the cached compiled component + pre-link
+    /// are reused.
+    pub fn build_async_controller(
+        &mut self,
+        path: &Path,
+        label: &str,
+        config: &str,
+    ) -> Result<AsyncWasmController, PluginError> {
+        let built = self.get_or_load_async(path)?;
+        AsyncWasmController::new(built, label, config)
+    }
+
+    /// Borrow the async engine, creating it if this is the first
+    /// async use. Public so that callers that need direct access
+    /// (e.g. tests) can reuse the same engine.
+    pub fn async_engine(&mut self) -> Result<&Arc<WasmEngine>, PluginError> {
+        self.ensure_async_state()?;
+        Ok(&self.async_state.as_ref().unwrap().engine)
+    }
+
+    /// Borrow the async runtime, creating it if this is the first
+    /// async use.
+    pub fn async_runtime(&mut self) -> Result<&Arc<AsyncRuntime>, PluginError> {
+        self.ensure_async_state()?;
+        Ok(&self.async_state.as_ref().unwrap().runtime)
+    }
+
+    fn ensure_async_state(&mut self) -> Result<(), PluginError> {
+        if self.async_state.is_none() {
+            let engine = Arc::new(WasmEngine::new_async()?);
+            let runtime = Arc::new(AsyncRuntime::new()?);
+            self.async_state = Some(AsyncCacheState {
+                engine,
+                runtime,
+                plugins: HashMap::new(),
+            });
+        }
+        Ok(())
+    }
+
+    fn get_or_load_async(&mut self, path: &Path) -> Result<&AsyncPluginPreBuilt, PluginError> {
+        self.ensure_async_state()?;
+        let state = self.async_state.as_mut().unwrap();
+        if !state.plugins.contains_key(path) {
+            let bytes = std::fs::read(path).map_err(|e| {
+                PluginError::Init(format!("cannot read WASM at '{}': {e}", path.display()))
+            })?;
+            let component = Component::new(state.engine.inner(), &bytes).map_err(|e| {
+                PluginError::Init(format!(
+                    "async WASM compile failed for '{}': {e}",
+                    path.display()
+                ))
+            })?;
+            let built = AsyncPluginPreBuilt::new(&state.engine, &state.runtime, &component)?;
+            state.plugins.insert(path.to_path_buf(), built);
+        }
+        Ok(state.plugins.get(path).expect("just inserted if missing"))
     }
 }

@@ -30,7 +30,7 @@ use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, AugmentedAttitudeSystem, GravityGradientTorque};
 use orts::effector::AugmentedState;
-use orts::plugin::wasm::{WasmController, WasmEngine};
+use orts::plugin::wasm::{WasmController, WasmEngine, WasmPluginCache};
 use orts::plugin::{ActuatorBundle, ActuatorState, PluginController, TickInput};
 use orts::sensor::{Gyroscope, SensorBundle, StarTracker};
 use orts::spacecraft::ReactionWheelAssembly;
@@ -120,22 +120,45 @@ fn guest_wasm_bytes() -> Vec<u8> {
     })
 }
 
-/// WASM PD+RW path via WasmController + SensorBundle.
-fn run_wasm(initial: AttitudeState) -> AugmentedState<AttitudeState> {
-    let mu = MU_EARTH;
-    let radius = R_EARTH + ALT_KM;
-    let epoch = Epoch::j2000();
+fn pd_rw_config() -> String {
+    format!(
+        r#"{{"kp":{},"kd":{},"target_q":[1,0,0,0],"sample_period":{}}}"#,
+        KP, KD, DT_CTRL
+    )
+}
 
+/// WASM PD+RW path via the sync `WasmController`.
+fn run_wasm(initial: AttitudeState) -> AugmentedState<AttitudeState> {
     let engine = Arc::new(WasmEngine::new().expect("WasmEngine must init"));
     let wasm_bytes = guest_wasm_bytes();
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component must compile");
     let pre = WasmController::prepare(&engine, &component).expect("prepare must succeed");
+    let ctrl =
+        WasmController::new(&pre, "oracle-pd-rw", &pd_rw_config()).expect("new must succeed");
+    drive_wasm(Box::new(ctrl), initial)
+}
 
-    let config = format!(
-        r#"{{"kp":{},"kd":{},"target_q":[1,0,0,0],"sample_period":{}}}"#,
-        KP, KD, DT_CTRL
-    );
-    let mut ctrl = WasmController::new(&pre, "oracle-pd-rw", &config).expect("new must succeed");
+/// WASM PD+RW path via the async `AsyncWasmController`.
+#[cfg(feature = "plugin-wasm-async")]
+fn run_wasm_async(initial: AttitudeState) -> AugmentedState<AttitudeState> {
+    let mut cache = WasmPluginCache::new().expect("cache init");
+    let path = std::path::PathBuf::from(format!(
+        "{}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
+        env!("CARGO_MANIFEST_DIR")
+    ));
+    let ctrl = cache
+        .build_async_controller(&path, "oracle-pd-rw-async", &pd_rw_config())
+        .expect("build_async_controller");
+    drive_wasm(Box::new(ctrl), initial)
+}
+
+fn drive_wasm(
+    mut ctrl: Box<dyn PluginController>,
+    initial: AttitudeState,
+) -> AugmentedState<AttitudeState> {
+    let mu = MU_EARTH;
+    let radius = R_EARTH + ALT_KM;
+    let epoch = Epoch::j2000();
 
     let rw = ReactionWheelAssembly::three_axis(RW_INERTIA, RW_MAX_MOMENTUM, RW_MAX_TORQUE);
 
@@ -195,6 +218,32 @@ fn run_wasm(initial: AttitudeState) -> AugmentedState<AttitudeState> {
     }
 
     state
+}
+
+/// Sync and async backends must produce bit-exact identical
+/// trajectories for the same initial condition.
+#[cfg(feature = "plugin-wasm-async")]
+#[test]
+fn wasm_pd_rw_sync_matches_async_bit_exact() {
+    let initial = initial_attitude();
+
+    let sync_state = run_wasm(initial.clone());
+    let async_state = run_wasm_async(initial);
+
+    assert_eq!(
+        sync_state.plant.quaternion.as_slice(),
+        async_state.plant.quaternion.as_slice(),
+        "quaternion: sync vs async must be bit-exact"
+    );
+    assert_eq!(
+        sync_state.plant.angular_velocity.as_slice(),
+        async_state.plant.angular_velocity.as_slice(),
+        "angular_velocity: sync vs async must be bit-exact"
+    );
+    assert_eq!(
+        sync_state.aux, async_state.aux,
+        "RW momentum: sync vs async must be bit-exact"
+    );
 }
 
 #[test]

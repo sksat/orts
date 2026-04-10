@@ -34,12 +34,12 @@ pub struct WasmEngine {
 }
 
 impl WasmEngine {
-    /// Create a new engine targeting the Pulley interpreter.
+    /// Create a new engine for the **sync** WASM backend.
     ///
     /// Returns `PluginError::Init` if wasmtime rejects the target
     /// triple (e.g. the binary was compiled without the `pulley`
     /// feature).
-    pub fn new() -> Result<Self, PluginError> {
+    pub fn new_sync() -> Result<Self, PluginError> {
         let mut config = Config::new();
         config
             .target("pulley64")
@@ -47,6 +47,25 @@ impl WasmEngine {
         let inner = Engine::new(&config)
             .map_err(|err| PluginError::Init(format!("wasmtime Engine::new failed: {err}")))?;
         Ok(Self { inner })
+    }
+
+    /// Backwards-compatible alias for [`new_sync`](Self::new_sync).
+    pub fn new() -> Result<Self, PluginError> {
+        Self::new_sync()
+    }
+
+    /// Create a new engine for the **async (fiber)** WASM backend.
+    ///
+    /// In wasmtime 43 the engine itself has no per-mode flag: async
+    /// vs sync invocation is determined by the bindgen variant used
+    /// (async bindings call `instantiate_async` / `call_xxx_async`).
+    /// We keep a distinct constructor so that the intent is visible
+    /// at the call site and so we have a place to add future async
+    /// engine tuning (e.g. fuel, epoch deadlines) without disturbing
+    /// sync callers.
+    #[cfg(feature = "plugin-wasm-async")]
+    pub fn new_async() -> Result<Self, PluginError> {
+        Self::new_sync()
     }
 
     /// Access the underlying `wasmtime::Engine`.

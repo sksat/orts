@@ -34,7 +34,7 @@ use orts::attitude::{
     AttitudeState, BdotFiniteDiff as NativeBdot, CommandedMagnetorquer, DecoupledAttitudeSystem,
 };
 use orts::control::DiscreteController;
-use orts::plugin::wasm::{WasmController, WasmEngine};
+use orts::plugin::wasm::{WasmController, WasmEngine, WasmPluginCache};
 use orts::plugin::{ActuatorBundle, ActuatorState, PluginController, TickInput};
 use orts::sensor::{Gyroscope, Magnetometer, SensorBundle};
 
@@ -116,16 +116,37 @@ fn run_native(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
     state
 }
 
-/// Run the WASM Component guest path via WasmController.
+/// Run the WASM Component guest path via WasmController (sync backend).
 fn run_wasm(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
-    let mu = MU_EARTH;
-    let radius = R_EARTH + ALT_KM;
-
     let engine = Arc::new(WasmEngine::new().expect("WasmEngine must init"));
     let wasm_bytes = guest_wasm_bytes();
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component must compile");
     let pre = WasmController::prepare(&engine, &component).expect("prepare must succeed");
-    let mut ctrl = WasmController::new(&pre, "oracle-bdot", "").expect("new must succeed");
+    let ctrl = WasmController::new(&pre, "oracle-bdot", "").expect("new must succeed");
+    drive_wasm(Box::new(ctrl), initial, epoch)
+}
+
+/// Run the WASM Component guest path via the async backend.
+#[cfg(feature = "plugin-wasm-async")]
+fn run_wasm_async(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
+    let mut cache = WasmPluginCache::new().expect("cache init");
+    let path = std::path::PathBuf::from(format!(
+        "{}/../plugins/bdot-finite-diff/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
+        env!("CARGO_MANIFEST_DIR")
+    ));
+    let ctrl = cache
+        .build_async_controller(&path, "oracle-bdot-async", "")
+        .expect("build_async_controller");
+    drive_wasm(Box::new(ctrl), initial, epoch)
+}
+
+fn drive_wasm(
+    mut ctrl: Box<dyn PluginController>,
+    initial: AttitudeState,
+    epoch: Epoch,
+) -> AttitudeState {
+    let mu = MU_EARTH;
+    let radius = R_EARTH + ALT_KM;
 
     let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> =
         Arc::new(TiltedDipole::earth());
@@ -200,5 +221,30 @@ fn wasm_bdot_matches_native() {
     assert!(
         w_diff < 1e-12,
         "angular velocity difference too large: {w_diff:.3e}"
+    );
+}
+
+/// The sync and async backends must produce the **bit-exact** same
+/// trajectory for identical inputs. Both backends run the same guest
+/// WASM through Pulley on `worker_threads(1)` with identical host
+/// imports, so the only freedom is our own conversion/dispatch code.
+#[cfg(feature = "plugin-wasm-async")]
+#[test]
+fn wasm_bdot_sync_matches_async_bit_exact() {
+    let epoch = Epoch::j2000();
+    let initial = initial_attitude();
+
+    let sync_state = run_wasm(initial.clone(), epoch);
+    let async_state = run_wasm_async(initial, epoch);
+
+    assert_eq!(
+        sync_state.quaternion.as_slice(),
+        async_state.quaternion.as_slice(),
+        "quaternion: sync vs async must be bit-exact"
+    );
+    assert_eq!(
+        sync_state.angular_velocity.as_slice(),
+        async_state.angular_velocity.as_slice(),
+        "angular_velocity: sync vs async must be bit-exact"
     );
 }
