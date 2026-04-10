@@ -73,9 +73,26 @@ max_torque = 0.5
     Some(file)
 }
 
+/// Resolve the `orts` binary path.
+///
+/// Checks `ORTS_BIN` first so CI jobs can inject a pre-built binary
+/// from an artifact (mirrors the viewer-e2e pattern: download the
+/// `orts` artifact, then run this test with `ORTS_BIN=./bin/orts`).
+/// Falls back to `CARGO_BIN_EXE_orts`, which Cargo fills in when
+/// running `cargo test -p orts-cli --test plugin_backend_e2e`
+/// locally.
+fn orts_binary() -> String {
+    if let Ok(path) = std::env::var("ORTS_BIN") {
+        return path;
+    }
+    option_env!("CARGO_BIN_EXE_orts")
+        .map(str::to_owned)
+        .expect("neither ORTS_BIN nor CARGO_BIN_EXE_orts is set")
+}
+
 fn run_cli(config_path: &str, backend: &str) -> Vec<u8> {
-    let binary = env!("CARGO_BIN_EXE_orts");
-    let output = Command::new(binary)
+    let binary = orts_binary();
+    let output = Command::new(&binary)
         .args([
             "run",
             "--config",
@@ -88,7 +105,7 @@ fn run_cli(config_path: &str, backend: &str) -> Vec<u8> {
             "csv",
         ])
         .output()
-        .expect("failed to execute orts");
+        .unwrap_or_else(|e| panic!("failed to execute {binary}: {e}"));
     assert!(
         output.status.success(),
         "orts run --plugin-backend={backend} failed: stderr={}",
