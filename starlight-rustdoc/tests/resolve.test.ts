@@ -357,27 +357,24 @@ describe("resolveTraitImplUrl", () => {
 
 describe("computeRelativeUrl", () => {
   it("computes a relative link between siblings in the same crate", () => {
-    expect(
-      computeRelativeUrl("kaname/api/structs/eci/", "kaname/api/structs/epoch/"),
-    ).toBe("../epoch/");
+    expect(computeRelativeUrl("kaname/api/structs/eci/", "kaname/api/structs/epoch/")).toBe(
+      "../epoch/",
+    );
   });
 
   it("computes a relative link from the overview page to an item page", () => {
-    expect(
-      computeRelativeUrl("kaname/api/overview/", "kaname/api/structs/epoch/"),
-    ).toBe("../structs/epoch/");
+    expect(computeRelativeUrl("kaname/api/overview/", "kaname/api/structs/epoch/")).toBe(
+      "../structs/epoch/",
+    );
   });
 
   it("computes a relative link across crates", () => {
     // From a directory-like URL `.../orts/api/structs/spacecraft/` the
     // browser needs 4 `..` segments to back up past `spacecraft/`, `structs/`,
     // `api/`, and `orts/` before descending into the other crate.
-    expect(
-      computeRelativeUrl(
-        "orts/api/structs/spacecraft/",
-        "kaname/api/structs/epoch/",
-      ),
-    ).toBe("../../../../kaname/api/structs/epoch/");
+    expect(computeRelativeUrl("orts/api/structs/spacecraft/", "kaname/api/structs/epoch/")).toBe(
+      "../../../../kaname/api/structs/epoch/",
+    );
   });
 
   it("preserves trailing slash on the target", () => {
@@ -386,9 +383,7 @@ describe("computeRelativeUrl", () => {
   });
 
   it("falls back to root-relative when source is empty", () => {
-    expect(computeRelativeUrl("", "kaname/api/structs/eci/")).toBe(
-      "/kaname/api/structs/eci/",
-    );
+    expect(computeRelativeUrl("", "kaname/api/structs/eci/")).toBe("/kaname/api/structs/eci/");
   });
 });
 
@@ -445,9 +440,7 @@ describe("LinkResolver with logical paths", () => {
     // Items in kaname are registered under crateName "kaname". Four `..` are
     // needed because nothing in the two logical paths is shared above the
     // root.
-    expect(resolver.resolveId(300, kaname, "kaname")).toBe(
-      "../../../../kaname/api/structs/epoch/",
-    );
+    expect(resolver.resolveId(300, kaname, "kaname")).toBe("../../../../kaname/api/structs/epoch/");
   });
 
   it("returns pre-formatted absolute URLs verbatim (backwards-compat)", () => {
@@ -461,9 +454,7 @@ describe("LinkResolver with logical paths", () => {
 
     resolver.setCurrentPage("mycrate/api/overview/");
     // Absolute path, not affected by currentPagePath
-    expect(resolver.resolveId(42, crate, "mycrate")).toBe(
-      "/base/mycrate/api/structs/foo/",
-    );
+    expect(resolver.resolveId(42, crate, "mycrate")).toBe("/base/mycrate/api/structs/foo/");
   });
 
   it("resolvePath returns a relative URL for logical paths", () => {
