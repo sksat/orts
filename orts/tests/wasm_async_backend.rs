@@ -5,9 +5,9 @@
 //! on the shared async runtime, and driving them through the sync
 //! `PluginController::update` facade.
 //!
-//! The `_scale_1000_sats` test is `#[ignore]`d by default because
-//! compiling 1000 stores still takes ~1 second in debug builds; run
-//! with `--ignored` to include it.
+//! The 1000-satellite scale test runs by default. It takes ~6 s in
+//! debug builds (dominated by the Pulley interpreter's unoptimised
+//! store setup) and ~0.4 s in release.
 
 #![cfg(all(feature = "plugin-wasm", feature = "plugin-wasm-async"))]
 
@@ -128,7 +128,6 @@ fn async_backend_100_satellites() {
 }
 
 #[test]
-#[ignore = "slow; run with --ignored"]
 fn async_backend_1000_satellites() {
     run_multi_satellite(1000, 5);
 }
