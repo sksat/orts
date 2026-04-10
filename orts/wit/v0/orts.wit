@@ -185,6 +185,15 @@ interface types {
         /// ホスト側 RW モデルが各ホイール軸への投影を行う。
         rw-torque: option<commanded-rw-torque>,
     }
+
+    /// プラグインメタデータ（起動時情報）。
+    /// ホストが `metadata(config)` で一度だけ問い合わせる。config に依存する
+    /// 項目も含むので厳密には静的ではなく「起動時に決まる情報」。
+    record plugin-metadata {
+        /// 希望サンプル周期 \[s\]。ホストはこれを参考に tick 間隔を決める。
+        /// 正の有限値でなければならない。
+        sample-period-s: f64,
+    }
 }
 
 /// ゲストがホストに対して呼び出せるサービス（host import）。
@@ -221,41 +230,59 @@ interface host-env {
     ) -> vec3;
 }
 
-/// ゲスト側のエントリーポイント（host が呼び出す export）。
+/// ホスト-ゲスト間の tick 通信。
 ///
-/// プラグインはこのインターフェースを 1 回実装する。ホストは衛星ごとに
-/// `wasmtime::component::Instance` を 1 つ作成し、`update` 呼び出しを
-/// コントローラのサンプル周期で繰り返す。
-interface controller {
+/// ゲストは `wait-tick` で中断し、ホストが次の tick で再開する。
+/// `send-command` でコマンドをホストに送る。
+interface tick-io {
     use types.{tick-input, command};
 
-    /// ホストが `update` を呼ぶ固定サンプル周期 \[s\]。
-    /// インスタンス生成時に 1 回だけ問い合わせる。
-    sample-period-s: func() -> f64;
-
-    /// ホストからバックエンド固有の設定文字列を渡す初期化関数。
-    /// Phase P1 では JSON を想定するが強制しない。
-    init: func(config: string) -> result<_, string>;
-
-    /// 1 サンプル tick 分進めて、次の ZOH 区間に適用する
-    /// コマンドを返す。`none` はこの tick ではコマンドなし
-    /// (アクチュエータは前回値を ZOH で保持)。
+    /// ホストに制御を返し、次の tick まで待つ。
+    /// ホスト中断方式: worker thread + blocking channel (サーバ/CLI),
+    /// JSPI (ブラウザ)。
     ///
-    /// Phase P1 ではエラーチャネルに plain `string` を使用。
-    /// Phase P2 で構造化 `variant plugin-error { ... }` に
-    /// 昇格する可能性あり（ABI 破壊的変更 → `wit/v1/`）。
-    update: func(input: tick-input) -> result<option<command>, string>;
+    /// 戻り値が `none` の場合はホストが shutdown を要求していることを示す。
+    /// ゲストは `run()` を `Ok(())` で正常終了させること。
+    wait-tick: func() -> option<tick-input>;
 
-    /// コントローラの現在のミッションモード名
-    /// (detumble / nadir / burn 等)。
-    /// モードマシンを持たないコントローラは `none` を返す。
-    current-mode: func() -> option<string>;
+    /// コマンドをホストに送る。
+    /// 1 tick 中に複数回呼んだ場合は最後の値が適用される。
+    send-command: func(cmd: command);
 }
 
-/// トップレベル world。`host-env`（ホスト→ゲスト import）と
-/// `controller`（ゲスト→ホスト export）をリンク。
-/// プラグインは `cargo component` でこの world をターゲットにビルドする。
+/// プラグイン。ゲストがメインループを持ち、ホストは tick-io で駆動する。
+///
+/// コールバック型（`init` + 毎 tick `update`）のゲストも SDK の
+/// `orts_plugin!` マクロが内部的にこの world 向けにラップする。
+///
+/// ## ライフサイクル
+///
+/// 1. ホストが `metadata(config)` を呼ぶ。config の早期検証を兼ねる。
+///    不正な config はここで `Err` を返すこと。
+/// 2. 成功したら、ホストが新しい worker thread で `run(config)` を起動する。
+/// 3. ゲストは `run` の中で `wait-tick` → 制御計算 → `send-command` を繰り返す。
+/// 4. ホストが shutdown する時は、`wait-tick` が `none` を返すので
+///    ゲストは `run` を `Ok(())` で正常終了させる。
+///
+/// `metadata` と `run` では config が 2 回パースされるが、config は純粋関数的で
+/// あるべきで副作用を持たないため実害はない。
 world plugin {
+    use types.{plugin-metadata};
+
     import host-env;
-    export controller;
+    import tick-io;
+
+    /// メタデータを取得する。config の早期検証を兼ねる。
+    /// 不正な config の場合は `Err` を返すこと。
+    export metadata: func(config: string) -> result<plugin-metadata, string>;
+
+    /// 現在のミッションモード名（detumble / nadir / burn 等）。
+    /// モード遷移を持たないコントローラは `none` を返す。
+    /// **注意**: `run` が worker thread で store を占有するため、現状
+    /// ホストからこの export を並行に呼ぶことはできない。将来対応予定。
+    export current-mode: func() -> option<string>;
+
+    /// ゲストのエントリーポイント。`init` + main loop を一つの関数で。
+    /// ホストが `wait-tick` で中断させながら駆動する。
+    export run: func(config: string) -> result<_, string>;
 }

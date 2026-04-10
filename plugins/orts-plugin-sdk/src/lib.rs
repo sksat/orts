@@ -1,10 +1,13 @@
 //! orts plugin SDK — WASM Component ゲスト開発用。
 //!
-//! 2 つの書き方を提供する:
+//! ホストは **ループベース** (`plugin` world) でゲストを駆動する。
+//! ゲストは 2 つの書き方を選べる:
 //!
-//! ## コールバック型 (`Plugin` trait + `orts_plugin!`)
+//! ## 1. コールバック型（`Plugin` trait + `orts_plugin!` マクロ）
 //!
-//! ホストが毎 tick `update()` を呼ぶ。WIT world: `plugin`。
+//! `Plugin<TickInput, Command>` を実装すると、SDK マクロがメインループを
+//! 自動生成して plugin world の `run()` export にする。ユーザーは毎 tick の
+//! 制御計算だけ書けばよい。
 //!
 //! ```ignore
 //! #[allow(warnings)]
@@ -27,16 +30,22 @@
 //! orts_plugin!(MyController);
 //! ```
 //!
-//! ## メインループ型
+//! ## 2. メインループ型（`wait-tick` / `send-command` を直接使う）
 //!
-//! ゲストが制御フローを持つ。WIT world: `plugin-loop`。
-//! SDK を使わず WIT bindgen の関数を直接呼んでも動く。
+//! シーケンシャルな制御（Phase 1 → wait → Phase 2）を素直に書きたい場合。
+//! SDK マクロを使わず `impl Guest for Component` を手書きする。
 //!
 //! ```ignore
-//! fn main() {
-//!     loop {
-//!         let input = wait_tick();
-//!         send_command(my_command);
+//! use bindings::orts::plugin::tick_io::{send_command, wait_tick};
+//!
+//! impl bindings::Guest for Component {
+//!     fn metadata() -> PluginMetadata { PluginMetadata { sample_period_s: 1.0 } }
+//!     fn current_mode() -> Option<String> { None }
+//!     fn run(config: String) -> Result<(), String> {
+//!         loop {
+//!             let input = wait_tick();
+//!             send_command(my_command(&input));
+//!         }
 //!     }
 //! }
 //! ```
@@ -48,7 +57,7 @@ pub mod mode;
 /// 型パラメータ `I` は入力型（WIT の `TickInput`）、`C` はコマンド型（WIT の `Command`）。
 /// WIT bindgen が生成する型が crate ごとに異なるためジェネリクスにしている。
 pub trait Plugin<I, C> {
-    /// ホストが `update` を呼ぶ固定サンプル周期 [s]。
+    /// 希望サンプル周期 \[s\]。ホストはこれを参考に tick 間隔を決める。
     fn sample_period(&self) -> f64;
 
     /// 設定文字列からインスタンスを生成する。空文字列ならデフォルト。
@@ -68,6 +77,9 @@ pub trait Plugin<I, C> {
 /// コールバック型プラグインのボイラープレートを生成する。
 ///
 /// `$ty` は `Plugin<TickInput, Command>` を実装している必要がある。
+/// マクロは plugin world の `metadata` / `current-mode` / `run` export を
+/// 生成し、`run()` の中で `wait_tick()` → `update()` → `send_command()` の
+/// ループを回す。
 ///
 /// # 使い方
 ///
@@ -99,40 +111,58 @@ macro_rules! __orts_plugin_impl {
     ($ty:ty, { $current_mode_body:expr }) => {
         struct __OrtsPluginComponent;
 
-        impl bindings::exports::orts::plugin::controller::Guest for __OrtsPluginComponent {
-            fn sample_period_s() -> f64 {
-                __ORTS_PLUGIN_STATE.with(|s| {
-                    $crate::Plugin::sample_period(
-                        s.borrow().as_ref().expect("plugin not initialized")
-                    )
-                })
-            }
-
-            fn init(config: ::std::string::String) -> ::core::result::Result<(), ::std::string::String> {
+        impl bindings::Guest for __OrtsPluginComponent {
+            fn metadata(
+                config: ::std::string::String,
+            ) -> ::core::result::Result<
+                bindings::orts::plugin::types::PluginMetadata,
+                ::std::string::String,
+            > {
+                // config の早期検証を兼ねて一度 init を呼ぶ。ここで作った
+                // インスタンスは捨て、run 側で改めて初期化する。
                 let instance = <$ty as $crate::Plugin<
                     bindings::orts::plugin::types::TickInput,
                     bindings::orts::plugin::types::Command,
                 >>::init(&config)?;
-                __ORTS_PLUGIN_STATE.with(|s| *s.borrow_mut() = Some(instance));
-                Ok(())
-            }
-
-            fn update(
-                input: bindings::orts::plugin::types::TickInput,
-            ) -> ::core::result::Result<
-                ::core::option::Option<bindings::orts::plugin::types::Command>,
-                ::std::string::String,
-            > {
-                __ORTS_PLUGIN_STATE.with(|s| {
-                    $crate::Plugin::update(
-                        s.borrow_mut().as_mut().expect("plugin not initialized"),
-                        &input,
-                    )
+                let sample_period = $crate::Plugin::sample_period(&instance);
+                if !sample_period.is_finite() || sample_period <= 0.0 {
+                    return ::core::result::Result::Err(::std::format!(
+                        "invalid sample_period: {}",
+                        sample_period
+                    ));
+                }
+                ::core::result::Result::Ok(bindings::orts::plugin::types::PluginMetadata {
+                    sample_period_s: sample_period,
                 })
             }
 
             fn current_mode() -> ::core::option::Option<::std::string::String> {
                 $current_mode_body
+            }
+
+            fn run(config: ::std::string::String) -> ::core::result::Result<(), ::std::string::String> {
+                let instance = <$ty as $crate::Plugin<
+                    bindings::orts::plugin::types::TickInput,
+                    bindings::orts::plugin::types::Command,
+                >>::init(&config)?;
+                __ORTS_PLUGIN_STATE.with(|s| *s.borrow_mut() = Some(instance));
+
+                loop {
+                    let input = match bindings::orts::plugin::tick_io::wait_tick() {
+                        ::core::option::Option::Some(input) => input,
+                        // ホストが shutdown を要求している。正常終了する。
+                        ::core::option::Option::None => return ::core::result::Result::Ok(()),
+                    };
+                    let cmd = __ORTS_PLUGIN_STATE.with(|s| {
+                        $crate::Plugin::update(
+                            s.borrow_mut().as_mut().expect("plugin not initialized"),
+                            &input,
+                        )
+                    })?;
+                    if let ::core::option::Option::Some(cmd) = cmd {
+                        bindings::orts::plugin::tick_io::send_command(cmd);
+                    }
+                }
             }
         }
 

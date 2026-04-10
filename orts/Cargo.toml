@@ -47,3 +47,9 @@ required-features = ["plugin-wasm"]
 [dev-dependencies]
 proptest = "1.10.0"
 serde_json.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "fiber_overhead"
+harness = false
+required-features = ["plugin-wasm"]

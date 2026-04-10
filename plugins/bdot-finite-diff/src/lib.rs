@@ -1,125 +1,113 @@
-//! B-dot finite-difference detumbling controller -- WASM Component guest.
+//! B-dot finite-difference detumbling controller — メインループ型。
 //!
-//! The guest reads `sensors.magnetometer` from the tick input
-//! (pre-evaluated by the host's magnetometer sensor) and computes the
-//! finite-difference dB/dt approximation.
+//! `wait_tick()` でホストから tick 入力を受け取り、有限差分法で dB/dt を
+//! 近似して B-dot 則でコマンドを返す。
 
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::orts::plugin::controller::Guest;
+use bindings::orts::plugin::tick_io::{send_command, wait_tick};
 use bindings::orts::plugin::types::*;
-
-/// Internal state for the finite-difference B-dot controller.
-struct BdotFiniteDiff {
-    gain: f64,
-    max_moment: [f64; 3],
-    sample_period: f64,
-    prev_b_body: Option<[f64; 3]>,
-    prev_t: f64,
-}
-
-use core::cell::RefCell;
-
-thread_local! {
-    static STATE: RefCell<BdotFiniteDiff> = RefCell::new(BdotFiniteDiff {
-        gain: 1e4,
-        max_moment: [10.0, 10.0, 10.0],
-        sample_period: 1.0,
-        prev_b_body: None,
-        prev_t: 0.0,
-    });
-}
 
 struct Component;
 
-impl Guest for Component {
-    fn sample_period_s() -> f64 {
-        STATE.with(|s| s.borrow().sample_period)
-    }
-
-    fn init(config: String) -> Result<(), String> {
-        if config.is_empty() {
-            return Ok(());
-        }
-        #[derive(serde::Deserialize)]
-        #[serde(default)]
-        struct Config {
-            gain: f64,
-            max_moment: f64,
-            sample_period: f64,
-        }
-        impl Default for Config {
-            fn default() -> Self {
-                Self {
-                    gain: 1e4,
-                    max_moment: 10.0,
-                    sample_period: 1.0,
-                }
-            }
-        }
-        let cfg: Config =
-            serde_json::from_str(&config).map_err(|e| format!("config parse error: {e}"))?;
-        STATE.with(|state| {
-            let mut s = state.borrow_mut();
-            s.gain = cfg.gain;
-            s.max_moment = [cfg.max_moment, cfg.max_moment, cfg.max_moment];
-            s.sample_period = cfg.sample_period;
-        });
-        Ok(())
-    }
-
-    fn update(input: TickInput) -> Result<Option<Command>, String> {
-        STATE.with(|state| {
-            let mut s = state.borrow_mut();
-
-            let b_body = input
-                .sensors
-                .magnetometer
-                .ok_or("magnetometer sensor not available")?;
-
-            let b_mag_sq = b_body.x * b_body.x + b_body.y * b_body.y + b_body.z * b_body.z;
-            if b_mag_sq < 1e-60 {
-                return Ok(Some(zero_moment()));
-            }
-
-            let m_cmd = match s.prev_b_body {
-                Some(prev_b) => {
-                    let dt = input.t - s.prev_t;
-                    if dt < 1e-15 {
-                        return Ok(Some(zero_moment()));
-                    }
-                    let db_x = (b_body.x - prev_b[0]) / dt;
-                    let db_y = (b_body.y - prev_b[1]) / dt;
-                    let db_z = (b_body.z - prev_b[2]) / dt;
-                    let mx = clamp(-s.gain * db_x, -s.max_moment[0], s.max_moment[0]);
-                    let my = clamp(-s.gain * db_y, -s.max_moment[1], s.max_moment[1]);
-                    let mz = clamp(-s.gain * db_z, -s.max_moment[2], s.max_moment[2]);
-                    [mx, my, mz]
-                }
-                None => [0.0, 0.0, 0.0],
-            };
-
-            s.prev_b_body = Some([b_body.x, b_body.y, b_body.z]);
-            s.prev_t = input.t;
-
-            Ok(Some(Command {
-                magnetic_moment: Some(CommandedMagneticMoment {
-                    x: m_cmd[0],
-                    y: m_cmd[1],
-                    z: m_cmd[2],
-                }),
-                rw_torque: None,
-            }))
+impl bindings::Guest for Component {
+    fn metadata(config: String) -> Result<PluginMetadata, String> {
+        let cfg = Config::from_json(&config)?;
+        Ok(PluginMetadata {
+            sample_period_s: cfg.sample_period,
         })
     }
 
     fn current_mode() -> Option<String> {
         None
     }
+
+    fn run(config: String) -> Result<(), String> {
+        let cfg = Config::from_json(&config)?;
+
+        let gain = cfg.gain;
+        let max_moment = cfg.max_moment;
+        let mut prev_b: Option<[f64; 3]> = None;
+        let mut prev_t: f64 = 0.0;
+
+        loop {
+            let input = match wait_tick() {
+                Some(input) => input,
+                // ホストが shutdown を要求している。
+                None => return Ok(()),
+            };
+            let b = input
+                .sensors
+                .magnetometer
+                .ok_or("magnetometer not available")?;
+
+            let b_mag_sq = b.x * b.x + b.y * b.y + b.z * b.z;
+            if b_mag_sq < 1e-60 {
+                send_command(zero_moment());
+                // prev_b/prev_t を更新しない — near-zero サンプルは無視
+                continue;
+            }
+
+            let cmd = match prev_b {
+                Some(prev) => {
+                    let dt = input.t - prev_t;
+                    if dt < 1e-15 {
+                        // dt ≈ 0: prev_b/prev_t を更新せず zero command のみ送る
+                        send_command(zero_moment());
+                        continue;
+                    }
+                    let db_x = (b.x - prev[0]) / dt;
+                    let db_y = (b.y - prev[1]) / dt;
+                    let db_z = (b.z - prev[2]) / dt;
+                    Command {
+                        magnetic_moment: Some(CommandedMagneticMoment {
+                            x: clamp(-gain * db_x, -max_moment, max_moment),
+                            y: clamp(-gain * db_y, -max_moment, max_moment),
+                            z: clamp(-gain * db_z, -max_moment, max_moment),
+                        }),
+                        rw_torque: None,
+                    }
+                }
+                None => zero_moment(),
+            };
+
+            send_command(cmd);
+            prev_b = Some([b.x, b.y, b.z]);
+            prev_t = input.t;
+        }
+    }
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[derive(serde::Deserialize)]
+#[serde(default)]
+struct Config {
+    gain: f64,
+    max_moment: f64,
+    sample_period: f64,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            gain: 1e4,
+            max_moment: 10.0,
+            sample_period: 1.0,
+        }
+    }
+}
+
+impl Config {
+    fn from_json(s: &str) -> Result<Self, String> {
+        if s.is_empty() {
+            Ok(Self::default())
+        } else {
+            serde_json::from_str(s).map_err(|e| format!("config parse error: {e}"))
+        }
+    }
+}
 
 fn zero_moment() -> Command {
     Command {
