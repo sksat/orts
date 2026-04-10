@@ -18,9 +18,9 @@ use std::sync::{Arc, Mutex};
 
 use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 
-use super::bindings::orts::plugin::host_env;
-use super::bindings::orts::plugin::tick_io;
-use super::bindings::orts::plugin::types as wit;
+use super::sync_bindings::orts::plugin::host_env;
+use super::sync_bindings::orts::plugin::tick_io;
+use super::sync_bindings::orts::plugin::types as wit;
 
 // The `types` interface has no host functions, but the bindgen-generated
 // `add_to_linker` requires a blanket `types::Host` impl for the host state.

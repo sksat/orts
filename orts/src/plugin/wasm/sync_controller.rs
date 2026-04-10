@@ -45,11 +45,11 @@ use std::thread;
 use wasmtime::Store;
 use wasmtime::component::Component;
 
-use super::bindings::orts::plugin::types as wit;
-use super::bindings::{Plugin, PluginPre};
-use super::convert;
+use super::convert::sync as convert;
 use super::engine::WasmEngine;
-use super::host_state::{GuestResponse, HostState};
+use super::sync_bindings::orts::plugin::types as wit;
+use super::sync_bindings::{Plugin, PluginPre};
+use super::sync_host_state::{GuestResponse, HostState};
 
 use crate::plugin::controller::PluginController;
 use crate::plugin::tick_input::TickInput;

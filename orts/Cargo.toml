@@ -28,6 +28,12 @@ serde.workspace = true
 thiserror.workspace = true
 wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
+tokio = { version = "1", default-features = false, features = [
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "time",
+], optional = true }
 
 [features]
 fetch-weather = ["tobari/fetch"]
@@ -35,6 +41,11 @@ fetch-horizons = ["kaname/fetch-horizons"]
 # Phase P1: load WASM Component guest controllers at runtime via
 # wasmtime + Pulley interpreter. See `orts::plugin::wasm`.
 plugin-wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
+# Phase P1+: async WASM backend (fiber suspension via wasmtime async).
+# Allows a single worker thread to multiplex N satellite controllers
+# instead of the default sync backend's thread-per-satellite model.
+# Opt-in because it pulls tokio and wasmtime's async feature.
+plugin-wasm-async = ["plugin-wasm", "dep:tokio", "wasmtime/async"]
 
 [[example]]
 name = "wasm_bdot_simulate"
@@ -48,6 +59,7 @@ required-features = ["plugin-wasm"]
 proptest = "1.10.0"
 serde_json.workspace = true
 criterion = { version = "0.5", features = ["html_reports"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
 
 [[bench]]
 name = "fiber_overhead"

@@ -2909,6 +2909,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tobari",
+ "tokio",
  "utsuroi",
  "wasmtime",
  "wasmtime-wasi",

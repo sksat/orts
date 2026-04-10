@@ -37,10 +37,10 @@ use std::sync::Arc;
 
 use wasmtime::component::Component;
 
-use super::bindings::PluginPre;
-use super::controller::WasmController;
 use super::engine::WasmEngine;
-use super::host_state::HostState;
+use super::sync_bindings::PluginPre;
+use super::sync_controller::WasmController;
+use super::sync_host_state::HostState;
 
 use crate::plugin::error::PluginError;
 

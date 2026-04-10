@@ -16,13 +16,26 @@
 //!
 //! [wasm-component-model]: https://component-model.bytecodealliance.org/
 
-pub mod bindings;
 pub mod cache;
-pub mod controller;
 pub mod convert;
 pub mod engine;
-pub mod host_state;
+pub mod sync_bindings;
+pub mod sync_controller;
+pub mod sync_host_state;
+
+/// Backwards-compatible alias for the sync bindgen output. The async
+/// backend (feature `plugin-wasm-async`) brings its own bindings in
+/// [`async_bindings`].
+pub use sync_bindings as bindings;
+/// Backwards-compatible alias. The struct is still named
+/// `WasmController` — only the module file was renamed.
+pub use sync_controller as controller;
+/// Backwards-compatible alias for the host-state module.
+pub use sync_host_state as host_state;
 
 pub use cache::WasmPluginCache;
-pub use controller::WasmController;
 pub use engine::WasmEngine;
+pub use sync_controller::WasmController;
+
+#[cfg(feature = "plugin-wasm-async")]
+pub mod async_bindings;
