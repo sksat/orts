@@ -232,6 +232,18 @@ impl SimGroup {
             }
         }
     }
+
+    /// Push a new controlled satellite. Requires the group to be in
+    /// `Controlled` mode.
+    #[cfg(feature = "plugin-wasm")]
+    fn push_controlled_satellite(&mut self, sat: ControlledSatellite) {
+        match self {
+            SimGroup::Controlled(sats) => sats.push(sat),
+            SimGroup::OrbitOnly(_) | SimGroup::Spacecraft(_) => {
+                panic!("Cannot add controlled satellite to orbit-only/spacecraft simulation")
+            }
+        }
+    }
 }
 
 /// Maximum number of replay-able `simulation_terminated` events the server
@@ -373,6 +385,30 @@ pub(super) async fn simulation_manager_with_params(
     }
 }
 
+/// Validate a single satellite's attitude configuration so that
+/// `build_spacecraft_dynamics` cannot panic on a singular inertia
+/// tensor or a non-positive mass. Used from both the startup config
+/// validator and the runtime `AddSatellite` handler.
+fn validate_satellite_spec(spec: &SatelliteSpec) -> Result<(), String> {
+    let Some(att) = &spec.attitude_config else {
+        return Ok(());
+    };
+    let inertia = att.inertia_matrix();
+    if inertia.determinant().abs() < 1e-30 {
+        return Err(format!(
+            "Satellite '{}' has singular inertia tensor (not invertible)",
+            spec.id
+        ));
+    }
+    if att.mass <= 0.0 {
+        return Err(format!(
+            "Satellite '{}' has non-positive mass: {}",
+            spec.id, att.mass
+        ));
+    }
+    Ok(())
+}
+
 /// Validate a SimConfig before starting. Returns Err with a user-facing message
 /// if the config is invalid (e.g., mixed attitude settings).
 fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
@@ -395,21 +431,7 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     }
     // Validate inertia tensors are invertible
     for spec in &specs {
-        if let Some(att) = &spec.attitude_config {
-            let inertia = att.inertia_matrix();
-            if inertia.determinant().abs() < 1e-30 {
-                return Err(format!(
-                    "Satellite '{}' has singular inertia tensor (not invertible)",
-                    spec.id
-                ));
-            }
-            if att.mass <= 0.0 {
-                return Err(format!(
-                    "Satellite '{}' has non-positive mass: {}",
-                    spec.id, att.mass
-                ));
-            }
-        }
+        validate_satellite_spec(spec)?;
     }
     Ok(())
 }
@@ -549,6 +571,18 @@ struct SimLoopContext {
     paused: bool,
     current_t: f64,
     has_perturbations: bool,
+    /// Shared WASM plugin cache, kept alive for the whole sim loop so
+    /// dynamic `AddSatellite` commands can reuse the compiled guest
+    /// components and (for the async backend) the shared runtime
+    /// thread. `None` when the loop is running in non-controlled
+    /// mode or when `plugin-wasm` is disabled.
+    #[cfg(feature = "plugin-wasm")]
+    wasm_cache: Option<orts::plugin::wasm::WasmPluginCache>,
+    /// Resolved plugin backend (sync / async) for this loop. Locked
+    /// in at `SimLoopContext::new` time so dynamic additions stay on
+    /// the same backend as the initial fleet.
+    #[cfg(feature = "plugin-wasm")]
+    plugin_backend: Option<crate::sim::params::ResolvedPluginBackend>,
 }
 
 impl SimLoopContext {
@@ -600,22 +634,35 @@ impl SimLoopContext {
         let mut metas: Vec<SatMeta> = Vec::new();
         let third_bodies = default_third_bodies(&params.body);
 
+        // Eagerly build the WASM plugin cache so the same instance
+        // can serve both the initial fleet and any dynamic
+        // `AddSatellite` commands received later. For non-controlled
+        // runs the cache stays `None` and dynamic add will reject
+        // satellites with a `controller` config.
+        #[cfg(feature = "plugin-wasm")]
+        let (mut wasm_cache, plugin_backend) = if has_controller {
+            let cache = orts::plugin::wasm::WasmPluginCache::new()
+                .map_err(|e| format!("WASM plugin cache init failed: {e}"))?;
+            (Some(cache), Some(params.resolve_plugin_backend()))
+        } else {
+            (None, None)
+        };
+
         let group = if has_controller {
             // Plugin-controlled mode: direct integration with step_controlled.
             let mut controlled_sats = Vec::new();
-            #[cfg(feature = "plugin-wasm")]
-            let mut wasm_cache = orts::plugin::wasm::WasmPluginCache::new()
-                .map_err(|e| format!("WASM plugin cache init failed: {e}"))?;
-            #[cfg(feature = "plugin-wasm")]
-            let plugin_backend = params.resolve_plugin_backend();
             {
+                #[cfg(feature = "plugin-wasm")]
                 let mut ctx = crate::sim::controlled::ControlledBuildContext {
                     params: &params,
-                    #[cfg(feature = "plugin-wasm")]
-                    wasm_cache: &mut wasm_cache,
-                    #[cfg(feature = "plugin-wasm")]
-                    plugin_backend,
+                    wasm_cache: wasm_cache
+                        .as_mut()
+                        .expect("wasm_cache must be Some when has_controller"),
+                    plugin_backend: plugin_backend
+                        .expect("plugin_backend must be Some when has_controller"),
                 };
+                #[cfg(not(feature = "plugin-wasm"))]
+                let mut ctx = crate::sim::controlled::ControlledBuildContext { params: &params };
                 for spec in &params.satellites {
                     let sat = crate::sim::controlled::build_controlled_satellite(spec, &mut ctx)
                         .map_err(|e| format!("controlled satellite '{}': {e}", spec.id))?;
@@ -775,6 +822,10 @@ impl SimLoopContext {
             paused: false,
             current_t: 0.0,
             has_perturbations,
+            #[cfg(feature = "plugin-wasm")]
+            wasm_cache,
+            #[cfg(feature = "plugin-wasm")]
+            plugin_backend,
         })
     }
 
@@ -843,15 +894,22 @@ impl SimLoopContext {
                 return ControlFlow::Break(());
             }
             SimCommand::AddSatellite { satellite, respond } => {
-                // Dynamic satellite addition only supported in orbit-only mode
-                if matches!(
-                    self.group,
-                    SimGroup::Spacecraft(_) | SimGroup::Controlled(_)
-                ) {
-                    let _ = respond.send(Err(
-                        "Cannot add satellite to spacecraft/controlled simulation".to_string(),
-                    ));
-                    return ControlFlow::Continue(());
+                // Branch on the running simulation mode. Controlled
+                // and spacecraft paths are handled inline; the
+                // orbit-only path continues to the main body below.
+                match &self.group {
+                    SimGroup::Controlled(_) => {
+                        let result = self.handle_add_controlled_satellite(satellite);
+                        let _ = respond.send(result);
+                        return ControlFlow::Continue(());
+                    }
+                    SimGroup::Spacecraft(_) => {
+                        let _ = respond.send(Err(
+                            "Cannot add satellite to spacecraft simulation".to_string()
+                        ));
+                        return ControlFlow::Continue(());
+                    }
+                    SimGroup::OrbitOnly(_) => {}
                 }
 
                 // Reject attitude-enabled satellites in orbit-only mode
@@ -949,6 +1007,133 @@ impl SimLoopContext {
             }
         }
         ControlFlow::Continue(())
+    }
+
+    /// Build and install a new controlled satellite at runtime.
+    ///
+    /// Only available when the loop was started in controlled mode
+    /// (the initial fleet had all satellites with `controller`
+    /// config). Re-uses the shared `WasmPluginCache` held on the
+    /// context so dynamic adds do not pay the Cranelift compile
+    /// cost again.
+    #[cfg(feature = "plugin-wasm")]
+    fn handle_add_controlled_satellite(
+        &mut self,
+        satellite: SatelliteConfig,
+    ) -> Result<(SatelliteInfo, f64), String> {
+        if satellite.attitude.is_none() {
+            return Err("Cannot add orbit-only satellite to controlled simulation. \
+                 The dynamically-added satellite must have an attitude config."
+                .to_string());
+        }
+        if satellite.controller.is_none() {
+            return Err(
+                "Cannot add controller-less satellite to controlled simulation. \
+                 The dynamically-added satellite must have a controller config."
+                    .to_string(),
+            );
+        }
+
+        let wasm_cache = self.wasm_cache.as_mut().ok_or_else(|| {
+            "WASM plugin cache not initialized; cannot add controlled satellite".to_string()
+        })?;
+        let plugin_backend = self.plugin_backend.ok_or_else(|| {
+            "plugin backend not resolved; cannot add controlled satellite".to_string()
+        })?;
+
+        let sat_index = self.metas.len();
+        let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
+        // Re-use the startup validation so we cannot crash
+        // build_controlled_satellite → build_spacecraft_dynamics on
+        // a singular inertia tensor or non-positive mass.
+        validate_satellite_spec(&spec)?;
+        let new_sat = {
+            let mut ctx = crate::sim::controlled::ControlledBuildContext {
+                params: &self.params,
+                wasm_cache,
+                plugin_backend,
+            };
+            crate::sim::controlled::build_controlled_satellite(&spec, &mut ctx)
+                .map_err(|e| format!("build controlled satellite: {e}"))?
+        };
+
+        let initial = new_sat.state.plant.orbit.clone();
+        let attitude_q = new_sat.state.plant.attitude.quaternion;
+        let attitude_w = new_sat.state.plant.attitude.angular_velocity;
+        let has_rw = new_sat.has_rw;
+        let rw_mom = if has_rw && !new_sat.state.aux.is_empty() {
+            Some(new_sat.state.aux.clone())
+        } else {
+            None
+        };
+
+        self.group.push_controlled_satellite(new_sat);
+
+        let sat_info = SatelliteInfo {
+            id: spec.entity_path().to_string(),
+            name: spec.name.clone(),
+            altitude: spec.altitude(&self.params.body),
+            period: spec.period,
+            perturbations: vec![],
+        };
+        let t = self.current_t;
+        let sat_entity_path = spec.entity_path();
+
+        self.metas.push(SatMeta {
+            spec,
+            orbit_end_t: self.current_t + sat_info.period,
+            next_save_t: self.current_t + self.params.output_interval,
+        });
+
+        let body_radius = self.params.body.properties().radius;
+        let attitude_payload = AttitudePayload {
+            quaternion_wxyz: [attitude_q[0], attitude_q[1], attitude_q[2], attitude_q[3]],
+            angular_velocity_body: [attitude_w[0], attitude_w[1], attitude_w[2]],
+            source: AttitudeSource::Propagated,
+            rw_momentum: rw_mom,
+        };
+        let hs = make_history_state(
+            sat_entity_path.clone(),
+            self.current_t,
+            initial.position(),
+            initial.velocity(),
+            self.params.mu,
+            body_radius,
+            std::collections::HashMap::new(),
+            Some(attitude_payload.clone()),
+        );
+        self.history.push(hs);
+        let msg = state_message(
+            sat_entity_path,
+            self.current_t,
+            &initial,
+            self.params.mu,
+            body_radius,
+            std::collections::HashMap::new(),
+            Some(attitude_payload),
+        );
+        let _ = self.tx.send(msg);
+
+        let added_msg = serde_json::to_string(&WsMessage::SatelliteAdded {
+            satellite: sat_info.clone(),
+            t,
+        })
+        .expect("failed to serialize satellite_added");
+        let _ = self.tx.send(added_msg);
+
+        Ok((sat_info, t))
+    }
+
+    /// Non-plugin-wasm stub: dynamic add into controlled mode is
+    /// impossible without the WASM backend compiled in.
+    #[cfg(not(feature = "plugin-wasm"))]
+    fn handle_add_controlled_satellite(
+        &mut self,
+        _satellite: SatelliteConfig,
+    ) -> Result<(SatelliteInfo, f64), String> {
+        Err("Controlled simulation requires the `plugin-wasm` feature; \
+             cannot add controlled satellite"
+            .to_string())
     }
 
     /// Propagate one chunk of simulation time, collecting outputs.
