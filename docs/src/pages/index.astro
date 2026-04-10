@@ -1,0 +1,44 @@
+---
+// Root entry point for /orts/.
+//
+// Detects the visitor's preferred locale (localStorage > navigator.languages
+// > fallback) and redirects to the matching locale. See
+// `src/scripts/locale-redirect.ts` — the runtime script below is generated
+// by serialising the same `chooseRedirectTarget` function that is unit-tested
+// in `src/scripts/locale-redirect.test.ts`, so test coverage faithfully
+// reflects deployed behaviour.
+
+import { buildInlineRedirectScript } from "../scripts/locale-redirect";
+
+// biome-ignore lint/correctness/noUnusedVariables: used below via `set:html={redirectScript}` in the Astro template.
+const redirectScript = buildInlineRedirectScript({
+  base: "/orts/",
+  supported: ["en", "ja"],
+  fallback: "en",
+  storageKey: "orts-locale",
+});
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orts</title>
+    <meta name="robots" content="noindex" />
+    <link rel="canonical" href="https://sksat.github.io/orts/en/" />
+    <link rel="alternate" hreflang="en" href="https://sksat.github.io/orts/en/" />
+    <link rel="alternate" hreflang="ja" href="https://sksat.github.io/orts/ja/" />
+    <link rel="alternate" hreflang="x-default" href="https://sksat.github.io/orts/en/" />
+    <script is:inline set:html={redirectScript} />
+    <noscript>
+      <meta http-equiv="refresh" content="0; url=/orts/en/" />
+    </noscript>
+  </head>
+  <body>
+    <p>
+      Redirecting…
+      <a href="/orts/en/">English</a> ·
+      <a href="/orts/ja/">日本語</a>
+    </p>
+  </body>
+</html>

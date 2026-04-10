@@ -7,7 +7,9 @@
     "dev": "ALLOW_MISSING_VIEWER_DIST=1 ALLOW_MISSING_TOBARI=1 STARLIGHT_RUSTDOC_SKIP=1 pnpm run setup && astro dev",
     "prebuild": "pnpm run setup",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@astrojs/react": "^5.0.0",
@@ -20,5 +22,8 @@
     "typedoc": "^0.28.17",
     "typedoc-plugin-markdown": "^4.10.0",
     "starlight-rustdoc": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.18"
   }
 }

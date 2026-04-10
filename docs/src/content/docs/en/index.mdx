@@ -6,7 +6,11 @@ hero:
   tagline: Numerical computation and optimization platform for orbital mechanics
   actions:
     - text: Getting Started
-      link: /orts/getting-started/
+      # Relative so Starlight i18n fallback keeps users in their current
+      # locale: on /orts/en/ this resolves to /orts/en/getting-started/, and
+      # on the /orts/ja/ fallback render it resolves to
+      # /orts/ja/getting-started/.
+      link: ./getting-started/
       icon: right-arrow
     - text: Realtime Viewer
       link: /orts/viewer/
