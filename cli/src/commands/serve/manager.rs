@@ -561,15 +561,25 @@ impl SimLoopContext {
         let group = if has_controller {
             // Plugin-controlled mode: direct integration with step_controlled.
             let mut controlled_sats = Vec::new();
-            for spec in &params.satellites {
-                let sat = crate::sim::controlled::build_controlled_satellite(spec, &params)
-                    .map_err(|e| format!("controlled satellite '{}': {e}", spec.id))?;
-                controlled_sats.push(sat);
-                metas.push(SatMeta {
-                    spec: spec.clone(),
-                    orbit_end_t: spec.period,
-                    next_save_t: params.output_interval,
-                });
+            #[cfg(feature = "plugin-wasm")]
+            let mut wasm_cache = orts::plugin::wasm::WasmPluginCache::new()
+                .map_err(|e| format!("WASM plugin cache init failed: {e}"))?;
+            {
+                let mut ctx = crate::sim::controlled::ControlledBuildContext {
+                    params: &params,
+                    #[cfg(feature = "plugin-wasm")]
+                    wasm_cache: &mut wasm_cache,
+                };
+                for spec in &params.satellites {
+                    let sat = crate::sim::controlled::build_controlled_satellite(spec, &mut ctx)
+                        .map_err(|e| format!("controlled satellite '{}': {e}", spec.id))?;
+                    controlled_sats.push(sat);
+                    metas.push(SatMeta {
+                        spec: spec.clone(),
+                        orbit_end_t: spec.period,
+                        next_save_t: params.output_interval,
+                    });
+                }
             }
 
             SimGroup::Controlled(controlled_sats)
@@ -1066,7 +1076,18 @@ async fn run_simulation_loop(
             continue;
         }
 
-        let all_outputs = ctx.propagate_chunk(OUTPUTS_PER_CHUNK);
+        // Offload the blocking propagation work to a dedicated blocking
+        // thread so the tokio worker is free to handle WebSocket I/O
+        // and command dispatch while the physics/controller step runs.
+        // This also keeps `Handle::block_on` inside WASM async backends
+        // from starving the serve runtime.
+        let (all_outputs, ctx_back) = tokio::task::spawn_blocking(move || {
+            let outputs = ctx.propagate_chunk(OUTPUTS_PER_CHUNK);
+            (outputs, ctx)
+        })
+        .await
+        .expect("simulation blocking task panicked");
+        ctx = ctx_back;
 
         if !all_outputs.is_empty() {
             let send_interval = chunk_wall_time / all_outputs.len() as u32;

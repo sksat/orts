@@ -360,7 +360,9 @@ pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with
 
 /// 制御付きシミュレーション（プラグインコントローラ + RW + センサ）。
 fn run_controlled_simulation(params: &SimParams) -> Recording {
-    use crate::sim::controlled::{build_controlled_satellite, step_controlled};
+    use crate::sim::controlled::{
+        ControlledBuildContext, build_controlled_satellite, step_controlled,
+    };
 
     let duration = params.duration.unwrap_or_else(|| {
         // フォールバック: 最初の衛星の軌道周期。
@@ -378,14 +380,28 @@ fn run_controlled_simulation(params: &SimParams) -> Recording {
 
     let sat_paths: Vec<EntityPath> = params.satellites.iter().map(|s| s.entity_path()).collect();
 
+    // WASM plugin cache（複数衛星で共有する engine + compiled component）。
+    #[cfg(feature = "plugin-wasm")]
+    let mut wasm_cache = orts::plugin::wasm::WasmPluginCache::new().unwrap_or_else(|e| {
+        eprintln!("Error initializing WASM plugin cache: {e}");
+        std::process::exit(1);
+    });
+
     // 制御付き衛星を構築。
     let mut satellites = Vec::new();
-    for spec in &params.satellites {
-        let sat = build_controlled_satellite(spec, params).unwrap_or_else(|e| {
-            eprintln!("Error building controlled satellite '{}': {e}", spec.id);
-            std::process::exit(1);
-        });
-        satellites.push(sat);
+    {
+        let mut ctx = ControlledBuildContext {
+            params,
+            #[cfg(feature = "plugin-wasm")]
+            wasm_cache: &mut wasm_cache,
+        };
+        for spec in &params.satellites {
+            let sat = build_controlled_satellite(spec, &mut ctx).unwrap_or_else(|e| {
+                eprintln!("Error building controlled satellite '{}': {e}", spec.id);
+                std::process::exit(1);
+            });
+            satellites.push(sat);
+        }
     }
 
     // 初期状態を記録。

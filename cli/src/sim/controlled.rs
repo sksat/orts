@@ -23,6 +23,20 @@ use crate::config::{ControllerConfig, ReactionWheelConfig, SensorChoice};
 use crate::satellite::SatelliteSpec;
 use crate::sim::params::SimParams;
 
+#[cfg(feature = "plugin-wasm")]
+use orts::plugin::wasm::WasmPluginCache;
+
+/// Shared build context for constructing multiple controlled satellites.
+///
+/// Holds resources that should be shared across all satellites in a
+/// simulation (e.g. the WASM engine + compiled component cache), so
+/// that 1000 satellites don't each pay the full WASM compilation cost.
+pub struct ControlledBuildContext<'a> {
+    pub params: &'a SimParams,
+    #[cfg(feature = "plugin-wasm")]
+    pub wasm_cache: &'a mut WasmPluginCache,
+}
+
 /// 制御付き衛星の状態。
 pub struct ControlledSatellite {
     pub dynamics: SpacecraftDynamics<Box<dyn GravityField>>,
@@ -35,10 +49,16 @@ pub struct ControlledSatellite {
 }
 
 /// Config からプラグイン制御付き衛星を構築する。
+///
+/// 複数衛星をループで構築する場合は、[`ControlledBuildContext`] 内の
+/// `wasm_cache` を使い回すことで WASM コンポーネントのコンパイルが
+/// 1 ファイルにつき 1 回だけで済む。
 pub fn build_controlled_satellite(
     spec: &SatelliteSpec,
-    params: &SimParams,
+    ctx: &mut ControlledBuildContext<'_>,
 ) -> Result<ControlledSatellite, String> {
+    let params = ctx.params;
+
     let att = spec
         .attitude_config
         .as_ref()
@@ -88,8 +108,8 @@ pub fn build_controlled_satellite(
     };
     let state = dynamics.initial_augmented_state(plant);
 
-    // コントローラを構築。
-    let controller = build_controller(ctrl_config)?;
+    // コントローラを構築（cache 経由）。
+    let controller = build_controller(ctrl_config, &spec.id, ctx)?;
 
     // センサを構築。
     let sensors = build_sensor_bundle(spec.sensor_choices.as_deref());
@@ -169,28 +189,25 @@ pub fn step_controlled(
 
 // --- builder helpers ---------------------------------------------------------
 
-fn build_controller(config: &ControllerConfig) -> Result<Box<dyn PluginController>, String> {
+fn build_controller(
+    config: &ControllerConfig,
+    label: &str,
+    ctx: &mut ControlledBuildContext<'_>,
+) -> Result<Box<dyn PluginController>, String> {
     match config {
         #[cfg(feature = "plugin-wasm")]
         ControllerConfig::Wasm { path, config } => {
-            use orts::plugin::wasm::{WasmController, WasmEngine};
-            use wasmtime::component::Component;
-
-            let engine =
-                Arc::new(WasmEngine::new().map_err(|e| format!("WasmEngine init failed: {e}"))?);
-            let wasm_bytes =
-                std::fs::read(path).map_err(|e| format!("cannot read WASM at '{path}': {e}"))?;
-            let component = Component::new(engine.inner(), &wasm_bytes)
-                .map_err(|e| format!("WASM compile failed: {e}"))?;
-            let pre = WasmController::prepare(&engine, &component)
-                .map_err(|e| format!("WASM prepare failed: {e}"))?;
             let config_str = config.to_string();
-            let ctrl = WasmController::new(&pre, "controlled", &config_str)
-                .map_err(|e| format!("WasmController init failed: {e}"))?;
+            let ctrl = ctx
+                .wasm_cache
+                .build_controller(std::path::Path::new(path), label, &config_str)
+                .map_err(|e| format!("WasmController build failed: {e}"))?;
             Ok(Box::new(ctrl))
         }
         #[cfg(not(feature = "plugin-wasm"))]
         ControllerConfig::Wasm { .. } => {
+            let _ = ctx;
+            let _ = label;
             Err("WASM controller requires the 'plugin-wasm' feature. \
              Rebuild with: cargo build --features plugin-wasm"
                 .to_string())

@@ -17,10 +17,12 @@
 //! [wasm-component-model]: https://component-model.bytecodealliance.org/
 
 pub mod bindings;
+pub mod cache;
 pub mod controller;
 pub mod convert;
 pub mod engine;
 pub mod host_state;
 
+pub use cache::WasmPluginCache;
 pub use controller::WasmController;
 pub use engine::WasmEngine;
