@@ -295,7 +295,9 @@ jobs:
       - name: Run CLI plugin-backend E2E
         env:
           ORTS_BIN: ${{ github.workspace }}/bin/orts
-        run: cargo test --locked -p orts-cli --test plugin_backend_e2e
+        run: |
+          cargo test --locked -p orts-cli --test plugin_backend_e2e
+          cargo test --locked -p orts-cli --test serve_dynamic_controlled_add_e2e
 
   # Build CLI with embedded viewer SPA (main only).
   # On PRs, build.rs falls back to a placeholder — viewer embedding
