@@ -33,7 +33,7 @@ export interface ApiItem {
 // ---------------------------------------------------------------------------
 
 export class LinkResolver {
-  /** "crateName:id" → relative page path — keyed by crate to avoid ID collisions */
+  /** "crateName:id" → stored page path — keyed by crate to avoid ID collisions */
   private pageMap = new Map<string, string>();
   /** display name (lowercase) → page path — for intra-doc link resolution */
   private nameToPage = new Map<string, string>();
@@ -44,6 +44,15 @@ export class LinkResolver {
 
   /** Crate object → crate name reverse lookup */
   private crateNames = new Map<Crate, string>();
+
+  /**
+   * Logical path of the page currently being generated, e.g.
+   * `"kaname/api/structs/epoch/"`. Used to compute relative URLs from stored
+   * logical paths so that generated links navigate correctly regardless of
+   * which locale the page is served under (including Starlight i18n fallback
+   * routes).
+   */
+  private currentPagePath = "";
 
   constructor(crates: Map<string, Crate>, basePath: string) {
     this.crates = crates;
@@ -58,7 +67,26 @@ export class LinkResolver {
     return this.crateNames.get(crate) ?? "unknown";
   }
 
-  /** Register a page path for an item ID, scoped to its crate */
+  /**
+   * Set the logical path of the page currently being generated. Callers
+   * should invoke this before generating markdown for each page so that
+   * `resolveId`/`resolvePath` can return relative URLs rooted at the current
+   * page's location.
+   */
+  setCurrentPage(logicalPath: string): void {
+    this.currentPagePath = logicalPath;
+  }
+
+  /**
+   * Register a page path for an item ID, scoped to its crate.
+   *
+   * Prefer passing a **logical path** (e.g. `"kaname/api/structs/epoch/"`)
+   * without a leading slash, basePath, or locale segment. Such paths are
+   * resolved to relative URLs at lookup time using the current page. Paths
+   * that already look absolute (starting with `/` or containing `://`) are
+   * stored verbatim and returned as-is (backward-compatible with callers that
+   * pre-compute absolute URLs).
+   */
   registerPage(id: Id, pagePath: string, displayName: string, crateName: string): void {
     this.pageMap.set(`${crateName}:${id}`, pagePath);
     this.nameToPage.set(displayName.toLowerCase(), pagePath);
@@ -69,7 +97,7 @@ export class LinkResolver {
     const crateName = fromCrateName ?? this.getCrateName(fromCrate);
     // 1. Check our generated pages for this crate's ID space
     const page = this.pageMap.get(`${crateName}:${id}`);
-    if (page) return page;
+    if (page) return this.toUrl(page);
 
     // 2. Try to resolve via the fromCrate's paths table
     const summary = fromCrate.paths[String(id)];
@@ -87,7 +115,7 @@ export class LinkResolver {
       const itemName = summary.path[summary.path.length - 1];
       if (itemName) {
         const localPage = this.nameToPage.get(itemName.toLowerCase());
-        if (localPage) return localPage;
+        if (localPage) return this.toUrl(localPage);
       }
     }
 
@@ -103,9 +131,22 @@ export class LinkResolver {
 
     // Exact match on display name
     const exact = this.nameToPage.get(lastName);
-    if (exact) return exact;
+    if (exact) return this.toUrl(exact);
 
     return undefined;
+  }
+
+  /**
+   * Convert a stored page path to a URL suitable for embedding in generated
+   * Markdown. External URLs (containing `://`) and pre-formatted absolute
+   * paths (starting with `/`) are returned verbatim; logical paths are
+   * resolved to a relative URL from `currentPagePath`.
+   */
+  private toUrl(stored: string): string {
+    if (stored.includes("://") || stored.startsWith("/")) {
+      return stored;
+    }
+    return computeRelativeUrl(this.currentPagePath, stored);
   }
 
   private buildExternalUrl(
@@ -213,6 +254,54 @@ function collectFromModule(
       });
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Relative URL computation
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute a relative URL from a source logical page path to a target logical
+ * page path. Both inputs are "logical" paths without leading slash, basePath,
+ * or locale prefix (e.g. `"kaname/api/structs/epoch/"`). Trailing slashes on
+ * inputs are preserved in the output.
+ *
+ * Examples:
+ * - from `kaname/api/overview/` to `kaname/api/structs/epoch/`
+ *   → `../structs/epoch/`
+ * - from `kaname/api/structs/eci/` to `tobari/api/structs/nrlmsise00/`
+ *   → `../../../tobari/api/structs/nrlmsise00/`
+ *
+ * When the source path is empty (no current page set), falls back to a
+ * root-relative path `/${toPath}` — useful for unit tests that bypass page
+ * generation.
+ */
+export function computeRelativeUrl(fromPath: string, toPath: string): string {
+  if (!fromPath) {
+    return `/${toPath}`;
+  }
+  const fromParts = fromPath.replace(/\/$/, "").split("/").filter(Boolean);
+  const toParts = toPath.replace(/\/$/, "").split("/").filter(Boolean);
+
+  let common = 0;
+  while (
+    common < fromParts.length &&
+    common < toParts.length &&
+    fromParts[common] === toParts[common]
+  ) {
+    common++;
+  }
+
+  // Current page URL ends with `/` (directory-like), so the base for
+  // resolving relative links is the current page itself. We need one `..`
+  // for each remaining segment of fromParts after the common prefix.
+  const up = fromParts.length - common;
+  const down = toParts.slice(common);
+  const prefix = "../".repeat(up);
+  const suffix = down.join("/");
+  const trailing = toPath.endsWith("/") ? "/" : "";
+  const rel = `${prefix}${suffix}${trailing}`;
+  return rel || "./";
 }
 
 // ---------------------------------------------------------------------------

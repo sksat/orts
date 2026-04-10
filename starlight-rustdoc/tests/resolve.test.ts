@@ -4,6 +4,7 @@ import {
   LinkResolver,
   collectApiItems,
   collectTraitImpls,
+  computeRelativeUrl,
   resolveTraitImplUrl,
 } from "../src/resolve.js";
 
@@ -347,5 +348,134 @@ describe("resolveTraitImplUrl", () => {
       resolver,
     );
     expect(url).toBe("/base/mycrate/api/traits/odestate/");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeRelativeUrl — locale-agnostic internal link computation
+// ---------------------------------------------------------------------------
+
+describe("computeRelativeUrl", () => {
+  it("computes a relative link between siblings in the same crate", () => {
+    expect(
+      computeRelativeUrl("kaname/api/structs/eci/", "kaname/api/structs/epoch/"),
+    ).toBe("../epoch/");
+  });
+
+  it("computes a relative link from the overview page to an item page", () => {
+    expect(
+      computeRelativeUrl("kaname/api/overview/", "kaname/api/structs/epoch/"),
+    ).toBe("../structs/epoch/");
+  });
+
+  it("computes a relative link across crates", () => {
+    // From a directory-like URL `.../orts/api/structs/spacecraft/` the
+    // browser needs 4 `..` segments to back up past `spacecraft/`, `structs/`,
+    // `api/`, and `orts/` before descending into the other crate.
+    expect(
+      computeRelativeUrl(
+        "orts/api/structs/spacecraft/",
+        "kaname/api/structs/epoch/",
+      ),
+    ).toBe("../../../../kaname/api/structs/epoch/");
+  });
+
+  it("preserves trailing slash on the target", () => {
+    expect(computeRelativeUrl("a/b/", "a/c/")).toBe("../c/");
+    expect(computeRelativeUrl("a/b/", "a/c")).toBe("../c");
+  });
+
+  it("falls back to root-relative when source is empty", () => {
+    expect(computeRelativeUrl("", "kaname/api/structs/eci/")).toBe(
+      "/kaname/api/structs/eci/",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LinkResolver — locale-agnostic logical paths + currentPagePath
+// ---------------------------------------------------------------------------
+
+describe("LinkResolver with logical paths", () => {
+  it("returns a relative URL from the current page to a registered item", () => {
+    const crate = makeCrate();
+    const crates = new Map([["kaname", crate]]);
+    const resolver = new LinkResolver(crates, "/orts");
+    // Register using a logical path (no base, no locale)
+    resolver.registerPage(100, "kaname/api/structs/epoch/", "Epoch", "kaname");
+
+    resolver.setCurrentPage("kaname/api/overview/");
+    expect(resolver.resolveId(100, crate, "kaname")).toBe("../structs/epoch/");
+
+    resolver.setCurrentPage("kaname/api/structs/eci/");
+    expect(resolver.resolveId(100, crate, "kaname")).toBe("../epoch/");
+  });
+
+  it("produces the same relative URL regardless of which locale the source lives in", () => {
+    // This is the key property for Starlight i18n fallback: because links are
+    // relative, a page served at /en/kaname/api/overview/ and the same page
+    // served at /ja/kaname/api/overview/ (fallback) both resolve links to
+    // their own locale — users stay in their chosen language.
+    const crate = makeCrate();
+    const crates = new Map([["kaname", crate]]);
+    const resolver = new LinkResolver(crates, "/orts");
+    resolver.registerPage(200, "kaname/api/structs/epoch/", "Epoch", "kaname");
+
+    // Relative URL does not embed any locale segment; resolution happens in
+    // the browser using whichever locale URL the page was served from.
+    resolver.setCurrentPage("kaname/api/overview/");
+    const link = resolver.resolveId(200, crate, "kaname");
+    expect(link).toBe("../structs/epoch/");
+    expect(link).not.toContain("/en/");
+    expect(link).not.toContain("/ja/");
+    expect(link).not.toContain("/orts/");
+  });
+
+  it("resolves cross-crate logical paths to the right depth", () => {
+    const kaname = makeCrate();
+    const orts = makeCrate();
+    const crates = new Map([
+      ["kaname", kaname],
+      ["orts", orts],
+    ]);
+    const resolver = new LinkResolver(crates, "/orts");
+    resolver.registerPage(300, "kaname/api/structs/epoch/", "Epoch", "kaname");
+
+    resolver.setCurrentPage("orts/api/structs/spacecraft/");
+    // Items in kaname are registered under crateName "kaname". Four `..` are
+    // needed because nothing in the two logical paths is shared above the
+    // root.
+    expect(resolver.resolveId(300, kaname, "kaname")).toBe(
+      "../../../../kaname/api/structs/epoch/",
+    );
+  });
+
+  it("returns pre-formatted absolute URLs verbatim (backwards-compat)", () => {
+    // Tests in older suites (and any caller that pre-computes URLs) pass
+    // absolute paths starting with `/`. These should pass through unchanged
+    // so existing behaviour is preserved.
+    const crate = makeCrate();
+    const crates = new Map([["mycrate", crate]]);
+    const resolver = new LinkResolver(crates, "/base");
+    resolver.registerPage(42, "/base/mycrate/api/structs/foo/", "Foo", "mycrate");
+
+    resolver.setCurrentPage("mycrate/api/overview/");
+    // Absolute path, not affected by currentPagePath
+    expect(resolver.resolveId(42, crate, "mycrate")).toBe(
+      "/base/mycrate/api/structs/foo/",
+    );
+  });
+
+  it("resolvePath returns a relative URL for logical paths", () => {
+    const crate = makeCrate();
+    const crates = new Map<string, Crate>([["kaname", crate]]);
+    const resolver = new LinkResolver(crates, "/orts");
+    resolver.registerPage(1, "kaname/api/traits/integrator/", "Integrator", "kaname");
+
+    resolver.setCurrentPage("kaname/api/structs/eci/");
+    // From `structs/eci/` → `traits/integrator/` shares `kaname/api/`, so
+    // we need to back up past `eci/` and `structs/` (2 levels) before
+    // descending into `traits/integrator/`.
+    expect(resolver.resolvePath("Integrator")).toBe("../../traits/integrator/");
   });
 });

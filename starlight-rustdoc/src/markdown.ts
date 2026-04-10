@@ -41,6 +41,12 @@ import {
 export interface MarkdownOptions {
   contentDir: string; // e.g. docs/src/content/docs
   basePath: string; // e.g. "/orts"
+  /**
+   * Locale prefix for i18n (e.g. "en"). When set, files are written under
+   * `${contentDir}/${locale}/${crate}/api/...` and cross-crate URLs embed
+   * `${locale}/` between basePath and crate segments.
+   */
+  locale?: string;
   sourceLinks?: {
     repository: string;
     branch: string;
@@ -62,23 +68,34 @@ export function generateCratePages(
   options: MarkdownOptions,
 ): GeneratedPage[] {
   const pages: GeneratedPage[] = [];
+  const localePrefix = localePrefixOf(options);
 
-  // Generate overview page
-  const overviewPath = `${crateName}/api/overview.md`;
-  const overviewContent = generateOverviewPage(crateName, items, crate, resolver, options);
+  // Generate overview page.
+  // Tell the resolver which page is being generated so that link lookups
+  // return relative URLs rooted at this page. Relative links keep the
+  // generated content locale-agnostic — the same file works whether served
+  // from `/en/...` or from a `/ja/...` fallback route.
+  resolver.setCurrentPage(`${crateName}/api/overview/`);
+  const overviewPath = `${localePrefix}${crateName}/api/overview.md`;
+  const overviewContent = generateOverviewPage(crateName, items, crate, resolver);
   writePage(join(options.contentDir, overviewPath), overviewContent);
   pages.push({ relativePath: overviewPath, category: "struct", name: "overview" });
 
   // Generate individual pages
   for (const apiItem of items) {
     const slug = apiItem.displayName.toLowerCase();
-    const relativePath = `${crateName}/api/${categoryDir(apiItem.category)}/${slug}.md`;
+    resolver.setCurrentPage(`${crateName}/api/${categoryDir(apiItem.category)}/${slug}/`);
+    const relativePath = `${localePrefix}${crateName}/api/${categoryDir(apiItem.category)}/${slug}.md`;
     const content = generateItemPage(apiItem, crate, resolver, options);
     writePage(join(options.contentDir, relativePath), content);
     pages.push({ relativePath, category: apiItem.category, name: apiItem.displayName });
   }
 
   return pages;
+}
+
+function localePrefixOf(options: Pick<MarkdownOptions, "locale">): string {
+  return options.locale ? `${options.locale}/` : "";
 }
 
 // ---------------------------------------------------------------------------
@@ -90,7 +107,6 @@ function generateOverviewPage(
   items: ApiItem[],
   crate: Crate,
   resolver: LinkResolver,
-  options: MarkdownOptions,
 ): string {
   const lines: string[] = [];
 
@@ -112,7 +128,14 @@ function generateOverviewPage(
     lines.push("| Name | Description |");
     lines.push("|------|-------------|");
     for (const item of categoryItems) {
-      const link = `${options.basePath}/${item.crateName}/api/${categoryDir(item.category)}/${item.displayName.toLowerCase()}/`;
+      // Look up each item through the resolver so that the resulting link is
+      // a relative URL from the overview page (set as the current page by
+      // generateCratePages). Falling back to a root-relative path if the
+      // resolver doesn't know about the item shouldn't happen because items
+      // on this list were all registered, but guard defensively.
+      const link =
+        resolver.resolveId(item.item.id, crate, item.crateName) ??
+        `${item.crateName}/api/${categoryDir(item.category)}/${item.displayName.toLowerCase()}/`;
       const desc = firstSentence(item.item.docs);
       lines.push(`| [${item.displayName}](${link}) | ${desc} |`);
     }

@@ -38,8 +38,13 @@ export interface StarlightRustdocOptions {
   workspace?: string;
   /** Rust toolchain for rustdoc JSON (default: "nightly") */
   toolchain?: string;
-  /** Output directory pattern per crate (default: "{crate}/api") */
-  output?: (crateName: string) => string;
+  /**
+   * Locale prefix for i18n. When set, generated Markdown files are written to
+   * `src/content/docs/${locale}/${crate}/api/...` and cross-crate URLs include
+   * the prefix. Sidebar slugs are kept locale-agnostic so that Starlight's i18n
+   * routing resolves them per current locale.
+   */
+  locale?: string;
   /** Source link configuration */
   sourceLinks?: {
     repository: string;
@@ -71,6 +76,7 @@ export default function starlightRustdoc(options: StarlightRustdocOptions): Star
         const workspace = resolve(astroRoot, options.workspace ?? "..");
         const contentDir = resolve(astroRoot, "src", "content", "docs");
         const basePath = (astroConfig.base ?? "/").replace(/\/$/, "");
+        const locale = options.locale;
 
         const crateSpecs = options.crates.map(normalizeCrateSpec);
 
@@ -102,13 +108,18 @@ export default function starlightRustdoc(options: StarlightRustdocOptions): Star
           const items = collectApiItems(crateJson, crateName);
           allItems.set(crateName, items);
 
-          // Register pages in resolver for cross-crate linking
+          // Register pages in resolver for cross-crate linking.
+          // We register **logical paths** (no basePath, no locale prefix) so
+          // the resolver can compute relative URLs at lookup time. This keeps
+          // generated markdown locale-agnostic: the same overview page works
+          // whether it is served at `/orts/en/...` or as a `/orts/ja/...`
+          // fallback.
           for (const item of items) {
             const slug = item.displayName.toLowerCase();
             const categoryDir =
               item.category === "type_alias" ? "type-aliases" : `${item.category}s`;
-            const pagePath = `${basePath}/${crateName}/api/${categoryDir}/${slug}/`;
-            resolver.registerPage(item.item.id, pagePath, item.displayName, crateName);
+            const logicalPath = `${crateName}/api/${categoryDir}/${slug}/`;
+            resolver.registerPage(item.item.id, logicalPath, item.displayName, crateName);
           }
         }
 
@@ -122,6 +133,7 @@ export default function starlightRustdoc(options: StarlightRustdocOptions): Star
           const pages = generateCratePages(crateName, items, crateJson, resolver, {
             contentDir,
             basePath,
+            locale,
             sourceLinks: options.sourceLinks
               ? {
                   repository: options.sourceLinks.repository,
