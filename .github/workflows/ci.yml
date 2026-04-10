@@ -67,6 +67,25 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
+      # Standard ubuntu-latest runners ship with only ~14 GB of free
+      # disk. The orts workspace (rerun + wasmtime with async feature
+      # + criterion benches + 50+ transitive crates) fills that during
+      # the link phase of `cargo test --workspace --no-run`, so we
+      # reclaim ~20 GB by removing runtimes we don't need (Android,
+      # .NET, Haskell, Docker, large apt packages). Keep the
+      # tool-cache so setup-rust / setup-node stay hot, and keep the
+      # swap file because the linker occasionally peaks memory.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+
       - name: Install mold linker
         run: sudo apt-get install -y mold
 
