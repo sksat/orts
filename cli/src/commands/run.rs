@@ -14,7 +14,7 @@ use crate::satellite::OrbitSpec;
 use crate::sim::params::SimParams;
 
 pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
-    let params = if let Some(config_path) = &sim.config {
+    let mut params = if let Some(config_path) = &sim.config {
         let config = crate::config::SimConfig::load(std::path::Path::new(config_path))
             .unwrap_or_else(|e| {
                 eprintln!("Error: {e}");
@@ -24,6 +24,10 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
     } else {
         SimParams::from_sim_args(sim, false)
     };
+    // CLI backend flags always override config-file defaults so
+    // `orts run --config … --plugin-backend=sync|async` works.
+    params.plugin_backend_choice = sim.plugin_backend;
+    params.plugin_backend_threshold = sim.plugin_backend_threshold;
 
     // 全衛星が controller 付きなら制御ループへディスパッチ。
     let has_controller = !params.satellites.is_empty()
@@ -32,7 +36,7 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
             .iter()
             .all(|s| s.controller_config.is_some());
     let rec = if has_controller {
-        run_controlled_simulation(&params)
+        run_controlled_simulation(&params, sim)
     } else {
         run_simulation(&params)
     };
@@ -359,10 +363,11 @@ pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with
 }
 
 /// 制御付きシミュレーション（プラグインコントローラ + RW + センサ）。
-fn run_controlled_simulation(params: &SimParams) -> Recording {
+fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
     use crate::sim::controlled::{
         ControlledBuildContext, build_controlled_satellite, step_controlled,
     };
+    let _ = sim; // Plugin backend is now stored in SimParams directly.
 
     let duration = params.duration.unwrap_or_else(|| {
         // フォールバック: 最初の衛星の軌道周期。
@@ -386,6 +391,8 @@ fn run_controlled_simulation(params: &SimParams) -> Recording {
         eprintln!("Error initializing WASM plugin cache: {e}");
         std::process::exit(1);
     });
+    #[cfg(feature = "plugin-wasm")]
+    let plugin_backend = params.resolve_plugin_backend();
 
     // 制御付き衛星を構築。
     let mut satellites = Vec::new();
@@ -394,6 +401,8 @@ fn run_controlled_simulation(params: &SimParams) -> Recording {
             params,
             #[cfg(feature = "plugin-wasm")]
             wasm_cache: &mut wasm_cache,
+            #[cfg(feature = "plugin-wasm")]
+            plugin_backend,
         };
         for spec in &params.satellites {
             let sat = build_controlled_satellite(spec, &mut ctx).unwrap_or_else(|e| {

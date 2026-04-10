@@ -86,11 +86,17 @@ async fn async_server(sim: &SimArgs, port: u16) {
 
     // Spawn simulation manager
     let mgr_tx = tx.clone();
+    let plugin_overrides = manager::PluginBackendOverrides::from_sim_args(sim);
     if has_explicit_sim_args(sim) && initial_config.is_none() {
-        // Legacy path: build SimParams from CLI args directly
+        // Legacy path: build SimParams from CLI args directly.
+        // from_sim_args already populates plugin_backend_choice /
+        // threshold, but we still pass the overrides so that any
+        // later delegate to simulation_manager (after a terminate +
+        // restart) honors them too.
         let params = Arc::new(SimParams::from_sim_args(sim, true));
         tokio::spawn(manager::simulation_manager_with_params(
             params,
+            plugin_overrides,
             cmd_rx,
             mgr_tx,
             texture_request_tx.clone(),
@@ -98,6 +104,7 @@ async fn async_server(sim: &SimArgs, port: u16) {
     } else {
         tokio::spawn(manager::simulation_manager(
             initial_config,
+            plugin_overrides,
             cmd_rx,
             mgr_tx,
             texture_request_tx.clone(),

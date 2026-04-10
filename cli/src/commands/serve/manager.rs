@@ -11,7 +11,38 @@ use orts::orbital::gravity::GravityField;
 use orts::spacecraft::{SpacecraftDynamics, SpacecraftState};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::cli::IntegratorChoice;
+use crate::cli::{IntegratorChoice, PluginBackendChoice, SimArgs};
+
+/// CLI-time backend overrides that must apply to every `SimParams`
+/// built inside the serve manager — including ones derived from
+/// configs received from the client at runtime.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct PluginBackendOverrides {
+    pub choice: Option<PluginBackendChoice>,
+    pub threshold: Option<usize>,
+}
+
+impl PluginBackendOverrides {
+    pub fn from_sim_args(sim: &SimArgs) -> Self {
+        Self {
+            // Only override if the user explicitly asked for a
+            // non-default backend on the CLI. If they left it at
+            // `Auto` (the clap default) we still apply that, but the
+            // threshold override is only applied when set.
+            choice: Some(sim.plugin_backend),
+            threshold: sim.plugin_backend_threshold,
+        }
+    }
+
+    pub fn apply(&self, params: &mut SimParams) {
+        if let Some(c) = self.choice {
+            params.plugin_backend_choice = c;
+        }
+        if self.threshold.is_some() {
+            params.plugin_backend_threshold = self.threshold;
+        }
+    }
+}
 use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::{SatelliteInfo, SatelliteSpec};
 use crate::sim::core::{
@@ -311,6 +342,7 @@ fn body_names_for(body: &kaname::body::KnownBody) -> Vec<String> {
 /// Simulation manager that starts with a pre-built SimParams (legacy CLI args path).
 pub(super) async fn simulation_manager_with_params(
     params: Arc<SimParams>,
+    cli_plugin_overrides: PluginBackendOverrides,
     cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     texture_tx: super::textures::TextureRequestSender,
@@ -327,7 +359,14 @@ pub(super) async fn simulation_manager_with_params(
             eprintln!("Simulation manager: idle, waiting for start_simulation...");
             if let Some(config) = idle_loop(&mut returned_rx).await {
                 // Delegate to the standard manager for subsequent runs.
-                simulation_manager(Some(config), returned_rx, tx, texture_tx).await;
+                simulation_manager(
+                    Some(config),
+                    cli_plugin_overrides,
+                    returned_rx,
+                    tx,
+                    texture_tx,
+                )
+                .await;
             }
         }
         (LoopExit::Disconnected, _) => {}
@@ -418,6 +457,7 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig>
 /// Loops between idle and running states; after terminate it returns to idle.
 pub(super) async fn simulation_manager(
     initial_config: Option<SimConfig>,
+    cli_plugin_overrides: PluginBackendOverrides,
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     texture_tx: super::textures::TextureRequestSender,
@@ -432,7 +472,9 @@ pub(super) async fn simulation_manager(
 
     // Main manager loop: start simulation, run until terminated, return to idle.
     while let Some(config) = next_config {
-        let params = Arc::new(SimParams::from_config(&config));
+        let mut params_inner = SimParams::from_config(&config);
+        cli_plugin_overrides.apply(&mut params_inner);
+        let params = Arc::new(params_inner);
 
         // Request texture downloads for all bodies in the system.
         let _ = texture_tx.send(system_body_names(&params)).await;
@@ -564,11 +606,15 @@ impl SimLoopContext {
             #[cfg(feature = "plugin-wasm")]
             let mut wasm_cache = orts::plugin::wasm::WasmPluginCache::new()
                 .map_err(|e| format!("WASM plugin cache init failed: {e}"))?;
+            #[cfg(feature = "plugin-wasm")]
+            let plugin_backend = params.resolve_plugin_backend();
             {
                 let mut ctx = crate::sim::controlled::ControlledBuildContext {
                     params: &params,
                     #[cfg(feature = "plugin-wasm")]
                     wasm_cache: &mut wasm_cache,
+                    #[cfg(feature = "plugin-wasm")]
+                    plugin_backend,
                 };
                 for spec in &params.satellites {
                     let sat = crate::sim::controlled::build_controlled_satellite(spec, &mut ctx)

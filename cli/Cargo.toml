@@ -12,9 +12,13 @@ name = "orts"
 path = "src/main.rs"
 
 [features]
-default = ["viewer"]
+default = ["viewer", "plugin-wasm-async"]
 viewer = ["dep:rust-embed"]
 plugin-wasm = ["orts/plugin-wasm", "dep:wasmtime"]
+# Enables the fiber-based async WASM backend so `orts run --plugin-backend=async`
+# (and `auto` above the threshold) can multiplex many satellites on one
+# worker thread. Opt-in at the orts-crate level, default-on here in the CLI.
+plugin-wasm-async = ["plugin-wasm", "orts/plugin-wasm-async"]
 
 [dependencies]
 nalgebra.workspace = true
@@ -38,3 +42,4 @@ wasmtime = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio-tungstenite.workspace = true
+tempfile = "3"

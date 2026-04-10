@@ -21,6 +21,8 @@ use utsuroi::{Integrator, Rk4};
 
 use crate::config::{ControllerConfig, ReactionWheelConfig, SensorChoice};
 use crate::satellite::SatelliteSpec;
+#[cfg(feature = "plugin-wasm")]
+use crate::sim::params::ResolvedPluginBackend;
 use crate::sim::params::SimParams;
 
 #[cfg(feature = "plugin-wasm")]
@@ -35,6 +37,10 @@ pub struct ControlledBuildContext<'a> {
     pub params: &'a SimParams,
     #[cfg(feature = "plugin-wasm")]
     pub wasm_cache: &'a mut WasmPluginCache,
+    /// Which WASM backend to build controllers with. Resolved once by
+    /// the caller (based on `--plugin-backend` and fleet size).
+    #[cfg(feature = "plugin-wasm")]
+    pub plugin_backend: ResolvedPluginBackend,
 }
 
 /// 制御付き衛星の状態。
@@ -198,11 +204,24 @@ fn build_controller(
         #[cfg(feature = "plugin-wasm")]
         ControllerConfig::Wasm { path, config } => {
             let config_str = config.to_string();
-            let ctrl = ctx
-                .wasm_cache
-                .build_controller(std::path::Path::new(path), label, &config_str)
-                .map_err(|e| format!("WasmController build failed: {e}"))?;
-            Ok(Box::new(ctrl))
+            let wasm_path = std::path::Path::new(path);
+            match ctx.plugin_backend {
+                ResolvedPluginBackend::Sync => {
+                    let ctrl = ctx
+                        .wasm_cache
+                        .build_sync_controller(wasm_path, label, &config_str)
+                        .map_err(|e| format!("WasmController build failed: {e}"))?;
+                    Ok(Box::new(ctrl))
+                }
+                #[cfg(feature = "plugin-wasm-async")]
+                ResolvedPluginBackend::Async => {
+                    let ctrl = ctx
+                        .wasm_cache
+                        .build_async_controller(wasm_path, label, &config_str)
+                        .map_err(|e| format!("AsyncWasmController build failed: {e}"))?;
+                    Ok(Box::new(ctrl))
+                }
+            }
         }
         #[cfg(not(feature = "plugin-wasm"))]
         ControllerConfig::Wasm { .. } => {

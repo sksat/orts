@@ -5,10 +5,84 @@ use kaname::epoch::Epoch;
 use orts::tle::Tle;
 use utsuroi::Tolerances;
 
-use crate::cli::{AtmosphereChoice, IntegratorChoice, SimArgs};
+use crate::cli::{AtmosphereChoice, IntegratorChoice, PluginBackendChoice, SimArgs};
 use crate::config::SimConfig;
 use crate::satellite::{OrbitSpec, SatelliteSpec, parse_body, parse_sat_spec};
 use crate::tle::{fetch_tle_by_norad_id, try_fetch_tle_by_norad_id};
+
+/// Resolved WASM plugin backend selection.
+///
+/// Produced by [`SimParams::resolve_plugin_backend`] from the CLI
+/// choice plus the satellite count. Callers pass this to the
+/// WasmPluginCache to pick between `build_sync_controller` and
+/// `build_async_controller`.
+#[cfg(feature = "plugin-wasm")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedPluginBackend {
+    Sync,
+    #[cfg(feature = "plugin-wasm-async")]
+    Async,
+}
+
+/// Default multiplier applied to `available_parallelism()` when the
+/// user does not provide `--plugin-backend-threshold`. At 8 cores
+/// this yields a threshold of 256 satellites, which comfortably sits
+/// inside the "sync is still fine" band identified in the perf
+/// review (≤ a few hundred OS threads).
+#[cfg(feature = "plugin-wasm")]
+const DEFAULT_THRESHOLD_PER_CORE: usize = 32;
+
+#[cfg(feature = "plugin-wasm")]
+fn resolve_plugin_backend_inner(
+    choice: PluginBackendChoice,
+    threshold_override: Option<usize>,
+    n_sats: usize,
+) -> ResolvedPluginBackend {
+    let threshold = threshold_override.unwrap_or_else(default_auto_threshold);
+
+    match choice {
+        PluginBackendChoice::Sync => {
+            log::info!("WASM backend = sync (forced by --plugin-backend=sync)");
+            ResolvedPluginBackend::Sync
+        }
+        PluginBackendChoice::Async => {
+            #[cfg(feature = "plugin-wasm-async")]
+            {
+                log::info!("WASM backend = async (forced by --plugin-backend=async)");
+                ResolvedPluginBackend::Async
+            }
+            #[cfg(not(feature = "plugin-wasm-async"))]
+            {
+                log::warn!(
+                    "--plugin-backend=async requested but this binary was built \
+                     without the plugin-wasm-async feature; falling back to sync"
+                );
+                ResolvedPluginBackend::Sync
+            }
+        }
+        PluginBackendChoice::Auto => {
+            #[cfg(feature = "plugin-wasm-async")]
+            {
+                if n_sats > threshold {
+                    log::info!(
+                        "WASM backend = async (auto: n_sats={n_sats} > threshold={threshold})"
+                    );
+                    return ResolvedPluginBackend::Async;
+                }
+            }
+            log::info!("WASM backend = sync (auto: n_sats={n_sats} <= threshold={threshold})");
+            ResolvedPluginBackend::Sync
+        }
+    }
+}
+
+#[cfg(feature = "plugin-wasm")]
+fn default_auto_threshold() -> usize {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    (cores * DEFAULT_THRESHOLD_PER_CORE).max(32)
+}
 
 /// Simulation parameters derived from CLI arguments.
 pub struct SimParams {
@@ -26,6 +100,26 @@ pub struct SimParams {
     pub f107: f64,
     pub ap: f64,
     pub space_weather_provider: Option<Arc<tobari::CssiSpaceWeather>>,
+    /// User-selected plugin backend from the CLI (or `Auto`).
+    /// Only consulted when `plugin-wasm` is enabled.
+    #[cfg_attr(not(feature = "plugin-wasm"), allow(dead_code))]
+    pub plugin_backend_choice: PluginBackendChoice,
+    /// Optional threshold override from the CLI.
+    #[cfg_attr(not(feature = "plugin-wasm"), allow(dead_code))]
+    pub plugin_backend_threshold: Option<usize>,
+}
+
+impl SimParams {
+    /// Resolve the WASM plugin backend for this parameter set based
+    /// on the user's CLI choice and the current satellite count.
+    #[cfg(feature = "plugin-wasm")]
+    pub fn resolve_plugin_backend(&self) -> ResolvedPluginBackend {
+        resolve_plugin_backend_inner(
+            self.plugin_backend_choice,
+            self.plugin_backend_threshold,
+            self.satellites.len(),
+        )
+    }
 }
 
 impl SimParams {
@@ -170,6 +264,8 @@ impl SimParams {
             f107: args.f107,
             ap: args.ap,
             space_weather_provider: Self::load_space_weather(args.space_weather.as_deref()),
+            plugin_backend_choice: args.plugin_backend,
+            plugin_backend_threshold: args.plugin_backend_threshold,
         }
     }
 
@@ -228,6 +324,10 @@ impl SimParams {
             f107: config.f107,
             ap: config.ap,
             space_weather_provider: Self::load_space_weather(config.space_weather.as_deref()),
+            // Config-file path: no CLI override, use defaults. The
+            // auto selection logic falls back to its derived threshold.
+            plugin_backend_choice: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         }
     }
 
@@ -382,6 +482,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.output_interval - 10.0).abs() < 1e-9);
@@ -413,6 +515,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.dt - 1.0).abs() < 1e-9);
@@ -444,6 +548,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!((params.stream_interval - 5.0).abs() < 1e-9);
@@ -470,6 +576,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params2 = SimParams::from_sim_args(&args2, false);
         assert!((params2.stream_interval - 10.0).abs() < 1e-9);
@@ -498,6 +606,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert!(params.epoch.is_some());
@@ -534,6 +644,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         SimParams::from_sim_args(&args, false);
     }
@@ -565,6 +677,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -612,6 +726,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         let state = params.satellites[0].initial_state(params.mu);
@@ -652,6 +768,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -690,6 +808,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, false);
 
@@ -727,6 +847,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert_eq!(params.satellites.len(), 2);
@@ -758,6 +880,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, false);
         assert_eq!(params.satellites.len(), 1);
@@ -788,6 +912,8 @@ mod tests {
             space_weather: None,
             duration: None,
             config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
         };
         let params = SimParams::from_sim_args(&args, true);
         // Should have at least SSO satellite

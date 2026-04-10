@@ -152,6 +152,45 @@ pub struct SimArgs {
     /// When specified, orbit-related args (--altitude, --sat, --tle, etc.) are ignored.
     #[arg(long)]
     pub config: Option<String>,
+
+    /// WASM plugin backend.
+    ///
+    /// - `sync`: one OS thread per controlled satellite. Fastest
+    ///   dispatch (~3 µs/tick on Pulley) but scales poorly beyond a
+    ///   few hundred satellites because of thread stack overhead.
+    /// - `async`: one tokio worker thread multiplexes all controller
+    ///   tasks via wasmtime fiber suspension. Higher per-tick
+    ///   dispatch overhead but scales to thousands of satellites.
+    ///   Requires the `plugin-wasm-async` build feature.
+    /// - `auto` (default): pick automatically based on satellite
+    ///   count. Uses `sync` when `n_sats <= threshold`, `async`
+    ///   otherwise (when available). Threshold is derived from the
+    ///   machine's thread count; override with `--plugin-backend-threshold`.
+    #[arg(long, value_enum, default_value = "auto")]
+    pub plugin_backend: PluginBackendChoice,
+
+    /// Satellite-count threshold above which `--plugin-backend=auto`
+    /// switches to the async backend.
+    ///
+    /// If unset, the default is derived from
+    /// `std::thread::available_parallelism() * 32` (e.g. 256 on an
+    /// 8-core machine), which keeps the sync backend engaged for
+    /// small-fleet ergonomics while switching to async before the OS
+    /// thread count becomes problematic.
+    #[arg(long)]
+    pub plugin_backend_threshold: Option<usize>,
+}
+
+/// Explicit backend choice from CLI.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum PluginBackendChoice {
+    /// Sync backend: one OS thread per satellite.
+    Sync,
+    /// Async backend: tokio tasks multiplexed on a single worker.
+    /// Requires the `plugin-wasm-async` build feature.
+    Async,
+    /// Automatic selection based on `--plugin-backend-threshold`.
+    Auto,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
