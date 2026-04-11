@@ -51,7 +51,7 @@ thiserror = "2"
 # See DESIGN.md Phase P for the rationale. Version pinned exactly to
 # keep CI deterministic against Cranelift optimizer churn (orts/plan).
 wasmtime-wasi = { version = "=43.0.0", default-features = false }
-wasmtime = { version = "=43.0.0", default-features = false, features = [
+wasmtime = { version = "=43.0.1", default-features = false, features = [
     "runtime",
     "cranelift",
     "pulley",
