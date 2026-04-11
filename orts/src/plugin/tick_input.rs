@@ -5,8 +5,8 @@
 //! readings, and (optionally) the true spacecraft state for
 //! debugging.
 
-use kaname::epoch::Epoch;
-use kaname::frame::{Body, Vec3};
+use arika::epoch::Epoch;
+use arika::frame::{Body, Vec3};
 use nalgebra::Vector4;
 
 use crate::SpacecraftState;

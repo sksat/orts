@@ -1,6 +1,6 @@
-use kaname::SimpleEci;
-use kaname::epoch::Epoch;
-use kaname::frame;
+use arika::SimpleEci;
+use arika::epoch::Epoch;
+use arika::frame;
 use nalgebra::Vector3;
 
 use super::MagneticFieldModel;

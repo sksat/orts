@@ -1,5 +1,5 @@
-use kaname::SimpleEci;
-use kaname::frame;
+use arika::SimpleEci;
+use arika::frame;
 use nalgebra::Vector3;
 use utsuroi::{OdeState, State, Tolerances};
 

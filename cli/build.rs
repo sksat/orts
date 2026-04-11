@@ -33,7 +33,7 @@ fn main() {
 /// `serde-wasm-bindgen` that aren't reachable from the native cli graph, so
 /// these need a dedicated `cargo about` pass to be covered by the notice.
 const VIEWER_WASM_CRATES: &[(&str, &str)] = &[
-    ("../kaname/Cargo.toml", "kaname"),
+    ("../arika/Cargo.toml", "arika"),
     ("../rrd-wasm/Cargo.toml", "rrd-wasm"),
 ];
 
@@ -46,7 +46,7 @@ const VIEWER_WASM_CRATES: &[(&str, &str)] = &[
 ///    `cargo about generate` for the current crate and writes the result
 ///    to `$OUT_DIR/notalawyer` for consumption via
 ///    `notalawyer::include_notice!()`.
-/// 2. The `wasm-pack` outputs of workspace wasm crates (`kaname`, `rrd-wasm`)
+/// 2. The `wasm-pack` outputs of workspace wasm crates (`arika`, `rrd-wasm`)
 ///    that are built with their `wasm` feature and bundled into the viewer,
 ///    whose compiled assets are embedded into cli via `rust-embed`. Those
 ///    deps are scanned by an extra `cargo about` pass per crate, written to

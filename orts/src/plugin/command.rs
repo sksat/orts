@@ -14,7 +14,7 @@
 //! See DESIGN.md Phase P, D2 ("Command enum は最小 variant から始めて
 //! phase ごとに拡張する").
 
-use kaname::frame::{Body, Vec3};
+use arika::frame::{Body, Vec3};
 
 /// Logical command emitted by a controller backend.
 ///

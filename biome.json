@@ -9,10 +9,10 @@
     "ignoreUnknown": false,
     "includes": [
       "**",
-      "!viewer/src/wasm/kaname",
+      "!viewer/src/wasm/arika",
       "!viewer/src/wasm/rrd-wasm",
       "!tobari/examples/web/src/wasm/tobari",
-      "!tobari/examples/web/src/wasm/kaname",
+      "!tobari/examples/web/src/wasm/arika",
       "!orts/tests/fixtures",
       "!docs/.astro",
       "!docs/dist",

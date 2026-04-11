@@ -1,5 +1,5 @@
 import type { SimInfo } from "../hooks/useWebSocket.js";
-import { jd_to_utc_string } from "../wasm/kanameInit.js";
+import { jd_to_utc_string } from "../wasm/arikaInit.js";
 import styles from "./SimInfoBar.module.css";
 
 interface SimInfoBarProps {

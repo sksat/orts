@@ -7,7 +7,7 @@
 //! The reaction torque on the spacecraft follows Newton's third law:
 //! `τ_body = -Σ (dh_i/dt · axis_i)`.
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use nalgebra::Vector3;
 
 use super::ExternalLoads;

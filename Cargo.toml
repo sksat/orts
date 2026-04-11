@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "utsuroi",
-    "kaname",
+    "arika",
     "cli",
     "orts",
     "tobari",
@@ -17,7 +17,7 @@ repository = "https://github.com/sksat/orts"
 
 [workspace.dependencies]
 utsuroi = { path = "utsuroi" }
-kaname = { path = "kaname" }
+arika = { path = "arika" }
 orts = { path = "orts" }
 tobari = { path = "tobari" }
 nalgebra = "0.34"

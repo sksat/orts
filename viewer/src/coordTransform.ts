@@ -1,6 +1,6 @@
 import type { OrbitPoint } from "./orbit.js";
 import type { LvlhAxes } from "./sceneFrame.js";
-import { eci_to_ecef_batch as wasmBatch } from "./wasm/kanameInit.js";
+import { eci_to_ecef_batch as wasmBatch } from "./wasm/arikaInit.js";
 
 /**
  * Batch-transform orbit points from ECI to ECEF via WASM, writing scaled

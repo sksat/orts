@@ -19,7 +19,7 @@ macro_rules! impl_convert {
     ($wit_mod:path) => {
         use $wit_mod as wit;
 
-        use kaname::frame::{Body, Vec3};
+        use arika::frame::{Body, Vec3};
         use nalgebra::Vector3;
 
         use $crate::SpacecraftState;
@@ -86,7 +86,7 @@ macro_rules! impl_convert {
             }
         }
 
-        fn epoch_to_wit(e: &kaname::epoch::Epoch) -> wit::Epoch {
+        fn epoch_to_wit(e: &arika::epoch::Epoch) -> wit::Epoch {
             wit::Epoch {
                 julian_date: e.jd(),
             }
@@ -177,7 +177,7 @@ pub mod sync {
         #[test]
         fn observation_roundtrip_preserves_values() {
             let spacecraft = make_spacecraft();
-            let epoch = kaname::epoch::Epoch::j2000();
+            let epoch = arika::epoch::Epoch::j2000();
             use crate::plugin::tick_input::{
                 AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody,
             };

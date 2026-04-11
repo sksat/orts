@@ -1,9 +1,9 @@
-use kaname::epoch::Epoch;
-use kaname::sun;
+use arika::epoch::Epoch;
+use arika::sun;
 use nalgebra::Vector3;
 
 use crate::perturbations::{SOLAR_RADIATION_PRESSURE, shadow_function};
-use kaname::earth::R as R_EARTH;
+use arika::earth::R as R_EARTH;
 
 use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
 
@@ -101,8 +101,8 @@ impl PanelSrp {
                 // Divide by 1000 to convert to km/s²
                 let a_mag = base_pressure * cr * area / mass / 1000.0;
                 ExternalLoads {
-                    acceleration_inertial: kaname::frame::Vec3::from_raw(-a_mag * s_hat),
-                    torque_body: kaname::frame::Vec3::zeros(),
+                    acceleration_inertial: arika::frame::Vec3::from_raw(-a_mag * s_hat),
+                    torque_body: arika::frame::Vec3::zeros(),
                     mass_rate: 0.0,
                 }
             }
@@ -110,7 +110,7 @@ impl PanelSrp {
                 // Transform Sun direction to body frame
                 let s_body = attitude
                     .rotation_to_body()
-                    .transform(&kaname::frame::Vec3::from_raw(s_hat))
+                    .transform(&arika::frame::Vec3::from_raw(s_hat))
                     .into_inner();
 
                 let mut total_force_body = Vector3::zeros(); // [N]
@@ -132,12 +132,12 @@ impl PanelSrp {
                 }
 
                 // a_body [m/s²] → a_inertial [km/s²]
-                let a_body = kaname::frame::Vec3::from_raw(total_force_body / mass);
+                let a_body = arika::frame::Vec3::from_raw(total_force_body / mass);
                 let a_inertial = attitude.rotation_to_eci().transform(&a_body) / 1000.0;
 
                 ExternalLoads {
                     acceleration_inertial: a_inertial,
-                    torque_body: kaname::frame::Vec3::from_raw(total_torque_body),
+                    torque_body: arika::frame::Vec3::from_raw(total_torque_body),
                     mass_rate: 0.0,
                 }
             }
@@ -163,7 +163,7 @@ mod tests {
     use crate::attitude::AttitudeState;
     use crate::perturbations::SolarRadiationPressure;
     use crate::spacecraft::SurfacePanel;
-    use kaname::earth::MU as MU_EARTH;
+    use arika::earth::MU as MU_EARTH;
     use nalgebra::{Vector4, vector};
 
     fn test_epoch() -> Epoch {

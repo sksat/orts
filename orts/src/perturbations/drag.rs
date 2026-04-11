@@ -1,7 +1,7 @@
-use kaname::body::KnownBody;
-use kaname::earth::ellipsoid::{WGS84_A, WGS84_B};
-use kaname::earth::{OMEGA as OMEGA_EARTH, R as R_EARTH};
-use kaname::epoch::Epoch;
+use arika::body::KnownBody;
+use arika::earth::ellipsoid::{WGS84_A, WGS84_B};
+use arika::earth::{OMEGA as OMEGA_EARTH, R as R_EARTH};
+use arika::epoch::Epoch;
 use nalgebra::Vector3;
 use tobari::{AtmosphereModel, Exponential};
 
@@ -86,7 +86,7 @@ impl AtmosphericDrag {
     pub(crate) fn acceleration(
         &self,
         state: &OrbitalState,
-        epoch: Option<&Epoch<kaname::epoch::Utc>>,
+        epoch: Option<&Epoch<arika::epoch::Utc>>,
     ) -> Vector3<f64> {
         // Check if inside the body (ellipsoid test for Earth, spherical for others)
         let pos_eci = state.position_eci();
@@ -109,7 +109,7 @@ impl AtmosphericDrag {
         // correct WGS-84 ellipsoidal altitude even when given the
         // simple ECI position directly.
         let alt = match self.body {
-            Some(KnownBody::Earth) => kaname::earth::geodetic_altitude(pos),
+            Some(KnownBody::Earth) => arika::earth::geodetic_altitude(pos),
             _ => pos.magnitude() - self.body_radius,
         };
 
@@ -151,7 +151,7 @@ impl<S: HasOrbit> Model<S> for AtmosphericDrag {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
+    use arika::earth::{MU as MU_EARTH, R as R_EARTH};
     use nalgebra::vector;
 
     fn iss_drag() -> AtmosphericDrag {

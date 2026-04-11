@@ -1,4 +1,4 @@
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 
 use crate::model::ExternalLoads;

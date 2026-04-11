@@ -85,7 +85,7 @@ export default defineConfig({
           output: "en/uneri/api",
         }),
         starlightRustdoc({
-          crates: ["utsuroi", "kaname", "tobari", "orts"],
+          crates: ["utsuroi", "arika", "tobari", "orts"],
           workspace: "..",
           locale: "en",
           sourceLinks: {

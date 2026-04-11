@@ -340,7 +340,7 @@ fn system_body_names(params: &SimParams) -> Vec<String> {
 }
 
 /// Return the central body name plus all third-body names for the given central body.
-fn body_names_for(body: &kaname::body::KnownBody) -> Vec<String> {
+fn body_names_for(body: &arika::body::KnownBody) -> Vec<String> {
     let mut names = vec![body.properties().name.to_lowercase()];
     for tb in &default_third_bodies(body) {
         // tb.name is like "third_body_sun" → extract the body name after the prefix
@@ -1362,7 +1362,7 @@ async fn run_simulation_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::body::KnownBody;
+    use arika::body::KnownBody;
 
     #[test]
     fn terminated_events_ring_buffer_caps_at_limit() {

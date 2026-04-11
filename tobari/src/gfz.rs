@@ -13,7 +13,7 @@
 
 use std::fmt;
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 
 use crate::cssi::{CssiDailyRecord, CssiData};
 

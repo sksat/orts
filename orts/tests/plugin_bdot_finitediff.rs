@@ -20,9 +20,9 @@
 //!    implementation, this one becomes the trusted reference against
 //!    which the guest is compared.
 
-use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
-use kaname::epoch::Epoch;
-use kaname::frame::{Body, Vec3};
+use arika::earth::{MU as MU_EARTH, R as R_EARTH};
+use arika::epoch::Epoch;
+use arika::frame::{Body, Vec3};
 use nalgebra::{Matrix3, Vector3, Vector4};
 use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 use utsuroi::{Integrator, Rk4};
@@ -101,7 +101,7 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotFiniteDiff<F> {
             .spacecraft
             .attitude
             .rotation_to_body()
-            .transform(&kaname::frame::Vec3::from_raw(b_eci))
+            .transform(&arika::frame::Vec3::from_raw(b_eci))
             .into_inner();
 
         let m_cmd = match self.prev_b_body {

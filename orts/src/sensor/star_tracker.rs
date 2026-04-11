@@ -4,7 +4,7 @@
 //! returns the true quaternion; noisy versions apply a small random
 //! rotation perturbation to model pointing error.
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use nalgebra::{UnitQuaternion, Vector3, Vector4};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};

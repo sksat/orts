@@ -98,7 +98,7 @@ def compute_derived(sat, moon):
 def sun_direction_eci(t_hours):
     """Sun direction (unit vector) in ECI frame at epoch + t_hours.
 
-    Port of kaname::sun::sun_direction_eci (Meeus Ch.25).
+    Port of arika::sun::sun_direction_eci (Meeus Ch.25).
     Accuracy ~1 arcminute — sufficient for lighting.
     """
     jd = EPOCH_JD + t_hours / 24.0

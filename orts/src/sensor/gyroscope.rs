@@ -3,7 +3,7 @@
 //! Returns the spacecraft's angular velocity in the body frame,
 //! optionally with noise models applied.
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 
 use super::noise::NoiseModel;
 use crate::SpacecraftState;
@@ -45,7 +45,7 @@ impl Gyroscope {
         for n in &mut self.noise {
             omega = n.apply(omega);
         }
-        AngularVelocityBody::new(kaname::frame::Vec3::from_raw(omega))
+        AngularVelocityBody::new(arika::frame::Vec3::from_raw(omega))
     }
 }
 

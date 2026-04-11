@@ -1,5 +1,5 @@
-use kaname::epoch::Epoch;
-use kaname::frame::{self, Vec3};
+use arika::epoch::Epoch;
+use arika::frame::{self, Vec3};
 use nalgebra::{Matrix3, Vector3};
 
 use crate::model::ExternalLoads;

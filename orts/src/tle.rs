@@ -1,7 +1,7 @@
 use std::f64::consts::PI;
 use std::fmt;
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 
 use crate::orbital::kepler::{KeplerianElements, mean_to_true_anomaly};
 
@@ -266,8 +266,8 @@ impl Tle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::body::KnownBody;
-    use kaname::earth::MU as MU_EARTH;
+    use arika::body::KnownBody;
+    use arika::earth::MU as MU_EARTH;
 
     const ISS_TLE: &str = "\
 ISS (ZARYA)

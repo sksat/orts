@@ -2,7 +2,7 @@
  * General rotation utilities for coordinate frame transforms.
  *
  * Frame type definitions are in referenceFrame.ts.
- * ECI→ECEF coordinate transforms are handled by the kaname WASM module.
+ * ECI→ECEF coordinate transforms are handled by the arika WASM module.
  */
 
 /**

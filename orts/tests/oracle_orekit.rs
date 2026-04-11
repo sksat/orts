@@ -19,8 +19,8 @@
 //! - **Moon position**: Simplified analytical vs DE405 (~10')
 //! - **LST**: Orekit precise solar time vs our UT+lon/15 (~±16 min → 1-5% density)
 
-use kaname::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH, R as R_EARTH};
-use kaname::epoch::Epoch;
+use arika::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH, R as R_EARTH};
+use arika::epoch::Epoch;
 use nalgebra::Vector3;
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
@@ -438,7 +438,7 @@ fn orekit_j2_sun_moon_sso_10orbits() {
 #[test]
 fn orekit_j2_sun_moon_geo_3days() {
     // Tolerance widened from 150m to 250m after upgrading Moon ephemeris from
-    // simplified 5-term to full 60-term Meeus (kaname::moon). The new model is
+    // simplified 5-term to full 60-term Meeus (arika::moon). The new model is
     // more accurate (~1% distance vs ~5%), but the error pattern vs Orekit's
     // DE405 changed, increasing the trajectory divergence at this epoch.
     // This does NOT indicate a regression — the integration is correct.

@@ -18,7 +18,7 @@ include = [
 [dependencies]
 nalgebra.workspace = true
 rerun.workspace = true
-kaname.workspace = true
+arika.workspace = true
 utsuroi.workspace = true
 tobari.workspace = true
 log = "0.4.29"
@@ -37,7 +37,7 @@ tokio = { version = "1", default-features = false, features = [
 
 [features]
 fetch-weather = ["tobari/fetch"]
-fetch-horizons = ["kaname/fetch-horizons"]
+fetch-horizons = ["arika/fetch-horizons"]
 # Phase P1: load WASM Component guest controllers at runtime via
 # wasmtime + Pulley interpreter. See `orts::plugin::wasm`.
 plugin-wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]

@@ -1,5 +1,5 @@
 /**
- * Web Worker for tobari/kaname WASM computation.
+ * Web Worker for tobari/arika WASM computation.
  *
  * Keeps heavy WASM calls off the main thread so UI (OrbitControls, etc.)
  * stays responsive during animation.

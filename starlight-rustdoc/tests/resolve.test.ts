@@ -54,24 +54,24 @@ describe("LinkResolver.resolveId", () => {
   });
 
   it("does not confuse items with same ID from different crates", () => {
-    // utsuroi ID 158 = Rk4, kaname ID 158 = earth::MU
+    // utsuroi ID 158 = Rk4, arika ID 158 = earth::MU
     // When resolving from utsuroi context, ID 158 should be Rk4
     const utsuroi = makeCrate();
-    const kaname = makeCrate();
+    const arika = makeCrate();
     const crates = new Map([
       ["utsuroi", utsuroi],
-      ["kaname", kaname],
+      ["arika", arika],
     ]);
     const resolver = new LinkResolver(crates, "/base");
 
     // Register both pages — same numeric ID but from different crates
     resolver.registerPage(158, "/base/utsuroi/api/structs/rk4/", "Rk4", "utsuroi");
-    resolver.registerPage(158, "/base/kaname/api/earth/constants/mu/", "MU", "kaname");
+    resolver.registerPage(158, "/base/arika/api/earth/constants/mu/", "MU", "arika");
 
     // Resolving ID 158 from utsuroi context should give Rk4
     expect(resolver.resolveId(158, utsuroi, "utsuroi")).toBe("/base/utsuroi/api/structs/rk4/");
-    // Resolving ID 158 from kaname context should give earth::MU
-    expect(resolver.resolveId(158, kaname, "kaname")).toBe("/base/kaname/api/earth/constants/mu/");
+    // Resolving ID 158 from arika context should give earth::MU
+    expect(resolver.resolveId(158, arika, "arika")).toBe("/base/arika/api/earth/constants/mu/");
   });
 
   it("resolves std traits to doc.rust-lang.org", () => {
@@ -120,25 +120,25 @@ describe("LinkResolver.resolveId", () => {
   });
 
   it("resolves cross-crate local references to internal pages", () => {
-    // orts crate references kaname::Epoch — should resolve to internal page
-    const kanameCrate = makeCrate();
+    // orts crate references arika::Epoch — should resolve to internal page
+    const arikaCrate = makeCrate();
     const ortsCrate = makeCrate({
       paths: {
-        "300": { crate_id: 10, path: ["kaname", "epoch", "Epoch"], kind: "struct" },
+        "300": { crate_id: 10, path: ["arika", "epoch", "Epoch"], kind: "struct" },
       },
       external_crates: {
-        "10": { name: "kaname", html_root_url: null },
+        "10": { name: "arika", html_root_url: null },
       },
     });
     const crates = new Map([
-      ["kaname", kanameCrate],
+      ["arika", arikaCrate],
       ["orts", ortsCrate],
     ]);
     const resolver = new LinkResolver(crates, "/base");
-    resolver.registerPage(999, "/base/kaname/api/structs/epoch/", "Epoch", "kaname");
+    resolver.registerPage(999, "/base/arika/api/structs/epoch/", "Epoch", "arika");
 
     const url = resolver.resolveId(300, ortsCrate);
-    expect(url).toBe("/base/kaname/api/structs/epoch/");
+    expect(url).toBe("/base/arika/api/structs/epoch/");
   });
 
   it("falls back to docs.rs for unknown external crates", () => {
@@ -357,13 +357,13 @@ describe("resolveTraitImplUrl", () => {
 
 describe("computeRelativeUrl", () => {
   it("computes a relative link between siblings in the same crate", () => {
-    expect(computeRelativeUrl("kaname/api/structs/eci/", "kaname/api/structs/epoch/")).toBe(
+    expect(computeRelativeUrl("arika/api/structs/eci/", "arika/api/structs/epoch/")).toBe(
       "../epoch/",
     );
   });
 
   it("computes a relative link from the overview page to an item page", () => {
-    expect(computeRelativeUrl("kaname/api/overview/", "kaname/api/structs/epoch/")).toBe(
+    expect(computeRelativeUrl("arika/api/overview/", "arika/api/structs/epoch/")).toBe(
       "../structs/epoch/",
     );
   });
@@ -372,8 +372,8 @@ describe("computeRelativeUrl", () => {
     // From a directory-like URL `.../orts/api/structs/spacecraft/` the
     // browser needs 4 `..` segments to back up past `spacecraft/`, `structs/`,
     // `api/`, and `orts/` before descending into the other crate.
-    expect(computeRelativeUrl("orts/api/structs/spacecraft/", "kaname/api/structs/epoch/")).toBe(
-      "../../../../kaname/api/structs/epoch/",
+    expect(computeRelativeUrl("orts/api/structs/spacecraft/", "arika/api/structs/epoch/")).toBe(
+      "../../../../arika/api/structs/epoch/",
     );
   });
 
@@ -383,7 +383,7 @@ describe("computeRelativeUrl", () => {
   });
 
   it("falls back to root-relative when source is empty", () => {
-    expect(computeRelativeUrl("", "kaname/api/structs/eci/")).toBe("/kaname/api/structs/eci/");
+    expect(computeRelativeUrl("", "arika/api/structs/eci/")).toBe("/arika/api/structs/eci/");
   });
 });
 
@@ -394,32 +394,32 @@ describe("computeRelativeUrl", () => {
 describe("LinkResolver with logical paths", () => {
   it("returns a relative URL from the current page to a registered item", () => {
     const crate = makeCrate();
-    const crates = new Map([["kaname", crate]]);
+    const crates = new Map([["arika", crate]]);
     const resolver = new LinkResolver(crates, "/orts");
     // Register using a logical path (no base, no locale)
-    resolver.registerPage(100, "kaname/api/structs/epoch/", "Epoch", "kaname");
+    resolver.registerPage(100, "arika/api/structs/epoch/", "Epoch", "arika");
 
-    resolver.setCurrentPage("kaname/api/overview/");
-    expect(resolver.resolveId(100, crate, "kaname")).toBe("../structs/epoch/");
+    resolver.setCurrentPage("arika/api/overview/");
+    expect(resolver.resolveId(100, crate, "arika")).toBe("../structs/epoch/");
 
-    resolver.setCurrentPage("kaname/api/structs/eci/");
-    expect(resolver.resolveId(100, crate, "kaname")).toBe("../epoch/");
+    resolver.setCurrentPage("arika/api/structs/eci/");
+    expect(resolver.resolveId(100, crate, "arika")).toBe("../epoch/");
   });
 
   it("produces the same relative URL regardless of which locale the source lives in", () => {
     // This is the key property for Starlight i18n fallback: because links are
-    // relative, a page served at /en/kaname/api/overview/ and the same page
-    // served at /ja/kaname/api/overview/ (fallback) both resolve links to
+    // relative, a page served at /en/arika/api/overview/ and the same page
+    // served at /ja/arika/api/overview/ (fallback) both resolve links to
     // their own locale — users stay in their chosen language.
     const crate = makeCrate();
-    const crates = new Map([["kaname", crate]]);
+    const crates = new Map([["arika", crate]]);
     const resolver = new LinkResolver(crates, "/orts");
-    resolver.registerPage(200, "kaname/api/structs/epoch/", "Epoch", "kaname");
+    resolver.registerPage(200, "arika/api/structs/epoch/", "Epoch", "arika");
 
     // Relative URL does not embed any locale segment; resolution happens in
     // the browser using whichever locale URL the page was served from.
-    resolver.setCurrentPage("kaname/api/overview/");
-    const link = resolver.resolveId(200, crate, "kaname");
+    resolver.setCurrentPage("arika/api/overview/");
+    const link = resolver.resolveId(200, crate, "arika");
     expect(link).toBe("../structs/epoch/");
     expect(link).not.toContain("/en/");
     expect(link).not.toContain("/ja/");
@@ -427,20 +427,20 @@ describe("LinkResolver with logical paths", () => {
   });
 
   it("resolves cross-crate logical paths to the right depth", () => {
-    const kaname = makeCrate();
+    const arika = makeCrate();
     const orts = makeCrate();
     const crates = new Map([
-      ["kaname", kaname],
+      ["arika", arika],
       ["orts", orts],
     ]);
     const resolver = new LinkResolver(crates, "/orts");
-    resolver.registerPage(300, "kaname/api/structs/epoch/", "Epoch", "kaname");
+    resolver.registerPage(300, "arika/api/structs/epoch/", "Epoch", "arika");
 
     resolver.setCurrentPage("orts/api/structs/spacecraft/");
-    // Items in kaname are registered under crateName "kaname". Four `..` are
+    // Items in arika are registered under crateName "arika". Four `..` are
     // needed because nothing in the two logical paths is shared above the
     // root.
-    expect(resolver.resolveId(300, kaname, "kaname")).toBe("../../../../kaname/api/structs/epoch/");
+    expect(resolver.resolveId(300, arika, "arika")).toBe("../../../../arika/api/structs/epoch/");
   });
 
   it("returns pre-formatted absolute URLs verbatim (backwards-compat)", () => {
@@ -459,12 +459,12 @@ describe("LinkResolver with logical paths", () => {
 
   it("resolvePath returns a relative URL for logical paths", () => {
     const crate = makeCrate();
-    const crates = new Map<string, Crate>([["kaname", crate]]);
+    const crates = new Map<string, Crate>([["arika", crate]]);
     const resolver = new LinkResolver(crates, "/orts");
-    resolver.registerPage(1, "kaname/api/traits/integrator/", "Integrator", "kaname");
+    resolver.registerPage(1, "arika/api/traits/integrator/", "Integrator", "arika");
 
-    resolver.setCurrentPage("kaname/api/structs/eci/");
-    // From `structs/eci/` → `traits/integrator/` shares `kaname/api/`, so
+    resolver.setCurrentPage("arika/api/structs/eci/");
+    // From `structs/eci/` → `traits/integrator/` shares `arika/api/`, so
     // we need to back up past `eci/` and `structs/` (2 levels) before
     // descending into `traits/integrator/`.
     expect(resolver.resolvePath("Integrator")).toBe("../../traits/integrator/");

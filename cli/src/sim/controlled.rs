@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use orts::attitude::CoupledGravityGradient;
 use orts::effector::AugmentedState;
 use orts::orbital::gravity::GravityField;

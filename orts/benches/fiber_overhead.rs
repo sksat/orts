@@ -41,7 +41,7 @@ fn dummy_spacecraft() -> SpacecraftState {
 }
 
 fn dummy_sensors() -> Sensors {
-    use kaname::frame::{Body, Vec3};
+    use arika::frame::{Body, Vec3};
     use orts::plugin::tick_input::{
         AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody,
     };

@@ -1,7 +1,7 @@
 /**
  * WASM integration tests for coordinate system correctness.
  *
- * Uses kaname WASM (geodetic_to_ecef, geodetic_to_eci) and tobari WASM
+ * Uses arika WASM (geodetic_to_ecef, geodetic_to_eci) and tobari WASM
  * (magnetic_field_lines, igrf_field_at) to verify that:
  * - Geodetic → ECEF/ECI conversions are physically correct
  * - The globe visualization coordinate system is consistent
@@ -20,15 +20,15 @@ const __dirname = dirname(__filename);
 // WASM module loading (synchronous via initSync + readFileSync)
 // ---------------------------------------------------------------------------
 
-let kaname: typeof import("../wasm/kaname/kaname.js");
+let arika: typeof import("../wasm/arika/arika.js");
 let tobari: typeof import("../wasm/tobari/tobari.js");
 
 beforeAll(async () => {
-  // Load kaname WASM
-  const kanameJs = await import("../wasm/kaname/kaname.js");
-  const kanameWasm = readFileSync(resolve(__dirname, "../wasm/kaname/kaname_bg.wasm"));
-  kanameJs.initSync({ module: kanameWasm });
-  kaname = kanameJs;
+  // Load arika WASM
+  const arikaJs = await import("../wasm/arika/arika.js");
+  const arikaWasm = readFileSync(resolve(__dirname, "../wasm/arika/arika_bg.wasm"));
+  arikaJs.initSync({ module: arikaWasm });
+  arika = arikaJs;
 
   // Load tobari WASM
   const tobariJs = await import("../wasm/tobari/tobari.js");
@@ -48,30 +48,30 @@ const J2000_JD = 2451545.0;
 // Geodetic → ECEF
 // ---------------------------------------------------------------------------
 
-describe("kaname geodetic_to_ecef", () => {
+describe("arika geodetic_to_ecef", () => {
   it("north pole (90°,0°,0km) → ECEF z ≈ polar radius, x=y≈0", () => {
-    const ecef = kaname.geodetic_to_ecef(90, 0, 0);
+    const ecef = arika.geodetic_to_ecef(90, 0, 0);
     expect(ecef[0]).toBeCloseTo(0, 3); // x ≈ 0
     expect(ecef[1]).toBeCloseTo(0, 3); // y ≈ 0
     expect(ecef[2]).toBeCloseTo(EARTH_POLAR_RADIUS, 0); // z ≈ 6356.752
   });
 
   it("equator Greenwich (0°,0°,0km) → ECEF x ≈ equatorial radius, y=z≈0", () => {
-    const ecef = kaname.geodetic_to_ecef(0, 0, 0);
+    const ecef = arika.geodetic_to_ecef(0, 0, 0);
     expect(ecef[0]).toBeCloseTo(EARTH_EQUATORIAL_RADIUS, 0); // x ≈ 6378.137
     expect(ecef[1]).toBeCloseTo(0, 3); // y ≈ 0
     expect(ecef[2]).toBeCloseTo(0, 3); // z ≈ 0
   });
 
   it("equator 90°E (0°,90°,0km) → ECEF y ≈ equatorial radius, x=z≈0", () => {
-    const ecef = kaname.geodetic_to_ecef(0, 90, 0);
+    const ecef = arika.geodetic_to_ecef(0, 90, 0);
     expect(ecef[0]).toBeCloseTo(0, 3);
     expect(ecef[1]).toBeCloseTo(EARTH_EQUATORIAL_RADIUS, 0);
     expect(ecef[2]).toBeCloseTo(0, 3);
   });
 
   it("south pole (-90°,0°,0km) → ECEF z ≈ -polar radius", () => {
-    const ecef = kaname.geodetic_to_ecef(-90, 0, 0);
+    const ecef = arika.geodetic_to_ecef(-90, 0, 0);
     expect(ecef[0]).toBeCloseTo(0, 3);
     expect(ecef[1]).toBeCloseTo(0, 3);
     expect(ecef[2]).toBeCloseTo(-EARTH_POLAR_RADIUS, 0);
@@ -79,7 +79,7 @@ describe("kaname geodetic_to_ecef", () => {
 
   it("altitude increases radius", () => {
     const alt = 400; // ISS altitude
-    const ecef = kaname.geodetic_to_ecef(0, 0, alt);
+    const ecef = arika.geodetic_to_ecef(0, 0, alt);
     expect(ecef[0]).toBeCloseTo(EARTH_EQUATORIAL_RADIUS + alt, 0);
   });
 });
@@ -88,17 +88,17 @@ describe("kaname geodetic_to_ecef", () => {
 // Geodetic → ECI
 // ---------------------------------------------------------------------------
 
-describe("kaname geodetic_to_eci", () => {
+describe("arika geodetic_to_eci", () => {
   it("north pole → ECI z component is large, x²+y² ≈ 0", () => {
-    const eci = kaname.geodetic_to_eci(90, 0, 0, J2000_JD);
+    const eci = arika.geodetic_to_eci(90, 0, 0, J2000_JD);
     const rxy = Math.sqrt(eci[0] ** 2 + eci[1] ** 2);
     expect(rxy).toBeLessThan(1); // nearly on Z-axis
     expect(Math.abs(eci[2])).toBeCloseTo(EARTH_POLAR_RADIUS, 0);
   });
 
   it("ECI position magnitude ≈ ECEF position magnitude (same point)", () => {
-    const ecef = kaname.geodetic_to_ecef(45, 30, 400);
-    const eci = kaname.geodetic_to_eci(45, 30, 400, J2000_JD);
+    const ecef = arika.geodetic_to_ecef(45, 30, 400);
+    const eci = arika.geodetic_to_eci(45, 30, 400, J2000_JD);
     const rEcef = Math.sqrt(ecef[0] ** 2 + ecef[1] ** 2 + ecef[2] ** 2);
     const rEci = Math.sqrt(eci[0] ** 2 + eci[1] ** 2 + eci[2] ** 2);
     // Magnitudes must match (rotation preserves length)
@@ -106,8 +106,8 @@ describe("kaname geodetic_to_eci", () => {
   });
 
   it("north pole ECI z is same regardless of epoch (rotation is around Z)", () => {
-    const eci1 = kaname.geodetic_to_eci(90, 0, 0, J2000_JD);
-    const eci2 = kaname.geodetic_to_eci(90, 0, 0, J2000_JD + 0.5);
+    const eci1 = arika.geodetic_to_eci(90, 0, 0, J2000_JD);
+    const eci2 = arika.geodetic_to_eci(90, 0, 0, J2000_JD + 0.5);
     // Z component should be identical (pole is on the rotation axis)
     expect(eci1[2]).toBeCloseTo(eci2[2], 6);
   });
@@ -123,9 +123,9 @@ describe("ECI ↔ ECEF roundtrip", () => {
     const lon = 139.7; // Tokyo
     const alt = 0;
 
-    const ecefDirect = kaname.geodetic_to_ecef(lat, lon, alt);
-    const eci = kaname.geodetic_to_eci(lat, lon, alt, J2000_JD);
-    const ecefViaEci = kaname.eci_to_ecef(
+    const ecefDirect = arika.geodetic_to_ecef(lat, lon, alt);
+    const eci = arika.geodetic_to_eci(lat, lon, alt, J2000_JD);
+    const ecefViaEci = arika.eci_to_ecef(
       eci[0] as unknown as number,
       eci[1] as unknown as number,
       eci[2] as unknown as number,
@@ -207,12 +207,12 @@ describe("globe coordinate consistency", () => {
   });
 
   // -----------------------------------------------------------------------
-  // Differential rotation equivalence with kaname ECI→ECEF
+  // Differential rotation equivalence with arika ECI→ECEF
   // -----------------------------------------------------------------------
   // GlobeView computes field lines in ECI at epoch T0, then applies:
   //   deltaRotation = GMST(T_current) - GMST(T0)
   // as a Z-axis rotation. This should be equivalent to:
-  //   kaname.eci_to_ecef(point, T_current) rotated back by -GMST(T_current)
+  //   arika.eci_to_ecef(point, T_current) rotated back by -GMST(T_current)
   //   ... which is just a Z-rotation by -GMST(T0)
   // i.e., the differential rotation converts ECI(T0) → ECI(T_current)
   // by the amount the Earth rotated between T0 and T_current.
@@ -223,7 +223,7 @@ describe("globe coordinate consistency", () => {
     return [v[0] * c - v[1] * s, v[0] * s + v[1] * c, v[2]];
   }
 
-  it("differential Z-rotation equals kaname ECI→ECEF→ECI roundtrip across epochs", () => {
+  it("differential Z-rotation equals arika ECI→ECEF→ECI roundtrip across epochs", () => {
     // A point on the equator at lon=30°, alt=400km
     const lat = 0;
     const lon = 30;
@@ -232,12 +232,12 @@ describe("globe coordinate consistency", () => {
     const T0 = J2000_JD;
     const T1 = J2000_JD + 0.25; // 6 hours later
 
-    // Get GMST at both epochs from kaname
-    const gmst0 = kaname.earth_rotation_angle(T0, 0);
-    const gmst1 = kaname.earth_rotation_angle(T1, 0);
+    // Get GMST at both epochs from arika
+    const gmst0 = arika.earth_rotation_angle(T0, 0);
+    const gmst1 = arika.earth_rotation_angle(T1, 0);
 
     // Compute field line seed in ECI at T0
-    const eciT0 = kaname.geodetic_to_eci(lat, lon, alt, T0);
+    const eciT0 = arika.geodetic_to_eci(lat, lon, alt, T0);
     const pointEci: [number, number, number] = [eciT0[0], eciT0[1], eciT0[2]];
 
     // Method 1: GlobeView's differential rotation approach
@@ -245,25 +245,25 @@ describe("globe coordinate consistency", () => {
     const deltaRotation = gmst1 - gmst0;
     const viaRotation = rotateZ(pointEci, deltaRotation);
 
-    // Method 2: kaname's exact coordinate transformation
+    // Method 2: arika's exact coordinate transformation
     // ECI(T0) → ECEF (time-independent) → ECI(T1)
     // Step 1: ECI(T0) → ECEF: rotate by -gmst0
     const ecef = rotateZ(pointEci, -gmst0);
     // Step 2: ECEF → ECI(T1): rotate by +gmst1
-    const viaKaname = rotateZ(ecef, gmst1);
+    const viaArika = rotateZ(ecef, gmst1);
 
     // Both methods should produce the same result
-    expect(viaRotation[0]).toBeCloseTo(viaKaname[0], 8);
-    expect(viaRotation[1]).toBeCloseTo(viaKaname[1], 8);
-    expect(viaRotation[2]).toBeCloseTo(viaKaname[2], 8);
+    expect(viaRotation[0]).toBeCloseTo(viaArika[0], 8);
+    expect(viaRotation[1]).toBeCloseTo(viaArika[1], 8);
+    expect(viaRotation[2]).toBeCloseTo(viaArika[2], 8);
   });
 
-  it("differential rotation matches kaname eci_to_ecef for multiple points", () => {
+  it("differential rotation matches arika eci_to_ecef for multiple points", () => {
     const T0 = J2000_JD;
     const T1 = J2000_JD + 1.0; // 1 day later
 
-    const gmst0 = kaname.earth_rotation_angle(T0, 0);
-    const gmst1 = kaname.earth_rotation_angle(T1, 0);
+    const gmst0 = arika.earth_rotation_angle(T0, 0);
+    const gmst1 = arika.earth_rotation_angle(T1, 0);
     const delta = gmst1 - gmst0;
 
     // Test multiple geodetic positions
@@ -275,8 +275,8 @@ describe("globe coordinate consistency", () => {
     ];
 
     for (const { lat, lon } of testPoints) {
-      const eciT0 = kaname.geodetic_to_eci(lat, lon, 400, T0);
-      const eciT1 = kaname.geodetic_to_eci(lat, lon, 400, T1);
+      const eciT0 = arika.geodetic_to_eci(lat, lon, 400, T0);
+      const eciT1 = arika.geodetic_to_eci(lat, lon, 400, T1);
 
       // The point in ECI(T0) rotated by delta should equal ECI(T1)
       // because the same geodetic point maps to different ECI positions
@@ -288,7 +288,7 @@ describe("globe coordinate consistency", () => {
       const magRot = Math.sqrt(rotated[0] ** 2 + rotated[1] ** 2 + rotated[2] ** 2);
       expect(magRot).toBeCloseTo(magOrig, 6);
 
-      // The rotated point should match ECI(T1) from kaname
+      // The rotated point should match ECI(T1) from arika
       expect(rotated[0]).toBeCloseTo(eciT1[0], 2);
       expect(rotated[1]).toBeCloseTo(eciT1[1], 2);
       expect(rotated[2]).toBeCloseTo(eciT1[2], 2);
@@ -297,7 +297,7 @@ describe("globe coordinate consistency", () => {
 
   it("differential rotation is zero when epochs match", () => {
     const T = J2000_JD + 100;
-    const gmst = kaname.earth_rotation_angle(T, 0);
+    const gmst = arika.earth_rotation_angle(T, 0);
     const delta = gmst - gmst;
     expect(delta).toBe(0);
 
@@ -311,8 +311,8 @@ describe("globe coordinate consistency", () => {
 
   it("shell radius at 400km altitude is consistent", () => {
     const expectedRadius = 1.0 * (1 + 400 / EARTH_RADIUS_KM);
-    // Verify this matches the actual geodetic radius from kaname
-    const ecef = kaname.geodetic_to_ecef(0, 0, 400);
+    // Verify this matches the actual geodetic radius from arika
+    const ecef = arika.geodetic_to_ecef(0, 0, 400);
     const actualRadiusKm = Math.sqrt(ecef[0] ** 2 + ecef[1] ** 2 + ecef[2] ** 2);
     const actualNormalized = actualRadiusKm / EARTH_RADIUS_KM;
     // Should be close (not exact due to oblateness vs mean radius)

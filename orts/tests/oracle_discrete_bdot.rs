@@ -3,9 +3,9 @@ use std::f64::consts::PI;
 use nalgebra::{Matrix3, Vector3};
 use utsuroi::{Integrator, Rk4};
 
-use kaname::SimpleEci;
-use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
-use kaname::epoch::Epoch;
+use arika::SimpleEci;
+use arika::earth::{MU as MU_EARTH, R as R_EARTH};
+use arika::epoch::Epoch;
 use orts::attitude::{
     AttitudeState, BdotDetumbler, BdotFiniteDiff, CommandedMagnetorquer, DecoupledAttitudeSystem,
 };

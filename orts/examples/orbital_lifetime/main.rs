@@ -1,6 +1,6 @@
 //! Orbital lifetime analysis example: AE1b (YODAKA) decay reproduction.
 //!
-//! Demonstrates using orts libraries (kaname, utsuroi, tobari, orts) to predict
+//! Demonstrates using orts libraries (arika, utsuroi, tobari, orts) to predict
 //! how long a LEO satellite stays in orbit before atmospheric reentry.
 //!
 //! Compares multiple atmosphere models and ballistic coefficients against the
@@ -14,8 +14,8 @@
 //! Test:
 //!   cargo test --example orbital_lifetime -p orts
 
-use kaname::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
-use kaname::epoch::Epoch;
+use arika::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
+use arika::epoch::Epoch;
 use nalgebra::Vector3;
 use orts::OrbitalState;
 use orts::events::SimulationEvent;

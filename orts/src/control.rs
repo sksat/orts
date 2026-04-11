@@ -1,6 +1,6 @@
 //! Discrete-time controller trait for simulation with zero-order hold.
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;

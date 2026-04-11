@@ -2,7 +2,7 @@
 //!
 //! Decodes .rrd files into orbital state vectors + metadata.
 //! Designed to be compiled to WASM for use in the viewer's Web Worker.
-//! Does NOT compute Keplerian elements — that is done by kaname WASM.
+//! Does NOT compute Keplerian elements — that is done by arika WASM.
 
 use std::collections::BTreeMap;
 use std::io::Read;

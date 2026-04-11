@@ -11,7 +11,7 @@
 //!   - LST: Orekit uses precise solar time; Rust uses Meeus EoT correction (residual < 1 min).
 //!   - Coordinates: both use WGS-84 geodetic (after geo.rs fix).
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, Nrlmsise00};
 
@@ -74,17 +74,15 @@ fn compute_density_via_eci(
 ) -> f64 {
     // Convert geodetic → ECEF → ECI (round-trip to exercise the full path)
     let gmst = epoch.gmst();
-    let geod = kaname::earth::Geodetic {
+    let geod = arika::earth::Geodetic {
         latitude: lat_deg.to_radians(),
         longitude: lon_deg.to_radians(),
         altitude: alt_km,
     };
-    let ecef = kaname::SimpleEcef::from(geod);
+    let ecef = arika::SimpleEcef::from(geod);
     let eci =
-        kaname::frame::Rotation::<kaname::frame::SimpleEcef, kaname::frame::SimpleEci>::from_era(
-            gmst,
-        )
-        .transform(&ecef);
+        arika::frame::Rotation::<arika::frame::SimpleEcef, arika::frame::SimpleEci>::from_era(gmst)
+            .transform(&ecef);
 
     model
         .density_with_composition(alt_km, &eci, epoch)

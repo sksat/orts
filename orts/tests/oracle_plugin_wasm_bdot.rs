@@ -21,8 +21,8 @@
 
 use std::sync::Arc;
 
-use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
-use kaname::epoch::Epoch;
+use arika::earth::{MU as MU_EARTH, R as R_EARTH};
+use arika::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3, Vector4};
 use tobari::magnetic::TiltedDipole;
 use utsuroi::{Integrator, Rk4};

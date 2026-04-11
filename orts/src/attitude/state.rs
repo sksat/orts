@@ -1,4 +1,4 @@
-use kaname::frame::{self, Rotation};
+use arika::frame::{self, Rotation};
 use nalgebra::{UnitQuaternion, Vector3, Vector4};
 use utsuroi::{OdeState, Tolerances};
 

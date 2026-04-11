@@ -1,0 +1,20 @@
+{
+  "name": "arika",
+  "type": "module",
+  "version": "0.0.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sksat/orts"
+  },
+  "files": [
+    "arika_bg.wasm",
+    "arika.js",
+    "arika.d.ts"
+  ],
+  "main": "arika.js",
+  "types": "arika.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

@@ -2,8 +2,8 @@ use nalgebra::Matrix3;
 
 use crate::orbital::gravity::{self, GravityField};
 use crate::spacecraft::SpacecraftDynamics;
-use kaname::body::KnownBody;
-use kaname::epoch::Epoch;
+use arika::body::KnownBody;
+use arika::epoch::Epoch;
 
 use crate::orbital::OrbitalSystem;
 use crate::perturbations::{AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity};

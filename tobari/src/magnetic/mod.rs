@@ -14,9 +14,9 @@ pub mod igrf;
 pub use dipole::TiltedDipole;
 pub use igrf::Igrf;
 
-use kaname::SimpleEci;
-use kaname::epoch::Epoch;
-use kaname::frame;
+use arika::SimpleEci;
+use arika::epoch::Epoch;
+use arika::frame;
 
 /// A geomagnetic field model.
 ///

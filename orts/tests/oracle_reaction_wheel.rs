@@ -38,7 +38,7 @@ fn total_angular_momentum(
     state
         .plant
         .rotation_to_eci()
-        .transform(&kaname::frame::Vec3::from_raw(l_body_sc + l_body_rw))
+        .transform(&arika::frame::Vec3::from_raw(l_body_sc + l_body_rw))
         .into_inner()
 }
 

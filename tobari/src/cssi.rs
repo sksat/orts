@@ -12,7 +12,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 
 use crate::space_weather::{SpaceWeather, SpaceWeatherProvider};
 

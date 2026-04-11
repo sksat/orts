@@ -21,8 +21,8 @@
 //! Fixture: `orbits/tests/fixtures/iss_decay_reference.json`
 //! Generator: `tools/generate_iss_decay_fixtures.py`
 
-use kaname::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
-use kaname::epoch::Epoch;
+use arika::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
+use arika::epoch::Epoch;
 use nalgebra::Vector3;
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;

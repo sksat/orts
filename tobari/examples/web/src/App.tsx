@@ -7,7 +7,7 @@ import { GlobeView } from "./panels/GlobeView.js";
 import { MagneticFieldMap } from "./panels/MagneticFieldMap.js";
 import { SpaceWeatherChart } from "./panels/SpaceWeatherChart.js";
 import { dateToJd, type ViewerParams } from "./types.js";
-import { earthRotationAngle, initKaname } from "./wasm/kanameInit.js";
+import { earthRotationAngle, initArika } from "./wasm/arikaInit.js";
 import { initWorker, onSpaceWeatherReady } from "./wasm/workerClient.js";
 
 type TabId =
@@ -110,7 +110,7 @@ export function App() {
     onSpaceWeatherReady((range) => {
       setSwRange(range);
     });
-    Promise.all([initKaname(), initWorker()])
+    Promise.all([initArika(), initWorker()])
       .then(() => setReady(true))
       .catch((e) => setError(String(e)));
   }, []);
@@ -145,7 +145,7 @@ export function App() {
     return <div style={styles.loading}>Loading tobari WASM...</div>;
   }
 
-  // Compute Earth rotation via kaname WASM (only when enabled)
+  // Compute Earth rotation via arika WASM (only when enabled)
   const rotation = showRotation ? earthRotationAngle(params.epochJd) : 0;
 
   // Show Space Weather tab only when data is available

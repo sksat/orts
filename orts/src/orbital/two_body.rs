@@ -23,7 +23,7 @@ impl DynamicalSystem for TwoBodySystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
+    use arika::earth::{MU as MU_EARTH, R as R_EARTH};
     use nalgebra::vector;
 
     #[test]

@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { jd_to_utc_string } from "../wasm/kanameInit.js";
+import { jd_to_utc_string } from "../wasm/arikaInit.js";
 import styles from "./PlaybackBar.module.css";
 
 interface PlaybackBarProps {

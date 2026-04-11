@@ -1,4 +1,4 @@
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
 use utsuroi::DynamicalSystem;
 

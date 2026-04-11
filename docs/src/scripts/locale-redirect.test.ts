@@ -98,10 +98,10 @@ describe("chooseRedirectTarget — nested paths and query/hash", () => {
     expect(
       chooseRedirectTarget({
         ...CONFIG,
-        path: "/orts/kaname/api/structs/epoch",
+        path: "/orts/arika/api/structs/epoch",
         languages: ["en"],
       }),
-    ).toBe("/orts/en/kaname/api/structs/epoch");
+    ).toBe("/orts/en/arika/api/structs/epoch");
   });
 
   it("preserves query string and hash when redirecting", () => {
@@ -153,7 +153,7 @@ describe("chooseRedirectTarget — already-prefixed URLs pass through untouched"
     expect(
       chooseRedirectTarget({
         ...CONFIG,
-        path: "/orts/ja/kaname/api/structs/epoch/",
+        path: "/orts/ja/arika/api/structs/epoch/",
         languages: ["en"],
       }),
     ).toBeNull();
@@ -297,7 +297,7 @@ describe("detectLocaleFromPath", () => {
     expect(
       detectLocaleFromPath({
         base: "/orts/",
-        path: "/orts/ja/kaname/api/overview/",
+        path: "/orts/ja/arika/api/overview/",
         supported: ["en", "ja"],
       }),
     ).toBe("ja");
@@ -494,7 +494,7 @@ describe("buildPersistCurrentLocaleScript", () => {
   it("writes the current locale to localStorage when on a ja page", () => {
     const store = new Map<string, string>();
     const fakeWindow = {
-      location: { pathname: "/orts/ja/kaname/api/overview/" },
+      location: { pathname: "/orts/ja/arika/api/overview/" },
       localStorage: {
         getItem: (k: string) => store.get(k) ?? null,
         setItem: (k: string, v: string) => {

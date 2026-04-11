@@ -4,7 +4,7 @@
 //! used by atmosphere models that depend on solar and geomagnetic activity indices
 //! (e.g., NRLMSISE-00).
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 
 /// Space weather conditions at a given epoch.
 ///

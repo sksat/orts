@@ -1,5 +1,5 @@
 use crate::OrbitalState;
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 
 /// A target attitude reference that provides desired orientation and angular velocity.

@@ -3,7 +3,7 @@
 //! Based on US Standard Atmosphere 1976 reference values.
 //! Returns atmospheric density [kg/m³] at a given altitude [km].
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 
 use crate::AtmosphereModel;
 
@@ -108,8 +108,8 @@ impl AtmosphereModel for Exponential {
     fn density(
         &self,
         altitude_km: f64,
-        _position_eci: &kaname::SimpleEci,
-        _epoch: Option<&Epoch<kaname::epoch::Utc>>,
+        _position_eci: &arika::SimpleEci,
+        _epoch: Option<&Epoch<arika::epoch::Utc>>,
     ) -> f64 {
         density(altitude_km)
     }
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn trait_ignores_position_and_epoch() {
         let model = Exponential;
-        let pos = kaname::SimpleEci::new(6778.0, 0.0, 0.0);
+        let pos = arika::SimpleEci::new(6778.0, 0.0, 0.0);
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
 
         let rho_trait = model.density(400.0, &pos, Some(&epoch));

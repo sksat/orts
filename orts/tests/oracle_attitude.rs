@@ -26,7 +26,7 @@ fn angular_momentum_inertial(state: &AttitudeState, inertia: &Matrix3<f64>) -> V
     let l_body = inertia * state.angular_velocity;
     state
         .rotation_to_eci()
-        .transform(&kaname::frame::Vec3::from_raw(l_body))
+        .transform(&arika::frame::Vec3::from_raw(l_body))
         .into_inner()
 }
 

@@ -11,9 +11,9 @@
 //! - Frozen orbit conditions (J2+J3)
 //! - Third-body perturbation effects at GEO
 
-use kaname::body::KnownBody;
-use kaname::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH, R as R_EARTH};
-use kaname::epoch::Epoch;
+use arika::body::KnownBody;
+use arika::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH, R as R_EARTH};
+use arika::epoch::Epoch;
 use nalgebra::vector;
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;

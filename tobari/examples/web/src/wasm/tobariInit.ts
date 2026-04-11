@@ -1,7 +1,7 @@
 /**
  * Lazy WASM loader for tobari Earth environment models.
  *
- * Follows the same pattern as viewer/src/wasm/kanameInit.ts.
+ * Follows the same pattern as viewer/src/wasm/arikaInit.ts.
  */
 
 // biome-ignore lint: dynamic import types

@@ -7,7 +7,7 @@
 //!    via `notalawyer-build` (which shells out to `cargo about generate`)
 //!    into `$OUT_DIR/notalawyer` and pulled in with
 //!    [`notalawyer::include_notice!`].
-//! 2. **Rust deps of the wasm-pack'd workspace crates** (`kaname`,
+//! 2. **Rust deps of the wasm-pack'd workspace crates** (`arika`,
 //!    `rrd-wasm`) that are compiled with their `wasm` feature and bundled
 //!    into the viewer. The native cli graph does not reach the wasm-only
 //!    optional deps (`wasm-bindgen`, `serde-wasm-bindgen`, ...), so
@@ -28,10 +28,10 @@ pub fn rust_notice() -> &'static str {
     notalawyer::include_notice!()
 }
 
-/// NOTICE for the `kaname` Rust crate's dependencies as compiled with its
+/// NOTICE for the `arika` Rust crate's dependencies as compiled with its
 /// `wasm` feature (as packed into the viewer bundle by wasm-pack).
-pub fn wasm_kaname_notice() -> &'static str {
-    include_str!(concat!(env!("OUT_DIR"), "/notalawyer_wasm_kaname"))
+pub fn wasm_arika_notice() -> &'static str {
+    include_str!(concat!(env!("OUT_DIR"), "/notalawyer_wasm_arika"))
 }
 
 /// NOTICE for the `rrd-wasm` Rust crate's dependencies as compiled with its
@@ -64,10 +64,10 @@ pub fn combined_notice() -> String {
     out.push_str("=== Rust dependencies (native CLI) ===\n\n");
     out.push_str(rust_notice());
 
-    let wasm_kaname = wasm_kaname_notice();
-    if !wasm_kaname.is_empty() {
-        out.push_str("\n=== Rust dependencies (viewer WASM — kaname) ===\n\n");
-        out.push_str(wasm_kaname);
+    let wasm_arika = wasm_arika_notice();
+    if !wasm_arika.is_empty() {
+        out.push_str("\n=== Rust dependencies (viewer WASM — arika) ===\n\n");
+        out.push_str(wasm_arika);
     }
 
     let wasm_rrd = wasm_rrd_notice();

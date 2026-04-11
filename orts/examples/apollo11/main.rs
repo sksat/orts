@@ -16,12 +16,12 @@ use std::sync::Arc;
 
 use nalgebra::Vector3;
 
-use kaname::body::KnownBody;
-use kaname::earth::{
+use arika::body::KnownBody;
+use arika::earth::{
     Geodetic, J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH, R as R_EARTH,
 };
-use kaname::epoch::Epoch;
-use kaname::moon::{MU as MU_MOON, MeeusMoonEphemeris, MoonEphemeris};
+use arika::epoch::Epoch;
+use arika::moon::{MU as MU_MOON, MeeusMoonEphemeris, MoonEphemeris};
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
 use orts::orbital::gravity::ZonalHarmonics;
@@ -201,13 +201,11 @@ fn entry_interface_state_eci(epoch: &Epoch) -> OrbitalState {
         altitude: EI_ALT_KM,
     };
     let gmst = epoch.gmst();
-    let ecef = kaname::SimpleEcef::from(geod);
+    let ecef = arika::SimpleEcef::from(geod);
     let pos_eci =
-        kaname::frame::Rotation::<kaname::frame::SimpleEcef, kaname::frame::SimpleEci>::from_era(
-            gmst,
-        )
-        .transform(&ecef)
-        .into_inner();
+        arika::frame::Rotation::<arika::frame::SimpleEcef, arika::frame::SimpleEci>::from_era(gmst)
+            .transform(&ecef)
+            .into_inner();
 
     // Velocity: decompose (speed, FPA, azimuth) in the local topocentric frame at pos_eci.
     //
@@ -517,7 +515,7 @@ fn specific_energy(state: &OrbitalState, mu: f64) -> f64 {
 /// Sharing the same handle between the integrator and the targeting helpers
 /// ensures both see an identical lunar ephemeris (critical for finite-
 /// difference gradient consistency). The blanket
-/// `impl<T> MoonEphemeris for Arc<T>` in [`kaname::moon`] makes the
+/// `impl<T> MoonEphemeris for Arc<T>` in [`arika::moon`] makes the
 /// `ThirdBodyGravity::moon_with_ephemeris` constructor accept the shared
 /// handle directly — no manual closure plumbing needed.
 fn build_translunar_system(epoch: Epoch, moon_ephem: &Arc<dyn MoonEphemeris>) -> OrbitalSystem {
@@ -1176,13 +1174,13 @@ fn main() {
     if let Some((t_cross, ref state_122)) = state_at_122km {
         let get_122 = mission_t + t_cross;
         let epoch_122 = parking_epoch.add_seconds(get_122);
-        let eci_122 = kaname::SimpleEci::from_raw(*state_122.position());
+        let eci_122 = arika::SimpleEci::from_raw(*state_122.position());
         let ecef_122 =
-            kaname::frame::Rotation::<kaname::frame::SimpleEci, kaname::frame::SimpleEcef>::from_era(
+            arika::frame::Rotation::<arika::frame::SimpleEci, arika::frame::SimpleEcef>::from_era(
                 epoch_122.gmst(),
             )
             .transform(&eci_122);
-        let geod_122 = kaname::earth::Geodetic::from(ecef_122);
+        let geod_122 = arika::earth::Geodetic::from(ecef_122);
         let pos_err = (state_122.position() - ei_ref.position()).magnitude();
         let vel_err = (state_122.velocity() - ei_ref.velocity()).magnitude();
         println!("    [At 122 km altitude]");
@@ -1209,13 +1207,13 @@ fn main() {
     if let Some((t_get, ref state_get)) = state_at_ei_get {
         let get_t = mission_t + t_get;
         let epoch_get = parking_epoch.add_seconds(get_t);
-        let eci_get = kaname::SimpleEci::from_raw(*state_get.position());
+        let eci_get = arika::SimpleEci::from_raw(*state_get.position());
         let ecef_get =
-            kaname::frame::Rotation::<kaname::frame::SimpleEci, kaname::frame::SimpleEcef>::from_era(
+            arika::frame::Rotation::<arika::frame::SimpleEci, arika::frame::SimpleEcef>::from_era(
                 epoch_get.gmst(),
             )
             .transform(&eci_get);
-        let geod_get = kaname::earth::Geodetic::from(ecef_get);
+        let geod_get = arika::earth::Geodetic::from(ecef_get);
         let pos_err = (state_get.position() - ei_ref.position()).magnitude();
         let vel_err = (state_get.velocity() - ei_ref.velocity()).magnitude();
         println!("    [At reference GET {:.2}h]", EI_GET_SECONDS / 3600.0);
@@ -1571,7 +1569,7 @@ mod tests {
     #[test]
     fn moon_position_at_tli_epoch() {
         let epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
-        let moon_pos = kaname::moon::moon_position_eci(&epoch);
+        let moon_pos = arika::moon::moon_position_eci(&epoch);
         let moon_dist = moon_pos.magnitude();
 
         // Moon distance should be ~384,400 km ± ~5%
@@ -1585,7 +1583,7 @@ mod tests {
     fn moon_position_at_loi_epoch() {
         let tli_epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
         let loi_epoch = tli_epoch.add_seconds(TLI_TO_LOI_SECONDS);
-        let moon_pos = kaname::moon::moon_position_eci(&loi_epoch);
+        let moon_pos = arika::moon::moon_position_eci(&loi_epoch);
         let moon_dist = moon_pos.magnitude();
 
         // Moon should still be at roughly lunar distance
@@ -1599,8 +1597,8 @@ mod tests {
     fn moon_moves_during_transit() {
         let tli_epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
         let loi_epoch = tli_epoch.add_seconds(TLI_TO_LOI_SECONDS);
-        let moon_tli = kaname::moon::moon_position_eci(&tli_epoch);
-        let moon_loi = kaname::moon::moon_position_eci(&loi_epoch);
+        let moon_tli = arika::moon::moon_position_eci(&tli_epoch);
+        let moon_loi = arika::moon::moon_position_eci(&loi_epoch);
 
         // Moon moves ~13°/day, so in ~3 days it should move ~39° ≈ significant displacement
         let displacement = (moon_loi - moon_tli).magnitude();

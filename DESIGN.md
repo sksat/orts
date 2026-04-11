@@ -98,14 +98,14 @@ WebSocket サーバーモード。viewer へシミュレーション結果をリ
 
 Rust crate と TypeScript パッケージで構成される。
 Rust crate は `orts-` prefix を使用し、ディレクトリ名は prefix なし。
-汎用的な独立ライブラリには固有名を付ける（kaname, uneri, tobari）。
+汎用的な独立ライブラリには固有名を付ける（arika, uneri, tobari）。
 
 ### Rust crate
 
 | Crate | ディレクトリ | 責務 |
 |---|---|---|
 | utsuroi | `utsuroi/` | 汎用 ODE ソルバ。OdeState trait、DynamicalSystem trait、RK4、Dormand-Prince 適応刻み、Yoshida シンプレクティック積分 |
-| kaname | `kaname/` | 測地学・天文ライブラリ。詳細は [`kaname/DESIGN.md`](kaname/DESIGN.md) |
+| arika | `arika/` | 測地学・天文ライブラリ。詳細は [`arika/DESIGN.md`](arika/DESIGN.md) |
 | tobari | `tobari/` | 地球周辺環境モデル（大気密度・地磁気・宇宙天気）。詳細は [`tobari/DESIGN.md`](tobari/DESIGN.md) |
 | orts | `orts/` | 軌道力学 + シミュレーション。重力場 (J2+)、ケプラー要素、TLE、摂動モデル (`Model<S>`: 抗力/SRP/第三体)、OrbitalSystem、イベント検出、姿勢力学 (AttitudeState)、SpacecraftState (軌道+姿勢+質量)、capability traits (`HasAttitude`/`HasOrbit`/`HasMass`)、ECS データモデル・Rerun エクスポート |
 | orts-cli | `cli/` | CLI + WebSocket サーバ。run/serve/convert サブコマンド。バイナリ名は `orts` |
@@ -120,7 +120,7 @@ Rust crate は `orts-` prefix を使用し、ディレクトリ名は prefix な
 ### 依存関係
 
 ```
-kaname              utsuroi               ← 基盤層
+arika              utsuroi               ← 基盤層
   ↑   ↑                  ↑
   │   tobari              │               ← 環境層
   │     ↑                 │
@@ -129,9 +129,9 @@ kaname              utsuroi               ← 基盤層
   └── orts-cli                            ← アプリ層
 ```
 
-- kaname と utsuroi は独立（ワークスペース内の他クレートに依存しない）
-- tobari は kaname のみに依存し、地球周辺環境モデル（大気密度 + 地磁気）ライブラリとして独立性を維持
-- orts は integrator, kaname, tobari を利用（軌道力学 + 摂動モデル + 姿勢力学 + 宇宙機統合 + データ記録）
+- arika と utsuroi は独立（ワークスペース内の他クレートに依存しない）
+- tobari は arika のみに依存し、地球周辺環境モデル（大気密度 + 地磁気）ライブラリとして独立性を維持
+- orts は integrator, arika, tobari を利用（軌道力学 + 摂動モデル + 姿勢力学 + 宇宙機統合 + データ記録）
 - orts-cli は orts を利用する薄い CLI ラッパー
 - utsuroi は汎用 ODE ソルバであり、軌道力学・姿勢力学の両方から利用される
 
@@ -139,7 +139,7 @@ kaname              utsuroi               ← 基盤層
 
 - **capability-based モデル合成**: state の capability trait (`HasAttitude`, `HasOrbit`, `HasMass`) と統一 `Model<S>` trait により、モデルが必要な state 情報を generic bound で宣言し、対応する system で自動的に使える設計。`GravityField`、`AtmosphereModel`、`MagneticFieldModel` 等の環境 trait は別途維持
 - **問題に応じたモデル構成**: ユーザーが OrbitalSystem / SpacecraftDynamics に重力場とモデルを組み合わせる。フルスペック計算は不要な場合がほとんど
-- **責務の分離**: 各 crate は独立テスト可能。座標変換は kaname、環境モデル（大気・磁場）は tobari、シミュレーションは orts
+- **責務の分離**: 各 crate は独立テスト可能。座標変換は arika、環境モデル（大気・磁場）は tobari、シミュレーションは orts
 
 ## 実装済みのアーキテクチャ拡張
 

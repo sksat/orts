@@ -1,8 +1,8 @@
 use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
 use crate::perturbations::OMEGA_EARTH;
-use kaname::body::KnownBody;
-use kaname::earth::R as R_EARTH;
-use kaname::epoch::Epoch;
+use arika::body::KnownBody;
+use arika::earth::R as R_EARTH;
+use arika::epoch::Epoch;
 use nalgebra::Vector3;
 use tobari::{AtmosphereModel, Exponential};
 
@@ -193,8 +193,8 @@ impl PanelDrag {
             Some(KnownBody::Earth) => {
                 let p2 = position.x * position.x + position.y * position.y;
                 let z2 = position.z * position.z;
-                p2 / (kaname::earth::ellipsoid::WGS84_A * kaname::earth::ellipsoid::WGS84_A)
-                    + z2 / (kaname::earth::ellipsoid::WGS84_B * kaname::earth::ellipsoid::WGS84_B)
+                p2 / (arika::earth::ellipsoid::WGS84_A * arika::earth::ellipsoid::WGS84_A)
+                    + z2 / (arika::earth::ellipsoid::WGS84_B * arika::earth::ellipsoid::WGS84_B)
                     < 1.0
             }
             _ => position.magnitude() < self.body_radius,
@@ -204,7 +204,7 @@ impl PanelDrag {
     /// Compute altitude [km] from position.
     fn altitude(&self, position: &Vector3<f64>) -> f64 {
         match self.body {
-            Some(KnownBody::Earth) => kaname::earth::geodetic_altitude(position),
+            Some(KnownBody::Earth) => arika::earth::geodetic_altitude(position),
             _ => position.magnitude() - self.body_radius,
         }
     }
@@ -221,7 +221,7 @@ impl PanelDrag {
         orbit: &crate::OrbitalState,
         attitude: &crate::attitude::AttitudeState,
         mass: f64,
-        epoch: Option<&Epoch<kaname::epoch::Utc>>,
+        epoch: Option<&Epoch<arika::epoch::Utc>>,
     ) -> ExternalLoads {
         // Inside body → zero
         if self.is_inside(orbit.position()) {
@@ -250,8 +250,8 @@ impl PanelDrag {
                 let v_rel_mag_m = v_rel_m.magnitude();
                 let a_drag_m = -0.5 * rho * cd * area / mass * v_rel_mag_m * v_rel_m;
                 ExternalLoads {
-                    acceleration_inertial: kaname::frame::Vec3::from_raw(a_drag_m / 1000.0), // m/s² → km/s²
-                    torque_body: kaname::frame::Vec3::zeros(),
+                    acceleration_inertial: arika::frame::Vec3::from_raw(a_drag_m / 1000.0), // m/s² → km/s²
+                    torque_body: arika::frame::Vec3::zeros(),
                     mass_rate: 0.0,
                 }
             }
@@ -259,7 +259,7 @@ impl PanelDrag {
                 // Transform flow direction to body frame
                 let v_body = attitude
                     .rotation_to_body()
-                    .transform(&kaname::frame::Vec3::from_raw(v_rel))
+                    .transform(&arika::frame::Vec3::from_raw(v_rel))
                     .into_inner(); // km/s in body frame
                 let v_body_m = v_body * 1000.0; // m/s
                 let v_body_mag_m = v_body_m.magnitude();
@@ -286,12 +286,12 @@ impl PanelDrag {
                 }
 
                 // a_body [m/s²] → a_inertial [km/s²]
-                let a_body = kaname::frame::Vec3::from_raw(total_force_body / mass);
+                let a_body = arika::frame::Vec3::from_raw(total_force_body / mass);
                 let a_inertial = attitude.rotation_to_eci().transform(&a_body) / 1000.0;
 
                 ExternalLoads {
                     acceleration_inertial: a_inertial,
-                    torque_body: kaname::frame::Vec3::from_raw(total_torque_body),
+                    torque_body: arika::frame::Vec3::from_raw(total_torque_body),
                     mass_rate: 0.0,
                 }
             }
@@ -548,7 +548,7 @@ mod tests {
 
     fn iss_state() -> SpacecraftState {
         let r = R_EARTH + 400.0;
-        let v = (kaname::earth::MU / r).sqrt();
+        let v = (arika::earth::MU / r).sqrt();
         SpacecraftState {
             orbit: OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v, 0.0)),
             attitude: AttitudeState::identity(),
@@ -1114,8 +1114,8 @@ mod tests {
         fn density(
             &self,
             _alt: f64,
-            _pos_eci: &kaname::SimpleEci,
-            _epoch: Option<&Epoch<kaname::epoch::Utc>>,
+            _pos_eci: &arika::SimpleEci,
+            _epoch: Option<&Epoch<arika::epoch::Utc>>,
         ) -> f64 {
             self.0
         }
@@ -1458,7 +1458,7 @@ mod tests {
     fn panels_integrable_with_rk4() {
         use super::super::SpacecraftDynamics;
         use crate::orbital::gravity::PointMass;
-        use kaname::earth::MU as MU_EARTH;
+        use arika::earth::MU as MU_EARTH;
         use nalgebra::Matrix3;
         use utsuroi::{Integrator, OdeState, Rk4};
 
@@ -1480,7 +1480,7 @@ mod tests {
     fn panels_drag_reduces_orbital_energy() {
         use super::super::SpacecraftDynamics;
         use crate::orbital::gravity::PointMass;
-        use kaname::earth::MU as MU_EARTH;
+        use arika::earth::MU as MU_EARTH;
         use nalgebra::Matrix3;
         use utsuroi::{Integrator, Rk4};
 
@@ -1508,7 +1508,7 @@ mod tests {
     fn tumbling_asymmetric_panels_varying_drag() {
         use super::super::SpacecraftDynamics;
         use crate::orbital::gravity::PointMass;
-        use kaname::earth::MU as MU_EARTH;
+        use arika::earth::MU as MU_EARTH;
         use nalgebra::Matrix3;
         use utsuroi::{Integrator, Rk4};
 
@@ -1545,7 +1545,7 @@ mod tests {
     fn sphere_integrable_with_spacecraft_dynamics() {
         use super::super::SpacecraftDynamics;
         use crate::orbital::gravity::PointMass;
-        use kaname::earth::MU as MU_EARTH;
+        use arika::earth::MU as MU_EARTH;
         use nalgebra::Matrix3;
         use utsuroi::{Integrator, OdeState, Rk4};
 

@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use tobari::magnetic::MagneticFieldModel;
 
 use super::noise::NoiseModel;
@@ -61,7 +61,7 @@ impl Magnetometer {
         for n in &mut self.noise {
             b_body = n.apply(b_body);
         }
-        MagneticFieldBody::new(kaname::frame::Vec3::from_raw(b_body))
+        MagneticFieldBody::new(arika::frame::Vec3::from_raw(b_body))
     }
 }
 

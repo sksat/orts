@@ -1,7 +1,7 @@
 use crate::effector::{AugmentedState, AuxRegistry, StateEffector};
 use crate::model::Model;
 use crate::orbital::gravity::GravityField;
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use nalgebra::Matrix3;
 use utsuroi::DynamicalSystem;
 
@@ -237,7 +237,7 @@ mod tests {
     use crate::model::Model;
     use crate::orbital::OrbitalSystem;
     use crate::orbital::gravity::PointMass;
-    use kaname::earth::MU as MU_EARTH;
+    use arika::earth::MU as MU_EARTH;
     use nalgebra::{Vector3, Vector4};
     use utsuroi::{Integrator, OdeState, Rk4};
 
@@ -301,8 +301,8 @@ mod tests {
         fn eval(&self, _t: f64, _state: &SpacecraftState, epoch: Option<&Epoch>) -> ExternalLoads {
             match epoch {
                 Some(e) => ExternalLoads {
-                    acceleration_inertial: kaname::frame::Vec3::new(e.jd() * 1e-10, 0.0, 0.0),
-                    torque_body: kaname::frame::Vec3::zeros(),
+                    acceleration_inertial: arika::frame::Vec3::new(e.jd() * 1e-10, 0.0, 0.0),
+                    torque_body: arika::frame::Vec3::zeros(),
                     mass_rate: 0.0,
                 },
                 None => ExternalLoads::zeros(),
@@ -518,17 +518,17 @@ mod tests {
         assert_eq!(breakdown[0].0, "const_force");
         assert_eq!(
             breakdown[0].1.acceleration_inertial,
-            kaname::frame::Vec3::from_raw(accel)
+            arika::frame::Vec3::from_raw(accel)
         );
-        assert_eq!(breakdown[0].1.torque_body, kaname::frame::Vec3::zeros());
+        assert_eq!(breakdown[0].1.torque_body, arika::frame::Vec3::zeros());
         assert_eq!(breakdown[1].0, "const_torque");
         assert_eq!(
             breakdown[1].1.acceleration_inertial,
-            kaname::frame::Vec3::zeros()
+            arika::frame::Vec3::zeros()
         );
         assert_eq!(
             breakdown[1].1.torque_body,
-            kaname::frame::Vec3::from_raw(torque)
+            arika::frame::Vec3::from_raw(torque)
         );
     }
 

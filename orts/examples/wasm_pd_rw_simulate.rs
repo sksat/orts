@@ -17,8 +17,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
-use kaname::epoch::Epoch;
+use arika::earth::{MU as MU_EARTH, R as R_EARTH};
+use arika::epoch::Epoch;
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 use utsuroi::{Integrator, Rk4};
 use wasmtime::component::Component;

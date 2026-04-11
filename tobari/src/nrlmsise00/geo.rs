@@ -16,10 +16,10 @@
 //! into the precise function or vice versa — the type system rejects
 //! the mix at compile time.
 
-use kaname::SimpleEci;
-use kaname::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
-use kaname::epoch::{Epoch, Ut1, Utc};
-use kaname::frame::{self, Rotation, Vec3};
+use arika::SimpleEci;
+use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
+use arika::epoch::{Epoch, Ut1, Utc};
+use arika::frame::{self, Rotation, Vec3};
 
 /// Convert a simple-path ECI position to WGS-84 geodetic latitude and
 /// longitude [degrees].
@@ -51,8 +51,8 @@ pub fn simple_eci_to_geodetic_latlon(position_eci: &SimpleEci, epoch: &Epoch<Utc
 /// is [`Ut1Offset`] + [`NutationCorrections`] + [`PolarMotion`], matching
 /// the `iau2006_full_from_utc` signature exactly.
 ///
-/// `kaname::earth::eop::NullEop` is rejected at compile time — see
-/// `kaname/tests/trybuild/null_eop_in_iau2006_full_from_utc.rs`.
+/// `arika::earth::eop::NullEop` is rejected at compile time — see
+/// `arika/tests/trybuild/null_eop_in_iau2006_full_from_utc.rs`.
 pub fn precise_gcrs_to_geodetic_latlon<P>(
     position_gcrs: &Vec3<frame::Gcrs>,
     utc: &Epoch<Utc>,
@@ -111,7 +111,7 @@ fn day_of_year(year: i32, month: u32, day: u32) -> u32 {
 /// where EoT accounts for Earth's orbital eccentricity and axial tilt
 /// (up to ±16 minutes correction).
 pub fn local_solar_time(ut_sec: f64, longitude_deg: f64, epoch: &Epoch) -> f64 {
-    let eot_hours = kaname::sun::equation_of_time(epoch);
+    let eot_hours = arika::sun::equation_of_time(epoch);
     let lst = ut_sec / 3600.0 + longitude_deg / 15.0 + eot_hours;
     // Normalize to [0, 24)
     ((lst % 24.0) + 24.0) % 24.0
@@ -228,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_eci_to_latlon_matches_kaname_geodetic_at_iss_inclination() {
+    fn simple_eci_to_latlon_matches_arika_geodetic_at_iss_inclination() {
         // ISS-like: 400 km altitude, 51.6° geodetic latitude
         // Geocentric vs geodetic differs by ~0.17° at this latitude.
         // Round-trip: Geodetic → ECEF → ECI → simple_eci_to_geodetic_latlon
@@ -237,12 +237,12 @@ mod tests {
 
         let expected_lat: f64 = 51.6;
         let expected_lon: f64 = 30.0;
-        let geod = kaname::earth::Geodetic {
+        let geod = arika::earth::Geodetic {
             latitude: expected_lat.to_radians(),
             longitude: expected_lon.to_radians(),
             altitude: 400.0,
         };
-        let ecef = kaname::SimpleEcef::from(geod);
+        let ecef = arika::SimpleEcef::from(geod);
         let eci = Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst).transform(&ecef);
 
         let (lat_deg, lon_deg) = simple_eci_to_geodetic_latlon(&eci, &epoch);
@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_eci_to_latlon_matches_kaname_geodetic_at_polar() {
+    fn simple_eci_to_latlon_matches_arika_geodetic_at_polar() {
         // Near-polar: 800 km altitude, 80° geodetic latitude
         // Maximum geocentric↔geodetic difference region
         let epoch = Epoch::<Utc>::from_gregorian(2024, 3, 20, 12, 0, 0.0);
@@ -266,12 +266,12 @@ mod tests {
 
         let expected_lat: f64 = 80.0;
         let expected_lon: f64 = -45.0;
-        let geod = kaname::earth::Geodetic {
+        let geod = arika::earth::Geodetic {
             latitude: expected_lat.to_radians(),
             longitude: expected_lon.to_radians(),
             altitude: 800.0,
         };
-        let ecef = kaname::SimpleEcef::from(geod);
+        let ecef = arika::SimpleEcef::from(geod);
         let eci = Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst).transform(&ecef);
 
         let (lat_deg, lon_deg) = simple_eci_to_geodetic_latlon(&eci, &epoch);
@@ -326,12 +326,12 @@ mod tests {
 
         // Forward: Geodetic → SimpleEcef → Vec3<Itrs> (reinterpret) →
         // Vec3<Gcrs> (inverse full chain).
-        let geod = kaname::earth::Geodetic {
+        let geod = arika::earth::Geodetic {
             latitude: expected_lat.to_radians(),
             longitude: expected_lon.to_radians(),
             altitude: 400.0,
         };
-        let ecef_simple = kaname::SimpleEcef::from(geod);
+        let ecef_simple = arika::SimpleEcef::from(geod);
         let pos_itrs: Vec3<frame::Itrs> = Vec3::from_raw(*ecef_simple.inner());
         let rot = Rotation::<frame::Gcrs, frame::Itrs>::iau2006_full_from_utc(&utc, &ZeroEop);
         let pos_gcrs: Vec3<frame::Gcrs> = rot.inverse().transform(&pos_itrs);

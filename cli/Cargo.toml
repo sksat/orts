@@ -25,7 +25,7 @@ plugin-wasm-async = ["plugin-wasm", "orts/plugin-wasm-async"]
 nalgebra.workspace = true
 utsuroi.workspace = true
 tobari = { workspace = true, features = ["fetch"] }
-kaname.workspace = true
+arika.workspace = true
 orts.workspace = true
 log = "0.4.29"
 clap.workspace = true

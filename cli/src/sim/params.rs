@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use kaname::body::KnownBody;
-use kaname::epoch::Epoch;
+use arika::body::KnownBody;
+use arika::epoch::Epoch;
 use orts::tle::Tle;
 use utsuroi::Tolerances;
 

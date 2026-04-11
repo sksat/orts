@@ -101,7 +101,7 @@ def fetch_horizons(
         "REF_PLANE": "FRAME",
         # TIME_TYPE=UT: the `mid_epoch_iso` strings emitted by
         # `print_rust` feed straight into the Rust `MANEUVERS` table,
-        # which in turn is parsed by `kaname::Epoch::from_iso8601` as UTC
+        # which in turn is parsed by `arika::Epoch::from_iso8601` as UTC
         # (the only scale `Epoch` understands). Asking Horizons for UT
         # output here makes the JDUT column numerically equal the JD of
         # the burn event's **UTC** wall clock, so `jd_to_iso` below can
@@ -337,7 +337,7 @@ def jd_to_iso(jd: float) -> str:
     digits were the burn event's **TDB** wall clock dressed with a `Z`
     suffix — a silent 69 s mislabel relative to true UTC. Downstream the
     Rust `MANEUVERS` table ingested those strings with
-    `kaname::Epoch::from_iso8601` (UTC-only parser), so the impulse in
+    `arika::Epoch::from_iso8601` (UTC-only parser), so the impulse in
     `verify_burn` was applied 69 s before the real burn midpoint in
     physical time and produced |Δv| × 69 s ≈ 7 km of post-burn position
     error per burn. Switching this function and the Horizons query to

@@ -87,9 +87,9 @@ interface types {
     }
 
     /// 天文暦元。Julian Date (JD) として直接シリアライズ。
-    /// `kaname::epoch::Epoch { jd }` と bit-for-bit 対応。
+    /// `arika::epoch::Epoch { jd }` と bit-for-bit 対応。
     ///
-    /// **タイムスケール注意**: Phase P1 の `kaname::Epoch` は
+    /// **タイムスケール注意**: Phase P1 の `arika::Epoch` は
     /// UTC / TAI / TT を厳密に区別しない。`J2000_JD` 定数は
     /// TT J2000 (`2451545.0`) だが、`from_gregorian(...)` は
     /// うるう秒なしで UTC をそのタイムラインに載せる。

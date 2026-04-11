@@ -22,7 +22,7 @@
 //! `rw_torque` in a single `Command`, both actuators are updated
 //! simultaneously.
 
-use kaname::frame::{Body, Vec3};
+use arika::frame::{Body, Vec3};
 
 use super::command::Command;
 use super::error::PluginError;

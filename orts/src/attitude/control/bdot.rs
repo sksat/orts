@@ -1,5 +1,5 @@
-use kaname::epoch::Epoch;
-use kaname::frame::{self, Vec3};
+use arika::epoch::Epoch;
+use arika::frame::{self, Vec3};
 use nalgebra::Vector3;
 use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 
@@ -252,8 +252,8 @@ mod tests {
     use super::*;
     use crate::OrbitalState;
     use crate::attitude::AttitudeState;
-    use kaname::SimpleEci;
-    use kaname::epoch::Epoch;
+    use arika::SimpleEci;
+    use arika::epoch::Epoch;
     use nalgebra::Vector4;
     use tobari::magnetic::MagneticFieldModel;
 

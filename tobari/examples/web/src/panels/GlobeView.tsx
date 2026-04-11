@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { useDebouncedValue } from "../hooks/useDebouncedValue.js";
 import { overlayFrag, overlayVert } from "../shaders/fieldOverlay.js";
 import type { ViewerParams } from "../types.js";
-import { earthRotationAngle, isKanameReady } from "../wasm/kanameInit.js";
+import { earthRotationAngle, isArikaReady } from "../wasm/arikaInit.js";
 import {
   atmosphereLatlonMapAsync,
   atmosphereLatlonMapSwAsync,
@@ -25,7 +25,7 @@ const EARTH_RADIUS = 1.0; // normalized
 const EARTH_RADIUS_KM = 6371.0;
 const N_SHELLS = 12;
 
-// GMST is computed by kaname WASM via the caller (App) and passed as a prop.
+// GMST is computed by arika WASM via the caller (App) and passed as a prop.
 
 /**
  * Rotation to align Three.js SphereGeometry (pole along Y) with ECI (pole along Z).
@@ -511,7 +511,7 @@ function FieldLines({
         parsed.push({ vertices: verts, nPoints: nPts });
       }
       setLines(parsed);
-      if (isKanameReady()) {
+      if (isArikaReady()) {
         setComputedGmst(earthRotationAngle(debouncedEpoch));
       }
     });

@@ -24,8 +24,8 @@ mod model;
 
 use crate::AtmosphereModel;
 use crate::space_weather::SpaceWeatherProvider;
-use kaname::SimpleEci;
-use kaname::epoch::{Epoch, Utc};
+use arika::SimpleEci;
+use arika::epoch::{Epoch, Utc};
 
 /// Full output of the NRLMSISE-00 model.
 ///
@@ -134,7 +134,7 @@ impl Nrlmsise00 {
     ///
     /// # Frame / scale discipline (Phase 4)
     ///
-    /// Takes a `&kaname::SimpleEci` position (the simple-path
+    /// Takes a `&arika::SimpleEci` position (the simple-path
     /// phantom-typed marker) and a `&Epoch<Utc>`. A future
     /// `density_with_composition_precise` variant accepting `&Vec3<Itrs>`
     /// + a full EOP provider will be added in Phase 4B.
@@ -223,16 +223,16 @@ mod tests {
 
         // Path 2: via ECI position (goes through geo.rs eci_to_geodetic_latlon)
         let gmst = epoch.gmst();
-        let geod = kaname::earth::Geodetic {
+        let geod = arika::earth::Geodetic {
             latitude: lat_deg.to_radians(),
             longitude: lon_deg.to_radians(),
             altitude: alt_km,
         };
-        let ecef = kaname::SimpleEcef::from(geod);
-        let eci = kaname::frame::Rotation::<
-            kaname::frame::SimpleEcef,
-            kaname::frame::SimpleEci,
-        >::from_era(gmst)
+        let ecef = arika::SimpleEcef::from(geod);
+        let eci =
+            arika::frame::Rotation::<arika::frame::SimpleEcef, arika::frame::SimpleEci>::from_era(
+                gmst,
+            )
             .transform(&ecef);
         let eci_density = model
             .density_with_composition(alt_km, &eci, &epoch)

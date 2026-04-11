@@ -6,7 +6,7 @@
 //! angular momentum) that are integrated by the ODE solver alongside the
 //! plant state.
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use utsuroi::{OdeState, Tolerances};
 
 use crate::model::ExternalLoads;

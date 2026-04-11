@@ -31,7 +31,7 @@ mod magnetometer;
 pub mod noise;
 mod star_tracker;
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 
 use crate::SpacecraftState;
 use crate::plugin::tick_input::Sensors;

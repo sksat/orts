@@ -26,7 +26,7 @@ Rust core for orbital mechanics and simulation, with a React-based real-time 3D 
 | `orts` | `orts/` | Orbital mechanics, simulation, perturbations, spacecraft, events |
 | `orts-cli` | `cli/` | CLI + WebSocket server (binary name: `orts`) |
 | `utsuroi` | `utsuroi/` | Generic ODE solvers (RK4, Dormand-Prince, Störmer-Verlet, Yoshida) |
-| `kaname` | `kaname/` | Geodesy, astronomy, coordinate systems, epoch, sun/moon position |
+| `arika` | `arika/` | Geodesy, astronomy, coordinate systems, epoch, sun/moon position |
 | `tobari` | `tobari/` | Atmosphere density models, space weather (CSSI) |
 
 ### TypeScript packages

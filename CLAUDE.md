@@ -24,7 +24,7 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 - `cargo run --bin orts -- serve --altitude 800 --dt 5` — custom parameters
 - `cargo run --bin orts -- serve --dt 1 --output-interval 10` — fine dt with decimated output
 - `cargo test -p utsuroi` — test only the utsuroi (integrator) crate
-- `cargo test -p kaname` — test only the kaname crate
+- `cargo test -p arika` — test only the arika crate
 - `cargo test -p tobari` — test only the tobari (Earth environment models) crate
 - `cargo test -p orts` — test the simulation library (orts crate)
 - `cargo test -p orts-cli` — run CLI E2E tests

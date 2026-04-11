@@ -43,7 +43,7 @@ describe("tuple struct rendering", () => {
     const crate = makeCrate({
       root: 0,
       index: {
-        "0": makeItem(0, "kaname", {
+        "0": makeItem(0, "arika", {
           module: { is_crate: true, items: [1] },
         }),
         "1": makeItem(1, "Eci", {
@@ -70,21 +70,21 @@ describe("tuple struct rendering", () => {
       },
     });
 
-    const crates = new Map([["kaname", crate]]);
+    const crates = new Map([["arika", crate]]);
     const resolver = new LinkResolver(crates, "/orts");
 
-    const items = collectApiItems(crate, "kaname");
+    const items = collectApiItems(crate, "arika");
     expect(items).toHaveLength(1);
     expect(items[0]!.displayName).toBe("Eci");
 
     const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
     try {
-      const pages = generateCratePages("kaname", items, crate, resolver, {
+      const pages = generateCratePages("arika", items, crate, resolver, {
         contentDir: tmpDir,
         basePath: "/orts",
       });
 
-      const eciPage = readFileSync(join(tmpDir, "kaname/api/structs/eci.md"), "utf-8");
+      const eciPage = readFileSync(join(tmpDir, "arika/api/structs/eci.md"), "utf-8");
       // Should show tuple struct syntax in code block
       expect(eciPage).toContain("pub struct Eci(");
       expect(eciPage).toContain("Vector3<f64>");
@@ -253,13 +253,13 @@ describe("enum variant rendering", () => {
 // ---------------------------------------------------------------------------
 
 describe("i18n locale prefix & locale-agnostic links", () => {
-  function makeKanameCrate(): Crate {
+  function makeArikaCrate(): Crate {
     // Minimal two-item crate so the overview page table has something to
     // link between, allowing us to verify cross-reference URLs.
     return makeCrate({
       root: 0,
       index: {
-        "0": makeItem(0, "kaname", {
+        "0": makeItem(0, "arika", {
           module: { is_crate: true, items: [1, 3] },
         }),
         "1": makeItem(1, "Eci", {
@@ -308,22 +308,22 @@ describe("i18n locale prefix & locale-agnostic links", () => {
   }
 
   it("writes item pages under the locale subdirectory when locale is set", () => {
-    const crate = makeKanameCrate();
-    const crates = new Map([["kaname", crate]]);
+    const crate = makeArikaCrate();
+    const crates = new Map([["arika", crate]]);
     const resolver = new LinkResolver(crates, "/orts");
-    const items = collectApiItems(crate, "kaname");
+    const items = collectApiItems(crate, "arika");
     registerLogical(resolver, items);
 
     const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
     try {
-      generateCratePages("kaname", items, crate, resolver, {
+      generateCratePages("arika", items, crate, resolver, {
         contentDir: tmpDir,
         basePath: "/orts",
         locale: "en",
       });
 
       // File should be written under the locale directory
-      const localized = readFileSync(join(tmpDir, "en/kaname/api/structs/eci.md"), "utf-8");
+      const localized = readFileSync(join(tmpDir, "en/arika/api/structs/eci.md"), "utf-8");
       expect(localized).toContain("pub struct Eci(");
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
@@ -331,21 +331,21 @@ describe("i18n locale prefix & locale-agnostic links", () => {
   });
 
   it("overview links are relative (no locale or base baked in) when locale=en", () => {
-    const crate = makeKanameCrate();
-    const crates = new Map([["kaname", crate]]);
+    const crate = makeArikaCrate();
+    const crates = new Map([["arika", crate]]);
     const resolver = new LinkResolver(crates, "/orts");
-    const items = collectApiItems(crate, "kaname");
+    const items = collectApiItems(crate, "arika");
     registerLogical(resolver, items);
 
     const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
     try {
-      generateCratePages("kaname", items, crate, resolver, {
+      generateCratePages("arika", items, crate, resolver, {
         contentDir: tmpDir,
         basePath: "/orts",
         locale: "en",
       });
 
-      const overview = readFileSync(join(tmpDir, "en/kaname/api/overview.md"), "utf-8");
+      const overview = readFileSync(join(tmpDir, "en/arika/api/overview.md"), "utf-8");
       // Cross-reference links in the overview table must be relative so
       // that Starlight i18n fallback pages keep users in their chosen
       // locale. No `/orts/`, `/en/`, or `/ja/` segment should appear in
@@ -365,22 +365,22 @@ describe("i18n locale prefix & locale-agnostic links", () => {
     // plugin writes to, generated cross-references are locale-agnostic so
     // that the same content works when served via the opposite locale's
     // fallback route.
-    const crate = makeKanameCrate();
-    const crates = new Map([["kaname", crate]]);
+    const crate = makeArikaCrate();
+    const crates = new Map([["arika", crate]]);
     const resolver = new LinkResolver(crates, "/orts");
-    const items = collectApiItems(crate, "kaname");
+    const items = collectApiItems(crate, "arika");
     registerLogical(resolver, items);
 
     const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
     try {
-      generateCratePages("kaname", items, crate, resolver, {
+      generateCratePages("arika", items, crate, resolver, {
         contentDir: tmpDir,
         basePath: "/orts",
         locale: "ja",
       });
 
       // Files go to ja/... but link content is identical to the en case.
-      const overview = readFileSync(join(tmpDir, "ja/kaname/api/overview.md"), "utf-8");
+      const overview = readFileSync(join(tmpDir, "ja/arika/api/overview.md"), "utf-8");
       expect(overview).toMatch(/\]\(\.\.\/structs\/eci\/\)/);
       expect(overview).toMatch(/\]\(\.\.\/structs\/epoch\/\)/);
       expect(overview).not.toContain("/ja/");
@@ -396,41 +396,41 @@ describe("i18n locale prefix & locale-agnostic links", () => {
     // both when the file is served from its native locale and when it is
     // served via Starlight i18n fallback as the other locale.
     const makeCrates = () => {
-      const crate = makeKanameCrate();
-      const crates = new Map([["kaname", crate]]);
+      const crate = makeArikaCrate();
+      const crates = new Map([["arika", crate]]);
       return { crate, crates };
     };
 
     const { crate: enCrate, crates: enCrates } = makeCrates();
     const enResolver = new LinkResolver(enCrates, "/orts");
-    const enItems = collectApiItems(enCrate, "kaname");
+    const enItems = collectApiItems(enCrate, "arika");
     registerLogical(enResolver, enItems);
 
     const { crate: jaCrate, crates: jaCrates } = makeCrates();
     const jaResolver = new LinkResolver(jaCrates, "/orts");
-    const jaItems = collectApiItems(jaCrate, "kaname");
+    const jaItems = collectApiItems(jaCrate, "arika");
     registerLogical(jaResolver, jaItems);
 
     const enDir = mkdtempSync(join(tmpdir(), "rustdoc-en-"));
     const jaDir = mkdtempSync(join(tmpdir(), "rustdoc-ja-"));
     try {
-      generateCratePages("kaname", enItems, enCrate, enResolver, {
+      generateCratePages("arika", enItems, enCrate, enResolver, {
         contentDir: enDir,
         basePath: "/orts",
         locale: "en",
       });
-      generateCratePages("kaname", jaItems, jaCrate, jaResolver, {
+      generateCratePages("arika", jaItems, jaCrate, jaResolver, {
         contentDir: jaDir,
         basePath: "/orts",
         locale: "ja",
       });
 
-      const enOverview = readFileSync(join(enDir, "en/kaname/api/overview.md"), "utf-8");
-      const jaOverview = readFileSync(join(jaDir, "ja/kaname/api/overview.md"), "utf-8");
+      const enOverview = readFileSync(join(enDir, "en/arika/api/overview.md"), "utf-8");
+      const jaOverview = readFileSync(join(jaDir, "ja/arika/api/overview.md"), "utf-8");
       expect(jaOverview).toBe(enOverview);
 
-      const enEci = readFileSync(join(enDir, "en/kaname/api/structs/eci.md"), "utf-8");
-      const jaEci = readFileSync(join(jaDir, "ja/kaname/api/structs/eci.md"), "utf-8");
+      const enEci = readFileSync(join(enDir, "en/arika/api/structs/eci.md"), "utf-8");
+      const jaEci = readFileSync(join(jaDir, "ja/arika/api/structs/eci.md"), "utf-8");
       expect(jaEci).toBe(enEci);
     } finally {
       rmSync(enDir, { recursive: true, force: true });
@@ -439,23 +439,23 @@ describe("i18n locale prefix & locale-agnostic links", () => {
   });
 
   it("preserves root-level file layout when locale is not set", () => {
-    const crate = makeKanameCrate();
-    const crates = new Map([["kaname", crate]]);
+    const crate = makeArikaCrate();
+    const crates = new Map([["arika", crate]]);
     const resolver = new LinkResolver(crates, "/orts");
-    const items = collectApiItems(crate, "kaname");
+    const items = collectApiItems(crate, "arika");
     registerLogical(resolver, items);
 
     const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
     try {
-      generateCratePages("kaname", items, crate, resolver, {
+      generateCratePages("arika", items, crate, resolver, {
         contentDir: tmpDir,
         basePath: "/orts",
       });
 
       // Default behaviour: no locale directory
-      const root = readFileSync(join(tmpDir, "kaname/api/structs/eci.md"), "utf-8");
+      const root = readFileSync(join(tmpDir, "arika/api/structs/eci.md"), "utf-8");
       expect(root).toContain("pub struct Eci(");
-      const overview = readFileSync(join(tmpDir, "kaname/api/overview.md"), "utf-8");
+      const overview = readFileSync(join(tmpDir, "arika/api/overview.md"), "utf-8");
       // Links remain relative even with no locale — they were relative all
       // along; the locale option only controls file placement.
       expect(overview).toMatch(/\]\(\.\.\/structs\/eci\/\)/);

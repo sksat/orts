@@ -263,7 +263,7 @@ impl KeplerianElements {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::earth::MU as MU_EARTH;
+    use arika::earth::MU as MU_EARTH;
     use nalgebra::vector;
 
     #[test]

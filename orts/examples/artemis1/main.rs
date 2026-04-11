@@ -52,7 +52,7 @@
 //!    ephemeris (target `10`) from JPL Horizons, both centred on Earth
 //!    geocentre and sampled at 1-hour spacing over the full mission
 //!    window. Both are used as tabulated sources for the third-body
-//!    force model, replacing kaname's Meeus analytical models.
+//!    force model, replacing arika's Meeus analytical models.
 //! 2. For each coast window, fetches the real Orion state vector (target
 //!    `-1023`) at both endpoints.
 //! 3. Propagates the start state forward to the end epoch using `Dop853`
@@ -255,11 +255,11 @@
 use std::sync::Arc;
 
 #[cfg(feature = "fetch-horizons")]
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 #[cfg(feature = "fetch-horizons")]
-use kaname::horizons::HorizonsTable;
+use arika::horizons::HorizonsTable;
 #[cfg(feature = "fetch-horizons")]
-use kaname::moon::{HorizonsMoonEphemeris, MoonEphemeris};
+use arika::moon::{HorizonsMoonEphemeris, MoonEphemeris};
 #[cfg(feature = "fetch-horizons")]
 use orts::OrbitalState;
 #[cfg(feature = "fetch-horizons")]
@@ -300,7 +300,7 @@ const MOON_TARGET: &str = "301";
 /// Sun JPL Horizons target ID.
 ///
 /// The Sun's position is fetched from Horizons for the same reason
-/// the Moon is: the kaname analytical Sun ephemeris (Meeus-based) is
+/// the Moon is: the arika analytical Sun ephemeris (Meeus-based) is
 /// only ~10 km accurate at 1 AU, and that accumulates through the
 /// third-body tidal term over multi-day propagation.
 #[cfg(feature = "fetch-horizons")]
@@ -571,7 +571,7 @@ const MANEUVERS: &[Maneuver] = &[
     // old `TIME_TYPE=TDB` query, the same extraction emitted
     // `mid_epoch_iso: "2022-11-25T21:53:45Z"` — a string whose digits
     // were the burn event's **TDB** wall clock dressed as UTC. Parsed
-    // as UTC by `kaname::Epoch::from_iso8601` (the only time scale
+    // as UTC by `arika::Epoch::from_iso8601` (the only time scale
     // `Epoch` understands) that label sat 69 s after the real physical
     // burn midpoint, so `verify_burn`'s impulsive Δv landed in the
     // wrong place and produced |Δv| × 69 s ≈ 7 km of position error per
@@ -791,7 +791,7 @@ fn main() {
     println!();
 
     // ----- Fetch one Sun ephemeris covering the whole mission -----
-    // Mirrors the Moon fetch: the kaname analytical Sun (Meeus) is
+    // Mirrors the Moon fetch: the arika analytical Sun (Meeus) is
     // only ~10-km accurate at 1 AU and contributes to observed coast /
     // chain error via the third-body tidal term. Using a Horizons
     // table here aligns the Sun position with JPL's reference
@@ -950,12 +950,12 @@ fn main() {
     // source of truth; any future correction (e.g. switching to DE441
     // GM_EARTH) lands in both places at once.
     let mut rec = Recording::new();
-    let earth_props = kaname::body::KnownBody::Earth.properties();
+    let earth_props = arika::body::KnownBody::Earth.properties();
     let earth_path = EntityPath::parse("/world/earth");
     rec.log_static(&earth_path, &GravitationalParameter(earth_props.mu));
     rec.log_static(&earth_path, &BodyRadius(earth_props.radius));
     let moon_path = EntityPath::parse("/world/moon");
-    let moon_props = kaname::body::KnownBody::Moon.properties();
+    let moon_props = arika::body::KnownBody::Moon.properties();
     rec.log_static(&moon_path, &GravitationalParameter(moon_props.mu));
     rec.log_static(&moon_path, &BodyRadius(moon_props.radius));
 
@@ -2575,7 +2575,7 @@ fn print_summary(results: &[PhaseResult]) {
 #[cfg(feature = "fetch-horizons")]
 fn fetch_orion_sample(
     epoch: &Epoch,
-) -> Result<(nalgebra::Vector3<f64>, nalgebra::Vector3<f64>), kaname::horizons::HorizonsError> {
+) -> Result<(nalgebra::Vector3<f64>, nalgebra::Vector3<f64>), arika::horizons::HorizonsError> {
     // Horizons requires start != stop; request a 1-minute bracket so
     // Hermite interpolation below has two samples to work with.
     let start = epoch.add_seconds(-30.0);
@@ -2702,7 +2702,7 @@ fn fetch_orion_sample(
 /// verification in this spike.
 ///
 /// Force model components:
-/// - J2/J3/J4 zonal harmonics (from kaname constants)
+/// - J2/J3/J4 zonal harmonics (from arika constants)
 /// - Sun as a third-body, using the Horizons-tabulated ephemeris
 ///   (closure over [`HorizonsTable`])
 /// - Moon as a third-body, using the [`MoonEphemeris`] trait object
@@ -2725,7 +2725,7 @@ fn fetch_orion_sample(
 /// The asymmetry is historical: the Moon ephemeris trait was already in
 /// place for the earlier Moon migration, and cloning the same pattern
 /// for the Sun would require a new `SunEphemeris` trait + type in
-/// kaname. For a research spike the closure path is adequate and keeps
+/// arika. For a research spike the closure path is adequate and keeps
 /// the change consumer-side only.
 #[cfg(feature = "fetch-horizons")]
 fn build_artemis_system(
@@ -2733,9 +2733,9 @@ fn build_artemis_system(
     moon_ephem: &Arc<dyn MoonEphemeris>,
     sun_table: &Arc<HorizonsTable>,
 ) -> OrbitalSystem {
-    use kaname::body::KnownBody;
-    use kaname::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH};
-    use kaname::sun::MU as MU_SUN;
+    use arika::body::KnownBody;
+    use arika::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH};
+    use arika::sun::MU as MU_SUN;
 
     let earth = KnownBody::Earth;
     let props = earth.properties();
@@ -2743,7 +2743,7 @@ fn build_artemis_system(
     // Build a custom Sun third-body model whose position closure looks
     // up the Horizons table via Hermite interpolation. If the query
     // epoch falls outside the table range, the closure **silently**
-    // falls back to the kaname Meeus analytical Sun. This fallback
+    // falls back to the arika Meeus analytical Sun. This fallback
     // should not fire during normal runs — the Sun table is fetched
     // over the same mission window as the Moon table (moon_window_*),
     // with 1-hour padding — but unlike the Moon, there is no fallback
@@ -2753,13 +2753,13 @@ fn build_artemis_system(
     // improvement without any diagnostic signal. If that ever happens,
     // add a counter here mirroring `HorizonsMoonEphemeris`, or replace
     // this closure with a dedicated `SunEphemeris` trait + type in
-    // kaname.
+    // arika.
     let sun_table_for_closure: Arc<HorizonsTable> = Arc::clone(sun_table);
     let sun_model = ThirdBodyGravity::custom("third_body_sun", MU_SUN, move |e| {
         sun_table_for_closure
             .interpolate(e)
-            .map(|s| kaname::frame::Vec3::from_raw(s.position))
-            .unwrap_or_else(|| kaname::sun::sun_position_eci(e))
+            .map(|s| arika::frame::Vec3::from_raw(s.position))
+            .unwrap_or_else(|| arika::sun::sun_position_eci(e))
     });
 
     OrbitalSystem::new(

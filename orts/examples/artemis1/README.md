@@ -199,7 +199,7 @@ components panel では Δz (blue) が dominant で最終 -100 km、軌道面と
 | 0 (baseline) | — | 7.432 | 20.440 | 1266.657 | nearest-neighbor + TDB |
 | 8fdf486 | `fetch_orion_sample` を Hermite 補間化 | 3.965 | 16.288 | 1196.257 | 30 s tie-break bias 除去 |
 | 4619519 | `cache_key_for` に TIME_TYPE 追加 | 3.965 | 16.288 | 1196.257 | defensive (将来の stale cache 防止) |
-| 2ede30f | Horizons 時刻系を UT/UTC に統一 | **2.686** | **15.113** | **1037.633** | extract_burns.py + kaname TIME_TYPE 両方修正 |
+| 2ede30f | Horizons 時刻系を UT/UTC に統一 | **2.686** | **15.113** | **1037.633** | extract_burns.py + arika TIME_TYPE 両方修正 |
 | (pending) | `verify_burn_continuous` 追加 (falsification) | 2.686 | 15.113 | 1037.633 | impulsive と bit-identical。impulsive 近似仮説を棄却 (誤差 0 改善) |
 
 ### 残留誤差の出所
@@ -271,6 +271,6 @@ DRI / DRDI を再抽出した場合、MANEUVERS と plot_trajectory.py の定数
 ## 関連
 
 - [Apollo 11 example](../apollo11/) — 離散イベント (LOI/TEI/EI) 時刻検証 + 凝った PyVista 可視化
-- `kaname/src/horizons.rs` — Horizons CSV parser + HTTP fetch + Hermite 補間
-- `kaname/src/moon.rs::MoonEphemeris` — Meeus / Horizons Moon ephemeris 抽象化
+- `arika/src/horizons.rs` — Horizons CSV parser + HTTP fetch + Hermite 補間
+- `arika/src/moon.rs::MoonEphemeris` — Meeus / Horizons Moon ephemeris 抽象化
 - `orts/src/perturbations/constant_thrust.rs` — 有限時間 thrust force model

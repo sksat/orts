@@ -1,8 +1,8 @@
 //! IGRF-14 spherical harmonic magnetic field model.
 
-use kaname::epoch::Epoch;
-use kaname::frame::{self, Rotation};
-use kaname::{SimpleEcef, SimpleEci};
+use arika::epoch::Epoch;
+use arika::frame::{self, Rotation};
+use arika::{SimpleEcef, SimpleEci};
 use nalgebra::Vector3;
 
 mod coeff;

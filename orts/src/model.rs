@@ -13,10 +13,10 @@
 
 use std::ops::{Add, AddAssign};
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 #[cfg(test)]
-use kaname::frame::SimpleEci;
-use kaname::frame::{self, Body, Vec3};
+use arika::frame::SimpleEci;
+use arika::frame::{self, Body, Vec3};
 use nalgebra::Vector3;
 
 use crate::OrbitalState;

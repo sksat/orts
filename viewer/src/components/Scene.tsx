@@ -27,7 +27,7 @@ import {
   eci_to_ecef,
   sun_direction_from_body,
   sun_distance_from_body,
-} from "../wasm/kanameInit.js";
+} from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { Satellite } from "./Satellite.js";
@@ -287,7 +287,7 @@ function SecondaryBody({
     scenePos = [position.x / scaleRadius, position.y / scaleRadius, position.z / scaleRadius];
   }
 
-  // Body orientation via IAU rotation model (kaname WASM).
+  // Body orientation via IAU rotation model (arika WASM).
   // IAU quaternion is body-fixed → ECI. For non-inertial display frames
   // (ECEF, LVLH), we must apply the same frame rotation as positions get.
   const orientation = useMemo(() => {

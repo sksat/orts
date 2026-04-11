@@ -172,6 +172,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
+name = "arika"
+version = "0.0.0"
+dependencies = [
+ "nalgebra",
+ "serde",
+ "serde_json",
+ "trybuild",
+ "ureq 3.2.0",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "array-init"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2395,18 +2407,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kaname"
-version = "0.0.0"
-dependencies = [
- "nalgebra",
- "serde",
- "serde_json",
- "trybuild",
- "ureq 3.2.0",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2920,8 +2920,8 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 name = "orts"
 version = "0.0.0"
 dependencies = [
+ "arika",
  "criterion",
- "kaname",
  "log",
  "nalgebra",
  "proptest",
@@ -2942,11 +2942,11 @@ dependencies = [
 name = "orts-cli"
 version = "0.0.0"
 dependencies = [
+ "arika",
  "axum",
  "clap",
  "futures-util",
  "image",
- "kaname",
  "log",
  "nalgebra",
  "notalawyer",
@@ -5152,7 +5152,7 @@ dependencies = [
 name = "tobari"
 version = "0.0.0"
 dependencies = [
- "kaname",
+ "arika",
  "nalgebra",
  "serde",
  "serde_json",

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Scene } from "./components/Scene.js";
-import { initKaname } from "./wasm/kanameInit.js";
+import { initArika } from "./wasm/arikaInit.js";
 
-// Start loading kaname WASM module immediately.
-const kanameReady = initKaname();
+// Start loading arika WASM module immediately.
+const arikaReady = initArika();
 
 import type { TimeRange } from "uneri";
 import styles from "./App.module.css";
@@ -30,7 +30,7 @@ export function App() {
   // --- WASM initialization (must complete before rendering ECEF transforms) ---
   const [wasmReady, setWasmReady] = useState(false);
   useEffect(() => {
-    kanameReady.then(() => setWasmReady(true));
+    arikaReady.then(() => setWasmReady(true));
   }, []);
 
   // --- Reference frame ---

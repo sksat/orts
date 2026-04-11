@@ -6,9 +6,9 @@
 //!
 //! Reference: Montenbruck & Gill, "Satellite Orbits" (2000), Section 3.5.2.
 
-use kaname::epoch::Epoch;
-use kaname::frame;
-use kaname::sun;
+use arika::epoch::Epoch;
+use arika::frame;
+use arika::sun;
 use nalgebra::Vector3;
 
 use crate::AtmosphereModel;
@@ -387,8 +387,8 @@ impl AtmosphereModel for HarrisPriester {
     fn density(
         &self,
         altitude_km: f64,
-        position_eci: &kaname::SimpleEci,
-        epoch: Option<&Epoch<kaname::epoch::Utc>>,
+        position_eci: &arika::SimpleEci,
+        epoch: Option<&Epoch<arika::epoch::Utc>>,
     ) -> f64 {
         // Below HP table range: fall back to exponential model
         if altitude_km < HP_TABLE[0].h {
@@ -457,7 +457,7 @@ mod tests {
         let epoch = dummy_epoch();
 
         // Satellite at +X direction → at the apex
-        let pos = kaname::SimpleEci::new(6778.0, 0.0, 0.0);
+        let pos = arika::SimpleEci::new(6778.0, 0.0, 0.0);
 
         // At 400 km: rho_max = 7.492e-12
         let rho = hp.density(400.0, &pos, Some(&epoch));
@@ -476,7 +476,7 @@ mod tests {
         let epoch = dummy_epoch();
 
         // Satellite at -X → anti-apex
-        let pos = kaname::SimpleEci::new(-6778.0, 0.0, 0.0);
+        let pos = arika::SimpleEci::new(-6778.0, 0.0, 0.0);
 
         // At 400 km: rho_min = 2.249e-12
         let rho = hp.density(400.0, &pos, Some(&epoch));
@@ -495,8 +495,8 @@ mod tests {
 
         let altitudes = [100.0, 200.0, 300.0, 400.0, 500.0, 700.0, 1000.0];
         for i in 0..altitudes.len() - 1 {
-            let pos_lo = kaname::SimpleEci::new(6371.0 + altitudes[i], 0.0, 0.0);
-            let pos_hi = kaname::SimpleEci::new(6371.0 + altitudes[i + 1], 0.0, 0.0);
+            let pos_lo = arika::SimpleEci::new(6371.0 + altitudes[i], 0.0, 0.0);
+            let pos_hi = arika::SimpleEci::new(6371.0 + altitudes[i + 1], 0.0, 0.0);
             let rho_lo = hp.density(altitudes[i], &pos_lo, Some(&epoch));
             let rho_hi = hp.density(altitudes[i + 1], &pos_hi, Some(&epoch));
             assert!(
@@ -517,8 +517,8 @@ mod tests {
 
         for alt in [200.0, 400.0, 600.0, 800.0] {
             let r = 6371.0 + alt;
-            let pos_apex = kaname::SimpleEci::new(r, 0.0, 0.0);
-            let pos_anti = kaname::SimpleEci::new(-r, 0.0, 0.0);
+            let pos_apex = arika::SimpleEci::new(r, 0.0, 0.0);
+            let pos_anti = arika::SimpleEci::new(-r, 0.0, 0.0);
 
             let rho_apex = hp.density(alt, &pos_apex, Some(&epoch));
             let rho_anti = hp.density(alt, &pos_anti, Some(&epoch));
@@ -533,7 +533,7 @@ mod tests {
     #[test]
     fn no_epoch_returns_average() {
         let hp = hp_fixed_sun();
-        let pos = kaname::SimpleEci::new(6778.0, 0.0, 0.0);
+        let pos = arika::SimpleEci::new(6778.0, 0.0, 0.0);
 
         let rho = hp.density(400.0, &pos, None);
 
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn below_100km_falls_back_to_exponential() {
         let hp = hp_fixed_sun();
-        let pos = kaname::SimpleEci::new(6371.0 + 50.0, 0.0, 0.0);
+        let pos = arika::SimpleEci::new(6371.0 + 50.0, 0.0, 0.0);
         let epoch = dummy_epoch();
 
         let rho_hp = hp.density(50.0, &pos, Some(&epoch));
@@ -564,7 +564,7 @@ mod tests {
     #[test]
     fn above_table_returns_zero() {
         let hp = hp_fixed_sun();
-        let pos = kaname::SimpleEci::new(6371.0 + 1500.0, 0.0, 0.0);
+        let pos = arika::SimpleEci::new(6371.0 + 1500.0, 0.0, 0.0);
         let epoch = dummy_epoch();
 
         let rho = hp.density(1500.0, &pos, Some(&epoch));
@@ -575,7 +575,7 @@ mod tests {
     fn higher_exponent_sharper_bulge() {
         let epoch = dummy_epoch();
         // Satellite at 90° from apex (equator of the bulge)
-        let pos_90 = kaname::SimpleEci::new(0.0, 6778.0, 0.0);
+        let pos_90 = arika::SimpleEci::new(0.0, 6778.0, 0.0);
 
         let hp_n2 = hp_fixed_sun().with_lag_angle(0.0).with_exponent(2);
         let hp_n6 = hp_fixed_sun().with_lag_angle(0.0).with_exponent(6);
@@ -650,7 +650,7 @@ mod tests {
     fn iss_altitude_order_of_magnitude() {
         let hp = hp_fixed_sun();
         let epoch = dummy_epoch();
-        let pos = kaname::SimpleEci::new(6778.0, 0.0, 0.0);
+        let pos = arika::SimpleEci::new(6778.0, 0.0, 0.0);
 
         let rho_hp = hp.density(400.0, &pos, Some(&epoch));
         let rho_exp = crate::exponential::density(400.0);

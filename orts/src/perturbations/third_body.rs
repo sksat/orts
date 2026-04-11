@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use kaname::epoch::Epoch;
-use kaname::frame::{self, Vec3};
+use arika::epoch::Epoch;
+use arika::frame::{self, Vec3};
 use nalgebra::Vector3;
 
 use crate::OrbitalState;
@@ -42,45 +42,45 @@ impl ThirdBodyGravity {
     pub fn sun() -> Self {
         Self {
             name: "third_body_sun",
-            mu_body: kaname::sun::MU,
-            body_position_fn: Arc::new(kaname::sun::sun_position_eci),
+            mu_body: arika::sun::MU,
+            body_position_fn: Arc::new(arika::sun::sun_position_eci),
         }
     }
 
     /// Create a Moon third-body perturbation (uses Meeus analytical ephemeris).
     ///
-    /// μ_Moon is sourced from [`kaname::moon::MU`].
+    /// μ_Moon is sourced from [`arika::moon::MU`].
     pub fn moon() -> Self {
         Self {
             name: "third_body_moon",
-            mu_body: kaname::moon::MU,
-            body_position_fn: Arc::new(kaname::moon::moon_position_eci),
+            mu_body: arika::moon::MU,
+            body_position_fn: Arc::new(arika::moon::moon_position_eci),
         }
     }
 
-    /// Create a Moon third-body perturbation from any [`kaname::moon::MoonEphemeris`]
+    /// Create a Moon third-body perturbation from any [`arika::moon::MoonEphemeris`]
     /// implementation.
     ///
     /// Use this to swap in a higher-accuracy Moon ephemeris (e.g. a tabulated
     /// JPL Horizons source) while keeping the same force-model wiring.
     ///
     /// Thanks to the blanket `impl<T: MoonEphemeris + ?Sized> MoonEphemeris for
-    /// Arc<T>` in [`kaname::moon`], this constructor accepts both owned
+    /// Arc<T>` in [`arika::moon`], this constructor accepts both owned
     /// implementations (`MeeusMoonEphemeris`) *and* shared trait objects
     /// (`Arc<dyn MoonEphemeris>`), so a single ephemeris can be fanned out to
     /// the integrator's force model and to any auxiliary targeting helpers.
     ///
-    /// μ_Moon is fixed to [`kaname::moon::MU`] and is **not** derived
+    /// μ_Moon is fixed to [`arika::moon::MU`] and is **not** derived
     /// from the supplied ephemeris. If a non-standard μ is needed, use
     /// [`ThirdBodyGravity::custom`] directly.
     pub fn moon_with_ephemeris<E>(ephem: E) -> Self
     where
-        E: kaname::moon::MoonEphemeris + 'static,
+        E: arika::moon::MoonEphemeris + 'static,
     {
         let ephem = Arc::new(ephem);
         Self {
             name: "third_body_moon",
-            mu_body: kaname::moon::MU,
+            mu_body: arika::moon::MU,
             body_position_fn: Arc::new(move |epoch| ephem.position_eci(epoch)),
         }
     }
@@ -111,7 +111,7 @@ impl ThirdBodyGravity {
     /// simulation state (`OrbitalState::position`) is in the `SimpleEci`
     /// frame. At the current precision both frames are numerically identical
     /// because Meeus does not apply precession/nutation/frame-bias, so the
-    /// [`kaname::frame::Vec3::force_cast_simple_eci`] bridge below is a
+    /// [`arika::frame::Vec3::force_cast_simple_eci`] bridge below is a
     /// typed no-op that makes the "I'm treating these two frames as
     /// numerically equal at this call site" assertion explicit. The bridge
     /// must be removed in Phase 4 once the propagator adopts frame-policy
@@ -160,7 +160,7 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
+    use arika::earth::{MU as MU_EARTH, R as R_EARTH};
     use nalgebra::vector;
 
     fn iss_state() -> OrbitalState {
@@ -289,14 +289,14 @@ mod tests {
     #[test]
     fn moon_constructor_uses_mu_moon_constant() {
         // Regression guard: the Moon μ in `ThirdBodyGravity::moon()` must come
-        // from `kaname::moon::MU` so there is one authoritative
+        // from `arika::moon::MU` so there is one authoritative
         // value. If this test fails, someone reintroduced a hardcoded literal
         // and the two can drift.
         let tb = ThirdBodyGravity::moon();
-        assert_eq!(tb.mu_body, kaname::moon::MU);
+        assert_eq!(tb.mu_body, arika::moon::MU);
 
-        let tb_trait = ThirdBodyGravity::moon_with_ephemeris(kaname::moon::MeeusMoonEphemeris);
-        assert_eq!(tb_trait.mu_body, kaname::moon::MU);
+        let tb_trait = ThirdBodyGravity::moon_with_ephemeris(arika::moon::MeeusMoonEphemeris);
+        assert_eq!(tb_trait.mu_body, arika::moon::MU);
     }
 
     #[test]
@@ -306,7 +306,7 @@ mod tests {
         // `E: MoonEphemeris` and this constructor call would fail to compile.
         // apollo11/main.rs (and the upcoming artemis1 example) relies on this
         // shape to share one ephemeris between the integrator and targeters.
-        use kaname::moon::{MeeusMoonEphemeris, MoonEphemeris};
+        use arika::moon::{MeeusMoonEphemeris, MoonEphemeris};
         let shared: Arc<dyn MoonEphemeris> = Arc::new(MeeusMoonEphemeris);
         let tb = ThirdBodyGravity::moon_with_ephemeris(Arc::clone(&shared));
         let state = iss_state();
@@ -348,7 +348,7 @@ mod tests {
 
     #[test]
     fn moon_with_ephemeris_uses_supplied_ephemeris() {
-        use kaname::moon::{MeeusMoonEphemeris, MoonEphemeris};
+        use arika::moon::{MeeusMoonEphemeris, MoonEphemeris};
 
         // `::moon_with_ephemeris(MeeusMoonEphemeris)` should produce the same
         // acceleration as `::moon()` (both delegate to the Meeus analytical model).
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn moon_with_ephemeris_respects_custom_source() {
-        use kaname::moon::MoonEphemeris;
+        use arika::moon::MoonEphemeris;
 
         // Build a fake Moon ephemeris that always returns a fixed position.
         // This simulates what a tabulated (Horizons-backed) source would do.

@@ -1,4 +1,4 @@
-use kaname::frame::{self, Vec3};
+use arika::frame::{self, Vec3};
 use nalgebra::Vector3;
 
 /// A gravitational field model that computes acceleration from position.
@@ -103,7 +103,7 @@ impl GravityField for ZonalHarmonics {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
+    use arika::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
 
     #[test]
     fn point_mass_acceleration_direction() {
@@ -295,7 +295,7 @@ mod tests {
 
     // --- J3 tests ---
 
-    use kaname::earth::{J3 as J3_EARTH, J4 as J4_EARTH};
+    use arika::earth::{J3 as J3_EARTH, J4 as J4_EARTH};
 
     fn earth_j2_j3_j4() -> ZonalHarmonics {
         ZonalHarmonics {

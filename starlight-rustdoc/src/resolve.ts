@@ -47,7 +47,7 @@ export class LinkResolver {
 
   /**
    * Logical path of the page currently being generated, e.g.
-   * `"kaname/api/structs/epoch/"`. Used to compute relative URLs from stored
+   * `"arika/api/structs/epoch/"`. Used to compute relative URLs from stored
    * logical paths so that generated links navigate correctly regardless of
    * which locale the page is served under (including Starlight i18n fallback
    * routes).
@@ -80,7 +80,7 @@ export class LinkResolver {
   /**
    * Register a page path for an item ID, scoped to its crate.
    *
-   * Prefer passing a **logical path** (e.g. `"kaname/api/structs/epoch/"`)
+   * Prefer passing a **logical path** (e.g. `"arika/api/structs/epoch/"`)
    * without a leading slash, basePath, or locale segment. Such paths are
    * resolved to relative URLs at lookup time using the current page. Paths
    * that already look absolute (starting with `/` or containing `://`) are
@@ -263,13 +263,13 @@ function collectFromModule(
 /**
  * Compute a relative URL from a source logical page path to a target logical
  * page path. Both inputs are "logical" paths without leading slash, basePath,
- * or locale prefix (e.g. `"kaname/api/structs/epoch/"`). Trailing slashes on
+ * or locale prefix (e.g. `"arika/api/structs/epoch/"`). Trailing slashes on
  * inputs are preserved in the output.
  *
  * Examples:
- * - from `kaname/api/overview/` to `kaname/api/structs/epoch/`
+ * - from `arika/api/overview/` to `arika/api/structs/epoch/`
  *   → `../structs/epoch/`
- * - from `kaname/api/structs/eci/` to `tobari/api/structs/nrlmsise00/`
+ * - from `arika/api/structs/eci/` to `tobari/api/structs/nrlmsise00/`
  *   → `../../../tobari/api/structs/nrlmsise00/`
  *
  * When the source path is empty (no current page set), falls back to a

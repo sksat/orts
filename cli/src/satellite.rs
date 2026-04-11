@@ -1,4 +1,4 @@
-use kaname::body::KnownBody;
+use arika::body::KnownBody;
 use orts::OrbitalState;
 use orts::record::entity_path::EntityPath;
 use orts::{orbital::kepler::KeplerianElements, tle::Tle};

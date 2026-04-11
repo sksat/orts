@@ -4,7 +4,7 @@
 //! components with internal state (e.g., reaction wheels) that are
 //! integrated alongside the attitude state.
 
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3};
 use utsuroi::DynamicalSystem;
 

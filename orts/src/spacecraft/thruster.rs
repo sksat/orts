@@ -1,4 +1,4 @@
-use kaname::epoch::Epoch;
+use arika::epoch::Epoch;
 use nalgebra::Vector3;
 
 use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
@@ -172,7 +172,7 @@ impl Thruster {
 
         // Acceleration: body → inertial [km/s²]
         // F [N] / mass [kg] = [m/s²], / 1000 = [km/s²]
-        let a_body = kaname::frame::Vec3::from_raw(f_body_n / state.mass / 1000.0);
+        let a_body = arika::frame::Vec3::from_raw(f_body_n / state.mass / 1000.0);
         let a_inertial = state.attitude.rotation_to_eci().transform(&a_body);
 
         // Mass flow rate [kg/s]
@@ -180,7 +180,7 @@ impl Thruster {
 
         ExternalLoads {
             acceleration_inertial: a_inertial,
-            torque_body: kaname::frame::Vec3::from_raw(torque_body),
+            torque_body: arika::frame::Vec3::from_raw(torque_body),
             mass_rate,
         }
     }
@@ -409,8 +409,8 @@ mod tests {
             windows: vec![BurnWindow::full(100.0, 200.0)],
         }));
         let loads = t.loads(0.0, &sample_state(), None);
-        assert_eq!(loads.acceleration_inertial, kaname::frame::Vec3::zeros());
-        assert_eq!(loads.torque_body, kaname::frame::Vec3::zeros());
+        assert_eq!(loads.acceleration_inertial, arika::frame::Vec3::zeros());
+        assert_eq!(loads.torque_body, arika::frame::Vec3::zeros());
         assert_eq!(loads.mass_rate, 0.0);
     }
 
@@ -420,7 +420,7 @@ mod tests {
         let t = Thruster::new(1.0, 300.0, Vector3::x()).with_dry_mass(100.0);
         let loads = t.loads(0.0, &state_with_mass(100.0), None);
         assert_eq!(loads.mass_rate, 0.0);
-        assert_eq!(loads.acceleration_inertial, kaname::frame::Vec3::zeros());
+        assert_eq!(loads.acceleration_inertial, arika::frame::Vec3::zeros());
     }
 
     #[test]
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn dynamics_uses_mass_rate() {
         use crate::orbital::gravity::PointMass;
-        use kaname::earth::MU as MU_EARTH;
+        use arika::earth::MU as MU_EARTH;
         use nalgebra::Matrix3;
         use utsuroi::DynamicalSystem;
 

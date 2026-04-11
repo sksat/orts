@@ -2,7 +2,7 @@
  * RRD WASM module loader.
  *
  * Lazily loads the rrd-wasm WASM module and exposes a typed parse function.
- * Follows the same pattern as kanameInit.ts.
+ * Follows the same pattern as arikaInit.ts.
  */
 
 export interface RrdMetadata {
