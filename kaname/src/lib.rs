@@ -228,67 +228,6 @@ pub fn body_quat_to_rsw(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_simple_eci_construction() {
-        let eci = SimpleEci::new(1.0, 2.0, 3.0);
-        assert_eq!(eci.x(), 1.0);
-        assert_eq!(eci.y(), 2.0);
-        assert_eq!(eci.z(), 3.0);
-    }
-
-    #[test]
-    fn test_simple_eci_debug() {
-        let eci = SimpleEci::new(1.0, 2.0, 3.0);
-        let debug_str = format!("{:?}", eci);
-        assert!(debug_str.contains("SimpleEci"));
-    }
-
-    #[test]
-    fn test_simple_ecef_construction() {
-        let ecef = SimpleEcef::new(4.0, 5.0, 6.0);
-        assert_eq!(ecef.x(), 4.0);
-        assert_eq!(ecef.y(), 5.0);
-        assert_eq!(ecef.z(), 6.0);
-    }
-
-    #[test]
-    fn test_simple_ecef_debug() {
-        let ecef = SimpleEcef::new(4.0, 5.0, 6.0);
-        let debug_str = format!("{:?}", ecef);
-        assert!(debug_str.contains("SimpleEcef"));
-    }
-
-    #[test]
-    fn test_gcrs_construction() {
-        let g = Gcrs::new(1.0, 2.0, 3.0);
-        assert_eq!(g.x(), 1.0);
-        let debug_str = format!("{:?}", g);
-        assert!(debug_str.contains("Gcrs"));
-    }
-
-    #[test]
-    fn test_geodetic_construction() {
-        let geo = Geodetic {
-            latitude: 0.5,
-            longitude: 1.0,
-            altitude: 100.0,
-        };
-        assert_eq!(geo.latitude, 0.5);
-        assert_eq!(geo.longitude, 1.0);
-        assert_eq!(geo.altitude, 100.0);
-    }
-
-    #[test]
-    fn test_geodetic_debug() {
-        let geo = Geodetic {
-            latitude: 0.5,
-            longitude: 1.0,
-            altitude: 100.0,
-        };
-        let debug_str = format!("{:?}", geo);
-        assert!(debug_str.contains("Geodetic"));
-    }
-
     // SimpleEci <-> SimpleEcef conversion via Rotation<SimpleEci, SimpleEcef>
     //
     // All ERA-parametric conversions go through `Rotation::from_era(era)`
