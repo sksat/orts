@@ -38,7 +38,7 @@
     "react-dom": ">=18.0.0"
   },
   "dependencies": {
-    "@duckdb/duckdb-wasm": "1.33.1-dev20.0",
+    "@duckdb/duckdb-wasm": "1.32.0",
     "uplot": "^1.6.32"
   },
   "devDependencies": {

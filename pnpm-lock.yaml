@@ -108,8 +108,8 @@ importers:
   uneri:
     dependencies:
       '@duckdb/duckdb-wasm':
-        specifier: 1.33.1-dev20.0
-        version: 1.33.1-dev20.0
+        specifier: 1.32.0
+        version: 1.32.0
       uplot:
         specifier: ^1.6.32
         version: 1.6.32
@@ -419,6 +419,9 @@ packages:
 
   '@dimforge/rapier3d-compat@0.12.0':
     resolution: {integrity: sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow==, tarball: https://registry.npmjs.org/@dimforge/rapier3d-compat/-/rapier3d-compat-0.12.0.tgz}
+
+  '@duckdb/duckdb-wasm@1.32.0':
+    resolution: {integrity: sha512-IewXTNYEjsZCPE9weUWgtjGxUlMRo7qhX0GF6tq/KjK8bnY+RAl4cyUdYUfcdzbyb4b9ZxPC+FOsCcxgaKFWMg==, tarball: https://registry.npmjs.org/@duckdb/duckdb-wasm/-/duckdb-wasm-1.32.0.tgz}
 
   '@duckdb/duckdb-wasm@1.33.1-dev20.0':
     resolution: {integrity: sha512-ual3d/WDZnyZHNZ3tGdFvTZY22IDdg63Bh0icSBA6JPOy1u89rNfVH/3wQhtoJPv3Xn7eWVJ/4gpT3wprrisoA==, tarball: https://registry.npmjs.org/@duckdb/duckdb-wasm/-/duckdb-wasm-1.33.1-dev20.0.tgz}
@@ -3793,6 +3796,10 @@ snapshots:
   '@ctrl/tinycolor@4.2.0': {}
 
   '@dimforge/rapier3d-compat@0.12.0': {}
+
+  '@duckdb/duckdb-wasm@1.32.0':
+    dependencies:
+      apache-arrow: 17.0.0
 
   '@duckdb/duckdb-wasm@1.33.1-dev20.0':
     dependencies:
