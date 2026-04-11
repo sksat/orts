@@ -10,6 +10,8 @@
 //!   ([`Ut1Offset`](eop::Ut1Offset), [`PolarMotion`](eop::PolarMotion),
 //!   [`NutationCorrections`](eop::NutationCorrections),
 //!   [`LengthOfDay`](eop::LengthOfDay)) and [`NullEop`](eop::NullEop) placeholder
+//! - [`iau2006`] — IAU 2006 / 2000A_R06 precession-nutation supporting math
+//!   (angular units, fundamental arguments, precession polynomials; Phase 3A-1)
 //!
 //! Phase 3 will add `Rotation<Gcrs, Cirs>::iau2006` / `Rotation<Cirs, Tirs>::from_era`
 //! / `Rotation<Tirs, Itrs>::polar_motion` constructors that consume these EOP
@@ -18,6 +20,7 @@
 pub mod ellipsoid;
 pub mod eop;
 pub mod geodetic;
+pub mod iau2006;
 pub mod rotation;
 
 pub use ellipsoid::{WGS84_A, WGS84_B, WGS84_E2, WGS84_F};
