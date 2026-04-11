@@ -92,6 +92,28 @@ def precession_fukushima_williams(t: float) -> dict[str, float]:
     }
 
 
+def cip_xys(t: float) -> dict[str, float]:
+    """IAU 2006/2000A_R06 CIP coordinates `X`, `Y` and CIO locator `s`.
+
+    - `X`, `Y` are returned by `erfa.xy06(date1, date2)` in radians, and
+      are computed from Tables 5.2a / 5.2b of IERS Conventions 2010 TN36
+    - `s` is returned by `erfa.s06(date1, date2, x, y)` in radians, and
+      is computed from Table 5.2d plus an `−X·Y/2` subtraction
+
+    All three quantities take a two-part TT Julian Date, decomposed as
+    `(J2000, t × 36525)` to minimise f64 cancellation.
+    """
+    J2000_JD = 2451545.0
+    offset_days = t * 36525.0
+    x, y = erfa.xy06(J2000_JD, offset_days)
+    s = erfa.s06(J2000_JD, offset_days, x, y)
+    return {
+        "x": float(x),
+        "y": float(y),
+        "s": float(s),
+    }
+
+
 def main() -> None:
     samples = []
     for t in SAMPLES:
@@ -100,6 +122,7 @@ def main() -> None:
                 "t_tt_centuries_from_j2000": t,
                 "fundamental_arguments": fundamental_arguments(t),
                 "precession_fukushima_williams": precession_fukushima_williams(t),
+                "cip_xys": cip_xys(t),
             }
         )
 
@@ -118,6 +141,7 @@ def main() -> None:
         "units": {
             "fundamental_arguments": "rad (each value is fmod'd modulo 2*pi)",
             "precession_fukushima_williams": "rad",
+            "cip_xys": "rad",
         },
         "samples": samples,
     }

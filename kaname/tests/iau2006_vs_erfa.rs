@@ -28,11 +28,14 @@
 //!
 //! The pure Rust and ERFA implementations differ only by floating-point
 //! rounding order in Horner evaluation, so agreement is expected at the
-//! ~10⁻¹² rad (≈ 0.2 µas) level for fundamental arguments and the
-//! ~10⁻¹³ rad level for precession polynomials. The test pins generous
-//! tolerances (10⁻¹¹ / 10⁻¹²) to absorb cross-compiler jitter while
-//! still catching any real transcription mistake.
+//! ~10⁻¹² rad (≈ 0.2 µas) level for fundamental arguments / precession
+//! polynomials, and ~10⁻¹² rad for the CIP X, Y and CIO locator s
+//! series (which evaluate thousands of trigonometric terms before
+//! converting from microarcseconds to radians). The test pins generous
+//! tolerances (10⁻¹¹ / 10⁻¹² / 10⁻¹¹) to absorb cross-compiler jitter
+//! while still catching any real transcription mistake.
 
+use kaname::earth::iau2006::cip::{cio_locator_s, cip_xy};
 use kaname::earth::iau2006::fundamental_arguments::FundamentalArguments;
 use kaname::earth::iau2006::precession::{ecliptic_precession_angles, fukushima_williams};
 use serde_json::Value;
@@ -47,6 +50,10 @@ const FA_TOLERANCE_RAD: f64 = 1e-11;
 /// Maximum allowed absolute difference (rad) for Fukushima-Williams
 /// precession angles.
 const PFW_TOLERANCE_RAD: f64 = 1e-12;
+
+/// Maximum allowed absolute difference (rad) for CIP `X`, `Y` and CIO
+/// locator `s` — see the series-total comment above.
+const CIP_TOLERANCE_RAD: f64 = 1e-11;
 
 fn load_fixture() -> Value {
     serde_json::from_str(FIXTURE_JSON).expect("iau2006_erfa_reference.json must be valid JSON")
@@ -164,6 +171,45 @@ fn fukushima_williams_angles_match_erfa() {
     assert_eq!(
         failures, 0,
         "{failures} Fukushima-Williams mismatches exceeded {PFW_TOLERANCE_RAD:e} rad tolerance"
+    );
+}
+
+#[test]
+fn cip_xys_match_erfa() {
+    let fixture = load_fixture();
+    let samples = fixture["samples"]
+        .as_array()
+        .expect("fixture must have a `samples` array");
+
+    let mut failures = 0usize;
+
+    for sample in samples {
+        let t = field_f64(sample, "t_tt_centuries_from_j2000");
+        let xys_expected = &sample["cip_xys"];
+
+        let (x, y) = cip_xy(t);
+        let s = cio_locator_s(t, x, y);
+
+        let expectations: [(&str, f64, f64); 3] = [
+            ("x", x.raw(), field_f64(xys_expected, "x")),
+            ("y", y.raw(), field_f64(xys_expected, "y")),
+            ("s", s.raw(), field_f64(xys_expected, "s")),
+        ];
+
+        for (name, actual, expected) in expectations {
+            let delta = (actual - expected).abs();
+            if !delta.is_finite() || delta > CIP_TOLERANCE_RAD {
+                eprintln!(
+                    "FAIL t={t:+.3} cip.{name}: actual={actual:+.17e} expected={expected:+.17e} Δ={delta:.3e} rad"
+                );
+                failures += 1;
+            }
+        }
+    }
+
+    assert_eq!(
+        failures, 0,
+        "{failures} CIP X/Y/s mismatches exceeded {CIP_TOLERANCE_RAD:e} rad tolerance"
     );
 }
 

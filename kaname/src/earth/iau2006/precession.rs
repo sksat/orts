@@ -68,7 +68,10 @@ pub const EPSILON_0: Arcsec = Arcsec::new(84_381.406);
 ///
 /// Returned by [`fukushima_williams`]. Field order matches ERFA's
 /// `pfw06(date1, date2) -> (gamb, phib, psib, epsa)` for easy cross-check.
-#[derive(Debug, Clone, Copy)]
+///
+/// Only `Debug` is derived — consumers destructure or access fields
+/// individually through the (`Copy`) [`Rad`] type.
+#[derive(Debug)]
 pub struct FukushimaWilliamsAngles {
     /// `γ̄` — GCRS right ascension of the intersection of the ecliptic
     /// of date with the GCRS equator. TN36 Eq. (5.40) `γ̄`.
@@ -100,7 +103,9 @@ pub fn fukushima_williams(t: f64) -> FukushimaWilliamsAngles {
 
 /// The classical Lieske-style precession angles at a given `t`, all as
 /// [`Rad`]. Returned by [`ecliptic_precession_angles`].
-#[derive(Debug, Clone, Copy)]
+///
+/// Only `Debug` is derived (see [`FukushimaWilliamsAngles`]).
+#[derive(Debug)]
 pub struct EclipticPrecessionAngles {
     /// `ψ_A` — precession of the ecliptic in longitude. TN36 Eq. (5.39).
     pub psi_a: Rad,

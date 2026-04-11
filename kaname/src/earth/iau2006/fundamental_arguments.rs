@@ -53,7 +53,10 @@ use super::{DAS2R, Rad, TURNAS};
 /// longitudes + general precession). Values are reduced with SOFA's `fmod`
 /// convention — they may be negative for negative `t` since `fmod`
 /// preserves the sign of the dividend.
-#[derive(Debug, Clone, Copy)]
+///
+/// Only `Debug` is derived. The struct is always consumed by reference
+/// (e.g. [`super::cip::cip_xy`]) so `Clone`/`Copy` would be unused.
+#[derive(Debug)]
 pub struct FundamentalArguments {
     /// F1 = `l`, mean anomaly of the Moon (Delaunay).
     pub l: Rad,
