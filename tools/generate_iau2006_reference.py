@@ -23,6 +23,7 @@ The generator is stable — running it twice produces identical output.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import erfa
@@ -129,7 +130,14 @@ def main() -> None:
         / "iau2006_erfa_reference.json"
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(fixture, indent=2) + "\n")
+
+    # Emit JSON with Biome-compatible numeric formatting: the project-wide
+    # `biome format` rule strips leading zeros from float exponents
+    # (`e-05` → `e-5`), but Python's `json.dumps` uses `repr(float)`
+    # which zero-pads. Normalise here so `pnpm biome check` stays clean.
+    raw = json.dumps(fixture, indent=2)
+    normalised = re.sub(r"(e[+-])0(\d)", r"\1\2", raw)
+    out_path.write_text(normalised + "\n")
     print(f"Wrote {len(samples)} samples to {out_path}")
 
 
