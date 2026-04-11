@@ -160,8 +160,8 @@ importers:
   viewer:
     dependencies:
       '@duckdb/duckdb-wasm':
-        specifier: 1.33.1-dev20.0
-        version: 1.33.1-dev20.0
+        specifier: 1.32.0
+        version: 1.32.0
       '@react-three/drei':
         specifier: ^10.7.7
         version: 10.7.7(@react-three/fiber@9.5.0(@types/react@19.2.13)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(three@0.183.2))(@types/react@19.2.13)(@types/three@0.183.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(three@0.183.2)
@@ -422,9 +422,6 @@ packages:
 
   '@duckdb/duckdb-wasm@1.32.0':
     resolution: {integrity: sha512-IewXTNYEjsZCPE9weUWgtjGxUlMRo7qhX0GF6tq/KjK8bnY+RAl4cyUdYUfcdzbyb4b9ZxPC+FOsCcxgaKFWMg==, tarball: https://registry.npmjs.org/@duckdb/duckdb-wasm/-/duckdb-wasm-1.32.0.tgz}
-
-  '@duckdb/duckdb-wasm@1.33.1-dev20.0':
-    resolution: {integrity: sha512-ual3d/WDZnyZHNZ3tGdFvTZY22IDdg63Bh0icSBA6JPOy1u89rNfVH/3wQhtoJPv3Xn7eWVJ/4gpT3wprrisoA==, tarball: https://registry.npmjs.org/@duckdb/duckdb-wasm/-/duckdb-wasm-1.33.1-dev20.0.tgz}
 
   '@emnapi/core@1.9.0':
     resolution: {integrity: sha512-0DQ98G9ZQZOxfUcQn1waV2yS8aWdZ6kJMbYCJB3oUBecjWYO1fqJ+a1DRfPF3O5JEkwqwP1A9QEN/9mYm2Yd0w==, tarball: https://registry.npmjs.org/@emnapi/core/-/core-1.9.0.tgz}
@@ -1540,14 +1537,6 @@ packages:
   buffer@6.0.3:
     resolution: {integrity: sha512-FTiCpNxtwiZZHEZbcbTIcZjERVICn9yq/pDFkTl95/AxzD1naBctN7YO68riM/gLSDY7sdrMby8hofADYuuqOA==, tarball: https://registry.npmjs.org/buffer/-/buffer-6.0.3.tgz}
 
-  call-bind-apply-helpers@1.0.2:
-    resolution: {integrity: sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==, tarball: https://registry.npmjs.org/call-bind-apply-helpers/-/call-bind-apply-helpers-1.0.2.tgz}
-    engines: {node: '>= 0.4'}
-
-  call-bound@1.0.4:
-    resolution: {integrity: sha512-+ys997U96po4Kx/ABpBCqhA9EuxJaQWDQg7295H4hBphv3IZg0boBKuwYpt4YXp6MZ5AmZQnU/tyMTlRpaSejg==, tarball: https://registry.npmjs.org/call-bound/-/call-bound-1.0.4.tgz}
-    engines: {node: '>= 0.4'}
-
   camera-controls@3.1.2:
     resolution: {integrity: sha512-xkxfpG2ECZ6Ww5/9+kf4mfg1VEYAoe9aDSY+IwF0UEs7qEzwy0aVRfs2grImIECs/PoBtWFrh7RXsQkwG922JA==, tarball: https://registry.npmjs.org/camera-controls/-/camera-controls-3.1.2.tgz}
     engines: {node: '>=22.0.0', npm: '>=10.5.1'}
@@ -1758,10 +1747,6 @@ packages:
     resolution: {integrity: sha512-2QF/g9/zTaPDc3BjNcVTGoBbXBgYfMTTceLaYcFJ/W9kggFUkhxD/hMEeuLKbugyef9SqAx8cpgwlIP/jinUTA==, tarball: https://registry.npmjs.org/dset/-/dset-3.1.4.tgz}
     engines: {node: '>=4'}
 
-  dunder-proto@1.0.1:
-    resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==, tarball: https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz}
-    engines: {node: '>= 0.4'}
-
   electron-to-chromium@1.5.321:
     resolution: {integrity: sha512-L2C7Q279W2D/J4PLZLk7sebOILDSWos7bMsMNN06rK482umHUrh/3lM8G7IlHFOYip2oAg5nha1rCMxr/rs6ZQ==, tarball: https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.321.tgz}
 
@@ -1777,23 +1762,11 @@ packages:
     resolution: {integrity: sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA==, tarball: https://registry.npmjs.org/entities/-/entities-7.0.1.tgz}
     engines: {node: '>=0.12'}
 
-  es-define-property@1.0.1:
-    resolution: {integrity: sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==, tarball: https://registry.npmjs.org/es-define-property/-/es-define-property-1.0.1.tgz}
-    engines: {node: '>= 0.4'}
-
-  es-errors@1.3.0:
-    resolution: {integrity: sha512-Zf5H2Kxt2xjTvbJvP2ZWLEICxA6j+hAmMzIlypy4xcBg1vKVnx89Wy0GbS+kf5cwCVFFzdCFh2XSCFNULS6csw==, tarball: https://registry.npmjs.org/es-errors/-/es-errors-1.3.0.tgz}
-    engines: {node: '>= 0.4'}
-
   es-module-lexer@1.7.0:
     resolution: {integrity: sha512-jEQoCwk8hyb2AZziIOLhDqpm5+2ww5uIE6lkO/6jcOCusfk6LhMHpXXfBLXTZ7Ydyt0j4VoUQv6uGNYbdW+kBA==, tarball: https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-1.7.0.tgz}
 
   es-module-lexer@2.0.0:
     resolution: {integrity: sha512-5POEcUuZybH7IdmGsD8wlf0AI55wMecM9rVBTI/qEAy2c1kTOm3DjFYjrBdI2K3BaJjJYfYFeRtM0t9ssnRuxw==, tarball: https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-2.0.0.tgz}
-
-  es-object-atoms@1.1.1:
-    resolution: {integrity: sha512-FGgH2h8zKNim9ljj7dankFPcICIK9Cp5bm+c2gQSYePhpaG5+esrLODihIorn+Pe6FGJzWhXQotPv73jTaldXA==, tarball: https://registry.npmjs.org/es-object-atoms/-/es-object-atoms-1.1.1.tgz}
-    engines: {node: '>= 0.4'}
 
   esast-util-from-estree@2.0.0:
     resolution: {integrity: sha512-4CyanoAudUSBAn5K13H4JhsMH6L9ZP7XbLVe/dKybkxMO7eDyLsT8UHl9TRNrU2Gr9nz+FovfSIjuXWJ81uVwQ==, tarball: https://registry.npmjs.org/esast-util-from-estree/-/esast-util-from-estree-2.0.0.tgz}
@@ -1911,14 +1884,6 @@ packages:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==, tarball: https://registry.npmjs.org/gensync/-/gensync-1.0.0-beta.2.tgz}
     engines: {node: '>=6.9.0'}
 
-  get-intrinsic@1.3.0:
-    resolution: {integrity: sha512-9fSjSaos/fRIVIp+xSJlE6lfwhES7LNtKaCBIamHsjr2na1BiABJPo0mOjjz8GJDURarmCPGqaiVg5mfjb98CQ==, tarball: https://registry.npmjs.org/get-intrinsic/-/get-intrinsic-1.3.0.tgz}
-    engines: {node: '>= 0.4'}
-
-  get-proto@1.0.1:
-    resolution: {integrity: sha512-sTSfBjoXBp89JvIKIefqw7U2CCebsc74kiY6awiGogKtoSGbgjYE/G/+l9sF3MWFPNc9IcoOC4ODfKHfxFmp0g==, tarball: https://registry.npmjs.org/get-proto/-/get-proto-1.0.1.tgz}
-    engines: {node: '>= 0.4'}
-
   get-tsconfig@4.13.6:
     resolution: {integrity: sha512-shZT/QMiSHc/YBLxxOkMtgSid5HFoauqCE3/exfsEcwg1WkeqjG+V40yBbBrsD+jW2HDXcs28xOfcbm2jI8Ddw==, tarball: https://registry.npmjs.org/get-tsconfig/-/get-tsconfig-4.13.6.tgz}
 
@@ -1927,10 +1892,6 @@ packages:
 
   glsl-noise@0.0.0:
     resolution: {integrity: sha512-b/ZCF6amfAUb7dJM/MxRs7AetQEahYzJ8PtgfrmEdtw6uyGOr+ZSGtgjFm6mfsBkxJ4d2W7kg+Nlqzqvn3Bc0w==, tarball: https://registry.npmjs.org/glsl-noise/-/glsl-noise-0.0.0.tgz}
-
-  gopd@1.2.0:
-    resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==, tarball: https://registry.npmjs.org/gopd/-/gopd-1.2.0.tgz}
-    engines: {node: '>= 0.4'}
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==, tarball: https://registry.npmjs.org/graceful-fs/-/graceful-fs-4.2.11.tgz}
@@ -1945,10 +1906,6 @@ packages:
   has-flag@4.0.0:
     resolution: {integrity: sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ==, tarball: https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz}
     engines: {node: '>=8'}
-
-  has-symbols@1.1.0:
-    resolution: {integrity: sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==, tarball: https://registry.npmjs.org/has-symbols/-/has-symbols-1.1.0.tgz}
-    engines: {node: '>= 0.4'}
 
   hasown@2.0.2:
     resolution: {integrity: sha512-0hJU9SCPvmMzIBdZFqNPXWa6dqh7WdH0cII9y+CyS8rG3nL48Bclra9HmKhVVUHyPWNH5Y7xDwAB7bfgSjkUMQ==, tarball: https://registry.npmjs.org/hasown/-/hasown-2.0.2.tgz}
@@ -2260,10 +2217,6 @@ packages:
   markdown-table@3.0.4:
     resolution: {integrity: sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==, tarball: https://registry.npmjs.org/markdown-table/-/markdown-table-3.0.4.tgz}
 
-  math-intrinsics@1.1.0:
-    resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==, tarball: https://registry.npmjs.org/math-intrinsics/-/math-intrinsics-1.1.0.tgz}
-    engines: {node: '>= 0.4'}
-
   mdast-util-definitions@6.0.0:
     resolution: {integrity: sha512-scTllyX6pnYNZH/AIp/0ePz6s4cZtARxImwoPJ7kS42n+MnVsI4XbnG6d4ibehRIldYMWM2LD7ImQblVhUejVQ==, tarball: https://registry.npmjs.org/mdast-util-definitions/-/mdast-util-definitions-6.0.0.tgz}
 
@@ -2495,10 +2448,6 @@ packages:
   nth-check@2.1.1:
     resolution: {integrity: sha512-lqjrjmaOoAnWfMmBPL+XNnynZh2+swxiX3WUE0s4yEHI6m+AwrK2UZOimIRl3X/4QctVqS8AiZjFqyOGrMXb/w==, tarball: https://registry.npmjs.org/nth-check/-/nth-check-2.1.1.tgz}
 
-  object-inspect@1.13.4:
-    resolution: {integrity: sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==, tarball: https://registry.npmjs.org/object-inspect/-/object-inspect-1.13.4.tgz}
-    engines: {node: '>= 0.4'}
-
   obug@2.1.1:
     resolution: {integrity: sha512-uTqF9MuPraAQ+IsnPf366RG4cP9RtUi7MLO1N3KEc+wb0a6yKpeL0lmk2IB1jY5KHPAlTc6T/JRdC/YqxHNwkQ==, tarball: https://registry.npmjs.org/obug/-/obug-2.1.1.tgz}
 
@@ -2623,10 +2572,6 @@ packages:
   punycode@2.3.1:
     resolution: {integrity: sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==, tarball: https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz}
     engines: {node: '>=6'}
-
-  qs@6.14.1:
-    resolution: {integrity: sha512-4EK3+xJl8Ts67nLYNwqw/dsFVnCf+qR7RgXSK9jEEm9unao3njwMDdmsdvoKBKHzxd7tCYz5e5M+SnMjdtXGQQ==, tarball: https://registry.npmjs.org/qs/-/qs-6.14.1.tgz}
-    engines: {node: '>=0.6'}
 
   quansync@0.2.11:
     resolution: {integrity: sha512-AifT7QEbW9Nri4tAwR5M/uzpBuqfZf+zwaEM/QkzEjj7NBuFD2rBuy0K3dE+8wltbezDV7JMA0WfnCPYRSYbXA==, tarball: https://registry.npmjs.org/quansync/-/quansync-0.2.11.tgz}
@@ -2805,22 +2750,6 @@ packages:
   shiki@4.0.2:
     resolution: {integrity: sha512-eAVKTMedR5ckPo4xne/PjYQYrU3qx78gtJZ+sHlXEg5IHhhoQhMfZVzetTYuaJS0L2Ef3AcCRzCHV8T0WI6nIQ==, tarball: https://registry.npmjs.org/shiki/-/shiki-4.0.2.tgz}
     engines: {node: '>=20'}
-
-  side-channel-list@1.0.0:
-    resolution: {integrity: sha512-FCLHtRD/gnpCiCHEiJLOwdmFP+wzCmDEkc9y7NsYxeF4u7Btsn1ZuwgwJGxImImHicJArLP4R0yX4c2KCrMrTA==, tarball: https://registry.npmjs.org/side-channel-list/-/side-channel-list-1.0.0.tgz}
-    engines: {node: '>= 0.4'}
-
-  side-channel-map@1.0.1:
-    resolution: {integrity: sha512-VCjCNfgMsby3tTdo02nbjtM/ewra6jPHmpThenkTYh8pG9ucZ/1P8So4u4FGBek/BjpOVsDCMoLA/iuBKIFXRA==, tarball: https://registry.npmjs.org/side-channel-map/-/side-channel-map-1.0.1.tgz}
-    engines: {node: '>= 0.4'}
-
-  side-channel-weakmap@1.0.2:
-    resolution: {integrity: sha512-WPS/HvHQTYnHisLo9McqBHOJk2FkHO/tlpvldyrnem4aeQp4hai3gythswg6p01oSoTl58rcpiFAjF2br2Ak2A==, tarball: https://registry.npmjs.org/side-channel-weakmap/-/side-channel-weakmap-1.0.2.tgz}
-    engines: {node: '>= 0.4'}
-
-  side-channel@1.1.0:
-    resolution: {integrity: sha512-ZX99e6tRweoUXqR+VBrslhda51Nh5MTQwou5tnUDgbtyM0dBgmhEDtWGP/xbKn6hqfPRHujUNwz5fy/wbbhnpw==, tarball: https://registry.npmjs.org/side-channel/-/side-channel-1.1.0.tgz}
-    engines: {node: '>= 0.4'}
 
   siginfo@2.0.0:
     resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==, tarball: https://registry.npmjs.org/siginfo/-/siginfo-2.0.0.tgz}
@@ -3800,11 +3729,6 @@ snapshots:
   '@duckdb/duckdb-wasm@1.32.0':
     dependencies:
       apache-arrow: 17.0.0
-
-  '@duckdb/duckdb-wasm@1.33.1-dev20.0':
-    dependencies:
-      apache-arrow: 17.0.0
-      qs: 6.14.1
 
   '@emnapi/core@1.9.0':
     dependencies:
@@ -5034,16 +4958,6 @@ snapshots:
       base64-js: 1.5.1
       ieee754: 1.2.1
 
-  call-bind-apply-helpers@1.0.2:
-    dependencies:
-      es-errors: 1.3.0
-      function-bind: 1.1.2
-
-  call-bound@1.0.4:
-    dependencies:
-      call-bind-apply-helpers: 1.0.2
-      get-intrinsic: 1.3.0
-
   camera-controls@3.1.2(three@0.183.2):
     dependencies:
       three: 0.183.2
@@ -5221,12 +5135,6 @@ snapshots:
 
   dset@3.1.4: {}
 
-  dunder-proto@1.0.1:
-    dependencies:
-      call-bind-apply-helpers: 1.0.2
-      es-errors: 1.3.0
-      gopd: 1.2.0
-
   electron-to-chromium@1.5.321: {}
 
   entities@4.5.0: {}
@@ -5235,17 +5143,9 @@ snapshots:
 
   entities@7.0.1: {}
 
-  es-define-property@1.0.1: {}
-
-  es-errors@1.3.0: {}
-
   es-module-lexer@1.7.0: {}
 
   es-module-lexer@2.0.0: {}
-
-  es-object-atoms@1.1.1:
-    dependencies:
-      es-errors: 1.3.0
 
   esast-util-from-estree@2.0.0:
     dependencies:
@@ -5386,24 +5286,6 @@ snapshots:
 
   gensync@1.0.0-beta.2: {}
 
-  get-intrinsic@1.3.0:
-    dependencies:
-      call-bind-apply-helpers: 1.0.2
-      es-define-property: 1.0.1
-      es-errors: 1.3.0
-      es-object-atoms: 1.1.1
-      function-bind: 1.1.2
-      get-proto: 1.0.1
-      gopd: 1.2.0
-      has-symbols: 1.1.0
-      hasown: 2.0.2
-      math-intrinsics: 1.1.0
-
-  get-proto@1.0.1:
-    dependencies:
-      dunder-proto: 1.0.1
-      es-object-atoms: 1.1.1
-
   get-tsconfig@4.13.6:
     dependencies:
       resolve-pkg-maps: 1.0.0
@@ -5411,8 +5293,6 @@ snapshots:
   github-slugger@2.0.0: {}
 
   glsl-noise@0.0.0: {}
-
-  gopd@1.2.0: {}
 
   graceful-fs@4.2.11: {}
 
@@ -5441,8 +5321,6 @@ snapshots:
       - utf-8-validate
 
   has-flag@4.0.0: {}
-
-  has-symbols@1.1.0: {}
 
   hasown@2.0.2:
     dependencies:
@@ -5835,8 +5713,6 @@ snapshots:
       uc.micro: 2.1.0
 
   markdown-table@3.0.4: {}
-
-  math-intrinsics@1.1.0: {}
 
   mdast-util-definitions@6.0.0:
     dependencies:
@@ -6350,8 +6226,6 @@ snapshots:
     dependencies:
       boolbase: 1.0.0
 
-  object-inspect@1.13.4: {}
-
   obug@2.1.1: {}
 
   ofetch@1.5.1:
@@ -6483,10 +6357,6 @@ snapshots:
   punycode.js@2.3.1: {}
 
   punycode@2.3.1: {}
-
-  qs@6.14.1:
-    dependencies:
-      side-channel: 1.1.0
 
   quansync@0.2.11: {}
 
@@ -6819,34 +6689,6 @@ snapshots:
       '@shikijs/types': 4.0.2
       '@shikijs/vscode-textmate': 10.0.2
       '@types/hast': 3.0.4
-
-  side-channel-list@1.0.0:
-    dependencies:
-      es-errors: 1.3.0
-      object-inspect: 1.13.4
-
-  side-channel-map@1.0.1:
-    dependencies:
-      call-bound: 1.0.4
-      es-errors: 1.3.0
-      get-intrinsic: 1.3.0
-      object-inspect: 1.13.4
-
-  side-channel-weakmap@1.0.2:
-    dependencies:
-      call-bound: 1.0.4
-      es-errors: 1.3.0
-      get-intrinsic: 1.3.0
-      object-inspect: 1.13.4
-      side-channel-map: 1.0.1
-
-  side-channel@1.1.0:
-    dependencies:
-      es-errors: 1.3.0
-      object-inspect: 1.13.4
-      side-channel-list: 1.0.0
-      side-channel-map: 1.0.1
-      side-channel-weakmap: 1.0.2
 
   siginfo@2.0.0: {}
 
