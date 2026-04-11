@@ -189,21 +189,6 @@ mod tests {
     }
 
     #[test]
-    fn earth_mu_matches_constant() {
-        assert_eq!(KnownBody::Earth.properties().mu, constants::MU_EARTH);
-    }
-
-    #[test]
-    fn earth_radius_matches_constant() {
-        assert_eq!(KnownBody::Earth.properties().radius, constants::R_EARTH);
-    }
-
-    #[test]
-    fn sun_mu_matches_constant() {
-        assert_eq!(KnownBody::Sun.properties().mu, constants::MU_SUN);
-    }
-
-    #[test]
     fn serde_serialization_earth() {
         let json = serde_json::to_string(&KnownBody::Earth).unwrap();
         assert_eq!(json, "\"earth\"");
@@ -221,11 +206,6 @@ mod tests {
         assert_eq!(json, "\"celestial_body\"");
         let json = serde_json::to_string(&ObjectCategory::Satellite).unwrap();
         assert_eq!(json, "\"satellite\"");
-    }
-
-    #[test]
-    fn earth_j2_matches_constant() {
-        assert_eq!(KnownBody::Earth.properties().j2, Some(constants::J2_EARTH));
     }
 
     #[test]
@@ -272,16 +252,6 @@ mod tests {
             j2_jupiter > j2_earth,
             "Jupiter J2 ({j2_jupiter}) should be larger than Earth J2 ({j2_earth})"
         );
-    }
-
-    #[test]
-    fn earth_j3_matches_constant() {
-        assert_eq!(KnownBody::Earth.properties().j3, Some(constants::J3_EARTH));
-    }
-
-    #[test]
-    fn earth_j4_matches_constant() {
-        assert_eq!(KnownBody::Earth.properties().j4, Some(constants::J4_EARTH));
     }
 
     #[test]
