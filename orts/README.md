@@ -1,0 +1,15 @@
+# orts
+
+Orts core — orbital mechanics simulation, force / torque / sensor models,
+and a WASM plugin host runtime.
+
+Provides the simulation engine at the heart of the
+[orts](https://github.com/sksat/orts) workspace:
+
+- Orbital dynamics (two-body, Brouwer mean-element propagator, TLE/SGP4-equivalent).
+- Attitude dynamics and control (reaction wheels, gravity gradient, PD / B-dot).
+- Force models: gravity harmonics, drag, SRP, third-body, constant thrust.
+- Sensor models: magnetometer, gyroscope, star tracker.
+- WebAssembly Component Model plugin runtime (`plugin-wasm` /
+  `plugin-wasm-async` features), hosting guest controllers via wasmtime.
+
