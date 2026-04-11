@@ -1,12 +1,23 @@
 {
   "name": "uneri",
   "version": "0.0.1",
+  "description": "DuckDB-wasm + uPlot real-time time-series charting for streaming simulation data.",
+  "keywords": [
+    "duckdb",
+    "wasm",
+    "charting",
+    "uplot",
+    "time-series",
+    "visualization"
+  ],
+  "author": "sksat <sksat@sksat.net>",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/sksat/orts",
     "directory": "uneri"
   },
+  "homepage": "https://sksat.github.io/orts/",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
