@@ -19,8 +19,15 @@ struct SolarElements {
 /// Compute solar orbital elements at the given epoch.
 ///
 /// Reference: Meeus, "Astronomical Algorithms", Chapter 25.
+///
+/// # Time scale
+///
+/// Meeus ephemerides take a dynamical time argument (TDB). The public signature
+/// accepts `&Epoch<Utc>` (the default alias) for backward compatibility; the
+/// UTC epoch is converted to TDB internally via leap seconds + TT offset +
+/// Fairhead-Bretagnon periodic correction.
 fn solar_elements(epoch: &Epoch) -> SolarElements {
-    let t = epoch.centuries_since_j2000();
+    let t = epoch.to_tdb().centuries_since_j2000();
 
     // Mean longitude (degrees)
     let l0 = 280.46646 + 36000.76983 * t;
@@ -102,7 +109,8 @@ pub const AU_KM: f64 = 149_597_870.7;
 ///
 /// Reference: Meeus, "Astronomical Algorithms", Chapter 25.
 pub fn sun_distance_km(epoch: &Epoch) -> f64 {
-    let t = epoch.centuries_since_j2000();
+    // Meeus ephemeris uses TDB dynamical time; convert UTC → TDB internally.
+    let t = epoch.to_tdb().centuries_since_j2000();
 
     let m_deg = 357.52911 + 35999.05029 * t;
     let m = m_deg.to_radians();

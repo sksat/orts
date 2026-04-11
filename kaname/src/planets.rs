@@ -142,8 +142,14 @@ fn solve_kepler(mean_anomaly: f64, eccentricity: f64) -> f64 {
 /// Mean obliquity of the ecliptic at epoch [radians].
 ///
 /// Reference: Meeus, "Astronomical Algorithms".
+///
+/// # Time scale
+///
+/// Meeus ephemerides take a dynamical time argument (TDB). The public signature
+/// accepts `&Epoch<Utc>` for backward compatibility; UTC is converted to TDB
+/// internally.
 pub fn obliquity(epoch: &Epoch) -> f64 {
-    let t = epoch.centuries_since_j2000();
+    let t = epoch.to_tdb().centuries_since_j2000();
     (23.439_291 - 0.013_004_2 * t).to_radians()
 }
 
@@ -164,6 +170,12 @@ pub fn ecliptic_to_equatorial(v: &Vector3<f64>, epsilon: f64) -> Vector3<f64> {
 ///
 /// Returns `None` if the body is not a recognized planet.
 /// Accuracy: ~1 arcminute for inner planets, sufficient for sun-direction lighting.
+///
+/// # Time scale
+///
+/// Meeus ephemerides take a dynamical time argument (TDB). The public signature
+/// accepts `&Epoch<Utc>` for backward compatibility; UTC is converted to TDB
+/// internally.
 pub fn heliocentric_position_ecliptic(body: &str, epoch: &Epoch) -> Option<Vector3<f64>> {
     let elements = match body {
         "mercury" => &MERCURY,
@@ -175,7 +187,7 @@ pub fn heliocentric_position_ecliptic(body: &str, epoch: &Epoch) -> Option<Vecto
         _ => return None,
     };
 
-    let t = epoch.centuries_since_j2000();
+    let t = epoch.to_tdb().centuries_since_j2000();
 
     // Compute elements at epoch
     let l = (elements.l0 + elements.l_rate * t).to_radians();

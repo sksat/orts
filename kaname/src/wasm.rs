@@ -147,8 +147,11 @@ pub fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f
 /// Returns an empty vec if the body has no IAU rotation model.
 #[wasm_bindgen]
 pub fn body_orientation(body: &str, epoch_jd: f64, t: f64) -> Vec<f64> {
-    let epoch = Epoch::from_jd(epoch_jd).add_seconds(t);
-    match crate::rotation::body_orientation(body, &epoch) {
+    // JS-side callers pass a UTC JD + elapsed seconds. IAU WGCCRE 2009 takes
+    // TDB, so convert UTC → TDB before calling the rotation API.
+    let epoch_utc = Epoch::from_jd(epoch_jd).add_seconds(t);
+    let epoch_tdb = epoch_utc.to_tdb();
+    match crate::rotation::body_orientation(body, &epoch_tdb) {
         Some(q) => vec![q.w, q.i, q.j, q.k],
         None => vec![],
     }

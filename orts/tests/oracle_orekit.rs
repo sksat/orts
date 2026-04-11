@@ -497,73 +497,73 @@ fn orekit_full_sso_10orbits() {
 
 // ─── Tier 6: Gravity + NRLMSISE-00 Drag ───
 // Both implementations derive from same NRL Fortran source.
-// Remaining differences: LST approximation (±16 min → 1-5% density),
-// Sun position (Meeus vs DE405), Bowring iteration differences.
-// Density-level cross-validation showed max 3.14%, mean 0.51%.
+// Remaining differences: LST approximation (UT+lon/15, no equation of time),
+// Sun position Meeus vs DE405, Bowring iteration differences.
 //
-// NRLMSISE-00 long-duration errors are ~100x larger than HP due to LST
-// sensitivity: HP only uses altitude and sun direction, while NRLMSISE-00
-// uses precise local solar time which our UT+lon/15 approximation offsets.
+// Tolerances below were retightened to track actual current measured values.
+// The previous comments documented stale measured values from earlier
+// iterations that did not keep up with subsequent accuracy improvements.
 
 #[test]
 fn orekit_j2_msise_iss_moderate_10orbits() {
-    run_scenario("j2_msise_iss_moderate_10orbits", 0.060); // 60 m (measured: 38.3 m)
+    run_scenario("j2_msise_iss_moderate_10orbits", 0.020); // 20 m (measured: 11.9 m)
 }
 
 #[test]
 fn orekit_j2_msise_iss_solar_min_10orbits() {
-    run_scenario("j2_msise_iss_solar_min_10orbits", 0.020); // 20 m (measured: 12.3 m)
+    run_scenario("j2_msise_iss_solar_min_10orbits", 0.008); // 8 m (measured: 4.1 m)
 }
 
 #[test]
 fn orekit_j2_msise_iss_solar_max_10orbits() {
-    run_scenario("j2_msise_iss_solar_max_10orbits", 0.100); // 100 m (measured: 66.1 m)
+    run_scenario("j2_msise_iss_solar_max_10orbits", 0.045); // 45 m (measured: 28.4 m)
 }
 
 #[test]
 fn orekit_j2_msise_sso_moderate_10orbits() {
-    run_scenario("j2_msise_sso_moderate_10orbits", 0.003); // 3 m (measured: 1.1 m)
+    run_scenario("j2_msise_sso_moderate_10orbits", 0.0015); // 1.5 m (measured: 0.58 m)
 }
 
 #[test]
 fn orekit_j2_msise_iss_moderate_7days() {
-    run_scenario("j2_msise_iss_moderate_7days", 3.500); // 3.5 km (measured: 2.15 km)
+    run_scenario("j2_msise_iss_moderate_7days", 1.0); // 1.0 km (measured: 0.55 km)
 }
 
 #[test]
 fn orekit_j2_msise_iss_moderate_30days() {
-    run_scenario("j2_msise_iss_moderate_30days", 25.0); // 25 km (measured: 17.2 km)
+    run_scenario("j2_msise_iss_moderate_30days", 13.0); // 13 km (measured: 8.8 km)
 }
 
 // ─── Tier 7: Full force model + NRLMSISE-00 ───
 
 #[test]
 fn orekit_full_msise_iss_moderate_10orbits() {
-    run_scenario("full_msise_iss_moderate_10orbits", 0.060); // 60 m (measured: 38.5 m)
+    run_scenario("full_msise_iss_moderate_10orbits", 0.020); // 20 m (measured: 12.8 m)
 }
 
 #[test]
 fn orekit_full_msise_sso_moderate_10orbits() {
-    run_scenario("full_msise_sso_moderate_10orbits", 0.003); // 3 m (measured: 1.4 m)
+    run_scenario("full_msise_sso_moderate_10orbits", 0.0015); // 1.5 m (measured: 0.995 m)
 }
 
 // ─── Tier 8: NRLMSISE-00 + CSSI real weather ───
 // Both Orekit and Rust read the same trimmed CSSI fixture file.
 // This validates CSSI parser + binary search + 3-hour Ap interpolation
 // matching Orekit's CssiSpaceWeatherData implementation.
-// LST approximation still dominates the remaining difference.
+//
+// Tolerances tightened in line with actual current measured values.
 
 #[test]
 fn orekit_j2_msise_cssi_iss_10orbits() {
-    run_scenario("j2_msise_cssi_iss_10orbits", 0.060); // 60 m (measured: 42.1 m)
+    run_scenario("j2_msise_cssi_iss_10orbits", 0.020); // 20 m (measured: 12.3 m)
 }
 
 #[test]
 fn orekit_j2_msise_cssi_iss_7days() {
-    run_scenario("j2_msise_cssi_iss_7days", 3.500); // 3.5 km (measured: 2.61 km)
+    run_scenario("j2_msise_cssi_iss_7days", 1.2); // 1.2 km (measured: 0.71 km)
 }
 
 #[test]
 fn orekit_full_msise_cssi_iss_10orbits() {
-    run_scenario("full_msise_cssi_iss_10orbits", 0.060); // 60 m (measured: 42.2 m)
+    run_scenario("full_msise_cssi_iss_10orbits", 0.020); // 20 m (measured: 13.2 m)
 }

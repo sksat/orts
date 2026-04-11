@@ -8,8 +8,15 @@ use crate::frame::{self, Vec3};
 /// E correction factor, and planetary perturbation corrections.
 ///
 /// Accuracy: ~10" in ecliptic longitude, ~1% in distance (~4,000 km).
+///
+/// # Time scale
+///
+/// Meeus ephemerides take a dynamical time argument (TDB). The public signature
+/// accepts `&Epoch<Utc>` (the default alias) for backward compatibility; the
+/// UTC epoch is converted to TDB internally via leap seconds + TT offset +
+/// Fairhead-Bretagnon periodic correction.
 pub fn moon_position_eci(epoch: &Epoch) -> Vec3<frame::Eci> {
-    let t = epoch.centuries_since_j2000();
+    let t = epoch.to_tdb().centuries_since_j2000();
     let t2 = t * t;
     let t3 = t2 * t;
     let t4 = t3 * t;

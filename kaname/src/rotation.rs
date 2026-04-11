@@ -10,7 +10,7 @@
 
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 
-use crate::epoch::Epoch;
+use crate::epoch::{Epoch, Tdb};
 
 /// IAU rotation model parameters for a celestial body.
 ///
@@ -80,7 +80,14 @@ fn moon_nutation_args(d: f64) -> [f64; 13] {
 /// Archinal et al. (2011), Table 3a/3b. These correct for nutation and
 /// precession of the Moon's pole and prime meridian relative to the
 /// mean orientation (ME frame).
-pub fn moon_orientation(epoch: &Epoch) -> UnitQuaternion<f64> {
+///
+/// # Time scale
+///
+/// IAU WGCCRE 2009 specifies the W/α/δ polynomials in terms of "interval in
+/// Julian days from J2000 in TDB" (Archinal et al. 2011). This function takes
+/// `&Epoch<Tdb>` as input; callers starting from `Epoch<Utc>` must invoke
+/// `epoch.to_tdb()` explicitly.
+pub fn moon_orientation(epoch: &Epoch<Tdb>) -> UnitQuaternion<f64> {
     let d = epoch.jd() - 2451545.0;
     let t = d / 36525.0;
     let e = moon_nutation_args(d);
@@ -193,7 +200,12 @@ pub fn model_for_body(name: &str) -> Option<&'static IauRotationModel> {
 ///
 /// Uses the best available model: libration-corrected for the Moon,
 /// base IAU model for other bodies. Returns `None` for unknown bodies.
-pub fn body_orientation(name: &str, epoch: &Epoch) -> Option<UnitQuaternion<f64>> {
+///
+/// # Time scale
+///
+/// Takes `&Epoch<Tdb>` because IAU WGCCRE 2009 specifies the W/α/δ polynomials
+/// in TDB days from J2000. See [`moon_orientation`] for details.
+pub fn body_orientation(name: &str, epoch: &Epoch<Tdb>) -> Option<UnitQuaternion<f64>> {
     match name {
         "moon" => Some(moon_orientation(epoch)),
         _ => model_for_body(name).map(|m| m.orientation(epoch)),
@@ -205,8 +217,11 @@ impl IauRotationModel {
     ///
     /// The returned quaternion transforms vectors from the body-fixed frame
     /// (Z = north pole, X = prime meridian) to the ECI/ICRF frame.
-    pub fn orientation(&self, epoch: &Epoch) -> UnitQuaternion<f64> {
-        let d = epoch.jd() - 2451545.0; // days since J2000
+    ///
+    /// Takes `&Epoch<Tdb>` — IAU WGCCRE 2009 (Archinal et al. 2011) defines the
+    /// independent variable as "interval in Julian days from J2000 in TDB".
+    pub fn orientation(&self, epoch: &Epoch<Tdb>) -> UnitQuaternion<f64> {
+        let d = epoch.jd() - 2451545.0; // days since J2000 (TDB)
         let t = d / 36525.0; // Julian centuries since J2000
 
         let alpha = (self.alpha0 + self.alpha1 * t).to_radians();
@@ -244,13 +259,13 @@ impl IauRotationModel {
     }
 
     /// Compute the prime meridian angle W at the given epoch [radians].
-    pub fn prime_meridian_angle(&self, epoch: &Epoch) -> f64 {
+    pub fn prime_meridian_angle(&self, epoch: &Epoch<Tdb>) -> f64 {
         let d = epoch.jd() - 2451545.0;
         (self.w0 + self.wd * d).to_radians()
     }
 
     /// Compute the north pole direction in ECI at the given epoch.
-    pub fn pole_direction(&self, epoch: &Epoch) -> Vector3<f64> {
+    pub fn pole_direction(&self, epoch: &Epoch<Tdb>) -> Vector3<f64> {
         let d = epoch.jd() - 2451545.0;
         let t = d / 36525.0;
         let alpha = (self.alpha0 + self.alpha1 * t).to_radians();
@@ -269,7 +284,7 @@ mod tests {
 
     #[test]
     fn moon_orientation_is_unit_quaternion() {
-        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0).to_tdb();
         let q = MOON.orientation(&epoch);
         let norm = q.norm();
         assert!(
@@ -282,7 +297,7 @@ mod tests {
     fn moon_pole_near_ecliptic_normal() {
         // Moon's north pole is ~1.54° from the ecliptic normal.
         // The ecliptic normal in ECI is approximately (0, -sin(23.44°), cos(23.44°)).
-        let epoch = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0);
+        let epoch = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0).to_tdb();
         let pole = MOON.pole_direction(&epoch);
 
         let obliquity = 23.44_f64.to_radians();
@@ -299,11 +314,11 @@ mod tests {
     fn moon_rotation_period_matches_orbital_period() {
         // Moon's sidereal rotation period ≈ 27.322 days.
         // Prime meridian should advance ~360° in that time.
-        let epoch0 = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0);
+        let epoch0 = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0).to_tdb();
         let w0 = MOON.prime_meridian_angle(&epoch0);
 
         let sidereal_period_days = 27.322;
-        let epoch1 = epoch0.add_seconds(sidereal_period_days * 86400.0);
+        let epoch1 = Epoch::<crate::epoch::Tdb>::from_jd_tdb(epoch0.jd() + sidereal_period_days);
         let w1 = MOON.prime_meridian_angle(&epoch1);
 
         let dw = (w1 - w0).to_degrees();
@@ -317,11 +332,11 @@ mod tests {
     #[test]
     fn mars_rotation_period_approximately_24h37m() {
         // Mars sidereal rotation period ≈ 24h 37m 22s ≈ 88642 seconds.
-        let epoch0 = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0);
+        let epoch0 = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0).to_tdb();
         let w0 = MARS.prime_meridian_angle(&epoch0);
 
         let mars_day_s = 88642.0;
-        let epoch1 = epoch0.add_seconds(mars_day_s);
+        let epoch1 = Epoch::<crate::epoch::Tdb>::from_jd_tdb(epoch0.jd() + mars_day_s / 86400.0);
         let w1 = MARS.prime_meridian_angle(&epoch1);
 
         let dw = (w1 - w0).to_degrees();
@@ -333,7 +348,7 @@ mod tests {
 
     #[test]
     fn orientation_axes_are_orthonormal() {
-        let epoch = Epoch::from_gregorian(2024, 6, 15, 0, 0, 0.0);
+        let epoch = Epoch::from_gregorian(2024, 6, 15, 0, 0, 0.0).to_tdb();
         for model in [&MOON, &MARS, &SUN] {
             let q = model.orientation(&epoch);
             let rot = q.to_rotation_matrix();
@@ -360,11 +375,12 @@ mod tests {
     #[test]
     fn earth_rotation_period_approximately_sidereal_day() {
         // Earth sidereal day ≈ 86164.1 seconds
-        let epoch0 = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0);
+        let epoch0 = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0).to_tdb();
         let w0 = EARTH.prime_meridian_angle(&epoch0);
 
         let sidereal_day_s = 86164.1;
-        let epoch1 = epoch0.add_seconds(sidereal_day_s);
+        let epoch1 =
+            Epoch::<crate::epoch::Tdb>::from_jd_tdb(epoch0.jd() + sidereal_day_s / 86400.0);
         let w1 = EARTH.prime_meridian_angle(&epoch1);
 
         let dw = (w1 - w0).to_degrees();
@@ -376,7 +392,7 @@ mod tests {
 
     #[test]
     fn earth_pole_near_z_axis() {
-        let epoch = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0);
+        let epoch = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0).to_tdb();
         let pole = EARTH.pole_direction(&epoch);
         let z_axis = Vector3::new(0.0, 0.0, 1.0);
         let angle = pole.angle(&z_axis).to_degrees();
@@ -392,7 +408,7 @@ mod tests {
         // approximately the direction defined by GMST(J2000.0) ≈ 280.46°.
         // IAU model: W₀ = 190.147°, measured from ascending node at RA=90°.
         // So prime meridian RA ≈ 90° + 190.147° = 280.147° ≈ GMST at J2000.
-        let epoch = Epoch::from_jd(2451545.0); // J2000.0
+        let epoch = Epoch::<crate::epoch::Tdb>::from_jd_tdb(2451545.0); // J2000.0 TDB
         let q = EARTH.orientation(&epoch);
         let x_body_eci = q * Vector3::new(1.0, 0.0, 0.0); // prime meridian in ECI
 
@@ -420,7 +436,7 @@ mod tests {
         ];
         println!("--- IAU orientation fixture ---");
         for (body, jd, label) in &cases {
-            let epoch = Epoch::from_jd(*jd);
+            let epoch = Epoch::<crate::epoch::Tdb>::from_jd_tdb(*jd);
             let q = body_orientation(body, &epoch).unwrap();
             println!(
                 r#"  {{ body: "{body}", jd: {jd}, label: "{label}", q: [{:.15}, {:.15}, {:.15}, {:.15}] }},"#,
@@ -433,10 +449,11 @@ mod tests {
     #[test]
     fn moon_near_side_faces_earth_base_model() {
         // Base model (no libration): ~30° tolerance
-        let epoch = Epoch::from_gregorian(1969, 7, 20, 20, 17, 0.0);
-        let q = MOON.orientation(&epoch);
+        let epoch_utc = Epoch::from_gregorian(1969, 7, 20, 20, 17, 0.0);
+        let epoch_tdb = epoch_utc.to_tdb();
+        let q = MOON.orientation(&epoch_tdb);
         let x_body_eci = q * Vector3::new(1.0, 0.0, 0.0);
-        let moon_pos = crate::moon::moon_position_eci(&epoch).into_inner();
+        let moon_pos = crate::moon::moon_position_eci(&epoch_utc).into_inner();
         let earth_dir = -moon_pos.normalize();
         let angle = x_body_eci.angle(&earth_dir).to_degrees();
         assert!(
@@ -455,7 +472,8 @@ mod tests {
             Epoch::from_gregorian(2000, 1, 1, 12, 0, 0.0), // J2000
         ];
         for epoch in &epochs {
-            let q = moon_orientation(epoch);
+            let epoch_tdb = epoch.to_tdb();
+            let q = moon_orientation(&epoch_tdb);
             let x_body_eci = q * Vector3::new(1.0, 0.0, 0.0);
             let moon_pos = crate::moon::moon_position_eci(epoch).into_inner();
             let earth_dir = -moon_pos.normalize();
@@ -476,7 +494,7 @@ mod tests {
         // do NOT necessarily bring the prime meridian closer to the instantaneous
         // Earth direction. They correct for nutation/precession of the pole and
         // prime meridian relative to the mean orientation.
-        let epoch = Epoch::from_gregorian(2024, 3, 15, 0, 0, 0.0);
+        let epoch = Epoch::from_gregorian(2024, 3, 15, 0, 0, 0.0).to_tdb();
         let q_base = MOON.orientation(&epoch);
         let q_lib = moon_orientation(&epoch);
 
@@ -501,7 +519,8 @@ mod tests {
             Epoch::from_gregorian(2024, 6, 15, 12, 0, 0.0),
         ];
         for epoch in &epochs {
-            let q = moon_orientation(epoch);
+            let epoch_tdb = epoch.to_tdb();
+            let q = moon_orientation(&epoch_tdb);
             let rot = q.to_rotation_matrix();
             let m = rot.matrix();
             let mtm = m.transpose() * m;
