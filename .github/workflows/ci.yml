@@ -471,7 +471,7 @@ jobs:
           path: viewer/dist/
           retention-days: 1
 
-  tobari-web:
+  tobari-example-web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
@@ -509,10 +509,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build
-        run: pnpm --filter tobari-web build
+        run: pnpm --filter tobari-example-web build
 
       - name: Test
-        run: pnpm --filter tobari-web test
+        run: pnpm --filter tobari-example-web test
 
   uneri-e2e:
     runs-on: ubuntu-latest
