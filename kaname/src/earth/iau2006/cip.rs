@@ -16,10 +16,13 @@
 //!   `Y` at the same TT instant. Matches ERFA `s06`
 //! - [`CipCoordinates`] and [`cip_coordinates`] — one-shot convenience
 //!   wrapper that returns `(X, Y, s)` together
+//! - [`gcrs_to_cirs_matrix`] and [`gcrs_to_cirs_matrix_at`] — assemble
+//!   the celestial-to-intermediate rotation matrix from `X`, `Y`, `s`.
+//!   Matches ERFA `c2ixys`
 //!
 //! None of these are public [`crate::frame::Rotation`] constructors —
-//! those are Phase 3B. Phase 3A-3 ships the raw scalar evaluators that
-//! Phase 3A-4 will consume when assembling the GCRS→CIRS matrix.
+//! those are Phase 3B. Phase 3A-3 ships the raw scalar evaluators, and
+//! Phase 3A-4 adds the 3×3 matrix composition that Phase 3B will wrap.
 //!
 //! # Independent variable
 //!
@@ -43,6 +46,8 @@
 //! `cio_locator_s` additionally subtracts `X·Y/2` because the TN36 Table
 //! 5.2d tabulates `s + X·Y/2`, not `s` directly. This subtraction
 //! mirrors the ERFA `s06` internal implementation.
+
+use nalgebra::Matrix3;
 
 use super::fundamental_arguments::FundamentalArguments;
 use super::tables_gen::{
@@ -131,6 +136,102 @@ pub fn cip_coordinates(t: f64) -> CipCoordinates {
     let (x, y) = cip_xy(t);
     let s = cio_locator_s(t, x, y);
     CipCoordinates { x, y, s }
+}
+
+// ─── GCRS → CIRS matrix (TN36 Eq. 5.6-5.10 / SOFA iauC2ixys) ─────
+
+/// Assemble the 3×3 **celestial-to-intermediate** rotation matrix `C`
+/// from the CIP coordinates `(x, y)` and CIO locator `s`.
+///
+/// The returned matrix transforms a column vector in the GCRS to the
+/// same column vector in the CIRS:
+///
+/// ```text
+/// v_cirs = C · v_gcrs
+/// ```
+///
+/// # Algorithm
+///
+/// Equivalent to SOFA `iauC2ixys` / ERFA `c2ixys`. Following
+/// [IERS Conventions 2010 TN36](https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html)
+/// Eq. (5.6) / (5.10), the CIP position `(x, y)` defines spherical
+/// angles `(E, d)` via
+///
+/// ```text
+/// x = sin(d) · cos(E)
+/// y = sin(d) · sin(E)
+/// ```
+///
+/// from which we recover
+///
+/// ```text
+/// E = atan2(y, x)          (when x² + y² > 0, else 0)
+/// d = atan(sqrt(r²) / sqrt(1 − r²))        with r² = x² + y²
+/// ```
+///
+/// and the celestial-to-intermediate matrix is
+///
+/// ```text
+/// C = R_z(−(E + s)) · R_y(d) · R_z(E)
+/// ```
+///
+/// where `R_y`, `R_z` are right-handed rotations about the y- and
+/// z-axes with the SOFA sign convention (positive angle rotates a
+/// vector clockwise when viewed from the positive axis).
+///
+/// # Numerical behaviour
+///
+/// The `r² < 1` guard is implicit: for any realistic CIP offset
+/// `|x|, |y| < 10⁻⁴ rad` so `1 − r² > 0.999…`. The `atan(sqrt(r²/(1−r²)))`
+/// form matches SOFA and avoids the half-angle truncation that a naive
+/// `d = asin(sqrt(r²))` would introduce at sub-µas scales.
+pub fn gcrs_to_cirs_matrix(x: Rad, y: Rad, s: Rad) -> Matrix3<f64> {
+    let x = x.raw();
+    let y = y.raw();
+    let s = s.raw();
+
+    let r2 = x * x + y * y;
+    let e = if r2 > 0.0 { y.atan2(x) } else { 0.0 };
+    let d = (r2 / (1.0 - r2)).sqrt().atan();
+
+    // Explicit `R_z(−(e + s)) · R_y(d) · R_z(e)` with the SOFA sign
+    // convention. The matrix is written row-by-row to match ERFA's
+    // row-major return layout, so `c2ixys_matrix_matches_erfa` in
+    // kaname/tests/iau2006_vs_erfa.rs can compare element-for-element.
+    rotation_z(-(e + s)) * rotation_y(d) * rotation_z(e)
+}
+
+/// Assemble the GCRS→CIRS matrix directly from TT Julian centuries `t`.
+/// Combines [`cip_coordinates`] + [`gcrs_to_cirs_matrix`] into a
+/// single call.
+pub fn gcrs_to_cirs_matrix_at(t: f64) -> Matrix3<f64> {
+    let c = cip_coordinates(t);
+    gcrs_to_cirs_matrix(c.x, c.y, c.s)
+}
+
+/// Right-handed rotation about the z-axis by `psi`, SOFA `iauRz`
+/// convention (a positive angle rotates vectors clockwise when
+/// viewed from +z).
+#[inline]
+fn rotation_z(psi: f64) -> Matrix3<f64> {
+    let (s, c) = psi.sin_cos();
+    Matrix3::new(
+        c, s, 0.0, //
+        -s, c, 0.0, //
+        0.0, 0.0, 1.0,
+    )
+}
+
+/// Right-handed rotation about the y-axis by `theta`, SOFA `iauRy`
+/// convention.
+#[inline]
+fn rotation_y(theta: f64) -> Matrix3<f64> {
+    let (s, c) = theta.sin_cos();
+    Matrix3::new(
+        c, 0.0, -s, //
+        0.0, 1.0, 0.0, //
+        s, 0.0, c,
+    )
 }
 
 // ─── Shared evaluator ────────────────────────────────────────────
@@ -282,5 +383,72 @@ mod tests {
         // non-trivial.
         assert!(c.x.raw() != 0.0);
         assert!(c.y.raw() != 0.0);
+    }
+
+    // ─── GCRS → CIRS matrix (structural) ─────────────────────────
+
+    /// The celestial-to-intermediate matrix must be orthogonal with
+    /// determinant +1 (i.e. a proper rotation, not a reflection), for
+    /// any `t` — a structural invariant that catches sign errors in
+    /// either `R_y` or `R_z` without needing the ERFA oracle.
+    #[test]
+    fn gcrs_to_cirs_matrix_is_orthogonal_with_determinant_one() {
+        for &t in &[-1.0, -0.5, -0.1, 0.0, 0.1, 0.5, 1.0] {
+            let m = gcrs_to_cirs_matrix_at(t);
+            let mt = m.transpose();
+            let should_be_identity = m * mt;
+            let identity = Matrix3::<f64>::identity();
+            for i in 0..3 {
+                for j in 0..3 {
+                    let delta = (should_be_identity[(i, j)] - identity[(i, j)]).abs();
+                    assert!(delta < 1e-14, "M·Mᵀ at t={t} [{i},{j}] off by {delta}");
+                }
+            }
+            let det = m.determinant();
+            assert!(
+                (det - 1.0).abs() < 1e-14,
+                "det(M) at t={t} = {det}, expected +1"
+            );
+        }
+    }
+
+    /// Applying the matrix to the z-axis should yield the CIP's
+    /// direction in the GCRS (which is approximately `(X, Y, √(1−X²−Y²))`).
+    /// This pins the sign and axis convention of the rotation.
+    #[test]
+    fn gcrs_to_cirs_matrix_maps_cip_pole_to_intermediate_pole() {
+        use nalgebra::Vector3;
+
+        let c = cip_coordinates(0.5);
+        let m = gcrs_to_cirs_matrix(c.x, c.y, c.s);
+
+        // CIP direction in GCRS (the pole of the CIRS equator expressed
+        // in GCRS basis): approximately (X, Y, √(1-X²-Y²)).
+        let x = c.x.raw();
+        let y = c.y.raw();
+        let r2 = x * x + y * y;
+        let cip_in_gcrs = Vector3::new(x, y, (1.0 - r2).sqrt());
+
+        // Applying M should send this vector to (0, 0, 1) — the z-axis
+        // of the CIRS, since the CIP *is* the z-axis of the intermediate
+        // frame by construction.
+        let mapped = m * cip_in_gcrs;
+        assert!((mapped.x).abs() < 1e-13, "mapped.x = {}", mapped.x);
+        assert!((mapped.y).abs() < 1e-13, "mapped.y = {}", mapped.y);
+        assert!((mapped.z - 1.0).abs() < 1e-13, "mapped.z = {}", mapped.z);
+    }
+
+    /// When `(x, y, s)` are all zero the matrix must collapse to the
+    /// identity. Catches any accidental non-zero bias that crept into
+    /// the sin/cos path via a mis-placed additive constant.
+    #[test]
+    fn gcrs_to_cirs_matrix_is_identity_when_xys_are_zero() {
+        let m = gcrs_to_cirs_matrix(Rad::new(0.0), Rad::new(0.0), Rad::new(0.0));
+        let identity = Matrix3::<f64>::identity();
+        for i in 0..3 {
+            for j in 0..3 {
+                assert_eq!(m[(i, j)], identity[(i, j)]);
+            }
+        }
     }
 }

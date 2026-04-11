@@ -35,7 +35,7 @@
 //! tolerances (10⁻¹¹ / 10⁻¹² / 10⁻¹¹) to absorb cross-compiler jitter
 //! while still catching any real transcription mistake.
 
-use kaname::earth::iau2006::cip::{cio_locator_s, cip_xy};
+use kaname::earth::iau2006::cip::{cio_locator_s, cip_xy, gcrs_to_cirs_matrix_at};
 use kaname::earth::iau2006::fundamental_arguments::FundamentalArguments;
 use kaname::earth::iau2006::precession::{ecliptic_precession_angles, fukushima_williams};
 use serde_json::Value;
@@ -54,6 +54,13 @@ const PFW_TOLERANCE_RAD: f64 = 1e-12;
 /// Maximum allowed absolute difference (rad) for CIP `X`, `Y` and CIO
 /// locator `s` — see the series-total comment above.
 const CIP_TOLERANCE_RAD: f64 = 1e-11;
+
+/// Maximum allowed absolute difference for any element of the
+/// GCRS→CIRS 3×3 matrix. The matrix elements are either near-unity or
+/// near-zero but the rotation composition `R_z(−(E+s)) · R_y(d) · R_z(E)`
+/// amplifies scalar residuals by at most `O(1)`, so the same
+/// `1e-11` scale that bounds `X/Y/s` is sufficient here.
+const C2I_MATRIX_TOLERANCE: f64 = 1e-11;
 
 fn load_fixture() -> Value {
     serde_json::from_str(FIXTURE_JSON).expect("iau2006_erfa_reference.json must be valid JSON")
@@ -210,6 +217,49 @@ fn cip_xys_match_erfa() {
     assert_eq!(
         failures, 0,
         "{failures} CIP X/Y/s mismatches exceeded {CIP_TOLERANCE_RAD:e} rad tolerance"
+    );
+}
+
+#[test]
+fn gcrs_to_cirs_matrix_matches_erfa_c2ixys() {
+    let fixture = load_fixture();
+    let samples = fixture["samples"]
+        .as_array()
+        .expect("fixture must have a `samples` array");
+
+    let mut failures = 0usize;
+
+    for sample in samples {
+        let t = field_f64(sample, "t_tt_centuries_from_j2000");
+        let matrix_expected = sample["gcrs_to_cirs_matrix"]
+            .as_array()
+            .expect("sample must have a `gcrs_to_cirs_matrix` 3x3 array");
+        assert_eq!(matrix_expected.len(), 3, "expected 3 rows");
+
+        let m = gcrs_to_cirs_matrix_at(t);
+
+        for i in 0..3 {
+            let row = matrix_expected[i]
+                .as_array()
+                .expect("matrix row must be an array");
+            assert_eq!(row.len(), 3, "expected 3 columns in row {i}");
+            for j in 0..3 {
+                let expected = row[j].as_f64().expect("matrix element must be numeric");
+                let actual = m[(i, j)];
+                let delta = (actual - expected).abs();
+                if !delta.is_finite() || delta > C2I_MATRIX_TOLERANCE {
+                    eprintln!(
+                        "FAIL t={t:+.3} M[{i},{j}]: actual={actual:+.17e} expected={expected:+.17e} Δ={delta:.3e}"
+                    );
+                    failures += 1;
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        failures, 0,
+        "{failures} GCRS→CIRS matrix element mismatches exceeded {C2I_MATRIX_TOLERANCE:e} tolerance"
     );
 }
 

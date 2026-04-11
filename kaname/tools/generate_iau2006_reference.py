@@ -114,6 +114,23 @@ def cip_xys(t: float) -> dict[str, float]:
     }
 
 
+def gcrs_to_cirs_matrix(t: float) -> list[list[float]]:
+    """3×3 celestial-to-intermediate rotation matrix at TT centuries `t`.
+
+    Computed by `erfa.c2ixys(x, y, s)` where `(x, y, s)` come from the
+    same `xy06` / `s06` call that [`cip_xys`] uses. The returned matrix
+    is row-major, consistent with SOFA / ERFA layout: applying it to a
+    column vector in GCRS gives the same vector in CIRS, i.e.
+    `v_cirs = M · v_gcrs`.
+    """
+    J2000_JD = 2451545.0
+    offset_days = t * 36525.0
+    x, y = erfa.xy06(J2000_JD, offset_days)
+    s = erfa.s06(J2000_JD, offset_days, x, y)
+    m = erfa.c2ixys(x, y, s)
+    return [[float(v) for v in row] for row in m]
+
+
 def main() -> None:
     samples = []
     for t in SAMPLES:
@@ -123,6 +140,7 @@ def main() -> None:
                 "fundamental_arguments": fundamental_arguments(t),
                 "precession_fukushima_williams": precession_fukushima_williams(t),
                 "cip_xys": cip_xys(t),
+                "gcrs_to_cirs_matrix": gcrs_to_cirs_matrix(t),
             }
         )
 
@@ -142,6 +160,7 @@ def main() -> None:
             "fundamental_arguments": "rad (each value is fmod'd modulo 2*pi)",
             "precession_fukushima_williams": "rad",
             "cip_xys": "rad",
+            "gcrs_to_cirs_matrix": "dimensionless, row-major 3x3 orthogonal",
         },
         "samples": samples,
     }
