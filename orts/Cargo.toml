@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+authors.workspace = true
 # Phase P1: include WIT files so `cargo publish` ships them with
 # the crate. Without this, downstream users who enable the
 # `plugin-wasm` feature would fail to compile (the `bindgen!` macro

@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+authors.workspace = true
 # Include viewer-dist/ so `cargo publish` bundles the embedded SPA assets.
 # about.toml is required by notalawyer-build / cargo-about during build.
 include = ["src/**/*", "build.rs", "tests/**/*", "viewer-dist/**/*", "about.toml"]
