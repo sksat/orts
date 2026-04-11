@@ -5,12 +5,15 @@
 //! This module provides the pure-math building blocks for the IAU 2006 CIO-based
 //! Earth rotation chain. In Phase 3 it is populated incrementally:
 //!
-//! - **Phase 3A-1** (this commit): typed angle primitives, fundamental
-//!   arguments `F1..F14`, and IAU 2006 precession polynomial expressions from
+//! - **Phase 3A-1**: typed angle primitives, fundamental arguments
+//!   `F1..F14`, and IAU 2006 precession polynomial expressions from
 //!   [IERS Conventions 2010 TN36](https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html)
 //!   Eq. (5.39), (5.40), (5.43), (5.44)
-//! - **Phase 3A-2**: CIP `X`, `Y` and CIO locator `s` tables generated from
-//!   the IERS electronic tables `tab5.2a.txt`, `tab5.2b.txt`, `tab5.2d.txt`
+//! - **Phase 3A-2** (this commit): CIP `X`, `Y` and CIO locator `s + XY/2`
+//!   series generated from the IERS electronic tables `tab5.2a.txt`,
+//!   `tab5.2b.txt`, `tab5.2d.txt` — stored as the crate-private
+//!   `tables_gen` submodule. The generator lives at
+//!   `tools/generate_iau2006_tables.py`
 //! - **Phase 3A-3**: CIP coordinate evaluators and GCRS→CIRS matrix composition
 //! - **Phase 3B**: `Rotation<Gcrs, Cirs>::iau2006(tt, utc, eop)` and related
 //!   public constructors
@@ -53,6 +56,9 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 
 pub mod fundamental_arguments;
 pub mod precession;
+pub(crate) mod tables_gen;
+#[cfg(test)]
+mod tables_pin;
 
 // ─── Angular-unit markers ────────────────────────────────────────
 
