@@ -1,14 +1,14 @@
 import type {
   Crate,
+  EnumItem,
   Id,
+  ImplItem,
   Item,
   ItemInner,
-  ImplItem,
   ModuleItem,
-  UseItem,
   StructItem,
-  EnumItem,
   TraitItem,
+  UseItem,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------

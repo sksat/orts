@@ -1,5 +1,5 @@
-import type { ApiItemCategory } from "./resolve.js";
 import type { GeneratedPage } from "./markdown.js";
+import type { ApiItemCategory } from "./resolve.js";
 
 // Starlight sidebar types (simplified from @astrojs/starlight)
 export interface SidebarLink {

@@ -4,7 +4,22 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import {
+  renderFunctionSig,
+  renderGenericBound,
+  renderGenericParams,
+  renderType,
+  renderWhereClause,
+} from "./render.js";
+import type { ApiItem, ApiItemCategory, LinkResolver } from "./resolve.js";
+import {
+  collectImplementors,
+  collectInherentImpls,
+  collectTraitImpls,
+  resolveTraitImplUrl,
+} from "./resolve.js";
 import type {
+  ConstantItem,
   Crate,
   EnumItem,
   FunctionItem,
@@ -15,24 +30,9 @@ import type {
   StructKind,
   TraitItem,
   TypeAliasItem,
-  ConstantItem,
   VariantItem,
   VariantKind,
 } from "./types.js";
-import {
-  renderFunctionSig,
-  renderGenericBound,
-  renderGenericParams,
-  renderType,
-  renderWhereClause,
-} from "./render.js";
-import type { ApiItem, ApiItemCategory, LinkResolver } from "./resolve.js";
-import {
-  collectInherentImpls,
-  collectTraitImpls,
-  collectImplementors,
-  resolveTraitImplUrl,
-} from "./resolve.js";
 
 // ---------------------------------------------------------------------------
 // Public API

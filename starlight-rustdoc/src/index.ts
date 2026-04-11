@@ -2,8 +2,8 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CrateSpec } from "./exec.js";
 import { generateRustdocJson, normalizeCrateSpec } from "./exec.js";
-import { LinkResolver, collectApiItems } from "./resolve.js";
 import { generateCratePages } from "./markdown.js";
+import { collectApiItems, LinkResolver } from "./resolve.js";
 import { buildCrateSidebar } from "./sidebar.js";
 import type { Crate } from "./types.js";
 

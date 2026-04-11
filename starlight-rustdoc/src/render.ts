@@ -3,24 +3,24 @@
  * human-readable Rust-like strings.
  */
 
+import type { LinkResolver } from "./resolve.js";
 import type {
   Crate,
+  FunctionHeader,
   FunctionItem,
   FunctionSignature,
-  FunctionHeader,
-  GenericArgs,
   GenericArg,
+  GenericArgs,
   GenericBound,
   GenericParam,
   Generics,
   QualifiedPath,
   TraitBound,
   Type,
+  TypeBindingConstraint,
   TypePath,
   WherePredicate,
-  TypeBindingConstraint,
 } from "./types.js";
-import type { LinkResolver } from "./resolve.js";
 
 // ---------------------------------------------------------------------------
 // Type rendering

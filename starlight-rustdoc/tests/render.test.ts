@@ -1,12 +1,12 @@
-import { describe, it, expect } from "vitest";
-import type { Crate, Type } from "../src/types.js";
+import { describe, expect, it } from "vitest";
 import {
-  renderType,
-  renderGenericParams,
   renderFunctionSig,
+  renderGenericParams,
+  renderType,
   renderWhereClause,
 } from "../src/render.js";
 import { LinkResolver } from "../src/resolve.js";
+import type { Crate, Type } from "../src/types.js";
 
 function makeCrate(overrides: Partial<Crate> = {}): Crate {
   return {
