@@ -7,6 +7,9 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 authors.workspace = true
+description = "WebAssembly-friendly Rerun RRD decoder for streaming simulation data into browser viewers."
+keywords = ["wasm", "rerun", "rrd", "decoder", "visualization"]
+categories = ["wasm", "visualization"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

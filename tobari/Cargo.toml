@@ -7,6 +7,9 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 authors.workspace = true
+description = "Earth environment models — atmospheric drag density, IGRF geomagnetic field, and space weather integration."
+keywords = ["atmosphere", "igrf", "magnetic-field", "space-weather", "aerospace"]
+categories = ["science", "aerospace"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

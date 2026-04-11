@@ -7,6 +7,9 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 authors.workspace = true
+description = "Coordinate frames, reference transforms, epochs, and celestial body ephemerides for orbital mechanics."
+keywords = ["coordinates", "ephemeris", "astronomy", "geodesy", "orbital"]
+categories = ["science", "science::geo"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

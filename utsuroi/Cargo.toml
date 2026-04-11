@@ -7,6 +7,9 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 authors.workspace = true
+description = "Numerical ODE integrators (RK4, Dormand-Prince, Störmer-Verlet, Yoshida) for orbital mechanics and rigid-body simulation."
+keywords = ["ode", "integrator", "numerical", "simulation", "orbital"]
+categories = ["algorithms", "science"]
 
 [dependencies]
 nalgebra.workspace = true
