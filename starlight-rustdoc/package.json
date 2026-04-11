@@ -1,11 +1,39 @@
 {
   "name": "starlight-rustdoc",
   "version": "0.0.1",
-  "private": true,
+  "description": "Astro / Starlight integration that generates documentation pages from rustdoc JSON output.",
+  "keywords": [
+    "starlight",
+    "astro",
+    "rustdoc",
+    "documentation",
+    "rust"
+  ],
+  "author": "sksat <sksat@sksat.net>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sksat/orts",
+    "directory": "starlight-rustdoc"
+  },
+  "homepage": "https://sksat.github.io/orts/",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "import": "./dist/index.js",
+        "types": "./dist/index.d.ts"
+      }
+    }
   },
   "scripts": {
     "build": "tsc",
