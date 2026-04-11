@@ -85,12 +85,16 @@ try {
   rmSync(tobariDest, { recursive: true, force: true });
   cpSync(tobariTmp, tobariDest, { recursive: true });
   rmSync(tobariTmp, { recursive: true, force: true });
-  console.log("Embedded tobari-example-web into docs/public/tobari/examples/earth-visualizer/demo/");
+  console.log(
+    "Embedded tobari-example-web into docs/public/tobari/examples/earth-visualizer/demo/",
+  );
 } catch {
   if (process.env.ALLOW_MISSING_TOBARI) {
     console.log("Skipped tobari-example-web embed (build failed, allowed by ALLOW_MISSING_TOBARI)");
   } else {
-    console.error("Error: tobari-example-web build failed. Ensure Rust and wasm-pack are installed.");
+    console.error(
+      "Error: tobari-example-web build failed. Ensure Rust and wasm-pack are installed.",
+    );
     console.error("Set ALLOW_MISSING_TOBARI=1 to skip this for docs-only development.");
     process.exit(1);
   }
