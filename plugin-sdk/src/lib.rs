@@ -93,9 +93,8 @@ macro_rules! orts_plugin {
     ($ty:ty, mode) => {
         $crate::__orts_plugin_impl!($ty, {
             __ORTS_PLUGIN_STATE.with(|s| {
-                $crate::Plugin::current_mode(
-                    s.borrow().as_ref().expect("plugin not initialized")
-                ).map(::std::string::String::from)
+                $crate::Plugin::current_mode(s.borrow().as_ref().expect("plugin not initialized"))
+                    .map(::std::string::String::from)
             })
         });
     };
