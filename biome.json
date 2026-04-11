@@ -13,6 +13,7 @@
       "!viewer/src/wasm/rrd-wasm",
       "!tobari/examples/web/src/wasm/tobari",
       "!tobari/examples/web/src/wasm/arika",
+      "!arika/tests/fixtures",
       "!orts/tests/fixtures",
       "!docs/.astro",
       "!docs/dist",
