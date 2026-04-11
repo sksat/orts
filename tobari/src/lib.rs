@@ -48,19 +48,39 @@ pub use harris_priester::HarrisPriester;
 pub use nrlmsise00::Nrlmsise00;
 pub use space_weather::{ConstantWeather, SpaceWeather, SpaceWeatherProvider};
 
-use kaname::epoch::Epoch;
-use nalgebra::Vector3;
+use kaname::SimpleEci;
+use kaname::epoch::{Epoch, Utc};
 
 /// An atmospheric density model.
 ///
 /// Computes density \[kg/m³\] from altitude, satellite position, and epoch.
 /// Implementors must be `Send + Sync` for use inside [`ForceModel`](orts::perturbations::ForceModel).
+///
+/// # Frame and scale discipline (Phase 4)
+///
+/// `position_eci` is a phantom-typed [`kaname::SimpleEci`] — the simple
+/// path of the Phase 1–3 frame redesign. A future `density_precise`
+/// entry point that takes `&kaname::frame::Vec3<kaname::frame::Itrs>` +
+/// a full EOP provider is planned for Phase 4B; the current trait only
+/// covers the simple path so every existing atmosphere model can
+/// continue to participate.
+///
+/// `epoch` is a [`kaname::epoch::Epoch<Utc>`] so implementors that need
+/// a time argument (Harris-Priester's diurnal bulge, NRLMSISE-00's
+/// local solar time, etc.) receive a scale-tagged epoch rather than a
+/// bare JD, matching the rest of the kaname time-scale discipline.
 pub trait AtmosphereModel: Send + Sync {
     /// Compute atmospheric density \[kg/m³\].
     ///
     /// # Arguments
     /// - `altitude_km` — altitude above the reference body surface \[km\]
-    /// - `position` — satellite position in ECI frame \[km\]
-    /// - `epoch` — absolute time (`None` if unavailable)
-    fn density(&self, altitude_km: f64, position: &Vector3<f64>, epoch: Option<&Epoch>) -> f64;
+    /// - `position_eci` — satellite position in the simple ECI frame
+    ///   \[km\]
+    /// - `epoch` — absolute UTC time (`None` if unavailable)
+    fn density(
+        &self,
+        altitude_km: f64,
+        position_eci: &SimpleEci,
+        epoch: Option<&Epoch<Utc>>,
+    ) -> f64;
 }

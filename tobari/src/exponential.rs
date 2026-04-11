@@ -4,7 +4,6 @@
 //! Returns atmospheric density [kg/m³] at a given altitude [km].
 
 use kaname::epoch::Epoch;
-use nalgebra::Vector3;
 
 use crate::AtmosphereModel;
 
@@ -106,7 +105,12 @@ pub fn density(altitude_km: f64) -> f64 {
 pub struct Exponential;
 
 impl AtmosphereModel for Exponential {
-    fn density(&self, altitude_km: f64, _position: &Vector3<f64>, _epoch: Option<&Epoch>) -> f64 {
+    fn density(
+        &self,
+        altitude_km: f64,
+        _position_eci: &kaname::SimpleEci,
+        _epoch: Option<&Epoch<kaname::epoch::Utc>>,
+    ) -> f64 {
         density(altitude_km)
     }
 }
@@ -199,7 +203,7 @@ mod tests {
     #[test]
     fn trait_ignores_position_and_epoch() {
         let model = Exponential;
-        let pos = Vector3::new(6778.0, 0.0, 0.0);
+        let pos = kaname::SimpleEci::new(6778.0, 0.0, 0.0);
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
 
         let rho_trait = model.density(400.0, &pos, Some(&epoch));

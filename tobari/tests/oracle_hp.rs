@@ -94,7 +94,7 @@ fn hp_equatorial_density_vs_orekit() {
 
     for pt in &fixtures.equatorial_n2 {
         let epoch = parse_epoch(&pt.epoch);
-        let pos = Vector3::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
+        let pos = kaname::SimpleEci::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
 
         let our_density = hp.density(pt.altitude_km, &pos, Some(&epoch));
         let orekit_density = pt.density_kg_m3;
@@ -152,7 +152,7 @@ fn hp_apex_antapex_tight() {
         // Find points that are near the rho_max or rho_min bounds
         // by checking if density is within 5% of a table boundary
         let epoch = parse_epoch(&pt.epoch);
-        let pos = Vector3::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
+        let pos = kaname::SimpleEci::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
 
         let our_density = hp.density(pt.altitude_km, &pos, Some(&epoch));
         let orekit_density = pt.density_kg_m3;
@@ -200,7 +200,7 @@ fn hp_exponent_n6_vs_orekit() {
         assert_eq!(pt.n, 6);
 
         let epoch = parse_epoch(&pt.epoch);
-        let pos = Vector3::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
+        let pos = kaname::SimpleEci::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
 
         let our_density = hp.density(pt.altitude_km, &pos, Some(&epoch));
         let orekit_density = pt.density_kg_m3;
@@ -309,7 +309,7 @@ fn hp_off_equator_documents_geodetic_diff() {
 
     for pt in &fixtures.off_equator {
         let epoch = parse_epoch("2024-03-20T12:00:00Z");
-        let pos = Vector3::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
+        let pos = kaname::SimpleEci::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
 
         let our_density = hp.density(pt.altitude_km_spherical, &pos, Some(&epoch));
         let orekit_density = pt.density_kg_m3;
@@ -377,7 +377,8 @@ fn hp_seasonal_variation_range() {
 
             for pt in &pts {
                 let epoch = parse_epoch(&pt.epoch);
-                let pos = Vector3::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
+                let pos =
+                    kaname::SimpleEci::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
                 our_densities.push(hp.density(pt.altitude_km, &pos, Some(&epoch)));
                 orekit_densities.push(pt.density_kg_m3);
             }

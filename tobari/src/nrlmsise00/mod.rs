@@ -24,8 +24,8 @@ mod model;
 
 use crate::AtmosphereModel;
 use crate::space_weather::SpaceWeatherProvider;
-use kaname::epoch::Epoch;
-use nalgebra::Vector3;
+use kaname::SimpleEci;
+use kaname::epoch::{Epoch, Utc};
 
 /// Full output of the NRLMSISE-00 model.
 ///
@@ -131,13 +131,20 @@ impl Nrlmsise00 {
     ///
     /// Unlike [`AtmosphereModel::density()`] which only returns total mass density,
     /// this method provides the full species breakdown for diagnostics and analysis.
+    ///
+    /// # Frame / scale discipline (Phase 4)
+    ///
+    /// Takes a `&kaname::SimpleEci` position (the simple-path
+    /// phantom-typed marker) and a `&Epoch<Utc>`. A future
+    /// `density_with_composition_precise` variant accepting `&Vec3<Itrs>`
+    /// + a full EOP provider will be added in Phase 4B.
     pub fn density_with_composition(
         &self,
         altitude_km: f64,
-        position: &Vector3<f64>,
-        epoch: &Epoch,
+        position_eci: &SimpleEci,
+        epoch: &Epoch<Utc>,
     ) -> Nrlmsise00Output {
-        let (lat_deg, lon_deg) = geo::eci_to_geodetic_latlon(position, epoch);
+        let (lat_deg, lon_deg) = geo::simple_eci_to_geodetic_latlon(position_eci, epoch);
         let (doy, ut_seconds) = geo::epoch_to_day_of_year_and_ut(epoch);
         let lst = geo::local_solar_time(ut_seconds, lon_deg, epoch);
         let sw = self.weather.get(epoch);
@@ -160,10 +167,15 @@ impl Nrlmsise00 {
 }
 
 impl AtmosphereModel for Nrlmsise00 {
-    fn density(&self, altitude_km: f64, position: &Vector3<f64>, epoch: Option<&Epoch>) -> f64 {
+    fn density(
+        &self,
+        altitude_km: f64,
+        position_eci: &SimpleEci,
+        epoch: Option<&Epoch<Utc>>,
+    ) -> f64 {
         match epoch {
             Some(e) => {
-                self.density_with_composition(altitude_km, position, e)
+                self.density_with_composition(altitude_km, position_eci, e)
                     .total_mass_density
             }
             None => 0.0,
@@ -223,7 +235,7 @@ mod tests {
         >::from_era(gmst)
             .transform(&ecef);
         let eci_density = model
-            .density_with_composition(alt_km, eci.inner(), &epoch)
+            .density_with_composition(alt_km, &eci, &epoch)
             .total_mass_density;
 
         let rel_err = (eci_density - direct_density).abs() / direct_density;

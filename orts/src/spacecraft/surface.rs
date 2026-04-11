@@ -221,7 +221,7 @@ impl PanelDrag {
         orbit: &crate::OrbitalState,
         attitude: &crate::attitude::AttitudeState,
         mass: f64,
-        epoch: Option<&Epoch>,
+        epoch: Option<&Epoch<kaname::epoch::Utc>>,
     ) -> ExternalLoads {
         // Inside body → zero
         if self.is_inside(orbit.position()) {
@@ -229,7 +229,8 @@ impl PanelDrag {
         }
 
         let alt = self.altitude(orbit.position());
-        let rho = self.atmosphere.density(alt, orbit.position(), epoch);
+        let pos_eci = orbit.position_eci();
+        let rho = self.atmosphere.density(alt, &pos_eci, epoch);
         if rho == 0.0 {
             return ExternalLoads::zeros();
         }
@@ -1110,7 +1111,12 @@ mod tests {
     struct ConstantDensity(f64);
 
     impl AtmosphereModel for ConstantDensity {
-        fn density(&self, _alt: f64, _pos: &Vector3<f64>, _epoch: Option<&Epoch>) -> f64 {
+        fn density(
+            &self,
+            _alt: f64,
+            _pos_eci: &kaname::SimpleEci,
+            _epoch: Option<&Epoch<kaname::epoch::Utc>>,
+        ) -> f64 {
             self.0
         }
     }

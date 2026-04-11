@@ -384,7 +384,12 @@ impl Default for HarrisPriester {
 }
 
 impl AtmosphereModel for HarrisPriester {
-    fn density(&self, altitude_km: f64, position: &Vector3<f64>, epoch: Option<&Epoch>) -> f64 {
+    fn density(
+        &self,
+        altitude_km: f64,
+        position_eci: &kaname::SimpleEci,
+        epoch: Option<&Epoch<kaname::epoch::Utc>>,
+    ) -> f64 {
         // Below HP table range: fall back to exponential model
         if altitude_km < HP_TABLE[0].h {
             return crate::exponential::density(altitude_km);
@@ -403,9 +408,14 @@ impl AtmosphereModel for HarrisPriester {
             None => return (rho_min + rho_max) / 2.0,
         };
 
-        // Compute angle between satellite and bulge apex
+        // Compute angle between satellite direction and the diurnal
+        // bulge apex. The bulge apex is computed from the Sun direction
+        // (in Gcrs) but at Meeus precision Gcrs and SimpleEci are
+        // numerically indistinguishable, so extracting a raw Vector3
+        // from the SimpleEci position is semantically safe for the
+        // cos(ψ) calculation.
         let apex = self.bulge_apex(epoch);
-        let sat_dir = position.normalize();
+        let sat_dir = position_eci.inner().normalize();
         let cos_psi = sat_dir.dot(&apex).clamp(-1.0, 1.0);
 
         // cos(ψ/2) = sqrt((1 + cos ψ) / 2)
@@ -447,7 +457,7 @@ mod tests {
         let epoch = dummy_epoch();
 
         // Satellite at +X direction → at the apex
-        let pos = Vector3::new(6778.0, 0.0, 0.0);
+        let pos = kaname::SimpleEci::new(6778.0, 0.0, 0.0);
 
         // At 400 km: rho_max = 7.492e-12
         let rho = hp.density(400.0, &pos, Some(&epoch));
@@ -466,7 +476,7 @@ mod tests {
         let epoch = dummy_epoch();
 
         // Satellite at -X → anti-apex
-        let pos = Vector3::new(-6778.0, 0.0, 0.0);
+        let pos = kaname::SimpleEci::new(-6778.0, 0.0, 0.0);
 
         // At 400 km: rho_min = 2.249e-12
         let rho = hp.density(400.0, &pos, Some(&epoch));
@@ -482,12 +492,11 @@ mod tests {
     fn density_decreases_with_altitude() {
         let hp = hp_fixed_sun();
         let epoch = dummy_epoch();
-        let pos_dir = Vector3::new(1.0, 0.0, 0.0); // direction doesn't matter, just altitude
 
         let altitudes = [100.0, 200.0, 300.0, 400.0, 500.0, 700.0, 1000.0];
         for i in 0..altitudes.len() - 1 {
-            let pos_lo = pos_dir * (6371.0 + altitudes[i]);
-            let pos_hi = pos_dir * (6371.0 + altitudes[i + 1]);
+            let pos_lo = kaname::SimpleEci::new(6371.0 + altitudes[i], 0.0, 0.0);
+            let pos_hi = kaname::SimpleEci::new(6371.0 + altitudes[i + 1], 0.0, 0.0);
             let rho_lo = hp.density(altitudes[i], &pos_lo, Some(&epoch));
             let rho_hi = hp.density(altitudes[i + 1], &pos_hi, Some(&epoch));
             assert!(
@@ -508,8 +517,8 @@ mod tests {
 
         for alt in [200.0, 400.0, 600.0, 800.0] {
             let r = 6371.0 + alt;
-            let pos_apex = Vector3::new(r, 0.0, 0.0);
-            let pos_anti = Vector3::new(-r, 0.0, 0.0);
+            let pos_apex = kaname::SimpleEci::new(r, 0.0, 0.0);
+            let pos_anti = kaname::SimpleEci::new(-r, 0.0, 0.0);
 
             let rho_apex = hp.density(alt, &pos_apex, Some(&epoch));
             let rho_anti = hp.density(alt, &pos_anti, Some(&epoch));
@@ -524,7 +533,7 @@ mod tests {
     #[test]
     fn no_epoch_returns_average() {
         let hp = hp_fixed_sun();
-        let pos = Vector3::new(6778.0, 0.0, 0.0);
+        let pos = kaname::SimpleEci::new(6778.0, 0.0, 0.0);
 
         let rho = hp.density(400.0, &pos, None);
 
@@ -540,7 +549,7 @@ mod tests {
     #[test]
     fn below_100km_falls_back_to_exponential() {
         let hp = hp_fixed_sun();
-        let pos = Vector3::new(6371.0 + 50.0, 0.0, 0.0);
+        let pos = kaname::SimpleEci::new(6371.0 + 50.0, 0.0, 0.0);
         let epoch = dummy_epoch();
 
         let rho_hp = hp.density(50.0, &pos, Some(&epoch));
@@ -555,7 +564,7 @@ mod tests {
     #[test]
     fn above_table_returns_zero() {
         let hp = hp_fixed_sun();
-        let pos = Vector3::new(6371.0 + 1500.0, 0.0, 0.0);
+        let pos = kaname::SimpleEci::new(6371.0 + 1500.0, 0.0, 0.0);
         let epoch = dummy_epoch();
 
         let rho = hp.density(1500.0, &pos, Some(&epoch));
@@ -566,7 +575,7 @@ mod tests {
     fn higher_exponent_sharper_bulge() {
         let epoch = dummy_epoch();
         // Satellite at 90° from apex (equator of the bulge)
-        let pos_90 = Vector3::new(0.0, 6778.0, 0.0);
+        let pos_90 = kaname::SimpleEci::new(0.0, 6778.0, 0.0);
 
         let hp_n2 = hp_fixed_sun().with_lag_angle(0.0).with_exponent(2);
         let hp_n6 = hp_fixed_sun().with_lag_angle(0.0).with_exponent(6);
@@ -641,7 +650,7 @@ mod tests {
     fn iss_altitude_order_of_magnitude() {
         let hp = hp_fixed_sun();
         let epoch = dummy_epoch();
-        let pos = Vector3::new(6778.0, 0.0, 0.0);
+        let pos = kaname::SimpleEci::new(6778.0, 0.0, 0.0);
 
         let rho_hp = hp.density(400.0, &pos, Some(&epoch));
         let rho_exp = crate::exponential::density(400.0);

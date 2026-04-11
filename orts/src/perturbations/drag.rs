@@ -83,9 +83,14 @@ impl AtmosphericDrag {
 
 impl AtmosphericDrag {
     /// Compute drag acceleration [km/s²] from orbital state.
-    pub(crate) fn acceleration(&self, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
+    pub(crate) fn acceleration(
+        &self,
+        state: &OrbitalState,
+        epoch: Option<&Epoch<kaname::epoch::Utc>>,
+    ) -> Vector3<f64> {
         // Check if inside the body (ellipsoid test for Earth, spherical for others)
-        let pos = state.position();
+        let pos_eci = state.position_eci();
+        let pos = pos_eci.inner();
         let inside = match self.body {
             Some(KnownBody::Earth) => {
                 let p2 = pos.x * pos.x + pos.y * pos.y;
@@ -98,13 +103,17 @@ impl AtmosphericDrag {
             return Vector3::zeros();
         }
 
-        // Altitude: WGS-84 geodetic for Earth, spherical for others
+        // Altitude: WGS-84 geodetic for Earth, spherical for others.
+        // `geodetic_altitude` is invariant under Z-axis rotation
+        // (depends only on `p = √(x²+y²)` and `z`), so it gives the
+        // correct WGS-84 ellipsoidal altitude even when given the
+        // simple ECI position directly.
         let alt = match self.body {
             Some(KnownBody::Earth) => kaname::earth::geodetic_altitude(pos),
             _ => pos.magnitude() - self.body_radius,
         };
 
-        let rho = self.atmosphere.density(alt, pos, epoch); // kg/m³
+        let rho = self.atmosphere.density(alt, &pos_eci, epoch); // kg/m³
         if rho == 0.0 {
             return Vector3::zeros();
         }

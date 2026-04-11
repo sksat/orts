@@ -87,7 +87,7 @@ fn compute_density_via_eci(
         .transform(&ecef);
 
     model
-        .density_with_composition(alt_km, eci.inner(), epoch)
+        .density_with_composition(alt_km, &eci, epoch)
         .total_mass_density
 }
 

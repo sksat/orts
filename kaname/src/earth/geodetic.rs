@@ -8,6 +8,7 @@ use nalgebra::Vector3;
 
 use super::ellipsoid::{WGS84_A, WGS84_B, WGS84_E2};
 use crate::SimpleEcef;
+use crate::frame::{self, Vec3};
 
 /// Geodetic coordinates (WGS-84).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -48,6 +49,68 @@ impl From<SimpleEcef> for Geodetic {
         }
 
         // Bowring iteration with convergence check
+        let mut lat = v.z.atan2(p * (1.0 - WGS84_E2));
+        let mut alt = 0.0_f64;
+
+        for _ in 0..5 {
+            let sin_lat = lat.sin();
+            let cos_lat = lat.cos();
+            let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
+            let new_alt = p / cos_lat - n;
+            lat = (v.z / p / (1.0 - WGS84_E2 * n / (n + new_alt))).atan();
+            if (new_alt - alt).abs() < 1e-12 {
+                alt = new_alt;
+                break;
+            }
+            alt = new_alt;
+        }
+
+        Geodetic {
+            latitude: lat,
+            longitude,
+            altitude: alt,
+        }
+    }
+}
+
+// Generic `to_geodetic()` method on any Earth-fixed `Vec3<F>`.
+//
+// Works for both [`crate::frame::SimpleEcef`] (the ERA-only simple path) and
+// [`crate::frame::Itrs`] (the full IAU 2006 CIO-based precise path). The
+// Bowring iteration is identical for both — the distinction only matters
+// up-stream, in the rotation that produced the ECEF vector in the first
+// place.
+//
+// The pre-existing `impl From<SimpleEcef> for Geodetic` is kept for
+// backwards source compatibility of `.into()` call sites that predate
+// Phase 4; new code should prefer `.to_geodetic()` because it works for
+// both the simple and precise Ecef markers without rewriting the
+// signature when the frame is upgraded from `SimpleEcef` to `Itrs`.
+impl<F: frame::Ecef> Vec3<F> {
+    /// Convert this Earth-fixed Cartesian vector to WGS-84 geodetic
+    /// coordinates via Bowring iteration.
+    ///
+    /// Available on any `Vec3<F>` where `F` implements the
+    /// [`frame::Ecef`] category trait — currently
+    /// [`crate::frame::SimpleEcef`], [`crate::frame::Tirs`], and
+    /// [`crate::frame::Itrs`]. Tirs / Itrs variants require the caller
+    /// to have already applied the appropriate IAU 2006 rotation chain
+    /// (Phase 3B `Rotation<Gcrs, Itrs>::iau2006_full_from_utc` or
+    /// similar) to produce an Itrs vector.
+    pub fn to_geodetic(&self) -> Geodetic {
+        let v = self.inner();
+        let p = (v.x * v.x + v.y * v.y).sqrt();
+        let longitude = v.y.atan2(v.x);
+
+        // Near-polar special case mirrors the `From<SimpleEcef>` impl.
+        if p < 1e-10 {
+            return Geodetic {
+                latitude: v.z.signum() * std::f64::consts::FRAC_PI_2,
+                longitude,
+                altitude: v.z.abs() - WGS84_B,
+            };
+        }
+
         let mut lat = v.z.atan2(p * (1.0 - WGS84_E2));
         let mut alt = 0.0_f64;
 
@@ -271,6 +334,70 @@ mod tests {
         let pos = Vector3::new(1e-12, 0.0, WGS84_B + 400.0);
         let alt = geodetic_altitude(&pos);
         assert!((alt - 400.0).abs() < 1e-3);
+    }
+
+    // ── Vec3<F: Ecef>::to_geodetic() tests ──
+
+    /// The new generic method must agree with the legacy
+    /// `Geodetic::from(ecef)` conversion bit-for-bit on the same
+    /// `SimpleEcef` input. Pins that Phase 4's generic entry point is a
+    /// drop-in replacement for the `From` impl.
+    #[test]
+    fn generic_to_geodetic_matches_simple_ecef_from_impl() {
+        let geo_in = Geodetic {
+            latitude: 0.7,
+            longitude: 2.1,
+            altitude: 350.0,
+        };
+        let ecef: SimpleEcef = geo_in.into();
+        let via_from = Geodetic::from(ecef);
+        let via_method = ecef.to_geodetic();
+        assert_eq!(via_from.latitude, via_method.latitude);
+        assert_eq!(via_from.longitude, via_method.longitude);
+        assert_eq!(via_from.altitude, via_method.altitude);
+    }
+
+    /// `Vec3<Itrs>::to_geodetic()` works on the precise Ecef marker.
+    /// Uses a numerically identical payload to `SimpleEcef` (Phase 4A
+    /// does not wire a GCRS → ITRS rotation here) to pin the trait
+    /// generic dispatch.
+    #[test]
+    fn generic_to_geodetic_works_on_itrs() {
+        let geo_in = Geodetic {
+            latitude: (-45.0_f64).to_radians(),
+            longitude: (120.0_f64).to_radians(),
+            altitude: 600.0,
+        };
+        let ecef: SimpleEcef = geo_in.into();
+        // Reinterpret the same raw components as ITRS.
+        let itrs_vec: crate::frame::Vec3<crate::frame::Itrs> =
+            crate::frame::Vec3::from_raw(*ecef.inner());
+
+        let geo_out = itrs_vec.to_geodetic();
+        // Bowring converges to ~1e-9 km altitude; the angles are near
+        // machine precision. Use loose tolerances and pin the actual
+        // roundtrip error for diagnostics.
+        let lat_eps = 1e-12;
+        let lon_eps = 1e-12;
+        let alt_eps = 1e-6; // 1 mm
+        assert!(
+            (geo_out.latitude - geo_in.latitude).abs() < lat_eps,
+            "lat: {} vs {}",
+            geo_out.latitude,
+            geo_in.latitude
+        );
+        assert!(
+            (geo_out.longitude - geo_in.longitude).abs() < lon_eps,
+            "lon: {} vs {}",
+            geo_out.longitude,
+            geo_in.longitude
+        );
+        assert!(
+            (geo_out.altitude - geo_in.altitude).abs() < alt_eps,
+            "alt: {} vs {}",
+            geo_out.altitude,
+            geo_in.altitude
+        );
     }
 
     #[test]
