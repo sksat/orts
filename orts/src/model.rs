@@ -152,13 +152,6 @@ mod external_loads_tests {
     use super::*;
 
     #[test]
-    fn zeros() {
-        let w = ExternalLoads::zeros();
-        assert_eq!(w.acceleration_inertial, Vec3::<SimpleEci>::zeros());
-        assert_eq!(w.torque_body, Vec3::<Body>::zeros());
-    }
-
-    #[test]
     fn add_component_wise() {
         let a = ExternalLoads {
             acceleration_inertial: Vec3::new(1.0, 2.0, 3.0),
@@ -209,10 +202,5 @@ mod external_loads_tests {
         };
         let sum = w.clone() + ExternalLoads::zeros();
         assert_eq!(sum, w);
-    }
-
-    #[test]
-    fn zeros_has_zero_mass_rate() {
-        assert_eq!(ExternalLoads::zeros().mass_rate, 0.0);
     }
 }

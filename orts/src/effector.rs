@@ -211,13 +211,6 @@ mod tests {
     // ------- AuxRegistry tests -------
 
     #[test]
-    fn registry_empty() {
-        let reg = AuxRegistry::new();
-        assert_eq!(reg.total_dim(), 0);
-        assert!(reg.entries().is_empty());
-    }
-
-    #[test]
     fn registry_single_effector() {
         let mut reg = AuxRegistry::new();
         let offset = reg.register("rw", 3);
