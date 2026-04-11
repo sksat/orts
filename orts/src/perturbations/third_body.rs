@@ -12,7 +12,7 @@ use crate::model::{HasOrbit, Model};
 ///
 /// Stored as an `Arc<dyn Fn>` so the struct is cheaply cloneable and can hold
 /// closures that capture state (e.g., an interpolated ephemeris table).
-pub type BodyPositionFn = Arc<dyn Fn(&Epoch) -> Vec3<frame::Eci> + Send + Sync>;
+pub type BodyPositionFn = Arc<dyn Fn(&Epoch) -> Vec3<frame::Gcrs> + Send + Sync>;
 
 /// Third-body gravitational perturbation.
 ///
@@ -92,7 +92,7 @@ impl ThirdBodyGravity {
     /// a higher-accuracy ephemeris source (e.g., a precomputed table).
     pub fn custom<F>(name: &'static str, mu_body: f64, position_fn: F) -> Self
     where
-        F: Fn(&Epoch) -> Vec3<frame::Eci> + Send + Sync + 'static,
+        F: Fn(&Epoch) -> Vec3<frame::Gcrs> + Send + Sync + 'static,
     {
         Self {
             name,
@@ -305,7 +305,7 @@ mod tests {
     fn custom_third_body_uses_supplied_closure() {
         // Build a custom third body at a fixed position and verify the
         // acceleration matches the analytic tidal formula.
-        let fake_body_pos = Vec3::<frame::Eci>::new(1.0e6, 0.0, 0.0);
+        let fake_body_pos = Vec3::<frame::Gcrs>::new(1.0e6, 0.0, 0.0);
         let fake_mu = 1.0e5;
         let tb = ThirdBodyGravity::custom("fake", fake_mu, move |_epoch| fake_body_pos);
         let state = iss_state();
@@ -363,7 +363,7 @@ mod tests {
         // This simulates what a tabulated (Horizons-backed) source would do.
         struct FakeMoonEphem;
         impl MoonEphemeris for FakeMoonEphem {
-            fn position_eci(&self, _epoch: &Epoch) -> Vec3<frame::Eci> {
+            fn position_eci(&self, _epoch: &Epoch) -> Vec3<frame::Gcrs> {
                 Vec3::new(400_000.0, 0.0, 0.0)
             }
             fn name(&self) -> &str {
@@ -395,9 +395,9 @@ mod tests {
         // Captured-state closures are the whole point of the `Arc<dyn Fn>`
         // refactor — verify that a closure capturing a `Vec` works.
         let positions = vec![
-            Vec3::<frame::Eci>::new(1.0e6, 0.0, 0.0),
-            Vec3::<frame::Eci>::new(0.0, 1.0e6, 0.0),
-            Vec3::<frame::Eci>::new(0.0, 0.0, 1.0e6),
+            Vec3::<frame::Gcrs>::new(1.0e6, 0.0, 0.0),
+            Vec3::<frame::Gcrs>::new(0.0, 1.0e6, 0.0),
+            Vec3::<frame::Gcrs>::new(0.0, 0.0, 1.0e6),
         ];
         // Move the Vec into the closure; the closure returns the first entry.
         let tb = ThirdBodyGravity::custom("captured", 1.0e5, move |_epoch| positions[0]);

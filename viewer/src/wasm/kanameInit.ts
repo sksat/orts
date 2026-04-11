@@ -12,7 +12,7 @@ type SunDirectionFromBody = (body: string, epoch_jd: number, t: number) => Float
 type SunDistanceFromBody = (body: string, epoch_jd: number, t: number) => number;
 type JdToUtcString = (epoch_jd: number, t: number) => string;
 type BodyOrientation = (body: string, epoch_jd: number, t: number) => Float64Array;
-type BodyQuatEciToLvlh = (
+type BodyQuatToRsw = (
   pos_x: number,
   pos_y: number,
   pos_z: number,
@@ -35,7 +35,7 @@ let wasmSunDirFromBody: SunDirectionFromBody | undefined;
 let wasmSunDistFromBody: SunDistanceFromBody | undefined;
 let wasmJdToUtc: JdToUtcString | undefined;
 let wasmBodyOrientation: BodyOrientation | undefined;
-let wasmBodyQuatToLvlh: BodyQuatEciToLvlh | undefined;
+let wasmBodyQuatToRsw: BodyQuatToRsw | undefined;
 
 /** Initialize the kaname WASM module. Safe to call multiple times. Rejects on failure. */
 export function initKaname(): Promise<void> {
@@ -52,7 +52,7 @@ export function initKaname(): Promise<void> {
     wasmSunDistFromBody = mod.sun_distance_from_body;
     wasmJdToUtc = mod.jd_to_utc_string;
     wasmBodyOrientation = mod.body_orientation;
-    wasmBodyQuatToLvlh = mod.body_quat_eci_to_lvlh;
+    wasmBodyQuatToRsw = mod.body_quat_to_rsw;
     initialized = true;
   });
   initPromise = p;
@@ -125,11 +125,13 @@ export function body_orientation(
 }
 
 /**
- * Transform body-to-ECI quaternion to body-to-LVLH frame via WASM.
+ * Transform body-to-ECI quaternion to body-to-RSW frame via WASM.
+ *
+ * RSW axis order: [Radial, Along-track, Cross-track] (standard Vallado).
  *
  * Returns [w, x, y, z] (Hamilton scalar-first) or undefined if degenerate.
  */
-export function body_quat_eci_to_lvlh(
+export function body_quat_to_rsw(
   pos_x: number,
   pos_y: number,
   pos_z: number,
@@ -141,7 +143,7 @@ export function body_quat_eci_to_lvlh(
   qy: number,
   qz: number,
 ): [number, number, number, number] | undefined {
-  const result = wasmBodyQuatToLvlh!(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, qw, qx, qy, qz);
+  const result = wasmBodyQuatToRsw!(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, qw, qx, qy, qz);
   if (result.length === 0) return undefined;
   return [result[0], result[1], result[2], result[3]];
 }

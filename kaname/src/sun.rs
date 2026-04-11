@@ -57,7 +57,7 @@ fn solar_elements(epoch: &Epoch) -> SolarElements {
 /// Accuracy is ~1 arcminute, sufficient for visualization purposes.
 ///
 /// Reference: Meeus, "Astronomical Algorithms", Chapter 25.
-pub fn sun_direction_eci(epoch: &Epoch) -> Vec3<frame::Eci> {
+pub fn sun_direction_eci(epoch: &Epoch) -> Vec3<frame::Gcrs> {
     let el = solar_elements(epoch);
 
     // Sun direction in ECI (equatorial coordinates)
@@ -124,7 +124,7 @@ pub fn sun_distance_km(epoch: &Epoch) -> f64 {
 /// Sun position vector in ECI (J2000) frame [km].
 ///
 /// Returns the geocentric position of the Sun. Combines direction and distance.
-pub fn sun_position_eci(epoch: &Epoch) -> Vec3<frame::Eci> {
+pub fn sun_position_eci(epoch: &Epoch) -> Vec3<frame::Gcrs> {
     let direction = sun_direction_eci(epoch);
     let distance = sun_distance_km(epoch);
     direction * distance
@@ -151,7 +151,7 @@ pub fn sun_distance_from_body(body: &str, epoch: &Epoch) -> f64 {
 /// - Unknown bodies: fallback to +X direction (vernal equinox)
 ///
 /// The returned vector points FROM the body TOWARD the Sun.
-pub fn sun_direction_from_body(body: &str, epoch: &Epoch) -> Vec3<frame::Eci> {
+pub fn sun_direction_from_body(body: &str, epoch: &Epoch) -> Vec3<frame::Gcrs> {
     match body {
         "earth" | "moon" => sun_direction_eci(epoch),
         _ => {

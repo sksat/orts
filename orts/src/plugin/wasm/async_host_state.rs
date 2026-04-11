@@ -74,7 +74,7 @@ impl host_env::Host for AsyncHostState {
         position_eci_km: wit::Vec3,
         epoch: wit::Epoch,
     ) -> wit::Vec3 {
-        let pos = kaname::Eci::new(position_eci_km.x, position_eci_km.y, position_eci_km.z);
+        let pos = kaname::SimpleEci::new(position_eci_km.x, position_eci_km.y, position_eci_km.z);
         let ep = kaname::epoch::Epoch::from_jd(epoch.julian_date);
         let b = self.field.field_eci(&pos, &ep);
         wit::Vec3 {

@@ -216,7 +216,12 @@ mod tests {
             longitude: lon_deg.to_radians(),
             altitude: alt_km,
         };
-        let eci = geod.to_ecef().to_eci(gmst);
+        let ecef = kaname::SimpleEcef::from(geod);
+        let eci = kaname::frame::Rotation::<
+            kaname::frame::SimpleEcef,
+            kaname::frame::SimpleEci,
+        >::from_era(gmst)
+            .transform(&ecef);
         let eci_density = model
             .density_with_composition(alt_km, eci.inner(), &epoch)
             .total_mass_density;

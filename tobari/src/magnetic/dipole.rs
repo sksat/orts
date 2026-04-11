@@ -1,4 +1,4 @@
-use kaname::Eci;
+use kaname::SimpleEci;
 use kaname::epoch::Epoch;
 use kaname::frame;
 use nalgebra::Vector3;
@@ -88,7 +88,7 @@ impl TiltedDipole {
 }
 
 impl MagneticFieldModel for TiltedDipole {
-    fn field_eci(&self, position_eci: &Eci, epoch: &Epoch) -> frame::Vec3<frame::Eci> {
+    fn field_eci(&self, position_eci: &SimpleEci, epoch: &Epoch) -> frame::Vec3<frame::SimpleEci> {
         frame::Vec3::from_raw(self.compute_field(position_eci.inner(), epoch.gmst()))
     }
 }
@@ -104,7 +104,7 @@ mod tests {
     #[test]
     fn equatorial_field_magnitude_at_leo() {
         let dipole = TiltedDipole::earth();
-        let pos = Eci::new(7000.0, 0.0, 0.0);
+        let pos = SimpleEci::new(7000.0, 0.0, 0.0);
         let epoch = j2000_epoch();
         let b = dipole.field_eci(&pos, &epoch);
         let b_micro_t = b.magnitude() * 1e6;
@@ -120,10 +120,10 @@ mod tests {
         let dipole = TiltedDipole::earth();
         let epoch = j2000_epoch();
         let b1 = dipole
-            .field_eci(&Eci::new(7000.0, 0.0, 0.0), &epoch)
+            .field_eci(&SimpleEci::new(7000.0, 0.0, 0.0), &epoch)
             .magnitude();
         let b2 = dipole
-            .field_eci(&Eci::new(14000.0, 0.0, 0.0), &epoch)
+            .field_eci(&SimpleEci::new(14000.0, 0.0, 0.0), &epoch)
             .magnitude();
 
         let ratio = b1 / b2;
@@ -139,9 +139,13 @@ mod tests {
         let r = 7000.0;
         let epoch = j2000_epoch();
 
-        let b_pole = dipole.field_eci(&Eci::new(0.0, 0.0, r), &epoch).magnitude();
+        let b_pole = dipole
+            .field_eci(&SimpleEci::new(0.0, 0.0, r), &epoch)
+            .magnitude();
 
-        let b_eq = dipole.field_eci(&Eci::new(r, 0.0, 0.0), &epoch).magnitude();
+        let b_eq = dipole
+            .field_eci(&SimpleEci::new(r, 0.0, 0.0), &epoch)
+            .magnitude();
 
         let ratio = b_pole / b_eq;
         assert!(
@@ -153,24 +157,24 @@ mod tests {
     #[test]
     fn zero_inside_earth_guard() {
         let dipole = TiltedDipole::earth();
-        let pos = Eci::new(0.5, 0.0, 0.0);
+        let pos = SimpleEci::new(0.5, 0.0, 0.0);
         let epoch = j2000_epoch();
         let b = dipole.field_eci(&pos, &epoch);
-        assert_eq!(b, frame::Vec3::<frame::Eci>::zeros());
+        assert_eq!(b, frame::Vec3::<frame::SimpleEci>::zeros());
     }
 
     #[test]
     fn zero_at_origin() {
         let dipole = TiltedDipole::earth();
         let epoch = j2000_epoch();
-        let b = dipole.field_eci(&Eci::zeros(), &epoch);
-        assert_eq!(b, frame::Vec3::<frame::Eci>::zeros());
+        let b = dipole.field_eci(&SimpleEci::zeros(), &epoch);
+        assert_eq!(b, frame::Vec3::<frame::SimpleEci>::zeros());
     }
 
     #[test]
     fn field_is_finite() {
         let dipole = TiltedDipole::earth();
-        let pos = Eci::new(6778.0, 0.0, 0.0);
+        let pos = SimpleEci::new(6778.0, 0.0, 0.0);
         let epoch = j2000_epoch();
         let b = dipole.field_eci(&pos, &epoch);
         assert!(b.is_finite());
@@ -179,7 +183,7 @@ mod tests {
     #[test]
     fn field_rotates_with_epoch() {
         let dipole = TiltedDipole::earth();
-        let pos = Eci::new(7000.0, 0.0, 0.0);
+        let pos = SimpleEci::new(7000.0, 0.0, 0.0);
 
         let epoch1 = Epoch::j2000();
         let epoch2 = Epoch::j2000().add_seconds(6.0 * 3600.0);

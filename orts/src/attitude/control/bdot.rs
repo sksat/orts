@@ -75,7 +75,7 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for BdotDetumble
         // 2. Transform to body frame
         let b_body = att
             .rotation_to_body()
-            .transform(&Vec3::<frame::Eci>::from_raw(b_eci))
+            .transform(&Vec3::<frame::SimpleEci>::from_raw(b_eci))
             .into_inner();
 
         // 3. Analytical approximation: dB_body/dt = -omega x B_body
@@ -140,7 +140,7 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for CommandedMag
         let b_body = state
             .attitude()
             .rotation_to_body()
-            .transform(&Vec3::<frame::Eci>::from_raw(b_eci))
+            .transform(&Vec3::<frame::SimpleEci>::from_raw(b_eci))
             .into_inner();
         ExternalLoads::torque(self.commanded_moment.cross(&b_body))
     }
@@ -222,7 +222,7 @@ impl<F: MagneticFieldModel> DiscreteController for BdotFiniteDiff<F> {
         }
         let b_body = attitude
             .rotation_to_body()
-            .transform(&Vec3::<frame::Eci>::from_raw(b_eci))
+            .transform(&Vec3::<frame::SimpleEci>::from_raw(b_eci))
             .into_inner();
 
         let m_cmd = match self.prev_b_body {
@@ -252,7 +252,7 @@ mod tests {
     use super::*;
     use crate::OrbitalState;
     use crate::attitude::AttitudeState;
-    use kaname::Eci;
+    use kaname::SimpleEci;
     use kaname::epoch::Epoch;
     use nalgebra::Vector4;
     use tobari::magnetic::MagneticFieldModel;
@@ -351,7 +351,7 @@ mod tests {
         let epoch = test_epoch();
         let loads = ctrl.eval(0.0, &state, Some(&epoch));
         let b = TiltedDipole::earth()
-            .field_eci(&Eci::new(7000.0, 0.0, 0.0), &epoch)
+            .field_eci(&SimpleEci::new(7000.0, 0.0, 0.0), &epoch)
             .magnitude();
         let max_torque = 3.0_f64.sqrt() * max_m * b;
         assert!(

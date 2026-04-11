@@ -3,18 +3,21 @@
 //! Converts between ECI coordinates and the geodetic/time parameters
 //! required by the NRLMSISE-00 model.
 
-use kaname::Eci;
 use kaname::epoch::Epoch;
+use kaname::frame::{self, Rotation};
+use kaname::{Geodetic, SimpleEci};
 use nalgebra::Vector3;
 
 /// Convert ECI position + epoch to WGS-84 geodetic latitude and longitude [degrees].
 ///
-/// Uses GMST to rotate from ECI to ECEF, then computes geodetic latitude
-/// via Bowring iteration (delegated to `kaname::Ecef::to_geodetic()`).
+/// Uses GMST (naive ERA) to rotate from SimpleEci to SimpleEcef, then
+/// converts to geodetic via the `Geodetic: From<SimpleEcef>` impl (Bowring
+/// iteration).
 pub fn eci_to_geodetic_latlon(position: &Vector3<f64>, epoch: &Epoch) -> (f64, f64) {
-    let gmst_rad = epoch.gmst();
-    let ecef = Eci::from_raw(*position).to_ecef(gmst_rad);
-    let geod = ecef.to_geodetic();
+    let eci = SimpleEci::from_raw(*position);
+    let ecef =
+        Rotation::<frame::SimpleEci, frame::SimpleEcef>::from_era(epoch.gmst()).transform(&eci);
+    let geod = Geodetic::from(ecef);
     (geod.latitude.to_degrees(), geod.longitude.to_degrees())
 }
 
@@ -187,7 +190,8 @@ mod tests {
             longitude: expected_lon.to_radians(),
             altitude: 400.0,
         };
-        let eci = geod.to_ecef().to_eci(gmst);
+        let ecef = kaname::SimpleEcef::from(geod);
+        let eci = Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst).transform(&ecef);
 
         let (lat_deg, lon_deg) = eci_to_geodetic_latlon(eci.inner(), &epoch);
 
@@ -215,7 +219,8 @@ mod tests {
             longitude: expected_lon.to_radians(),
             altitude: 800.0,
         };
-        let eci = geod.to_ecef().to_eci(gmst);
+        let ecef = kaname::SimpleEcef::from(geod);
+        let eci = Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst).transform(&ecef);
 
         let (lat_deg, lon_deg) = eci_to_geodetic_latlon(eci.inner(), &epoch);
 

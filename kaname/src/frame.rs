@@ -1,57 +1,227 @@
-//! 座標系付き型: `Vec3<F>` と `Rotation<From, To>`。
+//! Coordinate frame markers and frame-tagged types: `Vec3<F>` and `Rotation<From, To>`.
 //!
-//! 座標系をコンパイル時に型レベルで区別し、異フレーム間の
-//! 不正な演算を防ぐ。ゼロサイズの `PhantomData` マーカーなので
-//! ランタイムコストはゼロ。
+//! `Vec3<F>` は座標系 `F` で表現される 3 次元ベクトル、`Rotation<From, To>` は
+//! `From` → `To` への回転を表す。両者とも `F` は ZST な phantom 型なので、
+//! メモリレイアウトは裸の `Vector3<f64>` / `UnitQuaternion<f64>` と同一。
 //!
-//! # フレームマーカー
+//! 座標系は sealed category trait でカテゴリ分けされており、structural math
+//! (magnitude / dot / cross / 変換) は generic に書ける。一方で precision-aware な
+//! 変換 (`Rotation<SimpleEci, SimpleEcef>` と `Rotation<Gcrs, Itrs>` など) は
+//! concrete 型 API として個別に提供し、近似系と厳密系の silent 混同を防ぐ。
 //!
-//! - [`Eci`] — Earth-Centered Inertial (J2000)
-//! - [`Ecef`] — Earth-Centered Earth-Fixed
+//! # Frame marker
+//!
+//! - [`SimpleEci`] — 歳差・章動・極運動を無視した近似的な Earth-centered inertial。
+//!   ERA-only Z 回転の親フレーム。Meeus ephemeris と可視化グレード計算の出発点
+//! - [`SimpleEcef`] — [`SimpleEci`] からの ERA Z 回転先。簡易地球固定系。
+//!   極運動や章動を一切適用しない近似的 Earth-fixed
+//! - [`Gcrs`] — Geocentric Celestial Reference System (IAU 2006 CIO chain の
+//!   celestial side)。Meeus ephemeris の返り型としても使う (strict な GCRS では
+//!   なく "geocentric inertial as returned by low-precision analytic models" の
+//!   意味。後続 Phase で precession/nutation 補正が加わると厳密な GCRS に近づく)
+//! - [`Rsw`] — Radial / Along-track / Cross-track 軌道ローカル系。
+//!   軸順は標準 RSW 規約 [R̂, Ŝ, Ŵ] (R̂=normalize(r), Ŵ=normalize(r×v), Ŝ=Ŵ×R̂)
 //! - [`Body`] — 宇宙機機体座標系
-//! - [`Lvlh`] — Local Vertical Local Horizontal
+//!
+//! # Category trait
+//!
+//! - [`Eci`] — structural category for earth-centered inertial frames.
+//!   実装者: `SimpleEci`, `Gcrs`
+//! - [`Ecef`] — structural category for earth-fixed frames.
+//!   実装者: `SimpleEcef`
+//! - [`LocalOrbital`] — structural category for local orbital frames.
+//!   実装者: `Rsw`
+//!
+//! category trait は precision-agnostic な generic math (`<F: Eci>` で受ける等)
+//! を書くためのものであり、precision-aware な変換 API には concrete 型を使うこと。
 //!
 //! # 使い方
 //!
 //! ```
-//! use kaname::frame::{Vec3, Rotation, Eci, Body};
+//! use kaname::frame::{Vec3, Rotation, Gcrs, Body};
 //!
-//! let b_eci = Vec3::<Eci>::new(1e-5, 2e-5, -3e-5);
-//! let r_bi = Rotation::<Eci, Body>::from_raw(
+//! let b_gcrs = Vec3::<Gcrs>::new(1e-5, 2e-5, -3e-5);
+//! let r_bg = Rotation::<Gcrs, Body>::from_raw(
 //!     nalgebra::UnitQuaternion::identity(),
 //! );
-//! let b_body: Vec3<Body> = r_bi.transform(&b_eci);
+//! let b_body: Vec3<Body> = r_bg.transform(&b_gcrs);
 //! ```
 
 use std::marker::PhantomData;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use nalgebra::{UnitQuaternion, Vector3};
+use serde::{Deserialize, Serialize};
 
-// ─── フレームマーカー ────────────────────────────────────────────
+use crate::epoch::{Epoch, Ut1, Utc};
 
-/// Earth-Centered Inertial (J2000)。
+// ─── Runtime frame descriptor ────────────────────────────────────
+
+/// Category tag for runtime frame identification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FrameCategory {
+    /// Earth-centered inertial (SimpleEci, Gcrs, ...)
+    Eci,
+    /// Earth-centered Earth-fixed (SimpleEcef, ...)
+    Ecef,
+    /// Local orbital (Rsw, ...)
+    LocalOrbital,
+    /// Spacecraft body-fixed
+    Body,
+}
+
+/// Concrete frame identifier for runtime identification and serialization.
+///
+/// Mirrors the compile-time `Frame` marker types. Used by RRD / log / CLI
+/// boundaries where a f64 tuple needs to carry its frame interpretation at
+/// runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FrameDescriptor {
+    SimpleEci,
+    SimpleEcef,
+    Gcrs,
+    Rsw,
+    Body,
+}
+
+impl FrameDescriptor {
+    pub const fn name(self) -> &'static str {
+        match self {
+            FrameDescriptor::SimpleEci => "SimpleEci",
+            FrameDescriptor::SimpleEcef => "SimpleEcef",
+            FrameDescriptor::Gcrs => "Gcrs",
+            FrameDescriptor::Rsw => "Rsw",
+            FrameDescriptor::Body => "Body",
+        }
+    }
+
+    pub const fn category(self) -> FrameCategory {
+        match self {
+            FrameDescriptor::SimpleEci | FrameDescriptor::Gcrs => FrameCategory::Eci,
+            FrameDescriptor::SimpleEcef => FrameCategory::Ecef,
+            FrameDescriptor::Rsw => FrameCategory::LocalOrbital,
+            FrameDescriptor::Body => FrameCategory::Body,
+        }
+    }
+}
+
+// ─── Sealed trait + Frame / category traits ──────────────────────
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Top-level frame trait. Implemented by every concrete frame marker.
+///
+/// Provides `NAME` and `DESCRIPTOR` for runtime identification. Sealed: new
+/// frames can only be added inside kaname. No `Copy` / `'static` bound —
+/// marker structs derive them themselves.
+pub trait Frame: sealed::Sealed {
+    const NAME: &'static str;
+    const DESCRIPTOR: FrameDescriptor;
+}
+
+/// Structural category for earth-centered inertial frames.
+///
+/// 実装者: [`SimpleEci`], [`Gcrs`]。近似系 (`SimpleEci`) と将来の厳密系
+/// (`Gcrs`/`Cirs` 等) の両方を含む category。precision-aware な処理は concrete
+/// 型を関数シグネチャに書き、`<F: Eci>` generic bound は precision-agnostic
+/// な math (magnitude / dot / 等) のみに使う。
+pub trait Eci: Frame {}
+
+/// Structural category for earth-centered earth-fixed frames.
+///
+/// 実装者: [`SimpleEcef`]。将来 `Itrs`/`Tirs`/`Pef` が追加される。同上の注意。
+pub trait Ecef: Frame {}
+
+/// Structural category for local orbital frames.
+///
+/// 実装者: [`Rsw`]。将来 `Ntw`/`Vvlh`/`Perifocal` 等が追加される。
+pub trait LocalOrbital: Frame {}
+
+// ─── Concrete frame markers ──────────────────────────────────────
+
+/// Approximate Earth-centered inertial frame: the "parent frame" for the
+/// ERA-only Z rotation used by the simple path. Ignores precession, nutation,
+/// polar motion, and frame bias.
+///
+/// Meeus ephemerides **return [`Gcrs`]** (the analytical "geocentric inertial"),
+/// not `SimpleEci`. `SimpleEci` is specifically the complement of [`SimpleEcef`]
+/// under the ERA-only rotation; there is no direct relationship between
+/// `SimpleEci` and `Gcrs` other than both being Earth-centered inertial in the
+/// broad `Eci` category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Eci;
+pub struct SimpleEci;
+impl sealed::Sealed for SimpleEci {}
+impl Frame for SimpleEci {
+    const NAME: &'static str = "SimpleEci";
+    const DESCRIPTOR: FrameDescriptor = FrameDescriptor::SimpleEci;
+}
+impl Eci for SimpleEci {}
 
-/// Earth-Centered Earth-Fixed。
+/// Approximate Earth-centered Earth-fixed frame: the result of applying an
+/// ERA-only Z rotation to [`SimpleEci`]. Does not apply polar motion, nutation,
+/// or IERS precession. WGS-84 geodetic conversion is defined on this frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Ecef;
+pub struct SimpleEcef;
+impl sealed::Sealed for SimpleEcef {}
+impl Frame for SimpleEcef {
+    const NAME: &'static str = "SimpleEcef";
+    const DESCRIPTOR: FrameDescriptor = FrameDescriptor::SimpleEcef;
+}
+impl Ecef for SimpleEcef {}
 
-/// 宇宙機機体座標系。
+/// Geocentric Celestial Reference System. IAU 2006 CIO chain의 celestial side。
+///
+/// 現 Phase では Meeus ephemeris (低精度 analytic model) の返り型として使用。
+/// 厳密な IAU 2006/2000A の precession-nutation 補正は後続 Phase で追加される。
+/// `Rotation<Gcrs, Itrs>::iau2006_full` など高精度 chain は Phase 3 で提供予定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Gcrs;
+impl sealed::Sealed for Gcrs {}
+impl Frame for Gcrs {
+    const NAME: &'static str = "Gcrs";
+    const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Gcrs;
+}
+impl Eci for Gcrs {}
+
+/// Local orbital frame: Radial / Along-track / Cross-track.
+///
+/// 軸順は標準 RSW 規約:
+/// - R̂ = `normalize(r)` — 地心から衛星方向
+/// - Ŵ = `normalize(r × v)` — orbit normal
+/// - Ŝ = `Ŵ × R̂` — tangential (円軌道順行なら +v̂ 方向)
+///
+/// 注意: これは LVLH (業界で変種多数) とは別物。円軌道時の +v̂ 方向が
+/// LVLH の X 軸 (or +I 軸) に一致するものがあるが、軸順・符号の選択は
+/// 実装によって異なる。kaname は標準 RSW [R̂, Ŝ, Ŵ] で固定する。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rsw;
+impl sealed::Sealed for Rsw {}
+impl Frame for Rsw {
+    const NAME: &'static str = "Rsw";
+    const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Rsw;
+}
+impl LocalOrbital for Rsw {}
+
+/// Spacecraft body-fixed frame.
+///
+/// Does not implement [`Eci`], [`Ecef`], or [`LocalOrbital`] categories —
+/// the body frame is its own thing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Body;
-
-/// Local Vertical Local Horizontal。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Lvlh;
+impl sealed::Sealed for Body {}
+impl Frame for Body {
+    const NAME: &'static str = "Body";
+    const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Body;
+}
 
 // ─── Vec3<F> ─────────────────────────────────────────────────────
 
-/// 座標系 `F` 付き 3 次元ベクトル。
+/// Frame-tagged 3D vector.
 ///
-/// `PhantomData<F>` はゼロサイズなのでメモリレイアウトは
-/// `Vector3<f64>` と同一。同一フレーム内の演算のみ許可。
+/// `PhantomData<F>` はゼロサイズなのでメモリレイアウトは `Vector3<f64>` と同一。
+/// 同一フレーム内の演算のみ許可され、異フレーム間の直接操作は compile error。
 #[derive(Clone, Copy, PartialEq)]
 pub struct Vec3<F>(Vector3<f64>, PhantomData<F>);
 
@@ -123,6 +293,13 @@ impl<F> Vec3<F> {
     /// 全成分が有限か。
     pub fn is_finite(&self) -> bool {
         self.0.iter().all(|x| x.is_finite())
+    }
+}
+
+impl<F: Frame> Vec3<F> {
+    /// Frame descriptor (runtime identification).
+    pub const fn frame_descriptor() -> FrameDescriptor {
+        F::DESCRIPTOR
     }
 }
 
@@ -239,25 +416,53 @@ impl<From, To> Rotation<From, To> {
     }
 }
 
-// ─── ECI↔ECEF 便利コンストラクタ ──────────────────────────────────
+// ─── Simple path (SimpleEci ↔ SimpleEcef) rotation constructors ─
 
-impl Rotation<Eci, Ecef> {
-    /// GMST 角 (ラジアン) から ECI→ECEF 回転を構築。
+impl Rotation<SimpleEci, SimpleEcef> {
+    /// Construct from a UT1 epoch using the Earth Rotation Angle (ERA).
     ///
-    /// Z 軸まわりに −GMST 回す: ECEF = R_z(−GMST) × ECI。
-    pub fn from_gmst(gmst: f64) -> Self {
+    /// `SimpleEcef = R_z(−ERA(UT1)) × SimpleEci`. Applies only the ERA Z
+    /// rotation — no precession, nutation, or polar motion. For high-precision
+    /// work use the IAU 2006 CIO chain (not yet implemented: Phase 3).
+    pub fn from_ut1(epoch: &Epoch<Ut1>) -> Self {
+        Self::from_era(epoch.era())
+    }
+
+    /// Legacy helper: construct from a UTC epoch assuming UT1 ≈ UTC.
+    ///
+    /// This ignores the dUT1 correction (< 0.9 s). Preserves bit-level
+    /// compatibility with pre-redesign code that called `Epoch::gmst` on a
+    /// UTC epoch.
+    pub fn from_utc_assuming_ut1_eq_utc(epoch: &Epoch<Utc>) -> Self {
+        Self::from_ut1(&epoch.to_ut1_naive())
+    }
+
+    /// Construct from a raw ERA (or GMST) angle [rad].
+    ///
+    /// Low-level entry point used by the from_ut1 / from_utc helpers, exposed
+    /// for tests and for integration with WASM bindings that expose ERA as a
+    /// f64 parameter.
+    pub fn from_era(era: f64) -> Self {
         let axis = nalgebra::Unit::new_normalize(Vector3::z());
-        Self::from_raw(UnitQuaternion::from_axis_angle(&axis, -gmst))
+        Self::from_raw(UnitQuaternion::from_axis_angle(&axis, -era))
     }
 }
 
-impl Rotation<Ecef, Eci> {
-    /// GMST 角 (ラジアン) から ECEF→ECI 回転を構築。
-    ///
-    /// Z 軸まわりに +GMST 回す: ECI = R_z(+GMST) × ECEF。
-    pub fn from_gmst(gmst: f64) -> Self {
+impl Rotation<SimpleEcef, SimpleEci> {
+    /// Inverse of [`Rotation::<SimpleEci, SimpleEcef>::from_ut1`].
+    pub fn from_ut1(epoch: &Epoch<Ut1>) -> Self {
+        Self::from_era(epoch.era())
+    }
+
+    /// Inverse of [`Rotation::<SimpleEci, SimpleEcef>::from_utc_assuming_ut1_eq_utc`].
+    pub fn from_utc_assuming_ut1_eq_utc(epoch: &Epoch<Utc>) -> Self {
+        Self::from_ut1(&epoch.to_ut1_naive())
+    }
+
+    /// Construct from a raw ERA (or GMST) angle [rad].
+    pub fn from_era(era: f64) -> Self {
         let axis = nalgebra::Unit::new_normalize(Vector3::z());
-        Self::from_raw(UnitQuaternion::from_axis_angle(&axis, gmst))
+        Self::from_raw(UnitQuaternion::from_axis_angle(&axis, era))
     }
 }
 
@@ -275,7 +480,7 @@ impl<From, To> std::fmt::Debug for Rotation<From, To> {
     }
 }
 
-// ─── テスト ──────────────────────────────────────────────────────
+// ─── Tests ───────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -284,8 +489,8 @@ mod tests {
 
     #[test]
     fn vec3_basic_ops() {
-        let a = Vec3::<Eci>::new(1.0, 2.0, 3.0);
-        let b = Vec3::<Eci>::new(4.0, 5.0, 6.0);
+        let a = Vec3::<Gcrs>::new(1.0, 2.0, 3.0);
+        let b = Vec3::<Gcrs>::new(4.0, 5.0, 6.0);
 
         let sum = a + b;
         assert_eq!(sum.x(), 5.0);
@@ -321,8 +526,8 @@ mod tests {
 
     #[test]
     fn vec3_dot_and_cross() {
-        let a = Vec3::<Eci>::new(1.0, 0.0, 0.0);
-        let b = Vec3::<Eci>::new(0.0, 1.0, 0.0);
+        let a = Vec3::<Gcrs>::new(1.0, 0.0, 0.0);
+        let b = Vec3::<Gcrs>::new(0.0, 1.0, 0.0);
 
         assert!((a.dot(&b)).abs() < 1e-15);
 
@@ -338,30 +543,30 @@ mod tests {
 
     #[test]
     fn vec3_inner_roundtrip() {
-        let v = Vec3::<Eci>::new(1.0, 2.0, 3.0);
+        let v = Vec3::<Gcrs>::new(1.0, 2.0, 3.0);
         let raw = v.into_inner();
-        let v2 = Vec3::<Eci>::from_raw(raw);
+        let v2 = Vec3::<Gcrs>::from_raw(raw);
         assert_eq!(v, v2);
     }
 
     #[test]
     fn vec3_add_assign() {
-        let mut a = Vec3::<Eci>::new(1.0, 2.0, 3.0);
+        let mut a = Vec3::<Gcrs>::new(1.0, 2.0, 3.0);
         a += Vec3::new(10.0, 20.0, 30.0);
         assert_eq!(a.x(), 11.0);
     }
 
     #[test]
     fn vec3_is_finite() {
-        assert!(Vec3::<Eci>::new(1.0, 2.0, 3.0).is_finite());
-        assert!(!Vec3::<Eci>::new(f64::NAN, 0.0, 0.0).is_finite());
-        assert!(!Vec3::<Eci>::new(0.0, f64::INFINITY, 0.0).is_finite());
+        assert!(Vec3::<Gcrs>::new(1.0, 2.0, 3.0).is_finite());
+        assert!(!Vec3::<Gcrs>::new(f64::NAN, 0.0, 0.0).is_finite());
+        assert!(!Vec3::<Gcrs>::new(0.0, f64::INFINITY, 0.0).is_finite());
     }
 
     #[test]
     fn rotation_identity_is_noop() {
-        let r = Rotation::<Eci, Body>::from_raw(UnitQuaternion::identity());
-        let v = Vec3::<Eci>::new(1.0, 2.0, 3.0);
+        let r = Rotation::<Gcrs, Body>::from_raw(UnitQuaternion::identity());
+        let v = Vec3::<Gcrs>::new(1.0, 2.0, 3.0);
         let result = r.transform(&v);
         assert!((result.x() - 1.0).abs() < 1e-15);
         assert!((result.y() - 2.0).abs() < 1e-15);
@@ -372,9 +577,9 @@ mod tests {
     fn rotation_90deg_about_z() {
         let axis = nalgebra::Unit::new_normalize(Vector3::z());
         let q = UnitQuaternion::from_axis_angle(&axis, PI / 2.0);
-        let r = Rotation::<Eci, Body>::from_raw(q);
+        let r = Rotation::<Gcrs, Body>::from_raw(q);
 
-        let v = Vec3::<Eci>::new(1.0, 0.0, 0.0);
+        let v = Vec3::<Gcrs>::new(1.0, 0.0, 0.0);
         let result = r.transform(&v);
         assert!((result.x()).abs() < 1e-15);
         assert!((result.y() - 1.0).abs() < 1e-15);
@@ -385,9 +590,9 @@ mod tests {
     fn rotation_inverse() {
         let axis = nalgebra::Unit::new_normalize(Vector3::z());
         let q = UnitQuaternion::from_axis_angle(&axis, PI / 4.0);
-        let r = Rotation::<Eci, Body>::from_raw(q);
+        let r = Rotation::<Gcrs, Body>::from_raw(q);
 
-        let v = Vec3::<Eci>::new(1.0, 0.0, 0.0);
+        let v = Vec3::<Gcrs>::new(1.0, 0.0, 0.0);
         let body = r.transform(&v);
         let back = r.inverse().transform(&body);
 
@@ -399,14 +604,14 @@ mod tests {
     fn rotation_compose() {
         let axis = nalgebra::Unit::new_normalize(Vector3::z());
         let r_ab =
-            Rotation::<Eci, Body>::from_raw(UnitQuaternion::from_axis_angle(&axis, PI / 4.0));
+            Rotation::<Gcrs, Body>::from_raw(UnitQuaternion::from_axis_angle(&axis, PI / 4.0));
         let r_bc =
-            Rotation::<Body, Lvlh>::from_raw(UnitQuaternion::from_axis_angle(&axis, PI / 4.0));
+            Rotation::<Body, Rsw>::from_raw(UnitQuaternion::from_axis_angle(&axis, PI / 4.0));
 
-        let r_ac: Rotation<Eci, Lvlh> = r_ab.then(&r_bc);
+        let r_ac: Rotation<Gcrs, Rsw> = r_ab.then(&r_bc);
 
         // 45° + 45° = 90° about Z
-        let v = Vec3::<Eci>::new(1.0, 0.0, 0.0);
+        let v = Vec3::<Gcrs>::new(1.0, 0.0, 0.0);
         let result = r_ac.transform(&v);
         assert!((result.x()).abs() < 1e-14);
         assert!((result.y() - 1.0).abs() < 1e-14);
@@ -414,18 +619,63 @@ mod tests {
 
     #[test]
     fn debug_formatting() {
-        let v = Vec3::<Eci>::new(1.0, 2.0, 3.0);
+        let v = Vec3::<Gcrs>::new(1.0, 2.0, 3.0);
         let s = format!("{v:?}");
-        assert!(s.contains("Eci"));
+        assert!(s.contains("Gcrs"));
         assert!(s.contains("1"));
     }
 
-    // ─── Rotation<Eci, Ecef> from_gmst tests ────────────────────
+    // ─── Frame descriptor / category ─────────────────────────────
 
     #[test]
-    fn from_gmst_zero_is_identity() {
-        let r = Rotation::<Eci, Ecef>::from_gmst(0.0);
-        let v = Vec3::<Eci>::new(1.0, 2.0, 3.0);
+    fn frame_descriptor_name() {
+        assert_eq!(FrameDescriptor::SimpleEci.name(), "SimpleEci");
+        assert_eq!(FrameDescriptor::SimpleEcef.name(), "SimpleEcef");
+        assert_eq!(FrameDescriptor::Gcrs.name(), "Gcrs");
+        assert_eq!(FrameDescriptor::Rsw.name(), "Rsw");
+        assert_eq!(FrameDescriptor::Body.name(), "Body");
+    }
+
+    #[test]
+    fn frame_descriptor_category() {
+        assert_eq!(FrameDescriptor::SimpleEci.category(), FrameCategory::Eci);
+        assert_eq!(FrameDescriptor::Gcrs.category(), FrameCategory::Eci);
+        assert_eq!(FrameDescriptor::SimpleEcef.category(), FrameCategory::Ecef);
+        assert_eq!(FrameDescriptor::Rsw.category(), FrameCategory::LocalOrbital);
+        assert_eq!(FrameDescriptor::Body.category(), FrameCategory::Body);
+    }
+
+    #[test]
+    fn frame_descriptor_via_trait() {
+        assert_eq!(<SimpleEci as Frame>::DESCRIPTOR, FrameDescriptor::SimpleEci);
+        assert_eq!(<Gcrs as Frame>::DESCRIPTOR, FrameDescriptor::Gcrs);
+        assert_eq!(
+            <SimpleEcef as Frame>::DESCRIPTOR,
+            FrameDescriptor::SimpleEcef
+        );
+        assert_eq!(
+            Vec3::<SimpleEci>::frame_descriptor(),
+            FrameDescriptor::SimpleEci
+        );
+    }
+
+    #[test]
+    fn category_trait_bounds_gate_generic_api() {
+        // Structural API using `F: Eci` bound should accept both SimpleEci
+        // and Gcrs interchangeably — this is by design.
+        fn magnitude_eci<F: Eci>(v: Vec3<F>) -> f64 {
+            v.magnitude()
+        }
+        assert_eq!(magnitude_eci(Vec3::<SimpleEci>::new(3.0, 4.0, 0.0)), 5.0);
+        assert_eq!(magnitude_eci(Vec3::<Gcrs>::new(0.0, 0.0, 7.0)), 7.0);
+    }
+
+    // ─── Rotation<SimpleEci, SimpleEcef> from_era tests ──────────
+
+    #[test]
+    fn from_era_zero_is_identity() {
+        let r = Rotation::<SimpleEci, SimpleEcef>::from_era(0.0);
+        let v = Vec3::<SimpleEci>::new(1.0, 2.0, 3.0);
         let result = r.transform(&v);
         assert!((result.x() - 1.0).abs() < 1e-14);
         assert!((result.y() - 2.0).abs() < 1e-14);
@@ -433,23 +683,23 @@ mod tests {
     }
 
     #[test]
-    fn from_gmst_90deg() {
-        let r = Rotation::<Eci, Ecef>::from_gmst(PI / 2.0);
-        let v = Vec3::<Eci>::new(1.0, 0.0, 0.0);
+    fn from_era_90deg() {
+        let r = Rotation::<SimpleEci, SimpleEcef>::from_era(PI / 2.0);
+        let v = Vec3::<SimpleEci>::new(1.0, 0.0, 0.0);
         let result = r.transform(&v);
-        // ECEF = R_z(-GMST) × ECI: with GMST=90°, +X_ECI → −Y_ECEF
+        // ECEF = R_z(-ERA) × ECI: with ERA=90°, +X_ECI → −Y_ECEF
         assert!(result.x().abs() < 1e-14);
         assert!((result.y() + 1.0).abs() < 1e-14);
         assert!(result.z().abs() < 1e-14);
     }
 
     #[test]
-    fn from_gmst_roundtrip() {
-        let gmst = 1.234;
-        let r_ei = Rotation::<Eci, Ecef>::from_gmst(gmst);
-        let r_ie = Rotation::<Ecef, Eci>::from_gmst(gmst);
+    fn from_era_roundtrip() {
+        let era = 1.234;
+        let r_ei = Rotation::<SimpleEci, SimpleEcef>::from_era(era);
+        let r_ie = Rotation::<SimpleEcef, SimpleEci>::from_era(era);
 
-        let v = Vec3::<Eci>::new(100.0, 200.0, 300.0);
+        let v = Vec3::<SimpleEci>::new(100.0, 200.0, 300.0);
         let ecef = r_ei.transform(&v);
         let back = r_ie.transform(&ecef);
         assert!((back.x() - v.x()).abs() < 1e-10);
@@ -458,31 +708,35 @@ mod tests {
     }
 
     #[test]
-    fn from_gmst_matches_manual_eci_to_ecef() {
-        // Cross-check: from_gmst should produce the same result as
-        // the manual Eci::to_ecef method in lib.rs.
-        let gmst = 0.7;
-        let eci = Vec3::<Eci>::new(6778.0, 0.0, 0.0);
-        let ecef_manual = crate::Eci::to_ecef(&eci, gmst);
-        let ecef_rotation = Rotation::<Eci, Ecef>::from_gmst(gmst).transform(&eci);
+    fn from_ut1_matches_from_era() {
+        use crate::epoch::Epoch;
+        let ut1 = Epoch::<Ut1>::from_jd_ut1(2460390.5);
+        let era = ut1.era();
+        let r_direct = Rotation::<SimpleEci, SimpleEcef>::from_era(era);
+        let r_via_ut1 = Rotation::<SimpleEci, SimpleEcef>::from_ut1(&ut1);
+        // Both should produce the same quaternion.
+        let v = Vec3::<SimpleEci>::new(6778.0, 0.0, 0.0);
+        let a = r_direct.transform(&v);
+        let b = r_via_ut1.transform(&v);
+        assert!((a.x() - b.x()).abs() < 1e-14);
+        assert!((a.y() - b.y()).abs() < 1e-14);
+        assert!((a.z() - b.z()).abs() < 1e-14);
+    }
 
-        assert!(
-            (ecef_rotation.x() - ecef_manual.x()).abs() < 1e-10,
-            "x mismatch: {} vs {}",
-            ecef_rotation.x(),
-            ecef_manual.x()
-        );
-        assert!(
-            (ecef_rotation.y() - ecef_manual.y()).abs() < 1e-10,
-            "y mismatch: {} vs {}",
-            ecef_rotation.y(),
-            ecef_manual.y()
-        );
-        assert!(
-            (ecef_rotation.z() - ecef_manual.z()).abs() < 1e-10,
-            "z mismatch: {} vs {}",
-            ecef_rotation.z(),
-            ecef_manual.z()
-        );
+    #[test]
+    fn from_utc_assuming_ut1_eq_utc_matches_legacy_gmst() {
+        use crate::epoch::Epoch;
+        let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        // Legacy path: Utc::gmst returns the ERA formula (misnamed).
+        let legacy_gmst = utc.gmst();
+        let r_new = Rotation::<SimpleEci, SimpleEcef>::from_utc_assuming_ut1_eq_utc(&utc);
+        let r_legacy = Rotation::<SimpleEci, SimpleEcef>::from_era(legacy_gmst);
+        // Quaternions should be identical (bit-level).
+        let v = Vec3::<SimpleEci>::new(7000.0, 1000.0, 500.0);
+        let a = r_new.transform(&v);
+        let b = r_legacy.transform(&v);
+        assert!((a.x() - b.x()).abs() < 1e-14);
+        assert!((a.y() - b.y()).abs() < 1e-14);
+        assert!((a.z() - b.z()).abs() < 1e-14);
     }
 }

@@ -14,7 +14,9 @@
 use std::ops::{Add, AddAssign};
 
 use kaname::epoch::Epoch;
-use kaname::frame::{Body, Eci, Vec3};
+#[cfg(test)]
+use kaname::frame::SimpleEci;
+use kaname::frame::{self, Body, Vec3};
 use nalgebra::Vector3;
 
 use crate::OrbitalState;
@@ -53,7 +55,7 @@ pub trait HasMass {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternalLoads {
     /// Translational acceleration in inertial frame [km/s²].
-    pub acceleration_inertial: Vec3<Eci>,
+    pub acceleration_inertial: Vec3<frame::SimpleEci>,
     /// Torque in body frame [N·m].
     pub torque_body: Vec3<Body>,
     /// Mass rate [kg/s] (negative for depletion, e.g. propellant consumption).
@@ -152,7 +154,7 @@ mod external_loads_tests {
     #[test]
     fn zeros() {
         let w = ExternalLoads::zeros();
-        assert_eq!(w.acceleration_inertial, Vec3::<Eci>::zeros());
+        assert_eq!(w.acceleration_inertial, Vec3::<SimpleEci>::zeros());
         assert_eq!(w.torque_body, Vec3::<Body>::zeros());
     }
 
@@ -171,7 +173,7 @@ mod external_loads_tests {
         let sum = a + b;
         assert_eq!(
             sum.acceleration_inertial,
-            Vec3::<Eci>::new(11.0, 22.0, 33.0)
+            Vec3::<SimpleEci>::new(11.0, 22.0, 33.0)
         );
         assert_eq!(sum.torque_body, Vec3::<Body>::new(1.1, 2.2, 3.3));
         assert!((sum.mass_rate - (-0.8)).abs() < 1e-15);
@@ -190,7 +192,10 @@ mod external_loads_tests {
             mass_rate: -0.3,
         };
         a += b;
-        assert_eq!(a.acceleration_inertial, Vec3::<Eci>::new(11.0, 22.0, 33.0));
+        assert_eq!(
+            a.acceleration_inertial,
+            Vec3::<SimpleEci>::new(11.0, 22.0, 33.0)
+        );
         assert_eq!(a.torque_body, Vec3::<Body>::new(1.1, 2.2, 3.3));
         assert!((a.mass_rate - (-0.8)).abs() < 1e-15);
     }

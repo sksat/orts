@@ -4,7 +4,7 @@ import type { OrbitPoint } from "../orbit.js";
 import { isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import type { LvlhAxes } from "../sceneFrame.js";
-import { body_quat_eci_to_lvlh, eci_to_ecef } from "../wasm/kanameInit.js";
+import { body_quat_to_rsw, eci_to_ecef } from "../wasm/kanameInit.js";
 import { BodyAxes } from "./BodyAxes.js";
 import { SatelliteModel } from "./SatelliteModel.js";
 
@@ -107,8 +107,10 @@ export function Satellite({
 
   let displayQuaternion: [number, number, number, number] | undefined;
   if (rawQuaternion && lvlhAxes != null) {
-    // LVLH view: transform body-to-ECI → body-to-LVLH via kaname WASM
-    displayQuaternion = body_quat_eci_to_lvlh(
+    // Local-orbital view: transform body-to-ECI → body-to-RSW via kaname WASM.
+    // (The historical viewer label "lvlhAxes" refers to the local orbital
+    // frame; the kaname API now uses standard RSW convention.)
+    displayQuaternion = body_quat_to_rsw(
       position.x,
       position.y,
       position.z,

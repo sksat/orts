@@ -15,7 +15,7 @@ use crate::frame::{self, Vec3};
 /// accepts `&Epoch<Utc>` (the default alias) for backward compatibility; the
 /// UTC epoch is converted to TDB internally via leap seconds + TT offset +
 /// Fairhead-Bretagnon periodic correction.
-pub fn moon_position_eci(epoch: &Epoch) -> Vec3<frame::Eci> {
+pub fn moon_position_eci(epoch: &Epoch) -> Vec3<frame::Gcrs> {
     let t = epoch.to_tdb().centuries_since_j2000();
     let t2 = t * t;
     let t3 = t2 * t;
@@ -249,13 +249,13 @@ pub fn moon_position_eci(epoch: &Epoch) -> Vec3<frame::Eci> {
 /// Horizons data) that can provide velocity more accurately should override it.
 pub trait MoonEphemeris: Send + Sync {
     /// Moon position in ECI [km] at the given epoch.
-    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci>;
+    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs>;
 
     /// Moon velocity in ECI [km/s] at the given epoch.
     ///
     /// Default: central finite difference over `position_eci` with a 1-second
     /// step. Override for sources that can supply analytic velocity.
-    fn velocity_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
+    fn velocity_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
         let dt = 1.0;
         let r_plus = self.position_eci(&epoch.add_seconds(dt));
         let r_minus = self.position_eci(&epoch.add_seconds(-dt));
@@ -274,7 +274,7 @@ pub trait MoonEphemeris: Send + Sync {
 pub struct MeeusMoonEphemeris;
 
 impl MoonEphemeris for MeeusMoonEphemeris {
-    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
+    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
         moon_position_eci(epoch)
     }
 
@@ -292,11 +292,11 @@ impl MoonEphemeris for MeeusMoonEphemeris {
 /// without re-parsing tables or re-fetching data — e.g.
 /// `ThirdBodyGravity::moon_with_ephemeris(Arc::clone(&shared_ephem))`.
 impl<T: MoonEphemeris + ?Sized> MoonEphemeris for std::sync::Arc<T> {
-    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
+    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
         (**self).position_eci(epoch)
     }
 
-    fn velocity_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
+    fn velocity_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
         (**self).velocity_eci(epoch)
     }
 
@@ -378,7 +378,7 @@ impl HorizonsMoonEphemeris {
 }
 
 impl MoonEphemeris for HorizonsMoonEphemeris {
-    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
+    fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
         match self.table.interpolate(epoch) {
             Some(sample) => Vec3::from_raw(sample.position),
             None => {
@@ -388,7 +388,7 @@ impl MoonEphemeris for HorizonsMoonEphemeris {
         }
     }
 
-    fn velocity_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
+    fn velocity_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
         // Hermite interpolation gives us analytic velocity — use it directly
         // rather than the trait's default central-difference implementation.
         match self.table.interpolate(epoch) {
@@ -654,7 +654,7 @@ $$EOE
             base_jd: f64,
         }
         impl MoonEphemeris for CountingEphem {
-            fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Eci> {
+            fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
                 self.calls.fetch_add(1, Ordering::Relaxed);
                 let offset_sec = (epoch.jd() - self.base_jd) * 86400.0;
                 self.last_offsets.lock().unwrap().push(offset_sec);

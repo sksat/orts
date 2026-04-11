@@ -200,7 +200,13 @@ fn entry_interface_state_eci(epoch: &Epoch) -> OrbitalState {
         altitude: EI_ALT_KM,
     };
     let gmst = epoch.gmst();
-    let pos_eci = geod.to_ecef().to_eci(gmst).into_inner();
+    let ecef = kaname::SimpleEcef::from(geod);
+    let pos_eci =
+        kaname::frame::Rotation::<kaname::frame::SimpleEcef, kaname::frame::SimpleEci>::from_era(
+            gmst,
+        )
+        .transform(&ecef)
+        .into_inner();
 
     // Velocity: decompose (speed, FPA, azimuth) in the local topocentric frame at pos_eci.
     //
@@ -1169,9 +1175,13 @@ fn main() {
     if let Some((t_cross, ref state_122)) = state_at_122km {
         let get_122 = mission_t + t_cross;
         let epoch_122 = parking_epoch.add_seconds(get_122);
-        let geod_122 = kaname::Eci::from_raw(*state_122.position())
-            .to_ecef(epoch_122.gmst())
-            .to_geodetic();
+        let eci_122 = kaname::SimpleEci::from_raw(*state_122.position());
+        let ecef_122 =
+            kaname::frame::Rotation::<kaname::frame::SimpleEci, kaname::frame::SimpleEcef>::from_era(
+                epoch_122.gmst(),
+            )
+            .transform(&eci_122);
+        let geod_122 = kaname::Geodetic::from(ecef_122);
         let pos_err = (state_122.position() - ei_ref.position()).magnitude();
         let vel_err = (state_122.velocity() - ei_ref.velocity()).magnitude();
         println!("    [At 122 km altitude]");
@@ -1198,9 +1208,13 @@ fn main() {
     if let Some((t_get, ref state_get)) = state_at_ei_get {
         let get_t = mission_t + t_get;
         let epoch_get = parking_epoch.add_seconds(get_t);
-        let geod_get = kaname::Eci::from_raw(*state_get.position())
-            .to_ecef(epoch_get.gmst())
-            .to_geodetic();
+        let eci_get = kaname::SimpleEci::from_raw(*state_get.position());
+        let ecef_get =
+            kaname::frame::Rotation::<kaname::frame::SimpleEci, kaname::frame::SimpleEcef>::from_era(
+                epoch_get.gmst(),
+            )
+            .transform(&eci_get);
+        let geod_get = kaname::Geodetic::from(ecef_get);
         let pos_err = (state_get.position() - ei_ref.position()).magnitude();
         let vel_err = (state_get.velocity() - ei_ref.velocity()).magnitude();
         println!("    [At reference GET {:.2}h]", EI_GET_SECONDS / 3600.0);

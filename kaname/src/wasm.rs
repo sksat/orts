@@ -1,8 +1,9 @@
 use wasm_bindgen::prelude::*;
 
-use crate::Eci;
 use crate::epoch::Epoch;
+use crate::frame::{self, Rotation};
 use crate::sun;
+use crate::{SimpleEcef, SimpleEci};
 use nalgebra::{UnitQuaternion, Vector3, Vector4};
 
 /// Batch ECI→ECEF transform with per-point time.
@@ -14,7 +15,7 @@ use nalgebra::{UnitQuaternion, Vector3, Vector4};
 /// Returns flat ECEF `[ex0,ey0,ez0, ...]` (length = N×3, km).
 ///
 /// For each point, computes ERA from `epoch_jd + t` and applies the
-/// Z-axis rotation (ECI→ECEF).
+/// Z-axis rotation (SimpleEci → SimpleEcef).
 #[wasm_bindgen]
 pub fn eci_to_ecef_batch(positions: &[f32], times: &[f32], epoch_jd: f64) -> Vec<f32> {
     let n = times.len();
@@ -24,15 +25,15 @@ pub fn eci_to_ecef_batch(positions: &[f32], times: &[f32], epoch_jd: f64) -> Vec
 
     for i in 0..n {
         let epoch = Epoch::from_jd(epoch_jd).add_seconds(times[i] as f64);
-        let gmst = epoch.gmst();
+        let r = Rotation::<frame::SimpleEci, frame::SimpleEcef>::from_era(epoch.gmst());
 
         let off = i * 3;
-        let eci = Eci::new(
+        let eci = SimpleEci::new(
             positions[off] as f64,
             positions[off + 1] as f64,
             positions[off + 2] as f64,
         );
-        let ecef = eci.to_ecef(gmst);
+        let ecef = r.transform(&eci);
 
         out.push(ecef.x() as f32);
         out.push(ecef.y() as f32);
@@ -48,13 +49,13 @@ pub fn eci_to_ecef_batch(positions: &[f32], times: &[f32], epoch_jd: f64) -> Vec
 #[wasm_bindgen]
 pub fn eci_to_ecef(x: f32, y: f32, z: f32, epoch_jd: f64, t: f32) -> Vec<f32> {
     let epoch = Epoch::from_jd(epoch_jd).add_seconds(t as f64);
-    let gmst = epoch.gmst();
-    let eci = Eci::new(x as f64, y as f64, z as f64);
-    let ecef = eci.to_ecef(gmst);
+    let eci = SimpleEci::new(x as f64, y as f64, z as f64);
+    let ecef =
+        Rotation::<frame::SimpleEci, frame::SimpleEcef>::from_era(epoch.gmst()).transform(&eci);
     vec![ecef.x() as f32, ecef.y() as f32, ecef.z() as f32]
 }
 
-/// Compute the Earth Rotation Angle (GMST) in radians.
+/// Compute the Earth Rotation Angle (ERA, historically called GMST) in radians.
 ///
 /// `epoch_jd`: Julian Date of the simulation epoch
 /// `t`: elapsed simulation time in seconds
@@ -64,7 +65,7 @@ pub fn earth_rotation_angle(epoch_jd: f64, t: f64) -> f64 {
     epoch.gmst()
 }
 
-/// Approximate sun direction (unit vector) in ECI frame.
+/// Approximate sun direction (unit vector) in Gcrs frame.
 ///
 /// Returns `[x, y, z]` (3 floats).
 #[wasm_bindgen]
@@ -107,7 +108,7 @@ pub fn jd_to_utc_string(epoch_jd: f64, t: f64) -> String {
     epoch.to_datetime().to_string()
 }
 
-/// Geodetic (lat_deg, lon_deg, altitude_km) → ECEF [km].
+/// Geodetic (lat_deg, lon_deg, altitude_km) → SimpleEcef [km].
 ///
 /// Returns `[x, y, z]` (3 floats, km).
 #[wasm_bindgen]
@@ -117,23 +118,24 @@ pub fn geodetic_to_ecef(lat_deg: f64, lon_deg: f64, altitude_km: f64) -> Vec<f64
         longitude: lon_deg.to_radians(),
         altitude: altitude_km,
     };
-    let ecef = geod.to_ecef();
+    let ecef = SimpleEcef::from(geod);
     vec![ecef.x(), ecef.y(), ecef.z()]
 }
 
-/// Geodetic (lat_deg, lon_deg, altitude_km) → ECI [km] at given epoch.
+/// Geodetic (lat_deg, lon_deg, altitude_km) → SimpleEci [km] at given epoch.
 ///
 /// Returns `[x, y, z]` (3 floats, km).
 #[wasm_bindgen]
 pub fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64) -> Vec<f64> {
     let epoch = Epoch::from_jd(epoch_jd);
-    let gmst = epoch.gmst();
     let geod = crate::Geodetic {
         latitude: lat_deg.to_radians(),
         longitude: lon_deg.to_radians(),
         altitude: altitude_km,
     };
-    let eci = geod.to_ecef().to_eci(gmst);
+    let ecef = SimpleEcef::from(geod);
+    let eci =
+        Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(epoch.gmst()).transform(&ecef);
     vec![eci.x(), eci.y(), eci.z()]
 }
 
@@ -157,16 +159,16 @@ pub fn body_orientation(body: &str, epoch_jd: f64, t: f64) -> Vec<f64> {
     }
 }
 
-/// Transform a body-to-ECI quaternion into a body-to-LVLH quaternion.
+/// Transform a body-to-ECI quaternion into a body-to-RSW quaternion.
 ///
 /// `pos_x/y/z`: satellite position in ECI \[km\]
 /// `vel_x/y/z`: satellite velocity in ECI \[km/s\]
 /// `qw/qx/qy/qz`: body-to-ECI quaternion (Hamilton scalar-first: w,x,y,z)
 ///
-/// Returns `[w, x, y, z]` body-to-LVLH quaternion (4 floats, f64).
-/// Returns an empty vec if the LVLH frame cannot be computed (degenerate orbit).
+/// Returns `[w, x, y, z]` body-to-RSW quaternion (4 floats, f64).
+/// Returns an empty vec if the RSW frame cannot be computed (degenerate orbit).
 #[wasm_bindgen]
-pub fn body_quat_eci_to_lvlh(
+pub fn body_quat_to_rsw(
     pos_x: f64,
     pos_y: f64,
     pos_z: f64,
@@ -183,7 +185,7 @@ pub fn body_quat_eci_to_lvlh(
     let q_body_eci =
         UnitQuaternion::from_quaternion(nalgebra::Quaternion::from(Vector4::new(qx, qy, qz, qw)));
 
-    match crate::body_quat_eci_to_lvlh(&pos, &vel, &q_body_eci) {
+    match crate::body_quat_to_rsw(&pos, &vel, &q_body_eci) {
         Some(q) => vec![q.w, q.i, q.j, q.k],
         None => vec![],
     }

@@ -14,7 +14,7 @@ pub mod igrf;
 pub use dipole::TiltedDipole;
 pub use igrf::Igrf;
 
-use kaname::Eci;
+use kaname::SimpleEci;
 use kaname::epoch::Epoch;
 use kaname::frame;
 
@@ -32,5 +32,5 @@ pub trait MagneticFieldModel: Send + Sync {
     /// # Returns
     /// Magnetic field vector in the ECI (J2000) frame, in Tesla.
     /// The caller is responsible for frame transformations (e.g., ECI → body).
-    fn field_eci(&self, position_eci: &Eci, epoch: &Epoch) -> frame::Vec3<frame::Eci>;
+    fn field_eci(&self, position_eci: &SimpleEci, epoch: &Epoch) -> frame::Vec3<frame::SimpleEci>;
 }

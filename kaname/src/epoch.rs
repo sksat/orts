@@ -1258,15 +1258,20 @@ mod tests {
     }
 
     #[test]
-    fn gmst_works_with_eci_ecef() {
-        // Verify that Epoch::gmst() produces valid angles for ECI↔ECEF conversion
-        use crate::Eci;
+    fn gmst_works_with_simple_eci_ecef() {
+        // Verify that Epoch::gmst() produces valid angles for
+        // SimpleEci↔SimpleEcef conversion via Rotation<SimpleEci, SimpleEcef>.
+        use crate::SimpleEci;
+        use crate::frame::{
+            Rotation, SimpleEcef as SimpleEcefMarker, SimpleEci as SimpleEciMarker,
+        };
         let epoch = Epoch::from_gregorian(2024, 6, 21, 12, 0, 0.0);
-        let gmst = epoch.gmst();
+        let era = epoch.gmst();
 
-        let eci = Eci::new(7000.0, 1000.0, 500.0);
-        let ecef = eci.to_ecef(gmst);
-        let roundtrip = ecef.to_eci(gmst);
+        let eci = SimpleEci::new(7000.0, 1000.0, 500.0);
+        let ecef = Rotation::<SimpleEciMarker, SimpleEcefMarker>::from_era(era).transform(&eci);
+        let roundtrip =
+            Rotation::<SimpleEcefMarker, SimpleEciMarker>::from_era(era).transform(&ecef);
 
         let eps = 1e-10;
         assert!((roundtrip.x() - eci.x()).abs() < eps);

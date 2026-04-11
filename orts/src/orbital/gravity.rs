@@ -7,13 +7,13 @@ use nalgebra::Vector3;
 /// harmonics (geoid) models.
 pub trait GravityField: Send + Sync {
     /// Compute gravitational acceleration [km/s²] at the given position.
-    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::Eci>;
+    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::SimpleEci>;
 }
 
 // Blanket impl so Box<dyn GravityField> can be used as G in SpacecraftDynamics<G>.
 // This is a builder convenience; performance-critical paths should use concrete types.
 impl GravityField for Box<dyn GravityField> {
-    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::Eci> {
+    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::SimpleEci> {
         (**self).acceleration(mu, position)
     }
 }
@@ -22,7 +22,7 @@ impl GravityField for Box<dyn GravityField> {
 pub struct PointMass;
 
 impl GravityField for PointMass {
-    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::Eci> {
+    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::SimpleEci> {
         let r_mag = position.magnitude();
         Vec3::from_raw(-mu / (r_mag * r_mag * r_mag) * position)
     }
@@ -44,7 +44,7 @@ pub struct ZonalHarmonics {
 }
 
 impl GravityField for ZonalHarmonics {
-    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::Eci> {
+    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::SimpleEci> {
         let r_mag = position.magnitude();
         let r2 = r_mag * r_mag;
         let r5 = r2 * r2 * r_mag;
@@ -109,7 +109,7 @@ mod tests {
     fn point_mass_acceleration_direction() {
         let state_pos = Vector3::new(6778.137, 0.0, 0.0);
         let accel = PointMass.acceleration(MU_EARTH, &state_pos);
-        let pos_eci = Vec3::<frame::Eci>::from_raw(state_pos);
+        let pos_eci = Vec3::<frame::SimpleEci>::from_raw(state_pos);
 
         // Acceleration should be antiparallel to position
         let dot = accel.dot(&pos_eci);

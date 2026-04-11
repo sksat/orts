@@ -46,12 +46,12 @@ impl AttitudeState {
     }
 
     /// Typed rotation: body frame → ECI (inertial).
-    pub fn rotation_to_eci(&self) -> Rotation<frame::Body, frame::Eci> {
+    pub fn rotation_to_eci(&self) -> Rotation<frame::Body, frame::SimpleEci> {
         Rotation::from_raw(self.orientation())
     }
 
     /// Typed rotation: ECI (inertial) → body frame.
-    pub fn rotation_to_body(&self) -> Rotation<frame::Eci, frame::Body> {
+    pub fn rotation_to_body(&self) -> Rotation<frame::SimpleEci, frame::Body> {
         self.rotation_to_eci().inverse()
     }
 

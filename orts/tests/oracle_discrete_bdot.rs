@@ -3,7 +3,7 @@ use std::f64::consts::PI;
 use nalgebra::{Matrix3, Vector3};
 use utsuroi::{Integrator, Rk4};
 
-use kaname::Eci;
+use kaname::SimpleEci;
 use kaname::constants::{MU_EARTH, R_EARTH};
 use kaname::epoch::Epoch;
 use orts::attitude::{
@@ -204,7 +204,7 @@ fn commanded_magnetorquer_torque_is_m_cross_b() {
     let loads = actuator.eval(0.0, &state, Some(&epoch));
 
     // Manually compute expected torque
-    let b_eci = TiltedDipole::earth().field_eci(&Eci::new(7000.0, 0.0, 0.0), &epoch);
+    let b_eci = TiltedDipole::earth().field_eci(&SimpleEci::new(7000.0, 0.0, 0.0), &epoch);
     let b_body = state
         .attitude
         .rotation_to_body()

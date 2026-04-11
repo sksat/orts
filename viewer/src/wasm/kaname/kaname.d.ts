@@ -14,19 +14,19 @@
 export function body_orientation(body: string, epoch_jd: number, t: number): Float64Array;
 
 /**
- * Transform a body-to-ECI quaternion into a body-to-LVLH quaternion.
+ * Transform a body-to-ECI quaternion into a body-to-RSW quaternion.
  *
  * `pos_x/y/z`: satellite position in ECI \[km\]
  * `vel_x/y/z`: satellite velocity in ECI \[km/s\]
  * `qw/qx/qy/qz`: body-to-ECI quaternion (Hamilton scalar-first: w,x,y,z)
  *
- * Returns `[w, x, y, z]` body-to-LVLH quaternion (4 floats, f64).
- * Returns an empty vec if the LVLH frame cannot be computed (degenerate orbit).
+ * Returns `[w, x, y, z]` body-to-RSW quaternion (4 floats, f64).
+ * Returns an empty vec if the RSW frame cannot be computed (degenerate orbit).
  */
-export function body_quat_eci_to_lvlh(pos_x: number, pos_y: number, pos_z: number, vel_x: number, vel_y: number, vel_z: number, qw: number, qx: number, qy: number, qz: number): Float64Array;
+export function body_quat_to_rsw(pos_x: number, pos_y: number, pos_z: number, vel_x: number, vel_y: number, vel_z: number, qw: number, qx: number, qy: number, qz: number): Float64Array;
 
 /**
- * Compute the Earth Rotation Angle (GMST) in radians.
+ * Compute the Earth Rotation Angle (ERA, historically called GMST) in radians.
  *
  * `epoch_jd`: Julian Date of the simulation epoch
  * `t`: elapsed simulation time in seconds
@@ -50,19 +50,19 @@ export function eci_to_ecef(x: number, y: number, z: number, epoch_jd: number, t
  * Returns flat ECEF `[ex0,ey0,ez0, ...]` (length = N×3, km).
  *
  * For each point, computes ERA from `epoch_jd + t` and applies the
- * Z-axis rotation (ECI→ECEF).
+ * Z-axis rotation (SimpleEci → SimpleEcef).
  */
 export function eci_to_ecef_batch(positions: Float32Array, times: Float32Array, epoch_jd: number): Float32Array;
 
 /**
- * Geodetic (lat_deg, lon_deg, altitude_km) → ECEF [km].
+ * Geodetic (lat_deg, lon_deg, altitude_km) → SimpleEcef [km].
  *
  * Returns `[x, y, z]` (3 floats, km).
  */
 export function geodetic_to_ecef(lat_deg: number, lon_deg: number, altitude_km: number): Float64Array;
 
 /**
- * Geodetic (lat_deg, lon_deg, altitude_km) → ECI [km] at given epoch.
+ * Geodetic (lat_deg, lon_deg, altitude_km) → SimpleEci [km] at given epoch.
  *
  * Returns `[x, y, z]` (3 floats, km).
  */
@@ -76,7 +76,7 @@ export function geodetic_to_eci(lat_deg: number, lon_deg: number, altitude_km: n
 export function jd_to_utc_string(epoch_jd: number, t: number): string;
 
 /**
- * Approximate sun direction (unit vector) in ECI frame.
+ * Approximate sun direction (unit vector) in Gcrs frame.
  *
  * Returns `[x, y, z]` (3 floats).
  */
@@ -105,17 +105,17 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly eci_to_ecef_batch: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly eci_to_ecef: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly body_orientation: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly body_quat_to_rsw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly earth_rotation_angle: (a: number, b: number) => number;
+    readonly eci_to_ecef: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly eci_to_ecef_batch: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly geodetic_to_ecef: (a: number, b: number, c: number) => [number, number];
+    readonly geodetic_to_eci: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly jd_to_utc_string: (a: number, b: number) => [number, number];
     readonly sun_direction_eci: (a: number, b: number) => [number, number];
     readonly sun_direction_from_body: (a: number, b: number, c: number, d: number) => [number, number];
     readonly sun_distance_from_body: (a: number, b: number, c: number, d: number) => number;
-    readonly jd_to_utc_string: (a: number, b: number) => [number, number];
-    readonly geodetic_to_ecef: (a: number, b: number, c: number) => [number, number];
-    readonly geodetic_to_eci: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly body_orientation: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly body_quat_eci_to_lvlh: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

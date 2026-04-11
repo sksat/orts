@@ -69,7 +69,7 @@ pub(crate) fn gravity_gradient_torque_vector(
     // Transform position to body frame: r_body = R_bi * r_eci
     let r_body = attitude
         .rotation_to_body()
-        .transform(&Vec3::<frame::Eci>::from_raw(*r_eci))
+        .transform(&Vec3::<frame::SimpleEci>::from_raw(*r_eci))
         .into_inner();
 
     // τ_gg = (3μ / r⁵) (r_body × (I · r_body))

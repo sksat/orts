@@ -297,7 +297,7 @@ pub struct HarrisPriester {
     /// Default: π/6 ≈ 30° (~2 hours in local solar time).
     pub lag_angle: f64,
     /// Function returning the Sun direction (unit vector) in ECI at a given epoch.
-    sun_direction_fn: fn(&Epoch) -> frame::Vec3<frame::Eci>,
+    sun_direction_fn: fn(&Epoch) -> frame::Vec3<frame::Gcrs>,
 }
 
 impl HarrisPriester {
@@ -325,7 +325,7 @@ impl HarrisPriester {
     }
 
     /// Override the Sun direction function (for testing).
-    pub fn with_sun_direction_fn(mut self, f: fn(&Epoch) -> frame::Vec3<frame::Eci>) -> Self {
+    pub fn with_sun_direction_fn(mut self, f: fn(&Epoch) -> frame::Vec3<frame::Gcrs>) -> Self {
         self.sun_direction_fn = f;
         self
     }
