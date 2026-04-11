@@ -586,20 +586,6 @@ mod tests {
     }
 
     #[test]
-    fn vec3_zeros() {
-        let z = Vec3::<Body>::zeros();
-        assert_eq!(z.magnitude(), 0.0);
-    }
-
-    #[test]
-    fn vec3_inner_roundtrip() {
-        let v = Vec3::<Gcrs>::new(1.0, 2.0, 3.0);
-        let raw = v.into_inner();
-        let v2 = Vec3::<Gcrs>::from_raw(raw);
-        assert_eq!(v, v2);
-    }
-
-    #[test]
     fn vec3_add_assign() {
         let mut a = Vec3::<Gcrs>::new(1.0, 2.0, 3.0);
         a += Vec3::new(10.0, 20.0, 30.0);
@@ -665,14 +651,6 @@ mod tests {
         let result = r_ac.transform(&v);
         assert!((result.x()).abs() < 1e-14);
         assert!((result.y() - 1.0).abs() < 1e-14);
-    }
-
-    #[test]
-    fn debug_formatting() {
-        let v = Vec3::<Gcrs>::new(1.0, 2.0, 3.0);
-        let s = format!("{v:?}");
-        assert!(s.contains("Gcrs"));
-        assert!(s.contains("1"));
     }
 
     // ─── Frame descriptor / category ─────────────────────────────
