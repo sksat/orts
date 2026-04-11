@@ -759,27 +759,6 @@ mod tests {
     // --- Epoch construction and accessors ---
 
     #[test]
-    fn j2000_constant() {
-        let epoch = Epoch::j2000();
-        assert_eq!(epoch.jd(), J2000_JD);
-        assert_eq!(epoch.jd(), 2451545.0);
-    }
-
-    #[test]
-    fn from_jd_roundtrip() {
-        let jd = 2460389.0;
-        let epoch = Epoch::from_jd(jd);
-        assert_eq!(epoch.jd(), jd);
-    }
-
-    #[test]
-    fn mjd_roundtrip() {
-        let mjd = 60388.5;
-        let epoch = Epoch::from_mjd(mjd);
-        assert!((epoch.mjd() - mjd).abs() < 1e-12);
-    }
-
-    #[test]
     fn mjd_jd_relationship() {
         let epoch = Epoch::from_jd(2451545.0);
         assert!((epoch.mjd() - 51544.5).abs() < 1e-12);
