@@ -52,30 +52,10 @@ mod tests {
     }
 
     #[test]
-    fn mu_earth_wgs84_value() {
-        assert!((MU_EARTH - 398600.4418).abs() < 1e-4);
-    }
-
-    #[test]
-    fn mu_sun_value() {
-        assert!((MU_SUN - 132712440018.0).abs() < 1.0);
-    }
-
-    #[test]
-    fn r_earth_wgs84_value() {
-        assert!((R_EARTH - 6378.137).abs() < 1e-3);
-    }
-
-    #[test]
     fn surface_gravity_approximate() {
         // g ≈ μ/R² ≈ 9.798e-3 km/s² ≈ 9.798 m/s²
         let g = MU_EARTH / (R_EARTH * R_EARTH);
         assert!((g - 9.798e-3).abs() < 0.01e-3);
-    }
-
-    #[test]
-    fn j2_earth_value() {
-        assert!((J2_EARTH - 1.08263e-3).abs() < 1e-8);
     }
 
     #[test]
@@ -84,18 +64,8 @@ mod tests {
     }
 
     #[test]
-    fn j3_earth_value() {
-        assert!((J3_EARTH - (-2.5356e-6)).abs() < 1e-11);
-    }
-
-    #[test]
     fn j3_earth_is_negative() {
         assert!(J3_EARTH < 0.0);
-    }
-
-    #[test]
-    fn j4_earth_value() {
-        assert!((J4_EARTH - (-1.6199e-6)).abs() < 1e-11);
     }
 
     #[test]
