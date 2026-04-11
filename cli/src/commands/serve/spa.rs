@@ -7,7 +7,7 @@ use rust_embed::{Embed, EmbeddedFile};
 #[folder = "viewer-dist/"]
 struct ViewerAssets;
 
-fn get_asset(path: &str) -> Option<EmbeddedFile> {
+pub(crate) fn get_asset(path: &str) -> Option<EmbeddedFile> {
     <ViewerAssets as Embed>::get(path)
 }
 

@@ -330,6 +330,11 @@ jobs:
           shared-key: rust-native
           save-if: false
 
+      - name: Install cargo-about
+        uses: taiki-e/install-action@7a4939c09608b2a1986b484eca1d16fd0db8ebef # v2.75.5
+        with:
+          tool: cargo-about
+
       - name: Download viewer dist
         uses: actions/download-artifact@v8.0.1
         with:
@@ -337,6 +342,11 @@ jobs:
           path: ./viewer/dist
 
       - name: Build CLI with embedded viewer
+        # ORTS_REQUIRE_LICENSE_NOTICE=1 makes cli/build.rs fail hard if
+        # cargo-about is missing, guarding against shipping a binary whose
+        # embedded third-party license notice is only a placeholder.
+        env:
+          ORTS_REQUIRE_LICENSE_NOTICE: "1"
         run: cargo build --locked -p orts-cli
 
       - name: Upload CLI binary (with viewer)

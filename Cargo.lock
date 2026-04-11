@@ -2748,6 +2748,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
 
 [[package]]
+name = "notalawyer"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8f10fae64217fe9e567380c332b648a937db0c756e11a17594bc8a8d5ca7762"
+
+[[package]]
+name = "notalawyer-build"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a23fb327485a4b7e648a4a23053456b400f5d3fed6cb4fc7b4029ac1f6297c8"
+
+[[package]]
+name = "notalawyer-clap"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6e87f4834f3bbf79650765227edffb5b40e96199a7d8ba04e57f433ea867f1e"
+dependencies = [
+ "clap",
+ "notalawyer",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2926,6 +2948,9 @@ dependencies = [
  "kaname",
  "log",
  "nalgebra",
+ "notalawyer",
+ "notalawyer-build",
+ "notalawyer-clap",
  "orts",
  "rayon",
  "rust-embed",

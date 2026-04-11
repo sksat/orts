@@ -1,15 +1,21 @@
 mod cli;
 mod commands;
 mod config;
+mod license;
 mod satellite;
 mod sim;
 mod tle;
 
-use clap::Parser;
 use cli::{Cli, Commands};
+use notalawyer_clap::ParseExt;
 
 fn main() {
-    let cli = Cli::parse();
+    // Concatenate the Rust and viewer (npm) NOTICE strings so a single
+    // `--license-notice` invocation prints everything that is redistributed
+    // in the binary. Built at runtime so the viewer notice can come from the
+    // rust-embed asset store (feature = "viewer").
+    let notice = license::combined_notice();
+    let cli = Cli::parse_with_license_notice(&notice);
     match cli.command {
         Commands::Run {
             sim,

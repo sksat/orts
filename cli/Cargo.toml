@@ -4,8 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-# Include viewer-dist/ so `cargo publish` bundles the embedded SPA assets
-include = ["src/**/*", "build.rs", "tests/**/*", "viewer-dist/**/*"]
+# Include viewer-dist/ so `cargo publish` bundles the embedded SPA assets.
+# about.toml is required by notalawyer-build / cargo-about during build.
+include = ["src/**/*", "build.rs", "tests/**/*", "viewer-dist/**/*", "about.toml"]
 
 [[bin]]
 name = "orts"
@@ -40,6 +41,11 @@ serde_yaml.workspace = true
 rust-embed = { workspace = true, optional = true }
 wasmtime = { workspace = true, optional = true }
 rayon = "1"
+notalawyer = "0.2"
+notalawyer-clap = "0.2"
+
+[build-dependencies]
+notalawyer-build = "0.2"
 
 [dev-dependencies]
 tokio-tungstenite.workspace = true

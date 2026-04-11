@@ -1,0 +1,31 @@
+# cargo-about configuration for orts-cli.
+#
+# The `accepted` list is kept to the minimum set of SPDX identifiers that are
+# actually consumed by the current dependency graph. If `cargo about generate`
+# starts failing with a new license, decide consciously whether to add the
+# SPDX identifier, add a `clarify` / `ignore` entry, or replace the dependency.
+
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    # wasmtime / cranelift / rustix etc. ship with the LLVM exception.
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "BSL-1.0",
+    # webpki-roots redistributes the Mozilla CA certificate store under
+    # CDLA-Permissive-2.0, a permissive data license.
+    "CDLA-Permissive-2.0",
+]
+
+# Build-/dev- dependencies are not redistributed in the released binary,
+# so their license texts do not need to be embedded.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# Ignore private workspace crates (they are our own MIT-licensed code).
+workarounds = ["ring"]
