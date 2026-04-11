@@ -25,10 +25,14 @@ use crate::{AtmosphereModel, ConstantWeather, Exponential, HarrisPriester};
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Convert geodetic (lat_deg, lon_deg, altitude_km) + epoch to SimpleEci position
-/// (stripped to a raw `Vector3<f64>` for the tobari internals that expect
-/// untagged coordinates).
-fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch: &Epoch) -> Vector3<f64> {
+/// Convert geodetic (lat_deg, lon_deg, altitude_km) + epoch to a frame-tagged
+/// `SimpleEci` position (for `AtmosphereModel::density` / `MagneticFieldModel::field_eci`).
+fn geodetic_to_eci(
+    lat_deg: f64,
+    lon_deg: f64,
+    altitude_km: f64,
+    epoch: &Epoch,
+) -> arika::SimpleEci {
     let gmst = epoch.gmst();
     let geod = Geodetic {
         latitude: lat_deg.to_radians(),
@@ -36,8 +40,7 @@ fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch: &Epoch) 
         altitude: altitude_km,
     };
     let ecef = SimpleEcef::from(geod);
-    let eci = Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst).transform(&ecef);
-    eci.into_inner()
+    Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst).transform(&ecef)
 }
 
 /// Compute ECI→NED rotation for a magnetic field vector at a geodetic point.
@@ -95,7 +98,11 @@ fn field_info(b_eci: &Vector3<f64>, lat_deg: f64, lon_deg: f64, epoch: &Epoch) -
 /// Exponential atmosphere density [kg/m³] at the given altitude.
 #[wasm_bindgen]
 pub fn exponential_density(altitude_km: f64) -> f64 {
-    Exponential.density(altitude_km, &Vector3::zeros(), None)
+    Exponential.density(
+        altitude_km,
+        &arika::SimpleEci::from_raw(Vector3::zeros()),
+        None,
+    )
 }
 
 /// Harris-Priester density [kg/m³] at a geodetic point and epoch.
@@ -173,7 +180,7 @@ pub fn atmosphere_altitude_profile(
     for &alt in altitudes {
         let pos = geodetic_to_eci(lat_deg, lon_deg, alt, &epoch);
 
-        let exp_rho = Exponential.density(alt, &Vector3::zeros(), None);
+        let exp_rho = Exponential.density(alt, &arika::SimpleEci::from_raw(Vector3::zeros()), None);
         let hp_rho = hp.density(alt, &pos, Some(&epoch));
 
         let msis_input = Nrlmsise00Input {
@@ -228,7 +235,11 @@ pub fn atmosphere_latlon_map(
             let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
             let rho = match model {
-                "exponential" => Exponential.density(altitude_km, &Vector3::zeros(), None),
+                "exponential" => Exponential.density(
+                    altitude_km,
+                    &arika::SimpleEci::from_raw(Vector3::zeros()),
+                    None,
+                ),
                 "harris-priester" => {
                     let pos = geodetic_to_eci(lat, lon, altitude_km, &epoch);
                     hp.density(altitude_km, &pos, Some(&epoch))
@@ -268,7 +279,7 @@ pub fn igrf_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64
     let epoch = Epoch::from_jd(epoch_jd);
     let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
     let igrf = Igrf::earth();
-    let b_eci = igrf.field_eci(&arika::SimpleEci::from_raw(pos), &epoch);
+    let b_eci = igrf.field_eci(&pos, &epoch);
     field_info(b_eci.inner(), lat_deg, lon_deg, &epoch)
 }
 
@@ -280,7 +291,7 @@ pub fn dipole_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f
     let epoch = Epoch::from_jd(epoch_jd);
     let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
     let dipole = TiltedDipole::earth();
-    let b_eci = dipole.field_eci(&arika::SimpleEci::from_raw(pos), &epoch);
+    let b_eci = dipole.field_eci(&pos, &epoch);
     field_info(b_eci.inner(), lat_deg, lon_deg, &epoch)
 }
 
@@ -316,10 +327,10 @@ pub fn magnetic_field_latlon_map(
             let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
             let pos = geodetic_to_eci(lat, lon, altitude_km, &epoch);
-            let eci_pos = arika::SimpleEci::from_raw(pos);
+
             let b_eci = match model {
-                "dipole" => dipole.field_eci(&eci_pos, &epoch),
-                _ => igrf.field_eci(&eci_pos, &epoch),
+                "dipole" => dipole.field_eci(&pos, &epoch),
+                _ => igrf.field_eci(&pos, &epoch),
             };
 
             let info = field_info(b_eci.inner(), lat, lon, &epoch);
@@ -378,10 +389,10 @@ pub fn magnetic_field_volume(
                 let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
                 let pos = geodetic_to_eci(lat, lon, alt, &epoch);
-                let eci_pos = arika::SimpleEci::from_raw(pos);
+
                 let b_eci = match model {
-                    "dipole" => dipole.field_eci(&eci_pos, &epoch),
-                    _ => igrf.field_eci(&eci_pos, &epoch),
+                    "dipole" => dipole.field_eci(&pos, &epoch),
+                    _ => igrf.field_eci(&pos, &epoch),
                 };
 
                 // Inline field_info to avoid per-point Vec allocation
@@ -462,7 +473,11 @@ pub fn atmosphere_volume(
                 let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
                 let rho = match model {
-                    "exponential" => Exponential.density(alt, &Vector3::zeros(), None),
+                    "exponential" => Exponential.density(
+                        alt,
+                        &arika::SimpleEci::from_raw(Vector3::zeros()),
+                        None,
+                    ),
                     "harris-priester" => {
                         let pos = geodetic_to_eci(lat, lon, alt, &epoch);
                         hp.density(alt, &pos, Some(&epoch))
@@ -727,7 +742,11 @@ pub fn atmosphere_latlon_map_sw(
             let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
             let rho = match model {
-                "exponential" => Exponential.density(altitude_km, &Vector3::zeros(), None),
+                "exponential" => Exponential.density(
+                    altitude_km,
+                    &arika::SimpleEci::from_raw(Vector3::zeros()),
+                    None,
+                ),
                 "harris-priester" => {
                     let pos = geodetic_to_eci(lat, lon, altitude_km, &epoch);
                     hp.density(altitude_km, &pos, Some(&epoch))
@@ -796,7 +815,11 @@ pub fn atmosphere_volume_sw(
                 let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
                 let rho = match model {
-                    "exponential" => Exponential.density(alt, &Vector3::zeros(), None),
+                    "exponential" => Exponential.density(
+                        alt,
+                        &arika::SimpleEci::from_raw(Vector3::zeros()),
+                        None,
+                    ),
                     "harris-priester" => {
                         let pos = geodetic_to_eci(lat, lon, alt, &epoch);
                         hp.density(alt, &pos, Some(&epoch))
