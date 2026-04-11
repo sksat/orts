@@ -1,7 +1,11 @@
 {
   "name": "tobari",
   "type": "module",
-  "version": "0.0.0",
+  "collaborators": [
+    "sksat <sksat@sksat.net>"
+  ],
+  "description": "Earth environment models — atmospheric drag density, IGRF geomagnetic field, and space weather integration.",
+  "version": "0.1.0-beta.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,8 +17,16 @@
     "tobari.d.ts"
   ],
   "main": "tobari.js",
+  "homepage": "https://sksat.github.io/orts/",
   "types": "tobari.d.ts",
   "sideEffects": [
     "./snippets/*"
+  ],
+  "keywords": [
+    "atmosphere",
+    "igrf",
+    "magnetic-field",
+    "space-weather",
+    "aerospace"
   ]
 }

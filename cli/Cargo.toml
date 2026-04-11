@@ -56,3 +56,21 @@ notalawyer-build = "0.2"
 [dev-dependencies]
 tokio-tungstenite.workspace = true
 tempfile = "3"
+
+# cargo-binstall metadata: `cargo binstall orts-cli` (or
+# `cargo binstall --git https://github.com/sksat/orts orts-cli` while
+# pre-publish) reads this block and downloads the prebuilt tarball
+# attached to the matching GitHub Release instead of compiling from source.
+# The asset filename and inner directory layout MUST stay in sync with
+# `.github/workflows/release.yml`.
+#
+# Template variables (from cargo-binstall docs):
+#   { name }           → crate name, here "orts-cli"
+#   { version }        → crate version, e.g. "0.1.0-beta.1"
+#   { target }         → rustc target triple, e.g. "x86_64-unknown-linux-gnu"
+#   { archive-suffix } → ".tar.gz" (derived from pkg-fmt)
+#   { bin }            → binary name, here "orts" (differs from crate name)
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }{ archive-suffix }"
+pkg-fmt = "tgz"
+bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"

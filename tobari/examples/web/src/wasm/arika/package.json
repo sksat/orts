@@ -1,7 +1,11 @@
 {
   "name": "arika",
   "type": "module",
-  "version": "0.0.0",
+  "collaborators": [
+    "sksat <sksat@sksat.net>"
+  ],
+  "description": "Coordinate frames, reference transforms, epochs, and celestial body ephemerides for orbital mechanics.",
+  "version": "0.1.0-beta.1",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -13,8 +17,16 @@
     "arika.d.ts"
   ],
   "main": "arika.js",
+  "homepage": "https://sksat.github.io/orts/",
   "types": "arika.d.ts",
   "sideEffects": [
     "./snippets/*"
+  ],
+  "keywords": [
+    "coordinates",
+    "ephemeris",
+    "astronomy",
+    "geodesy",
+    "orbital"
   ]
 }

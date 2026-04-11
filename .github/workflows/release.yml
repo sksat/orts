@@ -1,0 +1,188 @@
+name: Release
+
+# v* tag push で発火。tag 名から version を抽出し、Cargo.toml の
+# workspace version と一致することを検証してからビルドに入る。
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # softprops/action-gh-release が release 作成するのに必要
+
+jobs:
+  release:
+    name: Build and publish release (x86_64-unknown-linux-gnu)
+    runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-unknown-linux-gnu
+      # build.rs が cargo-about 不在を hard-fail にして、プレースホルダ
+      # NOTICE のままバイナリが出荷されるのを防ぐ。
+      ORTS_REQUIRE_LICENSE_NOTICE: "1"
+    steps:
+      - name: Checkout (at tag)
+        uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          set -euo pipefail
+          case "${GITHUB_REF}" in
+            refs/tags/v*)
+              VERSION="${GITHUB_REF#refs/tags/v}"
+              ;;
+            *)
+              echo "::error::Release workflow must run on a v* tag, got ${GITHUB_REF}"
+              exit 1
+              ;;
+          esac
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building release for version ${VERSION}"
+
+      - name: Verify Cargo.toml version matches tag
+        run: |
+          set -euo pipefail
+          CARGO_VERSION=$(awk -F'"' '
+            /^\[workspace\.package\]/ { in_wp = 1; next }
+            /^\[/ { in_wp = 0 }
+            in_wp && /^version[[:space:]]*=/ { print $2; exit }
+          ' Cargo.toml)
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+          if [ -z "${CARGO_VERSION}" ]; then
+            echo "::error::Could not read [workspace.package].version from Cargo.toml"
+            exit 1
+          fi
+          if [ "${CARGO_VERSION}" != "${TAG_VERSION}" ]; then
+            echo "::error::Tag version (${TAG_VERSION}) does not match Cargo.toml workspace version (${CARGO_VERSION})"
+            exit 1
+          fi
+          echo "OK: Cargo.toml workspace version matches tag: ${CARGO_VERSION}"
+
+      # Release builds can peak high during link — reclaim ~17 GB the same
+      # way rust-build / rust-test do. See ci.yml comments for rationale.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
+      - name: Install mold linker
+        run: sudo apt-get install -y mold
+
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo artifacts (release)
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          shared-key: rust-release
+          save-if: true
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install cargo-about
+        uses: taiki-e/install-action@7a4939c09608b2a1986b484eca1d16fd0db8ebef # v2.75.5
+        with:
+          tool: cargo-about
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4.4.0
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.3.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install JS dependencies
+        run: pnpm install --frozen-lockfile
+
+      # viewer/dist/ を作るために uneri → viewer の順で build.
+      - name: Build uneri (viewer dep)
+        run: pnpm --filter uneri build
+
+      - name: Build viewer (wasm-pack + vite)
+        run: pnpm --filter orts-viewer build
+
+      - name: Build orts-cli (release)
+        run: cargo build --locked --release -p orts-cli --target "${TARGET}"
+
+      - name: Stage + strip binary
+        id: stage
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          STAGE_DIR="orts-cli-${VERSION}-${TARGET}"
+          mkdir -p "${STAGE_DIR}"
+          cp "target/${TARGET}/release/orts" "${STAGE_DIR}/orts"
+          strip "${STAGE_DIR}/orts"
+          cp README.md "${STAGE_DIR}/README.md"
+          cp LICENSE "${STAGE_DIR}/LICENSE"
+          echo "stage_dir=${STAGE_DIR}" >> "$GITHUB_OUTPUT"
+          ls -lh "${STAGE_DIR}"
+
+      - name: Create tarball and checksum
+        id: archive
+        run: |
+          set -euo pipefail
+          STAGE_DIR="${{ steps.stage.outputs.stage_dir }}"
+          ARCHIVE="${STAGE_DIR}.tar.gz"
+          # Deterministic tar: sort order, no mtimes, no owner metadata.
+          tar --sort=name \
+              --owner=0 --group=0 --numeric-owner \
+              --mtime='UTC 2020-01-01' \
+              -czf "${ARCHIVE}" "${STAGE_DIR}"
+          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+          echo "checksum=${ARCHIVE}.sha256" >> "$GITHUB_OUTPUT"
+          ls -lh "${ARCHIVE}" "${ARCHIVE}.sha256"
+          cat "${ARCHIVE}.sha256"
+
+      # Create the GitHub Release (draft + prerelease) and upload assets.
+      # softprops/action-gh-release creates or updates a release matching
+      # the triggering tag; `draft: true` keeps it hidden until a human
+      # publishes it, and `prerelease: true` is correct for -beta.N.
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          draft: true
+          prerelease: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            orts ${{ steps.version.outputs.tag }} — first public beta.
+
+            ## Installation (cargo-binstall)
+
+            ```
+            cargo binstall --git https://github.com/sksat/orts orts-cli --version ${{ steps.version.outputs.version }}
+            ```
+
+            ## Manual install
+
+            Download the tarball, verify with the `.sha256` sidecar, extract, and run `./orts`.
+
+            Target: `x86_64-unknown-linux-gnu` (glibc).
+          files: |
+            ${{ steps.archive.outputs.archive }}
+            ${{ steps.archive.outputs.checksum }}
