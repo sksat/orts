@@ -10,6 +10,18 @@ authors.workspace = true
 description = "Earth environment models — atmospheric drag density, IGRF geomagnetic field, and space weather integration."
 keywords = ["atmosphere", "igrf", "magnetic-field", "space-weather", "aerospace"]
 categories = ["science", "aerospace"]
+# Restrict the crate tarball to source + vendored IGRF coefficients +
+# build.rs. Default cargo inclusion would package the 21 MB tobari-example-web
+# demo under examples/, the ~1 MB oracle test fixtures under tests/fixtures/,
+# and generated build artefacts, pushing the .crate over the crates.io 10 MiB
+# limit. README / Cargo.toml are auto-included by cargo.
+include = [
+    "/src/**/*",
+    "/data/igrf14.rs",
+    "/build.rs",
+    "/README.md",
+    "/Cargo.toml",
+]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
