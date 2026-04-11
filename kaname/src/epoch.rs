@@ -544,12 +544,35 @@ impl Epoch<Utc> {
 
     /// Convert to UT1 assuming UT1 ≈ UTC (naive, legacy behavior).
     ///
-    /// 真の UT1 が必要な場合は [`Epoch::<Utc>::to_ut1`] (Phase 2 で追加予定、
-    /// `EopProvider` 引数を取る) を使う。本 method は `NullEop` 相当の
-    /// `dUT1 = 0` 仮定で、current kaname の `gmst()` 実装との bit-level
-    /// 互換を保つため提供される。
+    /// 真の UT1 が必要な場合は [`Epoch::<Utc>::to_ut1`] (`Ut1Offset` provider を
+    /// 引数に取る) を使う。本 method は `NullEop` 相当の `dUT1 = 0` 仮定で、
+    /// current kaname の `gmst()` 実装との bit-level 互換を保つため提供される。
     pub fn to_ut1_naive(&self) -> Epoch<Ut1> {
         Epoch::<Ut1>::from_jd_raw(self.jd)
+    }
+
+    /// Convert to UT1 using the `dUT1 = UT1 − UTC` correction provided by
+    /// an EOP provider.
+    ///
+    /// ```text
+    /// JD_UT1 = JD_UTC + dUT1 / 86400
+    /// ```
+    ///
+    /// `dUT1` is looked up at the current UTC MJD and is typically in the
+    /// range `±0.9 s`. This is the **precise** UT1 conversion — the `NullEop`
+    /// placeholder type does **not** implement [`Ut1Offset`], so passing it
+    /// is a compile error (see `kaname/tests/trybuild/`).
+    ///
+    /// The `?Sized` bound lets callers pass trait objects directly
+    /// (e.g. `&dyn Ut1Offset` or `Box<dyn Ut1Offset>::as_ref()`) alongside
+    /// concrete types.
+    ///
+    /// For a naive `dUT1 = 0` conversion used by the legacy simple rotation
+    /// path, use [`Epoch::<Utc>::to_ut1_naive`] instead.
+    pub fn to_ut1<P: crate::earth::eop::Ut1Offset + ?Sized>(&self, eop: &P) -> Epoch<Ut1> {
+        let mjd = self.jd - MJD_OFFSET;
+        let dut1 = eop.dut1(mjd);
+        Epoch::<Ut1>::from_jd_raw(self.jd + dut1 / 86400.0)
     }
 }
 
@@ -1122,6 +1145,82 @@ mod tests {
         let utc = Epoch::<Utc>::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let ut1 = utc.to_ut1_naive();
         assert_eq!(ut1.era(), utc.gmst());
+    }
+
+    // --- to_ut1 with EOP provider ---
+
+    #[test]
+    fn to_ut1_applies_dut1_offset() {
+        // A mock EOP provider supplying a fixed dUT1 of -0.250 s should
+        // shift the UT1 JD by exactly -0.250/86400 days relative to UTC.
+        struct FixedDut1(f64);
+        impl crate::earth::eop::Ut1Offset for FixedDut1 {
+            fn dut1(&self, _utc_mjd: f64) -> f64 {
+                self.0
+            }
+        }
+
+        let utc = Epoch::<Utc>::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let eop = FixedDut1(-0.250);
+        let ut1 = utc.to_ut1(&eop);
+
+        // JD around 2.46e6 has ~1 ULP ≈ 5.6e-10 days ≈ 4.8e-5 s resolution,
+        // so the reconstructed delta is accurate only to ~10 μs.
+        let delta_s = (ut1.jd() - utc.jd()) * 86400.0;
+        assert!(
+            (delta_s - (-0.250)).abs() < 1e-4,
+            "expected -0.250 s shift, got {delta_s}"
+        );
+    }
+
+    #[test]
+    fn to_ut1_naive_is_equivalent_to_zero_dut1_provider() {
+        // to_ut1_naive() == to_ut1(&provider with dut1 == 0).
+        struct ZeroDut1;
+        impl crate::earth::eop::Ut1Offset for ZeroDut1 {
+            fn dut1(&self, _utc_mjd: f64) -> f64 {
+                0.0
+            }
+        }
+        let utc = Epoch::<Utc>::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let naive = utc.to_ut1_naive();
+        let precise = utc.to_ut1(&ZeroDut1);
+        assert_eq!(naive.jd(), precise.jd());
+    }
+
+    #[test]
+    fn to_ut1_accepts_trait_object_provider() {
+        // The `?Sized` bound on `to_ut1<P>` lets callers pass `&dyn Ut1Offset`
+        // / `Box<dyn Ut1Offset>` directly, which is essential for runtime
+        // provider selection (e.g. a plugin-supplied EOP source).
+        struct Fixed(f64);
+        impl crate::earth::eop::Ut1Offset for Fixed {
+            fn dut1(&self, _: f64) -> f64 {
+                self.0
+            }
+        }
+        let utc = Epoch::<Utc>::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let boxed: Box<dyn crate::earth::eop::Ut1Offset> = Box::new(Fixed(-0.100));
+        let _ut1_box: Epoch<Ut1> = utc.to_ut1(boxed.as_ref());
+        let dyn_ref: &dyn crate::earth::eop::Ut1Offset = &Fixed(-0.100);
+        let _ut1_dyn: Epoch<Ut1> = utc.to_ut1(dyn_ref);
+    }
+
+    #[test]
+    fn to_ut1_passes_utc_mjd_to_provider() {
+        // Verify the UTC MJD passed to the provider matches `epoch.mjd()`.
+        use std::cell::Cell;
+        struct Recording(Cell<f64>);
+        impl crate::earth::eop::Ut1Offset for Recording {
+            fn dut1(&self, utc_mjd: f64) -> f64 {
+                self.0.set(utc_mjd);
+                0.0
+            }
+        }
+        let utc = Epoch::<Utc>::from_gregorian(2024, 1, 1, 0, 0, 0.0);
+        let r = Recording(Cell::new(f64::NAN));
+        let _ = utc.to_ut1(&r);
+        assert_eq!(r.0.get(), utc.mjd());
     }
 
     // --- TLE epoch ---

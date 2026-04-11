@@ -19,6 +19,13 @@
 //!   celestial side)。Meeus ephemeris の返り型としても使う (strict な GCRS では
 //!   なく "geocentric inertial as returned by low-precision analytic models" の
 //!   意味。後続 Phase で precession/nutation 補正が加わると厳密な GCRS に近づく)
+//! - [`Cirs`] — Celestial Intermediate Reference System (IAU 2006 CIO chain 中間)。
+//!   Phase 2 では marker のみ、rotation chain impl は Phase 3 で追加
+//! - [`Tirs`] — Terrestrial Intermediate Reference System (polar motion 未適用)。
+//!   Phase 2 では marker のみ、rotation chain impl は Phase 3 で追加
+//! - [`Itrs`] — International Terrestrial Reference System。polar motion 適用済み
+//!   Earth-fixed frame で geodetic 変換はここに紐づく (本格的な bind は Phase 3+)。
+//!   Phase 2 では marker のみ、rotation chain impl は Phase 3 で追加
 //! - [`Rsw`] — Radial / Along-track / Cross-track 軌道ローカル系。
 //!   軸順は標準 RSW 規約 [R̂, Ŝ, Ŵ] (R̂=normalize(r), Ŵ=normalize(r×v), Ŝ=Ŵ×R̂)
 //! - [`Body`] — 宇宙機機体座標系
@@ -26,9 +33,9 @@
 //! # Category trait
 //!
 //! - [`Eci`] — structural category for earth-centered inertial frames.
-//!   実装者: `SimpleEci`, `Gcrs`
+//!   実装者: `SimpleEci`, `Gcrs`, `Cirs`
 //! - [`Ecef`] — structural category for earth-fixed frames.
-//!   実装者: `SimpleEcef`
+//!   実装者: `SimpleEcef`, `Tirs`, `Itrs`
 //! - [`LocalOrbital`] — structural category for local orbital frames.
 //!   実装者: `Rsw`
 //!
@@ -80,6 +87,9 @@ pub enum FrameDescriptor {
     SimpleEci,
     SimpleEcef,
     Gcrs,
+    Cirs,
+    Tirs,
+    Itrs,
     Rsw,
     Body,
 }
@@ -90,6 +100,9 @@ impl FrameDescriptor {
             FrameDescriptor::SimpleEci => "SimpleEci",
             FrameDescriptor::SimpleEcef => "SimpleEcef",
             FrameDescriptor::Gcrs => "Gcrs",
+            FrameDescriptor::Cirs => "Cirs",
+            FrameDescriptor::Tirs => "Tirs",
+            FrameDescriptor::Itrs => "Itrs",
             FrameDescriptor::Rsw => "Rsw",
             FrameDescriptor::Body => "Body",
         }
@@ -97,8 +110,12 @@ impl FrameDescriptor {
 
     pub const fn category(self) -> FrameCategory {
         match self {
-            FrameDescriptor::SimpleEci | FrameDescriptor::Gcrs => FrameCategory::Eci,
-            FrameDescriptor::SimpleEcef => FrameCategory::Ecef,
+            FrameDescriptor::SimpleEci | FrameDescriptor::Gcrs | FrameDescriptor::Cirs => {
+                FrameCategory::Eci
+            }
+            FrameDescriptor::SimpleEcef | FrameDescriptor::Tirs | FrameDescriptor::Itrs => {
+                FrameCategory::Ecef
+            }
             FrameDescriptor::Rsw => FrameCategory::LocalOrbital,
             FrameDescriptor::Body => FrameCategory::Body,
         }
@@ -171,7 +188,7 @@ impl Frame for SimpleEcef {
 }
 impl Ecef for SimpleEcef {}
 
-/// Geocentric Celestial Reference System. IAU 2006 CIO chain의 celestial side。
+/// Geocentric Celestial Reference System. IAU 2006 CIO chain の celestial side。
 ///
 /// 現 Phase では Meeus ephemeris (低精度 analytic model) の返り型として使用。
 /// 厳密な IAU 2006/2000A の precession-nutation 補正は後続 Phase で追加される。
@@ -184,6 +201,79 @@ impl Frame for Gcrs {
     const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Gcrs;
 }
 impl Eci for Gcrs {}
+
+/// Celestial Intermediate Reference System. IAU 2006 CIO chain の中間フレーム
+/// (precession/nutation 適用後、ERA による Z 回転の直前の celestial side)。
+///
+/// # Phase 2 status
+///
+/// 本 Phase では **marker のみ** を提供する。`Rotation<Gcrs, Cirs>::iau2006(tt, eop)`
+/// などの rotation chain constructor は Phase 3 で実装予定。現状ではこのフレームを
+/// 使う API は存在しないため、runtime では `FrameDescriptor::Cirs` と
+/// `<Cirs as Frame>::DESCRIPTOR` 経由でのみ参照できる。
+///
+/// # Independent variable
+///
+/// `Rotation<Gcrs, Cirs>` は TT (Terrestrial Time) の Julian centuries を独立変数と
+/// する — IAU 2006 precession と IAU 2000A/B nutation の series は TT centuries で
+/// 定義されているため。詳細は [`kaname/DESIGN.md`](../../DESIGN.md) の「Frame rotation
+/// の time scale は definitional」を参照。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cirs;
+impl sealed::Sealed for Cirs {}
+impl Frame for Cirs {
+    const NAME: &'static str = "Cirs";
+    const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Cirs;
+}
+impl Eci for Cirs {}
+
+/// Terrestrial Intermediate Reference System. polar motion 未適用の Earth-fixed
+/// 中間フレーム ([`Cirs`] から ERA による Z 回転で得られる)。
+///
+/// # Phase 2 status
+///
+/// 本 Phase では **marker のみ** を提供する。`Rotation<Cirs, Tirs>::from_era(ut1)` と
+/// `Rotation<Tirs, Itrs>::polar_motion(utc, eop)` は Phase 3 で実装予定。
+///
+/// # Independent variable
+///
+/// [`Cirs`] → [`Tirs`] の変換は UT1 (Earth rotation angle) を独立変数とする — ERA は
+/// UT1 の definitional な関数であり、他の scale では物理的に意味をなさない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tirs;
+impl sealed::Sealed for Tirs {}
+impl Frame for Tirs {
+    const NAME: &'static str = "Tirs";
+    const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Tirs;
+}
+impl Ecef for Tirs {}
+
+/// International Terrestrial Reference System. IAU 2006 CIO chain の Earth-fixed
+/// side (polar motion 適用済み)。WGS84 / GRS80 ellipsoid の geodetic 変換はこの
+/// frame に紐づく — ただし本 Phase では変換 impl は [`SimpleEcef`] にしか生えて
+/// いない。
+///
+/// # Phase 2 status
+///
+/// 本 Phase では **marker のみ** を提供する。Phase 3 以降:
+/// - `Rotation<Tirs, Itrs>::polar_motion(utc, eop)` の実装
+/// - `Rotation<Gcrs, Itrs>::iau2006_full(...)` の完全 chain
+/// - `Vec3<Itrs>::to_geodetic()` / `Vec3<Itrs>::to_geodetic_with::<E>()` の追加
+///
+/// # 独立性
+///
+/// [`SimpleEcef`] と [`Itrs`] の間には **型変換を提供しない** — 近似と厳密を silent
+/// に混ぜる経路を作らないため。precision-aware な API は concrete 型 (`Vec3<Itrs>`)
+/// を関数シグネチャに書き、generic な `<F: Ecef>` bound は precision-agnostic な
+/// math にのみ使う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Itrs;
+impl sealed::Sealed for Itrs {}
+impl Frame for Itrs {
+    const NAME: &'static str = "Itrs";
+    const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Itrs;
+}
+impl Ecef for Itrs {}
 
 /// Local orbital frame: Radial / Along-track / Cross-track.
 ///
@@ -660,6 +750,9 @@ mod tests {
         assert_eq!(FrameDescriptor::SimpleEci.name(), "SimpleEci");
         assert_eq!(FrameDescriptor::SimpleEcef.name(), "SimpleEcef");
         assert_eq!(FrameDescriptor::Gcrs.name(), "Gcrs");
+        assert_eq!(FrameDescriptor::Cirs.name(), "Cirs");
+        assert_eq!(FrameDescriptor::Tirs.name(), "Tirs");
+        assert_eq!(FrameDescriptor::Itrs.name(), "Itrs");
         assert_eq!(FrameDescriptor::Rsw.name(), "Rsw");
         assert_eq!(FrameDescriptor::Body.name(), "Body");
     }
@@ -668,7 +761,10 @@ mod tests {
     fn frame_descriptor_category() {
         assert_eq!(FrameDescriptor::SimpleEci.category(), FrameCategory::Eci);
         assert_eq!(FrameDescriptor::Gcrs.category(), FrameCategory::Eci);
+        assert_eq!(FrameDescriptor::Cirs.category(), FrameCategory::Eci);
         assert_eq!(FrameDescriptor::SimpleEcef.category(), FrameCategory::Ecef);
+        assert_eq!(FrameDescriptor::Tirs.category(), FrameCategory::Ecef);
+        assert_eq!(FrameDescriptor::Itrs.category(), FrameCategory::Ecef);
         assert_eq!(FrameDescriptor::Rsw.category(), FrameCategory::LocalOrbital);
         assert_eq!(FrameDescriptor::Body.category(), FrameCategory::Body);
     }
@@ -677,6 +773,9 @@ mod tests {
     fn frame_descriptor_via_trait() {
         assert_eq!(<SimpleEci as Frame>::DESCRIPTOR, FrameDescriptor::SimpleEci);
         assert_eq!(<Gcrs as Frame>::DESCRIPTOR, FrameDescriptor::Gcrs);
+        assert_eq!(<Cirs as Frame>::DESCRIPTOR, FrameDescriptor::Cirs);
+        assert_eq!(<Tirs as Frame>::DESCRIPTOR, FrameDescriptor::Tirs);
+        assert_eq!(<Itrs as Frame>::DESCRIPTOR, FrameDescriptor::Itrs);
         assert_eq!(
             <SimpleEcef as Frame>::DESCRIPTOR,
             FrameDescriptor::SimpleEcef
@@ -689,13 +788,23 @@ mod tests {
 
     #[test]
     fn category_trait_bounds_gate_generic_api() {
-        // Structural API using `F: Eci` bound should accept both SimpleEci
-        // and Gcrs interchangeably — this is by design.
+        // Structural API using `F: Eci` bound should accept SimpleEci, Gcrs,
+        // and Cirs interchangeably — this is by design for precision-agnostic
+        // math (magnitude / dot / etc.).
         fn magnitude_eci<F: Eci>(v: Vec3<F>) -> f64 {
             v.magnitude()
         }
         assert_eq!(magnitude_eci(Vec3::<SimpleEci>::new(3.0, 4.0, 0.0)), 5.0);
         assert_eq!(magnitude_eci(Vec3::<Gcrs>::new(0.0, 0.0, 7.0)), 7.0);
+        assert_eq!(magnitude_eci(Vec3::<Cirs>::new(5.0, 0.0, 12.0)), 13.0);
+
+        // Same for `F: Ecef`.
+        fn magnitude_ecef<F: Ecef>(v: Vec3<F>) -> f64 {
+            v.magnitude()
+        }
+        assert_eq!(magnitude_ecef(Vec3::<SimpleEcef>::new(3.0, 4.0, 0.0)), 5.0);
+        assert_eq!(magnitude_ecef(Vec3::<Tirs>::new(0.0, 0.0, 7.0)), 7.0);
+        assert_eq!(magnitude_ecef(Vec3::<Itrs>::new(5.0, 0.0, 12.0)), 13.0);
     }
 
     // ─── Rotation<SimpleEci, SimpleEcef> from_era tests ──────────

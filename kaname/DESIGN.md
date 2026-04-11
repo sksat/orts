@@ -137,11 +137,11 @@ UTC calendar arithmetic (「翌日同時刻」「翌月同日」) は kaname の
 Earth rotation の secular slowdown (潮汐摩擦) が原因。leap second table を kaname 内 compiled-in で持つ。
 外部 EOP provider とは完全に別体系 (更新 cadence / 意味論が異なる)。
 
-### EOP (Earth Orientation Parameters) は能力 trait で切り出す
+### EOP (Earth Orientation Parameters) はパラメータごとの trait に分割する
 
-`Ut1Offset` / `PolarMotion` / `NutationCorrections` / `LengthOfDay` に分割し、`NullEop` は何の能力 trait
-も実装しない。precise な rotation API (`iau2006_full` 等) は対応する能力 trait bound で gate され、
-`NullEop` を渡すと compile error になる。
+`Ut1Offset` / `PolarMotion` / `NutationCorrections` / `LengthOfDay` の 4 trait に分割し、`NullEop` placeholder
+はこれらの trait を一つも実装しない。precise な rotation API (`iau2006_full` 等) は対応する trait bound で
+gate され、`NullEop` を渡すと compile error になる。
 
 実装は外部 crate (tobari または新 crate) が IERS Bulletin A/B / CSSI 等から読み込んで trait を提供する。
 kaname 自体は data file を持たない (WASM compatibility)。

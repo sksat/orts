@@ -1,17 +1,22 @@
 //! Earth: physical constants, reference ellipsoid, geodetic coordinates,
-//! and Earth rotation models.
+//! Earth rotation models, and Earth Orientation Parameters.
 //!
 //! # Submodules
 //!
 //! - [`ellipsoid`] — WGS-84 reference ellipsoid constants
 //! - [`geodetic`] — WGS-84 Cartesian ↔ geodetic conversions, [`Geodetic`] type
 //! - [`rotation`] — IAU 2009 WGCCRE rotation model (`EARTH` const)
+//! - [`eop`] — Earth Orientation Parameters provider traits
+//!   ([`Ut1Offset`](eop::Ut1Offset), [`PolarMotion`](eop::PolarMotion),
+//!   [`NutationCorrections`](eop::NutationCorrections),
+//!   [`LengthOfDay`](eop::LengthOfDay)) and [`NullEop`](eop::NullEop) placeholder
 //!
-//! Phase 2 will add `eop`, `cirs`, `tirs`, `itrs` submodules for the IAU 2006
-//! CIO-based Earth rotation chain (precession / nutation / ERA / polar
-//! motion). Those are strictly Earth-specific and live under this module.
+//! Phase 3 will add `Rotation<Gcrs, Cirs>::iau2006` / `Rotation<Cirs, Tirs>::from_era`
+//! / `Rotation<Tirs, Itrs>::polar_motion` constructors that consume these EOP
+//! traits for the full IAU 2006 CIO-based Earth rotation chain.
 
 pub mod ellipsoid;
+pub mod eop;
 pub mod geodetic;
 pub mod rotation;
 
