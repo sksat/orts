@@ -13,7 +13,7 @@
 //!   series generated from the IERS electronic tables `tab5.2a.txt`,
 //!   `tab5.2b.txt`, `tab5.2d.txt` — stored as the crate-private
 //!   `tables_gen` submodule. The generator lives at
-//!   `tools/generate_iau2006_tables.py`
+//!   `kaname/tools/generate_iau2006_tables.py`
 //! - **Phase 3A-3**: CIP coordinate evaluators and GCRS→CIRS matrix composition
 //! - **Phase 3B**: `Rotation<Gcrs, Cirs>::iau2006(tt, utc, eop)` and related
 //!   public constructors

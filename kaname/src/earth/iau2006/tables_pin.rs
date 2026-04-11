@@ -9,10 +9,10 @@
 //!    first-row amplitudes, or
 //! 2. Someone accidentally edits the generated file by hand.
 //!
-//! In either case regenerate with:
+//! In either case regenerate with (from the repository root):
 //!
 //! ```shell
-//! uv run tools/generate_iau2006_tables.py
+//! uv run kaname/tools/generate_iau2006_tables.py
 //! ```
 //!
 //! The numerical cross-validation of the **evaluators** that consume

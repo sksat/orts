@@ -10,10 +10,10 @@
 //   - https://iers-conventions.obspm.fr/content/chapter5/additional_info/
 //   - ftp://tai.bipm.org/iers/conv2010/chapter5/
 //
-// Generator: tools/generate_iau2006_tables.py
+// Generator: kaname/tools/generate_iau2006_tables.py
 //
-// Re-generate with:
-//   uv run tools/generate_iau2006_tables.py
+// Re-generate with (from the repository root):
+//   uv run kaname/tools/generate_iau2006_tables.py
 //
 // The numerical coefficients below are scientific data published by the
 // IERS Conventions Centre as the definitive CIP X, Y and CIO locator s

@@ -22,9 +22,9 @@ access. Re-run this script whenever:
 - The IERS Conventions Centre publishes an updated Chapter 5 bundle
 - A new quantity is added to the kaname IAU 2006 module
 
-Usage:
+Usage (run from the repository root):
 
-    uv run tools/generate_iau2006_tables.py
+    uv run kaname/tools/generate_iau2006_tables.py
 
 The generator is stable — running it twice produces identical output
 when the upstream tables are unchanged.
@@ -256,10 +256,10 @@ def emit_rust(x: Table, y: Table, s: Table) -> str:
 //   - https://iers-conventions.obspm.fr/content/chapter5/additional_info/
 //   - ftp://tai.bipm.org/iers/conv2010/chapter5/
 //
-// Generator: tools/generate_iau2006_tables.py
+// Generator: kaname/tools/generate_iau2006_tables.py
 //
-// Re-generate with:
-//   uv run tools/generate_iau2006_tables.py
+// Re-generate with (from the repository root):
+//   uv run kaname/tools/generate_iau2006_tables.py
 //
 // The numerical coefficients below are scientific data published by the
 // IERS Conventions Centre as the definitive CIP X, Y and CIO locator s
@@ -333,14 +333,10 @@ def main() -> None:
               f"non-poly={total} terms across {len(table.groups)} power groups")
 
     rust = emit_rust(x, y, s)
-    out_path = (
-        Path(__file__).resolve().parent.parent
-        / "kaname"
-        / "src"
-        / "earth"
-        / "iau2006"
-        / "tables_gen.rs"
-    )
+    # `Path(__file__).resolve().parent.parent` = `orts/kaname/` since this
+    # script lives at `kaname/tools/generate_iau2006_tables.py`.
+    kaname_root = Path(__file__).resolve().parent.parent
+    out_path = kaname_root / "src" / "earth" / "iau2006" / "tables_gen.rs"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(rust)
     print(f"Wrote {out_path} ({len(rust)} bytes)")

@@ -11,9 +11,9 @@ cross-validated against the ERFA C library (a BSD-licensed, SOFA-board-
 blessed fork of IAU SOFA) without making ERFA a runtime dependency of
 kaname or CI.
 
-Usage:
+Usage (run from the repository root):
 
-    uv run tools/generate_iau2006_reference.py
+    uv run kaname/tools/generate_iau2006_reference.py
 
 Re-run whenever the reference set of `t` values is changed, the pyerfa
 version is bumped, or new quantities need to be added to the fixture.
@@ -112,7 +112,7 @@ def main() -> None:
             "kaname/src/earth/iau2006/."
         ),
         "source": f"pyerfa {erfa.__version__}",
-        "generator": "tools/generate_iau2006_reference.py",
+        "generator": "kaname/tools/generate_iau2006_reference.py",
         "convention": "IAU 2006 / 2000A_R06, IERS Conventions 2010 (TN36)",
         "independent_variable": "t = TT Julian centuries since J2000.0",
         "units": {
@@ -122,13 +122,10 @@ def main() -> None:
         "samples": samples,
     }
 
-    out_path = (
-        Path(__file__).resolve().parent.parent
-        / "kaname"
-        / "tests"
-        / "fixtures"
-        / "iau2006_erfa_reference.json"
-    )
+    # `Path(__file__).resolve().parent.parent` = `orts/kaname/` since this
+    # script lives at `kaname/tools/generate_iau2006_reference.py`.
+    kaname_root = Path(__file__).resolve().parent.parent
+    out_path = kaname_root / "tests" / "fixtures" / "iau2006_erfa_reference.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Emit JSON with Biome-compatible numeric formatting: the project-wide

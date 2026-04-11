@@ -6,9 +6,9 @@
 //! scientific Python astronomy tooling. It is *not* a runtime dependency
 //! of kaname or of CI: the reference fixture at
 //! `kaname/tests/fixtures/iau2006_erfa_reference.json` is generated
-//! offline by `tools/generate_iau2006_reference.py` (a `uv run` PEP 723
-//! script that pulls in `pyerfa`), and this integration test loads the
-//! committed JSON with `include_str!` and `serde_json`.
+//! offline by `kaname/tools/generate_iau2006_reference.py` (a `uv run`
+//! PEP 723 script that pulls in `pyerfa`), and this integration test
+//! loads the committed JSON with `include_str!` and `serde_json`.
 //!
 //! # When to regenerate
 //!
@@ -18,10 +18,10 @@
 //!   polynomials when Phase 3A-1 extended the fixture)
 //! - A new pyerfa version is pinned (update `source` and re-run)
 //!
-//! Re-run with:
+//! Re-run (from the repository root):
 //!
 //! ```shell
-//! uv run tools/generate_iau2006_reference.py
+//! uv run kaname/tools/generate_iau2006_reference.py
 //! ```
 //!
 //! # Tolerances

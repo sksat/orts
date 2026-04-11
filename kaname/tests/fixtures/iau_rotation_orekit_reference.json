@@ -1,5 +1,5 @@
 {
-  "generator": "tools/generate_iau_rotation_fixtures.py",
+  "generator": "kaname/tools/generate_iau_rotation_fixtures.py",
   "description": "IAU body orientation reference from Orekit (body-fixed \u2192 EME2000 quaternion)",
   "note": "Quaternion format: [w, x, y, z] (Hamilton scalar-first)",
   "fixtures": [

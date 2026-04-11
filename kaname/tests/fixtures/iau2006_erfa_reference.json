@@ -1,7 +1,7 @@
 {
   "description": "IAU 2006 / 2000A_R06 reference values generated from ERFA (liberfa/erfa), a BSD-3-Clause fork of IAU SOFA. Used by kaname/tests/iau2006_vs_erfa.rs as an independent oracle for the pure-Rust IAU 2006 implementation in kaname/src/earth/iau2006/.",
   "source": "pyerfa 2.0.1.5",
-  "generator": "tools/generate_iau2006_reference.py",
+  "generator": "kaname/tools/generate_iau2006_reference.py",
   "convention": "IAU 2006 / 2000A_R06, IERS Conventions 2010 (TN36)",
   "independent_variable": "t = TT Julian centuries since J2000.0",
   "units": {

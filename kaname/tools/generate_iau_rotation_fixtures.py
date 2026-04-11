@@ -18,7 +18,8 @@ Known differences:
   - Minor floating-point differences expected (< 1e-10 in quaternion components)
 
 Output: kaname/tests/fixtures/iau_rotation_orekit_reference.json
-Run:    uv run tools/generate_iau_rotation_fixtures.py
+Run (from the repository root):
+    uv run kaname/tools/generate_iau_rotation_fixtures.py
 """
 
 import json
@@ -139,12 +140,15 @@ def main():
             except Exception as e:
                 print(f"FAILED: {e}")
 
-    output_path = Path("kaname/tests/fixtures/iau_rotation_orekit_reference.json")
+    # `Path(__file__).resolve().parent.parent` = `orts/kaname/` since this
+    # script lives at `kaname/tools/generate_iau_rotation_fixtures.py`.
+    kaname_root = Path(__file__).resolve().parent.parent
+    output_path = kaname_root / "tests" / "fixtures" / "iau_rotation_orekit_reference.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(
             {
-                "generator": "tools/generate_iau_rotation_fixtures.py",
+                "generator": "kaname/tools/generate_iau_rotation_fixtures.py",
                 "description": "IAU body orientation reference from Orekit (body-fixed → EME2000 quaternion)",
                 "note": "Quaternion format: [w, x, y, z] (Hamilton scalar-first)",
                 "fixtures": fixtures,
