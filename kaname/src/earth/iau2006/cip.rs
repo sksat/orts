@@ -213,7 +213,7 @@ pub fn gcrs_to_cirs_matrix_at(t: f64) -> Matrix3<f64> {
 /// convention (a positive angle rotates vectors clockwise when
 /// viewed from +z).
 #[inline]
-fn rotation_z(psi: f64) -> Matrix3<f64> {
+pub(crate) fn rotation_z(psi: f64) -> Matrix3<f64> {
     let (s, c) = psi.sin_cos();
     Matrix3::new(
         c, s, 0.0, //
@@ -225,12 +225,25 @@ fn rotation_z(psi: f64) -> Matrix3<f64> {
 /// Right-handed rotation about the y-axis by `theta`, SOFA `iauRy`
 /// convention.
 #[inline]
-fn rotation_y(theta: f64) -> Matrix3<f64> {
+pub(crate) fn rotation_y(theta: f64) -> Matrix3<f64> {
     let (s, c) = theta.sin_cos();
     Matrix3::new(
         c, 0.0, -s, //
         0.0, 1.0, 0.0, //
         s, 0.0, c,
+    )
+}
+
+/// Right-handed rotation about the x-axis by `phi`, SOFA `iauRx`
+/// convention. Shared with [`super::cio_chain`] for the polar motion
+/// matrix.
+#[inline]
+pub(crate) fn rotation_x(phi: f64) -> Matrix3<f64> {
+    let (s, c) = phi.sin_cos();
+    Matrix3::new(
+        1.0, 0.0, 0.0, //
+        0.0, c, s, //
+        0.0, -s, c,
     )
 }
 

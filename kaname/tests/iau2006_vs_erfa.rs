@@ -35,10 +35,44 @@
 //! tolerances (10⁻¹¹ / 10⁻¹² / 10⁻¹¹) to absorb cross-compiler jitter
 //! while still catching any real transcription mistake.
 
+use kaname::earth::eop::{LengthOfDay, NutationCorrections, PolarMotion, Ut1Offset};
 use kaname::earth::iau2006::cip::{cio_locator_s, cip_xy, gcrs_to_cirs_matrix_at};
 use kaname::earth::iau2006::fundamental_arguments::FundamentalArguments;
 use kaname::earth::iau2006::precession::{ecliptic_precession_angles, fukushima_williams};
+use kaname::epoch::{Epoch, Tt, Ut1, Utc};
+use kaname::frame::{Gcrs, Itrs, Rotation, Vec3};
 use serde_json::Value;
+
+/// Minimal EOP provider that returns `0` for every parameter. Lets the
+/// `iau2006_full` test compose every Phase 3B constructor without a
+/// real EOP table.
+struct ZeroEop;
+impl Ut1Offset for ZeroEop {
+    fn dut1(&self, _utc_mjd: f64) -> f64 {
+        0.0
+    }
+}
+impl PolarMotion for ZeroEop {
+    fn x_pole(&self, _utc_mjd: f64) -> f64 {
+        0.0
+    }
+    fn y_pole(&self, _utc_mjd: f64) -> f64 {
+        0.0
+    }
+}
+impl NutationCorrections for ZeroEop {
+    fn dx(&self, _utc_mjd: f64) -> f64 {
+        0.0
+    }
+    fn dy(&self, _utc_mjd: f64) -> f64 {
+        0.0
+    }
+}
+impl LengthOfDay for ZeroEop {
+    fn lod(&self, _utc_mjd: f64) -> f64 {
+        0.0
+    }
+}
 
 /// The ERFA reference fixture, embedded into the test binary at compile
 /// time so CI needs neither a filesystem path nor network access.
@@ -61,6 +95,19 @@ const CIP_TOLERANCE_RAD: f64 = 1e-11;
 /// amplifies scalar residuals by at most `O(1)`, so the same
 /// `1e-11` scale that bounds `X/Y/s` is sufficient here.
 const C2I_MATRIX_TOLERANCE: f64 = 1e-11;
+
+/// Maximum allowed absolute difference for the full GCRS→ITRS matrix.
+/// The chain accumulates three sources of residual:
+///   1. The 3000-term CIP series evaluation (inherits the same
+///      [`CIP_TOLERANCE_RAD`] = 1e-11 bound used in Phase 3A-3)
+///   2. The `Matrix3 → UnitQuaternion → Matrix3` roundtrip that
+///      `Rotation<From, To>` performs (sub-ULP, dominated by item 1)
+///   3. The ERA composition: ERA reaches ~6.28 rad/century, so
+///      multiplying the CIP matrix by `R_z(ERA)` amplifies the scalar
+///      residual by up to ~2×. Empirically observed max delta over
+///      `|t| ≤ 1` century is ~1.1e-11, so we pin 5e-11 to absorb that
+///      plus headroom while still catching a real transcription error.
+const FULL_CHAIN_VECTOR_TOLERANCE: f64 = 5e-11;
 
 fn load_fixture() -> Value {
     serde_json::from_str(FIXTURE_JSON).expect("iau2006_erfa_reference.json must be valid JSON")
@@ -260,6 +307,85 @@ fn gcrs_to_cirs_matrix_matches_erfa_c2ixys() {
     assert_eq!(
         failures, 0,
         "{failures} GCRS→CIRS matrix element mismatches exceeded {C2I_MATRIX_TOLERANCE:e} tolerance"
+    );
+}
+
+#[test]
+fn iau2006_full_matches_erfa_zero_eop_chain() {
+    // End-to-end Phase 3B validation: construct
+    // `Rotation<Gcrs, Itrs>::iau2006_full` with the `ZeroEop` provider
+    // and verify it maps GCRS unit vectors to the same ITRS vectors
+    // that the ERFA-reference fixture computed via the piecewise
+    // `c2ixys → rz(era) → pom00(0,0,sp)` chain.
+    let fixture = load_fixture();
+    let samples = fixture["samples"]
+        .as_array()
+        .expect("fixture must have a `samples` array");
+
+    let mut failures = 0usize;
+
+    // Three orthogonal reference vectors so a transposition bug in the
+    // matrix layout would show up on at least one.
+    let reference_inputs: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+    for sample in samples {
+        let t = field_f64(sample, "t_tt_centuries_from_j2000");
+        let entry = &sample["gcrs_to_itrs_matrix_zero_eop"];
+        let matrix_expected = entry["matrix"]
+            .as_array()
+            .expect("missing gcrs_to_itrs_matrix_zero_eop.matrix");
+
+        // Build the kaname rotation. We use the individual scale
+        // constructors rather than `iau2006_full_from_utc` because the
+        // fixture `t` is already in TT centuries and we want to pin
+        // the raw composition; `from_utc` has its own test in the
+        // unit test suite.
+        let tt = Epoch::<Tt>::from_jd_tt(2451545.0 + t * 36525.0);
+        // With dUT1 = 0, `ut1 = utc` as bit-equal Julian Dates.
+        let ut1 = Epoch::<Ut1>::from_jd_ut1(2451545.0 + t * 36525.0);
+        let utc = Epoch::<Utc>::from_jd(2451545.0 + t * 36525.0);
+        let rot = Rotation::<Gcrs, Itrs>::iau2006_full(&tt, &ut1, &utc, &ZeroEop);
+
+        for input in reference_inputs {
+            let v_gcrs = Vec3::<Gcrs>::new(input[0], input[1], input[2]);
+            let v_itrs_kaname = rot.transform(&v_gcrs);
+
+            // Expected output: matrix_expected · input
+            let expected = [
+                matrix_expected[0][0].as_f64().unwrap() * input[0]
+                    + matrix_expected[0][1].as_f64().unwrap() * input[1]
+                    + matrix_expected[0][2].as_f64().unwrap() * input[2],
+                matrix_expected[1][0].as_f64().unwrap() * input[0]
+                    + matrix_expected[1][1].as_f64().unwrap() * input[1]
+                    + matrix_expected[1][2].as_f64().unwrap() * input[2],
+                matrix_expected[2][0].as_f64().unwrap() * input[0]
+                    + matrix_expected[2][1].as_f64().unwrap() * input[1]
+                    + matrix_expected[2][2].as_f64().unwrap() * input[2],
+            ];
+
+            for (i, (actual, expected)) in [
+                (v_itrs_kaname.x(), expected[0]),
+                (v_itrs_kaname.y(), expected[1]),
+                (v_itrs_kaname.z(), expected[2]),
+            ]
+            .iter()
+            .enumerate()
+            .map(|(i, (a, e))| (i, (*a, *e)))
+            {
+                let delta = (actual - expected).abs();
+                if !delta.is_finite() || delta > FULL_CHAIN_VECTOR_TOLERANCE {
+                    eprintln!(
+                        "FAIL t={t:+.3} input={input:?} component[{i}]: actual={actual:+.17e} expected={expected:+.17e} Δ={delta:.3e}"
+                    );
+                    failures += 1;
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        failures, 0,
+        "{failures} full-chain mismatches exceeded {FULL_CHAIN_VECTOR_TOLERANCE:e} tolerance"
     );
 }
 

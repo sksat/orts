@@ -17,11 +17,16 @@
 //! - **Phase 3A-3** (this commit): [`cip`] evaluators — `cip_xy`,
 //!   `cio_locator_s`, `cip_coordinates` — that consume the generated
 //!   series and return `Rad`-typed CIP coordinates + CIO locator
-//! - **Phase 3A-4**: GCRS→CIRS matrix composition using the CIP
-//!   coordinates from `cip` plus the Fukushima-Williams precession
-//!   angles from [`precession`]
-//! - **Phase 3B**: `Rotation<Gcrs, Cirs>::iau2006(tt, utc, eop)` and
-//!   related public constructors
+//! - **Phase 3A-4**: GCRS→CIRS matrix composition in [`cip`] using
+//!   `(X, Y, s)` plus SOFA-style `R_z · R_y · R_z` assembly
+//! - **Phase 3B** (this commit): public [`crate::frame::Rotation`]
+//!   constructors in [`cio_chain`] —
+//!   `Rotation<Gcrs, Cirs>::iau2006(tt, utc, eop)`,
+//!   `Rotation<Cirs, Tirs>::from_era(ut1)`,
+//!   `Rotation<Tirs, Itrs>::polar_motion(tt, utc, eop)`,
+//!   `Rotation<Gcrs, Itrs>::iau2006_full(tt, ut1, utc, eop)`,
+//!   and the convenience `iau2006_full_from_utc(utc, eop)`. All EOP
+//!   trait bounds from Phase 2 are now enforced end-to-end
 //!
 //! No public [`crate::frame::Rotation`] constructors are exposed from this
 //! module yet — they appear in Phase 3B.
@@ -59,6 +64,7 @@ use std::f64::consts::PI;
 use std::marker::PhantomData;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
+pub mod cio_chain;
 pub mod cip;
 pub mod fundamental_arguments;
 pub mod precession;

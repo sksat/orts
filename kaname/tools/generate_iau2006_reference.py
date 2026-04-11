@@ -131,6 +131,50 @@ def gcrs_to_cirs_matrix(t: float) -> list[list[float]]:
     return [[float(v) for v in row] for row in m]
 
 
+def gcrs_to_itrs_matrix_zero_eop(t: float) -> dict:
+    """Full GCRS→ITRS rotation matrix at TT centuries `t`, with every
+    EOP quantity held at zero (`dUT1 = xp = yp = dX = dY = 0`).
+
+    Computed by combining the ERFA pieces individually so that the
+    Rust test can compare against a chain built from kaname's
+    `Rotation<Gcrs, Cirs>::iau2006`, `Rotation<Cirs, Tirs>::from_era`,
+    and `Rotation<Tirs, Itrs>::polar_motion` each given the same
+    zero-valued mock provider. We do NOT call `erfa.c2t06a` because
+    that routine uses SOFA's internal IAU 2000A nutation series
+    routing, which differs from the `xy06 + s06 + c2ixys` path we
+    wired into kaname in Phase 3A.
+
+    With `dUT1 = 0` the UT1 and UTC Julian Dates coincide, so
+    `era00(ut1) = era00(utc)`.
+    """
+    J2000_JD = 2451545.0
+    offset_days = t * 36525.0
+
+    # Q: GCRS → CIRS via c2ixys
+    x, y = erfa.xy06(J2000_JD, offset_days)
+    s = erfa.s06(J2000_JD, offset_days, x, y)
+    rc2i = erfa.c2ixys(x, y, s)
+
+    # R: CIRS → TIRS via −ERA about z
+    era = erfa.era00(J2000_JD, offset_days)
+    # iauRz(era, r): r := R_z(era) · r — equivalent to applying R_3(era)
+    # which is the passive rotation matching kaname's `rotation_z`.
+    rc2tirs = erfa.rz(era, rc2i)
+
+    # W: TIRS → ITRS via `iauPom00(xp=0, yp=0, sp=sp00(tt))`
+    sp = erfa.sp00(J2000_JD, offset_days)
+    rpom = erfa.pom00(0.0, 0.0, sp)
+
+    # ITRS = W · (CIRS → TIRS) · (GCRS → CIRS) = W · rc2tirs
+    rc2t = rpom @ rc2tirs
+
+    return {
+        "era": float(era),
+        "sp": float(sp),
+        "matrix": [[float(v) for v in row] for row in rc2t],
+    }
+
+
 def main() -> None:
     samples = []
     for t in SAMPLES:
@@ -141,6 +185,7 @@ def main() -> None:
                 "precession_fukushima_williams": precession_fukushima_williams(t),
                 "cip_xys": cip_xys(t),
                 "gcrs_to_cirs_matrix": gcrs_to_cirs_matrix(t),
+                "gcrs_to_itrs_matrix_zero_eop": gcrs_to_itrs_matrix_zero_eop(t),
             }
         )
 
@@ -161,6 +206,7 @@ def main() -> None:
             "precession_fukushima_williams": "rad",
             "cip_xys": "rad",
             "gcrs_to_cirs_matrix": "dimensionless, row-major 3x3 orthogonal",
+            "gcrs_to_itrs_matrix_zero_eop": "dimensionless matrix + era (rad) + sp (rad)",
         },
         "samples": samples,
     }
