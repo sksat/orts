@@ -20,7 +20,7 @@
 //!    implementation, this one becomes the trusted reference against
 //!    which the guest is compared.
 
-use kaname::constants::{MU_EARTH, R_EARTH};
+use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
 use kaname::epoch::Epoch;
 use kaname::frame::{Body, Vec3};
 use nalgebra::{Matrix3, Vector3, Vector4};

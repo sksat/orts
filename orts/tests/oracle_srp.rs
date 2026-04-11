@@ -8,7 +8,7 @@
 //! - dt convergence (4th-order for RK4)
 //! - Energy-work consistency (nonconservative force)
 
-use kaname::constants::{MU_EARTH, R_EARTH};
+use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
 use kaname::epoch::Epoch;
 use nalgebra::vector;
 use orts::OrbitalState;

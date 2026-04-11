@@ -20,7 +20,7 @@
 
 use std::sync::Arc;
 
-use kaname::constants::{MU_EARTH, R_EARTH};
+use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
 use kaname::epoch::Epoch;
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 use utsuroi::{Integrator, Rk4};

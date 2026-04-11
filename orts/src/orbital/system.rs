@@ -86,7 +86,7 @@ mod tests {
     use crate::orbital::gravity::{PointMass, ZonalHarmonics};
     use crate::orbital::kepler::KeplerianElements;
     use crate::orbital::two_body::TwoBodySystem;
-    use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
+    use kaname::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
     use nalgebra::vector;
     use std::f64::consts::PI;
     use utsuroi::{Integrator, Rk4};
@@ -292,8 +292,8 @@ mod tests {
             Box::new(ZonalHarmonics {
                 r_body: R_EARTH,
                 j2: J2_EARTH,
-                j3: Some(kaname::constants::J3_EARTH),
-                j4: Some(kaname::constants::J4_EARTH),
+                j3: Some(kaname::earth::J3),
+                j4: Some(kaname::earth::J4),
             }),
         )
     }

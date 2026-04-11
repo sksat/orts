@@ -9,7 +9,7 @@
 //! each control cycle evaluates the PD law at the current state, sets
 //! the RW commanded torque, then integrates one segment with RW + GG.
 
-use kaname::constants::{MU_EARTH, R_EARTH};
+use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 use utsuroi::{Integrator, Rk4};
 

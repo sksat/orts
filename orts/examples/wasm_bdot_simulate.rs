@@ -22,7 +22,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kaname::constants::{MU_EARTH, R_EARTH};
+use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
 use kaname::epoch::Epoch;
 use nalgebra::{Matrix3, Vector3, Vector4};
 use tobari::magnetic::TiltedDipole;

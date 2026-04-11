@@ -1,7 +1,58 @@
 /* @ts-self-types="./kaname.d.ts" */
 
 /**
- * Compute the Earth Rotation Angle (GMST) in radians.
+ * Body-fixed → ECI orientation quaternion using the IAU rotation model.
+ *
+ * `body`: body identifier string (e.g., "moon", "mars", "sun")
+ * `epoch_jd`: Julian Date of the simulation epoch
+ * `t`: elapsed simulation time in seconds
+ *
+ * Returns `[w, x, y, z]` quaternion (4 f64 values, Hamilton scalar-first).
+ * Returns an empty vec if the body has no IAU rotation model.
+ * @param {string} body
+ * @param {number} epoch_jd
+ * @param {number} t
+ * @returns {Float64Array}
+ */
+export function body_orientation(body, epoch_jd, t) {
+    const ptr0 = passStringToWasm0(body, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.body_orientation(ptr0, len0, epoch_jd, t);
+    var v2 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v2;
+}
+
+/**
+ * Transform a body-to-ECI quaternion into a body-to-RSW quaternion.
+ *
+ * `pos_x/y/z`: satellite position in ECI \[km\]
+ * `vel_x/y/z`: satellite velocity in ECI \[km/s\]
+ * `qw/qx/qy/qz`: body-to-ECI quaternion (Hamilton scalar-first: w,x,y,z)
+ *
+ * Returns `[w, x, y, z]` body-to-RSW quaternion (4 floats, f64).
+ * Returns an empty vec if the RSW frame cannot be computed (degenerate orbit).
+ * @param {number} pos_x
+ * @param {number} pos_y
+ * @param {number} pos_z
+ * @param {number} vel_x
+ * @param {number} vel_y
+ * @param {number} vel_z
+ * @param {number} qw
+ * @param {number} qx
+ * @param {number} qy
+ * @param {number} qz
+ * @returns {Float64Array}
+ */
+export function body_quat_to_rsw(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, qw, qx, qy, qz) {
+    const ret = wasm.body_quat_to_rsw(pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, qw, qx, qy, qz);
+    var v1 = getArrayF64FromWasm0(ret[0], ret[1]).slice();
+    wasm.__wbindgen_free(ret[0], ret[1] * 8, 8);
+    return v1;
+}
+
+/**
+ * Compute the Earth Rotation Angle (ERA, historically called GMST) in radians.
  *
  * `epoch_jd`: Julian Date of the simulation epoch
  * `t`: elapsed simulation time in seconds
@@ -42,7 +93,7 @@ export function eci_to_ecef(x, y, z, epoch_jd, t) {
  * Returns flat ECEF `[ex0,ey0,ez0, ...]` (length = N×3, km).
  *
  * For each point, computes ERA from `epoch_jd + t` and applies the
- * Z-axis rotation (ECI→ECEF).
+ * Z-axis rotation (SimpleEci → SimpleEcef).
  * @param {Float32Array} positions
  * @param {Float32Array} times
  * @param {number} epoch_jd
@@ -60,7 +111,7 @@ export function eci_to_ecef_batch(positions, times, epoch_jd) {
 }
 
 /**
- * Geodetic (lat_deg, lon_deg, altitude_km) → ECEF [km].
+ * Geodetic (lat_deg, lon_deg, altitude_km) → SimpleEcef [km].
  *
  * Returns `[x, y, z]` (3 floats, km).
  * @param {number} lat_deg
@@ -76,7 +127,7 @@ export function geodetic_to_ecef(lat_deg, lon_deg, altitude_km) {
 }
 
 /**
- * Geodetic (lat_deg, lon_deg, altitude_km) → ECI [km] at given epoch.
+ * Geodetic (lat_deg, lon_deg, altitude_km) → SimpleEci [km] at given epoch.
  *
  * Returns `[x, y, z]` (3 floats, km).
  * @param {number} lat_deg
@@ -114,7 +165,7 @@ export function jd_to_utc_string(epoch_jd, t) {
 }
 
 /**
- * Approximate sun direction (unit vector) in ECI frame.
+ * Approximate sun direction (unit vector) in Gcrs frame.
  *
  * Returns `[x, y, z]` (3 floats).
  * @param {number} epoch_jd

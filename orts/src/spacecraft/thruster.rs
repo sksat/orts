@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn dynamics_uses_mass_rate() {
         use crate::orbital::gravity::PointMass;
-        use kaname::constants::MU_EARTH;
+        use kaname::earth::MU as MU_EARTH;
         use nalgebra::Matrix3;
         use utsuroi::DynamicalSystem;
 

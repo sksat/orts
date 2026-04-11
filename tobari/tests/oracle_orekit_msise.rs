@@ -74,7 +74,7 @@ fn compute_density_via_eci(
 ) -> f64 {
     // Convert geodetic → ECEF → ECI (round-trip to exercise the full path)
     let gmst = epoch.gmst();
-    let geod = kaname::Geodetic {
+    let geod = kaname::earth::Geodetic {
         latitude: lat_deg.to_radians(),
         longitude: lon_deg.to_radians(),
         altitude: alt_km,

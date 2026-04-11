@@ -211,7 +211,7 @@ mod tests {
 
         // Path 2: via ECI position (goes through geo.rs eci_to_geodetic_latlon)
         let gmst = epoch.gmst();
-        let geod = kaname::Geodetic {
+        let geod = kaname::earth::Geodetic {
             latitude: lat_deg.to_radians(),
             longitude: lon_deg.to_radians(),
             altitude: alt_km,

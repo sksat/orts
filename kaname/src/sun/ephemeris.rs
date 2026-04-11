@@ -1,8 +1,25 @@
+//! Meeus analytical solar ephemeris and Equation of Time.
+//!
+//! Low-precision (~1 arcminute) analytic model from Meeus "Astronomical
+//! Algorithms" Chapter 25 / Chapter 28. Returns positions in [`crate::frame::Gcrs`]
+//! (the analytical "geocentric inertial") rather than [`crate::frame::SimpleEci`] —
+//! Meeus ephemerides apply no precession/nutation/frame-bias, so numerically
+//! the two frames agree, but the returned type documents that this is not a
+//! propagator state vector.
+//!
+//! # Time scale
+//!
+//! Meeus ephemerides take a dynamical time argument (TDB). The public
+//! signatures accept `&Epoch<Utc>` (the default alias) for ergonomics; the
+//! UTC epoch is converted to TDB internally via leap seconds + TT offset +
+//! Fairhead-Bretagnon periodic correction.
+
 use nalgebra::Vector3;
 
 use crate::epoch::Epoch;
 use crate::frame::{self, Vec3};
 use crate::planets;
+use crate::sun::AU_KM;
 
 /// Solar orbital elements at epoch.
 ///
@@ -19,13 +36,6 @@ struct SolarElements {
 /// Compute solar orbital elements at the given epoch.
 ///
 /// Reference: Meeus, "Astronomical Algorithms", Chapter 25.
-///
-/// # Time scale
-///
-/// Meeus ephemerides take a dynamical time argument (TDB). The public signature
-/// accepts `&Epoch<Utc>` (the default alias) for backward compatibility; the
-/// UTC epoch is converted to TDB internally via leap seconds + TT offset +
-/// Fairhead-Bretagnon periodic correction.
 fn solar_elements(epoch: &Epoch) -> SolarElements {
     let t = epoch.to_tdb().centuries_since_j2000();
 
@@ -98,9 +108,6 @@ pub fn equation_of_time(epoch: &Epoch) -> f64 {
     // Convert radians to hours: 2π rad = 24 hours
     eot_rad * 24.0 / std::f64::consts::TAU
 }
-
-/// 1 Astronomical Unit in km.
-pub const AU_KM: f64 = 149_597_870.7;
 
 /// Sun-Earth distance [km] at the given epoch.
 ///

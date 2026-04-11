@@ -3,7 +3,7 @@ use kaname::sun;
 use nalgebra::Vector3;
 
 use crate::perturbations::{SOLAR_RADIATION_PRESSURE, shadow_function};
-use kaname::constants::R_EARTH;
+use kaname::earth::R as R_EARTH;
 
 use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
 
@@ -163,7 +163,7 @@ mod tests {
     use crate::attitude::AttitudeState;
     use crate::perturbations::SolarRadiationPressure;
     use crate::spacecraft::SurfacePanel;
-    use kaname::constants::MU_EARTH;
+    use kaname::earth::MU as MU_EARTH;
     use nalgebra::{Vector4, vector};
 
     fn test_epoch() -> Epoch {

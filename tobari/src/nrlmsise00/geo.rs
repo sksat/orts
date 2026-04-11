@@ -3,9 +3,10 @@
 //! Converts between ECI coordinates and the geodetic/time parameters
 //! required by the NRLMSISE-00 model.
 
+use kaname::SimpleEci;
+use kaname::earth::Geodetic;
 use kaname::epoch::Epoch;
 use kaname::frame::{self, Rotation};
-use kaname::{Geodetic, SimpleEci};
 use nalgebra::Vector3;
 
 /// Convert ECI position + epoch to WGS-84 geodetic latitude and longitude [degrees].
@@ -185,7 +186,7 @@ mod tests {
 
         let expected_lat: f64 = 51.6;
         let expected_lon: f64 = 30.0;
-        let geod = kaname::Geodetic {
+        let geod = kaname::earth::Geodetic {
             latitude: expected_lat.to_radians(),
             longitude: expected_lon.to_radians(),
             altitude: 400.0,
@@ -214,7 +215,7 @@ mod tests {
 
         let expected_lat: f64 = 80.0;
         let expected_lon: f64 = -45.0;
-        let geod = kaname::Geodetic {
+        let geod = kaname::earth::Geodetic {
             latitude: expected_lat.to_radians(),
             longitude: expected_lon.to_radians(),
             altitude: 800.0,

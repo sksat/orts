@@ -42,18 +42,18 @@ impl ThirdBodyGravity {
     pub fn sun() -> Self {
         Self {
             name: "third_body_sun",
-            mu_body: kaname::constants::MU_SUN,
+            mu_body: kaname::sun::MU,
             body_position_fn: Arc::new(kaname::sun::sun_position_eci),
         }
     }
 
     /// Create a Moon third-body perturbation (uses Meeus analytical ephemeris).
     ///
-    /// μ_Moon is sourced from [`kaname::constants::MU_MOON`].
+    /// μ_Moon is sourced from [`kaname::moon::MU`].
     pub fn moon() -> Self {
         Self {
             name: "third_body_moon",
-            mu_body: kaname::constants::MU_MOON,
+            mu_body: kaname::moon::MU,
             body_position_fn: Arc::new(kaname::moon::moon_position_eci),
         }
     }
@@ -70,7 +70,7 @@ impl ThirdBodyGravity {
     /// (`Arc<dyn MoonEphemeris>`), so a single ephemeris can be fanned out to
     /// the integrator's force model and to any auxiliary targeting helpers.
     ///
-    /// μ_Moon is fixed to [`kaname::constants::MU_MOON`] and is **not** derived
+    /// μ_Moon is fixed to [`kaname::moon::MU`] and is **not** derived
     /// from the supplied ephemeris. If a non-standard μ is needed, use
     /// [`ThirdBodyGravity::custom`] directly.
     pub fn moon_with_ephemeris<E>(ephem: E) -> Self
@@ -80,7 +80,7 @@ impl ThirdBodyGravity {
         let ephem = Arc::new(ephem);
         Self {
             name: "third_body_moon",
-            mu_body: kaname::constants::MU_MOON,
+            mu_body: kaname::moon::MU,
             body_position_fn: Arc::new(move |epoch| ephem.position_eci(epoch)),
         }
     }
@@ -160,7 +160,7 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::constants::{MU_EARTH, R_EARTH};
+    use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
     use nalgebra::vector;
 
     fn iss_state() -> OrbitalState {
@@ -289,14 +289,14 @@ mod tests {
     #[test]
     fn moon_constructor_uses_mu_moon_constant() {
         // Regression guard: the Moon μ in `ThirdBodyGravity::moon()` must come
-        // from `kaname::constants::MU_MOON` so there is one authoritative
+        // from `kaname::moon::MU` so there is one authoritative
         // value. If this test fails, someone reintroduced a hardcoded literal
         // and the two can drift.
         let tb = ThirdBodyGravity::moon();
-        assert_eq!(tb.mu_body, kaname::constants::MU_MOON);
+        assert_eq!(tb.mu_body, kaname::moon::MU);
 
         let tb_trait = ThirdBodyGravity::moon_with_ephemeris(kaname::moon::MeeusMoonEphemeris);
-        assert_eq!(tb_trait.mu_body, kaname::constants::MU_MOON);
+        assert_eq!(tb_trait.mu_body, kaname::moon::MU);
     }
 
     #[test]

@@ -27,7 +27,7 @@
 //!    magnitude is strictly smaller than the initial one, by a
 //!    margin that would not be reached without a working controller.
 
-use kaname::constants::{MU_EARTH, R_EARTH};
+use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
 use kaname::epoch::Epoch;
 use kaname::frame::{Body, Vec3};
 use nalgebra::{Matrix3, Vector3, Vector4};

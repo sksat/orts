@@ -4,7 +4,7 @@ use nalgebra::{Matrix3, Vector3};
 use utsuroi::{Integrator, Rk4};
 
 use kaname::SimpleEci;
-use kaname::constants::{MU_EARTH, R_EARTH};
+use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
 use kaname::epoch::Epoch;
 use orts::attitude::{AttitudeState, BdotDetumbler, DecoupledAttitudeSystem};
 use tobari::magnetic::{MagneticFieldModel, TiltedDipole};

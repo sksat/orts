@@ -6,9 +6,10 @@
 
 use wasm_bindgen::prelude::*;
 
+use kaname::SimpleEcef;
+use kaname::earth::Geodetic;
 use kaname::epoch::Epoch;
 use kaname::frame::{self, Rotation};
-use kaname::{Geodetic, SimpleEcef};
 use nalgebra::Vector3;
 
 use std::sync::OnceLock;

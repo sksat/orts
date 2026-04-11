@@ -54,7 +54,7 @@ describe("LinkResolver.resolveId", () => {
   });
 
   it("does not confuse items with same ID from different crates", () => {
-    // utsuroi ID 158 = Rk4, kaname ID 158 = MU_EARTH
+    // utsuroi ID 158 = Rk4, kaname ID 158 = earth::MU
     // When resolving from utsuroi context, ID 158 should be Rk4
     const utsuroi = makeCrate();
     const kaname = makeCrate();
@@ -66,12 +66,12 @@ describe("LinkResolver.resolveId", () => {
 
     // Register both pages — same numeric ID but from different crates
     resolver.registerPage(158, "/base/utsuroi/api/structs/rk4/", "Rk4", "utsuroi");
-    resolver.registerPage(158, "/base/kaname/api/constants/mu_earth/", "MU_EARTH", "kaname");
+    resolver.registerPage(158, "/base/kaname/api/earth/constants/mu/", "MU", "kaname");
 
     // Resolving ID 158 from utsuroi context should give Rk4
     expect(resolver.resolveId(158, utsuroi, "utsuroi")).toBe("/base/utsuroi/api/structs/rk4/");
-    // Resolving ID 158 from kaname context should give MU_EARTH
-    expect(resolver.resolveId(158, kaname, "kaname")).toBe("/base/kaname/api/constants/mu_earth/");
+    // Resolving ID 158 from kaname context should give earth::MU
+    expect(resolver.resolveId(158, kaname, "kaname")).toBe("/base/kaname/api/earth/constants/mu/");
   });
 
   it("resolves std traits to doc.rust-lang.org", () => {

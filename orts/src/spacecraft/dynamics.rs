@@ -237,7 +237,7 @@ mod tests {
     use crate::model::Model;
     use crate::orbital::OrbitalSystem;
     use crate::orbital::gravity::PointMass;
-    use kaname::constants::MU_EARTH;
+    use kaname::earth::MU as MU_EARTH;
     use nalgebra::{Vector3, Vector4};
     use utsuroi::{Integrator, OdeState, Rk4};
 

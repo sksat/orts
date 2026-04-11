@@ -1,3 +1,22 @@
+//! Analytical planetary ephemerides (Mercury through Saturn) and related
+//! ecliptic math helpers.
+//!
+//! The heliocentric orbital elements are from Standish (1992) / Meeus
+//! "Astronomical Algorithms" Table 31.A. Valid from ~3000 BC to ~3000 AD
+//! with ~1 arcminute accuracy for the inner planets.
+//!
+//! # `obliquity` / `ecliptic_to_equatorial`
+//!
+//! These are Meeus ecliptic ↔ equatorial math helpers, co-located here
+//! (rather than under `earth/`) because they are only consumed by the
+//! planet / Sun Meeus chain — `heliocentric_position_ecliptic` and
+//! `sun::ephemeris::sun_direction_from_body`. When the strict IAU 2006
+//! CIO-based precession / nutation pipeline lands under `earth/`, the
+//! canonical form of `obliquity()` will move there and these helpers will
+//! follow.
+
+pub mod rotation;
+
 use nalgebra::Vector3;
 
 use crate::epoch::Epoch;
@@ -32,9 +51,14 @@ struct OrbitalElements {
     pi_rate: f64,
 }
 
-// Standish (1992) / Meeus Table 31.A elements
+// Standish (1992) / Meeus Table 31.A elements.
+//
+// Note: these are suffixed with `_ELEMENTS` rather than `MERCURY` / `MARS` etc.
+// to avoid a name collision with the IAU WGCCRE rotation-model constants in
+// `planets::rotation::MARS`, which would otherwise both live in the value
+// namespace of this module.
 
-const MERCURY: OrbitalElements = OrbitalElements {
+const MERCURY_ELEMENTS: OrbitalElements = OrbitalElements {
     l0: 252.250_84,
     l_rate: 149_472.674_11,
     a: 0.387_10,
@@ -48,7 +72,7 @@ const MERCURY: OrbitalElements = OrbitalElements {
     pi_rate: 0.159_40,
 };
 
-const VENUS: OrbitalElements = OrbitalElements {
+const VENUS_ELEMENTS: OrbitalElements = OrbitalElements {
     l0: 181.979_73,
     l_rate: 58_517.815_39,
     a: 0.723_33,
@@ -62,7 +86,7 @@ const VENUS: OrbitalElements = OrbitalElements {
     pi_rate: 0.004_75,
 };
 
-const EARTH: OrbitalElements = OrbitalElements {
+const EARTH_ELEMENTS: OrbitalElements = OrbitalElements {
     l0: 100.464_57,
     l_rate: 35_999.372_45,
     a: 1.000_00,
@@ -76,7 +100,7 @@ const EARTH: OrbitalElements = OrbitalElements {
     pi_rate: 0.323_27,
 };
 
-const MARS: OrbitalElements = OrbitalElements {
+const MARS_ELEMENTS: OrbitalElements = OrbitalElements {
     l0: 355.453_32,
     l_rate: 19_140.302_68,
     a: 1.523_68,
@@ -90,7 +114,7 @@ const MARS: OrbitalElements = OrbitalElements {
     pi_rate: 0.443_23,
 };
 
-const JUPITER: OrbitalElements = OrbitalElements {
+const JUPITER_ELEMENTS: OrbitalElements = OrbitalElements {
     l0: 34.404_38,
     l_rate: 3_034.746_13,
     a: 5.202_60,
@@ -104,7 +128,7 @@ const JUPITER: OrbitalElements = OrbitalElements {
     pi_rate: 0.212_52,
 };
 
-const SATURN: OrbitalElements = OrbitalElements {
+const SATURN_ELEMENTS: OrbitalElements = OrbitalElements {
     l0: 49.944_32,
     l_rate: 1_222.493_62,
     a: 9.554_91,
@@ -178,12 +202,12 @@ pub fn ecliptic_to_equatorial(v: &Vector3<f64>, epsilon: f64) -> Vector3<f64> {
 /// internally.
 pub fn heliocentric_position_ecliptic(body: &str, epoch: &Epoch) -> Option<Vector3<f64>> {
     let elements = match body {
-        "mercury" => &MERCURY,
-        "venus" => &VENUS,
-        "earth" => &EARTH,
-        "mars" => &MARS,
-        "jupiter" => &JUPITER,
-        "saturn" => &SATURN,
+        "mercury" => &MERCURY_ELEMENTS,
+        "venus" => &VENUS_ELEMENTS,
+        "earth" => &EARTH_ELEMENTS,
+        "mars" => &MARS_ELEMENTS,
+        "jupiter" => &JUPITER_ELEMENTS,
+        "saturn" => &SATURN_ELEMENTS,
         _ => return None,
     };
 

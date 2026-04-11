@@ -14,7 +14,7 @@
 //! Test:
 //!   cargo test --example orbital_lifetime -p orts
 
-use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
+use kaname::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
 use kaname::epoch::Epoch;
 use nalgebra::Vector3;
 use orts::OrbitalState;

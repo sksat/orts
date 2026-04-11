@@ -1,7 +1,5 @@
 use serde::Serialize;
 
-use crate::constants;
-
 /// Known celestial bodies with pre-defined physical properties.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,7 +42,7 @@ impl KnownBody {
     pub fn properties(&self) -> BodyProperties {
         match self {
             KnownBody::Sun => BodyProperties {
-                mu: constants::MU_SUN,
+                mu: crate::sun::MU,
                 radius: 695700.0,
                 name: "Sun",
                 j2: None,
@@ -71,16 +69,16 @@ impl KnownBody {
                 atmosphere_altitude: Some(250.0),
             },
             KnownBody::Earth => BodyProperties {
-                mu: constants::MU_EARTH,
-                radius: constants::R_EARTH,
+                mu: crate::earth::MU,
+                radius: crate::earth::R,
                 name: "Earth",
-                j2: Some(constants::J2_EARTH),
-                j3: Some(constants::J3_EARTH),
-                j4: Some(constants::J4_EARTH),
+                j2: Some(crate::earth::J2),
+                j3: Some(crate::earth::J3),
+                j4: Some(crate::earth::J4),
                 atmosphere_altitude: Some(100.0), // Kármán line
             },
             KnownBody::Moon => BodyProperties {
-                mu: constants::MU_MOON,
+                mu: crate::moon::MU,
                 radius: 1737.4,
                 name: "Moon",
                 j2: Some(2.033e-4),

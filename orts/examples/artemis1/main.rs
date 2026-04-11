@@ -2734,7 +2734,8 @@ fn build_artemis_system(
     sun_table: &Arc<HorizonsTable>,
 ) -> OrbitalSystem {
     use kaname::body::KnownBody;
-    use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, MU_SUN};
+    use kaname::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH};
+    use kaname::sun::MU as MU_SUN;
 
     let earth = KnownBody::Earth;
     let props = earth.properties();

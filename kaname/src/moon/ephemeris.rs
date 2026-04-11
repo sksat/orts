@@ -1,3 +1,9 @@
+//! Meeus analytical lunar ephemeris and `MoonEphemeris` trait abstraction.
+//!
+//! Implements the analytical model from Meeus "Astronomical Algorithms"
+//! Chapter 47 with full periodic term tables, plus a trait abstraction that
+//! lets callers swap between Meeus and JPL-Horizons-backed ephemerides.
+
 use crate::epoch::Epoch;
 use crate::frame::{self, Vec3};
 

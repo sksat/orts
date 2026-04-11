@@ -1,13 +1,13 @@
+use kaname::body::KnownBody;
+use kaname::earth::ellipsoid::{WGS84_A, WGS84_B};
+use kaname::earth::{OMEGA as OMEGA_EARTH, R as R_EARTH};
 use kaname::epoch::Epoch;
-use kaname::{WGS84_A, WGS84_B};
 use nalgebra::Vector3;
 use tobari::{AtmosphereModel, Exponential};
 
 use crate::OrbitalState;
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
-use kaname::body::KnownBody;
-use kaname::constants::{OMEGA_EARTH, R_EARTH};
 
 /// Default ballistic coefficient for LEO satellites \[m²/kg\].
 ///
@@ -100,7 +100,7 @@ impl AtmosphericDrag {
 
         // Altitude: WGS-84 geodetic for Earth, spherical for others
         let alt = match self.body {
-            Some(KnownBody::Earth) => kaname::geodetic_altitude(pos),
+            Some(KnownBody::Earth) => kaname::earth::geodetic_altitude(pos),
             _ => pos.magnitude() - self.body_radius,
         };
 
@@ -142,7 +142,7 @@ impl<S: HasOrbit> Model<S> for AtmosphericDrag {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::constants::{MU_EARTH, R_EARTH};
+    use kaname::earth::{MU as MU_EARTH, R as R_EARTH};
     use nalgebra::vector;
 
     fn iss_drag() -> AtmosphericDrag {

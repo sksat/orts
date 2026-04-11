@@ -12,7 +12,7 @@
 //! - Third-body perturbation effects at GEO
 
 use kaname::body::KnownBody;
-use kaname::constants::{J2_EARTH, J3_EARTH, J4_EARTH, MU_EARTH, R_EARTH};
+use kaname::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH, R as R_EARTH};
 use kaname::epoch::Epoch;
 use nalgebra::vector;
 use orts::OrbitalState;

@@ -267,7 +267,7 @@ impl Tle {
 mod tests {
     use super::*;
     use kaname::body::KnownBody;
-    use kaname::constants::MU_EARTH;
+    use kaname::earth::MU as MU_EARTH;
 
     const ISS_TLE: &str = "\
 ISS (ZARYA)

@@ -10,7 +10,7 @@
 //! - Kozai, Y. (1959), AJ 64, 367–377.
 //! - Lara, M. (2021), Celest. Mech. Dyn. Astron. 133, 43.
 
-use kaname::constants::{J2_EARTH, MU_EARTH, R_EARTH};
+use kaname::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
 use orts::orbital::gravity::ZonalHarmonics;

@@ -113,7 +113,7 @@ pub fn jd_to_utc_string(epoch_jd: f64, t: f64) -> String {
 /// Returns `[x, y, z]` (3 floats, km).
 #[wasm_bindgen]
 pub fn geodetic_to_ecef(lat_deg: f64, lon_deg: f64, altitude_km: f64) -> Vec<f64> {
-    let geod = crate::Geodetic {
+    let geod = crate::earth::Geodetic {
         latitude: lat_deg.to_radians(),
         longitude: lon_deg.to_radians(),
         altitude: altitude_km,
@@ -128,7 +128,7 @@ pub fn geodetic_to_ecef(lat_deg: f64, lon_deg: f64, altitude_km: f64) -> Vec<f64
 #[wasm_bindgen]
 pub fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64) -> Vec<f64> {
     let epoch = Epoch::from_jd(epoch_jd);
-    let geod = crate::Geodetic {
+    let geod = crate::earth::Geodetic {
         latitude: lat_deg.to_radians(),
         longitude: lon_deg.to_radians(),
         altitude: altitude_km,

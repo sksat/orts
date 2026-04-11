@@ -16,11 +16,12 @@ use std::sync::Arc;
 
 use nalgebra::Vector3;
 
-use kaname::Geodetic;
 use kaname::body::KnownBody;
-use kaname::constants::*;
+use kaname::earth::{
+    Geodetic, J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH, R as R_EARTH,
+};
 use kaname::epoch::Epoch;
-use kaname::moon::{MeeusMoonEphemeris, MoonEphemeris};
+use kaname::moon::{MU as MU_MOON, MeeusMoonEphemeris, MoonEphemeris};
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
 use orts::orbital::gravity::ZonalHarmonics;
@@ -1181,7 +1182,7 @@ fn main() {
                 epoch_122.gmst(),
             )
             .transform(&eci_122);
-        let geod_122 = kaname::Geodetic::from(ecef_122);
+        let geod_122 = kaname::earth::Geodetic::from(ecef_122);
         let pos_err = (state_122.position() - ei_ref.position()).magnitude();
         let vel_err = (state_122.velocity() - ei_ref.velocity()).magnitude();
         println!("    [At 122 km altitude]");
@@ -1214,7 +1215,7 @@ fn main() {
                 epoch_get.gmst(),
             )
             .transform(&eci_get);
-        let geod_get = kaname::Geodetic::from(ecef_get);
+        let geod_get = kaname::earth::Geodetic::from(ecef_get);
         let pos_err = (state_get.position() - ei_ref.position()).magnitude();
         let vel_err = (state_get.velocity() - ei_ref.velocity()).magnitude();
         println!("    [At reference GET {:.2}h]", EI_GET_SECONDS / 3600.0);

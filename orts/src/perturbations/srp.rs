@@ -5,7 +5,7 @@ use nalgebra::Vector3;
 use crate::OrbitalState;
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
-use kaname::constants::R_EARTH;
+use kaname::earth::R as R_EARTH;
 
 /// Solar radiation pressure at 1 AU (N/m²).
 /// P/c = 1361 W/m² / 299792458 m/s ≈ 4.5396e-6 N/m²
@@ -153,7 +153,7 @@ impl<S: HasOrbit> Model<S> for SolarRadiationPressure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kaname::constants::MU_EARTH;
+    use kaname::earth::MU as MU_EARTH;
     use nalgebra::vector;
 
     fn test_epoch() -> Epoch {
