@@ -104,13 +104,30 @@ impl ThirdBodyGravity {
 
 impl ThirdBodyGravity {
     /// Compute third-body gravitational acceleration [km/s²] from orbital state.
+    ///
+    /// # Frame bridge
+    ///
+    /// The closure returns `Vec3<Gcrs>` (Meeus analytic ephemeris) while the
+    /// simulation state (`OrbitalState::position`) is in the `SimpleEci`
+    /// frame. At the current precision both frames are numerically identical
+    /// because Meeus does not apply precession/nutation/frame-bias, so the
+    /// [`kaname::frame::Vec3::force_cast_simple_eci`] bridge below is a
+    /// typed no-op that makes the "I'm treating these two frames as
+    /// numerically equal at this call site" assertion explicit. The bridge
+    /// must be removed in Phase 4 once the propagator adopts frame-policy
+    /// dispatch and force models use concrete-type signatures for
+    /// precision-aware computations.
     pub(crate) fn acceleration(&self, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
         let epoch = match epoch {
             Some(e) => e,
             None => return Vector3::zeros(),
         };
 
-        let r_body = (self.body_position_fn)(epoch).into_inner();
+        #[allow(deprecated)]
+        let r_body = (self.body_position_fn)(epoch)
+            .force_cast_simple_eci()
+            .into_inner();
+
         let r_sat_to_body = r_body - *state.position();
         let d = r_sat_to_body.magnitude();
         let r_body_mag = r_body.magnitude();
