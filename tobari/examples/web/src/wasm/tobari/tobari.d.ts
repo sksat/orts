@@ -150,7 +150,6 @@ export interface InitOutput {
     readonly atmosphere_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly atmosphere_volume_sw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
     readonly dipole_field_at: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly harris_priester_density: (a: number, b: number, c: number, d: number) => number;
     readonly igrf_field_at: (a: number, b: number, c: number, d: number) => [number, number];
     readonly load_space_weather: (a: number, b: number) => number;
     readonly magnetic_field_latlon_map: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
@@ -161,6 +160,7 @@ export interface InitOutput {
     readonly space_weather_series: () => [number, number];
     readonly nrlmsise00_density: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly exponential_density: (a: number) => number;
+    readonly harris_priester_density: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
