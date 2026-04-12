@@ -68,7 +68,7 @@ export function useTimeSeriesStore<T extends TimePoint>(
   } = options;
 
   const [data, setData] = useState<ChartDataMap | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, _setIsLoading] = useState(false);
   const queryTimerRef = useRef<number>(0);
   const hasDataRef = useRef(false);
 

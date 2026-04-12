@@ -28,10 +28,10 @@ export default defineConfig({
                 const spdx = dep.license ?? "UNKNOWN";
                 const repo = dep.repository?.url ? `\n  ${dep.repository.url}` : "";
                 const text = dep.licenseText ? `\n\n${dep.licenseText}` : "";
-                return `${name}${author} (${spdx})${repo}${text}\n` + "-".repeat(74);
+                return `${name}${author} (${spdx})${repo}${text}\n${"-".repeat(74)}`;
               })
               .join("\n\n");
-            return header + body + "\n";
+            return `${header + body}\n`;
           },
         },
       },

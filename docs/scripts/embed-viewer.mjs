@@ -8,7 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, resolve } from "node:path";
+import { resolve } from "node:path";
 
 const docsRoot = resolve(import.meta.dirname, "..");
 const repoRoot = resolve(docsRoot, "..");
@@ -57,21 +57,16 @@ const tobariBase = "/orts/tobari/examples/earth-visualizer/demo/";
 
 // Download space weather data for bundling
 const swDest = resolve(tobariWebRoot, "public/space-weather.txt");
-{
-  console.log("Downloading space weather data...");
-  try {
-    const res = await fetch("https://celestrak.org/SpaceData/SW-Last5Years.txt");
-    if (res.ok) {
-      const { writeFileSync, mkdirSync } = await import("node:fs");
-      mkdirSync(resolve(tobariWebRoot, "public"), { recursive: true });
-      writeFileSync(swDest, await res.text());
-      console.log("Downloaded space weather data.");
-    }
-  } catch {
-    console.log(
-      "Warning: could not download space weather data, Real SW mode will be unavailable.",
-    );
+console.log("Downloading space weather data...");
+try {
+  const res = await fetch("https://celestrak.org/SpaceData/SW-Last5Years.txt");
+  if (res.ok) {
+    mkdirSync(resolve(tobariWebRoot, "public"), { recursive: true });
+    writeFileSync(swDest, await res.text());
+    console.log("Downloaded space weather data.");
   }
+} catch {
+  console.log("Warning: could not download space weather data, Real SW mode will be unavailable.");
 }
 
 try {
@@ -83,7 +78,7 @@ try {
   });
   console.log("Building tobari-example-web...");
   // Build to a temp dir first, then swap — so a failed build doesn't delete an existing demo
-  const tobariTmp = resolve(tobariDest + ".tmp");
+  const tobariTmp = resolve(`${tobariDest}.tmp`);
   rmSync(tobariTmp, { recursive: true, force: true });
   execSync(`npx vite build --base ${tobariBase} --outDir ${tobariTmp}`, {
     cwd: tobariWebRoot,

@@ -79,7 +79,7 @@ describe("tuple struct rendering", () => {
 
     const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
     try {
-      const pages = generateCratePages("arika", items, crate, resolver, {
+      const _pages = generateCratePages("arika", items, crate, resolver, {
         contentDir: tmpDir,
         basePath: "/orts",
       });

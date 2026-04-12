@@ -1,12 +1,11 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  collectApiItems,
   collectTraitImpls,
   computeRelativeUrl,
   LinkResolver,
   resolveTraitImplUrl,
 } from "../src/resolve.js";
-import type { Crate, Id } from "../src/types.js";
+import type { Crate, } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers to build minimal Crate fixtures

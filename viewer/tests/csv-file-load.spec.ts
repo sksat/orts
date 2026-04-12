@@ -80,7 +80,7 @@ test("CSV file load populates trail and charts", async ({ page }) => {
   await expect(pointsInfo).toContainText(`${NUM_POINTS} points`, { timeout: 5000 });
 
   // Verify TrailBuffer has correct data via debug state
-  const bufferCheck = await page.evaluate((expectedPoints) => {
+  const bufferCheck = await page.evaluate((_expectedPoints) => {
     const buffers = (window as unknown as Record<string, unknown>).__debug_ingest_buffers;
     if (!buffers || !(buffers instanceof Map)) return { ok: false, error: "no buffers" };
 

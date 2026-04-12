@@ -8,12 +8,10 @@ import type {
   Crate,
   FunctionHeader,
   FunctionItem,
-  FunctionSignature,
   GenericArg,
   GenericArgs,
   GenericBound,
   GenericParam,
-  Generics,
   QualifiedPath,
   TraitBound,
   Type,
@@ -365,7 +363,7 @@ export function renderFunctionSig(
   return `${header}fn ${name}${generics}(${params.join(", ")})${ret}${whereStr}`;
 }
 
-function renderSelfParam(type: Type, crate: Crate, resolver: LinkResolver): string {
+function renderSelfParam(type: Type, _crate: Crate, _resolver: LinkResolver): string {
   if ("borrowed_ref" in type) {
     const ref = type.borrowed_ref;
     const lt = ref.lifetime ? `${ref.lifetime} ` : "";

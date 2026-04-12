@@ -46,7 +46,7 @@ test("main thread stays responsive during Worker data streaming", async ({ page 
 
       // Measure for 5 seconds after warm-up
       const measureDuration = 5000;
-      const startTimeout = setTimeout(() => {
+      const _startTimeout = setTimeout(() => {
         // This timeout fires 2s (warmup) + 5s (measure) after page load
         const intervals = frameTimes;
         const jankThreshold = 100; // ms

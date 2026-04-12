@@ -1,13 +1,9 @@
 import type {
   Crate,
-  EnumItem,
   Id,
   ImplItem,
   Item,
-  ItemInner,
   ModuleItem,
-  StructItem,
-  TraitItem,
   UseItem,
 } from "./types.js";
 
@@ -39,8 +35,6 @@ export class LinkResolver {
   private nameToPage = new Map<string, string>();
   /** All loaded crate JSONs for cross-crate resolution */
   private crates: Map<string, Crate>;
-
-  private basePath: string;
 
   /** Crate object → crate name reverse lookup */
   private crateNames = new Map<Crate, string>();
@@ -151,7 +145,7 @@ export class LinkResolver {
 
   private buildExternalUrl(
     crateName: string,
-    htmlRootUrl: string | null,
+    _htmlRootUrl: string | null,
     path: string[],
     kind: string,
   ): string {

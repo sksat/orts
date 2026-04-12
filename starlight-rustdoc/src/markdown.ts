@@ -23,15 +23,12 @@ import type {
   Crate,
   EnumItem,
   FunctionItem,
-  Generics,
   Id,
   Item,
   StructItem,
-  StructKind,
   TraitItem,
   TypeAliasItem,
   VariantItem,
-  VariantKind,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -377,7 +374,7 @@ function generateStructPage(
   }
 
   // Trait implementations
-  const { userTraits, autoTraits } = collectTraitImpls(crate, structData.impls);
+  const { userTraits } = collectTraitImpls(crate, structData.impls);
   if (userTraits.length > 0) {
     lines.push("## Trait Implementations");
     lines.push("");
@@ -672,9 +669,9 @@ function sourceLink(item: Item, options: MarkdownOptions): string {
   return `Defined in: [${shortFile}:${line}](${url})\n`;
 }
 
-function processDocComment(docs: string, crate: Crate, resolver: LinkResolver): string {
+function processDocComment(docs: string, _crate: Crate, resolver: LinkResolver): string {
   // Convert rustdoc intralinks like [`Integrator::step`] to Markdown links
-  return docs.replace(/\[`([^`]+)`\]/g, (match, path: string) => {
+  return docs.replace(/\[`([^`]+)`\]/g, (_match, path: string) => {
     const url = resolver.resolvePath(path);
     if (url) return `[\`${path}\`](${url})`;
     return `\`${path}\``;
