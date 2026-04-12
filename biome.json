@@ -42,7 +42,8 @@
         "noLabelWithoutControl": "warn"
       },
       "correctness": {
-        "useExhaustiveDependencies": "warn"
+        "useExhaustiveDependencies": "warn",
+        "noUnusedPrivateClassMembers": "off"
       }
     }
   },
