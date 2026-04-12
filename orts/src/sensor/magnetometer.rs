@@ -11,6 +11,7 @@ use tobari::magnetic::MagneticFieldModel;
 
 use super::noise::NoiseModel;
 use crate::SpacecraftState;
+use crate::magnetic;
 use crate::plugin::tick_input::MagneticFieldBody;
 
 /// Three-axis magnetometer.
@@ -53,9 +54,11 @@ impl Magnetometer {
 
     /// Measure the magnetic field in the body frame.
     pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> MagneticFieldBody {
-        let b_eci = self
-            .field_model
-            .field_eci(&state.orbit.position_eci(), epoch);
+        let b_eci = magnetic::field_eci(
+            self.field_model.as_ref(),
+            &state.orbit.position_eci(),
+            epoch,
+        );
         let b_body_typed = state.attitude.rotation_to_body().transform(&b_eci);
         let mut b_body = b_body_typed.into_inner();
         for n in &mut self.noise {
@@ -106,10 +109,8 @@ mod tests {
         let state = leo_state();
         let epoch = Epoch::j2000();
         let b_body = mag.measure(&state, &epoch).into_inner();
-        let b_eci = field_model
-            .field_eci(&state.orbit.position_eci(), &epoch)
-            .into_inner();
-        assert!((b_body.into_inner() - b_eci).magnitude() < 1e-15);
+        let b_eci = magnetic::field_eci(field_model.as_ref(), &state.orbit.position_eci(), &epoch);
+        assert!((b_body.into_inner() - b_eci.into_inner()).magnitude() < 1e-15);
     }
 
     #[test]

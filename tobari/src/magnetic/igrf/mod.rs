@@ -1,13 +1,11 @@
 //! IGRF-14 spherical harmonic magnetic field model.
 
+use arika::earth::ellipsoid::{WGS84_A, WGS84_E2};
 use arika::epoch::Epoch;
-use arika::frame::{self, Rotation};
-use arika::{SimpleEcef, SimpleEci};
-use nalgebra::Vector3;
 
 mod coeff;
 
-use super::MagneticFieldModel;
+use super::{MagneticFieldInput, MagneticFieldModel};
 use coeff::*;
 
 /// Gauss coefficient set for a single epoch.
@@ -97,35 +95,45 @@ impl Igrf {
 }
 
 impl MagneticFieldModel for Igrf {
-    fn field_eci(&self, position_eci: &SimpleEci, epoch: &Epoch) -> frame::Vec3<frame::SimpleEci> {
-        let gmst = epoch.gmst();
-        let r_eci_to_ecef = Rotation::<frame::SimpleEci, frame::SimpleEcef>::from_era(gmst);
-        let r_ecef_to_eci = Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst);
+    fn field_ecef(&self, input: &MagneticFieldInput<'_>) -> [f64; 3] {
+        // Geodetic → ECEF Cartesian position
+        let lat = input.geodetic.latitude;
+        let lon = input.geodetic.longitude;
+        let h = input.geodetic.altitude;
+        let sin_lat = lat.sin();
+        let cos_lat = lat.cos();
+        let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
+        let x = (n + h) * cos_lat * lon.cos();
+        let y = (n + h) * cos_lat * lon.sin();
+        let z = (n * (1.0 - WGS84_E2) + h) * sin_lat;
 
-        // ECI → ECEF
-        let ecef = r_eci_to_ecef.transform(position_eci);
-        let (x, y, z) = (ecef.x(), ecef.y(), ecef.z());
-
-        // Cartesian → geocentric spherical
+        // ECEF Cartesian → geocentric spherical
         let r_km = (x * x + y * y + z * z).sqrt();
         if r_km < 1.0 {
-            return frame::Vec3::zeros();
+            return [0.0, 0.0, 0.0];
         }
-        let p = (x * x + y * y).sqrt(); // distance from z-axis
+        let p = (x * x + y * y).sqrt();
         let cos_theta = z / r_km;
         let sin_theta = p / r_km;
-        let phi = y.atan2(x); // longitude
+        let phi = y.atan2(x);
 
         // Interpolate Gauss coefficients to epoch
-        let year = decimal_year(epoch);
-        let (g, h) = match &self.custom_coeffs {
+        let year = decimal_year(input.utc);
+        let (g, h_coeff) = match &self.custom_coeffs {
             Some(c) => interpolate_custom(year, c, self.max_degree),
             None => interpolate_builtin(year, self.max_degree),
         };
 
         // Evaluate spherical harmonic expansion
-        let (b_r, b_theta, b_phi) =
-            evaluate_sh(&g, &h, r_km, cos_theta, sin_theta, phi, self.max_degree);
+        let (b_r, b_theta, b_phi) = evaluate_sh(
+            &g,
+            &h_coeff,
+            r_km,
+            cos_theta,
+            sin_theta,
+            phi,
+            self.max_degree,
+        );
 
         // Convert nT → T
         let b_r_t = b_r * 1e-9;
@@ -136,14 +144,11 @@ impl MagneticFieldModel for Igrf {
         let cos_phi = phi.cos();
         let sin_phi = phi.sin();
 
-        let b_ecef = Vector3::new(
+        [
             sin_theta * cos_phi * b_r_t + cos_theta * cos_phi * b_theta_t - sin_phi * b_phi_t,
             sin_theta * sin_phi * b_r_t + cos_theta * sin_phi * b_theta_t + cos_phi * b_phi_t,
             cos_theta * b_r_t - sin_theta * b_theta_t,
-        );
-
-        // ECEF → ECI
-        r_ecef_to_eci.transform(&SimpleEcef::from_raw(b_ecef))
+        ]
     }
 }
 
@@ -398,9 +403,22 @@ fn evaluate_sh(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arika::earth::ellipsoid::WGS84_B;
+    use arika::earth::geodetic::Geodetic;
 
     fn epoch_2025() -> Epoch {
         Epoch::from_gregorian(2025, 1, 1, 0, 0, 0.0)
+    }
+
+    fn make_input(geodetic: Geodetic, epoch: &Epoch) -> MagneticFieldInput<'_> {
+        MagneticFieldInput {
+            geodetic,
+            utc: epoch,
+        }
+    }
+
+    fn b_magnitude(b: &[f64; 3]) -> f64 {
+        (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt()
     }
 
     #[test]
@@ -425,10 +443,17 @@ mod tests {
     fn igrf_field_magnitude_at_equatorial_leo() {
         // At equatorial LEO (7000 km from centre), expect |B| ~ 20-50 uT
         let igrf = Igrf::earth();
-        let pos = SimpleEci::new(7000.0, 0.0, 0.0);
         let epoch = epoch_2025();
-        let b = igrf.field_eci(&pos, &epoch);
-        let b_micro_t = b.magnitude() * 1e6;
+        let input = make_input(
+            Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: 7000.0 - WGS84_A,
+            },
+            &epoch,
+        );
+        let b = igrf.field_ecef(&input);
+        let b_micro_t = b_magnitude(&b) * 1e6;
 
         assert!(
             b_micro_t > 15.0 && b_micro_t < 60.0,
@@ -441,10 +466,17 @@ mod tests {
         // Near north pole, expect stronger field ~50-60 uT
         let igrf = Igrf::earth();
         let r = 6771.0; // ~400km altitude at pole
-        let pos = SimpleEci::new(0.0, 0.0, r);
         let epoch = epoch_2025();
-        let b = igrf.field_eci(&pos, &epoch);
-        let b_micro_t = b.magnitude() * 1e6;
+        let input = make_input(
+            Geodetic {
+                latitude: std::f64::consts::FRAC_PI_2,
+                longitude: 0.0,
+                altitude: r - WGS84_B,
+            },
+            &epoch,
+        );
+        let b = igrf.field_ecef(&input);
+        let b_micro_t = b_magnitude(&b) * 1e6;
 
         assert!(
             b_micro_t > 40.0 && b_micro_t < 80.0,
@@ -457,12 +489,22 @@ mod tests {
         // At large distances, field should approximately follow 1/r^3
         let igrf = Igrf::earth();
         let epoch = epoch_2025();
-        let b1 = igrf
-            .field_eci(&SimpleEci::new(20000.0, 0.0, 0.0), &epoch)
-            .magnitude();
-        let b2 = igrf
-            .field_eci(&SimpleEci::new(40000.0, 0.0, 0.0), &epoch)
-            .magnitude();
+        let b1 = b_magnitude(&igrf.field_ecef(&make_input(
+            Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: 20000.0 - WGS84_A,
+            },
+            &epoch,
+        )));
+        let b2 = b_magnitude(&igrf.field_ecef(&make_input(
+            Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: 40000.0 - WGS84_A,
+            },
+            &epoch,
+        )));
 
         let ratio = b1 / b2;
         // Should be close to 8.0 (exact for pure dipole)
@@ -481,12 +523,16 @@ mod tests {
         let dipole = TiltedDipole::earth();
         let epoch = epoch_2025();
 
-        // South Atlantic Anomaly region (~-30° lat, -50° lon in ECEF)
-        // Use a position that will be roughly there at some epoch
-        let pos = SimpleEci::new(4000.0, -4000.0, -3500.0);
+        // South Atlantic Anomaly region (~-30° lat, -50° lon)
+        let geo = Geodetic {
+            latitude: -30.0_f64.to_radians(),
+            longitude: -50.0_f64.to_radians(),
+            altitude: 400.0,
+        };
+        let input = make_input(geo, &epoch);
 
-        let b_igrf = igrf.field_eci(&pos, &epoch).magnitude();
-        let b_dipole = dipole.field_eci(&pos, &epoch).magnitude();
+        let b_igrf = b_magnitude(&igrf.field_ecef(&input));
+        let b_dipole = b_magnitude(&dipole.field_ecef(&input));
 
         let diff_pct = ((b_igrf - b_dipole) / b_dipole).abs() * 100.0;
         assert!(
@@ -505,10 +551,15 @@ mod tests {
         let epoch = epoch_2025();
 
         let geo_r = 42164.0; // GEO radius in km
-        let pos = SimpleEci::new(geo_r, 0.0, 0.0);
+        let geo = Geodetic {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: geo_r - WGS84_A,
+        };
+        let input = make_input(geo, &epoch);
 
-        let b_igrf = igrf.field_eci(&pos, &epoch).magnitude();
-        let b_dipole = dipole.field_eci(&pos, &epoch).magnitude();
+        let b_igrf = b_magnitude(&igrf.field_ecef(&input));
+        let b_dipole = b_magnitude(&dipole.field_ecef(&input));
 
         // At GEO the dipole dominates; expect <10% difference
         // (TiltedDipole uses approximate parameters, so some difference is expected)
@@ -521,33 +572,60 @@ mod tests {
 
     #[test]
     fn igrf_zero_inside_earth() {
+        // Altitude deep below surface → geocentric r < 1 km → guard returns zero
         let igrf = Igrf::earth();
         let epoch = epoch_2025();
-        let b = igrf.field_eci(&SimpleEci::new(0.5, 0.0, 0.0), &epoch);
-        assert_eq!(b, frame::Vec3::<frame::SimpleEci>::zeros());
+        let input = make_input(
+            Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: -WGS84_A, // centre of the Earth
+            },
+            &epoch,
+        );
+        let b = igrf.field_ecef(&input);
+        assert_eq!(b, [0.0, 0.0, 0.0]);
     }
 
     #[test]
     fn igrf_field_is_finite() {
         let igrf = Igrf::earth();
         let epoch = epoch_2025();
-        let b = igrf.field_eci(&SimpleEci::new(6778.0, 0.0, 0.0), &epoch);
-        assert!(b.is_finite(), "Field must be finite: {b:?}");
+        let input = make_input(
+            Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: 6778.0 - WGS84_A,
+            },
+            &epoch,
+        );
+        let b = igrf.field_ecef(&input);
+        assert!(
+            b[0].is_finite() && b[1].is_finite() && b[2].is_finite(),
+            "Field must be finite: {b:?}"
+        );
     }
 
     #[test]
     fn igrf_secular_variation() {
         // Field should change between 2020 and 2025
         let igrf = Igrf::earth();
-        let pos = SimpleEci::new(7000.0, 0.0, 0.0);
+        let geo = Geodetic {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: 7000.0 - WGS84_A,
+        };
 
         let e2020 = Epoch::from_gregorian(2020, 1, 1, 0, 0, 0.0);
         let e2025 = epoch_2025();
 
-        let b2020 = igrf.field_eci(&pos, &e2020);
-        let b2025 = igrf.field_eci(&pos, &e2025);
+        let b2020 = igrf.field_ecef(&make_input(geo, &e2020));
+        let b2025 = igrf.field_ecef(&make_input(geo, &e2025));
 
-        let diff = (b2020 - b2025).magnitude();
+        let diff = ((b2020[0] - b2025[0]).powi(2)
+            + (b2020[1] - b2025[1]).powi(2)
+            + (b2020[2] - b2025[2]).powi(2))
+        .sqrt();
         assert!(
             diff > 1e-10,
             "Field should change between 2020 and 2025, diff={diff:.3e}"
@@ -560,9 +638,14 @@ mod tests {
         let igrf13 = Igrf::earth();
         let epoch = epoch_2025();
 
-        let pos = SimpleEci::new(7000.0, 0.0, 0.0);
-        let b1 = igrf1.field_eci(&pos, &epoch).magnitude();
-        let b13 = igrf13.field_eci(&pos, &epoch).magnitude();
+        let geo = Geodetic {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: 7000.0 - WGS84_A,
+        };
+        let input = make_input(geo, &epoch);
+        let b1 = b_magnitude(&igrf1.field_ecef(&input));
+        let b13 = b_magnitude(&igrf13.field_ecef(&input));
 
         // Degree-1 should be within ~20% of full model at LEO
         let diff_pct = ((b1 - b13) / b13).abs() * 100.0;

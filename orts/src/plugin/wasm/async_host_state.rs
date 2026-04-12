@@ -8,7 +8,7 @@
 //! channels rather than `std::sync::mpsc`, so that the satellite
 //! task can yield to the runtime on every `wait_tick`.
 
-use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
+use tobari::magnetic::TiltedDipole;
 use tokio::sync::mpsc;
 
 use super::async_bindings::orts::plugin::host_env;
@@ -74,9 +74,13 @@ impl host_env::Host for AsyncHostState {
         position_eci_km: wit::Vec3,
         epoch: wit::Epoch,
     ) -> wit::Vec3 {
-        let pos = arika::SimpleEci::new(position_eci_km.x, position_eci_km.y, position_eci_km.z);
+        let pos = arika::frame::Vec3::<arika::frame::SimpleEci>::new(
+            position_eci_km.x,
+            position_eci_km.y,
+            position_eci_km.z,
+        );
         let ep = arika::epoch::Epoch::from_jd(epoch.julian_date);
-        let b = self.field.field_eci(&pos, &ep);
+        let b = crate::magnetic::field_eci(&self.field, &pos, &ep);
         wit::Vec3 {
             x: b.x(),
             y: b.y(),

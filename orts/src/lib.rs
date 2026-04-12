@@ -3,6 +3,7 @@ pub mod control;
 pub mod effector;
 pub mod events;
 pub mod group;
+pub mod magnetic;
 pub mod model;
 pub mod orbital;
 pub mod perturbations;

@@ -6,6 +6,7 @@ use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
 use crate::control::DiscreteController;
+use crate::magnetic;
 use crate::model::ExternalLoads;
 use crate::model::{HasAttitude, HasOrbit, Model};
 
@@ -64,10 +65,7 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for BdotDetumble
         let orbit = state.orbit();
 
         // 1. Compute B in ECI (requires epoch for ECEF->ECI rotation)
-        let b_eci = self
-            .field
-            .field_eci(&orbit.position_eci(), epoch)
-            .into_inner();
+        let b_eci = magnetic::field_eci(&self.field, &orbit.position_eci(), epoch).into_inner();
         if b_eci.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
         }
@@ -130,10 +128,8 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for CommandedMag
         let Some(epoch) = epoch else {
             return ExternalLoads::zeros();
         };
-        let b_eci = self
-            .field
-            .field_eci(&state.orbit().position_eci(), epoch)
-            .into_inner();
+        let b_eci =
+            magnetic::field_eci(&self.field, &state.orbit().position_eci(), epoch).into_inner();
         if b_eci.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
         }
@@ -213,10 +209,7 @@ impl<F: MagneticFieldModel> DiscreteController for BdotFiniteDiff<F> {
         let Some(epoch) = epoch else {
             return Vector3::zeros();
         };
-        let b_eci = self
-            .field
-            .field_eci(&orbit.position_eci(), epoch)
-            .into_inner();
+        let b_eci = magnetic::field_eci(&self.field, &orbit.position_eci(), epoch).into_inner();
         if b_eci.magnitude() < 1e-30 {
             return Vector3::zeros();
         }
@@ -252,10 +245,9 @@ mod tests {
     use super::*;
     use crate::OrbitalState;
     use crate::attitude::AttitudeState;
-    use arika::SimpleEci;
     use arika::epoch::Epoch;
+    use arika::frame::Vec3 as FrameVec3;
     use nalgebra::Vector4;
-    use tobari::magnetic::MagneticFieldModel;
 
     fn test_epoch() -> Epoch {
         Epoch::j2000()
@@ -350,9 +342,12 @@ mod tests {
         };
         let epoch = test_epoch();
         let loads = ctrl.eval(0.0, &state, Some(&epoch));
-        let b = TiltedDipole::earth()
-            .field_eci(&SimpleEci::new(7000.0, 0.0, 0.0), &epoch)
-            .magnitude();
+        let b = magnetic::field_eci(
+            &TiltedDipole::earth(),
+            &FrameVec3::<frame::SimpleEci>::new(7000.0, 0.0, 0.0),
+            &epoch,
+        )
+        .magnitude();
         let max_torque = 3.0_f64.sqrt() * max_m * b;
         assert!(
             loads.torque_body.magnitude() <= max_torque * 1.01,

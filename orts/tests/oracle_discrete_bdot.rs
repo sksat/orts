@@ -10,7 +10,7 @@ use orts::attitude::{
     AttitudeState, BdotDetumbler, BdotFiniteDiff, CommandedMagnetorquer, DecoupledAttitudeSystem,
 };
 use orts::control::DiscreteController;
-use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
+use tobari::magnetic::TiltedDipole;
 
 fn symmetric_inertia(i: f64) -> Matrix3<f64> {
     Matrix3::from_diagonal(&Vector3::new(i, i, i))
@@ -204,7 +204,11 @@ fn commanded_magnetorquer_torque_is_m_cross_b() {
     let loads = actuator.eval(0.0, &state, Some(&epoch));
 
     // Manually compute expected torque
-    let b_eci = TiltedDipole::earth().field_eci(&SimpleEci::new(7000.0, 0.0, 0.0), &epoch);
+    let b_eci = orts::magnetic::field_eci(
+        &TiltedDipole::earth(),
+        &SimpleEci::new(7000.0, 0.0, 0.0),
+        &epoch,
+    );
     let b_body = state
         .attitude
         .rotation_to_body()

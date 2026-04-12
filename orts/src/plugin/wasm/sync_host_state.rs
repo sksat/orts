@@ -16,7 +16,7 @@
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
+use tobari::magnetic::TiltedDipole;
 
 use super::sync_bindings::orts::plugin::host_env;
 use super::sync_bindings::orts::plugin::tick_io;
@@ -124,9 +124,13 @@ impl host_env::Host for HostState {
     }
 
     fn magnetic_field_eci(&mut self, position_eci_km: wit::Vec3, epoch: wit::Epoch) -> wit::Vec3 {
-        let pos = arika::SimpleEci::new(position_eci_km.x, position_eci_km.y, position_eci_km.z);
+        let pos = arika::frame::Vec3::<arika::frame::SimpleEci>::new(
+            position_eci_km.x,
+            position_eci_km.y,
+            position_eci_km.z,
+        );
         let epoch = arika::epoch::Epoch::from_jd(epoch.julian_date);
-        let b = self.field.field_eci(&pos, &epoch);
+        let b = crate::magnetic::field_eci(&self.field, &pos, &epoch);
         wit::Vec3 {
             x: b.x(),
             y: b.y(),

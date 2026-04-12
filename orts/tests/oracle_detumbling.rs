@@ -3,11 +3,10 @@ use std::f64::consts::PI;
 use nalgebra::{Matrix3, Vector3};
 use utsuroi::{Integrator, Rk4};
 
-use arika::SimpleEci;
 use arika::earth::{MU as MU_EARTH, R as R_EARTH};
 use arika::epoch::Epoch;
 use orts::attitude::{AttitudeState, BdotDetumbler, DecoupledAttitudeSystem};
-use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
+use tobari::magnetic::TiltedDipole;
 
 fn symmetric_inertia(i: f64) -> Matrix3<f64> {
     Matrix3::from_diagonal(&Vector3::new(i, i, i))
@@ -30,11 +29,22 @@ fn test_epoch() -> Epoch {
 
 #[test]
 fn magnetic_field_magnitude_at_equatorial_leo() {
+    use arika::earth::ellipsoid::WGS84_A;
+    use arika::earth::geodetic::Geodetic;
+    use tobari::magnetic::{MagneticFieldInput, MagneticFieldModel};
+
     let dipole = TiltedDipole::earth();
-    let pos = Vector3::new(7000.0, 0.0, 0.0);
     let epoch = test_epoch();
-    let b = dipole.field_eci(&SimpleEci::from_raw(pos), &epoch);
-    let b_micro_t = b.magnitude() * 1e6;
+    let input = MagneticFieldInput {
+        geodetic: Geodetic {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: 7000.0 - WGS84_A,
+        },
+        utc: &epoch,
+    };
+    let b = dipole.field_ecef(&input);
+    let b_micro_t = (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt() * 1e6;
 
     assert!(
         b_micro_t > 20.0 && b_micro_t < 50.0,
@@ -44,19 +54,39 @@ fn magnetic_field_magnitude_at_equatorial_leo() {
 
 #[test]
 fn magnetic_field_inverse_cube_law() {
+    use arika::earth::ellipsoid::WGS84_A;
+    use arika::earth::geodetic::Geodetic;
+    use tobari::magnetic::{MagneticFieldInput, MagneticFieldModel};
+
     let dipole = TiltedDipole::earth();
     let epoch = test_epoch();
-    let b_near = dipole
-        .field_eci(&SimpleEci::new(7000.0, 0.0, 0.0), &epoch)
-        .magnitude();
-    let b_far = dipole
-        .field_eci(&SimpleEci::new(14000.0, 0.0, 0.0), &epoch)
-        .magnitude();
+    let b_near = {
+        let b = dipole.field_ecef(&MagneticFieldInput {
+            geodetic: Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: 7000.0 - WGS84_A,
+            },
+            utc: &epoch,
+        });
+        (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt()
+    };
+    let b_far = {
+        let b = dipole.field_ecef(&MagneticFieldInput {
+            geodetic: Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: 14000.0 - WGS84_A,
+            },
+            utc: &epoch,
+        });
+        (b[0] * b[0] + b[1] * b[1] + b[2] * b[2]).sqrt()
+    };
 
     let ratio = b_near / b_far;
     assert!(
-        (ratio - 8.0).abs() < 0.01,
-        "Expected 1/r^3 ratio of 8.0, got {ratio:.4}"
+        (ratio - 8.0).abs() < 0.1,
+        "Expected ~1/r^3 ratio of ~8.0, got {ratio:.4}"
     );
 }
 

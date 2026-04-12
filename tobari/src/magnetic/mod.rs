@@ -14,23 +14,27 @@ pub mod igrf;
 pub use dipole::TiltedDipole;
 pub use igrf::Igrf;
 
-use arika::SimpleEci;
-use arika::epoch::Epoch;
-use arika::frame;
+use arika::earth::geodetic::Geodetic;
+use arika::epoch::{Epoch, Utc};
+
+/// Pre-computed input for magnetic field evaluation.
+///
+/// The caller computes `geodetic` from the propagator's frame-typed
+/// position — the model itself is frame-agnostic.
+pub struct MagneticFieldInput<'a> {
+    /// Satellite geodetic coordinates (latitude/longitude in rad, altitude in km).
+    pub geodetic: Geodetic,
+    /// Absolute UTC epoch (required for secular variation and ECEF orientation).
+    pub utc: &'a Epoch<Utc>,
+}
 
 /// A geomagnetic field model.
 ///
-/// Computes the magnetic field vector at a given position and time.
-/// Implementors must be `Send + Sync` for use inside dynamics models.
+/// Computes the magnetic field vector in ECEF Cartesian coordinates.
+/// The model is **frame-agnostic**: it receives pre-computed geodetic
+/// coordinates and returns the field in the Earth-fixed frame.
+/// The caller is responsible for rotating to their inertial frame.
 pub trait MagneticFieldModel: Send + Sync {
-    /// Compute the magnetic field vector in the ECI (J2000) frame \[T\].
-    ///
-    /// # Arguments
-    /// - `position_eci` — satellite position in ECI frame \[km\]
-    /// - `epoch` — absolute time (required for ECEF↔ECI rotation and secular variation)
-    ///
-    /// # Returns
-    /// Magnetic field vector in the ECI (J2000) frame, in Tesla.
-    /// The caller is responsible for frame transformations (e.g., ECI → body).
-    fn field_eci(&self, position_eci: &SimpleEci, epoch: &Epoch) -> frame::Vec3<frame::SimpleEci>;
+    /// Compute the magnetic field vector in ECEF Cartesian \[T\].
+    fn field_ecef(&self, input: &MagneticFieldInput<'_>) -> [f64; 3];
 }
