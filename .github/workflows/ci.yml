@@ -787,7 +787,9 @@ jobs:
           cp README.md "${STAGE_DIR}/README.md"
           cp LICENSE "${STAGE_DIR}/LICENSE"
           # Rename plugin wasm files: strip orts_example_plugin_ prefix, use hyphens
-          for f in plugins-wasm/orts_example_plugin_*.wasm; do
+          # upload-artifact preserves the directory tree, so wasm files are at
+          # plugins-wasm/*/target/wasm32-wasip1/release/*.wasm
+          for f in $(find plugins-wasm -name 'orts_example_plugin_*.wasm' -not -path '*/deps/*'); do
             base=$(basename "$f" .wasm)
             short=$(echo "$base" | sed 's/^orts_example_plugin_//' | tr '_' '-')
             cp "$f" "${STAGE_DIR}/examples/plugins/${short}.wasm"
