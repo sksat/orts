@@ -9,7 +9,10 @@ import {
   type TimeRange,
   useTimeSeriesStoreWorker,
 } from "@sksat/uneri";
-import type { MultiChartDataResult, MultiChartDataWorkerClient } from "@sksat/uneri/multiWorkerClient";
+import type {
+  MultiChartDataResult,
+  MultiChartDataWorkerClient,
+} from "@sksat/uneri/multiWorkerClient";
 import { METRIC_NAMES } from "../chartMetrics.js";
 import { createOrbitSchema } from "../db/orbitSchema.js";
 import type { OrbitPoint } from "../orbit.js";
