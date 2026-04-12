@@ -144,6 +144,28 @@ print(data.get('version', 'NOT_FOUND'), end='')
 fi
 
 # ---------------------------------------------------------------------------
+# 5. Check plugin Cargo.lock references to orts-plugin-sdk
+# ---------------------------------------------------------------------------
+info "Checking plugin Cargo.lock orts-plugin-sdk versions..."
+
+for lock in "${REPO_ROOT}"/plugins/*/Cargo.lock; do
+    [ -f "$lock" ] || continue
+    plugin_dir=$(dirname "$lock")
+    plugin_name=$(basename "$plugin_dir")
+
+    sdk_version=$(grep -A1 'name = "orts-plugin-sdk"' "$lock" 2>/dev/null | grep 'version' | sed 's/.*"\(.*\)"/\1/' | head -1 || true)
+    if [ -z "$sdk_version" ]; then
+        # Plugin doesn't depend on orts-plugin-sdk (e.g. bdot-finite-diff)
+        continue
+    fi
+    if [ "$sdk_version" = "$WORKSPACE_VERSION" ]; then
+        pass "plugin ${plugin_name} Cargo.lock orts-plugin-sdk = \"${sdk_version}\""
+    else
+        fail "plugin ${plugin_name} Cargo.lock orts-plugin-sdk = \"${sdk_version}\" (expected \"${WORKSPACE_VERSION}\")"
+    fi
+done
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
