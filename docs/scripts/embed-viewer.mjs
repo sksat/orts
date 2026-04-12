@@ -142,14 +142,14 @@ const examplePages = [
     slug: "examples/plugins/bdot-finite-diff",
     readme: "plugins/bdot-finite-diff/README.md",
     locale: "en",
-    title: "B-dot Finite-Difference Controller (plugin)",
+    title: "B-dot Finite-Difference Controller",
     description: "Main-loop style WASM plugin implementing B-dot detumbling",
   },
   {
     slug: "examples/plugins/pd-rw-control",
     readme: "plugins/pd-rw-control/README.md",
     locale: "ja",
-    title: "PD 姿勢制御 + RW (plugin)",
+    title: "PD 姿勢制御 + RW",
     description: "コールバック型 WASM plugin で PD 姿勢制御 + リアクションホイール",
   },
 ];
@@ -206,9 +206,15 @@ for (const page of examplePages) {
     "",
   ].join("\n");
 
-  const contentBase = resolve(docsRoot, `src/content/docs/${page.locale}`);
-  const dest = resolve(contentBase, `${page.slug}.mdx`);
-  mkdirSync(resolve(dest, ".."), { recursive: true });
-  writeFileSync(dest, frontmatter + body);
-  console.log(`Copied ${page.readme} → ${page.slug}.mdx`);
+  // Always write to en/ (default locale) so the page appears in all sidebars.
+  // Starlight's i18n fallback shows a "not translated" warning when a non-default
+  // locale falls back to the default locale content.
+  const locales = page.locale === "en" ? ["en"] : ["en", page.locale];
+  for (const locale of locales) {
+    const contentBase = resolve(docsRoot, `src/content/docs/${locale}`);
+    const dest = resolve(contentBase, `${page.slug}.mdx`);
+    mkdirSync(resolve(dest, ".."), { recursive: true });
+    writeFileSync(dest, frontmatter + body);
+  }
+  console.log(`Copied ${page.readme} → ${page.slug}.mdx (${locales.join(" + ")})`);
 }
