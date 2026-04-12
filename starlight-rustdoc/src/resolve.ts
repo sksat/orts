@@ -39,6 +39,7 @@ export class LinkResolver {
    * which locale the page is served under (including Starlight i18n fallback
    * routes).
    */
+  private basePath: string;
   private currentPagePath = "";
 
   constructor(crates: Map<string, Crate>, basePath: string) {
