@@ -3,8 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
+
+permissions:
+  contents: write # softprops/action-gh-release (rust-dist, tag push only)
 
 jobs:
   # Code quality checks: Rust (fmt, clippy) + TypeScript (biome).
@@ -301,16 +305,33 @@ jobs:
           cargo test --locked -p orts-cli --test throughput_mode_speedup_e2e
           cargo test --locked -p orts-cli --test e2e test_controlled_simulation_via_config
 
-  # Build CLI with embedded viewer SPA (main only).
+  # Build CLI with embedded viewer SPA in release profile.
+  # Runs on main push (smoke test) AND tag push (actual release).
+  # On tag push the extra release steps create a draft GitHub Release
+  # with the tarball + checksum attached. This ensures the released
+  # binary is the exact same one that CI validated.
   # On PRs, build.rs falls back to a placeholder — viewer embedding
   # breakage is detected post-merge, not pre-merge. This is an accepted
-  # trade-off to keep the PR critical path short (~390s vs ~785s).
+  # trade-off to keep the PR critical path short.
   rust-dist:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     needs: [rust-build, viewer-build]
+    env:
+      TARGET: x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v6.0.2
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
 
       - name: Install mold linker
         run: sudo apt-get install -y mold
@@ -327,8 +348,8 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.1
         with:
-          shared-key: rust-native
-          save-if: false
+          shared-key: rust-release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-about
         uses: taiki-e/install-action@7a4939c09608b2a1986b484eca1d16fd0db8ebef # v2.75.5
@@ -341,20 +362,100 @@ jobs:
           name: viewer-dist
           path: ./viewer/dist
 
-      - name: Build CLI with embedded viewer
-        # ORTS_REQUIRE_LICENSE_NOTICE=1 makes cli/build.rs fail hard if
-        # cargo-about is missing, guarding against shipping a binary whose
-        # embedded third-party license notice is only a placeholder.
+      - name: Build CLI with embedded viewer (release)
         env:
           ORTS_REQUIRE_LICENSE_NOTICE: "1"
-        run: cargo build --locked -p orts-cli
+        run: cargo build --locked --release -p orts-cli
 
       - name: Upload CLI binary (with viewer)
         uses: actions/upload-artifact@v7.0.0
         with:
           name: orts-with-viewer
-          path: target/debug/orts
+          path: target/release/orts
           retention-days: 1
+
+      # ── Release steps (tag push only) ──────────────────────────
+      - name: Extract version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Cargo.toml version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          CARGO_VERSION=$(awk -F'"' '
+            /^\[workspace\.package\]/ { in_wp = 1; next }
+            /^\[/ { in_wp = 0 }
+            in_wp && /^version[[:space:]]*=/ { print $2; exit }
+          ' Cargo.toml)
+          TAG_VERSION="${{ steps.version.outputs.version }}"
+          if [ "${CARGO_VERSION}" != "${TAG_VERSION}" ]; then
+            echo "::error::Tag version (${TAG_VERSION}) does not match Cargo.toml workspace version (${CARGO_VERSION})"
+            exit 1
+          fi
+
+      - name: Stage + strip binary
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: stage
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          STAGE_DIR="orts-cli-${VERSION}-${TARGET}"
+          mkdir -p "${STAGE_DIR}"
+          cp target/release/orts "${STAGE_DIR}/orts"
+          strip "${STAGE_DIR}/orts"
+          cp README.md "${STAGE_DIR}/README.md"
+          cp LICENSE "${STAGE_DIR}/LICENSE"
+          echo "stage_dir=${STAGE_DIR}" >> "$GITHUB_OUTPUT"
+
+      - name: Create tarball and checksum
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: archive
+        run: |
+          set -euo pipefail
+          STAGE_DIR="${{ steps.stage.outputs.stage_dir }}"
+          ARCHIVE="${STAGE_DIR}.tar.gz"
+          tar --sort=name \
+              --owner=0 --group=0 --numeric-owner \
+              --mtime='UTC 2020-01-01' \
+              -czf "${ARCHIVE}" "${STAGE_DIR}"
+          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+          echo "checksum=${ARCHIVE}.sha256" >> "$GITHUB_OUTPUT"
+          cat "${ARCHIVE}.sha256"
+
+      - name: Create draft GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          draft: true
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            orts ${{ steps.version.outputs.tag }}
+
+            ## Installation (cargo-binstall)
+
+            ```
+            cargo binstall --git https://github.com/sksat/orts orts-cli --version ${{ steps.version.outputs.version }}
+            ```
+
+            ## Manual install
+
+            Download the tarball, verify with the `.sha256` sidecar, extract, and run `./orts`.
+
+            Target: `x86_64-unknown-linux-gnu` (glibc).
+          files: |
+            ${{ steps.archive.outputs.archive }}
+            ${{ steps.archive.outputs.checksum }}
 
   starlight-rustdoc:
     runs-on: ubuntu-latest
