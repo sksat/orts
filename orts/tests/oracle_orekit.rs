@@ -461,12 +461,12 @@ fn orekit_j2_srp_sso_10orbits() {
 
 #[test]
 fn orekit_j2_hp_iss_equatorial_5orbits() {
-    run_scenario("j2_hp_iss_equatorial_5orbits", 0.006); // 6 m (measured: 2.7 m)
+    run_scenario("j2_hp_iss_equatorial_5orbits", 0.004); // 4 m (measured: 2.7 m, baseline lock)
 }
 
 #[test]
 fn orekit_j2_hp_iss_10orbits() {
-    run_scenario("j2_hp_iss_10orbits", 0.010); // 10 m (measured: 3.6 m)
+    run_scenario("j2_hp_iss_10orbits", 0.005); // 5 m (measured: 3.6 m, baseline lock)
 }
 
 // Long-duration HP drag: validates error growth over ISS decay timescales.
@@ -474,12 +474,12 @@ fn orekit_j2_hp_iss_10orbits() {
 
 #[test]
 fn orekit_j2_hp_iss_7days() {
-    run_scenario("j2_hp_iss_7days", 0.030); // 30 m (measured: 13.4 m)
+    run_scenario("j2_hp_iss_7days", 0.017); // 17 m (measured: 13.4 m, baseline lock)
 }
 
 #[test]
 fn orekit_j2_hp_iss_30days() {
-    run_scenario("j2_hp_iss_30days", 0.400); // 400 m (measured: 191 m)
+    run_scenario("j2_hp_iss_30days", 0.230); // 230 m (measured: 191 m, baseline lock)
 }
 
 // ─── Tier 5: Full force model ───
@@ -487,7 +487,7 @@ fn orekit_j2_hp_iss_30days() {
 
 #[test]
 fn orekit_full_iss_10orbits() {
-    run_scenario("full_iss_10orbits", 0.010); // 10 m (measured: 3.8 m)
+    run_scenario("full_iss_10orbits", 0.006); // 6 m (measured: 4.5 m, baseline lock)
 }
 
 #[test]
@@ -506,7 +506,7 @@ fn orekit_full_sso_10orbits() {
 
 #[test]
 fn orekit_j2_msise_iss_moderate_10orbits() {
-    run_scenario("j2_msise_iss_moderate_10orbits", 0.020); // 20 m (measured: 11.9 m)
+    run_scenario("j2_msise_iss_moderate_10orbits", 0.015); // 15 m (measured: 11.9 m, baseline lock)
 }
 
 #[test]
@@ -526,19 +526,19 @@ fn orekit_j2_msise_sso_moderate_10orbits() {
 
 #[test]
 fn orekit_j2_msise_iss_moderate_7days() {
-    run_scenario("j2_msise_iss_moderate_7days", 1.0); // 1.0 km (measured: 0.55 km)
+    run_scenario("j2_msise_iss_moderate_7days", 0.7); // 0.7 km (measured: 0.55 km, baseline lock)
 }
 
 #[test]
 fn orekit_j2_msise_iss_moderate_30days() {
-    run_scenario("j2_msise_iss_moderate_30days", 13.0); // 13 km (measured: 8.8 km)
+    run_scenario("j2_msise_iss_moderate_30days", 11.0); // 11 km (measured: 8.8 km, baseline lock)
 }
 
 // ─── Tier 7: Full force model + NRLMSISE-00 ───
 
 #[test]
 fn orekit_full_msise_iss_moderate_10orbits() {
-    run_scenario("full_msise_iss_moderate_10orbits", 0.020); // 20 m (measured: 12.8 m)
+    run_scenario("full_msise_iss_moderate_10orbits", 0.016); // 16 m (measured: 12.8 m, baseline lock)
 }
 
 #[test]
@@ -555,15 +555,15 @@ fn orekit_full_msise_sso_moderate_10orbits() {
 
 #[test]
 fn orekit_j2_msise_cssi_iss_10orbits() {
-    run_scenario("j2_msise_cssi_iss_10orbits", 0.020); // 20 m (measured: 12.3 m)
+    run_scenario("j2_msise_cssi_iss_10orbits", 0.015); // 15 m (measured: 12.3 m, baseline lock)
 }
 
 #[test]
 fn orekit_j2_msise_cssi_iss_7days() {
-    run_scenario("j2_msise_cssi_iss_7days", 1.2); // 1.2 km (measured: 0.71 km)
+    run_scenario("j2_msise_cssi_iss_7days", 0.9); // 0.9 km (measured: 0.71 km, baseline lock)
 }
 
 #[test]
 fn orekit_full_msise_cssi_iss_10orbits() {
-    run_scenario("full_msise_cssi_iss_10orbits", 0.020); // 20 m (measured: 13.2 m)
+    run_scenario("full_msise_cssi_iss_10orbits", 0.016); // 16 m (measured: 13.2 m, baseline lock)
 }
