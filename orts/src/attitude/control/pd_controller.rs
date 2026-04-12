@@ -94,6 +94,9 @@ impl<R: AttitudeReference> TrackingPdController<R> {
     }
 }
 
+// TODO: SimpleEci constraint comes from AttitudeReference::target taking
+// &OrbitalState (SimpleEci). To make frame-generic, AttitudeReference
+// needs to accept &OrbitalState<F>.
 impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci>, R: AttitudeReference + 'static>
     Model<S> for TrackingPdController<R>
 {

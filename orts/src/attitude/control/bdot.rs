@@ -51,6 +51,9 @@ impl<F: MagneticFieldModel> BdotDetumbler<F> {
     }
 }
 
+// TODO: SimpleEci constraint comes from magnetic::field_eci. To make
+// frame-generic, BdotDetumbler needs EarthFrameBridge<Fr> (like
+// AtmosphericDrag<Fr>) and should use magnetic::field_inertial<Fr>.
 impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci>> Model<S>
     for BdotDetumbler<F>
 {
@@ -121,6 +124,7 @@ impl<F: MagneticFieldModel> CommandedMagnetorquer<F> {
     }
 }
 
+// TODO: Same SimpleEci constraint as BdotDetumbler (magnetic::field_eci).
 impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci>> Model<S>
     for CommandedMagnetorquer<F>
 {
