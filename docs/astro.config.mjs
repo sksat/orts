@@ -101,6 +101,7 @@ export default defineConfig({
           collapsed: true,
           items: [
             { label: "Overview", slug: "orts/overview" },
+            { label: "Examples", autogenerate: { directory: "orts/examples" } },
             {
               label: "API",
               collapsed: true,

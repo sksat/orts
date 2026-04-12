@@ -1,6 +1,14 @@
 import { execSync } from "node:child_process";
-import { cpSync, existsSync, readdirSync, rmSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, resolve } from "node:path";
 
 const docsRoot = resolve(import.meta.dirname, "..");
 const repoRoot = resolve(docsRoot, "..");
@@ -98,4 +106,61 @@ try {
     console.error("Set ALLOW_MISSING_TOBARI=1 to skip this for docs-only development.");
     process.exit(1);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Copy example READMEs into docs content as .mdx pages.
+// Each entry maps a docs slug to { source README, title, description }.
+// The script reads the README, strips the first `# heading` line (replaced
+// by Starlight's title), prepends frontmatter, and writes to content dir.
+// ---------------------------------------------------------------------------
+
+/** @type {Array<{slug: string, readme: string, title: string, description: string}>} */
+const examplePages = [
+  {
+    slug: "orts/examples/apollo11",
+    readme: "orts/examples/apollo11/README.md",
+    title: "Apollo 11 Trajectory",
+    description: "Apollo 11 全行程の軌道シミュレーションと 3D 可視化",
+  },
+  {
+    slug: "orts/examples/artemis1",
+    readme: "orts/examples/artemis1/README.md",
+    title: "Artemis 1 Coast Feasibility",
+    description: "Artemis 1 coast phase を JPL Horizons と照合する feasibility spike",
+  },
+  {
+    slug: "orts/examples/orbital-lifetime",
+    readme: "orts/examples/orbital_lifetime/README.md",
+    title: "Orbital Lifetime Analysis",
+    description: "6U CubeSat の軌道減衰を再現し、大気モデルと太陽活動の影響を比較",
+  },
+];
+
+const contentBase = resolve(docsRoot, "src/content/docs/en");
+
+for (const page of examplePages) {
+  const src = resolve(repoRoot, page.readme);
+  if (!existsSync(src)) {
+    console.log(`Warning: ${page.readme} not found, skipping`);
+    continue;
+  }
+
+  let body = readFileSync(src, "utf-8");
+
+  // Strip the first `# ...` heading — Starlight renders the title from frontmatter.
+  body = body.replace(/^#\s+.*\n+/, "");
+
+  const frontmatter = [
+    "---",
+    `title: "${page.title}"`,
+    `description: "${page.description}"`,
+    "---",
+    "",
+  ].join("\n");
+
+  const dest = resolve(contentBase, `${page.slug}.mdx`);
+  mkdirSync(resolve(dest, ".."), { recursive: true });
+  writeFileSync(dest, frontmatter + body);
+  console.log(`Copied ${page.readme} → ${page.slug}.mdx`);
 }
