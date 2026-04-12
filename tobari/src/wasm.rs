@@ -16,49 +16,19 @@ use std::sync::OnceLock;
 
 use crate::cssi::{CssiData, CssiSpaceWeather};
 use crate::gfz::{self, SpaceWeatherFormat};
-use crate::magnetic::{Igrf, MagneticFieldModel, TiltedDipole};
+use crate::magnetic::{Igrf, MagneticFieldInput, MagneticFieldModel, TiltedDipole};
 use crate::nrlmsise00::{Nrlmsise00, Nrlmsise00Input};
 use crate::space_weather::SpaceWeatherProvider;
-use crate::{AtmosphereInput, AtmosphereModel, ConstantWeather, Exponential, HarrisPriester};
+use crate::{AtmosphereInput, AtmosphereModel, ConstantWeather, HarrisPriester};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Convert geodetic (lat_deg, lon_deg, altitude_km) + epoch to a frame-tagged
-/// `SimpleEci` position (for `AtmosphereModel::density` / `MagneticFieldModel::field_eci`).
-fn geodetic_to_eci(
-    lat_deg: f64,
-    lon_deg: f64,
-    altitude_km: f64,
-    epoch: &Epoch,
-) -> arika::SimpleEci {
-    let gmst = epoch.gmst();
-    let geod = Geodetic {
-        latitude: lat_deg.to_radians(),
-        longitude: lon_deg.to_radians(),
-        altitude: altitude_km,
-    };
-    let ecef = SimpleEcef::from(geod);
-    Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst).transform(&ecef)
-}
-
-/// Compute ECI→NED rotation for a magnetic field vector at a geodetic point.
+/// Compute ECEF→NED rotation for a magnetic field vector at a geodetic point.
 ///
 /// Returns (B_north, B_east, B_down) in Tesla.
-fn eci_to_ned(b_eci: &Vector3<f64>, lat_deg: f64, lon_deg: f64, epoch: &Epoch) -> (f64, f64, f64) {
-    let gmst = epoch.gmst();
-
-    // ECI → ECEF
-    let cos_g = gmst.cos();
-    let sin_g = gmst.sin();
-    let b_ecef = Vector3::new(
-        cos_g * b_eci.x + sin_g * b_eci.y,
-        -sin_g * b_eci.x + cos_g * b_eci.y,
-        b_eci.z,
-    );
-
-    // ECEF → NED
+fn ecef_to_ned(b_ecef: &[f64; 3], lat_deg: f64, lon_deg: f64) -> (f64, f64, f64) {
     let lat = lat_deg.to_radians();
     let lon = lon_deg.to_radians();
     let sin_lat = lat.sin();
@@ -66,16 +36,18 @@ fn eci_to_ned(b_eci: &Vector3<f64>, lat_deg: f64, lon_deg: f64, epoch: &Epoch) -
     let sin_lon = lon.sin();
     let cos_lon = lon.cos();
 
-    let b_north = -sin_lat * cos_lon * b_ecef.x - sin_lat * sin_lon * b_ecef.y + cos_lat * b_ecef.z;
-    let b_east = -sin_lon * b_ecef.x + cos_lon * b_ecef.y;
-    let b_down = -cos_lat * cos_lon * b_ecef.x - cos_lat * sin_lon * b_ecef.y - sin_lat * b_ecef.z;
+    let b_north =
+        -sin_lat * cos_lon * b_ecef[0] - sin_lat * sin_lon * b_ecef[1] + cos_lat * b_ecef[2];
+    let b_east = -sin_lon * b_ecef[0] + cos_lon * b_ecef[1];
+    let b_down =
+        -cos_lat * cos_lon * b_ecef[0] - cos_lat * sin_lon * b_ecef[1] - sin_lat * b_ecef[2];
 
     (b_north, b_east, b_down)
 }
 
 /// Compute magnetic field info at a point, returning [Bn, Be, Bd, |B|, inc_deg, dec_deg].
-fn field_info(b_eci: &Vector3<f64>, lat_deg: f64, lon_deg: f64, epoch: &Epoch) -> Vec<f64> {
-    let (bn, be, bd) = eci_to_ned(b_eci, lat_deg, lon_deg, epoch);
+fn field_info(b_ecef: &[f64; 3], lat_deg: f64, lon_deg: f64) -> Vec<f64> {
+    let (bn, be, bd) = ecef_to_ned(b_ecef, lat_deg, lon_deg);
     let bh = (bn * bn + be * be).sqrt();
     let b_total = (bn * bn + be * be + bd * bd).sqrt();
     let inc_deg = bd.atan2(bh).to_degrees();
@@ -89,6 +61,23 @@ fn field_info(b_eci: &Vector3<f64>, lat_deg: f64, lon_deg: f64, epoch: &Epoch) -
         inc_deg,
         dec_deg,
     ]
+}
+
+/// Build a [`MagneticFieldInput`] from geodetic degrees + epoch.
+fn make_mag_input(
+    lat_deg: f64,
+    lon_deg: f64,
+    altitude_km: f64,
+    epoch: &Epoch,
+) -> MagneticFieldInput<'_> {
+    MagneticFieldInput {
+        geodetic: Geodetic {
+            latitude: lat_deg.to_radians(),
+            longitude: lon_deg.to_radians(),
+            altitude: altitude_km,
+        },
+        utc: epoch,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -289,10 +278,10 @@ pub fn atmosphere_latlon_map(
 #[wasm_bindgen]
 pub fn igrf_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64) -> Vec<f64> {
     let epoch = Epoch::from_jd(epoch_jd);
-    let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
     let igrf = Igrf::earth();
-    let b_eci = igrf.field_eci(&pos, &epoch);
-    field_info(b_eci.inner(), lat_deg, lon_deg, &epoch)
+    let input = make_mag_input(lat_deg, lon_deg, altitude_km, &epoch);
+    let b_ecef = igrf.field_ecef(&input);
+    field_info(&b_ecef, lat_deg, lon_deg)
 }
 
 /// Tilted dipole field at a geodetic point.
@@ -301,10 +290,10 @@ pub fn igrf_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64
 #[wasm_bindgen]
 pub fn dipole_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64) -> Vec<f64> {
     let epoch = Epoch::from_jd(epoch_jd);
-    let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
     let dipole = TiltedDipole::earth();
-    let b_eci = dipole.field_eci(&pos, &epoch);
-    field_info(b_eci.inner(), lat_deg, lon_deg, &epoch)
+    let input = make_mag_input(lat_deg, lon_deg, altitude_km, &epoch);
+    let b_ecef = dipole.field_ecef(&input);
+    field_info(&b_ecef, lat_deg, lon_deg)
 }
 
 // ---------------------------------------------------------------------------
@@ -338,14 +327,14 @@ pub fn magnetic_field_latlon_map(
         for i_lon in 0..n_lon {
             let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
-            let pos = geodetic_to_eci(lat, lon, altitude_km, &epoch);
+            let input = make_mag_input(lat, lon, altitude_km, &epoch);
 
-            let b_eci = match model {
-                "dipole" => dipole.field_eci(&pos, &epoch),
-                _ => igrf.field_eci(&pos, &epoch),
+            let b_ecef = match model {
+                "dipole" => dipole.field_ecef(&input),
+                _ => igrf.field_ecef(&input),
             };
 
-            let info = field_info(b_eci.inner(), lat, lon, &epoch);
+            let info = field_info(&b_ecef, lat, lon);
             // info: [Bn, Be, Bd, |B|, inc, dec]
             let val = match component {
                 "north" => info[0],
@@ -400,15 +389,15 @@ pub fn magnetic_field_volume(
             for i_lon in 0..n_lon {
                 let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
-                let pos = geodetic_to_eci(lat, lon, alt, &epoch);
+                let input = make_mag_input(lat, lon, alt, &epoch);
 
-                let b_eci = match model {
-                    "dipole" => dipole.field_eci(&pos, &epoch),
-                    _ => igrf.field_eci(&pos, &epoch),
+                let b_ecef = match model {
+                    "dipole" => dipole.field_ecef(&input),
+                    _ => igrf.field_ecef(&input),
                 };
 
                 // Inline field_info to avoid per-point Vec allocation
-                let (bn, be, bd) = eci_to_ned(b_eci.inner(), lat, lon, &epoch);
+                let (bn, be, bd) = ecef_to_ned(&b_ecef, lat, lon);
                 let val = match component {
                     "north" => bn * 1e9,
                     "east" => be * 1e9,
@@ -882,7 +871,10 @@ pub fn atmosphere_volume_sw(
 // Magnetic field lines
 // ---------------------------------------------------------------------------
 
-/// Evaluate magnetic field at an ECI position.
+/// Evaluate magnetic field at an ECI position, returning the field in ECI.
+///
+/// Internally converts ECI → ECEF → Geodetic, calls `field_ecef`, then
+/// rotates the result back to ECI.
 fn field_at_eci(
     pos: &Vector3<f64>,
     epoch: &Epoch,
@@ -890,9 +882,22 @@ fn field_at_eci(
     igrf: &Igrf,
     dipole: &TiltedDipole,
 ) -> Vector3<f64> {
+    let gmst = epoch.gmst();
+    // ECI → ECEF
     let eci = arika::SimpleEci::from_raw(*pos);
-    match model {
-        "dipole" => dipole.field_eci(&eci, epoch).into_inner(),
-        _ => igrf.field_eci(&eci, epoch).into_inner(),
-    }
+    let ecef = Rotation::<frame::SimpleEci, frame::SimpleEcef>::from_era(gmst).transform(&eci);
+    let geodetic = ecef.to_geodetic();
+    let input = MagneticFieldInput {
+        geodetic,
+        utc: epoch,
+    };
+    let b_ecef = match model {
+        "dipole" => dipole.field_ecef(&input),
+        _ => igrf.field_ecef(&input),
+    };
+    // ECEF → ECI
+    let b_ecef_vec = arika::SimpleEcef::from_raw(Vector3::new(b_ecef[0], b_ecef[1], b_ecef[2]));
+    Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst)
+        .transform(&b_ecef_vec)
+        .into_inner()
 }
