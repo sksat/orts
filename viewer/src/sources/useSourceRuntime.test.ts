@@ -30,6 +30,7 @@ class ChartBufferStub implements ChartBufferLike {
 class IngestBufferStub implements IngestBufferLike<OrbitPoint> {
   private _points: OrbitPoint[] = [];
   private _latestT = -Infinity;
+  private _rebuildData: OrbitPoint[] | null = null;
 
   push(point: OrbitPoint): void {
     this._points.push(point);

@@ -5,7 +5,7 @@ import {
   LinkResolver,
   resolveTraitImplUrl,
 } from "../src/resolve.js";
-import type { Crate, } from "../src/types.js";
+import type { Crate } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers to build minimal Crate fixtures

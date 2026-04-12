@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  renderGenericParams,
-  renderType,
-  renderWhereClause,
-} from "../src/render.js";
+import { renderGenericParams, renderType, renderWhereClause } from "../src/render.js";
 import { LinkResolver } from "../src/resolve.js";
 import type { Crate, Type } from "../src/types.js";
 

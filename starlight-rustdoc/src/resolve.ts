@@ -1,11 +1,4 @@
-import type {
-  Crate,
-  Id,
-  ImplItem,
-  Item,
-  ModuleItem,
-  UseItem,
-} from "./types.js";
+import type { Crate, Id, ImplItem, Item, ModuleItem, UseItem } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Collected item — a public API item that will get its own page
