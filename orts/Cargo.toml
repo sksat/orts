@@ -18,7 +18,7 @@ include = [
     "src/**/*",
     "wit/**/*.wit",
     "Cargo.toml",
-    "README.md",
+    "/README.md",
 ]
 
 [dependencies]

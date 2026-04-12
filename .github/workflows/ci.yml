@@ -356,6 +356,39 @@ jobs:
         with:
           tool: cargo-component
 
+      # Run before downloading viewer-dist so the working tree is clean
+      # and --allow-dirty is not needed.
+      - name: List crate package contents
+        run: |
+          mkdir -p /tmp/crate-pkg
+          for toml in */Cargo.toml plugin-sdk/Cargo.toml; do
+            crate=$(awk -F'"' '/^name[[:space:]]*=/ {print $2; exit}' "$toml")
+            [ -z "$crate" ] && continue
+            if cargo package --list -p "$crate" > "/tmp/crate-pkg/${crate}.txt" 2>/dev/null; then
+              echo "--- $crate ($(wc -l < /tmp/crate-pkg/${crate}.txt) files) ---"
+              cat "/tmp/crate-pkg/${crate}.txt"
+            else
+              echo "--- $crate (skipped: deps not on crates.io) ---"
+              rm -f "/tmp/crate-pkg/${crate}.txt"
+            fi
+          done
+
+      - name: Verify no unexpected files in crate packages
+        run: |
+          BAD_PATTERNS='\.venv/|__pycache__|\.pytest_cache|node_modules|\.DS_Store'
+          FAIL=0
+          for f in /tmp/crate-pkg/*.txt; do
+            crate=$(basename "$f" .txt)
+            bad=$(grep -E "$BAD_PATTERNS" "$f" || true)
+            if [ -n "$bad" ]; then
+              echo "::error::Unexpected files in $crate tarball:"
+              echo "$bad"
+              FAIL=1
+            fi
+          done
+          [ "$FAIL" -eq 0 ] && echo "All crate package contents clean."
+          exit $FAIL
+
       - name: Download viewer dist
         uses: actions/download-artifact@v8.0.1
         with:
