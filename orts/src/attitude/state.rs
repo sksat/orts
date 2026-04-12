@@ -46,22 +46,28 @@ impl AttitudeState {
     }
 
     /// Typed rotation: body frame → ECI (inertial).
-    ///
-    /// TODO: Returns `Rotation<Body, SimpleEci>` hardcoded. For Gcrs
-    /// propagation, body→inertial rotation should be `Rotation<Body, F>`
-    /// where F is the propagation frame. This requires either
-    /// `AttitudeState<F>` or a `rotation_to_inertial<F>()` method.
-    /// Models using this (Thruster, PanelDrag, PanelSrp) are currently
-    /// constrained to `Frame = SimpleEci`.
     pub fn rotation_to_eci(&self) -> Rotation<frame::Body, frame::SimpleEci> {
+        self.rotation_to_inertial()
+    }
+
+    /// Typed rotation: body frame → inertial frame `F`.
+    ///
+    /// The quaternion data is frame-independent — only the phantom type
+    /// tag changes. This allows models to produce `ExternalLoads<F>` in
+    /// any propagation frame without `AttitudeState` needing a type
+    /// parameter.
+    pub fn rotation_to_inertial<F: frame::Eci>(&self) -> Rotation<frame::Body, F> {
         Rotation::from_raw(self.orientation())
     }
 
     /// Typed rotation: ECI (inertial) → body frame.
-    ///
-    /// TODO: Same SimpleEci limitation as `rotation_to_eci`.
     pub fn rotation_to_body(&self) -> Rotation<frame::SimpleEci, frame::Body> {
-        self.rotation_to_eci().inverse()
+        self.rotation_from_inertial()
+    }
+
+    /// Typed rotation: inertial frame `F` → body frame.
+    pub fn rotation_from_inertial<F: frame::Eci>(&self) -> Rotation<F, frame::Body> {
+        self.rotation_to_inertial::<F>().inverse()
     }
 
     /// Quaternion kinematic equation: dq/dt = 0.5 * q ⊗ (0, ω).
