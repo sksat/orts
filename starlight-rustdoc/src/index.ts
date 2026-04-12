@@ -51,9 +51,11 @@ export interface StarlightRustdocOptions {
     branch?: string;
   };
   /** Sidebar options. Set `false` to skip auto-generation entirely. */
-  sidebar?: false | {
-    collapsed?: boolean;
-  };
+  sidebar?:
+    | false
+    | {
+        collapsed?: boolean;
+      };
 }
 
 export default function starlightRustdoc(options: StarlightRustdocOptions): StarlightPlugin {

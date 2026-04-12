@@ -653,17 +653,8 @@ function renderVariantSignature(
 // Frontmatter & formatting
 // ---------------------------------------------------------------------------
 
-function frontmatter(
-  title: string,
-  options?: { sidebarOrder?: number },
-): string {
-  const lines = [
-    "---",
-    "editUrl: false",
-    "next: false",
-    "prev: false",
-    `title: "${title}"`,
-  ];
+function frontmatter(title: string, options?: { sidebarOrder?: number }): string {
+  const lines = ["---", "editUrl: false", "next: false", "prev: false", `title: "${title}"`];
   if (options?.sidebarOrder !== undefined) {
     lines.push("sidebar:");
     lines.push(`  order: ${options.sidebarOrder}`);
