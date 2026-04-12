@@ -206,8 +206,11 @@ jobs:
           shared-key: rust-native
           save-if: false
 
-      - name: Test (orts unit + doc + examples)
-        run: cargo test --locked -p orts --lib --doc --examples
+      - name: Test (orts unit + examples)
+        run: cargo test --locked -p orts --lib --examples
+
+      - name: Test (orts doc)
+        run: cargo test --locked -p orts --doc
 
   # orts integration tests (heavy — each test propagates a
   # full simulation). Runs in parallel with the lightweight orts job.
