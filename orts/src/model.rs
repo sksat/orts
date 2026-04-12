@@ -59,20 +59,46 @@ pub trait HasMass {
 
 /// Acceleration (inertial frame) and torque (body frame) pair.
 ///
-/// Each field is in the frame used by its respective equation of motion:
+/// Parameterized by the inertial frame `F` (default `SimpleEci`).
 /// - acceleration: inertial frame [km/s²] (for translational EOM)
 /// - torque: body frame [N·m] (for rotational EOM)
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExternalLoads {
+pub struct ExternalLoads<F: frame::Eci = frame::SimpleEci> {
     /// Translational acceleration in inertial frame [km/s²].
-    pub acceleration_inertial: Vec3<frame::SimpleEci>,
+    pub acceleration_inertial: Vec3<F>,
     /// Torque in body frame [N·m].
     pub torque_body: Vec3<Body>,
     /// Mass rate [kg/s] (negative for depletion, e.g. propellant consumption).
     pub mass_rate: f64,
 }
 
-impl ExternalLoads {
+// Manual impls to avoid F bounds from derive.
+impl<F: frame::Eci> std::fmt::Debug for ExternalLoads<F> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalLoads")
+            .field("acceleration_inertial", &self.acceleration_inertial)
+            .field("torque_body", &self.torque_body)
+            .field("mass_rate", &self.mass_rate)
+            .finish()
+    }
+}
+impl<F: frame::Eci> Clone for ExternalLoads<F> {
+    fn clone(&self) -> Self {
+        Self {
+            acceleration_inertial: Vec3::from_raw(*self.acceleration_inertial.inner()),
+            torque_body: Vec3::from_raw(*self.torque_body.inner()),
+            mass_rate: self.mass_rate,
+        }
+    }
+}
+impl<F: frame::Eci> PartialEq for ExternalLoads<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.acceleration_inertial.inner() == other.acceleration_inertial.inner()
+            && self.torque_body.inner() == other.torque_body.inner()
+            && self.mass_rate == other.mass_rate
+    }
+}
+
+impl<F: frame::Eci> ExternalLoads<F> {
     pub fn zeros() -> Self {
         Self {
             acceleration_inertial: Vec3::zeros(),
@@ -100,7 +126,7 @@ impl ExternalLoads {
     }
 }
 
-impl Add for ExternalLoads {
+impl<F: frame::Eci> Add for ExternalLoads<F> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self {
@@ -112,7 +138,7 @@ impl Add for ExternalLoads {
     }
 }
 
-impl AddAssign for ExternalLoads {
+impl<F: frame::Eci> AddAssign for ExternalLoads<F> {
     fn add_assign(&mut self, rhs: Self) {
         self.acceleration_inertial += rhs.acceleration_inertial;
         self.torque_body += rhs.torque_body;
@@ -161,18 +187,18 @@ impl<S> Model<S> for Box<dyn Model<S>> {
 mod external_loads_tests {
     use super::*;
 
+    fn loads(ax: f64, ay: f64, az: f64, tx: f64, ty: f64, tz: f64, mr: f64) -> ExternalLoads {
+        ExternalLoads {
+            acceleration_inertial: Vec3::<SimpleEci>::new(ax, ay, az),
+            torque_body: Vec3::<Body>::new(tx, ty, tz),
+            mass_rate: mr,
+        }
+    }
+
     #[test]
     fn add_component_wise() {
-        let a = ExternalLoads {
-            acceleration_inertial: Vec3::new(1.0, 2.0, 3.0),
-            torque_body: Vec3::new(0.1, 0.2, 0.3),
-            mass_rate: -0.5,
-        };
-        let b = ExternalLoads {
-            acceleration_inertial: Vec3::new(10.0, 20.0, 30.0),
-            torque_body: Vec3::new(1.0, 2.0, 3.0),
-            mass_rate: -0.3,
-        };
+        let a = loads(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, -0.5);
+        let b = loads(10.0, 20.0, 30.0, 1.0, 2.0, 3.0, -0.3);
         let sum = a + b;
         assert_eq!(
             sum.acceleration_inertial,
@@ -184,16 +210,8 @@ mod external_loads_tests {
 
     #[test]
     fn add_assign_component_wise() {
-        let mut a = ExternalLoads {
-            acceleration_inertial: Vec3::new(1.0, 2.0, 3.0),
-            torque_body: Vec3::new(0.1, 0.2, 0.3),
-            mass_rate: -0.5,
-        };
-        let b = ExternalLoads {
-            acceleration_inertial: Vec3::new(10.0, 20.0, 30.0),
-            torque_body: Vec3::new(1.0, 2.0, 3.0),
-            mass_rate: -0.3,
-        };
+        let mut a = loads(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, -0.5);
+        let b = loads(10.0, 20.0, 30.0, 1.0, 2.0, 3.0, -0.3);
         a += b;
         assert_eq!(
             a.acceleration_inertial,
@@ -205,11 +223,7 @@ mod external_loads_tests {
 
     #[test]
     fn add_zeros_identity() {
-        let w = ExternalLoads {
-            acceleration_inertial: Vec3::new(1.0, 2.0, 3.0),
-            torque_body: Vec3::new(0.1, 0.2, 0.3),
-            mass_rate: -0.1,
-        };
+        let w = loads(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, -0.1);
         let sum = w.clone() + ExternalLoads::zeros();
         assert_eq!(sum, w);
     }
