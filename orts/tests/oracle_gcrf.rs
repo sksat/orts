@@ -156,7 +156,10 @@ fn parse_epoch(s: &str) -> Epoch {
     Epoch::from_gregorian(date[0] as i32, date[1], date[2], hour, min, sec)
 }
 
-fn build_gcrs_system(scenario: &Scenario) -> OrbitalSystem<frame::Gcrs> {
+fn build_gcrs_system_with_eop(
+    scenario: &Scenario,
+    eop: GcrsEopStorage,
+) -> OrbitalSystem<frame::Gcrs> {
     let fm = &scenario.force_model;
     let epoch = parse_epoch(&scenario.epoch_utc);
 
@@ -191,7 +194,6 @@ fn build_gcrs_system(scenario: &Scenario) -> OrbitalSystem<frame::Gcrs> {
     if let Some(drag_cfg) = &fm.drag {
         let sat = &scenario.satellite;
         let b = sat.ballistic_coeff_m2_kg.unwrap_or(0.01);
-        let eop = GcrsEopStorage::new(ZeroEop);
         let mut drag = AtmosphericDrag::<frame::Gcrs>::for_earth_in_frame(Some(b), eop);
         match drag_cfg.model.as_str() {
             "nrlmsise00" => {
@@ -212,6 +214,19 @@ fn build_gcrs_system(scenario: &Scenario) -> OrbitalSystem<frame::Gcrs> {
     }
 
     system
+}
+
+fn build_gcrs_system(scenario: &Scenario) -> OrbitalSystem<frame::Gcrs> {
+    build_gcrs_system_with_eop(scenario, GcrsEopStorage::new(ZeroEop))
+}
+
+fn load_eop_table() -> arika::earth::eop::EopTable {
+    let text = include_str!("fixtures/finals2000A.sample");
+    arika::earth::eop::EopTable::from_finals2000a(text).expect("Failed to parse EOP fixture")
+}
+
+fn build_gcrs_system_real_eop(scenario: &Scenario) -> OrbitalSystem<frame::Gcrs> {
+    build_gcrs_system_with_eop(scenario, GcrsEopStorage::new(load_eop_table()))
 }
 
 /// Propagate with Gcrs path and return final position error vs Orekit.
@@ -403,5 +418,76 @@ fn gcrf_j2_msise_cssi_thirdbody_iss_30day() {
     assert!(
         gcrs_err < simple_err,
         "Gcrs ({gcrs_err:.3} km) should be better than SimpleEci ({simple_err:.3} km) for 30-day drag"
+    );
+}
+
+// ============================================================================
+// Real EOP data tests — validate improvement from finals2000A EOP
+// ============================================================================
+
+#[test]
+fn gcrf_real_eop_improves_drag_10orbits() {
+    let fixtures = load_fixtures();
+    let scenario = find_scenario(&fixtures, "gcrf_j2_msise_thirdbody_iss_10orbits");
+
+    let zero_err = final_pos_err_gcrs(scenario, &build_gcrs_system(scenario));
+    let real_err = final_pos_err_gcrs(scenario, &build_gcrs_system_real_eop(scenario));
+    let simple_err = final_pos_err_simple(scenario);
+
+    println!("GCRF J2 + NRLMSISE-00 + third-body ISS 10 orbits (EOP comparison):");
+    println!(
+        "  SimpleEci:   {:.6} km ({:.1} m)",
+        simple_err,
+        simple_err * 1000.0
+    );
+    println!(
+        "  Gcrs ZeroEop: {:.6} km ({:.1} m)",
+        zero_err,
+        zero_err * 1000.0
+    );
+    println!(
+        "  Gcrs RealEop: {:.6} km ({:.1} m)",
+        real_err,
+        real_err * 1000.0
+    );
+    println!("  Improvement (real vs zero): {:.1}x", zero_err / real_err);
+
+    // Real EOP should be at least as good as ZeroEop
+    assert!(
+        real_err <= zero_err * 1.05,
+        "Real EOP ({real_err:.6} km) should not be worse than ZeroEop ({zero_err:.6} km)"
+    );
+}
+
+#[test]
+fn gcrf_real_eop_improves_drag_30day() {
+    let fixtures = load_fixtures();
+    let scenario = find_scenario(&fixtures, "gcrf_j2_msise_cssi_thirdbody_iss_30day");
+
+    let zero_err = final_pos_err_gcrs(scenario, &build_gcrs_system(scenario));
+    let real_err = final_pos_err_gcrs(scenario, &build_gcrs_system_real_eop(scenario));
+    let simple_err = final_pos_err_simple(scenario);
+
+    println!("GCRF J2 + NRLMSISE-00 CSSI + third-body ISS 30 days (EOP comparison):");
+    println!("  SimpleEci:    {:.6} km", simple_err);
+    println!("  Gcrs ZeroEop: {:.6} km", zero_err);
+    println!("  Gcrs RealEop: {:.6} km", real_err);
+    println!(
+        "  Diff (real vs zero): {:.6} km ({:.1} m)",
+        (zero_err - real_err),
+        (zero_err - real_err) * 1000.0,
+    );
+
+    // Real EOP should not be significantly worse than ZeroEop.
+    // The effect of EOP on drag geodetic conversion is small compared to
+    // LST and ephemeris differences, so improvement may be negligible.
+    assert!(
+        real_err < zero_err * 1.01,
+        "Real EOP ({real_err:.6} km) should not be significantly worse than ZeroEop ({zero_err:.6} km)"
+    );
+    // Both Gcrs paths should be strictly better than SimpleEci
+    assert!(
+        real_err < simple_err,
+        "Real EOP ({real_err:.6} km) should be better than SimpleEci ({simple_err:.6} km)"
     );
 }

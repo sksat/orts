@@ -39,10 +39,10 @@ fn parse_entries_have_monotonic_mjd() {
 #[test]
 fn parse_mjd_matches_expected_epoch() {
     let entries = Finals2000A::parse(SAMPLE).unwrap();
-    // First line of our fixture is 2024-03-15, MJD 60384
+    // First line of our fixture is 2024-03-01, MJD 60370
     assert!(
-        (entries[0].mjd - 60384.0).abs() < 0.01,
-        "first MJD should be ~60384, got {}",
+        (entries[0].mjd - 60370.0).abs() < 0.01,
+        "first MJD should be ~60370, got {}",
         entries[0].mjd
     );
 }
