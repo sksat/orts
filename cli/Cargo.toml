@@ -12,7 +12,7 @@ keywords = ["cli", "orbital-mechanics", "spacecraft", "simulation", "aerospace"]
 categories = ["command-line-utilities", "science"]
 # Include viewer-dist/ so `cargo publish` bundles the embedded SPA assets.
 # about.toml is required by notalawyer-build / cargo-about during build.
-include = ["src/**/*", "build.rs", "tests/**/*", "viewer-dist/**/*", "about.toml", "README.md"]
+include = ["src/**/*", "build.rs", "tests/**/*", "viewer-dist/**/*", "textures/**/*", "about.toml", "README.md"]
 
 [[bin]]
 name = "orts"

@@ -30,8 +30,9 @@ orekit-data/
 # Environment variables (credentials)
 .env
 
-# Embedded viewer assets (copied by cli/build.rs from viewer/dist/)
+# Embedded viewer assets (copied by cli/build.rs from viewer/)
 cli/viewer-dist/
+cli/textures/
 
 # Embedded assets in docs (copied by docs/scripts/embed-viewer.mjs)
 docs/public/viewer/

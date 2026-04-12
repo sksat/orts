@@ -20,6 +20,36 @@ fn main() {
         .ok();
     }
 
+    // Texture handling for include_bytes!
+    //
+    // Problem: textures live in viewer/public/textures/ (source of truth for
+    // the web viewer), but include_bytes! needs a path inside the crate.
+    // cargo publish tarballs only contain files under cli/, so the relative
+    // path ../../../../viewer/... doesn't exist in crates.io installs.
+    //
+    // Solution: build.rs copies the 2K textures into cli/textures/ when
+    // running in the workspace (../viewer/ exists). include_bytes! references
+    // CARGO_MANIFEST_DIR/textures/ which works both in workspace builds
+    // (freshly copied) and crates.io installs (bundled in tarball via
+    // Cargo.toml include). cli/textures/ is gitignored to avoid duplicating
+    // the files in git, but included in Cargo.toml so cargo publish picks
+    // them up (same pattern as cli/viewer-dist/).
+    let textures_src = manifest_dir.join("../viewer/public/textures");
+    let textures_dst = manifest_dir.join("textures");
+    let texture_files = ["earth_2k.jpg", "earth_night_2k.jpg", "moon.jpg", "mars.jpg", "sun.jpg"];
+    if textures_src.is_dir() {
+        std::fs::create_dir_all(&textures_dst)
+            .expect("failed to create cli/textures/");
+        for name in &texture_files {
+            let src = textures_src.join(name);
+            let dst = textures_dst.join(name);
+            std::fs::copy(&src, &dst).unwrap_or_else(|e| {
+                panic!("failed to copy texture {name}: {e}")
+            });
+        }
+    }
+    println!("cargo:rerun-if-changed=../viewer/public/textures/");
+
     // Rerun if viewer/dist/ changes
     println!("cargo:rerun-if-changed=../viewer/dist/");
 

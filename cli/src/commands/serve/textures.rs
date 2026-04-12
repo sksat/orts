@@ -27,26 +27,31 @@ struct EmbeddedTexture {
     data: &'static [u8],
 }
 
+// 2K textures are copied from viewer/public/textures/ into cli/textures/
+// by build.rs at workspace build time. On crates.io installs, cli/textures/
+// is already bundled in the tarball. CARGO_MANIFEST_DIR-based paths avoid
+// fragile relative path counting and work in both contexts.
+// See cli/build.rs for the full rationale.
 const EMBEDDED: &[EmbeddedTexture] = &[
     EmbeddedTexture {
         filename: "earth_2k.jpg",
-        data: include_bytes!("../../../../viewer/public/textures/earth_2k.jpg"),
+        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/textures/earth_2k.jpg")),
     },
     EmbeddedTexture {
         filename: "earth_night_2k.jpg",
-        data: include_bytes!("../../../../viewer/public/textures/earth_night_2k.jpg"),
+        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/textures/earth_night_2k.jpg")),
     },
     EmbeddedTexture {
         filename: "moon.jpg",
-        data: include_bytes!("../../../../viewer/public/textures/moon.jpg"),
+        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/textures/moon.jpg")),
     },
     EmbeddedTexture {
         filename: "mars.jpg",
-        data: include_bytes!("../../../../viewer/public/textures/mars.jpg"),
+        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/textures/mars.jpg")),
     },
     EmbeddedTexture {
         filename: "sun.jpg",
-        data: include_bytes!("../../../../viewer/public/textures/sun.jpg"),
+        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/textures/sun.jpg")),
     },
 ];
 
