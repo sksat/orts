@@ -36,16 +36,20 @@ fn main() {
     // them up (same pattern as cli/viewer-dist/).
     let textures_src = manifest_dir.join("../viewer/public/textures");
     let textures_dst = manifest_dir.join("textures");
-    let texture_files = ["earth_2k.jpg", "earth_night_2k.jpg", "moon.jpg", "mars.jpg", "sun.jpg"];
+    let texture_files = [
+        "earth_2k.jpg",
+        "earth_night_2k.jpg",
+        "moon.jpg",
+        "mars.jpg",
+        "sun.jpg",
+    ];
     if textures_src.is_dir() {
-        std::fs::create_dir_all(&textures_dst)
-            .expect("failed to create cli/textures/");
+        std::fs::create_dir_all(&textures_dst).expect("failed to create cli/textures/");
         for name in &texture_files {
             let src = textures_src.join(name);
             let dst = textures_dst.join(name);
-            std::fs::copy(&src, &dst).unwrap_or_else(|e| {
-                panic!("failed to copy texture {name}: {e}")
-            });
+            std::fs::copy(&src, &dst)
+                .unwrap_or_else(|e| panic!("failed to copy texture {name}: {e}"));
         }
     }
     println!("cargo:rerun-if-changed=../viewer/public/textures/");
