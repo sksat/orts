@@ -1,7 +1,7 @@
 import { createRoot } from "react-dom/client";
 import "./styles/tokens.css";
 import "./styles/base.css";
-import "uneri/style.css";
+import "@sksat/uneri/style.css";
 import { App } from "./App.js";
 
 // React 19 dev mode accumulates performance.measure entries via logComponentRender,

@@ -1,4 +1,4 @@
-import type { TimeRange } from "uneri";
+import type { TimeRange } from "@sksat/uneri";
 
 /**
  * Read the `timeRange` query parameter from the current URL.

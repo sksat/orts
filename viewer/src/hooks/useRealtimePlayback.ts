@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { TimeRange } from "uneri";
+import type { TimeRange } from "@sksat/uneri";
 import type { OrbitPoint } from "../orbit.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
 

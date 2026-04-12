@@ -20,6 +20,9 @@ importers:
       '@astrojs/starlight':
         specifier: ^0.38.1
         version: 0.38.1(astro@6.0.6(@types/node@25.2.3)(lightningcss@1.32.0)(rollup@4.57.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2))
+      '@sksat/uneri':
+        specifier: workspace:*
+        version: link:../uneri
       astro:
         specifier: ^6.0.5
         version: 6.0.6(@types/node@25.2.3)(lightningcss@1.32.0)(rollup@4.57.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.2)
@@ -41,9 +44,6 @@ importers:
       typedoc-plugin-markdown:
         specifier: ^4.10.0
         version: 4.10.0(typedoc@0.28.17(typescript@5.9.3))
-      uneri:
-        specifier: workspace:*
-        version: link:../uneri
     devDependencies:
       vitest:
         specifier: ^4.1.4
@@ -168,6 +168,9 @@ importers:
       '@react-three/fiber':
         specifier: ^9.5.0
         version: 9.5.0(@types/react@19.2.13)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(three@0.183.2)
+      '@sksat/uneri':
+        specifier: workspace:*
+        version: link:../uneri
       react:
         specifier: ^19.2.4
         version: 19.2.4
@@ -177,9 +180,6 @@ importers:
       three:
         specifier: ^0.183.0
         version: 0.183.2
-      uneri:
-        specifier: workspace:*
-        version: link:../uneri
       uplot:
         specifier: ^1.6.32
         version: 1.6.32

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChartDataWorkerClient, IngestBuffer as IngestBufferType } from "uneri";
+import type { ChartDataWorkerClient, IngestBuffer as IngestBufferType } from "@sksat/uneri";
 import {
   type ChartBuffer,
   type ChartDataMap,
@@ -8,8 +8,8 @@ import {
   sliceArrays,
   type TimeRange,
   useTimeSeriesStoreWorker,
-} from "uneri";
-import type { MultiChartDataResult, MultiChartDataWorkerClient } from "uneri/multiWorkerClient";
+} from "@sksat/uneri";
+import type { MultiChartDataResult, MultiChartDataWorkerClient } from "@sksat/uneri/multiWorkerClient";
 import { METRIC_NAMES } from "../chartMetrics.js";
 import { createOrbitSchema } from "../db/orbitSchema.js";
 import type { OrbitPoint } from "../orbit.js";

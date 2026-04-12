@@ -5,7 +5,7 @@ import { initArika } from "./wasm/arikaInit.js";
 // Start loading arika WASM module immediately.
 const arikaReady = initArika();
 
-import type { TimeRange } from "uneri";
+import type { TimeRange } from "@sksat/uneri";
 import styles from "./App.module.css";
 import { FrameSelector } from "./components/FrameSelector.js";
 import { GraphPanel } from "./components/GraphPanel.js";

@@ -14,7 +14,7 @@ import {
   type TableSchema,
   type TimePoint,
   type TimeRange,
-} from "uneri";
+} from "@sksat/uneri";
 import {
   buildMultiChartData,
   type MultiChartDataMap,

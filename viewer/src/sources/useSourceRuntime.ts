@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { ChartBuffer, IngestBuffer } from "uneri";
+import { ChartBuffer, IngestBuffer } from "@sksat/uneri";
 import type { OrbitPoint } from "../orbit.js";
 import { TrailBuffer } from "../utils/TrailBuffer.js";
 import {

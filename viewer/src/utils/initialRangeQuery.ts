@@ -1,4 +1,4 @@
-import type { TimeRange } from "uneri";
+import type { TimeRange } from "@sksat/uneri";
 import type { SimInfo } from "../hooks/useWebSocket.js";
 
 /**

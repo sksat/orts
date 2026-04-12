@@ -6,9 +6,9 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import type { IngestBuffer, TableSchema, TimePoint, TimeRange } from "uneri";
-import type { MultiChartDataResult, MultiChartDataWorkerClient } from "uneri/multiWorkerClient";
-import type { WorkerSatelliteConfig, WorkerTableSchema } from "uneri/workerProtocol";
+import type { IngestBuffer, TableSchema, TimePoint, TimeRange } from "@sksat/uneri";
+import type { MultiChartDataResult, MultiChartDataWorkerClient } from "@sksat/uneri/multiWorkerClient";
+import type { WorkerSatelliteConfig, WorkerTableSchema } from "@sksat/uneri/workerProtocol";
 import type { MultiChartDataMap, SatelliteConfig } from "./buildMultiChartData.js";
 
 export interface UseMultiSatelliteStoreWorkerOptions<T extends TimePoint> {
@@ -121,7 +121,7 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
     (async () => {
       let ClientClass: typeof MultiChartDataWorkerClient;
       try {
-        ({ MultiChartDataWorkerClient: ClientClass } = await import("uneri/multiWorkerClient"));
+        ({ MultiChartDataWorkerClient: ClientClass } = await import("@sksat/uneri/multiWorkerClient"));
       } catch (e) {
         console.error("useMultiSatelliteStoreWorker: failed to load Worker module:", e);
         return;

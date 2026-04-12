@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from "react";
-import { type ChartDataMap, type TimeRange, TimeSeriesChart } from "uneri";
+import { type ChartDataMap, type TimeRange, TimeSeriesChart } from "@sksat/uneri";
 import type { MultiChartDataMap } from "../hooks/buildMultiChartData.js";
 import styles from "./GraphPanel.module.css";
 

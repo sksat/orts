@@ -21,7 +21,7 @@
     "starlight-typedoc": "^0.21.5",
     "typedoc": "^0.28.17",
     "typedoc-plugin-markdown": "^4.10.0",
-    "uneri": "workspace:*"
+    "@sksat/uneri": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^4.1.4"

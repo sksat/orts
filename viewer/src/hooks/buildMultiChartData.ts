@@ -1,4 +1,4 @@
-import { alignTimeSeries, type NamedTimeSeries } from "uneri/align";
+import { alignTimeSeries, type NamedTimeSeries } from "@sksat/uneri/align";
 
 /** Generic chart data: keyed by column name. Compatible with uneri ChartDataMap. */
 interface ChartDataMap {
