@@ -50,8 +50,8 @@ export interface StarlightRustdocOptions {
     repository: string;
     branch?: string;
   };
-  /** Sidebar options */
-  sidebar?: {
+  /** Sidebar options. Set `false` to skip auto-generation entirely. */
+  sidebar?: false | {
     collapsed?: boolean;
   };
 }
@@ -142,18 +142,22 @@ export default function starlightRustdoc(options: StarlightRustdocOptions): Star
               : undefined,
           });
 
-          sidebarItems.push(
-            buildCrateSidebar(crateName, pages, {
-              collapsed: options.sidebar?.collapsed,
-            }),
-          );
+          if (options.sidebar !== false) {
+            sidebarItems.push(
+              buildCrateSidebar(crateName, pages, {
+                collapsed: options.sidebar?.collapsed,
+              }),
+            );
+          }
         }
 
-        // Update Starlight sidebar
-        const existingSidebar = (config.sidebar ?? []) as unknown[];
-        updateConfig({
-          sidebar: [...existingSidebar, ...sidebarItems],
-        });
+        // Update Starlight sidebar (skip when sidebar: false)
+        if (options.sidebar !== false) {
+          const existingSidebar = (config.sidebar ?? []) as unknown[];
+          updateConfig({
+            sidebar: [...existingSidebar, ...sidebarItems],
+          });
+        }
 
         logger.info("Rustdoc generation complete.");
       },

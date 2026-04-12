@@ -85,9 +85,10 @@ export default defineConfig({
           output: "en/uneri/api",
         }),
         starlightRustdoc({
-          crates: ["utsuroi", "arika", "tobari", "orts"],
+          crates: ["orts", "arika", "utsuroi", "tobari"],
           workspace: "..",
           locale: "en",
+          sidebar: false,
           sourceLinks: {
             repository: "https://github.com/sksat/orts",
           },
@@ -101,16 +102,9 @@ export default defineConfig({
           items: [
             { label: "Overview", slug: "orts/api/overview" },
             {
-              label: "API Reference",
+              label: "API",
               collapsed: true,
-              items: [
-                { label: "Traits", autogenerate: { directory: "orts/api/traits" } },
-                { label: "Structs", autogenerate: { directory: "orts/api/structs" } },
-                { label: "Enums", autogenerate: { directory: "orts/api/enums" } },
-                { label: "Functions", autogenerate: { directory: "orts/api/functions" } },
-                { label: "Constants", autogenerate: { directory: "orts/api/constants" } },
-                { label: "Type Aliases", autogenerate: { directory: "orts/api/type-aliases" } },
-              ],
+              autogenerate: { directory: "orts/api" },
             },
           ],
         },
@@ -120,16 +114,9 @@ export default defineConfig({
           items: [
             { label: "Overview", slug: "arika/api/overview" },
             {
-              label: "API Reference",
+              label: "API",
               collapsed: true,
-              items: [
-                { label: "Traits", autogenerate: { directory: "arika/api/traits" } },
-                { label: "Structs", autogenerate: { directory: "arika/api/structs" } },
-                { label: "Enums", autogenerate: { directory: "arika/api/enums" } },
-                { label: "Functions", autogenerate: { directory: "arika/api/functions" } },
-                { label: "Constants", autogenerate: { directory: "arika/api/constants" } },
-                { label: "Type Aliases", autogenerate: { directory: "arika/api/type-aliases" } },
-              ],
+              autogenerate: { directory: "arika/api" },
             },
           ],
         },
@@ -139,13 +126,9 @@ export default defineConfig({
           items: [
             { label: "Overview", slug: "utsuroi/api/overview" },
             {
-              label: "API Reference",
+              label: "API",
               collapsed: true,
-              items: [
-                { label: "Traits", autogenerate: { directory: "utsuroi/api/traits" } },
-                { label: "Structs", autogenerate: { directory: "utsuroi/api/structs" } },
-                { label: "Enums", autogenerate: { directory: "utsuroi/api/enums" } },
-              ],
+              autogenerate: { directory: "utsuroi/api" },
             },
           ],
         },
@@ -156,15 +139,9 @@ export default defineConfig({
             { label: "Overview", slug: "tobari/api/overview" },
             { label: "Examples", autogenerate: { directory: "tobari/examples" } },
             {
-              label: "API Reference",
+              label: "API",
               collapsed: true,
-              items: [
-                { label: "Traits", autogenerate: { directory: "tobari/api/traits" } },
-                { label: "Structs", autogenerate: { directory: "tobari/api/structs" } },
-                { label: "Enums", autogenerate: { directory: "tobari/api/enums" } },
-                { label: "Functions", autogenerate: { directory: "tobari/api/functions" } },
-                { label: "Constants", autogenerate: { directory: "tobari/api/constants" } },
-              ],
+              autogenerate: { directory: "tobari/api" },
             },
           ],
         },
