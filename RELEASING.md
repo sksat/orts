@@ -182,6 +182,11 @@ cargo publish -p orts-cli
 **注意**: publish 済み crate は取り消せない。途中で失敗した場合、
 修正版を bump して再 publish する。
 
+**Rate limit**: crates.io は新規 crate publish にレート制限がある
+(10 分間に 5 crate 程度)。Tier 1 で 4 crate publish すると Tier 2-3
+で 429 が返る場合がある。エラーメッセージの `try again after` の時刻
+まで待ってから retry する。
+
 ### Pre-publish dry-run
 
 real publish 前に dry-run で metadata validity を確認:
