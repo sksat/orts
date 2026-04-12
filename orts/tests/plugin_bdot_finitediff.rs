@@ -90,12 +90,9 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotFiniteDiff<F> {
         let Some(epoch) = obs.epoch else {
             return Ok(Some(Command::magnetic_moment(Vec3::zeros())));
         };
-        let b_eci = orts::magnetic::field_eci(
-            &self.field,
-            &obs.spacecraft.orbit.position_eci(),
-            epoch,
-        )
-        .into_inner();
+        let b_eci =
+            orts::magnetic::field_eci(&self.field, &obs.spacecraft.orbit.position_eci(), epoch)
+                .into_inner();
         if b_eci.magnitude() < 1e-30 {
             return Ok(Some(Command::magnetic_moment(Vec3::zeros())));
         }
