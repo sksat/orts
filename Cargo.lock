@@ -173,7 +173,7 @@ checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
 name = "arika"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "nalgebra",
  "serde",
@@ -2918,7 +2918,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "orts"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "arika",
  "criterion",
@@ -2940,7 +2940,7 @@ dependencies = [
 
 [[package]]
 name = "orts-cli"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "arika",
  "axum",
@@ -2970,7 +2970,7 @@ dependencies = [
 
 [[package]]
 name = "orts-plugin-sdk"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 
 [[package]]
 name = "parking"
@@ -4417,7 +4417,7 @@ dependencies = [
 
 [[package]]
 name = "rrd-wasm"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "getrandom 0.3.4",
  "re_chunk",
@@ -5154,7 +5154,7 @@ dependencies = [
 
 [[package]]
 name = "tobari"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "arika",
  "nalgebra",
@@ -5592,7 +5592,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "utsuroi"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "nalgebra",
  "proptest",
