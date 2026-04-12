@@ -118,19 +118,19 @@ try {
 /** @type {Array<{slug: string, readme: string, title: string, description: string}>} */
 const examplePages = [
   {
-    slug: "orts/examples/apollo11",
+    slug: "examples/apollo11",
     readme: "orts/examples/apollo11/README.md",
     title: "Apollo 11 Trajectory",
     description: "Apollo 11 全行程の軌道シミュレーションと 3D 可視化",
   },
   {
-    slug: "orts/examples/artemis1",
+    slug: "examples/artemis1",
     readme: "orts/examples/artemis1/README.md",
     title: "Artemis 1 Coast Feasibility",
     description: "Artemis 1 coast phase を JPL Horizons と照合する feasibility spike",
   },
   {
-    slug: "orts/examples/orbital-lifetime",
+    slug: "examples/orbital-lifetime",
     readme: "orts/examples/orbital_lifetime/README.md",
     title: "Orbital Lifetime Analysis",
     description: "6U CubeSat の軌道減衰を再現し、大気モデルと太陽活動の影響を比較",

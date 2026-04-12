@@ -96,12 +96,12 @@ export default defineConfig({
       ],
       sidebar: [
         { label: "Getting Started", slug: "getting-started" },
+        { label: "Examples", autogenerate: { directory: "examples" } },
         {
           label: "orts",
           collapsed: true,
           items: [
             { label: "Overview", slug: "orts/overview" },
-            { label: "Examples", autogenerate: { directory: "orts/examples" } },
             {
               label: "API",
               collapsed: true,
