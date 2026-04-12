@@ -881,17 +881,24 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
-          # Extract the section between ## [VERSION] and the next ## [
-          # Falls back to ## [Unreleased] if the version heading isn't found.
-          BODY=$(awk -v ver="$VERSION" '
-            BEGIN { found=0 }
-            /^## \[/ {
-              if (found) exit
-              if ($0 ~ "\\[" ver "\\]" || $0 ~ "\\[Unreleased\\]") found=1
-              next
-            }
-            found { print }
-          ' CHANGELOG.md)
+          # Extract the section between ## [VERSION] and the next ## [.
+          # Two-pass: first try the exact version heading, then fall back
+          # to [Unreleased] if no version-specific section exists.
+          extract_section() {
+            awk -v heading="$1" '
+              BEGIN { found=0 }
+              /^## \[/ {
+                if (found) exit
+                if ($0 ~ "\\[" heading "\\]") found=1
+                next
+              }
+              found { print }
+            ' CHANGELOG.md
+          }
+          BODY=$(extract_section "$VERSION")
+          if [ -z "$BODY" ]; then
+            BODY=$(extract_section "Unreleased")
+          fi
           # Write to file to preserve newlines
           echo "$BODY" > /tmp/changelog-body.txt
           echo "Extracted $(wc -l < /tmp/changelog-body.txt) lines from CHANGELOG.md"
