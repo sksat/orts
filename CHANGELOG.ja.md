@@ -6,7 +6,7 @@
 orts は マルチパッケージ workspace (crates.io Rust crate + npm package)。
 全パッケージを同一バージョンでリリースし、セクションはパッケージ別に分割。
 
-## [Unreleased]
+## [0.1.0]
 
 ### `orts` (Rust, crates.io)
 
@@ -217,4 +217,4 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   Starlight `config:setup` hook plugin として呼び出されるため、
   任意の Astro / Starlight サイトで Rust crate のドキュメントに採用可能。
 
-[Unreleased]: https://github.com/sksat/orts/commits/main
+[0.1.0]: https://github.com/sksat/orts/releases/tag/v0.1.0

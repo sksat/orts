@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0-beta.2"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.91.0"
 license = "MIT"
@@ -22,10 +22,10 @@ authors = ["sksat <sksat@sksat.net>"]
 [workspace.dependencies]
 # Internal workspace crates: path for local resolution + version for crates.io
 # publish. The version is kept in sync with [workspace.package] version above.
-utsuroi = { path = "utsuroi", version = "=0.1.0-beta.2" }
-arika = { path = "arika", version = "=0.1.0-beta.2" }
-orts = { path = "orts", version = "=0.1.0-beta.2" }
-tobari = { path = "tobari", version = "=0.1.0-beta.2" }
+utsuroi = { path = "utsuroi", version = "=0.1.0" }
+arika = { path = "arika", version = "=0.1.0" }
+orts = { path = "orts", version = "=0.1.0" }
+tobari = { path = "tobari", version = "=0.1.0" }
 nalgebra = "0.34"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "fs", "io-util"] }

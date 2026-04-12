@@ -9,7 +9,7 @@ orts is a multi-package workspace (Rust crates on crates.io and npm packages
 on npm). Releases are tagged together on the same version, and each version
 section is subdivided by package.
 
-## [Unreleased]
+## [0.1.0]
 
 ### `orts` (Rust, crates.io)
 
@@ -238,4 +238,4 @@ section is subdivided by package.
   Invoked as a Starlight `config:setup` hook plugin, so any Astro /
   Starlight site can adopt it to document Rust crates.
 
-[Unreleased]: https://github.com/sksat/orts/commits/main
+[0.1.0]: https://github.com/sksat/orts/releases/tag/v0.1.0
