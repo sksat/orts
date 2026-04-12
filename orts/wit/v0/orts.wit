@@ -25,7 +25,7 @@
 //
 // ## 命名規則
 //
-// - 座標系: `eci` (Earth-centred inertial), `ecef`, `body`
+// - 座標系: `eci` (Earth-centred inertial, SimpleEci or Gcrs), `ecef`, `body`
 // - 単位は doc comment に記載。フィールド名接尾辞は `-km`, `-kms`,
 //   `-kgm3` 等のリーフスカラーのみ。`-t` (Tesla) は "time" と衝突
 //   するため避ける。
@@ -86,15 +86,13 @@ interface types {
         mass: f64,
     }
 
-    /// 天文暦元。Julian Date (JD) として直接シリアライズ。
-    /// `arika::epoch::Epoch { jd }` と bit-for-bit 対応。
+    /// 天文暦元 (UTC)。Julian Date (JD) として直接シリアライズ。
+    /// `arika::epoch::Epoch<Utc>` の JD 値と bit-for-bit 対応。
     ///
-    /// **タイムスケール注意**: Phase P1 の `arika::Epoch` は
-    /// UTC / TAI / TT を厳密に区別しない。`J2000_JD` 定数は
-    /// TT J2000 (`2451545.0`) だが、`from_gregorian(...)` は
-    /// うるう秒なしで UTC をそのタイムラインに載せる。
-    /// "J2000 からの秒数" が必要なゲストは
-    /// `(julian-date - 2451545.0) * 86400.0` を自分で計算すること。
+    /// タイムスケールは **UTC** 固定。ゲストが TDB (天体暦表用) や
+    /// TT (歳差・章動用) を必要とする場合は、ホスト側の scale 変換を
+    /// 経由するか、`(jd - 2451545.0) * 86400` で UTC 秒を得てから
+    /// ゲスト内で近似変換すること。
     record epoch {
         julian-date: f64,
     }
