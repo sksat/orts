@@ -755,6 +755,44 @@ jobs:
           path: viewer/test-results/
           retention-days: 7
 
+  # Verify that npm packages can be published. Runs after build jobs
+  # so dist/ artifacts are available. Catches metadata issues, missing
+  # files, and registry misconfigurations before release.
+  npm-publish-dry-run:
+    runs-on: ubuntu-latest
+    needs: [uneri, starlight-rustdoc]
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4.4.0
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.3.0
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download uneri dist
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: uneri-dist
+          path: ./uneri/dist
+
+      - name: Build starlight-rustdoc
+        run: pnpm --filter starlight-rustdoc build
+
+      - name: Publish dry-run (uneri)
+        run: pnpm --filter uneri publish --dry-run --no-git-checks --registry https://registry.npmjs.org/
+
+      - name: Publish dry-run (starlight-rustdoc)
+        run: pnpm --filter starlight-rustdoc publish --dry-run --no-git-checks --registry https://registry.npmjs.org/
+
   # ── Release (tag push only) ──────────────────────────────────
   # Package the release binary and create a draft GitHub Release.
   # Downloads the artifact from rust-dist — the released binary is the
@@ -762,7 +800,7 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: [rust-dist]
+    needs: [rust-dist, npm-publish-dry-run]
     env:
       TARGET: x86_64-unknown-linux-gnu
     steps:
