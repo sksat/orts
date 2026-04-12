@@ -74,8 +74,9 @@ section is subdivided by package.
   fiber-multiplexed (`async`) runtime, selectable at runtime for
   constellation-scale scenarios.
 - `[package.metadata.binstall]` installed so
-  `cargo binstall orts-cli` fetches the prebuilt GitHub Release tarball for
-  `x86_64-unknown-linux-gnu` directly, no compilation required.
+  `cargo binstall orts-cli` fetches the prebuilt GitHub Release tarball
+  directly, no compilation required. Both `x86_64-unknown-linux-gnu` and
+  `x86_64-unknown-linux-musl` (fully static) targets available.
 - Single-binary distributable: ships the simulator, WebSocket server, and
   viewer SPA together.
 
@@ -231,6 +232,8 @@ section is subdivided by package.
   unstable-options --output-format json`).
 - Configurable source-link integration (embeds `repository` + branch into
   generated pages) and skippable generation for preview builds.
+- `sidebar: false` option to disable auto-appending sidebar entries, allowing
+  full manual control over sidebar structure.
 - Generic and reusable — not orts-specific despite living in this repo.
   Invoked as a Starlight `config:setup` hook plugin, so any Astro /
   Starlight site can adopt it to document Rust crates.
