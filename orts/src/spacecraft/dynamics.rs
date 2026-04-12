@@ -205,7 +205,7 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
         }
 
         // Total translational acceleration
-        let total_accel = (grav_accel + total.acceleration_inertial).into_inner();
+        let total_accel = grav_accel + total.acceleration_inertial.into_inner();
 
         // Quaternion kinematics: dq/dt = ½ q ⊗ (0, ω)
         let q_dot = state.plant.attitude.q_dot();

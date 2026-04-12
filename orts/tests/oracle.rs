@@ -436,6 +436,7 @@ fn drag_monotonic_sma_decay() {
         omega_body: orts::perturbations::OMEGA_EARTH,
         ballistic_coeff: 0.005, // physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
         atmosphere: Box::new(tobari::exponential::Exponential),
+        eop: (),
     });
 
     let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
@@ -513,6 +514,7 @@ fn drag_scaling_with_ballistic_coefficient() {
             omega_body: orts::perturbations::OMEGA_EARTH,
             ballistic_coeff: b,
             atmosphere: Box::new(tobari::exponential::Exponential),
+            eop: (),
         });
 
         let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
@@ -1596,6 +1598,7 @@ fn drag_decay_200_orbits() {
         omega_body: orts::perturbations::OMEGA_EARTH,
         ballistic_coeff: orts::perturbations::DEFAULT_BALLISTIC_COEFF,
         atmosphere: Box::new(tobari::exponential::Exponential),
+        eop: (),
     });
 
     let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);
@@ -1808,6 +1811,7 @@ fn iss_drag_30day_survival() {
         omega_body: orts::perturbations::OMEGA_EARTH,
         ballistic_coeff: 0.005, // Physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
         atmosphere: Box::new(tobari::exponential::Exponential),
+        eop: (),
     });
 
     let initial = OrbitalState::new(vector![a, 0.0, 0.0], vector![0.0, v, 0.0]);

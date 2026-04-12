@@ -94,8 +94,8 @@ impl<R: AttitudeReference> TrackingPdController<R> {
     }
 }
 
-impl<S: HasAttitude + HasOrbit, R: AttitudeReference + 'static> Model<S>
-    for TrackingPdController<R>
+impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci>, R: AttitudeReference + 'static>
+    Model<S> for TrackingPdController<R>
 {
     fn name(&self) -> &str {
         "pd_tracking"

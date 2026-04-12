@@ -49,7 +49,7 @@ impl SpacecraftState {
 impl HasOrbit for SpacecraftState {
     type Frame = arika::frame::SimpleEci;
 
-    fn orbit(&self) -> &OrbitalState {
+    fn orbit(&self) -> &OrbitalState<arika::frame::SimpleEci> {
         &self.orbit
     }
 }
@@ -72,7 +72,7 @@ use crate::effector::AugmentedState;
 impl HasOrbit for AugmentedState<SpacecraftState> {
     type Frame = arika::frame::SimpleEci;
 
-    fn orbit(&self) -> &OrbitalState {
+    fn orbit(&self) -> &OrbitalState<arika::frame::SimpleEci> {
         &self.plant.orbit
     }
 }

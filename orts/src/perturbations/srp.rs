@@ -2,10 +2,11 @@ use arika::epoch::Epoch;
 use arika::sun;
 use nalgebra::Vector3;
 
-use crate::OrbitalState;
+use arika::earth::R as R_EARTH;
+use arika::frame::Eci;
+
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
-use arika::earth::R as R_EARTH;
 
 /// Solar radiation pressure at 1 AU (N/m²).
 /// P/c = 1361 W/m² / 299792458 m/s ≈ 4.5396e-6 N/m²
@@ -104,21 +105,29 @@ pub(crate) fn shadow_function(
 }
 
 impl SolarRadiationPressure {
-    /// Compute SRP acceleration [km/s²] from orbital state.
-    pub(crate) fn acceleration(&self, state: &OrbitalState, epoch: Option<&Epoch>) -> Vector3<f64> {
+    /// Compute SRP acceleration [km/s²].
+    ///
+    /// Sun position comes from Meeus ephemeris (`Vec3<Gcrs>`).
+    /// The tidal geometry is pure raw vector arithmetic — frame-independent
+    /// at Meeus precision.
+    pub(crate) fn acceleration(
+        &self,
+        sat_position: &Vector3<f64>,
+        epoch: Option<&Epoch>,
+    ) -> Vector3<f64> {
         let epoch = match epoch {
             Some(e) => e,
             None => return Vector3::zeros(),
         };
 
         let sun_pos = sun::sun_position_eci(epoch).into_inner();
-        let sat_to_sun = sun_pos - *state.position();
+        let sat_to_sun = sun_pos - sat_position;
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
 
         // Shadow check
         if let Some(body_r) = self.shadow_body_radius {
-            let illumination = shadow_function(state.position(), &sun_pos, body_r);
+            let illumination = shadow_function(sat_position, &sun_pos, body_r);
             if illumination < 0.5 {
                 return Vector3::zeros();
             }
@@ -140,19 +149,20 @@ impl SolarRadiationPressure {
     }
 }
 
-impl<S: HasOrbit> Model<S> for SolarRadiationPressure {
+impl<F: Eci, S: HasOrbit<Frame = F>> Model<S, F> for SolarRadiationPressure {
     fn name(&self) -> &str {
         "srp"
     }
 
-    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
-        ExternalLoads::acceleration(self.acceleration(state.orbit(), epoch))
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
+        ExternalLoads::acceleration(self.acceleration(state.orbit().position(), epoch))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OrbitalState;
     use arika::earth::MU as MU_EARTH;
     use nalgebra::vector;
 
@@ -177,7 +187,7 @@ mod tests {
         };
         let state = iss_state();
         let epoch = test_epoch();
-        let a = srp.acceleration(&state, Some(&epoch));
+        let a = srp.acceleration(state.position(), Some(&epoch));
 
         // Sun direction at equinox is roughly +X, so acceleration should be roughly -X
         let sun_dir = sun::sun_direction_eci(&epoch).into_inner();
@@ -199,7 +209,7 @@ mod tests {
         };
         let state = iss_state();
         let epoch = test_epoch();
-        let a = srp.acceleration(&state, Some(&epoch));
+        let a = srp.acceleration(state.position(), Some(&epoch));
         let expected = SOLAR_RADIATION_PRESSURE / 1000.0; // ≈ 4.54e-9 km/s²
 
         // Distance is approximately 1 AU (satellite offset is negligible)
@@ -227,8 +237,12 @@ mod tests {
             shadow_body_radius: None,
         };
 
-        let a1 = srp1.acceleration(&state, Some(&epoch)).magnitude();
-        let a2 = srp2.acceleration(&state, Some(&epoch)).magnitude();
+        let a1 = srp1
+            .acceleration(state.position(), Some(&epoch))
+            .magnitude();
+        let a2 = srp2
+            .acceleration(state.position(), Some(&epoch))
+            .magnitude();
         let ratio = a2 / a1;
 
         assert!(
@@ -253,8 +267,12 @@ mod tests {
             shadow_body_radius: None,
         };
 
-        let a1 = srp1.acceleration(&state, Some(&epoch)).magnitude();
-        let a2 = srp2.acceleration(&state, Some(&epoch)).magnitude();
+        let a1 = srp1
+            .acceleration(state.position(), Some(&epoch))
+            .magnitude();
+        let a2 = srp2
+            .acceleration(state.position(), Some(&epoch))
+            .magnitude();
         let ratio = a2 / a1;
 
         assert!(
@@ -267,7 +285,7 @@ mod tests {
     fn srp_no_epoch_returns_zero() {
         let srp = SolarRadiationPressure::for_earth(None);
         let state = iss_state();
-        let a = srp.acceleration(&state, None);
+        let a = srp.acceleration(state.position(), None);
         assert_eq!(a, Vector3::zeros());
     }
 
@@ -282,7 +300,7 @@ mod tests {
         };
         let epoch = test_epoch();
         let state = iss_state();
-        let a_mag = srp.acceleration(&state, Some(&epoch)).magnitude();
+        let a_mag = srp.acceleration(state.position(), Some(&epoch)).magnitude();
 
         assert!(
             a_mag > 1e-11 && a_mag < 1e-8,
@@ -350,7 +368,7 @@ mod tests {
             vector![-(R_EARTH + 400.0), 0.0, 0.0],
             vector![0.0, -7.67, 0.0],
         );
-        let a = srp.acceleration(&state, Some(&epoch));
+        let a = srp.acceleration(state.position(), Some(&epoch));
         assert_eq!(a, Vector3::zeros(), "SRP should be zero in shadow");
     }
 

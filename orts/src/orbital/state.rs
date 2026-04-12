@@ -139,10 +139,10 @@ mod tests {
     }
 }
 
-impl HasOrbit for OrbitalState<SimpleEci> {
-    type Frame = SimpleEci;
+impl<F: Eci> HasOrbit for OrbitalState<F> {
+    type Frame = F;
 
-    fn orbit(&self) -> &OrbitalState {
+    fn orbit(&self) -> &OrbitalState<F> {
         self
     }
 }

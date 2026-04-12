@@ -145,7 +145,7 @@ impl PanelSrp {
     }
 }
 
-impl<S: HasAttitude + HasOrbit + HasMass> Model<S> for PanelSrp {
+impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci> + HasMass> Model<S> for PanelSrp {
     fn name(&self) -> &str {
         "panel_srp"
     }
@@ -277,7 +277,7 @@ mod tests {
         };
 
         let panel_loads = panel_srp.eval(0.0, &state, Some(&epoch));
-        let scalar_a = scalar_srp.acceleration(&state.orbit, Some(&epoch));
+        let scalar_a = scalar_srp.acceleration(state.orbit.position(), Some(&epoch));
 
         let rel_err = (panel_loads.acceleration_inertial.into_inner() - scalar_a).magnitude()
             / scalar_a.magnitude();

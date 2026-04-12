@@ -1,19 +1,20 @@
-use arika::frame::{self, Vec3};
 use nalgebra::Vector3;
 
 /// A gravitational field model that computes acceleration from position.
 ///
-/// Implementations range from simple point-mass gravity to full spherical
-/// harmonics (geoid) models.
+/// Returns raw `Vector3<f64>` because gravitational acceleration is
+/// frame-independent (the formula `-mu/|r|^3 * r` gives the same raw
+/// vector regardless of the inertial frame). The dynamical system wraps
+/// the result in the appropriate `Vec3<F>`.
 pub trait GravityField: Send + Sync {
     /// Compute gravitational acceleration [km/s²] at the given position.
-    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::SimpleEci>;
+    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vector3<f64>;
 }
 
 // Blanket impl so Box<dyn GravityField> can be used as G in SpacecraftDynamics<G>.
 // This is a builder convenience; performance-critical paths should use concrete types.
 impl GravityField for Box<dyn GravityField> {
-    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::SimpleEci> {
+    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vector3<f64> {
         (**self).acceleration(mu, position)
     }
 }
@@ -22,9 +23,9 @@ impl GravityField for Box<dyn GravityField> {
 pub struct PointMass;
 
 impl GravityField for PointMass {
-    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::SimpleEci> {
+    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vector3<f64> {
         let r_mag = position.magnitude();
-        Vec3::from_raw(-mu / (r_mag * r_mag * r_mag) * position)
+        -mu / (r_mag * r_mag * r_mag) * position
     }
 }
 
@@ -44,7 +45,7 @@ pub struct ZonalHarmonics {
 }
 
 impl GravityField for ZonalHarmonics {
-    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vec3<frame::SimpleEci> {
+    fn acceleration(&self, mu: f64, position: &Vector3<f64>) -> Vector3<f64> {
         let r_mag = position.magnitude();
         let r2 = r_mag * r_mag;
         let r5 = r2 * r2 * r_mag;
@@ -96,7 +97,7 @@ impl GravityField for ZonalHarmonics {
             );
         }
 
-        Vec3::from_raw(accel)
+        accel
     }
 }
 
@@ -109,17 +110,16 @@ mod tests {
     fn point_mass_acceleration_direction() {
         let state_pos = Vector3::new(6778.137, 0.0, 0.0);
         let accel = PointMass.acceleration(MU_EARTH, &state_pos);
-        let pos_eci = Vec3::<frame::SimpleEci>::from_raw(state_pos);
 
         // Acceleration should be antiparallel to position
-        let dot = accel.dot(&pos_eci);
+        let dot = accel.dot(&state_pos);
         assert!(
             dot < 0.0,
             "acceleration should point toward center (dot={dot})"
         );
 
         // Should be collinear
-        let cross = accel.cross(&pos_eci);
+        let cross = accel.cross(&state_pos);
         assert!(
             cross.magnitude() < 1e-10,
             "acceleration should be collinear with position (cross mag={})",
@@ -240,9 +240,9 @@ mod tests {
         let a_j2 = a_total - a_pm;
 
         assert!(
-            a_j2.z().abs() < 1e-20,
+            a_j2.z.abs() < 1e-20,
             "J2 z-component should be zero on equatorial plane, got {}",
-            a_j2.z()
+            a_j2.z
         );
     }
 
@@ -345,21 +345,21 @@ mod tests {
         // a_J3_z = (1/2)*J3*μ*R³/r⁵ * (3 - 0 + 0) = (3/2)*J3*μ*R³/r⁵
         let expected_z = 1.5 * J3_EARTH * MU_EARTH * R_EARTH.powi(3) / 7000.0_f64.powi(5);
         assert!(
-            (a_j3.z() - expected_z).abs() / expected_z.abs() < 1e-10,
+            (a_j3.z - expected_z).abs() / expected_z.abs() < 1e-10,
             "J3 z-force at equator: expected={expected_z:.6e}, got={:.6e}",
-            a_j3.z()
+            a_j3.z
         );
 
         // J3 x,y components should be zero on equator (since z=0)
         assert!(
-            a_j3.x().abs() < 1e-20,
+            a_j3.x.abs() < 1e-20,
             "J3 x-component should be zero on equator, got {}",
-            a_j3.x()
+            a_j3.x
         );
         assert!(
-            a_j3.y().abs() < 1e-20,
+            a_j3.y.abs() < 1e-20,
             "J3 y-component should be zero on equator, got {}",
-            a_j3.y()
+            a_j3.y
         );
     }
 
@@ -430,9 +430,9 @@ mod tests {
         let a_j4 = a_total - a_pm;
 
         assert!(
-            a_j4.z().abs() < 1e-20,
+            a_j4.z.abs() < 1e-20,
             "J4 z-component should be zero on equatorial plane, got {}",
-            a_j4.z()
+            a_j4.z
         );
     }
 

@@ -43,7 +43,7 @@ pub trait HasOrbit {
     /// より general な `Frame` bound が必要になる (別 milestone)。
     type Frame: arika::frame::Eci;
 
-    fn orbit(&self) -> &OrbitalState;
+    fn orbit(&self) -> &OrbitalState<Self::Frame>;
 }
 
 /// State type that provides translational mass.
@@ -152,6 +152,11 @@ impl<F: frame::Eci> AddAssign for ExternalLoads<F> {
 
 /// A physical model that evaluates external loads on a spacecraft.
 ///
+/// The second type parameter `F` selects the inertial frame of the
+/// returned [`ExternalLoads`]. The default is `SimpleEci`, so existing
+/// code that writes `Model<OrbitalState>` is equivalent to
+/// `Model<OrbitalState, SimpleEci>`.
+///
 /// Models declare their state requirements via generic bounds:
 /// - `impl<S: HasAttitude> Model<S>` — attitude-only (e.g., PD controller)
 /// - `impl<S: HasOrbit> Model<S>` — orbit-only (e.g., atmospheric drag)
@@ -160,7 +165,7 @@ impl<F: frame::Eci> AddAssign for ExternalLoads<F> {
 /// `eval` must be a pure function with no side effects.
 /// All models are evaluated against the same immutable state snapshot;
 /// evaluation order must not affect results.
-pub trait Model<S>: Send + Sync {
+pub trait Model<S, F: frame::Eci = frame::SimpleEci>: Send + Sync {
     /// Human-readable name for this model (e.g., "drag", "gravity_gradient").
     fn name(&self) -> &str;
 
@@ -168,17 +173,17 @@ pub trait Model<S>: Send + Sync {
     ///
     /// `epoch` is the absolute time corresponding to integration time `t`.
     /// It is `None` when no initial epoch was provided.
-    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads;
+    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F>;
 }
 
-// Blanket impl so Box<dyn Model<S>> also satisfies Model<S>.
+// Blanket impl so Box<dyn Model<S, F>> also satisfies Model<S, F>.
 // This allows with_model() to accept both concrete types and boxed trait objects.
-impl<S> Model<S> for Box<dyn Model<S>> {
+impl<S, F: frame::Eci> Model<S, F> for Box<dyn Model<S, F>> {
     fn name(&self) -> &str {
         (**self).name()
     }
 
-    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         (**self).eval(t, state, epoch)
     }
 }

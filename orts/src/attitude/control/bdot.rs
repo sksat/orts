@@ -51,7 +51,9 @@ impl<F: MagneticFieldModel> BdotDetumbler<F> {
     }
 }
 
-impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for BdotDetumbler<F> {
+impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci>> Model<S>
+    for BdotDetumbler<F>
+{
     fn name(&self) -> &str {
         "bdot"
     }
@@ -119,7 +121,9 @@ impl<F: MagneticFieldModel> CommandedMagnetorquer<F> {
     }
 }
 
-impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit> Model<S> for CommandedMagnetorquer<F> {
+impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci>> Model<S>
+    for CommandedMagnetorquer<F>
+{
     fn name(&self) -> &str {
         "magnetorquer"
     }
@@ -268,7 +272,7 @@ mod tests {
     impl HasOrbit for TestState {
         type Frame = arika::frame::SimpleEci;
 
-        fn orbit(&self) -> &OrbitalState {
+        fn orbit(&self) -> &OrbitalState<arika::frame::SimpleEci> {
             &self.orbit
         }
     }

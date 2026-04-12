@@ -186,7 +186,7 @@ impl Thruster {
     }
 }
 
-impl<S: HasAttitude + HasOrbit + HasMass> Model<S> for Thruster {
+impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci> + HasMass> Model<S> for Thruster {
     fn name(&self) -> &str {
         "thruster"
     }

@@ -3,12 +3,14 @@ use arika::earth::ellipsoid::{WGS84_A, WGS84_B};
 use arika::earth::geodetic::Geodetic;
 use arika::earth::{OMEGA as OMEGA_EARTH, R as R_EARTH};
 use arika::epoch::Epoch;
+use arika::frame::{self, Vec3};
 use nalgebra::Vector3;
 use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 
-use crate::OrbitalState;
+use crate::environment::EarthFrameBridge;
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
+use crate::orbital::OrbitalState;
 
 /// Default ballistic coefficient for LEO satellites \[m²/kg\].
 ///
@@ -22,7 +24,12 @@ pub const DEFAULT_BALLISTIC_COEFF: f64 = 0.01;
 ///
 /// Computes drag acceleration based on the ballistic coefficient B = Cd*A/(2*m) \[m²/kg\]
 /// and a pluggable atmospheric density model.
-pub struct AtmosphericDrag {
+///
+/// The frame parameter `F` selects how ECI positions are converted to
+/// geodetic coordinates (for density lookup) and how the atmosphere
+/// co-rotation velocity is computed. The default `SimpleEci` uses
+/// ERA-only Z rotation; `Gcrs` uses the full IAU 2006 CIO chain.
+pub struct AtmosphericDrag<F: EarthFrameBridge = frame::SimpleEci> {
     /// Central body (enables WGS-84 geodetic altitude for Earth)
     pub body: Option<KnownBody>,
     /// Central body equatorial radius [km] (fallback for non-Earth bodies)
@@ -33,9 +40,11 @@ pub struct AtmosphericDrag {
     pub ballistic_coeff: f64,
     /// Atmospheric density model.
     pub atmosphere: Box<dyn AtmosphereModel>,
+    /// EOP storage for the frame adapter. `()` for `SimpleEci`.
+    pub eop: F::EopStorage,
 }
 
-impl AtmosphericDrag {
+impl AtmosphericDrag<frame::SimpleEci> {
     /// Create drag model for Earth orbit with an optional explicit ballistic coefficient.
     ///
     /// Uses the piecewise exponential atmosphere model by default.
@@ -47,13 +56,8 @@ impl AtmosphericDrag {
             omega_body: OMEGA_EARTH,
             ballistic_coeff: ballistic_coeff.unwrap_or(DEFAULT_BALLISTIC_COEFF),
             atmosphere: Box::new(Exponential),
+            eop: (),
         }
-    }
-
-    /// Replace the atmospheric density model (builder pattern).
-    pub fn with_atmosphere(mut self, model: Box<dyn AtmosphereModel>) -> Self {
-        self.atmosphere = model;
-        self
     }
 
     /// Create drag model for Earth orbit from B* (TLE drag term).
@@ -78,20 +82,40 @@ impl AtmosphericDrag {
             omega_body: OMEGA_EARTH,
             ballistic_coeff,
             atmosphere: Box::new(Exponential),
+            eop: (),
         }
     }
 }
 
-impl AtmosphericDrag {
+impl<F: EarthFrameBridge> AtmosphericDrag<F> {
+    /// Create drag model for Earth orbit in any frame.
+    pub fn for_earth_in_frame(ballistic_coeff: Option<f64>, eop: F::EopStorage) -> Self {
+        Self {
+            body: Some(KnownBody::Earth),
+            body_radius: R_EARTH,
+            omega_body: OMEGA_EARTH,
+            ballistic_coeff: ballistic_coeff.unwrap_or(DEFAULT_BALLISTIC_COEFF),
+            atmosphere: Box::new(Exponential),
+            eop,
+        }
+    }
+
+    /// Replace the atmospheric density model (builder pattern).
+    pub fn with_atmosphere(mut self, model: Box<dyn AtmosphereModel>) -> Self {
+        self.atmosphere = model;
+        self
+    }
+}
+
+impl<F: EarthFrameBridge> AtmosphericDrag<F> {
     /// Compute drag acceleration [km/s²] from orbital state.
     pub(crate) fn acceleration(
         &self,
-        state: &OrbitalState,
+        state: &OrbitalState<F>,
         epoch: Option<&Epoch<arika::epoch::Utc>>,
     ) -> Vector3<f64> {
+        let pos = state.position();
         // Check if inside the body (ellipsoid test for Earth, spherical for others)
-        let pos_eci = state.position_eci();
-        let pos = pos_eci.inner();
         let inside = match self.body {
             Some(KnownBody::Earth) => {
                 let p2 = pos.x * pos.x + pos.y * pos.y;
@@ -112,12 +136,8 @@ impl AtmosphericDrag {
 
         let geodetic = match self.body {
             Some(KnownBody::Earth) => {
-                let gmst = utc.gmst();
-                let rot = arika::frame::Rotation::<
-                    arika::frame::SimpleEci,
-                    arika::frame::SimpleEcef,
-                >::from_era(gmst);
-                rot.transform(&pos_eci).to_geodetic()
+                let pos_vec = Vec3::<F>::from_raw(*pos);
+                F::to_geodetic(&pos_vec, utc, &self.eop)
             }
             _ => {
                 let r_mag = pos.magnitude();
@@ -136,6 +156,8 @@ impl AtmosphericDrag {
         }
 
         // Relative velocity: v_rel = v - ω × r (atmosphere co-rotates with body)
+        // TODO: Phase 4D — precise path should use LOD-corrected ω and
+        // proper ECEF velocity transform via F::fixed_to_inertial.
         let omega = Vector3::new(0.0, 0.0, self.omega_body);
         let v_rel = *state.velocity() - omega.cross(pos);
 
@@ -155,12 +177,12 @@ impl AtmosphericDrag {
     }
 }
 
-impl<S: HasOrbit> Model<S> for AtmosphericDrag {
+impl<F: EarthFrameBridge, S: HasOrbit<Frame = F>> Model<S, F> for AtmosphericDrag<F> {
     fn name(&self) -> &str {
         "drag"
     }
 
-    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         ExternalLoads::acceleration(self.acceleration(state.orbit(), epoch))
     }
 }
@@ -178,6 +200,7 @@ mod tests {
             omega_body: OMEGA_EARTH,
             ballistic_coeff: 0.005, // physical ISS: Cd*A/(2m) ≈ 2.2*2000/(2*420000)
             atmosphere: Box::new(Exponential),
+            eop: (),
         }
     }
 
@@ -294,6 +317,7 @@ mod tests {
             omega_body: OMEGA_EARTH,
             ballistic_coeff: 0.005,
             atmosphere: Box::new(Exponential),
+            eop: (),
         };
         let drag_static = AtmosphericDrag {
             body: Some(KnownBody::Earth),
@@ -301,6 +325,7 @@ mod tests {
             omega_body: 0.0,
             ballistic_coeff: 0.005,
             atmosphere: Box::new(Exponential),
+            eop: (),
         };
 
         let r = R_EARTH + 400.0;

@@ -301,7 +301,7 @@ impl PanelDrag {
     }
 }
 
-impl<S: HasAttitude + HasOrbit + HasMass> Model<S> for PanelDrag {
+impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci> + HasMass> Model<S> for PanelDrag {
     fn name(&self) -> &str {
         "panel_drag"
     }
