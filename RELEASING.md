@@ -174,9 +174,13 @@ cargo publish -p tobari
 cargo publish -p orts
 # → crates.io index 反映を待つ
 
-# Tier 4: orts-cli (← orts + 全 crate、viewer embed あり)
-# 前提: pnpm --filter uneri build && pnpm --filter orts-viewer build 済み
-cargo publish -p orts-cli
+# Tier 4: orts-cli (← orts + 全 crate、viewer embed + textures あり)
+# 前提: pnpm --filter @sksat/uneri build && pnpm --filter orts-viewer build 済み
+#        (build.rs が viewer/public/textures/ → cli/textures/ にコピーする)
+# まず dry-run で verification build が通ることを確認:
+cargo publish --dry-run --allow-dirty -p orts-cli
+# OK なら publish (--allow-dirty は viewer-dist/ + textures/ が gitignored のため必要)
+cargo publish --allow-dirty -p orts-cli
 ```
 
 **注意**: publish 済み crate は取り消せない。途中で失敗した場合、
@@ -189,10 +193,12 @@ cargo publish -p orts-cli
 
 ### Pre-publish dry-run
 
-real publish 前に dry-run で metadata validity を確認:
+Tier 1-3 publish 前に leaf crate の dry-run で metadata を確認。
+orts-cli は Tier 1-3 が crates.io に載った後でないと dep 解決できない
+ため、Tier 4 の手順内で dry-run → publish を連続実行する。
 
 ```sh
-# Leaf crates (成功するはず)
+# Leaf crates (Tier 1-3 publish 前に実行)
 cargo publish --dry-run --allow-dirty -p utsuroi
 cargo publish --dry-run --allow-dirty -p arika
 cargo publish --dry-run --allow-dirty -p rrd-wasm
