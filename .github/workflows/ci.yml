@@ -246,11 +246,11 @@ jobs:
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.1
         with:
-          shared-key: rust-native
-          save-if: false
+          shared-key: rust-release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Test (orts integration)
-        run: cargo test --locked -p orts --tests
+      - name: Test (orts integration, release)
+        run: cargo test --locked --release -p orts --tests
 
   # Plugin-wasm guest tests: build the bdot + pd-rw-control guest
   # components with cargo-component, then run the feature-gated

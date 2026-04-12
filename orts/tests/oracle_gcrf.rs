@@ -396,7 +396,6 @@ fn gcrf_j2_msise_thirdbody_iss_10orbits() {
 }
 
 #[test]
-#[ignore = "30-day propagation is too slow for routine CI (~20 min)"]
 fn gcrf_j2_msise_cssi_thirdbody_iss_30day() {
     let fixtures = load_fixtures();
     let scenario = find_scenario(&fixtures, "gcrf_j2_msise_cssi_thirdbody_iss_30day");
@@ -461,7 +460,6 @@ fn gcrf_real_eop_improves_drag_10orbits() {
 }
 
 #[test]
-#[ignore = "30-day propagation is too slow for routine CI (~20 min)"]
 fn gcrf_real_eop_improves_drag_30day() {
     let fixtures = load_fixtures();
     let scenario = find_scenario(&fixtures, "gcrf_j2_msise_cssi_thirdbody_iss_30day");
