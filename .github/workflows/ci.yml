@@ -309,10 +309,17 @@ jobs:
   # Runs on main push (smoke test) AND tag push (release job consumes
   # the artifact). On PRs, build.rs falls back to a placeholder —
   # viewer embedding breakage is detected post-merge, not pre-merge.
+  # Build CLI release binary for each target. Matrix produces one
+  # artifact per target that the release job assembles into tarballs.
   rust-dist:
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     needs: [rust-build, viewer-build]
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -328,7 +335,12 @@ jobs:
           swap-storage: false
 
       - name: Install mold linker
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: sudo apt-get install -y mold
+
+      - name: Install musl toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install -y musl-tools
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -338,12 +350,12 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
-          targets: wasm32-wasip1
+          targets: ${{ matrix.target }}
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2.9.1
         with:
-          shared-key: rust-release
+          shared-key: rust-release-${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-about
@@ -351,13 +363,41 @@ jobs:
         with:
           tool: cargo-about
 
-      - name: Install cargo-component
-        uses: taiki-e/install-action@7a4939c09608b2a1986b484eca1d16fd0db8ebef # v2.75.5
+      - name: Download viewer dist
+        uses: actions/download-artifact@v8.0.1
         with:
-          tool: cargo-component
+          name: viewer-dist
+          path: ./viewer/dist
 
-      # Run before downloading viewer-dist so the working tree is clean
-      # and --allow-dirty is not needed.
+      - name: Build CLI with embedded viewer (release)
+        env:
+          ORTS_REQUIRE_LICENSE_NOTICE: "1"
+        run: cargo build --locked --release -p orts-cli --target ${{ matrix.target }}
+
+      - name: Upload CLI binary
+        uses: actions/upload-artifact@v7.0.0
+        with:
+          name: orts-cli-release-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/orts
+          retention-days: 1
+
+  # Verify crate package contents before release. Runs on a clean
+  # checkout (no downloaded artifacts) so --allow-dirty is not needed.
+  crate-package-verify:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
       - name: List crate package contents
         run: |
           mkdir -p /tmp/crate-pkg
@@ -389,16 +429,27 @@ jobs:
           [ "$FAIL" -eq 0 ] && echo "All crate package contents clean."
           exit $FAIL
 
-      - name: Download viewer dist
-        uses: actions/download-artifact@v8.0.1
-        with:
-          name: viewer-dist
-          path: ./viewer/dist
+  # Build example WASM plugin guests for inclusion in the release tarball.
+  build-example-plugins:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
 
-      - name: Build CLI with embedded viewer (release)
-        env:
-          ORTS_REQUIRE_LICENSE_NOTICE: "1"
-        run: cargo build --locked --release -p orts-cli
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: wasm32-wasip1
+
+      - name: Install cargo-component
+        uses: taiki-e/install-action@7a4939c09608b2a1986b484eca1d16fd0db8ebef # v2.75.5
+        with:
+          tool: cargo-component
 
       - name: Build example WASM plugins
         run: |
@@ -407,13 +458,6 @@ jobs:
             echo "Building $(basename "$dir")..."
             (cd "$dir" && cargo component build --release)
           done
-
-      - name: Upload CLI binary (with viewer)
-        uses: actions/upload-artifact@v7.0.0
-        with:
-          name: orts-cli-release-with-viewer
-          path: target/release/orts
-          retention-days: 1
 
       - name: Upload example plugins
         uses: actions/upload-artifact@v7.0.0
@@ -800,9 +844,7 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: [rust-dist, npm-publish-dry-run]
-    env:
-      TARGET: x86_64-unknown-linux-gnu
+    needs: [rust-dist, build-example-plugins, crate-package-verify, npm-publish-dry-run]
     steps:
       - uses: actions/checkout@v6.0.2
         with:
@@ -833,58 +875,72 @@ jobs:
             exit 1
           fi
 
-      - name: Download CLI binary
-        uses: actions/download-artifact@v8.0.1
-        with:
-          name: orts-cli-release-with-viewer
-          path: ./bin
-
       - name: Download example plugins
         uses: actions/download-artifact@v8.0.1
         with:
           name: example-plugins
           path: ./plugins-wasm
 
-      - name: Stage + strip binary
-        id: stage
+      - name: Download CLI binary (gnu)
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: orts-cli-release-x86_64-unknown-linux-gnu
+          path: ./bin-gnu
+
+      - name: Download CLI binary (musl)
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: orts-cli-release-x86_64-unknown-linux-musl
+          path: ./bin-musl
+
+      - name: Create tarballs and checksums
+        id: assets
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
-          STAGE_DIR="orts-cli-${VERSION}-${TARGET}"
-          mkdir -p "${STAGE_DIR}/examples/plugins"
-          cp bin/orts "${STAGE_DIR}/orts"
-          chmod +x "${STAGE_DIR}/orts"
-          strip "${STAGE_DIR}/orts"
-          cp README.md "${STAGE_DIR}/README.md"
-          cp LICENSE "${STAGE_DIR}/LICENSE"
-          # Rename plugin wasm files: strip orts_example_plugin_ prefix, use hyphens
-          # upload-artifact preserves the directory tree, so wasm files are at
-          # plugins-wasm/*/target/wasm32-wasip1/release/*.wasm
-          for f in $(find plugins-wasm -name 'orts_example_plugin_*.wasm' -not -path '*/deps/*'); do
-            base=$(basename "$f" .wasm)
-            short=$(echo "$base" | sed 's/^orts_example_plugin_//' | tr '_' '-')
-            cp "$f" "${STAGE_DIR}/examples/plugins/${short}.wasm"
-          done
-          ls -lh "${STAGE_DIR}/examples/plugins/"
-          # Also prepare a standalone binary for direct download
-          cp "${STAGE_DIR}/orts" "orts-${TARGET}"
-          echo "stage_dir=${STAGE_DIR}" >> "$GITHUB_OUTPUT"
-          echo "binary=orts-${TARGET}" >> "$GITHUB_OUTPUT"
+          ALL_FILES=""
 
-      - name: Create tarball and checksum
-        id: archive
-        run: |
-          set -euo pipefail
-          STAGE_DIR="${{ steps.stage.outputs.stage_dir }}"
-          ARCHIVE="${STAGE_DIR}.tar.gz"
-          tar --sort=name \
-              --owner=0 --group=0 --numeric-owner \
-              --mtime='UTC 2020-01-01' \
-              -czf "${ARCHIVE}" "${STAGE_DIR}"
-          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
-          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
-          echo "checksum=${ARCHIVE}.sha256" >> "$GITHUB_OUTPUT"
-          cat "${ARCHIVE}.sha256"
+          for TARGET in x86_64-unknown-linux-gnu x86_64-unknown-linux-musl; do
+            # Pick the right binary
+            case "$TARGET" in
+              *gnu)  BIN_DIR=bin-gnu ;;
+              *musl) BIN_DIR=bin-musl ;;
+            esac
+
+            STAGE_DIR="orts-cli-${VERSION}-${TARGET}"
+            mkdir -p "${STAGE_DIR}/examples/plugins"
+
+            cp "${BIN_DIR}/orts" "${STAGE_DIR}/orts"
+            chmod +x "${STAGE_DIR}/orts"
+            strip "${STAGE_DIR}/orts"
+            cp README.md "${STAGE_DIR}/README.md"
+            cp LICENSE "${STAGE_DIR}/LICENSE"
+
+            # Rename plugin wasm files: strip orts_example_plugin_ prefix, use hyphens
+            for f in $(find plugins-wasm -name 'orts_example_plugin_*.wasm' -not -path '*/deps/*'); do
+              base=$(basename "$f" .wasm)
+              short=$(echo "$base" | sed 's/^orts_example_plugin_//' | tr '_' '-')
+              cp "$f" "${STAGE_DIR}/examples/plugins/${short}.wasm"
+            done
+
+            # Create tarball
+            ARCHIVE="${STAGE_DIR}.tar.gz"
+            tar --sort=name \
+                --owner=0 --group=0 --numeric-owner \
+                --mtime='UTC 2020-01-01' \
+                -czf "${ARCHIVE}" "${STAGE_DIR}"
+            sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+            cat "${ARCHIVE}.sha256"
+
+            # Standalone binary
+            BINARY="orts-${TARGET}"
+            cp "${STAGE_DIR}/orts" "${BINARY}"
+
+            ALL_FILES="${ALL_FILES}${ARCHIVE}\n${ARCHIVE}.sha256\n${BINARY}\n"
+          done
+
+          echo -e "$ALL_FILES" > /tmp/release-files.txt
+          cat /tmp/release-files.txt
 
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
@@ -906,12 +962,17 @@ jobs:
 
             ## Manual install
 
-            Download the tarball, verify with the `.sha256` sidecar, extract, and run `./orts`.
+            Download the tarball for your platform, verify with the `.sha256` sidecar, extract, and run `./orts`.
 
-            Target: `x86_64-unknown-linux-gnu` (glibc).
+            Targets:
+            - `x86_64-unknown-linux-gnu` (glibc, dynamically linked)
+            - `x86_64-unknown-linux-musl` (musl, fully static)
           files: |
-            ${{ steps.archive.outputs.archive }}
-            ${{ steps.archive.outputs.checksum }}
-            ${{ steps.stage.outputs.binary }}
+            orts-cli-${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz
+            orts-cli-${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz.sha256
+            orts-x86_64-unknown-linux-gnu
+            orts-cli-${{ steps.version.outputs.version }}-x86_64-unknown-linux-musl.tar.gz
+            orts-cli-${{ steps.version.outputs.version }}-x86_64-unknown-linux-musl.tar.gz.sha256
+            orts-x86_64-unknown-linux-musl
             README.md
             LICENSE
