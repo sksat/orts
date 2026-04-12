@@ -96,20 +96,88 @@ export default defineConfig({
       sidebar: [
         { label: "Getting Started", slug: "getting-started" },
         {
+          label: "orts",
+          collapsed: true,
+          items: [
+            { label: "Overview", slug: "orts/api/overview" },
+            {
+              label: "API Reference",
+              collapsed: true,
+              items: [
+                { label: "Traits", autogenerate: { directory: "orts/api/traits" } },
+                { label: "Structs", autogenerate: { directory: "orts/api/structs" } },
+                { label: "Enums", autogenerate: { directory: "orts/api/enums" } },
+                { label: "Functions", autogenerate: { directory: "orts/api/functions" } },
+                { label: "Constants", autogenerate: { directory: "orts/api/constants" } },
+                { label: "Type Aliases", autogenerate: { directory: "orts/api/type-aliases" } },
+              ],
+            },
+          ],
+        },
+        {
+          label: "arika",
+          collapsed: true,
+          items: [
+            { label: "Overview", slug: "arika/api/overview" },
+            {
+              label: "API Reference",
+              collapsed: true,
+              items: [
+                { label: "Traits", autogenerate: { directory: "arika/api/traits" } },
+                { label: "Structs", autogenerate: { directory: "arika/api/structs" } },
+                { label: "Enums", autogenerate: { directory: "arika/api/enums" } },
+                { label: "Functions", autogenerate: { directory: "arika/api/functions" } },
+                { label: "Constants", autogenerate: { directory: "arika/api/constants" } },
+                { label: "Type Aliases", autogenerate: { directory: "arika/api/type-aliases" } },
+              ],
+            },
+          ],
+        },
+        {
+          label: "utsuroi",
+          collapsed: true,
+          items: [
+            { label: "Overview", slug: "utsuroi/api/overview" },
+            {
+              label: "API Reference",
+              collapsed: true,
+              items: [
+                { label: "Traits", autogenerate: { directory: "utsuroi/api/traits" } },
+                { label: "Structs", autogenerate: { directory: "utsuroi/api/structs" } },
+                { label: "Enums", autogenerate: { directory: "utsuroi/api/enums" } },
+              ],
+            },
+          ],
+        },
+        {
           label: "tobari",
           collapsed: true,
-          items: [{ label: "Examples", autogenerate: { directory: "tobari/examples" } }],
+          items: [
+            { label: "Overview", slug: "tobari/api/overview" },
+            { label: "Examples", autogenerate: { directory: "tobari/examples" } },
+            {
+              label: "API Reference",
+              collapsed: true,
+              items: [
+                { label: "Traits", autogenerate: { directory: "tobari/api/traits" } },
+                { label: "Structs", autogenerate: { directory: "tobari/api/structs" } },
+                { label: "Enums", autogenerate: { directory: "tobari/api/enums" } },
+                { label: "Functions", autogenerate: { directory: "tobari/api/functions" } },
+                { label: "Constants", autogenerate: { directory: "tobari/api/constants" } },
+              ],
+            },
+          ],
         },
         {
           label: "uneri",
           collapsed: true,
           items: [
+            { label: "Overview", slug: "uneri/api/readme" },
             { label: "Examples", autogenerate: { directory: "uneri/examples" } },
             {
               label: "API Reference",
               collapsed: true,
               items: [
-                { label: "Overview", slug: "uneri/api/readme" },
                 { label: "Classes", autogenerate: { directory: "uneri/api/classes" } },
                 { label: "Interfaces", autogenerate: { directory: "uneri/api/interfaces" } },
                 { label: "Functions", autogenerate: { directory: "uneri/api/functions" } },
