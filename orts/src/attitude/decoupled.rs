@@ -24,6 +24,8 @@ impl HasAttitude for DecoupledContext {
 }
 
 impl HasOrbit for DecoupledContext {
+    type Frame = arika::frame::SimpleEci;
+
     fn orbit(&self) -> &OrbitalState {
         &self.orbit
     }

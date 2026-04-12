@@ -101,6 +101,8 @@ mod tests {
 }
 
 impl HasOrbit for OrbitalState {
+    type Frame = arika::frame::SimpleEci;
+
     fn orbit(&self) -> &OrbitalState {
         self
     }

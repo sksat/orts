@@ -33,6 +33,16 @@ pub trait HasAttitude {
 
 /// State type that provides orbital information (position + velocity).
 pub trait HasOrbit {
+    /// Inertial frame of the orbital state.
+    ///
+    /// Currently all propagation uses `SimpleEci`. When the propagator
+    /// supports `Gcrs`, this associated type will drive frame-generic
+    /// force model dispatch.
+    ///
+    /// TODO: `Eci` bound は地心慣性系に限定している。月周回や深宇宙では
+    /// より general な `Frame` bound が必要になる (別 milestone)。
+    type Frame: arika::frame::Eci;
+
     fn orbit(&self) -> &OrbitalState;
 }
 

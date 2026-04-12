@@ -47,6 +47,8 @@ impl SpacecraftState {
 }
 
 impl HasOrbit for SpacecraftState {
+    type Frame = arika::frame::SimpleEci;
+
     fn orbit(&self) -> &OrbitalState {
         &self.orbit
     }
@@ -68,6 +70,8 @@ impl HasMass for SpacecraftState {
 use crate::effector::AugmentedState;
 
 impl HasOrbit for AugmentedState<SpacecraftState> {
+    type Frame = arika::frame::SimpleEci;
+
     fn orbit(&self) -> &OrbitalState {
         &self.plant.orbit
     }
