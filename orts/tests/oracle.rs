@@ -2242,3 +2242,98 @@ fn j2_omega_precession_dp45_500_orbits() {
         "Secular drift: Q1={e_mean_q1:.8}, Q4={e_mean_q4:.8}"
     );
 }
+
+// ============================================================================
+// Test: Gcrs propagation end-to-end
+//
+// Validates that OrbitalSystem<Gcrs> compiles, runs, and produces
+// physically reasonable results. With zero EOP, SimpleEci and Gcrs
+// paths should agree closely (difference comes from precession/nutation
+// in the IAU 2006 chain used by EarthFrameBridge<Gcrs>).
+// ============================================================================
+
+#[test]
+fn gcrs_propagation_close_to_simple_eci() {
+    use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
+    use arika::frame;
+    use orts::environment::GcrsEopStorage;
+    use orts::orbital::gravity::PointMass;
+
+    /// Zero EOP provider for testing.
+    struct ZeroEop;
+    impl Ut1Offset for ZeroEop {
+        fn dut1(&self, _: f64) -> f64 {
+            0.0
+        }
+    }
+    impl PolarMotion for ZeroEop {
+        fn x_pole(&self, _: f64) -> f64 {
+            0.0
+        }
+        fn y_pole(&self, _: f64) -> f64 {
+            0.0
+        }
+    }
+    impl NutationCorrections for ZeroEop {
+        fn dx(&self, _: f64) -> f64 {
+            0.0
+        }
+        fn dy(&self, _: f64) -> f64 {
+            0.0
+        }
+    }
+
+    let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+    let r = R_EARTH + 400.0;
+    let v = (MU_EARTH / r).sqrt();
+    let dt = 10.0;
+    let duration = 5400.0; // ~1 orbit
+
+    // --- SimpleEci path ---
+    let system_simple = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ThirdBodyGravity::sun())
+        .with_model(ThirdBodyGravity::moon())
+        .with_model(AtmosphericDrag::for_earth(Some(0.01)))
+        .with_epoch(epoch.clone());
+    let initial_simple = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
+    let final_simple = Rk4.integrate(&system_simple, initial_simple, 0.0, duration, dt, |_, _| {});
+
+    // --- Gcrs path ---
+    let eop = GcrsEopStorage::new(ZeroEop);
+    let system_gcrs =
+        orts::orbital::OrbitalSystem::<frame::Gcrs>::new(MU_EARTH, Box::new(PointMass))
+            .with_model(ThirdBodyGravity::sun())
+            .with_model(ThirdBodyGravity::moon())
+            .with_model(orts::perturbations::AtmosphericDrag::for_earth_in_frame(
+                Some(0.01),
+                eop,
+            ))
+            .with_epoch(epoch);
+    let initial_gcrs =
+        orts::OrbitalState::<frame::Gcrs>::new_in_frame(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
+    let final_gcrs = Rk4.integrate(&system_gcrs, initial_gcrs, 0.0, duration, dt, |_, _| {});
+
+    // --- Compare ---
+    let pos_diff = (*final_simple.position() - *final_gcrs.position()).magnitude();
+    let vel_diff = (*final_simple.velocity() - *final_gcrs.velocity()).magnitude();
+
+    println!("Gcrs vs SimpleEci after 1 orbit:");
+    println!("  position diff: {pos_diff:.6} km");
+    println!("  velocity diff: {vel_diff:.9} km/s");
+
+    // With zero EOP, the difference comes from precession/nutation/frame-bias
+    // in the IAU 2006 chain (used by Gcrs drag geodetic conversion).
+    // Over 1 orbit (~90 min), this should be small but non-zero.
+    assert!(
+        pos_diff < 1.0,
+        "Gcrs and SimpleEci should agree within 1 km over 1 orbit, got {pos_diff:.6} km"
+    );
+    assert!(
+        pos_diff > 1e-10,
+        "Gcrs and SimpleEci should NOT be identical (precession/nutation differs), got {pos_diff:.2e} km"
+    );
+    assert!(
+        vel_diff < 1e-3,
+        "Velocity difference should be small, got {vel_diff:.6} km/s"
+    );
+}

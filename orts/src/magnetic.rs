@@ -1,45 +1,51 @@
-//! Temporary adapter for the tobari [`MagneticFieldModel`] trait.
-//!
-//! TODO: Phase 4B-1 で OrbitalState<F> / AtmosphereFrame trait を導入したら、
-//! この SimpleEci-hardcoded adapter は frame-generic な変換に統合して削除する。
+//! Frame-generic adapter for the tobari [`MagneticFieldModel`] trait.
 //!
 //! The model's [`MagneticFieldModel::field_ecef`] returns the field in
-//! ECEF Cartesian coordinates.  Callers inside orts typically work in
-//! the ECI frame, so this module provides [`field_eci`] which handles
-//! the full round-trip:
+//! ECEF Cartesian coordinates. Callers inside orts work in an ECI frame,
+//! so this module provides [`field_inertial`] which handles the full
+//! round-trip via [`EarthFrameBridge`]:
 //!
 //! ```text
-//! ECI position → ECEF (via GMST rotation) → geodetic
+//! ECI position → ECEF (via EarthFrameBridge) → geodetic
 //!   → field_ecef → ECEF field vector → ECI (inverse rotation)
 //! ```
 
-use arika::epoch::Epoch;
-use arika::frame::{self, Rotation, Vec3};
+use arika::epoch::{Epoch, Utc};
+use arika::frame::Vec3;
 use tobari::magnetic::{MagneticFieldInput, MagneticFieldModel};
 
-/// Evaluate a magnetic field model and return the result in the ECI frame.
-///
-/// Performs the following chain:
-/// 1. Rotate `position_eci` to ECEF using the GMST-based ERA rotation.
-/// 2. Convert the ECEF position to geodetic coordinates (Bowring).
-/// 3. Call [`MagneticFieldModel::field_ecef`].
-/// 4. Rotate the resulting ECEF field vector back to ECI.
-pub fn field_eci(
-    model: &dyn MagneticFieldModel,
-    position_eci: &Vec3<frame::SimpleEci>,
-    epoch: &Epoch,
-) -> Vec3<frame::SimpleEci> {
-    let gmst = epoch.gmst();
-    let rot_to_ecef = Rotation::<frame::SimpleEci, frame::SimpleEcef>::from_era(gmst);
-    let rot_to_eci = Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst);
+use crate::environment::EarthFrameBridge;
 
-    let ecef = rot_to_ecef.transform(position_eci);
-    let geodetic = ecef.to_geodetic();
+/// Evaluate a magnetic field model and return the result in the
+/// propagation frame `F`.
+///
+/// Uses [`EarthFrameBridge`] for the ECI↔ECEF conversion, so it works
+/// with both `SimpleEci` (ERA rotation) and `Gcrs` (IAU 2006 chain).
+pub fn field_inertial<F: EarthFrameBridge>(
+    model: &dyn MagneticFieldModel,
+    position: &Vec3<F>,
+    epoch: &Epoch<Utc>,
+    eop: &F::EopStorage,
+) -> Vec3<F> {
+    let geodetic = F::to_geodetic(position, epoch, eop);
+    let rot_to_eci = F::fixed_to_inertial(epoch, eop);
 
     let b_ecef_arr = model.field_ecef(&MagneticFieldInput {
         geodetic,
         utc: epoch,
     });
-    let b_ecef = Vec3::<frame::SimpleEcef>::new(b_ecef_arr[0], b_ecef_arr[1], b_ecef_arr[2]);
+    let b_ecef = Vec3::<F::Fixed>::new(b_ecef_arr[0], b_ecef_arr[1], b_ecef_arr[2]);
     rot_to_eci.transform(&b_ecef)
+}
+
+/// SimpleEci convenience wrapper for [`field_inertial`].
+///
+/// Retained for callers that are `Frame = SimpleEci` constrained
+/// (bdot controllers, magnetometer sensor, plugin WASM host).
+pub fn field_eci(
+    model: &dyn MagneticFieldModel,
+    position_eci: &Vec3<arika::frame::SimpleEci>,
+    epoch: &Epoch<Utc>,
+) -> Vec3<arika::frame::SimpleEci> {
+    field_inertial::<arika::frame::SimpleEci>(model, position_eci, epoch, &())
 }

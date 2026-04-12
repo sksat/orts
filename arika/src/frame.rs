@@ -306,56 +306,6 @@ impl Frame for Body {
     const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Body;
 }
 
-// ─── Phase 1C legacy bridge (remove in Phase 4) ──────────────────
-//
-// `Vec3<Gcrs>::force_cast_simple_eci` is a typed no-op that lets call
-// sites mix Meeus `Vec3<Gcrs>` output with `Vec3<SimpleEci>` simulation
-// state explicitly, instead of silently stripping the phantom tag via
-// `.into_inner()`. It exists only because Phase 1B/1C introduces `Gcrs`
-// as the return type of Meeus ephemerides while the propagator state
-// remains `SimpleEci` — a real `Rotation<Gcrs, SimpleEci>` is
-// deliberately NOT provided by the plan (see .claude/plans/
-// delegated-chasing-floyd.md § 1 "no upgrade path from SimpleEci to Gcrs").
-//
-// At Meeus precision the two frames are numerically identical because
-// the analytic models apply no precession/nutation/frame-bias, so
-// relabeling the tag is semantically honest at the call site.
-// Once real GCRS ephemerides (JPL DE430 / Horizons / IAU 2006) land,
-// this bridge must be removed — Phase 4 will refactor the propagator
-// to either integrate in `Gcrs` directly or to dispatch the force
-// model through concrete `Vec3<Gcrs>` / `Vec3<SimpleEci>` overloads.
-//
-// The method is `#[deprecated]` so each new call site triggers a
-// compiler warning, and the name is chosen so `rg force_cast_simple_eci`
-// locates every remaining bridge at Phase 4 cleanup time.
-
-impl Vec3<Gcrs> {
-    /// Force-cast a `Vec3<Gcrs>` to `Vec3<SimpleEci>` without applying any
-    /// frame rotation (a typed no-op). **Phase 1C legacy bridge, remove in
-    /// Phase 4.**
-    ///
-    /// At the current precision (Meeus analytic ephemerides, ~arcminute)
-    /// `Gcrs` and `SimpleEci` are numerically indistinguishable — neither
-    /// applies precession, nutation, frame bias, or polar motion, so the
-    /// raw f64 components agree bit-for-bit. Force-casting is the explicit
-    /// way for force-model code to mix Meeus Sun / Moon positions with
-    /// `SimpleEci` satellite state and make the "I'm treating these two
-    /// frames as numerically equal at this call site" assertion grep-able.
-    ///
-    /// This is **not** `unsafe` in the Rust sense (no undefined behaviour,
-    /// no invariants the compiler relies on). The caution comes from
-    /// precision: once real GCRS ephemerides or IAU 2006 precession land,
-    /// calling this function bypasses the proper `Rotation<Gcrs, …>`
-    /// conversion chain and silently degrades the computation. Phase 4
-    /// removes this method entirely.
-    #[deprecated(note = "Phase 1C 限定の Gcrs→SimpleEci 型変換 bridge。\
-                         Phase 4 で削除予定 (propagator を Gcrs で動かすか、\
-                         force model に concrete 型 overload を導入した時点で消す)。")]
-    pub fn force_cast_simple_eci(self) -> Vec3<SimpleEci> {
-        Vec3::from_raw(self.into_inner())
-    }
-}
-
 // ─── Vec3<F> ─────────────────────────────────────────────────────
 
 /// Frame-tagged 3D vector.
