@@ -1,0 +1,18 @@
+---
+title: "tobari"
+description: "Earth environment models — atmosphere, geomagnetic field, and space weather."
+---
+
+Earth environment models — atmospheric drag density, IGRF geomagnetic field,
+and space weather integration for orbital mechanics simulation. The name
+「帳」(tobari) means "veil" — Earth's atmosphere and magnetosphere form the
+environmental veil a spacecraft flies through.
+
+Provides:
+
+- Atmospheric density models (`Exponential`, `HarrisPriester`, `NRLMSISE-00`)
+  behind the `AtmosphereModel` trait, with typed `SimpleEci` position input.
+- IGRF-14 full geomagnetic field + tilted-dipole approximation via
+  `MagneticFieldModel`.
+- Space weather providers (CSSI, GFZ) feeding F10.7 / Ap / Kp indices into
+  the atmosphere models.

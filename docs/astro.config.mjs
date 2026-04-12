@@ -100,7 +100,7 @@ export default defineConfig({
           label: "orts",
           collapsed: true,
           items: [
-            { label: "Overview", slug: "orts/api/overview" },
+            { label: "Overview", slug: "orts/overview" },
             {
               label: "API",
               collapsed: true,
@@ -112,7 +112,7 @@ export default defineConfig({
           label: "arika",
           collapsed: true,
           items: [
-            { label: "Overview", slug: "arika/api/overview" },
+            { label: "Overview", slug: "arika/overview" },
             {
               label: "API",
               collapsed: true,
@@ -124,7 +124,7 @@ export default defineConfig({
           label: "utsuroi",
           collapsed: true,
           items: [
-            { label: "Overview", slug: "utsuroi/api/overview" },
+            { label: "Overview", slug: "utsuroi/overview" },
             {
               label: "API",
               collapsed: true,
@@ -136,7 +136,7 @@ export default defineConfig({
           label: "tobari",
           collapsed: true,
           items: [
-            { label: "Overview", slug: "tobari/api/overview" },
+            { label: "Overview", slug: "tobari/overview" },
             { label: "Examples", autogenerate: { directory: "tobari/examples" } },
             {
               label: "API",
