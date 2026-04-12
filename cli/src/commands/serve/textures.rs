@@ -35,11 +35,17 @@ struct EmbeddedTexture {
 const EMBEDDED: &[EmbeddedTexture] = &[
     EmbeddedTexture {
         filename: "earth_2k.jpg",
-        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/textures/earth_2k.jpg")),
+        data: include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/textures/earth_2k.jpg"
+        )),
     },
     EmbeddedTexture {
         filename: "earth_night_2k.jpg",
-        data: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/textures/earth_night_2k.jpg")),
+        data: include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/textures/earth_night_2k.jpg"
+        )),
     },
     EmbeddedTexture {
         filename: "moon.jpg",
