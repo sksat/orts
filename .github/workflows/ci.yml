@@ -793,7 +793,10 @@ jobs:
             cp "$f" "${STAGE_DIR}/examples/plugins/${short}.wasm"
           done
           ls -lh "${STAGE_DIR}/examples/plugins/"
+          # Also prepare a standalone binary for direct download
+          cp "${STAGE_DIR}/orts" "orts-${TARGET}"
           echo "stage_dir=${STAGE_DIR}" >> "$GITHUB_OUTPUT"
+          echo "binary=orts-${TARGET}" >> "$GITHUB_OUTPUT"
 
       - name: Create tarball and checksum
         id: archive
@@ -836,3 +839,6 @@ jobs:
           files: |
             ${{ steps.archive.outputs.archive }}
             ${{ steps.archive.outputs.checksum }}
+            ${{ steps.stage.outputs.binary }}
+            README.md
+            LICENSE
