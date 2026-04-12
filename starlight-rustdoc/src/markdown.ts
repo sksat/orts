@@ -110,7 +110,7 @@ function generateOverviewPage(
 ): string {
   const lines: string[] = [];
 
-  lines.push(frontmatter(crateName));
+  lines.push(frontmatter(crateName, { sidebarOrder: -1 }));
 
   // Crate-level docs
   const root = crate.index[String(crate.root)];
@@ -653,14 +653,23 @@ function renderVariantSignature(
 // Frontmatter & formatting
 // ---------------------------------------------------------------------------
 
-function frontmatter(title: string): string {
-  return `---
-editUrl: false
-next: false
-prev: false
-title: "${title}"
----
-`;
+function frontmatter(
+  title: string,
+  options?: { sidebarOrder?: number },
+): string {
+  const lines = [
+    "---",
+    "editUrl: false",
+    "next: false",
+    "prev: false",
+    `title: "${title}"`,
+  ];
+  if (options?.sidebarOrder !== undefined) {
+    lines.push("sidebar:");
+    lines.push(`  order: ${options.sidebarOrder}`);
+  }
+  lines.push("---", "");
+  return lines.join("\n");
 }
 
 function sourceLink(item: Item, options: MarkdownOptions): string {
