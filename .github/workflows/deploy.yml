@@ -30,7 +30,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6.3.0
         with:
-          node-version: "22"
+          node-version-file: package.json
           cache: pnpm
 
       - name: Install dependencies
@@ -53,6 +53,11 @@ jobs:
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: nightly
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          shared-key: deploy-site
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
