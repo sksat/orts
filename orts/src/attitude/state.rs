@@ -46,11 +46,20 @@ impl AttitudeState {
     }
 
     /// Typed rotation: body frame → ECI (inertial).
+    ///
+    /// TODO: Returns `Rotation<Body, SimpleEci>` hardcoded. For Gcrs
+    /// propagation, body→inertial rotation should be `Rotation<Body, F>`
+    /// where F is the propagation frame. This requires either
+    /// `AttitudeState<F>` or a `rotation_to_inertial<F>()` method.
+    /// Models using this (Thruster, PanelDrag, PanelSrp) are currently
+    /// constrained to `Frame = SimpleEci`.
     pub fn rotation_to_eci(&self) -> Rotation<frame::Body, frame::SimpleEci> {
         Rotation::from_raw(self.orientation())
     }
 
     /// Typed rotation: ECI (inertial) → body frame.
+    ///
+    /// TODO: Same SimpleEci limitation as `rotation_to_eci`.
     pub fn rotation_to_body(&self) -> Rotation<frame::SimpleEci, frame::Body> {
         self.rotation_to_eci().inverse()
     }

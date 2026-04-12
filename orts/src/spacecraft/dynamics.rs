@@ -1,7 +1,10 @@
+use std::marker::PhantomData;
+
 use crate::effector::{AugmentedState, AuxRegistry, StateEffector};
 use crate::model::Model;
 use crate::orbital::gravity::GravityField;
 use arika::epoch::Epoch;
+use arika::frame::{Eci, SimpleEci, Vec3};
 use nalgebra::Matrix3;
 use utsuroi::DynamicalSystem;
 
@@ -13,7 +16,10 @@ use super::{ExternalLoads, SpacecraftState};
 /// and state effectors (e.g. reaction wheels) into a [`DynamicalSystem`]
 /// for the augmented spacecraft state.
 ///
-/// The state type is `AugmentedState<SpacecraftState>` — the 14D plant
+/// Parameterized by the inertial frame `F` (default `SimpleEci`),
+/// matching [`SpacecraftState<F>`].
+///
+/// The state type is `AugmentedState<SpacecraftState<F>>` — the 14D plant
 /// state (orbit 6D + attitude 7D + mass 1D) plus concatenated auxiliary
 /// variables from registered [`StateEffector`]s (e.g. RW angular
 /// momentum). When no effectors are registered, `aux` is empty and the
@@ -23,19 +29,25 @@ use super::{ExternalLoads, SpacecraftState};
 /// - Translation: dr/dt = v, dv/dt = a_gravity + Σ a_loads
 /// - Rotation: dq/dt = ½ q ⊗ (0,ω), dω/dt = I⁻¹(τ − ω × Iω)
 /// - Auxiliary: daux/dt from registered effectors
-pub struct SpacecraftDynamics<G: GravityField> {
+pub struct SpacecraftDynamics<G: GravityField, F: Eci = SimpleEci> {
     mu: f64,
     gravity: G,
     inertia: Matrix3<f64>,
     inertia_inv: Matrix3<f64>,
-    models: Vec<Box<dyn Model<SpacecraftState>>>,
-    effectors: Vec<Box<dyn StateEffector<SpacecraftState>>>,
+    models: Vec<Box<dyn Model<SpacecraftState<F>, F>>>,
+    effectors: Vec<Box<dyn StateEffector<SpacecraftState<F>>>>,
     registry: AuxRegistry,
     epoch_0: Option<Epoch>,
     body_radius: Option<f64>,
+    _frame: PhantomData<F>,
 }
 
-impl<G: GravityField> SpacecraftDynamics<G> {
+// Manual Send + Sync: all fields are Send + Sync, PhantomData<F> is fine
+// because F is a ZST frame marker.
+unsafe impl<G: GravityField, F: Eci> Send for SpacecraftDynamics<G, F> {}
+unsafe impl<G: GravityField, F: Eci> Sync for SpacecraftDynamics<G, F> {}
+
+impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// Create with gravitational parameter, gravity model, and inertia tensor.
     ///
     /// # Panics
@@ -54,11 +66,12 @@ impl<G: GravityField> SpacecraftDynamics<G> {
             registry: AuxRegistry::new(),
             epoch_0: None,
             body_radius: None,
+            _frame: PhantomData,
         }
     }
 
     /// Add an external model (builder pattern).
-    pub fn with_model(mut self, model: impl Model<SpacecraftState> + 'static) -> Self {
+    pub fn with_model(mut self, model: impl Model<SpacecraftState<F>, F> + 'static) -> Self {
         self.models.push(Box::new(model));
         self
     }
@@ -69,7 +82,7 @@ impl<G: GravityField> SpacecraftDynamics<G> {
     /// is integrated alongside the plant state.
     pub fn with_effector(
         mut self,
-        effector: impl StateEffector<SpacecraftState> + 'static,
+        effector: impl StateEffector<SpacecraftState<F>> + 'static,
     ) -> Self {
         let dim = effector.state_dim();
         self.registry.register(effector.name(), dim);
@@ -95,8 +108,8 @@ impl<G: GravityField> SpacecraftDynamics<G> {
     /// from all registered effectors.
     pub fn initial_augmented_state(
         &self,
-        plant: SpacecraftState,
-    ) -> AugmentedState<SpacecraftState> {
+        plant: SpacecraftState<F>,
+    ) -> AugmentedState<SpacecraftState<F>> {
         let mut bounds = Vec::with_capacity(self.registry.total_dim());
         for eff in &self.effectors {
             bounds.extend(eff.aux_bounds());
@@ -109,7 +122,7 @@ impl<G: GravityField> SpacecraftDynamics<G> {
     }
 
     /// Downcast a state effector by index.
-    pub fn effector_mut<T: StateEffector<SpacecraftState> + 'static>(
+    pub fn effector_mut<T: StateEffector<SpacecraftState<F>> + 'static>(
         &mut self,
         index: usize,
     ) -> Option<&mut T> {
@@ -119,7 +132,7 @@ impl<G: GravityField> SpacecraftDynamics<G> {
     }
 
     /// Find and downcast a state effector by name.
-    pub fn effector_by_name_mut<T: StateEffector<SpacecraftState> + 'static>(
+    pub fn effector_by_name_mut<T: StateEffector<SpacecraftState<F>> + 'static>(
         &mut self,
         name: &str,
     ) -> Option<&mut T> {
@@ -152,7 +165,11 @@ impl<G: GravityField> SpacecraftDynamics<G> {
     }
 
     /// Per-model load breakdown at the given state.
-    pub fn model_breakdown(&self, t: f64, state: &SpacecraftState) -> Vec<(&str, ExternalLoads)> {
+    pub fn model_breakdown(
+        &self,
+        t: f64,
+        state: &SpacecraftState<F>,
+    ) -> Vec<(&str, ExternalLoads<F>)> {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
         self.models
             .iter()
@@ -161,7 +178,7 @@ impl<G: GravityField> SpacecraftDynamics<G> {
     }
 
     /// Acceleration breakdown for telemetry.
-    pub fn acceleration_breakdown(&self, t: f64, state: &SpacecraftState) -> Vec<(&str, f64)> {
+    pub fn acceleration_breakdown(&self, t: f64, state: &SpacecraftState<F>) -> Vec<(&str, f64)> {
         let grav = self
             .gravity
             .acceleration(self.mu, state.orbit.position())
@@ -174,14 +191,14 @@ impl<G: GravityField> SpacecraftDynamics<G> {
     }
 }
 
-impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
-    type State = AugmentedState<SpacecraftState>;
+impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G, F> {
+    type State = AugmentedState<SpacecraftState<F>>;
 
     fn derivatives(
         &self,
         t: f64,
-        state: &AugmentedState<SpacecraftState>,
-    ) -> AugmentedState<SpacecraftState> {
+        state: &AugmentedState<SpacecraftState<F>>,
+    ) -> AugmentedState<SpacecraftState<F>> {
         let epoch = self.epoch_0.map(|e| e.add_seconds(t));
 
         // Gravitational acceleration
@@ -190,18 +207,31 @@ impl<G: GravityField> DynamicalSystem for SpacecraftDynamics<G> {
             .acceleration(self.mu, state.plant.orbit.position());
 
         // Accumulate external loads from models
-        let mut total = ExternalLoads::zeros();
+        let mut total = ExternalLoads::<F>::zeros();
         for model in &self.models {
             total += model.eval(t, &state.plant, epoch.as_ref());
         }
 
         // Evaluate state effectors
+        // Note: StateEffector::derivatives returns ExternalLoads (= ExternalLoads<SimpleEci>).
+        // We convert to ExternalLoads<F> via raw vectors, which is safe because the
+        // underlying representation is identical (Vec3 is a newtype over Vector3<f64>).
         let mut aux_rates = vec![0.0; self.registry.total_dim()];
         for (i, eff) in self.effectors.iter().enumerate() {
             let entry = &self.registry.entries()[i];
             let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
             let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
-            total += eff.derivatives(t, &state.plant, aux_slice, rates_slice, epoch.as_ref());
+            let eff_loads =
+                eff.derivatives(t, &state.plant, aux_slice, rates_slice, epoch.as_ref());
+            // TODO: StateEffector::derivatives returns ExternalLoads<SimpleEci>.
+            // When F != SimpleEci, this raw re-tag is only correct if the effector
+            // produces zero translational acceleration (torque-only, like RW).
+            // Making StateEffector frame-generic is needed for Gcrs effectors
+            // that contribute translational loads.
+            total.acceleration_inertial +=
+                Vec3::<F>::from_raw(*eff_loads.acceleration_inertial.inner());
+            total.torque_body += eff_loads.torque_body;
+            total.mass_rate += eff_loads.mass_rate;
         }
 
         // Total translational acceleration
@@ -587,7 +617,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "Inertia tensor must be invertible")]
     fn singular_inertia_panics() {
-        let _dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, Matrix3::zeros());
+        let _dyn_sc: SpacecraftDynamics<PointMass> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, Matrix3::zeros());
     }
 
     // ======== Step 6: Derivative-level conservation laws ========
@@ -708,7 +739,7 @@ mod tests {
     fn effector_mut_downcasts() {
         use crate::spacecraft::ReactionWheelAssembly;
         let rw = ReactionWheelAssembly::three_axis(0.01, 1.0, 0.5);
-        let mut dyn_sc =
+        let mut dyn_sc: SpacecraftDynamics<PointMass> =
             SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0)).with_effector(rw);
 
         let rw_ref = dyn_sc
