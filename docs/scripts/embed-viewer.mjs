@@ -151,6 +151,23 @@ for (const page of examplePages) {
   // Strip the first `# ...` heading — Starlight renders the title from frontmatter.
   body = body.replace(/^#\s+.*\n+/, "");
 
+  // Convert bare GitHub video URLs to <video> tags.
+  // GitHub README renders bare `https://github.com/user-attachments/...` as video,
+  // but mdx treats it as plain text. Convert to HTML video element.
+  body = body.replace(
+    /^(https:\/\/github\.com\/user-attachments\/assets\/[a-f0-9-]+)$/gm,
+    (_, url) => `<video controls width="100%"><source src="${url}" type="video/mp4" /></video>`,
+  );
+
+  // Rewrite relative image paths to GitHub raw URLs.
+  // e.g. ![alt](image.png) → ![alt](https://raw.githubusercontent.com/sksat/orts/main/orts/examples/apollo11/image.png)
+  const readmeDir = page.readme.replace(/\/[^/]+$/, "");
+  body = body.replace(
+    /!\[([^\]]*)\]\((?!https?:\/\/)([^)]+)\)/g,
+    (_, alt, src) =>
+      `![${alt}](https://raw.githubusercontent.com/sksat/orts/main/${readmeDir}/${src})`,
+  );
+
   const frontmatter = [
     "---",
     `title: "${page.title}"`,
