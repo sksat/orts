@@ -96,7 +96,13 @@ export default defineConfig({
       ],
       sidebar: [
         { label: "Getting Started", slug: "getting-started" },
-        { label: "Examples", autogenerate: { directory: "examples" } },
+        {
+          label: "Examples",
+          items: [
+            { label: "Simulations", autogenerate: { directory: "examples", collapsed: true } },
+            { label: "Plugins", autogenerate: { directory: "examples/plugins" } },
+          ],
+        },
         {
           label: "orts",
           collapsed: true,

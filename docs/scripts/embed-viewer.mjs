@@ -115,29 +115,44 @@ try {
 // by Starlight's title), prepends frontmatter, and writes to content dir.
 // ---------------------------------------------------------------------------
 
-/** @type {Array<{slug: string, readme: string, title: string, description: string}>} */
+/** @type {Array<{slug: string, readme: string, locale: string, title: string, description: string}>} */
 const examplePages = [
   {
     slug: "examples/apollo11",
     readme: "orts/examples/apollo11/README.md",
-    title: "Apollo 11 Trajectory",
+    locale: "ja",
+    title: "Apollo 11 軌道シミュレーション",
     description: "Apollo 11 全行程の軌道シミュレーションと 3D 可視化",
   },
   {
     slug: "examples/artemis1",
     readme: "orts/examples/artemis1/README.md",
+    locale: "ja",
     title: "Artemis 1 Coast Feasibility",
     description: "Artemis 1 coast phase を JPL Horizons と照合する feasibility spike",
   },
   {
     slug: "examples/orbital-lifetime",
     readme: "orts/examples/orbital_lifetime/README.md",
-    title: "Orbital Lifetime Analysis",
+    locale: "ja",
+    title: "軌道寿命解析",
     description: "6U CubeSat の軌道減衰を再現し、大気モデルと太陽活動の影響を比較",
   },
+  {
+    slug: "examples/plugins/bdot-finite-diff",
+    readme: "plugins/bdot-finite-diff/README.md",
+    locale: "en",
+    title: "B-dot Finite-Difference Controller (plugin)",
+    description: "Main-loop style WASM plugin implementing B-dot detumbling",
+  },
+  {
+    slug: "examples/plugins/pd-rw-control",
+    readme: "plugins/pd-rw-control/README.md",
+    locale: "ja",
+    title: "PD 姿勢制御 + RW (plugin)",
+    description: "コールバック型 WASM plugin で PD 姿勢制御 + リアクションホイール",
+  },
 ];
-
-const contentBase = resolve(docsRoot, "src/content/docs/en");
 
 for (const page of examplePages) {
   const src = resolve(repoRoot, page.readme);
@@ -168,6 +183,21 @@ for (const page of examplePages) {
       `![${alt}](https://raw.githubusercontent.com/sksat/orts/main/${readmeDir}/${src})`,
   );
 
+  // Escape bare `<` in prose that MDX would parse as JSX tags.
+  // Matches `<` NOT followed by a known HTML/JSX-like pattern (tag name, !, /, etc.)
+  // but preceded by a space or start-of-line — e.g. "< 1°" or "<1°".
+  // Skip lines inside code fences.
+  let inCodeFence = false;
+  body = body
+    .split("\n")
+    .map((line) => {
+      if (line.startsWith("```")) inCodeFence = !inCodeFence;
+      if (inCodeFence) return line;
+      // Replace bare < that looks like a comparison, not an HTML tag
+      return line.replace(/(<)(\d)/g, "&lt;$2");
+    })
+    .join("\n");
+
   const frontmatter = [
     "---",
     `title: "${page.title}"`,
@@ -176,6 +206,7 @@ for (const page of examplePages) {
     "",
   ].join("\n");
 
+  const contentBase = resolve(docsRoot, `src/content/docs/${page.locale}`);
   const dest = resolve(contentBase, `${page.slug}.mdx`);
   mkdirSync(resolve(dest, ".."), { recursive: true });
   writeFileSync(dest, frontmatter + body);
