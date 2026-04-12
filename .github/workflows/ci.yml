@@ -129,16 +129,15 @@ jobs:
           retention-days: 1
 
   # Reuses cargo cache from rust-build via shared-key to skip recompilation.
+  # Split into two jobs: orts (heavy, ~20 min) runs alone while all
+  # other crates share a single job (~3 min). New crates are
+  # automatically included via --workspace.
   rust-test:
     runs-on: ubuntu-latest
     needs: [rust-build]
     steps:
       - uses: actions/checkout@v6.0.2
 
-      # Same reason as rust-build: restoring the cargo cache + running
-      # test binaries on the default runner can still exhaust disk
-      # during the test link/run phase. Keep the same keep/reclaim
-      # policy as rust-build.
       - name: Free disk space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
@@ -168,11 +167,46 @@ jobs:
           shared-key: rust-native
           save-if: false
 
-      - name: Build (test targets)
-        run: cargo test --locked --workspace --no-run
+      - name: Test (all except orts)
+        run: cargo test --locked --workspace --exclude orts
 
-      - name: Test
-        run: cargo test --locked --workspace
+  rust-test-orts:
+    runs-on: ubuntu-latest
+    needs: [rust-build]
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
+      - name: Install mold linker
+        run: sudo apt-get install -y mold
+
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2.9.1
+        with:
+          shared-key: rust-native
+          save-if: false
+
+      - name: Test (orts)
+        run: cargo test --locked -p orts
 
   # Plugin-wasm guest tests: build the bdot + pd-rw-control guest
   # components with cargo-component, then run the feature-gated
@@ -844,7 +878,7 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: [rust-dist, build-example-plugins, crate-package-verify, npm-publish-dry-run, rust-test, rust-test-plugin-wasm, viewer-e2e, cli-plugin-backend-e2e]
+    needs: [rust-dist, build-example-plugins, crate-package-verify, npm-publish-dry-run, rust-test, rust-test-orts, rust-test-plugin-wasm, viewer-e2e, cli-plugin-backend-e2e]
     steps:
       - uses: actions/checkout@v6.0.2
         with:
