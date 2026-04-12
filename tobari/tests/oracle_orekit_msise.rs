@@ -64,7 +64,7 @@ fn parse_epoch(epoch_utc: &str) -> Epoch {
     )
 }
 
-/// Compute density via ECI position path (exercises geo.rs eci_to_geodetic_latlon).
+/// Compute density via ECI round-trip (exercises geo.rs eci_to_geodetic_latlon).
 fn compute_density_via_eci(
     model: &Nrlmsise00,
     lat_deg: f64,
@@ -72,7 +72,7 @@ fn compute_density_via_eci(
     alt_km: f64,
     epoch: &Epoch,
 ) -> f64 {
-    // Convert geodetic → ECEF → ECI (round-trip to exercise the full path)
+    // Convert geodetic → ECEF → ECI → geodetic (round-trip to exercise the full path)
     let gmst = epoch.gmst();
     let geod = arika::earth::Geodetic {
         latitude: lat_deg.to_radians(),
@@ -84,8 +84,17 @@ fn compute_density_via_eci(
         arika::frame::Rotation::<arika::frame::SimpleEcef, arika::frame::SimpleEci>::from_era(gmst)
             .transform(&ecef);
 
+    // Round-trip: ECI → geodetic via geo module
+    let (rt_lat_deg, rt_lon_deg) =
+        tobari::nrlmsise00::geo::simple_eci_to_geodetic_latlon(&eci, epoch);
+    let rt_geod = arika::earth::Geodetic {
+        latitude: rt_lat_deg.to_radians(),
+        longitude: rt_lon_deg.to_radians(),
+        altitude: arika::earth::geodetic_altitude(eci.inner()),
+    };
+
     model
-        .density_with_composition(alt_km, &eci, epoch)
+        .density_with_composition(&rt_geod, epoch)
         .total_mass_density
 }
 

@@ -9,9 +9,8 @@
 use arika::epoch::Epoch;
 use arika::frame;
 use arika::sun;
-use nalgebra::Vector3;
 
-use crate::AtmosphereModel;
+use crate::{AtmosphereInput, AtmosphereModel};
 
 /// Harris-Priester density table entry.
 struct HpEntry {
@@ -336,17 +335,58 @@ impl HarrisPriester {
     /// (Earth spin axis) in the direction of Earth's rotation (eastward).
     /// This places the bulge at ~14h local solar time (2 hours after local noon),
     /// representing the thermal inertia delay.
-    fn bulge_apex(&self, epoch: &Epoch) -> Vector3<f64> {
-        let sun_dir = (self.sun_direction_fn)(epoch);
-        let cos_lag = self.lag_angle.cos();
-        let sin_lag = self.lag_angle.sin();
-        // Counter-clockwise rotation about Z-axis by +lag_angle
-        Vector3::new(
-            cos_lag * sun_dir.x() - sin_lag * sun_dir.y(),
-            sin_lag * sun_dir.x() + cos_lag * sun_dir.y(),
-            sun_dir.z(),
-        )
-        .normalize()
+    /// Compute cos(ψ) from geodetic coordinates and solar geometry.
+    ///
+    /// Uses spherical trigonometry on the geocentric sphere:
+    ///   cos(ψ) = cos(φ_c) · cos(δ) · cos(h + lag) + sin(φ_c) · sin(δ)
+    /// where φ_c = geocentric latitude (converted from geodetic),
+    /// δ = solar declination, h = local hour angle.
+    ///
+    /// The geodetic → geocentric conversion accounts for the WGS-84 ellipsoid
+    /// and satellite altitude, matching the original 3D vector dot product
+    /// to < 1e-10 relative error.
+    fn bulge_cos_psi(&self, input: &AtmosphereInput<'_>) -> f64 {
+        let sun_dir = (self.sun_direction_fn)(input.utc);
+        let sun_r = sun_dir.inner();
+        let sun_mag = sun_r.magnitude();
+        if sun_mag < 1e-30 {
+            return 0.0;
+        }
+        let sun_unit = sun_r / sun_mag;
+
+        // Solar RA and declination from Meeus direction (GCRS ≈ ECI for HP precision)
+        let ra_sun = sun_unit.y.atan2(sun_unit.x);
+        let dec_sun = sun_unit.z.asin();
+
+        // Satellite right ascension = GMST + geodetic_longitude
+        // (geodetic_longitude == geocentric_longitude by definition)
+        let gmst = input.utc.gmst();
+        let ra_sat = gmst + input.geodetic.longitude;
+
+        // Geocentric latitude from geodetic latitude + altitude.
+        // N = a / √(1 - e² sin²(φ)), then:
+        //   p = (N + h) cos(φ),  z = (N(1-e²) + h) sin(φ)
+        //   φ_c = atan2(z, p)
+        let lat = input.geodetic.latitude;
+        let sin_lat = lat.sin();
+        let cos_lat = lat.cos();
+        let e2 = arika::earth::ellipsoid::WGS84_E2;
+        let a = arika::earth::ellipsoid::WGS84_A;
+        let n = a / (1.0 - e2 * sin_lat * sin_lat).sqrt();
+        let h = input.geodetic.altitude;
+        let p = (n + h) * cos_lat;
+        let z = (n * (1.0 - e2) + h) * sin_lat;
+        let geocentric_lat = z.atan2(p);
+
+        // Hour angle = RA_sat - RA_sun
+        let ha = ra_sat - ra_sun;
+
+        // Bulge apex is at RA_sun + lag (east of Sun), so the
+        // angular separation from the satellite is ha - lag.
+        let ha_lag = ha - self.lag_angle;
+
+        (geocentric_lat.cos() * dec_sun.cos() * ha_lag.cos() + geocentric_lat.sin() * dec_sun.sin())
+            .clamp(-1.0, 1.0)
     }
 
     /// Interpolate ρ_min and ρ_max from the HP table at a given altitude.
@@ -384,12 +424,9 @@ impl Default for HarrisPriester {
 }
 
 impl AtmosphereModel for HarrisPriester {
-    fn density(
-        &self,
-        altitude_km: f64,
-        position_eci: &arika::SimpleEci,
-        epoch: Option<&Epoch<arika::epoch::Utc>>,
-    ) -> f64 {
+    fn density(&self, input: &AtmosphereInput<'_>) -> f64 {
+        let altitude_km = input.geodetic.altitude;
+
         // Below HP table range: fall back to exponential model
         if altitude_km < HP_TABLE[0].h {
             return crate::exponential::density(altitude_km);
@@ -402,21 +439,9 @@ impl AtmosphereModel for HarrisPriester {
 
         let (rho_min, rho_max) = self.interpolate_table(altitude_km);
 
-        // Without epoch, return average (no diurnal info available)
-        let epoch = match epoch {
-            Some(e) => e,
-            None => return (rho_min + rho_max) / 2.0,
-        };
-
-        // Compute angle between satellite direction and the diurnal
-        // bulge apex. The bulge apex is computed from the Sun direction
-        // (in Gcrs) but at Meeus precision Gcrs and SimpleEci are
-        // numerically indistinguishable, so extracting a raw Vector3
-        // from the SimpleEci position is semantically safe for the
-        // cos(ψ) calculation.
-        let apex = self.bulge_apex(epoch);
-        let sat_dir = position_eci.inner().normalize();
-        let cos_psi = sat_dir.dot(&apex).clamp(-1.0, 1.0);
+        // Compute cos(ψ) via geodetic→geocentric conversion + spherical trig.
+        // Frame-agnostic: uses only geodetic coordinates + epoch.
+        let cos_psi = self.bulge_cos_psi(input);
 
         // cos(ψ/2) = sqrt((1 + cos ψ) / 2)
         let cos_half_psi = ((1.0 + cos_psi) / 2.0).sqrt();
@@ -439,6 +464,7 @@ fn scale_height_interp(h: f64, h_lo: f64, h_hi: f64, rho_lo: f64, rho_hi: f64) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arika::earth::geodetic::Geodetic;
     use std::f64::consts::PI;
 
     /// Helper: create a Harris-Priester model with a fixed sun direction (+X).
@@ -450,17 +476,36 @@ mod tests {
         Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0)
     }
 
+    /// Build an AtmosphereInput from geodetic coordinates and epoch.
+    fn make_input(geodetic: Geodetic, epoch: &Epoch) -> AtmosphereInput<'_> {
+        AtmosphereInput {
+            geodetic,
+            utc: epoch,
+        }
+    }
+
     #[test]
     fn density_at_table_boundary_apex() {
         // At the bulge apex (same direction as sun+lag), should get rho_max
         let hp = hp_fixed_sun().with_lag_angle(0.0); // no lag, apex = +X
         let epoch = dummy_epoch();
 
-        // Satellite at +X direction → at the apex
-        let pos = arika::SimpleEci::new(6778.0, 0.0, 0.0);
+        // Satellite at +X direction (equator, longitude ~ GMST) → at the apex
+        // ECI (6778, 0, 0) at equator: lat=0, lon depends on GMST, alt=6778-6371=407 km
+        // For this test we need altitude=400 km and to be at the apex.
+        // With fixed sun at +X and lag=0, the bulge apex is at RA=0.
+        // Satellite at lon = -GMST (to be at RA=0 in ECI) but for the HP model
+        // what matters is lat/lon + GMST → position in ECI space.
+        // We use lon = -GMST so that in ECI the satellite is at +X.
+        let gmst = epoch.gmst();
+        let geodetic = Geodetic {
+            latitude: 0.0,
+            longitude: -gmst,
+            altitude: 400.0,
+        };
 
         // At 400 km: rho_max = 7.492e-12
-        let rho = hp.density(400.0, &pos, Some(&epoch));
+        let rho = hp.density(&make_input(geodetic, &epoch));
         let expected = 7.492e-12;
         let rel_err = (rho - expected).abs() / expected;
         assert!(
@@ -475,11 +520,16 @@ mod tests {
         let hp = hp_fixed_sun().with_lag_angle(0.0);
         let epoch = dummy_epoch();
 
-        // Satellite at -X → anti-apex
-        let pos = arika::SimpleEci::new(-6778.0, 0.0, 0.0);
+        // Satellite at -X → anti-apex: lon = PI - GMST
+        let gmst = epoch.gmst();
+        let geodetic = Geodetic {
+            latitude: 0.0,
+            longitude: PI - gmst,
+            altitude: 400.0,
+        };
 
         // At 400 km: rho_min = 2.249e-12
-        let rho = hp.density(400.0, &pos, Some(&epoch));
+        let rho = hp.density(&make_input(geodetic, &epoch));
         let expected = 2.249e-12;
         let rel_err = (rho - expected).abs() / expected;
         assert!(
@@ -494,11 +544,20 @@ mod tests {
         let epoch = dummy_epoch();
 
         let altitudes = [100.0, 200.0, 300.0, 400.0, 500.0, 700.0, 1000.0];
+        // All at equator, same longitude
         for i in 0..altitudes.len() - 1 {
-            let pos_lo = arika::SimpleEci::new(6371.0 + altitudes[i], 0.0, 0.0);
-            let pos_hi = arika::SimpleEci::new(6371.0 + altitudes[i + 1], 0.0, 0.0);
-            let rho_lo = hp.density(altitudes[i], &pos_lo, Some(&epoch));
-            let rho_hi = hp.density(altitudes[i + 1], &pos_hi, Some(&epoch));
+            let geod_lo = Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: altitudes[i],
+            };
+            let geod_hi = Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: altitudes[i + 1],
+            };
+            let rho_lo = hp.density(&make_input(geod_lo, &epoch));
+            let rho_hi = hp.density(&make_input(geod_hi, &epoch));
             assert!(
                 rho_hi < rho_lo,
                 "Density should decrease: ρ({})={:.3e} > ρ({})={:.3e}",
@@ -514,14 +573,24 @@ mod tests {
     fn diurnal_variation_apex_greater_than_antapex() {
         let hp = hp_fixed_sun().with_lag_angle(0.0);
         let epoch = dummy_epoch();
+        let gmst = epoch.gmst();
 
         for alt in [200.0, 400.0, 600.0, 800.0] {
-            let r = 6371.0 + alt;
-            let pos_apex = arika::SimpleEci::new(r, 0.0, 0.0);
-            let pos_anti = arika::SimpleEci::new(-r, 0.0, 0.0);
+            // Apex: satellite at ECI +X → lon = -GMST
+            let geod_apex = Geodetic {
+                latitude: 0.0,
+                longitude: -gmst,
+                altitude: alt,
+            };
+            // Anti-apex: satellite at ECI -X → lon = PI - GMST
+            let geod_anti = Geodetic {
+                latitude: 0.0,
+                longitude: PI - gmst,
+                altitude: alt,
+            };
 
-            let rho_apex = hp.density(alt, &pos_apex, Some(&epoch));
-            let rho_anti = hp.density(alt, &pos_anti, Some(&epoch));
+            let rho_apex = hp.density(&make_input(geod_apex, &epoch));
+            let rho_anti = hp.density(&make_input(geod_anti, &epoch));
 
             assert!(
                 rho_apex > rho_anti,
@@ -531,28 +600,16 @@ mod tests {
     }
 
     #[test]
-    fn no_epoch_returns_average() {
-        let hp = hp_fixed_sun();
-        let pos = arika::SimpleEci::new(6778.0, 0.0, 0.0);
-
-        let rho = hp.density(400.0, &pos, None);
-
-        // Should be (rho_min + rho_max) / 2 at 400 km
-        let expected = (2.249e-12 + 7.492e-12) / 2.0;
-        let rel_err = (rho - expected).abs() / expected;
-        assert!(
-            rel_err < 1e-6,
-            "Without epoch: expected {expected:.3e}, got {rho:.3e}"
-        );
-    }
-
-    #[test]
     fn below_100km_falls_back_to_exponential() {
         let hp = hp_fixed_sun();
-        let pos = arika::SimpleEci::new(6371.0 + 50.0, 0.0, 0.0);
         let epoch = dummy_epoch();
+        let geodetic = Geodetic {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: 50.0,
+        };
 
-        let rho_hp = hp.density(50.0, &pos, Some(&epoch));
+        let rho_hp = hp.density(&make_input(geodetic, &epoch));
         let rho_exp = crate::exponential::density(50.0);
 
         assert_eq!(
@@ -564,24 +621,33 @@ mod tests {
     #[test]
     fn above_table_returns_zero() {
         let hp = hp_fixed_sun();
-        let pos = arika::SimpleEci::new(6371.0 + 1500.0, 0.0, 0.0);
         let epoch = dummy_epoch();
+        let geodetic = Geodetic {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: 1500.0,
+        };
 
-        let rho = hp.density(1500.0, &pos, Some(&epoch));
+        let rho = hp.density(&make_input(geodetic, &epoch));
         assert_eq!(rho, 0.0, "Above table range should return 0, got {rho:.3e}");
     }
 
     #[test]
     fn higher_exponent_sharper_bulge() {
         let epoch = dummy_epoch();
-        // Satellite at 90° from apex (equator of the bulge)
-        let pos_90 = arika::SimpleEci::new(0.0, 6778.0, 0.0);
+        let gmst = epoch.gmst();
+        // Satellite at 90° from apex: ECI +Y → lon = PI/2 - GMST
+        let geodetic_90 = Geodetic {
+            latitude: 0.0,
+            longitude: PI / 2.0 - gmst,
+            altitude: 400.0,
+        };
 
         let hp_n2 = hp_fixed_sun().with_lag_angle(0.0).with_exponent(2);
         let hp_n6 = hp_fixed_sun().with_lag_angle(0.0).with_exponent(6);
 
-        let rho_n2 = hp_n2.density(400.0, &pos_90, Some(&epoch));
-        let rho_n6 = hp_n6.density(400.0, &pos_90, Some(&epoch));
+        let rho_n2 = hp_n2.density(&make_input(geodetic_90, &epoch));
+        let rho_n6 = hp_n6.density(&make_input(geodetic_90, &epoch));
 
         // Higher n → density drops faster away from apex → lower density at 90°
         assert!(
@@ -591,31 +657,30 @@ mod tests {
     }
 
     #[test]
-    fn apex_rotated_from_sun() {
-        let hp = hp_fixed_sun(); // sun at +X, lag = π/6
+    fn bulge_cos_psi_at_apex_is_one() {
+        use arika::earth::geodetic::Geodetic;
 
+        // hp_fixed_sun: Sun at +X (RA=0, dec=0), lag = π/6.
+        // Bulge apex is at RA = lag = π/6.
+        // A satellite at the apex (geocentric lat=0, RA=π/6) should give cos_psi ≈ 1.
+        let hp = hp_fixed_sun();
         let epoch = dummy_epoch();
-        let apex = hp.bulge_apex(&epoch);
+        let gmst = epoch.gmst();
 
-        // Sun at +X, rotated +30° about Z (eastward) → apex.x = cos(30°), apex.y = +sin(30°)
-        // The density bulge leads the sub-solar point in the direction of Earth's rotation
-        let expected_x = (PI / 6.0).cos();
-        let expected_y = (PI / 6.0).sin();
-
+        // Satellite geodetic longitude such that RA_sat = GMST + lon = π/6
+        let lon = PI / 6.0 - gmst;
+        let input = crate::AtmosphereInput {
+            geodetic: Geodetic {
+                latitude: 0.0, // equator (geocentric = geodetic)
+                longitude: lon,
+                altitude: 400.0,
+            },
+            utc: &epoch,
+        };
+        let cos_psi = hp.bulge_cos_psi(&input);
         assert!(
-            (apex.x - expected_x).abs() < 1e-10,
-            "Apex x: expected {expected_x:.4}, got {:.4}",
-            apex.x
-        );
-        assert!(
-            (apex.y - expected_y).abs() < 1e-10,
-            "Apex y: expected {expected_y:.4}, got {:.4}",
-            apex.y
-        );
-        assert!(
-            apex.z.abs() < 1e-10,
-            "Apex z should be ~0, got {:.4}",
-            apex.z
+            (cos_psi - 1.0).abs() < 1e-10,
+            "cos_psi at bulge apex should be ~1.0, got {cos_psi:.6}"
         );
     }
 
@@ -650,9 +715,13 @@ mod tests {
     fn iss_altitude_order_of_magnitude() {
         let hp = hp_fixed_sun();
         let epoch = dummy_epoch();
-        let pos = arika::SimpleEci::new(6778.0, 0.0, 0.0);
+        let geodetic = Geodetic {
+            latitude: 0.0,
+            longitude: 0.0,
+            altitude: 400.0,
+        };
 
-        let rho_hp = hp.density(400.0, &pos, Some(&epoch));
+        let rho_hp = hp.density(&make_input(geodetic, &epoch));
         let rho_exp = crate::exponential::density(400.0);
 
         // HP and Exponential should agree within ~1 order of magnitude at ISS altitude

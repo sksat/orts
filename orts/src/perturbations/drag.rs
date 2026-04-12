@@ -1,9 +1,10 @@
 use arika::body::KnownBody;
 use arika::earth::ellipsoid::{WGS84_A, WGS84_B};
+use arika::earth::geodetic::Geodetic;
 use arika::earth::{OMEGA as OMEGA_EARTH, R as R_EARTH};
 use arika::epoch::Epoch;
 use nalgebra::Vector3;
-use tobari::{AtmosphereModel, Exponential};
+use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 
 use crate::OrbitalState;
 use crate::model::ExternalLoads;
@@ -103,17 +104,33 @@ impl AtmosphericDrag {
             return Vector3::zeros();
         }
 
-        // Altitude: WGS-84 geodetic for Earth, spherical for others.
-        // `geodetic_altitude` is invariant under Z-axis rotation
-        // (depends only on `p = √(x²+y²)` and `z`), so it gives the
-        // correct WGS-84 ellipsoidal altitude even when given the
-        // simple ECI position directly.
-        let alt = match self.body {
-            Some(KnownBody::Earth) => arika::earth::geodetic_altitude(pos),
-            _ => pos.magnitude() - self.body_radius,
+        // TODO: OrbitalSystem::epoch_0 を Option ではなく required にすれば
+        // この dummy epoch は不要になる。現状は epoch なしで呼ばれる unit test
+        // パスのためだけに存在する一時的な妥協。
+        let dummy_epoch = arika::epoch::Epoch::from_jd(2451545.0); // J2000.0
+        let utc = epoch.unwrap_or(&dummy_epoch);
+
+        let geodetic = match self.body {
+            Some(KnownBody::Earth) => {
+                let gmst = utc.gmst();
+                let rot = arika::frame::Rotation::<
+                    arika::frame::SimpleEci,
+                    arika::frame::SimpleEcef,
+                >::from_era(gmst);
+                rot.transform(&pos_eci).to_geodetic()
+            }
+            _ => {
+                let r_mag = pos.magnitude();
+                Geodetic {
+                    latitude: (pos.z / r_mag).asin(),
+                    longitude: pos.y.atan2(pos.x),
+                    altitude: r_mag - self.body_radius,
+                }
+            }
         };
 
-        let rho = self.atmosphere.density(alt, &pos_eci, epoch); // kg/m³
+        let input = AtmosphereInput { geodetic, utc };
+        let rho = self.atmosphere.density(&input); // kg/m³
         if rho == 0.0 {
             return Vector3::zeros();
         }

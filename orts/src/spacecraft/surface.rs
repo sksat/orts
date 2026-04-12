@@ -4,7 +4,7 @@ use arika::body::KnownBody;
 use arika::earth::R as R_EARTH;
 use arika::epoch::Epoch;
 use nalgebra::Vector3;
-use tobari::{AtmosphereModel, Exponential};
+use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 
 use super::ExternalLoads;
 
@@ -201,14 +201,6 @@ impl PanelDrag {
         }
     }
 
-    /// Compute altitude [km] from position.
-    fn altitude(&self, position: &Vector3<f64>) -> f64 {
-        match self.body {
-            Some(KnownBody::Earth) => arika::earth::geodetic_altitude(position),
-            _ => position.magnitude() - self.body_radius,
-        }
-    }
-
     /// Compute relative velocity accounting for atmosphere co-rotation [km/s].
     fn relative_velocity_from_orbit(&self, orbit: &crate::OrbitalState) -> Vector3<f64> {
         let omega = Vector3::new(0.0, 0.0, self.omega_body);
@@ -228,9 +220,19 @@ impl PanelDrag {
             return ExternalLoads::zeros();
         }
 
-        let alt = self.altitude(orbit.position());
+        // TODO: OrbitalSystem::epoch_0 を required にすれば dummy は不要
         let pos_eci = orbit.position_eci();
-        let rho = self.atmosphere.density(alt, &pos_eci, epoch);
+        let dummy_epoch = arika::epoch::Epoch::from_jd(2451545.0);
+        let utc = epoch.unwrap_or(&dummy_epoch);
+        let geodetic = {
+            let gmst = utc.gmst();
+            let rot = arika::frame::Rotation::<
+                arika::frame::SimpleEci,
+                arika::frame::SimpleEcef,
+            >::from_era(gmst);
+            rot.transform(&pos_eci).to_geodetic()
+        };
+        let rho = self.atmosphere.density(&AtmosphereInput { geodetic, utc });
         if rho == 0.0 {
             return ExternalLoads::zeros();
         }
@@ -1111,12 +1113,7 @@ mod tests {
     struct ConstantDensity(f64);
 
     impl AtmosphereModel for ConstantDensity {
-        fn density(
-            &self,
-            _alt: f64,
-            _pos_eci: &arika::SimpleEci,
-            _epoch: Option<&Epoch<arika::epoch::Utc>>,
-        ) -> f64 {
+        fn density(&self, _input: &AtmosphereInput<'_>) -> f64 {
             self.0
         }
     }

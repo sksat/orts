@@ -14,10 +14,11 @@
 //! - **Table & interpolation**: Identical data and scale-height formula — no
 //!   expected difference from this source.
 
+use arika::earth::geodetic::Geodetic;
 use arika::epoch::Epoch;
 use nalgebra::Vector3;
 use serde::Deserialize;
-use tobari::{AtmosphereModel, HarrisPriester};
+use tobari::{AtmosphereInput, AtmosphereModel, HarrisPriester};
 
 // ─── Fixture data structures ───
 
@@ -74,6 +75,19 @@ fn parse_epoch(s: &str) -> Epoch {
     Epoch::from_gregorian(date[0] as i32, date[1], date[2], hour, min, sec)
 }
 
+/// Convert an ECI position to Geodetic coordinates for atmosphere input.
+///
+/// Converts the ECI position to geodetic lat/lon via `simple_eci_to_geodetic_latlon`,
+/// and uses the given altitude (which may be spherical or geodetic depending on the caller).
+fn eci_to_geodetic(pos: &arika::SimpleEci, altitude_km: f64, epoch: &Epoch) -> Geodetic {
+    let (lat_deg, lon_deg) = tobari::nrlmsise00::geo::simple_eci_to_geodetic_latlon(pos, epoch);
+    Geodetic {
+        latitude: lat_deg.to_radians(),
+        longitude: lon_deg.to_radians(),
+        altitude: altitude_km,
+    }
+}
+
 // ─── Tests ───
 
 /// Test 1: All 480 equatorial n=2 points against Orekit.
@@ -95,8 +109,13 @@ fn hp_equatorial_density_vs_orekit() {
     for pt in &fixtures.equatorial_n2 {
         let epoch = parse_epoch(&pt.epoch);
         let pos = arika::SimpleEci::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
+        let geodetic = eci_to_geodetic(&pos, pt.altitude_km, &epoch);
+        let input = AtmosphereInput {
+            geodetic,
+            utc: &epoch,
+        };
 
-        let our_density = hp.density(pt.altitude_km, &pos, Some(&epoch));
+        let our_density = hp.density(&input);
         let orekit_density = pt.density_kg_m3;
 
         // Skip points where both densities are essentially zero (boundary)
@@ -153,8 +172,13 @@ fn hp_apex_antapex_tight() {
         // by checking if density is within 5% of a table boundary
         let epoch = parse_epoch(&pt.epoch);
         let pos = arika::SimpleEci::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
+        let geodetic = eci_to_geodetic(&pos, pt.altitude_km, &epoch);
+        let input = AtmosphereInput {
+            geodetic,
+            utc: &epoch,
+        };
 
-        let our_density = hp.density(pt.altitude_km, &pos, Some(&epoch));
+        let our_density = hp.density(&input);
         let orekit_density = pt.density_kg_m3;
 
         if orekit_density.abs() < 1e-20 {
@@ -201,8 +225,13 @@ fn hp_exponent_n6_vs_orekit() {
 
         let epoch = parse_epoch(&pt.epoch);
         let pos = arika::SimpleEci::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
+        let geodetic = eci_to_geodetic(&pos, pt.altitude_km, &epoch);
+        let input = AtmosphereInput {
+            geodetic,
+            utc: &epoch,
+        };
 
-        let our_density = hp.density(pt.altitude_km, &pos, Some(&epoch));
+        let our_density = hp.density(&input);
         let orekit_density = pt.density_kg_m3;
 
         if orekit_density.abs() < 1e-20 {
@@ -310,8 +339,13 @@ fn hp_off_equator_documents_geodetic_diff() {
     for pt in &fixtures.off_equator {
         let epoch = parse_epoch("2024-03-20T12:00:00Z");
         let pos = arika::SimpleEci::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
+        let geodetic = eci_to_geodetic(&pos, pt.altitude_km_spherical, &epoch);
+        let input = AtmosphereInput {
+            geodetic,
+            utc: &epoch,
+        };
 
-        let our_density = hp.density(pt.altitude_km_spherical, &pos, Some(&epoch));
+        let our_density = hp.density(&input);
         let orekit_density = pt.density_kg_m3;
 
         let ratio = if orekit_density > 0.0 {
@@ -379,7 +413,12 @@ fn hp_seasonal_variation_range() {
                 let epoch = parse_epoch(&pt.epoch);
                 let pos =
                     arika::SimpleEci::new(pt.position_km[0], pt.position_km[1], pt.position_km[2]);
-                our_densities.push(hp.density(pt.altitude_km, &pos, Some(&epoch)));
+                let geodetic = eci_to_geodetic(&pos, pt.altitude_km, &epoch);
+                let input = AtmosphereInput {
+                    geodetic,
+                    utc: &epoch,
+                };
+                our_densities.push(hp.density(&input));
                 orekit_densities.push(pt.density_kg_m3);
             }
 

@@ -3,9 +3,7 @@
 //! Based on US Standard Atmosphere 1976 reference values.
 //! Returns atmospheric density [kg/m³] at a given altitude [km].
 
-use arika::epoch::Epoch;
-
-use crate::AtmosphereModel;
+use crate::{AtmosphereInput, AtmosphereModel};
 
 /// Atmosphere layer: base altitude, base density, and scale height.
 struct Layer {
@@ -105,13 +103,8 @@ pub fn density(altitude_km: f64) -> f64 {
 pub struct Exponential;
 
 impl AtmosphereModel for Exponential {
-    fn density(
-        &self,
-        altitude_km: f64,
-        _position_eci: &arika::SimpleEci,
-        _epoch: Option<&Epoch<arika::epoch::Utc>>,
-    ) -> f64 {
-        density(altitude_km)
+    fn density(&self, input: &AtmosphereInput<'_>) -> f64 {
+        density(input.geodetic.altitude)
     }
 }
 
@@ -202,11 +195,20 @@ mod tests {
 
     #[test]
     fn trait_ignores_position_and_epoch() {
-        let model = Exponential;
-        let pos = arika::SimpleEci::new(6778.0, 0.0, 0.0);
-        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        use arika::earth::geodetic::Geodetic;
+        use arika::epoch::Epoch;
 
-        let rho_trait = model.density(400.0, &pos, Some(&epoch));
+        let model = Exponential;
+        let input = AtmosphereInput {
+            geodetic: Geodetic {
+                latitude: 0.0,
+                longitude: 0.0,
+                altitude: 400.0,
+            },
+            utc: &Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0),
+        };
+
+        let rho_trait = model.density(&input);
         let rho_free = density(400.0);
         assert_eq!(
             rho_trait, rho_free,

@@ -48,39 +48,30 @@ pub use harris_priester::HarrisPriester;
 pub use nrlmsise00::Nrlmsise00;
 pub use space_weather::{ConstantWeather, SpaceWeather, SpaceWeatherProvider};
 
-use arika::SimpleEci;
+use arika::earth::geodetic::Geodetic;
 use arika::epoch::{Epoch, Utc};
+
+/// Pre-computed input for atmospheric density evaluation.
+///
+/// Contains the geodetic coordinates and UTC epoch needed by all
+/// atmosphere models. The caller (e.g., drag force model) is
+/// responsible for computing `geodetic` from the propagator's
+/// frame-typed position vector — the atmosphere model itself is
+/// frame-agnostic.
+pub struct AtmosphereInput<'a> {
+    /// Satellite geodetic coordinates (latitude/longitude in rad, altitude in km).
+    pub geodetic: Geodetic,
+    /// Absolute UTC epoch.
+    pub utc: &'a Epoch<Utc>,
+}
 
 /// An atmospheric density model.
 ///
-/// Computes density \[kg/m³\] from altitude, satellite position, and epoch.
-/// Implementors must be `Send + Sync` for use inside [`ForceModel`](orts::perturbations::ForceModel).
-///
-/// # Frame and scale discipline (Phase 4)
-///
-/// `position_eci` is a phantom-typed [`arika::SimpleEci`] — the simple
-/// path of the Phase 1–3 frame redesign. A future `density_precise`
-/// entry point that takes `&arika::frame::Vec3<arika::frame::Itrs>` +
-/// a full EOP provider is planned for Phase 4B; the current trait only
-/// covers the simple path so every existing atmosphere model can
-/// continue to participate.
-///
-/// `epoch` is a [`arika::epoch::Epoch<Utc>`] so implementors that need
-/// a time argument (Harris-Priester's diurnal bulge, NRLMSISE-00's
-/// local solar time, etc.) receive a scale-tagged epoch rather than a
-/// bare JD, matching the rest of the arika time-scale discipline.
+/// Computes density \[kg/m³\] from geodetic position and epoch.
+/// The model is **frame-agnostic**: it receives pre-computed geodetic
+/// coordinates rather than frame-typed ECI vectors. The frame-to-geodetic
+/// conversion is the caller's responsibility.
 pub trait AtmosphereModel: Send + Sync {
     /// Compute atmospheric density \[kg/m³\].
-    ///
-    /// # Arguments
-    /// - `altitude_km` — altitude above the reference body surface \[km\]
-    /// - `position_eci` — satellite position in the simple ECI frame
-    ///   \[km\]
-    /// - `epoch` — absolute UTC time (`None` if unavailable)
-    fn density(
-        &self,
-        altitude_km: f64,
-        position_eci: &SimpleEci,
-        epoch: Option<&Epoch<Utc>>,
-    ) -> f64;
+    fn density(&self, input: &AtmosphereInput<'_>) -> f64;
 }

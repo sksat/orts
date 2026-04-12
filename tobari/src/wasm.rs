@@ -19,7 +19,7 @@ use crate::gfz::{self, SpaceWeatherFormat};
 use crate::magnetic::{Igrf, MagneticFieldModel, TiltedDipole};
 use crate::nrlmsise00::{Nrlmsise00, Nrlmsise00Input};
 use crate::space_weather::SpaceWeatherProvider;
-use crate::{AtmosphereModel, ConstantWeather, Exponential, HarrisPriester};
+use crate::{AtmosphereInput, AtmosphereModel, ConstantWeather, Exponential, HarrisPriester};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -98,11 +98,7 @@ fn field_info(b_eci: &Vector3<f64>, lat_deg: f64, lon_deg: f64, epoch: &Epoch) -
 /// Exponential atmosphere density [kg/m³] at the given altitude.
 #[wasm_bindgen]
 pub fn exponential_density(altitude_km: f64) -> f64 {
-    Exponential.density(
-        altitude_km,
-        &arika::SimpleEci::from_raw(Vector3::zeros()),
-        None,
-    )
+    crate::exponential::density(altitude_km)
 }
 
 /// Harris-Priester density [kg/m³] at a geodetic point and epoch.
@@ -111,9 +107,16 @@ pub fn exponential_density(altitude_km: f64) -> f64 {
 #[wasm_bindgen]
 pub fn harris_priester_density(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64) -> f64 {
     let epoch = Epoch::from_jd(epoch_jd);
-    let pos = geodetic_to_eci(lat_deg, lon_deg, altitude_km, &epoch);
     let hp = HarrisPriester::new();
-    hp.density(altitude_km, &pos, Some(&epoch))
+    let input = AtmosphereInput {
+        geodetic: Geodetic {
+            latitude: lat_deg.to_radians(),
+            longitude: lon_deg.to_radians(),
+            altitude: altitude_km,
+        },
+        utc: &epoch,
+    };
+    hp.density(&input)
 }
 
 /// NRLMSISE-00 density [kg/m³] at a geodetic point with constant space weather.
@@ -178,10 +181,16 @@ pub fn atmosphere_altitude_profile(
 
     let mut out = Vec::with_capacity(altitudes.len() * 3);
     for &alt in altitudes {
-        let pos = geodetic_to_eci(lat_deg, lon_deg, alt, &epoch);
-
-        let exp_rho = Exponential.density(alt, &arika::SimpleEci::from_raw(Vector3::zeros()), None);
-        let hp_rho = hp.density(alt, &pos, Some(&epoch));
+        let exp_rho = crate::exponential::density(alt);
+        let hp_input = AtmosphereInput {
+            geodetic: Geodetic {
+                latitude: lat_deg.to_radians(),
+                longitude: lon_deg.to_radians(),
+                altitude: alt,
+            },
+            utc: &epoch,
+        };
+        let hp_rho = hp.density(&hp_input);
 
         let msis_input = Nrlmsise00Input {
             day_of_year: doy,
@@ -235,14 +244,17 @@ pub fn atmosphere_latlon_map(
             let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
             let rho = match model {
-                "exponential" => Exponential.density(
-                    altitude_km,
-                    &arika::SimpleEci::from_raw(Vector3::zeros()),
-                    None,
-                ),
+                "exponential" => crate::exponential::density(altitude_km),
                 "harris-priester" => {
-                    let pos = geodetic_to_eci(lat, lon, altitude_km, &epoch);
-                    hp.density(altitude_km, &pos, Some(&epoch))
+                    let atm_input = AtmosphereInput {
+                        geodetic: Geodetic {
+                            latitude: lat.to_radians(),
+                            longitude: lon.to_radians(),
+                            altitude: altitude_km,
+                        },
+                        utc: &epoch,
+                    };
+                    hp.density(&atm_input)
                 }
                 _ => {
                     let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
@@ -473,14 +485,17 @@ pub fn atmosphere_volume(
                 let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
                 let rho = match model {
-                    "exponential" => Exponential.density(
-                        alt,
-                        &arika::SimpleEci::from_raw(Vector3::zeros()),
-                        None,
-                    ),
+                    "exponential" => crate::exponential::density(alt),
                     "harris-priester" => {
-                        let pos = geodetic_to_eci(lat, lon, alt, &epoch);
-                        hp.density(alt, &pos, Some(&epoch))
+                        let atm_input = AtmosphereInput {
+                            geodetic: Geodetic {
+                                latitude: lat.to_radians(),
+                                longitude: lon.to_radians(),
+                                altitude: alt,
+                            },
+                            utc: &epoch,
+                        };
+                        hp.density(&atm_input)
                     }
                     _ => {
                         let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
@@ -742,14 +757,17 @@ pub fn atmosphere_latlon_map_sw(
             let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
             let rho = match model {
-                "exponential" => Exponential.density(
-                    altitude_km,
-                    &arika::SimpleEci::from_raw(Vector3::zeros()),
-                    None,
-                ),
+                "exponential" => crate::exponential::density(altitude_km),
                 "harris-priester" => {
-                    let pos = geodetic_to_eci(lat, lon, altitude_km, &epoch);
-                    hp.density(altitude_km, &pos, Some(&epoch))
+                    let atm_input = AtmosphereInput {
+                        geodetic: Geodetic {
+                            latitude: lat.to_radians(),
+                            longitude: lon.to_radians(),
+                            altitude: altitude_km,
+                        },
+                        utc: &epoch,
+                    };
+                    hp.density(&atm_input)
                 }
                 _ => {
                     let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
@@ -815,14 +833,17 @@ pub fn atmosphere_volume_sw(
                 let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
                 let rho = match model {
-                    "exponential" => Exponential.density(
-                        alt,
-                        &arika::SimpleEci::from_raw(Vector3::zeros()),
-                        None,
-                    ),
+                    "exponential" => crate::exponential::density(alt),
                     "harris-priester" => {
-                        let pos = geodetic_to_eci(lat, lon, alt, &epoch);
-                        hp.density(alt, &pos, Some(&epoch))
+                        let atm_input = AtmosphereInput {
+                            geodetic: Geodetic {
+                                latitude: lat.to_radians(),
+                                longitude: lon.to_radians(),
+                                altitude: alt,
+                            },
+                            utc: &epoch,
+                        };
+                        hp.density(&atm_input)
                     }
                     _ => {
                         let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);

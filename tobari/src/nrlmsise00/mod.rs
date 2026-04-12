@@ -22,10 +22,11 @@ pub mod coefficients;
 pub mod geo;
 mod model;
 
-use crate::AtmosphereModel;
-use crate::space_weather::SpaceWeatherProvider;
-use arika::SimpleEci;
+use arika::earth::geodetic::Geodetic;
 use arika::epoch::{Epoch, Utc};
+
+use crate::space_weather::SpaceWeatherProvider;
+use crate::{AtmosphereInput, AtmosphereModel};
 
 /// Full output of the NRLMSISE-00 model.
 ///
@@ -118,33 +119,23 @@ impl Nrlmsise00 {
         }
     }
 
-    /// Compute full atmospheric composition at the given position and epoch.
+    /// Compute full atmospheric composition from geodetic coordinates and epoch.
     ///
     /// Returns the complete NRLMSISE-00 output including:
     /// - Total mass density \[kg/m³\]
     /// - Number densities \[cm⁻³\] for 9 species: He, O, N₂, O₂, Ar, H, N, anomalous O
     /// - Exospheric and local temperatures \[K\]
     ///
-    /// This is the high-level API that handles ECI-to-geodetic coordinate conversions
-    /// internally. For direct low-level access with pre-computed geodetic coordinates,
+    /// This is the high-level API that takes pre-computed geodetic coordinates.
+    /// For direct low-level access with explicit NRLMSISE-00 input parameters,
     /// use [`Nrlmsise00::calculate()`].
-    ///
-    /// Unlike [`AtmosphereModel::density()`] which only returns total mass density,
-    /// this method provides the full species breakdown for diagnostics and analysis.
-    ///
-    /// # Frame / scale discipline (Phase 4)
-    ///
-    /// Takes a `&arika::SimpleEci` position (the simple-path
-    /// phantom-typed marker) and a `&Epoch<Utc>`. A future
-    /// `density_with_composition_precise` variant accepting `&Vec3<Itrs>`
-    /// + a full EOP provider will be added in Phase 4B.
     pub fn density_with_composition(
         &self,
-        altitude_km: f64,
-        position_eci: &SimpleEci,
+        geodetic: &Geodetic,
         epoch: &Epoch<Utc>,
     ) -> Nrlmsise00Output {
-        let (lat_deg, lon_deg) = geo::simple_eci_to_geodetic_latlon(position_eci, epoch);
+        let lat_deg = geodetic.latitude.to_degrees();
+        let lon_deg = geodetic.longitude.to_degrees();
         let (doy, ut_seconds) = geo::epoch_to_day_of_year_and_ut(epoch);
         let lst = geo::local_solar_time(ut_seconds, lon_deg, epoch);
         let sw = self.weather.get(epoch);
@@ -152,7 +143,7 @@ impl Nrlmsise00 {
         let input = Nrlmsise00Input {
             day_of_year: doy,
             ut_seconds,
-            altitude_km,
+            altitude_km: geodetic.altitude,
             latitude_deg: lat_deg,
             longitude_deg: lon_deg,
             local_solar_time_hours: lst,
@@ -164,22 +155,31 @@ impl Nrlmsise00 {
 
         self.calculate(&input)
     }
+
+    /// Deprecated: compute composition from SimpleEci position.
+    ///
+    /// Prefer [`density_with_composition`] with pre-computed [`Geodetic`].
+    #[deprecated(note = "Use density_with_composition(&Geodetic, &Epoch<Utc>) instead")]
+    pub fn density_with_composition_simple_eci(
+        &self,
+        altitude_km: f64,
+        position_eci: &arika::SimpleEci,
+        epoch: &Epoch<Utc>,
+    ) -> Nrlmsise00Output {
+        let (lat_deg, lon_deg) = geo::simple_eci_to_geodetic_latlon(position_eci, epoch);
+        let geodetic = Geodetic {
+            latitude: lat_deg.to_radians(),
+            longitude: lon_deg.to_radians(),
+            altitude: altitude_km,
+        };
+        self.density_with_composition(&geodetic, epoch)
+    }
 }
 
 impl AtmosphereModel for Nrlmsise00 {
-    fn density(
-        &self,
-        altitude_km: f64,
-        position_eci: &SimpleEci,
-        epoch: Option<&Epoch<Utc>>,
-    ) -> f64 {
-        match epoch {
-            Some(e) => {
-                self.density_with_composition(altitude_km, position_eci, e)
-                    .total_mass_density
-            }
-            None => 0.0,
-        }
+    fn density(&self, input: &AtmosphereInput<'_>) -> f64 {
+        self.density_with_composition(&input.geodetic, input.utc)
+            .total_mass_density
     }
 }
 
@@ -221,7 +221,7 @@ mod tests {
         };
         let direct_density = model.calculate(&direct_input).total_mass_density;
 
-        // Path 2: via ECI position (goes through geo.rs eci_to_geodetic_latlon)
+        // Path 2: via ECI position (round-trip geodetic→ECEF→ECI→geodetic)
         let gmst = epoch.gmst();
         let geod = arika::earth::Geodetic {
             latitude: lat_deg.to_radians(),
@@ -234,8 +234,15 @@ mod tests {
                 gmst,
             )
             .transform(&ecef);
+        // Round-trip: ECI→geodetic via geo module
+        let (rt_lat_deg, rt_lon_deg) = geo::simple_eci_to_geodetic_latlon(&eci, &epoch);
+        let rt_geod = Geodetic {
+            latitude: rt_lat_deg.to_radians(),
+            longitude: rt_lon_deg.to_radians(),
+            altitude: arika::earth::geodetic_altitude(eci.inner()),
+        };
         let eci_density = model
-            .density_with_composition(alt_km, &eci, &epoch)
+            .density_with_composition(&rt_geod, &epoch)
             .total_mass_density;
 
         let rel_err = (eci_density - direct_density).abs() / direct_density;
