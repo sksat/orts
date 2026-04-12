@@ -6,7 +6,20 @@
 orts は マルチパッケージ workspace (crates.io Rust crate + npm package)。
 全パッケージを同一バージョンでリリースし、セクションはパッケージ別に分割。
 
-## [0.1.0]
+## [0.1.1](https://github.com/sksat/orts/releases/tag/v0.1.1)
+
+### `orts-cli` (Rust, crates.io, binary)
+
+- `cargo install` 時の `include_bytes!` texture パスを修正。build.rs が
+  `viewer/public/textures/` → `cli/textures/` にコピーし、
+  `CARGO_MANIFEST_DIR` ベースで参照する形に変更 (`viewer-dist/` と同じ pattern)。
+
+### `uneri` (npm: `@sksat/uneri`)
+
+- npm package 名を `uneri` → `@sksat/uneri` (scoped package) に変更。
+  npm が既存パッケージとの類似名で unscoped 名を拒否したため。
+
+## [0.1.0](https://github.com/sksat/orts/releases/tag/v0.1.0)
 
 ### `orts` (Rust, crates.io)
 
@@ -217,4 +230,3 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   Starlight `config:setup` hook plugin として呼び出されるため、
   任意の Astro / Starlight サイトで Rust crate のドキュメントに採用可能。
 
-[0.1.0]: https://github.com/sksat/orts/releases/tag/v0.1.0
