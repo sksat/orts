@@ -122,7 +122,7 @@ jobs:
         run: cargo test --locked --workspace --no-run
 
       - name: Upload CLI binary
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: orts-cli-debug
           path: target/debug/orts
@@ -453,7 +453,7 @@ jobs:
         run: cargo build --locked --release -p orts-cli --target ${{ matrix.target }}
 
       - name: Upload CLI binary
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: orts-cli-release-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/orts
@@ -538,7 +538,7 @@ jobs:
           done
 
       - name: Upload example plugins
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: example-plugins
           path: plugins/*/target/wasm32-wasip1/release/orts_example_plugin_*.wasm
@@ -595,7 +595,7 @@ jobs:
         run: pnpm --filter uneri test
 
       - name: Upload dist
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: uneri-dist
           path: uneri/dist/
@@ -653,7 +653,7 @@ jobs:
         run: pnpm --filter orts-viewer test
 
       - name: Upload viewer dist
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: viewer-dist
           path: viewer/dist/
@@ -751,7 +751,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: uneri-playwright-report
           path: uneri/test-results/
@@ -871,7 +871,7 @@ jobs:
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: viewer-playwright-report
           path: viewer/test-results/
