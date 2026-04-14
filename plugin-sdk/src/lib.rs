@@ -159,7 +159,7 @@ macro_rules! __orts_plugin_impl {
                         )
                     })?;
                     if let ::core::option::Option::Some(cmd) = cmd {
-                        bindings::orts::plugin::tick_io::send_command(cmd);
+                        bindings::orts::plugin::tick_io::send_command(&cmd);
                     }
                 }
             }

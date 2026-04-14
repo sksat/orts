@@ -46,13 +46,13 @@ fn dummy_sensors() -> Sensors {
         AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody,
     };
     Sensors {
-        magnetometer: Some(MagneticFieldBody::new(Vec3::<Body>::new(2e-5, -1e-5, 3e-5))),
-        gyroscope: Some(AngularVelocityBody::new(Vec3::<Body>::new(
+        magnetometers: vec![MagneticFieldBody::new(Vec3::<Body>::new(2e-5, -1e-5, 3e-5))],
+        gyroscopes: vec![AngularVelocityBody::new(Vec3::<Body>::new(
             0.1, 0.05, -0.03,
-        ))),
-        star_tracker: Some(AttitudeBodyToInertial::new(Vector4::new(
+        ))],
+        star_trackers: vec![AttitudeBodyToInertial::new(Vector4::new(
             1.0, 0.0, 0.0, 0.0,
-        ))),
+        ))],
     }
 }
 

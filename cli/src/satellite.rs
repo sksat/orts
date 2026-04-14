@@ -53,6 +53,9 @@ pub struct SatelliteSpec {
     /// Reaction wheel configuration (used in Step 3: controlled.rs).
     #[allow(dead_code)]
     pub rw_config: Option<crate::config::ReactionWheelConfig>,
+    /// MTQ configuration (used in Step 3: controlled.rs).
+    #[allow(dead_code)]
+    pub mtq_config: Option<crate::config::MtqConfig>,
 }
 
 impl SatelliteSpec {
@@ -255,6 +258,7 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         controller_config: None,
         sensor_choices: None,
         rw_config: None,
+        mtq_config: None,
     }
 }
 

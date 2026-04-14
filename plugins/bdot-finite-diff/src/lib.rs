@@ -39,12 +39,13 @@ impl bindings::Guest for Component {
             };
             let b = input
                 .sensors
-                .magnetometer
+                .magnetometers
+                .first()
                 .ok_or("magnetometer not available")?;
 
             let b_mag_sq = b.x * b.x + b.y * b.y + b.z * b.z;
             if b_mag_sq < 1e-60 {
-                send_command(zero_moment());
+                send_command(&zero_moment());
                 // prev_b/prev_t を更新しない — near-zero サンプルは無視
                 continue;
             }
@@ -54,25 +55,25 @@ impl bindings::Guest for Component {
                     let dt = input.t - prev_t;
                     if dt < 1e-15 {
                         // dt ≈ 0: prev_b/prev_t を更新せず zero command のみ送る
-                        send_command(zero_moment());
+                        send_command(&zero_moment());
                         continue;
                     }
                     let db_x = (b.x - prev[0]) / dt;
                     let db_y = (b.y - prev[1]) / dt;
                     let db_z = (b.z - prev[2]) / dt;
                     Command {
-                        magnetic_moment: Some(CommandedMagneticMoment {
-                            x: clamp(-gain * db_x, -max_moment, max_moment),
-                            y: clamp(-gain * db_y, -max_moment, max_moment),
-                            z: clamp(-gain * db_z, -max_moment, max_moment),
-                        }),
-                        rw_torque: None,
+                        mtq_moments: Some(vec![
+                            clamp(-gain * db_x, -max_moment, max_moment),
+                            clamp(-gain * db_y, -max_moment, max_moment),
+                            clamp(-gain * db_z, -max_moment, max_moment),
+                        ]),
+                        rw_torques: None,
                     }
                 }
                 None => zero_moment(),
             };
 
-            send_command(cmd);
+            send_command(&cmd);
             prev_b = Some([b.x, b.y, b.z]);
             prev_t = input.t;
         }
@@ -111,12 +112,8 @@ impl Config {
 
 fn zero_moment() -> Command {
     Command {
-        magnetic_moment: Some(CommandedMagneticMoment {
-            x: 0.0,
-            y: 0.0,
-            z: 0.0,
-        }),
-        rw_torque: None,
+        mtq_moments: Some(vec![0.0, 0.0, 0.0]),
+        rw_torques: None,
     }
 }
 

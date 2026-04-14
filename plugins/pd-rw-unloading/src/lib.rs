@@ -62,11 +62,13 @@ impl Plugin<TickInput, Command> for PdRwUnloading {
         // ── PD attitude control ─────────────────────────────────
         let att = input
             .sensors
-            .star_tracker
+            .star_trackers
+            .first()
             .ok_or("star tracker sensor not available")?;
         let omega = input
             .sensors
-            .gyroscope
+            .gyroscopes
+            .first()
             .ok_or("gyroscope sensor not available")?;
 
         let q_current = UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
@@ -87,13 +89,10 @@ impl Plugin<TickInput, Command> for PdRwUnloading {
         // ── Desaturation via magnetorquer ───────────────────────
         let mag_cmd = compute_desaturation(input, self.k_desat);
 
+        // Per-wheel motor torque (Newton's 3rd law for orthogonal 3-axis)
         Ok(Some(Command {
-            rw_torque: Some(CommandedRwTorque {
-                x: tau.x,
-                y: tau.y,
-                z: tau.z,
-            }),
-            magnetic_moment: mag_cmd,
+            rw_torques: Some(vec![-tau.x, -tau.y, -tau.z]),
+            mtq_moments: mag_cmd,
         }))
     }
 }
@@ -101,8 +100,8 @@ impl Plugin<TickInput, Command> for PdRwUnloading {
 orts_plugin!(PdRwUnloading);
 
 /// Desaturation: m = k_desat * (h_rw × B_body) / |B_body|²
-fn compute_desaturation(input: &TickInput, k_desat: f64) -> Option<CommandedMagneticMoment> {
-    let b = input.sensors.magnetometer.as_ref()?;
+fn compute_desaturation(input: &TickInput, k_desat: f64) -> Option<Vec<f64>> {
+    let b = input.sensors.magnetometers.first()?;
     let rw_momentum = input.actuators.rw_momentum.as_ref()?;
 
     if rw_momentum.len() < 3 {
@@ -119,11 +118,7 @@ fn compute_desaturation(input: &TickInput, k_desat: f64) -> Option<CommandedMagn
 
     let m = (k_desat / b_mag_sq) * h.cross(&b_body);
 
-    Some(CommandedMagneticMoment {
-        x: m.x,
-        y: m.y,
-        z: m.z,
-    })
+    Some(vec![m.x, m.y, m.z])
 }
 
 #[derive(serde::Deserialize)]

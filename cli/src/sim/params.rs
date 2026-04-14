@@ -210,6 +210,7 @@ impl SimParams {
                     controller_config: None,
                     sensor_choices: None,
                     rw_config: None,
+                    mtq_config: None,
                 }]
             } else if is_serve
                 && args.altitude == 400.0
@@ -240,6 +241,7 @@ impl SimParams {
                     controller_config: None,
                     sensor_choices: None,
                     rw_config: None,
+                    mtq_config: None,
                 }]
             }
         };
@@ -397,6 +399,7 @@ impl SimParams {
             controller_config: None,
             sensor_choices: None,
             rw_config: None,
+            mtq_config: None,
         });
 
         // ISS: try online sources, fall back to embedded TLE
@@ -435,6 +438,7 @@ impl SimParams {
             controller_config: None,
             sensor_choices: None,
             rw_config: None,
+            mtq_config: None,
         });
 
         sats

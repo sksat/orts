@@ -385,7 +385,7 @@ Basilisk/Orekit と同様の3層分離を採用:
 **Phase D-0 実装済み**: DecoupledAttitudeSystem, AttitudeReference, PD制御則
 **Phase D-1 実装済み**: B-dot デタンブリング（stateless 解析近似）+ 地磁気モデル（TiltedDipole + IGRF-14）
 **Phase D-2 実装済み**: DiscreteController 基盤 + B-dot 有限差分版
-**Phase D-3 実装済み**: StateEffector + AugmentedState + ReactionWheel
+**Phase D-3 実装済み**: StateEffector + AugmentedState + RwAssembly (Core+Wrapper), MtqAssembly (Core+Wrapper)
 **Phase D-4 実装済み**: 統合テスト（PID + RW + 環境トルク）
 **Phase D-5**: MagneticFieldModel trait 抽象化 + ジェネリクス化（BdotDetumbler\<F\> 等）+ IGRF 球面調和展開
 
@@ -403,13 +403,19 @@ guest は ODE RHS のホットパスから完全に外に出す。サンプル t
 
 **P-D2. 戻り値は物理量ではなく Command (論理指令)**
 
-`ExternalLoads` (acceleration_inertial, torque_body, mass_rate) を guest に直接返させない。代わりに「magnetic moment [A·m²]」「RW command」「throttle 0..1」「impulsive Δv」といった論理的コマンドを返させる。物理モデルと制御則の分離を保ち、Rust 側 actuator (`CommandedMagnetorquer`, `DynamicThrottle`+`Thruster`, `ReactionWheelAssembly`) が物理化を担当する。
+`ExternalLoads` (acceleration_inertial, torque_body, mass_rate) を guest に直接返させない。guest は **per-device のアクチュエータコマンド** を返す。物理モデルと制御則の分離を保ち、Rust 側 actuator assembly が物理化（トルク/力への変換）を担当する。
 
-Command enum は最小 variant から始めて phase ごとに拡張する (early lock-in 回避):
-- P1 (Detumbling): `Command::MagneticMoment(Vector3<f64>)` 1 variant のみ
-- P3 (PD + モードマシン): `Command::RwCommand(RwCommand)` を追加
-- P4 (推進): `Command::Throttle` / `Command::ImpulsiveDv` を追加
-- P5 (結合): 複数 variant 組み合わせ
+コマンドの抽象レベルは **per-device**（個別アクチュエータ単位）:
+- MTQ: per-MTQ magnetic moment `list<f64>` [A·m²]
+- RW: per-wheel torque `list<f64>` [N·m]
+- Thruster: throttle 0..1（Phase P4）
+
+これは `ExternalLoads`（物理量）とは異なる「論理指令」。plugin が actuator allocation まで担当することで、実機の flight software に近い制御が可能になる。Rust 側の `MtqAssembly` / `RwAssembly` は per-device コマンドを受け取り、clamp + 物理変換のみを行う。
+
+Command は per-device `list<f64>` を `Option` で持つ flat struct:
+- P1: `mtq_moments: Option<Vec<f64>>`, `rw_torques: Option<Vec<f64>>`
+- P4 (推進): `throttles: Option<Vec<f64>>` / `impulsive_dv` を追加
+- P5 (結合): 複数フィールド同時指定
 
 **P-D3. trait 構造: 既存 `DiscreteController` を拡張して 1 trait に統一**
 

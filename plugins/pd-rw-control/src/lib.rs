@@ -49,11 +49,13 @@ impl Plugin<TickInput, Command> for PdRwControl {
     fn update(&mut self, input: &TickInput) -> Result<Option<Command>, String> {
         let att = input
             .sensors
-            .star_tracker
+            .star_trackers
+            .first()
             .ok_or("star tracker sensor not available")?;
         let omega = input
             .sensors
-            .gyroscope
+            .gyroscopes
+            .first()
             .ok_or("gyroscope sensor not available")?;
 
         // Current attitude as UnitQuaternion (Hamilton scalar-first).
@@ -75,16 +77,14 @@ impl Plugin<TickInput, Command> for PdRwControl {
         let theta = 2.0 * q_err.vector();
         let omega_body = Vector3::new(omega.x, omega.y, omega.z);
 
-        // PD torque: tau = -Kp * theta - Kd * omega
+        // PD torque (desired body torque): tau = -Kp * theta - Kd * omega
         let tau = -self.kp * theta - self.kd * omega_body;
 
+        // Per-wheel motor torque (Newton's 3rd law for orthogonal 3-axis):
+        // wheel absorbs the negative of desired body torque projected onto its axis.
         Ok(Some(Command {
-            rw_torque: Some(CommandedRwTorque {
-                x: tau.x,
-                y: tau.y,
-                z: tau.z,
-            }),
-            magnetic_moment: None,
+            rw_torques: Some(vec![-tau.x, -tau.y, -tau.z]),
+            mtq_moments: None,
         }))
     }
 }

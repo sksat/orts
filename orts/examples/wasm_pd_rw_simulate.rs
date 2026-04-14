@@ -78,9 +78,9 @@ fn main() {
     let mut bundle = ActuatorBundle::new();
 
     let mut sensor_bundle = SensorBundle {
-        magnetometer: Some(orts::sensor::Magnetometer::new(Arc::clone(&field_model))),
-        gyroscope: Some(Gyroscope::new()),
-        star_tracker: Some(StarTracker::new()),
+        magnetometers: vec![orts::sensor::Magnetometer::new(Arc::clone(&field_model))],
+        gyroscopes: vec![Gyroscope::new()],
+        star_trackers: vec![StarTracker::new()],
     };
 
     let mut state = AugmentedState {
@@ -97,7 +97,9 @@ fn main() {
         let t_next = (t + DT_CTRL).min(T_END);
 
         let mut rw_seg = rw.clone();
-        rw_seg.commanded_torque = bundle.rw_torque().into_inner();
+        if bundle.has_rw_command() {
+            rw_seg.commanded_torques = bundle.rw_torques().to_vec();
+        }
         let gg = GravityGradientTorque::circular_orbit(mu, radius, inertia);
         let system = AugmentedAttitudeSystem::circular_orbit(inertia, mu, radius, MASS)
             .with_model(gg)
@@ -121,6 +123,7 @@ fn main() {
         let sensors = sensor_bundle.evaluate(&snapshot, &current_epoch);
         let actuator_state = ActuatorState {
             rw_momentum: Some(state.aux.clone()),
+            ..Default::default()
         };
         let input = TickInput {
             t,

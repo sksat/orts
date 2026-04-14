@@ -317,15 +317,13 @@ pub mod orts {
                         .finish()
                 }
             }
-            /// 天文暦元。Julian Date (JD) として直接シリアライズ。
-            /// `arika::epoch::Epoch { jd }` と bit-for-bit 対応。
+            /// 天文暦元 (UTC)。Julian Date (JD) として直接シリアライズ。
+            /// `arika::epoch::Epoch<Utc>` の JD 値と bit-for-bit 対応。
             ///
-            /// **タイムスケール注意**: Phase P1 の `arika::Epoch` は
-            /// UTC / TAI / TT を厳密に区別しない。`J2000_JD` 定数は
-            /// TT J2000 (`2451545.0`) だが、`from_gregorian(...)` は
-            /// うるう秒なしで UTC をそのタイムラインに載せる。
-            /// "J2000 からの秒数" が必要なゲストは
-            /// `(julian-date - 2451545.0) * 86400.0` を自分で計算すること。
+            /// タイムスケールは **UTC** 固定。ゲストが TDB (天体暦表用) や
+            /// TT (歳差・章動用) を必要とする場合は、ホスト側の scale 変換を
+            /// 経由するか、`(jd - 2451545.0) * 86400` で UTC 秒を得てから
+            /// ゲスト内で近似変換すること。
             #[repr(C)]
             #[derive(Clone, Copy)]
             pub struct Epoch {
@@ -344,12 +342,13 @@ pub mod orts {
             /// tick 時点で評価されたセンサ読み値。
             ///
             /// ホスト側センサモデル (`orts::sensor`) による事前計算結果。
-            /// 各フィールドは `option` — 宇宙機にそのセンサがなければ `none`。
+            /// 各フィールドは `list` — 空リストはそのセンサが未搭載。
+            /// index 順序は config 定義順で安定し、シミュレーション中に変わらない。
             ///
-            /// このレコードへのフィールド追加は **Canonical ABI 破壊的変更**。
-            /// Phase P1 では host/guest を lockstep で開発するため許容。
-            /// サードパーティゲストが出た段階でレイアウトを凍結し、
-            /// 新フィールドは新 wit バージョンで追加する。
+            /// ## バージョニング
+            /// 0.x / v0: repo 内 host/guest lockstep。breaking change 可。
+            /// 変更時は全 example plugin bindings と oracle tests を同時更新。
+            /// v1: third-party plugin 向け安定 ABI。record field 変更禁止。
             /// 機体座標系の磁場 \[T\]。
             #[repr(C)]
             #[derive(Clone, Copy)]
@@ -413,17 +412,16 @@ pub mod orts {
                 }
             }
             /// tick 時点で評価されたセンサ読み値。
-            /// フィールド名 = センサ名、型 = 物理量 + 座標系。
-            #[repr(C)]
-            #[derive(Clone, Copy)]
+            /// フィールド名 = センサ名（複数形）、型 = 物理量 + 座標系。
+            #[derive(Clone)]
             pub struct Sensors {
                 /// 磁力計。任意位置/エポックの磁場が必要なら
                 /// `host-env.magnetic-field-eci` を使う。
-                pub magnetometer: Option<MagneticFieldBody>,
+                pub magnetometers: _rt::Vec<MagneticFieldBody>,
                 /// ジャイロスコープ。
-                pub gyroscope: Option<AngularVelocityBody>,
+                pub gyroscopes: _rt::Vec<AngularVelocityBody>,
                 /// スタートラッカ。
-                pub star_tracker: Option<AttitudeBodyToInertial>,
+                pub star_trackers: _rt::Vec<AttitudeBodyToInertial>,
             }
             impl ::core::fmt::Debug for Sensors {
                 fn fmt(
@@ -431,15 +429,15 @@ pub mod orts {
                     f: &mut ::core::fmt::Formatter<'_>,
                 ) -> ::core::fmt::Result {
                     f.debug_struct("Sensors")
-                        .field("magnetometer", &self.magnetometer)
-                        .field("gyroscope", &self.gyroscope)
-                        .field("star-tracker", &self.star_tracker)
+                        .field("magnetometers", &self.magnetometers)
+                        .field("gyroscopes", &self.gyroscopes)
+                        .field("star-trackers", &self.star_trackers)
                         .finish()
                 }
             }
             /// アクチュエータのテレメトリ（状態フィードバック）。
             ///
-            /// RW 角運動量などアクチュエータの現在状態をゲストに提供する。
+            /// アクチュエータの現在状態をゲストに提供する。
             /// 各フィールドは `option` — アクチュエータが存在しなければ `none`。
             #[derive(Clone)]
             pub struct ActuatorState {
@@ -485,60 +483,21 @@ pub mod orts {
                         .finish()
                 }
             }
-            /// 機体座標系の磁気ダイポールモーメント指令 \[A·m²\]。
-            #[repr(C)]
-            #[derive(Clone, Copy)]
-            pub struct CommandedMagneticMoment {
-                pub x: f64,
-                pub y: f64,
-                pub z: f64,
-            }
-            impl ::core::fmt::Debug for CommandedMagneticMoment {
-                fn fmt(
-                    &self,
-                    f: &mut ::core::fmt::Formatter<'_>,
-                ) -> ::core::fmt::Result {
-                    f.debug_struct("CommandedMagneticMoment")
-                        .field("x", &self.x)
-                        .field("y", &self.y)
-                        .field("z", &self.z)
-                        .finish()
-                }
-            }
-            /// 機体座標系の RW トルク指令 \[N·m\]。
-            #[repr(C)]
-            #[derive(Clone, Copy)]
-            pub struct CommandedRwTorque {
-                pub x: f64,
-                pub y: f64,
-                pub z: f64,
-            }
-            impl ::core::fmt::Debug for CommandedRwTorque {
-                fn fmt(
-                    &self,
-                    f: &mut ::core::fmt::Formatter<'_>,
-                ) -> ::core::fmt::Result {
-                    f.debug_struct("CommandedRwTorque")
-                        .field("x", &self.x)
-                        .field("y", &self.y)
-                        .field("z", &self.z)
-                        .finish()
-                }
-            }
-            /// コントローラが返す論理アクチュエータ指令。
+            /// コントローラが返す per-device アクチュエータ指令。
             ///
-            /// Phase P1 は `magnetic-moment` と `rw-torque` を定義。
-            /// 後続フェーズで `throttle`, `impulsive-dv` 等を追加。
-            /// `None` のフィールドはそのアクチュエータに対するコマンドなし
-            /// (前回値が ZOH で保持される)。
-            #[repr(C)]
-            #[derive(Clone, Copy)]
+            /// 各フィールドは per-device の `list<f64>`。長さはアセンブリの
+            /// デバイス数と一致する必要がある。`None` のフィールドは
+            /// そのアクチュエータに対するコマンドなし（前回値が ZOH で保持）。
+            ///
+            /// Phase P1: `mtq-moments` + `rw-torques`
+            /// Phase P4: `throttles` / `impulsive-dv` を追加予定。
+            #[derive(Clone)]
             pub struct Command {
-                /// 機体座標系での指令磁気ダイポールモーメント \[A·m²\]。
-                pub magnetic_moment: Option<CommandedMagneticMoment>,
-                /// RW アセンブリへの指令トルク \[N·m\]、機体座標系。
-                /// ホスト側 RW モデルが各ホイール軸への投影を行う。
-                pub rw_torque: Option<CommandedRwTorque>,
+                /// per-MTQ 磁気ダイポールモーメント指令 \[A·m²\]。
+                pub mtq_moments: Option<_rt::Vec<f64>>,
+                /// per-wheel トルク指令 \[N·m\]。
+                /// 正値 → ホイールが正の角運動量を吸収。
+                pub rw_torques: Option<_rt::Vec<f64>>,
             }
             impl ::core::fmt::Debug for Command {
                 fn fmt(
@@ -546,8 +505,8 @@ pub mod orts {
                     f: &mut ::core::fmt::Formatter<'_>,
                 ) -> ::core::fmt::Result {
                     f.debug_struct("Command")
-                        .field("magnetic-moment", &self.magnetic_moment)
-                        .field("rw-torque", &self.rw_torque)
+                        .field("mtq-moments", &self.mtq_moments)
+                        .field("rw-torques", &self.rw_torques)
                         .finish()
                 }
             }
@@ -730,11 +689,11 @@ pub mod orts {
                     struct RetArea(
                         [::core::mem::MaybeUninit<
                             u8,
-                        >; 256 + 2 * ::core::mem::size_of::<*const u8>()],
+                        >; 152 + 8 * ::core::mem::size_of::<*const u8>()],
                     );
                     let mut ret_area = RetArea(
-                        [::core::mem::MaybeUninit::uninit(); 256
-                            + 2 * ::core::mem::size_of::<*const u8>()],
+                        [::core::mem::MaybeUninit::uninit(); 152
+                            + 8 * ::core::mem::size_of::<*const u8>()],
                     );
                     let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
@@ -749,7 +708,7 @@ pub mod orts {
                     }
                     unsafe { wit_import1(ptr0) };
                     let l2 = i32::from(*ptr0.add(0).cast::<u8>());
-                    let result37 = match l2 {
+                    let result33 = match l2 {
                         0 => None,
                         1 => {
                             let e = {
@@ -769,10 +728,30 @@ pub mod orts {
                                 let l16 = *ptr0.add(112).cast::<f64>();
                                 let l17 = *ptr0.add(120).cast::<f64>();
                                 let l18 = i32::from(*ptr0.add(128).cast::<u8>());
-                                let l20 = i32::from(*ptr0.add(144).cast::<u8>());
-                                let l24 = i32::from(*ptr0.add(176).cast::<u8>());
-                                let l28 = i32::from(*ptr0.add(208).cast::<u8>());
-                                let l33 = i32::from(*ptr0.add(248).cast::<u8>());
+                                let l20 = *ptr0.add(144).cast::<*mut u8>();
+                                let l21 = *ptr0
+                                    .add(144 + 1 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>();
+                                let len22 = l21;
+                                let l23 = *ptr0
+                                    .add(144 + 2 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>();
+                                let l24 = *ptr0
+                                    .add(144 + 3 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>();
+                                let len25 = l24;
+                                let l26 = *ptr0
+                                    .add(144 + 4 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>();
+                                let l27 = *ptr0
+                                    .add(144 + 5 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>();
+                                let len28 = l27;
+                                let l29 = i32::from(
+                                    *ptr0
+                                        .add(144 + 6 * ::core::mem::size_of::<*const u8>())
+                                        .cast::<u8>(),
+                                );
                                 super::super::super::orts::plugin::types::TickInput {
                                     t: l3,
                                     spacecraft: super::super::super::orts::plugin::types::SpacecraftState {
@@ -817,73 +796,35 @@ pub mod orts {
                                         _ => _rt::invalid_enum_discriminant(),
                                     },
                                     sensors: super::super::super::orts::plugin::types::Sensors {
-                                        magnetometer: match l20 {
-                                            0 => None,
-                                            1 => {
-                                                let e = {
-                                                    let l21 = *ptr0.add(152).cast::<f64>();
-                                                    let l22 = *ptr0.add(160).cast::<f64>();
-                                                    let l23 = *ptr0.add(168).cast::<f64>();
-                                                    super::super::super::orts::plugin::types::MagneticFieldBody {
-                                                        x: l21,
-                                                        y: l22,
-                                                        z: l23,
-                                                    }
-                                                };
-                                                Some(e)
-                                            }
-                                            _ => _rt::invalid_enum_discriminant(),
-                                        },
-                                        gyroscope: match l24 {
-                                            0 => None,
-                                            1 => {
-                                                let e = {
-                                                    let l25 = *ptr0.add(184).cast::<f64>();
-                                                    let l26 = *ptr0.add(192).cast::<f64>();
-                                                    let l27 = *ptr0.add(200).cast::<f64>();
-                                                    super::super::super::orts::plugin::types::AngularVelocityBody {
-                                                        x: l25,
-                                                        y: l26,
-                                                        z: l27,
-                                                    }
-                                                };
-                                                Some(e)
-                                            }
-                                            _ => _rt::invalid_enum_discriminant(),
-                                        },
-                                        star_tracker: match l28 {
-                                            0 => None,
-                                            1 => {
-                                                let e = {
-                                                    let l29 = *ptr0.add(216).cast::<f64>();
-                                                    let l30 = *ptr0.add(224).cast::<f64>();
-                                                    let l31 = *ptr0.add(232).cast::<f64>();
-                                                    let l32 = *ptr0.add(240).cast::<f64>();
-                                                    super::super::super::orts::plugin::types::AttitudeBodyToInertial {
-                                                        w: l29,
-                                                        x: l30,
-                                                        y: l31,
-                                                        z: l32,
-                                                    }
-                                                };
-                                                Some(e)
-                                            }
-                                            _ => _rt::invalid_enum_discriminant(),
-                                        },
+                                        magnetometers: _rt::Vec::from_raw_parts(
+                                            l20.cast(),
+                                            len22,
+                                            len22,
+                                        ),
+                                        gyroscopes: _rt::Vec::from_raw_parts(
+                                            l23.cast(),
+                                            len25,
+                                            len25,
+                                        ),
+                                        star_trackers: _rt::Vec::from_raw_parts(
+                                            l26.cast(),
+                                            len28,
+                                            len28,
+                                        ),
                                     },
                                     actuators: super::super::super::orts::plugin::types::ActuatorState {
-                                        rw_momentum: match l33 {
+                                        rw_momentum: match l29 {
                                             0 => None,
                                             1 => {
                                                 let e = {
-                                                    let l34 = *ptr0
-                                                        .add(248 + 1 * ::core::mem::size_of::<*const u8>())
+                                                    let l30 = *ptr0
+                                                        .add(144 + 7 * ::core::mem::size_of::<*const u8>())
                                                         .cast::<*mut u8>();
-                                                    let l35 = *ptr0
-                                                        .add(248 + 2 * ::core::mem::size_of::<*const u8>())
+                                                    let l31 = *ptr0
+                                                        .add(144 + 8 * ::core::mem::size_of::<*const u8>())
                                                         .cast::<usize>();
-                                                    let len36 = l35;
-                                                    _rt::Vec::from_raw_parts(l34.cast(), len36, len36)
+                                                    let len32 = l31;
+                                                    _rt::Vec::from_raw_parts(l30.cast(), len32, len32)
                                                 };
                                                 Some(e)
                                             }
@@ -896,39 +837,35 @@ pub mod orts {
                         }
                         _ => _rt::invalid_enum_discriminant(),
                     };
-                    result37
+                    result33
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
             /// コマンドをホストに送る。
             /// 1 tick 中に複数回呼んだ場合は最後の値が適用される。
-            pub fn send_command(cmd: Command) -> () {
+            pub fn send_command(cmd: &Command) -> () {
                 unsafe {
                     let super::super::super::orts::plugin::types::Command {
-                        magnetic_moment: magnetic_moment0,
-                        rw_torque: rw_torque0,
+                        mtq_moments: mtq_moments0,
+                        rw_torques: rw_torques0,
                     } = cmd;
-                    let (result2_0, result2_1, result2_2, result2_3) = match magnetic_moment0 {
+                    let (result2_0, result2_1, result2_2) = match mtq_moments0 {
                         Some(e) => {
-                            let super::super::super::orts::plugin::types::CommandedMagneticMoment {
-                                x: x1,
-                                y: y1,
-                                z: z1,
-                            } = e;
-                            (1i32, _rt::as_f64(x1), _rt::as_f64(y1), _rt::as_f64(z1))
+                            let vec1 = e;
+                            let ptr1 = vec1.as_ptr().cast::<u8>();
+                            let len1 = vec1.len();
+                            (1i32, ptr1.cast_mut(), len1)
                         }
-                        None => (0i32, 0.0f64, 0.0f64, 0.0f64),
+                        None => (0i32, ::core::ptr::null_mut(), 0usize),
                     };
-                    let (result4_0, result4_1, result4_2, result4_3) = match rw_torque0 {
+                    let (result4_0, result4_1, result4_2) = match rw_torques0 {
                         Some(e) => {
-                            let super::super::super::orts::plugin::types::CommandedRwTorque {
-                                x: x3,
-                                y: y3,
-                                z: z3,
-                            } = e;
-                            (1i32, _rt::as_f64(x3), _rt::as_f64(y3), _rt::as_f64(z3))
+                            let vec3 = e;
+                            let ptr3 = vec3.as_ptr().cast::<u8>();
+                            let len3 = vec3.len();
+                            (1i32, ptr3.cast_mut(), len3)
                         }
-                        None => (0i32, 0.0f64, 0.0f64, 0.0f64),
+                        None => (0i32, ::core::ptr::null_mut(), 0usize),
                     };
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "orts:plugin/tick-io@0.1.0")]
@@ -936,25 +873,21 @@ pub mod orts {
                         #[link_name = "send-command"]
                         fn wit_import5(
                             _: i32,
-                            _: f64,
-                            _: f64,
-                            _: f64,
+                            _: *mut u8,
+                            _: usize,
                             _: i32,
-                            _: f64,
-                            _: f64,
-                            _: f64,
+                            _: *mut u8,
+                            _: usize,
                         );
                     }
                     #[cfg(not(target_arch = "wasm32"))]
                     unsafe extern "C" fn wit_import5(
                         _: i32,
-                        _: f64,
-                        _: f64,
-                        _: f64,
+                        _: *mut u8,
+                        _: usize,
                         _: i32,
-                        _: f64,
-                        _: f64,
-                        _: f64,
+                        _: *mut u8,
+                        _: usize,
                     ) {
                         unreachable!()
                     }
@@ -963,11 +896,9 @@ pub mod orts {
                             result2_0,
                             result2_1,
                             result2_2,
-                            result2_3,
                             result4_0,
                             result4_1,
                             result4_2,
-                            result4_3,
                         )
                     };
                 }
@@ -1060,9 +991,9 @@ pub(crate) use __export_plugin_impl as export;
 )]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1418] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\x8d\x0a\x01A\x02\x01\
-A\x15\x01B,\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01x\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1332] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xb7\x09\x01A\x02\x01\
+A\x15\x01B&\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01x\
 u\x01yu\x01zu\x04\0\x04quat\x03\0\x02\x01r\x03\x01xu\x01yu\x01zu\x04\0\x0fpositi\
 on-eci-km\x03\0\x04\x01r\x03\x01xu\x01yu\x01zu\x04\0\x10velocity-eci-kms\x03\0\x06\
 \x01r\x02\x08position\x05\x08velocity\x07\x04\0\x0dorbital-state\x03\0\x08\x01r\x02\
@@ -1071,28 +1002,27 @@ r\x03\x05orbit\x09\x08attitude\x0b\x04massu\x04\0\x10spacecraft-state\x03\0\x0c\
 r\x01\x0bjulian-dateu\x04\0\x05epoch\x03\0\x0e\x01r\x03\x01xu\x01yu\x01zu\x04\0\x13\
 magnetic-field-body\x03\0\x10\x01r\x03\x01xu\x01yu\x01zu\x04\0\x15angular-veloci\
 ty-body\x03\0\x12\x01r\x04\x01wu\x01xu\x01yu\x01zu\x04\0\x19attitude-body-to-ine\
-rtial\x03\0\x14\x01k\x11\x01k\x13\x01k\x15\x01r\x03\x0cmagnetometer\x16\x09gyros\
-cope\x17\x0cstar-tracker\x18\x04\0\x07sensors\x03\0\x19\x01pu\x01k\x1b\x01r\x01\x0b\
-rw-momentum\x1c\x04\0\x0eactuator-state\x03\0\x1d\x01k\x0f\x01r\x05\x01tu\x0aspa\
-cecraft\x0d\x05epoch\x1f\x07sensors\x1a\x09actuators\x1e\x04\0\x0atick-input\x03\
-\0\x20\x01r\x03\x01xu\x01yu\x01zu\x04\0\x19commanded-magnetic-moment\x03\0\"\x01\
-r\x03\x01xu\x01yu\x01zu\x04\0\x13commanded-rw-torque\x03\0$\x01k#\x01k%\x01r\x02\
-\x0fmagnetic-moment&\x09rw-torque'\x04\0\x07command\x03\0(\x01r\x01\x0fsample-pe\
-riod-su\x04\0\x0fplugin-metadata\x03\0*\x03\0\x17orts:plugin/types@0.1.0\x05\0\x02\
-\x03\0\0\x0fplugin-metadata\x03\0\x0fplugin-metadata\x03\0\x01\x02\x03\0\0\x04ve\
-c3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\x03\x04\0\x04vec3\x03\0\0\x02\x03\
-\x02\x01\x04\x04\0\x05epoch\x03\0\x02\x01m\x05\x05trace\x05debug\x04info\x04warn\
-\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\x05level\x05\x07messages\x01\0\x04\
-\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\x01\x01e\x03\0\x01\x04\0\x12magnet\
-ic-field-eci\x01\x07\x03\0\x1aorts:plugin/host-env@0.1.0\x05\x05\x02\x03\0\0\x0a\
-tick-input\x02\x03\0\0\x07command\x01B\x09\x02\x03\x02\x01\x06\x04\0\x0atick-inp\
-ut\x03\0\0\x02\x03\x02\x01\x07\x04\0\x07command\x03\0\x02\x01k\x01\x01@\0\0\x04\x04\
-\0\x09wait-tick\x01\x05\x01@\x01\x03cmd\x03\x01\0\x04\0\x0csend-command\x01\x06\x03\
-\0\x19orts:plugin/tick-io@0.1.0\x05\x08\x01j\x01\x02\x01s\x01@\x01\x06configs\0\x09\
-\x04\0\x08metadata\x01\x0a\x01ks\x01@\0\0\x0b\x04\0\x0ccurrent-mode\x01\x0c\x01j\
-\0\x01s\x01@\x01\x06configs\0\x0d\x04\0\x03run\x01\x0e\x04\0\x18orts:plugin/plug\
-in@0.1.0\x04\0\x0b\x0c\x01\0\x06plugin\x03\0\0\0G\x09producers\x01\x0cprocessed-\
-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\x060.41.0";
+rtial\x03\0\x14\x01p\x11\x01p\x13\x01p\x15\x01r\x03\x0dmagnetometers\x16\x0agyro\
+scopes\x17\x0dstar-trackers\x18\x04\0\x07sensors\x03\0\x19\x01pu\x01k\x1b\x01r\x01\
+\x0brw-momentum\x1c\x04\0\x0eactuator-state\x03\0\x1d\x01k\x0f\x01r\x05\x01tu\x0a\
+spacecraft\x0d\x05epoch\x1f\x07sensors\x1a\x09actuators\x1e\x04\0\x0atick-input\x03\
+\0\x20\x01r\x02\x0bmtq-moments\x1c\x0arw-torques\x1c\x04\0\x07command\x03\0\"\x01\
+r\x01\x0fsample-period-su\x04\0\x0fplugin-metadata\x03\0$\x03\0\x17orts:plugin/t\
+ypes@0.1.0\x05\0\x02\x03\0\0\x0fplugin-metadata\x03\0\x0fplugin-metadata\x03\0\x01\
+\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\x03\x04\0\x04\
+vec3\x03\0\0\x02\x03\x02\x01\x04\x04\0\x05epoch\x03\0\x02\x01m\x05\x05trace\x05d\
+ebug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\x05level\x05\
+\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\x01\x01e\x03\
+\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugin/host-env@0.1.0\x05\
+\x05\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07command\x01B\x09\x02\x03\x02\x01\x06\
+\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\x07\x04\0\x07command\x03\0\x02\x01k\
+\x01\x01@\0\0\x04\x04\0\x09wait-tick\x01\x05\x01@\x01\x03cmd\x03\x01\0\x04\0\x0c\
+send-command\x01\x06\x03\0\x19orts:plugin/tick-io@0.1.0\x05\x08\x01j\x01\x02\x01\
+s\x01@\x01\x06configs\0\x09\x04\0\x08metadata\x01\x0a\x01ks\x01@\0\0\x0b\x04\0\x0c\
+current-mode\x01\x0c\x01j\0\x01s\x01@\x01\x06configs\0\x0d\x04\0\x03run\x01\x0e\x04\
+\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06plugin\x03\0\0\0G\x09produ\
+cers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\x06\
+0.41.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

@@ -100,12 +100,14 @@ interface types {
     /// tick 時点で評価されたセンサ読み値。
     ///
     /// ホスト側センサモデル (`orts::sensor`) による事前計算結果。
-    /// 各フィールドは `option` — 宇宙機にそのセンサがなければ `none`。
+    /// 各フィールドは `list` — 空リストはそのセンサが未搭載。
+    /// index 順序は config 定義順で安定し、シミュレーション中に変わらない。
     ///
-    /// このレコードへのフィールド追加は **Canonical ABI 破壊的変更**。
-    /// Phase P1 では host/guest を lockstep で開発するため許容。
-    /// サードパーティゲストが出た段階でレイアウトを凍結し、
-    /// 新フィールドは新 wit バージョンで追加する。
+    /// ## バージョニング
+    /// 0.x / v0: repo 内 host/guest lockstep。breaking change 可。
+    /// 変更時は全 example plugin bindings と oracle tests を同時更新。
+    /// v1: third-party plugin 向け安定 ABI。record field 変更禁止。
+
     /// 機体座標系の磁場 \[T\]。
     record magnetic-field-body {
         x: f64, y: f64, z: f64,
@@ -122,22 +124,22 @@ interface types {
     }
 
     /// tick 時点で評価されたセンサ読み値。
-    /// フィールド名 = センサ名、型 = 物理量 + 座標系。
+    /// フィールド名 = センサ名（複数形）、型 = 物理量 + 座標系。
     record sensors {
         /// 磁力計。任意位置/エポックの磁場が必要なら
         /// `host-env.magnetic-field-eci` を使う。
-        magnetometer: option<magnetic-field-body>,
+        magnetometers: list<magnetic-field-body>,
 
         /// ジャイロスコープ。
-        gyroscope: option<angular-velocity-body>,
+        gyroscopes: list<angular-velocity-body>,
 
         /// スタートラッカ。
-        star-tracker: option<attitude-body-to-inertial>,
+        star-trackers: list<attitude-body-to-inertial>,
     }
 
     /// アクチュエータのテレメトリ（状態フィードバック）。
     ///
-    /// RW 角運動量などアクチュエータの現在状態をゲストに提供する。
+    /// アクチュエータの現在状態をゲストに提供する。
     /// 各フィールドは `option` — アクチュエータが存在しなければ `none`。
     record actuator-state {
         /// RW 各ホイールの角運動量 \[N·m·s\]。
@@ -159,29 +161,21 @@ interface types {
         actuators: actuator-state,
     }
 
-    /// 機体座標系の磁気ダイポールモーメント指令 \[A·m²\]。
-    record commanded-magnetic-moment {
-        x: f64, y: f64, z: f64,
-    }
-
-    /// 機体座標系の RW トルク指令 \[N·m\]。
-    record commanded-rw-torque {
-        x: f64, y: f64, z: f64,
-    }
-
-    /// コントローラが返す論理アクチュエータ指令。
+    /// コントローラが返す per-device アクチュエータ指令。
     ///
-    /// Phase P1 は `magnetic-moment` と `rw-torque` を定義。
-    /// 後続フェーズで `throttle`, `impulsive-dv` 等を追加。
-    /// `None` のフィールドはそのアクチュエータに対するコマンドなし
-    /// (前回値が ZOH で保持される)。
+    /// 各フィールドは per-device の `list<f64>`。長さはアセンブリの
+    /// デバイス数と一致する必要がある。`None` のフィールドは
+    /// そのアクチュエータに対するコマンドなし（前回値が ZOH で保持）。
+    ///
+    /// Phase P1: `mtq-moments` + `rw-torques`
+    /// Phase P4: `throttles` / `impulsive-dv` を追加予定。
     record command {
-        /// 機体座標系での指令磁気ダイポールモーメント \[A·m²\]。
-        magnetic-moment: option<commanded-magnetic-moment>,
+        /// per-MTQ 磁気ダイポールモーメント指令 \[A·m²\]。
+        mtq-moments: option<list<f64>>,
 
-        /// RW アセンブリへの指令トルク \[N·m\]、機体座標系。
-        /// ホスト側 RW モデルが各ホイール軸への投影を行う。
-        rw-torque: option<commanded-rw-torque>,
+        /// per-wheel トルク指令 \[N·m\]。
+        /// 正値 → ホイールが正の角運動量を吸収。
+        rw-torques: option<list<f64>>,
     }
 
     /// プラグインメタデータ（起動時情報）。

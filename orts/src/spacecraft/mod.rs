@@ -1,4 +1,5 @@
 mod dynamics;
+pub mod mtq;
 mod panel_srp;
 pub mod reaction_wheel;
 mod state;
@@ -6,6 +7,7 @@ mod surface;
 mod thruster;
 pub use crate::model::ExternalLoads;
 pub use dynamics::SpacecraftDynamics;
+pub use mtq::{Mtq, MtqAssembly, MtqAssemblyCore};
 pub use panel_srp::PanelSrp;
 pub use reaction_wheel::ReactionWheelAssembly;
 pub use state::SpacecraftState;

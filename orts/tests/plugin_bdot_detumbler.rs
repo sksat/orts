@@ -29,7 +29,6 @@
 
 use arika::earth::{MU as MU_EARTH, R as R_EARTH};
 use arika::epoch::Epoch;
-use arika::frame::{Body, Vec3};
 use nalgebra::{Matrix3, Vector3, Vector4};
 use tobari::magnetic::{MagneticFieldModel, TiltedDipole};
 use utsuroi::{Integrator, Rk4};
@@ -104,13 +103,13 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
     }
     fn update(&mut self, obs: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
         let Some(epoch) = obs.epoch else {
-            return Ok(Some(Command::magnetic_moment(Vec3::zeros())));
+            return Ok(Some(Command::mtq(vec![0.0, 0.0, 0.0])));
         };
         let b_eci =
             orts::magnetic::field_eci(&self.field, &obs.spacecraft.orbit.position_eci(), epoch)
                 .into_inner();
         if b_eci.magnitude() < 1e-30 {
-            return Ok(Some(Command::magnetic_moment(Vec3::zeros())));
+            return Ok(Some(Command::mtq(vec![0.0, 0.0, 0.0])));
         }
         let b_body = obs
             .spacecraft
@@ -127,7 +126,7 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
         for i in 0..3 {
             m_cmd[i] = m_cmd[i].clamp(-self.max_moment[i], self.max_moment[i]);
         }
-        let cmd = Command::magnetic_moment(Vec3::from_raw(m_cmd));
+        let cmd = Command::mtq(m_cmd.as_slice().to_vec());
         if !cmd.is_finite() {
             return Err(PluginError::BadCommand(format!("{cmd:?}")));
         }
@@ -138,6 +137,17 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
 // =============================================================
 // Simulation harness
 // =============================================================
+
+/// Convert per-MTQ moments from ActuatorBundle to a Vector3 for
+/// CommandedMagnetorquer (3-axis orthogonal layout assumed).
+fn mtq_moment_vec3(bundle: &ActuatorBundle) -> Vector3<f64> {
+    let s = bundle.mtq_moments();
+    if s.is_empty() {
+        Vector3::zeros()
+    } else {
+        Vector3::from_row_slice(s)
+    }
+}
 
 fn inertia() -> Matrix3<f64> {
     Matrix3::from_diagonal(&Vector3::new(1.0, 1.0, 1.0))
@@ -179,10 +189,7 @@ fn run(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
 
     while t < T_END - 1e-12 {
         let t_next = (t + SAMPLE_PERIOD).min(T_END);
-        let actuator = CommandedMagnetorquer::new(
-            bundle.magnetic_moment().into_inner(),
-            TiltedDipole::earth(),
-        );
+        let actuator = CommandedMagnetorquer::new(mtq_moment_vec3(&bundle), TiltedDipole::earth());
         let system = DecoupledAttitudeSystem::circular_orbit(inertia(), mu, radius, MASS)
             .with_model(actuator)
             .with_epoch(epoch);
@@ -276,5 +283,5 @@ fn plugin_bdot_detumbler_uses_angular_velocity_from_observation() {
         actuators: &actuator_state,
     };
     let cmd = ctrl.update(&obs).unwrap().expect("must return Some");
-    assert_eq!(cmd.magnetic_moment, Some(Vec3::<Body>::zeros()));
+    assert_eq!(cmd.mtq_moments, Some(vec![0.0, 0.0, 0.0]));
 }

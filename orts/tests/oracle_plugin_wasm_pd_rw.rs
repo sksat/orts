@@ -94,7 +94,7 @@ fn run_native(initial: AttitudeState) -> AugmentedState<AttitudeState> {
         let tau_cmd = -KP * theta_error - KD * state.plant.angular_velocity;
 
         let mut rw_seg = rw.clone();
-        rw_seg.commanded_torque = tau_cmd;
+        rw_seg.commanded_torques = rw_seg.core().allocate(&tau_cmd);
         let gg = GravityGradientTorque::circular_orbit(mu, radius, inertia());
         let system = AugmentedAttitudeSystem::circular_orbit(inertia(), mu, radius, MASS)
             .with_model(gg)
@@ -179,9 +179,9 @@ fn drive_wasm(
     let mut bundle = ActuatorBundle::new();
 
     let mut sensor_bundle = SensorBundle {
-        magnetometer: None,
-        gyroscope: Some(Gyroscope::new()),
-        star_tracker: Some(StarTracker::new()),
+        magnetometers: vec![],
+        gyroscopes: vec![Gyroscope::new()],
+        star_trackers: vec![StarTracker::new()],
     };
 
     let mut state = AugmentedState {
@@ -196,7 +196,9 @@ fn drive_wasm(
 
         // Set RW command from plugin's last output.
         let mut rw_seg = rw.clone();
-        rw_seg.commanded_torque = bundle.rw_torque().into_inner();
+        if bundle.has_rw_command() {
+            rw_seg.commanded_torques = bundle.rw_torques().to_vec();
+        }
         let gg = GravityGradientTorque::circular_orbit(mu, radius, inertia());
         let system = AugmentedAttitudeSystem::circular_orbit(inertia(), mu, radius, MASS)
             .with_model(gg)
@@ -215,6 +217,7 @@ fn drive_wasm(
         let sensors = sensor_bundle.evaluate(&snapshot, &current_epoch);
         let actuator_state = ActuatorState {
             rw_momentum: Some(state.aux.clone()),
+            ..Default::default()
         };
         let input = TickInput {
             t,

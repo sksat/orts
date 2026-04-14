@@ -68,7 +68,7 @@ impl Plugin<TickInput, Command> for Controller {
                 max_moment,
                 omega_threshold,
             } => {
-                let omega = match &input.sensors.gyroscope {
+                let omega = match input.sensors.gyroscopes.first() {
                     Some(g) => Vector3::new(g.x, g.y, g.z),
                     None => return Ok(None),
                 };
@@ -81,7 +81,7 @@ impl Plugin<TickInput, Command> for Controller {
                     return Ok(None);
                 }
 
-                let b = match &input.sensors.magnetometer {
+                let b = match input.sensors.magnetometers.first() {
                     Some(m) => Vector3::new(m.x, m.y, m.z),
                     None => return Ok(None),
                 };
@@ -93,21 +93,21 @@ impl Plugin<TickInput, Command> for Controller {
                 let max = *max_moment;
 
                 Ok(Some(Command {
-                    magnetic_moment: Some(CommandedMagneticMoment {
-                        x: m.x.clamp(-max, max),
-                        y: m.y.clamp(-max, max),
-                        z: m.z.clamp(-max, max),
-                    }),
-                    rw_torque: None,
+                    mtq_moments: Some(vec![
+                        m.x.clamp(-max, max),
+                        m.y.clamp(-max, max),
+                        m.z.clamp(-max, max),
+                    ]),
+                    rw_torques: None,
                 }))
             }
 
             Mode::Nadir { kp, kd } => {
-                let att = match &input.sensors.star_tracker {
+                let att = match input.sensors.star_trackers.first() {
                     Some(a) => a,
                     None => return Ok(None),
                 };
-                let omega = match &input.sensors.gyroscope {
+                let omega = match input.sensors.gyroscopes.first() {
                     Some(g) => Vector3::new(g.x, g.y, g.z),
                     None => return Ok(None),
                 };
@@ -124,13 +124,10 @@ impl Plugin<TickInput, Command> for Controller {
                 let theta = 2.0 * q.vector();
                 let tau = -*kp * theta - *kd * omega;
 
+                // Per-wheel motor torque (Newton's 3rd law for orthogonal 3-axis)
                 Ok(Some(Command {
-                    rw_torque: Some(CommandedRwTorque {
-                        x: tau.x,
-                        y: tau.y,
-                        z: tau.z,
-                    }),
-                    magnetic_moment: None,
+                    rw_torques: Some(vec![-tau.x, -tau.y, -tau.z]),
+                    mtq_moments: None,
                 }))
             }
         }

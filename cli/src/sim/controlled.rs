@@ -15,11 +15,11 @@ use orts::sensor::{Gyroscope, Magnetometer, SensorBundle, StarTracker};
 use orts::setup::{build_spacecraft_dynamics, default_third_bodies};
 
 use crate::sim::core::sat_params;
-use orts::spacecraft::{ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState};
+use orts::spacecraft::{MtqAssembly, ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState};
 use tobari::magnetic::TiltedDipole;
 use utsuroi::{Integrator, Rk4};
 
-use crate::config::{ControllerConfig, ReactionWheelConfig, SensorChoice};
+use crate::config::{ControllerConfig, MtqConfig, ReactionWheelConfig, SensorChoice};
 use crate::satellite::SatelliteSpec;
 #[cfg(feature = "plugin-wasm")]
 use crate::sim::params::ResolvedPluginBackend;
@@ -52,6 +52,10 @@ pub struct ControlledSatellite {
     pub actuators: ActuatorBundle,
     /// RW effector が登録されているかどうか。
     pub has_rw: bool,
+    /// MTQ model が登録されているかどうか。
+    pub has_mtq: bool,
+    /// MTQ per-axis max moment [A·m²] (for rebuilding the model).
+    pub mtq_max_moment: f64,
 }
 
 /// Config からプラグイン制御付き衛星を構築する。
@@ -102,6 +106,17 @@ pub fn build_controlled_satellite(
         dynamics = dynamics.with_effector(rw);
     }
 
+    // MTQ を追加。
+    let has_mtq = spec.mtq_config.is_some();
+    let mtq_max_moment = match &spec.mtq_config {
+        Some(MtqConfig::ThreeAxis { max_moment }) => {
+            let mtq = MtqAssembly::three_axis(*max_moment, TiltedDipole::earth());
+            dynamics = dynamics.with_model(mtq);
+            *max_moment
+        }
+        None => 0.0,
+    };
+
     // 初期状態。
     let orbit = spec.initial_state(params.mu);
     let plant = SpacecraftState {
@@ -129,6 +144,8 @@ pub fn build_controlled_satellite(
         sensors,
         actuators,
         has_rw,
+        has_mtq,
+        mtq_max_moment,
     })
 }
 
@@ -144,11 +161,35 @@ pub fn step_controlled(
 
     // 前 tick のコマンドで RW を設定。
     if sat.has_rw
+        && sat.actuators.has_rw_command()
         && let Some(rw) = sat
             .dynamics
             .effector_by_name_mut::<ReactionWheelAssembly>("reaction_wheels")
     {
-        rw.commanded_torque = sat.actuators.rw_torque().into_inner();
+        let cmd = sat.actuators.rw_torques();
+        if cmd.len() != rw.wheels().len() {
+            return Err(format!(
+                "rw_torques length ({}) != wheel count ({})",
+                cmd.len(),
+                rw.wheels().len()
+            ));
+        }
+        rw.commanded_torques = cmd.to_vec();
+    }
+
+    // 前 tick のコマンドで MTQ を設定（モデルを差し替え）。
+    if sat.has_mtq && sat.actuators.has_mtq_command() {
+        let cmd = sat.actuators.mtq_moments();
+        let mut mtq = MtqAssembly::three_axis(sat.mtq_max_moment, TiltedDipole::earth());
+        if cmd.len() != mtq.core().num_mtqs() {
+            return Err(format!(
+                "mtq_moments length ({}) != MTQ count ({})",
+                cmd.len(),
+                mtq.core().num_mtqs()
+            ));
+        }
+        mtq.commanded_moments = cmd.to_vec();
+        sat.dynamics.replace_model("mtq_assembly", Box::new(mtq));
     }
 
     // 結合伝播（軌道 + 姿勢 + RW）。
@@ -244,20 +285,20 @@ fn build_sensor_bundle(choices: Option<&[SensorChoice]>) -> SensorBundle {
         Arc::new(TiltedDipole::earth());
 
     SensorBundle {
-        magnetometer: if choices.contains(&SensorChoice::Magnetometer) {
-            Some(Magnetometer::new(Arc::clone(&field_model)))
+        magnetometers: if choices.contains(&SensorChoice::Magnetometer) {
+            vec![Magnetometer::new(Arc::clone(&field_model))]
         } else {
-            None
+            vec![]
         },
-        gyroscope: if choices.contains(&SensorChoice::Gyroscope) {
-            Some(Gyroscope::new())
+        gyroscopes: if choices.contains(&SensorChoice::Gyroscope) {
+            vec![Gyroscope::new()]
         } else {
-            None
+            vec![]
         },
-        star_tracker: if choices.contains(&SensorChoice::StarTracker) {
-            Some(StarTracker::new())
+        star_trackers: if choices.contains(&SensorChoice::StarTracker) {
+            vec![StarTracker::new()]
         } else {
-            None
+            vec![]
         },
     }
 }

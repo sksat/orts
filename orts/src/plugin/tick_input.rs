@@ -73,21 +73,19 @@ impl AttitudeBodyToInertial {
 
 /// Sensor readings evaluated at the current tick instant.
 ///
-/// Each field is `Option`-wrapped — `None` means the sensor is not
-/// configured or not available this tick.
-///
-/// Field names are sensor names; types encode the physical quantity,
-/// coordinate frame, and units.
+/// Each field is a `Vec` — empty means no sensor of that type is
+/// configured. Index order is stable (config definition order) and
+/// does not change during a simulation run.
 #[derive(Debug, Clone, Default)]
 pub struct Sensors {
-    /// Magnetometer reading. Pre-evaluated once per tick.
-    pub magnetometer: Option<MagneticFieldBody>,
+    /// Magnetometer readings. Pre-evaluated once per tick.
+    pub magnetometers: Vec<MagneticFieldBody>,
 
-    /// Gyroscope reading.
-    pub gyroscope: Option<AngularVelocityBody>,
+    /// Gyroscope readings.
+    pub gyroscopes: Vec<AngularVelocityBody>,
 
-    /// Star tracker reading.
-    pub star_tracker: Option<AttitudeBodyToInertial>,
+    /// Star tracker readings.
+    pub star_trackers: Vec<AttitudeBodyToInertial>,
 }
 
 impl Sensors {

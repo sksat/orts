@@ -36,6 +36,17 @@ use orts::plugin::wasm::{WasmController, WasmEngine};
 use orts::plugin::{ActuatorBundle, ActuatorState, PluginController, TickInput};
 use orts::sensor::{Gyroscope, Magnetometer, SensorBundle};
 
+/// Convert per-MTQ moments from ActuatorBundle to a Vector3 for
+/// CommandedMagnetorquer (3-axis orthogonal layout assumed).
+fn mtq_moment_vec3(bundle: &ActuatorBundle) -> Vector3<f64> {
+    let s = bundle.mtq_moments();
+    if s.is_empty() {
+        Vector3::zeros()
+    } else {
+        Vector3::from_row_slice(s)
+    }
+}
+
 const MASS: f64 = 50.0;
 const ALT_KM: f64 = 500.0;
 const ODE_DT: f64 = 0.1;
@@ -130,9 +141,9 @@ fn run_case(
     let mut bundle = ActuatorBundle::new();
 
     let mut sensor_bundle = SensorBundle {
-        magnetometer: Some(Magnetometer::new(Arc::clone(&field_model))),
-        gyroscope: Some(Gyroscope::new()),
-        star_tracker: None,
+        magnetometers: vec![Magnetometer::new(Arc::clone(&field_model))],
+        gyroscopes: vec![Gyroscope::new()],
+        star_trackers: vec![],
     };
     let mut state = initial;
     let mut t = 0.0;
@@ -144,10 +155,7 @@ fn run_case(
 
     while t < T_END - 1e-12 {
         let t_next = (t + SAMPLE_PERIOD).min(T_END);
-        let actuator = CommandedMagnetorquer::new(
-            bundle.magnetic_moment().into_inner(),
-            TiltedDipole::earth(),
-        );
+        let actuator = CommandedMagnetorquer::new(mtq_moment_vec3(&bundle), TiltedDipole::earth());
         let system = DecoupledAttitudeSystem::circular_orbit(inertia, mu, radius, MASS)
             .with_model(actuator)
             .with_epoch(epoch);

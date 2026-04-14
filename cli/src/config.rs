@@ -154,6 +154,18 @@ pub enum ReactionWheelConfig {
     },
 }
 
+/// MTQ (磁気トルカ) 設定。
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(tag = "type")]
+pub enum MtqConfig {
+    /// 直交 3 軸配置。
+    #[serde(rename = "three_axis")]
+    ThreeAxis {
+        /// 最大ダイポールモーメント [A·m²]。
+        max_moment: f64,
+    },
+}
+
 /// Per-satellite configuration.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct SatelliteConfig {
@@ -171,6 +183,8 @@ pub struct SatelliteConfig {
     pub sensors: Option<Vec<SensorChoice>>,
     /// リアクションホイール設定。
     pub reaction_wheels: Option<ReactionWheelConfig>,
+    /// MTQ 設定。
+    pub mtq: Option<MtqConfig>,
 }
 
 /// Orbit specification in config files.
@@ -316,6 +330,7 @@ impl SatelliteConfig {
             controller_config: self.controller.clone(),
             sensor_choices: self.sensors.clone(),
             rw_config: self.reaction_wheels.clone(),
+            mtq_config: self.mtq.clone(),
         }
     }
 }
@@ -514,6 +529,7 @@ mod tests {
             controller: None,
             sensors: None,
             reaction_wheels: None,
+            mtq: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -548,6 +564,7 @@ mod tests {
             controller: None,
             sensors: None,
             reaction_wheels: None,
+            mtq: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -573,6 +590,7 @@ mod tests {
             controller: None,
             sensors: None,
             reaction_wheels: None,
+            mtq: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -676,6 +694,7 @@ satellites:
                 controller: None,
                 sensors: None,
                 reaction_wheels: None,
+                mtq: None,
             }],
         };
         let json = serde_json::to_string(&config).unwrap();

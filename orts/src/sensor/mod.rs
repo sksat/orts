@@ -10,6 +10,7 @@
 //!
 //! - [`Magnetometer`] — geomagnetic field in the body frame \[T\]
 //! - [`Gyroscope`] — angular velocity in the body frame \[rad/s\]
+//! - [`StarTracker`] — attitude quaternion body→inertial
 //!
 //! ## Noise injection
 //!
@@ -17,14 +18,12 @@
 //! sensors (no noise) are constructed with `::new()`, noisy sensors
 //! with `::with_noise(model)`. See [`noise`] for available models.
 //!
-//! ## Why no `Sensor` trait?
+//! ## Multi-instance support
 //!
-//! A generic `trait Sensor { type Measurement; fn measure(...) }` is
-//! intentionally deferred. With only two concrete sensors that produce
-//! the same type (`Vector3<f64>`) and feed into a fixed `Sensors`
-//! struct, a trait would add abstraction without value. When the
-//! sensor count grows (sun sensor, star tracker, GPS, ...) a trait
-//! will become useful for `Vec<Box<dyn Sensor>>` iteration.
+//! Each sensor type is stored as a `Vec`, allowing multiple
+//! instances with different noise models / accuracy. Index order
+//! matches the config definition order and is stable during a
+//! simulation run.
 
 mod gyroscope;
 mod magnetometer;
@@ -48,22 +47,22 @@ pub use star_tracker::StarTracker;
 /// tick input, while `ActuatorBundle` collects commands *out of*
 /// the tick input.
 ///
-/// Sensors are `Option`-wrapped because a spacecraft may not carry
-/// every sensor type. Missing sensors produce `None` in the
-/// corresponding `Sensors` field.
+/// Each sensor type is a `Vec` — empty means no sensor of that
+/// type is mounted. Multiple instances of the same type are
+/// supported (e.g., redundant gyroscopes with different noise).
 pub struct SensorBundle {
-    pub magnetometer: Option<Magnetometer>,
-    pub gyroscope: Option<Gyroscope>,
-    pub star_tracker: Option<StarTracker>,
+    pub magnetometers: Vec<Magnetometer>,
+    pub gyroscopes: Vec<Gyroscope>,
+    pub star_trackers: Vec<StarTracker>,
 }
 
 impl SensorBundle {
     /// Create an empty bundle (no sensors configured).
     pub fn new() -> Self {
         Self {
-            magnetometer: None,
-            gyroscope: None,
-            star_tracker: None,
+            magnetometers: Vec::new(),
+            gyroscopes: Vec::new(),
+            star_trackers: Vec::new(),
         }
     }
 
@@ -72,9 +71,21 @@ impl SensorBundle {
     /// `&mut self` because noise models mutate their internal RNG.
     pub fn evaluate(&mut self, state: &SpacecraftState, epoch: &Epoch) -> Sensors {
         Sensors {
-            magnetometer: self.magnetometer.as_mut().map(|m| m.measure(state, epoch)),
-            gyroscope: self.gyroscope.as_mut().map(|g| g.measure(state, epoch)),
-            star_tracker: self.star_tracker.as_mut().map(|s| s.measure(state, epoch)),
+            magnetometers: self
+                .magnetometers
+                .iter_mut()
+                .map(|m| m.measure(state, epoch))
+                .collect(),
+            gyroscopes: self
+                .gyroscopes
+                .iter_mut()
+                .map(|g| g.measure(state, epoch))
+                .collect(),
+            star_trackers: self
+                .star_trackers
+                .iter_mut()
+                .map(|s| s.measure(state, epoch))
+                .collect(),
         }
     }
 }
@@ -106,26 +117,43 @@ mod tests {
     }
 
     #[test]
-    fn empty_bundle_produces_none_fields() {
+    fn empty_bundle_produces_empty_vecs() {
         let mut bundle = SensorBundle::new();
         let epoch = Epoch::j2000();
         let state = make_state();
         let readings = bundle.evaluate(&state, &epoch);
-        assert!(readings.magnetometer.is_none());
-        assert!(readings.gyroscope.is_none());
+        assert!(readings.magnetometers.is_empty());
+        assert!(readings.gyroscopes.is_empty());
+        assert!(readings.star_trackers.is_empty());
     }
 
     #[test]
-    fn full_bundle_produces_some_fields() {
+    fn single_sensor_produces_one_reading() {
         let mut bundle = SensorBundle {
-            magnetometer: Some(Magnetometer::new(Arc::new(TiltedDipole::earth()))),
-            gyroscope: Some(Gyroscope::new()),
-            star_tracker: None,
+            magnetometers: vec![Magnetometer::new(Arc::new(TiltedDipole::earth()))],
+            gyroscopes: vec![Gyroscope::new()],
+            star_trackers: Vec::new(),
         };
         let epoch = Epoch::j2000();
         let state = make_state();
         let readings = bundle.evaluate(&state, &epoch);
-        assert!(readings.magnetometer.is_some());
-        assert!(readings.gyroscope.is_some());
+        assert_eq!(readings.magnetometers.len(), 1);
+        assert_eq!(readings.gyroscopes.len(), 1);
+        assert!(readings.star_trackers.is_empty());
+    }
+
+    #[test]
+    fn multiple_gyroscopes() {
+        let mut bundle = SensorBundle {
+            magnetometers: Vec::new(),
+            gyroscopes: vec![Gyroscope::new(), Gyroscope::new()],
+            star_trackers: Vec::new(),
+        };
+        let epoch = Epoch::j2000();
+        let state = make_state();
+        let readings = bundle.evaluate(&state, &epoch);
+        assert_eq!(readings.gyroscopes.len(), 2);
+        // Both ideal gyros should produce the same reading
+        assert_eq!(readings.gyroscopes[0], readings.gyroscopes[1]);
     }
 }

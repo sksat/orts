@@ -159,6 +159,23 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         self.body_radius
     }
 
+    /// Replace a model by name, returning the old one (if found).
+    ///
+    /// This is used to swap in a model with updated commanded state
+    /// between integration segments (e.g., `MtqAssembly` with new
+    /// `commanded_moments`).
+    pub fn replace_model(
+        &mut self,
+        name: &str,
+        new_model: Box<dyn Model<SpacecraftState<F>, F>>,
+    ) -> Option<Box<dyn Model<SpacecraftState<F>, F>>> {
+        if let Some(slot) = self.models.iter_mut().find(|m| m.name() == name) {
+            Some(std::mem::replace(slot, new_model))
+        } else {
+            None
+        }
+    }
+
     /// Names of active models.
     pub fn model_names(&self) -> Vec<&str> {
         self.models.iter().map(|m| m.name()).collect()
@@ -745,7 +762,7 @@ mod tests {
         let rw_ref = dyn_sc
             .effector_mut::<ReactionWheelAssembly>(0)
             .expect("should downcast");
-        rw_ref.commanded_torque = Vector3::new(0.1, 0.0, 0.0);
+        rw_ref.commanded_torques = vec![0.1, 0.0, 0.0];
     }
 
     #[test]
@@ -755,11 +772,11 @@ mod tests {
         let mut dyn_sc =
             SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0)).with_effector(rw);
 
-        // Command a small torque on the x-axis.
+        // Command a small torque on the x-axis (per-wheel).
         dyn_sc
             .effector_mut::<ReactionWheelAssembly>(0)
             .unwrap()
-            .commanded_torque = Vector3::new(0.01, 0.0, 0.0);
+            .commanded_torques = vec![0.01, 0.0, 0.0];
 
         let state = dyn_sc.initial_augmented_state(sample_spacecraft());
         let result = Rk4.integrate(&dyn_sc, state, 0.0, 10.0, 0.1, |_, _| {});

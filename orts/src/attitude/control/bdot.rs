@@ -9,6 +9,7 @@ use crate::control::DiscreteController;
 use crate::magnetic;
 use crate::model::ExternalLoads;
 use crate::model::{HasAttitude, HasOrbit, Model};
+use crate::spacecraft::MtqAssemblyCore;
 
 /// B-dot detumbling controller using stateless analytical approximation.
 ///
@@ -21,19 +22,24 @@ use crate::model::{HasAttitude, HasOrbit, Model};
 /// velocity perpendicular to the local magnetic field (provable via
 /// Cauchy-Schwarz: omega . tau <= 0).
 ///
+/// Uses [`MtqAssemblyCore`] for per-MTQ allocation and clamping, ensuring
+/// consistency with the plugin-controlled `MtqAssembly` path.
+///
 /// When no epoch is available, returns zero loads (magnetic field models
 /// require epoch for ECEF↔ECI rotation and secular variation).
 pub struct BdotDetumbler<F: MagneticFieldModel = TiltedDipole> {
     /// Gain k > 0  [A*m^2*s/(rad*T)]
     gain: f64,
-    /// Per-axis maximum magnetic moment [A*m^2]
-    max_moment: Vector3<f64>,
+    /// MTQ assembly core for allocation + clamping.
+    mtq: MtqAssemblyCore,
     /// Geomagnetic field model
     field: F,
 }
 
 impl<F: MagneticFieldModel> BdotDetumbler<F> {
     /// Create a new B-dot detumbler with custom field model.
+    ///
+    /// `max_moment` is per-axis maximum [A·m²] for a 3-axis MTQ.
     ///
     /// # Panics
     /// Panics if `gain` is negative or any component of `max_moment` is negative.
@@ -43,11 +49,13 @@ impl<F: MagneticFieldModel> BdotDetumbler<F> {
             max_moment[0] >= 0.0 && max_moment[1] >= 0.0 && max_moment[2] >= 0.0,
             "max_moment must be non-negative, got {max_moment:?}"
         );
-        Self {
-            gain,
-            max_moment,
-            field,
-        }
+        use crate::spacecraft::Mtq;
+        let mtq = MtqAssemblyCore::new(vec![
+            Mtq::new(Vector3::x(), max_moment[0]),
+            Mtq::new(Vector3::y(), max_moment[1]),
+            Mtq::new(Vector3::z(), max_moment[2]),
+        ]);
+        Self { gain, mtq, field }
     }
 }
 
@@ -82,20 +90,15 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = arika::frame::Simp
             .into_inner();
 
         // 3. Analytical approximation: dB_body/dt = -omega x B_body
-        //    (valid when |omega| >> orbital angular rate)
         let omega = &att.angular_velocity;
         let db_body_dt = -omega.cross(&b_body);
 
-        // 4. Commanded magnetic moment: m = -k * dB/dt = k * (omega x B)
-        let mut m_cmd = -self.gain * db_body_dt;
+        // 4. Desired magnetic moment: m = -k * dB/dt = k * (omega x B)
+        let desired = -self.gain * db_body_dt;
 
-        // 5. Clamp per-axis
-        for i in 0..3 {
-            m_cmd[i] = m_cmd[i].clamp(-self.max_moment[i], self.max_moment[i]);
-        }
-
-        // 6. Torque: tau = m x B [N*m]
-        let tau = m_cmd.cross(&b_body);
+        // 5. Allocate to per-MTQ + clamp, then compute torque
+        let allocated = self.mtq.allocate(&desired);
+        let tau = self.mtq.torque(&allocated, &b_body);
 
         ExternalLoads::torque(tau)
     }
@@ -162,7 +165,8 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = arika::frame::Simp
 /// When no epoch is available, returns zero command.
 pub struct BdotFiniteDiff<F: MagneticFieldModel = TiltedDipole> {
     gain: f64,
-    max_moment: Vector3<f64>,
+    /// MTQ assembly core for allocation + clamping.
+    mtq: MtqAssemblyCore,
     field: F,
     sample_period: f64,
     prev_b_body: Option<Vector3<f64>>,
@@ -171,6 +175,8 @@ pub struct BdotFiniteDiff<F: MagneticFieldModel = TiltedDipole> {
 
 impl<F: MagneticFieldModel> BdotFiniteDiff<F> {
     /// Create a new finite-difference B-dot controller.
+    ///
+    /// `max_moment` is per-axis maximum [A·m²] for a 3-axis MTQ.
     ///
     /// # Panics
     /// Panics if `gain` is negative, any component of `max_moment` is negative,
@@ -185,9 +191,15 @@ impl<F: MagneticFieldModel> BdotFiniteDiff<F> {
             sample_period > 0.0,
             "sample_period must be positive, got {sample_period}"
         );
+        use crate::spacecraft::Mtq;
+        let mtq = MtqAssemblyCore::new(vec![
+            Mtq::new(Vector3::x(), max_moment[0]),
+            Mtq::new(Vector3::y(), max_moment[1]),
+            Mtq::new(Vector3::z(), max_moment[2]),
+        ]);
         Self {
             gain,
-            max_moment,
+            mtq,
             field,
             sample_period,
             prev_b_body: None,
@@ -233,11 +245,10 @@ impl<F: MagneticFieldModel> DiscreteController for BdotFiniteDiff<F> {
                     return Vector3::zeros();
                 }
                 let db_dt = (b_body - prev_b) / dt;
-                let mut m = -self.gain * db_dt;
-                for i in 0..3 {
-                    m[i] = m[i].clamp(-self.max_moment[i], self.max_moment[i]);
-                }
-                m
+                let desired = -self.gain * db_dt;
+                // Use MtqAssemblyCore for consistent allocation + clamp
+                let allocated = self.mtq.allocate(&desired);
+                self.mtq.realized_moment(&allocated)
             }
             None => Vector3::zeros(),
         };
