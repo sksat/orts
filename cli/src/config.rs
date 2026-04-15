@@ -151,6 +151,9 @@ pub enum ReactionWheelConfig {
         max_momentum: f64,
         /// 最大トルク [N·m]。
         max_torque: f64,
+        /// 速度制御ゲイン [N·m / (rad/s)]。省略時はデフォルト (I_wheel * 10)。
+        #[serde(default)]
+        speed_control_gain: Option<f64>,
     },
 }
 
@@ -864,7 +867,7 @@ satellites:
         let rw = sat.reaction_wheels.as_ref().unwrap();
         assert!(matches!(
             rw,
-            ReactionWheelConfig::ThreeAxis { inertia, max_momentum, max_torque }
+            ReactionWheelConfig::ThreeAxis { inertia, max_momentum, max_torque, .. }
             if (*inertia - 0.01).abs() < 1e-9
             && (*max_momentum - 1.0).abs() < 1e-9
             && (*max_torque - 0.5).abs() < 1e-9

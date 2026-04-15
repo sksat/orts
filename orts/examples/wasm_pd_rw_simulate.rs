@@ -97,8 +97,8 @@ fn main() {
         let t_next = (t + DT_CTRL).min(T_END);
 
         let mut rw_seg = rw.clone();
-        if bundle.has_rw_command() {
-            rw_seg.commanded_torques = bundle.rw_torques().to_vec();
+        if let Some(rw_cmd) = bundle.rw_command() {
+            rw_seg.command = rw_cmd.clone();
         }
         let gg = GravityGradientTorque::circular_orbit(mu, radius, inertia);
         let system = AugmentedAttitudeSystem::circular_orbit(inertia, mu, radius, MASS)

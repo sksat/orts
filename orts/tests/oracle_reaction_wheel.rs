@@ -55,7 +55,8 @@ fn angular_momentum_conservation_with_rw() {
     let inertia = symmetric_inertia(i_val);
 
     let mut rw = ReactionWheelAssembly::three_axis(0.01, 10.0, 0.5);
-    rw.commanded_torques = rw.core().allocate(&Vector3::new(0.1, 0.05, 0.2));
+    rw.command =
+        orts::spacecraft::RwCommand::Torques(rw.core().allocate(&Vector3::new(0.1, 0.05, 0.2)));
 
     let wheel_axes = vec![Vector3::x(), Vector3::y(), Vector3::z()];
 
@@ -110,7 +111,8 @@ fn rw_torque_produces_opposite_spacecraft_rotation() {
     let inertia = symmetric_inertia(i_val);
 
     let mut rw = ReactionWheelAssembly::three_axis(0.01, 10.0, 0.5);
-    rw.commanded_torques = rw.core().allocate(&Vector3::new(0.0, 0.0, 0.1)); // desired +Z body torque
+    rw.command =
+        orts::spacecraft::RwCommand::Torques(rw.core().allocate(&Vector3::new(0.0, 0.0, 0.1))); // desired +Z body torque
 
     let system = AugmentedAttitudeSystem::circular_orbit(inertia, 398600.4418, 7000.0, 100.0)
         .with_effector(rw);
@@ -186,7 +188,9 @@ fn momentum_saturation_stops_acceleration() {
     let max_momentum = 0.5; // small limit for fast saturation
     let max_torque = 0.1;
     let mut rw = ReactionWheelAssembly::three_axis(0.01, max_momentum, max_torque);
-    rw.commanded_torques = rw.core().allocate(&Vector3::new(0.0, 0.0, max_torque)); // saturate Z-wheel
+    rw.command = orts::spacecraft::RwCommand::Torques(
+        rw.core().allocate(&Vector3::new(0.0, 0.0, max_torque)),
+    ); // saturate Z-wheel
 
     let system = AugmentedAttitudeSystem::circular_orbit(inertia, 398600.4418, 7000.0, 100.0)
         .with_effector(rw);
@@ -240,7 +244,8 @@ fn torque_rate_limiting_clamps_acceleration() {
 
     let max_torque = 0.1;
     let mut rw = ReactionWheelAssembly::three_axis(0.01, 100.0, max_torque);
-    rw.commanded_torques = rw.core().allocate(&Vector3::new(0.0, 0.0, 100.0)); // way above max_torque
+    rw.command =
+        orts::spacecraft::RwCommand::Torques(rw.core().allocate(&Vector3::new(0.0, 0.0, 100.0))); // way above max_torque
 
     let system = AugmentedAttitudeSystem::circular_orbit(inertia, 398600.4418, 7000.0, 100.0)
         .with_effector(rw);

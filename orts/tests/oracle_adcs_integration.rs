@@ -115,7 +115,7 @@ fn pd_rw_stabilization_with_gravity_gradient() {
 
         // 2. Set RW command
         let mut rw_seg = rw.clone();
-        rw_seg.commanded_torques = rw_seg.core().allocate(&tau_cmd);
+        rw_seg.command = orts::spacecraft::RwCommand::Torques(rw_seg.core().allocate(&tau_cmd));
 
         // 3. Build system with gravity gradient + RW (no PD Model)
         let gg = GravityGradientTorque::circular_orbit(mu, radius, inertia);
@@ -199,7 +199,7 @@ fn rw_momentum_buildup_under_gravity_gradient() {
 
         // Set RW command
         let mut rw_seg = rw.clone();
-        rw_seg.commanded_torques = rw_seg.core().allocate(&tau_cmd);
+        rw_seg.command = orts::spacecraft::RwCommand::Torques(rw_seg.core().allocate(&tau_cmd));
 
         // Build system with GG + RW
         let gg = GravityGradientTorque::circular_orbit(mu, radius, inertia);
@@ -295,7 +295,7 @@ fn pd_rw_matches_direct_pd_symmetric_body() {
         let tau_cmd = pd_control_law(&state_rw.plant, &target_q, kp, kd);
 
         let mut rw_seg = rw.clone();
-        rw_seg.commanded_torques = rw_seg.core().allocate(&tau_cmd);
+        rw_seg.command = orts::spacecraft::RwCommand::Torques(rw_seg.core().allocate(&tau_cmd));
 
         let system = AugmentedAttitudeSystem::circular_orbit(inertia, mu, radius, mass)
             .with_effector(rw_seg);

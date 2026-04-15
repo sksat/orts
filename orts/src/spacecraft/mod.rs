@@ -9,7 +9,7 @@ pub use crate::model::ExternalLoads;
 pub use dynamics::SpacecraftDynamics;
 pub use mtq::{Mtq, MtqAssembly, MtqAssemblyCore};
 pub use panel_srp::PanelSrp;
-pub use reaction_wheel::ReactionWheelAssembly;
+pub use reaction_wheel::{ReactionWheelAssembly, RwCommand};
 pub use state::SpacecraftState;
 pub use surface::{PanelDrag, SpacecraftShape, SurfacePanel};
 pub use thruster::{BurnWindow, ConstantThrottle, G0, ScheduledBurn, ThrustProfile, Thruster};

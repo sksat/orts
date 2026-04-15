@@ -25,7 +25,7 @@ macro_rules! impl_convert {
         use $crate::attitude::AttitudeState;
         use $crate::orbital::OrbitalState;
         use $crate::plugin::tick_input::{ActuatorState, Sensors, TickInput};
-        use $crate::plugin::{Command, PluginError};
+        use $crate::plugin::{Command, PluginError, RwCommand};
 
         // ───────────────────── host -> guest (TickInput) ─────────────────────
 
@@ -43,6 +43,7 @@ macro_rules! impl_convert {
         fn actuator_state_to_wit(a: &ActuatorState) -> wit::ActuatorState {
             wit::ActuatorState {
                 rw_momentum: a.rw_momentum.clone(),
+                rw_speeds: a.rw_speeds.clone(),
             }
         }
 
@@ -147,9 +148,13 @@ macro_rules! impl_convert {
         ///
         /// Returns `PluginError::BadCommand` if any numeric field is NaN / Inf.
         pub fn command_from_wit(cmd: wit::Command) -> Result<Command, PluginError> {
+            let rw = cmd.rw.map(|rw_cmd| match rw_cmd {
+                wit::RwCommand::Speeds(s) => RwCommand::Speeds(s),
+                wit::RwCommand::Torques(t) => RwCommand::Torques(t),
+            });
             let result = Command {
                 mtq_moments: cmd.mtq_moments,
-                rw_torques: cmd.rw_torques,
+                rw,
             };
             if !result.is_finite() {
                 return Err(PluginError::BadCommand(format!("{result:?}")));
@@ -247,29 +252,40 @@ pub mod sync {
         fn command_roundtrip_mtq_moments() {
             let wit_cmd = wit::Command {
                 mtq_moments: Some(vec![1.0, -2.0, 0.5]),
-                rw_torques: None,
+                rw: None,
             };
             let cmd = command_from_wit(wit_cmd).unwrap();
             assert_eq!(cmd.mtq_moments, Some(vec![1.0, -2.0, 0.5]));
-            assert_eq!(cmd.rw_torques, None);
+            assert_eq!(cmd.rw, None);
         }
 
         #[test]
         fn command_roundtrip_rw_torques() {
             let wit_cmd = wit::Command {
                 mtq_moments: None,
-                rw_torques: Some(vec![0.01, -0.02, 0.03]),
+                rw: Some(wit::RwCommand::Torques(vec![0.01, -0.02, 0.03])),
             };
             let cmd = command_from_wit(wit_cmd).unwrap();
             assert_eq!(cmd.mtq_moments, None);
-            assert_eq!(cmd.rw_torques, Some(vec![0.01, -0.02, 0.03]));
+            assert_eq!(cmd.rw, Some(RwCommand::Torques(vec![0.01, -0.02, 0.03])));
+        }
+
+        #[test]
+        fn command_roundtrip_rw_speeds() {
+            let wit_cmd = wit::Command {
+                mtq_moments: None,
+                rw: Some(wit::RwCommand::Speeds(vec![10.0, -5.0, 0.0])),
+            };
+            let cmd = command_from_wit(wit_cmd).unwrap();
+            assert_eq!(cmd.mtq_moments, None);
+            assert_eq!(cmd.rw, Some(RwCommand::Speeds(vec![10.0, -5.0, 0.0])));
         }
 
         #[test]
         fn command_from_wit_rejects_nan() {
             let wit_cmd = wit::Command {
                 mtq_moments: Some(vec![1.0, f64::NAN, 0.0]),
-                rw_torques: None,
+                rw: None,
             };
             assert!(command_from_wit(wit_cmd).is_err());
         }
@@ -278,7 +294,7 @@ pub mod sync {
         fn command_from_wit_rejects_nan_rw() {
             let wit_cmd = wit::Command {
                 mtq_moments: None,
-                rw_torques: Some(vec![f64::INFINITY, 0.0, 0.0]),
+                rw: Some(wit::RwCommand::Torques(vec![f64::INFINITY, 0.0, 0.0])),
             };
             assert!(command_from_wit(wit_cmd).is_err());
         }

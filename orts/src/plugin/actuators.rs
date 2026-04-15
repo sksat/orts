@@ -18,10 +18,10 @@
 //! Each `apply()` call updates the actuators for which the `Command`
 //! has `Some` fields. Other actuators retain their last value
 //! (zero-order hold). If a guest sets both `mtq_moments` and
-//! `rw_torques` in a single `Command`, both actuators are updated
+//! `rw` in a single `Command`, both actuators are updated
 //! simultaneously.
 
-use super::command::Command;
+use super::command::{Command, RwCommand};
 use super::error::PluginError;
 
 /// Per-actuator applied command state.
@@ -31,9 +31,9 @@ pub struct ActuatorBundle {
     /// `None` until `apply()` receives a `Command` with `mtq_moments`.
     commanded_mtq_moments: Option<Vec<f64>>,
 
-    /// Per-wheel commanded torque \[N·m\].
-    /// `None` until `apply()` receives a `Command` with `rw_torques`.
-    commanded_rw_torques: Option<Vec<f64>>,
+    /// Per-wheel commanded RW command (speed or torque).
+    /// `None` until `apply()` receives a `Command` with `rw`.
+    commanded_rw: Option<RwCommand>,
 }
 
 impl ActuatorBundle {
@@ -57,8 +57,8 @@ impl ActuatorBundle {
         if let Some(m) = &cmd.mtq_moments {
             self.commanded_mtq_moments = Some(m.clone());
         }
-        if let Some(t) = &cmd.rw_torques {
-            self.commanded_rw_torques = Some(t.clone());
+        if let Some(rw) = &cmd.rw {
+            self.commanded_rw = Some(rw.clone());
         }
         Ok(())
     }
@@ -74,15 +74,14 @@ impl ActuatorBundle {
         self.commanded_mtq_moments.is_some()
     }
 
-    /// Returns the currently-commanded per-wheel torques.
-    /// Returns empty slice when no command has been observed yet.
-    pub fn rw_torques(&self) -> &[f64] {
-        self.commanded_rw_torques.as_deref().unwrap_or(&[])
+    /// Returns the currently-commanded RW command.
+    pub fn rw_command(&self) -> Option<&RwCommand> {
+        self.commanded_rw.as_ref()
     }
 
-    /// Returns `true` if an RW torque command has been applied at least once.
+    /// Returns `true` if an RW command has been applied at least once.
     pub fn has_rw_command(&self) -> bool {
-        self.commanded_rw_torques.is_some()
+        self.commanded_rw.is_some()
     }
 }
 
@@ -105,11 +104,28 @@ mod tests {
     fn apply_stores_rw_torques() {
         let mut bundle = ActuatorBundle::new();
         assert!(!bundle.has_rw_command());
-        assert!(bundle.rw_torques().is_empty());
 
-        bundle.apply(&Command::rw(vec![0.01, -0.02, 0.03])).unwrap();
+        bundle
+            .apply(&Command::rw_torques(vec![0.01, -0.02, 0.03]))
+            .unwrap();
         assert!(bundle.has_rw_command());
-        assert_eq!(bundle.rw_torques(), &[0.01, -0.02, 0.03]);
+        assert_eq!(
+            bundle.rw_command(),
+            Some(&RwCommand::Torques(vec![0.01, -0.02, 0.03]))
+        );
+    }
+
+    #[test]
+    fn apply_stores_rw_speeds() {
+        let mut bundle = ActuatorBundle::new();
+        bundle
+            .apply(&Command::rw_speeds(vec![10.0, -5.0, 0.0]))
+            .unwrap();
+        assert!(bundle.has_rw_command());
+        assert_eq!(
+            bundle.rw_command(),
+            Some(&RwCommand::Speeds(vec![10.0, -5.0, 0.0]))
+        );
     }
 
     #[test]
@@ -127,7 +143,7 @@ mod tests {
     #[test]
     fn apply_rw_rejects_nan() {
         let mut bundle = ActuatorBundle::new();
-        let bad = Command::rw(vec![0.0, f64::INFINITY, 0.0]);
+        let bad = Command::rw_torques(vec![0.0, f64::INFINITY, 0.0]);
         assert!(bundle.apply(&bad).is_err());
         assert!(!bundle.has_rw_command());
     }
@@ -136,9 +152,14 @@ mod tests {
     fn multi_command_retains_both() {
         let mut bundle = ActuatorBundle::new();
         bundle.apply(&Command::mtq(vec![1.0, 0.0, 0.0])).unwrap();
-        bundle.apply(&Command::rw(vec![0.0, 0.1, 0.0])).unwrap();
+        bundle
+            .apply(&Command::rw_torques(vec![0.0, 0.1, 0.0]))
+            .unwrap();
         assert_eq!(bundle.mtq_moments(), &[1.0, 0.0, 0.0]);
-        assert_eq!(bundle.rw_torques(), &[0.0, 0.1, 0.0]);
+        assert_eq!(
+            bundle.rw_command(),
+            Some(&RwCommand::Torques(vec![0.0, 0.1, 0.0]))
+        );
     }
 
     #[test]
@@ -146,10 +167,13 @@ mod tests {
         let mut bundle = ActuatorBundle::new();
         let cmd = Command {
             mtq_moments: Some(vec![1.0, 0.0, 0.0]),
-            rw_torques: Some(vec![0.0, 0.1, 0.0]),
+            rw: Some(RwCommand::Torques(vec![0.0, 0.1, 0.0])),
         };
         bundle.apply(&cmd).unwrap();
         assert_eq!(bundle.mtq_moments(), &[1.0, 0.0, 0.0]);
-        assert_eq!(bundle.rw_torques(), &[0.0, 0.1, 0.0]);
+        assert_eq!(
+            bundle.rw_command(),
+            Some(&RwCommand::Torques(vec![0.0, 0.1, 0.0]))
+        );
     }
 }

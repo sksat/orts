@@ -6,11 +6,33 @@
 //! physical loads via `ActuatorBundle`.
 //!
 //! The field set grows incrementally with each phase:
-//! - P1: `mtq_moments` (per-MTQ magnetic moment) + `rw_torques` (per-wheel torque)
+//! - P1: `mtq_moments` (per-MTQ magnetic moment) + `rw` (per-wheel speed or torque)
 //! - P4: thrust throttle / impulsive delta-v
 //! - P5: composite commands for coupled attitude + thrust guest
 //!
 //! See DESIGN.md Phase P, D2 ("Command は per-device 論理指令").
+
+/// Per-wheel RW command.
+///
+/// The variant selects the command mode: target speeds (the host motor
+/// model converts to torque) or direct motor torques (applied after
+/// rate/saturation clamping).
+#[derive(Debug, Clone, PartialEq)]
+pub enum RwCommand {
+    /// Target speeds [rad/s]. Host motor model generates torque.
+    Speeds(Vec<f64>),
+    /// Direct motor torques [N·m]. Applied after clamp.
+    Torques(Vec<f64>),
+}
+
+impl RwCommand {
+    /// Returns `true` if every element in the command is finite.
+    pub fn is_finite(&self) -> bool {
+        match self {
+            RwCommand::Speeds(v) | RwCommand::Torques(v) => v.iter().all(|x| x.is_finite()),
+        }
+    }
+}
 
 /// Logical command emitted by a controller backend.
 ///
@@ -28,10 +50,10 @@ pub struct Command {
     /// Length must match the number of MTQs in the assembly.
     pub mtq_moments: Option<Vec<f64>>,
 
-    /// Per-wheel commanded torque \[N·m\].
+    /// Per-wheel RW command (speed or torque).
     /// Length must match the number of wheels in the assembly.
     /// Sign convention: positive value → wheel absorbs positive angular momentum.
-    pub rw_torques: Option<Vec<f64>>,
+    pub rw: Option<RwCommand>,
 }
 
 impl Command {
@@ -39,16 +61,26 @@ impl Command {
     pub fn mtq(moments: Vec<f64>) -> Self {
         Self {
             mtq_moments: Some(moments),
-            rw_torques: None,
+            rw: None,
         }
     }
 
-    /// Create a command that only sets the RW torques.
-    pub fn rw(torques: Vec<f64>) -> Self {
+    /// Create a command that only sets the RW command.
+    pub fn rw_cmd(cmd: RwCommand) -> Self {
         Self {
             mtq_moments: None,
-            rw_torques: Some(torques),
+            rw: Some(cmd),
         }
+    }
+
+    /// Create a command that only sets the RW torques (convenience shorthand).
+    pub fn rw_torques(torques: Vec<f64>) -> Self {
+        Self::rw_cmd(RwCommand::Torques(torques))
+    }
+
+    /// Create a command that only sets the RW speeds (convenience shorthand).
+    pub fn rw_speeds(speeds: Vec<f64>) -> Self {
+        Self::rw_cmd(RwCommand::Speeds(speeds))
     }
 
     /// Returns `true` if every numeric component in the command is
@@ -63,10 +95,7 @@ impl Command {
             .mtq_moments
             .as_ref()
             .is_none_or(|v| v.iter().all(|x| x.is_finite()));
-        let rw_ok = self
-            .rw_torques
-            .as_ref()
-            .is_none_or(|v| v.iter().all(|x| x.is_finite()));
+        let rw_ok = self.rw.as_ref().is_none_or(|cmd| cmd.is_finite());
         mtq_ok && rw_ok
     }
 }
@@ -89,10 +118,19 @@ mod tests {
 
     #[test]
     fn rw_finite_detects_nan() {
-        let good = Command::rw(vec![0.01, -0.02, 0.0]);
+        let good = Command::rw_torques(vec![0.01, -0.02, 0.0]);
         assert!(good.is_finite());
 
-        let nan = Command::rw(vec![f64::NAN, 0.0, 0.0]);
+        let nan = Command::rw_torques(vec![f64::NAN, 0.0, 0.0]);
+        assert!(!nan.is_finite());
+    }
+
+    #[test]
+    fn rw_speeds_finite_detects_nan() {
+        let good = Command::rw_speeds(vec![10.0, -5.0, 0.0]);
+        assert!(good.is_finite());
+
+        let nan = Command::rw_speeds(vec![f64::NAN, 0.0, 0.0]);
         assert!(!nan.is_finite());
     }
 
@@ -100,29 +138,29 @@ mod tests {
     fn field_access() {
         let mm = Command::mtq(vec![1.0, 2.0, 3.0]);
         assert!(mm.mtq_moments.is_some());
-        assert!(mm.rw_torques.is_none());
+        assert!(mm.rw.is_none());
 
-        let rw = Command::rw(vec![0.1, 0.2, 0.3]);
+        let rw = Command::rw_torques(vec![0.1, 0.2, 0.3]);
         assert!(rw.mtq_moments.is_none());
-        assert!(rw.rw_torques.is_some());
+        assert!(rw.rw.is_some());
     }
 
     #[test]
     fn both_fields_set() {
         let cmd = Command {
             mtq_moments: Some(vec![1.0, 0.0, 0.0]),
-            rw_torques: Some(vec![0.0, 0.1, 0.0]),
+            rw: Some(RwCommand::Torques(vec![0.0, 0.1, 0.0])),
         };
         assert!(cmd.is_finite());
         assert!(cmd.mtq_moments.is_some());
-        assert!(cmd.rw_torques.is_some());
+        assert!(cmd.rw.is_some());
     }
 
     #[test]
     fn both_fields_nan_in_one() {
         let cmd = Command {
             mtq_moments: Some(vec![f64::NAN, 0.0, 0.0]),
-            rw_torques: Some(vec![0.0, 0.1, 0.0]),
+            rw: Some(RwCommand::Torques(vec![0.0, 0.1, 0.0])),
         };
         assert!(!cmd.is_finite());
     }
@@ -131,7 +169,7 @@ mod tests {
     fn empty_vec_is_finite() {
         let cmd = Command {
             mtq_moments: Some(vec![]),
-            rw_torques: Some(vec![]),
+            rw: Some(RwCommand::Torques(vec![])),
         };
         assert!(cmd.is_finite());
     }

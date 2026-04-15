@@ -443,8 +443,8 @@ pub mod orts {
             pub struct ActuatorState {
                 /// RW 各ホイールの角運動量 \[N·m·s\]。
                 pub rw_momentum: Option<_rt::Vec<f64>>,
-                /// MTQ 各 MTQ の実現モーメント \[A·m²\]（clamp 後）。
-                pub mtq_realized_moments: Option<_rt::Vec<f64>>,
+                /// RW 各ホイールのスピン速度 \[rad/s\]。
+                pub rw_speeds: Option<_rt::Vec<f64>>,
             }
             impl ::core::fmt::Debug for ActuatorState {
                 fn fmt(
@@ -453,7 +453,7 @@ pub mod orts {
                 ) -> ::core::fmt::Result {
                     f.debug_struct("ActuatorState")
                         .field("rw-momentum", &self.rw_momentum)
-                        .field("mtq-realized-moments", &self.mtq_realized_moments)
+                        .field("rw-speeds", &self.rw_speeds)
                         .finish()
                 }
             }
@@ -486,21 +486,43 @@ pub mod orts {
                         .finish()
                 }
             }
+            /// Per-wheel RW command. The mode (speed vs torque) is per-assembly.
+            #[derive(Clone)]
+            pub enum RwCommand {
+                /// Per-wheel target speed \[rad/s\]. Host motor model generates torque.
+                Speeds(_rt::Vec<f64>),
+                /// Per-wheel motor torque \[N·m\]. Applied directly after clamp.
+                Torques(_rt::Vec<f64>),
+            }
+            impl ::core::fmt::Debug for RwCommand {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    match self {
+                        RwCommand::Speeds(e) => {
+                            f.debug_tuple("RwCommand::Speeds").field(e).finish()
+                        }
+                        RwCommand::Torques(e) => {
+                            f.debug_tuple("RwCommand::Torques").field(e).finish()
+                        }
+                    }
+                }
+            }
             /// コントローラが返す per-device アクチュエータ指令。
             ///
             /// 各フィールドは per-device の `list<f64>`。長さはアセンブリの
             /// デバイス数と一致する必要がある。`None` のフィールドは
             /// そのアクチュエータに対するコマンドなし（前回値が ZOH で保持）。
             ///
-            /// Phase P1: `mtq-moments` + `rw-torques`
+            /// Phase P1: `mtq-moments` + `rw`
             /// Phase P4: `throttles` / `impulsive-dv` を追加予定。
             #[derive(Clone)]
             pub struct Command {
                 /// per-MTQ 磁気ダイポールモーメント指令 \[A·m²\]。
                 pub mtq_moments: Option<_rt::Vec<f64>>,
-                /// per-wheel トルク指令 \[N·m\]。
-                /// 正値 → ホイールが正の角運動量を吸収。
-                pub rw_torques: Option<_rt::Vec<f64>>,
+                /// per-wheel RW コマンド（速度指令またはトルク指令）。
+                pub rw: Option<RwCommand>,
             }
             impl ::core::fmt::Debug for Command {
                 fn fmt(
@@ -509,7 +531,7 @@ pub mod orts {
                 ) -> ::core::fmt::Result {
                     f.debug_struct("Command")
                         .field("mtq-moments", &self.mtq_moments)
-                        .field("rw-torques", &self.rw_torques)
+                        .field("rw", &self.rw)
                         .finish()
                 }
             }
@@ -838,7 +860,7 @@ pub mod orts {
                                             }
                                             _ => _rt::invalid_enum_discriminant(),
                                         },
-                                        mtq_realized_moments: match l33 {
+                                        rw_speeds: match l33 {
                                             0 => None,
                                             1 => {
                                                 let e = {
@@ -872,7 +894,7 @@ pub mod orts {
                 unsafe {
                     let super::super::super::orts::plugin::types::Command {
                         mtq_moments: mtq_moments0,
-                        rw_torques: rw_torques0,
+                        rw: rw0,
                     } = cmd;
                     let (result2_0, result2_1, result2_2) = match mtq_moments0 {
                         Some(e) => {
@@ -883,33 +905,47 @@ pub mod orts {
                         }
                         None => (0i32, ::core::ptr::null_mut(), 0usize),
                     };
-                    let (result4_0, result4_1, result4_2) = match rw_torques0 {
+                    let (result7_0, result7_1, result7_2, result7_3) = match rw0 {
                         Some(e) => {
-                            let vec3 = e;
-                            let ptr3 = vec3.as_ptr().cast::<u8>();
-                            let len3 = vec3.len();
-                            (1i32, ptr3.cast_mut(), len3)
+                            use super::super::super::orts::plugin::types::RwCommand as V5;
+                            let (result6_0, result6_1, result6_2) = match e {
+                                V5::Speeds(e) => {
+                                    let vec3 = e;
+                                    let ptr3 = vec3.as_ptr().cast::<u8>();
+                                    let len3 = vec3.len();
+                                    (0i32, ptr3.cast_mut(), len3)
+                                }
+                                V5::Torques(e) => {
+                                    let vec4 = e;
+                                    let ptr4 = vec4.as_ptr().cast::<u8>();
+                                    let len4 = vec4.len();
+                                    (1i32, ptr4.cast_mut(), len4)
+                                }
+                            };
+                            (1i32, result6_0, result6_1, result6_2)
                         }
-                        None => (0i32, ::core::ptr::null_mut(), 0usize),
+                        None => (0i32, 0i32, ::core::ptr::null_mut(), 0usize),
                     };
                     #[cfg(target_arch = "wasm32")]
                     #[link(wasm_import_module = "orts:plugin/tick-io@0.1.0")]
                     unsafe extern "C" {
                         #[link_name = "send-command"]
-                        fn wit_import5(
+                        fn wit_import8(
                             _: i32,
                             _: *mut u8,
                             _: usize,
+                            _: i32,
                             _: i32,
                             _: *mut u8,
                             _: usize,
                         );
                     }
                     #[cfg(not(target_arch = "wasm32"))]
-                    unsafe extern "C" fn wit_import5(
+                    unsafe extern "C" fn wit_import8(
                         _: i32,
                         _: *mut u8,
                         _: usize,
+                        _: i32,
                         _: i32,
                         _: *mut u8,
                         _: usize,
@@ -917,13 +953,14 @@ pub mod orts {
                         unreachable!()
                     }
                     unsafe {
-                        wit_import5(
+                        wit_import8(
                             result2_0,
                             result2_1,
                             result2_2,
-                            result4_0,
-                            result4_1,
-                            result4_2,
+                            result7_0,
+                            result7_1,
+                            result7_2,
+                            result7_3,
                         )
                     };
                 }
@@ -1016,9 +1053,9 @@ pub(crate) use __export_plugin_impl as export;
 )]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1354] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xcd\x09\x01A\x02\x01\
-A\x15\x01B&\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01x\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1378] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xe5\x09\x01A\x02\x01\
+A\x15\x01B)\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01x\
 u\x01yu\x01zu\x04\0\x04quat\x03\0\x02\x01r\x03\x01xu\x01yu\x01zu\x04\0\x0fpositi\
 on-eci-km\x03\0\x04\x01r\x03\x01xu\x01yu\x01zu\x04\0\x10velocity-eci-kms\x03\0\x06\
 \x01r\x02\x08position\x05\x08velocity\x07\x04\0\x0dorbital-state\x03\0\x08\x01r\x02\
@@ -1029,25 +1066,26 @@ magnetic-field-body\x03\0\x10\x01r\x03\x01xu\x01yu\x01zu\x04\0\x15angular-veloci
 ty-body\x03\0\x12\x01r\x04\x01wu\x01xu\x01yu\x01zu\x04\0\x19attitude-body-to-ine\
 rtial\x03\0\x14\x01p\x11\x01p\x13\x01p\x15\x01r\x03\x0dmagnetometers\x16\x0agyro\
 scopes\x17\x0dstar-trackers\x18\x04\0\x07sensors\x03\0\x19\x01pu\x01k\x1b\x01r\x02\
-\x0brw-momentum\x1c\x14mtq-realized-moments\x1c\x04\0\x0eactuator-state\x03\0\x1d\
-\x01k\x0f\x01r\x05\x01tu\x0aspacecraft\x0d\x05epoch\x1f\x07sensors\x1a\x09actuat\
-ors\x1e\x04\0\x0atick-input\x03\0\x20\x01r\x02\x0bmtq-moments\x1c\x0arw-torques\x1c\
-\x04\0\x07command\x03\0\"\x01r\x01\x0fsample-period-su\x04\0\x0fplugin-metadata\x03\
-\0$\x03\0\x17orts:plugin/types@0.1.0\x05\0\x02\x03\0\0\x0fplugin-metadata\x03\0\x0f\
-plugin-metadata\x03\0\x01\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\
-\x02\x01\x03\x04\0\x04vec3\x03\0\0\x02\x03\x02\x01\x04\x04\0\x05epoch\x03\0\x02\x01\
-m\x05\x05trace\x05debug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01\
-@\x02\x05level\x05\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-e\
-ci-km\x01\x01e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugi\
-n/host-env@0.1.0\x05\x05\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07command\x01B\x09\
-\x02\x03\x02\x01\x06\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\x07\x04\0\x07co\
-mmand\x03\0\x02\x01k\x01\x01@\0\0\x04\x04\0\x09wait-tick\x01\x05\x01@\x01\x03cmd\
-\x03\x01\0\x04\0\x0csend-command\x01\x06\x03\0\x19orts:plugin/tick-io@0.1.0\x05\x08\
-\x01j\x01\x02\x01s\x01@\x01\x06configs\0\x09\x04\0\x08metadata\x01\x0a\x01ks\x01\
-@\0\0\x0b\x04\0\x0ccurrent-mode\x01\x0c\x01j\0\x01s\x01@\x01\x06configs\0\x0d\x04\
-\0\x03run\x01\x0e\x04\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06plugi\
-n\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227.1\x10\
-wit-bindgen-rust\x060.41.0";
+\x0brw-momentum\x1c\x09rw-speeds\x1c\x04\0\x0eactuator-state\x03\0\x1d\x01k\x0f\x01\
+r\x05\x01tu\x0aspacecraft\x0d\x05epoch\x1f\x07sensors\x1a\x09actuators\x1e\x04\0\
+\x0atick-input\x03\0\x20\x01q\x02\x06speeds\x01\x1b\0\x07torques\x01\x1b\0\x04\0\
+\x0arw-command\x03\0\"\x01k#\x01r\x02\x0bmtq-moments\x1c\x02rw$\x04\0\x07command\
+\x03\0%\x01r\x01\x0fsample-period-su\x04\0\x0fplugin-metadata\x03\0'\x03\0\x17or\
+ts:plugin/types@0.1.0\x05\0\x02\x03\0\0\x0fplugin-metadata\x03\0\x0fplugin-metad\
+ata\x03\0\x01\x02\x03\0\0\x04vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\x03\
+\x04\0\x04vec3\x03\0\0\x02\x03\x02\x01\x04\x04\0\x05epoch\x03\0\x02\x01m\x05\x05\
+trace\x05debug\x04info\x04warn\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\x05\
+level\x05\x07messages\x01\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\x01\
+\x01e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\x03\0\x1aorts:plugin/host-en\
+v@0.1.0\x05\x05\x02\x03\0\0\x0atick-input\x02\x03\0\0\x07command\x01B\x09\x02\x03\
+\x02\x01\x06\x04\0\x0atick-input\x03\0\0\x02\x03\x02\x01\x07\x04\0\x07command\x03\
+\0\x02\x01k\x01\x01@\0\0\x04\x04\0\x09wait-tick\x01\x05\x01@\x01\x03cmd\x03\x01\0\
+\x04\0\x0csend-command\x01\x06\x03\0\x19orts:plugin/tick-io@0.1.0\x05\x08\x01j\x01\
+\x02\x01s\x01@\x01\x06configs\0\x09\x04\0\x08metadata\x01\x0a\x01ks\x01@\0\0\x0b\
+\x04\0\x0ccurrent-mode\x01\x0c\x01j\0\x01s\x01@\x01\x06configs\0\x0d\x04\0\x03ru\
+n\x01\x0e\x04\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06plugin\x03\0\0\
+\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-component\x070.227.1\x10wit-bind\
+gen-rust\x060.41.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

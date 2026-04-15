@@ -94,7 +94,7 @@ fn run_native(initial: AttitudeState) -> AugmentedState<AttitudeState> {
         let tau_cmd = -KP * theta_error - KD * state.plant.angular_velocity;
 
         let mut rw_seg = rw.clone();
-        rw_seg.commanded_torques = rw_seg.core().allocate(&tau_cmd);
+        rw_seg.command = orts::spacecraft::RwCommand::Torques(rw_seg.core().allocate(&tau_cmd));
         let gg = GravityGradientTorque::circular_orbit(mu, radius, inertia());
         let system = AugmentedAttitudeSystem::circular_orbit(inertia(), mu, radius, MASS)
             .with_model(gg)
@@ -196,8 +196,8 @@ fn drive_wasm(
 
         // Set RW command from plugin's last output.
         let mut rw_seg = rw.clone();
-        if bundle.has_rw_command() {
-            rw_seg.commanded_torques = bundle.rw_torques().to_vec();
+        if let Some(rw_cmd) = bundle.rw_command() {
+            rw_seg.command = rw_cmd.clone();
         }
         let gg = GravityGradientTorque::circular_orbit(mu, radius, inertia());
         let system = AugmentedAttitudeSystem::circular_orbit(inertia(), mu, radius, MASS)

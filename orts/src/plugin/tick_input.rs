@@ -105,6 +105,8 @@ impl Sensors {
 pub struct ActuatorState {
     /// RW 各ホイールの角運動量 \[N·m·s\]。
     pub rw_momentum: Option<Vec<f64>>,
+    /// RW 各ホイールのスピン速度 \[rad/s\]。
+    pub rw_speeds: Option<Vec<f64>>,
     // 将来: pub fuel_mass: Option<f64>,
 }
 

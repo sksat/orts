@@ -121,7 +121,17 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         }
     }
 
-    /// Downcast a state effector by index.
+    /// Downcast a state effector by index (immutable).
+    pub fn effector<T: StateEffector<SpacecraftState<F>> + 'static>(
+        &self,
+        index: usize,
+    ) -> Option<&T> {
+        self.effectors
+            .get(index)
+            .and_then(|e| (e.as_ref() as &dyn std::any::Any).downcast_ref::<T>())
+    }
+
+    /// Downcast a state effector by index (mutable).
     pub fn effector_mut<T: StateEffector<SpacecraftState<F>> + 'static>(
         &mut self,
         index: usize,
@@ -131,7 +141,20 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
             .and_then(|e| (e.as_mut() as &mut dyn std::any::Any).downcast_mut::<T>())
     }
 
-    /// Find and downcast a state effector by name.
+    /// Find and downcast a state effector by name (immutable).
+    pub fn effector_by_name<T: StateEffector<SpacecraftState<F>> + 'static>(
+        &self,
+        name: &str,
+    ) -> Option<&T> {
+        let idx = self
+            .registry
+            .entries()
+            .iter()
+            .position(|e| e.name == name)?;
+        self.effector(idx)
+    }
+
+    /// Find and downcast a state effector by name (mutable).
     pub fn effector_by_name_mut<T: StateEffector<SpacecraftState<F>> + 'static>(
         &mut self,
         name: &str,
@@ -762,7 +785,7 @@ mod tests {
         let rw_ref = dyn_sc
             .effector_mut::<ReactionWheelAssembly>(0)
             .expect("should downcast");
-        rw_ref.commanded_torques = vec![0.1, 0.0, 0.0];
+        rw_ref.command = crate::plugin::command::RwCommand::Torques(vec![0.1, 0.0, 0.0]);
     }
 
     #[test]
@@ -776,7 +799,7 @@ mod tests {
         dyn_sc
             .effector_mut::<ReactionWheelAssembly>(0)
             .unwrap()
-            .commanded_torques = vec![0.01, 0.0, 0.0];
+            .command = crate::plugin::command::RwCommand::Torques(vec![0.01, 0.0, 0.0]);
 
         let state = dyn_sc.initial_augmented_state(sample_spacecraft());
         let result = Rk4.integrate(&dyn_sc, state, 0.0, 10.0, 0.1, |_, _| {});

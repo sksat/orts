@@ -144,6 +144,8 @@ interface types {
     record actuator-state {
         /// RW 各ホイールの角運動量 \[N·m·s\]。
         rw-momentum: option<list<f64>>,
+        /// RW 各ホイールのスピン速度 \[rad/s\]。
+        rw-speeds: option<list<f64>>,
     }
 
     /// `controller.update` に渡される tick ごとの入力。
@@ -161,21 +163,28 @@ interface types {
         actuators: actuator-state,
     }
 
+    /// Per-wheel RW command. The mode (speed vs torque) is per-assembly.
+    variant rw-command {
+        /// Per-wheel target speed \[rad/s\]. Host motor model generates torque.
+        speeds(list<f64>),
+        /// Per-wheel motor torque \[N·m\]. Applied directly after clamp.
+        torques(list<f64>),
+    }
+
     /// コントローラが返す per-device アクチュエータ指令。
     ///
     /// 各フィールドは per-device の `list<f64>`。長さはアセンブリの
     /// デバイス数と一致する必要がある。`None` のフィールドは
     /// そのアクチュエータに対するコマンドなし（前回値が ZOH で保持）。
     ///
-    /// Phase P1: `mtq-moments` + `rw-torques`
+    /// Phase P1: `mtq-moments` + `rw`
     /// Phase P4: `throttles` / `impulsive-dv` を追加予定。
     record command {
         /// per-MTQ 磁気ダイポールモーメント指令 \[A·m²\]。
         mtq-moments: option<list<f64>>,
 
-        /// per-wheel トルク指令 \[N·m\]。
-        /// 正値 → ホイールが正の角運動量を吸収。
-        rw-torques: option<list<f64>>,
+        /// per-wheel RW コマンド（速度指令またはトルク指令）。
+        rw: option<rw-command>,
     }
 
     /// プラグインメタデータ（起動時情報）。

@@ -101,7 +101,15 @@ pub fn build_controlled_satellite(
                 inertia,
                 max_momentum,
                 max_torque,
-            } => ReactionWheelAssembly::three_axis(*inertia, *max_momentum, *max_torque),
+                speed_control_gain,
+            } => {
+                let mut rw =
+                    ReactionWheelAssembly::three_axis(*inertia, *max_momentum, *max_torque);
+                if let Some(gain) = speed_control_gain {
+                    rw.speed_control_gain = *gain;
+                }
+                rw
+            }
         };
         dynamics = dynamics.with_effector(rw);
     }
@@ -166,15 +174,20 @@ pub fn step_controlled(
             .dynamics
             .effector_by_name_mut::<ReactionWheelAssembly>("reaction_wheels")
     {
-        let cmd = sat.actuators.rw_torques();
-        if cmd.len() != rw.wheels().len() {
-            return Err(format!(
-                "rw_torques length ({}) != wheel count ({})",
-                cmd.len(),
-                rw.wheels().len()
-            ));
+        use orts::plugin::RwCommand;
+        if let Some(rw_cmd) = sat.actuators.rw_command() {
+            let cmd_len = match rw_cmd {
+                RwCommand::Torques(v) | RwCommand::Speeds(v) => v.len(),
+            };
+            if cmd_len != rw.wheels().len() {
+                return Err(format!(
+                    "rw command length ({}) != wheel count ({})",
+                    cmd_len,
+                    rw.wheels().len()
+                ));
+            }
+            rw.command = rw_cmd.clone();
         }
-        rw.commanded_torques = cmd.to_vec();
     }
 
     // 前 tick のコマンドで MTQ を設定（モデルを差し替え）。
@@ -210,6 +223,25 @@ pub fn step_controlled(
     let actuator_state = ActuatorState {
         rw_momentum: if sat.has_rw {
             Some(sat.state.aux.clone())
+        } else {
+            None
+        },
+        rw_speeds: if sat.has_rw {
+            if let Some(rw) = sat
+                .dynamics
+                .effector_by_name::<ReactionWheelAssembly>("reaction_wheels")
+            {
+                Some(
+                    sat.state
+                        .aux
+                        .iter()
+                        .zip(rw.wheels())
+                        .map(|(h, w)| w.speed_from_momentum(*h))
+                        .collect(),
+                )
+            } else {
+                None
+            }
         } else {
             None
         },

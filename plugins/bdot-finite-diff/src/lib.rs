@@ -67,7 +67,7 @@ impl bindings::Guest for Component {
                             clamp(-gain * db_y, -max_moment, max_moment),
                             clamp(-gain * db_z, -max_moment, max_moment),
                         ]),
-                        rw_torques: None,
+                        rw: None,
                     }
                 }
                 None => zero_moment(),
@@ -113,7 +113,7 @@ impl Config {
 fn zero_moment() -> Command {
     Command {
         mtq_moments: Some(vec![0.0, 0.0, 0.0]),
-        rw_torques: None,
+        rw: None,
     }
 }
 

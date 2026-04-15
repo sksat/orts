@@ -83,7 +83,7 @@ impl Plugin<TickInput, Command> for PdRwControl {
         // Per-wheel motor torque (Newton's 3rd law for orthogonal 3-axis):
         // wheel absorbs the negative of desired body torque projected onto its axis.
         Ok(Some(Command {
-            rw_torques: Some(vec![-tau.x, -tau.y, -tau.z]),
+            rw: Some(RwCommand::Torques(vec![-tau.x, -tau.y, -tau.z])),
             mtq_moments: None,
         }))
     }
