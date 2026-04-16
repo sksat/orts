@@ -106,20 +106,50 @@ impl Rw {
     }
 }
 
+/// Build a pseudo-inverse allocation matrix from device axes.
+///
+/// Given axes `a_0, a_1, ..., a_{n-1}` (each a 3D unit vector),
+/// construct `B: 3×n` where column `i` is `a_i`, then return
+/// `B^+: n×3` (the Moore-Penrose pseudo-inverse).
+///
+/// - `n >= 3` and rank 3 → minimum-norm solution (overactuated)
+/// - `n < 3` or rank < 3 → least-squares approximation (underactuated)
+///
+/// Used by both RW and MTQ allocation.
+pub(super) fn build_allocation_pinv(axes: &[Vector3<f64>]) -> nalgebra::DMatrix<f64> {
+    use nalgebra::DMatrix;
+    let n = axes.len();
+    if n == 0 {
+        return DMatrix::zeros(0, 3);
+    }
+    // B: 3×n, columns are unit axes
+    let b = DMatrix::from_fn(3, n, |row, col| axes[col][row]);
+    let eps = 1e-12;
+    b.pseudo_inverse(eps)
+        .expect("pseudo_inverse with eps=1e-12 should not fail for unit axes")
+}
+
 /// RW assembly geometry and constraint logic (no ODE state integration).
 ///
 /// This core struct handles per-wheel torque clamping, momentum saturation,
 /// reaction torque computation, and torque allocation without depending on
 /// the ODE system. It is designed to be unit-tested independently.
+///
+/// Allocation uses a precomputed pseudo-inverse matrix, supporting
+/// non-orthogonal wheel arrangements (e.g., pyramid 4-wheel).
 #[derive(Debug, Clone)]
 pub struct RwAssemblyCore {
     wheels: Vec<Rw>,
+    /// Allocation matrix (pseudo-inverse of axis matrix), `n×3`.
+    alloc_pinv: nalgebra::DMatrix<f64>,
 }
 
 impl RwAssemblyCore {
     /// Create an assembly core from a list of reaction wheels.
     pub fn new(wheels: Vec<Rw>) -> Self {
-        Self { wheels }
+        let axes: Vec<_> = wheels.iter().map(|w| *w.axis()).collect();
+        let alloc_pinv = build_allocation_pinv(&axes);
+        Self { wheels, alloc_pinv }
     }
 
     /// Standard 3-axis orthogonal arrangement with identical wheels.
@@ -220,20 +250,25 @@ impl RwAssemblyCore {
         -omega.cross(&h_rw)
     }
 
-    /// Allocate a desired body-frame torque to per-wheel torques via
+    /// Allocate a desired body-frame torque to per-wheel motor torques.
+    ///
+    /// Uses the precomputed pseudo-inverse of the axis matrix for
+    /// correct allocation in non-orthogonal layouts (pyramid, skewed).
+    /// For orthogonal 3-axis this produces the same result as simple
     /// axis projection.
     ///
-    /// For orthogonal wheel arrangements this is exact; for non-orthogonal
-    /// layouts this is an approximation.
+    /// The result is **unclamped** — pass to [`clamp_torques`] for
+    /// rate limiting and saturation.
+    ///
+    /// When underactuated (fewer axes than 3), the least-squares
+    /// approximation is returned (unrealizable components are dropped).
     pub fn allocate(&self, desired: &Vector3<f64>) -> Vec<f64> {
-        self.wheels
-            .iter()
-            .map(|wheel| {
-                // Wheel motor torque = negative of desired body torque projected onto axis
-                // (Newton's third law: to get +torque on body, wheels must absorb -torque)
-                -desired.dot(&wheel.axis)
-            })
-            .collect()
+        // RW sign convention: u = pinv * (-desired)
+        // (Newton's 3rd law: body torque = -Σ u_i axis_i)
+        let neg_desired =
+            nalgebra::DVector::from_column_slice(&[-desired.x, -desired.y, -desired.z]);
+        let result = &self.alloc_pinv * neg_desired;
+        result.as_slice().to_vec()
     }
 }
 
@@ -482,12 +517,67 @@ mod tests {
     #[test]
     fn allocate_orthogonal() {
         let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
-        // Desired body torque [0.05, 0.03, 0.02]
-        // Allocation: per-wheel = -desired.dot(axis)
-        let allocated = core.allocate(&Vector3::new(0.05, 0.03, 0.02));
-        assert!((allocated[0] - (-0.05)).abs() < 1e-15);
-        assert!((allocated[1] - (-0.03)).abs() < 1e-15);
-        assert!((allocated[2] - (-0.02)).abs() < 1e-15);
+        let desired = Vector3::new(0.05, 0.03, 0.02);
+        let allocated = core.allocate(&desired);
+        // Allocation should produce correct per-wheel values
+        assert!((allocated[0] - (-0.05)).abs() < 1e-12);
+        assert!((allocated[1] - (-0.03)).abs() < 1e-12);
+        assert!((allocated[2] - (-0.02)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn allocate_orthogonal_roundtrip() {
+        // allocate → reaction_torque should recover the desired body torque
+        let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
+        let desired = Vector3::new(0.05, 0.03, 0.02);
+        let allocated = core.allocate(&desired);
+        let realized = core.reaction_torque(&allocated);
+        assert!(
+            (realized - desired).magnitude() < 1e-12,
+            "roundtrip error: {:.3e}",
+            (realized - desired).magnitude()
+        );
+    }
+
+    #[test]
+    fn allocate_pyramid_4wheel_roundtrip() {
+        // 4-wheel pyramid: overactuated (n=4, rank=3)
+        let angle = std::f64::consts::FRAC_PI_4; // 45°
+        let sin = angle.sin();
+        let cos = angle.cos();
+        let core = RwAssemblyCore::new(vec![
+            Rw::new(Vector3::new(sin, 0.0, cos), 0.01, 1.0, 0.1),
+            Rw::new(Vector3::new(0.0, sin, cos), 0.01, 1.0, 0.1),
+            Rw::new(Vector3::new(-sin, 0.0, cos), 0.01, 1.0, 0.1),
+            Rw::new(Vector3::new(0.0, -sin, cos), 0.01, 1.0, 0.1),
+        ]);
+        let desired = Vector3::new(0.05, 0.03, 0.02);
+        let allocated = core.allocate(&desired);
+        assert_eq!(allocated.len(), 4);
+        let realized = core.reaction_torque(&allocated);
+        assert!(
+            (realized - desired).magnitude() < 1e-12,
+            "pyramid roundtrip error: {:.3e}",
+            (realized - desired).magnitude()
+        );
+    }
+
+    #[test]
+    fn allocate_2axis_drops_unrealizable() {
+        // 2-wheel X/Y only (underactuated, rank=2)
+        let core = RwAssemblyCore::new(vec![
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1),
+            Rw::new(Vector3::y(), 0.01, 1.0, 0.1),
+        ]);
+        // Desired includes Z component which can't be realized
+        let desired = Vector3::new(0.05, 0.03, 0.02);
+        let allocated = core.allocate(&desired);
+        assert_eq!(allocated.len(), 2);
+        let realized = core.reaction_torque(&allocated);
+        // X and Y should be realized, Z dropped
+        assert!((realized.x - 0.05).abs() < 1e-12);
+        assert!((realized.y - 0.03).abs() < 1e-12);
+        assert!(realized.z.abs() < 1e-12);
     }
 
     #[test]

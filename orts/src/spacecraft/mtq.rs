@@ -54,15 +54,22 @@ impl Mtq {
 /// This core struct handles per-MTQ clamping, moment allocation, and
 /// torque computation without depending on any environment model.
 /// It is designed to be unit-tested independently.
+///
+/// Allocation uses a precomputed pseudo-inverse matrix, supporting
+/// non-orthogonal MTQ arrangements (e.g., skewed 4-coil).
 #[derive(Debug, Clone)]
 pub struct MtqAssemblyCore {
     mtqs: Vec<Mtq>,
+    /// Allocation matrix (pseudo-inverse of axis matrix), `n×3`.
+    alloc_pinv: nalgebra::DMatrix<f64>,
 }
 
 impl MtqAssemblyCore {
     /// Create an assembly from a list of MTQs.
     pub fn new(mtqs: Vec<Mtq>) -> Self {
-        Self { mtqs }
+        let axes: Vec<_> = mtqs.iter().map(|m| *m.axis()).collect();
+        let alloc_pinv = super::reaction_wheel::build_allocation_pinv(&axes);
+        Self { mtqs, alloc_pinv }
     }
 
     /// Standard 3-axis orthogonal arrangement with identical MTQs.
@@ -119,20 +126,23 @@ impl MtqAssemblyCore {
         self.realized_moment(commanded).cross(b_body)
     }
 
-    /// Allocate a desired body-frame moment to per-MTQ moments via
-    /// axis projection + clamping.
+    /// Allocate a desired body-frame moment to per-MTQ moments.
     ///
-    /// This is the inverse of `realized_moment`: given a desired total
-    /// moment vector, compute per-MTQ commands that best approximate it.
-    /// For orthogonal arrangements this is exact; for non-orthogonal
-    /// layouts this is an approximation (pseudo-inverse not yet implemented).
+    /// Uses the precomputed pseudo-inverse of the axis matrix for
+    /// correct allocation in non-orthogonal layouts. Results are
+    /// clamped to each MTQ's `[-max_moment, max_moment]`.
+    ///
+    /// When underactuated (fewer axes than 3), the least-squares
+    /// approximation is returned (unrealizable components are dropped).
     pub fn allocate(&self, desired: &Vector3<f64>) -> Vec<f64> {
-        self.mtqs
+        // MTQ: u = pinv * desired (direct, no sign flip)
+        let d = nalgebra::DVector::from_column_slice(desired.as_slice());
+        let result = &self.alloc_pinv * d;
+        // Clamp to per-MTQ limits
+        result
             .iter()
-            .map(|mtq| {
-                let projected = desired.dot(&mtq.axis);
-                projected.clamp(-mtq.max_moment, mtq.max_moment)
-            })
+            .zip(self.mtqs.iter())
+            .map(|(&u, mtq)| u.clamp(-mtq.max_moment, mtq.max_moment))
             .collect()
     }
 }
@@ -311,7 +321,51 @@ mod tests {
         let desired = Vector3::new(0.3, -0.5, 0.7);
         let allocated = core.allocate(&desired);
         let realized = core.realized_moment(&allocated);
-        assert!((realized - desired).magnitude() < 1e-14);
+        assert!(
+            (realized - desired).magnitude() < 1e-12,
+            "roundtrip error: {:.3e}",
+            (realized - desired).magnitude()
+        );
+    }
+
+    #[test]
+    fn allocate_skewed_4mtq_roundtrip() {
+        // 4 MTQs in a skewed configuration (overactuated)
+        let angle = std::f64::consts::FRAC_PI_4;
+        let sin = angle.sin();
+        let cos = angle.cos();
+        let core = MtqAssemblyCore::new(vec![
+            Mtq::new(Vector3::new(sin, 0.0, cos), 1.0),
+            Mtq::new(Vector3::new(0.0, sin, cos), 1.0),
+            Mtq::new(Vector3::new(-sin, 0.0, cos), 1.0),
+            Mtq::new(Vector3::new(0.0, -sin, cos), 1.0),
+        ]);
+        let desired = Vector3::new(0.1, -0.2, 0.3);
+        let allocated = core.allocate(&desired);
+        assert_eq!(allocated.len(), 4);
+        let realized = core.realized_moment(&allocated);
+        assert!(
+            (realized - desired).magnitude() < 1e-12,
+            "skewed 4-MTQ roundtrip error: {:.3e}",
+            (realized - desired).magnitude()
+        );
+    }
+
+    #[test]
+    fn allocate_2axis_mtq_drops_unrealizable() {
+        // 2 MTQs on X/Y only (underactuated)
+        let core = MtqAssemblyCore::new(vec![
+            Mtq::new(Vector3::x(), 1.0),
+            Mtq::new(Vector3::y(), 1.0),
+        ]);
+        let desired = Vector3::new(0.3, -0.5, 0.7);
+        let allocated = core.allocate(&desired);
+        assert_eq!(allocated.len(), 2);
+        let realized = core.realized_moment(&allocated);
+        // X and Y realized, Z dropped
+        assert!((realized.x - 0.3).abs() < 1e-12);
+        assert!((realized.y - (-0.5)).abs() < 1e-12);
+        assert!(realized.z.abs() < 1e-12);
     }
 
     #[test]
