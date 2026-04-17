@@ -29,6 +29,7 @@ mod gyroscope;
 mod magnetometer;
 pub mod noise;
 mod star_tracker;
+mod sun_sensor;
 
 use arika::epoch::Epoch;
 
@@ -38,6 +39,7 @@ use crate::plugin::tick_input::Sensors;
 pub use gyroscope::Gyroscope;
 pub use magnetometer::Magnetometer;
 pub use star_tracker::StarTracker;
+pub use sun_sensor::SunSensor;
 
 /// Aggregates all sensor instances for a single spacecraft and
 /// produces [`Sensors`] from the current true state.
@@ -54,6 +56,7 @@ pub struct SensorBundle {
     pub magnetometers: Vec<Magnetometer>,
     pub gyroscopes: Vec<Gyroscope>,
     pub star_trackers: Vec<StarTracker>,
+    pub sun_sensors: Vec<SunSensor>,
 }
 
 impl SensorBundle {
@@ -63,6 +66,7 @@ impl SensorBundle {
             magnetometers: Vec::new(),
             gyroscopes: Vec::new(),
             star_trackers: Vec::new(),
+            sun_sensors: Vec::new(),
         }
     }
 
@@ -83,6 +87,11 @@ impl SensorBundle {
                 .collect(),
             star_trackers: self
                 .star_trackers
+                .iter_mut()
+                .map(|s| s.measure(state, epoch))
+                .collect(),
+            sun_sensors: self
+                .sun_sensors
                 .iter_mut()
                 .map(|s| s.measure(state, epoch))
                 .collect(),
@@ -133,6 +142,7 @@ mod tests {
             magnetometers: vec![Magnetometer::new(Arc::new(TiltedDipole::earth()))],
             gyroscopes: vec![Gyroscope::new()],
             star_trackers: Vec::new(),
+            sun_sensors: Vec::new(),
         };
         let epoch = Epoch::j2000();
         let state = make_state();
@@ -148,6 +158,7 @@ mod tests {
             magnetometers: Vec::new(),
             gyroscopes: vec![Gyroscope::new(), Gyroscope::new()],
             star_trackers: Vec::new(),
+            sun_sensors: Vec::new(),
         };
         let epoch = Epoch::j2000();
         let state = make_state();

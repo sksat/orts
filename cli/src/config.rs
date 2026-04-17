@@ -136,6 +136,7 @@ pub enum SensorChoice {
     Magnetometer,
     Gyroscope,
     StarTracker,
+    SunSensor,
 }
 
 /// リアクションホイール設定。

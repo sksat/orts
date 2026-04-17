@@ -24,7 +24,7 @@ macro_rules! impl_convert {
         use $crate::SpacecraftState;
         use $crate::attitude::AttitudeState;
         use $crate::orbital::OrbitalState;
-        use $crate::plugin::tick_input::{ActuatorState, Sensors, TickInput};
+        use $crate::plugin::tick_input::{ActuatorTelemetry, Sensors, SunSensorOutput, TickInput};
         use $crate::plugin::{Command, MtqCommand, PluginError, RwCommand};
 
         // ───────────────────── host -> guest (TickInput) ─────────────────────
@@ -36,15 +36,17 @@ macro_rules! impl_convert {
                 spacecraft: spacecraft_to_wit(obs.spacecraft),
                 epoch: obs.epoch.map(epoch_to_wit),
                 sensors: sensor_readings_to_wit(obs.sensors),
-                actuators: actuator_state_to_wit(obs.actuators),
+                actuators: actuator_telemetry_to_wit(obs.actuators),
             }
         }
 
-        fn actuator_state_to_wit(a: &ActuatorState) -> wit::ActuatorState {
-            wit::ActuatorState {
-                rw_momentum: a.rw_momentum.clone(),
-                rw_speeds: a.rw_speeds.clone(),
-                rw_realized_torques: a.rw_realized_torques.clone(),
+        fn actuator_telemetry_to_wit(a: &ActuatorTelemetry) -> wit::ActuatorTelemetry {
+            wit::ActuatorTelemetry {
+                rw: a.rw.as_ref().map(|rw| wit::RwTelemetry {
+                    momentum: rw.momentum.clone(),
+                    speeds: rw.speeds.clone(),
+                    realized_torques: rw.realized_torques.clone(),
+                }),
             }
         }
 
@@ -132,6 +134,27 @@ macro_rules! impl_convert {
                         }
                     })
                     .collect(),
+                sun_sensors: s
+                    .sun_sensors
+                    .iter()
+                    .map(|o| match o {
+                        SunSensorOutput::Fine {
+                            direction,
+                            illumination,
+                        } => {
+                            let v = direction.into_inner().into_inner();
+                            wit::SunSensorOutput::Fine(wit::SunFineOutput {
+                                direction: wit::SunDirectionBody {
+                                    x: v.x,
+                                    y: v.y,
+                                    z: v.z,
+                                },
+                                illumination: *illumination,
+                            })
+                        }
+                        SunSensorOutput::Coarse(val) => wit::SunSensorOutput::Coarse(*val),
+                    })
+                    .collect(),
             }
         }
 
@@ -206,8 +229,9 @@ pub mod sync {
                 star_trackers: vec![AttitudeBodyToInertial::new(Vector4::new(
                     1.0, 0.0, 0.0, 0.0,
                 ))],
+                sun_sensors: vec![],
             };
-            let actuators = ActuatorState::default();
+            let actuators = ActuatorTelemetry::default();
             let obs = TickInput {
                 t: 42.0,
                 epoch: Some(&epoch),
@@ -236,7 +260,7 @@ pub mod sync {
         fn observation_empty_sensors() {
             let spacecraft = make_spacecraft();
             let sensors = Sensors::empty();
-            let actuators = ActuatorState::default();
+            let actuators = ActuatorTelemetry::default();
             let obs = TickInput {
                 t: 0.0,
                 spacecraft: &spacecraft,

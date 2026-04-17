@@ -71,9 +71,8 @@ impl Plugin<TickInput, Command> for PdRwUnloading {
             .first()
             .ok_or("gyroscope sensor not available")?;
 
-        let q_current = UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
-            att.w, att.x, att.y, att.z,
-        ));
+        let q_current =
+            UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(att.w, att.x, att.y, att.z));
 
         let q_err = self.target_q.inverse() * q_current;
         let q_err = if q_err.w < 0.0 {
@@ -102,13 +101,13 @@ orts_plugin!(PdRwUnloading);
 /// Desaturation: m = k_desat * (h_rw × B_body) / |B_body|²
 fn compute_desaturation(input: &TickInput, k_desat: f64) -> Option<Vec<f64>> {
     let b = input.sensors.magnetometers.first()?;
-    let rw_momentum = input.actuators.rw_momentum.as_ref()?;
+    let rw_tlm = input.actuators.rw.as_ref()?;
 
-    if rw_momentum.len() < 3 {
+    if rw_tlm.momentum.len() < 3 {
         return None;
     }
 
-    let h = Vector3::new(rw_momentum[0], rw_momentum[1], rw_momentum[2]);
+    let h = Vector3::new(rw_tlm.momentum[0], rw_tlm.momentum[1], rw_tlm.momentum[2]);
     let b_body = Vector3::new(b.x, b.y, b.z);
 
     let b_mag_sq = b_body.norm_squared();

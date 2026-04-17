@@ -31,7 +31,7 @@ use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, AugmentedAttitudeSystem, GravityGradientTorque};
 use orts::effector::AugmentedState;
 use orts::plugin::wasm::{WasmController, WasmEngine, WasmPluginCache};
-use orts::plugin::{ActuatorBundle, ActuatorState, PluginController, TickInput};
+use orts::plugin::{ActuatorBundle, ActuatorTelemetry, PluginController, RwTelemetry, TickInput};
 use orts::sensor::{Gyroscope, SensorBundle, StarTracker};
 use orts::spacecraft::ReactionWheelAssembly;
 
@@ -182,6 +182,7 @@ fn drive_wasm(
         magnetometers: vec![],
         gyroscopes: vec![Gyroscope::new()],
         star_trackers: vec![StarTracker::new()],
+        sun_sensors: vec![],
     };
 
     let mut state = AugmentedState {
@@ -215,9 +216,12 @@ fn drive_wasm(
             mass: MASS,
         };
         let sensors = sensor_bundle.evaluate(&snapshot, &current_epoch);
-        let actuator_state = ActuatorState {
-            rw_momentum: Some(state.aux.clone()),
-            ..Default::default()
+        let actuator_state = ActuatorTelemetry {
+            rw: Some(RwTelemetry {
+                speeds: state.aux.iter().map(|h| h / RW_INERTIA).collect(),
+                momentum: state.aux.clone(),
+                realized_torques: None,
+            }),
         };
         let input = TickInput {
             t,

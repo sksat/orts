@@ -123,6 +123,29 @@ interface types {
         w: f64, x: f64, y: f64, z: f64,
     }
 
+    /// ������座標系での太陽方向（単位ベクトル、satellite→Sun）。
+    record sun-direction-body {
+        x: f64, y: f64, z: f64,
+    }
+
+    /// Fine sun sensor 出力: 方向 + 照度。
+    record sun-fine-output {
+        /// 太陽方向 body frame (unit vector, satellite→Sun)。
+        direction: sun-direction-body,
+        /// 照度 \[0, 1\]。1 = full sun, 0 = full eclipse。
+        /// TODO: eclipse 対応。現在は常に 1.0。
+        illumination: f64,
+    }
+
+    /// Sun sensor 出力。センサタイプにより出力形式が異なる。
+    variant sun-sensor-output {
+        /// Fine sun sensor: 太陽方向 + 照度。
+        fine(sun-fine-output),
+        /// Coarse sun sensor (CSS): cos(入射角) × 照度 ��スカラー。
+        /// TODO: coarse 実装は将来追加予定。
+        coarse(f64),
+    }
+
     /// tick 時点で評価されたセンサ読み値。
     /// フィールド名 = センサ名（複数形）、型 = 物理量 + 座標系。
     record sensors {
@@ -133,21 +156,27 @@ interface types {
         /// ジャイロスコープ。
         gyroscopes: list<angular-velocity-body>,
 
-        /// スタートラッカ。
+        /// スタ��トラッカ。
         star-trackers: list<attitude-body-to-inertial>,
+
+        /// 太陽センサ。
+        sun-sensors: list<sun-sensor-output>,
     }
 
-    /// アクチュエータのテレメトリ（状態フィードバック）。
-    ///
-    /// アクチュエータの現在状態をゲストに提供する。
-    /// 各フィールドは `option` — アクチュエータが存在しなければ `none`。
-    record actuator-state {
-        /// RW 各ホイールの角運動量 \[N·m·s\]。
-        rw-momentum: option<list<f64>>,
-        /// RW 各ホイールのスピン速度 \[rad/s\]。
-        rw-speeds: option<list<f64>>,
-        /// RW 各ホイールの実現トルク \[N·m\]（モータ遅れモデル使用時）。
-        rw-realized-torques: option<list<f64>>,
+    /// RW テレメトリ（ホイール内部状態のフィードバック）。
+    record rw-telemetry {
+        /// 各ホイールの角運動量 \[N·m·s\]。
+        momentum: list<f64>,
+        /// 各ホイールのスピン速度 \[rad/s\]。
+        speeds: list<f64>,
+        /// 各ホイールの実現トルク \[N·m\]（モータ遅れモデル使用時）。
+        realized-torques: option<list<f64>>,
+    }
+
+    /// アクチュエータテレメトリ（per-device 構造化フィードバック）。
+    record actuator-telemetry {
+        /// RW テレメトリ。`none` = RW 未搭載。
+        rw: option<rw-telemetry>,
     }
 
     /// `controller.update` に渡される tick ごとの入力。
@@ -161,8 +190,8 @@ interface types {
         epoch: option<epoch>,
         /// センサ読み値。将来ノイズが乗る可能性がある。
         sensors: sensors,
-        /// アクチュエータ状態フィードバック。
-        actuators: actuator-state,
+        /// アクチュエータテレメトリ。
+        actuators: actuator-telemetry,
     }
 
     /// Per-wheel RW command. The mode (speed vs torque) is per-assembly.

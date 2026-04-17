@@ -18,7 +18,7 @@ use nalgebra::{Vector3, Vector4};
 use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::AttitudeState;
-use orts::plugin::tick_input::{ActuatorState, Sensors};
+use orts::plugin::tick_input::{ActuatorTelemetry, Sensors};
 use orts::plugin::wasm::WasmPluginCache;
 use orts::plugin::{PluginController, TickInput};
 
@@ -64,6 +64,7 @@ fn dummy_sensors() -> Sensors {
         star_trackers: vec![AttitudeBodyToInertial::new(Vector4::new(
             1.0, 0.0, 0.0, 0.0,
         ))],
+        sun_sensors: vec![],
     }
 }
 
@@ -105,7 +106,7 @@ fn async_backend_single_satellite() {
 
     let spacecraft = dummy_spacecraft();
     let sensors = dummy_sensors();
-    let actuators = ActuatorState::default();
+    let actuators = ActuatorTelemetry::default();
 
     for i in 0..10 {
         let input = TickInput {
@@ -156,7 +157,7 @@ fn run_multi_satellite(n_sats: usize, n_ticks: usize) {
 
     let spacecraft = dummy_spacecraft();
     let sensors = dummy_sensors();
-    let actuators = ActuatorState::default();
+    let actuators = ActuatorTelemetry::default();
 
     let drive_start = Instant::now();
     for tick in 0..n_ticks {

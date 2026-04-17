@@ -86,6 +86,9 @@ pub struct Sensors {
 
     /// Star tracker readings.
     pub star_trackers: Vec<AttitudeBodyToInertial>,
+
+    /// Sun sensor outputs.
+    pub sun_sensors: Vec<SunSensorOutput>,
 }
 
 impl Sensors {
@@ -95,21 +98,63 @@ impl Sensors {
     }
 }
 
-// ─── actuator state ──────────────────────────────────────────────
+// ─── sun sensor output types ────────────────────────────────────
 
-/// アクチュエータのテレメトリ（状態フィードバック）。
+/// Sun direction in the body frame (unit vector, satellite→Sun).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SunDirectionBody(Vec3<Body>);
+
+impl SunDirectionBody {
+    pub fn new(v: Vec3<Body>) -> Self {
+        Self(v)
+    }
+    pub fn inner(&self) -> &Vec3<Body> {
+        &self.0
+    }
+    pub fn into_inner(self) -> Vec3<Body> {
+        self.0
+    }
+}
+
+/// Sun sensor output. Sensor type determines the output variant.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SunSensorOutput {
+    /// Fine sun sensor: direction unit vector + illumination.
+    Fine {
+        direction: SunDirectionBody,
+        /// Illumination [0, 1]. 1 = full sun, 0 = full eclipse.
+        // TODO: eclipse 対応。現在は常に 1.0。
+        illumination: f64,
+    },
+    /// Coarse sun sensor (CSS): cos(incidence) × illumination scalar.
+    // TODO: coarse 実装は将来追加予定。
+    Coarse(f64),
+}
+
+// ─── actuator telemetry ─────────────────────────────────────────
+
+/// Per-wheel RW telemetry (observable internal state).
 ///
-/// Each field is `Option`-wrapped — `None` means the actuator is
-/// not present or the host has not populated this tick's telemetry.
+/// All fields are always populated when the RW is mounted.
+/// `realized_torques` is `Some` only when motor lag is enabled.
+#[derive(Debug, Clone)]
+pub struct RwTelemetry {
+    /// Per-wheel angular momentum \[N·m·s\].
+    pub momentum: Vec<f64>,
+    /// Per-wheel spin speed \[rad/s\].
+    pub speeds: Vec<f64>,
+    /// Per-wheel realized torque \[N·m\] (motor lag model only).
+    pub realized_torques: Option<Vec<f64>>,
+}
+
+/// Actuator telemetry (per-device structured feedback).
+///
+/// Each field wraps a per-device telemetry struct. `None` means
+/// the actuator type is not mounted on this spacecraft.
 #[derive(Debug, Clone, Default)]
-pub struct ActuatorState {
-    /// RW 各ホイールの角運動量 \[N·m·s\]。
-    pub rw_momentum: Option<Vec<f64>>,
-    /// RW 各ホイールのスピン速度 \[rad/s\]。
-    pub rw_speeds: Option<Vec<f64>>,
-    /// RW 各ホイールの実現トルク \[N·m\]（モータ遅れモデル使用時）。
-    pub rw_realized_torques: Option<Vec<f64>>,
-    // 将来: pub fuel_mass: Option<f64>,
+pub struct ActuatorTelemetry {
+    /// RW telemetry. `None` if no RW is mounted.
+    pub rw: Option<RwTelemetry>,
 }
 
 // ─── tick input ──────────────────────────────────────────────────
@@ -130,8 +175,8 @@ pub struct TickInput<'a> {
     /// Sensor readings evaluated at this tick. May contain noise;
     /// use `spacecraft` for ground-truth.
     pub sensors: &'a Sensors,
-    /// Actuator state feedback (e.g. RW momentum) at this tick.
-    pub actuators: &'a ActuatorState,
+    /// Actuator telemetry (e.g. RW momentum/speed) at this tick.
+    pub actuators: &'a ActuatorTelemetry,
     /// True spacecraft state: orbit + attitude + mass. This is the
     /// simulation ground-truth, not a sensor measurement.
     pub spacecraft: &'a SpacecraftState,

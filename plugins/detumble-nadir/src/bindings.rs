@@ -411,6 +411,71 @@ pub mod orts {
                         .finish()
                 }
             }
+            /// ������座標系での太陽方向（単位ベクトル、satellite→Sun）。
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct SunDirectionBody {
+                pub x: f64,
+                pub y: f64,
+                pub z: f64,
+            }
+            impl ::core::fmt::Debug for SunDirectionBody {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("SunDirectionBody")
+                        .field("x", &self.x)
+                        .field("y", &self.y)
+                        .field("z", &self.z)
+                        .finish()
+                }
+            }
+            /// Fine sun sensor 出力: 方向 + 照度。
+            #[repr(C)]
+            #[derive(Clone, Copy)]
+            pub struct SunFineOutput {
+                /// 太陽方向 body frame (unit vector, satellite→Sun)。
+                pub direction: SunDirectionBody,
+                /// 照度 \[0, 1\]。1 = full sun, 0 = full eclipse。
+                /// TODO: eclipse 対応。現在は常に 1.0。
+                pub illumination: f64,
+            }
+            impl ::core::fmt::Debug for SunFineOutput {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("SunFineOutput")
+                        .field("direction", &self.direction)
+                        .field("illumination", &self.illumination)
+                        .finish()
+                }
+            }
+            /// Sun sensor 出力。センサタイプにより出力形式が異なる。
+            #[derive(Clone, Copy)]
+            pub enum SunSensorOutput {
+                /// Fine sun sensor: 太陽方向 + 照度。
+                Fine(SunFineOutput),
+                /// Coarse sun sensor (CSS): cos(入射角) × 照度 ��スカラー。
+                /// TODO: coarse 実装は将来追加予定。
+                Coarse(f64),
+            }
+            impl ::core::fmt::Debug for SunSensorOutput {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    match self {
+                        SunSensorOutput::Fine(e) => {
+                            f.debug_tuple("SunSensorOutput::Fine").field(e).finish()
+                        }
+                        SunSensorOutput::Coarse(e) => {
+                            f.debug_tuple("SunSensorOutput::Coarse").field(e).finish()
+                        }
+                    }
+                }
+            }
             /// tick 時点で評価されたセンサ読み値。
             /// フィールド名 = センサ名（複数形）、型 = 物理量 + 座標系。
             #[derive(Clone)]
@@ -420,8 +485,10 @@ pub mod orts {
                 pub magnetometers: _rt::Vec<MagneticFieldBody>,
                 /// ジャイロスコープ。
                 pub gyroscopes: _rt::Vec<AngularVelocityBody>,
-                /// スタートラッカ。
+                /// スタ��トラッカ。
                 pub star_trackers: _rt::Vec<AttitudeBodyToInertial>,
+                /// 太陽センサ。
+                pub sun_sensors: _rt::Vec<SunSensorOutput>,
             }
             impl ::core::fmt::Debug for Sensors {
                 fn fmt(
@@ -432,32 +499,44 @@ pub mod orts {
                         .field("magnetometers", &self.magnetometers)
                         .field("gyroscopes", &self.gyroscopes)
                         .field("star-trackers", &self.star_trackers)
+                        .field("sun-sensors", &self.sun_sensors)
                         .finish()
                 }
             }
-            /// アクチュエータのテレメトリ（状態フィードバック）。
-            ///
-            /// アクチュエータの現在状態をゲストに提供する。
-            /// 各フィールドは `option` — アクチュエータが存在しなければ `none`。
+            /// RW テレメトリ（ホイール内部状態のフィードバック）。
             #[derive(Clone)]
-            pub struct ActuatorState {
-                /// RW 各ホイールの角運動量 \[N·m·s\]。
-                pub rw_momentum: Option<_rt::Vec<f64>>,
-                /// RW 各ホイールのスピン速度 \[rad/s\]。
-                pub rw_speeds: Option<_rt::Vec<f64>>,
-                /// RW 各ホイールの実現トルク \[N·m\]（モータ遅れモデル使用時）。
-                pub rw_realized_torques: Option<_rt::Vec<f64>>,
+            pub struct RwTelemetry {
+                /// 各ホイールの角運動量 \[N·m·s\]。
+                pub momentum: _rt::Vec<f64>,
+                /// 各ホイールのスピン速度 \[rad/s\]。
+                pub speeds: _rt::Vec<f64>,
+                /// 各ホイールの実現トルク \[N·m\]（モータ遅れモデル使用時）。
+                pub realized_torques: Option<_rt::Vec<f64>>,
             }
-            impl ::core::fmt::Debug for ActuatorState {
+            impl ::core::fmt::Debug for RwTelemetry {
                 fn fmt(
                     &self,
                     f: &mut ::core::fmt::Formatter<'_>,
                 ) -> ::core::fmt::Result {
-                    f.debug_struct("ActuatorState")
-                        .field("rw-momentum", &self.rw_momentum)
-                        .field("rw-speeds", &self.rw_speeds)
-                        .field("rw-realized-torques", &self.rw_realized_torques)
+                    f.debug_struct("RwTelemetry")
+                        .field("momentum", &self.momentum)
+                        .field("speeds", &self.speeds)
+                        .field("realized-torques", &self.realized_torques)
                         .finish()
+                }
+            }
+            /// アクチュエータテレメトリ（per-device 構造化フィードバック）。
+            #[derive(Clone)]
+            pub struct ActuatorTelemetry {
+                /// RW テレメトリ。`none` = RW 未搭載。
+                pub rw: Option<RwTelemetry>,
+            }
+            impl ::core::fmt::Debug for ActuatorTelemetry {
+                fn fmt(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.debug_struct("ActuatorTelemetry").field("rw", &self.rw).finish()
                 }
             }
             /// `controller.update` に渡される tick ごとの入力。
@@ -472,8 +551,8 @@ pub mod orts {
                 pub epoch: Option<Epoch>,
                 /// センサ読み値。将来ノイズが乗る可能性がある。
                 pub sensors: Sensors,
-                /// アクチュエータ状態フィードバック。
-                pub actuators: ActuatorState,
+                /// アクチュエータテレメトリ。
+                pub actuators: ActuatorTelemetry,
             }
             impl ::core::fmt::Debug for TickInput {
                 fn fmt(
@@ -743,11 +822,11 @@ pub mod orts {
                     struct RetArea(
                         [::core::mem::MaybeUninit<
                             u8,
-                        >; 152 + 14 * ::core::mem::size_of::<*const u8>()],
+                        >; 144 + 16 * ::core::mem::size_of::<*const u8>()],
                     );
                     let mut ret_area = RetArea(
-                        [::core::mem::MaybeUninit::uninit(); 152
-                            + 14 * ::core::mem::size_of::<*const u8>()],
+                        [::core::mem::MaybeUninit::uninit(); 144
+                            + 16 * ::core::mem::size_of::<*const u8>()],
                     );
                     let ptr0 = ret_area.0.as_mut_ptr().cast::<u8>();
                     #[cfg(target_arch = "wasm32")]
@@ -762,7 +841,7 @@ pub mod orts {
                     }
                     unsafe { wit_import1(ptr0) };
                     let l2 = i32::from(*ptr0.add(0).cast::<u8>());
-                    let result41 = match l2 {
+                    let result50 = match l2 {
                         0 => None,
                         1 => {
                             let e = {
@@ -801,19 +880,55 @@ pub mod orts {
                                     .add(144 + 5 * ::core::mem::size_of::<*const u8>())
                                     .cast::<usize>();
                                 let len28 = l27;
-                                let l29 = i32::from(
+                                let l29 = *ptr0
+                                    .add(144 + 6 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<*mut u8>();
+                                let l30 = *ptr0
+                                    .add(144 + 7 * ::core::mem::size_of::<*const u8>())
+                                    .cast::<usize>();
+                                let base38 = l29;
+                                let len38 = l30;
+                                let mut result38 = _rt::Vec::with_capacity(len38);
+                                for i in 0..len38 {
+                                    let base = base38.add(i * 40);
+                                    let e38 = {
+                                        let l31 = i32::from(*base.add(0).cast::<u8>());
+                                        use super::super::super::orts::plugin::types::SunSensorOutput as V37;
+                                        let v37 = match l31 {
+                                            0 => {
+                                                let e37 = {
+                                                    let l32 = *base.add(8).cast::<f64>();
+                                                    let l33 = *base.add(16).cast::<f64>();
+                                                    let l34 = *base.add(24).cast::<f64>();
+                                                    let l35 = *base.add(32).cast::<f64>();
+                                                    super::super::super::orts::plugin::types::SunFineOutput {
+                                                        direction: super::super::super::orts::plugin::types::SunDirectionBody {
+                                                            x: l32,
+                                                            y: l33,
+                                                            z: l34,
+                                                        },
+                                                        illumination: l35,
+                                                    }
+                                                };
+                                                V37::Fine(e37)
+                                            }
+                                            n => {
+                                                debug_assert_eq!(n, 1, "invalid enum discriminant");
+                                                let e37 = {
+                                                    let l36 = *base.add(8).cast::<f64>();
+                                                    l36
+                                                };
+                                                V37::Coarse(e37)
+                                            }
+                                        };
+                                        v37
+                                    };
+                                    result38.push(e38);
+                                }
+                                _rt::cabi_dealloc(base38, len38 * 40, 8);
+                                let l39 = i32::from(
                                     *ptr0
-                                        .add(144 + 6 * ::core::mem::size_of::<*const u8>())
-                                        .cast::<u8>(),
-                                );
-                                let l33 = i32::from(
-                                    *ptr0
-                                        .add(144 + 9 * ::core::mem::size_of::<*const u8>())
-                                        .cast::<u8>(),
-                                );
-                                let l37 = i32::from(
-                                    *ptr0
-                                        .add(144 + 12 * ::core::mem::size_of::<*const u8>())
+                                        .add(144 + 8 * ::core::mem::size_of::<*const u8>())
                                         .cast::<u8>(),
                                 );
                                 super::super::super::orts::plugin::types::TickInput {
@@ -875,54 +990,57 @@ pub mod orts {
                                             len28,
                                             len28,
                                         ),
+                                        sun_sensors: result38,
                                     },
-                                    actuators: super::super::super::orts::plugin::types::ActuatorState {
-                                        rw_momentum: match l29 {
+                                    actuators: super::super::super::orts::plugin::types::ActuatorTelemetry {
+                                        rw: match l39 {
                                             0 => None,
                                             1 => {
                                                 let e = {
-                                                    let l30 = *ptr0
-                                                        .add(144 + 7 * ::core::mem::size_of::<*const u8>())
+                                                    let l40 = *ptr0
+                                                        .add(144 + 9 * ::core::mem::size_of::<*const u8>())
                                                         .cast::<*mut u8>();
-                                                    let l31 = *ptr0
-                                                        .add(144 + 8 * ::core::mem::size_of::<*const u8>())
-                                                        .cast::<usize>();
-                                                    let len32 = l31;
-                                                    _rt::Vec::from_raw_parts(l30.cast(), len32, len32)
-                                                };
-                                                Some(e)
-                                            }
-                                            _ => _rt::invalid_enum_discriminant(),
-                                        },
-                                        rw_speeds: match l33 {
-                                            0 => None,
-                                            1 => {
-                                                let e = {
-                                                    let l34 = *ptr0
+                                                    let l41 = *ptr0
                                                         .add(144 + 10 * ::core::mem::size_of::<*const u8>())
-                                                        .cast::<*mut u8>();
-                                                    let l35 = *ptr0
+                                                        .cast::<usize>();
+                                                    let len42 = l41;
+                                                    let l43 = *ptr0
                                                         .add(144 + 11 * ::core::mem::size_of::<*const u8>())
-                                                        .cast::<usize>();
-                                                    let len36 = l35;
-                                                    _rt::Vec::from_raw_parts(l34.cast(), len36, len36)
-                                                };
-                                                Some(e)
-                                            }
-                                            _ => _rt::invalid_enum_discriminant(),
-                                        },
-                                        rw_realized_torques: match l37 {
-                                            0 => None,
-                                            1 => {
-                                                let e = {
-                                                    let l38 = *ptr0
-                                                        .add(144 + 13 * ::core::mem::size_of::<*const u8>())
                                                         .cast::<*mut u8>();
-                                                    let l39 = *ptr0
-                                                        .add(144 + 14 * ::core::mem::size_of::<*const u8>())
+                                                    let l44 = *ptr0
+                                                        .add(144 + 12 * ::core::mem::size_of::<*const u8>())
                                                         .cast::<usize>();
-                                                    let len40 = l39;
-                                                    _rt::Vec::from_raw_parts(l38.cast(), len40, len40)
+                                                    let len45 = l44;
+                                                    let l46 = i32::from(
+                                                        *ptr0
+                                                            .add(144 + 13 * ::core::mem::size_of::<*const u8>())
+                                                            .cast::<u8>(),
+                                                    );
+                                                    super::super::super::orts::plugin::types::RwTelemetry {
+                                                        momentum: _rt::Vec::from_raw_parts(
+                                                            l40.cast(),
+                                                            len42,
+                                                            len42,
+                                                        ),
+                                                        speeds: _rt::Vec::from_raw_parts(l43.cast(), len45, len45),
+                                                        realized_torques: match l46 {
+                                                            0 => None,
+                                                            1 => {
+                                                                let e = {
+                                                                    let l47 = *ptr0
+                                                                        .add(144 + 14 * ::core::mem::size_of::<*const u8>())
+                                                                        .cast::<*mut u8>();
+                                                                    let l48 = *ptr0
+                                                                        .add(144 + 15 * ::core::mem::size_of::<*const u8>())
+                                                                        .cast::<usize>();
+                                                                    let len49 = l48;
+                                                                    _rt::Vec::from_raw_parts(l47.cast(), len49, len49)
+                                                                };
+                                                                Some(e)
+                                                            }
+                                                            _ => _rt::invalid_enum_discriminant(),
+                                                        },
+                                                    }
                                                 };
                                                 Some(e)
                                             }
@@ -935,7 +1053,7 @@ pub mod orts {
                         }
                         _ => _rt::invalid_enum_discriminant(),
                     };
-                    result41
+                    result50
                 }
             }
             #[allow(unused_unsafe, clippy::all)]
@@ -1062,6 +1180,13 @@ mod _rt {
             unsafe { core::hint::unreachable_unchecked() }
         }
     }
+    pub unsafe fn cabi_dealloc(ptr: *mut u8, size: usize, align: usize) {
+        if size == 0 {
+            return;
+        }
+        let layout = alloc::Layout::from_size_align_unchecked(size, align);
+        alloc::dealloc(ptr, layout);
+    }
     #[cfg(target_arch = "wasm32")]
     pub fn run_ctors_once() {
         wit_bindgen_rt::run_ctors_once();
@@ -1072,13 +1197,6 @@ mod _rt {
         } else {
             String::from_utf8_unchecked(bytes)
         }
-    }
-    pub unsafe fn cabi_dealloc(ptr: *mut u8, size: usize, align: usize) {
-        if size == 0 {
-            return;
-        }
-        let layout = alloc::Layout::from_size_align_unchecked(size, align);
-        alloc::dealloc(ptr, layout);
     }
     pub use alloc_crate::string::String;
     extern crate alloc as alloc_crate;
@@ -1119,9 +1237,9 @@ pub(crate) use __export_plugin_impl as export;
 )]
 #[doc(hidden)]
 #[allow(clippy::octal_escapes)]
-pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1447] = *b"\
-\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xaa\x0a\x01A\x02\x01\
-A\x15\x01B,\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01x\
+pub static __WIT_BINDGEN_COMPONENT_TYPE: [u8; 1615] = *b"\
+\0asm\x0d\0\x01\0\0\x19\x16wit-component-encoding\x04\0\x07\xd2\x0b\x01A\x02\x01\
+A\x15\x01B6\x01r\x03\x01xu\x01yu\x01zu\x04\0\x04vec3\x03\0\0\x01r\x04\x01wu\x01x\
 u\x01yu\x01zu\x04\0\x04quat\x03\0\x02\x01r\x03\x01xu\x01yu\x01zu\x04\0\x0fpositi\
 on-eci-km\x03\0\x04\x01r\x03\x01xu\x01yu\x01zu\x04\0\x10velocity-eci-kms\x03\0\x06\
 \x01r\x02\x08position\x05\x08velocity\x07\x04\0\x0dorbital-state\x03\0\x08\x01r\x02\
@@ -1130,29 +1248,32 @@ r\x03\x05orbit\x09\x08attitude\x0b\x04massu\x04\0\x10spacecraft-state\x03\0\x0c\
 r\x01\x0bjulian-dateu\x04\0\x05epoch\x03\0\x0e\x01r\x03\x01xu\x01yu\x01zu\x04\0\x13\
 magnetic-field-body\x03\0\x10\x01r\x03\x01xu\x01yu\x01zu\x04\0\x15angular-veloci\
 ty-body\x03\0\x12\x01r\x04\x01wu\x01xu\x01yu\x01zu\x04\0\x19attitude-body-to-ine\
-rtial\x03\0\x14\x01p\x11\x01p\x13\x01p\x15\x01r\x03\x0dmagnetometers\x16\x0agyro\
-scopes\x17\x0dstar-trackers\x18\x04\0\x07sensors\x03\0\x19\x01pu\x01k\x1b\x01r\x03\
-\x0brw-momentum\x1c\x09rw-speeds\x1c\x13rw-realized-torques\x1c\x04\0\x0eactuato\
-r-state\x03\0\x1d\x01k\x0f\x01r\x05\x01tu\x0aspacecraft\x0d\x05epoch\x1f\x07sens\
-ors\x1a\x09actuators\x1e\x04\0\x0atick-input\x03\0\x20\x01q\x02\x06speeds\x01\x1b\
-\0\x07torques\x01\x1b\0\x04\0\x0arw-command\x03\0\"\x01q\x02\x07moments\x01\x1b\0\
-\x12normalized-moments\x01\x1b\0\x04\0\x0bmtq-command\x03\0$\x01k%\x01k#\x01r\x02\
-\x03mtq&\x02rw'\x04\0\x07command\x03\0(\x01r\x01\x0fsample-period-su\x04\0\x0fpl\
-ugin-metadata\x03\0*\x03\0\x17orts:plugin/types@0.1.0\x05\0\x02\x03\0\0\x0fplugi\
-n-metadata\x03\0\x0fplugin-metadata\x03\0\x01\x02\x03\0\0\x04vec3\x02\x03\0\0\x05\
-epoch\x01B\x0a\x02\x03\x02\x01\x03\x04\0\x04vec3\x03\0\0\x02\x03\x02\x01\x04\x04\
-\0\x05epoch\x03\0\x02\x01m\x05\x05trace\x05debug\x04info\x04warn\x05error\x04\0\x09\
-log-level\x03\0\x04\x01@\x02\x05level\x05\x07messages\x01\0\x04\0\x03log\x01\x06\
-\x01@\x02\x0fposition-eci-km\x01\x01e\x03\0\x01\x04\0\x12magnetic-field-eci\x01\x07\
-\x03\0\x1aorts:plugin/host-env@0.1.0\x05\x05\x02\x03\0\0\x0atick-input\x02\x03\0\
-\0\x07command\x01B\x09\x02\x03\x02\x01\x06\x04\0\x0atick-input\x03\0\0\x02\x03\x02\
-\x01\x07\x04\0\x07command\x03\0\x02\x01k\x01\x01@\0\0\x04\x04\0\x09wait-tick\x01\
-\x05\x01@\x01\x03cmd\x03\x01\0\x04\0\x0csend-command\x01\x06\x03\0\x19orts:plugi\
-n/tick-io@0.1.0\x05\x08\x01j\x01\x02\x01s\x01@\x01\x06configs\0\x09\x04\0\x08met\
-adata\x01\x0a\x01ks\x01@\0\0\x0b\x04\0\x0ccurrent-mode\x01\x0c\x01j\0\x01s\x01@\x01\
-\x06configs\0\x0d\x04\0\x03run\x01\x0e\x04\0\x18orts:plugin/plugin@0.1.0\x04\0\x0b\
-\x0c\x01\0\x06plugin\x03\0\0\0G\x09producers\x01\x0cprocessed-by\x02\x0dwit-comp\
-onent\x070.227.1\x10wit-bindgen-rust\x060.41.0";
+rtial\x03\0\x14\x01r\x03\x01xu\x01yu\x01zu\x04\0\x12sun-direction-body\x03\0\x16\
+\x01r\x02\x09direction\x17\x0cilluminationu\x04\0\x0fsun-fine-output\x03\0\x18\x01\
+q\x02\x04fine\x01\x19\0\x06coarse\x01u\0\x04\0\x11sun-sensor-output\x03\0\x1a\x01\
+p\x11\x01p\x13\x01p\x15\x01p\x1b\x01r\x04\x0dmagnetometers\x1c\x0agyroscopes\x1d\
+\x0dstar-trackers\x1e\x0bsun-sensors\x1f\x04\0\x07sensors\x03\0\x20\x01pu\x01k\"\
+\x01r\x03\x08momentum\"\x06speeds\"\x10realized-torques#\x04\0\x0crw-telemetry\x03\
+\0$\x01k%\x01r\x01\x02rw&\x04\0\x12actuator-telemetry\x03\0'\x01k\x0f\x01r\x05\x01\
+tu\x0aspacecraft\x0d\x05epoch)\x07sensors!\x09actuators(\x04\0\x0atick-input\x03\
+\0*\x01q\x02\x06speeds\x01\"\0\x07torques\x01\"\0\x04\0\x0arw-command\x03\0,\x01\
+q\x02\x07moments\x01\"\0\x12normalized-moments\x01\"\0\x04\0\x0bmtq-command\x03\0\
+.\x01k/\x01k-\x01r\x02\x03mtq0\x02rw1\x04\0\x07command\x03\02\x01r\x01\x0fsample\
+-period-su\x04\0\x0fplugin-metadata\x03\04\x03\0\x17orts:plugin/types@0.1.0\x05\0\
+\x02\x03\0\0\x0fplugin-metadata\x03\0\x0fplugin-metadata\x03\0\x01\x02\x03\0\0\x04\
+vec3\x02\x03\0\0\x05epoch\x01B\x0a\x02\x03\x02\x01\x03\x04\0\x04vec3\x03\0\0\x02\
+\x03\x02\x01\x04\x04\0\x05epoch\x03\0\x02\x01m\x05\x05trace\x05debug\x04info\x04\
+warn\x05error\x04\0\x09log-level\x03\0\x04\x01@\x02\x05level\x05\x07messages\x01\
+\0\x04\0\x03log\x01\x06\x01@\x02\x0fposition-eci-km\x01\x01e\x03\0\x01\x04\0\x12\
+magnetic-field-eci\x01\x07\x03\0\x1aorts:plugin/host-env@0.1.0\x05\x05\x02\x03\0\
+\0\x0atick-input\x02\x03\0\0\x07command\x01B\x09\x02\x03\x02\x01\x06\x04\0\x0ati\
+ck-input\x03\0\0\x02\x03\x02\x01\x07\x04\0\x07command\x03\0\x02\x01k\x01\x01@\0\0\
+\x04\x04\0\x09wait-tick\x01\x05\x01@\x01\x03cmd\x03\x01\0\x04\0\x0csend-command\x01\
+\x06\x03\0\x19orts:plugin/tick-io@0.1.0\x05\x08\x01j\x01\x02\x01s\x01@\x01\x06co\
+nfigs\0\x09\x04\0\x08metadata\x01\x0a\x01ks\x01@\0\0\x0b\x04\0\x0ccurrent-mode\x01\
+\x0c\x01j\0\x01s\x01@\x01\x06configs\0\x0d\x04\0\x03run\x01\x0e\x04\0\x18orts:pl\
+ugin/plugin@0.1.0\x04\0\x0b\x0c\x01\0\x06plugin\x03\0\0\0G\x09producers\x01\x0cp\
+rocessed-by\x02\x0dwit-component\x070.227.1\x10wit-bindgen-rust\x060.41.0";
 #[inline(never)]
 #[doc(hidden)]
 pub fn __link_custom_section_describing_imports() {

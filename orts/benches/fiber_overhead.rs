@@ -25,7 +25,7 @@ use wasmtime::component::Component;
 use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::AttitudeState;
-use orts::plugin::tick_input::{ActuatorState, Sensors};
+use orts::plugin::tick_input::{ActuatorTelemetry, Sensors};
 use orts::plugin::wasm::{WasmController, WasmEngine};
 use orts::plugin::{PluginController, TickInput};
 
@@ -53,6 +53,7 @@ fn dummy_sensors() -> Sensors {
         star_trackers: vec![AttitudeBodyToInertial::new(Vector4::new(
             1.0, 0.0, 0.0, 0.0,
         ))],
+        sun_sensors: vec![],
     }
 }
 
@@ -91,7 +92,7 @@ fn bench_sync_update(c: &mut Criterion) {
 
     let spacecraft = dummy_spacecraft();
     let sensors = dummy_sensors();
-    let actuators = ActuatorState::default();
+    let actuators = ActuatorTelemetry::default();
     let mut t = 0.0;
 
     c.bench_function("plugin_update_sync", |b| {
@@ -134,7 +135,7 @@ fn bench_async_update(c: &mut Criterion) {
 
     let spacecraft = dummy_spacecraft();
     let sensors = dummy_sensors();
-    let actuators = ActuatorState::default();
+    let actuators = ActuatorTelemetry::default();
     let mut t = 0.0;
 
     c.bench_function("plugin_update_async", |b| {

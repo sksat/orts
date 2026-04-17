@@ -33,7 +33,7 @@ use orts::attitude::{
 };
 use orts::control::DiscreteController;
 use orts::plugin::{
-    ActuatorBundle, ActuatorState, Command, MtqCommand, PluginController, PluginError, Sensors,
+    ActuatorBundle, ActuatorTelemetry, Command, MtqCommand, PluginController, PluginError, Sensors,
     TickInput,
 };
 
@@ -211,7 +211,7 @@ fn run_plugin_path(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
     let mut bundle = ActuatorBundle::new();
 
     let sensors = Sensors::empty();
-    let actuator_state = ActuatorState::default();
+    let actuator_state = ActuatorTelemetry::default();
     let mut state = initial;
     let mut t = 0.0;
 
@@ -292,7 +292,7 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
     let mut bundle = ActuatorBundle::new();
 
     let sensors = Sensors::empty();
-    let actuator_state = ActuatorState::default();
+    let actuator_state = ActuatorTelemetry::default();
     let initial = initial_attitude();
 
     let actuator = CommandedMagnetorquer::new(mtq_moment_vec3(&bundle), TiltedDipole::earth());

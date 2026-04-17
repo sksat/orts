@@ -33,7 +33,7 @@ use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, CommandedMagnetorquer, DecoupledAttitudeSystem};
 use orts::plugin::wasm::{WasmController, WasmEngine};
-use orts::plugin::{ActuatorBundle, ActuatorState, MtqCommand, PluginController, TickInput};
+use orts::plugin::{ActuatorBundle, ActuatorTelemetry, MtqCommand, PluginController, TickInput};
 use orts::sensor::{Gyroscope, Magnetometer, SensorBundle};
 
 /// Convert per-MTQ moments from ActuatorBundle to a Vector3 for
@@ -142,6 +142,7 @@ fn run_case(
         magnetometers: vec![Magnetometer::new(Arc::clone(&field_model))],
         gyroscopes: vec![Gyroscope::new()],
         star_trackers: vec![],
+        sun_sensors: vec![],
     };
     let mut state = initial;
     let mut t = 0.0;
@@ -174,7 +175,7 @@ fn run_case(
             mass: MASS,
         };
         let sensors = sensor_bundle.evaluate(&snapshot, &current_epoch);
-        let actuator_state = ActuatorState::default();
+        let actuator_state = ActuatorTelemetry::default();
         let obs = TickInput {
             t,
             epoch: Some(&current_epoch),

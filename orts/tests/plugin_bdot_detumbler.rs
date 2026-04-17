@@ -37,7 +37,7 @@ use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, CommandedMagnetorquer, DecoupledAttitudeSystem};
 use orts::plugin::{
-    ActuatorBundle, ActuatorState, Command, MtqCommand, PluginController, PluginError, Sensors,
+    ActuatorBundle, ActuatorTelemetry, Command, MtqCommand, PluginController, PluginError, Sensors,
     TickInput,
 };
 
@@ -182,7 +182,7 @@ fn run(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
     let mut bundle = ActuatorBundle::new();
 
     let sensors = Sensors::empty();
-    let actuator_state = ActuatorState::default();
+    let actuator_state = ActuatorTelemetry::default();
     let mut state = initial;
     let mut t = 0.0;
 
@@ -265,7 +265,7 @@ fn plugin_bdot_detumbler_uses_angular_velocity_from_observation() {
     );
     let epoch = Epoch::j2000();
     let sensors = Sensors::empty();
-    let actuator_state = ActuatorState::default();
+    let actuator_state = ActuatorTelemetry::default();
     let spacecraft = SpacecraftState {
         orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0)),
         attitude: AttitudeState {

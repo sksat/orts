@@ -39,6 +39,6 @@ pub use command::{Command, MtqCommand, RwCommand};
 pub use controller::PluginController;
 pub use error::PluginError;
 pub use tick_input::{
-    ActuatorState, AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody, Sensors,
-    TickInput,
+    ActuatorTelemetry, AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody, RwTelemetry,
+    Sensors, SunDirectionBody, SunSensorOutput, TickInput,
 };

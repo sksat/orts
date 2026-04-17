@@ -10,7 +10,9 @@ use arika::epoch::Epoch;
 use orts::attitude::CoupledGravityGradient;
 use orts::effector::AugmentedState;
 use orts::orbital::gravity::GravityField;
-use orts::plugin::{ActuatorBundle, ActuatorState, MtqCommand, PluginController, TickInput};
+use orts::plugin::{
+    ActuatorBundle, ActuatorTelemetry, MtqCommand, PluginController, RwTelemetry, TickInput,
+};
 use orts::sensor::{Gyroscope, Magnetometer, SensorBundle, StarTracker};
 use orts::setup::{build_spacecraft_dynamics, default_third_bodies};
 
@@ -225,37 +227,34 @@ pub fn step_controlled(
     let sensors = sat
         .sensors
         .evaluate(&sat.state.plant, &current_epoch.unwrap_or(Epoch::j2000()));
-    let actuator_state = if sat.has_rw {
-        if let Some(rw) = sat
-            .dynamics
-            .effector_by_name::<ReactionWheelAssembly>("reaction_wheels")
-        {
-            let core = rw.core();
-            let momentum = core.momentum_slice(&sat.state.aux);
-            ActuatorState {
-                rw_momentum: Some(momentum.to_vec()),
-                rw_speeds: Some(
-                    momentum
-                        .iter()
-                        .zip(rw.wheels())
-                        .map(|(h, w)| w.speed_from_momentum(*h))
-                        .collect(),
-                ),
-                rw_realized_torques: core
-                    .realized_torque_slice(&sat.state.aux)
-                    .map(|s| s.to_vec()),
-            }
+    let actuator_telemetry = ActuatorTelemetry {
+        rw: if sat.has_rw {
+            sat.dynamics
+                .effector_by_name::<ReactionWheelAssembly>("reaction_wheels")
+                .map(|rw| {
+                    let core = rw.core();
+                    let momentum = core.momentum_slice(&sat.state.aux);
+                    RwTelemetry {
+                        momentum: momentum.to_vec(),
+                        speeds: momentum
+                            .iter()
+                            .zip(rw.wheels())
+                            .map(|(h, w)| w.speed_from_momentum(*h))
+                            .collect(),
+                        realized_torques: core
+                            .realized_torque_slice(&sat.state.aux)
+                            .map(|s| s.to_vec()),
+                    }
+                })
         } else {
-            ActuatorState::default()
-        }
-    } else {
-        ActuatorState::default()
+            None
+        },
     };
     let input = TickInput {
         t: t_next,
         epoch: current_epoch.as_ref(),
         sensors: &sensors,
-        actuators: &actuator_state,
+        actuators: &actuator_telemetry,
         spacecraft: &sat.state.plant,
     };
     if let Some(cmd) = sat
@@ -334,6 +333,11 @@ fn build_sensor_bundle(choices: Option<&[SensorChoice]>) -> SensorBundle {
         },
         star_trackers: if choices.contains(&SensorChoice::StarTracker) {
             vec![StarTracker::new()]
+        } else {
+            vec![]
+        },
+        sun_sensors: if choices.contains(&SensorChoice::SunSensor) {
+            vec![orts::sensor::SunSensor::new()]
         } else {
             vec![]
         },
