@@ -385,7 +385,7 @@ Basilisk/Orekit と同様の3層分離を採用:
 **Phase D-0 実装済み**: DecoupledAttitudeSystem, AttitudeReference, PD制御則
 **Phase D-1 実装済み**: B-dot デタンブリング（stateless 解析近似）+ 地磁気モデル（TiltedDipole + IGRF-14）
 **Phase D-2 実装済み**: DiscreteController 基盤 + B-dot 有限差分版
-**Phase D-3 実装済み**: StateEffector + AugmentedState + RwAssembly (Core+Wrapper), MtqAssembly (Core+Wrapper)
+**Phase D-3 実装済み**: StateEffector + AugmentedState + RwAssembly (Core+Wrapper), MtqAssembly (Core+Wrapper)。RW: speed/torque command variant, pseudo-inverse allocation (非直交配置対応), motor first-order lag (aux 2n 拡張), max_speed 独立パラメータ。MTQ: moments/normalized-moments variant, pseudo-inverse allocation。センサ: Magnetometer, Gyroscope, StarTracker, SunSensor (fine/coarse variant)。テレメトリ: ActuatorTelemetry { rw: Option\<RwTelemetry\> }
 **Phase D-4 実装済み**: 統合テスト（PID + RW + 環境トルク）
 **Phase D-5**: MagneticFieldModel trait 抽象化 + ジェネリクス化（BdotDetumbler\<F\> 等）+ IGRF 球面調和展開
 
@@ -405,15 +405,19 @@ guest は ODE RHS のホットパスから完全に外に出す。サンプル t
 
 `ExternalLoads` (acceleration_inertial, torque_body, mass_rate) を guest に直接返させない。guest は **per-device のアクチュエータコマンド** を返す。物理モデルと制御則の分離を保ち、Rust 側 actuator assembly が物理化（トルク/力への変換）を担当する。
 
-コマンドの抽象レベルは **per-device**（個別アクチュエータ単位）:
-- MTQ: per-MTQ magnetic moment `list<f64>` [A·m²]
-- RW: per-wheel torque `list<f64>` [N·m]
+コマンドの抽象レベルは **per-device**（個別アクチュエータ単位）で、variant により指令モードを選択:
+- MTQ: `variant mtq-command { moments(list<f64>), normalized-moments(list<f64>) }` — 直接ダイポール [A·m²] or 正規化 [-1,1]×max_moment
+- RW: `variant rw-command { speeds(list<f64>), torques(list<f64>) }` — 目標速度 [rad/s] or 直接トルク [N·m]
 - Thruster: throttle 0..1（Phase P4）
 
 これは `ExternalLoads`（物理量）とは異なる「論理指令」。plugin が actuator allocation まで担当することで、実機の flight software に近い制御が可能になる。Rust 側の `MtqAssembly` / `RwAssembly` は per-device コマンドを受け取り、clamp + 物理変換のみを行う。
 
-Command は per-device `list<f64>` を `Option` で持つ flat struct:
-- P1: `mtq_moments: Option<Vec<f64>>`, `rw_torques: Option<Vec<f64>>`
+コマンドの2段階 clamp:
+- `clamp_command`: モータドライバの受付範囲（max_torque/max_moment）
+- `clamp_physical`: 物理制約（運動量/速度飽和）
+
+Command は per-device variant を `Option` で持つ struct:
+- P1: `mtq: Option<MtqCommand>`, `rw: Option<RwCommand>`
 - P4 (推進): `throttles: Option<Vec<f64>>` / `impulsive_dv` を追加
 - P5 (結合): 複数フィールド同時指定
 
@@ -523,7 +527,7 @@ Phase P0 smoke test で core wasm path (`Module::*`) と Component Model path (`
 |---|---|
 | Phase P0 | 調査・方針決定 **実装済み**。DESIGN.md 更新 + rust-toolchain.toml pin + smoke test で core wasm / Component Model 両 path の precompile/deserialize ラウンドトリップを確認 (実測値は plan 参照) |
 | Phase P0.5 | `NativeController` で trait + adapter + oracle の経路を validation **実装済み** |
-| Phase P1 | wasmtime (Pulley) backend + Detumbling guest + 理想センサ (Magnetometer/Gyroscope) + RW コマンド + ノイズモデル **実装済み** (`BdotFiniteDiff` と 1e-12 bit 近似一致) |
+| Phase P1 | wasmtime (Pulley) backend + Detumbling guest + センサ (Magnetometer/Gyroscope/StarTracker/SunSensor) + RW/MTQ command variant + ノイズモデル + pseudo-inverse allocation + motor lag + actuator-telemetry **実装済み** |
 | Phase P2 | 第 2 backend 追加 (pure Rust embedded script 系を候補として評価。Phase P1 完了後に選定) |
 | Phase P3 | PD 姿勢制御 + モードマシン (detumble → nadir 切替) |
 | Phase P4 | 推進 (throttle / impulsive / finite burn) |
