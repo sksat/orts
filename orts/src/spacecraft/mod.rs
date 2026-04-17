@@ -7,7 +7,7 @@ mod surface;
 mod thruster;
 pub use crate::model::ExternalLoads;
 pub use dynamics::SpacecraftDynamics;
-pub use mtq::{Mtq, MtqAssembly, MtqAssemblyCore};
+pub use mtq::{Mtq, MtqAssembly, MtqAssemblyCore, MtqCommand};
 pub use panel_srp::PanelSrp;
 pub use reaction_wheel::{ReactionWheelAssembly, RwCommand};
 pub use state::SpacecraftState;

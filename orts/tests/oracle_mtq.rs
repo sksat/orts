@@ -9,7 +9,7 @@ use utsuroi::{Integrator, Rk4};
 use arika::epoch::Epoch;
 use orts::attitude::AttitudeState;
 use orts::orbital::OrbitalState;
-use orts::spacecraft::{MtqAssembly, SpacecraftDynamics, SpacecraftState};
+use orts::spacecraft::{MtqAssembly, MtqCommand, SpacecraftDynamics, SpacecraftState};
 use tobari::magnetic::TiltedDipole;
 
 const MU_EARTH: f64 = 398600.4418;
@@ -33,7 +33,7 @@ fn mtq_assembly_produces_torque_in_dynamics() {
     let inertia = symmetric_inertia(10.0);
 
     let mut mtq = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
-    mtq.commanded_moments = vec![5.0, 0.0, 0.0];
+    mtq.command = MtqCommand::Moments(vec![5.0, 0.0, 0.0]);
 
     let dynamics = SpacecraftDynamics::new(MU_EARTH, orts::orbital::gravity::PointMass, inertia)
         .with_model(mtq)
@@ -77,7 +77,7 @@ fn mtq_assembly_clamping_limits_effect() {
 
     // Huge command with small max → clamped
     let mut mtq_clamped = MtqAssembly::three_axis(0.001, TiltedDipole::earth());
-    mtq_clamped.commanded_moments = vec![1000.0, 1000.0, 1000.0];
+    mtq_clamped.command = MtqCommand::Moments(vec![1000.0, 1000.0, 1000.0]);
 
     let dynamics_clamped =
         SpacecraftDynamics::new(MU_EARTH, orts::orbital::gravity::PointMass, inertia)
@@ -86,7 +86,7 @@ fn mtq_assembly_clamping_limits_effect() {
 
     // Reference: commanded = max_moment (no clamp needed)
     let mut mtq_ref = MtqAssembly::three_axis(0.001, TiltedDipole::earth());
-    mtq_ref.commanded_moments = vec![0.001, 0.001, 0.001];
+    mtq_ref.command = MtqCommand::Moments(vec![0.001, 0.001, 0.001]);
 
     let dynamics_ref =
         SpacecraftDynamics::new(MU_EARTH, orts::orbital::gravity::PointMass, inertia)
@@ -132,7 +132,7 @@ fn replace_model_updates_mtq_command() {
 
     // Replace model with nonzero command
     let mut mtq_active = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
-    mtq_active.commanded_moments = vec![5.0, 0.0, 0.0];
+    mtq_active.command = MtqCommand::Moments(vec![5.0, 0.0, 0.0]);
     dynamics.replace_model("mtq_assembly", Box::new(mtq_active));
 
     // Second segment: nonzero command → produces effect

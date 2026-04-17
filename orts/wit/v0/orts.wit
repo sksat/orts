@@ -146,6 +146,8 @@ interface types {
         rw-momentum: option<list<f64>>,
         /// RW 各ホイールのスピン速度 \[rad/s\]。
         rw-speeds: option<list<f64>>,
+        /// RW 各ホイールの実現トルク \[N·m\]（モータ遅れモデル使用時）。
+        rw-realized-torques: option<list<f64>>,
     }
 
     /// `controller.update` に渡される tick ごとの入力。
@@ -171,17 +173,26 @@ interface types {
         torques(list<f64>),
     }
 
+    /// Per-MTQ command. The mode (moments vs normalized) is per-assembly.
+    variant mtq-command {
+        /// Per-MTQ magnetic dipole moment \[A·m²\] (direct physical quantity).
+        moments(list<f64>),
+        /// Per-MTQ normalized moment \[-1, 1\].
+        /// Realized moment = normalized × max_moment.
+        normalized-moments(list<f64>),
+    }
+
     /// コントローラが返す per-device アクチュエータ指令。
     ///
     /// 各フィールドは per-device の `list<f64>`。長さはアセンブリの
     /// デバイス数と一致する必要がある。`None` のフィールドは
     /// そのアクチュエータに対するコマンドなし（前回値が ZOH で保持）。
     ///
-    /// Phase P1: `mtq-moments` + `rw`
+    /// Phase P1: `mtq` + `rw`
     /// Phase P4: `throttles` / `impulsive-dv` を追加予定。
     record command {
-        /// per-MTQ 磁気ダイポールモーメント指令 \[A·m²\]。
-        mtq-moments: option<list<f64>>,
+        /// per-MTQ コマンド（直接モーメント指令または正規化指令）。
+        mtq: option<mtq-command>,
 
         /// per-wheel RW コマンド（速度指令またはトルク指令）。
         rw: option<rw-command>,

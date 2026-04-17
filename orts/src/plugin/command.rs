@@ -6,7 +6,7 @@
 //! physical loads via `ActuatorBundle`.
 //!
 //! The field set grows incrementally with each phase:
-//! - P1: `mtq_moments` (per-MTQ magnetic moment) + `rw` (per-wheel speed or torque)
+//! - P1: `mtq` (per-MTQ moment or normalized) + `rw` (per-wheel speed or torque)
 //! - P4: thrust throttle / impulsive delta-v
 //! - P5: composite commands for coupled attitude + thrust guest
 //!
@@ -34,6 +34,31 @@ impl RwCommand {
     }
 }
 
+/// Per-MTQ command.
+///
+/// The variant selects the command mode: direct physical dipole moments
+/// (clamped per-MTQ) or normalized values in `[-1, 1]` that are scaled
+/// by each MTQ's `max_moment`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MtqCommand {
+    /// Per-MTQ dipole moments [A·m²] (direct).
+    Moments(Vec<f64>),
+    /// Per-MTQ normalized moments [-1, 1].
+    /// Realized moment = normalized × max_moment.
+    NormalizedMoments(Vec<f64>),
+}
+
+impl MtqCommand {
+    /// Returns `true` if every element in the command is finite.
+    pub fn is_finite(&self) -> bool {
+        match self {
+            MtqCommand::Moments(v) | MtqCommand::NormalizedMoments(v) => {
+                v.iter().all(|x| x.is_finite())
+            }
+        }
+    }
+}
+
 /// Logical command emitted by a controller backend.
 ///
 /// Each field corresponds to one actuator type. `Some` means the
@@ -46,9 +71,9 @@ impl RwCommand {
 /// site, not by an all-`None` `Command` struct.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Command {
-    /// Per-MTQ commanded magnetic dipole moment \[A·m²\].
+    /// Per-MTQ command (direct moments or normalized values).
     /// Length must match the number of MTQs in the assembly.
-    pub mtq_moments: Option<Vec<f64>>,
+    pub mtq: Option<MtqCommand>,
 
     /// Per-wheel RW command (speed or torque).
     /// Length must match the number of wheels in the assembly.
@@ -57,10 +82,19 @@ pub struct Command {
 }
 
 impl Command {
-    /// Create a command that only sets the MTQ moments.
+    /// Create a command that only sets the MTQ moments (direct).
     pub fn mtq(moments: Vec<f64>) -> Self {
         Self {
-            mtq_moments: Some(moments),
+            mtq: Some(MtqCommand::Moments(moments)),
+            rw: None,
+        }
+    }
+
+    /// Create a command that only sets the MTQ normalized moments
+    /// (each value in `[-1, 1]`, scaled by per-MTQ `max_moment`).
+    pub fn mtq_normalized(values: Vec<f64>) -> Self {
+        Self {
+            mtq: Some(MtqCommand::NormalizedMoments(values)),
             rw: None,
         }
     }
@@ -68,7 +102,7 @@ impl Command {
     /// Create a command that only sets the RW command.
     pub fn rw_cmd(cmd: RwCommand) -> Self {
         Self {
-            mtq_moments: None,
+            mtq: None,
             rw: Some(cmd),
         }
     }
@@ -91,10 +125,7 @@ impl Command {
     /// spacecraft state through `axpy` on the next ODE step and destroy
     /// the whole trajectory.
     pub fn is_finite(&self) -> bool {
-        let mtq_ok = self
-            .mtq_moments
-            .as_ref()
-            .is_none_or(|v| v.iter().all(|x| x.is_finite()));
+        let mtq_ok = self.mtq.as_ref().is_none_or(|cmd| cmd.is_finite());
         let rw_ok = self.rw.as_ref().is_none_or(|cmd| cmd.is_finite());
         mtq_ok && rw_ok
     }
@@ -114,6 +145,15 @@ mod tests {
 
         let inf = Command::mtq(vec![f64::INFINITY, 0.0, 0.0]);
         assert!(!inf.is_finite());
+    }
+
+    #[test]
+    fn mtq_normalized_finite_detects_nan() {
+        let good = Command::mtq_normalized(vec![0.5, -1.0, 0.0]);
+        assert!(good.is_finite());
+
+        let nan = Command::mtq_normalized(vec![0.5, f64::NAN, 0.0]);
+        assert!(!nan.is_finite());
     }
 
     #[test]
@@ -137,29 +177,33 @@ mod tests {
     #[test]
     fn field_access() {
         let mm = Command::mtq(vec![1.0, 2.0, 3.0]);
-        assert!(mm.mtq_moments.is_some());
+        assert!(mm.mtq.is_some());
         assert!(mm.rw.is_none());
 
+        let mn = Command::mtq_normalized(vec![0.1, 0.2, 0.3]);
+        assert!(matches!(mn.mtq, Some(MtqCommand::NormalizedMoments(_))));
+        assert!(mn.rw.is_none());
+
         let rw = Command::rw_torques(vec![0.1, 0.2, 0.3]);
-        assert!(rw.mtq_moments.is_none());
+        assert!(rw.mtq.is_none());
         assert!(rw.rw.is_some());
     }
 
     #[test]
     fn both_fields_set() {
         let cmd = Command {
-            mtq_moments: Some(vec![1.0, 0.0, 0.0]),
+            mtq: Some(MtqCommand::Moments(vec![1.0, 0.0, 0.0])),
             rw: Some(RwCommand::Torques(vec![0.0, 0.1, 0.0])),
         };
         assert!(cmd.is_finite());
-        assert!(cmd.mtq_moments.is_some());
+        assert!(cmd.mtq.is_some());
         assert!(cmd.rw.is_some());
     }
 
     #[test]
     fn both_fields_nan_in_one() {
         let cmd = Command {
-            mtq_moments: Some(vec![f64::NAN, 0.0, 0.0]),
+            mtq: Some(MtqCommand::Moments(vec![f64::NAN, 0.0, 0.0])),
             rw: Some(RwCommand::Torques(vec![0.0, 0.1, 0.0])),
         };
         assert!(!cmd.is_finite());
@@ -168,7 +212,7 @@ mod tests {
     #[test]
     fn empty_vec_is_finite() {
         let cmd = Command {
-            mtq_moments: Some(vec![]),
+            mtq: Some(MtqCommand::Moments(vec![])),
             rw: Some(RwCommand::Torques(vec![])),
         };
         assert!(cmd.is_finite());

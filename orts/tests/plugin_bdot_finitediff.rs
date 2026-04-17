@@ -33,7 +33,8 @@ use orts::attitude::{
 };
 use orts::control::DiscreteController;
 use orts::plugin::{
-    ActuatorBundle, ActuatorState, Command, PluginController, PluginError, Sensors, TickInput,
+    ActuatorBundle, ActuatorState, Command, MtqCommand, PluginController, PluginError, Sensors,
+    TickInput,
 };
 
 const MASS: f64 = 50.0;
@@ -136,11 +137,9 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotFiniteDiff<F> {
 /// Convert per-MTQ moments from ActuatorBundle to a Vector3 for
 /// CommandedMagnetorquer (3-axis orthogonal layout assumed).
 fn mtq_moment_vec3(bundle: &ActuatorBundle) -> Vector3<f64> {
-    let s = bundle.mtq_moments();
-    if s.is_empty() {
-        Vector3::zeros()
-    } else {
-        Vector3::from_row_slice(s)
+    match bundle.mtq_command() {
+        Some(MtqCommand::Moments(v)) if !v.is_empty() => Vector3::from_row_slice(v),
+        _ => Vector3::zeros(),
     }
 }
 
@@ -318,7 +317,7 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
     let cmd1 = ctrl.update(&obs1).unwrap().expect("must return Some");
     bundle.apply(&cmd1).unwrap();
     // First tick: no finite-difference history => zero command.
-    assert_eq!(cmd1.mtq_moments, Some(vec![0.0, 0.0, 0.0]));
+    assert_eq!(cmd1.mtq, Some(MtqCommand::Moments(vec![0.0, 0.0, 0.0])));
 
     let actuator2 = CommandedMagnetorquer::new(mtq_moment_vec3(&bundle), TiltedDipole::earth());
     let system2 = DecoupledAttitudeSystem::circular_orbit(inertia(), mu, radius, MASS)
@@ -347,9 +346,10 @@ fn plugin_bdot_finitediff_is_not_trivially_zero() {
         actuators: &actuator_state,
     };
     let cmd2 = ctrl.update(&obs2).unwrap().expect("must return Some");
-    let m = cmd2
-        .mtq_moments
-        .expect("controller must emit a magnetic moment command");
+    let m = match cmd2.mtq {
+        Some(MtqCommand::Moments(v)) => v,
+        other => panic!("controller must emit MtqCommand::Moments, got {other:?}"),
+    };
     let m_mag: f64 = m.iter().map(|x| x * x).sum::<f64>().sqrt();
     assert!(
         m_mag > 0.0,

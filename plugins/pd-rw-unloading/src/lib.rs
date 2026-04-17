@@ -87,12 +87,12 @@ impl Plugin<TickInput, Command> for PdRwUnloading {
         let tau = -self.kp * theta - self.kd * omega_body;
 
         // ── Desaturation via magnetorquer ───────────────────────
-        let mag_cmd = compute_desaturation(input, self.k_desat);
+        let mag_cmd = compute_desaturation(input, self.k_desat).map(MtqCommand::Moments);
 
         // Per-wheel motor torque (Newton's 3rd law for orthogonal 3-axis)
         Ok(Some(Command {
             rw: Some(RwCommand::Torques(vec![-tau.x, -tau.y, -tau.z])),
-            mtq_moments: mag_cmd,
+            mtq: mag_cmd,
         }))
     }
 }

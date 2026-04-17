@@ -62,11 +62,11 @@ impl bindings::Guest for Component {
                     let db_y = (b.y - prev[1]) / dt;
                     let db_z = (b.z - prev[2]) / dt;
                     Command {
-                        mtq_moments: Some(vec![
+                        mtq: Some(MtqCommand::Moments(vec![
                             clamp(-gain * db_x, -max_moment, max_moment),
                             clamp(-gain * db_y, -max_moment, max_moment),
                             clamp(-gain * db_z, -max_moment, max_moment),
-                        ]),
+                        ])),
                         rw: None,
                     }
                 }
@@ -112,7 +112,7 @@ impl Config {
 
 fn zero_moment() -> Command {
     Command {
-        mtq_moments: Some(vec![0.0, 0.0, 0.0]),
+        mtq: Some(MtqCommand::Moments(vec![0.0, 0.0, 0.0])),
         rw: None,
     }
 }

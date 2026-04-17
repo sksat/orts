@@ -107,6 +107,8 @@ pub struct ActuatorState {
     pub rw_momentum: Option<Vec<f64>>,
     /// RW 各ホイールのスピン速度 \[rad/s\]。
     pub rw_speeds: Option<Vec<f64>>,
+    /// RW 各ホイールの実現トルク \[N·m\]（モータ遅れモデル使用時）。
+    pub rw_realized_torques: Option<Vec<f64>>,
     // 将来: pub fuel_mass: Option<f64>,
 }
 

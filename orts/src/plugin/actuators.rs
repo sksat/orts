@@ -17,19 +17,18 @@
 //!
 //! Each `apply()` call updates the actuators for which the `Command`
 //! has `Some` fields. Other actuators retain their last value
-//! (zero-order hold). If a guest sets both `mtq_moments` and
-//! `rw` in a single `Command`, both actuators are updated
-//! simultaneously.
+//! (zero-order hold). If a guest sets both `mtq` and `rw` in a single
+//! `Command`, both actuators are updated simultaneously.
 
-use super::command::{Command, RwCommand};
+use super::command::{Command, MtqCommand, RwCommand};
 use super::error::PluginError;
 
 /// Per-actuator applied command state.
 #[derive(Debug, Clone, Default)]
 pub struct ActuatorBundle {
-    /// Per-MTQ commanded dipole moment \[A·m²\].
-    /// `None` until `apply()` receives a `Command` with `mtq_moments`.
-    commanded_mtq_moments: Option<Vec<f64>>,
+    /// Per-MTQ commanded command (direct moments or normalized).
+    /// `None` until `apply()` receives a `Command` with `mtq`.
+    commanded_mtq: Option<MtqCommand>,
 
     /// Per-wheel commanded RW command (speed or torque).
     /// `None` until `apply()` receives a `Command` with `rw`.
@@ -54,8 +53,8 @@ impl ActuatorBundle {
         if !cmd.is_finite() {
             return Err(PluginError::BadCommand(format!("{cmd:?}")));
         }
-        if let Some(m) = &cmd.mtq_moments {
-            self.commanded_mtq_moments = Some(m.clone());
+        if let Some(mtq) = &cmd.mtq {
+            self.commanded_mtq = Some(mtq.clone());
         }
         if let Some(rw) = &cmd.rw {
             self.commanded_rw = Some(rw.clone());
@@ -63,15 +62,15 @@ impl ActuatorBundle {
         Ok(())
     }
 
-    /// Returns the currently-commanded per-MTQ moments, if any was ever
-    /// applied. Returns empty slice when no command has been observed yet.
-    pub fn mtq_moments(&self) -> &[f64] {
-        self.commanded_mtq_moments.as_deref().unwrap_or(&[])
+    /// Returns the currently-commanded MTQ command, if any was ever
+    /// applied.
+    pub fn mtq_command(&self) -> Option<&MtqCommand> {
+        self.commanded_mtq.as_ref()
     }
 
     /// Returns `true` if an MTQ command has been applied at least once.
     pub fn has_mtq_command(&self) -> bool {
-        self.commanded_mtq_moments.is_some()
+        self.commanded_mtq.is_some()
     }
 
     /// Returns the currently-commanded RW command.
@@ -93,11 +92,27 @@ mod tests {
     fn apply_stores_mtq_moments() {
         let mut bundle = ActuatorBundle::new();
         assert!(!bundle.has_mtq_command());
-        assert!(bundle.mtq_moments().is_empty());
+        assert!(bundle.mtq_command().is_none());
 
         bundle.apply(&Command::mtq(vec![1.0, -2.0, 3.0])).unwrap();
         assert!(bundle.has_mtq_command());
-        assert_eq!(bundle.mtq_moments(), &[1.0, -2.0, 3.0]);
+        assert_eq!(
+            bundle.mtq_command(),
+            Some(&MtqCommand::Moments(vec![1.0, -2.0, 3.0]))
+        );
+    }
+
+    #[test]
+    fn apply_stores_mtq_normalized() {
+        let mut bundle = ActuatorBundle::new();
+        bundle
+            .apply(&Command::mtq_normalized(vec![0.5, -1.0, 0.0]))
+            .unwrap();
+        assert!(bundle.has_mtq_command());
+        assert_eq!(
+            bundle.mtq_command(),
+            Some(&MtqCommand::NormalizedMoments(vec![0.5, -1.0, 0.0]))
+        );
     }
 
     #[test]
@@ -155,7 +170,10 @@ mod tests {
         bundle
             .apply(&Command::rw_torques(vec![0.0, 0.1, 0.0]))
             .unwrap();
-        assert_eq!(bundle.mtq_moments(), &[1.0, 0.0, 0.0]);
+        assert_eq!(
+            bundle.mtq_command(),
+            Some(&MtqCommand::Moments(vec![1.0, 0.0, 0.0]))
+        );
         assert_eq!(
             bundle.rw_command(),
             Some(&RwCommand::Torques(vec![0.0, 0.1, 0.0]))
@@ -166,11 +184,14 @@ mod tests {
     fn single_command_with_both_fields() {
         let mut bundle = ActuatorBundle::new();
         let cmd = Command {
-            mtq_moments: Some(vec![1.0, 0.0, 0.0]),
+            mtq: Some(MtqCommand::Moments(vec![1.0, 0.0, 0.0])),
             rw: Some(RwCommand::Torques(vec![0.0, 0.1, 0.0])),
         };
         bundle.apply(&cmd).unwrap();
-        assert_eq!(bundle.mtq_moments(), &[1.0, 0.0, 0.0]);
+        assert_eq!(
+            bundle.mtq_command(),
+            Some(&MtqCommand::Moments(vec![1.0, 0.0, 0.0]))
+        );
         assert_eq!(
             bundle.rw_command(),
             Some(&RwCommand::Torques(vec![0.0, 0.1, 0.0]))

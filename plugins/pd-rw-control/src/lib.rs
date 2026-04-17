@@ -84,7 +84,7 @@ impl Plugin<TickInput, Command> for PdRwControl {
         // wheel absorbs the negative of desired body torque projected onto its axis.
         Ok(Some(Command {
             rw: Some(RwCommand::Torques(vec![-tau.x, -tau.y, -tau.z])),
-            mtq_moments: None,
+            mtq: None,
         }))
     }
 }

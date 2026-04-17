@@ -185,8 +185,8 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// Replace a model by name, returning the old one (if found).
     ///
     /// This is used to swap in a model with updated commanded state
-    /// between integration segments (e.g., `MtqAssembly` with new
-    /// `commanded_moments`).
+    /// between integration segments (e.g., `MtqAssembly` with a new
+    /// `command`).
     pub fn replace_model(
         &mut self,
         name: &str,

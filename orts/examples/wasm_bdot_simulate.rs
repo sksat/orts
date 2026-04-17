@@ -33,17 +33,15 @@ use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, CommandedMagnetorquer, DecoupledAttitudeSystem};
 use orts::plugin::wasm::{WasmController, WasmEngine};
-use orts::plugin::{ActuatorBundle, ActuatorState, PluginController, TickInput};
+use orts::plugin::{ActuatorBundle, ActuatorState, MtqCommand, PluginController, TickInput};
 use orts::sensor::{Gyroscope, Magnetometer, SensorBundle};
 
 /// Convert per-MTQ moments from ActuatorBundle to a Vector3 for
 /// CommandedMagnetorquer (3-axis orthogonal layout assumed).
 fn mtq_moment_vec3(bundle: &ActuatorBundle) -> Vector3<f64> {
-    let s = bundle.mtq_moments();
-    if s.is_empty() {
-        Vector3::zeros()
-    } else {
-        Vector3::from_row_slice(s)
+    match bundle.mtq_command() {
+        Some(MtqCommand::Moments(v)) if !v.is_empty() => Vector3::from_row_slice(v),
+        _ => Vector3::zeros(),
     }
 }
 

@@ -147,16 +147,19 @@ impl MtqAssemblyCore {
     }
 }
 
+/// Per-MTQ command. Re-exported from `crate::plugin::command::MtqCommand` for convenience.
+pub use crate::plugin::command::MtqCommand;
+
 /// MTQ assembly with magnetic field model, usable as a [`Model<S>`]
 /// in the ODE system.
 ///
-/// The `commanded_moments` field is `pub` so it can be updated between
+/// The `command` field is `pub` so it can be updated between
 /// integration segments (zero-order hold, set by plugin or host controller).
 #[derive(Clone)]
 pub struct MtqAssembly<F: MagneticFieldModel> {
     core: MtqAssemblyCore,
-    /// Per-MTQ commanded dipole moment [A·m²], updated between ODE segments.
-    pub commanded_moments: Vec<f64>,
+    /// Per-MTQ command (direct moments or normalized), updated between ODE segments.
+    pub command: MtqCommand,
     /// Geomagnetic field model.
     field: F,
 }
@@ -167,7 +170,7 @@ impl<F: MagneticFieldModel> MtqAssembly<F> {
         let n = core.num_mtqs();
         Self {
             core,
-            commanded_moments: vec![0.0; n],
+            command: MtqCommand::Moments(vec![0.0; n]),
             field,
         }
     }
@@ -180,6 +183,42 @@ impl<F: MagneticFieldModel> MtqAssembly<F> {
     /// Access the core (geometry + constraint logic).
     pub fn core(&self) -> &MtqAssemblyCore {
         &self.core
+    }
+
+    /// Resolve the current command into per-MTQ dipole moments [A·m²].
+    ///
+    /// `MtqCommand::Moments` is used directly; `MtqCommand::NormalizedMoments`
+    /// is clamped to `[-1, 1]` per element and scaled by each MTQ's
+    /// `max_moment`.
+    ///
+    /// # Panics
+    /// Panics if the command length does not match the number of MTQs.
+    fn resolved_moments(&self) -> Vec<f64> {
+        match &self.command {
+            MtqCommand::Moments(m) => {
+                assert_eq!(
+                    m.len(),
+                    self.core.num_mtqs(),
+                    "MtqCommand::Moments length ({}) != MTQ count ({})",
+                    m.len(),
+                    self.core.num_mtqs()
+                );
+                m.clone()
+            }
+            MtqCommand::NormalizedMoments(u) => {
+                assert_eq!(
+                    u.len(),
+                    self.core.num_mtqs(),
+                    "MtqCommand::NormalizedMoments length ({}) != MTQ count ({})",
+                    u.len(),
+                    self.core.num_mtqs()
+                );
+                u.iter()
+                    .zip(self.core.mtqs())
+                    .map(|(&u, mtq)| u.clamp(-1.0, 1.0) * mtq.max_moment)
+                    .collect()
+            }
+        }
     }
 }
 
@@ -205,7 +244,8 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = frame::SimpleEci>>
             .rotation_to_body()
             .transform(&Vec3::<frame::SimpleEci>::from_raw(b_eci))
             .into_inner();
-        ExternalLoads::torque(self.core.torque(&self.commanded_moments, &b_body))
+        let moments = self.resolved_moments();
+        ExternalLoads::torque(self.core.torque(&moments, &b_body))
     }
 }
 
@@ -404,7 +444,7 @@ mod tests {
     #[test]
     fn assembly_nonzero_command_produces_torque() {
         let mut assembly = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
-        assembly.commanded_moments = vec![1.0, 0.0, 0.0];
+        assembly.command = MtqCommand::Moments(vec![1.0, 0.0, 0.0]);
         let state = TestState {
             attitude: AttitudeState::identity(),
             orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
@@ -418,7 +458,7 @@ mod tests {
     #[test]
     fn assembly_no_epoch_returns_zero() {
         let mut assembly = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
-        assembly.commanded_moments = vec![1.0, 1.0, 1.0];
+        assembly.command = MtqCommand::Moments(vec![1.0, 1.0, 1.0]);
         let state = TestState {
             attitude: AttitudeState::identity(),
             orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
@@ -430,7 +470,7 @@ mod tests {
     #[test]
     fn assembly_no_acceleration_or_mass_rate() {
         let mut assembly = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
-        assembly.commanded_moments = vec![1.0, 0.5, -0.3];
+        assembly.command = MtqCommand::Moments(vec![1.0, 0.5, -0.3]);
         let state = TestState {
             attitude: AttitudeState::identity(),
             orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
@@ -445,7 +485,7 @@ mod tests {
     fn assembly_clamping_bounds_torque() {
         let max_m = 0.001;
         let mut assembly = MtqAssembly::three_axis(max_m, TiltedDipole::earth());
-        assembly.commanded_moments = vec![100.0, 100.0, 100.0];
+        assembly.command = MtqCommand::Moments(vec![100.0, 100.0, 100.0]);
         let state = TestState {
             attitude: AttitudeState {
                 quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
@@ -469,5 +509,110 @@ mod tests {
             "Torque should be bounded: |tau|={:.6e}, bound={max_torque:.6e}",
             loads.torque_body.magnitude()
         );
+    }
+
+    #[test]
+    fn assembly_moments_variant_produces_same_result() {
+        // Sanity: MtqCommand::Moments([0.5, 0, 0]) should match the
+        // pre-variant behaviour of setting commanded_moments directly.
+        let mut assembly = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
+        assembly.command = MtqCommand::Moments(vec![0.5, 0.0, 0.0]);
+        let state = TestState {
+            attitude: AttitudeState::identity(),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
+        };
+        let epoch = test_epoch();
+        let loads_moments = assembly.eval(0.0, &state, Some(&epoch));
+
+        // Also compute expected value directly from the core
+        let b_eci = magnetic::field_eci(
+            &TiltedDipole::earth(),
+            &FrameVec3::<frame::SimpleEci>::new(7000.0, 0.0, 0.0),
+            &epoch,
+        )
+        .into_inner();
+        let b_body = state
+            .attitude
+            .rotation_to_body()
+            .transform(&FrameVec3::<frame::SimpleEci>::from_raw(b_eci))
+            .into_inner();
+        let expected = assembly.core.torque(&[0.5, 0.0, 0.0], &b_body);
+        let got = loads_moments.torque_body.into_inner();
+        assert!((got - expected).magnitude() < 1e-20);
+    }
+
+    #[test]
+    fn assembly_normalized_moments_scales_by_max_moment() {
+        // NormalizedMoments([0.5, 0, 0]) with max_moment=10.0
+        // should produce the same torque as Moments([5.0, 0, 0]).
+        let state = TestState {
+            attitude: AttitudeState::identity(),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
+        };
+        let epoch = test_epoch();
+
+        let mut assembly_norm = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
+        assembly_norm.command = MtqCommand::NormalizedMoments(vec![0.5, 0.0, 0.0]);
+        let loads_norm = assembly_norm.eval(0.0, &state, Some(&epoch));
+
+        let mut assembly_direct = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
+        assembly_direct.command = MtqCommand::Moments(vec![5.0, 0.0, 0.0]);
+        let loads_direct = assembly_direct.eval(0.0, &state, Some(&epoch));
+
+        let diff = loads_norm.torque_body.into_inner() - loads_direct.torque_body.into_inner();
+        assert!(
+            diff.magnitude() < 1e-18,
+            "normalized and direct should match: norm={:?}, direct={:?}",
+            loads_norm.torque_body,
+            loads_direct.torque_body
+        );
+    }
+
+    #[test]
+    fn assembly_normalized_clamps_to_unit() {
+        // NormalizedMoments with values outside [-1, 1] should be clamped.
+        let state = TestState {
+            attitude: AttitudeState::identity(),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
+        };
+        let epoch = test_epoch();
+
+        let mut assembly_clamped = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
+        assembly_clamped.command = MtqCommand::NormalizedMoments(vec![100.0, -100.0, 0.3]);
+        let loads_clamped = assembly_clamped.eval(0.0, &state, Some(&epoch));
+
+        let mut assembly_ref = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
+        // 100 clamped to 1, -100 clamped to -1, 0.3 unchanged, each × 10.0
+        assembly_ref.command = MtqCommand::Moments(vec![10.0, -10.0, 3.0]);
+        let loads_ref = assembly_ref.eval(0.0, &state, Some(&epoch));
+
+        let diff = loads_clamped.torque_body.into_inner() - loads_ref.torque_body.into_inner();
+        assert!(diff.magnitude() < 1e-18);
+    }
+
+    #[test]
+    #[should_panic(expected = "MtqCommand::Moments length")]
+    fn assembly_moments_wrong_length_panics() {
+        let mut assembly = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
+        assembly.command = MtqCommand::Moments(vec![1.0, 0.0]); // 2 instead of 3
+        let state = TestState {
+            attitude: AttitudeState::identity(),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
+        };
+        let epoch = test_epoch();
+        let _ = assembly.eval(0.0, &state, Some(&epoch));
+    }
+
+    #[test]
+    #[should_panic(expected = "MtqCommand::NormalizedMoments length")]
+    fn assembly_normalized_moments_wrong_length_panics() {
+        let mut assembly = MtqAssembly::three_axis(10.0, TiltedDipole::earth());
+        assembly.command = MtqCommand::NormalizedMoments(vec![0.5, 0.5]); // 2 instead of 3
+        let state = TestState {
+            attitude: AttitudeState::identity(),
+            orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
+        };
+        let epoch = test_epoch();
+        let _ = assembly.eval(0.0, &state, Some(&epoch));
     }
 }

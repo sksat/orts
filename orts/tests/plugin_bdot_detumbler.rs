@@ -37,7 +37,8 @@ use orts::OrbitalState;
 use orts::SpacecraftState;
 use orts::attitude::{AttitudeState, CommandedMagnetorquer, DecoupledAttitudeSystem};
 use orts::plugin::{
-    ActuatorBundle, ActuatorState, Command, PluginController, PluginError, Sensors, TickInput,
+    ActuatorBundle, ActuatorState, Command, MtqCommand, PluginController, PluginError, Sensors,
+    TickInput,
 };
 
 const MASS: f64 = 50.0;
@@ -141,11 +142,9 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
 /// Convert per-MTQ moments from ActuatorBundle to a Vector3 for
 /// CommandedMagnetorquer (3-axis orthogonal layout assumed).
 fn mtq_moment_vec3(bundle: &ActuatorBundle) -> Vector3<f64> {
-    let s = bundle.mtq_moments();
-    if s.is_empty() {
-        Vector3::zeros()
-    } else {
-        Vector3::from_row_slice(s)
+    match bundle.mtq_command() {
+        Some(MtqCommand::Moments(v)) if !v.is_empty() => Vector3::from_row_slice(v),
+        _ => Vector3::zeros(),
     }
 }
 
@@ -283,5 +282,5 @@ fn plugin_bdot_detumbler_uses_angular_velocity_from_observation() {
         actuators: &actuator_state,
     };
     let cmd = ctrl.update(&obs).unwrap().expect("must return Some");
-    assert_eq!(cmd.mtq_moments, Some(vec![0.0, 0.0, 0.0]));
+    assert_eq!(cmd.mtq, Some(MtqCommand::Moments(vec![0.0, 0.0, 0.0])));
 }

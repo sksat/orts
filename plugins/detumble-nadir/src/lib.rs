@@ -93,11 +93,11 @@ impl Plugin<TickInput, Command> for Controller {
                 let max = *max_moment;
 
                 Ok(Some(Command {
-                    mtq_moments: Some(vec![
+                    mtq: Some(MtqCommand::Moments(vec![
                         m.x.clamp(-max, max),
                         m.y.clamp(-max, max),
                         m.z.clamp(-max, max),
-                    ]),
+                    ])),
                     rw: None,
                 }))
             }
@@ -127,7 +127,7 @@ impl Plugin<TickInput, Command> for Controller {
                 // Per-wheel motor torque (Newton's 3rd law for orthogonal 3-axis)
                 Ok(Some(Command {
                     rw: Some(RwCommand::Torques(vec![-tau.x, -tau.y, -tau.z])),
-                    mtq_moments: None,
+                    mtq: None,
                 }))
             }
         }

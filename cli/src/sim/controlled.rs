@@ -10,7 +10,7 @@ use arika::epoch::Epoch;
 use orts::attitude::CoupledGravityGradient;
 use orts::effector::AugmentedState;
 use orts::orbital::gravity::GravityField;
-use orts::plugin::{ActuatorBundle, ActuatorState, PluginController, TickInput};
+use orts::plugin::{ActuatorBundle, ActuatorState, MtqCommand, PluginController, TickInput};
 use orts::sensor::{Gyroscope, Magnetometer, SensorBundle, StarTracker};
 use orts::setup::{build_spacecraft_dynamics, default_third_bodies};
 
@@ -191,17 +191,22 @@ pub fn step_controlled(
     }
 
     // 前 tick のコマンドで MTQ を設定（モデルを差し替え）。
-    if sat.has_mtq && sat.actuators.has_mtq_command() {
-        let cmd = sat.actuators.mtq_moments();
+    if sat.has_mtq
+        && sat.actuators.has_mtq_command()
+        && let Some(mtq_cmd) = sat.actuators.mtq_command()
+    {
+        let cmd_len = match mtq_cmd {
+            MtqCommand::Moments(v) | MtqCommand::NormalizedMoments(v) => v.len(),
+        };
         let mut mtq = MtqAssembly::three_axis(sat.mtq_max_moment, TiltedDipole::earth());
-        if cmd.len() != mtq.core().num_mtqs() {
+        if cmd_len != mtq.core().num_mtqs() {
             return Err(format!(
-                "mtq_moments length ({}) != MTQ count ({})",
-                cmd.len(),
+                "mtq command length ({}) != MTQ count ({})",
+                cmd_len,
                 mtq.core().num_mtqs()
             ));
         }
-        mtq.commanded_moments = cmd.to_vec();
+        mtq.command = mtq_cmd.clone();
         sat.dynamics.replace_model("mtq_assembly", Box::new(mtq));
     }
 
@@ -220,31 +225,31 @@ pub fn step_controlled(
     let sensors = sat
         .sensors
         .evaluate(&sat.state.plant, &current_epoch.unwrap_or(Epoch::j2000()));
-    let actuator_state = ActuatorState {
-        rw_momentum: if sat.has_rw {
-            Some(sat.state.aux.clone())
-        } else {
-            None
-        },
-        rw_speeds: if sat.has_rw {
-            if let Some(rw) = sat
-                .dynamics
-                .effector_by_name::<ReactionWheelAssembly>("reaction_wheels")
-            {
-                Some(
-                    sat.state
-                        .aux
+    let actuator_state = if sat.has_rw {
+        if let Some(rw) = sat
+            .dynamics
+            .effector_by_name::<ReactionWheelAssembly>("reaction_wheels")
+        {
+            let core = rw.core();
+            let momentum = core.momentum_slice(&sat.state.aux);
+            ActuatorState {
+                rw_momentum: Some(momentum.to_vec()),
+                rw_speeds: Some(
+                    momentum
                         .iter()
                         .zip(rw.wheels())
                         .map(|(h, w)| w.speed_from_momentum(*h))
                         .collect(),
-                )
-            } else {
-                None
+                ),
+                rw_realized_torques: core
+                    .realized_torque_slice(&sat.state.aux)
+                    .map(|s| s.to_vec()),
             }
         } else {
-            None
-        },
+            ActuatorState::default()
+        }
+    } else {
+        ActuatorState::default()
     };
     let input = TickInput {
         t: t_next,

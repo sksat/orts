@@ -34,6 +34,11 @@ pub struct Rw {
     pub max_torque: f64,
     /// Maximum spin speed [rad/s]. Independent of max_momentum (bearing/motor limit).
     pub max_speed: f64,
+    /// Motor time constant [s]. `None` = instantaneous (legacy behavior).
+    ///
+    /// When set, the realized torque follows the commanded torque via
+    /// a first-order lag: `dτ_realized/dt = (τ_target - τ_realized) / T_m`.
+    pub motor_time_constant: Option<f64>,
 }
 
 impl Rw {
@@ -67,6 +72,7 @@ impl Rw {
             max_momentum,
             max_torque,
             max_speed,
+            motor_time_constant: None,
         }
     }
 
@@ -93,6 +99,19 @@ impl Rw {
         // Tighten momentum bound to match speed limit
         rw.max_momentum = rw.max_momentum.min(inertia * rw.max_speed);
         rw
+    }
+
+    /// Set the motor time constant [s] (builder pattern).
+    ///
+    /// # Panics
+    /// Panics if `t_m` is not positive and finite.
+    pub fn with_motor_lag(mut self, t_m: f64) -> Self {
+        assert!(
+            t_m > 0.0 && t_m.is_finite(),
+            "motor_time_constant must be positive and finite, got {t_m}"
+        );
+        self.motor_time_constant = Some(t_m);
+        self
     }
 
     /// Get the spin axis unit vector.
@@ -142,6 +161,8 @@ pub struct RwAssemblyCore {
     wheels: Vec<Rw>,
     /// Allocation matrix (pseudo-inverse of axis matrix), `n×3`.
     alloc_pinv: nalgebra::DMatrix<f64>,
+    /// True if any wheel has a motor time constant.
+    has_motor_lag: bool,
 }
 
 impl RwAssemblyCore {
@@ -149,7 +170,12 @@ impl RwAssemblyCore {
     pub fn new(wheels: Vec<Rw>) -> Self {
         let axes: Vec<_> = wheels.iter().map(|w| *w.axis()).collect();
         let alloc_pinv = build_allocation_pinv(&axes);
-        Self { wheels, alloc_pinv }
+        let has_motor_lag = wheels.iter().any(|w| w.motor_time_constant.is_some());
+        Self {
+            wheels,
+            alloc_pinv,
+            has_motor_lag,
+        }
     }
 
     /// Standard 3-axis orthogonal arrangement with identical wheels.
@@ -171,19 +197,85 @@ impl RwAssemblyCore {
         self.wheels.len()
     }
 
+    /// Whether any wheel has a motor time constant (first-order lag).
+    pub fn has_motor_lag(&self) -> bool {
+        self.has_motor_lag
+    }
+
+    /// Auxiliary state dimension: `n` (instantaneous) or `2n` (motor lag).
+    ///
+    /// Layout when motor lag is active:
+    /// `[h_0, ..., h_{n-1}, τ_realized_0, ..., τ_realized_{n-1}]`
+    pub fn state_dim(&self) -> usize {
+        let n = self.wheels.len();
+        if self.has_motor_lag { 2 * n } else { n }
+    }
+
+    /// Extract the momentum slice from the aux state vector.
+    pub fn momentum_slice<'a>(&self, aux: &'a [f64]) -> &'a [f64] {
+        &aux[..self.wheels.len()]
+    }
+
+    /// Extract the realized torque slice from the aux state vector.
+    ///
+    /// Returns `None` if there is no motor lag (instantaneous mode).
+    pub fn realized_torque_slice<'a>(&self, aux: &'a [f64]) -> Option<&'a [f64]> {
+        if self.has_motor_lag {
+            let n = self.wheels.len();
+            Some(&aux[n..2 * n])
+        } else {
+            None
+        }
+    }
+
     /// Apply rate limiting, momentum saturation, and speed saturation
     /// to per-wheel commanded torques. Returns clamped per-wheel torques.
+    ///
+    /// This is a convenience method that chains [`clamp_command`] and
+    /// [`clamp_physical`].
     ///
     /// # Panics
     /// Panics if `commanded.len()` or `momentum.len()` != `self.num_wheels()`.
     pub fn clamp_torques(&self, commanded: &[f64], momentum: &[f64]) -> Vec<f64> {
+        let accepted = self.clamp_command(commanded);
+        self.clamp_physical(&accepted, momentum)
+    }
+
+    /// Command acceptance clamp: limit torques to motor driver's range
+    /// `[-max_torque, max_torque]` per wheel.
+    ///
+    /// This simulates what the RW driver accepts as a valid command.
+    /// No state-dependent constraints (momentum/speed saturation) are
+    /// applied here — use [`clamp_physical`] for that.
+    ///
+    /// # Panics
+    /// Panics if `commanded.len()` != `self.num_wheels()`.
+    pub fn clamp_command(&self, commanded: &[f64]) -> Vec<f64> {
         assert_eq!(commanded.len(), self.wheels.len());
+        self.wheels
+            .iter()
+            .enumerate()
+            .map(|(i, wheel)| commanded[i].clamp(-wheel.max_torque, wheel.max_torque))
+            .collect()
+    }
+
+    /// Physical constraint clamp: zero out torques that would push a
+    /// wheel past its momentum or speed limits.
+    ///
+    /// This enforces the physics — a wheel at max momentum cannot
+    /// accelerate further, regardless of what the motor is trying to do.
+    /// Deceleration (desaturation) is always allowed.
+    ///
+    /// # Panics
+    /// Panics if `torques.len()` or `momentum.len()` != `self.num_wheels()`.
+    pub fn clamp_physical(&self, torques: &[f64], momentum: &[f64]) -> Vec<f64> {
+        assert_eq!(torques.len(), self.wheels.len());
         assert_eq!(momentum.len(), self.wheels.len());
         self.wheels
             .iter()
             .enumerate()
             .map(|(i, wheel)| {
-                let mut tau = commanded[i].clamp(-wheel.max_torque, wheel.max_torque);
+                let mut tau = torques[i];
                 // Momentum saturation: prevent exceeding limits
                 if (momentum[i] >= wheel.max_momentum && tau > 0.0)
                     || (momentum[i] <= -wheel.max_momentum && tau < 0.0)
@@ -345,15 +437,23 @@ impl<S: HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     }
 
     fn state_dim(&self) -> usize {
-        self.core.num_wheels()
+        self.core.state_dim()
     }
 
     fn aux_bounds(&self) -> Vec<(f64, f64)> {
-        self.core
+        let mut bounds: Vec<_> = self
+            .core
             .wheels
             .iter()
             .map(|w| (-w.max_momentum, w.max_momentum))
-            .collect()
+            .collect();
+        if self.core.has_motor_lag() {
+            // τ_realized bounds: [-max_torque, max_torque] per wheel
+            for w in &self.core.wheels {
+                bounds.push((-w.max_torque, w.max_torque));
+            }
+        }
+        bounds
     }
 
     fn derivatives(
@@ -364,27 +464,70 @@ impl<S: HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         aux_rates: &mut [f64],
         _epoch: Option<&Epoch>,
     ) -> ExternalLoads {
+        let n = self.core.num_wheels();
         let omega = &state.attitude().angular_velocity;
+        let momentum = self.core.momentum_slice(aux);
 
         // Resolve the command variant into effective torques.
         let effective_torques = match &self.command {
             RwCommand::Torques(t) => t.clone(),
-            RwCommand::Speeds(s) => self.core.speed_to_torque(s, aux, self.speed_control_gain),
+            RwCommand::Speeds(s) => self
+                .core
+                .speed_to_torque(s, momentum, self.speed_control_gain),
         };
 
-        // Clamp per-wheel commanded torques (rate limiting + saturation)
-        let clamped = self.core.clamp_torques(&effective_torques, aux);
+        // Command acceptance clamp (motor driver range)
+        let accepted = self.core.clamp_command(&effective_torques);
 
-        // Set aux rates (wheel momentum derivatives)
-        for (i, &tau) in clamped.iter().enumerate() {
+        let applied = if self.core.has_motor_lag() {
+            let tau_realized = self.core.realized_torque_slice(aux).unwrap();
+
+            // Motor lag ODE: dτ_realized/dt = (τ_target - τ_realized) / T_m
+            let tau_target = self.core.clamp_physical(&accepted, momentum);
+            for (i, wheel) in self.core.wheels.iter().enumerate() {
+                if let Some(t_m) = wheel.motor_time_constant {
+                    aux_rates[n + i] = (tau_target[i] - tau_realized[i]) / t_m;
+                } else {
+                    // Instantaneous wheel in 2n layout: snap realized to
+                    // target via a fast tracking rate. Physics uses
+                    // tau_target directly (see effective_realized below),
+                    // so this only affects telemetry convergence.
+                    // Effective T_m ≈ 0.01s; stable with dt ≤ 0.028s (RK4).
+                    // For larger dt the aux_bounds projection keeps it bounded.
+                    aux_rates[n + i] = (tau_target[i] - tau_realized[i]) * 100.0;
+                }
+            }
+
+            // Physical constraint on realized torque for dh/dt
+            let effective_realized: Vec<f64> = self
+                .core
+                .wheels
+                .iter()
+                .enumerate()
+                .map(|(i, w)| {
+                    if w.motor_time_constant.is_some() {
+                        tau_realized[i]
+                    } else {
+                        tau_target[i]
+                    }
+                })
+                .collect();
+            self.core.clamp_physical(&effective_realized, momentum)
+        } else {
+            // No motor lag: combined clamp (legacy path)
+            self.core.clamp_physical(&accepted, momentum)
+        };
+
+        // Set aux rates: dh_i/dt = τ_applied_i
+        for (i, &tau) in applied.iter().enumerate() {
             aux_rates[i] = tau;
         }
 
         // Reaction torque from wheel acceleration (Newton's third law)
-        let reaction = self.core.reaction_torque(&clamped);
+        let reaction = self.core.reaction_torque(&applied);
 
         // Gyroscopic coupling: −ω × H_rw
-        let gyro = self.core.gyroscopic_torque(omega, aux);
+        let gyro = self.core.gyroscopic_torque(omega, momentum);
 
         ExternalLoads::torque(reaction + gyro)
     }
@@ -463,11 +606,58 @@ mod tests {
 
     // ── Core tests ──
 
+    // ── clamp_command tests ──
+
+    #[test]
+    fn clamp_command_rate_limiting() {
+        let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
+        let accepted = core.clamp_command(&[10.0, -10.0, 0.05]);
+        assert!((accepted[0] - 0.1).abs() < 1e-15);
+        assert!((accepted[1] - (-0.1)).abs() < 1e-15);
+        assert!((accepted[2] - 0.05).abs() < 1e-15);
+    }
+
+    #[test]
+    fn clamp_command_ignores_momentum() {
+        let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
+        // clamp_command doesn't know about momentum — only rate limits
+        let accepted = core.clamp_command(&[0.05, 0.0, 0.0]);
+        assert!((accepted[0] - 0.05).abs() < 1e-15);
+    }
+
+    // ── clamp_physical tests ──
+
+    #[test]
+    fn clamp_physical_saturation_positive() {
+        let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
+        // X-wheel at positive max momentum → positive torque zeroed
+        let applied = core.clamp_physical(&[0.05, 0.0, 0.0], &[1.0, 0.0, 0.0]);
+        assert!(applied[0].abs() < 1e-15);
+    }
+
+    #[test]
+    fn clamp_physical_allows_desaturation() {
+        let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
+        // X-wheel at positive max, negative torque → allowed (desaturation)
+        let applied = core.clamp_physical(&[-0.05, 0.0, 0.0], &[1.0, 0.0, 0.0]);
+        assert!((applied[0] - (-0.05)).abs() < 1e-15);
+    }
+
+    #[test]
+    fn clamp_physical_passes_through_below_limits() {
+        let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
+        let applied = core.clamp_physical(&[0.05, -0.03, 0.02], &[0.0, 0.0, 0.0]);
+        assert!((applied[0] - 0.05).abs() < 1e-15);
+        assert!((applied[1] - (-0.03)).abs() < 1e-15);
+        assert!((applied[2] - 0.02).abs() < 1e-15);
+    }
+
+    // ── clamp_torques (combined) backward compat ──
+
     #[test]
     fn clamp_torques_rate_limiting() {
         let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
         let momentum = [0.0, 0.0, 0.0];
-        // Command 10 N·m but max is 0.1
         let clamped = core.clamp_torques(&[10.0, -10.0, 0.05], &momentum);
         assert!((clamped[0] - 0.1).abs() < 1e-15);
         assert!((clamped[1] - (-0.1)).abs() < 1e-15);
@@ -477,7 +667,6 @@ mod tests {
     #[test]
     fn clamp_torques_saturation_positive() {
         let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
-        // X-wheel at positive max momentum, positive command → clamped to 0
         let clamped = core.clamp_torques(&[0.05, 0.0, 0.0], &[1.0, 0.0, 0.0]);
         assert!(clamped[0].abs() < 1e-15);
     }
@@ -485,7 +674,6 @@ mod tests {
     #[test]
     fn clamp_torques_saturation_allows_desaturation() {
         let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
-        // X-wheel at positive max, negative command → allowed (desaturation)
         let clamped = core.clamp_torques(&[-0.05, 0.0, 0.0], &[1.0, 0.0, 0.0]);
         assert!((clamped[0] - (-0.05)).abs() < 1e-15);
     }
@@ -753,6 +941,130 @@ mod tests {
         assert!((tb[0] - desired[0]).abs() < 1e-15);
         assert!((tb[1] - desired[1]).abs() < 1e-15);
         assert!((tb[2] - desired[2]).abs() < 1e-15);
+    }
+
+    // ── Motor lag tests ──
+
+    #[test]
+    fn rw_with_motor_lag() {
+        let rw = Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05);
+        assert_eq!(rw.motor_time_constant, Some(0.05));
+    }
+
+    #[test]
+    #[should_panic(expected = "motor_time_constant must be positive")]
+    fn rw_motor_lag_zero_panics() {
+        Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "motor_time_constant must be positive")]
+    fn rw_motor_lag_negative_panics() {
+        Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(-1.0);
+    }
+
+    #[test]
+    fn core_has_motor_lag_false() {
+        let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
+        assert!(!core.has_motor_lag());
+        assert_eq!(core.state_dim(), 3);
+    }
+
+    #[test]
+    fn core_has_motor_lag_true() {
+        let core = RwAssemblyCore::new(vec![
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::y(), 0.01, 1.0, 0.1),
+            Rw::new(Vector3::z(), 0.01, 1.0, 0.1).with_motor_lag(0.1),
+        ]);
+        assert!(core.has_motor_lag());
+        assert_eq!(core.state_dim(), 6); // 2n
+    }
+
+    #[test]
+    fn momentum_slice_no_lag() {
+        let core = RwAssemblyCore::three_axis(0.01, 1.0, 0.1);
+        let aux = [1.0, 2.0, 3.0];
+        assert_eq!(core.momentum_slice(&aux), &[1.0, 2.0, 3.0]);
+        assert!(core.realized_torque_slice(&aux).is_none());
+    }
+
+    #[test]
+    fn momentum_and_torque_slices_with_lag() {
+        let core = RwAssemblyCore::new(vec![
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::y(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+        ]);
+        let aux = [0.5, -0.3, 0.01, -0.02];
+        assert_eq!(core.momentum_slice(&aux), &[0.5, -0.3]);
+        assert_eq!(core.realized_torque_slice(&aux), Some(&[0.01, -0.02][..]));
+    }
+
+    #[test]
+    fn assembly_motor_lag_state_dim() {
+        let rw = RwAssembly::new(vec![
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::y(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::z(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+        ]);
+        assert_eq!(StateEffector::<AttitudeState>::state_dim(&rw), 6);
+    }
+
+    #[test]
+    fn assembly_motor_lag_aux_bounds() {
+        let rw = RwAssembly::new(vec![
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+            Rw::new(Vector3::y(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+        ]);
+        let bounds = StateEffector::<AttitudeState>::aux_bounds(&rw);
+        assert_eq!(bounds.len(), 4); // 2n = 4
+        // First 2: momentum bounds
+        assert_eq!(bounds[0], (-1.0, 1.0));
+        assert_eq!(bounds[1], (-1.0, 1.0));
+        // Next 2: torque bounds
+        assert_eq!(bounds[2], (-0.1, 0.1));
+        assert_eq!(bounds[3], (-0.1, 0.1));
+    }
+
+    #[test]
+    fn assembly_motor_lag_derivatives_has_torque_lag() {
+        let mut rw = RwAssembly::new(vec![
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+        ]);
+        rw.command = RwCommand::Torques(vec![0.1]); // full torque
+
+        let state = test_state_at_rest();
+        // aux = [h, τ_realized], both start at 0
+        let aux = vec![0.0, 0.0];
+        let mut rates = vec![0.0, 0.0];
+        let _loads = rw.derivatives(0.0, &state, &aux, &mut rates, None);
+
+        // dτ_realized/dt = (τ_target - τ_realized) / T_m = (0.1 - 0.0) / 0.05 = 2.0
+        assert!((rates[1] - 2.0).abs() < 1e-12);
+        // dh/dt = τ_applied = clamp_physical(τ_realized=0, h=0) = 0
+        // (realized is still 0, so no torque applied yet)
+        assert!(rates[0].abs() < 1e-15);
+    }
+
+    #[test]
+    fn assembly_motor_lag_partially_realized() {
+        let mut rw = RwAssembly::new(vec![
+            Rw::new(Vector3::x(), 0.01, 1.0, 0.1).with_motor_lag(0.05),
+        ]);
+        rw.command = RwCommand::Torques(vec![0.1]);
+
+        let state = test_state_at_rest();
+        // τ_realized has caught up to 0.06
+        let aux = vec![0.0, 0.06];
+        let mut rates = vec![0.0, 0.0];
+        let loads = rw.derivatives(0.0, &state, &aux, &mut rates, None);
+
+        // dτ_realized/dt = (0.1 - 0.06) / 0.05 = 0.8
+        assert!((rates[1] - 0.8).abs() < 1e-12);
+        // dh/dt = τ_applied = clamp_physical(0.06, 0) = 0.06
+        assert!((rates[0] - 0.06).abs() < 1e-12);
+        // Body torque = -0.06 * x_axis
+        assert!((loads.torque_body.x() - (-0.06)).abs() < 1e-12);
     }
 
     #[test]
