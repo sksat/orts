@@ -46,10 +46,15 @@ jobs:
       - name: Clippy (tobari wasm)
         run: cargo clippy --locked -p tobari --features wasm -- -D warnings
 
-      # Contract check: `arika` must compile with `no_std + alloc`
-      # (no default features disables the `std` feature).
+      # Contract checks: `arika` must compile at each feature tier.
+      #   no_std, no alloc → pure math core only
+      #   no_std + alloc   → + horizons, EopTable, HorizonsMoonEphemeris
+      #   std (default)    → covered by the workspace clippy above
       - name: Clippy (arika no_std)
         run: cargo clippy --locked -p arika --no-default-features -- -D warnings
+
+      - name: Clippy (arika no_std + alloc)
+        run: cargo clippy --locked -p arika --no-default-features --features alloc -- -D warnings
 
       # Contract check: `orts` must still build with the sync-only
       # WASM backend (`plugin-wasm` without `plugin-wasm-async`). The
