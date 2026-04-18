@@ -565,6 +565,7 @@ fn main() {
         body_name: Some("Earth".to_string()),
         altitude: Some(INITIAL_ALT_KM),
         period: None,
+        ..Default::default()
     };
     orts::record::rerun_export::save_as_rrd(&rec, "orts-orbital-lifetime", rrd_path).unwrap();
     println!("Saved to {rrd_path} (open with: rerun {rrd_path})");

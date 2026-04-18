@@ -786,6 +786,7 @@ mod tests {
             body_name: Some("Earth".to_string()),
             altitude: Some(400.0),
             period: Some(5554.0),
+            ..Default::default()
         };
 
         let r0 = 6778.137;

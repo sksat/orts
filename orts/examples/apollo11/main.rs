@@ -1270,6 +1270,7 @@ fn main() {
         body_name: Some("earth".to_string()),
         altitude: None,
         period: None,
+        ..Default::default()
     };
     orts::record::rerun_export::save_as_rrd(&rec, "orts-apollo11", rrd_path).unwrap();
     println!();
