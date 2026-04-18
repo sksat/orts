@@ -317,8 +317,7 @@ fn build_sensor_bundle(choices: Option<&[SensorChoice]>) -> SensorBundle {
         None => return SensorBundle::new(),
     };
 
-    let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> =
-        Arc::new(Igrf::earth());
+    let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> = Arc::new(Igrf::earth());
 
     SensorBundle {
         magnetometers: if choices.contains(&SensorChoice::Magnetometer) {
