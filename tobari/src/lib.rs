@@ -46,7 +46,6 @@ pub mod exponential;
 pub mod gfz;
 pub mod harris_priester;
 pub mod magnetic;
-#[cfg(feature = "alloc")]
 pub mod nrlmsise00;
 pub mod space_weather;
 
@@ -54,7 +53,6 @@ pub mod space_weather;
 pub use cssi::{CssiData, CssiSpaceWeather, OutOfRangeBehavior};
 pub use exponential::Exponential;
 pub use harris_priester::HarrisPriester;
-#[cfg(feature = "alloc")]
 pub use nrlmsise00::Nrlmsise00;
 pub use space_weather::{ConstantWeather, SpaceWeather, SpaceWeatherProvider};
 

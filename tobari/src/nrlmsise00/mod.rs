@@ -87,13 +87,16 @@ pub struct Nrlmsise00Input {
 /// Computes neutral atmospheric density and composition from 0 to ~1000 km altitude
 /// as a function of location, time, solar activity (F10.7), and geomagnetic
 /// activity (Ap).
-pub struct Nrlmsise00 {
-    weather: Box<dyn SpaceWeatherProvider>,
+///
+/// Generic over the space weather provider `P`. Use [`ConstantWeather`] for
+/// fixed conditions, or [`CssiSpaceWeather`] for time-varying data.
+pub struct Nrlmsise00<P: SpaceWeatherProvider> {
+    weather: P,
 }
 
-impl Nrlmsise00 {
+impl<P: SpaceWeatherProvider> Nrlmsise00<P> {
     /// Create a new NRLMSISE-00 model with the given space weather provider.
-    pub fn new(weather: Box<dyn SpaceWeatherProvider>) -> Self {
+    pub fn new(weather: P) -> Self {
         Self { weather }
     }
 
@@ -176,7 +179,7 @@ impl Nrlmsise00 {
     }
 }
 
-impl AtmosphereModel for Nrlmsise00 {
+impl<P: SpaceWeatherProvider> AtmosphereModel for Nrlmsise00<P> {
     fn density(&self, input: &AtmosphereInput<'_>) -> f64 {
         self.density_with_composition(&input.geodetic, input.utc)
             .total_mass_density

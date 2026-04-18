@@ -38,6 +38,13 @@ pub trait SpaceWeatherProvider: Send + Sync {
     fn get(&self, epoch: &Epoch) -> SpaceWeather;
 }
 
+#[cfg(feature = "alloc")]
+impl<T: SpaceWeatherProvider + ?Sized> SpaceWeatherProvider for alloc::boxed::Box<T> {
+    fn get(&self, epoch: &Epoch) -> SpaceWeather {
+        (**self).get(epoch)
+    }
+}
+
 /// Constant space weather — returns the same F10.7 and Ap for all epochs.
 ///
 /// Useful for testing or when historical space weather data is not available.

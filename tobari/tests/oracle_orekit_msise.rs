@@ -65,8 +65,8 @@ fn parse_epoch(epoch_utc: &str) -> Epoch {
 }
 
 /// Compute density via ECI round-trip (exercises geo.rs eci_to_geodetic_latlon).
-fn compute_density_via_eci(
-    model: &Nrlmsise00,
+fn compute_density_via_eci<P: tobari::SpaceWeatherProvider>(
+    model: &Nrlmsise00<P>,
     lat_deg: f64,
     lon_deg: f64,
     alt_km: f64,
