@@ -291,25 +291,37 @@ pub fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
 }
 
 pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with_id: bool) {
+    let mut stdout = std::io::stdout().lock();
+    write_satellite_csv(&mut stdout, rec, sat_path, mu, with_id).unwrap();
+}
+
+/// Write satellite CSV data to any writer.
+pub fn write_satellite_csv(
+    w: &mut dyn std::io::Write,
+    rec: &Recording,
+    sat_path: &EntityPath,
+    mu: f64,
+    with_id: bool,
+) -> std::io::Result<()> {
     use orts::record::component::Component;
     use orts::record::components::{Position3D, Velocity3D};
     use orts::record::timeline::TimelineName;
 
     let store = match rec.entity(sat_path) {
         Some(s) => s,
-        None => return,
+        None => return Ok(()),
     };
     let pos_col = match store.columns.get(&Position3D::component_name()) {
         Some(c) => c,
-        None => return,
+        None => return Ok(()),
     };
     let vel_col = match store.columns.get(&Velocity3D::component_name()) {
         Some(c) => c,
-        None => return,
+        None => return Ok(()),
     };
     let sim_times = match store.timelines.get(&TimelineName::SimTime) {
         Some(t) => t,
-        None => return,
+        None => return Ok(()),
     };
 
     // Collect extra columns (everything except Position3D and Velocity3D), sorted by name
@@ -356,7 +368,6 @@ pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with
             elements.true_anomaly,
         ));
 
-        // Append all extra columns dynamically
         for (_name, col) in &extra_cols {
             if let Some(row) = col.get_row(i) {
                 for val in row {
@@ -365,8 +376,9 @@ pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with
             }
         }
 
-        println!("{line}");
+        writeln!(w, "{line}")?;
     }
+    Ok(())
 }
 
 /// Build the CSV header line dynamically from the Recording's columns.
