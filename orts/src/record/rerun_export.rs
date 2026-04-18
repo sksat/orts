@@ -841,6 +841,155 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    /// Recording → rrd → load_as_recording roundtrip preserves all components.
+    #[test]
+    fn roundtrip_recording_all_components() {
+        use crate::record::components::*;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/test");
+
+        rec.metadata = SimMetadata {
+            epoch_jd: Some(2461149.0),
+            epoch_iso: Some("2026-04-18T12:00:00Z".to_string()),
+            mu: Some(398600.4418),
+            body_radius: Some(6378.137),
+            body_name: Some("Earth".to_string()),
+            altitude: Some(400.0),
+            period: Some(5553.6),
+            orbit_description: Some(
+                "Initial orbit: circular at 400 km altitude (r = 6778.137 km)".to_string(),
+            ),
+        };
+
+        // Log 3 rows with all component types
+        for i in 0..3u64 {
+            let t = i as f64 * 10.0;
+            let tp = TimePoint::new().with_sim_time(t).with_step(i);
+
+            let os = OrbitalState::new(
+                Vector3::new(6778.0 + t, t * 0.1, 0.0),
+                Vector3::new(0.0, 7.67 - t * 0.001, 0.0),
+            );
+            let q = Quaternion4D(nalgebra::Vector4::new(1.0 - t * 0.01, t * 0.005, 0.0, 0.0));
+            let w = AngularVelocity3D(Vector3::new(0.05 - t * 0.001, -0.03, 0.04));
+            rec.log_orbital_state_with_attitude(&sat, &tp, &os, Some(&q), Some(&w));
+
+            rec.log_temporal(&sat, &tp, &MtqCommand3D(Vector3::new(t, -t * 0.5, t * 0.3)));
+            rec.log_temporal(
+                &sat,
+                &tp,
+                &RwTorqueCommand3D(Vector3::new(0.1 * t, 0.0, -0.1 * t)),
+            );
+            rec.log_temporal(&sat, &tp, &RwMomentum3D(Vector3::new(t * 0.01, 0.0, 0.0)));
+        }
+
+        // Save to rrd
+        let path = std::env::temp_dir().join("test_orts_roundtrip_all.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-roundtrip", path_str).expect("save failed");
+
+        // Load back as Recording
+        let loaded = load_as_recording(path_str).expect("load failed");
+
+        // Verify metadata roundtrip
+        let m = &loaded.metadata;
+        assert!((m.epoch_jd.unwrap() - 2461149.0).abs() < 1e-6);
+        assert_eq!(m.epoch_iso.as_deref(), Some("2026-04-18T12:00:00Z"));
+        assert!((m.mu.unwrap() - 398600.4418).abs() < 1e-6);
+        assert!((m.body_radius.unwrap() - 6378.137).abs() < 1e-6);
+        assert_eq!(m.body_name.as_deref(), Some("Earth"));
+        assert_eq!(
+            m.orbit_description.as_deref(),
+            Some("Initial orbit: circular at 400 km altitude (r = 6778.137 km)")
+        );
+
+        // Find the satellite entity
+        let sat_path = EntityPath::parse("/world/sat/test");
+        let store = loaded.entity(&sat_path).expect("entity not found");
+
+        // Verify all component columns exist with correct row count
+        assert_eq!(store.num_rows, 3, "expected 3 rows");
+
+        let pos = store
+            .columns
+            .get(&Position3D::component_name())
+            .expect("Position3D missing");
+        assert_eq!(pos.num_rows(), 3);
+
+        let vel = store
+            .columns
+            .get(&Velocity3D::component_name())
+            .expect("Velocity3D missing");
+        assert_eq!(vel.num_rows(), 3);
+
+        let quat = store
+            .columns
+            .get(&Quaternion4D::component_name())
+            .expect("Quaternion4D missing");
+        assert_eq!(quat.num_rows(), 3);
+
+        let omega = store
+            .columns
+            .get(&AngularVelocity3D::component_name())
+            .expect("AngularVelocity3D missing");
+        assert_eq!(omega.num_rows(), 3);
+
+        let mtq = store
+            .columns
+            .get(&MtqCommand3D::component_name())
+            .expect("MtqCommand3D missing");
+        assert_eq!(mtq.num_rows(), 3);
+
+        let rw_torque = store
+            .columns
+            .get(&RwTorqueCommand3D::component_name())
+            .expect("RwTorqueCommand3D missing");
+        assert_eq!(rw_torque.num_rows(), 3);
+
+        let rw_mom = store
+            .columns
+            .get(&RwMomentum3D::component_name())
+            .expect("RwMomentum3D missing");
+        assert_eq!(rw_mom.num_rows(), 3);
+
+        // Verify data values for first row
+        let pos0 = pos.get_row(0).unwrap();
+        assert!(
+            (pos0[0] - 6778.0).abs() < 1e-6,
+            "pos x mismatch: {}",
+            pos0[0]
+        );
+
+        let q0 = quat.get_row(0).unwrap();
+        assert!((q0[0] - 1.0).abs() < 1e-6, "qw mismatch: {}", q0[0]);
+
+        let w0 = omega.get_row(0).unwrap();
+        assert!((w0[0] - 0.05).abs() < 1e-6, "wx mismatch: {}", w0[0]);
+
+        // Verify data values for last row (i=2, t=20)
+        let mtq2 = mtq.get_row(2).unwrap();
+        assert!((mtq2[0] - 20.0).abs() < 1e-6, "mtq_mx at t=20: {}", mtq2[0]);
+
+        // Verify timeline
+        use crate::record::timeline::{TimeIndex, TimelineName};
+        let sim_times = store
+            .timelines
+            .get(&TimelineName::SimTime)
+            .expect("SimTime timeline missing");
+        assert_eq!(sim_times.len(), 3);
+        match &sim_times[0] {
+            TimeIndex::Seconds(t) => assert!((t - 0.0).abs() < 1e-9),
+            other => panic!("expected Seconds, got {:?}", other),
+        }
+        match &sim_times[2] {
+            TimeIndex::Seconds(t) => assert!((t - 20.0).abs() < 1e-9),
+            other => panic!("expected Seconds, got {:?}", other),
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn save_static_only_entity() {
         let mut rec = Recording::new();
