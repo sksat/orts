@@ -94,9 +94,9 @@ impl Plugin<TickInput, Command> for Controller {
         // Always send explicit commands (including zeros) so the host clears
         // stale ZOH values when the C controller transitions to zero output.
         Ok(Some(Command {
-            // Tcmd is body torque → per-wheel motor torque (3-axis orthogonal)
-            // Newton's 3rd law: motor torque = -body torque
-            rw: Some(RwCommand::Torques(vec![-tcmd[0], -tcmd[1], -tcmd[2]])),
+            // NOS3 GNC->Tcmd is the motor command (not body torque).
+            // orts RwCommand::Torques is also motor torque, so pass directly.
+            rw: Some(RwCommand::Torques(tcmd.to_vec())),
             mtq: Some(MtqCommand::Moments(mcmd.to_vec())),
         }))
     }

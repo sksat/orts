@@ -16,7 +16,7 @@ altitude = 400
 inertia_diag = [10, 10, 10]
 mass = 500
 initial_quaternion = [0.966, 0, 0.259, 0]
-initial_angular_velocity = [0.05, -0.03, 0.04]
+initial_angular_velocity = [0.15, -0.10, 0.12]
 
 [satellites.controller]
 type = "wasm"

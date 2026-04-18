@@ -332,8 +332,9 @@ jobs:
   # (C FFI via wasi-sdk) and verifies B-dot detumbling reduces angular
   # velocity. Separate job because it needs wasi-sdk for C cross-compilation.
   nos3-adcs-e2e:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    needs: [rust-build]
+    needs: [rust-dist]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -361,33 +362,16 @@ jobs:
         with:
           tool: cargo-component
 
-      - name: Install wasi-sdk (sysroot only)
+      - name: Install wasi-sysroot
         run: |
-          # Download the official wasi-sdk and extract only the sysroot.
-          # The cc crate uses WASI_SYSROOT to find headers/libs for wasm32-wasip1.
-          WASI_SDK_VERSION_MAJOR=25
-          WASI_SDK_VERSION="${WASI_SDK_VERSION_MAJOR}.0"
-          WASI_SDK_URL="https://github.com/aspect-build/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION_MAJOR}/wasi-sysroot-${WASI_SDK_VERSION}.tar.gz"
-          curl -sfL "$WASI_SDK_URL" -o /tmp/wasi-sysroot.tar.gz || {
-            # Fallback: full wasi-sdk
-            WASI_SDK_URL="https://github.com/aspect-build/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION_MAJOR}/wasi-sdk-${WASI_SDK_VERSION}-x86_64-linux.tar.gz"
-            curl -sfL "$WASI_SDK_URL" -o /tmp/wasi-sysroot.tar.gz
-          }
-          sudo mkdir -p /usr/share/wasi-sysroot
-          sudo tar xzf /tmp/wasi-sysroot.tar.gz -C /usr/share/ 2>/dev/null || true
-          # Handle different archive layouts
-          if [ -d "/usr/share/wasi-sysroot/include" ]; then
-            echo "wasi-sysroot extracted directly"
-          elif [ -d "/usr/share/wasi-sdk-${WASI_SDK_VERSION}/share/wasi-sysroot" ]; then
-            sudo ln -sf "/usr/share/wasi-sdk-${WASI_SDK_VERSION}/share/wasi-sysroot" /usr/share/wasi-sysroot
-          fi
+          curl -sfL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sysroot-25.0.tar.gz" \
+            | sudo tar xzf - -C /usr/share/
           echo "WASI_SYSROOT=/usr/share/wasi-sysroot" >> "$GITHUB_ENV"
-          ls /usr/share/wasi-sysroot/
 
-      - name: Download orts binary
+      - name: Download orts binary (release)
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: orts-cli-debug
+          name: orts-cli-release-x86_64-unknown-linux-gnu
           path: ./bin
 
       - name: Make orts binary executable
@@ -397,28 +381,7 @@ jobs:
         working-directory: plugin-sdk/examples/nos3-adcs
         env:
           ORTS_BIN: ${{ github.workspace }}/bin/orts
-        run: |
-          cargo component build
-          "$ORTS_BIN" run --config orts.toml --format csv --output stdout > /tmp/nos3_test.csv
-          # Verify angular velocity decreases by at least 20%
-          awk -F, '
-            /^#/ { next }
-            !got_first { first_wx=$14; first_wy=$15; first_wz=$16; got_first=1 }
-            { last_wx=$14; last_wy=$15; last_wz=$16 }
-            END {
-              initial = sqrt(first_wx^2 + first_wy^2 + first_wz^2)
-              final_v = sqrt(last_wx^2 + last_wy^2 + last_wz^2)
-              printf "Initial |omega| = %.6f rad/s\n", initial
-              printf "Final   |omega| = %.6f rad/s\n", final_v
-              if (final_v < initial * 0.8) {
-                printf "PASS: %.1f%% reduction\n", (1 - final_v/initial) * 100
-                exit 0
-              } else {
-                printf "FAIL: insufficient reduction\n"
-                exit 1
-              }
-            }
-          ' /tmp/nos3_test.csv
+        run: ./test.sh all
 
   # CLI plugin-backend E2E: downloads the orts binary artifact built
   # by rust-build and exercises `orts run --plugin-backend=sync|async`

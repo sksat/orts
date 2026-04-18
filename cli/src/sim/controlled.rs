@@ -18,7 +18,7 @@ use orts::setup::{build_spacecraft_dynamics, default_third_bodies};
 
 use crate::sim::core::sat_params;
 use orts::spacecraft::{MtqAssembly, ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState};
-use tobari::magnetic::TiltedDipole;
+use tobari::magnetic::igrf::Igrf;
 use utsuroi::{Integrator, Rk4};
 
 use crate::config::{ControllerConfig, MtqConfig, ReactionWheelConfig, SensorChoice};
@@ -120,7 +120,7 @@ pub fn build_controlled_satellite(
     let has_mtq = spec.mtq_config.is_some();
     let mtq_max_moment = match &spec.mtq_config {
         Some(MtqConfig::ThreeAxis { max_moment }) => {
-            let mtq = MtqAssembly::three_axis(*max_moment, TiltedDipole::earth());
+            let mtq = MtqAssembly::three_axis(*max_moment, Igrf::earth());
             dynamics = dynamics.with_model(mtq);
             *max_moment
         }
@@ -200,7 +200,7 @@ pub fn step_controlled(
         let cmd_len = match mtq_cmd {
             MtqCommand::Moments(v) | MtqCommand::NormalizedMoments(v) => v.len(),
         };
-        let mut mtq = MtqAssembly::three_axis(sat.mtq_max_moment, TiltedDipole::earth());
+        let mut mtq = MtqAssembly::three_axis(sat.mtq_max_moment, Igrf::earth());
         if cmd_len != mtq.core().num_mtqs() {
             return Err(format!(
                 "mtq command length ({}) != MTQ count ({})",
@@ -318,7 +318,7 @@ fn build_sensor_bundle(choices: Option<&[SensorChoice]>) -> SensorBundle {
     };
 
     let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> =
-        Arc::new(TiltedDipole::earth());
+        Arc::new(Igrf::earth());
 
     SensorBundle {
         magnetometers: if choices.contains(&SensorChoice::Magnetometer) {
