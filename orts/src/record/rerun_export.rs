@@ -147,6 +147,18 @@ pub fn save_as_rrd(
             &rerun::TextDocument::new(name.as_str()),
         )?;
     }
+    if let Some(ref iso) = meta.epoch_iso {
+        rec.log_static(
+            "meta/sim/epoch_iso",
+            &rerun::TextDocument::new(iso.as_str()),
+        )?;
+    }
+    if let Some(ref desc) = meta.orbit_description {
+        rec.log_static(
+            "meta/sim/orbit_description",
+            &rerun::TextDocument::new(desc.as_str()),
+        )?;
+    }
 
     rec.flush_blocking()?;
     Ok(())
@@ -268,11 +280,13 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
     // Build metadata from extracted values
     let metadata = SimMetadata {
         epoch_jd: meta_scalars.get("meta/sim/epoch_jd").copied(),
+        epoch_iso: meta_texts.get("meta/sim/epoch_iso").cloned(),
         mu: meta_scalars.get("meta/sim/mu").copied(),
         body_radius: meta_scalars.get("meta/sim/body_radius").copied(),
         altitude: meta_scalars.get("meta/sim/altitude").copied(),
         period: meta_scalars.get("meta/sim/period").copied(),
         body_name: meta_texts.get("meta/sim/body_name").cloned(),
+        orbit_description: meta_texts.get("meta/sim/orbit_description").cloned(),
     };
 
     // Find base entity paths that have x/y/z/vx/vy/vz sub-entities.
@@ -449,11 +463,13 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
     // Build metadata
     let metadata = SimMetadata {
         epoch_jd: meta_scalars.get("meta/sim/epoch_jd").copied(),
+        epoch_iso: meta_texts.get("meta/sim/epoch_iso").cloned(),
         mu: meta_scalars.get("meta/sim/mu").copied(),
         body_radius: meta_scalars.get("meta/sim/body_radius").copied(),
         altitude: meta_scalars.get("meta/sim/altitude").copied(),
         period: meta_scalars.get("meta/sim/period").copied(),
         body_name: meta_texts.get("meta/sim/body_name").cloned(),
+        orbit_description: meta_texts.get("meta/sim/orbit_description").cloned(),
     };
 
     // Find all entity base paths (strip the leaf field name and leading slash)

@@ -202,13 +202,31 @@ pub fn run_simulation(params: &SimParams) -> Recording {
 
     // Use first satellite for metadata (backward compatibility)
     let first_sat = params.satellites.first();
+    let orbit_desc = first_sat.map(|s| match &s.orbit {
+        OrbitSpec::Circular { altitude, r0, .. } => {
+            format!(
+                "Initial orbit: circular at {} km altitude (r = {} km)",
+                altitude, r0
+            )
+        }
+        OrbitSpec::Tle { elements, .. } => {
+            format!(
+                "Initial orbit: from TLE (a = {:.1} km, e = {:.6}, i = {:.2}°)",
+                elements.semi_major_axis,
+                elements.eccentricity,
+                elements.inclination.to_degrees()
+            )
+        }
+    });
     rec.metadata = orts::record::recording::SimMetadata {
         epoch_jd: params.epoch.map(|e| e.jd()),
+        epoch_iso: params.epoch.map(|e| e.to_datetime().to_string()),
         mu: Some(params.mu),
         body_radius: Some(params.body.properties().radius),
         body_name: Some(params.body.properties().name.to_string()),
         altitude: first_sat.map(|s| s.altitude(&params.body)),
         period: first_sat.map(|s| s.period),
+        orbit_description: orbit_desc,
     };
 
     rec
@@ -216,83 +234,76 @@ pub fn run_simulation(params: &SimParams) -> Recording {
 
 /// Print a Recording as CSV to stdout.
 pub fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
-    println!("# Orts 2-body orbit propagation");
-    println!("# mu = {} km^3/s^2", params.mu);
-    if let Some(epoch) = params.epoch {
-        println!("# epoch_jd = {}", epoch.jd());
-        println!("# epoch = {}", epoch.to_datetime());
-    }
-    println!(
-        "# central_body = {}",
-        params.body.properties().name.to_lowercase()
-    );
-    println!(
-        "# central_body_radius = {} km",
-        params.body.properties().radius
-    );
-
-    if params.satellites.len() == 1 {
-        // Single satellite: backward-compatible CSV format (no satellite_id column)
-        let sat = &params.satellites[0];
-        match &sat.orbit {
-            OrbitSpec::Circular { altitude, r0, .. } => {
-                println!(
-                    "# Initial orbit: circular at {} km altitude (r = {} km)",
-                    altitude, r0
-                );
-            }
-            OrbitSpec::Tle { tle_data, elements } => {
-                println!(
-                    "# Initial orbit: from TLE (a = {:.1} km, e = {:.6}, i = {:.2}°)",
-                    elements.semi_major_axis,
-                    elements.eccentricity,
-                    elements.inclination.to_degrees()
-                );
-                if let Some(name) = &tle_data.name {
-                    println!("# satellite = {name}");
-                }
-            }
-        }
-        println!(
-            "# Period = {:.1} s ({:.1} min)",
-            sat.period,
-            sat.period / 60.0
-        );
-        let sat_path = sat.entity_path();
-        println!("{}", build_csv_header(rec, &sat_path, false));
-        print_satellite_csv(rec, &sat_path, params.mu, false);
-    } else {
-        // Multi-satellite: add satellite_id as first column
-        println!(
-            "# satellites = {}",
-            params
-                .satellites
-                .iter()
-                .map(|s| s.id.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        // Build header from first satellite's columns (all satellites share the same schema)
-        if let Some(first_sat) = params.satellites.first() {
-            let sat_path = first_sat.entity_path();
-            println!("{}", build_csv_header(rec, &sat_path, true));
-        }
-
-        for sat in &params.satellites {
-            println!(
-                "# --- {} (period = {:.1} s) ---",
-                sat.name.as_deref().unwrap_or(&sat.id),
-                sat.period
-            );
-            let sat_path = sat.entity_path();
-            print_satellite_csv(rec, &sat_path, params.mu, true);
-        }
-    }
+    let mut stdout = std::io::stdout().lock();
+    write_recording_as_csv(&mut stdout, rec, Some(params)).unwrap();
 }
 
-pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with_id: bool) {
-    let mut stdout = std::io::stdout().lock();
-    write_satellite_csv(&mut stdout, rec, sat_path, mu, with_id).unwrap();
+/// Write a Recording as CSV to any writer.
+///
+/// If `params` is provided, satellite entity paths are taken from it;
+/// otherwise they are discovered from the Recording. This is the single
+/// source of truth for CSV output format.
+pub fn write_recording_as_csv(
+    w: &mut dyn std::io::Write,
+    rec: &Recording,
+    params: Option<&SimParams>,
+) -> std::io::Result<()> {
+    rec.metadata.write_csv_header(w)?;
+
+    let mu = rec.metadata.mu.unwrap_or(398600.4418);
+
+    // Get satellite entity paths + IDs
+    let sat_entries: Vec<(EntityPath, String)> = if let Some(params) = params {
+        params
+            .satellites
+            .iter()
+            .map(|s| (s.entity_path(), s.id.clone()))
+            .collect()
+    } else {
+        use orts::record::entity_path::EntityPath;
+        let prefix = EntityPath::parse("/world/sat");
+        let mut paths = rec.entities_under(&prefix);
+        paths.sort_by_key(|p| p.to_string());
+        paths
+            .into_iter()
+            .map(|p| {
+                let id = p
+                    .to_string()
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("default")
+                    .to_string();
+                (p.clone(), id)
+            })
+            .collect()
+    };
+
+    let multi_sat = sat_entries.len() > 1;
+
+    if multi_sat {
+        writeln!(
+            w,
+            "# satellites = {}",
+            sat_entries
+                .iter()
+                .map(|(_, id)| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )?;
+    }
+
+    if let Some((first_path, _)) = sat_entries.first() {
+        writeln!(w, "{}", build_csv_header(rec, first_path, multi_sat))?;
+    }
+
+    for (sat_path, id) in &sat_entries {
+        if multi_sat {
+            writeln!(w, "# --- {id} ---")?;
+        }
+        write_satellite_csv(w, rec, sat_path, mu, multi_sat)?;
+    }
+
+    Ok(())
 }
 
 /// Write satellite CSV data to any writer.
@@ -586,6 +597,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
 
     rec.metadata = orts::record::recording::SimMetadata {
         epoch_jd: params.epoch.map(|e| e.jd()),
+        epoch_iso: params.epoch.map(|e| e.to_datetime().to_string()),
         mu: Some(params.mu),
         body_radius: Some(params.body.properties().radius),
         body_name: Some(params.body.properties().name.to_string()),

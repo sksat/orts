@@ -64,11 +64,45 @@ pub struct EntityStore {
 #[derive(Debug, Clone, Default)]
 pub struct SimMetadata {
     pub epoch_jd: Option<f64>,
+    pub epoch_iso: Option<String>,
     pub mu: Option<f64>,
     pub body_radius: Option<f64>,
     pub body_name: Option<String>,
     pub altitude: Option<f64>,
     pub period: Option<f64>,
+    /// Human-readable initial orbit description (e.g. "circular at 400 km altitude").
+    pub orbit_description: Option<String>,
+}
+
+impl SimMetadata {
+    /// Write CSV metadata header comments to a writer.
+    ///
+    /// This is the single source of truth for CSV metadata format,
+    /// used by both `orts run --format csv` and `orts convert --format csv`.
+    pub fn write_csv_header(&self, w: &mut dyn std::io::Write) -> std::io::Result<()> {
+        if let Some(mu) = self.mu {
+            writeln!(w, "# mu = {} km^3/s^2", mu)?;
+        }
+        if let Some(epoch_jd) = self.epoch_jd {
+            writeln!(w, "# epoch_jd = {}", epoch_jd)?;
+        }
+        if let Some(ref iso) = self.epoch_iso {
+            writeln!(w, "# epoch = {}", iso)?;
+        }
+        if let Some(ref name) = self.body_name {
+            writeln!(w, "# central_body = {}", name.to_lowercase())?;
+        }
+        if let Some(radius) = self.body_radius {
+            writeln!(w, "# central_body_radius = {} km", radius)?;
+        }
+        if let Some(ref desc) = self.orbit_description {
+            writeln!(w, "# {}", desc)?;
+        }
+        if let Some(period) = self.period {
+            writeln!(w, "# Period = {:.1} s ({:.1} min)", period, period / 60.0)?;
+        }
+        Ok(())
+    }
 }
 
 /// Schema information for a registered component type.
