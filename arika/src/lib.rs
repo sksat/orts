@@ -1,5 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(feature = "alloc")]
 extern crate alloc;
 
 mod math;
@@ -8,6 +9,7 @@ pub mod body;
 pub mod earth;
 pub mod epoch;
 pub mod frame;
+#[cfg(feature = "alloc")]
 pub mod horizons;
 pub mod moon;
 pub mod planets;

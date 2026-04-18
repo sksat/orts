@@ -30,7 +30,6 @@
 //!
 //! 変換は `to_tai()` / `to_tt()` / `to_tdb()` 等の method で明示的に行う。
 
-use alloc::vec::Vec;
 use core::f64::consts::TAU;
 use core::marker::PhantomData;
 
@@ -382,30 +381,20 @@ impl Epoch<Utc> {
     /// Only UTC (Z suffix) is supported. Returns `None` if parsing fails.
     pub fn from_iso8601(s: &str) -> Option<Self> {
         let s = s.trim();
-        if !s.ends_with('Z') {
-            return None;
-        }
-        let s = &s[..s.len() - 1]; // strip 'Z'
-        let parts: Vec<&str> = s.split('T').collect();
-        if parts.len() != 2 {
-            return None;
-        }
+        let s = s.strip_suffix('Z')?;
+        let (date, time) = s.split_once('T')?;
 
-        let date_parts: Vec<&str> = parts[0].split('-').collect();
-        if date_parts.len() != 3 {
-            return None;
-        }
-        let year: i32 = date_parts[0].parse().ok()?;
-        let month: u32 = date_parts[1].parse().ok()?;
-        let day: u32 = date_parts[2].parse().ok()?;
+        let (year_s, rest) = date.split_once('-')?;
+        let (month_s, day_s) = rest.split_once('-')?;
+        let year: i32 = year_s.parse().ok()?;
+        let month: u32 = month_s.parse().ok()?;
+        let day: u32 = day_s.parse().ok()?;
 
-        let time_parts: Vec<&str> = parts[1].split(':').collect();
-        if time_parts.len() != 3 {
-            return None;
-        }
-        let hour: u32 = time_parts[0].parse().ok()?;
-        let min: u32 = time_parts[1].parse().ok()?;
-        let sec: f64 = time_parts[2].parse().ok()?;
+        let (hour_s, rest) = time.split_once(':')?;
+        let (min_s, sec_s) = rest.split_once(':')?;
+        let hour: u32 = hour_s.parse().ok()?;
+        let min: u32 = min_s.parse().ok()?;
+        let sec: f64 = sec_s.parse().ok()?;
 
         if !(1..=12).contains(&month)
             || !(1..=31).contains(&day)

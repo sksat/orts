@@ -13,7 +13,7 @@ categories = ["science", "science::geo"]
 
 [dependencies]
 nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
-serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde = { version = "1", default-features = false, features = ["derive"] }
 libm = "0.2"
 ureq = { workspace = true, optional = true }
 
@@ -23,5 +23,6 @@ trybuild = "1.0.116"
 
 [features]
 default = ["std"]
-std = ["nalgebra/std", "serde/std"]
+std = ["alloc", "nalgebra/std", "serde/std"]
+alloc = ["serde/alloc"]
 fetch-horizons = ["std", "dep:ureq"]

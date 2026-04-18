@@ -128,16 +128,22 @@ pub struct NullEop;
 // Intentionally NO `impl Ut1Offset for NullEop` etc.
 // The absence of these impls IS the feature.
 
-// ─── Data loading ────────────────────────────────────────────────
+// ─── Data loading (requires alloc) ───────────────────────────────
 
 pub mod entry;
+#[cfg(feature = "alloc")]
 pub mod error;
+#[cfg(feature = "alloc")]
 pub mod finals2000a;
+#[cfg(feature = "alloc")]
 pub mod table;
 
 pub use entry::EopEntry;
+#[cfg(feature = "alloc")]
 pub use error::{EopLookupError, EopParseError};
+#[cfg(feature = "alloc")]
 pub use finals2000a::Finals2000A;
+#[cfg(feature = "alloc")]
 pub use table::EopTable;
 
 // ─── Tests ───────────────────────────────────────────────────────

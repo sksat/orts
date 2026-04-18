@@ -12,7 +12,9 @@
 mod ephemeris;
 mod rotation;
 
-pub use ephemeris::{HorizonsMoonEphemeris, MeeusMoonEphemeris, MoonEphemeris, moon_position_eci};
+#[cfg(feature = "alloc")]
+pub use ephemeris::HorizonsMoonEphemeris;
+pub use ephemeris::{MeeusMoonEphemeris, MoonEphemeris, moon_position_eci};
 pub use rotation::{MOON, moon_orientation};
 
 // ─── Physical constants ──────────────────────────────────────────

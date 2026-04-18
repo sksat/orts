@@ -300,6 +300,7 @@ impl MoonEphemeris for MeeusMoonEphemeris {
 /// integrator's force model *and* to any number of auxiliary targeting helpers
 /// without re-parsing tables or re-fetching data — e.g.
 /// `ThirdBodyGravity::moon_with_ephemeris(Arc::clone(&shared_ephem))`.
+#[cfg(feature = "alloc")]
 impl<T: MoonEphemeris + ?Sized> MoonEphemeris for alloc::sync::Arc<T> {
     fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
         (**self).position_eci(epoch)
@@ -314,6 +315,7 @@ impl<T: MoonEphemeris + ?Sized> MoonEphemeris for alloc::sync::Arc<T> {
     }
 }
 
+#[cfg(feature = "alloc")]
 /// Moon ephemeris backed by a tabulated JPL Horizons vector table with
 /// cubic Hermite interpolation.
 ///
@@ -334,6 +336,7 @@ pub struct HorizonsMoonEphemeris {
     fallback_count: core::sync::atomic::AtomicUsize,
 }
 
+#[cfg(feature = "alloc")]
 impl HorizonsMoonEphemeris {
     /// Wrap an already-parsed `HorizonsTable`.
     pub fn from_table(table: crate::horizons::HorizonsTable) -> Self {
@@ -387,6 +390,7 @@ impl HorizonsMoonEphemeris {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl MoonEphemeris for HorizonsMoonEphemeris {
     fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
         match self.table.interpolate(epoch) {
