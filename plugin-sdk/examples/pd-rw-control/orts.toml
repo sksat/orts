@@ -19,7 +19,7 @@ initial_angular_velocity = [0.02, -0.01, 0.015]
 
 [satellites.controller]
 type = "wasm"
-path = "target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
+path = "../target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
 
 [satellites.controller.config]
 kp = 1.0
