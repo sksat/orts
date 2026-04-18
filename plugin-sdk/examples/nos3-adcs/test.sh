@@ -44,14 +44,16 @@ build() {
 
 run_sim() {
     local config="$1" label="$2"
+    local rrd_out="$RESULTS_DIR/${label}.rrd"
     local csv_out="$RESULTS_DIR/${label}.csv"
 
-    # Single simulation run → CSV (timed)
+    # Run simulation → rrd, then convert to CSV (single sim run)
     local t0 t1 elapsed_ms
     t0=$(date +%s%N)
-    "$ORTS_BIN" run --config "$config" --format csv --output stdout > "$csv_out" 2>/dev/null
+    "$ORTS_BIN" run --config "$config" --output "$rrd_out" 2>/dev/null
     t1=$(date +%s%N)
     elapsed_ms=$(( (t1 - t0) / 1000000 ))
+    "$ORTS_BIN" convert "$rrd_out" --format csv --output "$csv_out" 2>/dev/null
     cp "$csv_out" "$TMPCSV"
 
     # Single-pass awk: extract initial and final |omega|, append elapsed_ms
