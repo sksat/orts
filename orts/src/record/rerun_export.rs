@@ -84,6 +84,46 @@ pub fn save_as_rrd(
         }
     }
 
+    // Log component schema for each entity so load_as_recording() can
+    // reconstruct ComponentColumns without field-name guessing.
+    for entity_path in recording.entity_paths() {
+        let store = recording.entity(entity_path).unwrap();
+        let rr_path = to_rerun_path(entity_path);
+
+        let mut schema_entries: Vec<serde_json::Value> = Vec::new();
+        // Temporal components
+        let mut comp_names: Vec<_> = store.columns.keys().collect();
+        comp_names.sort();
+        for comp_name in comp_names {
+            let col = &store.columns[comp_name];
+            let fields = recording.lookup_component_fields(comp_name);
+            schema_entries.push(serde_json::json!({
+                "name": &**comp_name,
+                "fields": fields,
+                "scalars_per_row": col.scalars_per_row,
+            }));
+        }
+        // Static components
+        let mut static_names: Vec<_> = store.static_data.keys().collect();
+        static_names.sort();
+        for comp_name in static_names {
+            let fields = recording.lookup_component_fields(comp_name);
+            schema_entries.push(serde_json::json!({
+                "name": &**comp_name,
+                "fields": fields,
+                "static": true,
+            }));
+        }
+
+        if !schema_entries.is_empty() {
+            let schema_json = serde_json::to_string(&schema_entries).unwrap();
+            rec.log_static(
+                format!("meta/schema/{rr_path}"),
+                &rerun::TextDocument::new(schema_json),
+            )?;
+        }
+    }
+
     // Log simulation metadata as static data under meta/sim/
     let meta = &recording.metadata;
     if let Some(epoch_jd) = meta.epoch_jd {
@@ -311,6 +351,304 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
 /// Position and velocity are read from f64 Scalar components (x, y, z, vx, vy, vz).
 pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Error>> {
     Ok(load_rrd_data(path)?.rows)
+}
+
+/// Load an .rrd file and reconstruct a [`Recording`].
+///
+/// Uses component schema metadata (saved by [`save_as_rrd`]) to accurately
+/// reconstruct `ComponentColumn`s. Falls back to field-name heuristics for
+/// .rrd files saved before schema metadata was introduced.
+///
+/// This enables `orts convert` to produce the same CSV output as `orts run`.
+pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Error>> {
+    use crate::record::recording::ComponentColumn;
+    use rerun::external::re_log_encoding::DecoderApp;
+    use rerun::external::re_log_types::LogMsg;
+    use rerun::log::Chunk;
+    use std::borrow::Cow;
+    use std::collections::BTreeSet;
+
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::new(file);
+
+    // Collect all data from the rrd file
+    // scalars: "entity_path/field_name" -> Vec<(time_ns, f64)>
+    let mut scalars: BTreeMap<String, Vec<(i64, f64)>> = BTreeMap::new();
+    let mut meta_scalars: BTreeMap<String, f64> = BTreeMap::new();
+    let mut meta_texts: BTreeMap<String, String> = BTreeMap::new();
+
+    for msg in DecoderApp::decode_lazy(reader) {
+        let msg = msg?;
+        let LogMsg::ArrowMsg(_, arrow_msg) = msg else {
+            continue;
+        };
+        let chunk = Chunk::from_arrow_msg(&arrow_msg)?;
+        let entity_path = chunk.entity_path().to_string();
+        let n = chunk.num_rows();
+
+        let normalized_path = entity_path.strip_prefix('/').unwrap_or(&entity_path);
+        if normalized_path.starts_with("meta/") {
+            let entity_path = normalized_path.to_string();
+            for comp_id in chunk.components_identifiers() {
+                let comp_name = comp_id.as_str();
+                if comp_name.contains("Scalar") || comp_name.contains("scalars") {
+                    for row_idx in 0..n {
+                        let batch =
+                            chunk.component_batch::<rerun::components::Scalar>(comp_id, row_idx);
+                        if let Some(Ok(scalar_vec)) = batch
+                            && let Some(s) = scalar_vec.first()
+                        {
+                            meta_scalars.insert(entity_path.clone(), s.0.0);
+                        }
+                    }
+                }
+                if comp_name.contains("Text") || comp_name.contains("text") {
+                    for row_idx in 0..n {
+                        let batch =
+                            chunk.component_batch::<rerun::components::Text>(comp_id, row_idx);
+                        if let Some(Ok(text_vec)) = batch
+                            && let Some(t) = text_vec.first()
+                        {
+                            meta_texts.insert(entity_path.clone(), t.to_string());
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        let sim_time_col = chunk
+            .timelines()
+            .iter()
+            .find(|(name, _)| name.as_str() == "sim_time");
+        let times: Vec<i64> = if let Some((_, col)) = sim_time_col {
+            col.times_raw().to_vec()
+        } else {
+            vec![0; n]
+        };
+
+        for comp_id in chunk.components_identifiers() {
+            let comp_name = comp_id.as_str();
+            if comp_name.contains("Scalar") || comp_name.contains("scalars") {
+                for (row_idx, &t) in times.iter().enumerate() {
+                    let batch =
+                        chunk.component_batch::<rerun::components::Scalar>(comp_id, row_idx);
+                    if let Some(Ok(scalar_vec)) = batch {
+                        for s in scalar_vec {
+                            scalars
+                                .entry(entity_path.clone())
+                                .or_default()
+                                .push((t, s.0.0));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Build metadata
+    let metadata = SimMetadata {
+        epoch_jd: meta_scalars.get("meta/sim/epoch_jd").copied(),
+        mu: meta_scalars.get("meta/sim/mu").copied(),
+        body_radius: meta_scalars.get("meta/sim/body_radius").copied(),
+        altitude: meta_scalars.get("meta/sim/altitude").copied(),
+        period: meta_scalars.get("meta/sim/period").copied(),
+        body_name: meta_texts.get("meta/sim/body_name").cloned(),
+    };
+
+    // Find all entity base paths (strip the leaf field name and leading slash)
+    let base_paths: BTreeSet<String> = scalars
+        .keys()
+        .filter_map(|p| {
+            let normalized = p.strip_prefix('/').unwrap_or(p);
+            if normalized.starts_with("meta/") {
+                return None;
+            }
+            let base = normalized.rsplit_once('/')?.0;
+            Some(base.to_string())
+        })
+        .collect();
+
+    let mut rec = Recording::new();
+    rec.metadata = metadata;
+
+    for base in &base_paths {
+        let entity = EntityPath::parse(&format!("/{base}"));
+
+        // Try to load schema from meta/schema/<base>
+        let schema_key = format!("meta/schema/{base}");
+        let schema: Option<Vec<serde_json::Value>> = meta_texts
+            .get(&schema_key)
+            .and_then(|json| serde_json::from_str(json).ok());
+
+        // Collect all field names under this base path.
+        // Scalar keys may have a leading slash; normalize for comparison.
+        let field_names: Vec<String> = scalars
+            .keys()
+            .filter_map(|k| {
+                let normalized = k.strip_prefix('/').unwrap_or(k);
+                normalized
+                    .strip_prefix(base)?
+                    .strip_prefix('/')
+                    .map(String::from)
+            })
+            .collect();
+
+        if let Some(schema) = schema {
+            // Schema-based reconstruction: group fields into components
+            for entry in &schema {
+                let comp_name_str = entry["name"].as_str().unwrap_or("");
+                let is_static = entry
+                    .get("static")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let fields: Vec<String> = entry["fields"]
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if is_static {
+                    // Reconstruct static data
+                    let mut static_scalars = Vec::new();
+                    for field in &fields {
+                        if let Some(data) = get_scalar_data(&scalars, base, field)
+                            && let Some((_, val)) = data.first()
+                        {
+                            static_scalars.push(*val);
+                        } else if let Some(&val) = meta_scalars.get(&format!("{base}/{field}")) {
+                            static_scalars.push(val);
+                        }
+                    }
+                    if !static_scalars.is_empty() {
+                        let comp_name: Cow<'static, str> = Cow::Owned(comp_name_str.to_string());
+                        let store = rec.entity_mut(&entity);
+                        store.static_data.insert(comp_name.clone(), static_scalars);
+                        rec.register_component_fields(
+                            comp_name,
+                            fields.iter().map(|s| s.as_str()).collect(),
+                        );
+                    }
+                } else {
+                    // Reconstruct temporal ComponentColumn
+                    let n_fields = fields.len();
+                    if n_fields == 0 {
+                        continue;
+                    }
+
+                    // Get data for first field to determine row count and times
+                    let Some(first_data) = get_scalar_data(&scalars, base, &fields[0]) else {
+                        continue;
+                    };
+
+                    let n_rows = first_data.len();
+                    let mut column = ComponentColumn::new(n_fields);
+
+                    for i in 0..n_rows {
+                        let mut row = Vec::with_capacity(n_fields);
+                        for field in &fields {
+                            let val = get_scalar_data(&scalars, base, field)
+                                .and_then(|data| data.get(i))
+                                .map(|(_, v)| *v)
+                                .unwrap_or(0.0);
+                            row.push(val);
+                        }
+                        column.push(&row);
+                    }
+
+                    // Set timelines from first field's timestamps
+                    let store = rec.entity_mut(&entity);
+                    store
+                        .timelines
+                        .entry(TimelineName::SimTime)
+                        .or_insert_with(|| {
+                            first_data
+                                .iter()
+                                .map(|(t_ns, _)| TimeIndex::Seconds(*t_ns as f64 / 1e9))
+                                .collect()
+                        });
+                    store.num_rows = n_rows;
+
+                    let comp_name: Cow<'static, str> = Cow::Owned(comp_name_str.to_string());
+                    store.columns.insert(comp_name.clone(), column);
+                    rec.register_component_fields(
+                        comp_name,
+                        fields.iter().map(|s| s.as_str()).collect(),
+                    );
+                }
+            }
+        } else {
+            // Fallback: no schema metadata (legacy rrd files).
+            // Group fields by known Component field_names.
+            // Build reverse lookup from field_names
+            let known: &[(&str, &[&str])] = &[
+                ("orts.Position3D", &["x", "y", "z"]),
+                ("orts.Velocity3D", &["vx", "vy", "vz"]),
+                ("orts.Quaternion4D", &["qw", "qx", "qy", "qz"]),
+                ("orts.AngularVelocity3D", &["wx", "wy", "wz"]),
+                ("orts.MtqCommand3D", &["mtq_mx", "mtq_my", "mtq_mz"]),
+                ("orts.RwTorqueCommand3D", &["rw_tx", "rw_ty", "rw_tz"]),
+                ("orts.RwMomentum3D", &["rw_hx", "rw_hy", "rw_hz"]),
+            ];
+
+            let field_set: BTreeSet<&str> = field_names.iter().map(|s| s.as_str()).collect();
+
+            for &(comp_name_str, comp_fields) in known {
+                if comp_fields.iter().all(|f| field_set.contains(f)) {
+                    let Some(first_data) = get_scalar_data(&scalars, base, comp_fields[0]) else {
+                        continue;
+                    };
+                    let n_rows = first_data.len();
+                    let n_fields = comp_fields.len();
+                    let mut column = ComponentColumn::new(n_fields);
+
+                    for i in 0..n_rows {
+                        let mut row = Vec::with_capacity(n_fields);
+                        for field in comp_fields {
+                            let val = get_scalar_data(&scalars, base, field)
+                                .and_then(|data| data.get(i))
+                                .map(|(_, v)| *v)
+                                .unwrap_or(0.0);
+                            row.push(val);
+                        }
+                        column.push(&row);
+                    }
+
+                    let store = rec.entity_mut(&entity);
+                    store
+                        .timelines
+                        .entry(TimelineName::SimTime)
+                        .or_insert_with(|| {
+                            first_data
+                                .iter()
+                                .map(|(t_ns, _)| TimeIndex::Seconds(*t_ns as f64 / 1e9))
+                                .collect()
+                        });
+                    store.num_rows = n_rows.max(store.num_rows);
+
+                    let comp_name: Cow<'static, str> = Cow::Owned(comp_name_str.to_string());
+                    store.columns.insert(comp_name.clone(), column);
+                    rec.register_component_fields(comp_name, comp_fields.to_vec());
+                }
+            }
+        }
+    }
+
+    Ok(rec)
+}
+
+/// Look up scalar data, trying both with and without leading slash.
+fn get_scalar_data<'a>(
+    scalars: &'a BTreeMap<String, Vec<(i64, f64)>>,
+    base: &str,
+    field: &str,
+) -> Option<&'a Vec<(i64, f64)>> {
+    scalars
+        .get(&format!("{base}/{field}"))
+        .or_else(|| scalars.get(&format!("/{base}/{field}")))
 }
 
 fn to_rerun_path(path: &EntityPath) -> String {

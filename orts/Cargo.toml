@@ -28,6 +28,7 @@ arika.workspace = true
 utsuroi.workspace = true
 tobari.workspace = true
 log = "0.4.29"
+serde_json = { workspace = true }
 rand = "0.9.1"
 rand_distr = "0.5.0"
 serde.workspace = true

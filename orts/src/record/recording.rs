@@ -224,6 +224,22 @@ impl Recording {
         self.entities.keys()
     }
 
+    /// Get a mutable reference to the entity store, creating it if needed.
+    pub fn entity_mut(&mut self, path: &EntityPath) -> &mut EntityStore {
+        self.entities.entry(path.clone()).or_default()
+    }
+
+    /// Register component field names for a given component name.
+    /// Used by `load_as_recording` to populate the registry from schema metadata.
+    pub fn register_component_fields(&mut self, name: ComponentName, fields: Vec<&str>) {
+        self.component_registry
+            .entry(name)
+            .or_insert_with(|| ComponentFieldInfo {
+                scalars_per_row: fields.len(),
+                field_names: fields.iter().map(|s| s.to_string()).collect(),
+            });
+    }
+
     /// Get all entities matching a prefix path.
     pub fn entities_under(&self, prefix: &EntityPath) -> Vec<&EntityPath> {
         let prefix_str = prefix.to_string();
