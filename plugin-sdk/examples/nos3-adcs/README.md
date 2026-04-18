@@ -73,9 +73,9 @@ orts run --config orts.toml
 
 ![B-dot](bdot.png)
 
-### Sun-Safe Pointing (600s)
+### Sun-Safe Pointing (600s, post-detumble ω)
 
-初期角速度: ω = [0.15, -0.10, 0.12] rad/s (~12.5 deg/s)
+初期角速度: ω = [0.01, -0.005, 0.008] rad/s (~0.8 deg/s, B-dot デタンブリング後を想定)
 
 ![Sun-Safe](sunsafe.png)
 

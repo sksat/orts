@@ -147,12 +147,12 @@ bdot_b_range = 1e-9"
 }
 
 test_sunsafe() {
-    echo "=== Sun-Safe pointing (mode 2, 600s) ==="
+    echo "=== Sun-Safe pointing (mode 2, 600s, post-detumble ω) ==="
     gen_config 2 600.0 0.1 1.0 "sunsafe_kp = [0.01, 0.01, 0.01]
 sunsafe_kr = [0.1, 0.1, 0.1]
 sunsafe_sside = [1.0, 0.0, 0.0]
 sunsafe_vmax = 0.01
-momentum_management = true"
+momentum_management = true" "0.01, -0.005, 0.008"
     read -r initial final elapsed < <(run_sim "$TMPTOML" sunsafe)
     check_reduction "Sun-Safe" 0.2 "$initial" "$final" "$elapsed"
 }
