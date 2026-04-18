@@ -56,6 +56,9 @@ jobs:
       - name: Clippy (arika no_std + alloc)
         run: cargo clippy --locked -p arika --no-default-features --features alloc -- -D warnings
 
+      - name: Clippy (utsuroi no_std)
+        run: cargo clippy --locked -p utsuroi --no-default-features -- -D warnings
+
       # Contract check: `orts` must still build with the sync-only
       # WASM backend (`plugin-wasm` without `plugin-wasm-async`). The
       # workspace default pulls `plugin-wasm-async` in via the CLI's

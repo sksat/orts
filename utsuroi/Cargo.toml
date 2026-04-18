@@ -12,7 +12,12 @@ keywords = ["ode", "integrator", "numerical", "simulation", "orbital"]
 categories = ["algorithms", "science"]
 
 [dependencies]
-nalgebra.workspace = true
+nalgebra = { version = "0.34", default-features = false, features = ["libm", "macros"] }
+libm = "0.2.16"
+
+[features]
+default = ["std"]
+std = ["nalgebra/std"]
 
 [dev-dependencies]
 proptest = "1.10.0"

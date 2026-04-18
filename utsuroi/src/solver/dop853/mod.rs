@@ -1,9 +1,11 @@
 mod coeff;
 
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use coeff::*;
 
+#[allow(unused_imports)]
+use crate::math::F64Ext;
 use crate::{
     DynamicalSystem, IntegrationError, IntegrationOutcome, Integrator, OdeState, Tolerances,
 };
@@ -366,7 +368,7 @@ impl Dop853 {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::ControlFlow;
+    use core::ops::ControlFlow;
 
     use nalgebra::vector;
 

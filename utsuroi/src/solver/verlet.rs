@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use nalgebra::SVector;
 
@@ -116,7 +116,7 @@ impl StormerVerlet {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::ControlFlow;
+    use core::ops::ControlFlow;
 
     use nalgebra::vector;
 

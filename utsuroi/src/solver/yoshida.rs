@@ -9,7 +9,7 @@
 // integrators", Physics Letters A 150(5-7), 262-268, 1990.
 // ---------------------------------------------------------------------------
 
-use std::ops::ControlFlow;
+use core::ops::ControlFlow;
 
 use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState, State};
 

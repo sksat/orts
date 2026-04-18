@@ -1,6 +1,8 @@
 use nalgebra::SVector;
 
 use crate::Tolerances;
+#[allow(unused_imports)]
+use crate::math::F64Ext;
 
 /// Algebraic operations required by generic ODE solvers.
 ///
