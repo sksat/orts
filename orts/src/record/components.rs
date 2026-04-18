@@ -199,6 +199,84 @@ impl Component for KeplerianState {
     }
 }
 
+/// MTQ command (magnetic dipole moment) in body frame [A·m²], 3-axis.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MtqCommand3D(pub Vector3<f64>);
+
+impl Component for MtqCommand3D {
+    fn component_name() -> ComponentName {
+        "orts.MtqCommand3D".into()
+    }
+    fn num_scalars() -> usize {
+        3
+    }
+    fn to_scalars(&self) -> Vec<f64> {
+        vec![self.0.x, self.0.y, self.0.z]
+    }
+    fn from_scalars(data: &[f64]) -> Option<Self> {
+        if data.len() >= 3 {
+            Some(MtqCommand3D(Vector3::new(data[0], data[1], data[2])))
+        } else {
+            None
+        }
+    }
+    fn field_names() -> Vec<&'static str> {
+        vec!["mtq_mx", "mtq_my", "mtq_mz"]
+    }
+}
+
+/// RW command (motor torque) per wheel [N·m], 3-axis orthogonal.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RwTorqueCommand3D(pub Vector3<f64>);
+
+impl Component for RwTorqueCommand3D {
+    fn component_name() -> ComponentName {
+        "orts.RwTorqueCommand3D".into()
+    }
+    fn num_scalars() -> usize {
+        3
+    }
+    fn to_scalars(&self) -> Vec<f64> {
+        vec![self.0.x, self.0.y, self.0.z]
+    }
+    fn from_scalars(data: &[f64]) -> Option<Self> {
+        if data.len() >= 3 {
+            Some(RwTorqueCommand3D(Vector3::new(data[0], data[1], data[2])))
+        } else {
+            None
+        }
+    }
+    fn field_names() -> Vec<&'static str> {
+        vec!["rw_tx", "rw_ty", "rw_tz"]
+    }
+}
+
+/// RW momentum per wheel [N·m·s], 3-axis orthogonal.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RwMomentum3D(pub Vector3<f64>);
+
+impl Component for RwMomentum3D {
+    fn component_name() -> ComponentName {
+        "orts.RwMomentum3D".into()
+    }
+    fn num_scalars() -> usize {
+        3
+    }
+    fn to_scalars(&self) -> Vec<f64> {
+        vec![self.0.x, self.0.y, self.0.z]
+    }
+    fn from_scalars(data: &[f64]) -> Option<Self> {
+        if data.len() >= 3 {
+            Some(RwMomentum3D(Vector3::new(data[0], data[1], data[2])))
+        } else {
+            None
+        }
+    }
+    fn field_names() -> Vec<&'static str> {
+        vec!["rw_hx", "rw_hy", "rw_hz"]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

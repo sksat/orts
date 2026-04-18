@@ -4,7 +4,10 @@ use orts::OrbitalState;
 use orts::group::{IndependentGroup, IntegratorConfig};
 use orts::orbital::kepler::KeplerianElements;
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
-use orts::record::components::{BodyRadius, GravitationalParameter};
+use orts::record::components::{
+    AngularVelocity3D, BodyRadius, GravitationalParameter, MtqCommand3D, Quaternion4D,
+    RwMomentum3D, RwTorqueCommand3D,
+};
 use orts::record::entity_path::EntityPath;
 use orts::record::recording::Recording;
 use orts::record::timeline::TimePoint;
@@ -255,11 +258,8 @@ pub fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
             sat.period,
             sat.period / 60.0
         );
-        println!(
-            "# t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s],a[km],e[-],i[rad],raan[rad],omega[rad],nu[rad]"
-        );
-
         let sat_path = sat.entity_path();
+        println!("{}", build_csv_header(rec, &sat_path, false));
         print_satellite_csv(rec, &sat_path, params.mu, false);
     } else {
         // Multi-satellite: add satellite_id as first column
@@ -272,9 +272,11 @@ pub fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-        println!(
-            "# satellite_id,t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s],a[km],e[-],i[rad],raan[rad],omega[rad],nu[rad]"
-        );
+        // Build header from first satellite's columns (all satellites share the same schema)
+        if let Some(first_sat) = params.satellites.first() {
+            let sat_path = first_sat.entity_path();
+            println!("{}", build_csv_header(rec, &sat_path, true));
+        }
 
         for sat in &params.satellites {
             println!(
@@ -310,7 +312,15 @@ pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with
         None => return,
     };
 
-    // Extract satellite id from path (last segment)
+    // Collect extra columns (everything except Position3D and Velocity3D), sorted by name
+    let skip = [Position3D::component_name(), Velocity3D::component_name()];
+    let mut extra_cols: Vec<_> = store
+        .columns
+        .iter()
+        .filter(|(name, _)| !skip.contains(name))
+        .collect();
+    extra_cols.sort_by(|(a, _), (b, _)| a.cmp(b));
+
     let id = sat_path.to_string();
     let id = id.rsplit('/').next().unwrap_or("default");
 
@@ -324,43 +334,105 @@ pub fn print_satellite_csv(rec: &Recording, sat_path: &EntityPath, mu: f64, with
         let pos_vec = nalgebra::Vector3::new(pos[0], pos[1], pos[2]);
         let vel_vec = nalgebra::Vector3::new(vel[0], vel[1], vel[2]);
         let elements = KeplerianElements::from_state_vector(&pos_vec, &vel_vec, mu);
+
+        let mut line = String::new();
         if with_id {
-            println!(
-                "{},{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.3},{:.10},{:.10},{:.10},{:.10},{:.10}",
-                id,
-                t,
-                pos[0],
-                pos[1],
-                pos[2],
-                vel[0],
-                vel[1],
-                vel[2],
-                elements.semi_major_axis,
-                elements.eccentricity,
-                elements.inclination,
-                elements.raan,
-                elements.argument_of_periapsis,
-                elements.true_anomaly,
-            );
-        } else {
-            println!(
-                "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.3},{:.10},{:.10},{:.10},{:.10},{:.10}",
-                t,
-                pos[0],
-                pos[1],
-                pos[2],
-                vel[0],
-                vel[1],
-                vel[2],
-                elements.semi_major_axis,
-                elements.eccentricity,
-                elements.inclination,
-                elements.raan,
-                elements.argument_of_periapsis,
-                elements.true_anomaly,
-            );
+            line.push_str(&format!("{},", id));
+        }
+        line.push_str(&format!(
+            "{:.3},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.3},{:.10},{:.10},{:.10},{:.10},{:.10}",
+            t,
+            pos[0],
+            pos[1],
+            pos[2],
+            vel[0],
+            vel[1],
+            vel[2],
+            elements.semi_major_axis,
+            elements.eccentricity,
+            elements.inclination,
+            elements.raan,
+            elements.argument_of_periapsis,
+            elements.true_anomaly,
+        ));
+
+        // Append all extra columns dynamically
+        for (_name, col) in &extra_cols {
+            if let Some(row) = col.get_row(i) {
+                for val in row {
+                    line.push_str(&format!(",{:.10}", val));
+                }
+            }
+        }
+
+        println!("{line}");
+    }
+}
+
+/// Build the CSV header line dynamically from the Recording's columns.
+pub fn build_csv_header(rec: &Recording, sat_path: &EntityPath, with_id: bool) -> String {
+    use orts::record::component::Component;
+    use orts::record::components::{Position3D, Velocity3D};
+
+    let mut header = String::new();
+    header.push_str("# ");
+    if with_id {
+        header.push_str("satellite_id,");
+    }
+    header.push_str("t[s],x[km],y[km],z[km],vx[km/s],vy[km/s],vz[km/s],a[km],e[-],i[rad],raan[rad],omega[rad],nu[rad]");
+
+    if let Some(store) = rec.entity(sat_path) {
+        let skip = [Position3D::component_name(), Velocity3D::component_name()];
+        let mut extra_cols: Vec<_> = store
+            .columns
+            .keys()
+            .filter(|name| !skip.contains(name))
+            .collect();
+        extra_cols.sort();
+
+        for name in extra_cols {
+            // Use component name as column prefix (strip "orts." prefix)
+            let short = name.strip_prefix("orts.").unwrap_or(name);
+            if let Some(col) = store.columns.get(name) {
+                let n = col.scalars_per_row;
+                if n == 1 {
+                    header.push_str(&format!(",{short}"));
+                } else {
+                    // Look up field names from known components
+                    let field_names = lookup_field_names(name, n);
+                    for fname in field_names {
+                        header.push_str(&format!(",{fname}"));
+                    }
+                }
+            }
         }
     }
+
+    header
+}
+
+fn lookup_field_names(component_name: &str, n: usize) -> Vec<String> {
+    use orts::record::component::Component;
+
+    // Known component types — return their field_names
+    macro_rules! try_component {
+        ($ty:ty) => {
+            if <$ty>::component_name() == component_name {
+                return <$ty>::field_names().iter().map(|s| s.to_string()).collect();
+            }
+        };
+    }
+    try_component!(Quaternion4D);
+    try_component!(AngularVelocity3D);
+    try_component!(MtqCommand3D);
+    try_component!(RwTorqueCommand3D);
+    try_component!(RwMomentum3D);
+
+    // Fallback: generate numbered names
+    let short = component_name
+        .strip_prefix("orts.")
+        .unwrap_or(component_name);
+    (0..n).map(|i| format!("{short}_{i}")).collect()
 }
 
 /// 制御付きシミュレーション（プラグインコントローラ + RW + センサ）。
@@ -444,9 +516,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
     // 初期状態を記録。
     for (i, sat) in satellites.iter().enumerate() {
         let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
-        let orbit = &sat.state.plant.orbit;
-        let os = RecordOrbitalState::new(*orbit.position(), *orbit.velocity());
-        rec.log_orbital_state(&sat_paths[i], &tp, &os);
+        log_controlled_state(&mut rec, &sat_paths[i], &tp, sat);
     }
 
     // 全衛星の sample_period の最小値をグローバル tick に使う。
@@ -486,9 +556,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
         if t >= next_output_t - 1e-12 {
             for (i, sat) in satellites.iter().enumerate() {
                 let tp = TimePoint::new().with_sim_time(t).with_step(step);
-                let orbit = &sat.state.plant.orbit;
-                let os = RecordOrbitalState::new(*orbit.position(), *orbit.velocity());
-                rec.log_orbital_state(&sat_paths[i], &tp, &os);
+                log_controlled_state(&mut rec, &sat_paths[i], &tp, sat);
             }
             step += 1;
             last_output_t = t;
@@ -500,9 +568,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
     if (t - last_output_t) > 1e-9 {
         for (i, sat) in satellites.iter().enumerate() {
             let tp = TimePoint::new().with_sim_time(t).with_step(step);
-            let orbit = &sat.state.plant.orbit;
-            let os = RecordOrbitalState::new(*orbit.position(), *orbit.velocity());
-            rec.log_orbital_state(&sat_paths[i], &tp, &os);
+            log_controlled_state(&mut rec, &sat_paths[i], &tp, sat);
         }
     }
 
@@ -515,4 +581,77 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
     };
 
     rec
+}
+
+/// Log controlled satellite state: orbit + attitude + commands + actuator telemetry.
+fn log_controlled_state(
+    rec: &mut Recording,
+    entity: &EntityPath,
+    tp: &TimePoint,
+    sat: &crate::sim::controlled::ControlledSatellite,
+) {
+    use orts::plugin::{MtqCommand as PluginMtqCommand, RwCommand as PluginRwCommand};
+    use orts::spacecraft::ReactionWheelAssembly;
+
+    let orbit = &sat.state.plant.orbit;
+    let os = RecordOrbitalState::new(*orbit.position(), *orbit.velocity());
+    let att = &sat.state.plant.attitude;
+    let q = Quaternion4D(att.quaternion);
+    let w = AngularVelocity3D(att.angular_velocity);
+    rec.log_orbital_state_with_attitude(entity, tp, &os, Some(&q), Some(&w));
+
+    // MTQ command (always log to keep row count aligned with orbital state).
+    // TODO: distinguish Moments vs NormalizedMoments — currently both are
+    // recorded as MtqCommand3D with A·m² labels. NormalizedMoments values
+    // are [-1, 1] and should be scaled or use a separate component.
+    if sat.has_mtq {
+        let mtq_vec = sat
+            .actuators
+            .mtq_command()
+            .and_then(|cmd| {
+                let v = match cmd {
+                    PluginMtqCommand::Moments(v) | PluginMtqCommand::NormalizedMoments(v) => v,
+                };
+                (v.len() >= 3).then(|| nalgebra::Vector3::new(v[0], v[1], v[2]))
+            })
+            .unwrap_or(nalgebra::Vector3::zeros());
+        rec.log_temporal(entity, tp, &MtqCommand3D(mtq_vec));
+    }
+
+    // RW command (always log to keep row count aligned).
+    // TODO: distinguish Torques vs Speeds — currently both are recorded
+    // as RwTorqueCommand3D. Speeds (rad/s) should use a separate component.
+    if sat.has_rw {
+        let rw_vec = sat
+            .actuators
+            .rw_command()
+            .and_then(|cmd| {
+                let v = match cmd {
+                    PluginRwCommand::Torques(v) | PluginRwCommand::Speeds(v) => v,
+                };
+                (v.len() >= 3).then(|| nalgebra::Vector3::new(v[0], v[1], v[2]))
+            })
+            .unwrap_or(nalgebra::Vector3::zeros());
+        rec.log_temporal(entity, tp, &RwTorqueCommand3D(rw_vec));
+    }
+
+    // RW momentum telemetry
+    if sat.has_rw
+        && let Some(rw) = sat
+            .dynamics
+            .effector_by_name::<ReactionWheelAssembly>("reaction_wheels")
+    {
+        let momentum = rw.core().momentum_slice(&sat.state.aux);
+        if momentum.len() >= 3 {
+            rec.log_temporal(
+                entity,
+                tp,
+                &RwMomentum3D(nalgebra::Vector3::new(
+                    momentum[0],
+                    momentum[1],
+                    momentum[2],
+                )),
+            );
+        }
+    }
 }

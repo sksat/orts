@@ -188,6 +188,7 @@ pub struct SatelliteConfig {
     /// リアクションホイール設定。
     pub reaction_wheels: Option<ReactionWheelConfig>,
     /// MTQ 設定。
+    #[serde(alias = "magnetorquers")]
     pub mtq: Option<MtqConfig>,
 }
 
