@@ -44,6 +44,8 @@
 //! orts_plugin!(MyController, mode);
 //! ```
 
+use alloc::boxed::Box;
+
 /// 1 tick の実行結果。
 pub struct ModeOutput<I, C> {
     /// このモードが出すコマンド。

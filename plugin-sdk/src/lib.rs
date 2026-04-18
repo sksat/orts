@@ -1,3 +1,4 @@
+#![no_std]
 //! orts plugin SDK — WASM Component ゲスト開発用。
 //!
 //! ホストは **ループベース** (`plugin` world) でゲストを駆動する。
@@ -50,7 +51,11 @@
 //! }
 //! ```
 
+extern crate alloc;
+
 pub mod mode;
+
+use alloc::string::String;
 
 /// コールバック型プラグインの trait。
 ///
