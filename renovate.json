@@ -1,4 +1,14 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>sksat/renovate-config"]
+  "extends": ["github>sksat/renovate-config"],
+  "customManagers": [
+    {
+      "description": "Match '# renovate: datasource=... depName=...' followed by a VARNAME=value assignment in shell/CI",
+      "customType": "regex",
+      "fileMatch": ["^\\.github/workflows/.*\\.ya?ml$", "\\.sh$"],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)(?:\\s+extractVersion=(?<extractVersion>\\S+))?(?:\\s+versioning=(?<versioning>\\S+))?\\s*\\n\\s*\\w+=(?<currentValue>\\S+)"
+      ]
+    }
+  ]
 }

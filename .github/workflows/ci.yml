@@ -364,8 +364,11 @@ jobs:
 
       - name: Install wasi-sysroot
         run: |
-          curl -sfL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sysroot-25.0.tar.gz" \
-            | sudo tar xzf - -C /usr/share/
+          # renovate: datasource=github-releases depName=WebAssembly/wasi-sdk extractVersion=^wasi-sdk-(?<version>\d+)$
+          WASI_SDK_VERSION=25
+          curl -sfL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sysroot-${WASI_SDK_VERSION}.0.tar.gz" \
+            | sudo tar xzf - -C /tmp/
+          sudo mv "/tmp/wasi-sysroot-${WASI_SDK_VERSION}.0" /usr/share/wasi-sysroot
           echo "WASI_SYSROOT=/usr/share/wasi-sysroot" >> "$GITHUB_ENV"
 
       - name: Download orts binary (release)
