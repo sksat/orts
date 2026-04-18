@@ -1,15 +1,18 @@
 # orts
 
-Numerical computation and optimization platform for orbital mechanics.
+[![crates.io](https://img.shields.io/crates/v/orts)](https://crates.io/crates/orts)
+[![CI](https://github.com/sksat/orts/actions/workflows/ci.yml/badge.svg)](https://github.com/sksat/orts/actions/workflows/ci.yml)
+[![docs.rs](https://img.shields.io/docsrs/orts)](https://docs.rs/orts)
+[![Docs](https://img.shields.io/badge/docs-sksat.github.io%2Forts-blue)](https://sksat.github.io/orts/)
+[![License: MIT](https://img.shields.io/crates/l/orts)](LICENSE)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sksat/orts)
 
-Rust workspace for orbital / attitude simulation with a React-based real-time
-3D viewer, WebAssembly Component Model plugin runtime, and browser-native
-analytics.
+**orts** is an astrodynamics simulation platform — orbit and attitude dynamics with real-time 3D visualization, extensible WASM plugins, and in-browser analytics.
 
 ## Features
 
 - N-body orbital simulation with adaptive (DOP853, Dormand-Prince) and symplectic (Störmer-Verlet, Yoshida) integrators
-- Gravity models: point-mass, spherical harmonics (up to degree 16)
+- Gravity models: point-mass, zonal harmonics (J2, J3, J4)
 - Perturbations: atmospheric drag, solar radiation pressure, third-body gravity, constant thrust
 - Atmosphere models: Exponential, Harris-Priester, NRLMSISE-00
 - Geomagnetic field: IGRF-14 spherical harmonic expansion + tilted-dipole approximation
@@ -17,7 +20,7 @@ analytics.
 - IAU 2006/2000A CIO-based Earth rotation with typed coordinate frames and EOP
 - Celestial body ephemerides (Meeus analytic + JPL Horizons)
 - Attitude dynamics and control: reaction wheels, magnetorquers, B-dot / PD controllers
-- Sensor models: magnetometer, gyroscope, star tracker (with noise)
+- Sensor models: magnetometer, gyroscope, sun sensor, star tracker (with noise)
 - WASM Component Model plugin runtime for guest controllers via wasmtime
 - CLI with embedded 3D viewer, WebSocket telemetry, and format conversion
 - Real-time charting with DuckDB-wasm + uPlot (uneri library)
@@ -37,10 +40,10 @@ cargo binstall orts-cli
 
 ```bash
 # Run a simulation from config file
-orts run --config simulation.toml
+orts run --config orts.toml
 
 # WebSocket server with embedded 3D viewer
-orts serve --config simulation.toml
+orts serve --config orts.toml
 # Open http://localhost:9001
 
 # Replay a recorded simulation
@@ -50,7 +53,7 @@ orts replay output.rrd
 orts convert output.rrd --format csv
 ```
 
-Example config (`simulation.toml`):
+Example config (`orts.toml`):
 
 ```toml
 body = "earth"
@@ -75,8 +78,36 @@ inertia = 0.01
 max_torque = 0.5
 ```
 
-See [examples/](https://github.com/sksat/orts/tree/main/orts/examples) for
-Apollo 11, Artemis 1, orbital lifetime analysis, and WASM plugin demos.
+### WASM Plugin
+
+Write satellite attitude controllers in any language that compiles to WebAssembly.
+Plugins receive sensor readings (magnetometer, gyroscope, star tracker, etc.) each tick and return actuator commands (reaction wheels, magnetorquers) — the simulator handles all dynamics and environment models.
+
+```bash
+# Install cargo-component
+cargo install cargo-component
+
+# Build an example plugin
+cd plugin-sdk/examples/pd-rw-control
+cargo component build --release
+```
+
+Add a plugin controller to your config:
+
+```toml
+[satellites.controller]
+type = "wasm"
+path = "target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
+
+[satellites.controller.config]
+kp = 1.0
+kd = 2.0
+sample_period = 0.1
+```
+
+See [plugin-sdk/examples/](https://github.com/sksat/orts/tree/main/plugin-sdk/examples) for more plugin examples,
+and [examples/](https://github.com/sksat/orts/tree/main/orts/examples) for
+Apollo 11, Artemis 1, and orbital lifetime analysis demos.
 
 ## Project Structure
 
