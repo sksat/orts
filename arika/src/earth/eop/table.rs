@@ -1,5 +1,7 @@
 //! EOP lookup table with interpolation.
 
+use alloc::vec::Vec;
+
 use super::entry::EopEntry;
 use super::error::EopLookupError;
 

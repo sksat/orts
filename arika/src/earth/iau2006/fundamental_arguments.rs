@@ -42,7 +42,7 @@
 //! expressed in radians with `t` in Julian centuries, so only a linear (F6..F13)
 //! or quadratic (F14) evaluation and a 2π reduction are required.
 
-use std::f64::consts::TAU;
+use core::f64::consts::TAU;
 
 use super::{DAS2R, Rad, TURNAS};
 

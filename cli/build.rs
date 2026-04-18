@@ -66,9 +66,14 @@ fn main() {
 /// feature switches on optional deps such as `wasm-bindgen` and
 /// `serde-wasm-bindgen` that aren't reachable from the native cli graph, so
 /// these need a dedicated `cargo about` pass to be covered by the notice.
-const VIEWER_WASM_CRATES: &[(&str, &str)] = &[
-    ("../arika/Cargo.toml", "arika"),
-    ("../rrd-wasm/Cargo.toml", "rrd-wasm"),
+/// (manifest_path, display_name, extra_cargo_about_args)
+const VIEWER_WASM_CRATES: &[(&str, &str, &[&str])] = &[
+    ("../arika/wasm/Cargo.toml", "arika-wasm", &[]),
+    (
+        "../rrd-wasm/Cargo.toml",
+        "rrd-wasm",
+        &["--features", "wasm", "--no-default-features"],
+    ),
 ];
 
 /// Generate the third-party license NOTICE via notalawyer/cargo-about.
@@ -111,7 +116,7 @@ fn run_license_notice() {
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=../Cargo.lock");
     println!("cargo:rerun-if-changed=about.toml");
-    for (manifest, _) in VIEWER_WASM_CRATES {
+    for (manifest, _, _) in VIEWER_WASM_CRATES {
         println!("cargo:rerun-if-changed={manifest}");
     }
     println!("cargo:rerun-if-env-changed=DOCS_RS");
@@ -127,7 +132,7 @@ fn run_license_notice() {
             &native_path,
             "(third-party license notice is not embedded in docs.rs builds)\n",
         );
-        for (_, name) in VIEWER_WASM_CRATES {
+        for (_, name, _) in VIEWER_WASM_CRATES {
             write_stub_notice(&wasm_notice_path(out_dir, name), "");
         }
         return;
@@ -149,12 +154,16 @@ fn run_license_notice() {
         let config_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("about.toml");
         let template_path =
             notalawyer_build::about_hbs().expect("failed to locate notalawyer about.hbs template");
-        for (manifest, name) in VIEWER_WASM_CRATES {
+        for (manifest, name, extra_args) in VIEWER_WASM_CRATES {
             let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest);
             let output_path = wasm_notice_path(out_dir, name);
-            if let Err(err) =
-                try_generate_wasm_notice(&manifest_path, &config_path, &template_path, &output_path)
-            {
+            if let Err(err) = try_generate_wasm_notice(
+                &manifest_path,
+                &config_path,
+                &template_path,
+                &output_path,
+                extra_args,
+            ) {
                 // A missing sibling manifest happens on packaged / single-crate
                 // source installs; a non-zero cargo-about exit typically means a
                 // new license needs to be accepted. Either way we only hard-fail
@@ -197,7 +206,7 @@ fn run_license_notice() {
          available at build time; rebuild with cargo-about installed to \
          embed the real notice)\n",
     );
-    for (_, name) in VIEWER_WASM_CRATES {
+    for (_, name, _) in VIEWER_WASM_CRATES {
         write_stub_notice(&wasm_notice_path(out_dir, name), "");
     }
 }
@@ -211,6 +220,7 @@ fn try_generate_wasm_notice(
     config: &Path,
     template: &Path,
     output: &Path,
+    extra_args: &[&str],
 ) -> Result<(), String> {
     if !manifest.exists() {
         // Happens when cli is built from a packaged crate that does not
@@ -219,25 +229,26 @@ fn try_generate_wasm_notice(
     }
     let file = std::fs::File::create(output)
         .map_err(|e| format!("failed to create wasm notice file: {e}"))?;
+    let mut args = vec![
+        "about",
+        "generate",
+        "-c",
+        config
+            .to_str()
+            .ok_or_else(|| "about.toml path is not UTF-8".to_string())?,
+        "-m",
+        manifest
+            .to_str()
+            .ok_or_else(|| "manifest path is not UTF-8".to_string())?,
+    ];
+    args.extend_from_slice(extra_args);
+    args.push(
+        template
+            .to_str()
+            .ok_or_else(|| "about.hbs path is not UTF-8".to_string())?,
+    );
     let status = std::process::Command::new("cargo")
-        .args([
-            "about",
-            "generate",
-            "-c",
-            config
-                .to_str()
-                .ok_or_else(|| "about.toml path is not UTF-8".to_string())?,
-            "-m",
-            manifest
-                .to_str()
-                .ok_or_else(|| "manifest path is not UTF-8".to_string())?,
-            "--features",
-            "wasm",
-            "--no-default-features",
-            template
-                .to_str()
-                .ok_or_else(|| "about.hbs path is not UTF-8".to_string())?,
-        ])
+        .args(&args)
         .stdout(std::process::Stdio::from(file))
         .status()
         .map_err(|e| format!("failed to spawn cargo-about: {e}"))?;

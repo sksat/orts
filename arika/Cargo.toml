@@ -11,19 +11,17 @@ description = "Coordinate frames, reference transforms, epochs, and celestial bo
 keywords = ["coordinates", "ephemeris", "astronomy", "geodesy", "orbital"]
 categories = ["science", "science::geo"]
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
-nalgebra.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-wasm-bindgen = { version = "0.2", optional = true }
+nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+libm = "0.2"
 ureq = { workspace = true, optional = true }
 
 [dev-dependencies]
+serde_json.workspace = true
 trybuild = "1.0.116"
 
 [features]
-wasm = ["wasm-bindgen"]
-fetch-horizons = ["dep:ureq"]
+default = ["std"]
+std = ["nalgebra/std", "serde/std"]
+fetch-horizons = ["std", "dep:ureq"]

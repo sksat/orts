@@ -28,10 +28,10 @@ pub fn rust_notice() -> &'static str {
     notalawyer::include_notice!()
 }
 
-/// NOTICE for the `arika` Rust crate's dependencies as compiled with its
-/// `wasm` feature (as packed into the viewer bundle by wasm-pack).
+/// NOTICE for the `arika-wasm` Rust crate's dependencies
+/// (as packed into the viewer bundle by wasm-pack).
 pub fn wasm_arika_notice() -> &'static str {
-    include_str!(concat!(env!("OUT_DIR"), "/notalawyer_wasm_arika"))
+    include_str!(concat!(env!("OUT_DIR"), "/notalawyer_wasm_arika-wasm"))
 }
 
 /// NOTICE for the `rrd-wasm` Rust crate's dependencies as compiled with its

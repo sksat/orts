@@ -51,6 +51,9 @@
 #![allow(clippy::inconsistent_digit_grouping)]
 #![allow(clippy::excessive_precision)]
 
+#[allow(unused_imports)]
+use crate::math::F64Ext;
+
 use super::{Arcsec, Rad};
 
 // ─── IAU 2006 precession constants ───────────────────────────────

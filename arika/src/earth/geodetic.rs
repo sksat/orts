@@ -9,6 +9,8 @@ use nalgebra::Vector3;
 use super::ellipsoid::{WGS84_A, WGS84_B, WGS84_E2};
 use crate::SimpleEcef;
 use crate::frame::{self, Vec3};
+#[allow(unused_imports)]
+use crate::math::F64Ext;
 
 /// Geodetic coordinates (WGS-84).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -42,7 +44,7 @@ impl From<SimpleEcef> for Geodetic {
         // Near-polar special case
         if p < 1e-10 {
             return Geodetic {
-                latitude: v.z.signum() * std::f64::consts::FRAC_PI_2,
+                latitude: v.z.signum() * core::f64::consts::FRAC_PI_2,
                 longitude,
                 altitude: v.z.abs() - WGS84_B,
             };
@@ -105,7 +107,7 @@ impl<F: frame::Ecef> Vec3<F> {
         // Near-polar special case mirrors the `From<SimpleEcef>` impl.
         if p < 1e-10 {
             return Geodetic {
-                latitude: v.z.signum() * std::f64::consts::FRAC_PI_2,
+                latitude: v.z.signum() * core::f64::consts::FRAC_PI_2,
                 longitude,
                 altitude: v.z.abs() - WGS84_B,
             };
@@ -213,7 +215,7 @@ mod tests {
     fn test_equator_90east() {
         let geo = Geodetic {
             latitude: 0.0,
-            longitude: std::f64::consts::FRAC_PI_2,
+            longitude: core::f64::consts::FRAC_PI_2,
             altitude: 0.0,
         };
         let ecef: SimpleEcef = geo.into();
@@ -226,7 +228,7 @@ mod tests {
     #[test]
     fn test_north_pole() {
         let geo = Geodetic {
-            latitude: std::f64::consts::FRAC_PI_2,
+            latitude: core::f64::consts::FRAC_PI_2,
             longitude: 0.0,
             altitude: 0.0,
         };

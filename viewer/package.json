@@ -11,7 +11,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:wasm:arika": "wasm-pack build ../arika --target web --out-dir ../viewer/src/wasm/arika --out-name arika -- --locked --features wasm",
+    "build:wasm:arika": "wasm-pack build ../arika/wasm --target web --out-dir ../../viewer/src/wasm/arika --out-name arika -- --locked",
     "build:wasm:rrd": "wasm-pack build ../rrd-wasm --target web --out-dir ../viewer/src/wasm/rrd-wasm --out-name rrd_wasm -- --locked --features wasm",
     "build:wasm": "pnpm run build:wasm:arika && pnpm run build:wasm:rrd",
     "build": "pnpm run build:wasm && tsc && vite build",

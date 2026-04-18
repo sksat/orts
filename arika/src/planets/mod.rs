@@ -19,6 +19,9 @@ pub mod rotation;
 
 use nalgebra::Vector3;
 
+#[allow(unused_imports)]
+use crate::math::F64Ext;
+
 use crate::epoch::Epoch;
 use crate::sun::AU_KM;
 

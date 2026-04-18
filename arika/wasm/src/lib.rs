@@ -1,9 +1,14 @@
+//! WebAssembly bindings for the arika coordinate/epoch/ephemeris library.
+//!
+//! Thin `wasm_bindgen` facade exposing arika's coordinate transforms,
+//! epoch conversions, and ephemeris queries to browser-side JavaScript.
+
 use wasm_bindgen::prelude::*;
 
-use crate::epoch::Epoch;
-use crate::frame::{self, Rotation};
-use crate::sun;
-use crate::{SimpleEcef, SimpleEci};
+use arika::epoch::Epoch;
+use arika::frame::{self, Rotation};
+use arika::sun;
+use arika::{SimpleEcef, SimpleEci};
 use nalgebra::{UnitQuaternion, Vector3, Vector4};
 
 /// Batch ECI→ECEF transform with per-point time.
@@ -23,8 +28,8 @@ pub fn eci_to_ecef_batch(positions: &[f32], times: &[f32], epoch_jd: f64) -> Vec
 
     let mut out = Vec::with_capacity(n * 3);
 
-    for i in 0..n {
-        let epoch = Epoch::from_jd(epoch_jd).add_seconds(times[i] as f64);
+    for (i, &t) in times.iter().enumerate().take(n) {
+        let epoch = Epoch::from_jd(epoch_jd).add_seconds(t as f64);
         let r = Rotation::<frame::SimpleEci, frame::SimpleEcef>::from_era(epoch.gmst());
 
         let off = i * 3;
@@ -113,7 +118,7 @@ pub fn jd_to_utc_string(epoch_jd: f64, t: f64) -> String {
 /// Returns `[x, y, z]` (3 floats, km).
 #[wasm_bindgen]
 pub fn geodetic_to_ecef(lat_deg: f64, lon_deg: f64, altitude_km: f64) -> Vec<f64> {
-    let geod = crate::earth::Geodetic {
+    let geod = arika::earth::Geodetic {
         latitude: lat_deg.to_radians(),
         longitude: lon_deg.to_radians(),
         altitude: altitude_km,
@@ -128,7 +133,7 @@ pub fn geodetic_to_ecef(lat_deg: f64, lon_deg: f64, altitude_km: f64) -> Vec<f64
 #[wasm_bindgen]
 pub fn geodetic_to_eci(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f64) -> Vec<f64> {
     let epoch = Epoch::from_jd(epoch_jd);
-    let geod = crate::earth::Geodetic {
+    let geod = arika::earth::Geodetic {
         latitude: lat_deg.to_radians(),
         longitude: lon_deg.to_radians(),
         altitude: altitude_km,
@@ -153,7 +158,7 @@ pub fn body_orientation(body: &str, epoch_jd: f64, t: f64) -> Vec<f64> {
     // TDB, so convert UTC → TDB before calling the rotation API.
     let epoch_utc = Epoch::from_jd(epoch_jd).add_seconds(t);
     let epoch_tdb = epoch_utc.to_tdb();
-    match crate::rotation::body_orientation(body, &epoch_tdb) {
+    match arika::rotation::body_orientation(body, &epoch_tdb) {
         Some(q) => vec![q.w, q.i, q.j, q.k],
         None => vec![],
     }
@@ -168,6 +173,7 @@ pub fn body_orientation(body: &str, epoch_jd: f64, t: f64) -> Vec<f64> {
 /// Returns `[w, x, y, z]` body-to-RSW quaternion (4 floats, f64).
 /// Returns an empty vec if the RSW frame cannot be computed (degenerate orbit).
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn body_quat_to_rsw(
     pos_x: f64,
     pos_y: f64,
@@ -185,7 +191,7 @@ pub fn body_quat_to_rsw(
     let q_body_eci =
         UnitQuaternion::from_quaternion(nalgebra::Quaternion::from(Vector4::new(qx, qy, qz, qw)));
 
-    match crate::body_quat_to_rsw(&pos, &vel, &q_body_eci) {
+    match arika::body_quat_to_rsw(&pos, &vel, &q_body_eci) {
         Some(q) => vec![q.w, q.i, q.j, q.k],
         None => vec![],
     }

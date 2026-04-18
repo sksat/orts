@@ -16,6 +16,9 @@
 
 use nalgebra::Vector3;
 
+#[allow(unused_imports)]
+use crate::math::F64Ext;
+
 use crate::epoch::Epoch;
 use crate::frame::{self, Vec3};
 use crate::planets;
@@ -101,12 +104,12 @@ pub fn equation_of_time(epoch: &Epoch) -> f64 {
     let mut eot_rad = l0_rad - alpha_rad;
 
     // Normalize to [-π, π]
-    eot_rad = ((eot_rad + std::f64::consts::PI) % std::f64::consts::TAU + std::f64::consts::TAU)
-        % std::f64::consts::TAU
-        - std::f64::consts::PI;
+    eot_rad = ((eot_rad + core::f64::consts::PI) % core::f64::consts::TAU + core::f64::consts::TAU)
+        % core::f64::consts::TAU
+        - core::f64::consts::PI;
 
     // Convert radians to hours: 2π rad = 24 hours
-    eot_rad * 24.0 / std::f64::consts::TAU
+    eot_rad * 24.0 / core::f64::consts::TAU
 }
 
 /// Sun-Earth distance [km] at the given epoch.

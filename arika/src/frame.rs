@@ -54,8 +54,8 @@
 //! let b_body: Vec3<Body> = r_bg.transform(&b_gcrs);
 //! ```
 
-use std::marker::PhantomData;
-use std::ops::{Add, Div, Mul, Neg, Sub};
+use core::marker::PhantomData;
+use core::ops::{Add, Div, Mul, Neg, Sub};
 
 use nalgebra::{UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
@@ -393,12 +393,12 @@ impl<F: Frame> Vec3<F> {
     }
 }
 
-impl<F> std::fmt::Debug for Vec3<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<F> core::fmt::Debug for Vec3<F> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "Vec3<{}>({}, {}, {})",
-            std::any::type_name::<F>()
+            core::any::type_name::<F>()
                 .rsplit("::")
                 .next()
                 .unwrap_or("?"),
@@ -453,13 +453,13 @@ impl<F> Div<f64> for Vec3<F> {
     }
 }
 
-impl<F> std::ops::AddAssign for Vec3<F> {
+impl<F> core::ops::AddAssign for Vec3<F> {
     fn add_assign(&mut self, rhs: Self) {
         self.0 += rhs.0;
     }
 }
 
-impl<F> std::ops::SubAssign for Vec3<F> {
+impl<F> core::ops::SubAssign for Vec3<F> {
     fn sub_assign(&mut self, rhs: Self) {
         self.0 -= rhs.0;
     }
@@ -556,13 +556,13 @@ impl Rotation<SimpleEcef, SimpleEci> {
     }
 }
 
-impl<From, To> std::fmt::Debug for Rotation<From, To> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let from = std::any::type_name::<From>()
+impl<From, To> core::fmt::Debug for Rotation<From, To> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let from = core::any::type_name::<From>()
             .rsplit("::")
             .next()
             .unwrap_or("?");
-        let to = std::any::type_name::<To>()
+        let to = core::any::type_name::<To>()
             .rsplit("::")
             .next()
             .unwrap_or("?");

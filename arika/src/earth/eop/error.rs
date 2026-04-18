@@ -1,6 +1,7 @@
 //! Error types for EOP parsing and lookup.
 
-use std::fmt;
+use alloc::string::String;
+use core::fmt;
 
 /// Error during EOP data file parsing.
 #[derive(Debug)]
@@ -44,7 +45,7 @@ impl fmt::Display for EopParseError {
     }
 }
 
-impl std::error::Error for EopParseError {}
+impl core::error::Error for EopParseError {}
 
 /// Error during EOP table lookup.
 #[derive(Debug)]
@@ -66,4 +67,4 @@ impl fmt::Display for EopLookupError {
     }
 }
 
-impl std::error::Error for EopLookupError {}
+impl core::error::Error for EopLookupError {}

@@ -4,6 +4,9 @@
 //! Chapter 47 with full periodic term tables, plus a trait abstraction that
 //! lets callers swap between Meeus and JPL-Horizons-backed ephemerides.
 
+#[allow(unused_imports)]
+use crate::math::F64Ext;
+
 use crate::epoch::Epoch;
 use crate::frame::{self, Vec3};
 
@@ -297,7 +300,7 @@ impl MoonEphemeris for MeeusMoonEphemeris {
 /// integrator's force model *and* to any number of auxiliary targeting helpers
 /// without re-parsing tables or re-fetching data — e.g.
 /// `ThirdBodyGravity::moon_with_ephemeris(Arc::clone(&shared_ephem))`.
-impl<T: MoonEphemeris + ?Sized> MoonEphemeris for std::sync::Arc<T> {
+impl<T: MoonEphemeris + ?Sized> MoonEphemeris for alloc::sync::Arc<T> {
     fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
         (**self).position_eci(epoch)
     }
@@ -328,7 +331,7 @@ impl<T: MoonEphemeris + ?Sized> MoonEphemeris for std::sync::Arc<T> {
 pub struct HorizonsMoonEphemeris {
     table: crate::horizons::HorizonsTable,
     fallback: MeeusMoonEphemeris,
-    fallback_count: std::sync::atomic::AtomicUsize,
+    fallback_count: core::sync::atomic::AtomicUsize,
 }
 
 impl HorizonsMoonEphemeris {
@@ -337,11 +340,12 @@ impl HorizonsMoonEphemeris {
         Self {
             table,
             fallback: MeeusMoonEphemeris,
-            fallback_count: std::sync::atomic::AtomicUsize::new(0),
+            fallback_count: core::sync::atomic::AtomicUsize::new(0),
         }
     }
 
     /// Load a Horizons CSV file and wrap it.
+    #[cfg(feature = "std")]
     pub fn from_file(
         path: impl AsRef<std::path::Path>,
     ) -> Result<Self, crate::horizons::HorizonsError> {
@@ -374,12 +378,12 @@ impl HorizonsMoonEphemeris {
     /// because the query epoch was outside the table range.
     pub fn fallback_count(&self) -> usize {
         self.fallback_count
-            .load(std::sync::atomic::Ordering::Relaxed)
+            .load(core::sync::atomic::Ordering::Relaxed)
     }
 
     fn record_fallback(&self) {
         self.fallback_count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
 }
 

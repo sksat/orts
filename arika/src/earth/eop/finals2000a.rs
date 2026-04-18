@@ -25,6 +25,9 @@
 //!   166-175: dX [mas]
 //!   176-185: dY [mas]
 
+use alloc::string::ToString;
+use alloc::vec::Vec;
+
 use super::entry::EopEntry;
 use super::error::EopParseError;
 

@@ -60,9 +60,12 @@
 //! assert!((ra_rad.raw() - std::f64::consts::PI / 180.0).abs() < 1e-15);
 //! ```
 
-use std::f64::consts::PI;
-use std::marker::PhantomData;
-use std::ops::{Add, Div, Mul, Neg, Sub};
+use core::f64::consts::PI;
+use core::marker::PhantomData;
+use core::ops::{Add, Div, Mul, Neg, Sub};
+
+#[allow(unused_imports)]
+use crate::math::F64Ext;
 
 pub mod cio_chain;
 pub mod cip;
@@ -211,8 +214,8 @@ impl Rad {
 
 // Debug prints the unit name so that `Arcsec` vs `Rad` is visible in test
 // failures, without needing `std::any::type_name`.
-impl<U: AngleUnit> std::fmt::Debug for Angle<U> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<U: AngleUnit> core::fmt::Debug for Angle<U> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Angle<{}>({})", U::NAME, self.0)
     }
 }

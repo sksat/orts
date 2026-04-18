@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "utsuroi",
     "arika",
+    "arika/wasm",
     "cli",
     "orts",
     "tobari",

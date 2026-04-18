@@ -30,8 +30,12 @@
 //!
 //! 変換は `to_tai()` / `to_tt()` / `to_tdb()` 等の method で明示的に行う。
 
-use std::f64::consts::TAU;
-use std::marker::PhantomData;
+use alloc::vec::Vec;
+use core::f64::consts::TAU;
+use core::marker::PhantomData;
+
+#[allow(unused_imports)]
+use crate::math::F64Ext;
 
 // ─── Constants ────────────────────────────────────────────────────
 
@@ -51,6 +55,7 @@ const JULIAN_CENTURY: f64 = 36525.0;
 const TT_MINUS_TAI_SEC: f64 = 32.184;
 
 /// Unix epoch (1970-01-01 00:00:00 UTC) in Julian Date.
+#[cfg(feature = "std")]
 const UNIX_EPOCH_JD: f64 = 2440587.5;
 
 // ─── Leap second table ────────────────────────────────────────────
@@ -234,8 +239,8 @@ impl DateTime {
     }
 }
 
-impl std::fmt::Display for DateTime {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for DateTime {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Round to integer seconds and normalize overflow (e.g. sec=59.999... → 60)
         let sec = self.sec.round() as u32;
         let (sec, carry) = if sec >= 60 { (0u32, 1u32) } else { (sec, 0) };
@@ -415,6 +420,7 @@ impl Epoch<Utc> {
     }
 
     /// Create a UTC epoch from the current system time.
+    #[cfg(feature = "std")]
     pub fn now() -> Self {
         let unix_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

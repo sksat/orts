@@ -23,6 +23,9 @@
 
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 
+#[allow(unused_imports)]
+use crate::math::F64Ext;
+
 use crate::epoch::{Epoch, Tdb};
 
 /// IAU rotation model parameters for a celestial body.

@@ -49,6 +49,9 @@
 
 use nalgebra::Matrix3;
 
+#[allow(unused_imports)]
+use crate::math::F64Ext;
+
 use super::fundamental_arguments::FundamentalArguments;
 use super::tables_gen::{
     CipTerm, SXY2_POLY_UAS, SXY2_TERMS_0, SXY2_TERMS_1, SXY2_TERMS_2, SXY2_TERMS_3, SXY2_TERMS_4,

@@ -58,6 +58,9 @@
 
 use nalgebra::{Matrix3, Rotation3, UnitQuaternion, Vector3};
 
+#[allow(unused_imports)]
+use crate::math::F64Ext;
+
 use super::cip::{cio_locator_s, cip_xy, gcrs_to_cirs_matrix, rotation_x, rotation_y, rotation_z};
 use super::{Arcsec, Mas, Rad, Uas};
 use crate::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};

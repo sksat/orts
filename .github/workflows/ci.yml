@@ -46,6 +46,11 @@ jobs:
       - name: Clippy (tobari wasm)
         run: cargo clippy --locked -p tobari --features wasm -- -D warnings
 
+      # Contract check: `arika` must compile with `no_std + alloc`
+      # (no default features disables the `std` feature).
+      - name: Clippy (arika no_std)
+        run: cargo clippy --locked -p arika --no-default-features -- -D warnings
+
       # Contract check: `orts` must still build with the sync-only
       # WASM backend (`plugin-wasm` without `plugin-wasm-async`). The
       # workspace default pulls `plugin-wasm-async` in via the CLI's

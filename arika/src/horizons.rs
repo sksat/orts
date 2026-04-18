@@ -20,7 +20,9 @@
 //! Position is in km, velocity in km/s. The parser accepts either
 //! whitespace- or comma-separated rows after splitting on commas.
 
-use std::fmt;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
 
 use nalgebra::Vector3;
 
@@ -107,7 +109,7 @@ impl fmt::Display for HorizonsError {
     }
 }
 
-impl std::error::Error for HorizonsError {}
+impl core::error::Error for HorizonsError {}
 
 impl HorizonsTable {
     /// Parse a Horizons CSV vector-table string.
@@ -176,6 +178,7 @@ impl HorizonsTable {
     }
 
     /// Load a Horizons CSV table from a file on disk.
+    #[cfg(feature = "std")]
     pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self, HorizonsError> {
         let text =
             std::fs::read_to_string(path.as_ref()).map_err(|e| HorizonsError::Io(e.to_string()))?;

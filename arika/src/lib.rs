@@ -1,3 +1,9 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
+
+mod math;
+
 pub mod body;
 pub mod earth;
 pub mod epoch;
@@ -7,9 +13,6 @@ pub mod moon;
 pub mod planets;
 pub mod rotation;
 pub mod sun;
-
-#[cfg(feature = "wasm")]
-pub mod wasm;
 
 use nalgebra::{Matrix3, Rotation3, UnitQuaternion, Vector3};
 
