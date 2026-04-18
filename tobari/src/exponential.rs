@@ -3,6 +3,9 @@
 //! Based on US Standard Atmosphere 1976 reference values.
 //! Returns atmospheric density [kg/m³] at a given altitude [km].
 
+#[allow(unused_imports)]
+use crate::math::F64Ext;
+
 use crate::{AtmosphereInput, AtmosphereModel};
 
 /// Atmosphere layer: base altitude, base density, and scale height.

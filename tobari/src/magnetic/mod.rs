@@ -9,9 +9,11 @@
 //! `F: MagneticFieldModel` bounds.
 
 pub mod dipole;
+#[cfg(feature = "alloc")]
 pub mod igrf;
 
 pub use dipole::TiltedDipole;
+#[cfg(feature = "alloc")]
 pub use igrf::Igrf;
 
 use arika::earth::geodetic::Geodetic;

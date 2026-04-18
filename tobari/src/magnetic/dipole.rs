@@ -2,6 +2,8 @@ use arika::earth::ellipsoid::{WGS84_A, WGS84_E2};
 use nalgebra::Vector3;
 
 use super::{MagneticFieldInput, MagneticFieldModel};
+#[allow(unused_imports)]
+use crate::math::F64Ext;
 
 /// Earth magnetic dipole strength [T*m^3] (= mu_0/(4*pi) * 7.94e22 A*m^2).
 const EARTH_DIPOLE_STRENGTH: f64 = 7.94e15;

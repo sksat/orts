@@ -14,12 +14,12 @@ use nalgebra::Vector3;
 
 use std::sync::OnceLock;
 
-use crate::cssi::{CssiData, CssiSpaceWeather};
-use crate::gfz::{self, SpaceWeatherFormat};
-use crate::magnetic::{Igrf, MagneticFieldInput, MagneticFieldModel, TiltedDipole};
-use crate::nrlmsise00::{Nrlmsise00, Nrlmsise00Input};
-use crate::space_weather::SpaceWeatherProvider;
-use crate::{AtmosphereInput, AtmosphereModel, ConstantWeather, HarrisPriester};
+use tobari::cssi::{CssiData, CssiSpaceWeather};
+use tobari::gfz::{self, SpaceWeatherFormat};
+use tobari::magnetic::{Igrf, MagneticFieldInput, MagneticFieldModel, TiltedDipole};
+use tobari::nrlmsise00::{Nrlmsise00, Nrlmsise00Input};
+use tobari::space_weather::SpaceWeatherProvider;
+use tobari::{AtmosphereInput, AtmosphereModel, ConstantWeather, HarrisPriester};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,7 +87,7 @@ fn make_mag_input(
 /// Exponential atmosphere density [kg/m³] at the given altitude.
 #[wasm_bindgen]
 pub fn exponential_density(altitude_km: f64) -> f64 {
-    crate::exponential::density(altitude_km)
+    tobari::exponential::density(altitude_km)
 }
 
 /// Harris-Priester density [kg/m³] at a geodetic point and epoch.
@@ -124,8 +124,8 @@ pub fn nrlmsise00_density(
     let epoch = Epoch::from_jd(epoch_jd);
     let model = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
 
-    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
-    let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon_deg, &epoch);
+    let (doy, ut_sec) = tobari::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+    let lst = tobari::nrlmsise00::geo::local_solar_time(ut_sec, lon_deg, &epoch);
     let sw = ConstantWeather::new(f107, ap).get(&epoch);
 
     let input = Nrlmsise00Input {
@@ -164,13 +164,13 @@ pub fn atmosphere_altitude_profile(
     let hp = HarrisPriester::new();
     let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
 
-    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
-    let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon_deg, &epoch);
+    let (doy, ut_sec) = tobari::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+    let lst = tobari::nrlmsise00::geo::local_solar_time(ut_sec, lon_deg, &epoch);
     let sw = ConstantWeather::new(f107, ap).get(&epoch);
 
     let mut out = Vec::with_capacity(altitudes.len() * 3);
     for &alt in altitudes {
-        let exp_rho = crate::exponential::density(alt);
+        let exp_rho = tobari::exponential::density(alt);
         let hp_input = AtmosphereInput {
             geodetic: Geodetic {
                 latitude: lat_deg.to_radians(),
@@ -221,7 +221,7 @@ pub fn atmosphere_latlon_map(
     let hp = HarrisPriester::new();
     let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
 
-    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+    let (doy, ut_sec) = tobari::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
     let sw = ConstantWeather::new(f107, ap).get(&epoch);
 
     let n = (n_lat * n_lon) as usize;
@@ -233,7 +233,7 @@ pub fn atmosphere_latlon_map(
             let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
             let rho = match model {
-                "exponential" => crate::exponential::density(altitude_km),
+                "exponential" => tobari::exponential::density(altitude_km),
                 "harris-priester" => {
                     let atm_input = AtmosphereInput {
                         geodetic: Geodetic {
@@ -246,7 +246,7 @@ pub fn atmosphere_latlon_map(
                     hp.density(&atm_input)
                 }
                 _ => {
-                    let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
+                    let lst = tobari::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
                     let input = Nrlmsise00Input {
                         day_of_year: doy,
                         ut_seconds: ut_sec,
@@ -453,7 +453,7 @@ pub fn atmosphere_volume(
     let hp = HarrisPriester::new();
     let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
 
-    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+    let (doy, ut_sec) = tobari::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
     let sw = ConstantWeather::new(f107, ap).get(&epoch);
 
     let total = (n_alt * n_lat * n_lon) as usize;
@@ -474,7 +474,7 @@ pub fn atmosphere_volume(
                 let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
                 let rho = match model {
-                    "exponential" => crate::exponential::density(alt),
+                    "exponential" => tobari::exponential::density(alt),
                     "harris-priester" => {
                         let atm_input = AtmosphereInput {
                             geodetic: Geodetic {
@@ -487,7 +487,7 @@ pub fn atmosphere_volume(
                         hp.density(&atm_input)
                     }
                     _ => {
-                        let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
+                        let lst = tobari::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
                         let input = Nrlmsise00Input {
                             day_of_year: doy,
                             ut_seconds: ut_sec,
@@ -735,7 +735,7 @@ pub fn atmosphere_latlon_map_sw(
     let hp = HarrisPriester::new();
     let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(sw.f107_daily, sw.ap_daily)));
 
-    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+    let (doy, ut_sec) = tobari::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
 
     let n = (n_lat * n_lon) as usize;
     let mut out = Vec::with_capacity(n);
@@ -746,7 +746,7 @@ pub fn atmosphere_latlon_map_sw(
             let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
             let rho = match model {
-                "exponential" => crate::exponential::density(altitude_km),
+                "exponential" => tobari::exponential::density(altitude_km),
                 "harris-priester" => {
                     let atm_input = AtmosphereInput {
                         geodetic: Geodetic {
@@ -759,7 +759,7 @@ pub fn atmosphere_latlon_map_sw(
                     hp.density(&atm_input)
                 }
                 _ => {
-                    let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
+                    let lst = tobari::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
                     let input = Nrlmsise00Input {
                         day_of_year: doy,
                         ut_seconds: ut_sec,
@@ -802,7 +802,7 @@ pub fn atmosphere_volume_sw(
     let hp = HarrisPriester::new();
     let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(sw.f107_daily, sw.ap_daily)));
 
-    let (doy, ut_sec) = crate::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
+    let (doy, ut_sec) = tobari::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
 
     let total = (n_alt * n_lat * n_lon) as usize;
     let mut out = Vec::with_capacity(total + 2);
@@ -822,7 +822,7 @@ pub fn atmosphere_volume_sw(
                 let lon = -180.0 + (i_lon as f64 + 0.5) * 360.0 / n_lon as f64;
 
                 let rho = match model {
-                    "exponential" => crate::exponential::density(alt),
+                    "exponential" => tobari::exponential::density(alt),
                     "harris-priester" => {
                         let atm_input = AtmosphereInput {
                             geodetic: Geodetic {
@@ -835,7 +835,7 @@ pub fn atmosphere_volume_sw(
                         hp.density(&atm_input)
                     }
                     _ => {
-                        let lst = crate::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
+                        let lst = tobari::nrlmsise00::geo::local_solar_time(ut_sec, lon, &epoch);
                         let input = Nrlmsise00Input {
                             day_of_year: doy,
                             ut_seconds: ut_sec,

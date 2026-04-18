@@ -7,6 +7,7 @@ members = [
     "cli",
     "orts",
     "tobari",
+    "tobari/wasm",
     "rrd-wasm",
     "plugin-sdk",
 ]

@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build:wasm": "wasm-pack build ../.. --target web --out-dir examples/web/src/wasm/tobari --out-name tobari -- --locked --no-default-features --features wasm",
+    "build:wasm": "wasm-pack build ../../wasm --target web --out-dir ../examples/web/src/wasm/tobari --out-name tobari -- --locked",
     "build:wasm:arika": "wasm-pack build ../../../arika/wasm --target web --out-dir ../../tobari/examples/web/src/wasm/arika --out-name arika -- --locked",
     "build:wasm:all": "pnpm run build:wasm && pnpm run build:wasm:arika",
     "dev": "pnpm run build:wasm:all && vite",

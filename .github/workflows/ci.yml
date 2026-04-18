@@ -43,8 +43,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked --workspace -- -D warnings
 
-      - name: Clippy (tobari wasm)
-        run: cargo clippy --locked -p tobari --features wasm -- -D warnings
+      # Contract checks: `tobari` must compile at each feature tier.
+      # Uses `cargo check` instead of clippy because --no-default-features
+      # disables fetch-igrf, leaving build.rs IGRF helpers unused (dead_code).
+      - name: Check (tobari no_std)
+        run: cargo check --locked -p tobari --no-default-features
 
       # Contract checks: `arika` must compile at each feature tier.
       #   no_std, no alloc → pure math core only

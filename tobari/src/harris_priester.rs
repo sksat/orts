@@ -10,6 +10,8 @@ use arika::epoch::Epoch;
 use arika::frame;
 use arika::sun;
 
+#[allow(unused_imports)]
+use crate::math::F64Ext;
 use crate::{AtmosphereInput, AtmosphereModel};
 
 /// Harris-Priester density table entry.
@@ -306,7 +308,7 @@ impl HarrisPriester {
     pub fn new() -> Self {
         Self {
             n: 2,
-            lag_angle: std::f64::consts::FRAC_PI_6, // 30°
+            lag_angle: core::f64::consts::FRAC_PI_6, // 30°
             sun_direction_fn: sun::sun_direction_eci,
         }
     }

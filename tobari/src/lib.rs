@@ -32,19 +32,29 @@
 //! - F10.7 solar radio flux: NOAA SWPC / NRCan DRAO (public domain)
 //! - Aggregated and distributed by CelesTrak (<https://celestrak.org/SpaceData/>)
 
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+mod math;
+
+#[cfg(feature = "alloc")]
 pub mod cssi;
 pub mod exponential;
+#[cfg(feature = "alloc")]
 pub mod gfz;
 pub mod harris_priester;
 pub mod magnetic;
+#[cfg(feature = "alloc")]
 pub mod nrlmsise00;
 pub mod space_weather;
-#[cfg(feature = "wasm")]
-pub mod wasm;
 
+#[cfg(feature = "alloc")]
 pub use cssi::{CssiData, CssiSpaceWeather, OutOfRangeBehavior};
 pub use exponential::Exponential;
 pub use harris_priester::HarrisPriester;
+#[cfg(feature = "alloc")]
 pub use nrlmsise00::Nrlmsise00;
 pub use space_weather::{ConstantWeather, SpaceWeather, SpaceWeatherProvider};
 

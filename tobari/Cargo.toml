@@ -24,22 +24,22 @@ include = [
 ]
 
 [lib]
-crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-nalgebra.workspace = true
-arika.workspace = true
+nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
+arika = { path = "../arika", version = "=0.1.1", default-features = false }
+libm = "0.2.16"
 ureq = { workspace = true, optional = true }
-wasm-bindgen = { version = "0.2", optional = true }
 
 [build-dependencies]
 ureq.workspace = true
 
 [features]
-default = ["fetch-igrf"]
-fetch = ["dep:ureq"]
+default = ["std", "fetch-igrf"]
+std = ["alloc", "nalgebra/std", "arika/std"]
+alloc = []
+fetch = ["std", "dep:ureq"]
 fetch-igrf = []
-wasm = ["wasm-bindgen"]
 
 [dev-dependencies]
 serde = { workspace = true }
