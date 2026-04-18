@@ -1,5 +1,5 @@
 /target
-plugins/*/target/
+plugin-sdk/examples/target/
 node_modules/
 dist/
 test-results/

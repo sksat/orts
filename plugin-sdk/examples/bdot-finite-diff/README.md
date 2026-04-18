@@ -38,7 +38,7 @@ The output is `target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff
 From the **orts workspace root**:
 
 ```sh
-cargo run --example wasm_bdot_simulate --features plugin-wasm --release
+cargo run --example wasm-bdot --features plugin-wasm --release
 ```
 
 This sweeps gain × initial angular velocity (3×3 = 9 conditions) over 600 s of simulated time and writes CSV files here. Each CSV has columns `t, omega_x, omega_y, omega_z, omega_mag`.
@@ -46,7 +46,7 @@ This sweeps gain × initial angular velocity (3×3 = 9 conditions) over 600 s of
 ## Plotting
 
 ```sh
-cd plugins/bdot-finite-diff
+cd plugin-sdk/examples/bdot-finite-diff
 uv run plot.py
 ```
 

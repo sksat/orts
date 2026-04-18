@@ -1,0 +1,22 @@
+[package]
+name = "orts-example-plugin-detumble-nadir"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+orts-plugin-sdk = { workspace = true }
+wit-bindgen-rt = { workspace = true }
+nalgebra = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "component:orts-example-plugin-detumble-nadir"
+
+[package.metadata.component.target]
+path = "../../../orts/wit/v0"
+world = "plugin"

@@ -10,8 +10,8 @@
 //! **Prerequisites**: the guest must be built before running this test:
 //!
 //! ```sh
-//! cd plugins/bdot-finite-diff
-//! cargo +1.91.0 component build --release
+//! cd plugin-sdk/examples
+//! cargo +1.91.0 component build -p orts-example-plugin-bdot-finite-diff --release
 //! ```
 //!
 //! The test is feature-gated behind `plugin-wasm` so it only runs
@@ -60,7 +60,7 @@ fn try_guest_wasm_bytes() -> Option<Vec<u8>> {
     // version switches the target directory to `wasm32-wasip2/`, this
     // path will need updating.
     let path = format!(
-        "{}/../plugins/bdot-finite-diff/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
+        "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
     match std::fs::read(&path) {
@@ -68,7 +68,7 @@ fn try_guest_wasm_bytes() -> Option<Vec<u8>> {
         Err(_) => {
             eprintln!(
                 "WASM not found: {path}\n\
-                 Build: cd plugins/bdot-finite-diff && cargo +1.91.0 component build --release\n\
+                 Build: cd plugin-sdk/examples && cargo +1.91.0 component build -p orts-example-plugin-bdot-finite-diff --release\n\
                  Skipping this test."
             );
             None
@@ -152,7 +152,7 @@ fn run_wasm(initial: AttitudeState, epoch: Epoch) -> Option<AttitudeState> {
 #[cfg(feature = "plugin-wasm-async")]
 fn run_wasm_async(initial: AttitudeState, epoch: Epoch) -> Option<AttitudeState> {
     let path = std::path::PathBuf::from(format!(
-        "{}/../plugins/bdot-finite-diff/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
+        "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm",
         env!("CARGO_MANIFEST_DIR")
     ));
     if !path.exists() {

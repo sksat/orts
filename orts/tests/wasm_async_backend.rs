@@ -22,9 +22,9 @@ use orts::plugin::tick_input::{ActuatorTelemetry, Sensors};
 use orts::plugin::wasm::WasmPluginCache;
 use orts::plugin::{PluginController, TickInput};
 
-fn load_wasm(plugin: &str, binary: &str) -> Option<Vec<u8>> {
+fn load_wasm(binary: &str) -> Option<Vec<u8>> {
     let path = format!(
-        "{}/../plugins/{plugin}/target/wasm32-wasip1/release/{binary}.wasm",
+        "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/{binary}.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
     match std::fs::read(&path) {
@@ -32,7 +32,7 @@ fn load_wasm(plugin: &str, binary: &str) -> Option<Vec<u8>> {
         Err(_) => {
             eprintln!(
                 "WASM not found: {path}\n\
-                 Build: cd plugins/{plugin} && cargo +1.91.0 component build --release"
+                 Build: cd plugin-sdk/examples && cargo +1.91.0 component build --release"
             );
             None
         }
@@ -68,16 +68,13 @@ fn dummy_sensors() -> Sensors {
     }
 }
 
-fn make_cache_with_path(
-    plugin: &str,
-    binary: &str,
-) -> Option<(WasmPluginCache, std::path::PathBuf)> {
+fn make_cache_with_path(binary: &str) -> Option<(WasmPluginCache, std::path::PathBuf)> {
     // Check that the wasm file exists before constructing the cache
     // so tests skip cleanly on clean checkouts.
-    let _ = load_wasm(plugin, binary)?;
+    let _ = load_wasm(binary)?;
     let cache = WasmPluginCache::new().expect("WasmPluginCache::new");
     let path = std::path::PathBuf::from(format!(
-        "{}/../plugins/{plugin}/target/wasm32-wasip1/release/{binary}.wasm",
+        "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/{binary}.wasm",
         env!("CARGO_MANIFEST_DIR")
     ));
     Some((cache, path))
@@ -87,9 +84,7 @@ fn make_cache_with_path(
 /// command is returned each tick.
 #[test]
 fn async_backend_single_satellite() {
-    let Some((mut cache, path)) =
-        make_cache_with_path("pd-rw-control", "orts_example_plugin_pd_rw_control")
-    else {
+    let Some((mut cache, path)) = make_cache_with_path("orts_example_plugin_pd_rw_control") else {
         return;
     };
 
@@ -134,9 +129,7 @@ fn async_backend_1000_satellites() {
 }
 
 fn run_multi_satellite(n_sats: usize, n_ticks: usize) {
-    let Some((mut cache, path)) =
-        make_cache_with_path("pd-rw-control", "orts_example_plugin_pd_rw_control")
-    else {
+    let Some((mut cache, path)) = make_cache_with_path("orts_example_plugin_pd_rw_control") else {
         return;
     };
 
@@ -188,9 +181,7 @@ fn run_multi_satellite(n_sats: usize, n_ticks: usize) {
 /// thread should clean up the spawned task without hanging.
 #[test]
 fn async_backend_drop_during_wait() {
-    let Some((mut cache, path)) =
-        make_cache_with_path("pd-rw-control", "orts_example_plugin_pd_rw_control")
-    else {
+    let Some((mut cache, path)) = make_cache_with_path("orts_example_plugin_pd_rw_control") else {
         return;
     };
 

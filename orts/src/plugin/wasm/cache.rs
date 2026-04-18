@@ -19,7 +19,7 @@
 //! let mut cache = WasmPluginCache::new()?;
 //! for i in 0..1000 {
 //!     let ctrl = cache.build_sync_controller(
-//!         "plugins/bdot-finite-diff/target/wasm32-wasip1/release/guest.wasm".as_ref(),
+//!         "plugin-sdk/examples/bdot-finite-diff/target/wasm32-wasip1/release/guest.wasm".as_ref(),
 //!         &format!("sat{i}"),
 //!         "",
 //!     )?;

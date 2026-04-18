@@ -37,7 +37,7 @@ fn orts_binary() -> String {
 fn pd_rw_guest_wasm() -> Option<std::path::PathBuf> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let wasm_path = std::path::PathBuf::from(format!(
-        "{manifest_dir}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
+        "{manifest_dir}/../plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
     ));
     if wasm_path.exists() {
         Some(wasm_path)

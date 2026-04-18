@@ -34,7 +34,7 @@ def main() -> None:
     data = load_csv()
     if not data:
         print("No CSV found. Run the simulation first:")
-        print("  cargo run --example wasm_pd_rw_simulate --features plugin-wasm --release")
+        print("  cargo run --example wasm-pd-rw --features plugin-wasm --release")
         return
 
     t = data["t"]

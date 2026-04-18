@@ -135,14 +135,14 @@ const examplePages = [
   },
   {
     slug: "examples/plugins/bdot-finite-diff",
-    readme: "plugins/bdot-finite-diff/README.md",
+    readme: "plugin-sdk/examples/bdot-finite-diff/README.md",
     locale: "en",
     title: "B-dot Finite-Difference Controller",
     description: "Main-loop style WASM plugin implementing B-dot detumbling",
   },
   {
     slug: "examples/plugins/pd-rw-control",
-    readme: "plugins/pd-rw-control/README.md",
+    readme: "plugin-sdk/examples/pd-rw-control/README.md",
     locale: "ja",
     title: "PD 姿勢制御 + RW",
     description: "コールバック型 WASM plugin で PD 姿勢制御 + リアクションホイール",

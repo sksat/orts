@@ -20,7 +20,7 @@ q_err = q_target⁻¹ × q_current
 cargo install cargo-component  # 未インストールの場合
 rustup target add wasm32-wasip1 --toolchain 1.91.0
 
-cd plugins/pd-rw-control
+cd plugin-sdk/examples/pd-rw-control
 cargo +1.91.0 component build --release
 ```
 
@@ -31,7 +31,7 @@ cargo +1.91.0 component build --release
 TOML config でシミュレーションを実行:
 
 ```sh
-cd plugins/pd-rw-control
+cd plugin-sdk/examples/pd-rw-control
 orts run --config orts.toml --format csv
 ```
 
@@ -42,7 +42,7 @@ orts run --config orts.toml --format csv
 ## プロット
 
 ```sh
-cd plugins/pd-rw-control
+cd plugin-sdk/examples/pd-rw-control
 uv run plot.py
 ```
 

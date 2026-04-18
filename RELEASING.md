@@ -132,7 +132,7 @@ gh release edit v0.1.0 --draft=false
 - **viewer build 失敗**: viewer-build job で fail、rust-dist は実行されない。
   local で `pnpm --filter orts-viewer build` を再現。
 - **example plugin build 失敗**: rust-dist job の cargo-component build step
-  で fail。local で `(cd plugins/xxx && cargo component build --release)` を再現。
+  で fail。local で `cd plugin-sdk/examples && cargo component build -p CRATE_NAME --release` を再現。
 
 ## crates.io publish
 

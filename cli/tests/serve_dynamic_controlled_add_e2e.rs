@@ -8,7 +8,7 @@
 //!
 //! Requires:
 //! - `plugin-wasm-async` feature enabled
-//! - `plugins/pd-rw-control/target/wasm32-wasip1/release/...wasm`
+//! - `plugin-sdk/examples/target/wasm32-wasip1/release/...wasm`
 //!   built (soft-skips cleanly otherwise)
 //! - An `orts` binary to run; picks it up from `ORTS_BIN` if set
 //!   (CI `cli-plugin-backend-e2e` job), otherwise
@@ -38,14 +38,14 @@ fn orts_binary() -> String {
 fn pd_rw_guest_wasm() -> Option<std::path::PathBuf> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let wasm_path = std::path::PathBuf::from(format!(
-        "{manifest_dir}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
+        "{manifest_dir}/../plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
     ));
     if wasm_path.exists() {
         Some(wasm_path)
     } else {
         eprintln!(
             "WASM not found: {}\n\
-             Build: cd plugins/pd-rw-control && cargo +1.91.0 component build --release\n\
+             Build: cd plugin-sdk/examples && cargo +1.91.0 component build -p orts-example-plugin-pd-rw-control --release\n\
              Skipping serve dynamic-add e2e test.",
             wasm_path.display()
         );

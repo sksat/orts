@@ -100,7 +100,7 @@ Apollo 11, Artemis 1, orbital lifetime analysis, and WASM plugin demos.
 | `orts-viewer` | `viewer/` | Real-time 3D orbit viewer (React + @react-three/fiber) |
 | `starlight-rustdoc` | `starlight-rustdoc/` | Astro/Starlight plugin for Rust API docs from rustdoc JSON |
 
-### Example plugins
+### Example plugins (`plugin-sdk/examples/`)
 
 | Plugin | Style | Description |
 |--------|-------|-------------|

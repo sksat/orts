@@ -144,26 +144,23 @@ print(data.get('version', 'NOT_FOUND'), end='')
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Check plugin Cargo.lock references to orts-plugin-sdk
+# 5. Check plugin-sdk/examples Cargo.lock references to orts-plugin-sdk
 # ---------------------------------------------------------------------------
-info "Checking plugin Cargo.lock orts-plugin-sdk versions..."
+info "Checking plugin-sdk/examples Cargo.lock orts-plugin-sdk version..."
 
-for lock in "${REPO_ROOT}"/plugins/*/Cargo.lock; do
-    [ -f "$lock" ] || continue
-    plugin_dir=$(dirname "$lock")
-    plugin_name=$(basename "$plugin_dir")
-
-    sdk_version=$(grep -A1 'name = "orts-plugin-sdk"' "$lock" 2>/dev/null | grep 'version' | sed 's/.*"\(.*\)"/\1/' | head -1 || true)
+PLUGIN_LOCK="${REPO_ROOT}/plugin-sdk/examples/Cargo.lock"
+if [ -f "$PLUGIN_LOCK" ]; then
+    sdk_version=$(grep -A1 'name = "orts-plugin-sdk"' "$PLUGIN_LOCK" 2>/dev/null | grep 'version' | sed 's/.*"\(.*\)"/\1/' | head -1 || true)
     if [ -z "$sdk_version" ]; then
-        # Plugin doesn't depend on orts-plugin-sdk (e.g. bdot-finite-diff)
-        continue
-    fi
-    if [ "$sdk_version" = "$WORKSPACE_VERSION" ]; then
-        pass "plugin ${plugin_name} Cargo.lock orts-plugin-sdk = \"${sdk_version}\""
+        pass "plugin-sdk/examples Cargo.lock does not reference orts-plugin-sdk (path dependency)"
+    elif [ "$sdk_version" = "$WORKSPACE_VERSION" ]; then
+        pass "plugin-sdk/examples Cargo.lock orts-plugin-sdk = \"${sdk_version}\""
     else
-        fail "plugin ${plugin_name} Cargo.lock orts-plugin-sdk = \"${sdk_version}\" (expected \"${WORKSPACE_VERSION}\")"
+        fail "plugin-sdk/examples Cargo.lock orts-plugin-sdk = \"${sdk_version}\" (expected \"${WORKSPACE_VERSION}\")"
     fi
-done
+else
+    fail "plugin-sdk/examples/Cargo.lock not found"
+fi
 
 # ---------------------------------------------------------------------------
 # Summary

@@ -16,11 +16,11 @@ use std::process::Command;
 fn build_config() -> Option<tempfile::NamedTempFile> {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
     let wasm_path = std::path::PathBuf::from(format!(
-        "{manifest_dir}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
+        "{manifest_dir}/../plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
     ));
     if !wasm_path.exists() {
         eprintln!(
-            "WASM not found: {}\nBuild: cd plugins/pd-rw-control && cargo +1.91.0 component build --release",
+            "WASM not found: {}\nBuild: cd plugin-sdk/examples && cargo +1.91.0 component build -p orts-example-plugin-pd-rw-control --release",
             wasm_path.display()
         );
         return None;

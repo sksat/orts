@@ -4,13 +4,13 @@
 //!
 //! ```sh
 //! # Build the guest first:
-//! cd plugins/pd-rw-control && cargo +1.91.0 component build --release && cd -
+//! cd plugin-sdk/examples && cargo +1.91.0 component build -p orts-example-plugin-pd-rw-control --release && cd -
 //!
 //! # Run the simulation:
-//! cargo run --example wasm_pd_rw_simulate --features plugin-wasm --release
+//! cargo run --example wasm-pd-rw --features plugin-wasm --release
 //! ```
 //!
-//! Outputs CSV in `plugins/pd-rw-control/`:
+//! Outputs CSV in `plugin-sdk/examples/pd-rw-control/`:
 //! - `sim_pd_rw.csv`: attitude error, angular velocity, RW momentum
 
 use std::io::Write;
@@ -43,14 +43,14 @@ const T_END: f64 = 120.0;
 fn main() {
     let engine = Arc::new(WasmEngine::new().expect("WasmEngine must init"));
     let wasm_path = format!(
-        "{}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
+        "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
     let wasm_bytes = std::fs::read(&wasm_path).unwrap_or_else(|e| {
         panic!(
             "Guest WASM not found at {wasm_path}: {e}\n\
-             Build it first:\n  cd plugins/pd-rw-control\n  \
-             cargo +1.91.0 component build --release"
+             Build it first:\n  cd plugin-sdk/examples\n  \
+             cargo +1.91.0 component build -p orts-example-plugin-pd-rw-control --release"
         )
     });
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component compile failed");
@@ -144,8 +144,11 @@ fn main() {
         rows.push(record(&state, t, &target_q));
     }
 
-    let output_dir: PathBuf =
-        format!("{}/../plugins/pd-rw-control", env!("CARGO_MANIFEST_DIR")).into();
+    let output_dir: PathBuf = format!(
+        "{}/../plugin-sdk/examples/pd-rw-control",
+        env!("CARGO_MANIFEST_DIR")
+    )
+    .into();
     let csv_path = output_dir.join("sim_pd_rw.csv");
     write_csv(&csv_path, &rows);
 
@@ -155,7 +158,7 @@ fn main() {
         T_END, last.angle_error_deg, last.omega_mag
     );
     println!("CSV written to {}", csv_path.display());
-    println!("Plot with: cd plugins/pd-rw-control && uv run plot.py");
+    println!("Plot with: cd plugin-sdk/examples/pd-rw-control && uv run plot.py");
 }
 
 struct CsvRow {

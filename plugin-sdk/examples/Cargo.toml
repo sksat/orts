@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "bdot-finite-diff",
+    "pd-rw-control",
+    "detumble-nadir",
+    "pd-rw-unloading",
+]
+
+[workspace.dependencies]
+orts-plugin-sdk = { path = ".." }
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

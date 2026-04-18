@@ -54,11 +54,13 @@ plugin-wasm = ["dep:wasmtime", "dep:wasmtime-wasi"]
 plugin-wasm-async = ["plugin-wasm", "dep:tokio", "wasmtime/async"]
 
 [[example]]
-name = "wasm_bdot_simulate"
+name = "wasm-bdot"
+path = "examples/wasm-bdot/main.rs"
 required-features = ["plugin-wasm"]
 
 [[example]]
-name = "wasm_pd_rw_simulate"
+name = "wasm-pd-rw"
+path = "examples/wasm-pd-rw/main.rs"
 required-features = ["plugin-wasm"]
 
 [dev-dependencies]

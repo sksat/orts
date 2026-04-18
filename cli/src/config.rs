@@ -838,7 +838,7 @@ satellites:
     attitude: { inertia_diag: [10, 10, 10], mass: 500 }
     controller:
       type: wasm
-      path: plugins/pd-rw-control/target/plugin.wasm
+      path: plugin-sdk/examples/pd-rw-control/target/plugin.wasm
       config:
         kp: 1.0
         kd: 2.0

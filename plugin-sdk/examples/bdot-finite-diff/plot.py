@@ -101,7 +101,7 @@ def main() -> None:
     data = load_csvs()
     if not data:
         print("No CSV files found. Run the simulation first:")
-        print("  cargo run --example wasm_bdot_simulate --features plugin-wasm --release")
+        print("  cargo run --example wasm-bdot --features plugin-wasm --release")
         return
     plot_gain_sweep(data)
     plot_omega_sweep(data)

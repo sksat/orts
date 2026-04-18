@@ -500,18 +500,18 @@ fn test_controlled_simulation_via_config() {
     let guest_wasm = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm");
+        .join("plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm");
     if !guest_wasm.exists() {
         eprintln!(
             "WASM not found: {}\n\
-             Build: cd plugins/pd-rw-control && cargo +1.91.0 component build --release\n\
+             Build: cd plugin-sdk/examples && cargo +1.91.0 component build -p orts-example-plugin-pd-rw-control --release\n\
              Skipping this test.",
             guest_wasm.display()
         );
         return;
     }
 
-    let output = run_cli_config_csv("plugins/pd-rw-control/orts.toml");
+    let output = run_cli_config_csv("plugin-sdk/examples/pd-rw-control/orts.toml");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "CLI failed: {stderr}");

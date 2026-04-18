@@ -9,7 +9,7 @@
 //! through a shared tokio runtime + fiber suspension.
 //!
 //! Prerequisites:
-//!   cd plugins/pd-rw-control && cargo +1.91.0 component build --release
+//!   cd plugin-sdk/examples && cargo +1.91.0 component build -p orts-example-plugin-pd-rw-control --release
 //!
 //! Run:
 //!   cargo bench -p orts --features plugin-wasm-async
@@ -57,9 +57,9 @@ fn dummy_sensors() -> Sensors {
     }
 }
 
-fn try_read_wasm(plugin: &str, binary: &str) -> Option<Vec<u8>> {
+fn try_read_wasm(binary: &str) -> Option<Vec<u8>> {
     let path = format!(
-        "{}/../plugins/{plugin}/target/wasm32-wasip1/release/{binary}.wasm",
+        "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/{binary}.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
     match std::fs::read(&path) {
@@ -68,7 +68,7 @@ fn try_read_wasm(plugin: &str, binary: &str) -> Option<Vec<u8>> {
             eprintln!(
                 "WASM not found: {path}\n\
                  Build the guest first:\n  \
-                 cd plugins/{plugin} && cargo +1.91.0 component build --release"
+                 cd plugin-sdk/examples && cargo +1.91.0 component build --release"
             );
             None
         }
@@ -79,8 +79,7 @@ const PD_RW_CONFIG: &str = r#"{"kp":1.0,"kd":2.0,"sample_period":0.1}"#;
 
 /// Sync backend: `WasmController` + worker thread per satellite.
 fn bench_sync_update(c: &mut Criterion) {
-    let Some(wasm_bytes) = try_read_wasm("pd-rw-control", "orts_example_plugin_pd_rw_control")
-    else {
+    let Some(wasm_bytes) = try_read_wasm("orts_example_plugin_pd_rw_control") else {
         return;
     };
 
@@ -117,12 +116,12 @@ fn bench_async_update(c: &mut Criterion) {
     use orts::plugin::wasm::WasmPluginCache;
 
     let path = std::path::PathBuf::from(format!(
-        "{}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
+        "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
         env!("CARGO_MANIFEST_DIR")
     ));
     if !path.exists() {
         eprintln!(
-            "WASM not found: {}\nBuild: cd plugins/pd-rw-control && cargo +1.91.0 component build --release",
+            "WASM not found: {}\nBuild: cd plugin-sdk/examples && cargo +1.91.0 component build -p orts-example-plugin-pd-rw-control --release",
             path.display()
         );
         return;

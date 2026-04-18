@@ -12,8 +12,8 @@
 //! **Prerequisites**: build the guest first:
 //!
 //! ```sh
-//! cd plugins/pd-rw-control
-//! cargo +1.91.0 component build --release
+//! cd plugin-sdk/examples
+//! cargo +1.91.0 component build -p orts-example-plugin-pd-rw-control --release
 //! ```
 
 #![cfg(feature = "plugin-wasm")]
@@ -112,7 +112,7 @@ fn run_native(initial: AttitudeState) -> AugmentedState<AttitudeState> {
 /// `rust-test-plugin-wasm` CI job builds this guest explicitly.
 fn try_guest_wasm_bytes() -> Option<Vec<u8>> {
     let path = format!(
-        "{}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
+        "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
         env!("CARGO_MANIFEST_DIR")
     );
     match std::fs::read(&path) {
@@ -120,7 +120,7 @@ fn try_guest_wasm_bytes() -> Option<Vec<u8>> {
         Err(_) => {
             eprintln!(
                 "WASM not found: {path}\n\
-                 Build: cd plugins/pd-rw-control && cargo +1.91.0 component build --release\n\
+                 Build: cd plugin-sdk/examples && cargo +1.91.0 component build -p orts-example-plugin-pd-rw-control --release\n\
                  Skipping this test."
             );
             None
@@ -152,7 +152,7 @@ fn run_wasm(initial: AttitudeState) -> Option<AugmentedState<AttitudeState>> {
 #[cfg(feature = "plugin-wasm-async")]
 fn run_wasm_async(initial: AttitudeState) -> Option<AugmentedState<AttitudeState>> {
     let path = std::path::PathBuf::from(format!(
-        "{}/../plugins/pd-rw-control/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
+        "{}/../plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm",
         env!("CARGO_MANIFEST_DIR")
     ));
     if !path.exists() {

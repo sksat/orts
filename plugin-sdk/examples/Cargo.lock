@@ -19,9 +19,9 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "bitflags"
-version = "2.11.0"
+version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
+checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
 name = "glam"
@@ -271,6 +271,37 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
+]
+
+[[package]]
+name = "orts-example-plugin-bdot-finite-diff"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "orts-example-plugin-detumble-nadir"
+version = "0.0.0"
+dependencies = [
+ "nalgebra",
+ "orts-plugin-sdk",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "orts-example-plugin-pd-rw-control"
+version = "0.0.0"
+dependencies = [
+ "nalgebra",
+ "orts-plugin-sdk",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
