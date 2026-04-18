@@ -595,13 +595,32 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
         }
     }
 
+    let first_sat = params.satellites.first();
+    let orbit_desc = first_sat.map(|s| match &s.orbit {
+        OrbitSpec::Circular { altitude, r0, .. } => {
+            format!(
+                "Initial orbit: circular at {} km altitude (r = {} km)",
+                altitude, r0
+            )
+        }
+        OrbitSpec::Tle { elements, .. } => {
+            format!(
+                "Initial orbit: from TLE (a = {:.1} km, e = {:.6}, i = {:.2}°)",
+                elements.semi_major_axis,
+                elements.eccentricity,
+                elements.inclination.to_degrees()
+            )
+        }
+    });
     rec.metadata = orts::record::recording::SimMetadata {
         epoch_jd: params.epoch.map(|e| e.jd()),
         epoch_iso: params.epoch.map(|e| e.to_datetime().to_string()),
         mu: Some(params.mu),
         body_radius: Some(params.body.properties().radius),
         body_name: Some(params.body.properties().name.to_string()),
-        ..Default::default()
+        altitude: first_sat.map(|s| s.altitude(&params.body)),
+        period: first_sat.map(|s| s.period),
+        orbit_description: orbit_desc,
     };
 
     rec

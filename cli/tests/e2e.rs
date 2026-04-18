@@ -552,3 +552,75 @@ fn test_controlled_simulation_via_config() {
         "Final orbital radius {r:.1} km out of LEO range"
     );
 }
+
+/// Verify `orts run → rrd → orts convert --format csv` produces the same
+/// metadata headers as `orts run --format csv` (except the source comment).
+#[test]
+fn test_csv_convert_roundtrip_headers_match() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let rrd_path = std::env::temp_dir().join("test_e2e_roundtrip.rrd");
+
+    let epoch = "2026-01-01T00:00:00Z";
+
+    // 1. run → csv (direct)
+    let run_output = Command::new(binary)
+        .args([
+            "run", "--epoch", epoch, "--output", "stdout", "--format", "csv",
+        ])
+        .output()
+        .expect("failed to run orts run --format csv");
+    assert!(run_output.status.success());
+    let run_csv = String::from_utf8_lossy(&run_output.stdout);
+
+    // 2. run → rrd
+    let rrd_output = Command::new(binary)
+        .args([
+            "run",
+            "--epoch",
+            epoch,
+            "--output",
+            rrd_path.to_str().unwrap(),
+        ])
+        .stderr(Stdio::null())
+        .output()
+        .expect("failed to run orts run --output rrd");
+    assert!(rrd_output.status.success());
+
+    // 3. convert rrd → csv
+    let convert_output = Command::new(binary)
+        .args(["convert", rrd_path.to_str().unwrap(), "--format", "csv"])
+        .output()
+        .expect("failed to run orts convert");
+    assert!(convert_output.status.success());
+    let convert_csv = String::from_utf8_lossy(&convert_output.stdout);
+
+    // Compare metadata headers (skip source-specific lines)
+    let run_headers: Vec<&str> = run_csv
+        .lines()
+        .filter(|l| l.starts_with('#') && !l.starts_with("# Converted"))
+        .collect();
+    let convert_headers: Vec<&str> = convert_csv
+        .lines()
+        .filter(|l| l.starts_with('#') && !l.starts_with("# Converted"))
+        .collect();
+    assert_eq!(
+        run_headers, convert_headers,
+        "CSV metadata headers differ between run and convert:\nrun: {run_headers:#?}\nconvert: {convert_headers:#?}"
+    );
+
+    // Compare data row count
+    let run_data: Vec<&str> = run_csv.lines().filter(|l| !l.starts_with('#')).collect();
+    let convert_data: Vec<&str> = convert_csv
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .collect();
+    assert_eq!(
+        run_data.len(),
+        convert_data.len(),
+        "Data row count mismatch: run={} convert={}",
+        run_data.len(),
+        convert_data.len()
+    );
+
+    let _ = std::fs::remove_file(&rrd_path);
+}
