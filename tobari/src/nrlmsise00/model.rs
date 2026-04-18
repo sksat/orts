@@ -9,7 +9,10 @@
 
 use super::Nrlmsise00Input;
 use super::coefficients::*;
-use std::f64::consts::PI;
+use core::f64::consts::PI;
+
+#[allow(unused_imports)]
+use crate::math::F64Ext;
 
 // ─── Constants ───
 
@@ -108,10 +111,11 @@ fn ap_sum_factor(ex: f64) -> f64 {
 
 /// Geomagnetic activity function using 3-hour Ap history.
 fn ap_geomagnetic_index(ex: f64, ap_array: &[f64; 7], p: &[f64]) -> f64 {
-    let g0_vals: Vec<f64> = ap_array
-        .iter()
-        .map(|&a| ap_saturation(a, p[24], p[25]))
-        .collect();
+    // 7 elements: current + 6 historical 3-hour Ap indices (NRLMSISE-00 spec).
+    let mut g0_vals = [0.0; 7];
+    for (i, &a) in ap_array.iter().enumerate() {
+        g0_vals[i] = ap_saturation(a, p[24], p[25]);
+    }
 
     let sum = g0_vals[0]
         + g0_vals[1] * ex
@@ -415,8 +419,14 @@ fn geographic_variation_lower(
 // ─── Cubic Hermite spline helpers ───
 
 /// Natural cubic spline setup.
+///
+/// `n` = number of data points (= `SPLINE_ALTITUDES.len()` = 5 in practice).
+/// Work array `u` is allocated on the stack as a fixed-size buffer.
 fn cubic_spline_setup(x: &[f64], y: &[f64], n: usize, yp1: f64, ypn: f64, y2: &mut [f64]) {
-    let mut u = vec![0.0f64; n];
+    // SPLINE_ALTITUDES has 5 nodes; this is the maximum n this function sees.
+    const MAX_SPLINE_NODES: usize = 8; // generous upper bound
+    debug_assert!(n <= MAX_SPLINE_NODES);
+    let mut u = [0.0f64; MAX_SPLINE_NODES];
 
     if yp1 > 0.99e30 {
         y2[0] = 0.0;
@@ -564,9 +574,12 @@ fn density_temperature_profile(
 
     let zgdif = geopotential_height(z2, z1, re); // < 0 (bottom below top)
 
-    let mut xs = vec![0.0f64; n];
-    let mut ys = vec![0.0f64; n]; // 1/T values
-    let mut y2out = vec![0.0f64; n];
+    // n = SPLINE_ALTITUDES.len() = 5 (thermosphere–mesosphere junction nodes).
+    const MAX_NODES: usize = 8; // generous upper bound
+    debug_assert!(n <= MAX_NODES);
+    let mut xs = [0.0f64; MAX_NODES];
+    let mut ys = [0.0f64; MAX_NODES]; // 1/T values
+    let mut y2out = [0.0f64; MAX_NODES];
 
     for k in 0..n {
         xs[k] = geopotential_height(zn1[k], z1, re) / zgdif; // normalized [0, 1]
