@@ -6,6 +6,10 @@ members = [
     "detumble-nadir",
     "pd-rw-unloading",
 ]
+# nos3-adcs is excluded from the workspace because its build.rs requires
+# network access (git clone of nasa-itc/generic_adcs). Build it separately:
+#   cd nos3-adcs && cargo component build
+exclude = ["nos3-adcs"]
 
 [workspace.dependencies]
 orts-plugin-sdk = { path = ".." }

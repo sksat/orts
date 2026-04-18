@@ -1,0 +1,39 @@
+body = "earth"
+dt = 0.1
+output_interval = 1.0
+duration = 600.0
+epoch = "2026-04-18T12:00:00Z"
+
+[[satellites]]
+id = "nos3-adcs-demo"
+sensors = ["magnetometer", "gyroscope", "star_tracker", "sun_sensor"]
+
+[satellites.orbit]
+type = "circular"
+altitude = 400
+
+[satellites.attitude]
+inertia_diag = [10, 10, 10]
+mass = 500
+initial_quaternion = [0.966, 0, 0.259, 0]
+initial_angular_velocity = [0.05, -0.03, 0.04]
+
+[satellites.controller]
+type = "wasm"
+path = "target/wasm32-wasip1/debug/orts_example_plugin_nos3_adcs.wasm"
+
+[satellites.controller.config]
+sample_period = 1.0
+initial_mode = 1
+bdot_kb = 1e4
+bdot_b_range = 1e-9
+
+[satellites.reaction_wheels]
+type = "three_axis"
+inertia = 0.01
+max_momentum = 1.0
+max_torque = 0.5
+
+[satellites.magnetorquers]
+type = "three_axis"
+max_moment = 10.0

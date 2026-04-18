@@ -1,0 +1,32 @@
+[package]
+name = "orts-example-plugin-nos3-adcs"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# This crate is excluded from the parent workspace because build.rs
+# requires network access (git clone). Use its own [workspace].
+[workspace]
+
+[dependencies]
+orts-plugin-sdk = { path = "../.." }
+wit-bindgen-rt = { version = "0.44.0", features = ["bitflags"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+cc = "1"
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "component:orts-example-plugin-nos3-adcs"
+
+[package.metadata.component.target]
+path = "../../../orts/wit/v0"
+world = "plugin"
+
+[package.metadata.generic-adcs]
+repository = "https://github.com/nasa-itc/generic_adcs.git"
+commit = "01a2088629a3b05332c2457e5df8ec3d0eaceb30"
