@@ -162,10 +162,10 @@ for (const page of examplePages) {
   body = body.replace(/^#\s+.*\n+/, "");
 
   // Convert bare GitHub video URLs to <video> tags.
-  // GitHub README renders bare `https://github.com/user-attachments/...` as video,
+  // GitHub README renders bare video URLs (user-attachments, release assets) as video,
   // but mdx treats it as plain text. Convert to HTML video element.
   body = body.replace(
-    /^(https:\/\/github\.com\/user-attachments\/assets\/[a-f0-9-]+)$/gm,
+    /^(https:\/\/github\.com\/(?:user-attachments\/assets\/[a-f0-9-]+|[^\s]+\.mp4))$/gm,
     (_, url) => `<video controls width="100%"><source src="${url}" type="video/mp4" /></video>`,
   );
 

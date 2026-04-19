@@ -4,7 +4,7 @@ Apollo 11 ミッション全行程の軌道シミュレーションと 3D 可視
 
 ## 動画
 
-https://github.com/user-attachments/assets/9b8424e5-ba1c-4d0d-bba3-184f541be22c
+https://github.com/sksat/orts/releases/download/v0.1.1/apollo11_combined.mp4
 
 > Overview（上）+ 宇宙船視点（下）の 3 分間アニメーション。
 > 地球周回 → TLI → 月遷移 → LOI → 月周回 → TEI → 地球帰還。
