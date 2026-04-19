@@ -145,6 +145,7 @@ Apollo 11, Artemis 1, and orbital lifetime analysis demos.
 ## Documentation
 
 - [Docs site](https://sksat.github.io/orts/) — API reference, examples, guides
+- [ARCHITECTURE.md](ARCHITECTURE.md) / [日本語](ARCHITECTURE.ja.md) — Top-level architecture overview
 - [DESIGN.md](DESIGN.md) — Design document (Japanese)
 - [CHANGELOG.md](CHANGELOG.md) — English changelog
 - [CHANGELOG.ja.md](CHANGELOG.ja.md) — Japanese changelog

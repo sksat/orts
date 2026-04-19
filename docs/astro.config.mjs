@@ -7,6 +7,7 @@ import remarkMath from "remark-math";
 import starlightRustdoc from "starlight-rustdoc";
 import starlightTypeDoc from "starlight-typedoc";
 import rewriteTypedocLinks from "./src/integrations/rewrite-typedoc-links";
+import remarkRewriteRootMdLinks from "./src/plugins/remark-rewrite-root-md-links";
 import {
   buildInlineRedirectScript,
   buildPersistCurrentLocaleScript,
@@ -82,7 +83,7 @@ export default defineConfig({
   base: "/orts",
   site: "https://sksat.github.io",
   markdown: {
-    remarkPlugins: [remarkMath],
+    remarkPlugins: [remarkMath, remarkRewriteRootMdLinks],
     rehypePlugins: [rehypeKatex],
   },
   // Root (/) is handled by src/pages/index.astro and 404 handling is done
@@ -158,6 +159,7 @@ export default defineConfig({
       ],
       sidebar: [
         { label: "Getting Started", slug: "getting-started" },
+        { label: "Architecture", slug: "architecture" },
         { label: "Examples", autogenerate: { directory: "examples" } },
         {
           label: "orts",
