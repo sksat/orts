@@ -158,9 +158,9 @@ export interface InitOutput {
     readonly space_weather_date_range: () => [number, number];
     readonly space_weather_lookup: (a: number) => [number, number];
     readonly space_weather_series: () => [number, number];
+    readonly harris_priester_density: (a: number, b: number, c: number, d: number) => number;
     readonly nrlmsise00_density: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
     readonly exponential_density: (a: number) => number;
-    readonly harris_priester_density: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
