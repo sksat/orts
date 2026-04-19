@@ -8,10 +8,20 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 ## [Unreleased]
 
+- `ARCHITECTURE.md` (EN/JA) を新規追加。言語間の自動リンク書き換え機構付き
+- orts logo kit を docs / viewer / README に統合
+- ブランド名表記を `Orts` → `orts` (小文字) でリポジトリ全体で統一
+- Notable dependency updates:
+  - Rust: `nalgebra` 0.34、`clap` 4.6、`criterion` 0.8、`ureq` 3.3、
+    `toml` 1.1、`proptest` 1.11、`rand` 0.9.4 (security)
+  - npm: `@astrojs/starlight` 0.38.3、`@biomejs/biome` 2.4、
+    `happy-dom` 20.8.9 (security, dev only)
+
 ### `orts` (Rust, crates.io)
 
 #### Added
-- 円錐半影 (conical penumbra) モデルによる日食・影ジオメトリ計算
+- SRP と sun sensor が `arika::eclipse` を利用し、円錐半影
+  (conical penumbra) を考慮した連続照度スケーリング / 日食検出に対応
 - Per-device アクチュエータコマンド
   - MTQ・RW を個別デバイスリストとして管理し、デバイス単位で指令を送信
 - マルチインスタンスセンサ: sensor を `Vec` ベースに変更し任意の個数に対応
@@ -21,12 +31,33 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - Fine/Coarse バリアント付きサンセンサモデル
 - Controlled simulation の姿勢・コマンド・テレメトリログ
   - 動的 CSV カラム生成
+- `ThrusterSpec` 導入 — host スケジュール `Thruster` と plugin 指令型
+  `ThrusterAssembly` で物理パラメータを共有 (MTQ の Core+Assembly パターンを踏襲)
 
 #### Changed
+- **BREAKING**: B-dot detumble コントローラを `BdotDetumbler` → `BdotCross`
+  に rename。`BdotFiniteDiff` との命名一貫性を取り、dB/dt 推定手法
+  (cross-product `-ω × B` vs finite difference) の違いを明示
 - アクチュエータ telemetry をアクチュエータ種別横断で統一的に構造化
 - `orts convert` を姿勢・コマンド・テレメトリを含むフルデータ出力に拡張
 - CSV metadata・satellite 出力を `SimMetadata::write_csv_header` /
   `write_satellite_csv` に統一
+
+### `orts-cli` (Rust, crates.io, binary)
+
+#### Added
+- WASM plugin からの thruster スロットル指令 (`[0,1]` per-device) を
+  controlled simulation loop に配線 (Phase P4)
+
+#### Changed
+- **BREAKING**: `orts run` は orbit 指定が必須に。`--sat` / `--tle` /
+  `--norad-id` / `--config` / CWD の `orts.toml` のいずれも無い場合は
+  エラーを返す。従来の「無指定なら 400km 円軌道」はサイレントすぎるため廃止
+- **BREAKING**: `--altitude` フラグを削除。軌道指定は
+  `--sat "altitude=400,inclination=51.6"` または config file で
+  明示する形に統一
+- `orts run` が CWD の `orts.toml` を自動検出 (解決順序:
+  `--config` > CLI orbit args > `orts.toml` > エラー)
 
 ### `orts-plugin-sdk` (Rust, crates.io)
 
@@ -34,15 +65,38 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - `no_std` サポート
   - 標準ライブラリなし (allocator 不要) でコンパイル可能
   - オプションの `alloc` feature flag で `no_std` 下でのヒープ使用に対応
+- WIT plugin interface に thruster throttle 指令 (`[0,1]` per-device) を追加。
+  全 example plugin で新コマンドフィールドに対応
 - 新規 example: `nos3-adcs` — NOS3 `generic_adcs` WASM plugin (SILS デモ)
   - 全モードテスト、IGRF 統合、可視化スクリプト、CI workflow
+- 新規 example: `constellation-phasing` — コンステレーション位相制御デモ
+- 新規 example: `transfer-burn-with-tcm` — 軌道遷移 + trajectory
+  correction maneuver デモ
 
 #### Changed
+- **BREAKING**: WIT v0 の sensor / actuator / command 構造を再編。既存
+  plugin はバインディング再生成と tick handler の更新が必要:
+  - sensor: `option<T>` → `list<T>` (magnetometer / gyroscope /
+    star-tracker / sun-sensor の multi-instance 化)
+  - actuator: `ActuatorState` → `ActuatorTelemetry` (RW は
+    `RwTelemetry` として構造化)
+  - command: `commanded-magnetic-moment` / `commanded-rw-torque` を
+    `mtq-command` / `rw-command` variant に置換、`thruster-command`
+    variant を追加
+  - sun sensor: `sun-fine-output.direction` を `option` 化
+    (total eclipse で `None`)、fine / coarse variant を新設
 - example plugin を `plugin-sdk/examples/` workspace に移動
+- WIT bindings 生成を `wit_bindgen::generate!()` ベースに移行
+  (従来の `cargo component` 依存を軽量化)
+- `bdot-finite-diff` example をより長時間のシミュレーション +
+  複数モデル比較構成に刷新
 
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `eclipse` モジュール — cylindrical (binary) と conical
+  (Montenbruck & Gill penumbra) の 2 種類の shadow モデルを提供する
+  汎用 illumination API (observer / light / occulter)
 - `no_std` + `alloc` サポート (tiered feature hierarchy)
   - no alloc: core math (座標フレーム、エポック演算、解析 ephemeris、
     測地変換、IAU 2006 歳差・章動)
@@ -78,6 +132,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Added
 - 生成された API ドキュメントページに feature-gate バッジを表示
+
+### Docs
+
+#### Added
+- Starlight docs サイトに LaTeX 数式レンダリング
+  (`remark-math` + `rehype-katex`)
+- Starlight docs サイトに Mermaid 図レンダリング (`astro-mermaid`)
+- example README を YAML frontmatter で自動発見し、ドキュメントページとして展開
+
+#### Changed
+- example の制御則記述を LaTeX 数式に移行
 
 ## [0.1.1](https://github.com/sksat/orts/releases/tag/v0.1.1)
 

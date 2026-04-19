@@ -11,11 +11,23 @@ section is subdivided by package.
 
 ## [Unreleased]
 
+- `ARCHITECTURE.md` (EN / JA) with automatic cross-language link
+  rewriting
+- orts logo kit integrated across docs / viewer / README
+- Brand name unified as `orts` (lowercase) across the repository,
+  replacing `Orts`
+- Notable dependency updates:
+  - Rust: `nalgebra` 0.34, `clap` 4.6, `criterion` 0.8, `ureq` 3.3,
+    `toml` 1.1, `proptest` 1.11, `rand` 0.9.4 (security)
+  - npm: `@astrojs/starlight` 0.38.3, `@biomejs/biome` 2.4,
+    `happy-dom` 20.8.9 (security, dev only)
+
 ### `orts` (Rust, crates.io)
 
 #### Added
-- Eclipse / shadow geometry with conical penumbra model for accurate
-  sunlit / penumbra / umbra classification
+- SRP and sun sensor now consume `arika::eclipse` for continuous
+  illumination scaling and eclipse detection through the conical
+  penumbra
 - Per-device actuator commands
   - MTQ and reaction wheels are individually addressable device lists
     with per-device command dispatch
@@ -28,8 +40,15 @@ section is subdivided by package.
 - Sun sensor model with fine / coarse measurement variants
 - Controlled simulation attitude / command / telemetry logging
   - Dynamic CSV column generation
+- `ThrusterSpec` shared between host-scheduled `Thruster` and
+  plugin-commanded `ThrusterAssembly`, following the MTQ Core+Assembly
+  pattern
 
 #### Changed
+- **BREAKING**: B-dot detumble controller renamed `BdotDetumbler` →
+  `BdotCross` for naming consistency with `BdotFiniteDiff`. The
+  rename makes the dB/dt estimation method (cross-product `-ω × B` vs
+  finite difference) explicit
 - Actuator telemetry restructured into a unified representation across
   actuator types
 - `orts convert` extended to output full data including attitude,
@@ -37,21 +56,62 @@ section is subdivided by package.
 - CSV metadata and satellite output unified via
   `SimMetadata::write_csv_header` / `write_satellite_csv`
 
+### `orts-cli` (Rust, crates.io, binary)
+
+#### Added
+- WASM plugin thruster throttle commands (`[0,1]` per device) are
+  wired through the controlled simulation loop (Phase P4)
+
+#### Changed
+- **BREAKING**: `orts run` now requires an orbit specification. If none
+  of `--sat` / `--tle` / `--norad-id` / `--config` / an `orts.toml` in
+  CWD is provided, the command errors out. The previous silent default
+  of a 400 km circular orbit was too implicit
+- **BREAKING**: `--altitude` flag removed. Orbit specification is done
+  via `--sat "altitude=400,inclination=51.6"` or a config file so the
+  parameters are explicit
+- `orts run` auto-detects `orts.toml` in CWD (resolution order:
+  `--config` > CLI orbit args > `orts.toml` > error)
+
 ### `orts-plugin-sdk` (Rust, crates.io)
 
 #### Added
 - `no_std` support
   - Compilable without the standard library (no allocator required)
   - Optional `alloc` feature flag for heap usage under `no_std`
+- WIT plugin interface gains a thruster throttle command (`[0,1]` per
+  device). All example plugins updated for the new command field
 - New example: `nos3-adcs` — NOS3 `generic_adcs` WASM plugin (SILS demo)
   - All-mode tests, IGRF integration, visualization scripts, CI workflow
+- New example: `constellation-phasing` — satellite constellation phase
+  control demo
+- New example: `transfer-burn-with-tcm` — orbit transfer with
+  trajectory correction maneuver demo
 
 #### Changed
+- **BREAKING**: WIT v0 sensor / actuator / command records restructured.
+  Existing plugins must regenerate bindings and update tick handlers:
+  - Sensors: `option<T>` → `list<T>` (magnetometer / gyroscope /
+    star-tracker / sun-sensor are now multi-instance)
+  - Actuators: `ActuatorState` → `ActuatorTelemetry` (RW is now a
+    structured `RwTelemetry` record)
+  - Commands: `commanded-magnetic-moment` / `commanded-rw-torque`
+    replaced with `mtq-command` / `rw-command` variants, and
+    `thruster-command` variant added
+  - Sun sensor: `sun-fine-output.direction` is now an `option`
+    (`None` during total eclipse); fine / coarse variants introduced
 - Example plugins moved to `plugin-sdk/examples/` workspace
+- WIT bindings generation migrated to `wit_bindgen::generate!()`,
+  reducing the `cargo component` dependency surface
+- `bdot-finite-diff` example revamped with a longer simulation and
+  multi-model comparison layout
 
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `eclipse` module — generic illumination API (observer / light /
+  occulter) providing both cylindrical (binary) and conical
+  (Montenbruck & Gill penumbra) shadow models
 - `no_std` + `alloc` support (tiered feature hierarchy)
   - no alloc: core math (coordinate frames, epoch arithmetic, analytical
     ephemerides, geodetic conversions, IAU 2006 precession/nutation)
@@ -88,6 +148,19 @@ section is subdivided by package.
 
 #### Added
 - Display feature-gate badges on generated API documentation pages
+
+### Docs
+
+#### Added
+- LaTeX math rendering on the Starlight docs site
+  (`remark-math` + `rehype-katex`)
+- Mermaid diagram rendering on the Starlight docs site via
+  `astro-mermaid`
+- Example READMEs auto-discovered via YAML frontmatter and published as
+  docs pages
+
+#### Changed
+- Example control-law descriptions migrated to LaTeX math
 
 ## [0.1.1](https://github.com/sksat/orts/releases/tag/v0.1.1)
 
