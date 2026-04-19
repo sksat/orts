@@ -54,7 +54,11 @@ fn main() {
 fn resolve_source_dir(out_dir: &Path) -> PathBuf {
     if let Ok(dir) = std::env::var("GENERIC_ADCS_SRC_DIR") {
         let p = PathBuf::from(dir);
-        assert!(p.exists(), "GENERIC_ADCS_SRC_DIR does not exist: {}", p.display());
+        assert!(
+            p.exists(),
+            "GENERIC_ADCS_SRC_DIR does not exist: {}",
+            p.display()
+        );
         return p;
     }
 
