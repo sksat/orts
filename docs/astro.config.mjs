@@ -1,6 +1,7 @@
 import react from "@astrojs/react";
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
+import mermaid from "astro-mermaid";
 import rehypeKatex from "rehype-katex";
 import remarkMath from "remark-math";
 import starlightRustdoc from "starlight-rustdoc";
@@ -89,6 +90,9 @@ export default defineConfig({
   // `head` config below — see the comment on `redirectScript` above for why
   // we do not ship a custom src/pages/404.astro.
   integrations: [
+    // Must come BEFORE starlight so ```mermaid fenced blocks are transformed
+    // before Starlight's markdown pipeline treats them as plain code.
+    mermaid(),
     react(),
     starlight({
       title: "orts",
