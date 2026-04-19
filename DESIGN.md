@@ -387,7 +387,7 @@ Basilisk/Orekit と同様の3層分離を採用:
 **Phase D-2 実装済み**: DiscreteController 基盤 + B-dot 有限差分版
 **Phase D-3 実装済み**: StateEffector + AugmentedState + RwAssembly (Core+Wrapper), MtqAssembly (Core+Wrapper)。RW: speed/torque command variant, pseudo-inverse allocation (非直交配置対応), motor first-order lag (aux 2n 拡張), max_speed 独立パラメータ。MTQ: moments/normalized-moments variant, pseudo-inverse allocation。センサ: Magnetometer, Gyroscope, StarTracker, SunSensor (fine/coarse variant)。テレメトリ: ActuatorTelemetry { rw: Option\<RwTelemetry\> }
 **Phase D-4 実装済み**: 統合テスト（PID + RW + 環境トルク）
-**Phase D-5**: MagneticFieldModel trait 抽象化 + ジェネリクス化（BdotDetumbler\<F\> 等）+ IGRF 球面調和展開
+**Phase D-5**: MagneticFieldModel trait 抽象化 + ジェネリクス化（BdotCross\<F\> 等）+ IGRF 球面調和展開
 
 #### Phase P 詳細: プラグイン可能な制御則・ミッションロジック
 

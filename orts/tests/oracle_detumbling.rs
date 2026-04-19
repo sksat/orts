@@ -5,7 +5,7 @@ use utsuroi::{Integrator, Rk4};
 
 use arika::earth::{MU as MU_EARTH, R as R_EARTH};
 use arika::epoch::Epoch;
-use orts::attitude::{AttitudeState, BdotDetumbler, DecoupledAttitudeSystem};
+use orts::attitude::{AttitudeState, BdotCross, DecoupledAttitudeSystem};
 use tobari::magnetic::TiltedDipole;
 
 fn symmetric_inertia(i: f64) -> Matrix3<f64> {
@@ -107,7 +107,7 @@ fn bdot_reduces_angular_velocity() {
     let omega0_mag = omega0.magnitude();
     let initial = AttitudeState::new(nalgebra::UnitQuaternion::identity(), omega0);
 
-    let bdot = BdotDetumbler::new(1e6, Vector3::new(10.0, 10.0, 10.0), TiltedDipole::earth());
+    let bdot = BdotCross::new(1e6, Vector3::new(10.0, 10.0, 10.0), TiltedDipole::earth());
     let system = DecoupledAttitudeSystem::circular_orbit(inertia, MU_EARTH, radius, 500.0)
         .with_model(bdot)
         .with_epoch(test_epoch());
@@ -153,7 +153,7 @@ fn bdot_energy_dissipation_one_orbit() {
     let omega0 = Vector3::new(0.1, 0.2, 0.05);
     let initial = AttitudeState::new(nalgebra::UnitQuaternion::identity(), omega0);
 
-    let bdot = BdotDetumbler::new(1e6, Vector3::new(10.0, 10.0, 10.0), TiltedDipole::earth());
+    let bdot = BdotCross::new(1e6, Vector3::new(10.0, 10.0, 10.0), TiltedDipole::earth());
     let system = DecoupledAttitudeSystem::circular_orbit(inertia, MU_EARTH, radius, 500.0)
         .with_model(bdot)
         .with_epoch(test_epoch());
@@ -188,7 +188,7 @@ fn bdot_instantaneous_torque_opposes_omega() {
 
     let gain = 1e4;
     // Use large max_moment so nothing is clamped
-    let ctrl = BdotDetumbler::new(
+    let ctrl = BdotCross::new(
         gain,
         Vector3::new(100.0, 100.0, 100.0),
         TiltedDipole::earth(),
@@ -220,7 +220,7 @@ fn bdot_instantaneous_torque_opposes_omega() {
             mass: 100.0,
         };
 
-        let loads = <BdotDetumbler as orts::model::Model<orts::attitude::DecoupledContext>>::eval(
+        let loads = <BdotCross as orts::model::Model<orts::attitude::DecoupledContext>>::eval(
             &ctrl,
             0.0,
             &state,

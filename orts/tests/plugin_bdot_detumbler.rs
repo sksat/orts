@@ -14,7 +14,7 @@
 //! that the plugin layer can deliver rate-gyro information to guest
 //! controllers. Phase P1 WASM guests will use the same field.
 //!
-//! The pre-existing native equivalent `orts::attitude::BdotDetumbler`
+//! The pre-existing native equivalent `orts::attitude::BdotCross`
 //! is a `Model<S>` evaluated inside the ODE RHS at every integrator
 //! step, while this plugin variant is a sample-tick + ZOH
 //! `PluginController`. The two are structurally different (discrete
@@ -74,14 +74,14 @@ const DAMPING_FLOOR: f64 = 0.10;
 // m = -k * (omega x B_body), clamped per-axis.
 // =============================================================
 
-struct PluginBdotDetumbler<F: MagneticFieldModel = TiltedDipole> {
+struct PluginBdotCross<F: MagneticFieldModel = TiltedDipole> {
     gain: f64,
     max_moment: Vector3<f64>,
     field: F,
     sample_period: f64,
 }
 
-impl<F: MagneticFieldModel> PluginBdotDetumbler<F> {
+impl<F: MagneticFieldModel> PluginBdotCross<F> {
     fn new(gain: f64, max_moment: Vector3<f64>, field: F, sample_period: f64) -> Self {
         assert!(gain >= 0.0);
         assert!(max_moment[0] >= 0.0 && max_moment[1] >= 0.0 && max_moment[2] >= 0.0);
@@ -95,7 +95,7 @@ impl<F: MagneticFieldModel> PluginBdotDetumbler<F> {
     }
 }
 
-impl<F: MagneticFieldModel> PluginController for PluginBdotDetumbler<F> {
+impl<F: MagneticFieldModel> PluginController for PluginBdotCross<F> {
     fn name(&self) -> &str {
         "plugin::bdot_detumbler"
     }
@@ -173,7 +173,7 @@ fn run(initial: AttitudeState, epoch: Epoch) -> AttitudeState {
     let mu = MU_EARTH;
     let radius = R_EARTH + ALT_KM;
 
-    let mut ctrl = PluginBdotDetumbler::new(
+    let mut ctrl = PluginBdotCross::new(
         GAIN,
         Vector3::new(MAX_MOMENT, MAX_MOMENT, MAX_MOMENT),
         TiltedDipole::earth(),
@@ -257,7 +257,7 @@ fn plugin_bdot_detumbler_uses_angular_velocity_from_observation() {
     // stateless detumbler must return a zero command. This is what
     // distinguishes it from the finite-difference variant -- the
     // detumbler depends *only* on the rate-gyro reading.
-    let mut ctrl = PluginBdotDetumbler::new(
+    let mut ctrl = PluginBdotCross::new(
         GAIN,
         Vector3::new(MAX_MOMENT, MAX_MOMENT, MAX_MOMENT),
         TiltedDipole::earth(),

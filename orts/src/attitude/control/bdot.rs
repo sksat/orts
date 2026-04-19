@@ -11,7 +11,7 @@ use crate::model::ExternalLoads;
 use crate::model::{HasAttitude, HasOrbit, Model};
 use crate::spacecraft::MtqAssemblyCore;
 
-/// B-dot detumbling controller using stateless analytical approximation.
+/// B-dot detumbling controller using cross-product dB/dt estimation.
 ///
 /// Estimates the time-derivative of the magnetic field in the body frame as
 /// dB_body/dt = -omega x B_body (valid when |omega| >> orbital angular rate),
@@ -27,7 +27,7 @@ use crate::spacecraft::MtqAssemblyCore;
 ///
 /// When no epoch is available, returns zero loads (magnetic field models
 /// require epoch for ECEF↔ECI rotation and secular variation).
-pub struct BdotDetumbler<F: MagneticFieldModel = TiltedDipole> {
+pub struct BdotCross<F: MagneticFieldModel = TiltedDipole> {
     /// Gain k > 0  [A*m^2*s/(rad*T)]
     gain: f64,
     /// MTQ assembly core for allocation + clamping.
@@ -36,7 +36,7 @@ pub struct BdotDetumbler<F: MagneticFieldModel = TiltedDipole> {
     field: F,
 }
 
-impl<F: MagneticFieldModel> BdotDetumbler<F> {
+impl<F: MagneticFieldModel> BdotCross<F> {
     /// Create a new B-dot detumbler with custom field model.
     ///
     /// `max_moment` is per-axis maximum [A·m²] for a 3-axis MTQ.
@@ -60,10 +60,10 @@ impl<F: MagneticFieldModel> BdotDetumbler<F> {
 }
 
 // TODO: SimpleEci constraint comes from magnetic::field_eci. To make
-// frame-generic, BdotDetumbler needs EarthFrameBridge<Fr> (like
+// frame-generic, BdotCross needs EarthFrameBridge<Fr> (like
 // AtmosphericDrag<Fr>) and should use magnetic::field_inertial<Fr>.
 impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci>> Model<S>
-    for BdotDetumbler<F>
+    for BdotCross<F>
 {
     fn name(&self) -> &str {
         "bdot"
@@ -127,7 +127,7 @@ impl<F: MagneticFieldModel> CommandedMagnetorquer<F> {
     }
 }
 
-// TODO: Same SimpleEci constraint as BdotDetumbler (magnetic::field_eci).
+// TODO: Same SimpleEci constraint as BdotCross (magnetic::field_eci).
 impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci>> Model<S>
     for CommandedMagnetorquer<F>
 {
@@ -155,8 +155,8 @@ impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = arika::frame::Simp
 
 /// B-dot controller using finite-difference dB/dt estimation.
 ///
-/// Unlike [`BdotDetumbler`] which uses the analytical approximation
-/// dB_body/dt = -omega x B_body, this controller measures the actual
+/// Unlike [`BdotCross`] which estimates dB/dt via the cross-product
+/// -omega x B_body, this controller measures the actual
 /// magnetic field at each sample time and computes dB/dt via backward
 /// finite difference. This is more realistic (flight software only sees
 /// magnetometer readings) but introduces a one-sample delay and produces
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn zero_omega_gives_zero_torque() {
-        let ctrl = BdotDetumbler::new(1e4, Vector3::new(1.0, 1.0, 1.0), TiltedDipole::earth());
+        let ctrl = BdotCross::new(1e4, Vector3::new(1.0, 1.0, 1.0), TiltedDipole::earth());
         let state = TestState {
             attitude: AttitudeState::identity(),
             orbit: OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::zeros()),
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn torque_opposes_omega_component() {
-        let ctrl = BdotDetumbler::new(1e4, Vector3::new(10.0, 10.0, 10.0), TiltedDipole::earth());
+        let ctrl = BdotCross::new(1e4, Vector3::new(10.0, 10.0, 10.0), TiltedDipole::earth());
         let state = TestState {
             attitude: AttitudeState {
                 quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn no_acceleration_or_mass_rate() {
-        let ctrl = BdotDetumbler::new(1e4, Vector3::new(1.0, 1.0, 1.0), TiltedDipole::earth());
+        let ctrl = BdotCross::new(1e4, Vector3::new(1.0, 1.0, 1.0), TiltedDipole::earth());
         let state = TestState {
             attitude: AttitudeState {
                 quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
@@ -349,7 +349,7 @@ mod tests {
     #[test]
     fn moment_clamping() {
         let max_m = 0.001;
-        let ctrl = BdotDetumbler::new(
+        let ctrl = BdotCross::new(
             1e10,
             Vector3::new(max_m, max_m, max_m),
             TiltedDipole::earth(),
@@ -381,7 +381,7 @@ mod tests {
     fn no_epoch_returns_zero_loads() {
         // Without epoch, magnetic field models cannot compute the field,
         // so the controller returns zero loads.
-        let ctrl = BdotDetumbler::new(1e4, Vector3::new(1.0, 1.0, 1.0), TiltedDipole::earth());
+        let ctrl = BdotCross::new(1e4, Vector3::new(1.0, 1.0, 1.0), TiltedDipole::earth());
         let state = TestState {
             attitude: AttitudeState {
                 quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),

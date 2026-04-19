@@ -81,7 +81,9 @@ fn main() {
         for &omega in &initial_omegas {
             // TiltedDipole
             let label = format!("dipole_gain_{gain:.0e}_omega_{omega:.2}");
-            print_and_run(&pre, &output_dir, &label, gain, omega, || TiltedDipole::earth());
+            print_and_run(&pre, &output_dir, &label, gain, omega, || {
+                TiltedDipole::earth()
+            });
 
             // IGRF-14
             let label = format!("igrf_gain_{gain:.0e}_omega_{omega:.2}");

@@ -7,7 +7,7 @@ use arika::SimpleEci;
 use arika::earth::{MU as MU_EARTH, R as R_EARTH};
 use arika::epoch::Epoch;
 use orts::attitude::{
-    AttitudeState, BdotDetumbler, BdotFiniteDiff, CommandedMagnetorquer, DecoupledAttitudeSystem,
+    AttitudeState, BdotCross, BdotFiniteDiff, CommandedMagnetorquer, DecoupledAttitudeSystem,
 };
 use orts::control::DiscreteController;
 use tobari::magnetic::TiltedDipole;
@@ -380,7 +380,7 @@ fn stateless_and_discrete_bdot_both_converge() {
     let t_end = 3.0 * period; // 3 orbits for comfortable margin
 
     // --- Stateless (analytical) B-dot ---
-    let bdot_stateless = BdotDetumbler::new(gain, max_moment, TiltedDipole::earth());
+    let bdot_stateless = BdotCross::new(gain, max_moment, TiltedDipole::earth());
     let system = DecoupledAttitudeSystem::circular_orbit(inertia, MU_EARTH, radius, 500.0)
         .with_model(bdot_stateless)
         .with_epoch(test_epoch());
