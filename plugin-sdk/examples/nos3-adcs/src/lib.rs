@@ -17,11 +17,9 @@
 //! orts WIT は **scalar-first** `{w, x, y, z}` (Hamilton 規約)。
 //! 変換が必要。
 
-#[allow(warnings)]
-mod bindings;
 mod ffi;
 
-use bindings::orts::plugin::types::*;
+use orts_plugin_sdk::bindings::orts::plugin::types::*;
 use orts_plugin_sdk::{Plugin, orts_plugin};
 
 struct Controller {

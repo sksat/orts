@@ -11,9 +11,7 @@
 //! 制御計算だけ書けばよい。
 //!
 //! ```ignore
-//! #[allow(warnings)]
-//! mod bindings;
-//! use bindings::orts::plugin::types::*;
+//! use orts_plugin_sdk::bindings::orts::plugin::types::*;
 //! use orts_plugin_sdk::{Plugin, orts_plugin};
 //!
 //! struct MyController { sample_period: f64 }
@@ -37,6 +35,7 @@
 //! SDK マクロを使わず `impl Guest for Component` を手書きする。
 //!
 //! ```ignore
+//! use orts_plugin_sdk::bindings;
 //! use bindings::orts::plugin::tick_io::{send_command, wait_tick};
 //!
 //! impl bindings::Guest for Component {
@@ -49,10 +48,12 @@
 //!         }
 //!     }
 //! }
+//! bindings::export!(Component with_types_in bindings);
 //! ```
 
 extern crate alloc;
 
+pub mod bindings;
 pub mod mode;
 
 use alloc::string::String;
@@ -60,7 +61,6 @@ use alloc::string::String;
 /// コールバック型プラグインの trait。
 ///
 /// 型パラメータ `I` は入力型（WIT の `TickInput`）、`C` はコマンド型（WIT の `Command`）。
-/// WIT bindgen が生成する型が crate ごとに異なるためジェネリクスにしている。
 pub trait Plugin<I, C> {
     /// 希望サンプル周期 \[s\]。ホストはこれを参考に tick 間隔を決める。
     fn sample_period(&self) -> f64;
@@ -115,18 +115,18 @@ macro_rules! __orts_plugin_impl {
     ($ty:ty, { $current_mode_body:expr }) => {
         struct __OrtsPluginComponent;
 
-        impl bindings::Guest for __OrtsPluginComponent {
+        impl $crate::bindings::Guest for __OrtsPluginComponent {
             fn metadata(
                 config: ::std::string::String,
             ) -> ::core::result::Result<
-                bindings::orts::plugin::types::PluginMetadata,
+                $crate::bindings::orts::plugin::types::PluginMetadata,
                 ::std::string::String,
             > {
                 // config の早期検証を兼ねて一度 init を呼ぶ。ここで作った
                 // インスタンスは捨て、run 側で改めて初期化する。
                 let instance = <$ty as $crate::Plugin<
-                    bindings::orts::plugin::types::TickInput,
-                    bindings::orts::plugin::types::Command,
+                    $crate::bindings::orts::plugin::types::TickInput,
+                    $crate::bindings::orts::plugin::types::Command,
                 >>::init(&config)?;
                 let sample_period = $crate::Plugin::sample_period(&instance);
                 if !sample_period.is_finite() || sample_period <= 0.0 {
@@ -135,7 +135,7 @@ macro_rules! __orts_plugin_impl {
                         sample_period
                     ));
                 }
-                ::core::result::Result::Ok(bindings::orts::plugin::types::PluginMetadata {
+                ::core::result::Result::Ok($crate::bindings::orts::plugin::types::PluginMetadata {
                     sample_period_s: sample_period,
                 })
             }
@@ -146,13 +146,13 @@ macro_rules! __orts_plugin_impl {
 
             fn run(config: ::std::string::String) -> ::core::result::Result<(), ::std::string::String> {
                 let instance = <$ty as $crate::Plugin<
-                    bindings::orts::plugin::types::TickInput,
-                    bindings::orts::plugin::types::Command,
+                    $crate::bindings::orts::plugin::types::TickInput,
+                    $crate::bindings::orts::plugin::types::Command,
                 >>::init(&config)?;
                 __ORTS_PLUGIN_STATE.with(|s| *s.borrow_mut() = Some(instance));
 
                 loop {
-                    let input = match bindings::orts::plugin::tick_io::wait_tick() {
+                    let input = match $crate::bindings::orts::plugin::tick_io::wait_tick() {
                         ::core::option::Option::Some(input) => input,
                         // ホストが shutdown を要求している。正常終了する。
                         ::core::option::Option::None => return ::core::result::Result::Ok(()),
@@ -164,7 +164,7 @@ macro_rules! __orts_plugin_impl {
                         )
                     })?;
                     if let ::core::option::Option::Some(cmd) = cmd {
-                        bindings::orts::plugin::tick_io::send_command(&cmd);
+                        $crate::bindings::orts::plugin::tick_io::send_command(&cmd);
                     }
                 }
             }
@@ -175,6 +175,6 @@ macro_rules! __orts_plugin_impl {
                 const { ::core::cell::RefCell::new(None) };
         }
 
-        bindings::export!(__OrtsPluginComponent with_types_in bindings);
+        $crate::bindings::export!(__OrtsPluginComponent with_types_in $crate::bindings);
     };
 }

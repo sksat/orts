@@ -1,0 +1,330 @@
+// Phase P1: orts 宇宙機プラグインインターフェース v1
+//
+// orts シミュレータと外部の宇宙機制御プラグイン間の長期的な API 契約。
+// Phase P1 では B-dot デタンブリングコントローラを WASM Component
+// ゲストで動かすのに必要な最小の型とエントリーポイントのみを定義。
+// 後続フェーズで `host-env`（大気密度、太陽方向等）と `command`
+// （スラスタ、impulsive dv 等）を追加拡張する。
+//
+// ## バージョニング
+//
+// この world は `wit/v0/` 以下に配置。record フィールド、enum variant、
+// import/export 関数シグネチャの破壊的変更は `wit/v1/` への移行が必要。
+// 追加的変更（新しい host-env 関数、デフォルト付き新 command variant）
+// は既存ゲストを壊さない範囲でこのファイル内で行える。
+//
+// ## WIT world に反映しないホスト側メソッド
+//
+// ホスト側 `PluginController` trait の以下のメソッドは WIT には含めない:
+//
+// - `api_version`: WIT パッケージバージョン (`orts:plugin@0.1.0`) で
+//   カバー。ホストはロード時に component の WIT メタデータを読んで
+//   バージョン不一致を検出する。
+// - `snapshot_state` / `restore_state`: Phase P6 ホットリロード用。
+//   非破壊的な追加拡張として別 interface で追加するか、`wit/v1/` で対応。
+//
+// ## 命名規則
+//
+// - 座標系: `eci` (Earth-centred inertial, SimpleEci or Gcrs), `ecef`, `body`
+// - 単位は doc comment に記載。フィールド名接尾辞は `-km`, `-kms`,
+//   `-kgm3` 等のリーフスカラーのみ。`-t` (Tesla) は "time" と衝突
+//   するため避ける。
+// - クォータニオンは Hamilton、スカラー先頭 `(w, x, y, z)`。
+
+package orts:plugin@0.1.0;
+
+/// ホストとゲスト間で交換する物理量プリミティブ。
+///
+/// 全てのベクトル / クォータニオン / 状態型は orts の規約に従う:
+/// 軌道状態は km / km/s、姿勢は rad / rad/s、磁気モーメントは
+/// A·m²、Hamilton クォータニオン (スカラー先頭)、ECI 基準。
+interface types {
+    /// 3 成分実数ベクトル（汎用、フレーム未指定）。
+    record vec3 {
+        x: f64,
+        y: f64,
+        z: f64,
+    }
+
+    /// Hamilton クォータニオン、スカラー先頭 `(w, x, y, z)`。
+    record quat {
+        w: f64,
+        x: f64,
+        y: f64,
+        z: f64,
+    }
+
+    /// ECI 座標系での位置 \[km\]。
+    record position-eci-km {
+        x: f64, y: f64, z: f64,
+    }
+
+    /// ECI 座標系での速度 \[km/s\]。
+    record velocity-eci-kms {
+        x: f64, y: f64, z: f64,
+    }
+
+    /// ECI 座標系での軌道状態。
+    record orbital-state {
+        position: position-eci-km,
+        velocity: velocity-eci-kms,
+    }
+
+    /// 剛体姿勢: 姿勢クォータニオン (body→inertial) と
+    /// 機体座標系での角速度 \[rad/s\]。
+    record attitude-state {
+        orientation: quat,
+        angular-velocity: vec3,
+    }
+
+    /// サンプル tick ごとにプラグインコントローラに渡される宇宙機状態。
+    /// ホスト側 `orts::SpacecraftState` と対応。
+    record spacecraft-state {
+        orbit: orbital-state,
+        attitude: attitude-state,
+        /// 宇宙機質量 \[kg\]。
+        mass: f64,
+    }
+
+    /// 天文暦元 (UTC)。Julian Date (JD) として直接シリアライズ。
+    /// `arika::epoch::Epoch<Utc>` の JD 値と bit-for-bit 対応。
+    ///
+    /// タイムスケールは **UTC** 固定。ゲストが TDB (天体暦表用) や
+    /// TT (歳差・章動用) を必要とする場合は、ホスト側の scale 変換を
+    /// 経由するか、`(jd - 2451545.0) * 86400` で UTC 秒を得てから
+    /// ゲスト内で近似変換すること。
+    record epoch {
+        julian-date: f64,
+    }
+
+    /// tick 時点で評価されたセンサ読み値。
+    ///
+    /// ホスト側センサモデル (`orts::sensor`) による事前計算結果。
+    /// 各フィールドは `list` — 空リストはそのセンサが未搭載。
+    /// index 順序は config 定義順で安定し、シミュレーション中に変わらない。
+    ///
+    /// ## バージョニング
+    /// 0.x / v0: repo 内 host/guest lockstep。breaking change 可。
+    /// 変更時は全 example plugin bindings と oracle tests を同時更新。
+    /// v1: third-party plugin 向け安定 ABI。record field 変更禁止。
+
+    /// 機体座標系の磁場 \[T\]。
+    record magnetic-field-body {
+        x: f64, y: f64, z: f64,
+    }
+
+    /// 機体座標系の角速度 \[rad/s\]。
+    record angular-velocity-body {
+        x: f64, y: f64, z: f64,
+    }
+
+    /// 姿勢クォータニオン body→inertial (Hamilton scalar-first)。
+    record attitude-body-to-inertial {
+        w: f64, x: f64, y: f64, z: f64,
+    }
+
+    /// ������座標系での太陽方向（単位ベクトル、satellite→Sun）。
+    record sun-direction-body {
+        x: f64, y: f64, z: f64,
+    }
+
+    /// Fine sun sensor 出力: 方向 + 照度。
+    record sun-fine-output {
+        /// 太陽方向 body frame (unit vector, satellite→Sun)。
+        /// 本影 (total eclipse, illumination = 0) 中は none。
+        /// 半影 (penumbra) 中は太陽中心方向を返す (方向バイアス未モデル化)。
+        direction: option<sun-direction-body>,
+        /// 照度 \[0, 1\]。1 = full sun, 0 = full eclipse。
+        illumination: f64,
+    }
+
+    /// Sun sensor 出力。センサタイプにより出力形式が異なる。
+    variant sun-sensor-output {
+        /// Fine sun sensor: 太陽方向 + 照度。
+        fine(sun-fine-output),
+        /// Coarse sun sensor (CSS): cos(入射角) × 照度 ��スカラー。
+        /// TODO: coarse 実装は将来追加予定。
+        coarse(f64),
+    }
+
+    /// tick 時点で評価されたセンサ読み値。
+    /// フィールド名 = センサ名（複数形）、型 = 物理量 + 座標系。
+    record sensors {
+        /// 磁力計。任意位置/エポックの磁場が必要なら
+        /// `host-env.magnetic-field-eci` を使う。
+        magnetometers: list<magnetic-field-body>,
+
+        /// ジャイロスコープ。
+        gyroscopes: list<angular-velocity-body>,
+
+        /// スタ��トラッカ。
+        star-trackers: list<attitude-body-to-inertial>,
+
+        /// 太陽センサ。
+        sun-sensors: list<sun-sensor-output>,
+    }
+
+    /// RW テレメトリ（ホイール内部状態のフィードバック）。
+    record rw-telemetry {
+        /// 各ホイールの角運動量 \[N·m·s\]。
+        momentum: list<f64>,
+        /// 各ホイールのスピン速度 \[rad/s\]。
+        speeds: list<f64>,
+        /// 各ホイールの実現トルク \[N·m\]（モータ遅れモデル使用時）。
+        realized-torques: option<list<f64>>,
+    }
+
+    /// アクチュエータテレメトリ（per-device 構造化フィードバック）。
+    record actuator-telemetry {
+        /// RW テレメトリ。`none` = RW 未搭載。
+        rw: option<rw-telemetry>,
+    }
+
+    /// `controller.update` に渡される tick ごとの入力。
+    /// ホスト側 `orts::plugin::TickInput<'a>` と対応。
+    record tick-input {
+        /// シミュレーション時刻 \[s\]、コントローラの t=0 からの経過秒。
+        t: f64,
+        /// 宇宙機の真値状態（デバッグ・ログ用）。
+        spacecraft: spacecraft-state,
+        /// 暦元（暦表・磁場モデル等で必要な場合）。
+        epoch: option<epoch>,
+        /// センサ読み値。将来ノイズが乗る可能性がある。
+        sensors: sensors,
+        /// アクチュエータテレメトリ。
+        actuators: actuator-telemetry,
+    }
+
+    /// Per-wheel RW command. The mode (speed vs torque) is per-assembly.
+    variant rw-command {
+        /// Per-wheel target speed \[rad/s\]. Host motor model generates torque.
+        speeds(list<f64>),
+        /// Per-wheel motor torque \[N·m\]. Applied directly after clamp.
+        torques(list<f64>),
+    }
+
+    /// Per-MTQ command. The mode (moments vs normalized) is per-assembly.
+    variant mtq-command {
+        /// Per-MTQ magnetic dipole moment \[A·m²\] (direct physical quantity).
+        moments(list<f64>),
+        /// Per-MTQ normalized moment \[-1, 1\].
+        /// Realized moment = normalized × max_moment.
+        normalized-moments(list<f64>),
+    }
+
+    /// コントローラが返す per-device アクチュエータ指令。
+    ///
+    /// 各フィールドは per-device の `list<f64>`。長さはアセンブリの
+    /// デバイス数と一致する必要がある。`None` のフィールドは
+    /// そのアクチュエータに対するコマンドなし（前回値が ZOH で保持）。
+    ///
+    /// Phase P1: `mtq` + `rw`
+    /// Phase P4: `throttles` / `impulsive-dv` を追加予定。
+    record command {
+        /// per-MTQ コマンド（直接モーメント指令または正規化指令）。
+        mtq: option<mtq-command>,
+
+        /// per-wheel RW コマンド（速度指令またはトルク指令）。
+        rw: option<rw-command>,
+    }
+
+    /// プラグインメタデータ（起動時情報）。
+    /// ホストが `metadata(config)` で一度だけ問い合わせる。config に依存する
+    /// 項目も含むので厳密には静的ではなく「起動時に決まる情報」。
+    record plugin-metadata {
+        /// 希望サンプル周期 \[s\]。ホストはこれを参考に tick 間隔を決める。
+        /// 正の有限値でなければならない。
+        sample-period-s: f64,
+    }
+}
+
+/// ゲストがホストに対して呼び出せるサービス（host import）。
+///
+/// `update` 呼び出し中にゲストがホスト状態にアクセスする唯一の
+/// 合法的な手段。全関数は安価で副作用なし（`log` を除く）であること。
+interface host-env {
+    use types.{vec3, epoch};
+
+    /// ログレベル。orts 全体で使用する `tracing` crate のレベルと対応。
+    enum log-level {
+        trace,
+        debug,
+        info,
+        warn,
+        error,
+    }
+
+    /// ゲストからログレコードを出力する。
+    log: func(level: log-level, message: string);
+
+    /// 指定 ECI 位置・エポックでの地磁気ベクトルを ECI 座標系で返す \[T\]。
+    ///
+    /// 宇宙機の現在位置・姿勢での機体座標系磁場が欲しい場合は
+    /// `sensors.magnetometer` を使う方がオーバーヘッドがない。
+    /// このインポートは任意位置/エポックの磁場が必要な場合
+    /// （予測・計画等）の "escape hatch"。
+    ///
+    /// Phase P1 では `tobari::magnetic::TiltedDipole` に接続。
+    /// Phase D-5 で IGRF 球面調和モデルへ移行予定。
+    magnetic-field-eci: func(
+        position-eci-km: vec3,
+        e: epoch,
+    ) -> vec3;
+}
+
+/// ホスト-ゲスト間の tick 通信。
+///
+/// ゲストは `wait-tick` で中断し、ホストが次の tick で再開する。
+/// `send-command` でコマンドをホストに送る。
+interface tick-io {
+    use types.{tick-input, command};
+
+    /// ホストに制御を返し、次の tick まで待つ。
+    /// ホスト中断方式: worker thread + blocking channel (サーバ/CLI),
+    /// JSPI (ブラウザ)。
+    ///
+    /// 戻り値が `none` の場合はホストが shutdown を要求していることを示す。
+    /// ゲストは `run()` を `Ok(())` で正常終了させること。
+    wait-tick: func() -> option<tick-input>;
+
+    /// コマンドをホストに送る。
+    /// 1 tick 中に複数回呼んだ場合は最後の値が適用される。
+    send-command: func(cmd: command);
+}
+
+/// プラグイン。ゲストがメインループを持ち、ホストは tick-io で駆動する。
+///
+/// コールバック型（`init` + 毎 tick `update`）のゲストも SDK の
+/// `orts_plugin!` マクロが内部的にこの world 向けにラップする。
+///
+/// ## ライフサイクル
+///
+/// 1. ホストが `metadata(config)` を呼ぶ。config の早期検証を兼ねる。
+///    不正な config はここで `Err` を返すこと。
+/// 2. 成功したら、ホストが新しい worker thread で `run(config)` を起動する。
+/// 3. ゲストは `run` の中で `wait-tick` → 制御計算 → `send-command` を繰り返す。
+/// 4. ホストが shutdown する時は、`wait-tick` が `none` を返すので
+///    ゲストは `run` を `Ok(())` で正常終了させる。
+///
+/// `metadata` と `run` では config が 2 回パースされるが、config は純粋関数的で
+/// あるべきで副作用を持たないため実害はない。
+world plugin {
+    use types.{plugin-metadata};
+
+    import host-env;
+    import tick-io;
+
+    /// メタデータを取得する。config の早期検証を兼ねる。
+    /// 不正な config の場合は `Err` を返すこと。
+    export metadata: func(config: string) -> result<plugin-metadata, string>;
+
+    /// 現在のミッションモード名（detumble / nadir / burn 等）。
+    /// モード遷移を持たないコントローラは `none` を返す。
+    /// **注意**: `run` が worker thread で store を占有するため、現状
+    /// ホストからこの export を並行に呼ぶことはできない。将来対応予定。
+    export current-mode: func() -> option<string>;
+
+    /// ゲストのエントリーポイント。`init` + main loop を一つの関数で。
+    /// ホストが `wait-tick` で中断させながら駆動する。
+    export run: func(config: string) -> result<_, string>;
+}

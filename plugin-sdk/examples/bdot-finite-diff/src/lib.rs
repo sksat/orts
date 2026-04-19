@@ -3,8 +3,7 @@
 //! `wait_tick()` でホストから tick 入力を受け取り、有限差分法で dB/dt を
 //! 近似して B-dot 則でコマンドを返す。
 
-#[allow(warnings)]
-mod bindings;
+use orts_plugin_sdk::bindings;
 
 use bindings::orts::plugin::tick_io::{send_command, wait_tick};
 use bindings::orts::plugin::types::*;

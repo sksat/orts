@@ -2,10 +2,7 @@
 //!
 //! enum でモードを表現し、収束条件で遷移する。
 
-#[allow(warnings)]
-mod bindings;
-
-use bindings::orts::plugin::types::*;
+use orts_plugin_sdk::bindings::orts::plugin::types::*;
 use nalgebra::{UnitQuaternion, Vector3};
 use orts_plugin_sdk::{Plugin, orts_plugin};
 

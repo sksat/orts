@@ -18,10 +18,7 @@
 //! m_desat = k_desat * (h_rw × B_body) / |B_body|²
 //! ```
 
-#[allow(warnings)]
-mod bindings;
-
-use bindings::orts::plugin::types::*;
+use orts_plugin_sdk::bindings::orts::plugin::types::*;
 use nalgebra::{UnitQuaternion, Vector3};
 use orts_plugin_sdk::{Plugin, orts_plugin};
 
