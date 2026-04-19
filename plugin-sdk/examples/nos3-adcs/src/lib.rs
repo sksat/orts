@@ -95,6 +95,7 @@ impl Plugin<TickInput, Command> for Controller {
             // orts RwCommand::Torques is also motor torque, so pass directly.
             rw: Some(RwCommand::Torques(tcmd.to_vec())),
             mtq: Some(MtqCommand::Moments(mcmd.to_vec())),
+            thruster: None,
         }))
     }
 

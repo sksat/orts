@@ -89,6 +89,7 @@ impl Plugin<TickInput, Command> for PdRwUnloading {
         Ok(Some(Command {
             rw: Some(RwCommand::Torques(vec![-tau.x, -tau.y, -tau.z])),
             mtq: mag_cmd,
+            thruster: None,
         }))
     }
 }

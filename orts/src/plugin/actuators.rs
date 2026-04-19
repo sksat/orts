@@ -20,7 +20,7 @@
 //! (zero-order hold). If a guest sets both `mtq` and `rw` in a single
 //! `Command`, both actuators are updated simultaneously.
 
-use super::command::{Command, MtqCommand, RwCommand};
+use super::command::{Command, MtqCommand, RwCommand, ThrusterCommand};
 use super::error::PluginError;
 
 /// Per-actuator applied command state.
@@ -33,6 +33,10 @@ pub struct ActuatorBundle {
     /// Per-wheel commanded RW command (speed or torque).
     /// `None` until `apply()` receives a `Command` with `rw`.
     commanded_rw: Option<RwCommand>,
+
+    /// Per-thruster commanded throttle.
+    /// `None` until `apply()` receives a `Command` with `thruster`.
+    commanded_thruster: Option<ThrusterCommand>,
 }
 
 impl ActuatorBundle {
@@ -59,6 +63,9 @@ impl ActuatorBundle {
         if let Some(rw) = &cmd.rw {
             self.commanded_rw = Some(rw.clone());
         }
+        if let Some(thruster) = &cmd.thruster {
+            self.commanded_thruster = Some(thruster.clone());
+        }
         Ok(())
     }
 
@@ -81,6 +88,16 @@ impl ActuatorBundle {
     /// Returns `true` if an RW command has been applied at least once.
     pub fn has_rw_command(&self) -> bool {
         self.commanded_rw.is_some()
+    }
+
+    /// Returns the currently-commanded thruster command.
+    pub fn thruster_command(&self) -> Option<&ThrusterCommand> {
+        self.commanded_thruster.as_ref()
+    }
+
+    /// Returns `true` if a thruster command has been applied at least once.
+    pub fn has_thruster_command(&self) -> bool {
+        self.commanded_thruster.is_some()
     }
 }
 
@@ -186,6 +203,7 @@ mod tests {
         let cmd = Command {
             mtq: Some(MtqCommand::Moments(vec![1.0, 0.0, 0.0])),
             rw: Some(RwCommand::Torques(vec![0.0, 0.1, 0.0])),
+            thruster: None,
         };
         bundle.apply(&cmd).unwrap();
         assert_eq!(
@@ -196,5 +214,40 @@ mod tests {
             bundle.rw_command(),
             Some(&RwCommand::Torques(vec![0.0, 0.1, 0.0]))
         );
+    }
+
+    #[test]
+    fn apply_stores_thruster() {
+        let mut bundle = ActuatorBundle::new();
+        assert!(!bundle.has_thruster_command());
+        assert!(bundle.thruster_command().is_none());
+
+        bundle
+            .apply(&Command::thruster(vec![0.5, 1.0, 0.0]))
+            .unwrap();
+        assert!(bundle.has_thruster_command());
+        assert_eq!(
+            bundle.thruster_command(),
+            Some(&ThrusterCommand::Throttles(vec![0.5, 1.0, 0.0]))
+        );
+    }
+
+    #[test]
+    fn apply_thruster_rejects_nan() {
+        let mut bundle = ActuatorBundle::new();
+        let bad = Command::thruster(vec![0.5, f64::NAN, 0.0]);
+        assert!(bundle.apply(&bad).is_err());
+        assert!(!bundle.has_thruster_command());
+    }
+
+    #[test]
+    fn multi_command_retains_all_three() {
+        let mut bundle = ActuatorBundle::new();
+        bundle.apply(&Command::mtq(vec![1.0])).unwrap();
+        bundle.apply(&Command::rw_torques(vec![0.1])).unwrap();
+        bundle.apply(&Command::thruster(vec![0.5])).unwrap();
+        assert!(bundle.has_mtq_command());
+        assert!(bundle.has_rw_command());
+        assert!(bundle.has_thruster_command());
     }
 }

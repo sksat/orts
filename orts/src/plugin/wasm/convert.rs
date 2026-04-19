@@ -25,7 +25,7 @@ macro_rules! impl_convert {
         use $crate::attitude::AttitudeState;
         use $crate::orbital::OrbitalState;
         use $crate::plugin::tick_input::{ActuatorTelemetry, Sensors, SunSensorOutput, TickInput};
-        use $crate::plugin::{Command, MtqCommand, PluginError, RwCommand};
+        use $crate::plugin::{Command, MtqCommand, PluginError, RwCommand, ThrusterCommand};
 
         // ───────────────────── host -> guest (TickInput) ─────────────────────
 
@@ -183,7 +183,10 @@ macro_rules! impl_convert {
                 wit::RwCommand::Speeds(s) => RwCommand::Speeds(s),
                 wit::RwCommand::Torques(t) => RwCommand::Torques(t),
             });
-            let result = Command { mtq, rw };
+            let thruster = cmd.thruster.map(|thr_cmd| match thr_cmd {
+                wit::ThrusterCommand::Throttles(t) => ThrusterCommand::Throttles(t),
+            });
+            let result = Command { mtq, rw, thruster };
             if !result.is_finite() {
                 return Err(PluginError::BadCommand(format!("{result:?}")));
             }
@@ -282,10 +285,12 @@ pub mod sync {
             let wit_cmd = wit::Command {
                 mtq: Some(wit::MtqCommand::Moments(vec![1.0, -2.0, 0.5])),
                 rw: None,
+                thruster: None,
             };
             let cmd = command_from_wit(wit_cmd).unwrap();
             assert_eq!(cmd.mtq, Some(MtqCommand::Moments(vec![1.0, -2.0, 0.5])));
             assert_eq!(cmd.rw, None);
+            assert_eq!(cmd.thruster, None);
         }
 
         #[test]
@@ -293,6 +298,7 @@ pub mod sync {
             let wit_cmd = wit::Command {
                 mtq: Some(wit::MtqCommand::NormalizedMoments(vec![0.5, -1.0, 0.25])),
                 rw: None,
+                thruster: None,
             };
             let cmd = command_from_wit(wit_cmd).unwrap();
             assert_eq!(
@@ -307,6 +313,7 @@ pub mod sync {
             let wit_cmd = wit::Command {
                 mtq: None,
                 rw: Some(wit::RwCommand::Torques(vec![0.01, -0.02, 0.03])),
+                thruster: None,
             };
             let cmd = command_from_wit(wit_cmd).unwrap();
             assert_eq!(cmd.mtq, None);
@@ -318,6 +325,7 @@ pub mod sync {
             let wit_cmd = wit::Command {
                 mtq: None,
                 rw: Some(wit::RwCommand::Speeds(vec![10.0, -5.0, 0.0])),
+                thruster: None,
             };
             let cmd = command_from_wit(wit_cmd).unwrap();
             assert_eq!(cmd.mtq, None);
@@ -325,10 +333,27 @@ pub mod sync {
         }
 
         #[test]
+        fn command_roundtrip_thruster_throttles() {
+            let wit_cmd = wit::Command {
+                mtq: None,
+                rw: None,
+                thruster: Some(wit::ThrusterCommand::Throttles(vec![0.5, 1.0, 0.0])),
+            };
+            let cmd = command_from_wit(wit_cmd).unwrap();
+            assert_eq!(cmd.mtq, None);
+            assert_eq!(cmd.rw, None);
+            assert_eq!(
+                cmd.thruster,
+                Some(ThrusterCommand::Throttles(vec![0.5, 1.0, 0.0]))
+            );
+        }
+
+        #[test]
         fn command_from_wit_rejects_nan() {
             let wit_cmd = wit::Command {
                 mtq: Some(wit::MtqCommand::Moments(vec![1.0, f64::NAN, 0.0])),
                 rw: None,
+                thruster: None,
             };
             assert!(command_from_wit(wit_cmd).is_err());
         }
@@ -338,6 +363,7 @@ pub mod sync {
             let wit_cmd = wit::Command {
                 mtq: Some(wit::MtqCommand::NormalizedMoments(vec![0.5, f64::NAN, 0.0])),
                 rw: None,
+                thruster: None,
             };
             assert!(command_from_wit(wit_cmd).is_err());
         }
@@ -347,6 +373,17 @@ pub mod sync {
             let wit_cmd = wit::Command {
                 mtq: None,
                 rw: Some(wit::RwCommand::Torques(vec![f64::INFINITY, 0.0, 0.0])),
+                thruster: None,
+            };
+            assert!(command_from_wit(wit_cmd).is_err());
+        }
+
+        #[test]
+        fn command_from_wit_rejects_nan_thruster() {
+            let wit_cmd = wit::Command {
+                mtq: None,
+                rw: None,
+                thruster: Some(wit::ThrusterCommand::Throttles(vec![f64::NAN, 0.5])),
             };
             assert!(command_from_wit(wit_cmd).is_err());
         }

@@ -12,4 +12,7 @@ pub use panel_srp::PanelSrp;
 pub use reaction_wheel::{ReactionWheelAssembly, RwCommand};
 pub use state::SpacecraftState;
 pub use surface::{PanelDrag, SpacecraftShape, SurfacePanel};
-pub use thruster::{BurnWindow, ConstantThrottle, G0, ScheduledBurn, ThrustProfile, Thruster};
+pub use thruster::{
+    BurnWindow, ConstantThrottle, G0, ScheduledBurn, ThrustProfile, Thruster, ThrusterAssembly,
+    ThrusterAssemblyCore, ThrusterSpec,
+};

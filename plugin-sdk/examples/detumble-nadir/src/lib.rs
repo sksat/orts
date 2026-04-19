@@ -96,6 +96,7 @@ impl Plugin<TickInput, Command> for Controller {
                         m.z.clamp(-max, max),
                     ])),
                     rw: None,
+                    thruster: None,
                 }))
             }
 
@@ -125,6 +126,7 @@ impl Plugin<TickInput, Command> for Controller {
                 Ok(Some(Command {
                     rw: Some(RwCommand::Torques(vec![-tau.x, -tau.y, -tau.z])),
                     mtq: None,
+                    thruster: None,
                 }))
             }
         }

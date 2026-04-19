@@ -212,6 +212,14 @@ interface types {
         normalized-moments(list<f64>),
     }
 
+    /// Per-thruster command. Phase P4: throttle only.
+    /// 将来 impulsive delta-v 等の variant を追加可能。
+    variant thruster-command {
+        /// Per-thruster throttle level \[0, 1\].
+        /// 0 = off, 1 = full thrust. Host clamps to \[0, 1\].
+        throttles(list<f64>),
+    }
+
     /// コントローラが返す per-device アクチュエータ指令。
     ///
     /// 各フィールドは per-device の `list<f64>`。長さはアセンブリの
@@ -219,13 +227,16 @@ interface types {
     /// そのアクチュエータに対するコマンドなし（前回値が ZOH で保持）。
     ///
     /// Phase P1: `mtq` + `rw`
-    /// Phase P4: `throttles` / `impulsive-dv` を追加予定。
+    /// Phase P4: `thruster`
     record command {
         /// per-MTQ コマンド（直接モーメント指令または正規化指令）。
         mtq: option<mtq-command>,
 
         /// per-wheel RW コマンド（速度指令またはトルク指令）。
         rw: option<rw-command>,
+
+        /// per-thruster コマンド（スロットル指令）。
+        thruster: option<thruster-command>,
     }
 
     /// プラグインメタデータ（起動時情報）。

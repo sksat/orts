@@ -82,6 +82,7 @@ impl Plugin<TickInput, Command> for PdRwControl {
         Ok(Some(Command {
             rw: Some(RwCommand::Torques(vec![-tau.x, -tau.y, -tau.z])),
             mtq: None,
+            thruster: None,
         }))
     }
 }

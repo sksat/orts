@@ -35,7 +35,7 @@ pub mod tick_input;
 pub mod wasm;
 
 pub use actuators::ActuatorBundle;
-pub use command::{Command, MtqCommand, RwCommand};
+pub use command::{Command, MtqCommand, RwCommand, ThrusterCommand};
 pub use controller::PluginController;
 pub use error::PluginError;
 pub use tick_input::{

@@ -67,6 +67,7 @@ impl bindings::Guest for Component {
                             clamp(-gain * db_z, -max_moment, max_moment),
                         ])),
                         rw: None,
+                        thruster: None,
                     }
                 }
                 None => zero_moment(),
@@ -113,6 +114,7 @@ fn zero_moment() -> Command {
     Command {
         mtq: Some(MtqCommand::Moments(vec![0.0, 0.0, 0.0])),
         rw: None,
+        thruster: None,
     }
 }
 

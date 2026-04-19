@@ -59,6 +59,26 @@ impl MtqCommand {
     }
 }
 
+/// Per-thruster command.
+///
+/// Phase P4: throttle only. Future phases may add impulsive delta-v
+/// or force-based variants.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ThrusterCommand {
+    /// Per-thruster throttle level \[0, 1\].
+    /// 0 = off, 1 = full thrust. Host clamps to \[0, 1\].
+    Throttles(Vec<f64>),
+}
+
+impl ThrusterCommand {
+    /// Returns `true` if every element in the command is finite.
+    pub fn is_finite(&self) -> bool {
+        match self {
+            ThrusterCommand::Throttles(v) => v.iter().all(|x| x.is_finite()),
+        }
+    }
+}
+
 /// Logical command emitted by a controller backend.
 ///
 /// Each field corresponds to one actuator type. `Some` means the
@@ -79,6 +99,10 @@ pub struct Command {
     /// Length must match the number of wheels in the assembly.
     /// Sign convention: positive value → wheel absorbs positive angular momentum.
     pub rw: Option<RwCommand>,
+
+    /// Per-thruster command (throttle level).
+    /// Length must match the number of thrusters in the assembly.
+    pub thruster: Option<ThrusterCommand>,
 }
 
 impl Command {
@@ -87,6 +111,7 @@ impl Command {
         Self {
             mtq: Some(MtqCommand::Moments(moments)),
             rw: None,
+            thruster: None,
         }
     }
 
@@ -96,6 +121,7 @@ impl Command {
         Self {
             mtq: Some(MtqCommand::NormalizedMoments(values)),
             rw: None,
+            thruster: None,
         }
     }
 
@@ -104,6 +130,7 @@ impl Command {
         Self {
             mtq: None,
             rw: Some(cmd),
+            thruster: None,
         }
     }
 
@@ -117,6 +144,15 @@ impl Command {
         Self::rw_cmd(RwCommand::Speeds(speeds))
     }
 
+    /// Create a command that only sets the thruster throttles.
+    pub fn thruster(throttles: Vec<f64>) -> Self {
+        Self {
+            mtq: None,
+            rw: None,
+            thruster: Some(ThrusterCommand::Throttles(throttles)),
+        }
+    }
+
     /// Returns `true` if every numeric component in the command is
     /// finite (not NaN / +-Inf).
     ///
@@ -127,7 +163,8 @@ impl Command {
     pub fn is_finite(&self) -> bool {
         let mtq_ok = self.mtq.as_ref().is_none_or(|cmd| cmd.is_finite());
         let rw_ok = self.rw.as_ref().is_none_or(|cmd| cmd.is_finite());
-        mtq_ok && rw_ok
+        let thruster_ok = self.thruster.as_ref().is_none_or(|cmd| cmd.is_finite());
+        mtq_ok && rw_ok && thruster_ok
     }
 }
 
@@ -194,6 +231,7 @@ mod tests {
         let cmd = Command {
             mtq: Some(MtqCommand::Moments(vec![1.0, 0.0, 0.0])),
             rw: Some(RwCommand::Torques(vec![0.0, 0.1, 0.0])),
+            thruster: None,
         };
         assert!(cmd.is_finite());
         assert!(cmd.mtq.is_some());
@@ -205,6 +243,7 @@ mod tests {
         let cmd = Command {
             mtq: Some(MtqCommand::Moments(vec![f64::NAN, 0.0, 0.0])),
             rw: Some(RwCommand::Torques(vec![0.0, 0.1, 0.0])),
+            thruster: None,
         };
         assert!(!cmd.is_finite());
     }
@@ -214,6 +253,37 @@ mod tests {
         let cmd = Command {
             mtq: Some(MtqCommand::Moments(vec![])),
             rw: Some(RwCommand::Torques(vec![])),
+            thruster: None,
+        };
+        assert!(cmd.is_finite());
+    }
+
+    #[test]
+    fn thruster_finite_detects_nan() {
+        let good = Command::thruster(vec![0.5, 1.0, 0.0]);
+        assert!(good.is_finite());
+
+        let nan = Command::thruster(vec![0.5, f64::NAN, 0.0]);
+        assert!(!nan.is_finite());
+
+        let inf = Command::thruster(vec![f64::INFINITY, 0.0, 0.0]);
+        assert!(!inf.is_finite());
+    }
+
+    #[test]
+    fn thruster_field_access() {
+        let cmd = Command::thruster(vec![0.5, 1.0]);
+        assert!(cmd.thruster.is_some());
+        assert!(cmd.mtq.is_none());
+        assert!(cmd.rw.is_none());
+    }
+
+    #[test]
+    fn all_fields_set() {
+        let cmd = Command {
+            mtq: Some(MtqCommand::Moments(vec![1.0])),
+            rw: Some(RwCommand::Torques(vec![0.1])),
+            thruster: Some(ThrusterCommand::Throttles(vec![0.5])),
         };
         assert!(cmd.is_finite());
     }
