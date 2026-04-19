@@ -31,6 +31,19 @@ pub enum ResolvedPluginBackend {
 /// this yields a threshold of 256 satellites, which comfortably sits
 /// inside the "sync is still fine" band identified in the perf
 /// review (≤ a few hundred OS threads).
+///
+/// TODO: revisit this default. The constellation-phasing bench
+/// (N = 1, 8, 64 on a 16-thread CPU, sample_period = 0.1) found that
+/// async is already ~5× faster than sync from N = 8 because async
+/// throughput mode runs per-satellite `step_controlled()` in parallel
+/// via `rayon` (see cli/src/commands/run.rs parallel_step path),
+/// whereas sync's sim loop iterates satellites sequentially. The
+/// crossover is likely near N ≈ cores, not cores × 32. Before
+/// changing the default, measure with sample_period = 1.0 and with
+/// heavier plugins so we don't regress plugins where per-call cost
+/// dominates. Note the `.max(32)` floor in `default_auto_threshold()`
+/// also pins the effective threshold to ≥ 32 regardless of this
+/// constant.
 #[cfg(feature = "plugin-wasm")]
 const DEFAULT_THRESHOLD_PER_CORE: usize = 32;
 
