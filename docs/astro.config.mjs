@@ -163,7 +163,6 @@ export default defineConfig({
         { label: "Examples", autogenerate: { directory: "examples" } },
         {
           label: "orts",
-          collapsed: true,
           items: [
             { label: "Overview", slug: "orts/overview" },
             {
@@ -175,7 +174,6 @@ export default defineConfig({
         },
         {
           label: "arika",
-          collapsed: true,
           items: [
             { label: "Overview", slug: "arika/overview" },
             {
@@ -187,7 +185,6 @@ export default defineConfig({
         },
         {
           label: "utsuroi",
-          collapsed: true,
           items: [
             { label: "Overview", slug: "utsuroi/overview" },
             {
@@ -199,7 +196,6 @@ export default defineConfig({
         },
         {
           label: "tobari",
-          collapsed: true,
           items: [
             { label: "Overview", slug: "tobari/overview" },
             { label: "Examples", autogenerate: { directory: "tobari/examples" } },
@@ -212,7 +208,6 @@ export default defineConfig({
         },
         {
           label: "uneri",
-          collapsed: true,
           items: [
             { label: "Overview", slug: "uneri/api/readme" },
             { label: "Examples", autogenerate: { directory: "uneri/examples" } },
