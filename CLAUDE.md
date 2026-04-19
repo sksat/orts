@@ -19,9 +19,9 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 - `cargo build --workspace` — build all crates
 - `cargo test --workspace` — run all tests
 - `cargo clippy --workspace` — lint all crates
-- `cargo run --bin orts -- run` — run a simulation (outputs RRD by default)
+- `cargo run --bin orts -- run` — run a simulation (auto-detects orts.toml in CWD)
 - `cargo run --bin orts -- serve` — start WebSocket server (port 9001)
-- `cargo run --bin orts -- serve --altitude 800 --dt 5` — custom parameters
+- `cargo run --bin orts -- serve --sat "altitude=800" --dt 5` — custom parameters
 - `cargo run --bin orts -- serve --dt 1 --output-interval 10` — fine dt with decimated output
 - `cargo test -p utsuroi` — test only the utsuroi (integrator) crate
 - `cargo test -p arika` — test only the arika crate

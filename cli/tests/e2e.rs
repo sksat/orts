@@ -3,7 +3,15 @@ use std::process::{Command, Stdio};
 fn run_cli_csv() -> std::process::Output {
     let binary = env!("CARGO_BIN_EXE_orts");
     Command::new(binary)
-        .args(["run", "--output", "stdout", "--format", "csv"])
+        .args([
+            "run",
+            "--sat",
+            "altitude=400",
+            "--output",
+            "stdout",
+            "--format",
+            "csv",
+        ])
         .output()
         .expect("failed to execute orts")
 }
@@ -12,7 +20,15 @@ fn run_cli_csv_with_body(body: &str) -> std::process::Output {
     let binary = env!("CARGO_BIN_EXE_orts");
     Command::new(binary)
         .args([
-            "run", "--body", body, "--output", "stdout", "--format", "csv",
+            "run",
+            "--body",
+            body,
+            "--sat",
+            "altitude=400",
+            "--output",
+            "stdout",
+            "--format",
+            "csv",
         ])
         .output()
         .expect("failed to execute orts")
@@ -218,6 +234,31 @@ fn run_cli_with_config(config_path: &str) -> std::process::Output {
         ])
         .output()
         .expect("failed to execute orts")
+}
+
+#[test]
+fn test_cli_no_config_no_orbit_args_errors() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let dir = std::env::temp_dir().join(format!("orts-e2e-noconfig-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let output = Command::new(binary)
+        .current_dir(&dir)
+        .args(["run", "--output", "stdout", "--format", "csv"])
+        .output()
+        .expect("failed to execute orts");
+
+    assert!(
+        !output.status.success(),
+        "Expected non-zero exit when no config or orbit args are provided"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no simulation configuration found"),
+        "Expected error message about missing configuration, got: {stderr}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// Parse a CSV data line into (t, x, y, z, vx, vy, vz)
@@ -565,7 +606,15 @@ fn test_csv_convert_roundtrip_headers_match() {
     // 1. run → csv (direct)
     let run_output = Command::new(binary)
         .args([
-            "run", "--epoch", epoch, "--output", "stdout", "--format", "csv",
+            "run",
+            "--sat",
+            "altitude=400",
+            "--epoch",
+            epoch,
+            "--output",
+            "stdout",
+            "--format",
+            "csv",
         ])
         .output()
         .expect("failed to run orts run --format csv");
@@ -576,6 +625,8 @@ fn test_csv_convert_roundtrip_headers_match() {
     let rrd_output = Command::new(binary)
         .args([
             "run",
+            "--sat",
+            "altitude=400",
             "--epoch",
             epoch,
             "--output",

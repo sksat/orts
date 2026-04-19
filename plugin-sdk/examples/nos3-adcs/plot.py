@@ -3,7 +3,7 @@
 
 Usage:
     # Generate CSV first:
-    orts run --config orts.toml --format csv --output stdout > result.csv
+    orts run --format csv --output stdout > result.csv
     # Then plot:
     python3 plot.py result.csv
     python3 plot.py result.csv --save output.png

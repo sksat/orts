@@ -64,10 +64,6 @@ pub enum OutputFormat {
 
 #[derive(Parser, Debug, Clone)]
 pub struct SimArgs {
-    /// Orbit altitude in km
-    #[arg(long, default_value_t = 400.0)]
-    pub altitude: f64,
-
     /// Central body name (e.g. earth, moon, mars)
     #[arg(long, default_value = "earth")]
     pub body: String,
@@ -149,7 +145,7 @@ pub struct SimArgs {
     pub duration: Option<f64>,
 
     /// Path to simulation config file (JSON/TOML/YAML).
-    /// When specified, orbit-related args (--altitude, --sat, --tle, etc.) are ignored.
+    /// When specified, orbit-related args (--sat, --tle, etc.) are ignored.
     #[arg(long)]
     pub config: Option<String>,
 
@@ -198,6 +194,17 @@ pub struct SimArgs {
     /// always runs in deterministic mode regardless of this flag.
     #[arg(long, value_enum, default_value = "throughput")]
     pub plugin_backend_async_mode: PluginAsyncModeChoice,
+}
+
+impl SimArgs {
+    /// Returns true if explicit orbit-specifying arguments were provided.
+    pub fn has_orbit_args(&self) -> bool {
+        !self.sats.is_empty()
+            || self.tle.is_some()
+            || self.tle_line1.is_some()
+            || self.tle_line2.is_some()
+            || self.norad_id.is_some()
+    }
 }
 
 /// Async WASM backend execution mode.

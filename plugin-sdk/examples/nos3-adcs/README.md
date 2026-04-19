@@ -39,7 +39,7 @@ build.rs が自動で以下を行う:
 ## Run
 
 ```bash
-orts run --config orts.toml
+orts run
 ```
 
 デフォルト設定は B-dot モード (mode 1) で、400km LEO での 10 分間のデタンブリングを実行する。
@@ -89,7 +89,7 @@ orts run --config orts.toml
 
 ```bash
 # CSV を生成
-orts run --config orts.toml --format csv --output stdout > result.csv
+orts run --format csv --output stdout > result.csv
 
 # プロット (uv + matplotlib)
 uv run python3 plot.py result.csv

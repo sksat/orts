@@ -10,7 +10,7 @@ React + Three.js viewer SPA as a single `cargo install`-able distributable.
 ## Usage
 
 ```
-orts run --altitude 400 --dt 5         # run a quick sim, record to RRD
+orts run --sat "altitude=400" --dt 5   # run a quick sim, record to RRD
 orts serve                             # WebSocket server (port 9001) +
                                        # embedded viewer at http://localhost:9001
 ```

@@ -38,7 +38,7 @@ TOML config でシミュレーションを実行:
 
 ```sh
 cd plugin-sdk/examples/pd-rw-control
-orts run --config orts.toml --format csv
+orts run --format csv
 ```
 
 `orts.toml` に宇宙機パラメータ、WASM プラグインパス、センサ、RW を全て記述。Rust の再コンパイルなしに `.wasm` と config だけで制御則を差し替えられる。

@@ -24,8 +24,23 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
                 std::process::exit(1);
             });
         SimParams::from_config(&config)
-    } else {
+    } else if sim.has_orbit_args() {
         SimParams::from_sim_args(sim, false)
+    } else {
+        // Auto-detect orts.toml in the current directory
+        let config_path = std::path::Path::new("orts.toml");
+        if config_path.exists() {
+            let config = crate::config::SimConfig::load(config_path).unwrap_or_else(|e| {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            });
+            SimParams::from_config(&config)
+        } else {
+            eprintln!("Error: no simulation configuration found.");
+            eprintln!("Provide --config <path>, place orts.toml in the current directory,");
+            eprintln!("or specify an orbit with --sat / --tle / --norad-id.");
+            std::process::exit(1);
+        }
     };
     // CLI backend flags always override config-file defaults so
     // `orts run --config … --plugin-backend=sync|async` works.

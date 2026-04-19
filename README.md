@@ -39,8 +39,8 @@ cargo binstall orts-cli
 ## Quick Start
 
 ```bash
-# Run a simulation from config file
-orts run --config orts.toml
+# Run a simulation (auto-detects orts.toml in current directory)
+orts run
 
 # WebSocket server with embedded 3D viewer
 orts serve --config orts.toml

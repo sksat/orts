@@ -39,7 +39,7 @@ Run the simulation using a TOML config file:
 
 ```sh
 # orts-cli should be built with plugin-wasm feature
-orts run --config orts.toml
+orts run
 ```
 
 `orts.toml` specifies spacecraft parameters, WASM plugin path, and controller gain. You can tweak control parameters by editing the config without recompiling the `.wasm`.

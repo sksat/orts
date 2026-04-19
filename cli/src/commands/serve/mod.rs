@@ -37,13 +37,7 @@ pub fn run_server(sim: &SimArgs, port: u16) {
 
 /// Detect whether CLI args specify an explicit simulation configuration.
 fn has_explicit_sim_args(sim: &SimArgs) -> bool {
-    sim.config.is_some()
-        || !sim.sats.is_empty()
-        || sim.tle.is_some()
-        || sim.tle_line1.is_some()
-        || sim.norad_id.is_some()
-        // --altitude with non-default value
-        || (sim.altitude - 400.0).abs() > 1e-9
+    sim.config.is_some() || sim.has_orbit_args()
 }
 
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {

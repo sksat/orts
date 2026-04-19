@@ -212,37 +212,13 @@ impl SimParams {
                     rw_config: None,
                     mtq_config: None,
                 }]
-            } else if is_serve
-                && args.altitude == 400.0
-                && args.tle.is_none()
-                && args.tle_line1.is_none()
-                && args.norad_id.is_none()
-            {
+            } else if is_serve {
                 // serve with no explicit orbit → SSO + ISS default
                 Self::default_serve_satellites(body, mu)
             } else {
-                // Single circular orbit
-                let r0 = body.properties().radius + args.altitude;
-                let period = 2.0 * std::f64::consts::PI * (r0.powi(3) / mu).sqrt();
-                vec![SatelliteSpec {
-                    id: "default".to_string(),
-                    name: None,
-                    orbit: OrbitSpec::Circular {
-                        altitude: args.altitude,
-                        r0,
-                        inclination: 0.0,
-                        raan: 0.0,
-                    },
-                    period,
-                    ballistic_coeff: None,
-                    srp_area_to_mass: None,
-                    srp_cr: None,
-                    attitude_config: None,
-                    controller_config: None,
-                    sensor_choices: None,
-                    rw_config: None,
-                    mtq_config: None,
-                }]
+                // No orbit specification — caller should have
+                // checked before reaching here (orts run errors out).
+                vec![]
             }
         };
 
@@ -485,7 +461,7 @@ mod tests {
     #[test]
     fn sim_params_stream_interval_defaults_to_output_interval() {
         let args = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -519,7 +495,7 @@ mod tests {
     #[test]
     fn sim_params_explicit_stream_interval() {
         let args = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 1.0,
             output_interval: Some(10.0),
@@ -553,7 +529,7 @@ mod tests {
     fn sim_params_stream_interval_clamped() {
         // stream_interval < dt → clamped to dt
         let args = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 5.0,
             output_interval: Some(10.0),
@@ -582,7 +558,7 @@ mod tests {
 
         // stream_interval > output_interval → clamped to output_interval
         let args2 = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 1.0,
             output_interval: Some(10.0),
@@ -613,7 +589,7 @@ mod tests {
     #[test]
     fn sim_params_with_epoch() {
         let args = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -648,7 +624,7 @@ mod tests {
     #[should_panic(expected = "Cannot specify both")]
     fn sim_params_norad_id_conflicts_with_tle() {
         let args = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -682,7 +658,7 @@ mod tests {
     #[test]
     fn sim_params_from_tle_lines() {
         let args = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -732,7 +708,7 @@ mod tests {
     #[test]
     fn sim_params_tle_initial_state_plausible() {
         let args = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -777,46 +753,9 @@ mod tests {
     }
 
     #[test]
-    fn sim_params_circular_mode_still_works() {
-        let args = SimArgs {
-            altitude: 400.0,
-            body: "earth".to_string(),
-            dt: 10.0,
-            output_interval: None,
-            stream_interval: None,
-            epoch: None,
-            tle: None,
-            tle_line1: None,
-            tle_line2: None,
-            norad_id: None,
-            sats: vec![],
-            integrator: IntegratorChoice::Dp45,
-            atol: 1e-10,
-            rtol: 1e-8,
-            atmosphere: AtmosphereChoice::Exponential,
-            f107: 150.0,
-            ap: 15.0,
-            space_weather: None,
-            duration: None,
-            config: None,
-            plugin_backend: PluginBackendChoice::Auto,
-            plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
-        };
-        let params = SimParams::from_sim_args(&args, false);
-
-        assert_eq!(params.satellites.len(), 1);
-        assert!(matches!(
-            params.satellites[0].orbit,
-            OrbitSpec::Circular { .. }
-        ));
-        assert!((params.satellites[0].altitude(&params.body) - 400.0).abs() < 1e-9);
-    }
-
-    #[test]
     fn sim_params_tle_epoch_overridable() {
         let args = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -857,7 +796,7 @@ mod tests {
     #[test]
     fn sim_params_with_sat_flags() {
         let args = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -891,43 +830,10 @@ mod tests {
     }
 
     #[test]
-    fn sim_params_single_sat_shorthand() {
-        // When no --sat flag but --altitude is used, create single satellite
-        let args = SimArgs {
-            altitude: 400.0,
-            body: "earth".to_string(),
-            dt: 10.0,
-            output_interval: None,
-            stream_interval: None,
-            epoch: None,
-            tle: None,
-            tle_line1: None,
-            tle_line2: None,
-            norad_id: None,
-            sats: vec![],
-            integrator: IntegratorChoice::Dp45,
-            atol: 1e-10,
-            rtol: 1e-8,
-            atmosphere: AtmosphereChoice::Exponential,
-            f107: 150.0,
-            ap: 15.0,
-            space_weather: None,
-            duration: None,
-            config: None,
-            plugin_backend: PluginBackendChoice::Auto,
-            plugin_backend_threshold: None,
-            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
-        };
-        let params = SimParams::from_sim_args(&args, false);
-        assert_eq!(params.satellites.len(), 1);
-        assert_eq!(params.satellites[0].id, "default");
-    }
-
-    #[test]
     fn sim_params_serve_default_sso() {
         // serve with no orbit args → at least SSO (ISS requires network)
         let args = SimArgs {
-            altitude: 400.0,
+
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
