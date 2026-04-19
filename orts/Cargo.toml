@@ -29,7 +29,7 @@ utsuroi.workspace = true
 tobari.workspace = true
 log = "0.4.29"
 serde_json = { workspace = true }
-rand = "0.9.1"
+rand = "0.10.0"
 rand_distr = "0.5.0"
 serde.workspace = true
 thiserror.workspace = true
