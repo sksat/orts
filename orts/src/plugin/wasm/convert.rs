@@ -142,13 +142,16 @@ macro_rules! impl_convert {
                             direction,
                             illumination,
                         } => {
-                            let v = direction.into_inner().into_inner();
-                            wit::SunSensorOutput::Fine(wit::SunFineOutput {
-                                direction: wit::SunDirectionBody {
+                            let wit_dir = direction.map(|d| {
+                                let v = d.into_inner().into_inner();
+                                wit::SunDirectionBody {
                                     x: v.x,
                                     y: v.y,
                                     z: v.z,
-                                },
+                                }
+                            });
+                            wit::SunSensorOutput::Fine(wit::SunFineOutput {
+                                direction: wit_dir,
                                 illumination: *illumination,
                             })
                         }

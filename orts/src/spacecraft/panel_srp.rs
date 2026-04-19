@@ -1,8 +1,9 @@
+use arika::eclipse::{self, SUN_RADIUS_KM, ShadowModel};
 use arika::epoch::Epoch;
 use arika::sun;
 use nalgebra::Vector3;
 
-use crate::perturbations::{SOLAR_RADIATION_PRESSURE, shadow_function};
+use crate::perturbations::SOLAR_RADIATION_PRESSURE;
 use arika::earth::R as R_EARTH;
 
 use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
@@ -25,9 +26,11 @@ use super::{ExternalLoads, SpacecraftShape};
 /// and `ŝ` is the unit vector from the satellite toward the Sun.
 pub struct PanelSrp {
     shape: SpacecraftShape,
-    /// Central body radius for cylindrical shadow model [km].
+    /// Central body radius for shadow model [km].
     /// `None` disables shadow computation (always sunlit).
     shadow_body_radius: Option<f64>,
+    /// Shadow model to use (default: Cylindrical).
+    shadow_model: ShadowModel,
 }
 
 impl PanelSrp {
@@ -36,6 +39,7 @@ impl PanelSrp {
         Self {
             shape: SpacecraftShape::Panels(panels),
             shadow_body_radius: None,
+            shadow_model: ShadowModel::Cylindrical,
         }
     }
 
@@ -47,6 +51,7 @@ impl PanelSrp {
         Self {
             shape,
             shadow_body_radius: Some(R_EARTH),
+            shadow_model: ShadowModel::Cylindrical,
         }
     }
 
@@ -55,12 +60,19 @@ impl PanelSrp {
         Self {
             shape,
             shadow_body_radius: None,
+            shadow_model: ShadowModel::Cylindrical,
         }
     }
 
     /// Set or override the shadow body radius (builder pattern).
     pub fn with_shadow_body(mut self, radius: f64) -> Self {
         self.shadow_body_radius = Some(radius);
+        self
+    }
+
+    /// Set the shadow model (builder pattern).
+    pub fn with_shadow_model(mut self, model: ShadowModel) -> Self {
+        self.shadow_model = model;
         self
     }
 }
@@ -84,16 +96,26 @@ impl PanelSrp {
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
 
-        // Shadow check
-        if let Some(body_r) = self.shadow_body_radius {
-            let illumination = shadow_function(orbit.position(), &sun_pos, body_r);
-            if illumination < 0.5 {
+        // Shadow check using arika::eclipse
+        let illum = if let Some(body_r) = self.shadow_body_radius {
+            let v = eclipse::illumination_central(
+                orbit.position(),
+                &sun_pos,
+                body_r,
+                SUN_RADIUS_KM,
+                self.shadow_model,
+            );
+            if v <= 0.0 {
                 return ExternalLoads::zeros();
             }
-        }
+            v
+        } else {
+            1.0
+        };
 
         let distance_ratio = sun::AU_KM / r_sun;
-        let base_pressure = SOLAR_RADIATION_PRESSURE * distance_ratio * distance_ratio; // [N/m²]
+        // Scale base pressure by illumination for penumbra support
+        let base_pressure = SOLAR_RADIATION_PRESSURE * distance_ratio * distance_ratio * illum; // [N/m²]
 
         match &self.shape {
             SpacecraftShape::Sphere { area, cr, .. } => {
@@ -274,6 +296,7 @@ mod tests {
             cr: 1.5,
             area_to_mass: 0.02,
             shadow_body_radius: None,
+            shadow_model: ShadowModel::Cylindrical,
         };
 
         let panel_loads = panel_srp.eval(0.0, &state, Some(&epoch));

@@ -131,9 +131,10 @@ interface types {
     /// Fine sun sensor 出力: 方向 + 照度。
     record sun-fine-output {
         /// 太陽方向 body frame (unit vector, satellite→Sun)。
-        direction: sun-direction-body,
+        /// 本影 (total eclipse, illumination = 0) 中は none。
+        /// 半影 (penumbra) 中は太陽中心方向を返す (方向バイアス未モデル化)。
+        direction: option<sun-direction-body>,
         /// 照度 \[0, 1\]。1 = full sun, 0 = full eclipse。
-        /// TODO: eclipse 対応。現在は常に 1.0。
         illumination: f64,
     }
 

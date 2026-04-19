@@ -22,7 +22,7 @@ mod bindings;
 mod ffi;
 
 use bindings::orts::plugin::types::*;
-use orts_plugin_sdk::{orts_plugin, Plugin};
+use orts_plugin_sdk::{Plugin, orts_plugin};
 
 struct Controller {
     sample_period: f64,
@@ -43,8 +43,7 @@ macro_rules! pread {
 macro_rules! pwrite {
     ($base:expr, $field:ident, $val:expr) => {
         unsafe {
-            std::ptr::addr_of_mut!((*std::ptr::addr_of_mut!($base)).$field)
-                .write_unaligned($val)
+            std::ptr::addr_of_mut!((*std::ptr::addr_of_mut!($base)).$field).write_unaligned($val)
         }
     };
 }
@@ -147,8 +146,13 @@ impl Controller {
         if let Some(sun) = input.sensors.sun_sensors.first() {
             match sun {
                 SunSensorOutput::Fine(fine) => {
-                    pwrite!(self.di.fss, valid, 1u8);
-                    pwrite!(self.di.fss, svb, [fine.direction.x, fine.direction.y, fine.direction.z]);
+                    if let Some(dir) = &fine.direction {
+                        pwrite!(self.di.fss, valid, 1u8);
+                        pwrite!(self.di.fss, svb, [dir.x, dir.y, dir.z]);
+                    } else {
+                        // Eclipse: no sun direction available
+                        pwrite!(self.di.fss, valid, 0u8);
+                    }
                 }
                 SunSensorOutput::Coarse(_cos_angle) => {
                     // CSS scalar can't provide direction vector — mark invalid for FSS
@@ -173,7 +177,11 @@ impl Controller {
             pwrite!(self.di.rw, h_max_b, max_h);
 
             // Wheel axes: orthogonal
-            pwrite!(self.di.rw, whl_axis, [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+            pwrite!(
+                self.di.rw,
+                whl_axis,
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            );
         }
     }
 }
@@ -191,7 +199,11 @@ fn init_gnc(cfg: &Config) -> ffi::Gnc {
     pwrite!(gnc, dt, cfg.sample_period);
     pwrite!(gnc, max_mcmd, cfg.max_mcmd);
     pwrite!(gnc, mode, cfg.initial_mode);
-    pwrite!(gnc, hmgmt_on, if cfg.momentum_management { 1u8 } else { 0u8 });
+    pwrite!(
+        gnc,
+        hmgmt_on,
+        if cfg.momentum_management { 1u8 } else { 0u8 }
+    );
     pwrite!(gnc.hmgmt, kb, cfg.hmgmt_kb);
     pwrite!(gnc.hmgmt, b_range, cfg.hmgmt_b_range);
     pwrite!(gnc.hmgmt, lo_frac, cfg.hmgmt_lo_frac);
@@ -213,7 +225,11 @@ fn init_acs(cfg: &Config) -> ffi::Ac {
     pwrite!(acs.inertial, ki, cfg.inertial_ki);
     pwrite!(acs.inertial, phi_err_max, cfg.inertial_phi_err_max);
     pwrite!(acs.inertial, qbn_cmd, cfg.inertial_qbn_cmd);
-    pwrite!(acs.inertial, h_mgmt, if cfg.momentum_management { 1 } else { 0 } as std::ffi::c_long);
+    pwrite!(
+        acs.inertial,
+        h_mgmt,
+        if cfg.momentum_management { 1 } else { 0 } as std::ffi::c_long
+    );
     acs
 }
 

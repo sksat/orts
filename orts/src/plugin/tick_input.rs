@@ -120,10 +120,17 @@ impl SunDirectionBody {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SunSensorOutput {
     /// Fine sun sensor: direction unit vector + illumination.
+    ///
+    /// `direction` is `None` during total eclipse (illumination = 0)
+    /// because the sun sensor cannot measure a direction when no sunlight
+    /// is received. During partial eclipse (penumbra), the direction is
+    /// still `Some` — the sun center direction — but illumination < 1.
+    ///
+    /// Note: directional bias from the visible solar disk centroid shift
+    /// during partial eclipse is not modeled.
     Fine {
-        direction: SunDirectionBody,
+        direction: Option<SunDirectionBody>,
         /// Illumination [0, 1]. 1 = full sun, 0 = full eclipse.
-        // TODO: eclipse 対応。現在は常に 1.0。
         illumination: f64,
     },
     /// Coarse sun sensor (CSS): cos(incidence) × illumination scalar.

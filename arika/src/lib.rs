@@ -7,6 +7,7 @@ mod math;
 
 pub mod body;
 pub mod earth;
+pub mod eclipse;
 pub mod epoch;
 pub mod frame;
 #[cfg(feature = "alloc")]

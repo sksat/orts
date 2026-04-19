@@ -38,6 +38,7 @@ fn point_mass_srp_system(
         cr,
         area_to_mass,
         shadow_body_radius: if with_shadow { Some(R_EARTH) } else { None },
+        shadow_model: arika::eclipse::ShadowModel::Cylindrical,
     };
     OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
         .with_model(srp)
@@ -333,6 +334,7 @@ fn srp_energy_work_consistency() {
         cr,
         area_to_mass,
         shadow_body_radius: None,
+        shadow_model: arika::eclipse::ShadowModel::Cylindrical,
     };
 
     let mut work_accumulated = 0.0;
