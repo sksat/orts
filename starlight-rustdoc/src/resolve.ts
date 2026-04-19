@@ -1,4 +1,4 @@
-import type { Crate, Id, ImplItem, Item, ModuleItem, UseItem } from "./types.js";
+import type { Attribute, Crate, Id, ImplItem, Item, ModuleItem, UseItem } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Collected item — a public API item that will get its own page
@@ -15,6 +15,8 @@ export interface ApiItem {
   category: ApiItemCategory;
   /** The crate this item is exposed from */
   crateName: string;
+  /** Cfg attrs inherited from ancestor modules / re-exports */
+  inheritedAttrs: Attribute[];
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +187,7 @@ export function collectApiItems(crate: Crate, crateName: string): ApiItem[] {
   const items: ApiItem[] = [];
   const visited = new Set<number>();
 
-  collectFromModule(crate, moduleData, crateName, items, visited);
+  collectFromModule(crate, moduleData, crateName, items, visited, []);
 
   return items;
 }
@@ -196,6 +198,7 @@ function collectFromModule(
   crateName: string,
   items: ApiItem[],
   visited: Set<number>,
+  parentAttrs: Attribute[],
 ): void {
   for (const childId of moduleData.items) {
     if (visited.has(childId)) continue;
@@ -207,9 +210,12 @@ function collectFromModule(
     const innerKind = Object.keys(child.inner)[0]!;
 
     if (innerKind === "module") {
-      // Recurse into public submodules
+      // Recurse into public submodules, propagating cfg attrs
       const subModule = (child.inner as { module: ModuleItem }).module;
-      collectFromModule(crate, subModule, crateName, items, visited);
+      collectFromModule(crate, subModule, crateName, items, visited, [
+        ...parentAttrs,
+        ...child.attrs,
+      ]);
     } else if (innerKind === "use") {
       // Re-export: follow to the actual definition
       const useData = (child.inner as { use: UseItem }).use;
@@ -229,6 +235,7 @@ function collectFromModule(
         displayName: useData.name,
         category,
         crateName,
+        inheritedAttrs: [...parentAttrs, ...child.attrs],
       });
     } else {
       const category = INNER_KIND_TO_CATEGORY[innerKind];
@@ -239,6 +246,7 @@ function collectFromModule(
         displayName: child.name ?? "unnamed",
         category,
         crateName,
+        inheritedAttrs: parentAttrs,
       });
     }
   }

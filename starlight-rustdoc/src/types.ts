@@ -48,12 +48,19 @@ export type ItemKind =
 // Item
 // ---------------------------------------------------------------------------
 
+/**
+ * Rustdoc JSON Attribute enum. Simple variants serialize as plain strings
+ * (e.g. "automatically_derived"), complex variants as single-key objects
+ * (e.g. { "other": "#[...]" }, { "repr": { ... } }).
+ */
+export type Attribute = string | { [key: string]: unknown };
+
 export interface Item {
   id: Id;
   name: string | null;
   visibility: Visibility;
   docs: string | null;
-  attrs: string[];
+  attrs: Attribute[];
   deprecation: Deprecation | null;
   inner: ItemInner;
   span: Span | null;

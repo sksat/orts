@@ -7,6 +7,7 @@ export interface CrateSpec {
   name: string;
   features?: string[];
   noDefaultFeatures?: boolean;
+  allFeatures?: boolean;
 }
 
 export function normalizeCrateSpec(crate: string | CrateSpec): CrateSpec {
@@ -27,7 +28,9 @@ export function generateRustdocJson(
   if (crate.noDefaultFeatures) {
     args.push("--no-default-features");
   }
-  if (crate.features && crate.features.length > 0) {
+  if (crate.allFeatures) {
+    args.push("--all-features");
+  } else if (crate.features && crate.features.length > 0) {
     args.push("--features", crate.features.join(","));
   }
 

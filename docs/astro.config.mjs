@@ -85,7 +85,12 @@ export default defineConfig({
           output: "en/uneri/api",
         }),
         starlightRustdoc({
-          crates: ["orts", "arika", "utsuroi", "tobari"],
+          crates: [
+            { name: "orts", features: ["fetch-weather", "fetch-horizons"] },
+            { name: "arika", allFeatures: true },
+            "utsuroi",
+            { name: "tobari", features: ["fetch"] },
+          ],
           workspace: "..",
           locale: "en",
           sidebar: false,

@@ -467,6 +467,200 @@ describe("i18n locale prefix & locale-agnostic links", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Feature badge rendering
+// ---------------------------------------------------------------------------
+
+describe("feature badge rendering", () => {
+  it("renders feature badge on item page when attrs contain CfgTrace", () => {
+    const crate = makeCrate({
+      root: 0,
+      index: {
+        "0": makeItem(0, "arika", {
+          module: { is_crate: true, items: [1] },
+        }),
+        "1": {
+          ...makeItem(1, "EopTable", {
+            struct: {
+              kind: "unit",
+              generics: { params: [], where_predicates: [] },
+              impls: [],
+            },
+          }),
+          attrs: [
+            {
+              other:
+                '#[attr = CfgTrace([NameValue { name: "feature", value: Some("alloc"), span: arika/src/earth/eop/mod.rs:138:7: 138:24 (#0) }])]',
+            },
+          ],
+        },
+      },
+    });
+
+    const crates = new Map([["arika", crate]]);
+    const resolver = new LinkResolver(crates, "/orts");
+    const items = collectApiItems(crate, "arika");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
+    try {
+      generateCratePages("arika", items, crate, resolver, {
+        contentDir: tmpDir,
+        basePath: "/orts",
+      });
+
+      const page = readFileSync(join(tmpDir, "arika/api/structs/eoptable.md"), "utf-8");
+      expect(page).toContain("Available on crate feature `alloc` only.");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not render badge when attrs have no CfgTrace", () => {
+    const crate = makeCrate({
+      root: 0,
+      index: {
+        "0": makeItem(0, "arika", {
+          module: { is_crate: true, items: [1] },
+        }),
+        "1": makeItem(1, "Epoch", {
+          struct: {
+            kind: "unit",
+            generics: { params: [], where_predicates: [] },
+            impls: [],
+          },
+        }),
+      },
+    });
+
+    const crates = new Map([["arika", crate]]);
+    const resolver = new LinkResolver(crates, "/orts");
+    const items = collectApiItems(crate, "arika");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
+    try {
+      generateCratePages("arika", items, crate, resolver, {
+        contentDir: tmpDir,
+        basePath: "/orts",
+      });
+
+      const page = readFileSync(join(tmpDir, "arika/api/structs/epoch.md"), "utf-8");
+      expect(page).not.toContain("Available on");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("inherits feature badge from parent module CfgTrace", () => {
+    // EopTable itself has no CfgTrace, but its parent module does
+    const crate = makeCrate({
+      root: 0,
+      index: {
+        "0": makeItem(0, "arika", {
+          module: { is_crate: true, items: [1] },
+        }),
+        "1": {
+          ...makeItem(1, "table", {
+            module: { is_crate: false, items: [2] },
+          }),
+          attrs: [
+            {
+              other:
+                '#[attr = CfgTrace([NameValue { name: "feature", value: Some("alloc"), span: eop/mod.rs:138:7: 138:24 (#0) }])]',
+            },
+          ],
+        },
+        "2": makeItem(2, "EopTable", {
+          struct: {
+            kind: "unit",
+            generics: { params: [], where_predicates: [] },
+            impls: [],
+          },
+        }),
+      },
+    });
+
+    const crates = new Map([["arika", crate]]);
+    const resolver = new LinkResolver(crates, "/orts");
+    const items = collectApiItems(crate, "arika");
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.displayName).toBe("EopTable");
+    expect(items[0]?.inheritedAttrs).toHaveLength(1);
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
+    try {
+      generateCratePages("arika", items, crate, resolver, {
+        contentDir: tmpDir,
+        basePath: "/orts",
+      });
+
+      const page = readFileSync(join(tmpDir, "arika/api/structs/eoptable.md"), "utf-8");
+      expect(page).toContain("Available on crate feature `alloc` only.");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("shows feature tag in overview table for gated items", () => {
+    const crate = makeCrate({
+      root: 0,
+      index: {
+        "0": makeItem(0, "arika", {
+          module: { is_crate: true, items: [1, 2] },
+        }),
+        "1": makeItem(1, "Epoch", {
+          struct: {
+            kind: "unit",
+            generics: { params: [], where_predicates: [] },
+            impls: [],
+          },
+        }),
+        "2": {
+          ...makeItem(2, "EopTable", {
+            struct: {
+              kind: "unit",
+              generics: { params: [], where_predicates: [] },
+              impls: [],
+            },
+          }),
+          docs: "Earth orientation parameters.",
+          attrs: [
+            {
+              other:
+                '#[attr = CfgTrace([NameValue { name: "feature", value: Some("alloc"), span: foo.rs:1:1: 1:10 (#0) }])]',
+            },
+          ],
+        },
+      },
+    });
+
+    const crates = new Map([["arika", crate]]);
+    const resolver = new LinkResolver(crates, "/orts");
+    const items = collectApiItems(crate, "arika");
+    for (const item of items) {
+      const slug = item.displayName.toLowerCase();
+      resolver.registerPage(item.item.id, `arika/api/structs/${slug}/`, item.displayName, "arika");
+    }
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "rustdoc-test-"));
+    try {
+      generateCratePages("arika", items, crate, resolver, {
+        contentDir: tmpDir,
+        basePath: "/orts",
+      });
+
+      const overview = readFileSync(join(tmpDir, "arika/api/overview.md"), "utf-8");
+      // EopTable row should have the feature tag
+      expect(overview).toMatch(/EopTable.*`alloc`.*Earth orientation/);
+      // Epoch row should not have any feature tag
+      expect(overview).toMatch(/\| \[Epoch\]/);
+      expect(overview).not.toMatch(/Epoch.*`alloc`/);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // firstSentence
 // ---------------------------------------------------------------------------
 

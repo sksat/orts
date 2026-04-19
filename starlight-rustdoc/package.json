@@ -38,6 +38,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "lint": "biome check .",
+    "lint:fix": "biome check --fix .",
     "test": "vitest run",
     "test:watch": "vitest"
   },

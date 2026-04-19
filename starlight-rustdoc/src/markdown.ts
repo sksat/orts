@@ -4,6 +4,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { extractCfgConditions, renderCfgBadge } from "./attrs.js";
 import {
   renderFunctionSig,
   renderGenericBound,
@@ -134,7 +135,13 @@ function generateOverviewPage(
         resolver.resolveId(item.item.id, crate, item.crateName) ??
         `${item.crateName}/api/${categoryDir(item.category)}/${item.displayName.toLowerCase()}/`;
       const desc = firstSentence(item.item.docs);
-      lines.push(`| [${item.displayName}](${link}) | ${desc} |`);
+      const cfgConditions = extractCfgConditions([...item.inheritedAttrs, ...item.item.attrs]);
+      const featureTag = cfgConditions
+        .filter((c) => c.kind === "feature")
+        .map((c) => `\`${c.label}\``)
+        .join(" ");
+      const prefix = featureTag ? `${featureTag} — ` : "";
+      lines.push(`| [${item.displayName}](${link}) | ${prefix}${desc} |`);
     }
     lines.push("");
   }
@@ -155,6 +162,11 @@ function generateItemPage(
   const lines: string[] = [];
   lines.push(frontmatter(apiItem.displayName));
   lines.push(sourceLink(apiItem.item, options));
+
+  const badge = renderCfgBadge(
+    extractCfgConditions([...apiItem.inheritedAttrs, ...apiItem.item.attrs]),
+  );
+  if (badge) lines.push(badge);
 
   switch (apiItem.category) {
     case "trait":
@@ -582,6 +594,9 @@ function renderMethodSection(
   const sig = renderFunctionSig(fn, method.name!, crate, resolver);
   lines.push(`> **${sig}**`);
   lines.push("");
+
+  const methodBadge = renderCfgBadge(extractCfgConditions(method.attrs));
+  if (methodBadge) lines.push(methodBadge);
 
   if (method.docs) {
     lines.push(processDocComment(method.docs, crate, resolver));
