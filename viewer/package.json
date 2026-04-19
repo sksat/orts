@@ -35,7 +35,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.183.0",
     "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "^6.0.0",
+    "@vitejs/plugin-react": "^5.2.0",
     "happy-dom": "^20.5.0",
     "rollup-plugin-license": "^3.7.1",
     "typescript": "^5.7.0",
