@@ -4,6 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Orts Viewer</title>
+    <script type="module">
+      // GA4 tag — the viewer is a standalone SPA served at /orts/viewer/, so
+      // docs-site GA (injected by Starlight) does not reach it. Gate on
+      // `import.meta.env.PROD` and the Vite-replaced Measurement ID so dev
+      // builds stay silent. Set VITE_GA_MEASUREMENT_ID at build time (CI
+      // passes it from the GA_MEASUREMENT_ID repository variable).
+      if (import.meta.env.PROD && import.meta.env.VITE_GA_MEASUREMENT_ID) {
+        const id = import.meta.env.VITE_GA_MEASUREMENT_ID;
+        const s = document.createElement("script");
+        s.async = true;
+        s.src = `https://www.googletagmanager.com/gtag/js?id=${id}`;
+        document.head.appendChild(s);
+        window.dataLayer = window.dataLayer || [];
+        window.gtag = (...args) => {
+          window.dataLayer.push(args);
+        };
+        window.gtag("js", new Date());
+        window.gtag("config", id);
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
