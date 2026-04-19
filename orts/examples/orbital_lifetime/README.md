@@ -1,3 +1,9 @@
+---
+title: "軌道寿命解析"
+description: "6U CubeSat の軌道減衰を再現し、大気モデルと太陽活動の影響を比較"
+locale: ja
+---
+
 # Orbital Lifetime Analysis: AE1b (YODAKA)
 
 ArkEdge Space の 6U CubeSat **AE1b (YODAKA, NORAD 62295)** の軌道減衰を再現し、大気モデル・太陽活動データ・弾道係数の違いが寿命予測に与える影響を比較する example。

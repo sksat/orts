@@ -3,8 +3,8 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -104,62 +104,112 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Copy example READMEs into docs content as .mdx pages.
-// Each entry maps a docs slug to { source README, title, description }.
-// The script reads the README, strips the first `# heading` line (replaced
-// by Starlight's title), prepends frontmatter, and writes to content dir.
+// Auto-discover example READMEs and copy them into docs content as .mdx pages.
+// Any `README.md` under `orts/examples/*/` or `plugin-sdk/examples/*/` is
+// picked up. Metadata (title/description/locale) comes from an optional YAML
+// frontmatter block at the top of the README; otherwise title falls back to
+// the first `# heading`, description to the first paragraph after it, and
+// locale defaults to `ja`.
 // ---------------------------------------------------------------------------
 
+/**
+ * @param {string} raw README contents
+ * @returns {{ front: Record<string, string>, body: string }}
+ */
+function parseFrontmatter(raw) {
+  if (!raw.startsWith("---\n")) return { front: {}, body: raw };
+  const end = raw.indexOf("\n---\n", 4);
+  if (end === -1) return { front: {}, body: raw };
+  const block = raw.slice(4, end);
+  const body = raw.slice(end + 5).replace(/^\n+/, "");
+  /** @type {Record<string, string>} */
+  const front = {};
+  for (const line of block.split("\n")) {
+    const m = line.match(/^(\w+):\s*(.*)$/);
+    if (!m) continue;
+    let value = m[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    front[m[1]] = value;
+  }
+  return { front, body };
+}
+
+/**
+ * @param {string} body README body (frontmatter already stripped)
+ * @returns {{ title: string | null, description: string | null }}
+ */
+function extractTitleAndDescription(body) {
+  const lines = body.split("\n");
+  let title = null;
+  let i = 0;
+  for (; i < lines.length; i++) {
+    const m = lines[i].match(/^#\s+(.+?)\s*$/);
+    if (m) {
+      title = m[1];
+      i++;
+      break;
+    }
+  }
+  // Join consecutive non-empty lines into a single description paragraph.
+  while (i < lines.length && !lines[i].trim()) i++;
+  const paraLines = [];
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) break;
+    if (/^#{1,6}\s/.test(line)) break;
+    paraLines.push(line.trim());
+  }
+  const description = paraLines.length ? paraLines.join(" ").replace(/\s+/g, " ") : null;
+  return { title, description };
+}
+
 /** @type {Array<{slug: string, readme: string, locale: string, title: string, description: string}>} */
-const examplePages = [
-  {
-    slug: "examples/apollo11",
-    readme: "orts/examples/apollo11/README.md",
-    locale: "ja",
-    title: "Apollo 11 軌道シミュレーション",
-    description: "Apollo 11 全行程の軌道シミュレーションと 3D 可視化",
-  },
-  {
-    slug: "examples/artemis1",
-    readme: "orts/examples/artemis1/README.md",
-    locale: "ja",
-    title: "Artemis 1 Coast Feasibility",
-    description: "Artemis 1 coast phase を JPL Horizons と照合する feasibility spike",
-  },
-  {
-    slug: "examples/orbital-lifetime",
-    readme: "orts/examples/orbital_lifetime/README.md",
-    locale: "ja",
-    title: "軌道寿命解析",
-    description: "6U CubeSat の軌道減衰を再現し、大気モデルと太陽活動の影響を比較",
-  },
-  {
-    slug: "examples/plugins/bdot-finite-diff",
-    readme: "plugin-sdk/examples/bdot-finite-diff/README.md",
-    locale: "en",
-    title: "B-dot Finite-Difference Controller",
-    description: "Main-loop style WASM plugin implementing B-dot detumbling",
-  },
-  {
-    slug: "examples/plugins/pd-rw-control",
-    readme: "plugin-sdk/examples/pd-rw-control/README.md",
-    locale: "ja",
-    title: "PD 姿勢制御 + RW",
-    description: "コールバック型 WASM plugin で PD 姿勢制御 + リアクションホイール",
-  },
+const examplePages = [];
+const exampleRoots = [
+  { dir: "orts/examples", slugPrefix: "examples" },
+  { dir: "plugin-sdk/examples", slugPrefix: "examples/plugins" },
 ];
+for (const { dir, slugPrefix } of exampleRoots) {
+  const absDir = resolve(repoRoot, dir);
+  if (!existsSync(absDir)) continue;
+  const entries = readdirSync(absDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name)
+    .sort();
+  for (const name of entries) {
+    const readmeRel = `${dir}/${name}/README.md`;
+    const readmeAbs = resolve(repoRoot, readmeRel);
+    if (!existsSync(readmeAbs)) continue;
+    const raw = readFileSync(readmeAbs, "utf-8");
+    const { front, body } = parseFrontmatter(raw);
+    const { title: h1Title, description: firstPara } = extractTitleAndDescription(body);
+    const title = front.title ?? h1Title;
+    if (!title) {
+      console.log(`Warning: ${readmeRel} has no title (frontmatter or H1), skipping`);
+      continue;
+    }
+    const description = front.description ?? firstPara ?? "";
+    const locale = front.locale ?? "ja";
+    const slugName = name.replace(/_/g, "-");
+    examplePages.push({
+      slug: `${slugPrefix}/${slugName}`,
+      readme: readmeRel,
+      locale,
+      title,
+      description,
+      body,
+    });
+  }
+}
 
 for (const page of examplePages) {
-  const src = resolve(repoRoot, page.readme);
-  if (!existsSync(src)) {
-    console.log(`Warning: ${page.readme} not found, skipping`);
-    continue;
-  }
-
-  let body = readFileSync(src, "utf-8");
-
   // Strip the first `# ...` heading — Starlight renders the title from frontmatter.
-  body = body.replace(/^#\s+.*\n+/, "");
+  let body = page.body.replace(/^#\s+.*\n+/, "");
 
   // Convert bare GitHub video URLs to <video> tags.
   // GitHub README renders bare video URLs (user-attachments, release assets) as video,
@@ -193,10 +243,11 @@ for (const page of examplePages) {
     })
     .join("\n");
 
+  const yamlEscape = (s) => s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   const frontmatter = [
     "---",
-    `title: "${page.title}"`,
-    `description: "${page.description}"`,
+    `title: "${yamlEscape(page.title)}"`,
+    `description: "${yamlEscape(page.description)}"`,
     "---",
     "",
   ].join("\n");

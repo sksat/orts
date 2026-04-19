@@ -1,3 +1,9 @@
+---
+title: "Artemis 1 Coast Feasibility"
+description: "Artemis 1 coast phase を JPL Horizons と照合する feasibility spike"
+locale: ja
+---
+
 # Artemis 1 Coast Feasibility Spike
 
 NASA Artemis 1 ミッション (2022-11-16 打上 → 2022-12-11 着水) の主要 3 フェーズを、Earth-centric Dop853 integrator で伝播し、JPL Horizons が公開する Orion 参照軌道 (target `-1023`) と比較する feasibility spike。

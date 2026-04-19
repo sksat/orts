@@ -1,3 +1,9 @@
+---
+title: "Apollo 11 軌道シミュレーション"
+description: "Apollo 11 全行程の軌道シミュレーションと 3D 可視化"
+locale: ja
+---
+
 # Apollo 11 Trajectory Example
 
 Apollo 11 ミッション全行程の軌道シミュレーションと 3D 可視化。

@@ -1,3 +1,9 @@
+---
+title: "PD 姿勢制御 + RW"
+description: "コールバック型 WASM plugin で PD 姿勢制御 + リアクションホイール"
+locale: ja
+---
+
 # PD + Reaction Wheel Attitude Controller — WASM Guest Plugin
 
 PD 姿勢制御コントローラの WASM Component ゲストプラグイン。スタートラッカ (STT) とジャイロスコープのセンサ読み値から姿勢誤差を計算し、リアクションホイール (RW) にトルク指令を出す。

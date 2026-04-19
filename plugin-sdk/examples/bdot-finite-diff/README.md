@@ -1,3 +1,9 @@
+---
+title: "B-dot Finite-Difference Controller"
+description: "Main-loop style WASM plugin implementing B-dot detumbling"
+locale: en
+---
+
 # B-dot Finite-Difference Controller — WASM Guest Plugin
 
 B-dot detumbling controller implemented as a **WebAssembly Component** guest plugin for the orts simulator. This is the first end-to-end example of the Phase P plugin architecture: a spacecraft attitude controller written in Rust, compiled to a `.wasm` Component, loaded by the orts host via `wasmtime` + Pulley interpreter, and driven through the `PluginController` trait.
