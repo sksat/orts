@@ -41,7 +41,7 @@ From the **orts workspace root**:
 cargo run --example wasm-bdot --features plugin-wasm --release
 ```
 
-This sweeps gain × initial angular velocity (3×3 = 9 conditions) over 600 s of simulated time and writes CSV files here. Each CSV has columns `t, omega_x, omega_y, omega_z, omega_mag`.
+This sweeps gain × initial angular velocity × magnetic field model (3×3×2 = 18 conditions) over ~10 orbits (55,500 s) of simulated time and writes CSV files here. Both TiltedDipole and IGRF-14 magnetic field models are compared. Each CSV has columns `t, omega_x, omega_y, omega_z, omega_mag`.
 
 ## Plotting
 
@@ -50,19 +50,9 @@ cd plugin-sdk/examples/bdot-finite-diff
 uv run plot.py
 ```
 
-Produces two plots:
+Produces a gain × initial-ω matrix plot:
 
-### Gain Sweep
-
-Detumbling rate for different controller gains (`k = 1e3, 1e4, 1e5`) at each initial angular velocity magnitude.
-
-![Gain Sweep](bdot_gain_sweep.png)
-
-### Initial Angular Velocity Sweep
-
-Detumbling trajectories for different initial tumble rates at each gain setting.
-
-![Initial ω Sweep](bdot_omega_sweep.png)
+![B-dot Detumbling](bdot_detumbling.png)
 
 ## Oracle test
 
