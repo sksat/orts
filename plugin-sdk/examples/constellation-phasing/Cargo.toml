@@ -1,0 +1,14 @@
+[package]
+name = "orts-example-plugin-constellation-phasing"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+orts-plugin-sdk = { workspace = true }
+nalgebra = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]

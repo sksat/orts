@@ -1,0 +1,208 @@
+body = "earth"
+# 120000 s × 4 sat を現実的な時間で回すため dt=1.0 / sample_period=1.0 を採用。
+# 5000 N / 500 kg = 10 m/s² × dt=1 = 10 m/s per step (軌道速度 7.6 km/s の 0.13 %)、
+# 軌道周期 ≈ 5490 s に対して 5490 step/orbit なので phasing 物理には十分な解像度。
+dt = 1.0
+output_interval = 60.0
+duration = 120000.0
+epoch = "2024-01-01T00:00:00Z"
+# Demo では drag の影響を排除して純粋な 2-body の phasing を見せる
+atmosphere = "none"
+
+# In-plane constellation phasing demo。
+#
+# 4 衛星が同じ parking 軌道 (350 km, 同位置) から出発し、per-sat の
+# raise_delay_s で parking 滞在時間を変えることで operational 軌道
+# (550 km) 上の phase 差を作る。全員同じ WASM plugin を使い、config
+# だけが per-sat で違う。
+#
+# Δn = √(μ/r_park³) − √(μ/r_op³) ≈ 4.92e-5 rad/s
+# 90° (π/2 rad) に必要な delay ≈ π/2 / Δn ≈ 31900 s
+#
+#   sat-0: raise_delay_s = 0      → operational 上で 0°
+#   sat-1: raise_delay_s = 31900  → 90°
+#   sat-2: raise_delay_s = 63800  → 180°
+#   sat-3: raise_delay_s = 95700  → 270°
+#
+# duration = 120000 s は sat-3 の Hohmann 完了 (95700 + ~3000 ≈ 99000 s)
+# + 余裕を含む。
+
+# ---------------- sat-0 (no delay, reference) ----------------
+
+[[satellites]]
+id = "sat-0"
+sensors = ["gyroscope", "star_tracker"]
+
+[satellites.orbit]
+type = "circular"
+altitude = 350
+
+[satellites.attitude]
+inertia_diag = [100, 100, 100]
+mass = 500
+initial_quaternion = [1.0, 0.0, 0.0, 0.0]
+initial_angular_velocity = [0.0, 0.0, 0.0]
+
+[satellites.controller]
+type = "wasm"
+path = "../target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm"
+
+[satellites.controller.config]
+target_altitude_km = 550.0
+raise_delay_s = 0.0
+mu_km3_s2 = 398600.4418
+deadband_km = 5.0
+num_thrusters = 1
+num_rws = 3
+kp = 40.0
+kd = 120.0
+sample_period = 1.0
+
+[satellites.reaction_wheels]
+type = "three_axis"
+inertia = 0.05
+max_momentum = 100.0
+max_torque = 10.0
+
+[satellites.thruster]
+dry_mass = 100.0
+
+[[satellites.thruster.thrusters]]
+thrust_n = 5000.0
+isp_s = 230.0
+direction_body = [0.0, 1.0, 0.0]
+
+# ---------------- sat-1 (delay 31900 s → 90°) ----------------
+
+[[satellites]]
+id = "sat-1"
+sensors = ["gyroscope", "star_tracker"]
+
+[satellites.orbit]
+type = "circular"
+altitude = 350
+
+[satellites.attitude]
+inertia_diag = [100, 100, 100]
+mass = 500
+initial_quaternion = [1.0, 0.0, 0.0, 0.0]
+initial_angular_velocity = [0.0, 0.0, 0.0]
+
+[satellites.controller]
+type = "wasm"
+path = "../target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm"
+
+[satellites.controller.config]
+target_altitude_km = 550.0
+raise_delay_s = 31900.0
+mu_km3_s2 = 398600.4418
+deadband_km = 5.0
+num_thrusters = 1
+num_rws = 3
+kp = 40.0
+kd = 120.0
+sample_period = 1.0
+
+[satellites.reaction_wheels]
+type = "three_axis"
+inertia = 0.05
+max_momentum = 100.0
+max_torque = 10.0
+
+[satellites.thruster]
+dry_mass = 100.0
+
+[[satellites.thruster.thrusters]]
+thrust_n = 5000.0
+isp_s = 230.0
+direction_body = [0.0, 1.0, 0.0]
+
+# ---------------- sat-2 (delay 63800 s → 180°) ----------------
+
+[[satellites]]
+id = "sat-2"
+sensors = ["gyroscope", "star_tracker"]
+
+[satellites.orbit]
+type = "circular"
+altitude = 350
+
+[satellites.attitude]
+inertia_diag = [100, 100, 100]
+mass = 500
+initial_quaternion = [1.0, 0.0, 0.0, 0.0]
+initial_angular_velocity = [0.0, 0.0, 0.0]
+
+[satellites.controller]
+type = "wasm"
+path = "../target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm"
+
+[satellites.controller.config]
+target_altitude_km = 550.0
+raise_delay_s = 63800.0
+mu_km3_s2 = 398600.4418
+deadband_km = 5.0
+num_thrusters = 1
+num_rws = 3
+kp = 40.0
+kd = 120.0
+sample_period = 1.0
+
+[satellites.reaction_wheels]
+type = "three_axis"
+inertia = 0.05
+max_momentum = 100.0
+max_torque = 10.0
+
+[satellites.thruster]
+dry_mass = 100.0
+
+[[satellites.thruster.thrusters]]
+thrust_n = 5000.0
+isp_s = 230.0
+direction_body = [0.0, 1.0, 0.0]
+
+# ---------------- sat-3 (delay 95700 s → 270°) ----------------
+
+[[satellites]]
+id = "sat-3"
+sensors = ["gyroscope", "star_tracker"]
+
+[satellites.orbit]
+type = "circular"
+altitude = 350
+
+[satellites.attitude]
+inertia_diag = [100, 100, 100]
+mass = 500
+initial_quaternion = [1.0, 0.0, 0.0, 0.0]
+initial_angular_velocity = [0.0, 0.0, 0.0]
+
+[satellites.controller]
+type = "wasm"
+path = "../target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm"
+
+[satellites.controller.config]
+target_altitude_km = 550.0
+raise_delay_s = 95700.0
+mu_km3_s2 = 398600.4418
+deadband_km = 5.0
+num_thrusters = 1
+num_rws = 3
+kp = 40.0
+kd = 120.0
+sample_period = 1.0
+
+[satellites.reaction_wheels]
+type = "three_axis"
+inertia = 0.05
+max_momentum = 100.0
+max_torque = 10.0
+
+[satellites.thruster]
+dry_mass = 100.0
+
+[[satellites.thruster.thrusters]]
+thrust_n = 5000.0
+isp_s = 230.0
+direction_body = [0.0, 1.0, 0.0]

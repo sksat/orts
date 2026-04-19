@@ -352,6 +352,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "orts-example-plugin-constellation-phasing"
+version = "0.0.0"
+dependencies = [
+ "nalgebra",
+ "orts-plugin-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "orts-example-plugin-detumble-nadir"
 version = "0.0.0"
 dependencies = [

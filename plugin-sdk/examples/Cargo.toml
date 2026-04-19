@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "bdot-finite-diff",
     "pd-rw-control",
+    "constellation-phasing",
     "detumble-nadir",
     "pd-rw-unloading",
     "transfer-burn-with-tcm",

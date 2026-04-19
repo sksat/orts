@@ -1,0 +1,7 @@
+# Generated simulation output (regenerable from orts.toml)
+phasing.rrd
+phasing.csv
+
+# Python cache
+__pycache__/
+*.py[co]
