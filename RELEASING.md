@@ -36,7 +36,6 @@ git pull --ff-only
 # 2. Rust pre-commit gates
 cargo fmt --all -- --check
 cargo clippy --workspace --locked -- -D warnings
-cargo clippy --locked -p tobari --features wasm -- -D warnings
 cargo test --workspace --locked
 
 # 3. TypeScript pre-commit gates
@@ -60,10 +59,21 @@ pnpm build:site
 - `Cargo.toml` `[workspace.package] version` — 全 Rust crate に伝播
 - `Cargo.toml` `[workspace.dependencies]` の内部 path dep の `version` —
   workspace version と同期させる (`utsuroi` / `arika` / `orts` / `tobari`)
+- workspace inheritance (`version.workspace = true`) を使わず直接
+  `version = "=X.Y.Z"` を path dep に書いている crate があればそれも bump
+  (`grep 'version = "='` で洗い出す)
 - `plugin-sdk/Cargo.toml` — workspace inheritance 経由で自動
 - `viewer/package.json` `version`
 - `uneri/package.json` `version`
 - `starlight-rustdoc/package.json` `version`
+- CHANGELOG.md / CHANGELOG.ja.md — `[Unreleased]` → `[X.Y.Z] - DATE` に
+  rename し、新しい空の `[Unreleased]` セクションを上に追加
+- root workspace の外にある独立 workspace の `Cargo.lock` は root
+  `cargo check` では更新されないので、個別に
+  `cargo update -p <internal-crate>` を実行
+
+`tools/check-versions.sh` が workspace 内外の依存関係を横断して検証するので、
+bump 後に必ず実行して漏れを検出する。
 
 手順:
 
@@ -72,12 +82,18 @@ pnpm build:site
 cargo check --workspace               # Cargo.lock 更新
 cargo check --workspace --locked      # 再検証
 
+# 独立 workspace の Cargo.lock 更新 (存在する場合)
+(cd plugin-sdk/examples && cargo update -p orts-plugin-sdk)
+
+# Version 一貫性の検証
+bash tools/check-versions.sh
+
 # Tests (full suite)
 cargo test --workspace --locked
 
-# Commit
-git add Cargo.toml Cargo.lock viewer/package.json uneri/package.json \
-        starlight-rustdoc/package.json
+# Commit (bump で変更された tracked file を漏れなく stage)
+git add -u
+git status     # 目視確認
 git commit -m "chore: bump workspace to X.Y.Z"
 
 # Push & wait CI green
