@@ -17,7 +17,8 @@
       "!orts/tests/fixtures",
       "!docs/.astro",
       "!docs/dist",
-      "!docs/public"
+      "!docs/public",
+      "!renovate.json"
     ]
   },
   "formatter": {
