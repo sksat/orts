@@ -3,3 +3,8 @@ src/content/docs/en/utsuroi/api/
 src/content/docs/en/arika/api/
 src/content/docs/en/tobari/api/
 src/content/docs/en/orts/api/
+
+# Generated example pages (embed-viewer.mjs copies READMEs)
+src/content/docs/en/examples/
+src/content/docs/en/orts/examples/
+src/content/docs/ja/examples/
