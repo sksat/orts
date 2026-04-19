@@ -1,0 +1,10 @@
+/*
+ * Fix Starlight's SVG height rule conflicting with KaTeX square root symbols.
+ * Starlight sets `height: auto` on SVGs inside `.sl-markdown-content`, which
+ * makes KaTeX's sqrt SVG invisible.
+ *
+ * See: https://github.com/withastro/starlight/issues/2511
+ */
+.sl-markdown-content .katex-html svg {
+  height: inherit;
+}

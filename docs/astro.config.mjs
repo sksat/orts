@@ -1,6 +1,8 @@
 import react from "@astrojs/react";
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
+import rehypeKatex from "rehype-katex";
+import remarkMath from "remark-math";
 import starlightRustdoc from "starlight-rustdoc";
 import starlightTypeDoc from "starlight-typedoc";
 import rewriteTypedocLinks from "./src/integrations/rewrite-typedoc-links";
@@ -44,6 +46,10 @@ const redirectScript = buildInlineRedirectScript(LOCALE_CONFIG);
 export default defineConfig({
   base: "/orts",
   site: "https://sksat.github.io",
+  markdown: {
+    remarkPlugins: [remarkMath],
+    rehypePlugins: [rehypeKatex],
+  },
   // Root (/) is handled by src/pages/index.astro and 404 handling is done
   // via a script injected into Starlight's built-in 404 page through the
   // `head` config below — see the comment on `redirectScript` above for why
@@ -52,6 +58,7 @@ export default defineConfig({
     react(),
     starlight({
       title: "Orts",
+      customCss: ["katex/dist/katex.min.css", "./src/styles/katex.css"],
       defaultLocale: "en",
       locales: {
         en: { label: "English", lang: "en" },

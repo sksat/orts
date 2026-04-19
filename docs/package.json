@@ -14,16 +14,23 @@
   "dependencies": {
     "@astrojs/react": "^5.0.0",
     "@astrojs/starlight": "^0.38.1",
+    "@sksat/uneri": "workspace:*",
     "astro": "^6.0.5",
+    "katex": "^0.16.45",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0",
     "starlight-rustdoc": "workspace:*",
     "starlight-typedoc": "^0.21.5",
     "typedoc": "^0.28.17",
-    "typedoc-plugin-markdown": "^4.10.0",
-    "@sksat/uneri": "workspace:*"
+    "typedoc-plugin-markdown": "^4.10.0"
   },
   "devDependencies": {
+    "rehype-stringify": "^10.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
+    "unified": "^11.0.5",
     "vitest": "^4.1.4"
   }
 }
