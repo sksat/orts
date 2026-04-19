@@ -251,6 +251,35 @@ impl Component for RwTorqueCommand3D {
     }
 }
 
+/// Thruster throttle per thruster [0, 1], up to 3 thrusters (extras truncated).
+///
+/// Recorded so that downstream tools can see exactly when each thruster
+/// fired without having to infer from orbit-element deltas.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThrusterThrottle3D(pub Vector3<f64>);
+
+impl Component for ThrusterThrottle3D {
+    fn component_name() -> ComponentName {
+        "orts.ThrusterThrottle3D".into()
+    }
+    fn num_scalars() -> usize {
+        3
+    }
+    fn to_scalars(&self) -> Vec<f64> {
+        vec![self.0.x, self.0.y, self.0.z]
+    }
+    fn from_scalars(data: &[f64]) -> Option<Self> {
+        if data.len() >= 3 {
+            Some(ThrusterThrottle3D(Vector3::new(data[0], data[1], data[2])))
+        } else {
+            None
+        }
+    }
+    fn field_names() -> Vec<&'static str> {
+        vec!["throttle_0", "throttle_1", "throttle_2"]
+    }
+}
+
 /// RW momentum per wheel [N·m·s], 3-axis orthogonal.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RwMomentum3D(pub Vector3<f64>);

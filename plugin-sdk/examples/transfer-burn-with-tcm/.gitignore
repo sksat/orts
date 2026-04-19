@@ -1,0 +1,4 @@
+sim.csv
+.venv/
+__pycache__/
+uv.lock

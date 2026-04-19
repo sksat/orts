@@ -6,7 +6,7 @@ use orts::orbital::kepler::KeplerianElements;
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
 use orts::record::components::{
     AngularVelocity3D, BodyRadius, GravitationalParameter, MtqCommand3D, Quaternion4D,
-    RwMomentum3D, RwTorqueCommand3D,
+    RwMomentum3D, RwTorqueCommand3D, ThrusterThrottle3D,
 };
 use orts::record::entity_path::EntityPath;
 use orts::record::recording::Recording;
@@ -465,6 +465,7 @@ fn lookup_field_names(component_name: &str, n: usize) -> Vec<String> {
     try_component!(MtqCommand3D);
     try_component!(RwTorqueCommand3D);
     try_component!(RwMomentum3D);
+    try_component!(ThrusterThrottle3D);
 
     // Fallback: generate numbered names
     let short = component_name
@@ -648,7 +649,10 @@ fn log_controlled_state(
     tp: &TimePoint,
     sat: &crate::sim::controlled::ControlledSatellite,
 ) {
-    use orts::plugin::{MtqCommand as PluginMtqCommand, RwCommand as PluginRwCommand};
+    use orts::plugin::{
+        MtqCommand as PluginMtqCommand, RwCommand as PluginRwCommand,
+        ThrusterCommand as PluginThrusterCommand,
+    };
     use orts::spacecraft::ReactionWheelAssembly;
 
     let orbit = &sat.state.plant.orbit;
@@ -691,6 +695,25 @@ fn log_controlled_state(
             })
             .unwrap_or(nalgebra::Vector3::zeros());
         rec.log_temporal(entity, tp, &RwTorqueCommand3D(rw_vec));
+    }
+
+    // Thruster throttle per thruster (first 3 if >3). Always log when the
+    // spacecraft has thrusters, so plotting tools can show burn intervals
+    // without inferring them from orbit-element deltas.
+    if !sat.thruster_specs.is_empty() {
+        let throttle_vec = sat
+            .actuators
+            .thruster_command()
+            .map(|cmd| {
+                let PluginThrusterCommand::Throttles(v) = cmd;
+                nalgebra::Vector3::new(
+                    v.first().copied().unwrap_or(0.0),
+                    v.get(1).copied().unwrap_or(0.0),
+                    v.get(2).copied().unwrap_or(0.0),
+                )
+            })
+            .unwrap_or_else(nalgebra::Vector3::zeros);
+        rec.log_temporal(entity, tp, &ThrusterThrottle3D(throttle_vec));
     }
 
     // RW momentum telemetry

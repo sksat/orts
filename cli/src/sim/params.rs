@@ -211,6 +211,7 @@ impl SimParams {
                     sensor_choices: None,
                     rw_config: None,
                     mtq_config: None,
+                    thruster_config: None,
                 }]
             } else if is_serve {
                 // serve with no explicit orbit → SSO + ISS default
@@ -376,6 +377,7 @@ impl SimParams {
             sensor_choices: None,
             rw_config: None,
             mtq_config: None,
+            thruster_config: None,
         });
 
         // ISS: try online sources, fall back to embedded TLE
@@ -415,6 +417,7 @@ impl SimParams {
             sensor_choices: None,
             rw_config: None,
             mtq_config: None,
+            thruster_config: None,
         });
 
         sats

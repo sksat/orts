@@ -382,6 +382,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "orts-example-plugin-transfer-burn-with-tcm"
+version = "0.0.0"
+dependencies = [
+ "nalgebra",
+ "orts-plugin-sdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "orts-plugin-sdk"
 version = "0.1.1"
 dependencies = [

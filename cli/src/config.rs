@@ -170,6 +170,34 @@ pub enum MtqConfig {
     },
 }
 
+/// 推進器一機分の静的パラメータ。
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct ThrusterSpecConfig {
+    /// 最大推力 [N]。
+    pub thrust_n: f64,
+    /// 比推力 [s]。
+    pub isp_s: f64,
+    /// 機体系推力方向（単位ベクトル化される）。
+    pub direction_body: [f64; 3],
+    /// CoM からの取り付けオフセット [m, body frame]。省略時は 0。
+    #[serde(default)]
+    pub offset_body: Option<[f64; 3]>,
+}
+
+/// 推進器群 (ThrusterAssembly) 設定。
+///
+/// `thrusters` に各推進器の静的パラメータを並べ、`dry_mass` で
+/// 推進剤枯渇時の停止閾値 (spacecraft total mass [kg]) を指定する。
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct ThrusterConfig {
+    /// 推進器一覧（空リストは reject）。
+    pub thrusters: Vec<ThrusterSpecConfig>,
+    /// Assembly-level propellant floor [kg]。
+    /// spacecraft total mass がこの値以下になったら全推進器を停止。
+    #[serde(default)]
+    pub dry_mass: f64,
+}
+
 /// Per-satellite configuration.
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct SatelliteConfig {
@@ -190,6 +218,9 @@ pub struct SatelliteConfig {
     /// MTQ 設定。
     #[serde(alias = "magnetorquers")]
     pub mtq: Option<MtqConfig>,
+    /// 推進器 (thruster) 設定。
+    #[serde(alias = "thrusters")]
+    pub thruster: Option<ThrusterConfig>,
 }
 
 /// Orbit specification in config files.
@@ -227,18 +258,24 @@ impl SimConfig {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config file '{}': {e}", path.display()))?;
 
-        match ext.as_str() {
+        let config: SimConfig = match ext.as_str() {
             "json" => serde_json::from_str(&content)
-                .map_err(|e| format!("Failed to parse JSON config: {e}")),
+                .map_err(|e| format!("Failed to parse JSON config: {e}"))?,
             "toml" => {
-                toml::from_str(&content).map_err(|e| format!("Failed to parse TOML config: {e}"))
+                toml::from_str(&content).map_err(|e| format!("Failed to parse TOML config: {e}"))?
             }
             "yaml" | "yml" => serde_yaml::from_str(&content)
-                .map_err(|e| format!("Failed to parse YAML config: {e}")),
-            _ => Err(format!(
-                "Unknown config file extension '.{ext}'. Supported: .json, .toml, .yaml, .yml"
-            )),
-        }
+                .map_err(|e| format!("Failed to parse YAML config: {e}"))?,
+            _ => {
+                return Err(format!(
+                    "Unknown config file extension '.{ext}'. Supported: .json, .toml, .yaml, .yml"
+                ));
+            }
+        };
+
+        config.validate()?;
+
+        Ok(config)
     }
 
     /// Parse the integrator choice from the config string.
@@ -336,7 +373,76 @@ impl SatelliteConfig {
             sensor_choices: self.sensors.clone(),
             rw_config: self.reaction_wheels.clone(),
             mtq_config: self.mtq.clone(),
+            thruster_config: self.thruster.clone(),
         }
+    }
+}
+
+impl ThrusterConfig {
+    /// Validate the config: reject empty list, zero-length directions, and
+    /// non-finite numeric fields.
+    ///
+    /// We validate explicitly (rather than panicking inside `ThrusterSpec::new()`)
+    /// so malformed user config produces a proper error message.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.thrusters.is_empty() {
+            return Err("thruster.thrusters must not be empty".into());
+        }
+        for (i, t) in self.thrusters.iter().enumerate() {
+            let d = t.direction_body;
+            let norm_sq = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            if !norm_sq.is_finite() || norm_sq <= 0.0 {
+                return Err(format!(
+                    "thruster[{i}].direction_body must be a non-zero finite vector"
+                ));
+            }
+            if let Some(off) = t.offset_body
+                && !off.iter().all(|x| x.is_finite())
+            {
+                return Err(format!(
+                    "thruster[{i}].offset_body components must be finite"
+                ));
+            }
+            if !t.thrust_n.is_finite() || t.thrust_n <= 0.0 {
+                return Err(format!(
+                    "thruster[{i}].thrust_n must be positive and finite"
+                ));
+            }
+            if !t.isp_s.is_finite() || t.isp_s <= 0.0 {
+                return Err(format!("thruster[{i}].isp_s must be positive and finite"));
+            }
+        }
+        if !self.dry_mass.is_finite() || self.dry_mass < 0.0 {
+            return Err("thruster.dry_mass must be non-negative and finite".into());
+        }
+        Ok(())
+    }
+}
+
+impl SatelliteConfig {
+    /// Validate per-satellite config. Currently only covers thruster config;
+    /// extend as other composite fields grow validation needs.
+    ///
+    /// Called from both [`SimConfig::load`] (file input) and the serve
+    /// command's WebSocket entry points so that malformed JSON from a
+    /// dynamic `add_satellite` is rejected before it can reach
+    /// `ThrusterSpec::new()` and panic on e.g. zero-length directions.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(thruster) = &self.thruster {
+            thruster.validate().map_err(|e| format!("thruster: {e}"))?;
+        }
+        Ok(())
+    }
+}
+
+impl SimConfig {
+    /// Validate every satellite entry. Idempotent and side-effect-free.
+    pub fn validate(&self) -> Result<(), String> {
+        for (i, sat) in self.satellites.iter().enumerate() {
+            sat.validate()
+                .map_err(|e| format!("satellites[{i}]: {e}"))?;
+        }
+        Ok(())
     }
 }
 
@@ -535,6 +641,7 @@ mod tests {
             sensors: None,
             reaction_wheels: None,
             mtq: None,
+            thruster: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -570,6 +677,7 @@ mod tests {
             sensors: None,
             reaction_wheels: None,
             mtq: None,
+            thruster: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -596,6 +704,7 @@ mod tests {
             sensors: None,
             reaction_wheels: None,
             mtq: None,
+            thruster: None,
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -700,6 +809,7 @@ satellites:
                 sensors: None,
                 reaction_wheels: None,
                 mtq: None,
+                thruster: None,
             }],
         };
         let json = serde_json::to_string(&config).unwrap();
@@ -909,6 +1019,169 @@ satellites:
         assert!((config.dt - 5.0).abs() < 1e-9);
         assert_eq!(config.satellites.len(), 1);
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn thruster_config_parses() {
+        let toml = r#"
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[satellites.thruster]
+dry_mass = 400.0
+
+[[satellites.thruster.thrusters]]
+thrust_n = 10.0
+isp_s = 230.0
+direction_body = [1.0, 0.0, 0.0]
+
+[[satellites.thruster.thrusters]]
+thrust_n = 5.0
+isp_s = 200.0
+direction_body = [0.0, 1.0, 0.0]
+offset_body = [0.1, 0.0, 0.0]
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("parse");
+        let t = config.satellites[0].thruster.as_ref().expect("thruster");
+        assert_eq!(t.thrusters.len(), 2);
+        assert!((t.dry_mass - 400.0).abs() < 1e-9);
+        assert!((t.thrusters[0].thrust_n - 10.0).abs() < 1e-9);
+        assert!(t.thrusters[0].offset_body.is_none());
+        assert_eq!(t.thrusters[1].offset_body.unwrap(), [0.1, 0.0, 0.0]);
+        t.validate().expect("valid");
+    }
+
+    #[test]
+    fn thruster_config_alias_thrusters() {
+        // `[satellites.thrusters]` (plural) is accepted as an alias.
+        let toml = r#"
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[satellites.thrusters]
+
+[[satellites.thrusters.thrusters]]
+thrust_n = 1.0
+isp_s = 200.0
+direction_body = [1.0, 0.0, 0.0]
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("parse");
+        assert!(config.satellites[0].thruster.is_some());
+    }
+
+    #[test]
+    fn thruster_config_rejects_empty_list() {
+        let cfg = ThrusterConfig {
+            thrusters: vec![],
+            dry_mass: 0.0,
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("must not be empty"), "msg: {err}");
+    }
+
+    #[test]
+    fn thruster_config_rejects_zero_direction() {
+        let cfg = ThrusterConfig {
+            thrusters: vec![ThrusterSpecConfig {
+                thrust_n: 10.0,
+                isp_s: 230.0,
+                direction_body: [0.0, 0.0, 0.0],
+                offset_body: None,
+            }],
+            dry_mass: 0.0,
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("direction_body"), "msg: {err}");
+    }
+
+    #[test]
+    fn thruster_config_rejects_non_positive_thrust() {
+        let cfg = ThrusterConfig {
+            thrusters: vec![ThrusterSpecConfig {
+                thrust_n: -1.0,
+                isp_s: 230.0,
+                direction_body: [1.0, 0.0, 0.0],
+                offset_body: None,
+            }],
+            dry_mass: 0.0,
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("thrust_n"), "msg: {err}");
+    }
+
+    #[test]
+    fn thruster_config_rejects_nonfinite_offset() {
+        let cfg = ThrusterConfig {
+            thrusters: vec![ThrusterSpecConfig {
+                thrust_n: 10.0,
+                isp_s: 230.0,
+                direction_body: [1.0, 0.0, 0.0],
+                offset_body: Some([f64::NAN, 0.0, 0.0]),
+            }],
+            dry_mass: 0.0,
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("offset_body"), "msg: {err}");
+    }
+
+    #[test]
+    fn sim_config_validate_surfaces_satellite_index() {
+        // Two satellites, the second with invalid thruster config. Ensure
+        // the error message points at the right index so serve-path WebSocket
+        // users can find the offending entry.
+        let toml = r#"
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 600
+
+[satellites.thruster]
+
+[[satellites.thruster.thrusters]]
+thrust_n = 10.0
+isp_s = 230.0
+direction_body = [0.0, 0.0, 0.0]
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("parse");
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.contains("satellites[1]"),
+            "expected index in error: {err}"
+        );
+        assert!(err.contains("direction_body"), "msg: {err}");
+    }
+
+    #[test]
+    fn thruster_config_load_surfaces_validation_error() {
+        let toml = r#"
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[satellites.thruster]
+
+[[satellites.thruster.thrusters]]
+thrust_n = 10.0
+isp_s = 230.0
+direction_body = [0.0, 0.0, 0.0]
+"#;
+        let dir = std::env::temp_dir().join(format!("orts_config_thr_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bad.toml");
+        std::fs::write(&path, toml).unwrap();
+        let err = SimConfig::load(&path).unwrap_err();
+        assert!(err.contains("direction_body"), "msg: {err}");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

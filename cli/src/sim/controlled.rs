@@ -17,7 +17,11 @@ use orts::sensor::{Gyroscope, Magnetometer, SensorBundle, StarTracker};
 use orts::setup::{build_spacecraft_dynamics, default_third_bodies};
 
 use crate::sim::core::sat_params;
-use orts::spacecraft::{MtqAssembly, ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState};
+use nalgebra::Vector3;
+use orts::spacecraft::{
+    MtqAssembly, ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState, ThrusterAssembly,
+    ThrusterAssemblyCore, ThrusterSpec,
+};
 use tobari::magnetic::igrf::Igrf;
 use utsuroi::{Integrator, Rk4};
 
@@ -58,6 +62,11 @@ pub struct ControlledSatellite {
     pub has_mtq: bool,
     /// MTQ per-axis max moment [A·m²] (for rebuilding the model).
     pub mtq_max_moment: f64,
+    /// Thruster specs (空なら thruster なし)。ZOH 境界で ThrusterAssembly を
+    /// 作り直すために保持する。
+    pub thruster_specs: Vec<ThrusterSpec>,
+    /// Thruster assembly-level propellant floor [kg]。
+    pub thruster_dry_mass: f64,
 }
 
 /// Config からプラグイン制御付き衛星を構築する。
@@ -127,6 +136,30 @@ pub fn build_controlled_satellite(
         None => 0.0,
     };
 
+    // Thruster を追加。
+    let (thruster_specs, thruster_dry_mass) = if let Some(cfg) = &spec.thruster_config {
+        let specs: Vec<ThrusterSpec> = cfg
+            .thrusters
+            .iter()
+            .map(|t| {
+                let mut s = ThrusterSpec::new(
+                    t.thrust_n,
+                    t.isp_s,
+                    Vector3::from_row_slice(&t.direction_body),
+                );
+                if let Some(off) = t.offset_body {
+                    s = s.with_offset(Vector3::from_row_slice(&off));
+                }
+                s
+            })
+            .collect();
+        let core = ThrusterAssemblyCore::new(specs.clone(), cfg.dry_mass);
+        dynamics = dynamics.with_model(ThrusterAssembly::new(core));
+        (specs, cfg.dry_mass)
+    } else {
+        (Vec::new(), 0.0)
+    };
+
     // 初期状態。
     let orbit = spec.initial_state(params.mu);
     let plant = SpacecraftState {
@@ -156,6 +189,8 @@ pub fn build_controlled_satellite(
         has_rw,
         has_mtq,
         mtq_max_moment,
+        thruster_specs,
+        thruster_dry_mass,
     })
 }
 
@@ -210,6 +245,35 @@ pub fn step_controlled(
         }
         mtq.command = mtq_cmd.clone();
         sat.dynamics.replace_model("mtq_assembly", Box::new(mtq));
+    }
+
+    // 前 tick のコマンドで Thruster を設定（モデルを差し替え）。
+    // TODO: specs.clone() のコストが気になったら、
+    // dynamics.model_by_name_mut::<ThrusterAssembly>() を追加して
+    // in-place で command だけ書き換える方式に移行する（MTQ も同様）。
+    if !sat.thruster_specs.is_empty()
+        && sat.actuators.has_thruster_command()
+        && let Some(thruster_cmd) = sat.actuators.thruster_command()
+    {
+        use orts::plugin::ThrusterCommand;
+        let ThrusterCommand::Throttles(v) = thruster_cmd;
+        if v.len() != sat.thruster_specs.len() {
+            return Err(format!(
+                "thruster command length ({}) != thruster count ({})",
+                v.len(),
+                sat.thruster_specs.len()
+            ));
+        }
+        let core = ThrusterAssemblyCore::new(sat.thruster_specs.clone(), sat.thruster_dry_mass);
+        let mut assembly = ThrusterAssembly::new(core);
+        assembly.command = thruster_cmd.clone();
+        if sat
+            .dynamics
+            .replace_model("thruster_assembly", Box::new(assembly))
+            .is_none()
+        {
+            return Err("thruster_assembly model not registered in dynamics".into());
+        }
     }
 
     // 結合伝播（軌道 + 姿勢 + RW）。

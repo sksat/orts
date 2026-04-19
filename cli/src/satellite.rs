@@ -56,6 +56,9 @@ pub struct SatelliteSpec {
     /// MTQ configuration (used in Step 3: controlled.rs).
     #[allow(dead_code)]
     pub mtq_config: Option<crate::config::MtqConfig>,
+    /// Thruster configuration (plugin-commanded thruster assembly).
+    #[allow(dead_code)]
+    pub thruster_config: Option<crate::config::ThrusterConfig>,
 }
 
 impl SatelliteSpec {
@@ -259,6 +262,7 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         sensor_choices: None,
         rw_config: None,
         mtq_config: None,
+        thruster_config: None,
     }
 }
 

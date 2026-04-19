@@ -1,0 +1,65 @@
+body = "earth"
+dt = 0.1
+output_interval = 10.0
+duration = 7000.0
+epoch = "2024-01-01T00:00:00Z"
+# Demo では drag の影響を排除して純粋な 2-body の Hohmann 遷移を見せる
+atmosphere = "none"
+
+# 円軌道 500 km → 2000 km の Hohmann 遷移 (高度 4 倍) + 到達後の TCM デモ。
+# Plugin が **RW による姿勢追従** と **thruster throttle** を 1 つに合わせて
+# 司令するので、body-Y が常に velocity 方向を向いた状態で burn できる
+# （教科書通りの 2-burn Hohmann になる）。
+#
+# - FirstBurn: t≈0 から ~37 s。Δv ≈ 366 m/s を prograde に投入。
+#   transfer ellipse (perigee 500 km / apogee 2000 km、SMA 7628 km) を形成。
+# - Coast: t≈37 s から ~3314 s (transfer 半周期)。ballistic に apogee へ。
+# - SecondBurn: apogee で再び prograde burn、SMA を target まで上げて円化。
+# - Trim: SMA が deadband 分だけ下回ったら TCM 補正 burn (drag 等に対抗)。
+#
+# 姿勢追従は PD (kp, kd) を plugin config で指定。初期姿勢は body ≡ inertial
+# (identity quaternion)。t=0 で body-Y = +Y_inertial = prograde (矛盾なし)。
+
+[[satellites]]
+id = "controlled-sat"
+sensors = ["gyroscope", "star_tracker"]
+
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[satellites.attitude]
+inertia_diag = [100, 100, 100]
+mass = 500
+initial_quaternion = [1.0, 0.0, 0.0, 0.0]
+initial_angular_velocity = [0.0, 0.0, 0.0]
+
+[satellites.controller]
+type = "wasm"
+path = "../target/wasm32-wasip2/release/orts_example_plugin_transfer_burn_with_tcm.wasm"
+
+[satellites.controller.config]
+target_altitude_km = 2000.0
+mu_km3_s2 = 398600.4418
+deadband_km = 5.0
+num_thrusters = 1
+num_rws = 3
+kp = 500.0
+kd = 150.0
+sample_period = 0.1
+
+[satellites.reaction_wheels]
+type = "three_axis"
+inertia = 0.05
+max_momentum = 100.0
+max_torque = 10.0
+
+[satellites.thruster]
+# 推進剤枯渇の閾値 [kg]。mass=500 から始まり Isp=230s の burn で
+# 必要 Δv ≈ 730 m/s ≈ 160 kg 消費するので 100 kg まで使える余裕を残す。
+dry_mass = 100.0
+
+[[satellites.thruster.thrusters]]
+thrust_n = 5000.0
+isp_s = 230.0
+direction_body = [0.0, 1.0, 0.0]

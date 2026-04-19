@@ -412,6 +412,12 @@ fn validate_satellite_spec(spec: &SatelliteSpec) -> Result<(), String> {
 /// Validate a SimConfig before starting. Returns Err with a user-facing message
 /// if the config is invalid (e.g., mixed attitude settings).
 fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
+    // Field-level validation (non-zero direction, finite values, …) mirrors
+    // what `SimConfig::load` runs for file-based configs, so WebSocket
+    // `StartSimulation` cannot smuggle in thruster config that panics later
+    // in `ThrusterSpec::new()`.
+    config.validate()?;
+
     let body = crate::satellite::parse_body(&config.body);
     let mu = body.properties().mu;
     let specs: Vec<_> = config
@@ -1033,6 +1039,10 @@ impl SimLoopContext {
                     .to_string(),
             );
         }
+        // Field-level validation (thruster direction_body != 0 etc.) so
+        // a dynamic add over WebSocket cannot reach ThrusterSpec::new() and
+        // panic. Matches SimConfig::load's validation behaviour.
+        satellite.validate()?;
 
         let wasm_cache = self.wasm_cache.as_mut().ok_or_else(|| {
             "WASM plugin cache not initialized; cannot add controlled satellite".to_string()
