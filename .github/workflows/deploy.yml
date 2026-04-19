@@ -66,6 +66,7 @@ jobs:
         run: pnpm build:site
         env:
           VITE_BASE_PATH: /orts/viewer/
+          PUBLIC_GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
 
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0

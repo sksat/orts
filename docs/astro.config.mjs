@@ -43,6 +43,40 @@ const persistLocaleScript = buildPersistCurrentLocaleScript(LOCALE_CONFIG);
 // the locale-less URL handling we want.
 const redirectScript = buildInlineRedirectScript(LOCALE_CONFIG);
 
+// GA4 tag — injected only in production build when a Measurement ID is set.
+// The ID is supplied at build time via `PUBLIC_GA_MEASUREMENT_ID` (GitHub
+// Actions passes it from a repository variable — GA4 Measurement IDs are
+// public by design, so a `vars.*` is used rather than a secret).
+//
+// `import.meta.env` is not populated in astro.config.mjs (it runs in plain
+// Node before Vite wires that up), so we read from process.env directly.
+// `astro build` sets NODE_ENV=production; `astro dev` sets it to development
+// — so this block stays silent during `pnpm dev`.
+// For local production preview:
+//   PUBLIC_GA_MEASUREMENT_ID=G-LMW888TV62 pnpm build
+const GA_MEASUREMENT_ID = process.env.PUBLIC_GA_MEASUREMENT_ID;
+const gaHeadEntries =
+  process.env.NODE_ENV === "production" && GA_MEASUREMENT_ID
+    ? [
+        {
+          tag: "script",
+          attrs: {
+            async: true,
+            src: `https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`,
+          },
+        },
+        {
+          tag: "script",
+          attrs: { "is:inline": true },
+          content:
+            `window.dataLayer = window.dataLayer || [];` +
+            `function gtag(){dataLayer.push(arguments);}` +
+            `gtag('js', new Date());` +
+            `gtag('config', '${GA_MEASUREMENT_ID}');`,
+        },
+      ]
+    : [];
+
 export default defineConfig({
   base: "/orts",
   site: "https://sksat.github.io",
@@ -83,6 +117,7 @@ export default defineConfig({
           attrs: { "is:inline": true },
           content: redirectScript,
         },
+        ...gaHeadEntries,
       ],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/sksat/orts" }],
       plugins: [
