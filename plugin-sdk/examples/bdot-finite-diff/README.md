@@ -33,6 +33,17 @@ cargo +1.91.0 component build --release
 
 The output is `target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm` (~70 KB).
 
+## Running with CLI
+
+Run the simulation using a TOML config file:
+
+```sh
+# orts-cli should be built with plugin-wasm feature
+orts run --config orts.toml
+```
+
+`orts.toml` specifies spacecraft parameters, WASM plugin path, and controller gain. You can tweak control parameters by editing the config without recompiling the `.wasm`.
+
 ## Running the simulation sweep
 
 From the **orts workspace root**:

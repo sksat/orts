@@ -1,0 +1,30 @@
+body = "earth"
+dt = 0.1
+output_interval = 1.0
+duration = 55500.0  # ~10 orbits at 500 km altitude
+
+[[satellites]]
+id = "bdot-demo"
+sensors = ["magnetometer", "gyroscope"]
+
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[satellites.attitude]
+inertia_diag = [1, 1, 1]
+mass = 50
+initial_quaternion = [1, 0, 0, 0]
+initial_angular_velocity = [0.1155, 0.1155, -0.1155]  # |ω| ≈ 0.2 rad/s
+
+[satellites.controller]
+type = "wasm"
+path = "../target/wasm32-wasip1/release/orts_example_plugin_bdot_finite_diff.wasm"
+
+[satellites.controller.config]
+gain = 1e6
+sample_period = 1.0
+
+[satellites.magnetorquers]
+type = "three_axis"
+max_moment = 10.0
