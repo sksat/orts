@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 
-/// Orts CLI — orbital mechanics simulation tool
+/// orts CLI — orbital mechanics simulation tool
 #[derive(Parser, Debug)]
 #[command(name = "orts")]
 pub struct Cli {

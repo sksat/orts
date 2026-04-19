@@ -7,7 +7,7 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 authors.workspace = true
-description = "Orts CLI — orbital mechanics simulator with embedded 3D viewer and WebSocket telemetry server."
+description = "orts CLI — orbital mechanics simulator with embedded 3D viewer and WebSocket telemetry server."
 keywords = ["cli", "orbital-mechanics", "spacecraft", "simulation", "aerospace"]
 categories = ["command-line-utilities", "science"]
 # Include viewer-dist/ so `cargo publish` bundles the embedded SPA assets.

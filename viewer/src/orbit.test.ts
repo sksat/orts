@@ -77,7 +77,7 @@ describe("parseOrbitCSV", () => {
 describe("parseOrbitCSVWithMetadata", () => {
   it("extracts metadata from comment headers", () => {
     const csv = [
-      "# Orts 2-body orbit propagation",
+      "# orts 2-body orbit propagation",
       "# mu = 398600.4418 km^3/s^2",
       "# epoch_jd = 2460390.0",
       "# central_body = earth",

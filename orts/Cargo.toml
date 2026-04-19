@@ -7,7 +7,7 @@ repository.workspace = true
 homepage.workspace = true
 rust-version.workspace = true
 authors.workspace = true
-description = "Orts core — orbital mechanics simulation, force/torque/sensor models, and WASM plugin host runtime."
+description = "orts core — orbital mechanics simulation, force/torque/sensor models, and WASM plugin host runtime."
 keywords = ["orbital-mechanics", "simulation", "spacecraft", "physics", "aerospace"]
 categories = ["science", "simulation"]
 # Phase P1: include WIT files so `cargo publish` ships them with

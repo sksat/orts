@@ -48,7 +48,7 @@ fn test_cli_runs_successfully() {
 fn test_cli_output_has_header() {
     let output = run_cli_csv();
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("# Orts simulation"));
+    assert!(stdout.contains("# orts simulation"));
     assert!(stdout.contains("# mu ="));
     assert!(stdout.contains("# t[s],x[km]"));
 }

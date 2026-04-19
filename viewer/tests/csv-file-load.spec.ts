@@ -16,7 +16,7 @@ import { expect, test } from "@playwright/test";
 /** Generate a minimal CSV file with metadata and orbit points. */
 function generateTestCSV(numPoints: number, dt: number): string {
   const lines: string[] = [
-    "# Orts 2-body orbit propagation",
+    "# orts 2-body orbit propagation",
     "# mu = 398600.4418 km^3/s^2",
     "# epoch_jd = 2451545.0",
     "# central_body = earth",

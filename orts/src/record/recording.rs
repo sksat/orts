@@ -80,7 +80,7 @@ impl SimMetadata {
     /// This is the single source of truth for CSV metadata format,
     /// used by both `orts run --format csv` and `orts convert --format csv`.
     pub fn write_csv_header(&self, w: &mut dyn std::io::Write) -> std::io::Result<()> {
-        writeln!(w, "# Orts simulation")?;
+        writeln!(w, "# orts simulation")?;
         if let Some(mu) = self.mu {
             writeln!(w, "# mu = {} km^3/s^2", mu)?;
         }

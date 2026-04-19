@@ -310,7 +310,7 @@ export interface UseWebSocketReturn {
 }
 
 /**
- * React hook for connecting to the Orts simulation WebSocket server.
+ * React hook for connecting to the orts simulation WebSocket server.
  *
  * Manages the WebSocket lifecycle (connect/disconnect), parses incoming
  * JSON messages, and dispatches them to the appropriate callbacks.

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Orts is a numerical computation and optimization platform primarily for orbital mechanics. The design document is [DESIGN.md](DESIGN.md) (written in Japanese).
+orts is a numerical computation and optimization platform primarily for orbital mechanics. The design document is [DESIGN.md](DESIGN.md) (written in Japanese).
 
 ## Languages and Structure
 

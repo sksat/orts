@@ -1,5 +1,5 @@
 /**
- * Locale redirect logic for the Orts documentation site.
+ * Locale redirect logic for the orts documentation site.
  *
  * The documentation site is a Starlight + Astro project that publishes every
  * page under a locale segment (e.g. /orts/en/foo/ or /orts/ja/foo/). Some URL

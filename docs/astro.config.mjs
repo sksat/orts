@@ -91,7 +91,7 @@ export default defineConfig({
   integrations: [
     react(),
     starlight({
-      title: "Orts",
+      title: "orts",
       customCss: ["katex/dist/katex.min.css", "./src/styles/katex.css"],
       defaultLocale: "en",
       locales: {

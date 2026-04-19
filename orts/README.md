@@ -1,6 +1,6 @@
 # orts
 
-Orts core — orbital mechanics simulation, force / torque / sensor models,
+orts core — orbital mechanics simulation, force / torque / sensor models,
 and a WASM plugin host runtime.
 
 Provides the simulation engine at the heart of the

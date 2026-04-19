@@ -1,6 +1,6 @@
 # orts-cli
 
-Orts CLI — orbital mechanics simulator with an embedded 3D viewer and
+orts CLI — orbital mechanics simulator with an embedded 3D viewer and
 WebSocket telemetry server.
 
 Ships the `orts` binary, which drives the
