@@ -90,16 +90,21 @@ uv run plot.py   # → transfer_burn_with_tcm.png
 ![Transfer Burn with TCM](transfer_burn_with_tcm.png)
 
 - **左 (ECI XY trajectory)**: 地球、初期円軌道 (500 km)、目標円軌道 (2000 km)、
-  実軌道 (orange) を重ね描き。FirstBurn 後の transfer ellipse が内側接線から
-  目標軌道の外側接線へ伸び、SecondBurn で目標円軌道に載っている。
-- **右上 (Altitude)**: 500 → 2000 km の単調上昇。FirstBurn (t ≈ 0 – 37 s) で
-  一瞬ジャンプ後、Coast 中に transfer ellipse の apogee (2000 km) へ向けて
-  滑らかに上昇。t ≈ 3350 s の SecondBurn で circularize。以降は deadband
-  (±5 km) 内に収まっている。
-- **右下 (Orbital speed)**: FirstBurn で 7.613 → 7.980 km/s に加速、Coast 中は
-  vis-viva により altitude 上昇と引き換えに 7.98 → 6.55 km/s に減速、
-  SecondBurn で 6.55 → 6.90 km/s に再加速して target 円軌道の speed へ。
-  教科書 Hohmann の 2-impulse 特性そのもの。
+  実軌道を重ね描き。throttle>0 の区間は **赤い太線**、coast は橙色の細線。
+  FirstBurn が初期軌道接線方向で点火され、Coast (transfer ellipse) を半周後、
+  反対側で SecondBurn が発火して目標円軌道に載っている様子が読める。
+- **右上 (Altitude)**: 500 → 2000 km の単調上昇。burn 区間 (赤シェード) で
+  FirstBurn (t ≈ 0 – 37 s) が一瞬ジャンプ、Coast 中に transfer ellipse の
+  apogee へ向けて滑らかに上昇、t ≈ 3350 s の SecondBurn で circularize。
+  各 burn の Δalt 値が注釈付き。
+- **右下 (Orbital speed)**: burn 区間 (赤シェード) と **Δv 注釈** 付き。
+  FirstBurn で 7.613 → 7.98 km/s に加速、Coast 中は vis-viva により altitude
+  上昇と引き換えに 7.98 → 6.55 km/s に減速、SecondBurn で 6.55 → 6.90 km/s
+  に再加速して target 円軌道の速度へ。教科書 Hohmann の 2-impulse 特性そのもの。
+
+burn 区間の検出は `orts` が CSV に出力する `throttle_0` / `throttle_1` /
+`throttle_2` カラムに基づく（[ThrusterThrottle3D](../../../orts/src/record/components.rs)
+component）。plot では throttle > 0 の tick を burn とみなしている。
 
 ## Config
 
