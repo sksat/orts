@@ -12,9 +12,9 @@ The guest implements the `orts:plugin/controller` WIT interface:
 
 The control law is the standard finite-difference B-dot:
 
-```
-m = -k · (B_body(t) - B_body(t - Δt)) / Δt
-```
+$$
+\mathbf{m} = -k \cdot \frac{\mathbf{B}_\text{body}(t) - \mathbf{B}_\text{body}(t - \Delta t)}{\Delta t}
+$$
 
 clamped per-axis to `±max_moment`. On the first sample, the command is zero (no previous measurement).
 

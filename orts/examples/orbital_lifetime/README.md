@@ -50,7 +50,7 @@ decay 後に取得した CSSI 実測データをフルに使用。
 
 ## Ballistic coefficient
 
-弾道係数 B = Cd·A/(2m) の推定:
+弾道係数 $B = C_d A / (2m)$ の推定:
 
 - **Cd = 2.2** — LEO 標準値 (Vallado, 4th ed. §8.6.2)
 - **A = 0.132 m²** — bus body (0.061 m²) + deployed SAP 2 wings (0.071 m²), tumbling average
