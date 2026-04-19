@@ -461,7 +461,6 @@ mod tests {
     #[test]
     fn sim_params_stream_interval_defaults_to_output_interval() {
         let args = SimArgs {
-
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -495,7 +494,6 @@ mod tests {
     #[test]
     fn sim_params_explicit_stream_interval() {
         let args = SimArgs {
-
             body: "earth".to_string(),
             dt: 1.0,
             output_interval: Some(10.0),
@@ -529,7 +527,6 @@ mod tests {
     fn sim_params_stream_interval_clamped() {
         // stream_interval < dt → clamped to dt
         let args = SimArgs {
-
             body: "earth".to_string(),
             dt: 5.0,
             output_interval: Some(10.0),
@@ -558,7 +555,6 @@ mod tests {
 
         // stream_interval > output_interval → clamped to output_interval
         let args2 = SimArgs {
-
             body: "earth".to_string(),
             dt: 1.0,
             output_interval: Some(10.0),
@@ -589,7 +585,6 @@ mod tests {
     #[test]
     fn sim_params_with_epoch() {
         let args = SimArgs {
-
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -624,7 +619,6 @@ mod tests {
     #[should_panic(expected = "Cannot specify both")]
     fn sim_params_norad_id_conflicts_with_tle() {
         let args = SimArgs {
-
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -658,7 +652,6 @@ mod tests {
     #[test]
     fn sim_params_from_tle_lines() {
         let args = SimArgs {
-
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -708,7 +701,6 @@ mod tests {
     #[test]
     fn sim_params_tle_initial_state_plausible() {
         let args = SimArgs {
-
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -755,7 +747,6 @@ mod tests {
     #[test]
     fn sim_params_tle_epoch_overridable() {
         let args = SimArgs {
-
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -796,7 +787,6 @@ mod tests {
     #[test]
     fn sim_params_with_sat_flags() {
         let args = SimArgs {
-
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
@@ -833,7 +823,6 @@ mod tests {
     fn sim_params_serve_default_sso() {
         // serve with no orbit args → at least SSO (ISS requires network)
         let args = SimArgs {
-
             body: "earth".to_string(),
             dt: 10.0,
             output_interval: None,
