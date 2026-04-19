@@ -9,6 +9,86 @@ orts is a multi-package workspace (Rust crates on crates.io and npm packages
 on npm). Releases are tagged together on the same version, and each version
 section is subdivided by package.
 
+## [Unreleased]
+
+### `orts` (Rust, crates.io)
+
+#### Added
+- Eclipse / shadow geometry with conical penumbra model for accurate
+  sunlit / penumbra / umbra classification
+- Per-device actuator commands
+  - MTQ and reaction wheels are individually addressable device lists
+    with per-device command dispatch
+- Multi-instance sensors: sensors are now `Vec`-based for arbitrary
+  multiplicity
+- Reaction wheel motor first-order lag model
+- RW speed / torque command variants and `MtqCommand` variant
+- Pseudo-inverse torque / dipole allocation for non-orthogonal RW / MTQ
+  layouts
+- Sun sensor model with fine / coarse measurement variants
+- Controlled simulation attitude / command / telemetry logging
+  - Dynamic CSV column generation
+
+#### Changed
+- Actuator telemetry restructured into a unified representation across
+  actuator types
+- `orts convert` extended to output full data including attitude,
+  commands, and telemetry (not just orbital state)
+- CSV metadata and satellite output unified via
+  `SimMetadata::write_csv_header` / `write_satellite_csv`
+
+### `orts-plugin-sdk` (Rust, crates.io)
+
+#### Added
+- `no_std` support
+  - Compilable without the standard library (no allocator required)
+  - Optional `alloc` feature flag for heap usage under `no_std`
+- New example: `nos3-adcs` — NOS3 `generic_adcs` WASM plugin (SILS demo)
+  - All-mode tests, IGRF integration, visualization scripts, CI workflow
+
+#### Changed
+- Example plugins moved to `plugin-sdk/examples/` workspace
+
+### `arika` (Rust, crates.io)
+
+#### Added
+- `no_std` + `alloc` support (tiered feature hierarchy)
+  - no alloc: core math (coordinate frames, epoch arithmetic, analytical
+    ephemerides, geodetic conversions, IAU 2006 precession/nutation)
+  - `+ alloc`: Horizons, EopTable, HorizonsMoonEphemeris
+  - `+ std`: `Epoch::now()`, file I/O, fetch-horizons
+  - `libm`-backed `F64Ext` trait for transcendental functions under
+    no_std
+
+#### Changed
+- Browser-facing WASM facade split into a dedicated `arika-wasm` crate
+
+### `utsuroi` (Rust, crates.io)
+
+#### Added
+- `no_std` support — pure math with no heap allocation, so no `alloc`
+  feature is needed. Adds `libm`-backed `F64Ext` trait
+
+### `tobari` (Rust, crates.io)
+
+#### Added
+- `no_std` + `alloc` support (tiered feature hierarchy)
+  - no alloc: Exponential, Harris-Priester, TiltedDipole,
+    SpaceWeather traits, ConstantWeather
+  - `+ alloc`: NRLMSISE-00, IGRF, CSSI/GFZ parsing
+  - `+ std`: file I/O, fetch, OnceLock
+
+#### Changed
+- Browser-facing WASM facade split into a dedicated `tobari-wasm` crate
+- `Nrlmsise00` is now generic over `SpaceWeatherProvider` (alloc-free)
+- IGRF / NRLMSISE-00 internal storage changed from `Vec` to fixed-size
+  arrays (alloc-free)
+
+### `starlight-rustdoc` (npm)
+
+#### Added
+- Display feature-gate badges on generated API documentation pages
+
 ## [0.1.1](https://github.com/sksat/orts/releases/tag/v0.1.1)
 
 ### `orts-cli` (Rust, crates.io, binary)

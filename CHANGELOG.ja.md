@@ -6,6 +6,79 @@
 orts は マルチパッケージ workspace (crates.io Rust crate + npm package)。
 全パッケージを同一バージョンでリリースし、セクションはパッケージ別に分割。
 
+## [Unreleased]
+
+### `orts` (Rust, crates.io)
+
+#### Added
+- 円錐半影 (conical penumbra) モデルによる日食・影ジオメトリ計算
+- Per-device アクチュエータコマンド
+  - MTQ・RW を個別デバイスリストとして管理し、デバイス単位で指令を送信
+- マルチインスタンスセンサ: sensor を `Vec` ベースに変更し任意の個数に対応
+- RW モーター一次遅れ (first-order lag) モデル
+- RW 速度指令 / トルク指令バリアントと `MtqCommand` variant
+- 非直交 RW/MTQ レイアウト向けの擬似逆行列トルク・ダイポール配分
+- Fine/Coarse バリアント付きサンセンサモデル
+- Controlled simulation の姿勢・コマンド・テレメトリログ
+  - 動的 CSV カラム生成
+
+#### Changed
+- アクチュエータ telemetry をアクチュエータ種別横断で統一的に構造化
+- `orts convert` を姿勢・コマンド・テレメトリを含むフルデータ出力に拡張
+- CSV metadata・satellite 出力を `SimMetadata::write_csv_header` /
+  `write_satellite_csv` に統一
+
+### `orts-plugin-sdk` (Rust, crates.io)
+
+#### Added
+- `no_std` サポート
+  - 標準ライブラリなし (allocator 不要) でコンパイル可能
+  - オプションの `alloc` feature flag で `no_std` 下でのヒープ使用に対応
+- 新規 example: `nos3-adcs` — NOS3 `generic_adcs` WASM plugin (SILS デモ)
+  - 全モードテスト、IGRF 統合、可視化スクリプト、CI workflow
+
+#### Changed
+- example plugin を `plugin-sdk/examples/` workspace に移動
+
+### `arika` (Rust, crates.io)
+
+#### Added
+- `no_std` + `alloc` サポート (tiered feature hierarchy)
+  - no alloc: core math (座標フレーム、エポック演算、解析 ephemeris、
+    測地変換、IAU 2006 歳差・章動)
+  - `+ alloc`: Horizons、EopTable、HorizonsMoonEphemeris
+  - `+ std`: `Epoch::now()`、file I/O、fetch-horizons
+  - `libm` ベースの `F64Ext` trait で no_std 環境での超越関数を提供
+
+#### Changed
+- ブラウザ向け WASM facade を `arika-wasm` crate に分離
+
+### `utsuroi` (Rust, crates.io)
+
+#### Added
+- `no_std` サポート — pure math でヒープ allocation 不要のため
+  `alloc` feature は不要。`libm` ベースの `F64Ext` trait を追加
+
+### `tobari` (Rust, crates.io)
+
+#### Added
+- `no_std` + `alloc` サポート (tiered feature hierarchy)
+  - no alloc: Exponential、Harris-Priester、TiltedDipole、
+    SpaceWeather traits、ConstantWeather
+  - `+ alloc`: NRLMSISE-00、IGRF、CSSI/GFZ parsing
+  - `+ std`: file I/O、fetch、OnceLock
+
+#### Changed
+- ブラウザ向け WASM facade を `tobari-wasm` crate に分離
+- `Nrlmsise00` を `SpaceWeatherProvider` 上で generic 化 (alloc-free)
+- IGRF / NRLMSISE-00 の内部ストレージを `Vec` → 固定サイズ配列に変更
+  (alloc-free)
+
+### `starlight-rustdoc` (npm)
+
+#### Added
+- 生成された API ドキュメントページに feature-gate バッジを表示
+
 ## [0.1.1](https://github.com/sksat/orts/releases/tag/v0.1.1)
 
 ### `orts-cli` (Rust, crates.io, binary)
