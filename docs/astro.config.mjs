@@ -92,13 +92,24 @@ export default defineConfig({
     react(),
     starlight({
       title: "orts",
-      customCss: ["katex/dist/katex.min.css", "./src/styles/katex.css"],
+      logo: {
+        light: "./src/assets/orts-wordmark-on-light.svg",
+        dark: "./src/assets/orts-wordmark-on-dark.svg",
+        alt: "orts",
+        replacesTitle: true,
+      },
+      favicon: "/favicon.ico",
+      customCss: ["katex/dist/katex.min.css", "./src/styles/katex.css", "./src/styles/brand.css"],
       defaultLocale: "en",
       locales: {
         en: { label: "English", lang: "en" },
         ja: { label: "日本語", lang: "ja" },
       },
       head: [
+        {
+          tag: "link",
+          attrs: { rel: "icon", type: "image/svg+xml", href: "/orts/favicon.svg" },
+        },
         // Runs on every Starlight page: record the visitor's current locale
         // so the redirect script below (or src/pages/index.astro) honours
         // their manual choice on later visits.

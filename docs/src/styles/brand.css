@@ -1,0 +1,13 @@
+:root {
+  --sl-nav-height: 6rem;
+}
+
+a.site-title img {
+  height: calc(var(--sl-nav-height) - 1rem);
+  max-height: none;
+}
+
+/* Pull the brand wordmark flush to the viewport edge */
+header.header {
+  padding-inline-start: 0;
+}

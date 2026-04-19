@@ -1,4 +1,6 @@
-# orts
+<p align="center">
+  <img src="assets/orts-header.png" alt="orts" width="720">
+</p>
 
 [![crates.io](https://img.shields.io/crates/v/orts)](https://crates.io/crates/orts)
 [![CI](https://github.com/sksat/orts/actions/workflows/ci.yml/badge.svg)](https://github.com/sksat/orts/actions/workflows/ci.yml)
