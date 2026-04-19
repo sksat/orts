@@ -8,6 +8,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/sksat/orts/releases/tag/v0.2.0) - 2026-04-20
+
 - `ARCHITECTURE.md` (EN/JA) を新規追加。言語間の自動リンク書き換え機構付き
 - orts logo kit を docs / viewer / README に統合
 - ブランド名表記を `Orts` → `orts` (小文字) でリポジトリ全体で統一
@@ -143,6 +145,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Changed
 - example の制御則記述を LaTeX 数式に移行
+- crate の sidebar グループを既定で展開、API エントリのみ折りたたんだ状態に
+  して navigation を効率化
 
 ## [0.1.1](https://github.com/sksat/orts/releases/tag/v0.1.1)
 

@@ -1,6 +1,6 @@
 {
   "name": "starlight-rustdoc",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Astro / Starlight integration that generates documentation pages from rustdoc JSON output.",
   "keywords": [
     "starlight",

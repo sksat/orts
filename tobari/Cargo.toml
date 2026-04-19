@@ -27,7 +27,7 @@ include = [
 
 [dependencies]
 nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
-arika = { path = "../arika", version = "=0.1.1", default-features = false }
+arika = { path = "../arika", version = "=0.2.0", default-features = false }
 libm = "0.2.16"
 ureq = { workspace = true, optional = true }
 

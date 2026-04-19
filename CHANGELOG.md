@@ -11,6 +11,8 @@ section is subdivided by package.
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/sksat/orts/releases/tag/v0.2.0) - 2026-04-20
+
 - `ARCHITECTURE.md` (EN / JA) with automatic cross-language link
   rewriting
 - orts logo kit integrated across docs / viewer / README
@@ -161,6 +163,8 @@ section is subdivided by package.
 
 #### Changed
 - Example control-law descriptions migrated to LaTeX math
+- Crate sidebar groups expanded by default; API entries remain collapsed
+  for navigation efficiency
 
 ## [0.1.1](https://github.com/sksat/orts/releases/tag/v0.1.1)
 

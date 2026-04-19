@@ -1,6 +1,6 @@
 {
   "name": "@sksat/uneri",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "DuckDB-wasm + uPlot real-time time-series charting for streaming simulation data.",
   "keywords": [
     "duckdb",
