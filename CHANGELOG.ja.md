@@ -10,6 +10,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 ## [0.2.0](https://github.com/sksat/orts/releases/tag/v0.2.0) - 2026-04-20
 
+リリースブログ記事: [orts: 人工衛星シミュレーションプラットフォームを作りました](https://sksat.hatenablog.com/entry/orts-release)
+
 - `ARCHITECTURE.md` (EN/JA) を新規追加。言語間の自動リンク書き換え機構付き
 - orts logo kit を docs / viewer / README に統合
 - ブランド名表記を `Orts` → `orts` (小文字) でリポジトリ全体で統一

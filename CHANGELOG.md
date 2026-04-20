@@ -13,6 +13,8 @@ section is subdivided by package.
 
 ## [0.2.0](https://github.com/sksat/orts/releases/tag/v0.2.0) - 2026-04-20
 
+Release blog post: [orts: 人工衛星シミュレーションプラットフォームを作りました](https://sksat.hatenablog.com/entry/orts-release)
+
 - `ARCHITECTURE.md` (EN / JA) with automatic cross-language link
   rewriting
 - orts logo kit integrated across docs / viewer / README
