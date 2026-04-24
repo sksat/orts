@@ -1774,10 +1774,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0de51e6874e94e7bf76d726fc5d13ba782deca734ff60d5bb2fb2607c7406555"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
  "wasip2",
  "wasip3",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -4509,7 +4511,7 @@ dependencies = [
 name = "rrd-wasm"
 version = "0.2.0"
 dependencies = [
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "re_chunk",
  "re_log_encoding",
  "re_log_types",
