@@ -505,14 +505,28 @@ export function Scene({
       new THREE.Vector3(...lvlhAxes.radial),
     );
     const lvlhQuat = new THREE.Quaternion().setFromRotationMatrix(lvlhMat);
-    // R_z(ERA) rotation
-    const eraQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, era ?? 0));
-    // R_x(π/2) pole alignment
-    const poleQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
-    // Body orientation in LVLH: R_lvlh^T * R_z(ERA) * R_x(π/2)
-    const bodyQuat = lvlhQuat.clone().conjugate().multiply(eraQuat).multiply(poleQuat);
+    let bodyToInertialQuat: THREE.Quaternion;
+    if (centralBody === "earth") {
+      // Keep Earth in the same simple ERA frame as position/geodetic transforms.
+      // EarthBody applies the Three.js mesh pole alignment internally.
+      bodyToInertialQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, era ?? 0));
+    } else {
+      const q = epochJd != null ? body_orientation(centralBody, epochJd, simTime) : undefined;
+      bodyToInertialQuat = q
+        ? new THREE.Quaternion(q[1], q[2], q[3], q[0])
+        : new THREE.Quaternion();
+
+      // Non-Earth bodies use TexturedBody/FallbackBody, which do not apply
+      // Three.js Y-pole → body-frame Z-pole alignment internally.
+      bodyToInertialQuat.multiply(
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0)),
+      );
+    }
+
+    // Body orientation in LVLH: R_lvlh^T * R_body_to_inertial.
+    const bodyQuat = lvlhQuat.clone().conjugate().multiply(bodyToInertialQuat);
     return [bodyQuat.x, bodyQuat.y, bodyQuat.z, bodyQuat.w];
-  }, [lvlhActive, lvlhAxes, era]);
+  }, [lvlhActive, lvlhAxes, epochJd, centralBody, simTime, era]);
 
   // Target offset for SmoothOriginGroup (non-LVLH satellite-centered fallback)
   const originOffset = useMemo<[number, number, number]>(() => {
