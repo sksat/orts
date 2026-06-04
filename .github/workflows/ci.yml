@@ -6,6 +6,11 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+  # Run the same checks on merge-queue groups so required checks are
+  # validated against (main + queued PRs) before landing. The 14 PR
+  # jobs have no event guard, so they run here too; the main/tag-only
+  # jobs stay skipped (their ref guard is false for the queue branch).
+  merge_group:
 
 permissions:
   contents: write # softprops/action-gh-release (rust-dist, tag push only)
