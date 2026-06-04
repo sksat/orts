@@ -1,0 +1,24 @@
+name: Install wasm-pack
+description: >-
+  Install a pinned, checksum-verified wasm-pack into $CARGO_HOME/bin. Replaces
+  the unpinned `curl … init.sh | sh` (which fetches whatever version that
+  script bakes in). Bump WP_VERSION and WP_SHA256 together — the release has no
+  .sha256 sidecar, so compute the hash from the asset when bumping.
+
+runs:
+  using: composite
+  steps:
+    - name: Download, verify, and install wasm-pack
+      shell: bash
+      run: |
+        set -euo pipefail
+        WP_VERSION=0.13.1
+        WP_SHA256=c539d91ccab2591a7e975bcf82c82e1911b03335c80aa83d67ad25ed2ad06539
+        url="https://github.com/wasm-bindgen/wasm-pack/releases/download/v${WP_VERSION}/wasm-pack-v${WP_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+        curl -fsSL -o /tmp/wasm-pack.tar.gz "$url"
+        echo "${WP_SHA256}  /tmp/wasm-pack.tar.gz" | sha256sum -c -
+        dest="${CARGO_HOME:-$HOME/.cargo}/bin"
+        mkdir -p "$dest"
+        tar -xzf /tmp/wasm-pack.tar.gz --strip-components=1 -C "$dest" --wildcards '*/wasm-pack'
+        rm -f /tmp/wasm-pack.tar.gz
+        wasm-pack --version
