@@ -581,6 +581,51 @@ per-tick 実測では sync / async の差は測定ノイズの範囲。async の
 - 安全: 平のシンクコード、`tokio::task::spawn_blocking` からの呼び出し
 - `orts serve` の sim loop は `spawn_blocking` で blocking thread に退避済みのため、async backend でも serve が正常動作する
 
+##### ノード間メッセージング (msg-io): 地上局 ↔ FSW + 衛星間
+
+FSW (WASM plugin) と地上局の間のコマンド/テレメトリ (C&T)、および将来の衛星間通信 (ISL) を運ぶ transport 層。`interface msg-io` として定義し、制御ループ (`tick-io`) とは独立させる。
+
+`tick-io` の `command` は「FSW → アクチュエータ」の制御出力で別物。`msg-io` は「地上局 ↔ FSW」「衛星 ↔ 衛星」のメッセージを運ぶ。
+
+###### レイヤリング
+
+transport は dumb pipe とし、配送とアドレッシングのみを担う（`payload` は解釈しない）。fire-and-forget / request-response / ack といった interaction model は **アプリ層**（`payload` の中身 + SDK ヘルパ）に置く。こうすると同じ WIT 契約の上に複数モデルを載せられ、モデルを差し替えても契約は不変（fire-and-forget ⇄ request-response の差し替えで WIT が変わらないことを example で確認）。
+
+###### データモデル
+
+論理型 `kind`（content-type、名前空間 + version 規約）と payload のエンコーディングを分離する:
+
+```wit
+type msg-kind = string;            // 例 "orts.cmd.set-mode.v1"
+variant value { boolean(bool), integer(s64), number(f64), text(string), bytes(list<u8>) }
+variant payload {                  // エンコーディングをユースケースで選択
+    key-value(list<named-value>),  //   構造化（スカラ型付き）
+    binary(list<u8>),              //   生バイナリ
+    json(string),
+}
+variant node-id { ground, satellite(u32) }
+record message  { src, dst, kind, host-seq: u64, deliver-tick: u64, payload }  // 受信（host が確定）
+record outbound { dst, kind, payload }                                         // 送信（guest 側は最小）
+```
+
+`kind` はエンコーディングに依らず常に付くので型を担い、`payload` variant でエンコーディングを選べる。型付き構造体が欲しい guest は SDK の serde 層で被せる。
+
+###### 配送意味論
+
+- **受信**: host が tick 境界でその tick の inbox を**凍結**し、guest は `recv-batch(max)` で drain する。tick 途中の新着は次 tick へ回るので、いつ・何回呼んでも観測は不変（決定論）。`tick-input` には載せず物理 snapshot を純粋に保ち、大量受信でも `max` で guest がペース制御できる。
+- **送信**: `send-message` は append。host が `src` を注入（なりすまし防止）し `host-seq`・`deliver-tick` を確定 stamp する。
+
+###### transport adapter
+
+core は host が所有する transport 非依存のキュー。各入力経路は adapter にすぎず、FSW から見れば由来は区別されない。`deliver` / `take_outbound` / `set_node_id` を `PluginController` trait のメソッド（default no-op、WASM backend が override）として公開し、run ループが `dyn PluginController` 経由で駆動する。
+
+- **config 時刻シーケンス** (`[[command]]`): `t` / `sat` / `kind` / `args` を宣言し、`CommandSchedule` が tick ごとに due なものを配送する。決定論的。
+- **WebSocket 対話**（将来）: viewer から運用コンソール。到着タイミング依存で非決定論。
+
+###### 決定論とリプレイ
+
+非決定論の発生源は WebSocket の対話入力のみ（到着が壁時計依存）。host が tick 境界で **gate** して `deliver-tick` に確定・記録すれば、それは config の `[[command]]` と同形の**コマンドタイムライン**になる。これを config transport で流し直すのが**リプレイ**。物理は元々決定論なので、入力（コマンド列）さえ tick 単位で再現すれば全体が bit-for-bit 再現する。`deliver-tick` / `host-seq` を envelope に持たせたのはこの記録のため。録った運用セッションがそのまま oracle / 回帰テストになる。
+
 ### ミッション規模と力学モデル
 
 問題のスケールに応じて適切なモデルを選択する設計。一つのモデルで全てをカバーしない。
