@@ -31,6 +31,7 @@ impl Server {
         let binary = env!("CARGO_BIN_EXE_orts");
         let args = vec!["serve".to_string(), "--port".to_string(), port.to_string()];
         let mut child = Command::new(binary)
+            .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
             .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

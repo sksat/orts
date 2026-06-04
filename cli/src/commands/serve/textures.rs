@@ -278,6 +278,16 @@ pub fn spawn_texture_downloader(
 ) -> TextureRequestSender {
     let (tx, mut rx) = mpsc::channel::<Vec<String>>(8);
 
+    // Headless/e2e runs can opt out of fetching the high-res source textures
+    // (the Earth source alone is 21600×10800). Downloading and decoding them
+    // competes for CPU with the simulation loop, which makes timing-sensitive
+    // e2e tests flaky, so those tests set ORTS_DISABLE_TEXTURE_DOWNLOAD=1.
+    // Embedded 2k textures are still served regardless of this flag.
+    if std::env::var_os("ORTS_DISABLE_TEXTURE_DOWNLOAD").is_some() {
+        tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        return tx;
+    }
+
     tokio::spawn(async move {
         let dir = &cache.cache_dir;
         if let Err(e) = std::fs::create_dir_all(dir) {

@@ -119,6 +119,7 @@ impl Server {
     fn spawn_with_config(port: u16, config_path: &str) -> Self {
         let binary = orts_binary();
         let mut child = Command::new(&binary)
+            .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
             .args([
                 "serve",
                 "--port",
