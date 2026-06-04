@@ -1,8 +1,15 @@
-# mold: sudo apt install mold (or pacman -S mold)
-# wild: cargo install wild-linker
-
+# Local dev fast-linking: clang as the linker driver + mold as the actual
+# linker (mold: sudo apt install mold / pacman -S mold). Purely a build-speed
+# convenience for incremental dev rebuilds.
+#
+# The linker is folded into `rustflags` (via -Clinker) on purpose: it makes
+# the whole thing a single knob. Any build that sets a non-empty global
+# RUSTFLAGS replaces this line entirely and falls back to the default
+# `cc`/gcc linker — no clang, no mold required. The release gnu binary is
+# built exactly that way inside an old-glibc `cross` container that has
+# neither clang nor mold; see Cross.toml and the rust-dist job in
+# .github/workflows/ci.yml.
 [target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-# wild (~2x faster than mold)
-#rustflags = ["-C", "link-args=--ld-path=wild"]
+rustflags = ["-Clinker=clang", "-Clink-arg=-fuse-ld=mold"]
+# wild (~2x faster than mold): cargo install wild-linker, then swap to:
+#rustflags = ["-Clinker=clang", "-Clink-arg=--ld-path=wild"]

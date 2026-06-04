@@ -490,9 +490,18 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install mold linker
+      # The gnu binary is built with `cross` inside the released cross 0.2.5
+      # container (Ubuntu 16.04 / glibc 2.23) so the shipped binary's glibc
+      # floor is a pinned, host-independent value instead of whatever
+      # `ubuntu-latest` happens to ship (which produced GLIBC_2.39 binaries
+      # that failed on every distro older than Ubuntu 24.04). See Cross.toml.
+      # No host mold/clang is needed for this target anymore — linking happens
+      # inside the container with its gcc. musl stays a native static build.
+      - name: Install cross (gnu target)
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: sudo apt-get install -y mold
+        uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486 # v2.75.18
+        with:
+          tool: cross
 
       - name: Install musl toolchain
         if: matrix.target == 'x86_64-unknown-linux-musl'
@@ -514,7 +523,12 @@ jobs:
           shared-key: rust-release-${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install cargo-about
+      # Host build (musl) needs cargo-about for the embedded third-party
+      # license notice. The gnu build gets cargo-about inside the cross
+      # container (Cross.toml `pre-build`), so it is not needed on the host
+      # for that target.
+      - name: Install cargo-about (musl host build)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486 # v2.75.18
         with:
           tool: cargo-about
@@ -525,7 +539,23 @@ jobs:
           name: viewer-dist
           path: ./viewer/dist
 
-      - name: Build CLI with embedded viewer (release)
+      - name: Build CLI with embedded viewer (gnu, via cross)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        env:
+          ORTS_REQUIRE_LICENSE_NOTICE: "1"
+          # .cargo/config.toml enables clang+mold for the gnu triple via a
+          # single `rustflags` line; the cross container has neither. A
+          # non-empty global RUSTFLAGS replaces that line wholesale, dropping
+          # clang+mold and falling back to the container's default cc/gcc
+          # linker. target-cpu=x86-64 is the default baseline — a no-op that
+          # also documents the portable CPU floor. (An empty RUSTFLAGS is
+          # ignored, and neither --config nor CARGO_TARGET_*_RUSTFLAGS override
+          # config-file rustflags.) Forwarded via Cross.toml build.env.passthrough.
+          RUSTFLAGS: "-Ctarget-cpu=x86-64"
+        run: cross build --locked --release -p orts-cli --target ${{ matrix.target }}
+
+      - name: Build CLI with embedded viewer (musl, native static)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
         env:
           ORTS_REQUIRE_LICENSE_NOTICE: "1"
         run: cargo build --locked --release -p orts-cli --target ${{ matrix.target }}
@@ -1154,8 +1184,8 @@ jobs:
           Download the tarball for your platform, verify with the \`.sha256\` sidecar, extract, and run \`./orts\`.
 
           Targets:
-          - \`x86_64-unknown-linux-gnu\` (glibc, dynamically linked)
-          - \`x86_64-unknown-linux-musl\` (musl, fully static)
+          - \`x86_64-unknown-linux-gnu\` (glibc, dynamically linked; built with \`cross\` against an old glibc, so it requires only glibc >= 2.18 — runs on Ubuntu 14.04+, Debian 8+, and any newer distro)
+          - \`x86_64-unknown-linux-musl\` (musl, fully static; runs on any Linux)
           BODY
           # Remove leading whitespace from heredoc indentation
           sed -i 's/^          //' /tmp/release-body.md

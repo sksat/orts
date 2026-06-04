@@ -1,0 +1,39 @@
+# cross configuration for building the release `orts` gnu binary.
+#
+# Why cross: the gnu binary was previously built directly on
+# `ubuntu-latest`, so its glibc floor was whatever that runner happened to
+# ship — at v0.2.0 that meant GLIBC_2.39 (Ubuntu 24.04), which fails to
+# start on Ubuntu 22.04/20.04, Debian 11/12, RHEL 8/9, Amazon Linux 2, etc.
+# Building inside a pinned cross image makes the floor a deliberate,
+# host-independent value.
+#
+# Image: cross 0.2.5 (the latest released cross) ships an Ubuntu 16.04 based
+# gnu image == glibc 2.23 + gcc 5.4. That floor comfortably covers the target
+# environments (>= Ubuntu 20.04 / Debian 11 / RHEL 8) and older. gcc 5.4 is
+# old but the whole dependency graph — including the only C/asm dependency,
+# `ring` — compiles cleanly with it. Pinned to the released tag (not the
+# moving `:main`/`:edge` Ubuntu-20.04 images) so the floor is reproducible.
+[target.x86_64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:0.2.5"
+
+# The release build sets ORTS_REQUIRE_LICENSE_NOTICE=1, which makes
+# cli/build.rs hard-fail unless `cargo about` is available to generate the
+# embedded third-party license notice. cross runs the whole build inside the
+# container, so cargo-about must exist there too. Fetch the static musl
+# binary (runs on the image's old glibc) instead of compiling it.
+# renovate: datasource=github-releases depName=EmbarkStudios/cargo-about
+pre-build = [
+  "curl -fsSL https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.0/cargo-about-0.9.0-x86_64-unknown-linux-musl.tar.gz | tar -xz -C /usr/local/bin --strip-components=1 --wildcards '*/cargo-about'",
+]
+
+# Forward the build's env into the container. The workspace .cargo/config.toml
+# enables clang+mold for the gnu triple via a single `rustflags` line, neither
+# of which exists in the cross image. The CI step sets a non-empty global
+# RUSTFLAGS, which replaces that line wholesale (an empty value is ignored, and
+# neither --config nor CARGO_TARGET_*_RUSTFLAGS override config-file rustflags)
+# — dropping clang+mold and falling back to the container's default cc/gcc.
+[build.env]
+passthrough = [
+  "ORTS_REQUIRE_LICENSE_NOTICE",
+  "RUSTFLAGS",
+]
