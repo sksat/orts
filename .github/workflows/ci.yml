@@ -319,7 +319,7 @@ jobs:
       - name: Install cargo-component
         uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486 # v2.75.18
         with:
-          tool: cargo-component
+          tool: cargo-component@0.21.1
 
       - name: Build guest WASM components
         run: |
@@ -365,7 +365,7 @@ jobs:
       - name: Install cargo-component
         uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486 # v2.75.18
         with:
-          tool: cargo-component
+          tool: cargo-component@0.21.1
 
       - name: Install wasi-sysroot
         run: |
@@ -437,7 +437,7 @@ jobs:
       - name: Install cargo-component
         uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486 # v2.75.18
         with:
-          tool: cargo-component
+          tool: cargo-component@0.21.1
 
       - name: Build guest WASM components
         run: |
@@ -633,7 +633,7 @@ jobs:
       - name: Install cargo-component
         uses: taiki-e/install-action@055f5df8c3f65ea01cd41e9dc855becd88953486 # v2.75.18
         with:
-          tool: cargo-component
+          tool: cargo-component@0.21.1
 
       - name: Build example WASM plugins
         run: |
