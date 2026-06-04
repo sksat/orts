@@ -60,7 +60,7 @@ jobs:
           shared-key: deploy-site
 
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        uses: ./.github/actions/install-wasm-pack
 
       - name: Build site
         run: pnpm build:site
