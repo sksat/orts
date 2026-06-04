@@ -30,9 +30,7 @@ fn angular_momentum_inertial(state: &AttitudeState, inertia: &Matrix3<f64>) -> V
         .into_inner()
 }
 
-// ──────────────────────────────────────────────────────
 // Torque-free motion
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn torque_free_symmetric_body_constant_omega() {
@@ -170,9 +168,7 @@ fn torque_free_angular_momentum_conservation() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Gravity gradient libration
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn gravity_gradient_libration_frequency() {
@@ -280,9 +276,7 @@ fn gravity_gradient_libration_frequency() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Integration method tests
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn dp45_attitude_integration() {
@@ -462,9 +456,7 @@ fn tolerance_convergence_dp45() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Integrator precision comparison
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn rk4_vs_dp45_energy_conservation() {
@@ -486,7 +478,7 @@ fn rk4_vs_dp45_energy_conservation() {
     let l0 = angular_momentum_inertial(&initial, &inertia);
     let t_end = 100.0;
 
-    // --- RK4 at two dt values ---
+    // RK4 at two dt values
     let mut rk4_energy_errs = Vec::new();
     let mut rk4_angmom_errs = Vec::new();
     for &dt in &[0.1, 0.05] {
@@ -519,7 +511,7 @@ fn rk4_vs_dp45_energy_conservation() {
         rk4_angmom_errs[1]
     );
 
-    // --- DP45 at two tolerance levels ---
+    // DP45 at two tolerance levels
     let mut dp45_energy_errs = Vec::new();
     let mut dp45_angmom_errs = Vec::new();
     for &tol_val in &[1e-8, 1e-12] {

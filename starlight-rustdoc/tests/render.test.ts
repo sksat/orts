@@ -20,9 +20,7 @@ function makeResolver(): LinkResolver {
   return new LinkResolver(new Map(), "/base");
 }
 
-// ---------------------------------------------------------------------------
 // renderType
-// ---------------------------------------------------------------------------
 
 describe("renderType", () => {
   const crate = makeCrate();
@@ -149,9 +147,7 @@ describe("renderType", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // renderGenericParams — const generics
-// ---------------------------------------------------------------------------
 
 describe("renderGenericParams", () => {
   const crate = makeCrate();
@@ -210,9 +206,7 @@ describe("renderGenericParams", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // renderWhereClause — type binding equality (State = State<DIM, 2>)
-// ---------------------------------------------------------------------------
 
 describe("renderWhereClause", () => {
   const crate = makeCrate();

@@ -113,7 +113,7 @@ impl Plugin<TickInput, Command> for Controller {
 
 orts_plugin!(Controller, mode);
 
-// ── Sensor mapping ──
+// Sensor mapping
 
 impl Controller {
     fn populate_di(&mut self, input: &TickInput) {
@@ -185,7 +185,7 @@ impl Controller {
     }
 }
 
-// ── Initialization (replaces C init with FILE*) ──
+// Initialization (replaces C init with FILE*)
 
 fn init_ad(cfg: &Config) -> ffi::Ad {
     let mut ad: ffi::Ad = unsafe { std::mem::zeroed() };
@@ -232,7 +232,7 @@ fn init_acs(cfg: &Config) -> ffi::Ac {
     acs
 }
 
-// ── Configuration ──
+// Configuration
 
 #[derive(serde::Deserialize)]
 #[serde(default)]

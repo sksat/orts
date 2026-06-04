@@ -23,7 +23,7 @@ pub struct Geodetic {
     pub altitude: f64,
 }
 
-// ─── SimpleEcef ↔ Geodetic type-to-type conversions ──────────────
+// SimpleEcef ↔ Geodetic type-to-type conversions
 //
 // These are the WGS-84 ellipsoid Cartesian ↔ (lat, lon, height)
 // conversions. They are parameter-free (the ellipsoid constants are
@@ -338,7 +338,7 @@ mod tests {
         assert!((alt - 400.0).abs() < 1e-3);
     }
 
-    // ── Vec3<F: Ecef>::to_geodetic() tests ──
+    // Vec3<F: Ecef>::to_geodetic() tests
 
     /// The new generic method must agree with the legacy
     /// `Geodetic::from(ecef)` conversion bit-for-bit on the same

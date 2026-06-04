@@ -55,9 +55,7 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
 
     // Collect f64 scalars: entity_path -> Vec<(time_ns, f64)>
     let mut scalars: BTreeMap<String, Vec<(i64, f64)>> = BTreeMap::new();
-    // Collect metadata scalars
     let mut meta_scalars: BTreeMap<String, f64> = BTreeMap::new();
-    // Collect text metadata
     let mut meta_texts: BTreeMap<String, String> = BTreeMap::new();
 
     for msg in DecoderApp::decode_lazy(reader) {

@@ -56,9 +56,7 @@ fn angle_error_deg(state: &AttitudeState, target_q: &UnitQuaternion<f64>) -> f64
     q_err.angle().to_degrees()
 }
 
-// ──────────────────────────────────────────────────────
 // Test 1: PD + RW attitude stabilization with gravity gradient
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn pd_rw_stabilization_with_gravity_gradient() {
@@ -145,9 +143,7 @@ fn pd_rw_stabilization_with_gravity_gradient() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 2: RW momentum buildup under constant gravity gradient disturbance
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn rw_momentum_buildup_under_gravity_gradient() {
@@ -247,9 +243,7 @@ fn rw_momentum_buildup_under_gravity_gradient() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 3: PD+RW matches direct PD (ideal actuator) for symmetric body
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn pd_rw_matches_direct_pd_symmetric_body() {
@@ -281,7 +275,7 @@ fn pd_rw_matches_direct_pd_symmetric_body() {
     let dt_ode = 0.01;
     let t_end = 80.0;
 
-    // ---- Path A: PD + RW (segment loop) ----
+    // Path A: PD + RW (segment loop)
     let rw = ReactionWheelAssembly::three_axis(0.01, 1.0, 0.5);
     let mut state_rw = AugmentedState {
         plant: initial_att.clone(),
@@ -306,7 +300,7 @@ fn pd_rw_matches_direct_pd_symmetric_body() {
 
     let error_rw = angle_error_deg(&state_rw.plant, &target_q);
 
-    // ---- Path B: Direct PD torque (ideal actuator) ----
+    // Path B: Direct PD torque (ideal actuator)
     use orts::attitude::{AttitudeSystem, InertialPdController};
 
     let ctrl = InertialPdController::diagonal(kp, kd, target_q);

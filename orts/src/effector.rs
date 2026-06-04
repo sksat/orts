@@ -11,9 +11,7 @@ use utsuroi::{OdeState, Tolerances};
 
 use crate::model::ExternalLoads;
 
-// ---------------------------------------------------------------------------
 // StateEffector trait
-// ---------------------------------------------------------------------------
 
 /// A physical component with internal state that couples to spacecraft dynamics.
 ///
@@ -54,9 +52,7 @@ pub trait StateEffector<S>: Send + Sync + std::any::Any {
     }
 }
 
-// ---------------------------------------------------------------------------
 // AugmentedState
-// ---------------------------------------------------------------------------
 
 /// Plant state augmented with auxiliary effector state.
 ///
@@ -148,9 +144,7 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // AuxRegistry
-// ---------------------------------------------------------------------------
 
 /// Metadata for a registered auxiliary state block.
 #[derive(Debug, Clone)]
@@ -208,7 +202,7 @@ mod tests {
     use crate::attitude::AttitudeState;
     use nalgebra::{Vector3, Vector4};
 
-    // ------- AuxRegistry tests -------
+    // AuxRegistry tests
 
     #[test]
     fn registry_single_effector() {
@@ -233,7 +227,7 @@ mod tests {
         assert_eq!(reg.entries().len(), 2);
     }
 
-    // ------- AugmentedState OdeState tests -------
+    // AugmentedState OdeState tests
 
     fn sample_augmented() -> AugmentedState<AttitudeState> {
         AugmentedState {

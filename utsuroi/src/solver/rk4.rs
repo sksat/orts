@@ -331,7 +331,7 @@ mod tests {
         }
     }
 
-    // --- 1D tests ---
+    // 1D tests
 
     #[test]
     fn test_rk4_1d_harmonic_oscillator() {
@@ -411,7 +411,7 @@ mod tests {
         );
     }
 
-    // --- 2D tests ---
+    // 2D tests
 
     #[test]
     fn test_rk4_2d_harmonic_oscillator() {

@@ -189,7 +189,7 @@ async fn test_websocket_info_and_state_messages() {
         let ws_stream = ws_stream.unwrap();
         let (_write, mut read) = ws_stream.split();
 
-        // --- First message: must be "info" ---
+        // First message: must be "info"
         let info = next_json(&mut read).await;
         assert_eq!(info["type"], "info", "first message type must be 'info'");
         assert!(info["mu"].is_f64(), "info.mu must be a number");
@@ -228,7 +228,7 @@ async fn test_websocket_info_and_state_messages() {
             "expected default output_interval to equal dt ({dt}), got {output_interval}"
         );
 
-        // --- Second message: must be "history" ---
+        // Second message: must be "history"
         let history = next_json(&mut read).await;
         assert_eq!(
             history["type"], "history",
@@ -239,7 +239,7 @@ async fn test_websocket_info_and_state_messages() {
             "history must have 'states' array"
         );
 
-        // --- Subsequent messages: must include "state" messages ---
+        // Subsequent messages: must include "state" messages
         // (may also include history_detail interleaved)
         let (first_state, _) = read_until_type(&mut read, "state", 50).await;
         assert!(first_state["t"].is_f64(), "state.t must be a number");

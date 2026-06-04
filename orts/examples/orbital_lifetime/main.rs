@@ -31,9 +31,7 @@ use orts::record::timeline::TimePoint;
 use tobari::{ConstantWeather, Exponential, HarrisPriester, Nrlmsise00};
 use utsuroi::{DormandPrince, Tolerances};
 
-// ============================================================
 // AE1b (YODAKA) mission reference
-// ============================================================
 //
 // NORAD Catalog Number: 62295
 // COSPAR ID: 1998-067XB (ISS-associated object)
@@ -58,9 +56,7 @@ const DEPLOY_EPOCH_ISO: &str = "2024-12-09T08:15:00Z";
 /// Using CelesTrak (USSPACECOM-derived) as primary reference.
 const OBSERVED_LIFETIME_DAYS: f64 = 78.0; // 2024-12-09 -> 2025-02-25
 
-// ============================================================
 // Initial orbit
-// ============================================================
 // CubeSat deployed from ISS via J-SSOD: orbit matches ISS at deployment.
 // Source: ISS TLE from Space-Track (NORAD 25544) near 2024-12-09.
 //   ISS maintained ~410-420 km altitude in late 2024.
@@ -69,9 +65,7 @@ const OBSERVED_LIFETIME_DAYS: f64 = 78.0; // 2024-12-09 -> 2025-02-25
 const INITIAL_ALT_KM: f64 = 415.0;
 const INCLINATION_DEG: f64 = 51.64;
 
-// ============================================================
 // 6U CubeSat physical parameters
-// ============================================================
 // Form factor: 6U standard (approximately 10x20x34 cm).
 // Source: CubeSat Design Specification Rev. 14.1, Cal Poly SLO
 //   https://www.cubesat.org/cubesatinfo
@@ -122,9 +116,7 @@ const REENTRY_ALT: f64 = 100.0;
 /// Maximum simulation duration [days].
 const MAX_DURATION_DAYS: f64 = 365.0;
 
-// ============================================================
 // Space weather for predictive (Group 1) scenarios
-// ============================================================
 // Source: NOAA SWPC Solar Cycle 25 Progression
 //   https://www.swpc.noaa.gov/products/solar-cycle-progression
 //   Smoothed monthly F10.7 peaked at 160.8 SFU in October 2024.
@@ -137,9 +129,7 @@ const AP_PREDICTED: f64 = 15.0;
 /// Daily output interval for stdout [days].
 const PRINT_INTERVAL_DAYS: usize = 10;
 
-// ============================================================
 // Data structures
-// ============================================================
 
 #[allow(dead_code)]
 struct DailySample {
@@ -159,9 +149,7 @@ struct ScenarioResult {
     samples: Vec<DailySample>,
 }
 
-// ============================================================
 // Helper functions
-// ============================================================
 
 /// Create initial OrbitalState from circular orbit parameters.
 fn initial_state(altitude_km: f64, inclination_deg: f64) -> OrbitalState {
@@ -328,9 +316,7 @@ fn run_scenario(
     }
 }
 
-// ============================================================
 // Main
-// ============================================================
 
 fn main() {
     let epoch = Epoch::from_iso8601(DEPLOY_EPOCH_ISO).unwrap();
@@ -356,9 +342,7 @@ fn main() {
 
     let mut results: Vec<ScenarioResult> = Vec::new();
 
-    // ================================================================
     // Group 1: Predictive (pre-launch information only)
-    // ================================================================
     println!("=== Group 1: Predictive (pre-launch information only) ===");
     println!();
 
@@ -408,9 +392,7 @@ fn main() {
         &EntityPath::parse("/world/sat/scenario_c"),
     ));
 
-    // ================================================================
     // Group 2: Launch-day prediction (CSSI data available at launch)
-    // ================================================================
     // CSSI data is truncated at the deployment epoch so only data that
     // would have been available on launch day is used.  After the cutoff
     // the CssiSpaceWeather provider clamps to the last known record,
@@ -476,9 +458,7 @@ fn main() {
         ));
     }
 
-    // ================================================================
     // Group 3: Retrospective (full CSSI observed data, post-decay)
-    // ================================================================
     #[cfg(feature = "fetch-weather")]
     {
         println!("=== Group 3: Retrospective (full CSSI observed data) ===");
@@ -516,9 +496,7 @@ fn main() {
         ));
     }
 
-    // ================================================================
     // Comparison table
-    // ================================================================
     println!("=== Comparison ===");
     println!();
     println!(
@@ -554,9 +532,7 @@ fn main() {
     );
     println!();
 
-    // ================================================================
     // Save RRD
-    // ================================================================
     let rrd_path = "orts/examples/orbital_lifetime/orbital_lifetime.rrd";
     rec.metadata = orts::record::recording::SimMetadata {
         epoch_jd: Some(epoch.jd()),
@@ -570,9 +546,7 @@ fn main() {
     orts::record::rerun_export::save_as_rrd(&rec, "orts-orbital-lifetime", rrd_path).unwrap();
     println!("Saved to {rrd_path} (open with: rerun {rrd_path})");
 
-    // ================================================================
     // Assertions (active during `cargo test --example`)
-    // ================================================================
     // Group 1: all scenarios must terminate with reentry
     for r in &results {
         assert!(

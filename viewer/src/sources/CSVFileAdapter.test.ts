@@ -3,7 +3,7 @@ import { CSVFileAdapter } from "./CSVFileAdapter.js";
 import type { CSVWorkerMessage } from "./csvParseLogic.js";
 import type { SourceEvent, SourceId } from "./types.js";
 
-// --- Mock Worker ---
+// Mock Worker
 class MockWorker {
   static instances: MockWorker[] = [];
   onmessage: ((e: { data: CSVWorkerMessage }) => void) | null = null;
@@ -28,7 +28,7 @@ class MockWorker {
   }
 }
 
-// --- Mock FileReader ---
+// Mock FileReader
 class MockFileReader {
   static instances: MockFileReader[] = [];
   result: string | null = null;

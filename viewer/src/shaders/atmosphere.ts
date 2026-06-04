@@ -10,7 +10,7 @@
  * - Hillaire, "A Scalable and Production Ready Sky and Atmosphere Rendering Technique" (EGSR 2020)
  */
 
-// ── Physical constants ──────────────────────────────────────────────
+// Physical constants
 
 /** Amplified atmosphere scale for body-centered (distant) view. */
 export const ATMOSPHERE_SCALE_AMPLIFIED = 1.06;
@@ -45,7 +45,7 @@ export const AIRGLOW_COLOR: [number, number, number] = [0.1, 0.25, 0.5];
 /** Airglow emission strength factor. */
 export const AIRGLOW_STRENGTH = 2.0;
 
-// ── Math utility functions (also used in GLSL) ─────────────────────
+// Math utility functions (also used in GLSL)
 
 /**
  * Ray-sphere intersection for a sphere centered at the origin.
@@ -98,7 +98,7 @@ export function atmosphericDensity(altitude: number, scaleHeight: number): numbe
   return Math.exp(-altitude / scaleHeight);
 }
 
-// ── GLSL Shaders ────────────────────────────────────────────────────
+// GLSL Shaders
 
 /** Vertex shader for the atmosphere shell. */
 export const atmosphereVert = /* glsl */ `
@@ -131,7 +131,7 @@ uniform float atmosphereRadius; // scene units (earthRadius * scale)
 varying vec3 vWorldPosition;
 varying vec3 vSphereCenter;
 
-// ── Physical constants (all in Earth-radius units, earthRadius = 1) ──
+// Physical constants (all in Earth-radius units, earthRadius = 1)
 //
 // The shader normalizes all distances by earthRadius at the start of main(),
 // so these constants work correctly regardless of scene scale.
@@ -166,7 +166,7 @@ const float SUN_INTENSITY_SCALE = 20.0;
 const vec3 AIRGLOW_COLOR = vec3(0.1, 0.25, 0.5);
 const float AIRGLOW_STRENGTH = 2.0;
 
-// ── Ray-sphere intersection ──
+// Ray-sphere intersection
 
 // Returns (near, far) distances. near > far means no intersection.
 vec2 rsi(vec3 r0, vec3 rd, float sr) {
@@ -179,7 +179,7 @@ vec2 rsi(vec3 r0, vec3 rd, float sr) {
   return vec2((-b - sd) / (2.0 * a), (-b + sd) / (2.0 * a));
 }
 
-// ── Phase functions ──
+// Phase functions
 
 // Rayleigh phase: (3/16π)(1 + cos²θ)
 float phaseRayleigh(float cosTheta) {
@@ -196,7 +196,7 @@ float phaseMie(float cosTheta, float g) {
 }
 
 void main() {
-  // ── Normalize to Earth-radius units ──
+  // Normalize to Earth-radius units
   // All constants (RAY_BETA, HEIGHT_RAY, etc.) assume earthRadius = 1.
   // Dividing by earthRadius makes the shader scale-invariant.
   vec3 center = vSphereCenter;
@@ -244,7 +244,7 @@ void main() {
   float pRay = phaseRayleigh(mu);
   float pMie = phaseMie(mu, G_MIE);
 
-  // ── Primary ray-march (all in normalized Earth-radius units) ──
+  // Primary ray-march (all in normalized Earth-radius units)
   for (int i = 0; i < I_STEPS; i++) {
     // Sample point at center of step.
     vec3 iPos = r0 + rd * (tStart + iStepSize * (float(i) + 0.5));
@@ -260,7 +260,7 @@ void main() {
     // Airglow: broad emission layer (~90-300 km altitude range).
     totalGlow += exp(-iHeight / HEIGHT_GLOW) * iStepSize;
 
-    // ── Secondary ray-march toward sun ──
+    // Secondary ray-march toward sun
     float jStepSize = rsi(iPos, sunDirection, nAtmoRadius).y / float(J_STEPS);
     float jOptRay = 0.0;
     float jOptMie = 0.0;

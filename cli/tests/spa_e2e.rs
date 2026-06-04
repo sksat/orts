@@ -115,9 +115,7 @@ fn http_get(port: u16, path: &str) -> HttpResponse {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Tests with viewer feature (default build)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn spa_root_serves_index_html() {

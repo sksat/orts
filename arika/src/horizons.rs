@@ -299,9 +299,7 @@ fn parse_field(s: &str, field: &'static str, line: usize) -> Result<f64, Horizon
     })
 }
 
-// ---------------------------------------------------------------------------
 // HTTP fetch + disk cache (optional, feature-gated)
-// ---------------------------------------------------------------------------
 
 #[cfg(all(feature = "fetch-horizons", not(target_arch = "wasm32")))]
 mod fetch_impl {
@@ -380,7 +378,7 @@ mod fetch_impl {
             let cache_path =
                 cache_file_path(&cache_key).map_err(|e| HorizonsError::Io(e.to_string()))?;
 
-            // --- Serve from cache if fresh ---
+            // Serve from cache if fresh
             if let Ok(metadata) = std::fs::metadata(&cache_path)
                 && let Ok(modified) = metadata.modified()
                 && SystemTime::now()
@@ -392,7 +390,7 @@ mod fetch_impl {
                 return Self::from_file(&cache_path);
             }
 
-            // --- Fetch from HTTP ---
+            // Fetch from HTTP
             eprintln!(
                 "Fetching Horizons vector table: target={target}, center={center}, \
                  {start_iso} → {stop_iso} step={step}"

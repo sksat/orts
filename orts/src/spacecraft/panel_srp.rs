@@ -208,7 +208,7 @@ mod tests {
         Vector4::new(q.w, q.i, q.j, q.k)
     }
 
-    // ======== Basic ========
+    // Basic
 
     #[test]
     fn panel_srp_name() {
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(srp.shadow_body_radius, Some(R_EARTH));
     }
 
-    // ======== Sphere ========
+    // Sphere
 
     #[test]
     fn sphere_nonzero_srp() {
@@ -310,7 +310,7 @@ mod tests {
         );
     }
 
-    // ======== Ideal single panel + single Sun direction ========
+    // Ideal single panel + single Sun direction
 
     #[test]
     fn single_panel_face_on_analytical() {
@@ -366,7 +366,7 @@ mod tests {
         );
     }
 
-    // ======== Panels — scaling ========
+    // Panels — scaling
 
     #[test]
     fn panel_force_scales_with_area() {
@@ -404,7 +404,7 @@ mod tests {
         );
     }
 
-    // ======== Attitude coupling ========
+    // Attitude coupling
 
     #[test]
     fn panels_different_attitude_different_srp() {
@@ -436,7 +436,7 @@ mod tests {
         );
     }
 
-    // ======== Shadow ========
+    // Shadow
 
     #[test]
     fn panel_zero_in_shadow() {
@@ -511,7 +511,7 @@ mod tests {
         );
     }
 
-    // ======== Torque ========
+    // Torque
 
     #[test]
     fn panels_cp_offset_produces_torque() {
@@ -583,7 +583,7 @@ mod tests {
         );
     }
 
-    // ======== Integration with SpacecraftDynamics ========
+    // Integration with SpacecraftDynamics
 
     #[test]
     fn panel_srp_integrable() {
@@ -628,7 +628,7 @@ mod tests {
         assert!(dy.plant.orbit.position().magnitude().is_finite());
     }
 
-    // ======== Order of magnitude ========
+    // Order of magnitude
 
     #[test]
     fn srp_order_of_magnitude_geo() {
@@ -656,7 +656,7 @@ mod tests {
         );
     }
 
-    // ======== Tumbling (time-varying attitude) ========
+    // Tumbling (time-varying attitude)
 
     fn run_tumbling_srp_test(angular_velocity: Vector3<f64>) -> (f64, f64) {
         use crate::orbital::gravity::PointMass;
@@ -726,7 +726,7 @@ mod tests {
         );
     }
 
-    // ======== Empty panels ========
+    // Empty panels
 
     #[test]
     fn empty_panels_returns_zeros() {
@@ -737,7 +737,7 @@ mod tests {
         assert_eq!(loads.torque_body.into_inner(), Vector3::zeros());
     }
 
-    // ======== Mass scaling ========
+    // Mass scaling
 
     #[test]
     fn panel_force_scales_inversely_with_mass() {
@@ -763,7 +763,7 @@ mod tests {
         );
     }
 
-    // ======== Mixed illumination (some panels face Sun, some don't) ========
+    // Mixed illumination (some panels face Sun, some don't)
 
     #[test]
     fn mixed_illumination_only_sunlit_panels_contribute() {
@@ -794,7 +794,7 @@ mod tests {
         );
     }
 
-    // ======== Builder ========
+    // Builder
 
     #[test]
     fn with_shadow_body_builder() {
@@ -802,7 +802,7 @@ mod tests {
         assert_eq!(srp.shadow_body_radius, Some(R_EARTH));
     }
 
-    // ======== Cube (symmetric multi-panel) ========
+    // Cube (symmetric multi-panel)
 
     #[test]
     fn cube_srp_three_faces_illuminated() {
@@ -827,7 +827,7 @@ mod tests {
         assert!(loads.torque_body.magnitude().is_finite());
     }
 
-    // ======== Proptest: cos(θ) scaling with panel tilt ========
+    // Proptest: cos(θ) scaling with panel tilt
 
     mod prop {
         use super::*;

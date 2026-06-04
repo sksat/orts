@@ -22,9 +22,7 @@ use nalgebra::Vector3;
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
 
-// ---------------------------------------------------------------------------
 // Capability traits
-// ---------------------------------------------------------------------------
 
 /// State type that provides attitude information (quaternion + angular velocity).
 pub trait HasAttitude {
@@ -53,9 +51,7 @@ pub trait HasMass {
     fn mass(&self) -> f64;
 }
 
-// ---------------------------------------------------------------------------
 // ExternalLoads
-// ---------------------------------------------------------------------------
 
 /// Acceleration (inertial frame) and torque (body frame) pair.
 ///
@@ -146,9 +142,7 @@ impl<F: frame::Eci> AddAssign for ExternalLoads<F> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Unified Model trait
-// ---------------------------------------------------------------------------
 
 /// A physical model that evaluates external loads on a spacecraft.
 ///

@@ -11,7 +11,7 @@ use nalgebra::Vector4;
 
 use crate::SpacecraftState;
 
-// ─── sensor output newtypes ──────────────────────────────────────
+// sensor output newtypes
 
 /// Magnetic field in the body frame \[T\].
 ///
@@ -69,7 +69,7 @@ impl AttitudeBodyToInertial {
     }
 }
 
-// ─── sensor readings ─────────────────────────────────────────────
+// sensor readings
 
 /// Sensor readings evaluated at the current tick instant.
 ///
@@ -98,7 +98,7 @@ impl Sensors {
     }
 }
 
-// ─── sun sensor output types ────────────────────────────────────
+// sun sensor output types
 
 /// Sun direction in the body frame (unit vector, satellite→Sun).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,7 +138,7 @@ pub enum SunSensorOutput {
     Coarse(f64),
 }
 
-// ─── actuator telemetry ─────────────────────────────────────────
+// actuator telemetry
 
 /// Per-wheel RW telemetry (observable internal state).
 ///
@@ -164,7 +164,7 @@ pub struct ActuatorTelemetry {
     pub rw: Option<RwTelemetry>,
 }
 
-// ─── tick input ──────────────────────────────────────────────────
+// tick input
 
 /// Per-tick input handed to a plugin controller's `update` call.
 ///

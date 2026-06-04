@@ -254,7 +254,7 @@ pub fn heliocentric_position_ecliptic(body: &str, epoch: &Epoch) -> Option<Vecto
 mod tests {
     use super::*;
 
-    // --- Kepler solver tests ---
+    // Kepler solver tests
 
     #[test]
     fn kepler_circular_orbit() {
@@ -311,7 +311,7 @@ mod tests {
         );
     }
 
-    // --- Heliocentric position tests ---
+    // Heliocentric position tests
 
     #[test]
     fn earth_at_1au() {
@@ -401,7 +401,7 @@ mod tests {
         );
     }
 
-    // --- Coordinate conversion tests ---
+    // Coordinate conversion tests
 
     #[test]
     fn ecliptic_to_equatorial_x_unchanged() {

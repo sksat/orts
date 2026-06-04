@@ -18,7 +18,7 @@ pub use ephemeris::{
 };
 pub use rotation::SUN;
 
-// ─── Physical constants ──────────────────────────────────────────
+// Physical constants
 
 /// Sun gravitational parameter [km³/s²].
 pub const MU: f64 = 132712440018.0;

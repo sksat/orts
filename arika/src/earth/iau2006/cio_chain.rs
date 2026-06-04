@@ -67,7 +67,7 @@ use crate::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
 use crate::epoch::{Epoch, Tt, Ut1, Utc};
 use crate::frame::{Cirs, Gcrs, Itrs, Rotation, Tirs};
 
-// ─── TIO locator s'(t) ──────────────────────────────────────────
+// TIO locator s'(t)
 
 /// Terrestrial Intermediate Origin (TIO) locator `s'(t)`.
 ///
@@ -86,7 +86,7 @@ fn tio_locator_s_prime(tt_centuries: f64) -> Rad {
     Uas::new(-47.0 * tt_centuries).to_radians()
 }
 
-// ─── Matrix3 → UnitQuaternion ───────────────────────────────────
+// Matrix3 → UnitQuaternion
 
 /// Convert an orthogonal 3×3 matrix to a [`UnitQuaternion`].
 ///
@@ -99,7 +99,7 @@ fn matrix3_to_unit_quaternion(m: Matrix3<f64>) -> UnitQuaternion<f64> {
     UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(m))
 }
 
-// ─── Rotation<Gcrs, Cirs>::iau2006 ──────────────────────────────
+// Rotation<Gcrs, Cirs>::iau2006
 
 impl Rotation<Gcrs, Cirs> {
     /// Build the GCRS → CIRS rotation from the IAU 2006 / 2000A_R06
@@ -152,7 +152,7 @@ impl Rotation<Gcrs, Cirs> {
     }
 }
 
-// ─── Rotation<Cirs, Tirs>::from_era ─────────────────────────────
+// Rotation<Cirs, Tirs>::from_era
 
 impl Rotation<Cirs, Tirs> {
     /// Build the CIRS → TIRS rotation: `R_3(−ERA(ut1))`.
@@ -173,7 +173,7 @@ impl Rotation<Cirs, Tirs> {
     }
 }
 
-// ─── Rotation<Tirs, Itrs>::polar_motion ─────────────────────────
+// Rotation<Tirs, Itrs>::polar_motion
 
 impl Rotation<Tirs, Itrs> {
     /// Build the TIRS → ITRS rotation: the polar-motion matrix
@@ -219,7 +219,7 @@ impl Rotation<Tirs, Itrs> {
     }
 }
 
-// ─── Rotation<Gcrs, Itrs>::iau2006_full ─────────────────────────
+// Rotation<Gcrs, Itrs>::iau2006_full
 
 impl Rotation<Gcrs, Itrs> {
     /// Build the full GCRS → ITRS rotation by composing the three
@@ -268,7 +268,7 @@ impl Rotation<Gcrs, Itrs> {
     }
 }
 
-// ─── Structural tests ────────────────────────────────────────────
+// Structural tests
 
 #[cfg(test)]
 mod tests {
@@ -317,7 +317,7 @@ mod tests {
         (tt, ut1, utc)
     }
 
-    // ─── TIO locator (structural) ────────────────────────────────
+    // TIO locator (structural)
 
     /// TN36 Eq. 5.13 / SOFA `iauSp00`: `s'(0) = 0` and the linear
     /// coefficient is exactly `−47 µas/century`. Pins the polynomial
@@ -340,7 +340,7 @@ mod tests {
         assert!((two_t - t_doubled).abs() < 1e-30);
     }
 
-    // ─── Rotation<Cirs, Tirs>::from_era ──────────────────────────
+    // Rotation<Cirs, Tirs>::from_era
 
     /// At the J2000.0 UT1 reference instant the ERA is
     /// `2π × 0.7790572732640` ≈ `4.895 rad`, and the resulting
@@ -373,7 +373,7 @@ mod tests {
         assert!(v_out.z().abs() < 1e-14);
     }
 
-    // ─── Rotation<Tirs, Itrs>::polar_motion ──────────────────────
+    // Rotation<Tirs, Itrs>::polar_motion
 
     /// With zero xp, yp, the polar-motion matrix collapses to a
     /// pure `R_3(s')` about the z-axis (TIO locator alone). Pins the
@@ -396,7 +396,7 @@ mod tests {
         assert!((v_out.x() * v_out.x() + v_out.y() * v_out.y() - 1.0).abs() < 1e-14);
     }
 
-    // ─── Rotation<Gcrs, Cirs>::iau2006 ───────────────────────────
+    // Rotation<Gcrs, Cirs>::iau2006
 
     /// With zero dX, dY corrections, the `iau2006` rotation must match
     /// the raw `gcrs_to_cirs_matrix_at` from Phase 3A-4. Pins the
@@ -426,7 +426,7 @@ mod tests {
         }
     }
 
-    // ─── Rotation<Gcrs, Itrs>::iau2006_full ──────────────────────
+    // Rotation<Gcrs, Itrs>::iau2006_full
 
     /// `iau2006_full` must equal the explicit composition
     /// `polar_motion · from_era · iau2006`. Pins the chaining logic

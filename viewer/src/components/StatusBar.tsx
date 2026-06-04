@@ -41,7 +41,6 @@ export function StatusBar({
 
   return (
     <div className={styles.statusBar} data-testid="ui-overlay">
-      {/* Status */}
       <span
         className={`${styles.statusDot} ${isConnected ? styles.connected : styles.disconnected}`}
       />
@@ -49,7 +48,6 @@ export function StatusBar({
         {statusLabel}
       </span>
 
-      {/* WS URL + Connect (when disconnected) */}
       {!isConnected && (
         <>
           <input
@@ -71,7 +69,6 @@ export function StatusBar({
         </>
       )}
 
-      {/* Disconnect (when connected) */}
       {isConnected && (
         <button
           type="button"
@@ -83,10 +80,8 @@ export function StatusBar({
         </button>
       )}
 
-      {/* Spacer */}
       <div className={styles.spacer} />
 
-      {/* Sim controls (when running/paused) */}
       {isConnected && (serverState === "running" || serverState === "paused") && (
         <>
           {serverState === "running" ? (
@@ -119,7 +114,6 @@ export function StatusBar({
         </>
       )}
 
-      {/* Configure (when idle) */}
       {isConnected && serverState === "idle" && (
         <button
           type="button"
@@ -130,7 +124,6 @@ export function StatusBar({
         </button>
       )}
 
-      {/* Load File */}
       <button type="button" className={`${styles.btn} ${styles.loadBtn}`} onClick={onLoadFileClick}>
         Load File
       </button>

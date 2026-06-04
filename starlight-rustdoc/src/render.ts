@@ -20,9 +20,7 @@ import type {
   WherePredicate,
 } from "./types.js";
 
-// ---------------------------------------------------------------------------
 // Type rendering
-// ---------------------------------------------------------------------------
 
 export function renderType(
   type: Type,
@@ -153,9 +151,7 @@ function resolveTraitName(id: number, crate: Crate): string {
   return "";
 }
 
-// ---------------------------------------------------------------------------
 // Generic args
-// ---------------------------------------------------------------------------
 
 function renderGenericArgs(
   args: GenericArgs,
@@ -216,9 +212,7 @@ function renderTypeBindingConstraint(
   return `${c.name}${args}: ${bounds.join(" + ")}`;
 }
 
-// ---------------------------------------------------------------------------
 // Generic params & bounds
-// ---------------------------------------------------------------------------
 
 export function renderGenericParams(
   params: GenericParam[],
@@ -292,9 +286,7 @@ function renderTraitBound(tb: TraitBound, crate: Crate, resolver: LinkResolver):
   return `${prefix}${hrtb}${renderTypePath(tb.trait, crate, resolver)}`;
 }
 
-// ---------------------------------------------------------------------------
 // Where predicates
-// ---------------------------------------------------------------------------
 
 export function renderWhereClause(
   predicates: WherePredicate[],
@@ -328,9 +320,7 @@ function renderWherePredicate(pred: WherePredicate, crate: Crate, resolver: Link
   return "";
 }
 
-// ---------------------------------------------------------------------------
 // Function signature
-// ---------------------------------------------------------------------------
 
 function renderHeader(header: FunctionHeader): string {
   const parts: string[] = [];

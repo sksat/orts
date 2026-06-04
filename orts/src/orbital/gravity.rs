@@ -175,7 +175,7 @@ mod tests {
         assert!((a1 - a3).abs() / a1 < 1e-12);
     }
 
-    // --- ZonalHarmonics tests ---
+    // ZonalHarmonics tests
 
     fn earth_j2() -> ZonalHarmonics {
         ZonalHarmonics {
@@ -293,7 +293,7 @@ mod tests {
         );
     }
 
-    // --- J3 tests ---
+    // J3 tests
 
     use arika::earth::{J3 as J3_EARTH, J4 as J4_EARTH};
 
@@ -412,7 +412,7 @@ mod tests {
         );
     }
 
-    // --- J4 tests ---
+    // J4 tests
 
     #[test]
     fn j4_equatorial_symmetric() {

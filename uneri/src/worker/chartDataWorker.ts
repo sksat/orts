@@ -30,9 +30,7 @@ import type {
   WorkerToMainMessage,
 } from "./protocol.js";
 
-// ---------------------------------------------------------------------------
 // State
-// ---------------------------------------------------------------------------
 
 let conn: AsyncDuckDBConnection | null = null;
 let schema: WorkerTableSchema | null = null;
@@ -68,9 +66,7 @@ const MAX_INGEST_RETRIES = 3;
 
 const BATCH_SIZE = 1000;
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 function post(msg: WorkerToMainMessage, transfer?: Transferable[]) {
   if (transfer) {
@@ -109,9 +105,7 @@ function toTableSchema(ws: WorkerTableSchema): TableSchema {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Adaptive refresh for "All" mode
-// ---------------------------------------------------------------------------
 
 /**
  * Compute the effective cold refresh interval (in ticks) based on the
@@ -150,9 +144,7 @@ function computeEffectiveColdEveryN(range: TimeRange): number {
   return Math.max(COLD_REFRESH_EVERY_N, adaptiveTicks);
 }
 
-// ---------------------------------------------------------------------------
 // Tick loop (cold/hot query cycle)
-// ---------------------------------------------------------------------------
 
 async function tick() {
   if (!conn || !schema) return;
@@ -197,7 +189,7 @@ async function tick() {
   ticksSinceCold++;
   const derivedNames = schema.derived.map((d) => d.name);
 
-  // --- "All" mode adaptive refresh ---
+  // "All" mode adaptive refresh
   // In "All" mode (timeRange === null), the chart's time range grows
   // continuously. As it widens, a single new data point shifts fewer
   // and fewer pixels on screen — refreshing every 250ms is wasteful.
@@ -271,9 +263,7 @@ function scheduleNextTick() {
   }, TICK_INTERVAL);
 }
 
-// ---------------------------------------------------------------------------
 // Message handler
-// ---------------------------------------------------------------------------
 
 self.onmessage = async (e: MessageEvent<MainToWorkerMessage>) => {
   const msg = e.data;

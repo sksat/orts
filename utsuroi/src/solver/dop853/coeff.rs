@@ -1,10 +1,8 @@
 #![allow(clippy::excessive_precision)]
 
-// ---------------------------------------------------------------------------
 // DOP853 coefficients (Hairer, Norsett & Wanner, 1993)
 // Dormand-Prince 8(5,3) — 12 stages
 // Reference: SciPy dop853_coefficients.py (verified against Hairer's code)
-// ---------------------------------------------------------------------------
 
 // Nodes (c_i)
 pub(super) const C2: f64 = 0.526001519587677318785587544488e-01;

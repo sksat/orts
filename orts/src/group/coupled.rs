@@ -189,7 +189,7 @@ where
     }
 }
 
-// ── CoupledGroup (PropGroup impl) ──────────────────────────────────────────
+// CoupledGroup (PropGroup impl)
 
 type EventChecker<S> = Box<dyn Fn(f64, &S) -> ControlFlow<String> + Send>;
 
@@ -596,7 +596,7 @@ mod tests {
     use nalgebra::Vector3;
     use utsuroi::{Integrator, Rk4, Tolerances};
 
-    // ── InterSatelliteForce tests ──────────────────────────────────────────
+    // InterSatelliteForce tests
 
     fn pair_ctx<'a>(t: f64, pos_i: &'a Vector3<f64>, pos_j: &'a Vector3<f64>) -> PairContext<'a> {
         PairContext { t, pos_i, pos_j }
@@ -709,7 +709,7 @@ mod tests {
         assert_eq!(a_j, Vector3::zeros());
     }
 
-    // ── CoupledGroupDynamics tests ─────────────────────────────────────────
+    // CoupledGroupDynamics tests
 
     use crate::orbital::two_body::TwoBodySystem;
 
@@ -1088,7 +1088,7 @@ mod tests {
         );
     }
 
-    // ── CoupledGroup (PropGroup) tests ─────────────────────────────────────
+    // CoupledGroup (PropGroup) tests
 
     const MU_EARTH: f64 = 398600.4418;
     const EARTH_RADIUS: f64 = 6378.137;
@@ -1331,7 +1331,7 @@ mod tests {
         assert!((snap2.positions[0].1 - snap.positions[0].1).magnitude() > 1.0);
     }
 
-    // ── into_parts + push API tests ──────────────────────────────────────
+    // into_parts + push API tests
 
     #[test]
     fn into_parts_preserves_state_and_dynamics() {

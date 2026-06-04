@@ -75,7 +75,7 @@ pub(crate) mod tables_gen;
 #[cfg(test)]
 mod tables_pin;
 
-// ─── Angular-unit markers ────────────────────────────────────────
+// Angular-unit markers
 
 mod sealed {
     pub trait Sealed {}
@@ -130,7 +130,7 @@ impl AngleUnit for Microarcseconds {
     const NAME: &'static str = "µas";
 }
 
-// ─── Angle<U> ────────────────────────────────────────────────────
+// Angle<U>
 
 /// A scalar angle tagged with its unit `U`.
 ///
@@ -264,7 +264,7 @@ impl<U: AngleUnit> Div<f64> for Angle<U> {
     }
 }
 
-// ─── Angular-unit conversion constants ───────────────────────────
+// Angular-unit conversion constants
 
 /// Arcseconds → radians. `PI / (180 × 3600)`.
 ///

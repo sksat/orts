@@ -377,7 +377,7 @@ mod tests {
 
     use super::*;
 
-    // --- Single step tests ---
+    // Single step tests
 
     #[test]
     fn step_uniform_motion_exact() {
@@ -481,7 +481,7 @@ mod tests {
         );
     }
 
-    // --- Fixed-step integration tests ---
+    // Fixed-step integration tests
 
     #[test]
     fn integrate_uniform_motion() {
@@ -546,7 +546,7 @@ mod tests {
         );
     }
 
-    // --- Adaptive integration tests ---
+    // Adaptive integration tests
 
     #[test]
     fn adaptive_completes_normally() {
@@ -834,7 +834,7 @@ mod tests {
         );
     }
 
-    // --- Discriminating tests: problems where lower-order methods fail ---
+    // Discriminating tests: problems where lower-order methods fail
 
     /// With a coarse fixed step (dt=0.5), DOP853's 8th-order accuracy yields
     /// good results on a harmonic oscillator full period, while RK4 (4th-order)

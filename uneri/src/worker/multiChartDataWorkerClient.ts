@@ -115,9 +115,7 @@ export class MultiChartDataWorkerClient {
     }, 100);
   }
 
-  // -----------------------------------------------------------------------
   // Private
-  // -----------------------------------------------------------------------
 
   /** Resolve all pending zoom promises so callers do not hang on disposal. */
   private resolveAllPending(): void {

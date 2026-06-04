@@ -1,4 +1,3 @@
-// ---------------------------------------------------------------------------
 // Yoshida symplectic integrators (Yoshida, 1990)
 //
 // Higher-order symplectic methods constructed by composing Störmer-Verlet
@@ -7,7 +6,6 @@
 //
 // Reference: H. Yoshida, "Construction of higher order symplectic
 // integrators", Physics Letters A 150(5-7), 262-268, 1990.
-// ---------------------------------------------------------------------------
 
 use core::ops::ControlFlow;
 
@@ -15,14 +13,14 @@ use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState, Sta
 
 use super::verlet::StormerVerlet;
 
-// --- 4th order (3 substeps) ---
+// 4th order (3 substeps)
 // Triple-jump: w1 = 1/(2 - 2^{1/3}), w0 = 1 - 2*w1
 
 const Y4_W1: f64 = 1.3512071919596576;
 const Y4_W0: f64 = -1.7024143839193153;
 const Y4_WEIGHTS: [f64; 3] = [Y4_W1, Y4_W0, Y4_W1];
 
-// --- 6th order (7 substeps) ---
+// 6th order (7 substeps)
 // Yoshida (1990), Table 2, "Solution A"
 
 const Y6_W1: f64 = -1.17767998417887;
@@ -31,7 +29,7 @@ const Y6_W3: f64 = 0.784513610477560;
 const Y6_W0: f64 = 1.315186320683906;
 const Y6_WEIGHTS: [f64; 7] = [Y6_W3, Y6_W2, Y6_W1, Y6_W0, Y6_W1, Y6_W2, Y6_W3];
 
-// --- 8th order (15 substeps) ---
+// 8th order (15 substeps)
 // Yoshida (1990), Table 3, "Solution D"
 
 const Y8_W1: f64 = 0.311790812418427;
@@ -180,7 +178,7 @@ mod tests {
 
     use super::*;
 
-    // --- Basic correctness ---
+    // Basic correctness
 
     #[test]
     fn yoshida4_uniform_motion_exact() {
@@ -209,7 +207,7 @@ mod tests {
         assert!((result.dy().y - expected_vy).abs() < 1e-12);
     }
 
-    // --- Order of accuracy ---
+    // Order of accuracy
 
     fn harmonic_error(
         integrator_fn: impl Fn(f64, usize) -> State<1, 2>,
@@ -298,7 +296,7 @@ mod tests {
         );
     }
 
-    // --- Symplecticity: bounded energy drift ---
+    // Symplecticity: bounded energy drift
 
     fn energy_drift<F>(integrator: F, dt: f64, t_end: f64) -> (f64, f64)
     where
@@ -371,7 +369,7 @@ mod tests {
         );
     }
 
-    // --- Accuracy comparison ---
+    // Accuracy comparison
 
     #[test]
     fn yoshida4_more_accurate_than_verlet() {
@@ -412,7 +410,7 @@ mod tests {
         );
     }
 
-    // --- Time-reversibility ---
+    // Time-reversibility
 
     use proptest::prelude::*;
 
@@ -485,7 +483,7 @@ mod tests {
         }
     }
 
-    // --- Event detection ---
+    // Event detection
 
     #[test]
     fn yoshida4_integrate_with_events_completes() {
@@ -576,7 +574,7 @@ mod tests {
         }
     }
 
-    // --- 1D / 2D / 3D ---
+    // 1D / 2D / 3D
 
     #[test]
     fn yoshida4_1d_full_period() {

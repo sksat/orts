@@ -17,7 +17,7 @@ pub use ephemeris::HorizonsMoonEphemeris;
 pub use ephemeris::{MeeusMoonEphemeris, MoonEphemeris, moon_position_eci};
 pub use rotation::{MOON, moon_orientation};
 
-// ─── Physical constants ──────────────────────────────────────────
+// Physical constants
 
 /// Moon gravitational parameter [km³/s²].
 ///

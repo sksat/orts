@@ -11,9 +11,7 @@ use proptest::prelude::*;
 use crate::test_systems::*;
 use crate::{Integrator, Rk4, State, StormerVerlet};
 
-// ---------------------------------------------------------------------------
 // Time-reversibility comparison
-// ---------------------------------------------------------------------------
 
 proptest! {
     /// RK4 is NOT time-reversible: forward+backward does NOT recover initial state.
@@ -52,9 +50,7 @@ proptest! {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Energy drift comparison (symplectic vs non-symplectic)
-// ---------------------------------------------------------------------------
 //
 // Symplectic integrators preserve a modified Hamiltonian H̃ = H + O(dt^p),
 // so the true energy H oscillates with bounded amplitude O(dt^p) for ALL time.
@@ -144,9 +140,7 @@ fn rk4_has_secular_energy_drift() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Per-step accuracy comparison
-// ---------------------------------------------------------------------------
 
 #[test]
 fn verlet_less_accurate_per_step_than_rk4() {

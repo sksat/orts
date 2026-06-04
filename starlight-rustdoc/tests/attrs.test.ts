@@ -2,9 +2,7 @@ import { describe, expect, it } from "vitest";
 import { extractCfgConditions, renderCfgBadge } from "../src/attrs.js";
 import type { Attribute } from "../src/types.js";
 
-// ---------------------------------------------------------------------------
 // extractCfgConditions
-// ---------------------------------------------------------------------------
 
 describe("extractCfgConditions", () => {
   it("returns empty array for empty attrs", () => {
@@ -148,9 +146,7 @@ describe("extractCfgConditions", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // renderCfgBadge
-// ---------------------------------------------------------------------------
 
 describe("renderCfgBadge", () => {
   it("returns empty string for no conditions", () => {

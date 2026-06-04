@@ -7,9 +7,7 @@ import {
 } from "../src/resolve.js";
 import type { Crate } from "../src/types.js";
 
-// ---------------------------------------------------------------------------
 // Helpers to build minimal Crate fixtures
-// ---------------------------------------------------------------------------
 
 function makeCrate(overrides: Partial<Crate> = {}): Crate {
   return {
@@ -37,9 +35,7 @@ function makeItem(id: number, name: string, inner: Record<string, unknown>) {
   };
 }
 
-// ---------------------------------------------------------------------------
 // LinkResolver.resolveId
-// ---------------------------------------------------------------------------
 
 describe("LinkResolver.resolveId", () => {
   it("resolves registered page IDs", () => {
@@ -174,9 +170,7 @@ describe("LinkResolver.resolveId", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // LinkResolver.resolvePath
-// ---------------------------------------------------------------------------
 
 describe("LinkResolver.resolvePath", () => {
   it("resolves exact name match", () => {
@@ -215,9 +209,7 @@ describe("LinkResolver.resolvePath", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // collectTraitImpls — auto-trait filtering
-// ---------------------------------------------------------------------------
 
 describe("collectTraitImpls", () => {
   it("separates auto-traits from user traits", () => {
@@ -304,9 +296,7 @@ describe("collectTraitImpls", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // resolveTraitImplUrl
-// ---------------------------------------------------------------------------
 
 describe("resolveTraitImplUrl", () => {
   it("resolves std traits via paths table", () => {
@@ -350,9 +340,7 @@ describe("resolveTraitImplUrl", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // computeRelativeUrl — locale-agnostic internal link computation
-// ---------------------------------------------------------------------------
 
 describe("computeRelativeUrl", () => {
   it("computes a relative link between siblings in the same crate", () => {
@@ -386,9 +374,7 @@ describe("computeRelativeUrl", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // LinkResolver — locale-agnostic logical paths + currentPagePath
-// ---------------------------------------------------------------------------
 
 describe("LinkResolver with logical paths", () => {
   it("returns a relative URL from the current page to a registered item", () => {

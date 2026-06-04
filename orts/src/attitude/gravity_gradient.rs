@@ -256,7 +256,7 @@ mod tests {
         assert!(tau.iter().all(|v| v.is_finite()));
     }
 
-    // ─── CoupledGravityGradient tests ───
+    // CoupledGravityGradient tests
 
     #[test]
     fn coupled_matches_decoupled() {

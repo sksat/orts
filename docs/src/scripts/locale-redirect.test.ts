@@ -13,9 +13,7 @@ const CONFIG = {
   storageKey: "orts-locale",
 };
 
-// ---------------------------------------------------------------------------
 // chooseRedirectTarget — browser language → locale
-// ---------------------------------------------------------------------------
 
 describe("chooseRedirectTarget — browser language detection", () => {
   it("redirects /orts/ to /orts/ja/ when the browser prefers Japanese", () => {
@@ -79,9 +77,7 @@ describe("chooseRedirectTarget — browser language detection", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // chooseRedirectTarget — nested paths
-// ---------------------------------------------------------------------------
 
 describe("chooseRedirectTarget — nested paths and query/hash", () => {
   it("prepends the locale to nested URLs without a locale segment", () => {
@@ -117,9 +113,7 @@ describe("chooseRedirectTarget — nested paths and query/hash", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // chooseRedirectTarget — already-locale-prefixed URLs
-// ---------------------------------------------------------------------------
 
 describe("chooseRedirectTarget — already-prefixed URLs pass through untouched", () => {
   it("returns null for /orts/en/ (root of default locale)", () => {
@@ -209,9 +203,7 @@ describe("chooseRedirectTarget — already-prefixed URLs pass through untouched"
   });
 });
 
-// ---------------------------------------------------------------------------
 // chooseRedirectTarget — localStorage persistence
-// ---------------------------------------------------------------------------
 
 describe("chooseRedirectTarget — localStorage override", () => {
   it("honours a stored ja choice over an English browser", () => {
@@ -281,9 +273,7 @@ describe("chooseRedirectTarget — localStorage override", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // detectLocaleFromPath — companion to the persist script
-// ---------------------------------------------------------------------------
 
 describe("detectLocaleFromPath", () => {
   it("extracts the locale segment from a locale-prefixed URL", () => {
@@ -331,9 +321,7 @@ describe("detectLocaleFromPath", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // buildInlineRedirectScript — runtime script integrity
-// ---------------------------------------------------------------------------
 
 describe("buildInlineRedirectScript", () => {
   const script = buildInlineRedirectScript(CONFIG);
@@ -463,9 +451,7 @@ describe("buildInlineRedirectScript", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // buildPersistCurrentLocaleScript — every-page locale-saving script
-// ---------------------------------------------------------------------------
 
 describe("buildPersistCurrentLocaleScript", () => {
   const script = buildPersistCurrentLocaleScript(CONFIG);

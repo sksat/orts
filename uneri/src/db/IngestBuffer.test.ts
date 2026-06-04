@@ -100,7 +100,7 @@ describe("IngestBuffer", () => {
     expect(buf.latestT).toBe(99);
   });
 
-  // --- markRebuild / consumeRebuild ---
+  // markRebuild / consumeRebuild
 
   it("consumeRebuild returns null when no rebuild is pending", () => {
     const buf = new IngestBuffer<TestPoint>();
@@ -213,7 +213,7 @@ describe("IngestBuffer", () => {
     expect(buf.latestT).toBe(500);
   });
 
-  // --- prependMany ---
+  // prependMany
 
   it("prependMany inserts at the front of pending", () => {
     const buf = new IngestBuffer<TestPoint>();

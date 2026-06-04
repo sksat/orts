@@ -94,7 +94,7 @@ pub struct HistoryBuffer {
     /// Central body radius [km] (for computing derived values from loaded data).
     pub body_radius: f64,
 
-    // --- Incremental per-entity overview -----------------------------------
+    // Incremental per-entity overview
     //
     // Maintained in O(1) amortized per `push()` call, read in
     // O(num_entities * OVERVIEW_MAX_POINTS_PER_ENTITY) with no disk I/O.
@@ -356,7 +356,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    // --- Incremental overview buffer -----------------------------------
+    // Incremental overview buffer
     //
     // The `overview()` method must return a bounded, time-spanning summary
     // of the full simulation history in constant time, independent of how
@@ -629,7 +629,7 @@ mod tests {
         cleanup_dir(&dir);
     }
 
-    // --- query_range in-memory fast path ---------------------------------
+    // query_range in-memory fast path
     //
     // The proactive initial `query_range` the viewer fires on every connect
     // asks for "the last N seconds" of history. For any reasonable N that

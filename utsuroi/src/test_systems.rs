@@ -38,7 +38,7 @@ impl DynamicalSystem for HarmonicOscillator {
     }
 }
 
-// --- 1D test systems ---
+// 1D test systems
 
 /// 1D harmonic oscillator: dv/dt = -x (ω = 1).
 pub(crate) struct HarmonicOscillator1D;
@@ -64,7 +64,7 @@ impl DynamicalSystem for ExponentialDecay {
     }
 }
 
-// --- 2D test systems ---
+// 2D test systems
 
 /// 2D harmonic oscillator: dv/dt = -x (ω = 1).
 pub(crate) struct HarmonicOscillator2D;

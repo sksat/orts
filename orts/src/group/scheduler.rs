@@ -19,7 +19,7 @@ use super::independent::{IndependentGroup, IntegratorConfig};
 use super::prop_group::{GroupSnapshot, PropGroupOutcome, SatId, SatelliteTermination};
 use super::{FromAcceleration, HasPosition};
 
-// ── Regime types ────────────────────────────────────────────────────────────
+// Regime types
 
 /// Integration regime for a satellite pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +92,7 @@ pub struct InteractionSpec {
     pub policy: PairPolicy,
 }
 
-// ── Hysteresis state ────────────────────────────────────────────────────────
+// Hysteresis state
 
 /// Per-pair state tracking for hysteresis transitions.
 #[derive(Debug, Clone)]
@@ -157,7 +157,7 @@ fn evaluate_auto_regime(
     }
 }
 
-// ── Grouping ────────────────────────────────────────────────────────────────
+// Grouping
 
 /// Result of the grouping algorithm.
 #[derive(Debug)]
@@ -281,7 +281,7 @@ fn determine_grouping(
     }
 }
 
-// ── Scheduler ──────────────────────────────────────────────────────────────
+// Scheduler
 
 type SharedEventChecker<S> = Arc<dyn Fn(f64, &S) -> ControlFlow<String> + Send + Sync>;
 
@@ -438,7 +438,7 @@ where
         self
     }
 
-    // ── Accessors ──────────────────────────────────────────────────────────
+    // Accessors
 
     pub fn ids(&self) -> Vec<SatId> {
         self.satellites.iter().map(|s| s.id.clone()).collect()
@@ -477,7 +477,7 @@ where
         }
     }
 
-    // ── Propagation ────────────────────────────────────────────────────────
+    // Propagation
 
     /// Advance all active satellites to `t_target`.
     ///
@@ -735,7 +735,7 @@ where
         Ok(terminations)
     }
 
-    // ── KDK helpers ───────────────────────────────────────────────────
+    // KDK helpers
 
     /// Compute inter-satellite accelerations for each kick pair.
     ///
@@ -823,7 +823,7 @@ where
 mod tests {
     use super::*;
 
-    // ── RegimeConfig validation ─────────────────────────────────────────
+    // RegimeConfig validation
 
     fn default_config() -> RegimeConfig {
         RegimeConfig {
@@ -862,7 +862,7 @@ mod tests {
         assert!(c.validate().is_err());
     }
 
-    // ── evaluate_auto_regime: basic transitions ─────────────────────────
+    // evaluate_auto_regime: basic transitions
 
     fn pair_state(regime: PairRegime, t: f64) -> PairState {
         PairState {
@@ -949,7 +949,7 @@ mod tests {
         assert_eq!(result, PairRegime::Independent);
     }
 
-    // ── Dwell time ──────────────────────────────────────────────────────
+    // Dwell time
 
     #[test]
     fn downgrade_blocked_by_dwell_time() {
@@ -970,7 +970,7 @@ mod tests {
         assert_eq!(result, PairRegime::Coupled);
     }
 
-    // ── Fixed policy ────────────────────────────────────────────────────
+    // Fixed policy
 
     #[test]
     fn fixed_coupled_ignores_distance() {
@@ -984,7 +984,7 @@ mod tests {
         }
     }
 
-    // ── connected_components ────────────────────────────────────────────
+    // connected_components
 
     #[test]
     fn connected_components_empty() {
@@ -1024,7 +1024,7 @@ mod tests {
         assert_eq!(comps[0], vec![0, 1, 2]);
     }
 
-    // ── determine_grouping ──────────────────────────────────────────────
+    // determine_grouping
 
     #[test]
     fn grouping_all_independent() {
@@ -1115,7 +1115,7 @@ mod tests {
         assert_eq!(g.kick_pairs[0].sat_j, 3);
     }
 
-    // ── Scheduler builder + accessors ───────────────────────────────────
+    // Scheduler builder + accessors
 
     use super::super::coupled::MutualGravity;
     use crate::OrbitalState;
@@ -1258,7 +1258,7 @@ mod tests {
         assert!(sched.satellite_state(&SatId::from("short")).is_some());
     }
 
-    // ── Step 4: Independent-only propagation ────────────────────────────
+    // Step 4: Independent-only propagation
 
     use utsuroi::Tolerances;
 
@@ -1354,7 +1354,7 @@ mod tests {
         assert_eq!(snap.positions[0].0, SatId::from("safe"));
     }
 
-    // ── Step 5: Coupled-only propagation ─────────────────────────────
+    // Step 5: Coupled-only propagation
 
     use super::super::coupled::{CoupledGroup, Spring};
     use utsuroi::DynamicalSystem;
@@ -1528,7 +1528,7 @@ mod tests {
         assert_eq!(snap.positions.len(), 2);
     }
 
-    // ── Step 6: KDK kick propagation ────────────────────────────────
+    // Step 6: KDK kick propagation
 
     /// Helper: spring energy for two free particles
     fn spring_energy(k: f64, rest: f64, a: &OrbitalState, b: &OrbitalState) -> f64 {
@@ -1846,7 +1846,7 @@ mod tests {
         assert!((sched.current_t() - 20.0).abs() < 1e-12);
     }
 
-    // ── Step 7: Mixed regime + cross-group ──────────────────────────
+    // Step 7: Mixed regime + cross-group
 
     #[test]
     fn mixed_coupled_plus_sync_cross_group_kick() {
@@ -2209,7 +2209,7 @@ mod tests {
         );
     }
 
-    // ── Bug 1: compute_kick_accels time parameter ───────────────────
+    // Bug 1: compute_kick_accels time parameter
 
     /// Spring whose stiffness scales linearly with time: k(t) = k0 * (1 + alpha * t).
     /// This makes the force time-dependent, exposing bugs where the wrong time is used.
@@ -2309,7 +2309,7 @@ mod tests {
         );
     }
 
-    // ── Bug 6: progress guard ───────────────────────────────────────
+    // Bug 6: progress guard
 
     #[test]
     fn tiny_sync_interval_does_not_hang() {
@@ -2352,7 +2352,7 @@ mod tests {
         sched.propagate_to(1e15 + 1.0).unwrap();
     }
 
-    // ── Bug 3: sync_target clamped to end_time ──────────────────────
+    // Bug 3: sync_target clamped to end_time
 
     #[test]
     fn kdk_sync_target_clamped_to_end_time() {
@@ -2416,7 +2416,7 @@ mod tests {
         assert!((sched.current_t() - 10.0).abs() < 1e-12);
     }
 
-    // ── Bug 2: self.t updated after event break ─────────────────────
+    // Bug 2: self.t updated after event break
 
     #[test]
     fn kdk_event_updates_scheduler_time() {
@@ -2465,7 +2465,7 @@ mod tests {
         );
     }
 
-    // ── Bug 5: NaN distance guard ───────────────────────────────────
+    // Bug 5: NaN distance guard
 
     #[test]
     fn nan_distance_forces_independent_from_coupled() {
@@ -2499,7 +2499,7 @@ mod tests {
         assert_eq!(result, PairRegime::Independent);
     }
 
-    // ── Bug 4: per-satellite termination in CoupledGroup ────────────
+    // Bug 4: per-satellite termination in CoupledGroup
 
     #[test]
     fn coupled_event_only_terminates_triggering_satellite() {

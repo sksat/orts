@@ -49,7 +49,7 @@ mod tests {
         assert_eq!(*deriv.dy(), vector![0.0, 0.0, 0.0]);
     }
 
-    // --- OdeState trait tests ---
+    // OdeState trait tests
 
     #[test]
     fn ode_state_zero_like() {
@@ -116,7 +116,7 @@ mod tests {
         assert_eq!(*deriv.dy(), vector![4.0, 5.0, 6.0]);
     }
 
-    // --- 1D State tests ---
+    // 1D State tests
 
     #[test]
     fn state_1d_order2_basics() {
@@ -165,7 +165,7 @@ mod tests {
         );
     }
 
-    // --- 2D State tests ---
+    // 2D State tests
 
     #[test]
     fn state_2d_order2_basics() {

@@ -281,7 +281,7 @@ mod tests {
         }
     }
 
-    // ── Core tests ──
+    // Core tests
 
     #[test]
     fn three_axis_creates_three_mtqs() {
@@ -427,7 +427,7 @@ mod tests {
         core.realized_moment(&[0.0, 0.0]); // 2 instead of 3
     }
 
-    // ── Assembly (Model) tests ──
+    // Assembly (Model) tests
 
     #[test]
     fn assembly_zero_command_zero_torque() {

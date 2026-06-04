@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SourceEvent, SourceId } from "./types.js";
 import { WebSocketAdapter } from "./WebSocketAdapter.js";
 
-// --- Mock WebSocket ---
+// Mock WebSocket
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
   readyState = 0; // CONNECTING

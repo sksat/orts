@@ -45,14 +45,12 @@ const T_END: f64 = 20.0;
 const GAIN: f64 = 1e4;
 const MAX_MOMENT: f64 = 10.0;
 
-// =============================================================
 // Plugin-layer reimplementation of BdotFiniteDiff.
 //
 // Not part of the orts library API. This is the independent second
 // implementation of `orts::attitude::BdotFiniteDiff` used as the
 // oracle target. Operator order matches the native implementation
 // line-for-line so that a bit-exact assertion is legitimate.
-// =============================================================
 
 struct PluginBdotFiniteDiff<F: MagneticFieldModel = TiltedDipole> {
     gain: f64,
@@ -130,9 +128,7 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotFiniteDiff<F> {
     }
 }
 
-// =============================================================
 // Simulation harness
-// =============================================================
 
 /// Convert per-MTQ moments from ActuatorBundle to a Vector3 for
 /// CommandedMagnetorquer (3-axis orthogonal layout assumed).

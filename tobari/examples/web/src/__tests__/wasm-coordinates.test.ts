@@ -16,9 +16,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// ---------------------------------------------------------------------------
 // WASM module loading (synchronous via initSync + readFileSync)
-// ---------------------------------------------------------------------------
 
 let arika: typeof import("../wasm/arika/arika.js");
 let tobari: typeof import("../wasm/tobari/tobari.js");
@@ -44,9 +42,7 @@ const EARTH_RADIUS_KM = 6371.0; // mean radius used in GlobeView
 // J2000.0 epoch
 const J2000_JD = 2451545.0;
 
-// ---------------------------------------------------------------------------
 // Geodetic → ECEF
-// ---------------------------------------------------------------------------
 
 describe("arika geodetic_to_ecef", () => {
   it("north pole (90°,0°,0km) → ECEF z ≈ polar radius, x=y≈0", () => {
@@ -84,9 +80,7 @@ describe("arika geodetic_to_ecef", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Geodetic → ECI
-// ---------------------------------------------------------------------------
 
 describe("arika geodetic_to_eci", () => {
   it("north pole → ECI z component is large, x²+y² ≈ 0", () => {
@@ -113,9 +107,7 @@ describe("arika geodetic_to_eci", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // ECI → ECEF roundtrip
-// ---------------------------------------------------------------------------
 
 describe("ECI ↔ ECEF roundtrip", () => {
   it("geodetic → ECI → ECEF matches direct geodetic → ECEF", () => {
@@ -140,9 +132,7 @@ describe("ECI ↔ ECEF roundtrip", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Globe visualization coordinate consistency
-// ---------------------------------------------------------------------------
 
 describe("globe coordinate consistency", () => {
   // In GlobeView:
@@ -206,9 +196,7 @@ describe("globe coordinate consistency", () => {
     expect(inclination).toBeGreaterThan(70); // near 90° at magnetic pole
   });
 
-  // -----------------------------------------------------------------------
   // Differential rotation equivalence with arika ECI→ECEF
-  // -----------------------------------------------------------------------
   // GlobeView computes field lines in ECI at epoch T0, then applies:
   //   deltaRotation = GMST(T_current) - GMST(T0)
   // as a Z-axis rotation. This should be equivalent to:

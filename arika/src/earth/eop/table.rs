@@ -116,7 +116,7 @@ impl EopTable {
     }
 }
 
-// --- EOP trait implementations ---
+// EOP trait implementations
 
 use super::{LengthOfDay, NutationCorrections, PolarMotion, Ut1Offset};
 

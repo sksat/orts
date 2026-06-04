@@ -298,7 +298,7 @@ mod tests {
 
     use super::*;
 
-    // --- Single step tests ---
+    // Single step tests
 
     #[test]
     fn dp_step_uniform_motion_exact() {
@@ -400,7 +400,7 @@ mod tests {
         );
     }
 
-    // --- Error norm tests ---
+    // Error norm tests
 
     #[test]
     fn error_norm_zero_for_identical_states() {
@@ -435,7 +435,7 @@ mod tests {
         );
     }
 
-    // --- Fixed-step integration tests ---
+    // Fixed-step integration tests
 
     #[test]
     fn dp_integrate_uniform_motion() {
@@ -496,7 +496,7 @@ mod tests {
         );
     }
 
-    // --- Adaptive integration tests ---
+    // Adaptive integration tests
 
     #[test]
     fn dp_adaptive_completes_normally() {
@@ -740,7 +740,7 @@ mod tests {
         );
     }
 
-    // --- 1D tests ---
+    // 1D tests
 
     #[test]
     fn dp_1d_harmonic_oscillator_adaptive() {
@@ -822,7 +822,7 @@ mod tests {
         }
     }
 
-    // --- 2D tests ---
+    // 2D tests
 
     #[test]
     fn dp_2d_harmonic_oscillator_adaptive() {

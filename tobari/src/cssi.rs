@@ -439,7 +439,7 @@ impl SpaceWeatherProvider for CssiSpaceWeather {
     }
 }
 
-// --- fetch feature: HTTP download + cache ---
+// fetch feature: HTTP download + cache
 
 #[cfg(feature = "fetch")]
 mod fetch_impl {

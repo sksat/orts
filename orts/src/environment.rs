@@ -18,9 +18,7 @@ use arika::earth::geodetic::Geodetic;
 use arika::epoch::{Epoch, Utc};
 use arika::frame::{self, Ecef, Eci, Rotation, Vec3};
 
-// ---------------------------------------------------------------------------
 // PositionEop — combined trait for position-level rotation
-// ---------------------------------------------------------------------------
 
 /// Combined EOP capability needed for position-level Gcrs↔Itrs rotation.
 ///
@@ -32,9 +30,7 @@ pub trait PositionEop: Ut1Offset + PolarMotion + NutationCorrections + Send + Sy
 
 impl<T: Ut1Offset + PolarMotion + NutationCorrections + Send + Sync> PositionEop for T {}
 
-// ---------------------------------------------------------------------------
 // GcrsEopStorage
-// ---------------------------------------------------------------------------
 
 /// EOP storage for the Gcrs precise path.
 ///
@@ -80,9 +76,7 @@ impl NutationCorrections for GcrsEopStorage {
     }
 }
 
-// ---------------------------------------------------------------------------
 // EarthFrameBridge trait
-// ---------------------------------------------------------------------------
 
 /// ECI frame that can bridge to Earth-fixed (ECEF) coordinates.
 ///
@@ -114,9 +108,7 @@ pub trait EarthFrameBridge: Eci + Sized + 'static {
     fn fixed_to_inertial(utc: &Epoch<Utc>, eop: &Self::EopStorage) -> Rotation<Self::Fixed, Self>;
 }
 
-// ---------------------------------------------------------------------------
 // SimpleEci implementation
-// ---------------------------------------------------------------------------
 
 impl EarthFrameBridge for frame::SimpleEci {
     type Fixed = frame::SimpleEcef;
@@ -137,9 +129,7 @@ impl EarthFrameBridge for frame::SimpleEci {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Gcrs implementation
-// ---------------------------------------------------------------------------
 
 impl EarthFrameBridge for frame::Gcrs {
     type Fixed = frame::Itrs;

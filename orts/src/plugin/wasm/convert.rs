@@ -28,7 +28,7 @@ macro_rules! impl_convert {
         use $crate::plugin::tick_input::{ActuatorTelemetry, Sensors, SunSensorOutput, TickInput};
         use $crate::plugin::{Command, MtqCommand, PluginError, RwCommand, ThrusterCommand};
 
-        // ───────────────────── host -> guest (TickInput) ─────────────────────
+        // host -> guest (TickInput)
 
         /// Convert a host `TickInput<'_>` to the WIT `tick-input` record.
         pub fn tick_input_to_wit(obs: &TickInput<'_>) -> wit::TickInput {
@@ -170,7 +170,7 @@ macro_rules! impl_convert {
             }
         }
 
-        // ───────────────────── guest -> host (Command) ─────────────────────
+        // guest -> host (Command)
 
         /// Convert a WIT `command` record to the plugin-layer `Command` struct.
         ///

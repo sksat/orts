@@ -8,9 +8,7 @@
 import type { CSVMetadata, OrbitPoint } from "../orbit.js";
 import { emptyMetadata, parseDataLine, parseMetadataLine } from "./parseCSVLine.js";
 
-// ---------------------------------------------------------------------------
 // Worker message protocol
-// ---------------------------------------------------------------------------
 
 export type CSVWorkerMessage =
   | { type: "metadata"; metadata: CSVMetadata }
@@ -18,9 +16,7 @@ export type CSVWorkerMessage =
   | { type: "complete"; totalPoints: number }
   | { type: "error"; message: string };
 
-// ---------------------------------------------------------------------------
 // Chunked parser (pure function)
-// ---------------------------------------------------------------------------
 
 /**
  * Parse a CSV string in chunks, emitting messages via the callback.

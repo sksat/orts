@@ -133,7 +133,7 @@ export function batchTransformToLvlh(
   }
 }
 
-// --- High/Low split encoding for GPU precision ---
+// High/Low split encoding for GPU precision
 
 const HIGH_LOW_SPLIT = 65536.0; // 2^16
 

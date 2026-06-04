@@ -93,14 +93,14 @@ export function useTimeSeriesStore<T extends TimePoint>(
     const COMPACT_COOLDOWN_AFTER_REBUILD = 5;
     let compactCooldown = 0;
 
-    // --- Cold/hot state ---
+    // Cold/hot state
     let coldSnapshot: ChartDataMap | null = null;
     let coldTMax = -Infinity;
     let hotBuffer: ChartDataMap | null = null;
     let ticksSinceCold = 0;
     let coldRefreshNeeded = true; // start with a cold refresh
 
-    // --- Change detection refs for cold refresh triggers ---
+    // Change detection refs for cold refresh triggers
     let prevTimeRange: TimeRange = timeRangeRef.current;
     let prevMaxPoints: number = maxPointsRef.current;
     let prevSchema: TableSchema = schemaRef.current;

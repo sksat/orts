@@ -113,7 +113,7 @@ impl FundamentalArguments {
     }
 }
 
-// ─── Delaunay arguments (TN36 Eq. 5.43) ──────────────────────────
+// Delaunay arguments (TN36 Eq. 5.43)
 //
 // Polynomial in arcseconds, reduced modulo a full turn (1_296_000″), then
 // converted to radians. The constant term is converted from degrees to
@@ -206,7 +206,7 @@ pub fn fa_omega(t: f64) -> Rad {
     arcsec_mod_turn_to_rad(a)
 }
 
-// ─── Planetary longitudes (TN36 Eq. 5.44) ────────────────────────
+// Planetary longitudes (TN36 Eq. 5.44)
 //
 // Already in radians. Linear in t except F14 which is quadratic.
 

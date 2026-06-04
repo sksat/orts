@@ -49,9 +49,7 @@ fn identity_spacecraft(mass: f64) -> SpacecraftState {
     }
 }
 
-// =====================================================================
 // Tsiolkovsky rocket equation: ΔV = Isp × g₀ × ln(m₀/m_f)
-// =====================================================================
 
 #[test]
 fn tsiolkovsky_constant_thrust() {
@@ -92,9 +90,7 @@ fn tsiolkovsky_constant_thrust() {
     );
 }
 
-// =====================================================================
 // Mass depletion: m(t) = m₀ - F/(Isp×g₀)×t (linear for constant thrust)
-// =====================================================================
 
 #[test]
 fn mass_depletion_linear() {
@@ -129,9 +125,7 @@ fn mass_depletion_linear() {
     }
 }
 
-// =====================================================================
 // Propellant exhaustion: dry_mass stops thrust
-// =====================================================================
 
 #[test]
 fn propellant_exhaustion_stops_thrust() {
@@ -182,9 +176,7 @@ fn propellant_exhaustion_stops_thrust() {
     );
 }
 
-// =====================================================================
 // Torque spin-up: offset thruster → linear angular velocity increase
-// =====================================================================
 
 #[test]
 fn torque_spin_up() {
@@ -228,9 +220,7 @@ fn torque_spin_up() {
     );
 }
 
-// =====================================================================
 // dt convergence: RK4 4th-order accuracy (error ratio ≈ 16)
-// =====================================================================
 
 #[test]
 fn dt_convergence_tsiolkovsky() {
@@ -269,9 +259,7 @@ fn dt_convergence_tsiolkovsky() {
     );
 }
 
-// =====================================================================
 // Scheduled burn: ΔV matches expected for a timed burn
-// =====================================================================
 
 #[test]
 fn scheduled_burn_delta_v() {
@@ -315,10 +303,8 @@ fn scheduled_burn_delta_v() {
     );
 }
 
-// =====================================================================
 // Vector direction: ΔV must align with thrust direction in inertial frame
 // (Codex review: scalar |ΔV| check can pass even with frame bugs)
-// =====================================================================
 
 #[test]
 fn tsiolkovsky_velocity_vector_direction() {
@@ -371,10 +357,8 @@ fn tsiolkovsky_velocity_vector_direction() {
     );
 }
 
-// =====================================================================
 // Opposing thrusters: net acceleration ≈ 0, mass_rate doubles
 // (Codex review: catches sign and aggregation bugs)
-// =====================================================================
 
 #[test]
 fn opposing_thrusters_superposition() {
@@ -410,7 +394,6 @@ fn opposing_thrusters_superposition() {
     );
 }
 
-// =====================================================================
 // Rotating spacecraft: body-fixed thruster traces circle in inertial frame
 // (Codex review: catches "thrust ignores attitude dynamics")
 //
@@ -419,7 +402,6 @@ fn opposing_thrusters_superposition() {
 // Δv_x = ∫ (F/m) cos(ωz·t) dt, Δv_y = ∫ (F/m) sin(ωz·t) dt.
 // For constant mass (high Isp, short burn): Δv_x ≈ (F/m)(sin(ωz·T)/ωz),
 // Δv_y ≈ (F/m)(1-cos(ωz·T))/ωz.
-// =====================================================================
 
 #[test]
 fn rotating_spacecraft_thrust_integration() {

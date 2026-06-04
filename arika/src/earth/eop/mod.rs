@@ -41,7 +41,7 @@
 //! 更新 cadence (leap second = 6 ヶ月ごとの IERS Bulletin C、EOP = ほぼ毎日の
 //! IERS Bulletin A/B) も意味論も異なるため、完全に別扱い。
 
-// ─── EOP parameter traits ────────────────────────────────────────
+// EOP parameter traits
 
 /// Provides the UT1 − UTC (dUT1) offset.
 ///
@@ -107,7 +107,7 @@ pub trait FullEopProvider: Ut1Offset + PolarMotion + NutationCorrections + Lengt
 
 impl<T> FullEopProvider for T where T: Ut1Offset + PolarMotion + NutationCorrections + LengthOfDay {}
 
-// ─── NullEop ─────────────────────────────────────────────────────
+// NullEop
 
 /// EOP placeholder that implements none of the EOP parameter traits.
 ///
@@ -128,7 +128,7 @@ pub struct NullEop;
 // Intentionally NO `impl Ut1Offset for NullEop` etc.
 // The absence of these impls IS the feature.
 
-// ─── Data loading (requires alloc) ───────────────────────────────
+// Data loading (requires alloc)
 
 pub mod entry;
 #[cfg(feature = "alloc")]
@@ -146,7 +146,7 @@ pub use finals2000a::Finals2000A;
 #[cfg(feature = "alloc")]
 pub use table::EopTable;
 
-// ─── Tests ───────────────────────────────────────────────────────
+// Tests
 
 #[cfg(test)]
 mod tests {

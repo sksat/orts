@@ -10,7 +10,7 @@ use serde::Deserialize;
 use tobari::nrlmsise00::Nrlmsise00Input;
 use tobari::{ConstantWeather, Nrlmsise00};
 
-// ─── Fixture structures ───
+// Fixture structures
 
 #[derive(Deserialize)]
 struct FixtureData {
@@ -66,7 +66,7 @@ struct ExoTempPoint {
     mass_density_kg_m3: f64,
 }
 
-// ─── Helpers ───
+// Helpers
 
 fn load_fixture() -> FixtureData {
     let json = include_str!("fixtures/nrlmsise00_reference.json");
@@ -116,7 +116,7 @@ fn rel_error(computed: f64, expected: f64) -> f64 {
     }
 }
 
-// ─── Total mass density tests ───
+// Total mass density tests
 
 /// Test total mass density across all 1152 fixture points.
 ///
@@ -247,7 +247,7 @@ fn total_mass_density_spot_checks() {
     }
 }
 
-// ─── Species density tests ───
+// Species density tests
 
 /// Test individual species number densities against oracle.
 ///
@@ -330,7 +330,7 @@ fn species_densities() {
     }
 }
 
-// ─── Temperature tests ───
+// Temperature tests
 
 /// Test temperature at altitude against oracle.
 #[test]
@@ -405,7 +405,7 @@ fn temperature_at_altitude() {
     }
 }
 
-// ─── Solar activity variation tests ───
+// Solar activity variation tests
 
 /// Verify density increases with F10.7 (higher solar flux → hotter/denser thermosphere).
 #[test]
@@ -488,7 +488,7 @@ fn density_decreases_with_altitude() {
     }
 }
 
-// ─── Diurnal variation test ───
+// Diurnal variation test
 
 /// Verify density is higher at local noon than midnight (diurnal bulge).
 #[test]

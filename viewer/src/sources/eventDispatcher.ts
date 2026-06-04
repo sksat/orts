@@ -12,9 +12,7 @@ import type { OrbitPoint } from "../orbit.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
 import type { SimInfo, SourceConnectionState, SourceEvent, SourceId } from "./types.js";
 
-// ---------------------------------------------------------------------------
 // Chart row conversion
-// ---------------------------------------------------------------------------
 
 const RAD_TO_DEG = 180.0 / Math.PI;
 
@@ -42,9 +40,7 @@ export function orbitPointToChartRow(p: OrbitPoint): Record<string, number> {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Buffer / state interfaces
-// ---------------------------------------------------------------------------
 
 /** Minimal ChartBuffer interface used by the dispatcher. */
 export interface ChartBufferLike {
@@ -78,9 +74,7 @@ export interface RuntimeState {
   textureRevision: number;
 }
 
-// ---------------------------------------------------------------------------
 // Buffer helpers
-// ---------------------------------------------------------------------------
 
 function getOrCreate<T>(map: Map<string, T>, id: string, factory: () => T): T {
   let item = map.get(id);
@@ -118,9 +112,7 @@ function getOrCreateIngestBuffer(
   return getOrCreate(map, id, () => ingestBufferFactory(id));
 }
 
-// ---------------------------------------------------------------------------
 // Event classification
-// ---------------------------------------------------------------------------
 
 /**
  * Returns true for `SourceEvent` kinds that modify trail/ingest/chart
@@ -142,9 +134,7 @@ export function isDataBumpEvent(event: SourceEvent): boolean {
   );
 }
 
-// ---------------------------------------------------------------------------
 // Event dispatcher
-// ---------------------------------------------------------------------------
 
 /**
  * Create an event dispatcher that routes SourceEvents into buffers/state.

@@ -19,9 +19,7 @@ use orts::perturbations::SolarRadiationPressure;
 use std::f64::consts::PI;
 use utsuroi::{Integrator, Rk4};
 
-// ============================================================================
 // Helpers
-// ============================================================================
 
 fn test_epoch() -> Epoch {
     Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0)
@@ -71,7 +69,6 @@ fn propagate_collecting(
     (eccentricities, sma_values, current)
 }
 
-// ============================================================================
 // Test 1: SRP Eccentricity Growth (No Shadow)
 //
 // For a cannonball SRP with fixed Sun direction, no eclipse, initially circular
@@ -79,7 +76,6 @@ fn propagate_collecting(
 // should grow from ~0 to a measurable value.
 //
 // Oracle: Gauss VOP — de_vec/dt = (3/2)(a_srp × ĥ)/(n·a)
-// ============================================================================
 
 #[test]
 fn srp_eccentricity_growth_no_shadow() {
@@ -117,13 +113,11 @@ fn srp_eccentricity_growth_no_shadow() {
     println!("SRP eccentricity growth over {n_orbits} orbits: e_final={final_e:.6e}");
 }
 
-// ============================================================================
 // Test 2: SRP Scaling with Area-to-Mass Ratio
 //
 // Doubling A/m should approximately double eccentricity growth.
 //
 // Oracle: SRP acceleration is linear in A/m.
-// ============================================================================
 
 #[test]
 fn srp_scaling_area_to_mass() {
@@ -153,7 +147,6 @@ fn srp_scaling_area_to_mass() {
     );
 }
 
-// ============================================================================
 // Test 3: No Secular SMA Drift from SRP
 //
 // SRP does not secularly change the semi-major axis (to first order) when
@@ -161,7 +154,6 @@ fn srp_scaling_area_to_mass() {
 // da/dt ≈ 0 from orbit-averaged Gauss equations.
 //
 // Oracle: Gauss VOP — da/dt = 0 for constant SRP on circular orbit.
-// ============================================================================
 
 #[test]
 fn srp_no_sma_secular_drift() {
@@ -200,14 +192,12 @@ fn srp_no_sma_secular_drift() {
     );
 }
 
-// ============================================================================
 // Test 4: Shadow Reduces SRP Effect
 //
 // With the cylindrical shadow model enabled, eccentricity growth should be
 // smaller than without shadow, since SRP is blocked for part of each orbit.
 //
 // Oracle: LEO satellite spends ~30% of orbit in shadow → ~30% reduction.
-// ============================================================================
 
 #[test]
 fn srp_shadow_reduces_effect() {
@@ -247,7 +237,6 @@ fn srp_shadow_reduces_effect() {
     );
 }
 
-// ============================================================================
 // Test 5: Time Reversal
 //
 // SRP (without shadow) is a smooth function of position and epoch.
@@ -255,7 +244,6 @@ fn srp_shadow_reduces_effect() {
 // close to the initial state.
 //
 // Oracle: ODE reversibility (not energy conservation — SRP is nonconservative).
-// ============================================================================
 
 #[test]
 fn srp_time_reversal() {
@@ -296,7 +284,6 @@ fn srp_time_reversal() {
     );
 }
 
-// ============================================================================
 // Test 6: Energy-Work Consistency
 //
 // SRP is nonconservative: it does net work on the satellite.
@@ -304,7 +291,6 @@ fn srp_time_reversal() {
 //   ΔE = ∫ a_srp · v dt
 //
 // Oracle: First law of thermodynamics for mechanics.
-// ============================================================================
 
 #[test]
 fn srp_energy_work_consistency() {
@@ -373,13 +359,11 @@ fn srp_energy_work_consistency() {
     }
 }
 
-// ============================================================================
 // Test 7: dt Convergence (4th-Order for RK4)
 //
 // Halving dt should reduce position error by ~16x for RK4.
 //
 // Oracle: RK4 is O(dt⁴).
-// ============================================================================
 
 #[test]
 fn srp_dt_convergence() {
@@ -420,14 +404,12 @@ fn srp_dt_convergence() {
     );
 }
 
-// ============================================================================
 // Test 8: GEO SRP Eccentricity Growth
 //
 // GPS/GEO satellites at high altitude with large solar panels (high A/m)
 // experience significant SRP. This tests that SRP works at GEO altitudes.
 //
 // Oracle: Measurable eccentricity growth at GEO with A/m=0.04.
-// ============================================================================
 
 #[test]
 fn srp_geo_eccentricity() {

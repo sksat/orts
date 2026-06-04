@@ -7,7 +7,7 @@
 
 use std::ffi::c_double;
 
-// ── DI (Data Ingest) ──
+// DI (Data Ingest)
 
 #[repr(C, packed)]
 pub struct DiMag {
@@ -69,7 +69,7 @@ pub struct Di {
     pub st: DiSt,
 }
 
-// ── AD (Attitude Determination) ──
+// AD (Attitude Determination)
 
 #[repr(C, packed)]
 pub struct AdMag {
@@ -107,7 +107,7 @@ pub struct Ad {
     pub st: AdSt,
 }
 
-// ── GNC ──
+// GNC
 
 #[repr(C, packed)]
 pub struct GncHmgmt {
@@ -139,7 +139,7 @@ pub struct Gnc {
     pub q_err: [c_double; 4],
 }
 
-// ── AC (Attitude Control) ──
+// AC (Attitude Control)
 
 #[repr(C, packed)]
 pub struct AcBdot {
@@ -185,14 +185,14 @@ pub struct Ac {
     pub inertial: AcInertial,
 }
 
-// ── Mode constants ──
+// Mode constants
 
 pub const PASSIVE_MODE: u8 = 0;
 pub const BDOT_MODE: u8 = 1;
 pub const SUNSAFE_MODE: u8 = 2;
 pub const INERTIAL_MODE: u8 = 3;
 
-// ── C function declarations ──
+// C function declarations
 
 unsafe extern "C" {
     pub fn Generic_ADCS_execute_attitude_determination_and_attitude_control(

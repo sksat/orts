@@ -182,7 +182,7 @@ pub fn sun_direction_from_body(body: &str, epoch: &Epoch) -> Vec3<frame::Gcrs> {
 mod tests {
     use super::*;
 
-    // --- Equation of Time tests ---
+    // Equation of Time tests
 
     #[test]
     fn eot_february_negative() {
@@ -230,7 +230,7 @@ mod tests {
         }
     }
 
-    // --- Sun direction tests ---
+    // Sun direction tests
 
     #[test]
     fn sun_direction_is_unit_vector() {
@@ -365,7 +365,7 @@ mod tests {
         );
     }
 
-    // --- Sun distance tests ---
+    // Sun distance tests
 
     #[test]
     fn sun_distance_approximately_1au() {
@@ -412,7 +412,7 @@ mod tests {
         );
     }
 
-    // --- sun_direction_from_body tests ---
+    // sun_direction_from_body tests
 
     #[test]
     fn sun_direction_from_body_earth_matches_eci() {
@@ -487,7 +487,7 @@ mod tests {
         );
     }
 
-    // --- sun_distance_from_body tests ---
+    // sun_distance_from_body tests
 
     #[test]
     fn sun_distance_from_body_earth_matches() {

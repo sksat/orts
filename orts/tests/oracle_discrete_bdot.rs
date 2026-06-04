@@ -81,9 +81,7 @@ fn simulate_discrete_bdot(
     state
 }
 
-// ------
 // Test 1: BdotFiniteDiff first call returns zero
-// ------
 
 #[test]
 fn bdot_finite_diff_first_call_returns_zero() {
@@ -109,9 +107,7 @@ fn bdot_finite_diff_first_call_returns_zero() {
     );
 }
 
-// ------
 // Test 2: BdotFiniteDiff second call returns non-zero
-// ------
 
 #[test]
 fn bdot_finite_diff_second_call_nonzero() {
@@ -144,9 +140,7 @@ fn bdot_finite_diff_second_call_nonzero() {
     );
 }
 
-// ------
 // Test 3: BdotFiniteDiff moment clamping
-// ------
 
 #[test]
 fn bdot_finite_diff_clamping() {
@@ -183,9 +177,7 @@ fn bdot_finite_diff_clamping() {
     }
 }
 
-// ------
 // Test 4: CommandedMagnetorquer produces correct torque direction
-// ------
 
 #[test]
 fn commanded_magnetorquer_torque_is_m_cross_b() {
@@ -223,9 +215,7 @@ fn commanded_magnetorquer_torque_is_m_cross_b() {
     );
 }
 
-// ------
 // Test 5: CommandedMagnetorquer zero command gives zero torque
-// ------
 
 #[test]
 fn commanded_magnetorquer_zero_moment_zero_torque() {
@@ -245,9 +235,7 @@ fn commanded_magnetorquer_zero_moment_zero_torque() {
     );
 }
 
-// ------
 // Test 6: Discrete B-dot reduces angular velocity (1 orbit)
-// ------
 
 #[test]
 fn discrete_bdot_reduces_angular_velocity_one_orbit() {
@@ -304,9 +292,7 @@ fn discrete_bdot_reduces_angular_velocity_one_orbit() {
     );
 }
 
-// ------
 // Test 7: Discrete B-dot reduces angular velocity (3 orbits)
-// ------
 
 #[test]
 fn discrete_bdot_reduces_angular_velocity_three_orbits() {
@@ -357,9 +343,7 @@ fn discrete_bdot_reduces_angular_velocity_three_orbits() {
     );
 }
 
-// ------
 // Test 8: Compare stateless vs finite-diff B-dot
-// ------
 
 #[test]
 fn stateless_and_discrete_bdot_both_converge() {
@@ -379,7 +363,7 @@ fn stateless_and_discrete_bdot_both_converge() {
     let dt_ode = 0.5;
     let t_end = 3.0 * period; // 3 orbits for comfortable margin
 
-    // --- Stateless (analytical) B-dot ---
+    // Stateless (analytical) B-dot
     let bdot_stateless = BdotCross::new(gain, max_moment, TiltedDipole::earth());
     let system = DecoupledAttitudeSystem::circular_orbit(inertia, MU_EARTH, radius, 500.0)
         .with_model(bdot_stateless)
@@ -387,7 +371,7 @@ fn stateless_and_discrete_bdot_both_converge() {
     let final_stateless = Rk4.integrate(&system, initial.clone(), 0.0, t_end, dt_ode, |_, _| {});
     let omega_stateless = final_stateless.angular_velocity.magnitude();
 
-    // --- Discrete (finite-diff) B-dot ---
+    // Discrete (finite-diff) B-dot
     let dt_ctrl = 1.0;
     let mut controller = BdotFiniteDiff::new(gain, max_moment, TiltedDipole::earth(), dt_ctrl);
     let final_discrete = simulate_discrete_bdot(
@@ -423,9 +407,7 @@ fn stateless_and_discrete_bdot_both_converge() {
     );
 }
 
-// ------
 // Test 9: DiscreteController trait sample_period
-// ------
 
 #[test]
 fn discrete_controller_sample_period() {
@@ -438,9 +420,7 @@ fn discrete_controller_sample_period() {
     assert!((ctrl.sample_period() - 2.5).abs() < 1e-15);
 }
 
-// ------
 // Test 10: DiscreteController initial_command is zero
-// ------
 
 #[test]
 fn discrete_controller_initial_command_zero() {

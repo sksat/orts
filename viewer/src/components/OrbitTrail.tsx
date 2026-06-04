@@ -72,7 +72,7 @@ export function OrbitTrail({
   const generationRef = useRef(-1);
   const prevFrameRef = useRef<ReferenceFrame>(referenceFrame);
 
-  // --- Geometry with dual high/low attributes ---
+  // Geometry with dual high/low attributes
   const geometry = useMemo(() => {
     positionHighRef.current = new Float32Array(INITIAL_CAPACITY * 3);
     positionLowRef.current = new Float32Array(INITIAL_CAPACITY * 3);
@@ -91,7 +91,7 @@ export function OrbitTrail({
     return geom;
   }, [trailBuffer]);
 
-  // --- ShaderMaterial (stable, uniforms updated separately) ---
+  // ShaderMaterial (stable, uniforms updated separately)
   const material = useMemo(
     () =>
       new THREE.ShaderMaterial({
@@ -127,7 +127,7 @@ export function OrbitTrail({
     };
   }, [material]);
 
-  // --- Uniform updates ---
+  // Uniform updates
   // scaleRadius and color change rarely → useEffect is fine.
   useEffect(() => {
     material.uniforms.uInvScaleRadius.value = 1 / scaleRadius;
@@ -145,7 +145,7 @@ export function OrbitTrail({
   const lvlhAxesRef = useRef(lvlhAxes);
   lvlhAxesRef.current = lvlhAxes;
 
-  // --- Unified writePoints: encode source coordinates into high/low buffers ---
+  // Unified writePoints: encode source coordinates into high/low buffers
   function writePoints(src: OrbitPoint[], from: number, to: number): void {
     if (isLegacyEcef(referenceFrame) && epochJd != null) {
       batchEncodeEcefHighLow(

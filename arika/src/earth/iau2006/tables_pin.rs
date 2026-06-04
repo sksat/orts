@@ -31,7 +31,7 @@ use super::tables_gen::{
     Y_TERMS_1, Y_TERMS_2, Y_TERMS_3, Y_TERMS_4,
 };
 
-// ─── Row counts per power group (TN36 Chapter 5) ─────────────────
+// Row counts per power group (TN36 Chapter 5)
 
 /// Table 5.2a (`X`) row counts for `j = 0..4`. Sum = 1600 non-polynomial
 /// terms. Matches TN36 Chapter 5 / ERFA `xy06`.
@@ -88,7 +88,7 @@ fn total_terms(groups: &[&[CipTerm]]) -> usize {
     groups.iter().map(|g| g.len()).sum()
 }
 
-// ─── Polynomial parts ────────────────────────────────────────────
+// Polynomial parts
 //
 // Pin the six coefficients (microarcsec) of each table's polynomial
 // part verbatim from the TN36 header lines. The literals below come
@@ -126,7 +126,7 @@ fn sxy2_polynomial_matches_tn36_header() {
     );
 }
 
-// ─── First-row amplitudes for each j = 0 group ───────────────────
+// First-row amplitudes for each j = 0 group
 //
 // The largest (first) term of each `j = 0` series is by far the most
 // numerically dominant. Pinning it catches both column-order bugs in
@@ -171,7 +171,7 @@ fn sxy2_first_row_j0_is_dominant_omega_term() {
     assert_eq!(row.arg, [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 }
 
-// ─── Highest-power term pins (j = 4 in every table) ──────────────
+// Highest-power term pins (j = 4 in every table)
 //
 // The `j = 4` section of each table contains exactly one term. Pinning
 // its amplitude is a compact way to verify that the generator reached
@@ -202,7 +202,7 @@ fn sxy2_last_group_has_exactly_one_term_with_pinned_amplitude() {
     assert_eq!(row.cos_uas, -0.01);
 }
 
-// ─── Multiplier sanity ───────────────────────────────────────────
+// Multiplier sanity
 //
 // Every `arg` entry is an integer in a small signed range. Empirically
 // the entire TN36 Chapter 5 bundle uses multipliers in `[-21, 19]`; we
