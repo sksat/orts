@@ -8,23 +8,38 @@
 //! channels rather than `std::sync::mpsc`, so that the satellite
 //! task can yield to the runtime on every `wait_tick`.
 
+use std::collections::VecDeque;
+
 use tobari::magnetic::TiltedDipole;
 use tokio::sync::mpsc;
 
 use super::async_bindings::orts::plugin::host_env;
+use super::async_bindings::orts::plugin::msg_io;
 use super::async_bindings::orts::plugin::tick_io;
 use super::async_bindings::orts::plugin::types as wit;
+
+/// One tick's worth of host → guest input for the async backend.
+///
+/// Async mirror of [`super::sync_host_state::TickPacket`]: physical
+/// snapshot + the frozen msg-io inbox for this tick.
+pub(super) struct TickPacket {
+    pub input: wit::TickInput,
+    pub inbox: Vec<wit::Message>,
+}
 
 /// Response sent back to the outer `AsyncWasmController` via
 /// `output_tx`. Same shape as the sync variant — only the channel
 /// implementation differs.
 #[derive(Debug)]
 pub(super) enum GuestResponse {
-    /// A command captured from the previous tick. `None` means the
-    /// guest did not call `send_command` during that tick.
-    Command(Option<wit::Command>),
+    /// The outcome of one tick: the actuator command (possibly `None`)
+    /// plus every message emitted via `send-message` (append).
+    Tick {
+        command: Option<wit::Command>,
+        outgoing: Vec<wit::Outbound>,
+    },
     /// The guest's `run()` function returned or errored. No more
-    /// commands will be produced.
+    /// responses will be produced.
     Done(Result<(), String>),
 }
 
@@ -35,9 +50,13 @@ pub(super) struct AsyncHostState {
     pub(super) wasi: wasmtime_wasi::WasiCtx,
     pub(super) table: wasmtime_wasi::ResourceTable,
 
-    pub(super) input_rx: mpsc::Receiver<Option<wit::TickInput>>,
+    pub(super) input_rx: mpsc::Receiver<Option<TickPacket>>,
     pub(super) output_tx: mpsc::Sender<GuestResponse>,
     pub(super) pending_cmd: Option<wit::Command>,
+    /// Frozen msg-io inbox for the current tick (drained by `recv-batch`).
+    pub(super) inbox: VecDeque<wit::Message>,
+    /// Messages emitted via `send-message` this tick (append).
+    pub(super) outbox: Vec<wit::Outbound>,
     pub(super) is_first_wait: bool,
 }
 
@@ -99,17 +118,41 @@ impl tick_io::Host for AsyncHostState {
     /// the guest can exit its main loop cleanly.
     async fn wait_tick(&mut self) -> Option<wit::TickInput> {
         if !self.is_first_wait {
-            let cmd = self.pending_cmd.take();
-            let _ = self.output_tx.send(GuestResponse::Command(cmd)).await;
+            let command = self.pending_cmd.take();
+            let outgoing = std::mem::take(&mut self.outbox);
+            let _ = self
+                .output_tx
+                .send(GuestResponse::Tick { command, outgoing })
+                .await;
         } else {
             self.is_first_wait = false;
         }
-        self.input_rx.recv().await.flatten()
+        // `recv` yields `None` when the outer side drops the sender;
+        // an inner `None` is the explicit shutdown signal. Either way
+        // the guest exits. `Some(packet)` freezes this tick's inbox.
+        match self.input_rx.recv().await {
+            Some(Some(packet)) => {
+                self.inbox = packet.inbox.into();
+                Some(packet.input)
+            }
+            Some(None) | None => None,
+        }
     }
 
     async fn send_command(&mut self, cmd: wit::Command) {
         // Last-write-wins: if the guest calls send_command multiple
         // times in one tick, only the last one survives.
         self.pending_cmd = Some(cmd);
+    }
+}
+
+impl msg_io::Host for AsyncHostState {
+    async fn recv_batch(&mut self, max: u32) -> Vec<wit::Message> {
+        let n = (max as usize).min(self.inbox.len());
+        self.inbox.drain(..n).collect()
+    }
+
+    async fn send_message(&mut self, msg: wit::Outbound) {
+        self.outbox.push(msg);
     }
 }

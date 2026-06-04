@@ -49,18 +49,18 @@ use super::convert::sync as convert;
 use super::engine::WasmEngine;
 use super::sync_bindings::orts::plugin::types as wit;
 use super::sync_bindings::{Plugin, PluginPre};
-use super::sync_host_state::{GuestResponse, HostState};
+use super::sync_host_state::{GuestResponse, HostState, TickPacket};
 
 use crate::plugin::controller::PluginController;
 use crate::plugin::tick_input::TickInput;
-use crate::plugin::{Command, PluginError};
+use crate::plugin::{Command, Message, NodeId, Outbound, PluginError};
 
 /// A `PluginController` backed by a WebAssembly Component guest.
 pub struct WasmController {
     /// Worker thread handle. Joined on Drop.
     worker: Option<thread::JoinHandle<()>>,
-    /// Channel for sending tick inputs to the worker.
-    input_tx: Option<mpsc::SyncSender<wit::TickInput>>,
+    /// Channel for sending tick packets (input + frozen inbox) to the worker.
+    input_tx: Option<mpsc::SyncSender<TickPacket>>,
     /// Channel for receiving guest responses from the worker.
     output_rx: mpsc::Receiver<GuestResponse>,
     /// Cached sample period from the guest's `metadata()` export,
@@ -71,6 +71,23 @@ pub struct WasmController {
     /// Current mission mode name, refreshed by the worker thread.
     /// Not yet implemented — always `None` in the current design.
     _current_mode: Arc<Mutex<Option<String>>>,
+
+    // ─── msg-io transport state ─────────────────────────────────
+    /// This controller's node identity, stamped as `src` on outbound
+    /// messages. Defaults to `NodeId::Satellite(0)`.
+    node_id: NodeId,
+    /// Monotonic sequence counter assigned to outbound messages
+    /// (`host-seq`). Gives a deterministic total order.
+    host_seq: u64,
+    /// Tick counter, incremented once per `update()`. Stamped as
+    /// `deliver-tick` on outbound messages.
+    tick: u64,
+    /// Inbound messages queued via [`Self::deliver`], frozen into the
+    /// next tick's inbox on `update()`.
+    pending_inbound: Vec<Message>,
+    /// Outbound messages emitted by the guest, awaiting pickup via
+    /// [`Self::take_outbound`].
+    outbound_buffer: Vec<Message>,
 }
 
 impl WasmController {
@@ -89,7 +106,7 @@ impl WasmController {
         let pre = pre.clone();
 
         // Channels for outer ↔ worker communication.
-        let (input_tx, input_rx) = mpsc::sync_channel::<wit::TickInput>(1);
+        let (input_tx, input_rx) = mpsc::sync_channel::<TickPacket>(1);
         let (output_tx, output_rx) = mpsc::sync_channel::<GuestResponse>(1);
         // Separate metadata channel used only during startup so the
         // outer thread can synchronously wait for `metadata()` without
@@ -128,7 +145,32 @@ impl WasmController {
             sample_period,
             name: format!("wasm:{label}"),
             _current_mode: current_mode,
+            node_id: NodeId::Satellite(0),
+            host_seq: 0,
+            tick: 0,
+            pending_inbound: Vec::new(),
+            outbound_buffer: Vec::new(),
         })
+    }
+
+    /// Queue an inbound message for delivery on the **next** `update()`
+    /// tick. Transport / test-API entry point: the host freezes the
+    /// queued set into that tick's frozen inbox (`recv-batch`).
+    pub fn deliver(&mut self, msg: Message) {
+        self.pending_inbound.push(msg);
+    }
+
+    /// Drain every message the guest has emitted so far. Transport /
+    /// test-API exit point: each message carries the host-stamped
+    /// `src`, `host_seq`, and `deliver_tick`.
+    pub fn take_outbound(&mut self) -> Vec<Message> {
+        std::mem::take(&mut self.outbound_buffer)
+    }
+
+    /// Set this controller's node identity (stamped as `src` on
+    /// outbound messages). Defaults to `NodeId::Satellite(0)`.
+    pub fn set_node_id(&mut self, id: NodeId) {
+        self.node_id = id;
     }
 
     /// Pre-link a Component against the host imports.
@@ -172,22 +214,55 @@ impl PluginController for WasmController {
     fn update(&mut self, obs: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
         let wit_obs = convert::tick_input_to_wit(obs);
 
+        // Freeze this tick's inbox: drain whatever was queued via
+        // `deliver()` and lower it into WIT messages.
+        let inbox: Vec<wit::Message> = std::mem::take(&mut self.pending_inbound)
+            .into_iter()
+            .map(convert::message_to_wit)
+            .collect();
+
         let input_tx = self
             .input_tx
             .as_ref()
             .ok_or_else(|| PluginError::Runtime("controller is shut down".to_string()))?;
 
         input_tx
-            .send(wit_obs)
+            .send(TickPacket {
+                input: wit_obs,
+                inbox,
+            })
             .map_err(|_| PluginError::Runtime("worker thread exited".to_string()))?;
 
-        match self
+        let response = self
             .output_rx
             .recv()
-            .map_err(|_| PluginError::Runtime("worker thread exited".to_string()))?
-        {
-            GuestResponse::Command(Some(wit_cmd)) => convert::command_from_wit(wit_cmd).map(Some),
-            GuestResponse::Command(None) => Ok(None),
+            .map_err(|_| PluginError::Runtime("worker thread exited".to_string()))?;
+
+        match response {
+            GuestResponse::Tick { command, outgoing } => {
+                // Stamp host-controlled envelope fields onto each guest
+                // outbound (src injection prevents spoofing; host_seq
+                // gives a deterministic total order; deliver_tick is the
+                // tick the message was produced on) and buffer it.
+                for ob in outgoing {
+                    let ob: Outbound = convert::outbound_from_wit(ob);
+                    self.outbound_buffer.push(Message {
+                        src: self.node_id,
+                        dst: ob.dst,
+                        kind: ob.kind,
+                        host_seq: self.host_seq,
+                        deliver_tick: self.tick,
+                        payload: ob.payload,
+                    });
+                    self.host_seq += 1;
+                }
+                self.tick += 1;
+
+                match command {
+                    Some(wit_cmd) => convert::command_from_wit(wit_cmd).map(Some),
+                    None => Ok(None),
+                }
+            }
             GuestResponse::Done(Ok(())) => Err(PluginError::Runtime(
                 "guest run() returned early".to_string(),
             )),
@@ -205,7 +280,7 @@ fn worker_main(
     pre: PluginPre<HostState>,
     label: String,
     config: String,
-    input_rx: mpsc::Receiver<wit::TickInput>,
+    input_rx: mpsc::Receiver<TickPacket>,
     output_tx: mpsc::SyncSender<GuestResponse>,
     metadata_tx: mpsc::SyncSender<Result<f64, String>>,
     current_mode: Arc<Mutex<Option<String>>>,

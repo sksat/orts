@@ -57,6 +57,7 @@
 //! `PluginController::update` is reached via a blocking-thread
 //! boundary.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
@@ -66,14 +67,14 @@ use wasmtime::component::Component;
 use super::async_bindings::Plugin as AsyncPlugin;
 use super::async_bindings::PluginPre as AsyncPluginPre;
 use super::async_bindings::orts::plugin::types as wit;
-use super::async_host_state::{AsyncHostState, GuestResponse};
+use super::async_host_state::{AsyncHostState, GuestResponse, TickPacket};
 use super::async_runtime::AsyncRuntime;
 use super::convert::r#async as convert;
 use super::engine::WasmEngine;
 
 use crate::plugin::controller::PluginController;
 use crate::plugin::tick_input::TickInput;
-use crate::plugin::{Command, PluginError};
+use crate::plugin::{Command, Message, NodeId, Outbound, PluginError};
 
 /// Pre-linked async bindings ready to spawn satellite tasks against.
 ///
@@ -140,10 +141,17 @@ impl AsyncPluginPreBuilt {
 /// `handle.block_on` to exchange messages with the task.
 pub struct AsyncWasmController {
     runtime: Arc<AsyncRuntime>,
-    input_tx: mpsc::Sender<Option<wit::TickInput>>,
+    input_tx: mpsc::Sender<Option<TickPacket>>,
     output_rx: mpsc::Receiver<GuestResponse>,
     sample_period_s: f64,
     name: String,
+
+    // ─── msg-io transport state (mirror of sync backend) ────────
+    node_id: NodeId,
+    host_seq: u64,
+    tick: u64,
+    pending_inbound: Vec<Message>,
+    outbound_buffer: Vec<Message>,
 }
 
 impl AsyncWasmController {
@@ -162,7 +170,7 @@ impl AsyncWasmController {
         let label = label.into();
         let config = config.to_string();
 
-        let (input_tx, input_rx) = mpsc::channel::<Option<wit::TickInput>>(1);
+        let (input_tx, input_rx) = mpsc::channel::<Option<TickPacket>>(1);
         let (output_tx, output_rx) = mpsc::channel::<GuestResponse>(1);
         let (meta_tx, meta_rx) = oneshot::channel::<Result<f64, String>>();
 
@@ -184,6 +192,8 @@ impl AsyncWasmController {
                 input_rx,
                 output_tx: output_tx.clone(),
                 pending_cmd: None,
+                inbox: VecDeque::new(),
+                outbox: Vec::new(),
                 is_first_wait: true,
             };
             let mut store = Store::new(engine.inner(), host_state);
@@ -247,7 +257,30 @@ impl AsyncWasmController {
             output_rx,
             sample_period_s,
             name: format!("wasm-async:{label}"),
+            node_id: NodeId::Satellite(0),
+            host_seq: 0,
+            tick: 0,
+            pending_inbound: Vec::new(),
+            outbound_buffer: Vec::new(),
         })
+    }
+
+    /// Queue an inbound message for delivery on the next `update()`
+    /// tick. See [`super::WasmController::deliver`].
+    pub fn deliver(&mut self, msg: Message) {
+        self.pending_inbound.push(msg);
+    }
+
+    /// Drain messages the guest has emitted so far. See
+    /// [`super::WasmController::take_outbound`].
+    pub fn take_outbound(&mut self) -> Vec<Message> {
+        std::mem::take(&mut self.outbound_buffer)
+    }
+
+    /// Set this controller's node identity (stamped as `src` on
+    /// outbound messages). Defaults to `NodeId::Satellite(0)`.
+    pub fn set_node_id(&mut self, id: NodeId) {
+        self.node_id = id;
     }
 }
 
@@ -262,12 +295,19 @@ impl PluginController for AsyncWasmController {
 
     fn update(&mut self, obs: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
         let wit_obs = convert::tick_input_to_wit(obs);
+        let inbox: Vec<wit::Message> = std::mem::take(&mut self.pending_inbound)
+            .into_iter()
+            .map(convert::message_to_wit)
+            .collect();
         let input_tx = self.input_tx.clone();
         let output_rx = &mut self.output_rx;
 
-        self.runtime.handle().block_on(async move {
+        let (command, outgoing) = self.runtime.handle().block_on(async move {
             input_tx
-                .send(Some(wit_obs))
+                .send(Some(TickPacket {
+                    input: wit_obs,
+                    inbox,
+                }))
                 .await
                 .map_err(|_| PluginError::Runtime("async task dropped".to_string()))?;
             match output_rx
@@ -275,10 +315,7 @@ impl PluginController for AsyncWasmController {
                 .await
                 .ok_or_else(|| PluginError::Runtime("async task channel closed".to_string()))?
             {
-                GuestResponse::Command(Some(wit_cmd)) => {
-                    convert::command_from_wit(wit_cmd).map(Some)
-                }
-                GuestResponse::Command(None) => Ok(None),
+                GuestResponse::Tick { command, outgoing } => Ok((command, outgoing)),
                 GuestResponse::Done(Ok(())) => Err(PluginError::Runtime(
                     "guest run() returned early".to_string(),
                 )),
@@ -286,7 +323,27 @@ impl PluginController for AsyncWasmController {
                     Err(PluginError::Runtime(format!("guest error: {e}")))
                 }
             }
-        })
+        })?;
+
+        // Stamp host-controlled envelope fields onto guest outbound.
+        for ob in outgoing {
+            let ob: Outbound = convert::outbound_from_wit(ob);
+            self.outbound_buffer.push(Message {
+                src: self.node_id,
+                dst: ob.dst,
+                kind: ob.kind,
+                host_seq: self.host_seq,
+                deliver_tick: self.tick,
+                payload: ob.payload,
+            });
+            self.host_seq += 1;
+        }
+        self.tick += 1;
+
+        match command {
+            Some(wit_cmd) => convert::command_from_wit(wit_cmd).map(Some),
+            None => Ok(None),
+        }
     }
 }
 

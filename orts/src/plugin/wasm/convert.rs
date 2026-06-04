@@ -24,6 +24,7 @@ macro_rules! impl_convert {
         use $crate::SpacecraftState;
         use $crate::attitude::AttitudeState;
         use $crate::orbital::OrbitalState;
+        use $crate::plugin::message::{Message, NamedValue, NodeId, Outbound, Payload, Value};
         use $crate::plugin::tick_input::{ActuatorTelemetry, Sensors, SunSensorOutput, TickInput};
         use $crate::plugin::{Command, MtqCommand, PluginError, RwCommand, ThrusterCommand};
 
@@ -191,6 +192,98 @@ macro_rules! impl_convert {
                 return Err(PluginError::BadCommand(format!("{result:?}")));
             }
             Ok(result)
+        }
+
+        // ───────────────────── messaging (msg-io) ─────────────────────
+        //
+        // transport 層は payload を解釈しないので、Command のような
+        // NaN ガードは行わない（メッセージは ODE に入らない opaque データ）。
+
+        fn node_id_to_wit(n: NodeId) -> wit::NodeId {
+            match n {
+                NodeId::Ground => wit::NodeId::Ground,
+                NodeId::Satellite(id) => wit::NodeId::Satellite(id),
+            }
+        }
+
+        fn node_id_from_wit(n: wit::NodeId) -> NodeId {
+            match n {
+                wit::NodeId::Ground => NodeId::Ground,
+                wit::NodeId::Satellite(id) => NodeId::Satellite(id),
+            }
+        }
+
+        fn value_to_wit(v: Value) -> wit::Value {
+            match v {
+                Value::Boolean(b) => wit::Value::Boolean(b),
+                Value::Integer(i) => wit::Value::Integer(i),
+                Value::Number(n) => wit::Value::Number(n),
+                Value::Text(s) => wit::Value::Text(s),
+                Value::Bytes(b) => wit::Value::Bytes(b),
+            }
+        }
+
+        fn value_from_wit(v: wit::Value) -> Value {
+            match v {
+                wit::Value::Boolean(b) => Value::Boolean(b),
+                wit::Value::Integer(i) => Value::Integer(i),
+                wit::Value::Number(n) => Value::Number(n),
+                wit::Value::Text(s) => Value::Text(s),
+                wit::Value::Bytes(b) => Value::Bytes(b),
+            }
+        }
+
+        fn payload_to_wit(p: Payload) -> wit::Payload {
+            match p {
+                Payload::KeyValue(kvs) => wit::Payload::KeyValue(
+                    kvs.into_iter()
+                        .map(|kv| wit::NamedValue {
+                            name: kv.name,
+                            value: value_to_wit(kv.value),
+                        })
+                        .collect(),
+                ),
+                Payload::Binary(b) => wit::Payload::Binary(b),
+                Payload::Json(s) => wit::Payload::Json(s),
+            }
+        }
+
+        fn payload_from_wit(p: wit::Payload) -> Payload {
+            match p {
+                wit::Payload::KeyValue(kvs) => Payload::KeyValue(
+                    kvs.into_iter()
+                        .map(|kv| NamedValue {
+                            name: kv.name,
+                            value: value_from_wit(kv.value),
+                        })
+                        .collect(),
+                ),
+                wit::Payload::Binary(b) => Payload::Binary(b),
+                wit::Payload::Json(s) => Payload::Json(s),
+            }
+        }
+
+        /// Convert a host [`Message`] to the WIT `message` record
+        /// (host → guest inbox, delivered via `recv-batch`).
+        pub fn message_to_wit(m: Message) -> wit::Message {
+            wit::Message {
+                src: node_id_to_wit(m.src),
+                dst: node_id_to_wit(m.dst),
+                kind: m.kind,
+                host_seq: m.host_seq,
+                deliver_tick: m.deliver_tick,
+                payload: payload_to_wit(m.payload),
+            }
+        }
+
+        /// Convert a WIT `outbound` record to the host [`Outbound`]
+        /// (guest → host, captured from `send-message`).
+        pub fn outbound_from_wit(o: wit::Outbound) -> Outbound {
+            Outbound {
+                dst: node_id_from_wit(o.dst),
+                kind: o.kind,
+                payload: payload_from_wit(o.payload),
+            }
         }
     };
 }
@@ -386,6 +479,67 @@ pub mod sync {
                 thruster: Some(wit::ThrusterCommand::Throttles(vec![f64::NAN, 0.5])),
             };
             assert!(command_from_wit(wit_cmd).is_err());
+        }
+
+        #[test]
+        fn message_to_wit_preserves_fields() {
+            use crate::plugin::message::{Message, NodeId, Payload, Value};
+            let m = Message {
+                src: NodeId::Ground,
+                dst: NodeId::Satellite(7),
+                kind: "orts.cmd.set-mode.v1".into(),
+                host_seq: 42,
+                deliver_tick: 100,
+                payload: Payload::key_value([("mode", Value::Text("nadir".into()))]),
+            };
+            let w = message_to_wit(m);
+            assert!(matches!(w.src, wit::NodeId::Ground));
+            assert!(matches!(w.dst, wit::NodeId::Satellite(7)));
+            assert_eq!(w.kind, "orts.cmd.set-mode.v1");
+            assert_eq!(w.host_seq, 42);
+            assert_eq!(w.deliver_tick, 100);
+            match &w.payload {
+                wit::Payload::KeyValue(kvs) => {
+                    assert_eq!(kvs[0].name, "mode");
+                    assert!(matches!(&kvs[0].value, wit::Value::Text(s) if s == "nadir"));
+                }
+                _ => panic!("expected KeyValue"),
+            }
+        }
+
+        #[test]
+        fn outbound_from_wit_preserves_fields() {
+            use crate::plugin::message::{NodeId, Value};
+            let w = wit::Outbound {
+                dst: wit::NodeId::Ground,
+                kind: "orts.tlm.mode.v1".to_string(),
+                payload: wit::Payload::KeyValue(vec![wit::NamedValue {
+                    name: "mode".to_string(),
+                    value: wit::Value::Text("detumble".to_string()),
+                }]),
+            };
+            let o = outbound_from_wit(w);
+            assert_eq!(o.dst, NodeId::Ground);
+            assert_eq!(o.kind, "orts.tlm.mode.v1");
+            assert_eq!(
+                o.payload.get("mode").and_then(Value::as_text),
+                Some("detumble")
+            );
+        }
+
+        #[test]
+        fn value_roundtrip_through_wit() {
+            use crate::plugin::message::Value;
+            for v in [
+                Value::Boolean(true),
+                Value::Integer(-9),
+                Value::Number(2.5),
+                Value::Text("x".into()),
+                Value::Bytes(vec![1, 2, 3]),
+            ] {
+                let back = value_from_wit(value_to_wit(v.clone()));
+                assert_eq!(back, v);
+            }
         }
 
         #[test]

@@ -247,6 +247,91 @@ interface types {
         /// 正の有限値でなければならない。
         sample-period-s: f64,
     }
+
+    // ─── ノード間メッセージング (C&T / ISL) ─────────────────────────
+    //
+    // `tick-io` の `command`（FSW→アクチュエータの制御出力）とは別物。
+    // こちらは運用者(地上)↔FSW のコマンド/テレメトリ、および将来の
+    // 衛星間通信(ISL)を運ぶ **transport 層**。dumb pipe であり、
+    // request-response / ack / fire-and-forget / file-transfer といった
+    // interaction model は **アプリ層（payload の中身 + SDK ヘルパ）** に
+    // 押し出す。transport は中身の意味を解釈しない。
+
+    /// メッセージの論理型（content-type / 次プロトコル識別子）。
+    ///
+    /// エンコーディングに依らず常に付く = 「型」。名前空間 + version を
+    /// 必須とする規約: 例 `"orts.cmd.set-mode.v1"`, `"mission.adcs.hk.v2"`。
+    /// 受信側（FSW / 地上）はこの値で payload の解釈プロトコルを選ぶ。
+    type msg-kind = string;
+
+    /// 型付きスカラ値。`payload` の `key-value` 表現で使う。
+    variant value {
+        boolean(bool),
+        integer(s64),
+        number(f64),
+        text(string),
+        bytes(list<u8>),
+    }
+
+    /// 名前付き値（key-value の 1 要素）。
+    record named-value {
+        name: string,
+        value: value,
+    }
+
+    /// メッセージ本体のエンコーディング。ユースケースで選択する。
+    ///
+    /// 同一 `msg-kind` では canonical encoding を 1 つに固定する規約
+    /// （json / key-value / binary を同じ kind で混在させない）。
+    variant payload {
+        /// 構造化（スカラは型付き）。viewer/CLI/test から扱いやすい。
+        key-value(list<named-value>),
+        /// 生バイナリ（CCSDS 等、デコードは受信側 FSW）。
+        binary(list<u8>),
+        /// JSON テキスト。transport は opaque 文字列として扱う。
+        json(string),
+    }
+
+    /// ノードアドレス。運用者 C&T = `ground` ↔ `satellite`、
+    /// ISL = `satellite` ↔ `satellite`。
+    variant node-id {
+        /// 地上局 / 運用者。
+        ground,
+        /// 衛星（ID）。
+        satellite(u32),
+    }
+
+    /// transport が **受信側へ届ける** 完全なメッセージ。
+    ///
+    /// `src` / `host-seq` / `deliver-tick` はホストが確定して埋める
+    /// （ゲストは送信時にこれらを指定できない。なりすまし防止と決定論）。
+    record message {
+        /// 送信元。ホストが注入。
+        src: node-id,
+        /// 宛先。
+        dst: node-id,
+        /// 論理型（content-type）。
+        kind: msg-kind,
+        /// ホストが割り当てる決定論的な全順序の anchor。
+        /// 安定ソート・重複排除・ログ突合に使える。
+        host-seq: u64,
+        /// ホストが配送を確定した tick（WS 到着 / ISL 遅延 / config
+        /// 時刻シーケンスを全てここに吸収する）。
+        deliver-tick: u64,
+        /// 本体。
+        payload: payload,
+    }
+
+    /// ゲスト（FSW）が **送信する** メッセージ。最小限。
+    /// `src` / `host-seq` / `deliver-tick` はホストが補完する。
+    record outbound {
+        /// 宛先（地上なら `ground`、別衛星なら `satellite(id)`）。
+        dst: node-id,
+        /// 論理型（content-type）。
+        kind: msg-kind,
+        /// 本体。
+        payload: payload,
+    }
 }
 
 /// ゲストがホストに対して呼び出せるサービス（host import）。
@@ -303,6 +388,33 @@ interface tick-io {
     send-command: func(cmd: command);
 }
 
+/// ノード間メッセージング（運用 C&T + 将来の ISL）の transport 層。
+///
+/// `tick-io` の制御ループとは独立。ゲストは `update` / `run` の tick 内で
+/// `recv-batch` で受信箱を drain し、`send-message` で送信する。
+///
+/// ## 決定論と "frozen inbox"
+///
+/// ホストは tick 境界で「その tick に配るメッセージ集合」を凍結する。
+/// `recv-batch` はその凍結済み列の先頭から最大 `max` 件を pop する。
+/// tick の途中に届いた新着は次 tick の受信箱へ回るため、ゲストが
+/// `recv-batch` をいつ・何回呼んでも観測は不変（A 意味論）。
+/// drain しきらなかった分は次 tick へ持ち越す（backpressure）。
+///
+/// `tick-input` には載せない。物理 snapshot を純粋に保ち、大量受信
+/// （ファイル転送等）でも `max` でゲストがペース制御できるようにするため。
+interface msg-io {
+    use types.{message, outbound};
+
+    /// 現在 tick の凍結受信箱から最大 `max` 件を取り出す。
+    /// 返り値が空なら、この tick の受信箱は空になった。
+    recv-batch: func(max: u32) -> list<message>;
+
+    /// メッセージを送信する。append 意味論（`send-command` の
+    /// last-write-wins とは異なり、1 tick 内の複数送信は全て保持される）。
+    send-message: func(msg: outbound);
+}
+
 /// プラグイン。ゲストがメインループを持ち、ホストは tick-io で駆動する。
 ///
 /// コールバック型（`init` + 毎 tick `update`）のゲストも SDK の
@@ -324,6 +436,7 @@ world plugin {
 
     import host-env;
     import tick-io;
+    import msg-io;
 
     /// メタデータを取得する。config の早期検証を兼ねる。
     /// 不正な config の場合は `Err` を返すこと。
