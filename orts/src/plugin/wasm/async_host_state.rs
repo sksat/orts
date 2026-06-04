@@ -132,7 +132,9 @@ impl tick_io::Host for AsyncHostState {
         // the guest exits. `Some(packet)` freezes this tick's inbox.
         match self.input_rx.recv().await {
             Some(Some(packet)) => {
-                self.inbox = packet.inbox.into();
+                // Carry over undrained messages; append the newly delivered
+                // ones (backpressure per the msg-io contract).
+                self.inbox.extend(packet.inbox);
                 Some(packet.input)
             }
             Some(None) | None => None,

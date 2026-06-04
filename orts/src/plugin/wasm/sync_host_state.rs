@@ -84,10 +84,11 @@ pub struct HostState {
     /// Command captured from the most recent `send_command` call,
     /// forwarded to the outer thread on the next `wait_tick`.
     pending_cmd: Option<wit::Command>,
-    /// Frozen msg-io inbox for the current tick. Set on each
-    /// `wait_tick` from the incoming [`TickPacket`]; drained by
-    /// `recv-batch`. Leftover messages are dropped at the next tick
-    /// boundary (the outer side decides carry-over policy).
+    /// Frozen msg-io inbox for the current tick. On each `wait_tick`
+    /// the incoming [`TickPacket`]'s deliveries are appended; drained by
+    /// `recv-batch`. Messages left undrained carry over to the next tick
+    /// (appended before the new deliveries) — backpressure per the
+    /// msg-io contract.
     inbox: VecDeque<wit::Message>,
     /// Messages the guest emitted via `send-message` during the current
     /// tick (append). Forwarded to the outer thread on the next
@@ -202,9 +203,10 @@ impl tick_io::Host for HostState {
         // host function panicking.
         match self.input_rx.recv() {
             Ok(packet) => {
-                // Freeze this tick's inbox. Any messages left undrained
-                // from the previous tick are dropped here.
-                self.inbox = packet.inbox.into();
+                // Freeze this tick's inbox: append the newly delivered
+                // messages after any left undrained from the previous tick
+                // (carry-over / backpressure per the msg-io contract).
+                self.inbox.extend(packet.inbox);
                 Some(packet.input)
             }
             Err(_) => None,
@@ -241,6 +243,7 @@ impl msg_io::Host for HostState {
 mod tests {
     use super::host_env::Host as _;
     use super::msg_io::Host as _;
+    use super::tick_io::Host as _;
     use super::*;
 
     fn make_state() -> HostState {
@@ -259,6 +262,79 @@ mod tests {
             deliver_tick: 0,
             payload: wit::Payload::KeyValue(vec![]),
         }
+    }
+
+    fn dummy_tick_input() -> wit::TickInput {
+        wit::TickInput {
+            t: 0.0,
+            spacecraft: wit::SpacecraftState {
+                orbit: wit::OrbitalState {
+                    position: wit::PositionEciKm {
+                        x: 7000.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    velocity: wit::VelocityEciKms {
+                        x: 0.0,
+                        y: 7.5,
+                        z: 0.0,
+                    },
+                },
+                attitude: wit::AttitudeState {
+                    orientation: wit::Quat {
+                        w: 1.0,
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                    angular_velocity: wit::Vec3 {
+                        x: 0.0,
+                        y: 0.0,
+                        z: 0.0,
+                    },
+                },
+                mass: 50.0,
+            },
+            epoch: None,
+            sensors: wit::Sensors {
+                magnetometers: vec![],
+                gyroscopes: vec![],
+                star_trackers: vec![],
+                sun_sensors: vec![],
+            },
+            actuators: wit::ActuatorTelemetry { rw: None },
+        }
+    }
+
+    #[test]
+    fn wait_tick_carries_over_undrained_inbox() {
+        let (input_tx, input_rx) = mpsc::channel::<TickPacket>();
+        let (output_tx, _output_rx) = mpsc::sync_channel::<GuestResponse>(4);
+        let current_mode = Arc::new(Mutex::new(None));
+        let mut state = HostState::new("test", input_rx, output_tx, current_mode);
+
+        // Tick 0 delivers two messages; the guest drains only one.
+        input_tx
+            .send(TickPacket {
+                input: dummy_tick_input(),
+                inbox: vec![test_message(0), test_message(1)],
+            })
+            .unwrap();
+        state.wait_tick();
+        assert_eq!(state.recv_batch(1).len(), 1); // host_seq 0 drained
+
+        // Tick 1 delivers one more; the undrained host_seq 1 must carry over,
+        // with the newly frozen delivery appended after it.
+        input_tx
+            .send(TickPacket {
+                input: dummy_tick_input(),
+                inbox: vec![test_message(2)],
+            })
+            .unwrap();
+        state.wait_tick();
+
+        let seqs: Vec<u64> = state.recv_batch(10).iter().map(|m| m.host_seq).collect();
+        assert_eq!(seqs, vec![1, 2]); // leftover first, then newly delivered
     }
 
     #[test]

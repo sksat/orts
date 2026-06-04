@@ -96,8 +96,11 @@ fn args_to_payload(args: &serde_json::Value) -> Result<Payload, String> {
             J::Number(n) => {
                 if let Some(i) = n.as_i64() {
                     Value::Integer(i)
-                } else if let Some(u) = n.as_u64() {
-                    Value::Integer(u as i64)
+                } else if n.is_u64() {
+                    // Reached only for u64 > i64::MAX (`as_i64` handled the
+                    // rest), which always overflows s64. Reject rather than
+                    // wrap silently into a negative integer.
+                    return Err(format!("arg '{name}': integer {n} exceeds s64 (i64) range"));
                 } else if let Some(f) = n.as_f64() {
                     Value::Number(f)
                 } else {
@@ -1154,6 +1157,19 @@ args = { mode = "nadir", req-id = 7 }
             sat: "x".into(),
             kind: "k".into(),
             args: serde_json::json!({ "nested": { "a": 1 } }),
+        };
+        assert!(cmd.to_message(0).is_err());
+    }
+
+    #[test]
+    fn command_rejects_out_of_range_integer() {
+        // u64 > i64::MAX must be rejected, not silently wrapped to a
+        // negative s64 (WIT `value.integer` is s64).
+        let cmd = CommandConfig {
+            t: 0.0,
+            sat: "x".into(),
+            kind: "k".into(),
+            args: serde_json::json!({ "big": 9_223_372_036_854_775_808u64 }),
         };
         assert!(cmd.to_message(0).is_err());
     }
