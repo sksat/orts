@@ -116,10 +116,10 @@ gh run watch
    `--release` で CLI binary をビルド (viewer SPA を embed)。
    **gnu は `cross` 経由** ([Cross.toml](Cross.toml)) で released cross 0.2.5 の
    Ubuntu 16.04 (glibc 2.23) イメージ内ビルド → glibc floor を host 非依存に固定
-   (実測 GLIBC_2.18)。コンテナには
-   clang/mold が無いので、CI step で `RUSTFLAGS=-Ctarget-cpu=x86-64`
-   (mold link-arg を落とす) と `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc`
-   を渡し、cargo-about は Cross.toml の `pre-build` でコンテナに入れる。
+   (実測 GLIBC_2.18)。コンテナには clang/mold が無いので、CI step で
+   `RUSTFLAGS=-Ctarget-cpu=x86-64` を渡して config の clang+mold を打ち消し
+   (rustflags 1行が丸ごと置換され、デフォルトの cc/gcc にフォールバック)、
+   cargo-about は Cross.toml の `pre-build` でコンテナに入れる。
    **musl は従来通りホストで native static ビルド**。
 2. **`build-example-plugins` job** — WASM plugin guest を全自動ビルド
 3. **`release` job** (needs: rust-dist, build-example-plugins, crate-package-verify,
