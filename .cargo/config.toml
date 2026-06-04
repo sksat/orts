@@ -1,8 +1,9 @@
-# mold: sudo apt install mold (or pacman -S mold)
-# wild: cargo install wild-linker
-
+# Local dev fast-linking with mold (sudo apt install mold / pacman -S mold).
+# The linker is folded into `rustflags` (via -Clinker) on purpose: that makes
+# it a single knob — a non-empty global RUSTFLAGS replaces this whole line and
+# falls back to plain cc/gcc. The release gnu `cross` build relies on exactly
+# that (its container has no clang/mold); see Cross.toml.
 [target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-# wild (~2x faster than mold)
-#rustflags = ["-C", "link-args=--ld-path=wild"]
+rustflags = ["-Clinker=clang", "-Clink-arg=-fuse-ld=mold"]
+# wild (~2x faster than mold): cargo install wild-linker, then swap to:
+#rustflags = ["-Clinker=clang", "-Clink-arg=--ld-path=wild"]

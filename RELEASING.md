@@ -15,7 +15,9 @@ orts のリリース手順メモ。
    - `orts-{target}` (standalone stripped binary)
    - `README.md`, `LICENSE`
 
-   ターゲット: `x86_64-unknown-linux-gnu` (glibc), `x86_64-unknown-linux-musl` (static)
+   ターゲット: `x86_64-unknown-linux-gnu` (glibc; `cross` ビルドで floor を
+   glibc >= 2.18 に pin) + `x86_64-unknown-linux-musl` (fully static)。
+   gnu の floor 固定の仕組みは [Cross.toml](Cross.toml) 参照。
 
    draft release なので、人間が確認してから手動で publish する。
    cargo-binstall compatible。
@@ -107,14 +109,14 @@ gh run watch
 通常の CI job (lint, rust-test, viewer-build 等) に加えて:
 
 1. **`rust-dist` job** (matrix: gnu + musl, needs: rust-build, viewer-build) —
-   `--release` で CLI binary をビルド (viewer SPA を embed)
+   `--release` で CLI binary をビルド (viewer SPA を embed)。**gnu は `cross`
+   経由** ([Cross.toml](Cross.toml)) で glibc floor を host 非依存に pin、
+   **musl はホストで native static ビルド**。
 2. **`build-example-plugins` job** — WASM plugin guest を全自動ビルド
 3. **`release` job** (needs: rust-dist, build-example-plugins, crate-package-verify,
    npm-publish-dry-run, rust-test, rust-test-plugin-wasm, viewer-e2e,
    cli-plugin-backend-e2e) — 全テスト + 全検証が通った場合のみ tarball +
    checksum を作成し `softprops/action-gh-release` で **draft** GitHub Release を作成
-
-ターゲット: `x86_64-unknown-linux-gnu` (glibc) + `x86_64-unknown-linux-musl` (static)。
 
 ### Release の添付物 (各ターゲットについて)
 
@@ -143,8 +145,16 @@ gh release edit v0.1.0 --draft=false
 
 - **Version mismatch**: tag 名と `Cargo.toml` version が不一致 →
   release job 冒頭の verify step で早期 fail。version bump 忘れ。
-- **cargo-about が無い**: `cli/build.rs` が panic。CI runner 側で
-  `taiki-e/install-action` で install されるはず。
+- **cargo-about が無い**: `cli/build.rs` が panic (`ORTS_REQUIRE_LICENSE_NOTICE=1`
+  のため)。musl(ホストビルド)は `taiki-e/install-action`、gnu(cross)は
+  [Cross.toml](Cross.toml) の `pre-build` で install される。gnu で失敗する場合は
+  pre-build の cargo-about ダウンロード URL/バージョンを確認。
+- **gnu (cross) で `-fuse-ld=mold` / `linker clang not found`**: CI step の
+  `RUSTFLAGS` 上書きがコンテナに伝わっていない (`.cargo/config.toml` の
+  clang+mold が効いてしまっている)。Cross.toml の `build.env.passthrough` に
+  `RUSTFLAGS` があるか確認。local 再現: `CROSS_CONTAINER_ENGINE=podman
+  RUSTFLAGS=-Ctarget-cpu=x86-64 cross build --release -p orts-cli
+  --target x86_64-unknown-linux-gnu`。
 - **viewer build 失敗**: viewer-build job で fail、rust-dist は実行されない。
   local で `pnpm --filter orts-viewer build` を再現。
 - **example plugin build 失敗**: rust-dist job の cargo-component build step
