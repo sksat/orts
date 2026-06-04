@@ -15,13 +15,9 @@ orts のリリース手順メモ。
    - `orts-{target}` (standalone stripped binary)
    - `README.md`, `LICENSE`
 
-   ターゲット: `x86_64-unknown-linux-gnu` (glibc, **`cross` の glibc 2.23 イメージ内
-   ビルド → 生成バイナリは glibc >= 2.18 を要求**), `x86_64-unknown-linux-musl`
-   (fully static)。gnu バイナリは以前 `ubuntu-latest` 直ビルドで glibc floor が
-   ランナー任せ (v0.2.0 は GLIBC_2.39 を要求し Ubuntu 24.04 未満で起動不可)
-   だったが、`cross` の released イメージ (Ubuntu 16.04 ベース, glibc 2.23) 内
-   ビルドに変更して floor を host 非依存に固定した (実測 GLIBC_2.18)。
-   詳細は [Cross.toml](Cross.toml)。
+   ターゲット: `x86_64-unknown-linux-gnu` (glibc; `cross` ビルドで floor を
+   glibc >= 2.18 に pin) + `x86_64-unknown-linux-musl` (fully static)。
+   gnu の floor 固定の仕組みは [Cross.toml](Cross.toml) 参照。
 
    draft release なので、人間が確認してから手動で publish する。
    cargo-binstall compatible。
@@ -113,22 +109,14 @@ gh run watch
 通常の CI job (lint, rust-test, viewer-build 等) に加えて:
 
 1. **`rust-dist` job** (matrix: gnu + musl, needs: rust-build, viewer-build) —
-   `--release` で CLI binary をビルド (viewer SPA を embed)。
-   **gnu は `cross` 経由** ([Cross.toml](Cross.toml)) で released cross 0.2.5 の
-   Ubuntu 16.04 (glibc 2.23) イメージ内ビルド → glibc floor を host 非依存に固定
-   (実測 GLIBC_2.18)。コンテナには clang/mold が無いので、CI step で
-   `RUSTFLAGS=-Ctarget-cpu=x86-64` を渡して config の clang+mold を打ち消し
-   (rustflags 1行が丸ごと置換され、デフォルトの cc/gcc にフォールバック)、
-   cargo-about は Cross.toml の `pre-build` でコンテナに入れる。
-   **musl は従来通りホストで native static ビルド**。
+   `--release` で CLI binary をビルド (viewer SPA を embed)。**gnu は `cross`
+   経由** ([Cross.toml](Cross.toml)) で glibc floor を host 非依存に pin、
+   **musl はホストで native static ビルド**。
 2. **`build-example-plugins` job** — WASM plugin guest を全自動ビルド
 3. **`release` job** (needs: rust-dist, build-example-plugins, crate-package-verify,
    npm-publish-dry-run, rust-test, rust-test-plugin-wasm, viewer-e2e,
    cli-plugin-backend-e2e) — 全テスト + 全検証が通った場合のみ tarball +
    checksum を作成し `softprops/action-gh-release` で **draft** GitHub Release を作成
-
-ターゲット: `x86_64-unknown-linux-gnu` (glibc >= 2.18, `cross` ビルド) +
-`x86_64-unknown-linux-musl` (fully static)。
 
 ### Release の添付物 (各ターゲットについて)
 
