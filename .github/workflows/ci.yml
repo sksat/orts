@@ -908,17 +908,12 @@ jobs:
       - name: Start WebSocket server
         run: ./bin/orts serve --sat altitude=400 --dt 1 --output-interval 10 &
 
-      - name: Wait for WebSocket server
-        run: |
-          for _ in $(seq 1 60); do
-            if nc -z localhost 9001 2>/dev/null; then
-              echo "WebSocket server ready"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "WebSocket server failed to start"
-          exit 1
+      - name: Wait for WebSocket server to stream
+        # `nc -z` only checks the port is bound (TcpListener::bind), which happens
+        # before the simulation manager is ready to stream. Wait until a client
+        # actually receives a `state` message so tests don't connect too early.
+        # See issue #65.
+        run: node .github/scripts/wait-ws-stream.mjs ws://localhost:9001/ws
 
       - name: Start Vite dev server
         run: VITE_WS_URL=ws://localhost:9001/ws pnpm --filter orts-viewer dev &

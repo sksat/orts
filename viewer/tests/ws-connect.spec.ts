@@ -92,11 +92,14 @@ test("raw WebSocket connects and receives messages", async ({ page }) => {
         }
       });
 
+      // Give-up cap, aligned with the other WS tests (10/20/30s) rather than a
+      // tight 5s. The test still resolves as soon as messages arrive; CI
+      // readiness is ensured separately by the streaming probe. See issue #65.
       setTimeout(() => {
         events.push(`timeout:readyState=${ws.readyState}`);
         ws.close();
         resolve(events.join(" | "));
-      }, 5000);
+      }, 15000);
     });
   }, wsUrl);
 
