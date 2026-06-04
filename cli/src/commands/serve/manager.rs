@@ -818,9 +818,13 @@ impl SimLoopContext {
         }
 
         // Honest readiness signal: the simulation has emitted its initial
-        // state(s), so clients connecting now will receive data. Only logged
-        // when a simulation actually starts (never in idle serve mode).
-        eprintln!("Streaming started: {} satellite(s)", group.len());
+        // state(s), so clients connecting now will receive data. Logged only
+        // when at least one satellite state was actually broadcast — never in
+        // idle serve mode, nor for an empty start awaiting AddSatellite.
+        let satellite_count = group.len();
+        if satellite_count > 0 {
+            eprintln!("Streaming started: {satellite_count} satellite(s)");
+        }
 
         Ok(SimLoopContext {
             params,
