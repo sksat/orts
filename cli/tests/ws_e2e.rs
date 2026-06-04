@@ -36,6 +36,7 @@ impl Server {
             args.push(sat.to_string());
         }
         let mut child = Command::new(binary)
+            .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
             .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -80,6 +81,7 @@ impl Server {
         let binary = env!("CARGO_BIN_EXE_orts");
         let args = vec!["serve".to_string(), "--port".to_string(), port.to_string()];
         let mut child = Command::new(binary)
+            .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
             .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -534,6 +536,7 @@ async fn test_websocket_no_history_detail_sent() {
     // empty HistoryDetailComplete marker immediately).
     let binary = env!("CARGO_BIN_EXE_orts");
     let mut child = Command::new(binary)
+        .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
         .args([
             "serve",
             "--port",
@@ -633,6 +636,7 @@ async fn test_websocket_history_overview_payload_is_bounded() {
     // dt=1 output_interval=1 accumulates 1 history point per wall-clock second.
     let binary = env!("CARGO_BIN_EXE_orts");
     let mut child = Command::new(binary)
+        .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
         .args([
             "serve",
             "--port",
