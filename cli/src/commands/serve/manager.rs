@@ -817,6 +817,11 @@ impl SimLoopContext {
             let _ = tx.send(msg);
         }
 
+        // Honest readiness signal: the simulation has emitted its initial
+        // state(s), so clients connecting now will receive data. Only logged
+        // when a simulation actually starts (never in idle serve mode).
+        eprintln!("Streaming started: {} satellite(s)", group.len());
+
         Ok(SimLoopContext {
             params,
             group,
