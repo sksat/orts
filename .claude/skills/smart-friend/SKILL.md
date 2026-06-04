@@ -14,12 +14,12 @@ Claude 単独では得られない「別の視点」を提供することが目�
 ## 使い方
 
 ```bash
-codex exec --sandbox read-only -m gpt-5.4 "<prompt>"
+codex exec --sandbox read-only -m gpt-5.5 "<prompt>"
 ```
 
 プロンプトが長い場合や `$` やバッククォートを含む場合は、heredoc で stdin から渡す:
 ```bash
-cat <<'EOF' | codex exec --sandbox read-only -m gpt-5.4 -
+cat <<'EOF' | codex exec --sandbox read-only -m gpt-5.5 -
 <prompt>
 EOF
 ```

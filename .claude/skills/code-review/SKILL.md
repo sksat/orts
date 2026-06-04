@@ -15,18 +15,18 @@ diff の取得は codex が自動で行う。
 
 ```bash
 # 未コミットの変更をレビュー
-codex review -c model=gpt-5.4 --uncommitted
+codex review -c model=gpt-5.5 --uncommitted
 
 # 特定ブランチとの差分をレビュー
-codex review -c model=gpt-5.4 --base main
+codex review -c model=gpt-5.5 --base main
 
 # 特定コミットをレビュー
-codex review -c model=gpt-5.4 --commit <SHA>
+codex review -c model=gpt-5.5 --commit <SHA>
 ```
 
 カスタムプロンプトで追加のレビュー指示を渡すこともできる（対象指定なしの自由プロンプトモード）:
 ```bash
-codex review -c model=gpt-5.4 "TDD-first の方針に沿っているかも確認してください"
+codex review -c model=gpt-5.5 "TDD-first の方針に沿っているかも確認してください"
 ```
 
 **制約: `[PROMPT]` と対象指定オプション (`--uncommitted`/`--base`/`--commit`) は排他。同時に使うとエラーになる。**
@@ -50,6 +50,6 @@ Codex の回答を鵜呑みにせず、自分の視点も持った上で建設�
 
 ## 注意事項
 
-- モデル指定は `-m` ではなく `-c model=gpt-5.4` を使う（`codex review` の制約）
+- モデル指定は `-m` ではなく `-c model=gpt-5.5` を使う（`codex review` の制約）
 - codex の実行には時間がかかることがある。Bash の timeout は 300000 (5分) を設定する
 - ユーザーが別のモデルを指定した場合はそれに従う
