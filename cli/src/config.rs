@@ -6,6 +6,7 @@ use crate::cli::{AtmosphereChoice, IntegratorChoice};
 use crate::satellite::{OrbitSpec, SatelliteSpec};
 use crate::tle::fetch_tle_by_norad_id;
 use arika::body::KnownBody;
+use orts::plugin::{Message, NamedValue, NodeId, Payload, Value};
 use orts::tle::Tle;
 
 /// JSON/TOML/YAML simulation configuration.
@@ -30,6 +31,91 @@ pub struct SimConfig {
     pub duration: Option<f64>,
     #[serde(default)]
     pub satellites: Vec<SatelliteConfig>,
+    /// 時刻指定コマンドシーケンス（FSW への C&T アップリンク）。
+    /// 各エントリは指定 sim 時刻に対象衛星のコントローラへ配送される。
+    /// TOML では `[[command]]`（単数）/ `[[commands]]`（複数）の両方可。
+    #[serde(default, alias = "command")]
+    pub commands: Vec<CommandConfig>,
+}
+
+/// 時刻指定コマンド（config transport）。
+///
+/// `orts.toml` の `[[command]]` として宣言し、`t` 秒の時点で `sat` の
+/// コントローラ(FSW)へ `kind` + `args`(key-value payload) を配送する。
+/// host が配送 tick を確定するので決定論的。
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct CommandConfig {
+    /// 配送するシミュレーション時刻 \[s\]。
+    pub t: f64,
+    /// 配送先衛星 id（`[[satellites]]` の id と一致する必要がある）。
+    pub sat: String,
+    /// メッセージの論理型（content-type）。例 `"orts.cmd.set-mode.v1"`。
+    pub kind: String,
+    /// key-value payload 引数。TOML/JSON のスカラ値が型付き値に対応する
+    /// （string→text, integer→integer, float→number, bool→boolean）。
+    /// 省略時は空の key-value。
+    #[serde(default)]
+    pub args: serde_json::Value,
+}
+
+impl CommandConfig {
+    /// 配送先衛星インデックスを指定して host-native [`Message`] を組み立てる。
+    /// `host_seq` / `deliver_tick` は配送時に host が上書きする（ここでは 0）。
+    pub fn to_message(&self, sat_index: usize) -> Result<Message, String> {
+        let payload = args_to_payload(&self.args).map_err(|e| {
+            format!(
+                "command t={} sat='{}' kind='{}': {e}",
+                self.t, self.sat, self.kind
+            )
+        })?;
+        Ok(Message {
+            src: NodeId::Ground,
+            dst: NodeId::Satellite(sat_index as u32),
+            kind: self.kind.clone(),
+            host_seq: 0,
+            deliver_tick: 0,
+            payload,
+        })
+    }
+}
+
+/// `args`（JSON/TOML object）を key-value [`Payload`] に変換する。
+/// スカラ値のみ対応。null（省略）は空の key-value。
+fn args_to_payload(args: &serde_json::Value) -> Result<Payload, String> {
+    use serde_json::Value as J;
+    let map = match args {
+        J::Null => return Ok(Payload::KeyValue(Vec::new())),
+        J::Object(m) => m,
+        other => return Err(format!("args must be a table/object, got {other}")),
+    };
+    let mut kvs = Vec::with_capacity(map.len());
+    for (name, v) in map {
+        let value = match v {
+            J::Bool(b) => Value::Boolean(*b),
+            J::String(s) => Value::Text(s.clone()),
+            J::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    Value::Integer(i)
+                } else if let Some(u) = n.as_u64() {
+                    Value::Integer(u as i64)
+                } else if let Some(f) = n.as_f64() {
+                    Value::Number(f)
+                } else {
+                    return Err(format!("arg '{name}': unsupported number {n}"));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "arg '{name}': unsupported value type {other} (only scalars allowed in args)"
+                ));
+            }
+        };
+        kvs.push(NamedValue {
+            name: name.clone(),
+            value,
+        });
+    }
+    Ok(Payload::KeyValue(kvs))
 }
 
 fn default_body() -> String {
@@ -587,6 +673,7 @@ mod tests {
             space_weather: None,
             duration: None,
             satellites: vec![],
+            commands: vec![],
         };
         assert!(matches!(config.integrator_choice(), IntegratorChoice::Rk4));
     }
@@ -606,6 +693,7 @@ mod tests {
             space_weather: None,
             duration: None,
             satellites: vec![],
+            commands: vec![],
         };
         assert!(matches!(
             config.atmosphere_choice(),
@@ -811,6 +899,7 @@ satellites:
                 mtq: None,
                 thruster: None,
             }],
+            commands: vec![],
         };
         let json = serde_json::to_string(&config).unwrap();
         let roundtrip: SimConfig = serde_json::from_str(&json).unwrap();
@@ -984,6 +1073,89 @@ satellites:
             && (*max_momentum - 1.0).abs() < 1e-9
             && (*max_torque - 0.5).abs() < 1e-9
         ));
+    }
+
+    #[test]
+    fn deserialize_commands() {
+        let toml = r#"
+[[satellites]]
+id = "sat-a"
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[command]]
+t = 300.0
+sat = "sat-a"
+kind = "orts.cmd.set-mode.v1"
+args = { mode = "nadir" }
+
+[[command]]
+t = 10.0
+sat = "sat-a"
+kind = "orts.cmd.ping.v1"
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.commands.len(), 2);
+        // Raw declaration order preserved (scheduling sorts separately).
+        assert!((config.commands[0].t - 300.0).abs() < 1e-9);
+        assert_eq!(config.commands[0].sat, "sat-a");
+        assert_eq!(config.commands[0].kind, "orts.cmd.set-mode.v1");
+        // No args → null.
+        assert!(config.commands[1].args.is_null());
+    }
+
+    #[test]
+    fn commands_absent_by_default() {
+        let json = r#"{ "satellites": [] }"#;
+        let config: SimConfig = serde_json::from_str(json).unwrap();
+        assert!(config.commands.is_empty());
+    }
+
+    #[test]
+    fn command_to_message_builds_keyvalue_payload() {
+        let toml = r#"
+t = 1.0
+sat = "x"
+kind = "orts.cmd.set-mode.v1"
+args = { mode = "nadir", req-id = 7 }
+"#;
+        let cmd: CommandConfig = toml::from_str(toml).unwrap();
+        let msg = cmd.to_message(2).unwrap();
+        assert_eq!(msg.dst, NodeId::Satellite(2));
+        assert_eq!(msg.src, NodeId::Ground);
+        assert_eq!(msg.kind, "orts.cmd.set-mode.v1");
+        assert_eq!(
+            msg.payload.get("mode").and_then(Value::as_text),
+            Some("nadir")
+        );
+        assert_eq!(
+            msg.payload.get("req-id").and_then(Value::as_integer),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn command_empty_args_is_empty_keyvalue() {
+        let cmd = CommandConfig {
+            t: 0.0,
+            sat: "x".into(),
+            kind: "k".into(),
+            args: serde_json::Value::Null,
+        };
+        let msg = cmd.to_message(0).unwrap();
+        assert!(matches!(msg.payload, Payload::KeyValue(ref v) if v.is_empty()));
+    }
+
+    #[test]
+    fn command_rejects_non_scalar_arg() {
+        let cmd = CommandConfig {
+            t: 0.0,
+            sat: "x".into(),
+            kind: "k".into(),
+            args: serde_json::json!({ "nested": { "a": 1 } }),
+        };
+        assert!(cmd.to_message(0).is_err());
     }
 
     #[test]

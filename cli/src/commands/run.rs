@@ -552,6 +552,46 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
         }
     }
 
+    // 各コントローラのノード identity を設定（msg-io outbound の src として
+    // stamp される）。衛星はベクタ内の位置でアドレス付けする。
+    for (i, sat) in satellites.iter_mut().enumerate() {
+        sat.controller
+            .set_node_id(orts::plugin::NodeId::Satellite(i as u32));
+    }
+
+    // config の時刻指定コマンド (`[[command]]`) を時刻順キューに積む。
+    // host が tick ごとに due なものを配送する決定論的 transport adapter。
+    let mut command_schedule = {
+        use std::collections::HashMap;
+        let id_to_index: HashMap<&str, usize> = params
+            .satellites
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.id.as_str(), i))
+            .collect();
+        let mut scheduled = Vec::new();
+        for cmd in &params.commands {
+            let Some(&idx) = id_to_index.get(cmd.sat.as_str()) else {
+                eprintln!("command targets unknown satellite '{}'", cmd.sat);
+                std::process::exit(1);
+            };
+            let message = cmd.to_message(idx).unwrap_or_else(|e| {
+                eprintln!("invalid command: {e}");
+                std::process::exit(1);
+            });
+            scheduled.push(crate::sim::command_schedule::ScheduledCommand {
+                t: cmd.t,
+                sat_index: idx,
+                message,
+            });
+        }
+        crate::sim::command_schedule::CommandSchedule::new(scheduled)
+    };
+    // Host-assigned monotonic sequence + control-tick index, stamped onto
+    // each delivered command's envelope.
+    let mut command_host_seq: u64 = 0;
+    let mut tick_index: u64 = 0;
+
     // 初期状態を記録。
     for (i, sat) in satellites.iter().enumerate() {
         let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
@@ -573,6 +613,16 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
     while t < duration - 1e-12 {
         let dt = dt_ctrl.min(duration - t);
 
+        // 時刻指定コマンド: この制御 tick の終端 (t+dt) までに due なものを
+        // 配送する。host が src/host-seq/deliver-tick を確定 stamp する。
+        for sc in command_schedule.drain_due(t + dt) {
+            let mut msg = sc.message.clone();
+            msg.host_seq = command_host_seq;
+            msg.deliver_tick = tick_index;
+            command_host_seq += 1;
+            satellites[sc.sat_index].controller.deliver(msg);
+        }
+
         if parallel_step {
             use rayon::prelude::*;
             satellites.par_iter_mut().for_each(|sat| {
@@ -590,7 +640,22 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
             }
         }
 
+        // FSW からの downlink（テレメトリ / ISL）を回収してログに出す。
+        // controller が msg-io 未対応なら default 実装で空。
+        for (i, sat) in satellites.iter_mut().enumerate() {
+            for m in sat.controller.take_outbound() {
+                log::info!(
+                    "downlink t={:.3} sat={} kind={} payload={:?}",
+                    t + dt,
+                    params.satellites[i].id,
+                    m.kind,
+                    m.payload
+                );
+            }
+        }
+
         t += dt;
+        tick_index += 1;
 
         if t >= next_output_t - 1e-12 {
             for (i, sat) in satellites.iter().enumerate() {

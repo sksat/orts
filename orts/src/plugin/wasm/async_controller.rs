@@ -264,24 +264,6 @@ impl AsyncWasmController {
             outbound_buffer: Vec::new(),
         })
     }
-
-    /// Queue an inbound message for delivery on the next `update()`
-    /// tick. See [`super::WasmController::deliver`].
-    pub fn deliver(&mut self, msg: Message) {
-        self.pending_inbound.push(msg);
-    }
-
-    /// Drain messages the guest has emitted so far. See
-    /// [`super::WasmController::take_outbound`].
-    pub fn take_outbound(&mut self) -> Vec<Message> {
-        std::mem::take(&mut self.outbound_buffer)
-    }
-
-    /// Set this controller's node identity (stamped as `src` on
-    /// outbound messages). Defaults to `NodeId::Satellite(0)`.
-    pub fn set_node_id(&mut self, id: NodeId) {
-        self.node_id = id;
-    }
 }
 
 impl PluginController for AsyncWasmController {
@@ -291,6 +273,18 @@ impl PluginController for AsyncWasmController {
 
     fn sample_period(&self) -> f64 {
         self.sample_period_s
+    }
+
+    fn deliver(&mut self, msg: Message) {
+        self.pending_inbound.push(msg);
+    }
+
+    fn take_outbound(&mut self) -> Vec<Message> {
+        std::mem::take(&mut self.outbound_buffer)
+    }
+
+    fn set_node_id(&mut self, id: NodeId) {
+        self.node_id = id;
     }
 
     fn update(&mut self, obs: &TickInput<'_>) -> Result<Option<Command>, PluginError> {

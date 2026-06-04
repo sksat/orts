@@ -153,26 +153,6 @@ impl WasmController {
         })
     }
 
-    /// Queue an inbound message for delivery on the **next** `update()`
-    /// tick. Transport / test-API entry point: the host freezes the
-    /// queued set into that tick's frozen inbox (`recv-batch`).
-    pub fn deliver(&mut self, msg: Message) {
-        self.pending_inbound.push(msg);
-    }
-
-    /// Drain every message the guest has emitted so far. Transport /
-    /// test-API exit point: each message carries the host-stamped
-    /// `src`, `host_seq`, and `deliver_tick`.
-    pub fn take_outbound(&mut self) -> Vec<Message> {
-        std::mem::take(&mut self.outbound_buffer)
-    }
-
-    /// Set this controller's node identity (stamped as `src` on
-    /// outbound messages). Defaults to `NodeId::Satellite(0)`.
-    pub fn set_node_id(&mut self, id: NodeId) {
-        self.node_id = id;
-    }
-
     /// Pre-link a Component against the host imports.
     pub fn prepare(
         engine: &Arc<WasmEngine>,
@@ -209,6 +189,25 @@ impl PluginController for WasmController {
 
     fn sample_period(&self) -> f64 {
         self.sample_period
+    }
+
+    /// Queue an inbound message for delivery on the **next** `update()`
+    /// tick. The host freezes the queued set into that tick's frozen
+    /// inbox (`recv-batch`).
+    fn deliver(&mut self, msg: Message) {
+        self.pending_inbound.push(msg);
+    }
+
+    /// Drain every message the guest has emitted so far. Each message
+    /// carries the host-stamped `src`, `host_seq`, and `deliver_tick`.
+    fn take_outbound(&mut self) -> Vec<Message> {
+        std::mem::take(&mut self.outbound_buffer)
+    }
+
+    /// Set this controller's node identity (stamped as `src` on
+    /// outbound messages). Defaults to `NodeId::Satellite(0)`.
+    fn set_node_id(&mut self, id: NodeId) {
+        self.node_id = id;
     }
 
     fn update(&mut self, obs: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
