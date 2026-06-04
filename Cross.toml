@@ -19,11 +19,17 @@ image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:0.2.5"
 # The release build sets ORTS_REQUIRE_LICENSE_NOTICE=1, which makes
 # cli/build.rs hard-fail unless `cargo about` is available to generate the
 # embedded third-party license notice. cross runs the whole build inside the
-# container, so cargo-about must exist there too. Fetch the static musl
-# binary (runs on the image's old glibc) instead of compiling it.
-# renovate: datasource=github-releases depName=EmbarkStudios/cargo-about
+# container, so cargo-about must exist there too. Fetch the prebuilt static
+# musl binary (runs on the image's old glibc) instead of compiling it, and
+# verify it against its published SHA-256 before extracting (download to a
+# file first rather than piping, so a bad download fails loudly).
+#
+# Version pinned to match the host `cargo-about` install in the rust-dist
+# job (.github/workflows/ci.yml). Bump the version and the sha256 together —
+# the value is the `.sha256` sidecar at the same release URL. (Deliberately
+# not a renovate auto-bump target: the hash must change in lockstep.)
 pre-build = [
-  "curl -fsSL https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.0/cargo-about-0.9.0-x86_64-unknown-linux-musl.tar.gz | tar -xz -C /usr/local/bin --strip-components=1 --wildcards '*/cargo-about'",
+  "curl -fsSL -o /tmp/cargo-about.tar.gz https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.0/cargo-about-0.9.0-x86_64-unknown-linux-musl.tar.gz && echo '7a1a1bfb3ae3b6feabe9e1d6147a6b34b85bd0339bfd8b0ec11b312dee10d99a  /tmp/cargo-about.tar.gz' | sha256sum -c - && tar -xzf /tmp/cargo-about.tar.gz -C /usr/local/bin --strip-components=1 --wildcards '*/cargo-about' && rm -f /tmp/cargo-about.tar.gz",
 ]
 
 # Forward the build's env into the container. The workspace .cargo/config.toml
