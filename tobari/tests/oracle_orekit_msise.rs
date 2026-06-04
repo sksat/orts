@@ -41,8 +41,6 @@ struct DensityPoint {
     density_kg_m3: f64,
 }
 
-// Helpers
-
 fn load_fixture() -> FixtureData {
     let json = include_str!("fixtures/orekit_msise_density_reference.json");
     serde_json::from_str(json).expect("Failed to parse Orekit MSISE density fixture")
@@ -97,8 +95,6 @@ fn compute_density_via_eci<P: tobari::SpaceWeatherProvider>(
         .density_with_composition(&rt_geod, epoch)
         .total_mass_density
 }
-
-// Tests
 
 /// All density points: compare Orekit vs Rust NRLMSISE-00 via ECI path.
 ///

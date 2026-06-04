@@ -306,8 +306,6 @@ impl Frame for Body {
     const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Body;
 }
 
-// Vec3<F>
-
 /// Frame-tagged 3D vector.
 ///
 /// `PhantomData<F>` はゼロサイズなのでメモリレイアウトは `Vector3<f64>` と同一。
@@ -465,8 +463,6 @@ impl<F> core::ops::SubAssign for Vec3<F> {
     }
 }
 
-// Rotation<From, To>
-
 /// 座標系 `From` から `To` への回転。
 ///
 /// Hamilton クォータニオンベース。`transform` でベクトルの
@@ -569,8 +565,6 @@ impl<From, To> core::fmt::Debug for Rotation<From, To> {
         write!(f, "Rotation<{from}, {to}>({:?})", self.0)
     }
 }
-
-// Tests
 
 #[cfg(test)]
 mod tests {

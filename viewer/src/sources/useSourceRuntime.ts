@@ -24,8 +24,6 @@ import type { SimInfo, SourceConnectionState, SourceEvent, SourceId } from "./ty
 // Re-export for convenience
 export type { ServerState } from "./eventDispatcher.js";
 
-// Chart column names
-
 const CHART_COLUMNS = [
   "t",
   "altitude",
@@ -48,8 +46,6 @@ const CHART_COLUMNS = [
 
 setTrailBufferFactory(() => new TrailBuffer(50000));
 setIngestBufferFactory(() => new IngestBuffer<OrbitPoint>());
-
-// React hook
 
 export function useSourceRuntime() {
   const trailBuffersRef = useRef(new Map<string, TrailBuffer>());

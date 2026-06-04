@@ -311,8 +311,6 @@ mod tests {
     use nalgebra::{Vector3, Vector4};
     use utsuroi::{Integrator, OdeState, Rk4};
 
-    // Helpers
-
     fn symmetric_inertia(i: f64) -> Matrix3<f64> {
         Matrix3::from_diagonal(&Vector3::new(i, i, i))
     }

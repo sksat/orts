@@ -59,8 +59,6 @@ const latestTs = new Map<string, number>();
 let tickCount = 0;
 let queryCount = 0;
 
-// Helpers
-
 function post(msg: MultiWorkerToMainMessage, transfer?: Transferable[]) {
   if (transfer) {
     postMessage(msg, { transfer });

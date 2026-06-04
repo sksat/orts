@@ -130,8 +130,6 @@ impl NutationCorrections for ZeroEop {
     }
 }
 
-// Helpers
-
 fn load_fixtures() -> FixtureFile {
     let json = include_str!("fixtures/orekit_gcrf_propagation_reference.json");
     serde_json::from_str(json).expect("Failed to parse GCRF fixture JSON")
@@ -330,8 +328,6 @@ fn final_pos_err_simple(scenario: &Scenario) -> f64 {
     ) - *final_state.position())
     .magnitude()
 }
-
-// Tests
 
 #[test]
 fn gcrf_j2_thirdbody_iss_10orbits() {

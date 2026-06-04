@@ -36,8 +36,6 @@ use core::marker::PhantomData;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-// Constants
-
 /// Julian Date of J2000.0 epoch (JD 2451545.0).
 ///
 /// これは歴史的に J2000.0 TT と呼ばれる値だが、本実装では bit-level 互換性のため
@@ -149,8 +147,6 @@ fn tdb_minus_tt(tt_jd: f64) -> f64 {
     0.001_658 * g.sin() + 0.000_014 * (2.0 * g).sin()
 }
 
-// Sealed trait
-
 mod sealed {
     pub trait Sealed {}
 }
@@ -209,8 +205,6 @@ define_scale!(
      IAU 2009 body rotation の formally な独立変数。"
 );
 
-// DateTime
-
 /// A Gregorian calendar date and time (UTC).
 ///
 /// 本 struct は UTC 暦表示専用。TAI / TT / TDB 等の dynamical time scale は
@@ -257,8 +251,6 @@ impl core::fmt::Display for DateTime {
         )
     }
 }
-
-// Epoch<S>
 
 /// An astronomical epoch represented as Julian Date in scale `S`.
 ///
@@ -672,8 +664,6 @@ impl Epoch<Ut1> {
     }
 }
 
-// Internal helpers
-
 /// Earth Rotation Angle (ERA) formula, shared by `Epoch<Ut1>::era` and the
 /// legacy `Epoch<Utc>::gmst` method.
 ///
@@ -729,8 +719,6 @@ fn to_datetime_from_jd(jd: f64) -> DateTime {
     }
 }
 
-// Duration
-
 /// Scale-invariant duration measured in SI (TAI) seconds.
 ///
 /// Does not carry a scale tag because SI seconds tick uniformly regardless of
@@ -767,8 +755,6 @@ impl Duration {
         self.si_seconds
     }
 }
-
-// Tests
 
 #[cfg(test)]
 mod tests {
@@ -1378,8 +1364,6 @@ mod tests {
         // Pre-1972: default to the first table value.
         assert_eq!(tai_minus_utc_at_mjd(40000.0), 10.0);
     }
-
-    // Duration
 
     #[test]
     fn duration_si_seconds() {

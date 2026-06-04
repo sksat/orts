@@ -146,8 +146,6 @@ pub use finals2000a::Finals2000A;
 #[cfg(feature = "alloc")]
 pub use table::EopTable;
 
-// Tests
-
 #[cfg(test)]
 mod tests {
     use super::*;

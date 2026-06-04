@@ -14,8 +14,6 @@ use core::f64::consts::PI;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-// Constants
-
 const DEG_TO_RAD: f64 = PI / 180.0;
 const DAY_ANGLE_RATE: f64 = 2.0 * PI / 365.25;
 const HOURS_TO_RAD: f64 = PI / 12.0; // hours to radians

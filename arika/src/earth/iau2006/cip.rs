@@ -60,8 +60,6 @@ use super::tables_gen::{
 };
 use super::{Rad, Uas};
 
-// Public API
-
 /// All three CIP / CIO quantities evaluated at a single `t`.
 ///
 /// Returned by [`cip_coordinates`]. `x` and `y` are the celestial

@@ -15,8 +15,6 @@ import { mergeQueryRangePoints, pickTrailBufferForResponse } from "../utils/merg
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
 import type { SourceEvent } from "./types.js";
 
-// Constants
-
 export const WS_SOURCE_ID = "ws-0";
 
 // Options & result types
@@ -131,8 +129,6 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
     (body: string) => handleEvent(WS_SOURCE_ID, { kind: "textures-ready", body }),
     [handleEvent],
   );
-
-  // useWebSocket
 
   const { connect, disconnect, isConnected, send } = useWebSocket({
     url: wsUrl,

@@ -131,8 +131,6 @@ struct AccelSnapshot {
     total_km_s2: [f64; 3],
 }
 
-// Helpers
-
 fn load_fixtures() -> FixtureFile {
     let json = include_str!("fixtures/orekit_propagation_reference.json");
     serde_json::from_str(json).expect("Failed to parse Orekit propagation fixture JSON")

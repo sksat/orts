@@ -25,8 +25,6 @@ use std::f64::consts::PI;
 use std::ops::ControlFlow;
 use utsuroi::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
 
-// Helpers
-
 fn earth_j2_system() -> OrbitalSystem {
     OrbitalSystem::new(
         MU_EARTH,

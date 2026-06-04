@@ -32,8 +32,6 @@ import type {
   VariantItem,
 } from "./types.js";
 
-// Public API
-
 export interface MarkdownOptions {
   contentDir: string; // e.g. docs/src/content/docs
   basePath: string; // e.g. "/orts"

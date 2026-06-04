@@ -19,8 +19,6 @@ use orts::perturbations::SolarRadiationPressure;
 use std::f64::consts::PI;
 use utsuroi::{Integrator, Rk4};
 
-// Helpers
-
 fn test_epoch() -> Epoch {
     Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0)
 }

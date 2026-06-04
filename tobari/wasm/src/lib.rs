@@ -21,8 +21,6 @@ use tobari::nrlmsise00::{Nrlmsise00, Nrlmsise00Input};
 use tobari::space_weather::SpaceWeatherProvider;
 use tobari::{AtmosphereInput, AtmosphereModel, ConstantWeather, HarrisPriester};
 
-// Helpers
-
 /// Compute ECEF→NED rotation for a magnetic field vector at a geodetic point.
 ///
 /// Returns (B_north, B_east, B_down) in Tesla.

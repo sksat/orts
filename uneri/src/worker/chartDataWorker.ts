@@ -66,8 +66,6 @@ const MAX_INGEST_RETRIES = 3;
 
 const BATCH_SIZE = 1000;
 
-// Helpers
-
 function post(msg: WorkerToMainMessage, transfer?: Transferable[]) {
   if (transfer) {
     postMessage(msg, { transfer });

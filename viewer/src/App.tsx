@@ -34,7 +34,6 @@ export function App() {
     arikaReady.then(() => setWasmReady(true));
   }, []);
 
-  // Reference frame
   const [referenceFrame, setReferenceFrame] = useState<ReferenceFrame>(DEFAULT_FRAME);
 
   // Chart time range
@@ -45,10 +44,8 @@ export function App() {
     writeTimeRangeParam(timeRange);
   }, [timeRange]);
 
-  // WS URL
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
 
-  // SimConfig modal
   const [simConfigOpen, setSimConfigOpen] = useState(false);
 
   // Source Runtime (manages buffers, state, event dispatch)
@@ -103,7 +100,6 @@ export function App() {
     queryRange,
   });
 
-  // WebSocket source
   const wsSource = useWebSocketSource({
     wsUrl,
     handleEvent,

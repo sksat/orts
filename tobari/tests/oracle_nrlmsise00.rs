@@ -66,8 +66,6 @@ struct ExoTempPoint {
     mass_density_kg_m3: f64,
 }
 
-// Helpers
-
 fn load_fixture() -> FixtureData {
     let json = include_str!("fixtures/nrlmsise00_reference.json");
     serde_json::from_str(json).expect("Failed to parse NRLMSISE-00 fixture")
