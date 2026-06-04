@@ -73,6 +73,7 @@ export function EarthBody({
   textureBaseUrl,
 }: EarthBodyProps) {
   const materialRef = useRef<THREE.ShaderMaterial | null>(null);
+  const poleGroupRef = useRef<THREE.Group>(null);
   const [ready, setReady] = useState(false);
   const [upgraded, setUpgraded] = useState(false);
 
@@ -205,11 +206,29 @@ export function EarthBody({
     }
   }, [sunIntensity, ready]);
 
+  // Dev/E2E-only: expose the rendered Earth orientation (mesh world quaternion,
+  // which includes the internal POLE_ALIGNMENT_ROTATION) so E2E tests can assert
+  // the central-body orientation from the live scene graph without reading pixels.
+  // See viewer/tests/lvlh-orientation.spec.ts.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__debug_get_earth_world_quat = (): [number, number, number, number] | null => {
+      const g = poleGroupRef.current;
+      if (!g) return null;
+      const q = g.getWorldQuaternion(new THREE.Quaternion());
+      return [q.x, q.y, q.z, q.w];
+    };
+    return () => {
+      delete w.__debug_get_earth_world_quat;
+    };
+  }, []);
+
   return (
     <group>
       <group rotation={[0, 0, rotationAngle ?? 0]}>
         {/* Inner group: align Three.js Y-pole to ECI Z-pole (north pole → +Z) */}
-        <group rotation={POLE_ALIGNMENT_ROTATION}>
+        <group ref={poleGroupRef} rotation={POLE_ALIGNMENT_ROTATION}>
           <mesh material={materialRef.current ?? undefined}>
             <sphereGeometry args={[radius, 64, 64]} />
             {!ready && (
