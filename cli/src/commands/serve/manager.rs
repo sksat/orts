@@ -817,11 +817,12 @@ impl SimLoopContext {
             let _ = tx.send(msg);
         }
 
-        // Honest readiness signal: the simulation has emitted its initial
-        // state(s), so clients connecting now will receive data. Logged only
-        // when at least one satellite state was actually broadcast — never in
-        // idle serve mode, nor for an empty start awaiting AddSatellite.
-        let satellite_count = group.len();
+        // Readiness signal: the simulation has computed its initial state(s)
+        // and the step loop is about to stream updates. (Clients that connect
+        // later receive initial data via GetStatus / history replay, not this
+        // startup broadcast.) Logged only when >=1 satellite state exists —
+        // never in idle serve mode, nor for an empty start awaiting AddSatellite.
+        let satellite_count = metas.len();
         if satellite_count > 0 {
             eprintln!("Streaming started: {satellite_count} satellite(s)");
         }
