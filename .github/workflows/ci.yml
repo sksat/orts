@@ -1023,12 +1023,18 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          # Non-cone mode so individual files — including the .github/ release
+          # body template — are checked out by exact path. Leading `/` anchors
+          # each pattern to the repo root (cone mode only takes directories, so
+          # it would not pull the template).
+          sparse-checkout-cone-mode: false
           sparse-checkout: |
-            README.md
-            LICENSE
-            Cargo.toml
-            CHANGELOG.md
-            CHANGELOG.ja.md
+            /README.md
+            /LICENSE
+            /Cargo.toml
+            /CHANGELOG.md
+            /CHANGELOG.ja.md
+            /.github/release-body.md.tmpl
 
       - name: Extract version from tag
         id: version
@@ -1163,10 +1169,11 @@ jobs:
           cp .github/release-body.md.tmpl /tmp/release-body.md
           sed -i "s/{{VERSION}}/${VERSION}/g" /tmp/release-body.md
           # Inject the extracted changelogs verbatim in place of the
-          # placeholder lines (sed `r` copies the file as-is, so its markdown
-          # and backticks are not re-interpreted).
-          sed -i -e '/{{CHANGELOG_EN}}/{r /tmp/changelog-en.txt' -e 'd}' /tmp/release-body.md
-          sed -i -e '/{{CHANGELOG_JA}}/{r /tmp/changelog-ja.txt' -e 'd}' /tmp/release-body.md
+          # placeholder lines: for the matched line, `r` queues the file
+          # (copied as-is, so its markdown/backticks are not re-interpreted)
+          # and `d` drops the placeholder.
+          sed -i -e '/{{CHANGELOG_EN}}/{' -e 'r /tmp/changelog-en.txt' -e 'd' -e '}' /tmp/release-body.md
+          sed -i -e '/{{CHANGELOG_JA}}/{' -e 'r /tmp/changelog-ja.txt' -e 'd' -e '}' /tmp/release-body.md
 
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
