@@ -1,43 +1,23 @@
-# cross configuration for building the release `orts` gnu binary.
-#
-# Why cross: the gnu binary was previously built directly on
-# `ubuntu-latest`, so its glibc floor was whatever that runner happened to
-# ship — at v0.2.0 that meant GLIBC_2.39 (Ubuntu 24.04), which fails to
-# start on Ubuntu 22.04/20.04, Debian 11/12, RHEL 8/9, Amazon Linux 2, etc.
-# Building inside a pinned cross image makes the floor a deliberate,
-# host-independent value.
-#
-# Image: cross 0.2.5 (the latest released cross) ships an Ubuntu 16.04 based
-# gnu image == glibc 2.23 + gcc 5.4. That floor comfortably covers the target
-# environments (>= Ubuntu 20.04 / Debian 11 / RHEL 8) and older. gcc 5.4 is
-# old but the whole dependency graph — including the only C/asm dependency,
-# `ring` — compiles cleanly with it. Pinned to the released tag (not the
-# moving `:main`/`:edge` Ubuntu-20.04 images) so the floor is reproducible.
+# Builds the release gnu binary in a pinned cross image so its glibc floor is
+# reproducible and host-independent (rationale in RELEASING.md). Released cross
+# 0.2.5's image is Ubuntu 16.04 = glibc 2.23 / gcc 5.4; the whole graph (incl.
+# ring) builds, and pinning the released tag — not the moving :edge — keeps the
+# floor stable.
 [target.x86_64-unknown-linux-gnu]
 image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:0.2.5"
 
-# The release build sets ORTS_REQUIRE_LICENSE_NOTICE=1, which makes
-# cli/build.rs hard-fail unless `cargo about` is available to generate the
-# embedded third-party license notice. cross runs the whole build inside the
-# container, so cargo-about must exist there too. Fetch the prebuilt static
-# musl binary (runs on the image's old glibc) instead of compiling it, and
-# verify it against its published SHA-256 before extracting (download to a
-# file first rather than piping, so a bad download fails loudly).
-#
-# Version pinned to match the host `cargo-about` install in the rust-dist
-# job (.github/workflows/ci.yml). Bump the version and the sha256 together —
-# the value is the `.sha256` sidecar at the same release URL. (Deliberately
-# not a renovate auto-bump target: the hash must change in lockstep.)
+# build.rs needs `cargo about` in the build env (it hard-fails under
+# ORTS_REQUIRE_LICENSE_NOTICE=1) and cross builds in-container, so fetch +
+# SHA-256 verify the prebuilt binary here. Pinned to the host install in
+# ci.yml; bump the version and hash together (hash = the .sha256 sidecar).
 pre-build = [
   "curl -fsSL -o /tmp/cargo-about.tar.gz https://github.com/EmbarkStudios/cargo-about/releases/download/0.9.0/cargo-about-0.9.0-x86_64-unknown-linux-musl.tar.gz && echo '7a1a1bfb3ae3b6feabe9e1d6147a6b34b85bd0339bfd8b0ec11b312dee10d99a  /tmp/cargo-about.tar.gz' | sha256sum -c - && tar -xzf /tmp/cargo-about.tar.gz -C /usr/local/bin --strip-components=1 --wildcards '*/cargo-about' && rm -f /tmp/cargo-about.tar.gz",
 ]
 
-# Forward the build's env into the container. The workspace .cargo/config.toml
-# enables clang+mold for the gnu triple via a single `rustflags` line, neither
-# of which exists in the cross image. The CI step sets a non-empty global
-# RUSTFLAGS, which replaces that line wholesale (an empty value is ignored, and
-# neither --config nor CARGO_TARGET_*_RUSTFLAGS override config-file rustflags)
-# — dropping clang+mold and falling back to the container's default cc/gcc.
+# .cargo/config.toml pins clang+mold for this triple; the container has
+# neither. The CI step's non-empty RUSTFLAGS replaces that rustflags line
+# (falling back to the container's cc/gcc) — forward it in, plus the
+# license-notice flag.
 [build.env]
 passthrough = [
   "ORTS_REQUIRE_LICENSE_NOTICE",
