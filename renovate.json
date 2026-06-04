@@ -17,6 +17,18 @@
       "matchManagers": ["cargo"],
       "matchPackagePatterns": ["^rerun$", "^re_"],
       "groupName": "rerun"
+    },
+    {
+      "description": "Auto-merge patch-level updates once required CI checks pass",
+      "matchUpdateTypes": ["patch"],
+      "automerge": true
     }
-  ]
+  ],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "automerge": true
+  },
+  "vulnerabilityAlerts": {
+    "automerge": true
+  }
 }
