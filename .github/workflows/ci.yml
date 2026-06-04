@@ -1023,12 +1023,18 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          # Non-cone mode so individual files are checked out by exact path,
+          # including `.github/release-body.md.tmpl`. Leading `/` anchors each
+          # pattern to the repo root (cone mode only takes directories, so it
+          # would not pull the template).
+          sparse-checkout-cone-mode: false
           sparse-checkout: |
-            README.md
-            LICENSE
-            Cargo.toml
-            CHANGELOG.md
-            CHANGELOG.ja.md
+            /README.md
+            /LICENSE
+            /Cargo.toml
+            /CHANGELOG.md
+            /CHANGELOG.ja.md
+            /.github/release-body.md.tmpl
 
       - name: Extract version from tag
         id: version
@@ -1160,33 +1166,14 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
-          cat > /tmp/release-body.md <<BODY
-          ## What's Changed
-
-          $(cat /tmp/changelog-en.txt)
-
-          <details><summary>日本語 / Japanese</summary>
-
-          $(cat /tmp/changelog-ja.txt)
-
-          </details>
-
-          ## Installation (cargo-binstall)
-
-          \`\`\`
-          cargo binstall --git https://github.com/sksat/orts orts-cli --version ${VERSION}
-          \`\`\`
-
-          ## Manual install
-
-          Download the tarball for your platform, verify with the \`.sha256\` sidecar, extract, and run \`./orts\`.
-
-          Targets:
-          - \`x86_64-unknown-linux-gnu\` (glibc, dynamically linked; built with \`cross\` against an old glibc, so it requires only glibc >= 2.18 — runs on Ubuntu 14.04+, Debian 8+, and any newer distro)
-          - \`x86_64-unknown-linux-musl\` (musl, fully static; runs on any Linux)
-          BODY
-          # Remove leading whitespace from heredoc indentation
-          sed -i 's/^          //' /tmp/release-body.md
+          cp .github/release-body.md.tmpl /tmp/release-body.md
+          sed -i "s/{{VERSION}}/${VERSION}/g" /tmp/release-body.md
+          # Inject the extracted changelogs verbatim in place of the
+          # placeholder lines: for the matched line, `r` queues the file
+          # (copied as-is, so its markdown/backticks are not re-interpreted)
+          # and `d` drops the placeholder.
+          sed -i -e '/{{CHANGELOG_EN}}/{' -e 'r /tmp/changelog-en.txt' -e 'd' -e '}' /tmp/release-body.md
+          sed -i -e '/{{CHANGELOG_JA}}/{' -e 'r /tmp/changelog-ja.txt' -e 'd' -e '}' /tmp/release-body.md
 
       - name: Create draft GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
