@@ -60,7 +60,7 @@ pub struct CommandConfig {
 
 impl CommandConfig {
     /// 配送先衛星インデックスを指定して host-native [`Message`] を組み立てる。
-    /// `host_seq` / `deliver_tick` は配送時に host が上書きする（ここでは 0）。
+    /// `src` は配送時に host(controller) が確定する。
     pub fn to_message(&self, sat_index: usize) -> Result<Message, String> {
         let payload = args_to_payload(&self.args).map_err(|e| {
             format!(
@@ -72,8 +72,6 @@ impl CommandConfig {
             src: NodeId::Ground,
             dst: NodeId::Satellite(sat_index as u32),
             kind: self.kind.clone(),
-            host_seq: 0,
-            deliver_tick: 0,
             payload,
         })
     }

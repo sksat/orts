@@ -598,7 +598,7 @@ FSW (WASM plugin) と地上局の間のコマンド/テレメトリ (C&T)、お�
 - **connection の属性**（host / kble / channel が決め、FSW は不知）:
   - **scope**: intra-node（同一機内）/ inter-node（別ノード・地上）。endpoint から導出される metadata 的軸。
   - **impairment**: lossless / impaired（欠落・遅延・エラー）。ただし**注入する層と粒度は shape に依存**（packet 単位 / byte span・gap / bit・frame）するので shape と完全には独立でない。
-  - **time model**: deterministic-tick（host が `deliver-tick` を確定）/ replay（記録再生）/ live（実時間）。impairment とは**独立の次元**。
+  - **time model**: deterministic-tick（host がどの tick で配送を確定するか）/ replay（記録再生）/ live（実時間）。impairment とは**独立の次元**。
 
 含意:
 - 同じ `stream-io` の口が、機内シリアル（intra・lossless、例 SpaceWire/UART）にも地上 RF リンク（inter・impaired）にも配線できる。byte-stream は inter-node 専用ではない。
@@ -622,16 +622,18 @@ variant payload {                  // エンコーディングをユースケー
     json(string),
 }
 variant node-id { ground, satellite(u32) }
-record message  { src, dst, kind, host-seq: u64, deliver-tick: u64, payload }  // 受信（host が確定）
-record outbound { dst, kind, payload }                                         // 送信（guest 側は最小）
+record message  { src, dst, kind, payload }  // 受信（src は host が確定）
+record outbound { dst, kind, payload }       // 送信（guest 側は最小）
 ```
+
+> envelope は最小限に保つ。決定論リプレイの全順序 anchor（host 採番 seq）・配送 tick・dedup 用 origin id といった host 採番メタは、それを読む consumer が現れるまで足さない（YAGNI）。
 
 `kind` はエンコーディングに依らず常に付くので型を担い、`payload` variant でエンコーディングを選べる。型付き構造体が欲しい guest は SDK の serde 層で被せる。
 
 ###### 配送意味論
 
 - **受信**: host が tick 境界でその tick の inbox を**凍結**し、guest は `recv-batch(max)` で drain する。tick 途中の新着は次 tick へ回るので、いつ・何回呼んでも観測は不変（決定論）。`tick-input` には載せず物理 snapshot を純粋に保ち、大量受信でも `max` で guest がペース制御できる。
-- **送信**: `send-message` は append。host が `src` を注入（なりすまし防止）し `host-seq`・`deliver-tick` を確定 stamp する。
+- **送信**: `send-message` は append。host が `src` を注入する（なりすまし防止）。
 
 ###### transport adapter
 
@@ -642,7 +644,7 @@ core は host が所有する transport 非依存のキュー。各入力経路�
 
 ###### 決定論とリプレイ
 
-非決定論の発生源は WebSocket の対話入力のみ（到着が壁時計依存）。host が tick 境界で **gate** して `deliver-tick` に確定・記録すれば、それは config の `[[command]]` と同形の**コマンドタイムライン**になる。これを config transport で流し直すのが**リプレイ**。物理は元々決定論なので、入力（コマンド列）さえ tick 単位で再現すれば全体が bit-for-bit 再現する。`deliver-tick` / `host-seq` を envelope に持たせたのはこの記録のため。録った運用セッションがそのまま oracle / 回帰テストになる。
+非決定論の発生源は WebSocket の対話入力のみ（到着が壁時計依存）。host が tick 境界で **gate** して「どの tick で何を配ったか」を確定・記録すれば、それは config の `[[command]]` と同形の**コマンドタイムライン**になる。これを config transport で流し直すのが**リプレイ**。物理は元々決定論なので、入力（コマンド列）さえ tick 単位で再現すれば全体が bit-for-bit 再現する。記録は config 形式のコマンドタイムライン側に持たせ、message envelope 自体には決定論メタを載せない（必要になれば前述の YAGNI 注記どおり後で足す）。録った運用セッションがそのまま oracle / 回帰テストになる。
 
 ### ミッション規模と力学モデル
 

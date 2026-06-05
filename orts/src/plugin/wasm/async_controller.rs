@@ -148,8 +148,6 @@ pub struct AsyncWasmController {
 
     // ─── msg-io transport state (mirror of sync backend) ────────
     node_id: NodeId,
-    host_seq: u64,
-    tick: u64,
     pending_inbound: Vec<Message>,
     outbound_buffer: Vec<Message>,
 }
@@ -258,8 +256,6 @@ impl AsyncWasmController {
             sample_period_s,
             name: format!("wasm-async:{label}"),
             node_id: NodeId::Satellite(0),
-            host_seq: 0,
-            tick: 0,
             pending_inbound: Vec::new(),
             outbound_buffer: Vec::new(),
         })
@@ -319,20 +315,16 @@ impl PluginController for AsyncWasmController {
             }
         })?;
 
-        // Stamp host-controlled envelope fields onto guest outbound.
+        // Inject the host-controlled `src` onto guest outbound (anti-spoof).
         for ob in outgoing {
             let ob: Outbound = convert::outbound_from_wit(ob);
             self.outbound_buffer.push(Message {
                 src: self.node_id,
                 dst: ob.dst,
                 kind: ob.kind,
-                host_seq: self.host_seq,
-                deliver_tick: self.tick,
                 payload: ob.payload,
             });
-            self.host_seq += 1;
         }
-        self.tick += 1;
 
         match command {
             Some(wit_cmd) => convert::command_from_wit(wit_cmd).map(Some),

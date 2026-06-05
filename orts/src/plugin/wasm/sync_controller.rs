@@ -76,12 +76,6 @@ pub struct WasmController {
     /// This controller's node identity, stamped as `src` on outbound
     /// messages. Defaults to `NodeId::Satellite(0)`.
     node_id: NodeId,
-    /// Monotonic sequence counter assigned to outbound messages
-    /// (`host-seq`). Gives a deterministic total order.
-    host_seq: u64,
-    /// Tick counter, incremented once per `update()`. Stamped as
-    /// `deliver-tick` on outbound messages.
-    tick: u64,
     /// Inbound messages queued via [`Self::deliver`], frozen into the
     /// next tick's inbox on `update()`.
     pending_inbound: Vec<Message>,
@@ -146,8 +140,6 @@ impl WasmController {
             name: format!("wasm:{label}"),
             _current_mode: current_mode,
             node_id: NodeId::Satellite(0),
-            host_seq: 0,
-            tick: 0,
             pending_inbound: Vec::new(),
             outbound_buffer: Vec::new(),
         })
@@ -199,7 +191,7 @@ impl PluginController for WasmController {
     }
 
     /// Drain every message the guest has emitted so far. Each message
-    /// carries the host-stamped `src`, `host_seq`, and `deliver_tick`.
+    /// carries the host-stamped `src`.
     fn take_outbound(&mut self) -> Vec<Message> {
         std::mem::take(&mut self.outbound_buffer)
     }
@@ -239,23 +231,17 @@ impl PluginController for WasmController {
 
         match response {
             GuestResponse::Tick { command, outgoing } => {
-                // Stamp host-controlled envelope fields onto each guest
-                // outbound (src injection prevents spoofing; host_seq
-                // gives a deterministic total order; deliver_tick is the
-                // tick the message was produced on) and buffer it.
+                // Inject the host-controlled `src` onto each guest outbound
+                // (prevents the guest from spoofing its origin) and buffer it.
                 for ob in outgoing {
                     let ob: Outbound = convert::outbound_from_wit(ob);
                     self.outbound_buffer.push(Message {
                         src: self.node_id,
                         dst: ob.dst,
                         kind: ob.kind,
-                        host_seq: self.host_seq,
-                        deliver_tick: self.tick,
                         payload: ob.payload,
                     });
-                    self.host_seq += 1;
                 }
-                self.tick += 1;
 
                 match command {
                     Some(wit_cmd) => convert::command_from_wit(wit_cmd).map(Some),

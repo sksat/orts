@@ -270,8 +270,6 @@ macro_rules! impl_convert {
                 src: node_id_to_wit(m.src),
                 dst: node_id_to_wit(m.dst),
                 kind: m.kind,
-                host_seq: m.host_seq,
-                deliver_tick: m.deliver_tick,
                 payload: payload_to_wit(m.payload),
             }
         }
@@ -488,16 +486,12 @@ pub mod sync {
                 src: NodeId::Ground,
                 dst: NodeId::Satellite(7),
                 kind: "orts.cmd.set-mode.v1".into(),
-                host_seq: 42,
-                deliver_tick: 100,
                 payload: Payload::key_value([("mode", Value::Text("nadir".into()))]),
             };
             let w = message_to_wit(m);
             assert!(matches!(w.src, wit::NodeId::Ground));
             assert!(matches!(w.dst, wit::NodeId::Satellite(7)));
             assert_eq!(w.kind, "orts.cmd.set-mode.v1");
-            assert_eq!(w.host_seq, 42);
-            assert_eq!(w.deliver_tick, 100);
             match &w.payload {
                 wit::Payload::KeyValue(kvs) => {
                     assert_eq!(kvs[0].name, "mode");

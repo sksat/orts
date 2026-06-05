@@ -308,8 +308,11 @@ interface types {
 
     /// transport が **受信側へ届ける** 完全なメッセージ。
     ///
-    /// `src` / `host-seq` / `deliver-tick` はホストが確定して埋める
-    /// （ゲストは送信時にこれらを指定できない。なりすまし防止と決定論）。
+    /// `src` はホストが注入する（ゲストは送信時に指定できない＝なりすまし防止）。
+    ///
+    /// NOTE: 将来、決定論リプレイの全順序 anchor（host 採番 seq）・配送 tick・
+    /// dedup 用の origin id といった host 採番メタを足すことはありうるが、
+    /// それを読む consumer が現れるまでは入れない（YAGNI）。
     record message {
         /// 送信元。ホストが注入。
         src: node-id,
@@ -317,18 +320,12 @@ interface types {
         dst: node-id,
         /// 論理型（content-type）。
         kind: msg-kind,
-        /// ホストが割り当てる決定論的な全順序の anchor。
-        /// 安定ソート・重複排除・ログ突合に使える。
-        host-seq: u64,
-        /// ホストが配送を確定した tick（WS 到着 / ISL 遅延 / config
-        /// 時刻シーケンスを全てここに吸収する）。
-        deliver-tick: u64,
         /// 本体。
         payload: payload,
     }
 
     /// ゲスト（FSW）が **送信する** メッセージ。最小限。
-    /// `src` / `host-seq` / `deliver-tick` はホストが補完する。
+    /// `src` はホストが補完する（`message` になる）。
     record outbound {
         /// 宛先（地上なら `ground`、別衛星なら `satellite(id)`）。
         dst: node-id,
@@ -407,7 +404,7 @@ interface tick-io {
 ///
 /// scope（intra / inter-node）や将来のリンク impairment（欠落・遅延）は、この
 /// channel が「何に配線されているか」の属性であり host が決める。決定論（host が
-/// `deliver-tick` を確定）は **time model** で、impairment とは別の次元。
+/// どの tick で配送を確定するか）は **time model** で、impairment とは別の次元。
 ///
 /// ## 決定論と "frozen inbox"
 ///

@@ -95,16 +95,13 @@ fn gyro_sensors(omega_x: f64) -> Sensors {
     }
 }
 
-/// Ground → satellite(0) set-mode command. The host re-stamps `src` /
-/// `host_seq` / `deliver_tick` on outbound; for inbound the test plays
-/// the router and sets them directly.
+/// Ground → satellite(0) set-mode command. The host injects `src` on
+/// outbound; for inbound the test plays the router and sets it directly.
 fn set_mode(payload: Payload) -> Message {
     Message {
         src: NodeId::Ground,
         dst: NodeId::Satellite(0),
         kind: KIND_SET_MODE.to_string(),
-        host_seq: 0,
-        deliver_tick: 0,
         payload,
     }
 }

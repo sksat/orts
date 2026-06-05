@@ -146,8 +146,10 @@ impl Payload {
 
 /// 受信側へ届く完全なメッセージ。
 ///
-/// `src` / `host_seq` / `deliver_tick` はホストが確定して埋める
-/// （ゲストは送信時にこれらを指定できない — なりすまし防止と決定論）。
+/// `src` はホストが確定して埋める（ゲストは送信時に指定できない — なりすまし防止）。
+///
+/// NOTE: 将来、決定論リプレイの全順序 anchor や配送 tick などの host 採番メタを
+/// 足すことはありうるが、それを読む consumer が現れるまでは入れない（YAGNI）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Message {
     /// 送信元。ホストが注入。
@@ -156,17 +158,13 @@ pub struct Message {
     pub dst: NodeId,
     /// 論理型（content-type）。例 `"orts.cmd.set-mode.v1"`。
     pub kind: String,
-    /// ホストが割り当てる決定論的な全順序の anchor。
-    pub host_seq: u64,
-    /// ホストが配送を確定した tick。
-    pub deliver_tick: u64,
     /// 本体。
     pub payload: Payload,
 }
 
 /// ゲスト（FSW）が送信するメッセージ。最小限。
 ///
-/// `src` / `host_seq` / `deliver_tick` はホストが補完して [`Message`] になる。
+/// `src` はホストが補完して [`Message`] になる。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Outbound {
     /// 宛先（地上なら [`NodeId::Ground`]、別衛星なら `Satellite(id)`）。

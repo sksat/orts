@@ -587,10 +587,6 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
         }
         crate::sim::command_schedule::CommandSchedule::new(scheduled)
     };
-    // Host-assigned monotonic sequence + control-tick index, stamped onto
-    // each delivered command's envelope.
-    let mut command_host_seq: u64 = 0;
-    let mut tick_index: u64 = 0;
 
     // 初期状態を記録。
     for (i, sat) in satellites.iter().enumerate() {
@@ -614,13 +610,11 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
         let dt = dt_ctrl.min(duration - t);
 
         // 時刻指定コマンド: この制御 tick の終端 (t+dt) までに due なものを
-        // 配送する。host が src/host-seq/deliver-tick を確定 stamp する。
+        // 配送する。`src` は controller(host) が確定する。
         for sc in command_schedule.drain_due(t + dt) {
-            let mut msg = sc.message.clone();
-            msg.host_seq = command_host_seq;
-            msg.deliver_tick = tick_index;
-            command_host_seq += 1;
-            satellites[sc.sat_index].controller.deliver(msg);
+            satellites[sc.sat_index]
+                .controller
+                .deliver(sc.message.clone());
         }
 
         if parallel_step {
@@ -663,7 +657,6 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
         }
 
         t += dt;
-        tick_index += 1;
 
         if t >= next_output_t - 1e-12 {
             for (i, sat) in satellites.iter().enumerate() {

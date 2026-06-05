@@ -17,8 +17,7 @@ pub struct ScheduledCommand {
     pub t: f64,
     /// 配送先衛星のインデックス（`SimParams::satellites` 内の位置）。
     pub sat_index: usize,
-    /// 配送するメッセージ。`host_seq` / `deliver_tick` は配送時に host が
-    /// 上書きする（ここではテンプレート）。
+    /// 配送するメッセージ。`src` は配送時に host が確定する。
     pub message: Message,
 }
 
@@ -66,8 +65,6 @@ mod tests {
                 src: NodeId::Ground,
                 dst: NodeId::Satellite(sat_index as u32),
                 kind: kind.to_string(),
-                host_seq: 0,
-                deliver_tick: 0,
                 payload: Payload::KeyValue(vec![]),
             },
         }

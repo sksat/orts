@@ -232,8 +232,7 @@ impl msg_io::Host for HostState {
     }
 
     /// Capture an outbound message (append). Forwarded to the outer
-    /// `update()` on the next `wait_tick`; `src` / `host-seq` /
-    /// `deliver-tick` are stamped by the host there.
+    /// `update()` on the next `wait_tick`; `src` is stamped by the host there.
     fn send_message(&mut self, msg: wit::Outbound) {
         self.outbox.push(msg);
     }
@@ -253,13 +252,13 @@ mod tests {
         HostState::new("test", input_rx, output_tx, current_mode)
     }
 
-    fn test_message(host_seq: u64) -> wit::Message {
+    /// `seq` is encoded into `kind` so tests can assert delivery order /
+    /// carry-over by message identity.
+    fn test_message(seq: u64) -> wit::Message {
         wit::Message {
             src: wit::NodeId::Ground,
             dst: wit::NodeId::Satellite(0),
-            kind: "test.cmd.v1".to_string(),
-            host_seq,
-            deliver_tick: 0,
+            kind: format!("test.cmd.{seq}"),
             payload: wit::Payload::KeyValue(vec![]),
         }
     }
@@ -321,9 +320,9 @@ mod tests {
             })
             .unwrap();
         state.wait_tick();
-        assert_eq!(state.recv_batch(1).len(), 1); // host_seq 0 drained
+        assert_eq!(state.recv_batch(1).len(), 1); // test.cmd.0 drained
 
-        // Tick 1 delivers one more; the undrained host_seq 1 must carry over,
+        // Tick 1 delivers one more; the undrained test.cmd.1 must carry over,
         // with the newly frozen delivery appended after it.
         input_tx
             .send(TickPacket {
@@ -333,8 +332,12 @@ mod tests {
             .unwrap();
         state.wait_tick();
 
-        let seqs: Vec<u64> = state.recv_batch(10).iter().map(|m| m.host_seq).collect();
-        assert_eq!(seqs, vec![1, 2]); // leftover first, then newly delivered
+        let kinds: Vec<String> = state
+            .recv_batch(10)
+            .iter()
+            .map(|m| m.kind.clone())
+            .collect();
+        assert_eq!(kinds, vec!["test.cmd.1", "test.cmd.2"]); // leftover first, then newly delivered
     }
 
     #[test]
@@ -346,12 +349,12 @@ mod tests {
         // First batch: 2 of 5, in order.
         let b1 = state.recv_batch(2);
         assert_eq!(b1.len(), 2);
-        assert_eq!(b1[0].host_seq, 0);
-        assert_eq!(b1[1].host_seq, 1);
+        assert_eq!(b1[0].kind, "test.cmd.0");
+        assert_eq!(b1[1].kind, "test.cmd.1");
         // max larger than remaining → take the rest.
         let b2 = state.recv_batch(10);
         assert_eq!(b2.len(), 3);
-        assert_eq!(b2[0].host_seq, 2);
+        assert_eq!(b2[0].kind, "test.cmd.2");
         // Exhausted.
         assert!(state.recv_batch(1).is_empty());
     }
