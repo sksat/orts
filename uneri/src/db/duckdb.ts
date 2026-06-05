@@ -3,7 +3,11 @@ import * as duckdb from "@duckdb/duckdb-wasm";
 let dbPromise: Promise<duckdb.AsyncDuckDB> | null = null;
 
 const MAX_ATTEMPTS = 3;
-const INIT_TIMEOUT_MS = 15000;
+// Generous backstop for a silently-dead/hung worker — kept long so it does NOT
+// abort a slow-but-healthy first load (large wasm fetch + compile on a slow
+// network/device). The worker `error` listener below fast-fails the common
+// CDN-unreachable case well before this fires.
+const INIT_TIMEOUT_MS = 45000;
 
 /**
  * One DuckDB-wasm instantiation attempt using the jsDelivr CDN bundles.
@@ -34,7 +38,14 @@ async function instantiateOnce(): Promise<duckdb.AsyncDuckDB> {
       };
       worker.addEventListener(
         "error",
-        () => settle(() => reject(new Error("DuckDB worker failed to load (CDN unreachable?)"))),
+        (ev: ErrorEvent) =>
+          settle(() =>
+            reject(
+              new Error(
+                `DuckDB worker failed to load (CDN unreachable?): ${ev.message || "unknown error"}`,
+              ),
+            ),
+          ),
         { once: true },
       );
       db.instantiate(bundle.mainModule, bundle.pthreadWorker).then(
@@ -72,7 +83,7 @@ export function initDuckDB(): Promise<duckdb.AsyncDuckDB> {
         }
       }
     }
-    throw lastError;
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   })();
 
   // If every attempt failed, drop the cached rejected promise so a later
