@@ -75,5 +75,12 @@ export function initDuckDB(): Promise<duckdb.AsyncDuckDB> {
     throw lastError;
   })();
 
+  // If every attempt failed, drop the cached rejected promise so a later
+  // call (e.g. after the user reconnects) retries from scratch instead of
+  // replaying the same rejection for the rest of the session.
+  dbPromise.catch(() => {
+    dbPromise = null;
+  });
+
   return dbPromise;
 }
