@@ -292,8 +292,13 @@ interface types {
         json(string),
     }
 
-    /// ノードアドレス。運用者 C&T = `ground` ↔ `satellite`、
-    /// ISL = `satellite` ↔ `satellite`。
+    /// ノードアドレス（network 層の論理アドレス）。
+    ///
+    /// node = **コンポーネントを内包する単位**（衛星 / 地上局）。機内の
+    /// コンポーネント（アクチュエータ / センサ / 通信機）は node ではない。
+    /// 運用者 C&T = `ground` ↔ `satellite`、ISL = `satellite` ↔ `satellite`。
+    /// inter-node は物理的には通信機(transceiver) ↔ 媒体 ↔ 通信機 だが、`msg-io`
+    /// はそれを隠して node ↔ node に見せる network 抽象。
     variant node-id {
         /// 地上局 / 運用者。
         ground,
@@ -372,6 +377,11 @@ interface host-env {
 ///
 /// ゲストは `wait-tick` で中断し、ホストが次の tick で再開する。
 /// `send-command` でコマンドをホストに送る。
+///
+/// 位置づけ: `tick-io` は **tick 結合の control plane**（FSW → アクチュエータ）。
+/// ここでの `command` は**アクチュエータ制御出力**で、`msg-io` が運ぶ運用
+/// メッセージ (telecommand) とは別物。通信の「形(shape)」ではなく、同期 tick 内の
+/// 型付き制御出力である点に注意。
 interface tick-io {
     use types.{tick-input, command};
 
@@ -388,10 +398,16 @@ interface tick-io {
     send-command: func(cmd: command);
 }
 
-/// ノード間メッセージング（運用 C&T + 将来の ISL）の transport 層。
+/// ノード間メッセージング（運用 C&T + 将来の ISL）。
 ///
-/// `tick-io` の制御ループとは独立。ゲストは `update` / `run` の tick 内で
-/// `recv-batch` で受信箱を drain し、`send-message` で送信する。
+/// datagram shape + `node-id` 論理アドレス + host 確定配送（決定論）から成る
+/// **network / service 抽象**（単なる byte 配送路ではない）。`tick-io`（制御）
+/// とは独立。ゲストは `update` / `run` の tick 内で `recv-batch` で受信箱を
+/// drain し、`send-message` で送信する。
+///
+/// scope（intra / inter-node）や将来のリンク impairment（欠落・遅延）は、この
+/// channel が「何に配線されているか」の属性であり host が決める。決定論（host が
+/// `deliver-tick` を確定）は **time model** で、impairment とは別の次元。
 ///
 /// ## 決定論と "frozen inbox"
 ///

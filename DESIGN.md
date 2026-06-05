@@ -587,6 +587,24 @@ FSW (WASM plugin) と地上局の間のコマンド/テレメトリ (C&T)、お�
 
 `tick-io` の `command` は「FSW → アクチュエータ」の制御出力で別物。`msg-io` は「地上局 ↔ FSW」「衛星 ↔ 衛星」のメッセージを運ぶ。
 
+###### 通信の概念モデル（component / port / connection）
+
+通信は常に **component ↔ component**。FSW が見る「口（port kind / I/O discipline）」と、その口が「何に配線されているか（connection）」を分けて考える。
+
+- **port kind**（FSW が見る面）:
+  - `tick-io` — tick 結合の **control plane**（FSW → アクチュエータ）。通信の shape ではない。
+  - `msg-io` — **node ↔ node の datagram service**。datagram shape + `node-id` 論理アドレス + host 確定配送から成る **network / service 抽象**（shape だけではない）。
+  - `stream-io`（将来）— 順序バイトの conduit。
+- **connection の属性**（host / kble / channel が決め、FSW は不知）:
+  - **scope**: intra-node（同一機内）/ inter-node（別ノード・地上）。endpoint から導出される metadata 的軸。
+  - **impairment**: lossless / impaired（欠落・遅延・エラー）。ただし**注入する層と粒度は shape に依存**（packet 単位 / byte span・gap / bit・frame）するので shape と完全には独立でない。
+  - **time model**: deterministic-tick（host が `deliver-tick` を確定）/ replay（記録再生）/ live（実時間）。impairment とは**独立の次元**。
+
+含意:
+- 同じ `stream-io` の口が、機内シリアル（intra・lossless、例 SpaceWire/UART）にも地上 RF リンク（inter・impaired）にも配線できる。byte-stream は inter-node 専用ではない。
+- `node` = component を内包する単位（衛星 / 地上局）。inter-node は物理的には通信機(transceiver) ↔ 媒体 ↔ 通信機 で、`msg-io` はそれを隠す network 抽象（link/physical 側は将来 `stream-io` / RF）。
+- これは config 軸を多数作る話ではなく **思考の枠**。orts は当面 `tick-io` / `msg-io` /（将来）`stream-io` の 3 口を実装する。
+
 ###### レイヤリング
 
 transport は dumb pipe とし、配送とアドレッシングのみを担う（`payload` は解釈しない）。fire-and-forget / request-response / ack といった interaction model は **アプリ層**（`payload` の中身 + SDK ヘルパ）に置く。こうすると同じ WIT 契約の上に複数モデルを載せられ、モデルを差し替えても契約は不変（fire-and-forget ⇄ request-response の差し替えで WIT が変わらないことを example で確認）。

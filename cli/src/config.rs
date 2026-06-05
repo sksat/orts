@@ -531,6 +531,16 @@ impl SimConfig {
             sat.validate()
                 .map_err(|e| format!("satellites[{i}]: {e}"))?;
         }
+        for (i, cmd) in self.commands.iter().enumerate() {
+            // A non-finite or negative `t` would never satisfy the
+            // schedule's `t <= t_due`, silently dropping the command.
+            if !cmd.t.is_finite() || cmd.t < 0.0 {
+                return Err(format!(
+                    "commands[{i}]: t must be finite and >= 0 (got {})",
+                    cmd.t
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1222,6 +1232,42 @@ altitude = 500
             args: serde_json::json!({ "big": 9_223_372_036_854_775_808u64 }),
         };
         assert!(cmd.to_message(0).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_non_finite_command_t() {
+        // A non-finite `t` (TOML allows `nan`/`inf`) sorts but never becomes
+        // `<= t_due`, so the command would be silently undelivered. Reject it.
+        let toml = r#"
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[command]]
+t = nan
+sat = "sat-0"
+kind = "orts.cmd.set-mode.v1"
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_negative_command_t() {
+        let toml = r#"
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[command]]
+t = -1.0
+sat = "sat-0"
+kind = "orts.cmd.set-mode.v1"
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        assert!(config.validate().is_err());
     }
 
     #[test]
