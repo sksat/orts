@@ -1732,7 +1732,7 @@ fn lz_conservation_500_orbits() {
     );
 }
 
-// Test 23: ISS 30-Day Survival with Physical Ballistic Coefficient
+// Test 24: ISS 30-Day Survival with Physical Ballistic Coefficient
 //
 // Oracle: ISS at ~400 km with physical B = Cd*A/(2m) ≈ 0.005 m²/kg
 // should survive at least 30 days without reboost. Expected decay rate

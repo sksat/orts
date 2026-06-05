@@ -604,8 +604,6 @@ mod tests {
         assert!((rw.max_momentum - 0.5).abs() < 1e-10);
     }
 
-    // Core tests
-
     // clamp_command tests
 
     #[test]
