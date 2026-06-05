@@ -74,6 +74,13 @@ async fn async_server(sim: &SimArgs, port: u16) {
         None
     };
 
+    // `orts serve` does not drive config `[[command]]` timelines (run-only);
+    // reject loudly instead of silently dropping scheduled uplinks.
+    if let Some(cfg) = &initial_config {
+        cfg.ensure_serve_supported()
+            .unwrap_or_else(|e| panic!("Error: {e}"));
+    }
+
     let texture_cache = Arc::new(TextureCache::new());
     let texture_request_tx =
         textures::spawn_texture_downloader(Arc::clone(&texture_cache), tx.clone());

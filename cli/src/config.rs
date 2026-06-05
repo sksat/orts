@@ -533,6 +533,25 @@ impl SimConfig {
         }
         Ok(())
     }
+
+    /// Reject configs that `orts serve` cannot honor.
+    ///
+    /// `[[command]]` timelines are an `orts run` (deterministic batch)
+    /// transport; the serve loop does not build/drain a `CommandSchedule`,
+    /// so a timeline would be silently dropped. Interactive commanding in
+    /// serve is the (future) WebSocket console, not a config timeline.
+    pub fn ensure_serve_supported(&self) -> Result<(), String> {
+        if !self.commands.is_empty() {
+            return Err(format!(
+                "config has {} `[[command]]` timeline entr{}: command timelines run under \
+                 `orts run`, not `orts serve` (they would be silently dropped). \
+                 Use `orts run` for scheduled commands.",
+                self.commands.len(),
+                if self.commands.len() == 1 { "y" } else { "ies" }
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1159,6 +1178,37 @@ args = { mode = "nadir", req-id = 7 }
             args: serde_json::json!({ "nested": { "a": 1 } }),
         };
         assert!(cmd.to_message(0).is_err());
+    }
+
+    #[test]
+    fn serve_rejects_command_timeline() {
+        let toml = r#"
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[command]]
+t = 1.0
+sat = "sat-0"
+kind = "orts.cmd.set-mode.v1"
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        // serve does not deliver config command timelines (run-only feature)
+        // → reject loudly instead of silently dropping them.
+        assert!(config.ensure_serve_supported().is_err());
+    }
+
+    #[test]
+    fn serve_accepts_config_without_commands() {
+        let toml = r#"
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        assert!(config.ensure_serve_supported().is_ok());
     }
 
     #[test]
