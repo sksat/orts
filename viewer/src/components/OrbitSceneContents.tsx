@@ -24,6 +24,7 @@ import {
 } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
+import { buildRenderEntries } from "./renderEntries.js";
 import { Satellite } from "./Satellite.js";
 
 // Default sun direction when no epoch is provided: ECI +X (vernal equinox).
@@ -530,17 +531,11 @@ export function OrbitSceneContents({
     ];
   }, [originPosition, centralBodyRadius, lvlhActive]);
 
-  // No useMemo: the trailBuffers Map reference (from useRef) never changes,
-  // but Scene re-renders each frame via satellitePositions, so reading entries
-  // inline picks up newly-added satellites.
-  const multiSatEntries = trailBuffers
-    ? Array.from(trailBuffers.entries()).filter(([, buf]) => buf.length > 0)
-    : null;
-
-  // Single-satellite backward compat
-  const hasTrailData = trailBuffers
-    ? Array.from(trailBuffers.values()).some((b) => b.length > 0)
-    : false;
+  // No useMemo: the Maps' references (from refs) never change, but the scene
+  // re-renders each frame, so reading inline picks up newly-added satellites.
+  // Satellites are rendered from the union of trails and positions, so one given
+  // only a position (no trail) still shows a marker.
+  const renderEntries = buildRenderEntries(trailBuffers, satellitePositions);
 
   return (
     <>
@@ -566,12 +561,11 @@ export function OrbitSceneContents({
 
       {/* Centered satellite/body: always exactly at world origin (0,0,0). */}
       {centeredSatId != null &&
-        multiSatEntries &&
         (() => {
-          const idx = multiSatEntries.findIndex(([id]) => id === centeredSatId);
-          if (idx < 0) return null;
           const pos = satellitePositions?.get(centeredSatId);
           if (!pos) return null;
+          const idx = renderEntries.findIndex((e) => e.satId === centeredSatId);
+          const color = SATELLITE_COLORS[(idx < 0 ? 0 : idx) % SATELLITE_COLORS.length];
           const centeredBodyId = entityPathToBodyId(centeredSatId);
           if (centeredBodyId != null) {
             // Render as CelestialBody at origin with physical radius + IAU orientation
@@ -600,7 +594,7 @@ export function OrbitSceneContents({
             <Satellite
               position={pos}
               scaleRadius={centralBodyRadius}
-              color={SATELLITE_COLORS[idx % SATELLITE_COLORS.length]}
+              color={color}
               referenceFrame={referenceFrame}
               epochJd={epochJd ?? undefined}
               satId={centeredSatId}
@@ -609,24 +603,6 @@ export function OrbitSceneContents({
               lvlhAxes={lvlhAxes}
             />
           );
-        })()}
-      {!multiSatEntries &&
-        isSatCentered &&
-        (() => {
-          const singlePos = satellitePositions?.values().next().value as
-            | OrbitPoint
-            | null
-            | undefined;
-          return singlePos ? (
-            <Satellite
-              position={singlePos}
-              scaleRadius={centralBodyRadius}
-              referenceFrame={referenceFrame}
-              epochJd={epochJd ?? undefined}
-              originPosition={originPosition}
-              lvlhAxes={lvlhAxes}
-            />
-          ) : null;
         })()}
 
       {/* All scene objects in a single stable tree — no ternary remounting.
@@ -647,27 +623,27 @@ export function OrbitSceneContents({
           textureBaseUrl={textureBaseUrl}
         />
 
-        {/* Multi-satellite mode */}
-        {multiSatEntries?.map(([satId, buf], index) => {
+        {/* One entry per satellite that has a trail and/or a position. */}
+        {renderEntries.map(({ satId, buf, pos }, index) => {
           const color = SATELLITE_COLORS[index % SATELLITE_COLORS.length];
-          const vc = trailVisibleCounts?.get(satId);
-          const pos = satellitePositions?.get(satId);
           const isCenteredSat = satId === centeredSatId;
           const trailScale = lvlhActive ? effectiveScaleRadius : centralBodyRadius;
           const bodyId = entityPathToBodyId(satId);
           return (
             <group key={satId}>
-              <OrbitTrail
-                trailBuffer={buf}
-                visibleCount={vc}
-                drawStart={trailDrawStarts?.get(satId)}
-                scaleRadius={trailScale}
-                color={color}
-                referenceFrame={referenceFrame}
-                epochJd={epochJd}
-                originPosition={lvlhActive ? originPosition : null}
-                lvlhAxes={lvlhActive ? lvlhAxes : null}
-              />
+              {buf && buf.length > 0 && (
+                <OrbitTrail
+                  trailBuffer={buf}
+                  visibleCount={trailVisibleCounts?.get(satId)}
+                  drawStart={trailDrawStarts?.get(satId)}
+                  scaleRadius={trailScale}
+                  color={color}
+                  referenceFrame={referenceFrame}
+                  epochJd={epochJd}
+                  originPosition={lvlhActive ? originPosition : null}
+                  lvlhAxes={lvlhActive ? lvlhAxes : null}
+                />
+              )}
               {pos && !isCenteredSat && bodyId != null && (
                 <SecondaryBody
                   bodyId={bodyId}
@@ -698,46 +674,6 @@ export function OrbitSceneContents({
             </group>
           );
         })}
-
-        {/* Single-satellite fallback (replay mode or legacy) */}
-        {!multiSatEntries &&
-          hasTrailData &&
-          (() => {
-            // Single-satellite: use first entry from trailBuffers
-            const singleBuf = trailBuffers?.values().next().value as TrailBuffer | undefined;
-            if (!singleBuf) return null;
-            const trailScale = lvlhActive ? effectiveScaleRadius : centralBodyRadius;
-            const firstSatId = trailBuffers?.keys().next().value as string | undefined;
-            const vc = firstSatId ? trailVisibleCounts?.get(firstSatId) : undefined;
-            const ds = firstSatId ? trailDrawStarts?.get(firstSatId) : undefined;
-            return (
-              <OrbitTrail
-                trailBuffer={singleBuf}
-                visibleCount={vc}
-                drawStart={ds}
-                scaleRadius={trailScale}
-                referenceFrame={referenceFrame}
-                epochJd={epochJd}
-                originPosition={lvlhActive ? originPosition : null}
-                lvlhAxes={lvlhActive ? lvlhAxes : null}
-              />
-            );
-          })()}
-        {!multiSatEntries &&
-          (() => {
-            const singlePos = satellitePositions?.values().next().value as
-              | OrbitPoint
-              | null
-              | undefined;
-            return singlePos && !isSatCentered ? (
-              <Satellite
-                position={singlePos}
-                scaleRadius={centralBodyRadius}
-                referenceFrame={referenceFrame}
-                epochJd={epochJd ?? undefined}
-              />
-            ) : null;
-          })()}
       </SmoothOriginGroup>
 
       {/* Reference axes: full ECI axes for body-centered, small LVLH reference for satellite-centered */}
