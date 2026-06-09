@@ -97,7 +97,7 @@ pub fn parse(text: &str) -> Result<Omm, TleParseError> {
         .get(9..17)
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(String::from);
+        .map(normalize_intl_designator);
 
     let epoch_year_2digit = parse_field::<u32>(line1, 18, 20, 1, "epoch_year")?;
     let epoch_day = parse_field::<f64>(line1, 20, 32, 1, "epoch_day")?;
@@ -193,6 +193,22 @@ fn decode_catalog_number(field: &str) -> Result<u32, TleParseError> {
         return Err(invalid());
     }
     Ok(leading * 10000 + rest)
+}
+
+/// Normalize a TLE international designator (`YYNNNPPP`) to the OMM `OBJECT_ID`
+/// form (`YYYY-NNNPPP`), e.g. `"98067A"` → `"1998-067A"`, so the field matches
+/// across TLE and OMM (it is the same COSPAR id). The 2-digit launch year uses
+/// the NORAD pivot (57-99 → 1900s, else 2000s; Sputnik 1957 is the floor).
+/// Inputs that don't start with two digits are returned unchanged.
+fn normalize_intl_designator(raw: &str) -> String {
+    let bytes = raw.as_bytes();
+    if raw.len() > 2 && bytes[0].is_ascii_digit() && bytes[1].is_ascii_digit() {
+        let yy: u32 = raw[..2].parse().unwrap_or(0);
+        let year = if yy >= 57 { 1900 + yy } else { 2000 + yy };
+        format!("{year}-{}", &raw[2..])
+    } else {
+        String::from(raw)
+    }
 }
 
 /// Parse a fixed-width numeric field from a TLE line.
@@ -302,7 +318,7 @@ ISS (ZARYA)
     fn parse_iss_3line() {
         let omm = parse(ISS_TLE).unwrap();
         assert_eq!(omm.object_name.as_deref(), Some("ISS (ZARYA)"));
-        assert_eq!(omm.object_id.as_deref(), Some("98067A"));
+        assert_eq!(omm.object_id.as_deref(), Some("1998-067A"));
         assert_eq!(omm.norad_cat_id, 25544);
         assert!((omm.inclination.to_degrees() - 51.64).abs() < 0.01);
         assert!((omm.raan.to_degrees() - 208.652).abs() < 0.01);
@@ -472,5 +488,14 @@ ISS (ZARYA)
         assert!(decode_catalog_number("O0000").is_err());
         // Non-digit trailing is rejected.
         assert!(decode_catalog_number("A00X0").is_err());
+    }
+
+    #[test]
+    fn intl_designator_normalized_to_omm_form() {
+        assert_eq!(normalize_intl_designator("98067A"), "1998-067A");
+        assert_eq!(normalize_intl_designator("04022A"), "2004-022A");
+        assert_eq!(normalize_intl_designator("57001B"), "1957-001B"); // Sputnik-era floor
+        assert_eq!(normalize_intl_designator("20001AB"), "2020-001AB"); // multi-letter piece
+        assert_eq!(normalize_intl_designator("XYZ"), "XYZ"); // unparseable left as-is
     }
 }
