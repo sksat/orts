@@ -86,6 +86,9 @@ export function OrbitViewer({
 
   // Map the public frame onto the renderer's internal ReferenceFrame; origin and
   // LVLH axes are derived inside OrbitSceneContents from the satellite positions.
+  // TODO(#90): satellite-centred `inertial` and `localOrbital` both collapse to
+  // the same internal frame, and OrbitSceneContents always applies LVLH for a
+  // satellite-centred view — so the `inertial` option is currently ignored.
   const internalFrame = useMemo(
     () => resolveFrameContext(referenceFrame, () => undefined).referenceFrame,
     [referenceFrame],
