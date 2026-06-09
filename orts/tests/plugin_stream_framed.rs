@@ -262,3 +262,22 @@ fn duplicate_close_is_idempotent() {
     ctrl.update(&obs(&sc, &sensors, &act))
         .expect("duplicate close must not fault the simulation");
 }
+
+#[test]
+fn empty_delivery_to_undeclared_stream_still_faults() {
+    let Some(mut ctrl) = load() else { return };
+    let (sc, sensors, act) = (
+        spacecraft(),
+        gyro_sensors(SETTLED),
+        ActuatorTelemetry::default(),
+    );
+
+    // An *empty, non-close* chunk to an undeclared stream is a host wiring
+    // bug. It must still be validated (fault) — not silently skipped just
+    // because it carries no bytes (only a pure close is exempt).
+    ctrl.stream_deliver("not-a-real-stream", Vec::new());
+    assert!(
+        ctrl.update(&obs(&sc, &sensors, &act)).is_err(),
+        "delivery to an undeclared stream must fault the simulation"
+    );
+}

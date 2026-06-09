@@ -154,10 +154,13 @@ impl tick_io::Host for AsyncHostState {
                 self.inbox.extend(packet.inbox);
                 // Freeze this tick's stream-io byte deliveries the same way.
                 for d in packet.stream_inbound {
-                    // Skip `deliver` for close-only events (empty bytes) so a
-                    // duplicate / teardown close stays idempotent (delivering
-                    // to a closed/undeclared stream would latch a fault).
-                    if !d.bytes.is_empty() {
+                    // Skip `deliver` only for a *pure close* event (closed +
+                    // no bytes) so a duplicate / teardown close stays
+                    // idempotent. Any other delivery — including an empty
+                    // non-close chunk — still goes through `deliver` to
+                    // validate the stream name/state (latching a host fault
+                    // on a wiring bug: undeclared / already-closed stream).
+                    if !(d.closed && d.bytes.is_empty()) {
                         self.streams.deliver(&d.name, &d.bytes);
                     }
                     if d.closed {
