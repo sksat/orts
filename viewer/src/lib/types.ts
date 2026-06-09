@@ -106,12 +106,6 @@ export interface OrbitViewerProps {
   epochJd?: number;
   /** Elapsed seconds since the epoch, for time-dependent Sun/rotation. Default 0. */
   time?: number;
-  /**
-   * Override the Sun direction as a unit vector in the inertial frame.
-   * Bypasses the WASM ephemeris; useful when you have no epoch but still want
-   * to control lighting.
-   */
-  sunDirection?: Vec3;
   /** Base URL for high-resolution body textures (e.g. `"/textures/"`). */
   textureBaseUrl?: string;
   /** Class applied to the wrapping element. */
