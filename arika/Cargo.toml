@@ -14,6 +14,11 @@ categories = ["science", "science::geo"]
 [dependencies]
 nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
+# OMM JSON parsing (arika::omm::json). no_std via `alloc`; pulled in only when
+# the `alloc` feature is on (the element-set parsers live behind `alloc`).
+serde_json = { version = "1", default-features = false, features = [
+    "alloc",
+], optional = true }
 libm = "0.2"
 ureq = { workspace = true, optional = true }
 
@@ -23,6 +28,6 @@ trybuild = "1.0.116"
 
 [features]
 default = ["std"]
-std = ["alloc", "nalgebra/std", "serde/std"]
-alloc = ["serde/alloc"]
+std = ["alloc", "nalgebra/std", "serde/std", "serde_json?/std"]
+alloc = ["serde/alloc", "dep:serde_json"]
 fetch-horizons = ["std", "dep:ureq"]

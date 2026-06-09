@@ -10,6 +10,8 @@
 //! at parse time. Convert to classical elements with
 //! [`Omm::to_keplerian_elements`].
 
+pub mod json;
+
 use alloc::string::String;
 
 // In `no_std` builds f64 transcendentals (`cbrt`) resolve via libm through this
