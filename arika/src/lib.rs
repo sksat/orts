@@ -19,6 +19,8 @@ pub mod omm;
 pub mod planets;
 pub mod rotation;
 pub mod sun;
+#[cfg(feature = "alloc")]
+pub mod tle;
 
 use nalgebra::{Matrix3, Rotation3, UnitQuaternion, Vector3};
 
