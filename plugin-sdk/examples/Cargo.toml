@@ -9,6 +9,7 @@ members = [
     "transfer-burn-with-tcm",
     "commandable-mode-ff",
     "commandable-mode-rr",
+    "stream-framed-commander",
 ]
 # nos3-adcs is excluded from the workspace because its build.rs requires
 # network access (git clone of nasa-itc/generic_adcs). Build it separately:

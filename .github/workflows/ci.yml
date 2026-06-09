@@ -332,6 +332,7 @@ jobs:
             --test oracle_plugin_wasm_pd_rw \
             --test wasm_async_backend \
             --test plugin_msg_commandable_mode \
+            --test plugin_stream_framed \
             --test block_on_from_spawn_blocking
 
   # NOS3 ADCS SILS E2E: builds the NOS3 generic_adcs WASM plugin

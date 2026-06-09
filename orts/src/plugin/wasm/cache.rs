@@ -140,7 +140,10 @@ impl WasmPluginCache {
         config: &str,
     ) -> Result<WasmController, PluginError> {
         let pre = self.get_or_load_sync(path)?;
-        WasmController::new(pre, label, config)
+        // No stream-io streams via the cached factory path yet; config
+        // `[[stream]]` wiring is a follow-up. Direct constructors (tests /
+        // future bridge) pass the declared names.
+        WasmController::new(pre, label, config, Vec::new())
     }
 
     /// Legacy alias for [`build_sync_controller`](Self::build_sync_controller).
@@ -188,7 +191,8 @@ impl WasmPluginCache {
         config: &str,
     ) -> Result<AsyncWasmController, PluginError> {
         let built = self.get_or_load_async(path)?;
-        AsyncWasmController::new(built, label, config)
+        // No stream-io streams via the cached factory path yet (see sync).
+        AsyncWasmController::new(built, label, config, Vec::new())
     }
 
     /// Borrow the async engine, creating it if this is the first

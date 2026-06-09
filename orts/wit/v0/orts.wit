@@ -334,6 +334,39 @@ interface types {
         /// 本体。
         payload: payload,
     }
+
+    // ─── stream-io（byte-stream 接続 / kble 統合）の型 ──────────────
+
+    /// `stream-io` のローカルストリーム名。FSW は自分の口だけを名前で識別する
+    /// （例 `"c2a"` / `"uart0"`）。host が外部 URL の (sat, stream) に対応づけ、
+    /// guest は他衛星の stream を指定できない。
+    type stream-name = string;
+
+    /// `read` の結果。`no-data`（今 tick はデータ無し・相手は生存）と
+    /// `closed`（相手切断）を区別する — 空 `list<u8>` だけでは判別できない。
+    ///
+    /// NOTE: variant にしているのは、将来 RF/erasure 合成のため `gap` /
+    /// `overrun` といったイベントを表現する余地を残すため（v1 では data /
+    /// no-data / closed のみ）。
+    variant stream-read {
+        /// 読めたバイト列（`max` 以下、長さ > 0）。
+        data(list<u8>),
+        /// この tick の凍結バッファは空（相手は生存）。
+        no-data,
+        /// 相手（対向 / kble 側）が切断した。以後データは来ない。
+        closed,
+    }
+
+    /// `read` / `write` の失敗。
+    variant stream-error {
+        /// その名前の stream は構成されていない。
+        unknown-stream,
+        /// 送信キューが溢れた。byte drop はせず接続/シミュレーションを止める
+        /// （drop はフレーム破壊を隠して解析不能にするため）。
+        overrun,
+        /// stream は既に閉じている。
+        closed,
+    }
 }
 
 /// ゲストがホストに対して呼び出せるサービス（host import）。
@@ -428,6 +461,30 @@ interface msg-io {
     send-message: func(msg: outbound);
 }
 
+/// バイトストリーム接続（[`kble`](https://github.com/arkedge/kble) virtual
+/// harness 統合 / 将来の RF seam）。orts は中身を解釈しない **dumb byte
+/// conduit**。framing（EB90 / C2A / CCSDS / 独自）やプロトコル解釈は FSW 側 +
+/// kble pipeline の責務。`msg-io`（orts-native の packet 運用模擬）とは別物の
+/// 兄弟として併存し、FSW は deploy で使い分ける。
+///
+/// `msg-io` と同様、host は tick 境界で受信バッファを凍結し送信を flush する
+/// （決定論を保つ）。連続 UART の inter-byte timing や短い timeout 検証は
+/// **非目標**（C2A 等フレーム単位プロトコルは許容、PHY/UART 代替ではない）。
+///
+/// 外部接続は live（`ws://` / stdio で kble と実時間接続・非決定論）と replay
+/// （録った byte chunks を tick-stamp して決定論再生・将来）の 2 モードを想定。
+interface stream-io {
+    use types.{stream-name, stream-read, stream-error};
+
+    /// 名前付き stream の凍結受信バッファから最大 `max` バイトを取り出す。
+    /// （`stream` は WIT 予約語のため引数名は `name`。）
+    read: func(name: stream-name, max: u32) -> result<stream-read, stream-error>;
+
+    /// 名前付き stream へバイト列を書く（append、次の tick 境界で flush）。
+    /// 送信キューが上限を超えると `overrun`（byte drop はしない）。
+    write: func(name: stream-name, bytes: list<u8>) -> result<_, stream-error>;
+}
+
 /// プラグイン。ゲストがメインループを持ち、ホストは tick-io で駆動する。
 ///
 /// コールバック型（`init` + 毎 tick `update`）のゲストも SDK の
@@ -450,6 +507,7 @@ world plugin {
     import host-env;
     import tick-io;
     import msg-io;
+    import stream-io;
 
     /// メタデータを取得する。config の早期検証を兼ねる。
     /// 不正な config の場合は `Err` を返すこと。

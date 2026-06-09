@@ -406,6 +406,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "orts-example-plugin-stream-framed-commander"
+version = "0.0.0"
+dependencies = [
+ "orts-plugin-sdk",
+]
+
+[[package]]
 name = "orts-example-plugin-transfer-burn-with-tcm"
 version = "0.0.0"
 dependencies = [
