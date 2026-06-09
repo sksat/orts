@@ -361,8 +361,9 @@ interface types {
     variant stream-error {
         /// その名前の stream は構成されていない。
         unknown-stream,
-        /// 送信キューが溢れた。byte drop はせず接続/シミュレーションを止める
-        /// （drop はフレーム破壊を隠して解析不能にするため）。
+        /// 送受信いずれかの有界キューが溢れた（`read` / `write` 双方で返りうる）。
+        /// byte drop はせず接続/シミュレーションを止める（drop はフレーム破壊を
+        /// 隠して解析不能にするため）。
         overrun,
         /// stream は既に閉じている。
         closed,

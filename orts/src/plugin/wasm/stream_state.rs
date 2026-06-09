@@ -52,7 +52,8 @@ pub(super) struct StreamDelivery {
 pub(super) enum ReadOutcome {
     /// Bytes drained from the frozen inbound buffer (length > 0).
     Data(Vec<u8>),
-    /// Inbound buffer empty this tick (or `max == 0`); peer still connected.
+    /// Nothing to return this tick: inbound buffer empty, or `max == 0`.
+    /// Distinct from `Closed` — observing a close requires `max > 0`.
     NoData,
     /// Peer closed and the inbound buffer is drained — no more bytes.
     Closed,
