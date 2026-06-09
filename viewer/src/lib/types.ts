@@ -53,8 +53,10 @@ export interface SatelliteState {
   trail?: readonly TrailPoint[];
   /**
    * Opaque token that, when changed, forces the trail's GPU buffer to be rebuilt
-   * from scratch. Bump it after a discontinuity (e.g. seeking, a new run) so a
-   * same-length-but-different trail isn't mistaken for an append.
+   * from scratch. The append/rebuild diff only inspects the trail's length and
+   * its last point, so you MUST bump this whenever you rewrite *existing* points
+   * (seeking, a new run, editing earlier history) — otherwise a same-length edit
+   * to interior points is mistaken for "unchanged" and won't reach the GPU.
    */
   trailVersion?: string | number;
   /** Marker/trail colour as a 0xRRGGBB integer. Defaults to a palette colour. */
@@ -85,6 +87,10 @@ export interface CentralBody {
  * - `{ satelliteId }` + `localOrbital` — that satellite at the origin, LVLH axes
  *   (radial / along-track / cross-track). Requires the satellite's velocity;
  *   falls back to `inertial` if it's missing.
+ *
+ * KNOWN LIMITATION (#90): satellite-centred views currently always render in
+ * LVLH when velocity is available — the `inertial` vs `localOrbital` choice is
+ * not yet honoured for a satellite centre.
  */
 export type ViewerReferenceFrame =
   | { center: "centralBody"; orientation?: "inertial" | "bodyFixed" }

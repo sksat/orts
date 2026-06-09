@@ -117,6 +117,10 @@ export function OrbitViewer({
 
   return (
     <div className={className} style={{ width: "100%", height: "100%", ...style }}>
+      {/* Set the camera up via the prop rather than mutating the global
+          THREE.Object3D.DEFAULT_UP (as the app's Scene does): a library shouldn't
+          change a global that affects the embedder's own Three.js objects.
+          CameraLvlhTracker keeps camera.up correct each frame. */}
       <Canvas
         camera={{ position: DEFAULT_CAMERA_POSITION, up: SCENE_UP, fov: 60, near: 0.01, far: 1000 }}
         gl={{ logarithmicDepthBuffer: true }}

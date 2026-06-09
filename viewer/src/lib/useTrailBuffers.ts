@@ -24,6 +24,11 @@ interface Entry {
 export function useTrailBuffers(satellites: readonly SatelliteState[]): Map<string, TrailBuffer> {
   const store = useRef(new Map<string, Entry>());
 
+  // Reconciled in useMemo (render phase) rather than an effect so children see
+  // the latest points in the same commit — no one-frame trail lag. This is safe
+  // under StrictMode / aborted renders because it's idempotent: decideTrailUpdate
+  // compares against the stored sync state, so a repeated run yields "noop" and
+  // re-applies nothing. (Rendering the same satellites twice never double-appends.)
   return useMemo(() => {
     const entries = store.current;
     const live = new Map<string, TrailBuffer>();

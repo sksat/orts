@@ -422,6 +422,9 @@ export function OrbitSceneContents({
 
   // LVLH body-frame mode: active when satellite-centered (not body entity) with valid axes.
   // Body entities (Moon, Mars) use IAU rotation in ECI, not LVLH.
+  // TODO(#90): this is inferred purely from "satellite-centered + velocity"; it
+  // ignores any caller-selected orientation, so a satellite-centered *inertial*
+  // frame still renders as LVLH. Honouring inertial needs an explicit signal here.
   const lvlhActive =
     isSatCentered && centeredBodyId == null && lvlhAxes != null && originPosition != null;
 
