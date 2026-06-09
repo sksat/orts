@@ -282,16 +282,23 @@ fn parse_assumed_decimal(
         return Ok(0.0);
     }
 
-    // Find the exponent sign (last '+' or '-' that isn't the leading sign).
-    let (mantissa_str, exp_str) = if let Some(pos) = s[1..].rfind(['+', '-']) {
-        let pos = pos + 1; // adjust for the [1..] offset
-        (&s[..pos], &s[pos..])
-    } else {
-        return Err(TleParseError::InvalidField {
-            line: line_num,
-            field,
-            value: s.to_string(),
-        });
+    // Find the exponent sign: the last '+' or '-' after the first character
+    // (the first char may be the mantissa's own sign). Iterate by char so a
+    // malformed multi-byte field can't panic on a non-char-boundary byte slice.
+    let exp_sign = s
+        .char_indices()
+        .skip(1)
+        .filter(|&(_, c)| c == '+' || c == '-')
+        .last();
+    let (mantissa_str, exp_str) = match exp_sign {
+        Some((pos, _)) => (&s[..pos], &s[pos..]),
+        None => {
+            return Err(TleParseError::InvalidField {
+                line: line_num,
+                field,
+                value: s.to_string(),
+            });
+        }
     };
 
     // Prepend "0." to the mantissa to apply the assumed decimal point.
@@ -508,6 +515,15 @@ ISS (ZARYA)
         // GEO TLE has "00000+0" → 0.0
         let omm = parse(GEO_TLE).unwrap();
         assert_eq!(omm.bstar, 0.0, "GEO B* should be 0.0, got {}", omm.bstar);
+    }
+
+    #[test]
+    fn assumed_decimal_rejects_malformed_without_panicking() {
+        // A single sign char, or a leading multi-byte char, must Err — not panic
+        // (parsers must tolerate untrusted element-set text).
+        assert!(parse_assumed_decimal("+", 0, 1, 1, "bstar").is_err());
+        let minus = "\u{2212}"; // U+2212 MINUS SIGN (3 bytes)
+        assert!(parse_assumed_decimal(minus, 0, minus.len(), 1, "bstar").is_err());
     }
 
     #[test]
