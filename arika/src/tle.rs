@@ -108,6 +108,22 @@ pub fn parse(text: &str) -> Result<Omm, TleParseError> {
 
     let epoch_year_2digit = parse_field::<u32>(line1, 18, 20, 1, "epoch_year")?;
     let epoch_day = parse_field::<f64>(line1, 20, 32, 1, "epoch_day")?;
+    // Validate day-of-year against the (leap-aware) year length so a malformed
+    // field (e.g. 0.0 or 367.0) can't silently roll into an adjacent year.
+    let year = if epoch_year_2digit >= 57 {
+        1900 + epoch_year_2digit
+    } else {
+        2000 + epoch_year_2digit
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let max_day = if leap { 367.0 } else { 366.0 };
+    if !(1.0..max_day).contains(&epoch_day) {
+        return Err(TleParseError::InvalidField {
+            line: 1,
+            field: "epoch_day",
+            value: format!("{epoch_day}"),
+        });
+    }
     let epoch = Epoch::from_tle_epoch(epoch_year_2digit, epoch_day);
 
     // B* drag term (columns 53-61, assumed decimal point notation):
@@ -397,6 +413,15 @@ ISS (ZARYA)
         assert_eq!(dt.month, 3);
         assert_eq!(dt.day, 19);
         assert_eq!(dt.hour, 12);
+    }
+
+    #[test]
+    fn rejects_out_of_range_epoch_day() {
+        // day-of-year must be 1.0 ≤ day < 366 (367 in a leap year).
+        let day_zero = ISS_TLE_2LINE.replace("24079.50000000", "24000.00000000");
+        assert!(parse(&day_zero).is_err(), "day 0.0 must be rejected");
+        let day_high = ISS_TLE_2LINE.replace("24079.50000000", "24367.00000000");
+        assert!(parse(&day_high).is_err(), "day 367.0 must be rejected");
     }
 
     #[test]

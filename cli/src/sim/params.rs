@@ -188,8 +188,14 @@ impl SimParams {
 
         let satellites = if !args.sats.is_empty() {
             // --sat flags provided: parse each spec
-            if args.tle.is_some() || args.tle_line1.is_some() || args.norad_id.is_some() {
-                panic!("Cannot specify both --sat and --tle/--tle-line1/--tle-line2/--norad-id");
+            if args.tle.is_some()
+                || args.omm.is_some()
+                || args.tle_line1.is_some()
+                || args.norad_id.is_some()
+            {
+                panic!(
+                    "Cannot specify both --sat and --tle / --omm / --tle-line1 / --tle-line2 / --norad-id"
+                );
             }
             args.sats
                 .iter()
@@ -442,32 +448,27 @@ impl SimParams {
     }
 
     pub fn parse_tle_from_args(args: &SimArgs) -> Option<Omm> {
-        // --norad-id: fetch from CelesTrak
+        // --norad-id: fetch from CelesTrak / SatNOGS.
         if let Some(norad_id) = args.norad_id {
-            if args.tle.is_some() || args.tle_line1.is_some() {
-                panic!("Cannot specify both --norad-id and --tle/--tle-line1/--tle-line2");
+            if args.tle.is_some() || args.omm.is_some() || args.tle_line1.is_some() {
+                panic!("Cannot combine --norad-id with --tle / --omm / --tle-line1 / --tle-line2");
             }
             return Some(fetch_tle_by_norad_id(norad_id));
         }
+        if args.tle.is_some() && args.omm.is_some() {
+            panic!("Cannot specify both --tle and --omm");
+        }
 
         if let Some(path) = &args.tle {
-            let text = if path == "-" {
-                use std::io::Read;
-                let mut buf = String::new();
-                std::io::stdin()
-                    .read_to_string(&mut buf)
-                    .unwrap_or_else(|e| panic!("Failed to read TLE from stdin: {e}"));
-                buf
-            } else {
-                std::fs::read_to_string(path)
-                    .unwrap_or_else(|e| panic!("Failed to read TLE file '{path}': {e}"))
-            };
-            // --tle file/stdin accepts any element-set serialization (TLE or
-            // OMM JSON/KVN/XML), detected from the content.
-            Some(
-                arika::omm::parse(&text)
-                    .unwrap_or_else(|e| panic!("Failed to parse element set: {e}")),
-            )
+            let text = Self::read_orbit_source(path, "TLE");
+            Some(arika::tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE: {e}")))
+        } else if let Some(path) = &args.omm {
+            let text = Self::read_orbit_source(path, "OMM");
+            // --omm is for OMM serializations (JSON/KVN/XML); route TLE to --tle.
+            if arika::omm::detect(&text) == Some(arika::omm::Format::Tle) {
+                panic!("--omm expects an OMM file (JSON/KVN/XML); use --tle for TLE");
+            }
+            Some(arika::omm::parse(&text).unwrap_or_else(|e| panic!("Failed to parse OMM: {e}")))
         } else if let (Some(line1), Some(line2)) = (&args.tle_line1, &args.tle_line2) {
             let text = format!("{line1}\n{line2}");
             Some(arika::tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE: {e}")))
@@ -475,6 +476,21 @@ impl SimParams {
             panic!("Both --tle-line1 and --tle-line2 must be specified together");
         } else {
             None
+        }
+    }
+
+    /// Read an orbit-source argument from a file path, or stdin if `path == "-"`.
+    fn read_orbit_source(path: &str, what: &str) -> String {
+        if path == "-" {
+            use std::io::Read;
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .unwrap_or_else(|e| panic!("Failed to read {what} from stdin: {e}"));
+            buf
+        } else {
+            std::fs::read_to_string(path)
+                .unwrap_or_else(|e| panic!("Failed to read {what} file '{path}': {e}"))
         }
     }
 }
@@ -493,6 +509,7 @@ mod tests {
             stream_interval: None,
             epoch: None,
             tle: None,
+            omm: None,
             tle_line1: None,
             tle_line2: None,
             norad_id: None,
@@ -526,6 +543,7 @@ mod tests {
             stream_interval: Some(2.0),
             epoch: None,
             tle: None,
+            omm: None,
             tle_line1: None,
             tle_line2: None,
             norad_id: None,
@@ -559,6 +577,7 @@ mod tests {
             stream_interval: Some(1.0),
             epoch: None,
             tle: None,
+            omm: None,
             tle_line1: None,
             tle_line2: None,
             norad_id: None,
@@ -587,6 +606,7 @@ mod tests {
             stream_interval: Some(20.0),
             epoch: None,
             tle: None,
+            omm: None,
             tle_line1: None,
             tle_line2: None,
             norad_id: None,
@@ -617,6 +637,7 @@ mod tests {
             stream_interval: None,
             epoch: Some("2024-03-20T12:00:00Z".to_string()),
             tle: None,
+            omm: None,
             tle_line1: None,
             tle_line2: None,
             norad_id: None,
@@ -642,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Cannot specify both")]
+    #[should_panic(expected = "Cannot combine --norad-id")]
     fn sim_params_norad_id_conflicts_with_tle() {
         let args = SimArgs {
             body: "earth".to_string(),
@@ -651,6 +672,7 @@ mod tests {
             stream_interval: None,
             epoch: None,
             tle: None,
+            omm: None,
             tle_line1: Some(
                 "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string(),
             ),
@@ -684,6 +706,7 @@ mod tests {
             stream_interval: None,
             epoch: None,
             tle: None,
+            omm: None,
             tle_line1: Some(
                 "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string(),
             ),
@@ -743,7 +766,8 @@ mod tests {
             output_interval: None,
             stream_interval: None,
             epoch: None,
-            tle: Some(path),
+            tle: None,
+            omm: Some(path),
             tle_line1: None,
             tle_line2: None,
             norad_id: None,
@@ -782,6 +806,7 @@ mod tests {
             stream_interval: None,
             epoch: None,
             tle: None,
+            omm: None,
             tle_line1: Some(
                 "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string(),
             ),
@@ -828,6 +853,7 @@ mod tests {
             stream_interval: None,
             epoch: Some("2025-01-01T00:00:00Z".to_string()),
             tle: None,
+            omm: None,
             tle_line1: Some(
                 "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string(),
             ),
@@ -868,6 +894,7 @@ mod tests {
             stream_interval: None,
             epoch: None,
             tle: None,
+            omm: None,
             tle_line1: None,
             tle_line2: None,
             norad_id: None,
@@ -904,6 +931,7 @@ mod tests {
             stream_interval: None,
             epoch: None,
             tle: None,
+            omm: None,
             tle_line1: None,
             tle_line2: None,
             norad_id: None,
