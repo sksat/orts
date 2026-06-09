@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { type BodyRenderInfo, getBodyRenderInfo } from "../bodies.js";
 import { type TextureResolution, useTextureResolution } from "../hooks/useTextureResolution.js";
@@ -31,12 +31,21 @@ interface CelestialBodyProps {
 
 const FALLBACK_CHAIN: TextureResolution[] = ["16k", "8k", "4k"];
 
+// Decode off the main thread via createImageBitmap (see EarthBody). The bitmap
+// is pre-flipped to match TextureLoader; WebGL can't flip an ImageBitmap on
+// upload, so texture.flipY is off.
+const bitmapLoader = new THREE.ImageBitmapLoader();
+bitmapLoader.setOptions({ imageOrientation: "flipY" });
+
 function loadTexture(url: string): Promise<THREE.Texture | null> {
   return new Promise((resolve) => {
-    new THREE.TextureLoader().load(
+    bitmapLoader.load(
       url,
-      (tex) => {
+      (bitmap) => {
+        const tex = new THREE.Texture(bitmap);
         tex.colorSpace = THREE.SRGBColorSpace;
+        tex.flipY = false;
+        tex.needsUpdate = true;
         resolve(tex);
       },
       undefined,
@@ -61,6 +70,9 @@ function TexturedBody({
   const [texture, setTexture] = useState<THREE.Texture | null>(null);
   const [baseLoaded, setBaseLoaded] = useState(false);
   const [upgraded, setUpgraded] = useState(false);
+  // Persisted across effect re-runs (e.g. textureRevision bumps) so upgrades
+  // never overlap, not just within a single effect execution.
+  const inFlightRef = useRef(false);
 
   // Load base texture
   useEffect(() => {
@@ -91,36 +103,60 @@ function TexturedBody({
     if (!baseLoaded || !renderInfo.textureBaseName) return;
     if (!targetResolution || targetResolution === "2k") return;
     if (upgraded) return;
+    // Only upgrade when a real texture source is provided (a connected orts
+    // server, or an explicit base URL). No source → keep the bundled 2K.
+    if (!textureBaseUrl) return;
 
     let cancelled = false;
-    const basePath = textureBaseUrl ?? `${import.meta.env.BASE_URL}textures/`;
+    const basePath = textureBaseUrl;
     const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);
     const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
 
     async function tryUpgrade() {
-      for (const res of candidates) {
-        if (cancelled) return;
-        const url = `${basePath}${renderInfo.textureBaseName}_${res}.jpg`;
-        const newTex = await loadTexture(url);
-        if (cancelled) {
-          newTex?.dispose();
-          return;
+      // Don't stack a second load while one is in flight: decode is off-thread
+      // (ImageBitmapLoader) but the GPU upload is still synchronous on the main thread.
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      try {
+        for (const res of candidates) {
+          if (cancelled) return;
+          const url = `${basePath}${renderInfo.textureBaseName}_${res}.jpg`;
+          const newTex = await loadTexture(url);
+          if (cancelled) {
+            newTex?.dispose();
+            return;
+          }
+          if (newTex) {
+            setTexture((old) => {
+              old?.dispose();
+              return newTex;
+            });
+            setUpgraded(true);
+            return;
+          }
         }
-        if (newTex) {
-          setTexture((old) => {
-            old?.dispose();
-            return newTex;
-          });
-          setUpgraded(true);
-          return;
-        }
+      } finally {
+        inFlightRef.current = false;
       }
     }
     tryUpgrade();
 
-    // Periodic retry every 10s until upgrade succeeds or component unmounts.
+    // Bounded fallback poll (textureRevision bump is the primary re-trigger).
+    // Stop after MAX_RETRIES so a permanently unavailable resolution doesn't
+    // loop forever, and never re-upload while a load is already running.
+    let attempts = 0;
+    const MAX_RETRIES = 3;
     const timer = setInterval(() => {
-      if (!cancelled) tryUpgrade();
+      if (cancelled) return;
+      // A load is still in flight — skip without spending a retry, so a slow load
+      // (>10s) doesn't exhaust the budget on ticks that tryUpgrade would bail on.
+      if (inFlightRef.current) return;
+      if (attempts >= MAX_RETRIES) {
+        clearInterval(timer);
+        return;
+      }
+      attempts += 1;
+      tryUpgrade();
     }, 10_000);
 
     return () => {

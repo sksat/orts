@@ -40,15 +40,25 @@ interface EarthBodyProps {
   textureBaseUrl?: string;
 }
 
+// Decode textures off the main thread via createImageBitmap, so a large texture
+// doesn't decode synchronously while uploading (the dominant source of frame
+// hitches on big textures). The bitmap is pre-flipped to match TextureLoader's
+// default; WebGL can't flip an ImageBitmap at upload, so texture.flipY is off.
+const bitmapLoader = new THREE.ImageBitmapLoader();
+bitmapLoader.setOptions({ imageOrientation: "flipY" });
+
 /**
  * Try loading a texture by URL. Returns the loaded texture or null on failure.
  */
 function loadTexture(url: string): Promise<THREE.Texture | null> {
   return new Promise((resolve) => {
-    new THREE.TextureLoader().load(
+    bitmapLoader.load(
       url,
-      (tex) => {
+      (bitmap) => {
+        const tex = new THREE.Texture(bitmap);
         tex.colorSpace = THREE.SRGBColorSpace;
+        tex.flipY = false;
+        tex.needsUpdate = true;
         resolve(tex);
       },
       undefined,
@@ -76,6 +86,10 @@ export function EarthBody({
   const poleGroupRef = useRef<THREE.Group>(null);
   const [ready, setReady] = useState(false);
   const [upgraded, setUpgraded] = useState(false);
+  // Guards against overlapping high-res loads. A ref (not an effect-local) so it
+  // persists across effect re-runs — e.g. a textureRevision bump that re-runs the
+  // upgrade effect while a previous load is still decoding — not just within one run.
+  const inFlightRef = useRef(false);
 
   // 1. Load 2K textures manually (no Suspense — keeps Canvas interactive)
   // biome-ignore lint/correctness/useExhaustiveDependencies: uniform values are synced by separate effects below; recreating the material on every uniform change would reload textures unnecessarily.
@@ -113,59 +127,89 @@ export function EarthBody({
       return;
     if (!materialRef.current) return;
     if (upgraded) return;
+    // Only upgrade when a real texture source is provided (a connected orts
+    // server, or an explicit base URL). No source → keep the bundled 2K.
+    if (!textureBaseUrl) return;
 
     let cancelled = false;
-    const basePath = textureBaseUrl ?? `${import.meta.env.BASE_URL}textures/`;
+    const basePath = textureBaseUrl;
 
     // Build fallback chain starting from target resolution
     const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);
     const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
 
     async function tryUpgrade() {
-      for (const res of candidates) {
-        if (cancelled) return;
+      // Don't stack a second load while one is in flight: decode is off-thread
+      // (ImageBitmapLoader) but the GPU upload of a large texture is still
+      // synchronous on the main thread, so overlapping loads pile up into hitches.
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      try {
+        for (const res of candidates) {
+          if (cancelled) return;
 
-        const dayUrl = `${basePath}${textureBaseName}_${res}.jpg`;
-        const nightUrl = `${basePath}${nightTextureBaseName}_${res}.jpg`;
+          const dayUrl = `${basePath}${textureBaseName}_${res}.jpg`;
+          const nightUrl = `${basePath}${nightTextureBaseName}_${res}.jpg`;
 
-        const [newDay, newNight] = await Promise.all([loadTexture(dayUrl), loadTexture(nightUrl)]);
+          const [newDay, newNight] = await Promise.all([
+            loadTexture(dayUrl),
+            loadTexture(nightUrl),
+          ]);
 
-        if (cancelled) {
+          if (cancelled) {
+            newDay?.dispose();
+            newNight?.dispose();
+            return;
+          }
+
+          // Both textures must load successfully for this resolution
+          if (newDay && newNight) {
+            if (materialRef.current) {
+              const oldDay = materialRef.current.uniforms.dayMap.value as THREE.Texture;
+              const oldNight = materialRef.current.uniforms.nightMap.value as THREE.Texture;
+
+              materialRef.current.uniforms.dayMap.value = newDay;
+              materialRef.current.uniforms.nightMap.value = newNight;
+              materialRef.current.needsUpdate = true;
+
+              // Dispose old textures to free GPU memory
+              oldDay.dispose();
+              oldNight.dispose();
+            }
+            setUpgraded(true);
+            return; // success
+          }
+
+          // Partial load: clean up and try next resolution
           newDay?.dispose();
           newNight?.dispose();
-          return;
         }
-
-        // Both textures must load successfully for this resolution
-        if (newDay && newNight) {
-          if (materialRef.current) {
-            const oldDay = materialRef.current.uniforms.dayMap.value as THREE.Texture;
-            const oldNight = materialRef.current.uniforms.nightMap.value as THREE.Texture;
-
-            materialRef.current.uniforms.dayMap.value = newDay;
-            materialRef.current.uniforms.nightMap.value = newNight;
-            materialRef.current.needsUpdate = true;
-
-            // Dispose old textures to free GPU memory
-            oldDay.dispose();
-            oldNight.dispose();
-          }
-          setUpgraded(true);
-          return; // success
-        }
-
-        // Partial load: clean up and try next resolution
-        newDay?.dispose();
-        newNight?.dispose();
+        // No resolution available right now — 2K stays. A textureRevision bump
+        // (server "textures_ready") re-runs this effect to try again.
+      } finally {
+        inFlightRef.current = false;
       }
-      // All resolutions failed — 2K fallback remains active
     }
 
     tryUpgrade();
 
-    // Periodic retry every 10s until upgrade succeeds or component unmounts.
+    // Bounded fallback poll. The textureRevision bump is the primary re-trigger;
+    // this just covers a missed signal. Stop after MAX_RETRIES so a permanently
+    // unavailable resolution doesn't loop forever (e.g. static hosting without
+    // the high-res files), and never re-upload while a load is already running.
+    let attempts = 0;
+    const MAX_RETRIES = 3;
     const timer = setInterval(() => {
-      if (!cancelled) tryUpgrade();
+      if (cancelled) return;
+      // A load is still in flight — skip without spending a retry, so a slow load
+      // (>10s) doesn't exhaust the budget on ticks that tryUpgrade would bail on.
+      if (inFlightRef.current) return;
+      if (attempts >= MAX_RETRIES) {
+        clearInterval(timer);
+        return;
+      }
+      attempts += 1;
+      tryUpgrade();
     }, 10_000);
 
     return () => {
