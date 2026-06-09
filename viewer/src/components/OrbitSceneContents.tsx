@@ -202,7 +202,13 @@ function CameraDistanceTransition({
   overrideDistance?: number;
 }) {
   const { camera } = useThree();
-  const prevKeyRef = useRef(`${profile.name}:${overrideDistance ?? ""}`);
+  // Empty sentinel so the first frame also snaps to the active profile's default
+  // placement — not only when switching profiles. This matters when the viewer
+  // *starts* in a non-default frame (e.g. an embedder mounting satellite-centred):
+  // otherwise the camera keeps the generic initial position instead of the
+  // profile's framing. (Body-centred uses defaultCameraDirection=null, so the
+  // initial snap only normalises distance and leaves the app's view unchanged.)
+  const prevKeyRef = useRef("");
 
   useFrame(() => {
     const key = `${profile.name}:${overrideDistance ?? ""}`;
