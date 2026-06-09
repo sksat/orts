@@ -81,6 +81,13 @@ export function OrbitViewer({
     return map;
   }, [satellites]);
 
+  // Per-satellite colour overrides from the public SatelliteState.color.
+  const satelliteColors = useMemo(() => {
+    const map = new Map<string, number | undefined>();
+    for (const sat of satellites) map.set(sat.id, sat.color);
+    return map;
+  }, [satellites]);
+
   // Persistent per-satellite trail buffers (stable identity → incremental upload).
   const trailBuffers = useTrailBuffers(satellites);
 
@@ -129,6 +136,7 @@ export function OrbitViewer({
           trailBuffers={trailBuffers}
           satellitePositions={satellitePositions}
           satelliteNames={satelliteNames}
+          satelliteColors={satelliteColors}
           centralBody={centralBody.id}
           centralBodyRadius={centralBody.radiusKm}
           epochJd={effectiveEpochJd}

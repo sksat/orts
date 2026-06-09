@@ -330,6 +330,8 @@ export interface OrbitSceneContentsProps {
   referenceFrame?: ReferenceFrame;
   /** Per-satellite metadata for model lookup. */
   satelliteNames?: Map<string, string | null>;
+  /** Per-satellite marker/trail colour override (0xRRGGBB); falls back to the palette. */
+  satelliteColors?: Map<string, number | undefined>;
   /** When true, atmosphere uses physical scale. Default: auto (true for satellite-centered). */
   physicalScale?: boolean;
   /** Bumped when server notifies high-res textures are available. */
@@ -354,6 +356,7 @@ export function OrbitSceneContents({
   epochJd,
   referenceFrame = DEFAULT_FRAME,
   satelliteNames,
+  satelliteColors,
   physicalScale,
   textureRevision,
   textureBaseUrl,
@@ -568,7 +571,9 @@ export function OrbitSceneContents({
           const pos = satellitePositions?.get(centeredSatId);
           if (!pos) return null;
           const idx = renderEntries.findIndex((e) => e.satId === centeredSatId);
-          const color = SATELLITE_COLORS[(idx < 0 ? 0 : idx) % SATELLITE_COLORS.length];
+          const color =
+            satelliteColors?.get(centeredSatId) ??
+            SATELLITE_COLORS[(idx < 0 ? 0 : idx) % SATELLITE_COLORS.length];
           const centeredBodyId = entityPathToBodyId(centeredSatId);
           if (centeredBodyId != null) {
             // Render as CelestialBody at origin with physical radius + IAU orientation
@@ -628,7 +633,8 @@ export function OrbitSceneContents({
 
         {/* One entry per satellite that has a trail and/or a position. */}
         {renderEntries.map(({ satId, buf, pos }, index) => {
-          const color = SATELLITE_COLORS[index % SATELLITE_COLORS.length];
+          const color =
+            satelliteColors?.get(satId) ?? SATELLITE_COLORS[index % SATELLITE_COLORS.length];
           const isCenteredSat = satId === centeredSatId;
           const trailScale = lvlhActive ? effectiveScaleRadius : centralBodyRadius;
           const bodyId = entityPathToBodyId(satId);
