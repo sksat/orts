@@ -86,6 +86,10 @@ export function EarthBody({
   const poleGroupRef = useRef<THREE.Group>(null);
   const [ready, setReady] = useState(false);
   const [upgraded, setUpgraded] = useState(false);
+  // Guards against overlapping high-res loads. A ref (not an effect-local) so it
+  // persists across effect re-runs — e.g. a textureRevision bump that re-runs the
+  // upgrade effect while a previous load is still decoding — not just within one run.
+  const inFlightRef = useRef(false);
 
   // 1. Load 2K textures manually (no Suspense — keeps Canvas interactive)
   // biome-ignore lint/correctness/useExhaustiveDependencies: uniform values are synced by separate effects below; recreating the material on every uniform change would reload textures unnecessarily.
@@ -128,7 +132,6 @@ export function EarthBody({
     if (!textureBaseUrl) return;
 
     let cancelled = false;
-    let inFlight = false;
     const basePath = textureBaseUrl;
 
     // Build fallback chain starting from target resolution
@@ -139,8 +142,8 @@ export function EarthBody({
       // Don't stack a second load while one is in flight: each load decodes and
       // uploads a large texture (synchronous on the main thread), so overlapping
       // attempts pile up into visible frame hitches.
-      if (inFlight) return;
-      inFlight = true;
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
       try {
         for (const res of candidates) {
           if (cancelled) return;
@@ -184,7 +187,7 @@ export function EarthBody({
         // No resolution available right now — 2K stays. A textureRevision bump
         // (server "textures_ready") re-runs this effect to try again.
       } finally {
-        inFlight = false;
+        inFlightRef.current = false;
       }
     }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { type BodyRenderInfo, getBodyRenderInfo } from "../bodies.js";
 import { type TextureResolution, useTextureResolution } from "../hooks/useTextureResolution.js";
@@ -70,6 +70,9 @@ function TexturedBody({
   const [texture, setTexture] = useState<THREE.Texture | null>(null);
   const [baseLoaded, setBaseLoaded] = useState(false);
   const [upgraded, setUpgraded] = useState(false);
+  // Persisted across effect re-runs (e.g. textureRevision bumps) so upgrades
+  // never overlap, not just within a single effect execution.
+  const inFlightRef = useRef(false);
 
   // Load base texture
   useEffect(() => {
@@ -105,7 +108,6 @@ function TexturedBody({
     if (!textureBaseUrl) return;
 
     let cancelled = false;
-    let inFlight = false;
     const basePath = textureBaseUrl;
     const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);
     const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
@@ -113,8 +115,8 @@ function TexturedBody({
     async function tryUpgrade() {
       // Don't stack a second load while one is in flight: each decodes and
       // uploads a large texture synchronously on the main thread.
-      if (inFlight) return;
-      inFlight = true;
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
       try {
         for (const res of candidates) {
           if (cancelled) return;
@@ -134,7 +136,7 @@ function TexturedBody({
           }
         }
       } finally {
-        inFlight = false;
+        inFlightRef.current = false;
       }
     }
     tryUpgrade();
