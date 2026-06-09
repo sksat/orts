@@ -139,9 +139,9 @@ export function EarthBody({
     const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
 
     async function tryUpgrade() {
-      // Don't stack a second load while one is in flight: each load decodes and
-      // uploads a large texture (synchronous on the main thread), so overlapping
-      // attempts pile up into visible frame hitches.
+      // Don't stack a second load while one is in flight: decode is off-thread
+      // (ImageBitmapLoader) but the GPU upload of a large texture is still
+      // synchronous on the main thread, so overlapping loads pile up into hitches.
       if (inFlightRef.current) return;
       inFlightRef.current = true;
       try {
@@ -201,11 +201,11 @@ export function EarthBody({
     const MAX_RETRIES = 3;
     const timer = setInterval(() => {
       if (cancelled) return;
-      attempts += 1;
-      if (attempts > MAX_RETRIES) {
+      if (attempts >= MAX_RETRIES) {
         clearInterval(timer);
         return;
       }
+      attempts += 1;
       tryUpgrade();
     }, 10_000);
 

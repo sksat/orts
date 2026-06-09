@@ -113,8 +113,8 @@ function TexturedBody({
     const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
 
     async function tryUpgrade() {
-      // Don't stack a second load while one is in flight: each decodes and
-      // uploads a large texture synchronously on the main thread.
+      // Don't stack a second load while one is in flight: decode is off-thread
+      // (ImageBitmapLoader) but the GPU upload is still synchronous on the main thread.
       if (inFlightRef.current) return;
       inFlightRef.current = true;
       try {
@@ -148,11 +148,11 @@ function TexturedBody({
     const MAX_RETRIES = 3;
     const timer = setInterval(() => {
       if (cancelled) return;
-      attempts += 1;
-      if (attempts > MAX_RETRIES) {
+      if (attempts >= MAX_RETRIES) {
         clearInterval(timer);
         return;
       }
+      attempts += 1;
       tryUpgrade();
     }, 10_000);
 
