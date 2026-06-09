@@ -77,7 +77,10 @@ pub fn parse(text: &str) -> Result<Omm, TleParseError> {
             if lines[0].starts_with('1') {
                 (None, lines[0], lines[1])
             } else {
-                (Some(lines[0].to_string()), lines[1], lines[2])
+                // CelesTrak "3LE" prefixes the name line with the "0 " line
+                // number; strip it so names match the OMM OBJECT_NAME form.
+                let name = lines[0].strip_prefix("0 ").unwrap_or(lines[0]).trim();
+                (Some(name.to_string()), lines[1], lines[2])
             }
         }
     };
@@ -348,6 +351,17 @@ ISS (ZARYA)
         assert!(omm.object_name.is_none());
         assert_eq!(omm.norad_cat_id, 25544);
         assert!((omm.inclination.to_degrees() - 51.64).abs() < 0.01);
+    }
+
+    #[test]
+    fn strips_3le_zero_prefix_from_name() {
+        // CelesTrak "3LE" prefixes the name line with the "0 " line number; it
+        // must be stripped so the name matches the bare-name / OMM forms.
+        let tle = "0 ISS (ZARYA)\n\
+1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993\n\
+2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000";
+        let omm = parse(tle).unwrap();
+        assert_eq!(omm.object_name.as_deref(), Some("ISS (ZARYA)"));
     }
 
     #[test]
