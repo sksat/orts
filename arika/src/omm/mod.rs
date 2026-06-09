@@ -14,7 +14,6 @@ pub mod json;
 pub mod kvn;
 pub mod xml;
 
-use alloc::format;
 use alloc::string::String;
 use core::fmt;
 
@@ -82,13 +81,11 @@ impl Omm {
 
 /// Parse an OMM `EPOCH` value into a UTC [`Epoch`].
 ///
-/// OMM epochs are UTC by definition but the ISO-8601 `Z` designator is often
-/// omitted; this normalizes to exactly one trailing `Z` (which
-/// [`Epoch::from_iso8601`] requires) before parsing. Returns `None` for
-/// malformed / non-calendar timestamps. Shared by the JSON / KVN / XML parsers.
+/// Delegates to [`Epoch::from_iso8601`], which accepts both the calendar and
+/// ordinal (day-of-year) forms with an optional `Z` suffix. Shared by the
+/// JSON / KVN / XML parsers; returns `None` for malformed timestamps.
 pub(crate) fn parse_epoch(raw: &str) -> Option<Epoch<Utc>> {
-    let normalized = format!("{}Z", raw.trim().trim_end_matches('Z'));
-    Epoch::from_iso8601(&normalized)
+    Epoch::from_iso8601(raw)
 }
 
 /// Element-set serialization formats that [`parse`] can decode.
@@ -105,11 +102,12 @@ pub enum Format {
 }
 
 /// Sniff the element-set format of `text` (cheap structural heuristic, no full
-/// parse): leading `{`/`[` → JSON, leading `<` → XML, a `1 `/`2 ` line pair →
-/// TLE, otherwise CCSDS keyword-value → KVN. `None` if nothing matches.
+/// parse): leading `{` → JSON (a single OMM object), leading `<` → XML, a
+/// `1 `/`2 ` line pair → TLE, otherwise CCSDS keyword-value → KVN. `None` if
+/// nothing matches. JSON arrays of multiple OMM objects are not yet supported.
 pub fn detect(text: &str) -> Option<Format> {
     match text.trim_start().chars().next()? {
-        '{' | '[' => return Some(Format::OmmJson),
+        '{' => return Some(Format::OmmJson),
         '<' => return Some(Format::OmmXml),
         _ => {}
     }
