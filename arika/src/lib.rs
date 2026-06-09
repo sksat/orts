@@ -14,6 +14,8 @@ pub mod frame;
 pub mod horizons;
 pub mod kepler;
 pub mod moon;
+#[cfg(feature = "alloc")]
+pub mod omm;
 pub mod planets;
 pub mod rotation;
 pub mod sun;

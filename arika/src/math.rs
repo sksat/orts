@@ -26,6 +26,7 @@ pub(crate) trait F64Ext {
     fn atan(self) -> f64;
     fn atan2(self, other: f64) -> f64;
     fn sqrt(self) -> f64;
+    fn cbrt(self) -> f64;
     fn abs(self) -> f64;
     fn powi(self, n: i32) -> f64;
     fn powf(self, n: f64) -> f64;
@@ -72,6 +73,10 @@ impl F64Ext for f64 {
     #[inline]
     fn sqrt(self) -> f64 {
         libm::sqrt(self)
+    }
+    #[inline]
+    fn cbrt(self) -> f64 {
+        libm::cbrt(self)
     }
     #[inline]
     fn abs(self) -> f64 {
