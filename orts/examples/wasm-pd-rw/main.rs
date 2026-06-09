@@ -57,8 +57,7 @@ fn main() {
     let pre = WasmController::prepare(&engine, &component).expect("prepare failed");
 
     let config = format!(r#"{{"kp":{},"kd":{},"sample_period":{}}}"#, KP, KD, DT_CTRL);
-    let mut ctrl = WasmController::new(&pre, "pd-rw", &config, Vec::new())
-        .expect("WasmController::new failed");
+    let mut ctrl = WasmController::new(&pre, "pd-rw", &config).expect("WasmController::new failed");
 
     let mu = MU_EARTH;
     let radius = R_EARTH + ALT_KM;

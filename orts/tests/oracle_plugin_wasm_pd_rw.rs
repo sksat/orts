@@ -143,8 +143,8 @@ fn run_wasm(initial: AttitudeState) -> Option<AugmentedState<AttitudeState>> {
     let engine = Arc::new(WasmEngine::new().expect("WasmEngine must init"));
     let component = Component::new(engine.inner(), &wasm_bytes).expect("Component must compile");
     let pre = WasmController::prepare(&engine, &component).expect("prepare must succeed");
-    let ctrl = WasmController::new(&pre, "oracle-pd-rw", &pd_rw_config(), Vec::new())
-        .expect("new must succeed");
+    let ctrl =
+        WasmController::new(&pre, "oracle-pd-rw", &pd_rw_config()).expect("new must succeed");
     Some(drive_wasm(Box::new(ctrl), initial))
 }
 

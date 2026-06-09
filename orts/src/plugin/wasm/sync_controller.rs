@@ -96,12 +96,25 @@ pub struct WasmController {
 }
 
 impl WasmController {
-    /// Instantiate a WASM guest controller for one satellite.
+    /// Instantiate a WASM guest controller for one satellite (no `stream-io`
+    /// streams). Use [`new_with_streams`](Self::new_with_streams) to wire
+    /// named byte streams.
+    pub fn new(
+        pre: &PluginPre<HostState>,
+        label: impl Into<String>,
+        config: &str,
+    ) -> Result<Self, PluginError> {
+        Self::new_with_streams(pre, label, config, Vec::new())
+    }
+
+    /// Instantiate a WASM guest controller wired to the given `stream-io`
+    /// streams (declared up front; the host maps each local name to an
+    /// external endpoint).
     ///
     /// Spawns a dedicated worker thread that owns the `Store` and
     /// drives the guest's `run()` loop. Returns after the guest's
     /// `metadata()` has been called (so `sample_period` is known).
-    pub fn new(
+    pub fn new_with_streams(
         pre: &PluginPre<HostState>,
         label: impl Into<String>,
         config: &str,

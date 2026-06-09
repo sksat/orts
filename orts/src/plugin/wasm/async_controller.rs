@@ -169,6 +169,16 @@ impl AsyncWasmController {
         built: &AsyncPluginPreBuilt,
         label: impl Into<String>,
         config: &str,
+    ) -> Result<Self, PluginError> {
+        Self::new_with_streams(built, label, config, Vec::new())
+    }
+
+    /// As [`new`](Self::new) but wired to the given `stream-io` streams
+    /// (declared up front).
+    pub fn new_with_streams(
+        built: &AsyncPluginPreBuilt,
+        label: impl Into<String>,
+        config: &str,
         stream_names: Vec<String>,
     ) -> Result<Self, PluginError> {
         let label = label.into();
