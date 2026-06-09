@@ -25,10 +25,13 @@ export function useTrailBuffers(satellites: readonly SatelliteState[]): Map<stri
   const store = useRef(new Map<string, Entry>());
 
   // Reconciled in useMemo (render phase) rather than an effect so children see
-  // the latest points in the same commit — no one-frame trail lag. This is safe
-  // under StrictMode / aborted renders because it's idempotent: decideTrailUpdate
-  // compares against the stored sync state, so a repeated run yields "noop" and
-  // re-applies nothing. (Rendering the same satellites twice never double-appends.)
+  // the latest points in the same commit — no one-frame trail lag. Idempotent
+  // against StrictMode's double render: decideTrailUpdate compares against the
+  // stored sync state, so a repeat with the same inputs is a "noop" (never
+  // double-appends).
+  // TODO(#91): render-phase mutation is NOT safe against a React 19 render that
+  // is aborted and then committed with different props; the robust form computes
+  // a pure plan here and applies it in a useLayoutEffect / useFrame pre-pass.
   return useMemo(() => {
     const entries = store.current;
     const live = new Map<string, TrailBuffer>();

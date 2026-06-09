@@ -49,6 +49,7 @@ describe("trailSyncState", () => {
       length: 3,
       version: "v1",
       lastPosition: [3, 0, 0],
+      lastTime: undefined,
     });
   });
 
@@ -57,6 +58,21 @@ describe("trailSyncState", () => {
       length: 0,
       version: undefined,
       lastPosition: undefined,
+      lastTime: undefined,
     });
+  });
+
+  it("captures the last position as a copy (immune to in-place caller mutation)", () => {
+    const points: TrailPoint[] = [{ position: [1, 0, 0] }, { position: [2, 0, 0] }];
+    const prev = trailSyncState(points, undefined);
+    points[1].position[0] = 9; // caller mutates the last point in place
+    // The mutated last point no longer matches the captured (copied) state → rebuild.
+    expect(decideTrailUpdate(prev, points, undefined)).toEqual({ kind: "rebuild" });
+  });
+
+  it("a time change on the last point rebuilds (matters for body-fixed/ECEF)", () => {
+    const prev = trailSyncState([{ position: [1, 0, 0], time: 10 }], undefined);
+    const updated: TrailPoint[] = [{ position: [1, 0, 0], time: 20 }];
+    expect(decideTrailUpdate(prev, updated, undefined)).toEqual({ kind: "rebuild" });
   });
 });

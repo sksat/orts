@@ -13,8 +13,18 @@ import type { TrailPoint, Vec3 } from "./types.js";
 export interface TrailSyncState {
   length: number;
   version: string | number | undefined;
-  /** Position of the last point (index `length - 1`), or undefined when empty. */
+  /**
+   * Position of the last point (index `length - 1`), or undefined when empty.
+   * Stored as a copy so an in-place Vec3 mutation by the caller can't silently
+   * mutate the captured state and defeat change detection.
+   */
   lastPosition: Vec3 | undefined;
+  /**
+   * Time of the last point. Affects body-fixed/ECEF vertices (each point is
+   * de-rotated by the Earth-rotation angle at its own time), so a time change on
+   * an otherwise-identical point must still trigger a rebuild.
+   */
+  lastTime: number | undefined;
 }
 
 /** Reconciliation decision for a trail buffer. */
@@ -30,10 +40,13 @@ export function trailSyncState(
   points: readonly TrailPoint[],
   version: string | number | undefined,
 ): TrailSyncState {
+  const last = points.length > 0 ? points[points.length - 1] : undefined;
   return {
     length: points.length,
     version,
-    lastPosition: points.length > 0 ? points[points.length - 1].position : undefined,
+    // Copy the Vec3 so a later in-place mutation by the caller can't change it.
+    lastPosition: last ? [last.position[0], last.position[1], last.position[2]] : undefined,
+    lastTime: last?.time,
   };
 }
 
@@ -56,10 +69,13 @@ export function decideTrailUpdate(
   if (points.length < prev.length) return { kind: "rebuild" };
 
   // The point that used to be the tail must still be there unchanged, otherwise
-  // earlier history was rewritten and an append would corrupt the line.
+  // earlier history was rewritten and an append would corrupt the line. Compare
+  // both position and time (time affects body-fixed/ECEF vertices).
   if (prev.length > 0) {
-    const tail = points[prev.length - 1]?.position;
-    if (!vec3Equal(tail, prev.lastPosition)) return { kind: "rebuild" };
+    const tail = points[prev.length - 1];
+    if (!vec3Equal(tail?.position, prev.lastPosition) || tail?.time !== prev.lastTime) {
+      return { kind: "rebuild" };
+    }
   }
 
   if (points.length > prev.length) return { kind: "append", from: prev.length };

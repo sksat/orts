@@ -16,8 +16,11 @@ export interface RenderEntry {
  * only a position (no trail history) still shows a marker — the streaming app
  * always has both, but an embedder may just want to drop a point somewhere.
  *
- * Order is stable across renders (trail-having satellites first, in insertion
- * order, then position-only ones) so palette colour assignment doesn't shift.
+ * Order: trail-having satellites first (in insertion order), then position-only
+ * ones. This is stable while each satellite's trail-status is stable; a satellite
+ * that gains or loses a trail moves between the two groups, which can shift the
+ * default palette-colour index of later satellites. Colours are cosmetic and such
+ * transitions are rare — pass an explicit `color` if you need guaranteed stability.
  */
 export function buildRenderEntries(
   trailBuffers: Map<string, TrailBuffer> | undefined,
