@@ -6,6 +6,7 @@
 //! `Omm` conventions (radians, rad/s) here.
 
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::f64::consts::PI;
 use core::fmt;
 
@@ -57,10 +58,31 @@ struct OmmJson {
     bstar: f64,
 }
 
-/// Parse a single OMM JSON object into an [`Omm`].
+/// Parse an OMM JSON document — a single object or a 1-element array — into an [`Omm`].
 pub fn parse(json: &str) -> Result<Omm, JsonParseError> {
-    let raw: OmmJson =
-        serde_json::from_str(json).map_err(|e| JsonParseError::Malformed(e.to_string()))?;
+    // Accept a single OMM object, or a 1-element array — some producers
+    // (incl. CelesTrak single-satellite GP queries) wrap the object in a JSON
+    // array. Reject empty / multi-element arrays with a clear error.
+    let raw: OmmJson = if json.trim_start().starts_with('[') {
+        let arr: Vec<OmmJson> =
+            serde_json::from_str(json).map_err(|e| JsonParseError::Malformed(e.to_string()))?;
+        let mut it = arr.into_iter();
+        match (it.next(), it.next()) {
+            (Some(obj), None) => obj,
+            (None, _) => {
+                return Err(JsonParseError::Malformed(String::from(
+                    "OMM JSON array is empty",
+                )));
+            }
+            (Some(_), Some(_)) => {
+                return Err(JsonParseError::Malformed(String::from(
+                    "OMM JSON array has multiple objects; expected exactly one",
+                )));
+            }
+        }
+    } else {
+        serde_json::from_str(json).map_err(|e| JsonParseError::Malformed(e.to_string()))?
+    };
 
     let epoch = crate::omm::parse_epoch(&raw.epoch)
         .ok_or_else(|| JsonParseError::InvalidEpoch(raw.epoch.clone()))?;
@@ -155,5 +177,19 @@ mod tests {
             "MEAN_ANOMALY": 0.0
         }"#;
         assert!(matches!(parse(j), Err(JsonParseError::InvalidEpoch(_))));
+    }
+
+    #[test]
+    fn parse_single_element_array() {
+        // CelesTrak single-satellite OMM JSON is sometimes a 1-element array.
+        let arr = ["[", ISS_OMM_JSON, "]"].concat();
+        assert_eq!(parse(&arr).unwrap().norad_cat_id, 25544);
+    }
+
+    #[test]
+    fn rejects_empty_and_multi_element_arrays() {
+        assert!(matches!(parse("[]"), Err(JsonParseError::Malformed(_))));
+        let two = ["[", ISS_OMM_JSON, ",", ISS_OMM_JSON, "]"].concat();
+        assert!(matches!(parse(&two), Err(JsonParseError::Malformed(_))));
     }
 }

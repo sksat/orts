@@ -107,12 +107,12 @@ pub enum Format {
 }
 
 /// Sniff the element-set format of `text` (cheap structural heuristic, no full
-/// parse): leading `{` → JSON (a single OMM object), leading `<` → XML, a
-/// `1 `/`2 ` line pair → TLE, otherwise CCSDS keyword-value → KVN. `None` if
-/// nothing matches. JSON arrays of multiple OMM objects are not yet supported.
+/// parse): leading `{` or `[` → JSON (a single OMM object, or a 1-element
+/// array), leading `<` → XML, a `1 `/`2 ` line pair → TLE, otherwise CCSDS
+/// keyword-value → KVN. `None` if nothing matches.
 pub fn detect(text: &str) -> Option<Format> {
     match text.trim_start().chars().next()? {
-        '{' => return Some(Format::OmmJson),
+        '{' | '[' => return Some(Format::OmmJson),
         '<' => return Some(Format::OmmXml),
         _ => {}
     }
@@ -267,6 +267,7 @@ NORAD_CAT_ID = 25544";
         assert_eq!(detect(TLE_2L), Some(Format::Tle));
         assert_eq!(detect(TLE_3L), Some(Format::Tle));
         assert_eq!(detect(JSON), Some(Format::OmmJson));
+        assert_eq!(detect("  [ {} ]"), Some(Format::OmmJson)); // 1-element array
         assert_eq!(detect(KVN), Some(Format::OmmKvn));
         assert_eq!(detect(XML), Some(Format::OmmXml));
         assert_eq!(detect("garbage, no markers"), None);
