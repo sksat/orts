@@ -264,6 +264,31 @@ fn duplicate_close_is_idempotent() {
 }
 
 #[test]
+fn resyncs_past_a_bogus_length_prefix() {
+    let Some(mut ctrl) = load() else { return };
+    let (sc, sensors, act) = (
+        spacecraft(),
+        gyro_sensors(SETTLED),
+        ActuatorTelemetry::default(),
+    );
+
+    // A false sync followed by an implausible LEN (0xFFFF) — if the FSW
+    // trusted it, it would buffer toward a 64 KiB frame that never arrives
+    // and never process anything. It must resync and still handle the valid
+    // frame that follows.
+    let mut buf = vec![0xEB, 0x90, 0xFF, 0xFF];
+    buf.extend(build_frame(b"nadir"));
+    ctrl.stream_deliver(STREAM, buf);
+    ctrl.update(&obs(&sc, &sensors, &act)).expect("update");
+
+    assert_eq!(
+        parse_frame(&ctrl.stream_take(STREAM)).as_deref(),
+        Some(&b"nadir"[..]),
+        "FSW must resync past the bogus length and process the real frame"
+    );
+}
+
+#[test]
 fn empty_delivery_to_undeclared_stream_still_faults() {
     let Some(mut ctrl) = load() else { return };
     let (sc, sensors, act) = (

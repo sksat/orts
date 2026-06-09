@@ -48,6 +48,12 @@ const SYNC: [u8; 2] = [0xEB, 0x90];
 /// Max bytes to pull from the stream per tick.
 const READ_CHUNK: u32 = 1024;
 
+/// Largest payload this FSW will accept. A desync onto a false sync word can
+/// parse a bogus `LEN` (e.g. 0xFFFF); without a cap the reassembly buffer
+/// would grow unbounded waiting for a frame that never completes. On an
+/// oversized length we resync (drop the sync word) instead.
+const MAX_PAYLOAD: usize = 4096;
+
 /// `nadir` acceptance gate \[rad/s\] — same threshold as the msg-io examples.
 const NADIR_RATE_GATE_RAD_S: f64 = 0.05;
 
@@ -135,6 +141,12 @@ impl Controller {
                 return None;
             }
             let len = u16::from_be_bytes([self.rxbuf[2], self.rxbuf[3]]) as usize;
+            if len > MAX_PAYLOAD {
+                // Implausible length — we're desynced. Drop the sync word and
+                // resync rather than buffer toward a frame that never arrives.
+                self.rxbuf.drain(..2);
+                continue;
+            }
             let frame_len = 4 + len + 2;
             if self.rxbuf.len() < frame_len {
                 // Partial frame — wait for the rest on a later tick.

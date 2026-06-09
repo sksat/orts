@@ -138,6 +138,11 @@ impl Streams {
             self.set_fault(format!("stream-io: delivery to undeclared stream '{name}'"));
             return;
         };
+        if s.overrun {
+            // Already a sticky fault — the stream is unusable. Don't buffer
+            // further bytes (read returns `Overrun` regardless).
+            return;
+        }
         if s.closed {
             self.set_fault(format!("stream-io: delivery to closed stream '{name}'"));
             return;
