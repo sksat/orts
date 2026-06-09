@@ -109,6 +109,8 @@ pub struct SimParams {
     pub epoch: Option<Epoch>,
     pub duration: Option<f64>,
     pub satellites: Vec<SatelliteSpec>,
+    /// 時刻指定コマンドシーケンス（config transport）。CLI 引数経由では空。
+    pub commands: Vec<crate::config::CommandConfig>,
     pub integrator: IntegratorChoice,
     pub tolerances: Tolerances,
     pub atmosphere: AtmosphereChoice,
@@ -264,6 +266,8 @@ impl SimParams {
             epoch,
             duration: args.duration,
             satellites,
+            // CLI-arg path has no command timeline (config-file only).
+            commands: Vec::new(),
             integrator: args.integrator,
             tolerances: Tolerances {
                 atol: args.atol,
@@ -325,6 +329,7 @@ impl SimParams {
             epoch,
             duration: config.duration,
             satellites,
+            commands: config.commands.clone(),
             integrator: config.integrator_choice(),
             tolerances: Tolerances {
                 atol: config.integrator.atol,

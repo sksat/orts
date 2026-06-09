@@ -352,6 +352,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "orts-example-plugin-commandable-mode-ff"
+version = "0.0.0"
+dependencies = [
+ "orts-plugin-sdk",
+]
+
+[[package]]
+name = "orts-example-plugin-commandable-mode-rr"
+version = "0.0.0"
+dependencies = [
+ "orts-plugin-sdk",
+]
+
+[[package]]
 name = "orts-example-plugin-constellation-phasing"
 version = "0.0.0"
 dependencies = [

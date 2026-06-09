@@ -29,6 +29,7 @@ pub mod actuators;
 pub mod command;
 pub mod controller;
 pub mod error;
+pub mod message;
 pub mod tick_input;
 
 #[cfg(feature = "plugin-wasm")]
@@ -38,6 +39,7 @@ pub use actuators::ActuatorBundle;
 pub use command::{Command, MtqCommand, RwCommand, ThrusterCommand};
 pub use controller::PluginController;
 pub use error::PluginError;
+pub use message::{Message, NamedValue, NodeId, Outbound, Payload, Value};
 pub use tick_input::{
     ActuatorTelemetry, AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody, RwTelemetry,
     Sensors, SunDirectionBody, SunSensorOutput, TickInput,

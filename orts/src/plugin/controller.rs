@@ -22,6 +22,7 @@
 
 use super::command::Command;
 use super::error::PluginError;
+use super::message::{Message, NodeId};
 use super::tick_input::TickInput;
 
 /// A controller backend exposed through the plugin layer.
@@ -117,4 +118,25 @@ pub trait PluginController: Send {
     fn restore_state(&mut self, _bytes: &[u8]) -> Result<(), PluginError> {
         Err(PluginError::UnsupportedOperation("restore_state"))
     }
+
+    // ─── msg-io transport (operator C&T / ISL) ──────────────────
+    //
+    // These let the host drive the controller's node-to-node messaging
+    // channel through `dyn PluginController` (config command timeline,
+    // WebSocket adapter, ...). Controllers without msg-io support use
+    // the default no-op impls; the WASM backends override them.
+
+    /// Queue an inbound message for delivery on the controller's **next**
+    /// `update()` tick. Default: drop it (no msg-io support).
+    fn deliver(&mut self, _msg: Message) {}
+
+    /// Drain the messages this controller has emitted since the last
+    /// call (telemetry / ISL downlink). Default: none.
+    fn take_outbound(&mut self) -> Vec<Message> {
+        Vec::new()
+    }
+
+    /// Set this controller's node identity, stamped as `src` on its
+    /// outbound messages. Default: no-op.
+    fn set_node_id(&mut self, _id: NodeId) {}
 }
