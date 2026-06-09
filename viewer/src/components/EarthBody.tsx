@@ -201,6 +201,9 @@ export function EarthBody({
     const MAX_RETRIES = 3;
     const timer = setInterval(() => {
       if (cancelled) return;
+      // A load is still in flight — skip without spending a retry, so a slow load
+      // (>10s) doesn't exhaust the budget on ticks that tryUpgrade would bail on.
+      if (inFlightRef.current) return;
       if (attempts >= MAX_RETRIES) {
         clearInterval(timer);
         return;
