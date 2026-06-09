@@ -12,6 +12,7 @@ pub mod epoch;
 pub mod frame;
 #[cfg(feature = "alloc")]
 pub mod horizons;
+pub mod kepler;
 pub mod moon;
 pub mod planets;
 pub mod rotation;
