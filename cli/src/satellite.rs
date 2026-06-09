@@ -1,7 +1,8 @@
 use arika::body::KnownBody;
+use arika::omm::Omm;
 use orts::OrbitalState;
+use orts::orbital::kepler::KeplerianElements;
 use orts::record::entity_path::EntityPath;
-use orts::{orbital::kepler::KeplerianElements, tle::Tle};
 use serde::Serialize;
 
 use crate::tle::fetch_tle_by_norad_id;
@@ -18,9 +19,9 @@ pub enum OrbitSpec {
         /// Right Ascension of Ascending Node in radians.
         raan: f64,
     },
-    /// From a TLE (parsed into Keplerian elements).
+    /// From an element set (TLE or OMM), parsed into Keplerian elements.
     Tle {
-        tle_data: Tle,
+        tle_data: Omm,
         elements: KeplerianElements,
     },
 }
@@ -206,7 +207,7 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         let tle = fetch_tle_by_norad_id(norad);
         let elements = tle.to_keplerian_elements(mu);
         let period = elements.period(mu);
-        let tle_name = tle.name.clone();
+        let tle_name = tle.object_name.clone();
         (
             OrbitSpec::Tle {
                 tle_data: tle,
@@ -217,10 +218,11 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         )
     } else if let (Some(l1), Some(l2)) = (tle_line1, tle_line2) {
         let text = format!("{l1}\n{l2}");
-        let tle = Tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE in --sat: {e}"));
+        let tle = arika::tle::parse(&text)
+            .unwrap_or_else(|e| panic!("Failed to parse TLE in --sat: {e}"));
         let elements = tle.to_keplerian_elements(mu);
         let period = elements.period(mu);
-        let tle_name = tle.name.clone();
+        let tle_name = tle.object_name.clone();
         (
             OrbitSpec::Tle {
                 tle_data: tle,

@@ -84,7 +84,7 @@ pub struct SimArgs {
     #[arg(long)]
     pub epoch: Option<String>,
 
-    /// TLE file path (2-line or 3-line format), use "-" for stdin
+    /// Element-set file: TLE (2-line/3-line) or OMM (JSON/KVN/XML); "-" for stdin
     #[arg(long)]
     pub tle: Option<String>,
 

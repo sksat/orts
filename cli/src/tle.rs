@@ -1,7 +1,7 @@
-use orts::tle::Tle;
+use arika::omm::Omm;
 
 /// Try fetching a TLE by NORAD catalog number. Tries CelesTrak first, falls back to SatNOGS.
-pub fn try_fetch_tle_by_norad_id(norad_id: u32) -> Option<Tle> {
+pub fn try_fetch_tle_by_norad_id(norad_id: u32) -> Option<Omm> {
     if let Some(tle) = fetch_tle_celestrak(norad_id) {
         return Some(tle);
     }
@@ -10,13 +10,13 @@ pub fn try_fetch_tle_by_norad_id(norad_id: u32) -> Option<Tle> {
 }
 
 /// Fetch a TLE by NORAD catalog number, panicking on failure.
-pub fn fetch_tle_by_norad_id(norad_id: u32) -> Tle {
+pub fn fetch_tle_by_norad_id(norad_id: u32) -> Omm {
     try_fetch_tle_by_norad_id(norad_id)
         .unwrap_or_else(|| panic!("Failed to fetch TLE for NORAD ID {norad_id} from any source"))
 }
 
 /// Try fetching TLE from CelesTrak (3LE format).
-fn fetch_tle_celestrak(norad_id: u32) -> Option<Tle> {
+fn fetch_tle_celestrak(norad_id: u32) -> Option<Omm> {
     let url = format!("https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=3LE");
     eprintln!("Fetching TLE for NORAD ID {norad_id} from CelesTrak...");
     let body = match ureq::get(&url).call() {
@@ -36,8 +36,8 @@ fn fetch_tle_celestrak(norad_id: u32) -> Option<Tle> {
         eprintln!("No TLE data found on CelesTrak for NORAD ID {norad_id}");
         return None;
     }
-    match Tle::parse(&body) {
-        Ok(tle) => Some(tle),
+    match arika::tle::parse(&body) {
+        Ok(omm) => Some(omm),
         Err(e) => {
             eprintln!("Failed to parse CelesTrak TLE: {e}");
             None
@@ -46,7 +46,7 @@ fn fetch_tle_celestrak(norad_id: u32) -> Option<Tle> {
 }
 
 /// Try fetching TLE from SatNOGS DB (JSON API).
-fn fetch_tle_satnogs(norad_id: u32) -> Option<Tle> {
+fn fetch_tle_satnogs(norad_id: u32) -> Option<Omm> {
     let url = format!("https://db.satnogs.org/api/tle/?norad_cat_id={norad_id}&format=json");
     eprintln!("Fetching TLE for NORAD ID {norad_id} from SatNOGS...");
     let body = match ureq::get(&url).call() {
@@ -74,8 +74,8 @@ fn fetch_tle_satnogs(norad_id: u32) -> Option<Tle> {
     let tle1 = entry["tle1"].as_str()?;
     let tle2 = entry["tle2"].as_str()?;
     let tle_text = format!("{tle0}\n{tle1}\n{tle2}");
-    match Tle::parse(&tle_text) {
-        Ok(tle) => Some(tle),
+    match arika::tle::parse(&tle_text) {
+        Ok(omm) => Some(omm),
         Err(e) => {
             eprintln!("Failed to parse SatNOGS TLE: {e}");
             None

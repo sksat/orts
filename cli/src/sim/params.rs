@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arika::body::KnownBody;
 use arika::epoch::Epoch;
-use orts::tle::Tle;
+use arika::omm::Omm;
 use utsuroi::Tolerances;
 
 use crate::cli::{
@@ -209,7 +209,7 @@ impl SimParams {
             if let Some(tle) = tle_opt {
                 let elements = tle.to_keplerian_elements(mu);
                 let period = elements.period(mu);
-                let sat_name = tle.name.clone();
+                let sat_name = tle.object_name.clone();
                 vec![SatelliteSpec {
                     id: "default".to_string(),
                     name: sat_name,
@@ -402,7 +402,7 @@ impl SimParams {
         let iss_tle = try_fetch_tle_by_norad_id(25544).unwrap_or_else(|| {
             eprintln!("Online TLE sources unavailable. Using embedded ISS TLE.");
             // Embedded ISS TLE (updated 2026-02-13)
-            Tle::parse(
+            arika::tle::parse(
                 "0 ISS (ZARYA)\n\
                  1 25544U 98067A   26044.11739808  .00007930  00000-0  15398-3 0  9991\n\
                  2 25544  51.6313 193.8240 0011114  93.1734 267.0526 15.48574923552528",
@@ -411,7 +411,7 @@ impl SimParams {
         });
         let elements = iss_tle.to_keplerian_elements(mu);
         let period = elements.period(mu);
-        let sat_name = iss_tle.name.clone();
+        let sat_name = iss_tle.object_name.clone();
         sats.push(SatelliteSpec {
             id: "iss".to_string(),
             name: sat_name,
@@ -441,7 +441,7 @@ impl SimParams {
         sats
     }
 
-    pub fn parse_tle_from_args(args: &SimArgs) -> Option<Tle> {
+    pub fn parse_tle_from_args(args: &SimArgs) -> Option<Omm> {
         // --norad-id: fetch from CelesTrak
         if let Some(norad_id) = args.norad_id {
             if args.tle.is_some() || args.tle_line1.is_some() {
@@ -462,10 +462,15 @@ impl SimParams {
                 std::fs::read_to_string(path)
                     .unwrap_or_else(|e| panic!("Failed to read TLE file '{path}': {e}"))
             };
-            Some(Tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE: {e}")))
+            // --tle file/stdin accepts any element-set serialization (TLE or
+            // OMM JSON/KVN/XML), detected from the content.
+            Some(
+                arika::omm::parse(&text)
+                    .unwrap_or_else(|e| panic!("Failed to parse element set: {e}")),
+            )
         } else if let (Some(line1), Some(line2)) = (&args.tle_line1, &args.tle_line2) {
             let text = format!("{line1}\n{line2}");
-            Some(Tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE: {e}")))
+            Some(arika::tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE: {e}")))
         } else if args.tle_line1.is_some() || args.tle_line2.is_some() {
             panic!("Both --tle-line1 and --tle-line2 must be specified together");
         } else {
@@ -716,6 +721,55 @@ mod tests {
             (sat.period / 60.0 - 92.0).abs() < 2.0,
             "ISS period: {:.1} min",
             sat.period / 60.0
+        );
+    }
+
+    #[test]
+    fn sim_params_from_omm_json_file() {
+        use std::io::Write;
+        // Same ISS element set as an OMM JSON document — `--tle` must
+        // auto-detect non-TLE serializations, not just TLE.
+        let json = r#"{"OBJECT_NAME":"ISS (ZARYA)","NORAD_CAT_ID":25544,
+            "EPOCH":"2024-03-19T12:00:00","MEAN_MOTION":15.49561654,
+            "ECCENTRICITY":0.0007417,"INCLINATION":51.64,"RA_OF_ASC_NODE":208.652,
+            "ARG_OF_PERICENTER":35.391,"MEAN_ANOMALY":324.758,"BSTAR":0.00003}"#;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(json.as_bytes()).unwrap();
+        let path = file.path().to_str().unwrap().to_string();
+
+        let args = SimArgs {
+            body: "earth".to_string(),
+            dt: 10.0,
+            output_interval: None,
+            stream_interval: None,
+            epoch: None,
+            tle: Some(path),
+            tle_line1: None,
+            tle_line2: None,
+            norad_id: None,
+            sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
+            atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
+            space_weather: None,
+            duration: None,
+            config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+        };
+        let params = SimParams::from_sim_args(&args, false);
+
+        assert_eq!(params.satellites.len(), 1);
+        let sat = &params.satellites[0];
+        assert!(matches!(sat.orbit, OrbitSpec::Tle { .. }));
+        let alt = sat.altitude(&params.body);
+        assert!(
+            (alt - 400.0).abs() < 30.0,
+            "ISS altitude from OMM JSON: {alt:.1} km"
         );
     }
 
