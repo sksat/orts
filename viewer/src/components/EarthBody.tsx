@@ -115,6 +115,7 @@ export function EarthBody({
     if (upgraded) return;
 
     let cancelled = false;
+    let inFlight = false;
     const basePath = textureBaseUrl ?? `${import.meta.env.BASE_URL}textures/`;
 
     // Build fallback chain starting from target resolution
@@ -122,50 +123,74 @@ export function EarthBody({
     const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
 
     async function tryUpgrade() {
-      for (const res of candidates) {
-        if (cancelled) return;
+      // Don't stack a second load while one is in flight: each load decodes and
+      // uploads a large texture (synchronous on the main thread), so overlapping
+      // attempts pile up into visible frame hitches.
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        for (const res of candidates) {
+          if (cancelled) return;
 
-        const dayUrl = `${basePath}${textureBaseName}_${res}.jpg`;
-        const nightUrl = `${basePath}${nightTextureBaseName}_${res}.jpg`;
+          const dayUrl = `${basePath}${textureBaseName}_${res}.jpg`;
+          const nightUrl = `${basePath}${nightTextureBaseName}_${res}.jpg`;
 
-        const [newDay, newNight] = await Promise.all([loadTexture(dayUrl), loadTexture(nightUrl)]);
+          const [newDay, newNight] = await Promise.all([
+            loadTexture(dayUrl),
+            loadTexture(nightUrl),
+          ]);
 
-        if (cancelled) {
+          if (cancelled) {
+            newDay?.dispose();
+            newNight?.dispose();
+            return;
+          }
+
+          // Both textures must load successfully for this resolution
+          if (newDay && newNight) {
+            if (materialRef.current) {
+              const oldDay = materialRef.current.uniforms.dayMap.value as THREE.Texture;
+              const oldNight = materialRef.current.uniforms.nightMap.value as THREE.Texture;
+
+              materialRef.current.uniforms.dayMap.value = newDay;
+              materialRef.current.uniforms.nightMap.value = newNight;
+              materialRef.current.needsUpdate = true;
+
+              // Dispose old textures to free GPU memory
+              oldDay.dispose();
+              oldNight.dispose();
+            }
+            setUpgraded(true);
+            return; // success
+          }
+
+          // Partial load: clean up and try next resolution
           newDay?.dispose();
           newNight?.dispose();
-          return;
         }
-
-        // Both textures must load successfully for this resolution
-        if (newDay && newNight) {
-          if (materialRef.current) {
-            const oldDay = materialRef.current.uniforms.dayMap.value as THREE.Texture;
-            const oldNight = materialRef.current.uniforms.nightMap.value as THREE.Texture;
-
-            materialRef.current.uniforms.dayMap.value = newDay;
-            materialRef.current.uniforms.nightMap.value = newNight;
-            materialRef.current.needsUpdate = true;
-
-            // Dispose old textures to free GPU memory
-            oldDay.dispose();
-            oldNight.dispose();
-          }
-          setUpgraded(true);
-          return; // success
-        }
-
-        // Partial load: clean up and try next resolution
-        newDay?.dispose();
-        newNight?.dispose();
+        // No resolution available right now — 2K stays. A textureRevision bump
+        // (server "textures_ready") re-runs this effect to try again.
+      } finally {
+        inFlight = false;
       }
-      // All resolutions failed — 2K fallback remains active
     }
 
     tryUpgrade();
 
-    // Periodic retry every 10s until upgrade succeeds or component unmounts.
+    // Bounded fallback poll. The textureRevision bump is the primary re-trigger;
+    // this just covers a missed signal. Stop after MAX_RETRIES so a permanently
+    // unavailable resolution doesn't loop forever (e.g. static hosting without
+    // the high-res files), and never re-upload while a load is already running.
+    let attempts = 0;
+    const MAX_RETRIES = 3;
     const timer = setInterval(() => {
-      if (!cancelled) tryUpgrade();
+      if (cancelled) return;
+      attempts += 1;
+      if (attempts > MAX_RETRIES) {
+        clearInterval(timer);
+        return;
+      }
+      tryUpgrade();
     }, 10_000);
 
     return () => {

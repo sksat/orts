@@ -93,34 +93,53 @@ function TexturedBody({
     if (upgraded) return;
 
     let cancelled = false;
+    let inFlight = false;
     const basePath = textureBaseUrl ?? `${import.meta.env.BASE_URL}textures/`;
     const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);
     const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
 
     async function tryUpgrade() {
-      for (const res of candidates) {
-        if (cancelled) return;
-        const url = `${basePath}${renderInfo.textureBaseName}_${res}.jpg`;
-        const newTex = await loadTexture(url);
-        if (cancelled) {
-          newTex?.dispose();
-          return;
+      // Don't stack a second load while one is in flight: each decodes and
+      // uploads a large texture synchronously on the main thread.
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        for (const res of candidates) {
+          if (cancelled) return;
+          const url = `${basePath}${renderInfo.textureBaseName}_${res}.jpg`;
+          const newTex = await loadTexture(url);
+          if (cancelled) {
+            newTex?.dispose();
+            return;
+          }
+          if (newTex) {
+            setTexture((old) => {
+              old?.dispose();
+              return newTex;
+            });
+            setUpgraded(true);
+            return;
+          }
         }
-        if (newTex) {
-          setTexture((old) => {
-            old?.dispose();
-            return newTex;
-          });
-          setUpgraded(true);
-          return;
-        }
+      } finally {
+        inFlight = false;
       }
     }
     tryUpgrade();
 
-    // Periodic retry every 10s until upgrade succeeds or component unmounts.
+    // Bounded fallback poll (textureRevision bump is the primary re-trigger).
+    // Stop after MAX_RETRIES so a permanently unavailable resolution doesn't
+    // loop forever, and never re-upload while a load is already running.
+    let attempts = 0;
+    const MAX_RETRIES = 3;
     const timer = setInterval(() => {
-      if (!cancelled) tryUpgrade();
+      if (cancelled) return;
+      attempts += 1;
+      if (attempts > MAX_RETRIES) {
+        clearInterval(timer);
+        return;
+      }
+      tryUpgrade();
     }, 10_000);
 
     return () => {
