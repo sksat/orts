@@ -11,6 +11,7 @@
 //! [`Omm::to_keplerian_elements`].
 
 pub mod json;
+pub mod kvn;
 
 use alloc::string::String;
 
