@@ -10,13 +10,15 @@ import { DEFAULT_VIEWER_FRAME, type OrbitViewerProps } from "./types.js";
 import { useTrailBuffers } from "./useTrailBuffers.js";
 
 /**
- * Drive the bundled arika WASM to readiness. Returns `true` once loaded so the
- * scene can switch from default lighting to ephemeris-accurate Sun/rotation.
+ * Drive the bundled arika WASM to readiness when `enabled`. Returns `true` once
+ * loaded so the scene can switch from default lighting to ephemeris-accurate
+ * Sun/rotation. When `enabled` is false (no epoch), the WASM is never loaded —
+ * epoch-less embedders pay no network/init cost and get the documented fixed Sun.
  */
-function useArikaReady(): boolean {
+function useArikaReady(enabled: boolean): boolean {
   const [ready, setReady] = useState(() => isArikaReady());
   useEffect(() => {
-    if (ready) return;
+    if (!enabled || ready) return;
     let cancelled = false;
     initArika()
       .then(() => {
@@ -28,7 +30,7 @@ function useArikaReady(): boolean {
     return () => {
       cancelled = true;
     };
-  }, [ready]);
+  }, [enabled, ready]);
   return ready;
 }
 
@@ -62,7 +64,8 @@ export function OrbitViewer({
   className,
   style,
 }: OrbitViewerProps) {
-  const arikaReady = useArikaReady();
+  // Only load the arika WASM when an epoch is supplied (Sun/rotation features).
+  const arikaReady = useArikaReady(epochJd != null);
 
   // Current position per satellite. `time` is stamped onto each point; the scene
   // reads it back as the simulation time that drives Sun direction and rotation.
