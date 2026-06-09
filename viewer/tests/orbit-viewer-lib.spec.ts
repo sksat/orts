@@ -47,7 +47,7 @@ test("renders a central body + satellite with a trail", async ({ page }) => {
 });
 
 test("advancing time does not rebuild the trail buffer (stable generation)", async ({ page }) => {
-  await page.goto("/examples/orbit-viewer/");
+  await page.goto("/examples/orbit-viewer/?animate=0"); // freeze so only the hook mutates state
   await waitForTrail(page);
 
   const before = await readTrail(page);
@@ -71,7 +71,7 @@ test("advancing time does not rebuild the trail buffer (stable generation)", asy
 test("appending trail points uploads incrementally (grows length, same generation)", async ({
   page,
 }) => {
-  await page.goto("/examples/orbit-viewer/");
+  await page.goto("/examples/orbit-viewer/?animate=0"); // freeze so only the hook mutates state
   await waitForTrail(page);
 
   const before = await readTrail(page);
