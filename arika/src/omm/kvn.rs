@@ -5,7 +5,6 @@
 //! `=`), strips trailing unit annotations (`51.64 [deg]`), and collects the
 //! mean-element keywords into an [`Omm`]. Unknown keywords are ignored.
 
-use alloc::format;
 use alloc::string::{String, ToString};
 use core::f64::consts::PI;
 use core::fmt;
@@ -15,7 +14,6 @@ use core::str::FromStr;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::epoch::Epoch;
 use crate::omm::Omm;
 
 /// Error type for OMM KVN parsing.
@@ -90,9 +88,7 @@ pub fn parse(kvn: &str) -> Result<Omm, KvnParseError> {
     }
 
     let epoch_str = epoch_str.ok_or(KvnParseError::MissingField("EPOCH"))?;
-    // OMM EPOCH is UTC by definition; normalize the (often Z-less) timestamp.
-    let epoch_norm = format!("{}Z", epoch_str.trim_end_matches('Z'));
-    let epoch = Epoch::from_iso8601(&epoch_norm)
+    let epoch = crate::omm::parse_epoch(epoch_str)
         .ok_or_else(|| KvnParseError::InvalidEpoch(epoch_str.to_string()))?;
 
     let mean_motion = mean_motion.ok_or(KvnParseError::MissingField("MEAN_MOTION"))?;
@@ -136,6 +132,7 @@ fn parse_num<T: FromStr>(key: &'static str, value: &str) -> Result<T, KvnParseEr
 mod tests {
     use super::*;
     use crate::earth::MU as MU_EARTH;
+    use alloc::format;
 
     // ISS OMM KVN with a META block, a COMMENT, and unit-annotated values —
     // same element set as the ISS fixtures in `crate::tle` / `crate::omm::json`.

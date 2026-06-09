@@ -5,7 +5,6 @@
 //! and angles arrive in degrees / mean motion in rev/day — converted to the
 //! `Omm` conventions (radians, rad/s) here.
 
-use alloc::format;
 use alloc::string::{String, ToString};
 use core::f64::consts::PI;
 use core::fmt;
@@ -16,7 +15,6 @@ use crate::math::F64Ext;
 
 use serde::Deserialize;
 
-use crate::epoch::Epoch;
 use crate::omm::Omm;
 
 /// Error type for OMM JSON parsing.
@@ -64,11 +62,7 @@ pub fn parse(json: &str) -> Result<Omm, JsonParseError> {
     let raw: OmmJson =
         serde_json::from_str(json).map_err(|e| JsonParseError::Malformed(e.to_string()))?;
 
-    // OMM EPOCH is UTC by definition but CelesTrak omits the 'Z' designator;
-    // normalize to exactly one trailing 'Z' so `from_iso8601` (which requires
-    // it) accepts the calendar timestamp.
-    let epoch_str = format!("{}Z", raw.epoch.trim_end_matches('Z'));
-    let epoch = Epoch::from_iso8601(&epoch_str)
+    let epoch = crate::omm::parse_epoch(&raw.epoch)
         .ok_or_else(|| JsonParseError::InvalidEpoch(raw.epoch.clone()))?;
 
     Ok(Omm {

@@ -14,7 +14,9 @@ pub mod json;
 pub mod kvn;
 pub mod xml;
 
+use alloc::format;
 use alloc::string::String;
+use core::fmt;
 
 // In `no_std` builds f64 transcendentals (`cbrt`) resolve via libm through this
 // trait; under `std` the inherent methods shadow it.
@@ -78,6 +80,101 @@ impl Omm {
     }
 }
 
+/// Parse an OMM `EPOCH` value into a UTC [`Epoch`].
+///
+/// OMM epochs are UTC by definition but the ISO-8601 `Z` designator is often
+/// omitted; this normalizes to exactly one trailing `Z` (which
+/// [`Epoch::from_iso8601`] requires) before parsing. Returns `None` for
+/// malformed / non-calendar timestamps. Shared by the JSON / KVN / XML parsers.
+pub(crate) fn parse_epoch(raw: &str) -> Option<Epoch<Utc>> {
+    let normalized = format!("{}Z", raw.trim().trim_end_matches('Z'));
+    Epoch::from_iso8601(&normalized)
+}
+
+/// Element-set serialization formats that [`parse`] can decode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// NORAD Two-Line Element set (also 2LE / 3LE), incl. Alpha-5 catalog ids.
+    Tle,
+    /// CCSDS OMM, JSON serialization.
+    OmmJson,
+    /// CCSDS OMM, KVN (keyword-value) serialization.
+    OmmKvn,
+    /// CCSDS OMM, XML serialization.
+    OmmXml,
+}
+
+/// Sniff the element-set format of `text` (cheap structural heuristic, no full
+/// parse): leading `{`/`[` → JSON, leading `<` → XML, a `1 `/`2 ` line pair →
+/// TLE, otherwise CCSDS keyword-value → KVN. `None` if nothing matches.
+pub fn detect(text: &str) -> Option<Format> {
+    match text.trim_start().chars().next()? {
+        '{' | '[' => return Some(Format::OmmJson),
+        '<' => return Some(Format::OmmXml),
+        _ => {}
+    }
+    if text.contains("CCSDS_OMM_VERS") {
+        return Some(Format::OmmKvn);
+    }
+    // TLE has a "1 …" line and a "2 …" line (optionally preceded by a name line).
+    let mut has_line1 = false;
+    let mut has_line2 = false;
+    for line in text.lines() {
+        let l = line.trim_start();
+        has_line1 |= l.starts_with("1 ");
+        has_line2 |= l.starts_with("2 ");
+    }
+    if has_line1 && has_line2 {
+        return Some(Format::Tle);
+    }
+    // Fallback: CCSDS keyword = value text carrying OMM keys.
+    if text.contains('=') && (text.contains("MEAN_MOTION") || text.contains("EPOCH")) {
+        return Some(Format::OmmKvn);
+    }
+    None
+}
+
+/// Error returned by the unified [`parse`] entry point.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParseError {
+    /// The format could not be determined from the input.
+    UnknownFormat,
+    /// TLE parsing failed.
+    Tle(crate::tle::TleParseError),
+    /// OMM JSON parsing failed.
+    Json(json::JsonParseError),
+    /// OMM KVN parsing failed.
+    Kvn(kvn::KvnParseError),
+    /// OMM XML parsing failed.
+    Xml(xml::XmlParseError),
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::UnknownFormat => write!(f, "unrecognized element-set format"),
+            ParseError::Tle(e) => write!(f, "{e}"),
+            ParseError::Json(e) => write!(f, "{e}"),
+            ParseError::Kvn(e) => write!(f, "{e}"),
+            ParseError::Xml(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for ParseError {}
+
+/// Parse any supported element-set serialization into an [`Omm`], detecting the
+/// format from the input via [`detect`].
+pub fn parse(text: &str) -> Result<Omm, ParseError> {
+    match detect(text).ok_or(ParseError::UnknownFormat)? {
+        Format::Tle => crate::tle::parse(text).map_err(ParseError::Tle),
+        Format::OmmJson => json::parse(text).map_err(ParseError::Json),
+        Format::OmmKvn => kvn::parse(text).map_err(ParseError::Kvn),
+        Format::OmmXml => xml::parse(text).map_err(ParseError::Xml),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +223,66 @@ mod tests {
         assert!(
             d_nu < 0.01,
             "ν should be ≈ M for near-circular orbit, Δ={d_nu}"
+        );
+    }
+
+    // ── Format detection / dispatch ──────────────────────────────
+    // The same ISS element set (NORAD 25544, i = 51.64°) in each serialization.
+
+    const TLE_2L: &str = "\
+1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993
+2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000";
+
+    const TLE_3L: &str = "\
+ISS (ZARYA)
+1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993
+2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000";
+
+    const JSON: &str = r#"{"NORAD_CAT_ID":25544,"EPOCH":"2024-03-19T12:00:00",
+        "MEAN_MOTION":15.49561654,"ECCENTRICITY":0.0007417,"INCLINATION":51.64,
+        "RA_OF_ASC_NODE":208.652,"ARG_OF_PERICENTER":35.391,"MEAN_ANOMALY":324.758}"#;
+
+    const KVN: &str = "\
+CCSDS_OMM_VERS = 2.0
+EPOCH = 2024-03-19T12:00:00
+MEAN_MOTION = 15.49561654
+ECCENTRICITY = 0.0007417
+INCLINATION = 51.64
+RA_OF_ASC_NODE = 208.652
+ARG_OF_PERICENTER = 35.391
+MEAN_ANOMALY = 324.758
+NORAD_CAT_ID = 25544";
+
+    const XML: &str = r#"<omm><EPOCH>2024-03-19T12:00:00</EPOCH>
+        <MEAN_MOTION>15.49561654</MEAN_MOTION><ECCENTRICITY>0.0007417</ECCENTRICITY>
+        <INCLINATION>51.64</INCLINATION><RA_OF_ASC_NODE>208.652</RA_OF_ASC_NODE>
+        <ARG_OF_PERICENTER>35.391</ARG_OF_PERICENTER><MEAN_ANOMALY>324.758</MEAN_ANOMALY>
+        <NORAD_CAT_ID>25544</NORAD_CAT_ID></omm>"#;
+
+    #[test]
+    fn detect_formats() {
+        assert_eq!(detect(TLE_2L), Some(Format::Tle));
+        assert_eq!(detect(TLE_3L), Some(Format::Tle));
+        assert_eq!(detect(JSON), Some(Format::OmmJson));
+        assert_eq!(detect(KVN), Some(Format::OmmKvn));
+        assert_eq!(detect(XML), Some(Format::OmmXml));
+        assert_eq!(detect("garbage, no markers"), None);
+    }
+
+    #[test]
+    fn parse_dispatches_every_format() {
+        for src in [TLE_2L, TLE_3L, JSON, KVN, XML] {
+            let omm = parse(src).unwrap();
+            assert_eq!(omm.norad_cat_id, 25544);
+            assert!((omm.inclination.to_degrees() - 51.64).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn parse_unknown_format_errors() {
+        assert_eq!(
+            parse("definitely not an element set"),
+            Err(ParseError::UnknownFormat)
         );
     }
 }

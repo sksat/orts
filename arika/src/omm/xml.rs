@@ -6,7 +6,6 @@
 //! attributes (e.g. `units="deg"`), and assumes well-formed OMM with no
 //! namespace prefixes or markup inside leaf values.
 
-use alloc::format;
 use alloc::string::{String, ToString};
 use core::f64::consts::PI;
 use core::fmt;
@@ -16,7 +15,6 @@ use core::str::FromStr;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::epoch::Epoch;
 use crate::omm::Omm;
 
 /// Error type for OMM XML parsing.
@@ -48,9 +46,7 @@ impl std::error::Error for XmlParseError {}
 /// Parse an OMM XML document into an [`Omm`].
 pub fn parse(xml: &str) -> Result<Omm, XmlParseError> {
     let epoch_raw = required(xml, "EPOCH")?;
-    // OMM EPOCH is UTC by definition; normalize the (often Z-less) timestamp.
-    let epoch_norm = format!("{}Z", epoch_raw.trim_end_matches('Z'));
-    let epoch = Epoch::from_iso8601(&epoch_norm)
+    let epoch = crate::omm::parse_epoch(epoch_raw)
         .ok_or_else(|| XmlParseError::InvalidEpoch(epoch_raw.to_string()))?;
 
     let mean_motion = parse_num::<f64>("MEAN_MOTION", required(xml, "MEAN_MOTION")?)?;
