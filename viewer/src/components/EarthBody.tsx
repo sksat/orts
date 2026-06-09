@@ -40,15 +40,25 @@ interface EarthBodyProps {
   textureBaseUrl?: string;
 }
 
+// Decode textures off the main thread via createImageBitmap, so a large texture
+// doesn't decode synchronously while uploading (the dominant source of frame
+// hitches on big textures). The bitmap is pre-flipped to match TextureLoader's
+// default; WebGL can't flip an ImageBitmap at upload, so texture.flipY is off.
+const bitmapLoader = new THREE.ImageBitmapLoader();
+bitmapLoader.setOptions({ imageOrientation: "flipY" });
+
 /**
  * Try loading a texture by URL. Returns the loaded texture or null on failure.
  */
 function loadTexture(url: string): Promise<THREE.Texture | null> {
   return new Promise((resolve) => {
-    new THREE.TextureLoader().load(
+    bitmapLoader.load(
       url,
-      (tex) => {
+      (bitmap) => {
+        const tex = new THREE.Texture(bitmap);
         tex.colorSpace = THREE.SRGBColorSpace;
+        tex.flipY = false;
+        tex.needsUpdate = true;
         resolve(tex);
       },
       undefined,
@@ -113,10 +123,13 @@ export function EarthBody({
       return;
     if (!materialRef.current) return;
     if (upgraded) return;
+    // Only upgrade when a real texture source is provided (a connected orts
+    // server, or an explicit base URL). No source → keep the bundled 2K.
+    if (!textureBaseUrl) return;
 
     let cancelled = false;
     let inFlight = false;
-    const basePath = textureBaseUrl ?? `${import.meta.env.BASE_URL}textures/`;
+    const basePath = textureBaseUrl;
 
     // Build fallback chain starting from target resolution
     const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);

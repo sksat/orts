@@ -31,12 +31,21 @@ interface CelestialBodyProps {
 
 const FALLBACK_CHAIN: TextureResolution[] = ["16k", "8k", "4k"];
 
+// Decode off the main thread via createImageBitmap (see EarthBody). The bitmap
+// is pre-flipped to match TextureLoader; WebGL can't flip an ImageBitmap on
+// upload, so texture.flipY is off.
+const bitmapLoader = new THREE.ImageBitmapLoader();
+bitmapLoader.setOptions({ imageOrientation: "flipY" });
+
 function loadTexture(url: string): Promise<THREE.Texture | null> {
   return new Promise((resolve) => {
-    new THREE.TextureLoader().load(
+    bitmapLoader.load(
       url,
-      (tex) => {
+      (bitmap) => {
+        const tex = new THREE.Texture(bitmap);
         tex.colorSpace = THREE.SRGBColorSpace;
+        tex.flipY = false;
+        tex.needsUpdate = true;
         resolve(tex);
       },
       undefined,
@@ -91,10 +100,13 @@ function TexturedBody({
     if (!baseLoaded || !renderInfo.textureBaseName) return;
     if (!targetResolution || targetResolution === "2k") return;
     if (upgraded) return;
+    // Only upgrade when a real texture source is provided (a connected orts
+    // server, or an explicit base URL). No source → keep the bundled 2K.
+    if (!textureBaseUrl) return;
 
     let cancelled = false;
     let inFlight = false;
-    const basePath = textureBaseUrl ?? `${import.meta.env.BASE_URL}textures/`;
+    const basePath = textureBaseUrl;
     const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);
     const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
 
