@@ -3,7 +3,11 @@
 //! Parses the legacy NORAD fixed-width TLE format into the shared
 //! [`crate::omm::Omm`] mean-element record — TLE is treated as a serialization
 //! of the same mean elements that OMM standardizes. Supports the classic
-//! 5-digit catalog number and the Alpha-5 alphanumeric extension.
+//! 5-digit catalog number and the Alpha-5 alphanumeric extension (the official
+//! interim scheme for catalog numbers past 99 999; see `decode_catalog_number`).
+//!
+//! Alpha-5 only extends the legacy format to 339 999 — for overflow-proof use
+//! the CCSDS OMM format ([`crate::omm`]) is the recommended successor.
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -160,6 +164,12 @@ pub fn parse(text: &str) -> Result<Omm, TleParseError> {
 /// | `A0000` | `100000` | `A` → 10      |
 /// | `E8493` | `148493` | `E` → 14      |
 /// | `Z9999` | `339999` | `Z` → 33 (max)|
+///
+/// Alpha-5 is the **official interim scheme** of the US Space Force /
+/// Space-Track (18th Space Defense Squadron): `100000`–`269999` for catalogued
+/// objects and `270000`–`339999` for Space-Fence analyst objects. It is a
+/// stopgap — Space-Track and CelesTrak recommend the CCSDS OMM format
+/// ([`crate::omm`]) as the overflow-proof long-term replacement.
 fn decode_catalog_number(field: &str) -> Result<u32, TleParseError> {
     let field = field.trim();
     let invalid = || TleParseError::InvalidField {

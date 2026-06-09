@@ -5,6 +5,11 @@
 //! the CCSDS OMM mean-element set: a satellite identity, an epoch, and the six
 //! SGP4 mean Keplerian elements plus the B* drag term.
 //!
+//! OMM is the CCSDS standard that Space-Track and CelesTrak recommend as the
+//! overflow-proof successor to the legacy TLE catalog (whose 5-digit number is
+//! only extended, not fixed, by Alpha-5 — see [`crate::tle`]). Its
+//! `NORAD_CAT_ID` has no fixed width.
+//!
 //! Angles are stored in **radians** and mean motion in **rad/s** (orts
 //! conventions), converted from each format's native units (degrees, rev/day)
 //! at parse time. Convert to classical elements with
