@@ -401,10 +401,17 @@ impl Epoch<Utc> {
                 }
                 Some(Self::from_gregorian(year, month, day, hour, min, sec))
             }
-            // Ordinal date: YYYY-DDD (day of year).
+            // Ordinal date: YYYY-DDD (zero-padded 3-digit day of year). The
+            // 3-digit requirement disambiguates from a truncated calendar date
+            // such as "2024-03", which is rejected rather than read as day 3.
             None => {
+                if rest.len() != 3 {
+                    return None;
+                }
                 let doy: u32 = rest.parse().ok()?;
-                if !(1..=366).contains(&doy) {
+                // Reject day 366 in a common year (it would roll into the next).
+                let max_doy = if Self::is_leap_year(year) { 366 } else { 365 };
+                if !(1..=max_doy).contains(&doy) {
                     return None;
                 }
                 let day_of_year =
@@ -436,6 +443,11 @@ impl Epoch<Utc> {
             jd: jan1.jd + (day_of_year - 1.0),
             _scale: PhantomData,
         }
+    }
+
+    /// Gregorian leap-year test.
+    fn is_leap_year(year: i32) -> bool {
+        year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
     }
 
     /// Create a UTC epoch from a TLE epoch (2-digit year + fractional day of year).
@@ -980,6 +992,19 @@ mod tests {
             (calendar.jd() - ordinal.jd()).abs() < 1e-9,
             "ordinal and calendar forms must denote the same instant"
         );
+    }
+
+    #[test]
+    fn from_iso8601_ordinal_validation() {
+        // A truncated calendar date (2-/1-digit field) must NOT be read as ordinal.
+        assert!(Epoch::<Utc>::from_iso8601("2024-03T12:00:00Z").is_none());
+        assert!(Epoch::<Utc>::from_iso8601("2024-3T12:00:00Z").is_none());
+        // Day 366 is valid only in a leap year.
+        assert!(Epoch::<Utc>::from_iso8601("2024-366T00:00:00Z").is_some()); // 2024 leap
+        assert!(Epoch::<Utc>::from_iso8601("2023-366T00:00:00Z").is_none()); // 2023 common
+        // Out-of-range ordinals are rejected.
+        assert!(Epoch::<Utc>::from_iso8601("2024-000T00:00:00Z").is_none());
+        assert!(Epoch::<Utc>::from_iso8601("2024-367T00:00:00Z").is_none());
     }
 
     #[test]
