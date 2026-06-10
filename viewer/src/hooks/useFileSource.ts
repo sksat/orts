@@ -73,6 +73,13 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
       let tMin = Number.POSITIVE_INFINITY;
       let tMax = Number.NEGATIVE_INFINITY;
 
+      // Stop the adapter and release the ref. Safe to call from inside the
+      // wrapper: the superseded-adapter guard only compares identity.
+      const retire = () => {
+        adapter.stop();
+        if (fileAdapterRef.current === adapter) fileAdapterRef.current = null;
+      };
+
       const wrapped: typeof handleEvent = (sourceId, event) => {
         // Ignore events from an adapter that has been superseded (a newer
         // load or a Connect stopped it); its worker may still flush messages.
@@ -100,17 +107,21 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
           case "complete":
             if (!gateOpened) {
               setOrbitInfo("No valid orbit data found in file.");
-              fileAdapterRef.current = null;
+              retire();
               return;
             }
             handleEvent(sourceId, event);
             setOrbitInfo(
               `Loaded: ${file.name} | ${pointCount} points | Duration: ${(tMax - tMin).toFixed(1)} s`,
             );
+            retire();
             return;
           case "error":
+            // Worker/file errors are fatal — surface them and clean up so
+            // a late message can never resurrect this load.
             if (gateOpened) handleEvent(sourceId, event);
             setOrbitInfo(`Failed to load ${file.name}: ${event.message}`);
+            retire();
             return;
           default:
             if (gateOpened) handleEvent(sourceId, event);
@@ -130,6 +141,10 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
       // RRD validation happens in the worker, so switch sources eagerly
       onBeforeEmit?.();
       let totalPoints = 0;
+      const retire = () => {
+        adapter.stop();
+        if (fileAdapterRef.current === adapter) fileAdapterRef.current = null;
+      };
       const wrapped: typeof handleEvent = (sourceId, event) => {
         if (fileAdapterRef.current !== adapter) return;
         handleEvent(sourceId, event);
@@ -138,6 +153,13 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
         }
         if (event.kind === "complete") {
           setOrbitInfo(`Loaded: ${file.name} | ${totalPoints} points`);
+          retire();
+        }
+        if (event.kind === "error") {
+          // Surface the failure (the UI would otherwise stay on "Loading…")
+          // and clean up the worker.
+          setOrbitInfo(`Failed to load ${file.name}: ${event.message}`);
+          retire();
         }
       };
 

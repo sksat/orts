@@ -180,6 +180,11 @@ export class RrdFileAdapter implements SourceAdapter {
 
       case "error":
         this.onEvent(id, { kind: "error", message: msg.message });
+        // Worker errors are fatal — no further messages will arrive.
+        if (this.worker) {
+          this.worker.terminate();
+          this.worker = null;
+        }
         break;
     }
   }
