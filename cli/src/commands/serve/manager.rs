@@ -853,6 +853,16 @@ impl SimLoopContext {
                     .collect::<Vec<_>>()
             })
             .collect();
+        // Streams are pumped through the controller; in orbit-only /
+        // spacecraft mode the endpoints would be black holes (accepted but
+        // never drained). Reject loudly instead.
+        if !stream_keys.is_empty() && !matches!(group, SimGroup::Controlled(_)) {
+            return Err(
+                "stream-io streams are declared but no satellite has a controller; \
+                 streams require a plugin-controlled simulation"
+                    .to_string(),
+            );
+        }
         for (sat, stream) in &stream_keys {
             eprintln!("stream-io endpoint: /stream/{sat}/{stream}");
         }
@@ -885,15 +895,18 @@ impl SimLoopContext {
         self.metas.iter().any(|m| !m.spec.streams.is_empty())
     }
 
-    /// Smallest controller sample period across controlled satellites —
-    /// the bridge pump tick. `None` when not in controlled mode.
-    fn min_sample_period(&self) -> Option<f64> {
+    /// The realtime bridge tick: the controllers' common sample period.
+    ///
+    /// `step_controlled_to` steps **every** controller over each interval,
+    /// so a global tick shorter than a controller's own period would update
+    /// it too often (changing FSW behavior and dynamics). Until per-sat
+    /// tick tracking exists, the bridge requires a uniform sample period.
+    fn realtime_tick(&self) -> Result<f64, String> {
         let SimGroup::Controlled(sats) = &self.group else {
-            return None;
+            return Err("stream-io bridge requires a controlled simulation".to_string());
         };
-        sats.iter()
-            .map(|s| s.controller.sample_period())
-            .min_by(|a, b| a.total_cmp(b))
+        let periods: Vec<f64> = sats.iter().map(|s| s.controller.sample_period()).collect();
+        uniform_tick(&periods)
     }
 
     /// Pump staged inbound bytes from the bridge into each controller
@@ -1415,6 +1428,22 @@ impl SimLoopContext {
     }
 }
 
+/// The single sample period shared by all controllers, or an error when the
+/// fleet mixes periods (the stream-io bridge steps every controller on the
+/// same global tick, so mixed rates would over-step the slower ones).
+fn uniform_tick(periods: &[f64]) -> Result<f64, String> {
+    let Some(&first) = periods.first() else {
+        return Err("stream-io bridge requires at least one controller".to_string());
+    };
+    if periods.iter().any(|p| (p - first).abs() > 1e-9) {
+        return Err(format!(
+            "stream-io bridge requires a uniform controller sample period, got {periods:?}; \
+             mixed-rate fleets are not supported with streams yet"
+        ));
+    }
+    Ok(first)
+}
+
 /// Serialize one history state as a `WsMessage::State` JSON string.
 fn state_json(out: &crate::sim::core::HistoryState) -> String {
     serde_json::to_string(&WsMessage::State {
@@ -1471,9 +1500,17 @@ async fn run_simulation_loop(
     // tick to the wall clock (1 sim s = 1 wall s).
     let realtime = ctx.has_streams();
     let (outputs_per_chunk, chunk_wall_time) = if realtime {
-        let tick = ctx
-            .min_sample_period()
-            .unwrap_or(ctx.params.stream_interval);
+        let tick = match ctx.realtime_tick() {
+            Ok(tick) => tick,
+            Err(e) => {
+                eprintln!("Simulation startup error: {e}");
+                let err_msg = serde_json::to_string(&WsMessage::Error { message: e })
+                    .expect("failed to serialize error");
+                let _ = tx.send(err_msg);
+                ctx.bridge.reset(Vec::new());
+                return (LoopExit::Terminated, cmd_rx);
+            }
+        };
         ctx.stream_step = tick;
         eprintln!("stream-io bridge active: realtime pacing (1 sim s = 1 wall s), tick = {tick} s");
         (1, std::time::Duration::from_secs_f64(tick))
@@ -1489,11 +1526,16 @@ async fn run_simulation_loop(
             match cmd_rx.try_recv() {
                 Ok(cmd) => {
                     if ctx.handle_command(cmd).is_break() {
+                        // Tear down the bridge endpoints with the loop —
+                        // while the manager is idle there is nothing to
+                        // drain them (lingering peers see `defunct`).
+                        ctx.bridge.reset(Vec::new());
                         return (LoopExit::Terminated, cmd_rx);
                     }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
+                    ctx.bridge.reset(Vec::new());
                     return (LoopExit::Disconnected, cmd_rx);
                 }
             }
@@ -1568,6 +1610,24 @@ async fn run_simulation_loop(
 mod tests {
     use super::*;
     use arika::body::KnownBody;
+
+    #[test]
+    fn uniform_tick_accepts_a_single_shared_period() {
+        assert_eq!(uniform_tick(&[1.0]), Ok(1.0));
+        assert_eq!(uniform_tick(&[0.5, 0.5, 0.5]), Ok(0.5));
+    }
+
+    #[test]
+    fn uniform_tick_rejects_mixed_periods() {
+        // A 1.0 s controller stepped on a 0.1 s global tick would update
+        // 10x too often — must be rejected, not silently mis-simulated.
+        assert!(uniform_tick(&[0.1, 1.0]).is_err());
+    }
+
+    #[test]
+    fn uniform_tick_rejects_empty_fleet() {
+        assert!(uniform_tick(&[]).is_err());
+    }
 
     #[test]
     fn terminated_events_ring_buffer_caps_at_limit() {
