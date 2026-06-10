@@ -91,7 +91,13 @@ impl StreamBridge {
             .collect();
         let mut map = self.endpoints.write().expect("bridge lock poisoned");
         for ep in map.values() {
-            ep.inner.lock().expect("endpoint lock poisoned").defunct = true;
+            let mut inner = ep.inner.lock().expect("endpoint lock poisoned");
+            inner.defunct = true;
+            // Drop the writer-side sender too: an *idle* connection's task
+            // only learns about the teardown through `out_rx` yielding
+            // `None` (it may never receive another inbound byte to observe
+            // `Defunct` on).
+            inner.peer_tx = None;
         }
         *map = fresh;
     }
@@ -152,11 +158,19 @@ impl StreamEndpoint {
     /// Register a new active peer (last-wins). Returns the connection's
     /// generation token and the receiver feeding its WS writer task.
     /// Replacing the previous sender ends the old writer task's `recv()`.
+    ///
+    /// A new connection starts a **fresh byte stream**: bytes staged by the
+    /// previous connection (and a latched staging overflow) are discarded
+    /// rather than spliced into the new peer's stream — interleaving two
+    /// connections' bytes would corrupt framing nondeterministically. Same
+    /// semantics as re-plugging a serial cable.
     pub fn attach_peer(&self) -> (u64, mpsc::Receiver<Vec<u8>>) {
         let (tx, rx) = mpsc::channel(PEER_QUEUE_CHUNKS);
         let mut inner = self.inner.lock().expect("endpoint lock poisoned");
         inner.generation += 1;
         inner.peer_tx = Some(tx);
+        inner.staged.clear();
+        inner.overflowed = false;
         (inner.generation, rx)
     }
 
@@ -200,6 +214,10 @@ impl StreamEndpoint {
                 inner.peer_tx = None;
                 OutboundPush::NoPeer
             }
+            // The unsent bytes are dropped, but `Stuck` makes the caller
+            // halt the simulation — the loss is loud, never silent (the
+            // no-drop contract is about not corrupting the stream while the
+            // sim keeps running).
             Err(mpsc::error::TrySendError::Full(_)) => OutboundPush::Stuck,
         }
     }
@@ -350,5 +368,45 @@ mod tests {
         let fresh = bridge.lookup("sat0", "comlink").unwrap();
         let (g2, _rx2) = fresh.attach_peer();
         assert_eq!(fresh.push_inbound(g2, &[1]), InboundPush::Ok);
+    }
+
+    #[test]
+    fn reset_ends_idle_connections_via_writer_channel() {
+        let bridge = StreamBridge::new();
+        bridge.reset(vec![("sat0".into(), "comlink".into())]);
+        let ep = bridge.lookup("sat0", "comlink").unwrap();
+        let (_generation, mut rx) = ep.attach_peer();
+        bridge.reset(Vec::new());
+        // An idle connection never observes `Defunct` through inbound; its
+        // task must end via the writer channel closing instead.
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn attach_starts_a_fresh_stream() {
+        let ep = StreamEndpoint::default();
+        let (g1, _rx1) = ep.attach_peer();
+        ep.push_inbound(g1, &[1, 2, 3]);
+        // Reconnect before the sim pumped: the old connection's tail must
+        // not be spliced into the new peer's stream.
+        let (g2, _rx2) = ep.attach_peer();
+        assert_eq!(ep.take_staged(), (vec![], false));
+        ep.push_inbound(g2, &[9]);
+        assert_eq!(ep.take_staged(), (vec![9], false));
+    }
+
+    #[test]
+    fn attach_clears_a_latched_overflow() {
+        let ep = StreamEndpoint::default();
+        let (g1, _rx1) = ep.attach_peer();
+        ep.push_inbound(g1, &vec![0u8; STAGING_CAPACITY]);
+        ep.push_inbound(g1, &[1]); // latch overflow
+        // The overflow belonged to the dead connection's stream; a fresh
+        // link must not halt the sim for it.
+        let (_g2, _rx2) = ep.attach_peer();
+        assert_eq!(ep.take_staged(), (vec![], false));
     }
 }
