@@ -66,7 +66,10 @@ pub fn parse(kvn: &str) -> Result<Omm, KvnParseError> {
             continue;
         };
         let key = key.trim();
-        let value = strip_units(value).trim();
+        // Trim only — do NOT strip unit annotations here, or a string field
+        // like `OBJECT_NAME = SAT [TEST]` would be truncated at '['. Units are
+        // stripped per numeric field inside `parse_num`.
+        let value = value.trim();
         // Pass the matched string literal (not the borrowed `key`) so the
         // error type can hold a `&'static str` keyword.
         match key {
@@ -122,10 +125,14 @@ fn strip_units(value: &str) -> &str {
 }
 
 fn parse_num<T: FromStr>(key: &'static str, value: &str) -> Result<T, KvnParseError> {
-    value.parse().map_err(|_| KvnParseError::InvalidValue {
-        key,
-        value: value.to_string(),
-    })
+    // Numeric fields may carry a trailing unit annotation (e.g. "51.64 [deg]").
+    strip_units(value)
+        .trim()
+        .parse()
+        .map_err(|_| KvnParseError::InvalidValue {
+            key,
+            value: value.to_string(),
+        })
 }
 
 #[cfg(test)]
@@ -205,5 +212,22 @@ BSTAR = 0.00003
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn object_name_with_bracket_not_truncated() {
+        // A '[' in a string field must survive (unit stripping is numeric-only).
+        let kvn = "\
+OBJECT_NAME = SAT [TEST]
+EPOCH = 2024-03-19T12:00:00
+MEAN_MOTION = 15.0
+ECCENTRICITY = 0.0
+INCLINATION = 0.0
+RA_OF_ASC_NODE = 0.0
+ARG_OF_PERICENTER = 0.0
+MEAN_ANOMALY = 0.0
+NORAD_CAT_ID = 1";
+        let omm = parse(kvn).unwrap();
+        assert_eq!(omm.object_name.as_deref(), Some("SAT [TEST]"));
     }
 }

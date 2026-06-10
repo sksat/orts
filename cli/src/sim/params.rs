@@ -750,8 +750,7 @@ mod tests {
     #[test]
     fn sim_params_from_omm_json_file() {
         use std::io::Write;
-        // Same ISS element set as an OMM JSON document — `--tle` must
-        // auto-detect non-TLE serializations, not just TLE.
+        // Same ISS element set as an OMM JSON document, loaded via `--omm`.
         let json = r#"{"OBJECT_NAME":"ISS (ZARYA)","NORAD_CAT_ID":25544,
             "EPOCH":"2024-03-19T12:00:00","MEAN_MOTION":15.49561654,
             "ECCENTRICITY":0.0007417,"INCLINATION":51.64,"RA_OF_ASC_NODE":208.652,
