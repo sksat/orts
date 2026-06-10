@@ -106,11 +106,20 @@ pub enum Format {
     OmmXml,
 }
 
+/// Strip a leading UTF-8 BOM (U+FEFF). It is not whitespace, so `trim_start`
+/// alone won't remove it, and a BOM-prefixed file would otherwise confuse both
+/// format sniffing and the JSON/XML parsers (failing at byte 0).
+fn strip_bom(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
+}
+
 /// Sniff the element-set format of `text` (cheap structural heuristic, no full
 /// parse): leading `{` or `[` → JSON (a single OMM object, or a 1-element
 /// array), leading `<` → XML, a `1 `/`2 ` line pair → TLE, otherwise CCSDS
-/// keyword-value → KVN. `None` if nothing matches.
+/// keyword-value → KVN. A leading UTF-8 BOM is ignored. `None` if nothing
+/// matches.
 pub fn detect(text: &str) -> Option<Format> {
+    let text = strip_bom(text);
     match text.trim_start().chars().next()? {
         '{' | '[' => return Some(Format::OmmJson),
         '<' => return Some(Format::OmmXml),
@@ -168,8 +177,10 @@ impl fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 /// Parse any supported element-set serialization into an [`Omm`], detecting the
-/// format from the input via [`detect`].
+/// format from the input via [`detect`]. A leading UTF-8 BOM is stripped before
+/// dispatch so the JSON/XML parsers see clean input.
 pub fn parse(text: &str) -> Result<Omm, ParseError> {
+    let text = strip_bom(text);
     match detect(text).ok_or(ParseError::UnknownFormat)? {
         Format::Tle => crate::tle::parse(text).map_err(ParseError::Tle),
         Format::OmmJson => json::parse(text).map_err(ParseError::Json),
@@ -280,6 +291,18 @@ NORAD_CAT_ID = 25544";
             assert_eq!(omm.norad_cat_id, 25544);
             assert!((omm.inclination.to_degrees() - 51.64).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn bom_prefixed_input_detects_and_parses() {
+        // A UTF-8 BOM (not whitespace!) must not break sniffing or parsing.
+        let bom_json = ["\u{feff}", JSON].concat();
+        assert_eq!(detect(&bom_json), Some(Format::OmmJson));
+        assert_eq!(parse(&bom_json).unwrap().norad_cat_id, 25544);
+        let bom_xml = ["\u{feff}", XML].concat();
+        assert_eq!(detect(&bom_xml), Some(Format::OmmXml));
+        let bom_tle = ["\u{feff}", TLE_2L].concat();
+        assert_eq!(detect(&bom_tle), Some(Format::Tle));
     }
 
     #[test]

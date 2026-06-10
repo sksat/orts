@@ -191,6 +191,7 @@ impl SimParams {
             if args.tle.is_some()
                 || args.omm.is_some()
                 || args.tle_line1.is_some()
+                || args.tle_line2.is_some()
                 || args.norad_id.is_some()
             {
                 panic!(
@@ -450,7 +451,11 @@ impl SimParams {
     pub fn parse_tle_from_args(args: &SimArgs) -> Option<Omm> {
         // --norad-id: fetch from CelesTrak / SatNOGS.
         if let Some(norad_id) = args.norad_id {
-            if args.tle.is_some() || args.omm.is_some() || args.tle_line1.is_some() {
+            if args.tle.is_some()
+                || args.omm.is_some()
+                || args.tle_line1.is_some()
+                || args.tle_line2.is_some()
+            {
                 panic!("Cannot combine --norad-id with --tle / --omm / --tle-line1 / --tle-line2");
             }
             return Some(fetch_tle_by_norad_id(norad_id));
