@@ -210,6 +210,18 @@ export function OrbitTrail({
     const allPoints = trailBuffer.getAll();
     const totalPoints = allPoints.length;
 
+    // Empty trail fast-path: with no points, `writtenCountRef === 0` would
+    // otherwise count as "needs full rewrite" every frame — re-flagging the
+    // attributes (and, in ECEF mode, calling the WASM batch transform) for a
+    // zero-length range. Track the generation and draw nothing instead; the
+    // first non-empty frame still takes the full-write path below.
+    if (totalPoints === 0) {
+      generationRef.current = currentGen;
+      writtenCountRef.current = 0;
+      geometry.setDrawRange(0, 0);
+      return;
+    }
+
     const needsFullRewrite = currentGen !== generationRef.current || writtenCountRef.current === 0;
 
     if (needsFullRewrite) {

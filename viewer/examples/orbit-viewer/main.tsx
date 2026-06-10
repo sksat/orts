@@ -72,7 +72,12 @@ function Example() {
       trail.push({ position: orbitStep(i).position, time: i * STEP_SECONDS });
     }
     const head = orbitStep(points - 1);
-    return [{ id: "demo", name: "demo", position: head.position, velocity: head.velocity, trail }];
+    return [
+      { id: "demo", name: "demo", position: head.position, velocity: head.velocity, trail },
+      // Marker-only satellite (no `trail` prop): just a point in space. No trail
+      // buffer is allocated and no OrbitTrail is mounted for it.
+      { id: "marker", name: "marker", position: [-6000, 6000, 3000] },
+    ];
   }, [points]);
 
   // Sim time: tracks the satellite's position so Sun/rotation animate with it.

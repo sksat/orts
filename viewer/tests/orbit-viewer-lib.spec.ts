@@ -95,3 +95,15 @@ test("local-orbital (LVLH) frame renders without error", async ({ page }) => {
   await waitForTrail(page);
   expect((await readTrail(page))?.length).toBeGreaterThan(0);
 });
+
+test("a marker-only satellite (no trail prop) gets no trail buffer", async ({ page }) => {
+  await page.goto("/examples/orbit-viewer/?animate=0");
+  await waitForTrail(page); // scene is up: the demo satellite's trail is filled
+
+  const markerTrail = await page.evaluate(() => {
+    const dbg = (window as unknown as { __debug_orbit_viewer?: { trail(id: string): TrailInfo } })
+      .__debug_orbit_viewer;
+    return dbg ? dbg.trail("marker") : undefined;
+  });
+  expect(markerTrail).toBeNull(); // no buffer allocated, no OrbitTrail mounted
+});

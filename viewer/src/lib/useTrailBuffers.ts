@@ -36,14 +36,17 @@ const INITIAL_CAPACITY = 4096;
 export function useTrailBuffers(satellites: readonly SatelliteState[]): Map<string, TrailBuffer> {
   const store = useRef(new Map<string, TrailEntry>());
 
-  // Render phase: ensure a stable buffer identity exists for each current id.
+  // Render phase: ensure a stable buffer identity exists for each satellite
+  // that asked for a trail. Marker-only satellites (no `trail` prop) get no
+  // buffer, so no OrbitTrail is mounted for them.
   const live = useMemo(() => {
     const map = new Map<string, TrailBuffer>();
     for (const sat of satellites) {
+      if (sat.trail === undefined) continue;
       let entry = store.current.get(sat.id);
       if (!entry) {
         entry = {
-          buffer: new TrailBuffer(Math.max((sat.trail?.length ?? 0) * 2, INITIAL_CAPACITY)),
+          buffer: new TrailBuffer(Math.max(sat.trail.length * 2, INITIAL_CAPACITY)),
           sync: null,
         };
         store.current.set(sat.id, entry);
@@ -59,11 +62,12 @@ export function useTrailBuffers(satellites: readonly SatelliteState[]): Map<stri
   useLayoutEffect(() => {
     const seen = new Set<string>();
     for (const sat of satellites) {
+      if (sat.trail === undefined) continue;
       seen.add(sat.id);
       const entry = store.current.get(sat.id);
-      if (entry) reconcileTrailEntry(entry, sat.trail ?? [], sat.trailVersion);
+      if (entry) reconcileTrailEntry(entry, sat.trail, sat.trailVersion);
     }
-    // Forget buffers for satellites that are no longer present.
+    // Forget buffers for satellites that vanished or dropped their trail.
     for (const id of store.current.keys()) {
       if (!seen.has(id)) store.current.delete(id);
     }
