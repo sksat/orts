@@ -453,12 +453,14 @@ jobs:
           cd plugin-sdk/examples && cargo component build -p orts-example-plugin-pd-rw-control -p orts-example-plugin-commandable-mode-ff -p orts-example-plugin-stream-framed-commander --release
 
       # Real kble binary for the stream-bridge E2E (prebuilt static musl,
-      # pinned by release tag + sha256).
+      # pinned by release tag; Renovate bumps KBLE_VERSION via the custom
+      # regex manager in renovate.json).
       - name: Install kble
         run: |
+          # renovate: datasource=github-releases depName=arkedge/kble
+          KBLE_VERSION=v0.4.2
           curl -fsSL -o "$RUNNER_TEMP/kble" \
-            https://github.com/arkedge/kble/releases/download/v0.4.2/kble-x86_64-unknown-linux-musl
-          echo "c2beba4352aeae1f214a5dabdb5d05790766d182972c63f70e714078e04c1bb4  $RUNNER_TEMP/kble" | sha256sum -c -
+            "https://github.com/arkedge/kble/releases/download/${KBLE_VERSION}/kble-x86_64-unknown-linux-musl"
           chmod +x "$RUNNER_TEMP/kble"
           echo "KBLE_BIN=$RUNNER_TEMP/kble" >> "$GITHUB_ENV"
 
