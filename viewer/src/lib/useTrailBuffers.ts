@@ -4,7 +4,13 @@ import { trailPointToOrbitPoint } from "./adapt.js";
 import { decideTrailUpdate, type TrailSyncState, trailSyncState } from "./trailSync.js";
 import type { SatelliteState } from "./types.js";
 
-/** Initial buffer capacity; grown automatically as trails get longer. */
+/**
+ * Floor for a trail buffer's capacity (in points). `TrailBuffer` is *bounded*:
+ * once a trail exceeds ~1.5× its capacity it trims the oldest points and bumps
+ * its generation (a one-off full re-upload). Capacity is fixed at creation
+ * (max of 2× the initial trail length and this floor), so raise it if you need
+ * very long histories without trimming.
+ */
 const INITIAL_CAPACITY = 4096;
 
 interface Entry {
