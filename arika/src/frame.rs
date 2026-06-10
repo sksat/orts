@@ -285,8 +285,10 @@ impl Ecef for Itrs {}
 ///
 /// **marker only**. The TEME ↔ [`Gcrs`] / [`SimpleEci`] rotation (GMST +
 /// equation of the equinoxes + precession/nutation) is deferred to a later
-/// phase. Element-set parsers tag their output `Vec3<Teme>` so the frame is
-/// explicit even before the precise transform exists.
+/// phase, as is tagging element-set-derived state vectors as `Vec3<Teme>` —
+/// today the parsers return mean elements ([`crate::omm::Omm`]), not
+/// frame-tagged vectors. The marker exists so those future APIs have an
+/// explicit frame to name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Teme;
 impl sealed::Sealed for Teme {}

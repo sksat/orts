@@ -220,10 +220,7 @@ impl SimParams {
                 vec![SatelliteSpec {
                     id: "default".to_string(),
                     name: sat_name,
-                    orbit: OrbitSpec::Tle {
-                        tle_data: tle,
-                        elements,
-                    },
+                    orbit: OrbitSpec::Omm { omm: tle, elements },
                     period,
                     ballistic_coeff: None,
                     srp_area_to_mass: None,
@@ -422,8 +419,8 @@ impl SimParams {
         sats.push(SatelliteSpec {
             id: "iss".to_string(),
             name: sat_name,
-            orbit: OrbitSpec::Tle {
-                tle_data: iss_tle,
+            orbit: OrbitSpec::Omm {
+                omm: iss_tle,
                 elements,
             },
             period,
@@ -738,7 +735,7 @@ mod tests {
         // Should have one satellite in TLE mode
         assert_eq!(params.satellites.len(), 1);
         let sat = &params.satellites[0];
-        assert!(matches!(sat.orbit, OrbitSpec::Tle { .. }));
+        assert!(matches!(sat.orbit, OrbitSpec::Omm { .. }));
 
         // Altitude should be ~400 km
         let alt = sat.altitude(&params.body);
@@ -793,7 +790,7 @@ mod tests {
 
         assert_eq!(params.satellites.len(), 1);
         let sat = &params.satellites[0];
-        assert!(matches!(sat.orbit, OrbitSpec::Tle { .. }));
+        assert!(matches!(sat.orbit, OrbitSpec::Omm { .. }));
         let alt = sat.altitude(&params.body);
         assert!(
             (alt - 400.0).abs() < 30.0,

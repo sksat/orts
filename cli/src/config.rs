@@ -475,28 +475,14 @@ impl SatelliteConfig {
                 let elements = tle.to_keplerian_elements(mu);
                 let period = elements.period(mu);
                 let tle_name = tle.object_name.clone();
-                (
-                    OrbitSpec::Tle {
-                        tle_data: tle,
-                        elements,
-                    },
-                    period,
-                    tle_name,
-                )
+                (OrbitSpec::Omm { omm: tle, elements }, period, tle_name)
             }
             OrbitConfig::Norad { norad_id } => {
                 let tle = fetch_tle_by_norad_id(*norad_id);
                 let elements = tle.to_keplerian_elements(mu);
                 let period = elements.period(mu);
                 let tle_name = tle.object_name.clone();
-                (
-                    OrbitSpec::Tle {
-                        tle_data: tle,
-                        elements,
-                    },
-                    period,
-                    tle_name,
-                )
+                (OrbitSpec::Omm { omm: tle, elements }, period, tle_name)
             }
         };
 
@@ -882,7 +868,7 @@ mod tests {
         let spec = sat_cfg.to_satellite_spec(0, body, mu);
 
         assert_eq!(spec.id, "iss");
-        assert!(matches!(spec.orbit, OrbitSpec::Tle { .. }));
+        assert!(matches!(spec.orbit, OrbitSpec::Omm { .. }));
         assert!(spec.period > 0.0);
     }
 

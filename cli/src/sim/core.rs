@@ -160,8 +160,7 @@ pub fn spacecraft_accel_breakdown(
 
 /// Convert a SatelliteSpec to SatelliteParams for OrbitalSystem construction.
 pub fn sat_params(spec: &SatelliteSpec) -> SatelliteParams {
-    let has_tle_drag =
-        matches!(&spec.orbit, OrbitSpec::Tle { tle_data, .. } if tle_data.bstar.abs() > 1e-15);
+    let has_tle_drag = matches!(&spec.orbit, OrbitSpec::Omm { omm, .. } if omm.bstar.abs() > 1e-15);
     SatelliteParams {
         has_drag: has_tle_drag || spec.ballistic_coeff.is_some(),
         ballistic_coeff: spec.ballistic_coeff,
