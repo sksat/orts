@@ -49,6 +49,9 @@ export interface SatelliteState {
    * Past trajectory, oldest first, rendered as a trailing line. Appending to
    * this list re-uses the existing GPU buffer (only new points are uploaded);
    * shrinking it, or bumping {@link SatelliteState.trailVersion}, forces a rebuild.
+   *
+   * Treat this immutably (new array reference on change), as with any React
+   * prop — in-place mutation is not detected.
    */
   trail?: readonly TrailPoint[];
   /**

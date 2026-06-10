@@ -26,6 +26,10 @@ interface Entry {
  * when the buffer object changes, so re-using the same instance lets it upload
  * just the appended tail (or do a full rewrite only on a real reset). The reconcile
  * is keyed on `satellites`, so advancing `time` alone never touches the buffers.
+ *
+ * `satellites` (and each `sat.trail`) must be treated immutably — supply new
+ * array references when points change, as with any React prop. The reconcile is
+ * keyed on the array's identity, so in-place mutation won't be picked up.
  */
 export function useTrailBuffers(satellites: readonly SatelliteState[]): Map<string, TrailBuffer> {
   const store = useRef(new Map<string, Entry>());
