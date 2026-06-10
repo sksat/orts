@@ -5,13 +5,15 @@ mod manager;
 pub mod protocol;
 #[cfg(feature = "viewer")]
 pub(crate) mod spa;
+mod stream_bridge;
 pub(crate) mod textures;
 
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::State;
 use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::{Path as AxumPath, State};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use tokio::net::TcpListener;
@@ -21,6 +23,7 @@ use crate::cli::SimArgs;
 use crate::sim::params::SimParams;
 
 use manager::SimCommand;
+use stream_bridge::StreamBridge;
 use textures::TextureCache;
 
 #[derive(Clone)]
@@ -28,6 +31,8 @@ struct AppState {
     tx: broadcast::Sender<String>,
     cmd_tx: mpsc::Sender<SimCommand>,
     textures: Arc<TextureCache>,
+    /// stream-io kble bridge endpoints (binary WS per declared stream).
+    bridge: Arc<StreamBridge>,
 }
 
 pub fn run_server(sim: &SimArgs, port: u16) {
@@ -47,6 +52,24 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
         connection::handle_connection(socket, rx, cmd_tx).await;
         eprintln!("Client disconnected");
     })
+}
+
+/// Binary WS endpoint for a declared `stream-io` stream — the shape of a
+/// kble `ws://` plug. 404 for undeclared `(sat, stream)` pairs.
+async fn stream_ws_handler(
+    ws: WebSocketUpgrade,
+    AxumPath((sat, stream)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    let Some(endpoint) = state.bridge.lookup(&sat, &stream) else {
+        return (
+            StatusCode::NOT_FOUND,
+            format!("no such stream endpoint: {sat}/{stream}\n"),
+        )
+            .into_response();
+    };
+    ws.on_upgrade(move |socket| stream_bridge::handle_stream_socket(socket, endpoint, sat, stream))
+        .into_response()
 }
 
 async fn async_server(sim: &SimArgs, port: u16) {
@@ -84,6 +107,7 @@ async fn async_server(sim: &SimArgs, port: u16) {
     let texture_cache = Arc::new(TextureCache::new());
     let texture_request_tx =
         textures::spawn_texture_downloader(Arc::clone(&texture_cache), tx.clone());
+    let bridge = Arc::new(StreamBridge::new());
 
     // Spawn simulation manager
     let mgr_tx = tx.clone();
@@ -101,6 +125,7 @@ async fn async_server(sim: &SimArgs, port: u16) {
             cmd_rx,
             mgr_tx,
             texture_request_tx.clone(),
+            Arc::clone(&bridge),
         ));
     } else {
         tokio::spawn(manager::simulation_manager(
@@ -109,6 +134,7 @@ async fn async_server(sim: &SimArgs, port: u16) {
             cmd_rx,
             mgr_tx,
             texture_request_tx.clone(),
+            Arc::clone(&bridge),
         ));
     }
 
@@ -116,12 +142,16 @@ async fn async_server(sim: &SimArgs, port: u16) {
         tx,
         cmd_tx,
         textures: texture_cache,
+        bridge,
     };
 
-    let app = Router::new().route("/ws", get(ws_handler)).route(
-        "/textures/{filename}",
-        get(textures::texture_handler).with_state(Arc::clone(&state.textures)),
-    );
+    let app = Router::new()
+        .route("/ws", get(ws_handler))
+        .route("/stream/{sat}/{stream}", get(stream_ws_handler))
+        .route(
+            "/textures/{filename}",
+            get(textures::texture_handler).with_state(Arc::clone(&state.textures)),
+        );
 
     #[cfg(feature = "viewer")]
     let app = app.fallback(spa::spa_handler);

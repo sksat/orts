@@ -450,7 +450,7 @@ jobs:
 
       - name: Build guest WASM components
         run: |
-          cd plugin-sdk/examples && cargo component build -p orts-example-plugin-pd-rw-control -p orts-example-plugin-commandable-mode-ff --release
+          cd plugin-sdk/examples && cargo component build -p orts-example-plugin-pd-rw-control -p orts-example-plugin-commandable-mode-ff -p orts-example-plugin-stream-framed-commander --release
 
       - name: Download orts binary
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -470,6 +470,7 @@ jobs:
           cargo test --locked -p orts-cli --test throughput_mode_speedup_e2e
           cargo test --locked -p orts-cli --test e2e test_controlled_simulation_via_config
           cargo test --locked -p orts-cli --test plugin_msg_config_command_e2e
+          cargo test --locked -p orts-cli --test serve_stream_bridge_e2e
 
   # Build CLI with embedded viewer SPA in release profile.
   # Runs on main push (smoke test) AND tag push (release job consumes

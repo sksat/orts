@@ -139,11 +139,20 @@ impl WasmPluginCache {
         label: &str,
         config: &str,
     ) -> Result<WasmController, PluginError> {
+        self.build_sync_controller_with_streams(path, label, config, Vec::new())
+    }
+
+    /// As [`build_sync_controller`](Self::build_sync_controller) but wired
+    /// to the given declared `stream-io` streams (kble bridge).
+    pub fn build_sync_controller_with_streams(
+        &mut self,
+        path: &Path,
+        label: &str,
+        config: &str,
+        stream_names: Vec<String>,
+    ) -> Result<WasmController, PluginError> {
         let pre = self.get_or_load_sync(path)?;
-        // Stream-io streams are not wired via the cached factory path yet
-        // (config `[[stream]]` is a follow-up); use `new_with_streams`
-        // directly to declare them.
-        WasmController::new(pre, label, config)
+        WasmController::new_with_streams(pre, label, config, stream_names)
     }
 
     /// Legacy alias for [`build_sync_controller`](Self::build_sync_controller).
@@ -190,8 +199,20 @@ impl WasmPluginCache {
         label: &str,
         config: &str,
     ) -> Result<AsyncWasmController, PluginError> {
+        self.build_async_controller_with_streams(path, label, config, Vec::new())
+    }
+
+    /// As [`build_async_controller`](Self::build_async_controller) but wired
+    /// to the given declared `stream-io` streams (kble bridge).
+    pub fn build_async_controller_with_streams(
+        &mut self,
+        path: &Path,
+        label: &str,
+        config: &str,
+        stream_names: Vec<String>,
+    ) -> Result<AsyncWasmController, PluginError> {
         let built = self.get_or_load_async(path)?;
-        AsyncWasmController::new(built, label, config)
+        AsyncWasmController::new_with_streams(built, label, config, stream_names)
     }
 
     /// Borrow the async engine, creating it if this is the first

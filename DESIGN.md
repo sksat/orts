@@ -657,7 +657,8 @@ core は host が所有する transport 非依存のキュー。各入力経路�
 - **result 型**: `read -> result<stream-read, stream-error>`。`no-data`（今 tick データ無し・相手生存）と `closed`（相手切断）を区別する（空 `list<u8>` では判別不能）。
 - **bounded queue + overrun**: 双方向で有界。溢れたら **byte drop せず `overrun`**（drop はフレーム破壊を隠す）。guest には `Err(overrun)` を即時通知しつつ、**host が authoritative に sim を停止**する（guest が read しなくても halt）。
 - **named streams**: guest は自分の local 名（`"comlink"` / `"uart0"`）だけを見る。host が外部 URL の (sat, stream) に対応づけ、guest から他衛星 stream は不可。宣言は controller 構築時（config）に固定。
-- **clock の 2 モード**（外部ブリッジ）: live（`ws://` 一級 / stdio 限定、kble と実時間・非決定論）と replay（録った byte chunks を tick-stamp して決定論再生）。**現状は core（WIT + host バッファ + SDK + 例 + test-API transport）まで。外部ブリッジ（ws:// / stdio）は follow-up**。
+- **live ブリッジ（実装済み）**: config の `streams = ["comlink"]` 宣言で `orts serve` が `ws://…/stream/{sat}/{stream}` を **binary WS**（= kble の `ws://` plug の形）として公開する。stream 宣言があると serve は **realtime pacing（1 sim 秒 = 1 wall 秒）** に自動切替し、controller tick ごとに wall clock と同期しつつ bridge を pump（tick 前に受信 drain → step → tick 後に送信 flush）。WS 切断は **transient**（guest の `closed` は latch しない・再接続可）、同一 stream への新接続は **後勝ち**（generation fencing で旧接続の遅延データを排除）。peer 不在時の送信は破棄、接続中に peer が詰まったら halt（no-drop 契約）。
+- **replay モード（将来）**: 録った byte chunks を tick-stamp して決定論再生。stdio (`exec:`) ブリッジも将来。
 - 将来の RF: `RF/channel → modem/decoder → byte stream → framing → message` の **データ面** seam として妥当。ただし RF observable（soft-decision / lock / SNR / 精密 RX 時刻・Doppler）は byte 継ぎ目で失われるので、必要なら別の sideband（modem を 1 デバイスとして模型化）で扱う。`stream-read` を variant にしてあるのは将来 gap/erasure イベントを足す余地のため（追加は API version bump）。
 
 ### ミッション規模と力学モデル

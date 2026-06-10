@@ -227,6 +227,7 @@ impl SimParams {
                     rw_config: None,
                     mtq_config: None,
                     thruster_config: None,
+                    streams: Vec::new(),
                 }]
             } else if is_serve {
                 // serve with no explicit orbit → SSO + ISS default
@@ -396,6 +397,7 @@ impl SimParams {
             rw_config: None,
             mtq_config: None,
             thruster_config: None,
+            streams: Vec::new(),
         });
 
         // ISS: try online sources, fall back to embedded TLE
@@ -436,6 +438,7 @@ impl SimParams {
             rw_config: None,
             mtq_config: None,
             thruster_config: None,
+            streams: Vec::new(),
         });
 
         sats
