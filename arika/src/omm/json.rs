@@ -1,7 +1,8 @@
 //! OMM JSON parser (CelesTrak / Space-Track "GP" JSON).
 //!
-//! Deserializes a single CCSDS OMM keyword-value object into [`Omm`]. The
-//! catalog number is already numeric in JSON (no Alpha-5 5-character limit),
+//! Deserializes a CCSDS OMM keyword-value object — or a 1-element array of one
+//! — into [`Omm`]. The catalog number is already numeric in JSON (no Alpha-5
+//! 5-character limit),
 //! and angles arrive in degrees / mean motion in rev/day — converted to the
 //! `Omm` conventions (radians, rad/s) here.
 
