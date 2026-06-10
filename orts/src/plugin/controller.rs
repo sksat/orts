@@ -139,4 +139,28 @@ pub trait PluginController: Send {
     /// Set this controller's node identity, stamped as `src` on its
     /// outbound messages. Default: no-op.
     fn set_node_id(&mut self, _id: NodeId) {}
+
+    // ─── stream-io transport (raw byte streams / kble) ──────────
+    //
+    // A sibling of msg-io for guests that speak a raw byte protocol
+    // (their own framing) over named streams. Controllers without
+    // stream-io support use the default no-op impls; the WASM backends
+    // override them. The set of valid stream names is fixed at controller
+    // construction (declared by the host/config); `read`/`write` on an
+    // undeclared stream is a guest error and delivery to one is a host
+    // fault that halts the simulation.
+
+    /// Queue inbound bytes for a named stream, frozen into the
+    /// controller's next `update()` tick. Default: drop them.
+    fn stream_deliver(&mut self, _stream: &str, _bytes: Vec<u8>) {}
+
+    /// Drain the bytes the guest has written to `stream` since the last
+    /// call (for the host bridge to forward). Default: none.
+    fn stream_take(&mut self, _stream: &str) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// Signal that a named stream's peer has closed (no more inbound).
+    /// Default: no-op.
+    fn stream_close(&mut self, _stream: &str) {}
 }

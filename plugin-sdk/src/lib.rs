@@ -56,6 +56,7 @@ extern crate alloc;
 pub mod bindings;
 pub mod mode;
 pub mod msg;
+pub mod stream;
 
 use alloc::string::String;
 

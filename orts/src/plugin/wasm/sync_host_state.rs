@@ -19,8 +19,12 @@ use std::sync::{Arc, Mutex};
 
 use tobari::magnetic::TiltedDipole;
 
+use super::stream_state::{
+    DEFAULT_STREAM_CAPACITY, ReadOutcome, StreamDelivery, Streams, WriteOutcome,
+};
 use super::sync_bindings::orts::plugin::host_env;
 use super::sync_bindings::orts::plugin::msg_io;
+use super::sync_bindings::orts::plugin::stream_io;
 use super::sync_bindings::orts::plugin::tick_io;
 use super::sync_bindings::orts::plugin::types as wit;
 
@@ -38,6 +42,9 @@ impl wit::Host for HostState {}
 pub(super) struct TickPacket {
     pub input: wit::TickInput,
     pub inbox: Vec<wit::Message>,
+    /// stream-io inbound byte deliveries (and close signals) frozen into
+    /// this tick. Applied before the guest runs, like `inbox`.
+    pub stream_inbound: Vec<StreamDelivery>,
 }
 
 /// Guest response delivered to the outer `update()` via `output_tx`.
@@ -53,6 +60,14 @@ pub(super) enum GuestResponse {
     Tick {
         command: Option<wit::Command>,
         outgoing: Vec<wit::Outbound>,
+        /// Bytes the guest wrote to each named stream this tick, flushed
+        /// to the outer controller for pickup by the host bridge.
+        stream_outbound: Vec<(String, Vec<u8>)>,
+        /// Host-authoritative stream fault (overrun / wiring inconsistency)
+        /// latched up to this tick. `Some(_)` tells `update()` to halt the
+        /// simulation with a `PluginError`, independent of whether the guest
+        /// observed the `Err(overrun)` on its own `read`/`write`.
+        stream_fault: Option<String>,
     },
     /// The guest's `run()` function returned or errored. No more
     /// responses will be produced.
@@ -94,6 +109,10 @@ pub struct HostState {
     /// tick (append). Forwarded to the outer thread on the next
     /// `wait_tick` and then cleared.
     outbox: Vec<wit::Outbound>,
+    /// stream-io byte streams (declared at construction). Frozen inbound
+    /// is applied each `wait_tick`; guest `read`/`write` operate here;
+    /// outbound is drained into the next `GuestResponse`.
+    streams: Streams,
     /// `true` until the first `wait_tick` call. The very first call
     /// must NOT send a response (there's nothing to report yet), it
     /// just blocks waiting for the first input.
@@ -112,6 +131,7 @@ impl HostState {
         input_rx: mpsc::Receiver<TickPacket>,
         output_tx: mpsc::SyncSender<GuestResponse>,
         current_mode: Arc<Mutex<Option<String>>>,
+        stream_names: Vec<String>,
     ) -> Self {
         Self {
             label: label.into(),
@@ -123,6 +143,7 @@ impl HostState {
             pending_cmd: None,
             inbox: VecDeque::new(),
             outbox: Vec::new(),
+            streams: Streams::new(stream_names, DEFAULT_STREAM_CAPACITY),
             is_first_wait: true,
             current_mode,
         }
@@ -187,12 +208,17 @@ impl tick_io::Host for HostState {
         if !self.is_first_wait {
             let command = self.pending_cmd.take();
             let outgoing = std::mem::take(&mut self.outbox);
+            let stream_outbound = self.streams.drain_outbound();
+            let stream_fault = self.streams.fault().map(str::to_string);
             // If the outer side has dropped the receiver (Controller
             // was dropped), this send fails — that's fine, we'll
             // return None below and the guest will exit cleanly.
-            let _ = self
-                .output_tx
-                .send(GuestResponse::Tick { command, outgoing });
+            let _ = self.output_tx.send(GuestResponse::Tick {
+                command,
+                outgoing,
+                stream_outbound,
+                stream_fault,
+            });
         } else {
             self.is_first_wait = false;
         }
@@ -207,6 +233,21 @@ impl tick_io::Host for HostState {
                 // messages after any left undrained from the previous tick
                 // (carry-over / backpressure per the msg-io contract).
                 self.inbox.extend(packet.inbox);
+                // Freeze this tick's stream-io byte deliveries the same way.
+                for d in packet.stream_inbound {
+                    // Skip `deliver` only for a *pure close* event (closed +
+                    // no bytes) so a duplicate / teardown close stays
+                    // idempotent. Any other delivery — including an empty
+                    // non-close chunk — still goes through `deliver` to
+                    // validate the stream name/state (latching a host fault
+                    // on a wiring bug: undeclared / already-closed stream).
+                    if !(d.closed && d.bytes.is_empty()) {
+                        self.streams.deliver(&d.name, &d.bytes);
+                    }
+                    if d.closed {
+                        self.streams.close(&d.name);
+                    }
+                }
                 Some(packet.input)
             }
             Err(_) => None,
@@ -238,6 +279,34 @@ impl msg_io::Host for HostState {
     }
 }
 
+// ─── stream-io interface ────────────────────────────────────────
+
+impl stream_io::Host for HostState {
+    /// Drain up to `max` bytes from a named stream's frozen inbound
+    /// buffer. `Err(overrun)` here is the guest-visible signal; the host
+    /// also halts the simulation via the latched fault.
+    fn read(&mut self, name: String, max: u32) -> Result<wit::StreamRead, wit::StreamError> {
+        match self.streams.read(&name, max as usize) {
+            ReadOutcome::Data(bytes) => Ok(wit::StreamRead::Data(bytes)),
+            ReadOutcome::NoData => Ok(wit::StreamRead::NoData),
+            ReadOutcome::Closed => Ok(wit::StreamRead::Closed),
+            ReadOutcome::Overrun => Err(wit::StreamError::Overrun),
+            ReadOutcome::Unknown => Err(wit::StreamError::UnknownStream),
+        }
+    }
+
+    /// Append bytes to a named stream's outbound buffer (flushed at the
+    /// next tick boundary).
+    fn write(&mut self, name: String, bytes: Vec<u8>) -> Result<(), wit::StreamError> {
+        match self.streams.write(&name, &bytes) {
+            WriteOutcome::Ok => Ok(()),
+            WriteOutcome::Overrun => Err(wit::StreamError::Overrun),
+            WriteOutcome::Closed => Err(wit::StreamError::Closed),
+            WriteOutcome::Unknown => Err(wit::StreamError::UnknownStream),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::host_env::Host as _;
@@ -249,7 +318,7 @@ mod tests {
         let (_, input_rx) = mpsc::channel();
         let (output_tx, _) = mpsc::sync_channel(1);
         let current_mode = Arc::new(Mutex::new(None));
-        HostState::new("test", input_rx, output_tx, current_mode)
+        HostState::new("test", input_rx, output_tx, current_mode, Vec::new())
     }
 
     /// `seq` is encoded into `kind` so tests can assert delivery order /
@@ -310,13 +379,14 @@ mod tests {
         let (input_tx, input_rx) = mpsc::channel::<TickPacket>();
         let (output_tx, _output_rx) = mpsc::sync_channel::<GuestResponse>(4);
         let current_mode = Arc::new(Mutex::new(None));
-        let mut state = HostState::new("test", input_rx, output_tx, current_mode);
+        let mut state = HostState::new("test", input_rx, output_tx, current_mode, Vec::new());
 
         // Tick 0 delivers two messages; the guest drains only one.
         input_tx
             .send(TickPacket {
                 input: dummy_tick_input(),
                 inbox: vec![test_message(0), test_message(1)],
+                stream_inbound: vec![],
             })
             .unwrap();
         state.wait_tick();
@@ -328,6 +398,7 @@ mod tests {
             .send(TickPacket {
                 input: dummy_tick_input(),
                 inbox: vec![test_message(2)],
+                stream_inbound: vec![],
             })
             .unwrap();
         state.wait_tick();

@@ -38,6 +38,7 @@
 //!   - drop input_tx → guest's wait_tick fails → worker thread exits
 //! ```
 
+use std::collections::HashMap;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -47,6 +48,7 @@ use wasmtime::component::Component;
 
 use super::convert::sync as convert;
 use super::engine::WasmEngine;
+use super::stream_state::{DEFAULT_STREAM_CAPACITY, StreamDelivery};
 use super::sync_bindings::orts::plugin::types as wit;
 use super::sync_bindings::{Plugin, PluginPre};
 use super::sync_host_state::{GuestResponse, HostState, TickPacket};
@@ -82,22 +84,46 @@ pub struct WasmController {
     /// Outbound messages emitted by the guest, awaiting pickup via
     /// [`Self::take_outbound`].
     outbound_buffer: Vec<Message>,
+
+    // ─── stream-io transport state ──────────────────────────────
+    /// Inbound byte deliveries / close signals queued via
+    /// [`Self::stream_deliver`] / [`Self::stream_close`], frozen into the
+    /// next tick on `update()`.
+    pending_stream_inbound: Vec<StreamDelivery>,
+    /// Bytes the guest wrote to each stream, awaiting pickup via
+    /// [`Self::stream_take`] (keyed by stream name).
+    stream_outbound_buffer: HashMap<String, Vec<u8>>,
 }
 
 impl WasmController {
-    /// Instantiate a WASM guest controller for one satellite.
-    ///
-    /// Spawns a dedicated worker thread that owns the `Store` and
-    /// drives the guest's `run()` loop. Returns after the guest's
-    /// `metadata()` has been called (so `sample_period` is known).
+    /// Instantiate a WASM guest controller for one satellite (no `stream-io`
+    /// streams). Use [`new_with_streams`](Self::new_with_streams) to wire
+    /// named byte streams.
     pub fn new(
         pre: &PluginPre<HostState>,
         label: impl Into<String>,
         config: &str,
     ) -> Result<Self, PluginError> {
+        Self::new_with_streams(pre, label, config, Vec::new())
+    }
+
+    /// Instantiate a WASM guest controller wired to the given `stream-io`
+    /// streams (declared up front; the host maps each local name to an
+    /// external endpoint).
+    ///
+    /// Spawns a dedicated worker thread that owns the `Store` and
+    /// drives the guest's `run()` loop. Returns after the guest's
+    /// `metadata()` has been called (so `sample_period` is known).
+    pub fn new_with_streams(
+        pre: &PluginPre<HostState>,
+        label: impl Into<String>,
+        config: &str,
+        stream_names: Vec<String>,
+    ) -> Result<Self, PluginError> {
         let label = label.into();
         let config = config.to_string();
         let pre = pre.clone();
+        let worker_streams = stream_names.clone();
 
         // Channels for outer ↔ worker communication.
         let (input_tx, input_rx) = mpsc::sync_channel::<TickPacket>(1);
@@ -122,6 +148,7 @@ impl WasmController {
                     output_tx,
                     metadata_tx,
                     worker_current_mode,
+                    worker_streams,
                 );
             })
             .map_err(|e| PluginError::Init(format!("failed to spawn worker thread: {e}")))?;
@@ -142,6 +169,8 @@ impl WasmController {
             node_id: NodeId::Satellite(0),
             pending_inbound: Vec::new(),
             outbound_buffer: Vec::new(),
+            pending_stream_inbound: Vec::new(),
+            stream_outbound_buffer: HashMap::new(),
         })
     }
 
@@ -202,6 +231,32 @@ impl PluginController for WasmController {
         self.node_id = id;
     }
 
+    /// Queue inbound bytes for a named stream, frozen into the next
+    /// `update()` tick.
+    fn stream_deliver(&mut self, stream: &str, bytes: Vec<u8>) {
+        self.pending_stream_inbound.push(StreamDelivery {
+            name: stream.to_string(),
+            bytes,
+            closed: false,
+        });
+    }
+
+    /// Drain the bytes the guest has written to `stream` since the last call.
+    fn stream_take(&mut self, stream: &str) -> Vec<u8> {
+        self.stream_outbound_buffer
+            .remove(stream)
+            .unwrap_or_default()
+    }
+
+    /// Signal that a named stream's peer has closed.
+    fn stream_close(&mut self, stream: &str) {
+        self.pending_stream_inbound.push(StreamDelivery {
+            name: stream.to_string(),
+            bytes: Vec::new(),
+            closed: true,
+        });
+    }
+
     fn update(&mut self, obs: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
         let wit_obs = convert::tick_input_to_wit(obs);
 
@@ -217,10 +272,13 @@ impl PluginController for WasmController {
             .as_ref()
             .ok_or_else(|| PluginError::Runtime("controller is shut down".to_string()))?;
 
+        let stream_inbound = std::mem::take(&mut self.pending_stream_inbound);
+
         input_tx
             .send(TickPacket {
                 input: wit_obs,
                 inbox,
+                stream_inbound,
             })
             .map_err(|_| PluginError::Runtime("worker thread exited".to_string()))?;
 
@@ -230,7 +288,19 @@ impl PluginController for WasmController {
             .map_err(|_| PluginError::Runtime("worker thread exited".to_string()))?;
 
         match response {
-            GuestResponse::Tick { command, outgoing } => {
+            GuestResponse::Tick {
+                command,
+                outgoing,
+                stream_outbound,
+                stream_fault,
+            } => {
+                // A latched stream fault (overrun / wiring inconsistency) is
+                // host-authoritative: halt the simulation regardless of
+                // whether the guest observed the byte-level error.
+                if let Some(fault) = stream_fault {
+                    return Err(PluginError::Runtime(fault));
+                }
+
                 // Inject the host-controlled `src` onto each guest outbound
                 // (prevents the guest from spoofing its origin) and buffer it.
                 for ob in outgoing {
@@ -241,6 +311,21 @@ impl PluginController for WasmController {
                         kind: ob.kind,
                         payload: ob.payload,
                     });
+                }
+
+                // Buffer guest-written stream bytes for `stream_take`. The
+                // worker's queue is bounded but drained every tick into this
+                // outer buffer; bound it here too so a consumer (bridge) that
+                // never calls `stream_take` halts the sim (overrun) instead of
+                // growing without limit.
+                for (name, bytes) in stream_outbound {
+                    let buf = self.stream_outbound_buffer.entry(name.clone()).or_default();
+                    buf.extend(bytes);
+                    if buf.len() > DEFAULT_STREAM_CAPACITY {
+                        return Err(PluginError::Runtime(format!(
+                            "stream-io: outbound backlog overrun on stream '{name}' (consumer not draining)"
+                        )));
+                    }
                 }
 
                 match command {
@@ -261,6 +346,9 @@ impl PluginController for WasmController {
 /// Owns the `Store` and drives `call_run()` for the guest's lifetime.
 /// Communication with the outer `WasmController` happens through the
 /// mpsc channels stored inside `HostState`.
+// Internal worker entry point: the parameters are the things the worker
+// needs to own (channels, config, declared streams), not a public API.
+#[allow(clippy::too_many_arguments)]
 fn worker_main(
     pre: PluginPre<HostState>,
     label: String,
@@ -269,9 +357,16 @@ fn worker_main(
     output_tx: mpsc::SyncSender<GuestResponse>,
     metadata_tx: mpsc::SyncSender<Result<f64, String>>,
     current_mode: Arc<Mutex<Option<String>>>,
+    stream_names: Vec<String>,
 ) {
     let engine = pre.engine();
-    let host_state = HostState::new(&label, input_rx, output_tx.clone(), current_mode);
+    let host_state = HostState::new(
+        &label,
+        input_rx,
+        output_tx.clone(),
+        current_mode,
+        stream_names,
+    );
     let mut store = Store::new(engine, host_state);
 
     let plugin = match pre.instantiate(&mut store) {

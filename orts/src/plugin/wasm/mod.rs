@@ -23,6 +23,10 @@ pub mod sync_bindings;
 pub mod sync_controller;
 pub mod sync_host_state;
 
+/// Backend-agnostic byte-stream buffers shared by the sync and async
+/// `stream-io` host implementations.
+mod stream_state;
+
 /// Backwards-compatible alias for the sync bindgen output. The async
 /// backend (feature `plugin-wasm-async`) brings its own bindings in
 /// [`async_bindings`].

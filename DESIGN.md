@@ -594,7 +594,7 @@ FSW (WASM plugin) と地上局の間のコマンド/テレメトリ (C&T)、お�
 - **port kind**（FSW が見る面）:
   - `tick-io` — tick 結合の **control plane**（FSW → アクチュエータ）。通信の shape ではない。
   - `msg-io` — **node ↔ node の datagram service**。datagram shape + `node-id` 論理アドレス + host 確定配送から成る **network / service 抽象**（shape だけではない）。
-  - `stream-io`（将来）— 順序バイトの conduit。
+  - `stream-io` — 順序バイトの conduit（kble 統合用。core 実装済み・外部ブリッジは将来）。
 - **connection の属性**（host / kble / channel が決め、FSW は不知）:
   - **scope**: intra-node（同一機内）/ inter-node（別ノード・地上）。endpoint から導出される metadata 的軸。
   - **impairment**: lossless / impaired（欠落・遅延・エラー）。ただし**注入する層と粒度は shape に依存**（packet 単位 / byte span・gap / bit・frame）するので shape と完全には独立でない。
@@ -603,7 +603,7 @@ FSW (WASM plugin) と地上局の間のコマンド/テレメトリ (C&T)、お�
 含意:
 - 同じ `stream-io` の口が、機内シリアル（intra・lossless、例 SpaceWire/UART）にも地上 RF リンク（inter・impaired）にも配線できる。byte-stream は inter-node 専用ではない。
 - `node` = component を内包する単位（衛星 / 地上局）。inter-node は物理的には通信機(transceiver) ↔ 媒体 ↔ 通信機 で、`msg-io` はそれを隠す network 抽象（link/physical 側は将来 `stream-io` / RF）。
-- これは config 軸を多数作る話ではなく **思考の枠**。orts は当面 `tick-io` / `msg-io` /（将来）`stream-io` の 3 口を実装する。
+- これは config 軸を多数作る話ではなく **思考の枠**。orts は `tick-io` / `msg-io` / `stream-io` の 3 口を実装する（`stream-io` の外部ブリッジは将来）。
 
 ###### レイヤリング
 
@@ -645,6 +645,18 @@ core は host が所有する transport 非依存のキュー。各入力経路�
 ###### 決定論とリプレイ
 
 非決定論の発生源は WebSocket の対話入力のみ（到着が壁時計依存）。host が tick 境界で **gate** して「どの tick で何を配ったか」を確定・記録すれば、それは config の `[[command]]` と同形の**コマンドタイムライン**になる。これを config transport で流し直すのが**リプレイ**。物理は元々決定論なので、入力（コマンド列）さえ tick 単位で再現すれば全体が bit-for-bit 再現する。記録は config 形式のコマンドタイムライン側に持たせ、message envelope 自体には決定論メタを載せない（必要になれば前述の YAGNI 注記どおり後で足す）。録った運用セッションがそのまま oracle / 回帰テストになる。
+
+##### バイトストリーム接続 (stream-io): kble 統合
+
+実機通信は「上位 = パケット / 下位 = バイトストリーム」のことが多く、ArkEdge では各コンポーネントを [`arkedge/kble`](https://github.com/arkedge/kble)（virtual harness、plug を双方向バイトストリームで配線）で繋いでいる。orts をその harness に組み込めるよう、FSW に **named byte stream** の口 `interface stream-io`（`read` / `write`）を追加する。`msg-io`（orts-native の packet 運用模擬）とは別物の兄弟で、FSW は deploy で使い分ける（純 sim = msg-io / 実機ツール統合 = stream-io）。
+
+- **dumb byte conduit**: orts は中身を解釈しない。framing（EB90 / C2A / CCSDS / 独自）やプロトコル解釈は **FSW 側 + kble pipeline**（`kble-eb90` / `kble-c2a` 等）の責務。RF/PHY（変調・BER）は対象外＝バイトストリーム層まで。
+- **決定論**: `msg-io` と同様 host が tick 境界で受信バッファを凍結し送信を flush する。`read` はその tick 分のバイトだけ返し、足りないフレームは次 tick へ持ち越して FSW が再組立する（連続 UART の inter-byte timing は模擬しない＝フレーム単位プロトコル向け）。
+- **result 型**: `read -> result<stream-read, stream-error>`。`no-data`（今 tick データ無し・相手生存）と `closed`（相手切断）を区別する（空 `list<u8>` では判別不能）。
+- **bounded queue + overrun**: 双方向で有界。溢れたら **byte drop せず `overrun`**（drop はフレーム破壊を隠す）。guest には `Err(overrun)` を即時通知しつつ、**host が authoritative に sim を停止**する（guest が read しなくても halt）。
+- **named streams**: guest は自分の local 名（`"comlink"` / `"uart0"`）だけを見る。host が外部 URL の (sat, stream) に対応づけ、guest から他衛星 stream は不可。宣言は controller 構築時（config）に固定。
+- **clock の 2 モード**（外部ブリッジ）: live（`ws://` 一級 / stdio 限定、kble と実時間・非決定論）と replay（録った byte chunks を tick-stamp して決定論再生）。**現状は core（WIT + host バッファ + SDK + 例 + test-API transport）まで。外部ブリッジ（ws:// / stdio）は follow-up**。
+- 将来の RF: `RF/channel → modem/decoder → byte stream → framing → message` の **データ面** seam として妥当。ただし RF observable（soft-decision / lock / SNR / 精密 RX 時刻・Doppler）は byte 継ぎ目で失われるので、必要なら別の sideband（modem を 1 デバイスとして模型化）で扱う。`stream-read` を variant にしてあるのは将来 gap/erasure イベントを足す余地のため（追加は API version bump）。
 
 ### ミッション規模と力学モデル
 

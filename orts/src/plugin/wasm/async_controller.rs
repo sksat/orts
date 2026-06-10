@@ -57,7 +57,7 @@
 //! `PluginController::update` is reached via a blocking-thread
 //! boundary.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, oneshot};
@@ -71,6 +71,7 @@ use super::async_host_state::{AsyncHostState, GuestResponse, TickPacket};
 use super::async_runtime::AsyncRuntime;
 use super::convert::r#async as convert;
 use super::engine::WasmEngine;
+use super::stream_state::{DEFAULT_STREAM_CAPACITY, StreamDelivery, Streams};
 
 use crate::plugin::controller::PluginController;
 use crate::plugin::tick_input::TickInput;
@@ -150,6 +151,10 @@ pub struct AsyncWasmController {
     node_id: NodeId,
     pending_inbound: Vec<Message>,
     outbound_buffer: Vec<Message>,
+
+    // ─── stream-io transport state (mirror of sync backend) ─────
+    pending_stream_inbound: Vec<StreamDelivery>,
+    stream_outbound_buffer: HashMap<String, Vec<u8>>,
 }
 
 impl AsyncWasmController {
@@ -164,6 +169,17 @@ impl AsyncWasmController {
         built: &AsyncPluginPreBuilt,
         label: impl Into<String>,
         config: &str,
+    ) -> Result<Self, PluginError> {
+        Self::new_with_streams(built, label, config, Vec::new())
+    }
+
+    /// As [`new`](Self::new) but wired to the given `stream-io` streams
+    /// (declared up front).
+    pub fn new_with_streams(
+        built: &AsyncPluginPreBuilt,
+        label: impl Into<String>,
+        config: &str,
+        stream_names: Vec<String>,
     ) -> Result<Self, PluginError> {
         let label = label.into();
         let config = config.to_string();
@@ -192,6 +208,7 @@ impl AsyncWasmController {
                 pending_cmd: None,
                 inbox: VecDeque::new(),
                 outbox: Vec::new(),
+                streams: Streams::new(stream_names, DEFAULT_STREAM_CAPACITY),
                 is_first_wait: true,
             };
             let mut store = Store::new(engine.inner(), host_state);
@@ -258,6 +275,8 @@ impl AsyncWasmController {
             node_id: NodeId::Satellite(0),
             pending_inbound: Vec::new(),
             outbound_buffer: Vec::new(),
+            pending_stream_inbound: Vec::new(),
+            stream_outbound_buffer: HashMap::new(),
         })
     }
 }
@@ -283,20 +302,44 @@ impl PluginController for AsyncWasmController {
         self.node_id = id;
     }
 
+    fn stream_deliver(&mut self, stream: &str, bytes: Vec<u8>) {
+        self.pending_stream_inbound.push(StreamDelivery {
+            name: stream.to_string(),
+            bytes,
+            closed: false,
+        });
+    }
+
+    fn stream_take(&mut self, stream: &str) -> Vec<u8> {
+        self.stream_outbound_buffer
+            .remove(stream)
+            .unwrap_or_default()
+    }
+
+    fn stream_close(&mut self, stream: &str) {
+        self.pending_stream_inbound.push(StreamDelivery {
+            name: stream.to_string(),
+            bytes: Vec::new(),
+            closed: true,
+        });
+    }
+
     fn update(&mut self, obs: &TickInput<'_>) -> Result<Option<Command>, PluginError> {
         let wit_obs = convert::tick_input_to_wit(obs);
         let inbox: Vec<wit::Message> = std::mem::take(&mut self.pending_inbound)
             .into_iter()
             .map(convert::message_to_wit)
             .collect();
+        let stream_inbound = std::mem::take(&mut self.pending_stream_inbound);
         let input_tx = self.input_tx.clone();
         let output_rx = &mut self.output_rx;
 
-        let (command, outgoing) = self.runtime.handle().block_on(async move {
+        let (command, outgoing, stream_outbound) = self.runtime.handle().block_on(async move {
             input_tx
                 .send(Some(TickPacket {
                     input: wit_obs,
                     inbox,
+                    stream_inbound,
                 }))
                 .await
                 .map_err(|_| PluginError::Runtime("async task dropped".to_string()))?;
@@ -305,7 +348,18 @@ impl PluginController for AsyncWasmController {
                 .await
                 .ok_or_else(|| PluginError::Runtime("async task channel closed".to_string()))?
             {
-                GuestResponse::Tick { command, outgoing } => Ok((command, outgoing)),
+                GuestResponse::Tick {
+                    command,
+                    outgoing,
+                    stream_outbound,
+                    stream_fault,
+                } => {
+                    // Host-authoritative stream fault → halt the simulation.
+                    if let Some(fault) = stream_fault {
+                        return Err(PluginError::Runtime(fault));
+                    }
+                    Ok((command, outgoing, stream_outbound))
+                }
                 GuestResponse::Done(Ok(())) => Err(PluginError::Runtime(
                     "guest run() returned early".to_string(),
                 )),
@@ -324,6 +378,20 @@ impl PluginController for AsyncWasmController {
                 kind: ob.kind,
                 payload: ob.payload,
             });
+        }
+
+        // Buffer guest-written stream bytes for `stream_take`. Bound it here
+        // too (the worker's queue is drained every tick into this outer
+        // buffer) so a consumer that never drains halts the sim via overrun
+        // rather than growing without limit.
+        for (name, bytes) in stream_outbound {
+            let buf = self.stream_outbound_buffer.entry(name.clone()).or_default();
+            buf.extend(bytes);
+            if buf.len() > DEFAULT_STREAM_CAPACITY {
+                return Err(PluginError::Runtime(format!(
+                    "stream-io: outbound backlog overrun on stream '{name}' (consumer not draining)"
+                )));
+            }
         }
 
         match command {

@@ -15,8 +15,10 @@ use tokio::sync::mpsc;
 
 use super::async_bindings::orts::plugin::host_env;
 use super::async_bindings::orts::plugin::msg_io;
+use super::async_bindings::orts::plugin::stream_io;
 use super::async_bindings::orts::plugin::tick_io;
 use super::async_bindings::orts::plugin::types as wit;
+use super::stream_state::{ReadOutcome, StreamDelivery, Streams, WriteOutcome};
 
 /// One tick's worth of host → guest input for the async backend.
 ///
@@ -25,6 +27,8 @@ use super::async_bindings::orts::plugin::types as wit;
 pub(super) struct TickPacket {
     pub input: wit::TickInput,
     pub inbox: Vec<wit::Message>,
+    /// stream-io inbound byte deliveries / close signals frozen this tick.
+    pub stream_inbound: Vec<StreamDelivery>,
 }
 
 /// Response sent back to the outer `AsyncWasmController` via
@@ -37,6 +41,10 @@ pub(super) enum GuestResponse {
     Tick {
         command: Option<wit::Command>,
         outgoing: Vec<wit::Outbound>,
+        /// Bytes the guest wrote to each named stream this tick.
+        stream_outbound: Vec<(String, Vec<u8>)>,
+        /// Host-authoritative stream fault → halt the simulation.
+        stream_fault: Option<String>,
     },
     /// The guest's `run()` function returned or errored. No more
     /// responses will be produced.
@@ -57,6 +65,8 @@ pub(super) struct AsyncHostState {
     pub(super) inbox: VecDeque<wit::Message>,
     /// Messages emitted via `send-message` this tick (append).
     pub(super) outbox: Vec<wit::Outbound>,
+    /// stream-io byte streams (declared at construction).
+    pub(super) streams: Streams,
     pub(super) is_first_wait: bool,
 }
 
@@ -120,9 +130,16 @@ impl tick_io::Host for AsyncHostState {
         if !self.is_first_wait {
             let command = self.pending_cmd.take();
             let outgoing = std::mem::take(&mut self.outbox);
+            let stream_outbound = self.streams.drain_outbound();
+            let stream_fault = self.streams.fault().map(str::to_string);
             let _ = self
                 .output_tx
-                .send(GuestResponse::Tick { command, outgoing })
+                .send(GuestResponse::Tick {
+                    command,
+                    outgoing,
+                    stream_outbound,
+                    stream_fault,
+                })
                 .await;
         } else {
             self.is_first_wait = false;
@@ -135,6 +152,21 @@ impl tick_io::Host for AsyncHostState {
                 // Carry over undrained messages; append the newly delivered
                 // ones (backpressure per the msg-io contract).
                 self.inbox.extend(packet.inbox);
+                // Freeze this tick's stream-io byte deliveries the same way.
+                for d in packet.stream_inbound {
+                    // Skip `deliver` only for a *pure close* event (closed +
+                    // no bytes) so a duplicate / teardown close stays
+                    // idempotent. Any other delivery — including an empty
+                    // non-close chunk — still goes through `deliver` to
+                    // validate the stream name/state (latching a host fault
+                    // on a wiring bug: undeclared / already-closed stream).
+                    if !(d.closed && d.bytes.is_empty()) {
+                        self.streams.deliver(&d.name, &d.bytes);
+                    }
+                    if d.closed {
+                        self.streams.close(&d.name);
+                    }
+                }
                 Some(packet.input)
             }
             Some(None) | None => None,
@@ -156,5 +188,26 @@ impl msg_io::Host for AsyncHostState {
 
     async fn send_message(&mut self, msg: wit::Outbound) {
         self.outbox.push(msg);
+    }
+}
+
+impl stream_io::Host for AsyncHostState {
+    async fn read(&mut self, name: String, max: u32) -> Result<wit::StreamRead, wit::StreamError> {
+        match self.streams.read(&name, max as usize) {
+            ReadOutcome::Data(bytes) => Ok(wit::StreamRead::Data(bytes)),
+            ReadOutcome::NoData => Ok(wit::StreamRead::NoData),
+            ReadOutcome::Closed => Ok(wit::StreamRead::Closed),
+            ReadOutcome::Overrun => Err(wit::StreamError::Overrun),
+            ReadOutcome::Unknown => Err(wit::StreamError::UnknownStream),
+        }
+    }
+
+    async fn write(&mut self, name: String, bytes: Vec<u8>) -> Result<(), wit::StreamError> {
+        match self.streams.write(&name, &bytes) {
+            WriteOutcome::Ok => Ok(()),
+            WriteOutcome::Overrun => Err(wit::StreamError::Overrun),
+            WriteOutcome::Closed => Err(wit::StreamError::Closed),
+            WriteOutcome::Unknown => Err(wit::StreamError::UnknownStream),
+        }
     }
 }

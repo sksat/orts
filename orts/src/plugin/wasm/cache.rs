@@ -140,6 +140,9 @@ impl WasmPluginCache {
         config: &str,
     ) -> Result<WasmController, PluginError> {
         let pre = self.get_or_load_sync(path)?;
+        // Stream-io streams are not wired via the cached factory path yet
+        // (config `[[stream]]` is a follow-up); use `new_with_streams`
+        // directly to declare them.
         WasmController::new(pre, label, config)
     }
 
