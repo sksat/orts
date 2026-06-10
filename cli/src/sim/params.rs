@@ -211,16 +211,16 @@ impl SimParams {
                 .collect()
         } else {
             // No --sat flags: use legacy single-satellite args
-            let tle_opt = Self::parse_tle_from_args(args);
+            let omm_opt = Self::parse_orbit_from_args(args);
 
-            if let Some(tle) = tle_opt {
-                let elements = tle.to_keplerian_elements(mu);
+            if let Some(omm) = omm_opt {
+                let elements = omm.to_keplerian_elements(mu);
                 let period = elements.period(mu);
-                let sat_name = tle.object_name.clone();
+                let sat_name = omm.object_name.clone();
                 vec![SatelliteSpec {
                     id: "default".to_string(),
                     name: sat_name,
-                    orbit: OrbitSpec::Omm { omm: tle, elements },
+                    orbit: OrbitSpec::Omm { omm, elements },
                     period,
                     ballistic_coeff: None,
                     srp_area_to_mass: None,
@@ -445,7 +445,9 @@ impl SimParams {
         sats
     }
 
-    pub fn parse_tle_from_args(args: &SimArgs) -> Option<Omm> {
+    /// Parse the orbit-source CLI args (`--norad-id` / `--tle` / `--omm` /
+    /// `--tle-line1/2`) into the canonical [`Omm`] record, if any was given.
+    pub fn parse_orbit_from_args(args: &SimArgs) -> Option<Omm> {
         // --norad-id: fetch from CelesTrak / SatNOGS.
         if let Some(norad_id) = args.norad_id {
             if args.tle.is_some()

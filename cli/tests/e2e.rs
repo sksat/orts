@@ -299,10 +299,10 @@ fn test_cli_tle_from_stdin() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Should contain TLE orbit info
+    // Should contain element-set orbit info
     assert!(
-        stdout.contains("from TLE"),
-        "Missing TLE header in: {}",
+        stdout.contains("from TLE/OMM"),
+        "Missing TLE/OMM header in: {}",
         stdout.lines().take(10).collect::<Vec<_>>().join("\n")
     );
     // Should produce CSV data with 13 fields
