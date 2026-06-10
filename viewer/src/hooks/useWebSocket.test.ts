@@ -42,6 +42,10 @@ describe("dispatchServerMessage", () => {
       raan: 0,
       argument_of_periapsis: 0,
       true_anomaly: 0,
+      altitude: 399.863,
+      specific_energy: -29.4,
+      angular_momentum: 51988.882,
+      velocity_mag: 7.669,
     };
 
     dispatchServerMessage(msg, callbacks);
@@ -77,6 +81,10 @@ describe("dispatchServerMessage", () => {
           raan: 0,
           argument_of_periapsis: 0,
           true_anomaly: 0,
+          altitude: 399.863,
+          specific_energy: -29.4,
+          angular_momentum: 51988.882,
+          velocity_mag: 7.669,
         },
         {
           entity_path: "sat-a",
@@ -89,6 +97,10 @@ describe("dispatchServerMessage", () => {
           raan: 0,
           argument_of_periapsis: 0,
           true_anomaly: 0.01,
+          altitude: 410.3,
+          specific_energy: -29.4,
+          angular_momentum: 51988.882,
+          velocity_mag: 7.616,
         },
       ],
     };
@@ -166,5 +178,32 @@ describe("dispatchServerMessage", () => {
 
     const msg: ServerMessage = { type: "textures_ready", body: "moon" };
     expect(() => dispatchServerMessage(msg, callbacks)).not.toThrow();
+  });
+
+  it("dispatches satellite_added message with normalized info", () => {
+    const onSatelliteAdded = vi.fn();
+    const callbacks = { ...baseCallbacks, onSatelliteAdded };
+
+    const msg: ServerMessage = {
+      type: "satellite_added",
+      satellite: { id: "iss", altitude: 420, period: 5560, perturbations: ["drag"] },
+      t: 120.5,
+    };
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onSatelliteAdded).toHaveBeenCalledOnce();
+    expect(onSatelliteAdded).toHaveBeenCalledWith(
+      { id: "iss", name: null, altitude: 420, period: 5560, perturbations: ["drag"] },
+      120.5,
+    );
+  });
+
+  it("handles satellite_added without callback", () => {
+    const msg: ServerMessage = {
+      type: "satellite_added",
+      satellite: { id: "sat-1", altitude: 500, period: 5677, perturbations: [] },
+      t: 0,
+    };
+    expect(() => dispatchServerMessage(msg, { ...baseCallbacks })).not.toThrow();
   });
 });

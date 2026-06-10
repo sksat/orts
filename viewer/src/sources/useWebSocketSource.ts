@@ -7,9 +7,10 @@
  */
 
 import { useCallback, useRef } from "react";
-import type { SimConfigPayload } from "../components/SimConfigForm.js";
 import { type QueryRangeResponse, type SimInfo, useWebSocket } from "../hooks/useWebSocket.js";
 import type { OrbitPoint } from "../orbit.js";
+import type { ClientMessage } from "../protocol/generated/ClientMessage.js";
+import type { SimConfig } from "../protocol/generated/SimConfig.js";
 import { mergeQueryRangePoints, pickTrailBufferForResponse } from "../utils/mergeQueryRange.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
 import type { SourceEvent } from "./types.js";
@@ -38,8 +39,8 @@ export interface WebSocketSourceResult {
   connect: () => void;
   disconnect: () => void;
   isConnected: boolean;
-  send: (msg: unknown) => void;
-  handleStartSimulation: (config: SimConfigPayload) => void;
+  send: (msg: ClientMessage) => void;
+  handleStartSimulation: (config: SimConfig) => void;
   handlePause: () => void;
   handleResume: () => void;
   handleTerminate: () => void;
@@ -154,7 +155,7 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
   // --- Sim control callbacks ---
 
   const handleStartSimulation = useCallback(
-    (config: SimConfigPayload) => {
+    (config: SimConfig) => {
       send({ type: "start_simulation", config });
     },
     [send],
@@ -176,7 +177,7 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
     connect,
     disconnect,
     isConnected,
-    send: send as (msg: unknown) => void,
+    send,
     handleStartSimulation,
     handlePause,
     handleResume,

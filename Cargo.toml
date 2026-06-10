@@ -43,6 +43,10 @@ toml = "1.0"
 serde_yaml = "0.9"
 rust-embed = { version = "8", features = ["mime-guess", "include-exclude"] }
 thiserror = "2"
+# WebSocket protocol type codegen (Rust → TypeScript). Generated bindings
+# land in viewer/src/protocol/generated/ via TS_RS_EXPORT_DIR (set in
+# .cargo/config.toml) whenever `cargo test -p orts-cli` runs.
+ts-rs = { version = "12", features = ["serde-json-impl"] }
 
 # wasmtime: Pulley single-backend + Component Model. Cranelift is
 # enabled for runtime compile path (plugin-wasm default), runtime-only

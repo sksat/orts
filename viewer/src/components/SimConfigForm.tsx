@@ -1,45 +1,15 @@
 import { useCallback, useState } from "react";
+import type { SatelliteConfig } from "../protocol/generated/SatelliteConfig.js";
+import type { SimConfig } from "../protocol/generated/SimConfig.js";
 import controlStyles from "../styles/controls.module.css";
 import styles from "./SimConfigForm.module.css";
 
 export type OrbitMode = "preset" | "circular" | "tle";
 
-interface CircularOrbit {
-  type: "circular";
-  altitude: number;
-  inclination: number;
-  raan: number;
-}
-
-interface TleOrbit {
-  type: "tle";
-  line1: string;
-  line2: string;
-}
-
-interface NoradOrbit {
-  type: "norad";
-  norad_id: number;
-}
-
-interface AttitudePayloadConfig {
-  inertia_diag: [number, number, number];
-  mass: number;
-  initial_quaternion?: [number, number, number, number];
-  initial_angular_velocity?: [number, number, number];
-}
-
-export interface SatellitePayload {
-  id?: string;
-  name?: string;
-  orbit: CircularOrbit | TleOrbit | NoradOrbit;
-  attitude?: AttitudePayloadConfig;
-}
-
 export interface PresetDef {
   label: string;
   detail: string;
-  satellite: SatellitePayload;
+  satellite: SatelliteConfig;
 }
 
 export const PRESETS: PresetDef[] = [
@@ -73,13 +43,6 @@ export const PRESETS: PresetDef[] = [
   },
 ];
 
-export interface SimConfigPayload {
-  dt: number;
-  output_interval: number;
-  atmosphere: string;
-  satellites: SatellitePayload[];
-}
-
 export interface FormState {
   orbitMode: OrbitMode;
   presetIndex: number;
@@ -93,9 +56,12 @@ export interface FormState {
   atmosphere: string;
 }
 
-/** Pure function: build SimConfig payload from form state. */
-export function buildSimConfig(state: FormState): SimConfigPayload {
-  let satellite: SatellitePayload;
+/** The form always populates `satellites`; narrow the generated wire type. */
+export type FormSimConfig = SimConfig & { satellites: SatelliteConfig[] };
+
+/** Pure function: build the `start_simulation` SimConfig payload from form state. */
+export function buildSimConfig(state: FormState): FormSimConfig {
+  let satellite: SatelliteConfig;
 
   if (state.orbitMode === "tle") {
     satellite = { orbit: { type: "tle", line1: state.tleLine1, line2: state.tleLine2 } };
@@ -121,7 +87,7 @@ export function buildSimConfig(state: FormState): SimConfigPayload {
 }
 
 export interface SimConfigFormProps {
-  onStart: (config: SimConfigPayload) => void;
+  onStart: (config: SimConfig) => void;
 }
 
 export function SimConfigForm({ onStart }: SimConfigFormProps) {

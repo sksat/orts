@@ -1,10 +1,10 @@
-import type { SimConfigPayload } from "./SimConfigForm.js";
+import type { SimConfig } from "../protocol/generated/SimConfig.js";
 import { SimConfigForm } from "./SimConfigForm.js";
 import styles from "./SimConfigModal.module.css";
 
 interface SimConfigModalProps {
   isOpen: boolean;
-  onStart: (config: SimConfigPayload) => void;
+  onStart: (config: SimConfig) => void;
   onClose: () => void;
 }
 

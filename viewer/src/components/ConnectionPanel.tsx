@@ -1,6 +1,6 @@
 import styles from "../App.module.css";
+import type { SimConfig } from "../protocol/generated/SimConfig.js";
 import type { ServerState } from "../sources/eventDispatcher.js";
-import type { SimConfigPayload } from "./SimConfigForm.js";
 import { SimConfigForm } from "./SimConfigForm.js";
 import { SimControlBar } from "./SimControlBar.js";
 
@@ -11,7 +11,7 @@ interface ConnectionPanelProps {
   serverState: ServerState; // "unknown" | "idle" | "running" | "paused"
   onConnect: () => void;
   onDisconnect: () => void;
-  onStartSimulation: (config: SimConfigPayload) => void;
+  onStartSimulation: (config: SimConfig) => void;
   onPause: () => void;
   onResume: () => void;
   onTerminate: () => void;

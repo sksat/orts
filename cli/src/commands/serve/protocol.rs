@@ -2,20 +2,28 @@ use std::collections::HashMap;
 
 use orts::record::entity_path::EntityPath;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::SatelliteInfo;
 use crate::sim::core::HistoryState;
 
 /// Client-to-server WebSocket message.
-#[derive(Deserialize, Debug)]
+///
+/// The `#[derive(TS)]` here (and on every type reachable from this enum)
+/// generates the TypeScript wire types consumed by the viewer; see
+/// `viewer/src/protocol/generated/`. Regenerate with `cargo test -p orts-cli`.
+#[derive(Deserialize, Debug, TS)]
 #[serde(tag = "type")]
+#[ts(export)]
 pub enum ClientMessage {
     #[serde(rename = "query_range")]
     QueryRange {
         t_min: f64,
         t_max: f64,
+        #[ts(optional)]
         max_points: Option<usize>,
+        #[ts(optional, type = "string")]
         entity_path: Option<EntityPath>,
     },
     /// Start a simulation from idle state.
@@ -39,8 +47,9 @@ pub enum ClientMessage {
 }
 
 /// Server-to-client WebSocket message.
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, TS)]
 #[serde(tag = "type")]
+#[ts(export)]
 pub enum WsMessage {
     /// Simulation metadata sent once when a client connects.
     #[serde(rename = "info")]
@@ -52,12 +61,14 @@ pub enum WsMessage {
         central_body: String,
         central_body_radius: f64,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
         epoch_jd: Option<f64>,
         satellites: Vec<SatelliteInfo>,
     },
     /// A single simulation state snapshot.
     #[serde(rename = "state")]
     State {
+        #[ts(type = "string")]
         entity_path: EntityPath,
         t: f64,
         position: [f64; 3],
@@ -73,10 +84,13 @@ pub enum WsMessage {
         specific_energy: f64,
         angular_momentum: f64,
         velocity_mag: f64,
+        /// Omitted from the wire when empty.
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        #[ts(as = "Option<_>", optional)]
         accelerations: HashMap<String, f64>,
         /// Attitude telemetry (present only when SpacecraftDynamics is used).
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
         attitude: Option<crate::sim::core::AttitudePayload>,
     },
     /// Bounded history overview sent on connect.
@@ -102,6 +116,7 @@ pub enum WsMessage {
     /// Notification that a satellite's simulation has terminated.
     #[serde(rename = "simulation_terminated")]
     SimulationTerminated {
+        #[ts(type = "string")]
         entity_path: EntityPath,
         t: f64,
         reason: String,

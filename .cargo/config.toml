@@ -1,3 +1,9 @@
+# ts-rs writes the generated WebSocket-protocol TypeScript bindings here
+# whenever the orts-cli export tests run (`cargo test -p orts-cli`).
+# CI diffs the directory to catch Rust/TS protocol drift.
+[env]
+TS_RS_EXPORT_DIR = { value = "viewer/src/protocol/generated", relative = true }
+
 # Local dev fast-linking with mold (sudo apt install mold / pacman -S mold).
 # The linker is folded into `rustflags` (via -Clinker) on purpose: that makes
 # it a single knob — a non-empty global RUSTFLAGS replaces this whole line and
