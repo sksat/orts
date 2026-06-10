@@ -1,10 +1,34 @@
-//! kble bridge: binary WebSocket endpoints for `stream-io` byte streams.
+//! Binary WebSocket endpoints for `stream-io` byte streams.
 //!
-//! Each declared stream of a controlled satellite is exposed at
-//! `ws://…/stream/{sat}/{stream}` as a **binary** WebSocket — the shape of an
-//! [`arkedge/kble`](https://github.com/arkedge/kble) `ws://` plug, so kble can
-//! wire external tools (framers, ground software, serial bridges) straight to
-//! the simulated FSW. orts stays a dumb byte conduit.
+//! Each stream declared in the config (`streams = ["comlink"]` on a
+//! satellite) is exposed at `ws://…/stream/{sat_id}/{stream_name}` as a
+//! **plain binary WebSocket**: every binary message is a chunk of the byte
+//! stream, nothing more. This is not a kble-specific protocol — anything
+//! that speaks binary WS (websocat, custom ground tools, …) connects
+//! directly. orts stays a dumb byte conduit.
+//!
+//! ## Name correspondence
+//!
+//! The stream-name string is a contract across three places: the FSW code
+//! (`stream::read("comlink", …)`), the config declaration, and the endpoint
+//! URL path. Nothing else links them.
+//!
+//! ## kble integration
+//!
+//! An [`arkedge/kble`](https://github.com/arkedge/kble) `ws://` plug is
+//! exactly this shape, so wiring the FSW into a virtual harness is just
+//! pointing a plug at the endpoint URL in the spaghetti:
+//!
+//! ```yaml
+//! plugs:
+//!   sat0_comlink: ws://localhost:9001/stream/sat0/comlink
+//!   gs: ws://…   # any external tool
+//! links: { sat0_comlink: gs, gs: sat0_comlink }
+//! ```
+//!
+//! (kble's `exec:` plugs speak the kble-socket protocol over stdio — not raw
+//! bytes — so processes wired via `exec:` need kble-socket, while `ws://`
+//! plugs work as-is.)
 //!
 //! ## Architecture
 //!
