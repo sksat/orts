@@ -9,14 +9,7 @@
 import type { OrbitPoint } from "../orbit.js";
 import { rrdMetadataToSimInfo } from "./normalizeMetadata.js";
 import type { RrdPointOut, RrdWorkerMessage } from "./rrdParseLogic.js";
-import type {
-  SourceAdapter,
-  SourceCapabilities,
-  SourceConnectionState,
-  SourceEventHandler,
-  SourceId,
-  SourceSpec,
-} from "./types.js";
+import type { SourceAdapter, SourceEventHandler, SourceId } from "./types.js";
 
 function rrdPointToOrbitPoint(p: RrdPointOut): OrbitPoint {
   return {
@@ -52,16 +45,9 @@ function rrdPointToOrbitPoint(p: RrdPointOut): OrbitPoint {
 
 export class RrdFileAdapter implements SourceAdapter {
   readonly sourceId: SourceId;
-  readonly spec: SourceSpec & { type: "rrd-file" };
-  readonly capabilities: SourceCapabilities = {
-    live: false,
-    control: false,
-    rangeQuery: false,
-  };
 
   private worker: Worker | null = null;
   private reader: FileReader | null = null;
-  private _connectionState: SourceConnectionState = "disconnected";
   private onEvent: SourceEventHandler;
   private file: File;
   private estimatedDt = 10;
@@ -69,13 +55,8 @@ export class RrdFileAdapter implements SourceAdapter {
 
   constructor(sourceId: SourceId, file: File, onEvent: SourceEventHandler) {
     this.sourceId = sourceId;
-    this.spec = { type: "rrd-file", file };
     this.onEvent = onEvent;
     this.file = file;
-  }
-
-  get connectionState(): SourceConnectionState {
-    return this._connectionState;
   }
 
   start(): void {
@@ -83,7 +64,6 @@ export class RrdFileAdapter implements SourceAdapter {
     this.pendingEntityPaths = new Set();
     this.infoEmitted = false;
     this.stopped = false;
-    this._connectionState = "loading";
 
     const reader = new FileReader();
     this.reader = reader;
@@ -94,7 +74,6 @@ export class RrdFileAdapter implements SourceAdapter {
     };
     reader.onerror = () => {
       if (this.stopped) return;
-      this._connectionState = "error";
       this.onEvent(this.sourceId, {
         kind: "error",
         message: `Failed to read file: ${this.file.name}`,
@@ -113,7 +92,6 @@ export class RrdFileAdapter implements SourceAdapter {
       this.worker.terminate();
       this.worker = null;
     }
-    this._connectionState = "disconnected";
   }
 
   private startWorker(buffer: ArrayBuffer): void {
@@ -124,7 +102,6 @@ export class RrdFileAdapter implements SourceAdapter {
     };
 
     this.worker.onerror = (err: ErrorEvent) => {
-      this._connectionState = "error";
       this.onEvent(this.sourceId, {
         kind: "error",
         message: `RRD worker error: ${err.message ?? "unknown"}`,
@@ -193,7 +170,6 @@ export class RrdFileAdapter implements SourceAdapter {
           }
           this.onEvent(id, { kind: "history-chunk", points: [], done: true });
           this.onEvent(id, { kind: "complete" });
-          this._connectionState = "complete";
           if (this.worker) {
             this.worker.terminate();
             this.worker = null;
@@ -204,7 +180,6 @@ export class RrdFileAdapter implements SourceAdapter {
 
       case "error":
         this.onEvent(id, { kind: "error", message: msg.message });
-        this._connectionState = "error";
         break;
     }
   }

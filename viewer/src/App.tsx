@@ -13,7 +13,7 @@ import { PlaybackBar } from "./components/PlaybackBar.js";
 import { SimConfigModal } from "./components/SimConfigModal.js";
 import { SimInfoBar } from "./components/SimInfoBar.js";
 import { StatusBar } from "./components/StatusBar.js";
-import { useFileSource } from "./hooks/useFileSource.js";
+import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
 import { useSimulationData } from "./hooks/useSimulationData.js";
 import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
@@ -174,7 +174,7 @@ export function App() {
 
   const handleConnect = useCallback(() => {
     manualDisconnectRef.current = false;
-    fileSource.stopRrdAdapter();
+    fileSource.stopFileAdapter();
     fileSource.clearFileSourceActive();
     resetBuffers();
     setActiveSourceId(WS_SOURCE_ID);
@@ -185,7 +185,7 @@ export function App() {
     wsSource.connect,
     resetBuffers,
     setActiveSourceId,
-    fileSource.stopRrdAdapter,
+    fileSource.stopFileAdapter,
     fileSource.clearFileSourceActive,
     simData.resetZoomState,
   ]);
@@ -202,17 +202,17 @@ export function App() {
   // and to prevent the auto-connect race condition.
   const handleFileLoad = useCallback(
     (file: File) => {
+      // Any previous in-flight file adapter is stopped inside loadFile,
+      // before the new load starts.
       fileSource.loadFile(file, () => {
         // Called after validation succeeds — safe to switch sources.
         // Set manualDisconnectRef to suppress auto-connect until fileSourceActive
         // becomes true (set by useFileSource right after this callback returns).
         manualDisconnectRef.current = true;
         if (wsSource.isConnected) wsSource.disconnect();
-        fileSource.stopRrdAdapter();
         resetBuffers();
         simData.resetZoomState();
-        const sourceId = file.name.endsWith(".rrd") ? "rrd-file" : "csv-file";
-        setActiveSourceId(sourceId);
+        setActiveSourceId(file.name.endsWith(".rrd") ? RRD_SOURCE_ID : CSV_SOURCE_ID);
         goLiveRef.current();
         // NOTE: manualDisconnectRef stays true here. It is cleared by handleConnect
         // when the user explicitly clicks Connect. Auto-connect is gated by
@@ -223,7 +223,6 @@ export function App() {
     [
       wsSource.isConnected,
       wsSource.disconnect,
-      fileSource.stopRrdAdapter,
       fileSource.loadFile,
       resetBuffers,
       setActiveSourceId,

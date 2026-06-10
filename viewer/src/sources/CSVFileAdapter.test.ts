@@ -72,23 +72,6 @@ function collectEvents(sourceId: SourceId) {
 }
 
 describe("CSVFileAdapter", () => {
-  it("starts with disconnected state", () => {
-    const { handler } = collectEvents("csv-0");
-    const file = new File(["test"], "test.csv", { type: "text/csv" });
-    const adapter = new CSVFileAdapter("csv-0", file, handler);
-    expect(adapter.connectionState).toBe("disconnected");
-    expect(adapter.capabilities.live).toBe(false);
-    expect(adapter.capabilities.control).toBe(false);
-  });
-
-  it("transitions to loading on start", async () => {
-    const { handler } = collectEvents("csv-0");
-    const file = new File(["test"], "test.csv", { type: "text/csv" });
-    const adapter = new CSVFileAdapter("csv-0", file, handler);
-    adapter.start();
-    expect(adapter.connectionState).toBe("loading");
-  });
-
   it("defers info event until first chunk arrives (dt estimation)", () => {
     const { events, handler } = collectEvents("csv-0");
     const file = new File(["0,7000,0,0,0,7.5,0"], "test.csv");
@@ -196,7 +179,6 @@ describe("CSVFileAdapter", () => {
     worker.simulateMessage({ type: "complete", totalPoints: 100 });
     expect(events.some((e) => e.kind === "history-chunk" && e.done === true)).toBe(true);
     expect(events.some((e) => e.kind === "complete")).toBe(true);
-    expect(adapter.connectionState).toBe("complete");
   });
 
   it("stop terminates worker", async () => {
@@ -208,6 +190,100 @@ describe("CSVFileAdapter", () => {
     expect(MockWorker.instances).toHaveLength(1);
     adapter.stop();
     expect(MockWorker.instances[0].terminated).toBe(true);
-    expect(adapter.connectionState).toBe("disconnected");
+  });
+
+  // dt estimation must compare timestamps of the SAME entity. Multi-sat CSVs
+  // interleave entities row by row, so naive consecutive-row deltas would
+  // produce dt = 0 (and previously latched it permanently).
+  describe("entity-aware dt estimation", () => {
+    const metadata = {
+      epochJd: null,
+      mu: null,
+      centralBody: null,
+      centralBodyRadius: null,
+      satelliteName: null,
+      satellites: ["sat1", "sat2"],
+    };
+
+    function makePoint(entityPath: string, t: number) {
+      return {
+        t,
+        x: 7000,
+        y: 0,
+        z: 0,
+        vx: 0,
+        vy: 7.5,
+        vz: 0,
+        a: 7000,
+        e: 0,
+        inc: 0,
+        raan: 0,
+        omega: 0,
+        nu: 0,
+        entityPath,
+        accel_gravity: 0,
+        accel_drag: 0,
+        accel_srp: 0,
+        accel_third_body_sun: 0,
+        accel_third_body_moon: 0,
+      };
+    }
+
+    function startAdapter() {
+      const { events, handler } = collectEvents("csv-0");
+      const file = new File(["data"], "multi.csv");
+      const adapter = new CSVFileAdapter("csv-0", file, handler);
+      adapter.start();
+      const worker = MockWorker.instances[0];
+      worker.simulateMessage({ type: "metadata", metadata });
+      return { events, worker };
+    }
+
+    function infoDt(events: SourceEvent[]): number | undefined {
+      const info = events.find((e) => e.kind === "info");
+      return info?.kind === "info" ? info.info.dt : undefined;
+    }
+
+    it("does not latch dt=0 on equal-timestamp interleaved rows", () => {
+      const { events, worker } = startAdapter();
+      // sat1@0, sat2@0 (same t, different entities), then sat1@5
+      worker.simulateMessage({
+        type: "chunk",
+        points: [makePoint("sat1", 0), makePoint("sat2", 0), makePoint("sat1", 5)],
+      });
+      expect(infoDt(events)).toBe(5);
+    });
+
+    it("persists last-seen timestamps across chunk boundaries", () => {
+      const { events, worker } = startAdapter();
+      // First chunk has one point per entity — no same-entity pair yet,
+      // so info falls back to the default dt for this chunk...
+      worker.simulateMessage({
+        type: "chunk",
+        points: [makePoint("sat1", 0), makePoint("sat2", 0)],
+      });
+      // ...but the second chunk's sat1@7 pairs with chunk 1's sat1@0.
+      worker.simulateMessage({
+        type: "chunk",
+        points: [makePoint("sat1", 7), makePoint("sat2", 7)],
+      });
+      // Info was already emitted on the first chunk with the fallback dt;
+      // what must NOT happen is a dt=0 latch from the equal-t interleave.
+      expect(infoDt(events)).not.toBe(0);
+    });
+
+    it("estimates dt from consecutive same-entity points in one chunk", () => {
+      const { events, worker } = startAdapter();
+      worker.simulateMessage({
+        type: "chunk",
+        points: [
+          makePoint("sat1", 0),
+          makePoint("sat2", 0),
+          makePoint("sat1", 2.5),
+          makePoint("sat2", 2.5),
+        ],
+      });
+      expect(infoDt(events)).toBe(2.5);
+    });
   });
 });

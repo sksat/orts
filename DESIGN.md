@@ -21,7 +21,7 @@ viewer は **Source** を primitive とするデータ駆動アーキテクチ�
 - **WebSocket source**: `orts serve` や `orts replay` に接続し、シミュレーション結果をストリーミング受信
 - **ローカルファイル source**: CSV / RRD ファイルを Web Worker でパースし、チャンク単位で投入
 
-viewer にはモード切替の概念はなく、全ての source が同一の TrailBuffer + IngestBuffer パイプラインにデータを流す。SourceAdapter が入力元の差異を吸収し、SourceEvent (discriminated union) を通じて統一的にデータを配信する。将来的には複数 source の同時接続・比較表示にも対応する。
+viewer にはモード切替の概念はなく、全ての source が同一の TrailBuffer + IngestBuffer パイプラインにデータを流す。各入力源（WS は hook ブリッジ、ファイルは worker ベースの adapter）が差異を吸収し、SourceEvent (discriminated union) を通じて統一的にデータを配信する。将来的には複数 source の同時接続・比較表示にも対応する。
 
 ラフなところから精度を上げていくためにも、はじめはシンプルな2体問題や3体問題を低精度で実装する。
 viewer についてもシンプルなものをまず実装する。
@@ -724,12 +724,13 @@ SOI 切り替え時の注意点:
 - **live 表示は JS バッファが正**: 3D（TrailBuffer）もチャート（ChartBuffer）もサーバーからのストリーミングデータを直接表示。DuckDB を経由しない
 - **derived 値はサーバーで事前計算**: altitude, energy, angular_momentum 等のチャート用 derived 値はサーバーが計算して state メッセージに含める。viewer 側での再計算を排除
 
-### SourceAdapter パイプライン
+### SourceEvent パイプライン
 
-全データ source (WebSocket / CSV / RRD) は SourceAdapter を通じて統一パイプラインに流れる:
+全データ source (WebSocket / CSV / RRD) は SourceEvent に正規化されて統一パイプラインに流れる
+（WS は useWebSocketSource ブリッジ、CSV/RRD は worker ベースの SourceAdapter）:
 
 ```
-SourceAdapter (WS / CSV Worker / RRD WASM Worker)
+Source layer (WS bridge / CSV Worker / RRD WASM Worker)
   │
   └→ SourceEvent (discriminated union)
        │
@@ -804,5 +805,5 @@ CSV ファイルは Web Worker でチャンク単位 (5000行/chunk) にパー�
 | DuckDB ingest/query | insert, queryDerived, compact | uneri |
 | TimeSeriesChart | uPlot ラッパー | uneri |
 | source 切替ポリシー | live/paused/zoom でどのソースを使うか | viewer |
-| SourceAdapter | WS/ファイルの入力差を吸収し SourceEvent に統一 | viewer |
-| useSourceRuntime | adapter 管理、event → buffer routing、source metadata | viewer |
+| Source layer | WS/ファイルの入力差を吸収し SourceEvent に統一 | viewer |
+| useSourceRuntime | event → buffer routing、source metadata | viewer |

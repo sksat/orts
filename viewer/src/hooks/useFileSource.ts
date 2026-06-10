@@ -5,12 +5,15 @@
  * (resetBuffers, setActiveSourceId, WS disconnect, goLive) remain in the
  * App coordinator — the caller must handle source switching before calling
  * loadFile().
+ *
+ * Both formats parse off the main thread via a SourceAdapter (Web Worker),
+ * so large files don't block the UI.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { parseOrbitCSVWithMetadata } from "../orbit.js";
+import { CSVFileAdapter } from "../sources/CSVFileAdapter.js";
 import { RrdFileAdapter } from "../sources/RrdFileAdapter.js";
-import type { SourceEvent } from "../sources/types.js";
+import type { SourceAdapter, SourceEvent } from "../sources/types.js";
 
 /** Source ID for CSV file sources. */
 export const CSV_SOURCE_ID = "csv-file";
@@ -28,14 +31,13 @@ interface FileSourceResult {
   fileSourceActive: boolean;
   /**
    * Load a file. The optional `onBeforeEmit` callback is called after validation
-   * succeeds (CSV parsed successfully / RRD ready) but before events are emitted.
+   * succeeds (CSV produced data points / RRD ready) but before events are emitted.
    * The coordinator should do source switching (disconnect WS, reset buffers, etc.) there.
    */
   loadFile: (file: File, onBeforeEmit?: () => void) => void;
   handleLoadClick: () => void;
-  handleFileChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  /** Stop any active RRD adapter. Called by coordinator during source switch. */
-  stopRrdAdapter: () => void;
+  /** Stop any active file adapter. Called by coordinator during source switch. */
+  stopFileAdapter: () => void;
   /** Reset file source active flag (call when switching to WS source). */
   clearFileSourceActive: () => void;
 }
@@ -44,93 +46,81 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
   const [orbitInfo, setOrbitInfo] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [fileSourceActive, setFileSourceActive] = useState(false);
-  const rrdAdapterRef = useRef<RrdFileAdapter | null>(null);
+  const fileAdapterRef = useRef<SourceAdapter | null>(null);
 
-  // Cleanup RRD adapter on unmount
-  useEffect(() => {
-    return () => {
-      rrdAdapterRef.current?.stop();
-    };
+  const stopFileAdapter = useCallback(() => {
+    if (fileAdapterRef.current) {
+      fileAdapterRef.current.stop();
+      fileAdapterRef.current = null;
+    }
   }, []);
+
+  // Cleanup adapter (abort reader / terminate worker) on unmount
+  useEffect(() => stopFileAdapter, [stopFileAdapter]);
 
   const loadCSVFile = useCallback(
     (file: File, onBeforeEmit?: () => void) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const text = reader.result as string;
-        const { points: parsed, metadata } = parseOrbitCSVWithMetadata(text);
+      // The CSV worker always produces metadata — even for junk input — so
+      // an "info" event alone does not prove the file is valid. Gate source
+      // switching on the first non-empty history-chunk instead: buffer the
+      // info event, and only when actual data points arrive fire
+      // onBeforeEmit, flush the buffered info, and start forwarding.
+      // A file with zero valid rows therefore never disturbs the current
+      // source (matching the old synchronous-validation behavior).
+      let pendingInfo: SourceEvent | null = null;
+      let gateOpened = false;
+      let pointCount = 0;
+      let tMin = Number.POSITIVE_INFINITY;
+      let tMax = Number.NEGATIVE_INFINITY;
 
-        if (parsed.length === 0) {
-          setOrbitInfo("No valid orbit data found in file.");
-          return;
-        }
+      const wrapped: typeof handleEvent = (sourceId, event) => {
+        // Ignore events from an adapter that has been superseded (a newer
+        // load or a Connect stopped it); its worker may still flush messages.
+        if (fileAdapterRef.current !== adapter) return;
 
-        // Validation passed — let the coordinator switch sources now
-        onBeforeEmit?.();
-
-        // Build SimInfo from CSV metadata
-        // For multi-sat, estimate dt from consecutive points of the same entity
-        let dt = 10;
-        if (metadata.satellites && metadata.satellites.length > 0) {
-          // Multi-sat: find dt from same-entity consecutive points
-          for (let i = 1; i < parsed.length; i++) {
-            if (parsed[i].entityPath === parsed[0].entityPath && parsed[i].t > parsed[0].t) {
-              dt = parsed[i].t - parsed[0].t;
-              break;
+        switch (event.kind) {
+          case "info":
+            pendingInfo = event;
+            return;
+          case "history-chunk": {
+            if (!gateOpened && event.points.length > 0) {
+              gateOpened = true;
+              onBeforeEmit?.();
+              if (pendingInfo) handleEvent(sourceId, pendingInfo);
+              setFileSourceActive(true);
             }
+            for (const p of event.points) {
+              pointCount++;
+              if (p.t < tMin) tMin = p.t;
+              if (p.t > tMax) tMax = p.t;
+            }
+            if (gateOpened) handleEvent(sourceId, event);
+            return;
           }
-        } else if (parsed.length >= 2) {
-          dt = parsed[1].t - parsed[0].t;
+          case "complete":
+            if (!gateOpened) {
+              setOrbitInfo("No valid orbit data found in file.");
+              fileAdapterRef.current = null;
+              return;
+            }
+            handleEvent(sourceId, event);
+            setOrbitInfo(
+              `Loaded: ${file.name} | ${pointCount} points | Duration: ${(tMax - tMin).toFixed(1)} s`,
+            );
+            return;
+          case "error":
+            if (gateOpened) handleEvent(sourceId, event);
+            setOrbitInfo(`Failed to load ${file.name}: ${event.message}`);
+            return;
+          default:
+            if (gateOpened) handleEvent(sourceId, event);
         }
-
-        // Build satellites list
-        const satellites =
-          metadata.satellites && metadata.satellites.length > 0
-            ? metadata.satellites.map((id) => ({
-                id,
-                name: id,
-                altitude: 0,
-                period: 0,
-                perturbations: [] as string[],
-              }))
-            : [
-                {
-                  id: "default",
-                  name: metadata.satelliteName ?? `${file.name} (1 sat)`,
-                  altitude: 0,
-                  period: 0,
-                  perturbations: [] as string[],
-                },
-              ];
-
-        handleEvent(CSV_SOURCE_ID, {
-          kind: "info",
-          info: {
-            mu: metadata.mu ?? 398600.4418,
-            dt,
-            output_interval: dt,
-            stream_interval: dt,
-            central_body: metadata.centralBody ?? "earth",
-            central_body_radius: metadata.centralBodyRadius ?? 6378.137,
-            epoch_jd: metadata.epochJd,
-            satellites,
-          },
-        });
-
-        // Push all CSV data as a history event, then mark complete.
-        // NOTE: Do NOT dispatch server-state "idle" here — the dispatcher
-        // clears simInfo on idle, which would erase the CSV metadata we just set.
-        handleEvent(CSV_SOURCE_ID, { kind: "history", points: parsed });
-        handleEvent(CSV_SOURCE_ID, { kind: "complete" });
-
-        setFileSourceActive(true);
-
-        const duration = parsed[parsed.length - 1].t - parsed[0].t;
-        setOrbitInfo(
-          `Loaded: ${file.name} | ${parsed.length} points | Duration: ${duration.toFixed(1)} s`,
-        );
       };
-      reader.readAsText(file);
+
+      const adapter = new CSVFileAdapter(CSV_SOURCE_ID, file, wrapped);
+      fileAdapterRef.current = adapter;
+      setOrbitInfo(`Loading: ${file.name}...`);
+      adapter.start();
     },
     [handleEvent],
   );
@@ -140,7 +130,8 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
       // RRD validation happens in the worker, so switch sources eagerly
       onBeforeEmit?.();
       let totalPoints = 0;
-      const rrdHandleEvent: typeof handleEvent = (sourceId, event) => {
+      const wrapped: typeof handleEvent = (sourceId, event) => {
+        if (fileAdapterRef.current !== adapter) return;
         handleEvent(sourceId, event);
         if (event.kind === "history-chunk") {
           totalPoints += event.points.length;
@@ -150,8 +141,8 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
         }
       };
 
-      const adapter = new RrdFileAdapter(RRD_SOURCE_ID, file, rrdHandleEvent);
-      rrdAdapterRef.current = adapter;
+      const adapter = new RrdFileAdapter(RRD_SOURCE_ID, file, wrapped);
+      fileAdapterRef.current = adapter;
       adapter.start();
       setFileSourceActive(true);
       setOrbitInfo(`Loading: ${file.name}...`);
@@ -159,38 +150,24 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
     [handleEvent],
   );
 
-  const stopRrdAdapter = useCallback(() => {
-    if (rrdAdapterRef.current) {
-      rrdAdapterRef.current.stop();
-      rrdAdapterRef.current = null;
-    }
-  }, []);
-
   /** Route file to appropriate loader based on extension. */
   const loadFile = useCallback(
     (file: File, onBeforeEmit?: () => void) => {
+      // Stop any in-flight load first so two adapters never stream into
+      // the same buffers concurrently.
+      stopFileAdapter();
       if (file.name.endsWith(".rrd")) {
         loadRrdFile(file, onBeforeEmit);
       } else {
         loadCSVFile(file, onBeforeEmit);
       }
     },
-    [loadCSVFile, loadRrdFile],
+    [loadCSVFile, loadRrdFile, stopFileAdapter],
   );
 
   const handleLoadClick = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
-
-  const handleFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      loadFile(file);
-      e.target.value = "";
-    },
-    [loadFile],
-  );
 
   const clearFileSourceActive = useCallback(() => {
     setFileSourceActive(false);
@@ -202,8 +179,7 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
     fileSourceActive,
     loadFile,
     handleLoadClick,
-    handleFileChange,
-    stopRrdAdapter,
+    stopFileAdapter,
     clearFileSourceActive,
   };
 }

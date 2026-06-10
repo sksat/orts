@@ -140,7 +140,7 @@ guest と native 実装の差し替えは設定ファイルの変更だけで済
 sequenceDiagram
   participant sim as orts-cli serve
   participant ws as WebSocket :9001
-  participant src as SourceAdapter
+  participant src as Source layer
   participant trail as TrailBuffer (GPU)
   participant chart as ChartBuffer (ring)
   participant duck as DuckDB (uneri)
@@ -159,9 +159,11 @@ sequenceDiagram
   レンダ経路に乗っていない。
 - **History path (cold):** `IngestBuffer` → DuckDB が zoom / downsample /
   事後クエリ用のキャッシュ。ring buffer と eventually consistent。
-- **Source 抽象:** `WebSocketAdapter` / `CSVFileAdapter` /
-  `RrdFileAdapter` はすべて同じ `SourceEvent` ストリームに正規化されるため、
-  live と replay は単一パイプラインを通る。
+- **Source 抽象:** 全入力が同じ `SourceEvent` ストリームに正規化されるため、
+  live と replay は単一パイプラインを通る。live WebSocket 経路は
+  `useWebSocket` hook のブリッジ (`useWebSocketSource`)、ファイル再生
+  (`CSVFileAdapter` / `RrdFileAdapter`) は Web Worker でメインスレッド外
+  パースを行う。
 
 ## 6. 設計原則
 
