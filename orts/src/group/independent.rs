@@ -773,7 +773,7 @@ mod tests {
         assert!(sso_pos_err < 1e-12, "SSO position error: {sso_pos_err} km");
     }
 
-    // --- RK4 tests ---
+    // RK4 tests
 
     #[test]
     fn rk4_single_satellite_propagation() {
@@ -886,7 +886,7 @@ mod tests {
         );
     }
 
-    // --- Event checker tests ---
+    // Event checker tests
 
     const EARTH_RADIUS: f64 = 6378.137;
 
@@ -991,7 +991,7 @@ mod tests {
         assert!(!group.satellites().next().unwrap().terminated);
     }
 
-    // --- end_time + accessor tests ---
+    // end_time + accessor tests
 
     #[test]
     fn end_time_clamps_propagation() {
@@ -1094,7 +1094,7 @@ mod tests {
         assert!((entry.state.position().x - 6778.137).abs() < 1e-10);
     }
 
-    // --- into_parts tests ---
+    // into_parts tests
 
     #[test]
     fn into_parts_preserves_state_and_dynamics() {

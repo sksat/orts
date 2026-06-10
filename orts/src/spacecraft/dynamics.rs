@@ -311,8 +311,6 @@ mod tests {
     use nalgebra::{Vector3, Vector4};
     use utsuroi::{Integrator, OdeState, Rk4};
 
-    // --- Helpers ---
-
     fn symmetric_inertia(i: f64) -> Matrix3<f64> {
         Matrix3::from_diagonal(&Vector3::new(i, i, i))
     }
@@ -338,7 +336,7 @@ mod tests {
         }
     }
 
-    // --- Mock models ---
+    // Mock models
 
     struct ConstantAcceleration(Vector3<f64>);
 
@@ -380,7 +378,7 @@ mod tests {
         }
     }
 
-    // ======== Step 1: Gravity only (no LoadModel) ========
+    // Step 1: Gravity only (no LoadModel)
 
     #[test]
     fn gravity_only_matches_orbital_system() {
@@ -427,7 +425,7 @@ mod tests {
         assert_eq!(d.plant.mass, 0.0);
     }
 
-    // ======== Step 2: Euler equation ========
+    // Step 2: Euler equation
 
     #[test]
     fn euler_diagonal_inertia_known_torque() {
@@ -497,7 +495,7 @@ mod tests {
         );
     }
 
-    // ======== Step 3: Model integration ========
+    // Step 3: Model integration
 
     #[test]
     fn model_adds_acceleration() {
@@ -548,7 +546,7 @@ mod tests {
         assert!((d.plant.attitude.angular_velocity - torque / 10.0).magnitude() < 1e-15);
     }
 
-    // ======== Step 4: Builder + telemetry ========
+    // Step 4: Builder + telemetry
 
     #[test]
     fn builder_with_model_epoch_body_radius() {
@@ -602,7 +600,7 @@ mod tests {
         );
     }
 
-    // ======== Step 5: Epoch + integration + edge cases ========
+    // Step 5: Epoch + integration + edge cases
 
     #[test]
     fn epoch_forwarded_to_loads() {
@@ -661,7 +659,7 @@ mod tests {
             SpacecraftDynamics::new(MU_EARTH, PointMass, Matrix3::zeros());
     }
 
-    // ======== Step 6: Derivative-level conservation laws ========
+    // Step 6: Derivative-level conservation laws
 
     #[test]
     fn derivative_preserves_two_body_energy() {
@@ -760,7 +758,7 @@ mod tests {
         );
     }
 
-    // ======== Step 7: StateEffector integration ========
+    // Step 7: StateEffector integration
 
     #[test]
     fn with_effector_registers_aux() {

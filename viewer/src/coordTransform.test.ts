@@ -271,7 +271,7 @@ describe("batchTransformToLvlh", () => {
   });
 });
 
-// --- High/Low split encoding tests ---
+// High/Low split encoding tests
 
 describe("encodeFloat64ToHighLow", () => {
   it("round-trips a small value", () => {

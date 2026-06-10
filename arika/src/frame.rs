@@ -62,7 +62,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::epoch::{Epoch, Ut1, Utc};
 
-// ─── Runtime frame descriptor ────────────────────────────────────
+// Runtime frame descriptor
 
 /// Category tag for runtime frame identification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -122,7 +122,7 @@ impl FrameDescriptor {
     }
 }
 
-// ─── Sealed trait + Frame / category traits ──────────────────────
+// Sealed trait + Frame / category traits
 
 mod sealed {
     pub trait Sealed {}
@@ -156,7 +156,7 @@ pub trait Ecef: Frame {}
 /// 実装者: [`Rsw`]。将来 `Ntw`/`Vvlh`/`Perifocal` 等が追加される。
 pub trait LocalOrbital: Frame {}
 
-// ─── Concrete frame markers ──────────────────────────────────────
+// Concrete frame markers
 
 /// Approximate Earth-centered inertial frame: the "parent frame" for the
 /// ERA-only Z rotation used by the simple path. Ignores precession, nutation,
@@ -306,8 +306,6 @@ impl Frame for Body {
     const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Body;
 }
 
-// ─── Vec3<F> ─────────────────────────────────────────────────────
-
 /// Frame-tagged 3D vector.
 ///
 /// `PhantomData<F>` はゼロサイズなのでメモリレイアウトは `Vector3<f64>` と同一。
@@ -341,7 +339,7 @@ impl<F> Vec3<F> {
         self.0
     }
 
-    // ─── 成分アクセサ ────────────────────────────────────────
+    // 成分アクセサ
 
     pub fn x(&self) -> f64 {
         self.0.x
@@ -353,7 +351,7 @@ impl<F> Vec3<F> {
         self.0.z
     }
 
-    // ─── フレーム非依存演算 ──────────────────────────────────
+    // フレーム非依存演算
 
     /// ベクトルの大きさ。
     pub fn magnitude(&self) -> f64 {
@@ -409,7 +407,7 @@ impl<F> core::fmt::Debug for Vec3<F> {
     }
 }
 
-// ─── 同一フレーム演算 ────────────────────────────────────────────
+// 同一フレーム演算
 
 impl<F> Add for Vec3<F> {
     type Output = Self;
@@ -464,8 +462,6 @@ impl<F> core::ops::SubAssign for Vec3<F> {
         self.0 -= rhs.0;
     }
 }
-
-// ─── Rotation<From, To> ─────────────────────────────────────────
 
 /// 座標系 `From` から `To` への回転。
 ///
@@ -569,8 +565,6 @@ impl<From, To> core::fmt::Debug for Rotation<From, To> {
         write!(f, "Rotation<{from}, {to}>({:?})", self.0)
     }
 }
-
-// ─── Tests ───────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -693,7 +687,7 @@ mod tests {
         assert!((result.y() - 1.0).abs() < 1e-14);
     }
 
-    // ─── Frame descriptor / category ─────────────────────────────
+    // Frame descriptor / category
 
     #[test]
     fn frame_descriptor_name() {
@@ -757,7 +751,7 @@ mod tests {
         assert_eq!(magnitude_ecef(Vec3::<Itrs>::new(5.0, 0.0, 12.0)), 13.0);
     }
 
-    // ─── Rotation<SimpleEci, SimpleEcef> from_era tests ──────────
+    // Rotation<SimpleEci, SimpleEcef> from_era tests
 
     #[test]
     fn from_era_zero_is_identity() {

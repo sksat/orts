@@ -41,9 +41,7 @@ const POLE_ALIGN: [number, number, number] = [Math.PI / 2, 0, 0];
  */
 const ECI_TO_THREEJS: [number, number, number] = [-Math.PI / 2, 0, 0];
 
-// ---------------------------------------------------------------------------
 // Shell mesh: one altitude layer (semi-transparent data overlay)
-// ---------------------------------------------------------------------------
 
 function ShellMesh({
   dataTexture,
@@ -99,9 +97,7 @@ function ShellMesh({
   );
 }
 
-// ---------------------------------------------------------------------------
 // Multi-shell atmosphere
-// ---------------------------------------------------------------------------
 
 interface ShellData {
   texture: THREE.DataTexture;
@@ -219,9 +215,7 @@ function AtmosphereShells({ params }: { params: ViewerParams }) {
   );
 }
 
-// ---------------------------------------------------------------------------
 // Single shell (one altitude, for both atmosphere and magnetic)
-// ---------------------------------------------------------------------------
 
 function SingleShell({
   params,
@@ -347,9 +341,7 @@ function SingleShell({
   );
 }
 
-// ---------------------------------------------------------------------------
 // Magnetic volume shells
-// ---------------------------------------------------------------------------
 
 function MagneticShells({ params }: { params: ViewerParams }) {
   const [shells, setShells] = useState<ShellData[]>([]);
@@ -460,9 +452,7 @@ function MagneticShells({ params }: { params: ViewerParams }) {
   );
 }
 
-// ---------------------------------------------------------------------------
 // Field lines (already in ECI coordinates — no pole alignment needed)
-// ---------------------------------------------------------------------------
 
 function FieldLines({
   params,
@@ -560,9 +550,7 @@ function FieldLines({
   );
 }
 
-// ---------------------------------------------------------------------------
 // Textured Earth sphere
-// ---------------------------------------------------------------------------
 
 function EarthSphere() {
   const [texture, setTexture] = useState<THREE.Texture | null>(null);
@@ -589,9 +577,7 @@ function EarthSphere() {
   );
 }
 
-// ---------------------------------------------------------------------------
 // Main GlobeView
-// ---------------------------------------------------------------------------
 
 export function GlobeView({
   params,

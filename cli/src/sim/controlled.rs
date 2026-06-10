@@ -334,7 +334,7 @@ pub fn step_controlled(
     Ok(())
 }
 
-// --- builder helpers ---------------------------------------------------------
+// builder helpers
 
 fn build_controller(
     config: &ControllerConfig,

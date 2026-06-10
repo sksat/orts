@@ -11,9 +11,7 @@ import type { OrbitPoint } from "../orbit.js";
 // Re-export for convenience
 export type { SatelliteInfo, SimInfo };
 
-// ---------------------------------------------------------------------------
 // Source specification
-// ---------------------------------------------------------------------------
 
 /** Describes how to connect to / load a data source. */
 export type SourceSpec =
@@ -24,9 +22,7 @@ export type SourceSpec =
 /** Opaque identifier for a source instance. */
 export type SourceId = string;
 
-// ---------------------------------------------------------------------------
 // Source events (discriminated union)
-// ---------------------------------------------------------------------------
 
 /** Events emitted by a SourceAdapter into the runtime. */
 export type SourceEvent =
@@ -47,9 +43,7 @@ export type SourceEvent =
   | { kind: "progress"; loaded: number; total: number }
   | { kind: "complete" };
 
-// ---------------------------------------------------------------------------
 // Source capabilities & connection state
-// ---------------------------------------------------------------------------
 
 /** What a source can do. */
 export interface SourceCapabilities {
@@ -69,9 +63,7 @@ export type SourceConnectionState =
   | "complete" // file: fully loaded
   | "error";
 
-// ---------------------------------------------------------------------------
 // Source adapter interface
-// ---------------------------------------------------------------------------
 
 /** Callback signature for receiving events from an adapter. */
 export type SourceEventHandler = (sourceId: SourceId, event: SourceEvent) => void;

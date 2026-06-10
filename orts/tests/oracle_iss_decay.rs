@@ -32,7 +32,7 @@ use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
 use utsuroi::{DormandPrince, Tolerances};
 
-// ─── Fixture data structures ───
+// Fixture data structures
 
 #[derive(Deserialize)]
 struct FixtureData {
@@ -85,7 +85,7 @@ struct TlePoint {
     line2: String,
 }
 
-// ─── Test infrastructure ───
+// Test infrastructure
 
 fn load_fixture() -> FixtureData {
     let json = include_str!("fixtures/iss_decay_reference.json");
@@ -287,7 +287,7 @@ fn run_decay_window(window_name: &str, min_ratio: f64, max_ratio: f64) {
     );
 }
 
-// ─── Test functions ───
+// Test functions
 
 // Solar minimum (2019-2020): HP density table (Montenbruck & Gill) represents
 // moderate solar activity. During deep solar minimum (F10.7 ~70 SFU), actual
@@ -323,7 +323,7 @@ fn iss_decay_solar_max_2024d() {
     run_decay_window("solar_max_2024d", 0.5, 2.0);
 }
 
-// ─── NRLMSISE-00 decay tests ───
+// NRLMSISE-00 decay tests
 //
 // Key improvement over HP: NRLMSISE-00 responds to F10.7 solar flux input.
 // HP overpredicts solar-min decay by 5-30x because its density table
@@ -452,7 +452,7 @@ fn iss_decay_solar_max_2024d_msise() {
     run_decay_window_msise("solar_max_2024d", 250.0, 50.0, 1.0, 5.0);
 }
 
-// ─── NRLMSISE-00 with real CSSI space weather ───
+// NRLMSISE-00 with real CSSI space weather
 //
 // Uses observed daily F10.7 and 3-hourly Ap from CelesTrak CSSI data.
 // This should significantly improve over ConstantWeather because:

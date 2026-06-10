@@ -15,15 +15,9 @@ import { mergeQueryRangePoints, pickTrailBufferForResponse } from "../utils/merg
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
 import type { SourceEvent } from "./types.js";
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 export const WS_SOURCE_ID = "ws-0";
 
-// ---------------------------------------------------------------------------
 // Options & result types
-// ---------------------------------------------------------------------------
 
 export interface UseWebSocketSourceOptions {
   wsUrl: string;
@@ -46,9 +40,7 @@ export interface WebSocketSourceResult {
   handleTerminate: () => void;
 }
 
-// ---------------------------------------------------------------------------
 // Hook
-// ---------------------------------------------------------------------------
 
 export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocketSourceResult {
   const { wsUrl, handleEvent, trailBuffers, simInfo, latestRequestedRangeRef } = options;
@@ -61,7 +53,7 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
   const simInfoRef = useRef(simInfo);
   simInfoRef.current = simInfo;
 
-  // --- WS → SourceEvent bridge callbacks ---
+  // WS → SourceEvent bridge callbacks
 
   const handleState = useCallback(
     (point: OrbitPoint) => handleEvent(WS_SOURCE_ID, { kind: "state", point }),
@@ -138,8 +130,6 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
     [handleEvent],
   );
 
-  // --- useWebSocket ---
-
   const { connect, disconnect, isConnected, send } = useWebSocket({
     url: wsUrl,
     onState: handleState,
@@ -152,7 +142,7 @@ export function useWebSocketSource(options: UseWebSocketSourceOptions): WebSocke
     onTexturesReady: handleTexturesReady,
   });
 
-  // --- Sim control callbacks ---
+  // Sim control callbacks
 
   const handleStartSimulation = useCallback(
     (config: SimConfig) => {

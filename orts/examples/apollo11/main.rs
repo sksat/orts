@@ -34,11 +34,9 @@ use orts::record::recording::Recording;
 use orts::record::timeline::TimePoint;
 use utsuroi::{Dop853, Integrator};
 
-// ============================================================
 // Apollo 11 reference data (NASA Postflight Trajectory AS-506)
-// ============================================================
 
-// --- Parking orbit (Earth Parking Orbit) ---
+// Parking orbit (Earth Parking Orbit)
 
 /// Parking orbit insertion epoch: 1969-07-16T13:43:49Z (GET 00:11:49)
 const PARKING_EPOCH_ISO: &str = "1969-07-16T13:43:49Z";
@@ -51,7 +49,7 @@ const PARKING_RAAN_DEG: f64 = 358.383; // degrees
 const PARKING_ECC: f64 = 0.00021;
 const PARKING_PERIOD_MIN: f64 = 88.18; // minutes
 
-// --- TLI (Trans-Lunar Injection) ---
+// TLI (Trans-Lunar Injection)
 
 /// TLI cutoff epoch (S-IVB SECO): 1969-07-16T16:22:03Z
 const TLI_EPOCH_ISO: &str = "1969-07-16T16:22:03Z";
@@ -79,7 +77,7 @@ const POST_TLI_SPEED: f64 = 10.8343;
 /// Post-TLI geocentric distance [km]
 const POST_TLI_DISTANCE: f64 = 6711.964;
 
-// --- MCC (Midcourse Correction) ---
+// MCC (Midcourse Correction)
 
 /// MCC-2 time: GET 26:44:58 → ~24h after TLI SECO
 /// Apollo 11 Mission Report NASA SP-238, Table 7-I
@@ -89,7 +87,7 @@ const MCC2_TIME_AFTER_TLI: f64 = 23.0 * 3600.0 + 55.0 * 60.0;
 /// Apollo 11 Mission Report NASA SP-238, Table 7-I
 const MCC2_DV: f64 = 0.0064; // 6.4 m/s
 
-// --- LOI (Lunar Orbit Insertion) ---
+// LOI (Lunar Orbit Insertion)
 
 /// TLI to LOI-1 elapsed time [s] (~73 hours)
 /// Apollo 11 Mission Report NASA SP-238, Table 7-I
@@ -99,7 +97,7 @@ const TLI_TO_LOI_SECONDS: f64 = 73.0 * 3600.0;
 /// Apollo 11 Mission Report NASA SP-238, Table 7-I
 const LOI1_DV: f64 = 0.8892;
 
-// --- TEI (Trans-Earth Injection) ---
+// TEI (Trans-Earth Injection)
 
 /// LOI to TEI elapsed time [s] (~60 hours: 2.5 days in lunar orbit)
 /// Apollo 11 Mission Report NASA SP-238, Table 7-I
@@ -109,7 +107,7 @@ const LOI_TO_TEI_SECONDS: f64 = 60.0 * 3600.0;
 /// Apollo 11 Mission Report NASA SP-238, Table 7-I
 const TEI_DV: f64 = 1.001;
 
-// --- Reference event GET times (Apollo 11 Mission Report NASA SP-238, Table 7-I) ---
+// Reference event GET times (Apollo 11 Mission Report NASA SP-238, Table 7-I)
 // Used for timing assertions. All values in seconds from parking orbit insertion.
 
 /// TLI SECO: GET 02:44:16.2 (from launch), parking insertion at GET 00:11:49
@@ -128,7 +126,7 @@ const REF_TEI_GET_HOURS: f64 = 135.2;
 /// Entry interface: GET 195:03:05.7 from launch ≈ 194.9h from parking
 const REF_EI_GET_HOURS: f64 = EI_GET_SECONDS / 3600.0;
 
-// --- Entry Interface reference (Apollo 11 Mission Report NASA SP-238, Table 7-II) ---
+// Entry Interface reference (Apollo 11 Mission Report NASA SP-238, Table 7-II)
 //
 // Entry interface is defined at 400,000 ft (121.92 km) geodetic altitude.
 // GET 195:03:05.7 (1969-07-24T16:46:55Z)
@@ -170,7 +168,7 @@ const TEI_TO_ENTRY_SECONDS: f64 = 59.7 * 3600.0;
 /// Apollo 11 Mission Report NASA SP-238, Table 7-I
 const MISSION_DURATION_REF: f64 = 195.3 * 3600.0;
 
-// --- Simulation parameters ---
+// Simulation parameters
 
 /// Translunar coast duration [s] (~4 days)
 const TRANSLUNAR_DURATION: f64 = 4.0 * 86400.0;
@@ -184,9 +182,7 @@ const DT: f64 = 10.0;
 /// Output interval [s]
 const OUTPUT_INTERVAL: f64 = 60.0;
 
-// ============================================================
 // Helper functions
-// ============================================================
 
 /// Compute entry interface state vector in ECI from geodetic reference data.
 ///
@@ -601,9 +597,7 @@ fn propagate_and_record(
     (final_state, min_moon_dist, min_moon_dist_t, step)
 }
 
-// ============================================================
 // main — full Apollo 11 mission simulation
-// ============================================================
 
 fn main() {
     println!("=== Apollo 11 Mission Trajectory Simulation ===");
@@ -633,9 +627,7 @@ fn main() {
     let mut mission_t: f64 = 0.0; // continuous mission elapsed time [s]
     let mut step: u64 = 0;
 
-    // ──────────────────────────────────────────────
     // Phase 1: Earth Parking Orbit (~1.5 revolutions)
-    // ──────────────────────────────────────────────
     println!("Phase 1: Earth Parking Orbit");
     println!("  Epoch: {}", parking_epoch.to_datetime());
 
@@ -685,9 +677,7 @@ fn main() {
     );
     println!();
 
-    // ──────────────────────────────────────────────
     // Phase 2: Trans-Lunar Injection (TLI)
-    // ──────────────────────────────────────────────
     println!("Phase 2: Trans-Lunar Injection (TLI)");
 
     // Demonstrate apply_delta_v with approximate prograde ΔV
@@ -724,9 +714,7 @@ fn main() {
     );
     println!();
 
-    // ──────────────────────────────────────────────
     // Phase 3: Translunar Coast (~3 days to Moon)
-    // ──────────────────────────────────────────────
     println!("Phase 3: Translunar Coast");
 
     // Reset mission time to TLI SECO epoch for accurate propagation
@@ -857,9 +845,7 @@ fn main() {
     );
     println!();
 
-    // ──────────────────────────────────────────────
     // Phase 4: Lunar Orbit Insertion (LOI-1)
-    // ──────────────────────────────────────────────
     println!("Phase 4: Lunar Orbit Insertion (LOI-1)");
 
     let loi_epoch = parking_epoch.add_seconds(mission_t);
@@ -892,9 +878,7 @@ fn main() {
     );
     println!();
 
-    // ──────────────────────────────────────────────
     // Phase 4b: LOI-2 circularization (~4.4h after LOI-1)
-    // ──────────────────────────────────────────────
     // Apollo 11 Mission Report NASA SP-238: LOI-2 at GET 80:11:36,
     // ΔV ≈ 48.5 m/s retrograde to circularize from 60×170 nmi to 60×65 nmi.
     println!("Phase 4b: LOI-2 circularization");
@@ -930,9 +914,7 @@ fn main() {
     );
     println!();
 
-    // ──────────────────────────────────────────────
     // Phase 5: Lunar Orbit (~56 hours after LOI-2)
-    // ──────────────────────────────────────────────
     println!("Phase 5: Lunar Orbit");
 
     let remaining_lo = LOI_TO_TEI_SECONDS - loi2_coast;
@@ -994,9 +976,7 @@ fn main() {
     );
     println!();
 
-    // ──────────────────────────────────────────────
     // Phase 6: Trans-Earth Injection (TEI)
-    // ──────────────────────────────────────────────
     println!("Phase 6: Trans-Earth Injection (TEI)");
 
     // Propagate to the far-side point
@@ -1051,9 +1031,7 @@ fn main() {
     );
     println!();
 
-    // ──────────────────────────────────────────────
     // Phase 7: Trans-Earth Coast → Atmospheric Entry
-    // ──────────────────────────────────────────────
     println!("Phase 7: Trans-Earth Coast");
 
     let sat_path = EntityPath::parse("/world/sat/apollo11");
@@ -1228,9 +1206,7 @@ fn main() {
     }
     println!();
 
-    // ──────────────────────────────────────────────
     // Summary
-    // ──────────────────────────────────────────────
     println!("=== Mission Summary ===");
     println!(
         "Total mission elapsed time: {:.1} hours ({:.2} days)",
@@ -1248,9 +1224,7 @@ fn main() {
         final_state.velocity().magnitude()
     );
 
-    // ──────────────────────────────────────────────
     // Record Moon trajectory and save RRD
-    // ──────────────────────────────────────────────
     let total_duration = mission_t;
     let n_moon_steps = (total_duration / OUTPUT_INTERVAL) as u64;
     for i in 0..=n_moon_steps {
@@ -1277,9 +1251,7 @@ fn main() {
     println!("Saved to {rrd_path} (open with: rerun {rrd_path})");
 }
 
-// ============================================================
 // Tests — validate against NASA Postflight Trajectory AS-506
-// ============================================================
 
 #[cfg(test)]
 mod tests {
@@ -1309,9 +1281,7 @@ mod tests {
         );
     }
 
-    // ----------------------------------------------------------
     // Translunar coast propagation tests
-    // ----------------------------------------------------------
 
     /// Propagate the translunar trajectory and return (final_state, min_moon_dist, min_moon_dist_t).
     fn run_translunar_propagation() -> (OrbitalState, f64, f64) {
@@ -1413,9 +1383,7 @@ mod tests {
         );
     }
 
-    // ----------------------------------------------------------
     // Dynamical system configuration tests
-    // ----------------------------------------------------------
 
     #[test]
     fn translunar_system_has_third_body_models() {
@@ -1441,9 +1409,7 @@ mod tests {
         assert_eq!(system.body_radius, Some(R_EARTH));
     }
 
-    // ----------------------------------------------------------
     // Acceleration breakdown at TLI
-    // ----------------------------------------------------------
 
     #[test]
     fn tli_gravity_dominates_acceleration() {
@@ -1496,9 +1462,7 @@ mod tests {
         );
     }
 
-    // ----------------------------------------------------------
     // apply_delta_v demonstration (parking orbit → TLI)
-    // ----------------------------------------------------------
 
     #[test]
     fn parking_orbit_period() {
@@ -1563,9 +1527,7 @@ mod tests {
         );
     }
 
-    // ----------------------------------------------------------
     // Moon ephemeris at Apollo 11 epoch
-    // ----------------------------------------------------------
 
     #[test]
     fn moon_position_at_tli_epoch() {

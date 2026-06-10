@@ -163,7 +163,7 @@ impl wasmtime::component::HasData for HostState {
     type Data<'a> = &'a mut HostState;
 }
 
-// ─── host-env interface ─────────────────────────────────────────
+// host-env interface
 
 impl host_env::Host for HostState {
     fn log(&mut self, level: host_env::LogLevel, message: String) {
@@ -192,7 +192,7 @@ impl host_env::Host for HostState {
     }
 }
 
-// ─── tick-io interface ──────────────────────────────────────────
+// tick-io interface
 
 impl tick_io::Host for HostState {
     /// Called by the guest at the start of each control loop iteration.

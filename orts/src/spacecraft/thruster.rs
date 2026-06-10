@@ -8,9 +8,7 @@ use super::{ExternalLoads, SpacecraftState};
 /// Standard gravitational acceleration [m/s²].
 pub const G0: f64 = 9.80665;
 
-// ---------------------------------------------------------------------------
 // ThrustProfile trait — control/scheduling layer
-// ---------------------------------------------------------------------------
 
 /// Determines the throttle level based on simulation state.
 ///
@@ -25,9 +23,7 @@ pub trait ThrustProfile: Send + Sync {
     fn throttle(&self, t: f64, state: &SpacecraftState, epoch: Option<&Epoch>) -> f64;
 }
 
-// ---------------------------------------------------------------------------
 // Profile implementations
-// ---------------------------------------------------------------------------
 
 /// Always returns a fixed throttle level.
 pub struct ConstantThrottle(pub f64);
@@ -76,9 +72,7 @@ impl ThrustProfile for ScheduledBurn {
     }
 }
 
-// ---------------------------------------------------------------------------
 // ThrusterSpec — static physical parameters (shared by Thruster & Assembly)
-// ---------------------------------------------------------------------------
 
 /// Static physical parameters of a single thruster.
 ///
@@ -174,9 +168,7 @@ impl ThrusterSpec {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Thruster — ThrusterSpec + ThrustProfile (host-scheduled)
-// ---------------------------------------------------------------------------
 
 /// A thruster mounted on the spacecraft body.
 ///
@@ -260,9 +252,7 @@ impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci> + HasMass> Model
     }
 }
 
-// ---------------------------------------------------------------------------
 // ThrusterAssembly — plugin-commanded thruster group
-// ---------------------------------------------------------------------------
 
 use crate::plugin::command::ThrusterCommand;
 
@@ -400,7 +390,7 @@ mod tests {
         }
     }
 
-    // ======== ThrustProfile tests ========
+    // ThrustProfile tests
 
     #[test]
     fn constant_throttle_value() {
@@ -457,7 +447,7 @@ mod tests {
         assert_eq!(p.throttle(7.0, &sample_state(), None), 0.0);
     }
 
-    // ======== Thruster construction tests ========
+    // Thruster construction tests
 
     #[test]
     fn new_normalizes_direction() {
@@ -489,7 +479,7 @@ mod tests {
         assert_eq!(t.spec.dry_mass, 100.0);
     }
 
-    // ======== LoadModel tests (analytical) ========
+    // LoadModel tests (analytical)
 
     #[test]
     fn acceleration_magnitude() {
@@ -616,7 +606,7 @@ mod tests {
         assert!((loads_half.mass_rate - loads_full.mass_rate * 0.5).abs() < 1e-15);
     }
 
-    // ======== Integration test: dynamics uses mass_rate ========
+    // Integration test: dynamics uses mass_rate
 
     #[test]
     fn dynamics_uses_mass_rate() {
@@ -649,7 +639,7 @@ mod tests {
         );
     }
 
-    // ======== ThrusterAssemblyCore tests ========
+    // ThrusterAssemblyCore tests
 
     #[test]
     fn assembly_zero_throttle() {
@@ -780,7 +770,7 @@ mod tests {
         assert_eq!(loads.acceleration_inertial, arika::frame::Vec3::zeros());
     }
 
-    // ======== ThrusterAssembly (Model wrapper) tests ========
+    // ThrusterAssembly (Model wrapper) tests
 
     #[test]
     fn assembly_model_name() {

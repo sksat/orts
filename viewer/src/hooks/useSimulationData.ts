@@ -63,7 +63,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     queryRange,
   } = options;
 
-  // --- Orbit schema (shared by single & multi-satellite Workers) ---
+  // Orbit schema (shared by single & multi-satellite Workers)
   const mu = simInfo?.mu;
   const bodyRadius = simInfo?.central_body_radius;
   const orbitSchema = useMemo(
@@ -83,7 +83,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     }
   }, [isMultiSatellite, ingestBuffers]);
 
-  // --- Single-satellite IngestBuffer ref and Worker client ref ---
+  // Single-satellite IngestBuffer ref and Worker client ref
   const singleIngestBufferRef = useRef(new IngestBuffer<OrbitPoint>());
   const workerClientRef = useRef<ChartDataWorkerClient | null>(null);
   // Multi-sat worker client ref. Populated by `useMultiSatelliteStoreWorker`
@@ -99,7 +99,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     }
   }, [simInfo, ingestBuffers]);
 
-  // --- Zoom state ---
+  // Zoom state
   const [localZoomData, setLocalZoomData] = useState<ChartDataMap | null>(null);
   const [localMultiZoomData, setLocalMultiZoomData] = useState<MultiChartDataMap | null>(null);
   const [localChartBump, setLocalChartBump] = useState(0);
@@ -118,7 +118,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     };
   }, []);
 
-  // --- Multi-satellite configs ---
+  // Multi-satellite configs
   const satelliteConfigs = useMemo((): SatelliteConfig[] => {
     if (!simInfo) return [];
     return simInfo.satellites.map((sat: SatelliteInfo, i: number) => ({
@@ -128,7 +128,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     }));
   }, [simInfo]);
 
-  // --- Chart zoom handler ---
+  // Chart zoom handler
   const isLive = playback.isLive;
   const isLiveRef = useRef(isLive);
   isLiveRef.current = isLive;
@@ -239,7 +239,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     [isMultiSatellite, simInfo, queryRange, chartBuffer],
   );
 
-  // --- Charts: single-satellite mode (Worker-based) ---
+  // Charts: single-satellite mode (Worker-based)
   // DuckDB tick loop runs entirely in a Web Worker, keeping the main thread free.
   // Disabled in multi-satellite mode (uses useMultiSatelliteStoreWorker instead).
   const { data: singleChartData, isLoading: singleChartsLoading } = useTimeSeriesStoreWorker({
@@ -250,7 +250,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     clientRef: workerClientRef,
   });
 
-  // --- Charts: multi-satellite mode (Worker-based) ---
+  // Charts: multi-satellite mode (Worker-based)
   const { data: multiChartDataRaw, isLoading: multiChartsLoading } = useMultiSatelliteStoreWorker({
     baseSchema: orbitSchema,
     satelliteConfigs,
@@ -279,13 +279,13 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
 
   const chartsLoading = isMultiSatellite ? multiChartsLoading : singleChartsLoading;
 
-  // --- Chart current time ---
+  // Chart current time
   const chartCurrentTime = useMemo(() => {
     if (isLive) return undefined;
     return quantizeChartTime(playback.currentTime);
   }, [isLive, playback.currentTime]);
 
-  // --- Live chart data: bypass DuckDB, read directly from ChartBuffer ---
+  // Live chart data: bypass DuckDB, read directly from ChartBuffer
   const liveChartData = useMemo((): ChartDataMap | null => {
     if (!isLive || isMultiSatellite) return null;
     // effectiveChartVersion triggers re-read from the buffer
@@ -310,7 +310,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     return chartBuffer.toChartData();
   }, [isLive, isMultiSatellite, effectiveChartVersion, timeRange, chartBuffer]);
 
-  // --- DuckDB chart data: used for replay, zoom outside ChartBuffer, and non-live scrubbing ---
+  // DuckDB chart data: used for replay, zoom outside ChartBuffer, and non-live scrubbing
   const chartArrays = useMemo(() => {
     if (isMultiSatellite || !singleChartData) return null;
     return [
@@ -347,7 +347,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     };
   }, [visibleArrays]);
 
-  // --- Zoom reset: clear when returning to live or when time range changes ---
+  // Zoom reset: clear when returning to live or when time range changes
   const prevIsLiveRef = useRef(isLive);
   const prevTimeRangeRef = useRef(timeRange);
   useEffect(() => {

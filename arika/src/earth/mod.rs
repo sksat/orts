@@ -26,7 +26,7 @@ pub mod rotation;
 pub use ellipsoid::{WGS84_A, WGS84_B, WGS84_E2, WGS84_F};
 pub use geodetic::{Geodetic, geodetic_altitude};
 
-// ─── Physical constants ──────────────────────────────────────────
+// Physical constants
 
 /// Earth gravitational parameter [km³/s²] (WGS-84).
 pub const MU: f64 = 398600.4418;

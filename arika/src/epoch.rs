@@ -36,8 +36,6 @@ use core::marker::PhantomData;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-// ─── Constants ────────────────────────────────────────────────────
-
 /// Julian Date of J2000.0 epoch (JD 2451545.0).
 ///
 /// これは歴史的に J2000.0 TT と呼ばれる値だが、本実装では bit-level 互換性のため
@@ -57,7 +55,7 @@ const TT_MINUS_TAI_SEC: f64 = 32.184;
 #[cfg(feature = "std")]
 const UNIX_EPOCH_JD: f64 = 2440587.5;
 
-// ─── Leap second table ────────────────────────────────────────────
+// Leap second table
 
 /// IERS leap second table: (MJD_start, TAI - UTC [s]).
 ///
@@ -132,7 +130,7 @@ fn tai_minus_utc_at_mjd(utc_mjd: f64) -> f64 {
     offset
 }
 
-// ─── Fairhead-Bretagnon TDB-TT ────────────────────────────────────
+// Fairhead-Bretagnon TDB-TT
 
 /// TDB - TT [seconds] at the given TT Julian Date.
 ///
@@ -148,8 +146,6 @@ fn tdb_minus_tt(tt_jd: f64) -> f64 {
     let g = g_deg.to_radians();
     0.001_658 * g.sin() + 0.000_014 * (2.0 * g).sin()
 }
-
-// ─── Sealed trait ─────────────────────────────────────────────────
 
 mod sealed {
     pub trait Sealed {}
@@ -209,8 +205,6 @@ define_scale!(
      IAU 2009 body rotation の formally な独立変数。"
 );
 
-// ─── DateTime ─────────────────────────────────────────────────────
-
 /// A Gregorian calendar date and time (UTC).
 ///
 /// 本 struct は UTC 暦表示専用。TAI / TT / TDB 等の dynamical time scale は
@@ -258,8 +252,6 @@ impl core::fmt::Display for DateTime {
     }
 }
 
-// ─── Epoch<S> ─────────────────────────────────────────────────────
-
 /// An astronomical epoch represented as Julian Date in scale `S`.
 ///
 /// `S` defaults to [`Utc`] so that `Epoch` (without type parameter) means
@@ -281,7 +273,7 @@ pub struct Epoch<S: TimeScale = Utc> {
     _scale: PhantomData<S>,
 }
 
-// ─── Generic accessors (available on all scales) ──────────────────
+// Generic accessors (available on all scales)
 
 impl<S: TimeScale> Epoch<S> {
     /// Return the Julian Date value, interpreted in scale `S`.
@@ -309,7 +301,7 @@ impl<S: TimeScale> Epoch<S> {
     }
 }
 
-// ─── Epoch<Utc> API (main user-facing scale) ─────────────────────
+// Epoch<Utc> API (main user-facing scale)
 
 impl Epoch<Utc> {
     /// Create a UTC epoch from a raw Julian Date (treated as UTC JD).
@@ -518,7 +510,7 @@ impl Epoch<Utc> {
         era_formula(self.jd)
     }
 
-    // ─── Scale conversions (outbound from UTC) ────────────────────
+    // Scale conversions (outbound from UTC)
 
     /// Convert to TAI by applying the current leap-second offset.
     pub fn to_tai(&self) -> Epoch<Tai> {
@@ -571,7 +563,7 @@ impl Epoch<Utc> {
     }
 }
 
-// ─── Epoch<Tai> API ───────────────────────────────────────────────
+// Epoch<Tai> API
 
 impl Epoch<Tai> {
     /// Create a TAI epoch from a Julian Date value interpreted as TAI JD.
@@ -597,7 +589,7 @@ impl Epoch<Tai> {
     }
 }
 
-// ─── Epoch<Tt> API ────────────────────────────────────────────────
+// Epoch<Tt> API
 
 impl Epoch<Tt> {
     /// Create a TT epoch from a Julian Date value interpreted as TT JD.
@@ -624,7 +616,7 @@ impl Epoch<Tt> {
     }
 }
 
-// ─── Epoch<Tdb> API ───────────────────────────────────────────────
+// Epoch<Tdb> API
 
 impl Epoch<Tdb> {
     /// Create a TDB epoch from a Julian Date value interpreted as TDB JD.
@@ -650,7 +642,7 @@ impl Epoch<Tdb> {
     }
 }
 
-// ─── Epoch<Ut1> API ───────────────────────────────────────────────
+// Epoch<Ut1> API
 
 impl Epoch<Ut1> {
     /// Create a UT1 epoch from a Julian Date value interpreted as UT1 JD.
@@ -671,8 +663,6 @@ impl Epoch<Ut1> {
         era_formula(self.jd)
     }
 }
-
-// ─── Internal helpers ─────────────────────────────────────────────
 
 /// Earth Rotation Angle (ERA) formula, shared by `Epoch<Ut1>::era` and the
 /// legacy `Epoch<Utc>::gmst` method.
@@ -729,8 +719,6 @@ fn to_datetime_from_jd(jd: f64) -> DateTime {
     }
 }
 
-// ─── Duration ─────────────────────────────────────────────────────
-
 /// Scale-invariant duration measured in SI (TAI) seconds.
 ///
 /// Does not carry a scale tag because SI seconds tick uniformly regardless of
@@ -768,13 +756,11 @@ impl Duration {
     }
 }
 
-// ─── Tests ────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // --- Epoch construction and accessors ---
+    // Epoch construction and accessors
 
     #[test]
     fn mjd_jd_relationship() {
@@ -791,7 +777,7 @@ mod tests {
         assert_eq!(Epoch::<Tdb>::scale_name(), "TDB");
     }
 
-    // --- Gregorian conversions ---
+    // Gregorian conversions
 
     #[test]
     fn j2000_gregorian() {
@@ -875,7 +861,7 @@ mod tests {
         assert!((rt.sec - dt.sec).abs() < 0.01);
     }
 
-    // --- add_seconds / add_si_seconds ---
+    // add_seconds / add_si_seconds
 
     #[test]
     fn add_seconds_one_day() {
@@ -926,7 +912,7 @@ mod tests {
         assert!((later.centuries_since_j2000() - 1.0).abs() < 1e-12);
     }
 
-    // --- Discriminating Red tests for Phase 1A ---
+    // Discriminating Red tests for Phase 1A
     //
     // These tests verify behaviors that are only achievable with the new
     // Epoch<Scale> design. They would fail with the pre-refactor naive
@@ -1049,7 +1035,7 @@ mod tests {
         );
     }
 
-    // --- ISO 8601 parsing ---
+    // ISO 8601 parsing
 
     #[test]
     fn iso8601_valid() {
@@ -1079,7 +1065,7 @@ mod tests {
         assert!(Epoch::from_iso8601("2024-01-32T00:00:00Z").is_none()); // day 32
     }
 
-    // --- ERA / legacy GMST ---
+    // ERA / legacy GMST
 
     #[test]
     fn gmst_at_j2000() {
@@ -1142,7 +1128,7 @@ mod tests {
         assert_eq!(ut1.era(), utc.gmst());
     }
 
-    // --- to_ut1 with EOP provider ---
+    // to_ut1 with EOP provider
 
     #[test]
     fn to_ut1_applies_dut1_offset() {
@@ -1218,7 +1204,7 @@ mod tests {
         assert_eq!(r.0.get(), utc.mjd());
     }
 
-    // --- TLE epoch ---
+    // TLE epoch
 
     #[test]
     fn tle_epoch_iss_2024() {
@@ -1283,7 +1269,7 @@ mod tests {
         );
     }
 
-    // --- JD → UTC string end-to-end ---
+    // JD → UTC string end-to-end
 
     #[test]
     fn jd_to_utc_string_j2000() {
@@ -1352,7 +1338,7 @@ mod tests {
         assert!((roundtrip.z() - eci.z()).abs() < eps);
     }
 
-    // --- Leap second table sanity ---
+    // Leap second table sanity
 
     #[test]
     fn leap_second_table_monotonic() {
@@ -1378,8 +1364,6 @@ mod tests {
         // Pre-1972: default to the first table value.
         assert_eq!(tai_minus_utc_at_mjd(40000.0), 10.0);
     }
-
-    // --- Duration ---
 
     #[test]
     fn duration_si_seconds() {

@@ -23,7 +23,7 @@
 use arika::eclipse::{self, ShadowModel};
 use nalgebra::Vector3;
 
-// ── helpers ─────────────────────────────────────────────────────
+// helpers
 
 const ZERO: Vector3<f64> = Vector3::new(0.0, 0.0, 0.0);
 
@@ -86,7 +86,7 @@ fn assert_close(actual: f64, expected: f64, tol: f64, msg: &str) {
 const D_LIGHT: f64 = 1e6; // 1,000,000 km (Sun-like distance)
 const D_OCCULTER: f64 = 1e4; // 10,000 km (Earth-like distance)
 
-// ── Full sun (c >= a + b) ───────────────────────────────────────
+// Full sun (c >= a + b)
 
 #[test]
 fn conical_full_sun_wide_separation() {
@@ -118,7 +118,7 @@ fn conical_full_sun_barely_separated() {
     );
 }
 
-// ── Total eclipse / umbra (b >= a && c <= b - a) ────────────────
+// Total eclipse / umbra (b >= a && c <= b - a)
 
 #[test]
 fn conical_total_eclipse_centered() {
@@ -167,7 +167,7 @@ fn conical_total_eclipse_boundary() {
     );
 }
 
-// ── Annular eclipse (a > b && c <= a - b) ───────────────────────
+// Annular eclipse (a > b && c <= a - b)
 
 #[test]
 fn conical_annular_centered() {
@@ -217,7 +217,7 @@ fn conical_annular_boundary() {
     );
 }
 
-// ── Partial eclipse / penumbra ──────────────────────────────────
+// Partial eclipse / penumbra
 
 #[test]
 fn conical_partial_half_overlap_symmetric() {
@@ -255,7 +255,7 @@ fn conical_partial_in_between() {
     );
 }
 
-// ── Tangent cases ───────────────────────────────────────────────
+// Tangent cases
 
 #[test]
 fn conical_tangent_outer() {
@@ -301,7 +301,7 @@ fn conical_tangent_inner_annular() {
     );
 }
 
-// ── Occulter behind observer ────────────────────────────────────
+// Occulter behind observer
 
 #[test]
 fn conical_occulter_behind_observer() {
@@ -340,7 +340,7 @@ fn conical_occulter_beside_observer() {
     );
 }
 
-// ── Monotonicity ────────────────────────────────────────────────
+// Monotonicity
 
 #[test]
 fn conical_monotonicity_umbra_to_sun() {
@@ -383,7 +383,7 @@ fn conical_monotonicity_annular_to_sun() {
     }
 }
 
-// ── Continuity at boundaries ────────────────────────────────────
+// Continuity at boundaries
 
 #[test]
 fn conical_continuity_at_outer_tangent() {
@@ -439,7 +439,7 @@ fn conical_continuity_at_inner_tangent_annular() {
     );
 }
 
-// ── Earth-like realistic geometry ───────────────────────────────
+// Earth-like realistic geometry
 
 #[test]
 fn conical_leo_full_shadow() {
@@ -527,7 +527,7 @@ fn conical_geo_penumbra_transition_wider_than_leo() {
     );
 }
 
-// ── Cylindrical model tests ─────────────────────────────────────
+// Cylindrical model tests
 
 #[test]
 fn cylindrical_sunlit() {
@@ -604,7 +604,7 @@ fn cylindrical_just_outside_shadow() {
     assert_close(illum, 1.0, 1e-12, "cylindrical just outside shadow");
 }
 
-// ── Cylindrical is binary (no intermediate values) ──────────────
+// Cylindrical is binary (no intermediate values)
 
 #[test]
 fn cylindrical_is_binary() {
@@ -630,7 +630,7 @@ fn cylindrical_is_binary() {
     }
 }
 
-// ── illumination_central convenience wrapper ────────────────────
+// illumination_central convenience wrapper
 
 #[test]
 fn illumination_central_matches_full_api() {
@@ -657,7 +657,7 @@ fn illumination_central_matches_full_api() {
     );
 }
 
-// ── Output range ────────────────────────────────────────────────
+// Output range
 
 #[test]
 fn conical_output_always_in_0_1() {

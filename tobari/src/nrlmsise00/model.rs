@@ -14,8 +14,6 @@ use core::f64::consts::PI;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-// ─── Constants ───
-
 const DEG_TO_RAD: f64 = PI / 180.0;
 const DAY_ANGLE_RATE: f64 = 2.0 * PI / 365.25;
 const HOURS_TO_RAD: f64 = PI / 12.0; // hours to radians
@@ -40,7 +38,7 @@ const MOLECULAR_MASS: [f64; 9] = [4.0, 16.0, 28.0, 32.0, 40.0, 1.0, 1.0, 14.0, 1
 /// Atomic mass unit [g].
 const ATOMIC_MASS_UNIT: f64 = 1.66e-24;
 
-// ─── Surface gravity and effective radius ───
+// Surface gravity and effective radius
 
 /// Compute surface gravity [cm/s²] and effective Earth radius [km].
 fn surface_gravity_and_radius(lat_deg: f64) -> (f64, f64) {
@@ -55,7 +53,7 @@ fn geopotential_height(z: f64, zl: f64, re: f64) -> f64 {
     (z - zl) * (re + zl) / (re + z)
 }
 
-// ─── Legendre polynomials ───
+// Legendre polynomials
 
 /// Compute associated Legendre polynomials P_n^m(x) up to degree 8, order 8.
 /// Uses unnormalized convention (no Condon-Shortley phase).
@@ -96,7 +94,7 @@ fn compute_legendre(sin_lat: f64) -> [[f64; 9]; 9] {
     plg
 }
 
-// ─── Ap magnetic activity functions ───
+// Ap magnetic activity functions
 
 /// Saturation function for Ap geomagnetic index.
 fn ap_saturation(a: f64, p24: f64, p25: f64) -> f64 {
@@ -127,7 +125,7 @@ fn ap_geomagnetic_index(ex: f64, ap_array: &[f64; 7], p: &[f64]) -> f64 {
     sum / ap_sum_factor(ex)
 }
 
-// ─── 150-term geographic/temporal variation ───
+// 150-term geographic/temporal variation
 
 /// Evaluate the 150-term geographic/temporal variation function.
 ///
@@ -308,7 +306,7 @@ fn geographic_variation(
     result
 }
 
-// ─── Simplified variation for lower atmosphere (100-term arrays) ───
+// Simplified variation for lower atmosphere (100-term arrays)
 
 fn geographic_variation_lower(
     p: &[f64],
@@ -416,7 +414,7 @@ fn geographic_variation_lower(
     result
 }
 
-// ─── Cubic Hermite spline helpers ───
+// Cubic Hermite spline helpers
 
 /// Natural cubic spline setup.
 ///
@@ -508,7 +506,7 @@ fn cubic_spline_integrate(xa: &[f64], ya: &[f64], y2a: &[f64], n: usize, x: f64)
     yi
 }
 
-// ─── Density/temperature computation ───
+// Density/temperature computation
 
 /// Compute temperature and density using Bates-Walker profile above ZA,
 /// with spline profile below.
@@ -682,7 +680,7 @@ fn composition_correction_dual(alt: f64, r: f64, h1: f64, zh: f64, h2: f64) -> f
     (r / (1.0 + 0.5 * (ex1 + ex2))).exp()
 }
 
-// ─── Main computation (GTS7/GTD7D equivalent) ───
+// Main computation (GTS7/GTD7D equivalent)
 
 /// Full NRLMSISE-00 computation.
 ///
@@ -698,14 +696,14 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
 
     let alt = input.altitude_km;
 
-    // ─── Joining altitude (ZA) ───
+    // Joining altitude (ZA)
     // ZA is where the Bates-Walker profile joins the spline profile.
     // The C reference uses pdl[1][15] = 123.435 km (above the physical ZLB of 120 km).
     let za = CORRECTION_PARAMS[1][15];
     let mut zn1 = SPLINE_ALTITUDES;
     zn1[0] = za;
 
-    // ─── Exospheric temperature ───
+    // Exospheric temperature
     // Tinf variations are not important below za (simplification from C reference)
     let tinf = if alt > za {
         (TEMP_BOUNDARY[0]
@@ -716,12 +714,12 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         TEMP_BOUNDARY[0] * TEMP_COEFFICIENTS[0]
     };
 
-    // ─── Temperature at lower boundary (120 km) ───
+    // Temperature at lower boundary (120 km)
     let tlb = TEMP_BOUNDARY[1]
         * DENSITY_COEFFICIENTS[3][0]
         * (1.0 + sw[17] * geographic_variation(&DENSITY_COEFFICIENTS[3], input, &sw, &plg));
 
-    // ─── Gradient parameter (g0) and normalized s ───
+    // Gradient parameter (g0) and normalized s
     // Gradient variations not important below bottom of spline (72.5 km)
     let g0 = if alt > SPLINE_ALTITUDES[4] {
         TEMP_BOUNDARY[3]
@@ -732,7 +730,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
     };
     let s = g0 / (tinf - tlb);
 
-    // ─── Ap saturation (apdf) ───
+    // Ap saturation (apdf)
     // geographic_variation computes this as a side-effect in the C code (static variable).
     // The saturation parameters p[43], p[44] are identical across all coefficient
     // arrays, so we compute it once here. geographic_variation_lower reuses this value for its
@@ -744,7 +742,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         apd + (p45 - 1.0) * (apd + ((-p44 * apd).exp() - 1.0) / p44)
     };
 
-    // ─── Lower thermosphere temperature profile (TN1 nodes) ───
+    // Lower thermosphere temperature profile (TN1 nodes)
     // Nodes at: za(~123), 110, 100, 90, 72.5 km
     // tn1[0] is set inside density_temperature_profile from Bates-Walker at za, not from tlb directly.
     // Lower temperature node variations are only significant below 300 km.
@@ -819,7 +817,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
     }
     // tgn1[0] is unused: density_temperature_profile computes gradient at za from Bates-Walker
 
-    // ─── Species densities ───
+    // Species densities
     //
     // Each species follows the NRLMSISE-00 formulation (Picone et al., 2002):
     //   1. Base density at ZLB from geographic_variation function
@@ -865,7 +863,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         re,
     );
 
-    // --- He ---
+    // He
     {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[0], input, &sw, &plg);
         let db04 = DENSITY_BOUNDARY[0][0] * g1.exp() * DENSITY_COEFFICIENTS[0][0];
@@ -905,7 +903,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         }
     }
 
-    // --- O ---
+    // O
     {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[1], input, &sw, &plg);
         let db16 = DENSITY_BOUNDARY[1][0] * g1.exp() * DENSITY_COEFFICIENTS[1][0];
@@ -951,7 +949,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         }
     }
 
-    // --- N2 ---
+    // N2
     {
         let (_, dd) = density_temperature_profile(
             alt, db28, tinf, tlb, 28.0, ALPHA[2], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
@@ -966,12 +964,12 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         }
     }
 
-    // --- Temperature at altitude ---
+    // Temperature at altitude
     let (temp_alt, _) = density_temperature_profile(
         alt, 1.0, tinf, tlb, 0.0, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
     );
 
-    // --- O2 ---
+    // O2
     {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[4], input, &sw, &plg);
         let db32 = DENSITY_BOUNDARY[3][0] * g1.exp() * DENSITY_COEFFICIENTS[4][0];
@@ -1017,7 +1015,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         d[3] *= composition_correction_dual(alt, rc32, hcc32, zcc32, hcc232);
     }
 
-    // --- Ar ---
+    // Ar
     {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[5], input, &sw, &plg);
         let db40 = DENSITY_BOUNDARY[4][0] * g1.exp() * DENSITY_COEFFICIENTS[5][0];
@@ -1055,7 +1053,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         }
     }
 
-    // --- H ---
+    // H
     {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[6], input, &sw, &plg);
         let db01 = DENSITY_BOUNDARY[5][0] * g1.exp() * DENSITY_COEFFICIENTS[6][0];
@@ -1098,7 +1096,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         }
     }
 
-    // --- N ---
+    // N
     {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[7], input, &sw, &plg);
         let db14 = DENSITY_BOUNDARY[6][0] * g1.exp() * DENSITY_COEFFICIENTS[7][0];
@@ -1141,7 +1139,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         }
     }
 
-    // --- Anomalous O ---
+    // Anomalous O
     {
         let g1 = sw[20] * geographic_variation(&DENSITY_COEFFICIENTS[8], input, &sw, &plg);
         let db16h = DENSITY_BOUNDARY[7][0] * g1.exp() * DENSITY_COEFFICIENTS[8][0];
@@ -1158,7 +1156,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
         }
     }
 
-    // ─── Total mass density [g/cm³] → convert to d[5] ───
+    // Total mass density [g/cm³] → convert to d[5]
     d[5] = ATOMIC_MASS_UNIT
         * (4.0 * d[0]       // He
             + 16.0 * d[1]   // O

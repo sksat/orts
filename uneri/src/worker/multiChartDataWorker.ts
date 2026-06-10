@@ -30,9 +30,7 @@ import type {
   WorkerTableSchema,
 } from "./protocol.js";
 
-// ---------------------------------------------------------------------------
 // State
-// ---------------------------------------------------------------------------
 
 let conn: AsyncDuckDBConnection | null = null;
 let baseSchema: WorkerTableSchema | null = null;
@@ -60,10 +58,6 @@ const latestTs = new Map<string, number>();
 
 let tickCount = 0;
 let queryCount = 0;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function post(msg: MultiWorkerToMainMessage, transfer?: Transferable[]) {
   if (transfer) {
@@ -213,9 +207,7 @@ async function handleMultiZoomQuery(id: number, tMin: number, tMax: number, zoom
   post({ type: "multi-zoom-result", id, metrics: serializedMetrics }, transfers);
 }
 
-// ---------------------------------------------------------------------------
 // Tick loop
-// ---------------------------------------------------------------------------
 
 async function tick() {
   if (!conn || !baseSchema) return;
@@ -312,9 +304,7 @@ function scheduleNextTick() {
   }, TICK_INTERVAL);
 }
 
-// ---------------------------------------------------------------------------
 // Message handler
-// ---------------------------------------------------------------------------
 
 self.onmessage = async (e: MessageEvent<MultiMainToWorkerMessage>) => {
   const msg = e.data;

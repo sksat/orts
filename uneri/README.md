@@ -14,8 +14,8 @@ pnpm build
 ## Test
 
 ```bash
-pnpm test        # vitest unit tests (59 tests)
-pnpm test:e2e    # Playwright E2E tests (5 tests)
+pnpm test        # vitest unit tests
+pnpm test:e2e    # Playwright E2E tests
 ```
 
 ## Examples

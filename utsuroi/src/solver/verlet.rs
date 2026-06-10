@@ -125,7 +125,7 @@ mod tests {
 
     use super::*;
 
-    // --- Basic correctness ---
+    // Basic correctness
 
     #[test]
     fn verlet_uniform_motion_exact() {
@@ -158,7 +158,7 @@ mod tests {
         assert!((result.dy().y - expected_vy).abs() < eps);
     }
 
-    // --- Order of accuracy ---
+    // Order of accuracy
 
     fn harmonic_error_with_steps(dt: f64, steps: usize) -> f64 {
         let system = HarmonicOscillator;
@@ -219,7 +219,7 @@ mod tests {
         }
     }
 
-    // --- Trade-offs ---
+    // Trade-offs
     //
     // Symplectic property holds only for separable Hamiltonians
     // (a = f(q) only). Velocity-dependent forces (drag, Lorentz)
@@ -274,7 +274,7 @@ mod tests {
         );
     }
 
-    // --- Full period integration ---
+    // Full period integration
 
     #[test]
     fn verlet_integrate_harmonic_full_period() {
@@ -300,7 +300,7 @@ mod tests {
         );
     }
 
-    // --- 1D tests ---
+    // 1D tests
 
     #[test]
     fn verlet_1d_harmonic_oscillator() {
@@ -320,7 +320,7 @@ mod tests {
         );
     }
 
-    // --- 2D tests ---
+    // 2D tests
 
     #[test]
     fn verlet_2d_harmonic_oscillator() {
@@ -363,7 +363,7 @@ mod tests {
         assert!(max_drift < 1e-4, "2D energy drift: {max_drift:.2e}");
     }
 
-    // --- Event detection ---
+    // Event detection
 
     #[test]
     fn verlet_integrate_with_events_completes() {
@@ -454,7 +454,7 @@ mod tests {
         }
     }
 
-    // --- Property-based tests (proptest) ---
+    // Property-based tests (proptest)
     //
     // These verify universal mathematical properties that must hold for ANY
     // valid initial conditions and step sizes, not just hand-picked examples.

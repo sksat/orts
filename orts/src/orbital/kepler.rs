@@ -431,7 +431,7 @@ mod tests {
         assert!(energy < 0.0, "bound orbit energy should be negative");
     }
 
-    // --- Kepler equation solver tests ---
+    // Kepler equation solver tests
 
     #[test]
     fn test_kepler_equation_circular() {

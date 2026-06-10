@@ -10,7 +10,7 @@ import {
   buildInsertSQLFromRows,
 } from "./store.js";
 
-// --- Test schema ---
+// Test schema
 
 interface TestPoint {
   t: number;
@@ -57,9 +57,7 @@ const mixedTypeSchema: TableSchema = {
   toRow: (p) => [p.t, p.count, p.id, p.approx],
 };
 
-// ---------------------------------------------------------------------------
 // buildCreateTableSQL
-// ---------------------------------------------------------------------------
 
 describe("buildCreateTableSQL", () => {
   it("generates CREATE TABLE with all columns", () => {
@@ -79,9 +77,7 @@ describe("buildCreateTableSQL", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // buildInsertSQL
-// ---------------------------------------------------------------------------
 
 describe("buildInsertSQL", () => {
   it("generates correct VALUES for a batch of points", () => {
@@ -101,9 +97,7 @@ describe("buildInsertSQL", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // buildInsertSQLFromRows
-// ---------------------------------------------------------------------------
 
 describe("buildInsertSQLFromRows", () => {
   it("generates correct VALUES from row tuples", () => {
@@ -143,9 +137,7 @@ describe("buildInsertSQLFromRows", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // buildDerivedQuery
-// ---------------------------------------------------------------------------
 
 describe("buildDerivedQuery", () => {
   it("generates basic SELECT with derived column expressions", () => {
@@ -317,9 +309,7 @@ describe("buildDerivedQuery", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // buildCompactKeepersSQL
-// ---------------------------------------------------------------------------
 
 describe("buildCompactKeepersSQL", () => {
   it("generates CREATE TEMP TABLE with NTILE bucketing", () => {
@@ -342,9 +332,7 @@ describe("buildCompactKeepersSQL", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // buildCompactDeleteSQL
-// ---------------------------------------------------------------------------
 
 describe("buildCompactDeleteSQL", () => {
   it("generates DELETE with NOT IN keepers subquery", () => {
@@ -361,9 +349,7 @@ describe("buildCompactDeleteSQL", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // buildIncrementalQuery
-// ---------------------------------------------------------------------------
 
 describe("buildIncrementalQuery", () => {
   it("generates simple SELECT with derived columns and WHERE t > tAfter", () => {

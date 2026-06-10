@@ -9,9 +9,7 @@ use arika::earth::eop::{
 
 const SAMPLE: &str = include_str!("fixtures/finals2000A.sample");
 
-// ============================================================================
 // Parser tests
-// ============================================================================
 
 #[test]
 fn parse_sample_returns_entries() {
@@ -98,9 +96,7 @@ fn parse_empty_returns_error() {
     assert!(result.is_err(), "empty input should return error");
 }
 
-// ============================================================================
 // EopTable tests
-// ============================================================================
 
 #[test]
 fn table_from_finals2000a() {
@@ -116,9 +112,7 @@ fn table_mjd_range() {
     assert!(end >= 60399.0 - 0.01);
 }
 
-// ============================================================================
 // Interpolation tests
-// ============================================================================
 
 #[test]
 fn table_dut1_at_exact_entry() {
@@ -169,9 +163,7 @@ fn table_out_of_range_returns_error() {
     assert!(table.dut1_checked(70000.0).is_err());
 }
 
-// ============================================================================
 // EOP trait implementation tests
-// ============================================================================
 
 #[test]
 fn trait_ut1_offset() {
@@ -207,9 +199,7 @@ fn trait_length_of_day() {
     );
 }
 
-// ============================================================================
 // Integration: EopTable works with Rotation chain
-// ============================================================================
 
 #[test]
 fn eop_table_works_with_iau2006_full() {

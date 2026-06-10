@@ -21,7 +21,7 @@ const EARTH_RADIUS_KM: f64 = 6371.0;
 const MOON_RADIUS_KM: f64 = 1737.4;
 const ZERO: Vector3<f64> = Vector3::new(0.0, 0.0, 0.0);
 
-// ── Solar eclipses (Moon occults Sun as seen from near-Earth) ───
+// Solar eclipses (Moon occults Sun as seen from near-Earth)
 
 #[test]
 fn solar_eclipse_2024_04_08_total() {
@@ -115,7 +115,7 @@ fn solar_eclipse_2023_10_14_annular() {
     }
 }
 
-// ── Lunar eclipses (Earth occults Sun as seen from Moon) ────────
+// Lunar eclipses (Earth occults Sun as seen from Moon)
 
 #[test]
 fn lunar_eclipse_2025_03_14() {
@@ -171,7 +171,7 @@ fn no_lunar_eclipse_at_first_quarter() {
     );
 }
 
-// ── LEO satellite eclipse pattern ───────────────────────────────
+// LEO satellite eclipse pattern
 
 #[test]
 fn leo_orbit_has_eclipse_region() {

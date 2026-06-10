@@ -42,9 +42,7 @@ fn total_angular_momentum(
         .into_inner()
 }
 
-// ──────────────────────────────────────────────────────
 // Test 1: Angular momentum conservation
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn angular_momentum_conservation_with_rw() {
@@ -98,9 +96,7 @@ fn angular_momentum_conservation_with_rw() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 2: RW torque produces spacecraft rotation
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn rw_torque_produces_opposite_spacecraft_rotation() {
@@ -174,9 +170,7 @@ fn rw_torque_produces_opposite_spacecraft_rotation() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 3: Momentum saturation
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn momentum_saturation_stops_acceleration() {
@@ -231,9 +225,7 @@ fn momentum_saturation_stops_acceleration() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 4: Torque rate limiting
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn torque_rate_limiting_clamps_acceleration() {

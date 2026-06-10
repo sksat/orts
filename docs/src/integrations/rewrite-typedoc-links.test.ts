@@ -15,9 +15,7 @@ const OPTIONS = {
   base: "/orts",
 };
 
-// ---------------------------------------------------------------------------
 // filePathToLogicalUrl
-// ---------------------------------------------------------------------------
 
 describe("filePathToLogicalUrl", () => {
   it("turns a README.md at the typedoc root into a readme/ slug", () => {
@@ -45,9 +43,7 @@ describe("filePathToLogicalUrl", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // computeRelativeUrl — mirror of starlight-rustdoc's helper
-// ---------------------------------------------------------------------------
 
 describe("computeRelativeUrl", () => {
   it("computes a sibling link", () => {
@@ -73,9 +69,7 @@ describe("computeRelativeUrl", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // rewriteAbsoluteTypedocLinks — main integration helper
-// ---------------------------------------------------------------------------
 
 describe("rewriteAbsoluteTypedocLinks", () => {
   const README_PATH = `${CONTENT_DIR}/en/uneri/api/README.md`;

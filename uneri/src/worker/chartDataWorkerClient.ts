@@ -106,9 +106,7 @@ export class ChartDataWorkerClient {
     }, 100);
   }
 
-  // -----------------------------------------------------------------------
   // Private
-  // -----------------------------------------------------------------------
 
   /** Resolve all pending query Promises so callers don't hang. */
   private resolveAllPending(): void {

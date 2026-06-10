@@ -8,12 +8,7 @@ orts のリリース手順メモ。
    tag push で自動発火（専用の release.yml は存在しない。CI と release が
    同一ワークフロー）。`v*` tag を打つとフル CI (lint, test, build 等) が
    走ったあと、`rust-dist` job で release binary をビルドし、`release` job
-   で draft release を作成。添付物:
-   各ターゲット (gnu + musl) について:
-   - `orts-cli-{version}-{target}.tar.gz` (binary + README + LICENSE + example WASM plugins)
-   - `orts-cli-{version}-{target}.tar.gz.sha256`
-   - `orts-{target}` (standalone stripped binary)
-   - `README.md`, `LICENSE`
+   で draft release を作成（添付物は下記「Release の添付物」節を参照）。
 
    ターゲット: `x86_64-unknown-linux-gnu` (glibc; `cross` ビルドで floor を
    glibc >= 2.18 に pin) + `x86_64-unknown-linux-musl` (fully static)。

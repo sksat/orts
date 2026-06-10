@@ -32,10 +32,6 @@ import type {
   VariantItem,
 } from "./types.js";
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 export interface MarkdownOptions {
   contentDir: string; // e.g. docs/src/content/docs
   basePath: string; // e.g. "/orts"
@@ -96,9 +92,7 @@ function localePrefixOf(options: Pick<MarkdownOptions, "locale">): string {
   return options.locale ? `${options.locale}/` : "";
 }
 
-// ---------------------------------------------------------------------------
 // Overview page
-// ---------------------------------------------------------------------------
 
 function generateOverviewPage(
   crateName: string,
@@ -149,9 +143,7 @@ function generateOverviewPage(
   return lines.join("\n");
 }
 
-// ---------------------------------------------------------------------------
 // Item pages
-// ---------------------------------------------------------------------------
 
 function generateItemPage(
   apiItem: ApiItem,
@@ -192,9 +184,7 @@ function generateItemPage(
   return lines.join("\n");
 }
 
-// ---------------------------------------------------------------------------
 // Trait page
-// ---------------------------------------------------------------------------
 
 function generateTraitPage(
   lines: string[],
@@ -273,9 +263,7 @@ function generateTraitPage(
   }
 }
 
-// ---------------------------------------------------------------------------
 // Struct page
-// ---------------------------------------------------------------------------
 
 function generateStructPage(
   lines: string[],
@@ -397,9 +385,7 @@ function generateStructPage(
   }
 }
 
-// ---------------------------------------------------------------------------
 // Enum page
-// ---------------------------------------------------------------------------
 
 function generateEnumPage(
   lines: string[],
@@ -503,9 +489,7 @@ function generateEnumPage(
   }
 }
 
-// ---------------------------------------------------------------------------
 // Function page
-// ---------------------------------------------------------------------------
 
 function generateFunctionPage(
   lines: string[],
@@ -526,9 +510,7 @@ function generateFunctionPage(
   }
 }
 
-// ---------------------------------------------------------------------------
 // Type alias page
-// ---------------------------------------------------------------------------
 
 function generateTypeAliasPage(
   lines: string[],
@@ -550,9 +532,7 @@ function generateTypeAliasPage(
   }
 }
 
-// ---------------------------------------------------------------------------
 // Constant page
-// ---------------------------------------------------------------------------
 
 function generateConstantPage(
   lines: string[],
@@ -576,9 +556,7 @@ function generateConstantPage(
   }
 }
 
-// ---------------------------------------------------------------------------
 // Shared helpers
-// ---------------------------------------------------------------------------
 
 function renderMethodSection(
   lines: string[],
@@ -661,9 +639,7 @@ function renderVariantSignature(
   return name;
 }
 
-// ---------------------------------------------------------------------------
 // Frontmatter & formatting
-// ---------------------------------------------------------------------------
 
 function frontmatter(title: string, options?: { sidebarOrder?: number }): string {
   const lines = ["---", "editUrl: false", "next: false", "prev: false", `title: "${title}"`];

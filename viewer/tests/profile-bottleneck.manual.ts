@@ -134,12 +134,12 @@ test("isolate: charts vs 3D", async ({ page }) => {
 
   console.log(`\nData points: ${points}`);
 
-  // --- Test 1: Charts visible (default) ---
+  // Test 1: Charts visible (default)
   console.log("\n--- Charts VISIBLE ---");
   const withCharts = await measureFps(page, 3000);
   console.log(JSON.stringify(withCharts));
 
-  // --- Test 2: Collapse GraphPanel ---
+  // Test 2: Collapse GraphPanel
   console.log("\n--- Charts COLLAPSED ---");
   const toggleBtn = page.locator('[class*="toggle"]').first();
   await toggleBtn.click();
@@ -147,7 +147,7 @@ test("isolate: charts vs 3D", async ({ page }) => {
   const withoutCharts = await measureFps(page, 3000);
   console.log(JSON.stringify(withoutCharts));
 
-  // --- Test 3: Hide 3D canvas entirely via CSS ---
+  // Test 3: Hide 3D canvas entirely via CSS
   console.log("\n--- 3D HIDDEN (canvas display:none) ---");
   await toggleBtn.click(); // re-open charts
   await page.waitForTimeout(500);
@@ -159,7 +159,7 @@ test("isolate: charts vs 3D", async ({ page }) => {
   const without3D = await measureFps(page, 3000);
   console.log(JSON.stringify(without3D));
 
-  // --- Test 4: Both hidden ---
+  // Test 4: Both hidden
   console.log("\n--- BOTH HIDDEN ---");
   await toggleBtn.click(); // collapse charts
   const withoutBoth = await measureFps(page, 3000);

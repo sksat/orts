@@ -28,16 +28,15 @@ const DEFAULT_WS_URL: string =
   `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 
 export function App() {
-  // --- WASM initialization (must complete before rendering ECEF transforms) ---
+  // WASM initialization (must complete before rendering ECEF transforms)
   const [wasmReady, setWasmReady] = useState(false);
   useEffect(() => {
     arikaReady.then(() => setWasmReady(true));
   }, []);
 
-  // --- Reference frame ---
   const [referenceFrame, setReferenceFrame] = useState<ReferenceFrame>(DEFAULT_FRAME);
 
-  // --- Chart time range ---
+  // Chart time range
   const [timeRange, setTimeRange] = useState<TimeRange>(() => readTimeRangeParam());
 
   // Sync timeRange to URL query parameter
@@ -45,13 +44,11 @@ export function App() {
     writeTimeRangeParam(timeRange);
   }, [timeRange]);
 
-  // --- WS URL ---
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
 
-  // --- SimConfig modal ---
   const [simConfigOpen, setSimConfigOpen] = useState(false);
 
-  // --- Source Runtime (manages buffers, state, event dispatch) ---
+  // Source Runtime (manages buffers, state, event dispatch)
   const runtime = useSourceRuntime();
   const {
     trailBuffers: trailBuffersMap,
@@ -67,17 +64,17 @@ export function App() {
     resetBuffers,
   } = runtime;
 
-  // --- File source ---
+  // File source
   const fileSource = useFileSource({ handleEvent });
 
-  // --- Realtime playback (history scrubbing) ---
+  // Realtime playback (history scrubbing)
   const realtimePlayback = useRealtimePlayback(trailBuffersMap, terminatedSatellites, timeRange);
 
   // Use ref for goLive to avoid including it in handleConnect deps.
   const goLiveRef = useRef(realtimePlayback.goLive);
   goLiveRef.current = realtimePlayback.goLive;
 
-  // --- queryRange callback for useSimulationData fallback ---
+  // queryRange callback for useSimulationData fallback
   const sendRef = useRef<(msg: ClientMessage) => void>(() => {});
   const queryRange = useCallback((satId: string, tMin: number, tMax: number, maxPoints: number) => {
     sendRef.current({
@@ -89,7 +86,7 @@ export function App() {
     });
   }, []);
 
-  // --- Simulation data (DuckDB + chart pipeline) ---
+  // Simulation data (DuckDB + chart pipeline)
   const simData = useSimulationData({
     simInfo,
     ingestBuffers: ingestBuffersMap,
@@ -103,7 +100,6 @@ export function App() {
     queryRange,
   });
 
-  // --- WebSocket source ---
   const wsSource = useWebSocketSource({
     wsUrl,
     handleEvent,
@@ -115,7 +111,7 @@ export function App() {
   // Keep sendRef in sync with wsSource.send
   sendRef.current = wsSource.send;
 
-  // --- Proactive initial range query ---
+  // Proactive initial range query
   //
   // The server's connect-time history is a bounded, sparse overview of the
   // entire simulation. For a client with a finite `timeRange` selected
@@ -173,7 +169,7 @@ export function App() {
     }
   }, [simInfo, timeRange, chartBufferVersion, queryRange, simData.latestRequestedRangeRef]);
 
-  // --- Coordinator: connect ---
+  // Coordinator: connect
   const manualDisconnectRef = useRef(false);
 
   const handleConnect = useCallback(() => {
@@ -200,7 +196,7 @@ export function App() {
     wsSource.disconnect();
   }, [wsSource.disconnect]);
 
-  // --- Coordinator: file load ---
+  // Coordinator: file load
   // Source switching is deferred until the file is validated (CSV parsed / RRD ready)
   // via the onBeforeEmit callback to avoid destroying the session on invalid files
   // and to prevent the auto-connect race condition.
@@ -235,7 +231,7 @@ export function App() {
     ],
   );
 
-  // --- Drag & Drop ---
+  // Drag & Drop
   const [isDragOver, setIsDragOver] = useState(false);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -272,7 +268,7 @@ export function App() {
     [handleFileLoad],
   );
 
-  // --- Auto-connect ---
+  // Auto-connect
   const handleConnectRef = useRef(handleConnect);
   handleConnectRef.current = handleConnect;
   const noAutoConnect = new URLSearchParams(window.location.search).has("noAutoConnect");
@@ -288,7 +284,7 @@ export function App() {
     }
   }, [fileSource.fileSourceActive, wsSource.isConnected, noAutoConnect]);
 
-  // --- Derived values ---
+  // Derived values
   const textureBaseUrl = useMemo(() => {
     // High-res textures are served by a connected orts server, which downloads
     // and resizes them on demand. Without a live server — file replay, or no

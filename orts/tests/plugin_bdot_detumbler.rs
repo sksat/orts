@@ -68,11 +68,9 @@ const INITIAL_OMEGA: [f64; 3] = [0.08, 0.05, -0.04];
 // far less than 1% over this horizon.
 const DAMPING_FLOOR: f64 = 0.10;
 
-// =============================================================
 // Plugin-layer Detumbler (analytic, stateless)
 //
 // m = -k * (omega x B_body), clamped per-axis.
-// =============================================================
 
 struct PluginBdotCross<F: MagneticFieldModel = TiltedDipole> {
     gain: f64,
@@ -135,9 +133,7 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotCross<F> {
     }
 }
 
-// =============================================================
 // Simulation harness
-// =============================================================
 
 /// Convert per-MTQ moments from ActuatorBundle to a Vector3 for
 /// CommandedMagnetorquer (3-axis orthogonal layout assumed).

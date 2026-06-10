@@ -83,16 +83,13 @@ impl Phase {
 }
 
 struct TransferBurnWithTcm {
-    // thruster config
     target_r_km: f64,
     mu_km3_s2: f64,
     deadband_km: f64,
     num_thrusters: usize,
-    // attitude config
     num_rws: usize,
     kp: f64,
     kd: f64,
-    //
     sample_period: f64,
     // derived (lazy from first update)
     transfer_sma_km: Option<f64>,
@@ -102,7 +99,6 @@ struct TransferBurnWithTcm {
     transfer_half_period_s: Option<f64>,
     /// Coast フェーズに入った時刻 [s]。
     coast_start_t: Option<f64>,
-    // state
     phase: Phase,
 }
 
@@ -152,7 +148,7 @@ impl Plugin<TickInput, Command> for TransferBurnWithTcm {
     }
 
     fn update(&mut self, input: &TickInput) -> Result<Option<Command>, String> {
-        // --- 1. orbit state から phase と throttle を決定 ---------------------
+        // 1. orbit state から phase と throttle を決定
         let p = &input.spacecraft.orbit.position;
         let v = &input.spacecraft.orbit.velocity;
         let r_vec = Vector3::new(p.x, p.y, p.z);
@@ -221,7 +217,7 @@ impl Plugin<TickInput, Command> for TransferBurnWithTcm {
             }
         };
 
-        // --- 2. 姿勢 target: body-Y を velocity 方向に、body-Z を orbit 法線に ---
+        // 2. 姿勢 target: body-Y を velocity 方向に、body-Z を orbit 法線に
         let y_target = v_vec.normalize();
         let z_target = r_vec.cross(&v_vec).normalize();
         let x_target = y_target.cross(&z_target);
@@ -229,7 +225,7 @@ impl Plugin<TickInput, Command> for TransferBurnWithTcm {
         let rot = Matrix3::from_columns(&[x_target, y_target, z_target]);
         let q_target = UnitQuaternion::from_matrix(&rot);
 
-        // --- 3. PD on attitude error → RW torque ------------------------------
+        // 3. PD on attitude error → RW torque
         let att = &input.spacecraft.attitude.orientation;
         let q_current = UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
             att.w, att.x, att.y, att.z,

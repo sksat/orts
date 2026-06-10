@@ -156,7 +156,7 @@ impl SpacecraftShape {
 ///
 /// Implements [`LoadModel`] to produce both translational acceleration and
 /// aerodynamic torque from per-panel drag forces.  For the [`SpacecraftShape::Sphere`]
-/// variant, behaves identically to the scalar `AtmosphericDrag` in `orts-orbits`.
+/// variant, behaves identically to the scalar `AtmosphericDrag`.
 pub struct PanelDrag {
     shape: SpacecraftShape,
     atmosphere: Box<dyn AtmosphereModel>,
@@ -320,7 +320,7 @@ mod tests {
     use super::*;
     use crate::SpacecraftState;
 
-    // ======== SurfacePanel ========
+    // SurfacePanel
 
     #[test]
     fn at_com_zero_cp_offset() {
@@ -359,7 +359,7 @@ mod tests {
         assert!((p.cd - 2.1).abs() < 1e-15);
     }
 
-    // ======== SpacecraftShape::sphere ========
+    // SpacecraftShape::sphere
 
     #[test]
     fn sphere_variant() {
@@ -392,7 +392,7 @@ mod tests {
         SpacecraftShape::sphere(10.0, 2.2, -0.1);
     }
 
-    // ======== SpacecraftShape::panels ========
+    // SpacecraftShape::panels
 
     #[test]
     fn panels_stores_panels() {
@@ -411,7 +411,7 @@ mod tests {
         }
     }
 
-    // ======== SpacecraftShape::cube ========
+    // SpacecraftShape::cube
 
     #[test]
     fn cube_has_six_panels() {
@@ -520,7 +520,7 @@ mod tests {
         }
     }
 
-    // ======== PanelDrag ========
+    // PanelDrag
 
     #[test]
     fn panel_drag_name() {
@@ -546,7 +546,7 @@ mod tests {
         assert_eq!(Model::<SpacecraftState>::name(&drag), "panel_drag");
     }
 
-    // ======== PanelDrag loads() — shared helpers ========
+    // PanelDrag loads() — shared helpers
 
     use crate::OrbitalState;
     use crate::attitude::AttitudeState;
@@ -562,7 +562,7 @@ mod tests {
         }
     }
 
-    // ======== Sphere branch ========
+    // Sphere branch
 
     #[test]
     fn sphere_nonzero_drag_at_iss() {
@@ -611,7 +611,7 @@ mod tests {
         assert!(loads.acceleration_inertial.y() < 0.0);
     }
 
-    // ======== Panels branch — acceleration ========
+    // Panels branch — acceleration
 
     #[test]
     fn panels_facing_flow_nonzero_drag() {
@@ -712,7 +712,7 @@ mod tests {
         assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
     }
 
-    // ======== Panels branch — torque ========
+    // Panels branch — torque
 
     #[test]
     fn panels_at_com_zero_torque() {
@@ -775,7 +775,7 @@ mod tests {
         );
     }
 
-    // ======== Equivalence: Sphere ↔ AtmosphericDrag ========
+    // Equivalence: Sphere ↔ AtmosphericDrag
 
     #[test]
     fn sphere_matches_atmospheric_drag() {
@@ -797,7 +797,7 @@ mod tests {
         );
     }
 
-    // ======== Equivalence: single panel at CoM (cos θ = 1) ↔ Sphere ========
+    // Equivalence: single panel at CoM (cos θ = 1) ↔ Sphere
 
     #[test]
     fn single_panel_facing_flow_matches_sphere() {
@@ -831,7 +831,7 @@ mod tests {
         );
     }
 
-    // ======== Torque tests ========
+    // Torque tests
 
     #[test]
     fn cube_symmetric_zero_net_torque() {
@@ -848,7 +848,7 @@ mod tests {
         );
     }
 
-    // ======== Quantitative attitude coupling ========
+    // Quantitative attitude coupling
 
     /// Helper: make a quaternion for rotation by `angle` about the given axis.
     fn quat_from_axis_angle(axis: Vector3<f64>, angle: f64) -> Vector4<f64> {
@@ -1111,7 +1111,7 @@ mod tests {
         );
     }
 
-    // ======== Mock atmosphere for isolated frame-transform tests ========
+    // Mock atmosphere for isolated frame-transform tests
 
     /// Constant density regardless of altitude/position/epoch.
     struct ConstantDensity(f64);
@@ -1453,7 +1453,7 @@ mod tests {
         );
     }
 
-    // ======== SpacecraftDynamics integration ========
+    // SpacecraftDynamics integration
 
     #[test]
     fn panels_integrable_with_rk4() {

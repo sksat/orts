@@ -90,9 +90,7 @@ async function call(fn: string, args: unknown[]): Promise<unknown> {
   });
 }
 
-// ---------------------------------------------------------------------------
 // Typed async wrappers
-// ---------------------------------------------------------------------------
 
 export async function atmosphereLatlonMapAsync(
   model: string,
@@ -236,9 +234,7 @@ export async function magneticFieldLinesAsync(
   ])) as Float32Array | null;
 }
 
-// ---------------------------------------------------------------------------
 // Space weather APIs (using loaded CSSI/GFZ data)
-// ---------------------------------------------------------------------------
 
 export async function atmosphereLatlonMapSwAsync(
   model: string,

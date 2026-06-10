@@ -107,7 +107,7 @@ pub fn illumination_central(
     )
 }
 
-// ── Cylindrical model ───────────────────────────────────────────
+// Cylindrical model
 
 /// Cylindrical shadow model (binary 0/1).
 ///
@@ -144,7 +144,7 @@ fn illumination_cylindrical(
     }
 }
 
-// ── Conical model ───────────────────────────────────────────────
+// Conical model
 
 /// Conical shadow model with penumbra (Montenbruck & Gill §3.4.2).
 ///

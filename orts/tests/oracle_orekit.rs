@@ -32,7 +32,7 @@ use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
 use utsuroi::{DormandPrince, DynamicalSystem, Tolerances};
 
-// ─── Fixture data structures ───
+// Fixture data structures
 
 #[derive(Deserialize)]
 struct FixtureFile {
@@ -130,8 +130,6 @@ struct TrajectoryPoint {
 struct AccelSnapshot {
     total_km_s2: [f64; 3],
 }
-
-// ─── Helpers ───
 
 fn load_fixtures() -> FixtureFile {
     let json = include_str!("fixtures/orekit_propagation_reference.json");
@@ -394,7 +392,7 @@ fn run_scenario(name: &str, pos_tol_km: f64) {
     );
 }
 
-// ─── Tier 1: Gravity-only ───
+// Tier 1: Gravity-only
 // Matched constants, J2000 Z-axis; residual from J2 coefficient difference (~3e-9).
 // Expected: sub-meter to ~2 m over 10 orbits.
 
@@ -418,7 +416,7 @@ fn orekit_j2_equatorial_5orbits() {
     run_scenario("j2_equatorial_5orbits", 0.005); // 5 m (measured: 1.7 m)
 }
 
-// ─── Tier 2: Gravity + Third-body ───
+// Tier 2: Gravity + Third-body
 // Sun: Meeus vs DE405 (~0.35°), Moon: full Meeus Ch.47 vs DE405 (~1% distance).
 // These tolerances include BOTH integration error AND ephemeris difference.
 // The ephemeris difference dominates for long-duration/high-altitude scenarios.
@@ -445,7 +443,7 @@ fn orekit_j2_sun_moon_geo_3days() {
     run_scenario("j2_sun_moon_geo_3days", 0.250); // 250 m (measured: 218 m)
 }
 
-// ─── Tier 3: Gravity + SRP ───
+// Tier 3: Gravity + SRP
 // Sun direction error ~0.35° affects SRP vector; shadow timing may differ slightly.
 // Expected: ~1-2 m over 10 SSO orbits.
 
@@ -454,7 +452,7 @@ fn orekit_j2_srp_sso_10orbits() {
     run_scenario("j2_srp_sso_10orbits", 0.005); // 5 m (measured: 1.0 m)
 }
 
-// ─── Tier 4: Gravity + HP Drag ───
+// Tier 4: Gravity + HP Drag
 // With geodetic altitude (WGS-84), remaining differences are:
 // - J2 constant (~3e-9), Meeus Sun direction for HP bulge (~0.35°)
 // - Minor geodetic algorithm differences (Bowring vs Orekit's WGS-84)
@@ -482,7 +480,7 @@ fn orekit_j2_hp_iss_30days() {
     run_scenario("j2_hp_iss_30days", 0.230); // 230 m (measured: 191 m, baseline lock)
 }
 
-// ─── Tier 5: Full force model ───
+// Tier 5: Full force model
 // All differences combined. With geodetic altitude, drag error is now small.
 
 #[test]
@@ -495,7 +493,7 @@ fn orekit_full_sso_10orbits() {
     run_scenario("full_sso_10orbits", 0.002); // 2 m (measured: 0.8 m)
 }
 
-// ─── Tier 6: Gravity + NRLMSISE-00 Drag ───
+// Tier 6: Gravity + NRLMSISE-00 Drag
 // Both implementations derive from same NRL Fortran source.
 // Remaining differences: LST approximation (UT+lon/15, no equation of time),
 // Sun position Meeus vs DE405, Bowring iteration differences.
@@ -534,7 +532,7 @@ fn orekit_j2_msise_iss_moderate_30days() {
     run_scenario("j2_msise_iss_moderate_30days", 11.0); // 11 km (measured: 8.8 km, baseline lock)
 }
 
-// ─── Tier 7: Full force model + NRLMSISE-00 ───
+// Tier 7: Full force model + NRLMSISE-00
 
 #[test]
 fn orekit_full_msise_iss_moderate_10orbits() {
@@ -546,7 +544,7 @@ fn orekit_full_msise_sso_moderate_10orbits() {
     run_scenario("full_msise_sso_moderate_10orbits", 0.0015); // 1.5 m (measured: 0.995 m)
 }
 
-// ─── Tier 8: NRLMSISE-00 + CSSI real weather ───
+// Tier 8: NRLMSISE-00 + CSSI real weather
 // Both Orekit and Rust read the same trimmed CSSI fixture file.
 // This validates CSSI parser + binary search + 3-hour Ap interpolation
 // matching Orekit's CssiSpaceWeatherData implementation.

@@ -60,8 +60,6 @@ use super::tables_gen::{
 };
 use super::{Rad, Uas};
 
-// ─── Public API ──────────────────────────────────────────────────
-
 /// All three CIP / CIO quantities evaluated at a single `t`.
 ///
 /// Returned by [`cip_coordinates`]. `x` and `y` are the celestial
@@ -141,7 +139,7 @@ pub fn cip_coordinates(t: f64) -> CipCoordinates {
     CipCoordinates { x, y, s }
 }
 
-// ─── GCRS → CIRS matrix (TN36 Eq. 5.6-5.10 / SOFA iauC2ixys) ─────
+// GCRS → CIRS matrix (TN36 Eq. 5.6-5.10 / SOFA iauC2ixys)
 
 /// Assemble the 3×3 **celestial-to-intermediate** rotation matrix `C`
 /// from the CIP coordinates `(x, y)` and CIO locator `s`.
@@ -250,7 +248,7 @@ pub(crate) fn rotation_x(phi: f64) -> Matrix3<f64> {
     )
 }
 
-// ─── Shared evaluator ────────────────────────────────────────────
+// Shared evaluator
 
 /// Evaluate one CIP / CIO series in microarcseconds.
 ///
@@ -341,7 +339,7 @@ fn horner6(t: f64, c0: f64, c1: f64, c2: f64, c3: f64, c4: f64, c5: f64) -> f64 
     c0 + t * (c1 + t * (c2 + t * (c3 + t * (c4 + t * c5))))
 }
 
-// ─── Structural tests ────────────────────────────────────────────
+// Structural tests
 //
 // Numerical correctness against ERFA `xy06` / `s06` is pinned by the
 // integration test `arika/tests/iau2006_vs_erfa.rs`. The unit tests in
@@ -401,7 +399,7 @@ mod tests {
         assert!(c.y.raw() != 0.0);
     }
 
-    // ─── GCRS → CIRS matrix (structural) ─────────────────────────
+    // GCRS → CIRS matrix (structural)
 
     /// The celestial-to-intermediate matrix must be orthogonal with
     /// determinant +1 (i.e. a proper rotation, not a reflection), for

@@ -18,9 +18,7 @@ use axum::response::{IntoResponse, Response};
 use image::ImageReader;
 use image::imageops::FilterType;
 
-// ---------------------------------------------------------------------------
 // Embedded 2K textures (NASA/USGS public domain)
-// ---------------------------------------------------------------------------
 
 struct EmbeddedTexture {
     filename: &'static str,
@@ -61,9 +59,7 @@ const EMBEDDED: &[EmbeddedTexture] = &[
     },
 ];
 
-// ---------------------------------------------------------------------------
 // Download sources for high-resolution textures
-// ---------------------------------------------------------------------------
 
 /// A texture that needs to be downloaded and possibly resized.
 struct DownloadTask {
@@ -176,9 +172,7 @@ static SUN: DownloadTask = DownloadTask {
     resize: Some((4096, 2048)),
 };
 
-// ---------------------------------------------------------------------------
 // TextureCache
-// ---------------------------------------------------------------------------
 
 pub struct TextureCache {
     embedded: HashMap<&'static str, &'static [u8]>,
@@ -218,9 +212,7 @@ pub enum TextureData {
     Cached(PathBuf),
 }
 
-// ---------------------------------------------------------------------------
 // axum handler
-// ---------------------------------------------------------------------------
 
 pub async fn texture_handler(
     AxumPath(filename): AxumPath<String>,
@@ -260,9 +252,7 @@ pub async fn texture_handler(
     resp
 }
 
-// ---------------------------------------------------------------------------
 // Background downloader
-// ---------------------------------------------------------------------------
 
 /// Channel sender for requesting texture downloads for bodies in the simulation.
 pub type TextureRequestSender = mpsc::Sender<Vec<String>>;

@@ -20,7 +20,7 @@ use nalgebra::Vector3;
 use serde::Deserialize;
 use tobari::{AtmosphereInput, AtmosphereModel, HarrisPriester};
 
-// ─── Fixture data structures ───
+// Fixture data structures
 
 #[derive(Deserialize)]
 struct FixtureFile {
@@ -56,8 +56,6 @@ struct SunDirection {
     sun_direction_eci: [f64; 3],
 }
 
-// ─── Helpers ───
-
 fn load_fixtures() -> FixtureFile {
     let json = include_str!("fixtures/hp_orekit_reference.json");
     serde_json::from_str(json).expect("Failed to parse HP fixture JSON")
@@ -87,8 +85,6 @@ fn eci_to_geodetic(pos: &arika::SimpleEci, altitude_km: f64, epoch: &Epoch) -> G
         altitude: altitude_km,
     }
 }
-
-// ─── Tests ───
 
 /// Test 1: All 480 equatorial n=2 points against Orekit.
 ///

@@ -21,9 +21,7 @@ async function renderMath(markdown: string): Promise<string> {
   return String(result);
 }
 
-// ---------------------------------------------------------------------------
 // Inline math ($...$)
-// ---------------------------------------------------------------------------
 
 describe("inline math", () => {
   it("renders $\\mu$ with KaTeX markup", async () => {
@@ -37,9 +35,7 @@ describe("inline math", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Display math ($$...$$)
-// ---------------------------------------------------------------------------
 
 describe("display math", () => {
   it("renders display math with katex-display class", async () => {
@@ -51,9 +47,7 @@ describe("display math", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Safety: dollar signs in non-math context
-// ---------------------------------------------------------------------------
 
 describe("non-math dollar signs", () => {
   it("does not parse $ inside code spans", async () => {

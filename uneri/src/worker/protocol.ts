@@ -9,9 +9,7 @@
 import type { TimeRange } from "../hooks/useTimeSeriesStore.js";
 import type { ColumnDef, DerivedColumn } from "../types.js";
 
-// ---------------------------------------------------------------------------
 // Shared types
-// ---------------------------------------------------------------------------
 
 /** A single row as a tuple of nullable numbers, produced by schema.toRow(). */
 export type RowTuple = (number | null)[];
@@ -26,9 +24,7 @@ export interface WorkerTableSchema {
   derived: DerivedColumn[];
 }
 
-// ---------------------------------------------------------------------------
 // Main thread → Worker messages
-// ---------------------------------------------------------------------------
 
 export type MainToWorkerMessage =
   | {
@@ -49,9 +45,7 @@ export type MainToWorkerMessage =
   | { type: "debug-query"; id: number; query: "row-count" }
   | { type: "zoom-query"; id: number; tMin: number; tMax: number; maxPoints: number };
 
-// ---------------------------------------------------------------------------
 // Multi-satellite Worker messages
-// ---------------------------------------------------------------------------
 
 /** Serializable satellite config (matches SatelliteConfig from buildMultiChartData). */
 export interface WorkerSatelliteConfig {
@@ -120,9 +114,7 @@ export type MultiWorkerToMainMessage =
     }
   | { type: "error"; message: string };
 
-// ---------------------------------------------------------------------------
 // Worker → Main thread messages (single-satellite)
-// ---------------------------------------------------------------------------
 
 export type WorkerToMainMessage =
   | { type: "ready" }

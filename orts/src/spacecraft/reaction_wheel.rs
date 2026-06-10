@@ -549,7 +549,7 @@ mod tests {
         AttitudeState::identity()
     }
 
-    // ── Core tests ──
+    // Core tests
 
     #[test]
     fn three_axis_has_three_wheels() {
@@ -557,7 +557,7 @@ mod tests {
         assert_eq!(core.num_wheels(), 3);
     }
 
-    // ── Rw validation tests ──
+    // Rw validation tests
 
     #[test]
     #[should_panic(expected = "inertia must be positive")]
@@ -604,9 +604,7 @@ mod tests {
         assert!((rw.max_momentum - 0.5).abs() < 1e-10);
     }
 
-    // ── Core tests ──
-
-    // ── clamp_command tests ──
+    // clamp_command tests
 
     #[test]
     fn clamp_command_rate_limiting() {
@@ -625,7 +623,7 @@ mod tests {
         assert!((accepted[0] - 0.05).abs() < 1e-15);
     }
 
-    // ── clamp_physical tests ──
+    // clamp_physical tests
 
     #[test]
     fn clamp_physical_saturation_positive() {
@@ -652,7 +650,7 @@ mod tests {
         assert!((applied[2] - 0.02).abs() < 1e-15);
     }
 
-    // ── clamp_torques (combined) backward compat ──
+    // clamp_torques (combined) backward compat
 
     #[test]
     fn clamp_torques_rate_limiting() {
@@ -821,7 +819,7 @@ mod tests {
         assert!((torques[0] - 50.0).abs() < 1e-14);
     }
 
-    // ── Assembly (StateEffector) tests ──
+    // Assembly (StateEffector) tests
 
     #[test]
     fn assembly_three_axis_has_three_wheels() {
@@ -943,7 +941,7 @@ mod tests {
         assert!((tb[2] - desired[2]).abs() < 1e-15);
     }
 
-    // ── Motor lag tests ──
+    // Motor lag tests
 
     #[test]
     fn rw_with_motor_lag() {

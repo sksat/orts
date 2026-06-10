@@ -281,9 +281,7 @@ use orts::record::timeline::TimePoint;
 #[cfg(feature = "fetch-horizons")]
 use utsuroi::{Dop853, Integrator};
 
-// ============================================================
 // Mission constants
-// ============================================================
 
 /// Orion spacecraft JPL Horizons target ID.
 #[cfg(feature = "fetch-horizons")]
@@ -420,9 +418,7 @@ const THRESHOLD_PASS_KM: f64 = 1000.0;
 #[cfg(feature = "fetch-horizons")]
 const THRESHOLD_CONDITIONAL_KM: f64 = 10_000.0;
 
-// ============================================================
 // Phase result (used by the summary table)
-// ============================================================
 
 #[cfg(feature = "fetch-horizons")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,9 +460,7 @@ struct PhaseResult {
     judgment: Judgment,
 }
 
-// ============================================================
 // Maneuver (impulsive burn applied during propagation)
-// ============================================================
 
 /// An impulsive maneuver scheduled for the mission.
 ///
@@ -733,9 +727,7 @@ impl Judgment {
     }
 }
 
-// ============================================================
 // Main
-// ============================================================
 
 #[cfg(not(feature = "fetch-horizons"))]
 fn main() {
@@ -762,7 +754,7 @@ fn main() {
     println!("phases (outbound, DRO, return) to within 1000 km of Horizons.");
     println!();
 
-    // ----- Fetch one Moon ephemeris covering the whole mission -----
+    // Fetch one Moon ephemeris covering the whole mission
     println!("[1/4] Fetching Moon ephemeris ({MOON_SAMPLE_STEP} spacing) from Horizons...");
     let moon_window_start =
         Epoch::from_iso8601(MOON_WINDOW_START_ISO).expect("valid Moon window start");
@@ -790,7 +782,7 @@ fn main() {
     let moon_ephem: Arc<dyn MoonEphemeris> = moon_concrete.clone();
     println!();
 
-    // ----- Fetch one Sun ephemeris covering the whole mission -----
+    // Fetch one Sun ephemeris covering the whole mission
     // Mirrors the Moon fetch: the arika analytical Sun (Meeus) is
     // only ~10-km accurate at 1 AU and contributes to observed coast /
     // chain error via the third-body tidal term. Using a Horizons
@@ -815,11 +807,11 @@ fn main() {
     let sun_table_arc: Arc<HorizonsTable> = Arc::new(sun_table);
     println!();
 
-    // ----- Fetch Orion state vectors at every phase endpoint -----
+    // Fetch Orion state vectors at every phase endpoint
     println!("[2/4] Fetching Orion reference state vectors at each phase endpoint...");
     println!();
 
-    // ----- Verify each coast phase -----
+    // Verify each coast phase
     println!("[3/4] Propagating each coast phase and comparing to Horizons...");
     println!();
 
@@ -837,7 +829,7 @@ fn main() {
         println!();
     }
 
-    // ----- Verify each maneuver (impulsive burn application) -----
+    // Verify each maneuver (impulsive burn application)
     if !MANEUVERS.is_empty() {
         println!("[4/4] Verifying impulsive burn application for each maneuver...");
         println!();
@@ -858,7 +850,7 @@ fn main() {
         println!();
     }
 
-    // ----- Verify burn chains (end-to-end multi-burn propagation) -----
+    // Verify burn chains (end-to-end multi-burn propagation)
     let mut chain_results: Vec<BurnChainResult> = Vec::new();
     if BURN_CHAIN_INDICES.len() >= 2 {
         println!("── Burn chain verification ──");
@@ -895,7 +887,7 @@ fn main() {
         println!();
     }
 
-    // ----- Emit Rerun RRD for visualization -----
+    // Emit Rerun RRD for visualization
     //
     // Re-propagate the three verification phases (outbound coast,
     // DRI→DRDI chain, return coast) with recording hooks and save
@@ -1071,7 +1063,7 @@ fn main() {
         .expect("save artemis1 RRD");
     println!();
 
-    // ----- Summary tables -----
+    // Summary tables
     print_summary(&results);
     if !burn_results_impulsive.is_empty() {
         print_burn_summary(&burn_results_impulsive, &burn_results_continuous);
@@ -1081,9 +1073,7 @@ fn main() {
     }
 }
 
-// ============================================================
 // Coast verification
-// ============================================================
 
 /// Propagate a single coast phase from `start_iso` to `end_iso`, compare
 /// to the Horizons reference at `end_iso`, and return a `PhaseResult`.
@@ -1184,9 +1174,7 @@ fn verify_coast(
     }
 }
 
-// ============================================================
 // Burn verification
-// ============================================================
 
 /// Propagate a single maneuver: coast from `pre_epoch` to `mid_epoch`,
 /// apply the impulsive Δv, coast from `mid_epoch` to `post_epoch`, and
@@ -1245,7 +1233,7 @@ fn verify_burn(
     // Record fallback count so we can attribute any drop-through to this burn.
     let fallbacks_before = moon_concrete.fallback_count();
 
-    // ----- Pure-coast reference pass (pre → post, no burn) -----
+    // Pure-coast reference pass (pre → post, no burn)
     // Used to derive the propulsive Δv by comparing to the Horizons post
     // state: the difference is exactly what the burn contributed above and
     // beyond the gravitational drift the integrator already captures.
@@ -1284,7 +1272,7 @@ fn verify_burn(
     let raw_vs_corrected_angle_deg = angle_between_deg(&dv_raw_ms, &dv_corrected_ms);
     let raw_vs_corrected_mag_diff_ms = dv_raw_mag_ms - dv_corrected_mag_ms;
 
-    // ----- Actual run: coast pre → mid → apply(corrected Δv) → mid → post -----
+    // Actual run: coast pre → mid → apply(corrected Δv) → mid → post
     let state_at_mid = Dop853.integrate(
         &system,
         initial_state,
@@ -1482,7 +1470,7 @@ fn verify_burn_continuous(
 
     let fallbacks_before = moon_concrete.fallback_count();
 
-    // ----- Method B: same pure-coast Δv extraction as verify_burn --
+    // Method B: same pure-coast Δv extraction as verify_burn
     let initial_state = OrbitalState::new(pre_pos, pre_vel);
     let pure_coast_system = build_artemis_system(pre_epoch, moon_ephem, sun_table);
     let pure_coast_state = Dop853.integrate(
@@ -1496,7 +1484,7 @@ fn verify_burn_continuous(
     let dv_corrected_kms = post_vel - pure_coast_state.velocity();
     let dv_corrected_mag_ms = dv_corrected_kms.magnitude() * 1000.0;
 
-    // ----- Actual run: 3 legs split at the burn-window boundaries --
+    // Actual run: 3 legs split at the burn-window boundaries
     //
     // Leg 1: coast pre → burn_start (no thrust).
     // Leg 2: integrate burn_start → burn_end with ConstantThrust
@@ -1607,9 +1595,7 @@ fn verify_burn_continuous(
     }
 }
 
-// ============================================================
 // Burn chain verification
-// ============================================================
 
 /// Helper that pre-computes a single maneuver's corrected Δv in its own
 /// isolated Method B pass. Used by [`verify_burn_chain`] so each burn's
@@ -2031,9 +2017,7 @@ fn verify_burn_chain_continuous(
     }
 }
 
-// ============================================================
 // Rerun RRD visualization
-// ============================================================
 
 /// Accumulated recording state for a chain propagation.
 ///
@@ -2568,9 +2552,7 @@ fn print_summary(results: &[PhaseResult]) {
     println!();
 }
 
-// ============================================================
 // Helpers (only compiled with fetch-horizons)
-// ============================================================
 
 #[cfg(feature = "fetch-horizons")]
 fn fetch_orion_sample(

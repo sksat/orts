@@ -13,9 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { dateToJd } from "../types.js";
 
-// ---------------------------------------------------------------------------
 // Rotation math (mirrors the Three.js Euler rotations used in GlobeView)
-// ---------------------------------------------------------------------------
 
 /** Apply rotation around X axis by angle (radians) to a 3D vector. */
 function rotateX(v: [number, number, number], angle: number): [number, number, number] {
@@ -29,9 +27,7 @@ const POLE_ALIGN_ANGLE = Math.PI / 2; // +π/2 around X
 const ECI_TO_THREEJS_ANGLE = -Math.PI / 2; // -π/2 around X
 const EARTH_RADIUS_KM = 6371.0;
 
-// ---------------------------------------------------------------------------
 // Julian Date
-// ---------------------------------------------------------------------------
 
 describe("dateToJd", () => {
   it("J2000.0 epoch (2000-01-01T12:00:00Z) → JD 2451545.0", () => {
@@ -55,9 +51,7 @@ describe("dateToJd", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // ECI → Three.js world rotation
-// ---------------------------------------------------------------------------
 
 describe("ECI_TO_THREEJS rotation (-π/2 around X)", () => {
   it("ECI north pole [0,0,1] → Three.js [0,1,0] (Y-up)", () => {
@@ -82,9 +76,7 @@ describe("ECI_TO_THREEJS rotation (-π/2 around X)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Pole alignment rotation (SphereGeometry Y-pole → ECI Z-pole)
-// ---------------------------------------------------------------------------
 
 describe("POLE_ALIGN rotation (+π/2 around X)", () => {
   it("sphere pole [0,1,0] → ECI [0,0,1] (Z-up)", () => {
@@ -102,9 +94,7 @@ describe("POLE_ALIGN rotation (+π/2 around X)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Combined: SphereGeometry → ECI → Three.js
-// ---------------------------------------------------------------------------
 
 describe("combined rotation (POLE_ALIGN then ECI_TO_THREEJS)", () => {
   function applyBoth(v: [number, number, number]): [number, number, number] {
@@ -136,9 +126,7 @@ describe("combined rotation (POLE_ALIGN then ECI_TO_THREEJS)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Field lines (ECI coordinates) through ECI_TO_THREEJS only
-// ---------------------------------------------------------------------------
 
 describe("field lines (ECI → Three.js, no pole alignment)", () => {
   it("field line at ECI north pole [0,0,R] → Three.js [0,R,0]", () => {
@@ -169,9 +157,7 @@ describe("field lines (ECI → Three.js, no pole alignment)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Earth rotation ON/OFF consistency
-// ---------------------------------------------------------------------------
 
 describe("rotation OFF (earthRotation=0): everything in ECEF", () => {
   // When rotation is OFF, earthRotation=0.
@@ -362,9 +348,7 @@ describe("rotation ON/OFF consistency at poles", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Shell radius
-// ---------------------------------------------------------------------------
 
 describe("shell radius", () => {
   it("surface (alt=0) → radius = 1.0 Earth radii", () => {
@@ -383,9 +367,7 @@ describe("shell radius", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // DataTexture UV ↔ lat/lon mapping
-// ---------------------------------------------------------------------------
 
 describe("DataTexture UV mapping", () => {
   // SphereGeometry UV:
@@ -433,9 +415,7 @@ describe("DataTexture UV mapping", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // ECEF sanity checks (pure math, no WASM)
-// ---------------------------------------------------------------------------
 
 describe("geodetic → ECEF sanity (pure math)", () => {
   // WGS-84 semi-major axis

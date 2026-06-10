@@ -23,9 +23,7 @@ fn test_epoch() -> Epoch {
     Epoch::j2000()
 }
 
-// ------
 // Test 1: Magnetic field validation
-// ------
 
 #[test]
 fn magnetic_field_magnitude_at_equatorial_leo() {
@@ -90,9 +88,7 @@ fn magnetic_field_inverse_cube_law() {
     );
 }
 
-// ------
 // Test 2: B-dot angular velocity reduction (non-saturated)
-// ------
 
 #[test]
 fn bdot_reduces_angular_velocity() {
@@ -137,9 +133,7 @@ fn bdot_reduces_angular_velocity() {
     );
 }
 
-// ------
 // Test 3: B-dot energy dissipation (1 orbit)
-// ------
 
 #[test]
 fn bdot_energy_dissipation_one_orbit() {
@@ -173,9 +167,7 @@ fn bdot_energy_dissipation_one_orbit() {
     );
 }
 
-// ------
 // Test 4: Instantaneous torque opposes omega (Cauchy-Schwarz)
-// ------
 
 #[test]
 fn bdot_instantaneous_torque_opposes_omega() {

@@ -19,19 +19,11 @@ use std::f64::consts::PI;
 use std::ops::ControlFlow;
 use utsuroi::{DormandPrince, IntegrationOutcome, Tolerances};
 
-// ============================================================================
-// Constants
-// ============================================================================
-
 /// SSO target RAAN rate [deg/day], tropical year = 365.2421897 days.
 const SSO_RATE_DEG_PER_DAY: f64 = 0.985_647_359_894_798_1;
 
 /// SSO target RAAN rate [rad/s].
 const SSO_RATE_RAD_PER_SEC: f64 = SSO_RATE_DEG_PER_DAY * PI / (180.0 * 86400.0);
-
-// ============================================================================
-// Helpers
-// ============================================================================
 
 fn earth_j2_system() -> OrbitalSystem {
     OrbitalSystem::new(
@@ -168,9 +160,7 @@ fn orbit_averaged_raan_rate(
     (mean_second - mean_first) / dt_halves
 }
 
-// ============================================================================
 // Phase A: Analytical Formula Self-Consistency
-// ============================================================================
 
 #[test]
 fn brouwer_raan_rate_reduces_to_first_order() {
@@ -274,9 +264,7 @@ fn brouwer_sso_rate_is_tropical_year() {
     );
 }
 
-// ============================================================================
 // Phase B: RAAN Precession Rate Precision Tests
-// ============================================================================
 
 #[test]
 fn raan_rate_brouwer_iss_51deg_200orbits() {
@@ -417,9 +405,7 @@ fn raan_rate_brouwer_multiple_altitudes() {
     }
 }
 
-// ============================================================================
 // Phase C: J2² Discrimination Tests
-// ============================================================================
 
 #[test]
 fn j2_squared_correction_sign_and_magnitude() {
@@ -562,9 +548,7 @@ fn raan_rate_eccentricity_dependence() {
     );
 }
 
-// ============================================================================
 // Phase D: Long-Duration SSO Tracking
-// ============================================================================
 
 #[test]
 fn sso_raan_tracks_sun_60days() {

@@ -285,7 +285,7 @@ mod tests {
         assert!(lon_diff < 0.01, "lon={lon_deg}, expected {expected_lon}");
     }
 
-    // ─── Precise path tests ──────────────────────────────────────
+    // Precise path tests
 
     /// Minimal all-zero EOP provider used by tests — `dut1 = xp = yp =
     /// dX = dY = 0`. Lets us build the full IAU 2006 chain without a

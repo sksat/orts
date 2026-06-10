@@ -27,9 +27,7 @@ export function isTobariReady(): boolean {
   return initialized;
 }
 
-// ---------------------------------------------------------------------------
 // Atmosphere
-// ---------------------------------------------------------------------------
 
 export function exponentialDensity(altitudeKm: number): number {
   return wasmModule!.exponential_density(altitudeKm);
@@ -78,9 +76,7 @@ export function atmosphereLatlonMap(
   return wasmModule!.atmosphere_latlon_map(model, altitudeKm, epochJd, nLat, nLon, f107, ap);
 }
 
-// ---------------------------------------------------------------------------
 // Magnetic field
-// ---------------------------------------------------------------------------
 
 export interface FieldInfo {
   north: number; // nT
@@ -136,9 +132,7 @@ export function magneticFieldLatlonMap(
   return wasmModule!.magnetic_field_latlon_map(model, component, altitudeKm, epochJd, nLat, nLon);
 }
 
-// ---------------------------------------------------------------------------
 // Volume data (3D)
-// ---------------------------------------------------------------------------
 
 export interface VolumeResult {
   /** Scalar values, alt-major: index = iAlt * nLat * nLon + iLat * nLon + iLon */
@@ -177,9 +171,7 @@ export function atmosphereVolume(
   };
 }
 
-// ---------------------------------------------------------------------------
 // Magnetic field lines
-// ---------------------------------------------------------------------------
 
 export interface FieldLine {
   /** Vertices in Earth radii, flat [x0,y0,z0, x1,y1,z1, ...] */

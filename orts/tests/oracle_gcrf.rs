@@ -25,7 +25,7 @@ use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, Nrlmsise00};
 use utsuroi::{DormandPrince, Integrator};
 
-// --- Fixture data structures ---
+// Fixture data structures
 
 #[derive(Deserialize)]
 struct FixtureFile {
@@ -104,7 +104,7 @@ struct TrajectoryPoint {
     velocity_km_s: [f64; 3],
 }
 
-// --- ZeroEop provider ---
+// ZeroEop provider
 
 struct ZeroEop;
 
@@ -129,8 +129,6 @@ impl NutationCorrections for ZeroEop {
         0.0
     }
 }
-
-// --- Helpers ---
 
 fn load_fixtures() -> FixtureFile {
     let json = include_str!("fixtures/orekit_gcrf_propagation_reference.json");
@@ -331,8 +329,6 @@ fn final_pos_err_simple(scenario: &Scenario) -> f64 {
     .magnitude()
 }
 
-// --- Tests ---
-
 #[test]
 fn gcrf_j2_thirdbody_iss_10orbits() {
     let fixtures = load_fixtures();
@@ -421,9 +417,7 @@ fn gcrf_j2_msise_cssi_thirdbody_iss_30day() {
     );
 }
 
-// ============================================================================
 // Real EOP data tests — validate improvement from finals2000A EOP
-// ============================================================================
 
 #[test]
 fn gcrf_real_eop_improves_drag_10orbits() {

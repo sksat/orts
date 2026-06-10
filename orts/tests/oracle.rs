@@ -25,10 +25,6 @@ use std::f64::consts::PI;
 use std::ops::ControlFlow;
 use utsuroi::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
 fn earth_j2_system() -> OrbitalSystem {
     OrbitalSystem::new(
         MU_EARTH,
@@ -180,7 +176,6 @@ fn integrate_backward(
     current
 }
 
-// ============================================================================
 // Test 1: Critical Inclination — ω̇ ≈ 0
 //
 // At the critical inclination i_c = 63.4349°, the J2 secular rate of
@@ -189,7 +184,6 @@ fn integrate_backward(
 // because sin²(63.4349°) = 4/5 → (2 - 5/2 · 4/5) = 0.
 //
 // Oracle: Lagrange planetary equations (first-order J2 secular terms).
-// ============================================================================
 
 #[test]
 fn critical_inclination_perigee_frozen() {
@@ -237,7 +231,6 @@ fn critical_inclination_perigee_frozen() {
     );
 }
 
-// ============================================================================
 // Test 2: J2 Argument of Perigee Precession (non-critical inclination)
 //
 // At ISS inclination (51.6°), the J2 secular perigee precession rate is:
@@ -248,7 +241,6 @@ fn critical_inclination_perigee_frozen() {
 //   ≈ +3.3 deg/day
 //
 // Oracle: Lagrange planetary equations (first-order J2 secular terms).
-// ============================================================================
 
 #[test]
 fn j2_perigee_precession_iss() {
@@ -304,7 +296,6 @@ fn j2_perigee_precession_iss() {
     );
 }
 
-// ============================================================================
 // Test 3: Zonal Harmonics Lz Conservation
 //
 // For axially symmetric gravity (zonal harmonics J2/J3/J4), the z-component
@@ -312,7 +303,6 @@ fn j2_perigee_precession_iss() {
 // This is an exact physics invariant, independent of integration accuracy.
 //
 // Oracle: Noether's theorem (axial symmetry → Lz conservation).
-// ============================================================================
 
 #[test]
 fn zonal_harmonics_lz_conservation() {
@@ -352,7 +342,6 @@ fn zonal_harmonics_lz_conservation() {
     );
 }
 
-// ============================================================================
 // Test 4: Time-Reversal (Conservative System)
 //
 // For J2-only gravity (conservative), propagating forward then backward
@@ -360,7 +349,6 @@ fn zonal_harmonics_lz_conservation() {
 // RK4 is NOT time-symmetric, so error is O(dt^4) per step.
 //
 // Oracle: Time-reversibility of conservative ODE (numerical consistency test).
-// ============================================================================
 
 #[test]
 fn time_reversal_j2_conservative() {
@@ -407,14 +395,12 @@ fn time_reversal_j2_conservative() {
     );
 }
 
-// ============================================================================
 // Test 5: Drag — Monotonic Semi-Major Axis Decay
 //
 // Atmospheric drag always removes energy, causing the semi-major axis
 // to decrease monotonically.
 //
 // Oracle: Energy dissipation theorem (drag is always anti-velocity).
-// ============================================================================
 
 #[test]
 fn drag_monotonic_sma_decay() {
@@ -481,14 +467,12 @@ fn drag_monotonic_sma_decay() {
     );
 }
 
-// ============================================================================
 // Test 6: Drag Scaling — Doubling Ballistic Coefficient Doubles Decay Rate
 //
 // For a constant-density atmosphere approximation, da/dt ∝ B.
 // So doubling B should roughly double the decay rate.
 //
 // Oracle: Analytical drag equation linearity in B.
-// ============================================================================
 
 #[test]
 fn drag_scaling_with_ballistic_coefficient() {
@@ -542,7 +526,6 @@ fn drag_scaling_with_ballistic_coefficient() {
     );
 }
 
-// ============================================================================
 // Test 7: J2+J3 Frozen Orbit
 //
 // A frozen orbit has de/dt ≈ 0 and dω/dt ≈ 0 simultaneously under J2+J3.
@@ -554,7 +537,6 @@ fn drag_scaling_with_ballistic_coefficient() {
 // For near-polar orbit (i≈98°, a≈7200 km): e_f ≈ 0.001-0.005.
 //
 // Oracle: Averaged J2+J3 secular equations (mean element theory).
-// ============================================================================
 
 #[test]
 fn frozen_orbit_j2_j3() {
@@ -619,7 +601,6 @@ fn frozen_orbit_j2_j3() {
     }
 }
 
-// ============================================================================
 // Test 8: Third-Body GEO Inclination Change
 //
 // At GEO altitude (42164 km), Moon and Sun perturbations cause measurable
@@ -628,7 +609,6 @@ fn frozen_orbit_j2_j3() {
 //
 // Oracle: Known GEO station-keeping requirement (~0.75-0.95 deg/year
 // inclination drift from lunar/solar gravity).
-// ============================================================================
 
 #[test]
 fn third_body_geo_inclination_change() {
@@ -671,7 +651,6 @@ fn third_body_geo_inclination_change() {
     );
 }
 
-// ============================================================================
 // Test 9: Third-Body Effect — Sun and Moon Each Cause Measurable Changes
 //
 // Sun and Moon each independently cause measurable position differences
@@ -679,7 +658,6 @@ fn third_body_geo_inclination_change() {
 // than either alone due to partial cancellation at certain epochs.
 //
 // Oracle: Known GEO perturbation magnitudes from astrodynamics literature.
-// ============================================================================
 
 #[test]
 fn third_body_individual_effects() {
@@ -735,14 +713,12 @@ fn third_body_individual_effects() {
     );
 }
 
-// ============================================================================
 // Test 10: RK4 dt Convergence with Full Force Model
 //
 // Verify that RK4's 4th-order convergence is maintained even with the full
 // J2+J3+J4+third-body force model. Halving dt should reduce error by ~16x.
 //
 // Oracle: Richardson extrapolation (numerical analysis theory).
-// ============================================================================
 
 #[test]
 fn full_model_dt_convergence() {
@@ -795,7 +771,6 @@ fn full_model_dt_convergence() {
     );
 }
 
-// ============================================================================
 // Tests 11–14: SGP4 Smoke Tests — Order-of-Magnitude Agreement
 //
 // Compare our numerical J2 propagation against Python SGP4 (python-sgp4)
@@ -844,7 +819,6 @@ fn full_model_dt_convergence() {
 // ones. Hand-crafted elements are not SGP4-consistent Brouwer mean elements,
 // causing the mean-to-osculating conversion to produce an inconsistent initial
 // state (measured ~1536 km / ~11° with hand-crafted vs ~245 km / ~2° with real).
-// ============================================================================
 
 /// Fixture data structures for SGP4 reference trajectories.
 ///
@@ -967,13 +941,11 @@ fn compare_with_sgp4(
     }
 }
 
-// ============================================================================
 // Test 11: ISS — LEO near-circular (h≈420 km, e≈0.0005, i=51.6°)
 //
 // 3 orbits (~280 min). ISS TLE has non-zero BSTAR so SGP4 includes drag,
 // but over 3 orbits the drag effect is small (~meters). Expect < 30 km
 // position error and < 0.01° angular error.
-// ============================================================================
 
 #[test]
 fn sgp4_smoke_iss_leo() {
@@ -1011,12 +983,10 @@ fn sgp4_smoke_iss_leo() {
     );
 }
 
-// ============================================================================
 // Test 12: Sentinel-2A — SSO (h≈700 km, e≈0.001, i=98.6°)
 //
 // 2 orbits (~200 min). Sun-synchronous orbit with near-zero drag effect.
 // Higher altitude means weaker J2 perturbation → tighter agreement.
-// ============================================================================
 
 #[test]
 fn sgp4_smoke_sso() {
@@ -1054,14 +1024,12 @@ fn sgp4_smoke_sso() {
     );
 }
 
-// ============================================================================
 // Test 13: GPS BIIR-2 — MEO near-circular (h≈20200 km, e≈0.005, i=55.4°)
 //
 // 2 orbits (~1440 min = 24 hours). Period > 225 min → SGP4 uses SDP4
 // deep-space mode (includes luni-solar gravity). Despite this, near-circular
 // orbit keeps the error small because the perturbation treatment difference
 // doesn't accumulate into large along-track phase errors.
-// ============================================================================
 
 #[test]
 fn sgp4_smoke_gps_meo() {
@@ -1099,7 +1067,6 @@ fn sgp4_smoke_gps_meo() {
     );
 }
 
-// ============================================================================
 // Test 14: Molniya 1-93 — Real HEO (e≈0.74, i≈62.8°, a≈26575 km)
 //
 // 1 orbit (~720 min). Real Molniya-class satellite TLE (NORAD 28163).
@@ -1120,7 +1087,6 @@ fn sgp4_smoke_gps_meo() {
 //
 // Thresholds informed by Codex recommendation: 100–300 km position error
 // is expected for osculating-state-initialized J2-only vs SGP4 at HEO.
-// ============================================================================
 
 #[test]
 fn sgp4_smoke_molniya_heo() {
@@ -1165,7 +1131,6 @@ fn sgp4_smoke_molniya_heo() {
     );
 }
 
-// ============================================================================
 // Tests 15–19: Extended SGP4 Tests — Long-Period Error Growth
 //
 // These tests extend the SGP4 comparison to longer propagation durations
@@ -1179,7 +1144,6 @@ fn sgp4_smoke_molniya_heo() {
 //
 // Additional sanity checks: altitude stays in physical range, verifying
 // no sign errors or integration blow-up.
-// ============================================================================
 
 /// Compare with SGP4 and additionally verify altitude stays in expected band.
 fn compare_with_sgp4_checking_altitude(
@@ -1259,14 +1223,12 @@ fn compare_with_sgp4_checking_altitude(
     }
 }
 
-// ============================================================================
 // Test 15: ISS — 1 day (~16 orbits)
 //
 // Over 1 day, the drag-induced divergence (ISS has BSTAR, our J2-only ignores
 // it) causes significant along-track phase error. Combined with J2 analytical
 // vs numerical treatment differences, expect < 10 km total.
 // Measured: ~7.7 km / 0.065° / 0.008 km/s
-// ============================================================================
 
 #[test]
 fn sgp4_extended_iss_1day() {
@@ -1304,7 +1266,6 @@ fn sgp4_extended_iss_1day() {
     );
 }
 
-// ============================================================================
 // Test 16: ISS — 7 days (~112 orbits)
 //
 // Over 7 days, the ISS BSTAR drag term causes major along-track divergence.
@@ -1312,7 +1273,6 @@ fn sgp4_extended_iss_1day() {
 // ~50 km/day along-track. Expect ~350 km position error dominated by phase.
 // This test primarily verifies no blow-up; the error is expected and large.
 // Measured: ~361 km / 3.0° / 0.40 km/s
-// ============================================================================
 
 #[test]
 fn sgp4_extended_iss_7day() {
@@ -1351,13 +1311,11 @@ fn sgp4_extended_iss_7day() {
     );
 }
 
-// ============================================================================
 // Test 17: Sentinel-2A SSO — 3 days (~43 orbits)
 //
 // SSO at 700 km with negligible BSTAR drag. The error growth is dominated
 // by analytical (Brouwer) vs numerical J2 treatment differences. Expect
 // relatively slow growth: < 10 km over 3 days.
-// ============================================================================
 
 #[test]
 fn sgp4_extended_sso_3day() {
@@ -1396,13 +1354,11 @@ fn sgp4_extended_sso_3day() {
     );
 }
 
-// ============================================================================
 // Test 18: GPS BIIR-2 — 7 days (~14 orbits)
 //
 // GPS at MEO (20200 km) uses SDP4 deep-space mode in SGP4. Our J2-only
 // model lacks luni-solar terms that SDP4 includes. However, for near-
 // circular MEO the error grows slowly: expect < 30 km over 7 days.
-// ============================================================================
 
 #[test]
 fn sgp4_extended_gps_7day() {
@@ -1439,7 +1395,6 @@ fn sgp4_extended_gps_7day() {
     );
 }
 
-// ============================================================================
 // Test 19: Molniya — 3 orbits (~36 hours)
 //
 // High-eccentricity orbit amplifies along-track phase error. Over 3 orbits,
@@ -1447,7 +1402,6 @@ fn sgp4_extended_gps_7day() {
 // (~245 km). Angular error is the more meaningful metric.
 //
 // Altitude sanity: perigee ~500 km, apogee ~39000 km (Molniya class).
-// ============================================================================
 
 #[test]
 fn sgp4_extended_molniya_3orbit() {
@@ -1485,7 +1439,6 @@ fn sgp4_extended_molniya_3orbit() {
     );
 }
 
-// ============================================================================
 // Tests 20–23: Long-Period Analytical Oracle Tests
 //
 // These tests verify the numerical integrator over hundreds of orbits,
@@ -1493,9 +1446,7 @@ fn sgp4_extended_molniya_3orbit() {
 // - Secular rates match analytical predictions over long baselines
 // - Conservation laws hold (error growth is bounded and predictable)
 // - Dissipative forces accumulate correctly
-// ============================================================================
 
-// ============================================================================
 // Test 20: RAAN Precession over 200 Orbits
 //
 // The J2 secular RAAN precession rate is:
@@ -1506,7 +1457,6 @@ fn sgp4_extended_molniya_3orbit() {
 // match the analytical formula more closely than the 15-orbit test.
 //
 // Oracle: Lagrange planetary equations (first-order J2 secular RAAN rate).
-// ============================================================================
 
 #[test]
 fn raan_precession_200_orbits() {
@@ -1564,7 +1514,6 @@ fn raan_precession_200_orbits() {
     );
 }
 
-// ============================================================================
 // Test 21: Drag — SMA Decay over 200 Orbits
 //
 // Over 200 orbits at 400 km with B=0.02 m²/kg, atmospheric drag causes
@@ -1572,7 +1521,6 @@ fn raan_precession_200_orbits() {
 // the decay rate to accelerate (positive feedback).
 //
 // Oracle: Energy dissipation theorem + exponential atmosphere model.
-// ============================================================================
 
 #[test]
 fn drag_decay_200_orbits() {
@@ -1656,7 +1604,6 @@ fn drag_decay_200_orbits() {
     );
 }
 
-// ============================================================================
 // Test 22: Orbit-Averaged SMA Stability over 500 Orbits (Conservative System)
 //
 // For conservative zonal harmonics (J2+J3+J4, no drag), the orbit-averaged
@@ -1669,7 +1616,6 @@ fn drag_decay_200_orbits() {
 // 2. Drift grows linearly, not exponentially (no instability)
 //
 // Oracle: RK4 secular energy error is O(T*dt^4), linear in propagation time.
-// ============================================================================
 
 #[test]
 fn sma_stability_500_orbits() {
@@ -1738,7 +1684,6 @@ fn sma_stability_500_orbits() {
     }
 }
 
-// ============================================================================
 // Test 23: Lz Conservation over 500 Orbits
 //
 // z-angular momentum Lz = (r × v)·ẑ is conserved for axially symmetric
@@ -1747,7 +1692,6 @@ fn sma_stability_500_orbits() {
 // rather than linearly or exponentially.
 //
 // Oracle: Noether's theorem (axial symmetry → Lz conservation).
-// ============================================================================
 
 #[test]
 fn lz_conservation_500_orbits() {
@@ -1788,8 +1732,7 @@ fn lz_conservation_500_orbits() {
     );
 }
 
-// ============================================================================
-// Test 23: ISS 30-Day Survival with Physical Ballistic Coefficient
+// Test 24: ISS 30-Day Survival with Physical Ballistic Coefficient
 //
 // Oracle: ISS at ~400 km with physical B = Cd*A/(2m) ≈ 0.005 m²/kg
 // should survive at least 30 days without reboost. Expected decay rate
@@ -1797,7 +1740,6 @@ fn lz_conservation_500_orbits() {
 //
 // Our atmosphere model uses US Standard 1976 (solar-minimum-like ρ ≈ 3.7e-12
 // at 400 km), so expect the lower end of the decay range.
-// ============================================================================
 
 #[test]
 fn iss_drag_30day_survival() {
@@ -1861,7 +1803,6 @@ fn iss_drag_30day_survival() {
     );
 }
 
-// ============================================================================
 // Test: J2 Eccentricity Oscillation Bounded
 //
 // Near-circular orbit under J2 has short-period eccentricity oscillations
@@ -1871,7 +1812,6 @@ fn iss_drag_30day_survival() {
 //
 // Oracle: Brouwer theory — J2 causes no secular eccentricity change;
 //         energy must be conserved for the conservative J2 system.
-// ============================================================================
 
 #[test]
 fn j2_eccentricity_oscillation_bounded() {
@@ -1956,7 +1896,6 @@ fn j2_eccentricity_oscillation_bounded() {
     );
 }
 
-// ============================================================================
 // Test: J2 ω Precession Modulates Eccentricity (Long-Duration)
 //
 // Over 200 orbits (~14 days), ω precesses ~46° (at 3.3°/day for ISS incl.).
@@ -1965,7 +1904,6 @@ fn j2_eccentricity_oscillation_bounded() {
 //
 // Oracle: Lagrange planetary equations predict no secular e change from J2.
 //         ω̇ ≈ 3.3°/day at ISS inclination confirms precession tracking.
-// ============================================================================
 
 #[test]
 fn j2_omega_precession_modulates_eccentricity() {
@@ -2062,12 +2000,10 @@ fn j2_omega_precession_modulates_eccentricity() {
     );
 }
 
-// ============================================================================
 // DP45 (Dormand-Prince) versions — tighter tolerances, longer duration
 //
 // DP45 with atol=1e-12, rtol=1e-10 preserves energy to ~1e-10 level,
 // enabling strict energy conservation checks over long periods.
-// ============================================================================
 
 #[test]
 fn j2_eccentricity_dp45_500_orbits() {
@@ -2243,14 +2179,12 @@ fn j2_omega_precession_dp45_500_orbits() {
     );
 }
 
-// ============================================================================
 // Test: Gcrs propagation end-to-end
 //
 // Validates that OrbitalSystem<Gcrs> compiles, runs, and produces
 // physically reasonable results. With zero EOP, SimpleEci and Gcrs
 // paths should agree closely (difference comes from precession/nutation
 // in the IAU 2006 chain used by EarthFrameBridge<Gcrs>).
-// ============================================================================
 
 #[test]
 fn gcrs_propagation_close_to_simple_eci() {
@@ -2289,7 +2223,7 @@ fn gcrs_propagation_close_to_simple_eci() {
     let dt = 10.0;
     let duration = 5400.0; // ~1 orbit
 
-    // --- SimpleEci path ---
+    // SimpleEci path
     let system_simple = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
         .with_model(ThirdBodyGravity::sun())
         .with_model(ThirdBodyGravity::moon())
@@ -2298,7 +2232,7 @@ fn gcrs_propagation_close_to_simple_eci() {
     let initial_simple = OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
     let final_simple = Rk4.integrate(&system_simple, initial_simple, 0.0, duration, dt, |_, _| {});
 
-    // --- Gcrs path ---
+    // Gcrs path
     let eop = GcrsEopStorage::new(ZeroEop);
     let system_gcrs =
         orts::orbital::OrbitalSystem::<frame::Gcrs>::new(MU_EARTH, Box::new(PointMass))
@@ -2313,7 +2247,7 @@ fn gcrs_propagation_close_to_simple_eci() {
         orts::OrbitalState::<frame::Gcrs>::new_in_frame(vector![r, 0.0, 0.0], vector![0.0, v, 0.0]);
     let final_gcrs = Rk4.integrate(&system_gcrs, initial_gcrs, 0.0, duration, dt, |_, _| {});
 
-    // --- Compare ---
+    // Compare
     let pos_diff = (*final_simple.position() - *final_gcrs.position()).magnitude();
     let vel_diff = (*final_simple.velocity() - *final_gcrs.velocity()).magnitude();
 

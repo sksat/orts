@@ -49,9 +49,7 @@ fn lyapunov_pd(
     kinetic + potential
 }
 
-// ──────────────────────────────────────────────────────
 // Test 1: Inertial PD convergence (underdamped)
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn inertial_pd_convergence_underdamped() {
@@ -110,9 +108,7 @@ fn inertial_pd_convergence_underdamped() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 2: Overdamped response (no overshoot)
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn inertial_pd_overdamped_no_overshoot() {
@@ -162,9 +158,7 @@ fn inertial_pd_overdamped_no_overshoot() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 3: DecoupledAttitudeSystem equivalence with AttitudeSystem
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn decoupled_system_equivalence_gravity_gradient() {
@@ -210,9 +204,7 @@ fn decoupled_system_equivalence_gravity_gradient() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 4: Nadir tracking with PD control + gravity gradient
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn decoupled_nadir_tracking_bounded_error() {
@@ -282,9 +274,7 @@ fn decoupled_nadir_tracking_bounded_error() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 5: InertialPdController with non-identity target converges
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn inertial_pd_non_identity_target_converges() {
@@ -321,9 +311,7 @@ fn inertial_pd_non_identity_target_converges() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 6: TrackingPdController with InertialPointing converges
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn tracking_pd_with_inertial_pointing_converges() {
@@ -361,9 +349,7 @@ fn tracking_pd_with_inertial_pointing_converges() {
     );
 }
 
-// ──────────────────────────────────────────────────────
 // Test 7: PD controller model names
-// ──────────────────────────────────────────────────────
 
 #[test]
 fn model_names_reported_correctly() {

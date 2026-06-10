@@ -47,7 +47,7 @@ pub(crate) struct CipTerm {
     pub arg: [i8; 14],
 }
 
-// ─── Table 5.2a: CIP X coordinate (IAU 2006 + 2000A_R06) ───────────────────────────────
+// Table 5.2a: CIP X coordinate (IAU 2006 + 2000A_R06)
 
 #[rustfmt::skip]
 pub(crate) const X_POLY_UAS: [f64; 6] = [
@@ -1679,7 +1679,7 @@ pub(crate) const X_TERMS_4: &[CipTerm] = &[
     CipTerm { sin_uas:               -0.1, cos_uas:              -0.02, arg: [  0,   0,   0,   0,   1,   0,   0,   0,   0,   0,   0,   0,   0,   0] },
 ];
 
-// ─── Table 5.2b: CIP Y coordinate (IAU 2006 + 2000A_R06) ───────────────────────────────
+// Table 5.2b: CIP Y coordinate (IAU 2006 + 2000A_R06)
 
 #[rustfmt::skip]
 pub(crate) const Y_POLY_UAS: [f64; 6] = [
@@ -2986,7 +2986,7 @@ pub(crate) const Y_TERMS_4: &[CipTerm] = &[
     CipTerm { sin_uas:              -0.02, cos_uas:               0.11, arg: [  0,   0,   0,   0,   1,   0,   0,   0,   0,   0,   0,   0,   0,   0] },
 ];
 
-// ─── Table 5.2d: CIO locator s + X·Y/2 ───────────────────────────────
+// Table 5.2d: CIO locator s + X·Y/2
 
 #[rustfmt::skip]
 pub(crate) const SXY2_POLY_UAS: [f64; 6] = [

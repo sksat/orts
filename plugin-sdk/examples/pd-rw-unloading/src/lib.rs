@@ -56,7 +56,7 @@ impl Plugin<TickInput, Command> for PdRwUnloading {
     }
 
     fn update(&mut self, input: &TickInput) -> Result<Option<Command>, String> {
-        // ── PD attitude control ─────────────────────────────────
+        // PD attitude control
         let att = input
             .sensors
             .star_trackers
@@ -82,7 +82,7 @@ impl Plugin<TickInput, Command> for PdRwUnloading {
         let omega_body = Vector3::new(omega.x, omega.y, omega.z);
         let tau = -self.kp * theta - self.kd * omega_body;
 
-        // ── Desaturation via magnetorquer ───────────────────────
+        // Desaturation via magnetorquer
         let mag_cmd = compute_desaturation(input, self.k_desat).map(MtqCommand::Moments);
 
         // Per-wheel motor torque (Newton's 3rd law for orthogonal 3-axis)

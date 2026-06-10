@@ -494,9 +494,7 @@ fn test_cli_config_file_mars() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// ──────────────────────────────────────────────────
 // Plugin-controlled simulation via config file
-// ──────────────────────────────────────────────────
 
 /// Run `orts run --config <path> --format csv` and return stdout.
 #[cfg(feature = "plugin-wasm")]

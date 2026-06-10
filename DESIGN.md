@@ -114,8 +114,8 @@ Rust crate は `orts-` prefix を使用し、ディレクトリ名は prefix な
 
 | パッケージ | ディレクトリ | 責務 |
 |---|---|---|
-| @orts/uneri | `packages/uneri/` | DuckDB-wasm + uPlot 汎用時系列チャートライブラリ |
-| viewer | `viewer/` | リアルタイム 3D 軌道ビューア (React + @react-three/fiber) |
+| @sksat/uneri | `uneri/` | DuckDB-wasm + uPlot 汎用時系列チャートライブラリ |
+| orts-viewer | `viewer/` | リアルタイム 3D 軌道ビューア (React + @react-three/fiber) |
 
 ### 依存関係
 
@@ -156,7 +156,7 @@ arika              utsuroi               ← 基盤層
 姿勢モジュールは orbits に依存しない（モジュール境界で設計上の分離を維持）。
 姿勢のみの伝播は `AttitudeSystem` 単体で可能（mock トルク・mock 軌道の注入に対応）。
 
-### Integrator のジェネリック化 (実装済み)
+### Integrator のジェネリック化
 
 **OdeState trait**: RK 法が必要とする代数演算を抽象化。
 
@@ -250,7 +250,9 @@ OrbitalSystem は `torque_body` を無視し、AttitudeSystem は `acceleration_
 
 `orts::model` を正規のインポートパスとする。`Model`, `HasAttitude`, `HasOrbit`, `HasMass`, `ExternalLoads` を公開。
 
-## 将来のアーキテクチャ拡張
+## アーキテクチャ拡張ロードマップ
+
+姿勢-軌道結合・複数衛星・プラグイン制御則などの拡張計画。多くは実装済みで、各フェーズの状況は表内に注記する（実装済み / 実装中 / 予定）。
 
 ### orts: 宇宙機型・シミュレーション管理・データ記録
 
@@ -335,7 +337,7 @@ trait PropGroup {
 
 #### record モジュール — データ記録
 
-現 orts-datamodel の内容を統合:
+ECS データモデルとデータ記録を担当:
 - Recording, Component, Archetype trait
 - Rerun (.rrd) エクスポート（default feature `rerun`; `default-features = false` で除外可能）
 - Recorder trait（CLI/WS からの記録インターフェース）

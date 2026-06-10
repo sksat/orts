@@ -63,9 +63,7 @@ fn download_and_generate(url: &str, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
 // Parsing
-// ---------------------------------------------------------------------------
 
 struct ParsedIgrf {
     columns: Vec<String>,
@@ -122,9 +120,7 @@ fn parse_igrf(raw: &str) -> ParsedIgrf {
     ParsedIgrf { columns, rows }
 }
 
-// ---------------------------------------------------------------------------
 // Code generation
-// ---------------------------------------------------------------------------
 
 fn coeff_index(n: usize, m: usize) -> usize {
     (n - 1) * n / 2 + (n - 1) + m

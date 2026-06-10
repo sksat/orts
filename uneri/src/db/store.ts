@@ -2,9 +2,7 @@ import type { AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
 import type { ChartDataMap, TableSchema, TimePoint } from "../types.js";
 import type { RowTuple } from "../worker/protocol.js";
 
-// ---------------------------------------------------------------------------
 // SQL builders (pure functions, testable without DuckDB)
-// ---------------------------------------------------------------------------
 
 /**
  * Generate a CREATE OR REPLACE TABLE statement from a schema definition.
@@ -101,9 +99,7 @@ export function buildDerivedQuery(
   );
 }
 
-// ---------------------------------------------------------------------------
 // Compaction SQL builders
-// ---------------------------------------------------------------------------
 
 /**
  * Build SQL to create a temp table of "keeper" t values from old data.
@@ -135,9 +131,7 @@ export function buildCompactDeleteSQL(tableName: string, cutoffT: number): strin
   );
 }
 
-// ---------------------------------------------------------------------------
 // Async DuckDB operations
-// ---------------------------------------------------------------------------
 
 const BATCH_SIZE = 1000;
 
@@ -195,9 +189,7 @@ export async function queryDerived(
   return map;
 }
 
-// ---------------------------------------------------------------------------
 // Incremental query (no downsampling — for hot path)
-// ---------------------------------------------------------------------------
 
 /**
  * Build a simple SELECT for new rows after `tAfter`, with no downsampling.

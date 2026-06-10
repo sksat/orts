@@ -15,7 +15,7 @@ use arika::epoch::Epoch;
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, Nrlmsise00};
 
-// ─── Fixture structures ───
+// Fixture structures
 
 #[derive(Deserialize)]
 struct FixtureData {
@@ -40,8 +40,6 @@ struct DensityPoint {
     weather_label: String,
     density_kg_m3: f64,
 }
-
-// ─── Helpers ───
 
 fn load_fixture() -> FixtureData {
     let json = include_str!("fixtures/orekit_msise_density_reference.json");
@@ -97,8 +95,6 @@ fn compute_density_via_eci<P: tobari::SpaceWeatherProvider>(
         .density_with_composition(&rt_geod, epoch)
         .total_mass_density
 }
-
-// ─── Tests ───
 
 /// All density points: compare Orekit vs Rust NRLMSISE-00 via ECI path.
 ///
@@ -224,7 +220,7 @@ fn orekit_msise_density_equatorial_tight() {
     );
 }
 
-// ─── CSSI real weather density tests ───
+// CSSI real weather density tests
 //
 // Uses the same trimmed CSSI fixture file as the Rust propagation tests.
 // Both Orekit and Rust read the same CSSI data, so differences isolate:

@@ -21,10 +21,6 @@ use tobari::nrlmsise00::{Nrlmsise00, Nrlmsise00Input};
 use tobari::space_weather::SpaceWeatherProvider;
 use tobari::{AtmosphereInput, AtmosphereModel, ConstantWeather, HarrisPriester};
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Compute ECEF→NED rotation for a magnetic field vector at a geodetic point.
 ///
 /// Returns (B_north, B_east, B_down) in Tesla.
@@ -80,9 +76,7 @@ fn make_mag_input(
     }
 }
 
-// ---------------------------------------------------------------------------
 // Atmospheric density — single point
-// ---------------------------------------------------------------------------
 
 /// Exponential atmosphere density [kg/m³] at the given altitude.
 #[wasm_bindgen]
@@ -144,9 +138,7 @@ pub fn nrlmsise00_density(
     model.calculate(&input).total_mass_density
 }
 
-// ---------------------------------------------------------------------------
 // Atmospheric density — batch
-// ---------------------------------------------------------------------------
 
 /// Compute altitude profile for all 3 atmosphere models.
 ///
@@ -268,9 +260,7 @@ pub fn atmosphere_latlon_map(
     out
 }
 
-// ---------------------------------------------------------------------------
 // Magnetic field — single point
-// ---------------------------------------------------------------------------
 
 /// IGRF-14 field at a geodetic point.
 ///
@@ -296,9 +286,7 @@ pub fn dipole_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f
     field_info(&b_ecef, lat_deg, lon_deg)
 }
 
-// ---------------------------------------------------------------------------
 // Magnetic field — batch
-// ---------------------------------------------------------------------------
 
 /// Compute lat/lon magnetic field map.
 ///
@@ -427,9 +415,7 @@ pub fn magnetic_field_volume(
     out
 }
 
-// ---------------------------------------------------------------------------
 // Volume data (3D: lat × lon × alt)
-// ---------------------------------------------------------------------------
 
 /// Compute 3D atmospheric density volume as Float32.
 ///
@@ -519,9 +505,7 @@ pub fn atmosphere_volume(
     out
 }
 
-// ---------------------------------------------------------------------------
 // Magnetic field lines
-// ---------------------------------------------------------------------------
 
 /// Integrate magnetic field lines from seed points using RK4.
 ///
@@ -633,9 +617,7 @@ pub fn magnetic_field_lines(
     out
 }
 
-// ---------------------------------------------------------------------------
 // Space weather (CSSI / GFZ)
-// ---------------------------------------------------------------------------
 
 /// Global space weather provider, loaded once via `load_space_weather`.
 static SPACE_WEATHER: OnceLock<CssiSpaceWeather> = OnceLock::new();
@@ -867,9 +849,7 @@ pub fn atmosphere_volume_sw(
     out
 }
 
-// ---------------------------------------------------------------------------
 // Magnetic field lines
-// ---------------------------------------------------------------------------
 
 /// Evaluate magnetic field at an ECI position, returning the field in ECI.
 ///

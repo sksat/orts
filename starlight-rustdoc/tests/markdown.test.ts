@@ -33,9 +33,7 @@ function makeItem(id: number, name: string, inner: Record<string, unknown>): Ite
   } as Item;
 }
 
-// ---------------------------------------------------------------------------
 // Tuple struct rendering
-// ---------------------------------------------------------------------------
 
 describe("tuple struct rendering", () => {
   it("renders tuple struct with its field types in the code block", () => {
@@ -94,9 +92,7 @@ describe("tuple struct rendering", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Plain struct with fields in code block
-// ---------------------------------------------------------------------------
 
 describe("plain struct field rendering", () => {
   it("includes fields in the struct code block", () => {
@@ -148,9 +144,7 @@ describe("plain struct field rendering", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Enum variant rendering
-// ---------------------------------------------------------------------------
 
 describe("enum variant rendering", () => {
   it("renders all three variant kinds: unit, tuple, and struct", () => {
@@ -248,9 +242,7 @@ describe("enum variant rendering", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // i18n locale prefix & locale-agnostic (fallback-safe) links
-// ---------------------------------------------------------------------------
 
 describe("i18n locale prefix & locale-agnostic links", () => {
   function makeArikaCrate(): Crate {
@@ -466,9 +458,7 @@ describe("i18n locale prefix & locale-agnostic links", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // Feature badge rendering
-// ---------------------------------------------------------------------------
 
 describe("feature badge rendering", () => {
   it("renders feature badge on item page when attrs contain CfgTrace", () => {
@@ -660,9 +650,7 @@ describe("feature badge rendering", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // firstSentence
-// ---------------------------------------------------------------------------
 
 describe("firstSentence", () => {
   it("extracts first sentence ending with period + space", () => {
@@ -694,9 +682,7 @@ describe("firstSentence", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // collectImplementors — crate:: prefix stripping
-// ---------------------------------------------------------------------------
 
 describe("collectImplementors", () => {
   it("strips crate:: prefix from implementor names", () => {

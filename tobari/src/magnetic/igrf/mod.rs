@@ -162,9 +162,7 @@ impl MagneticFieldModel for Igrf {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Time utilities
-// ---------------------------------------------------------------------------
 
 fn decimal_year(epoch: &Epoch) -> f64 {
     let dt = epoch.to_datetime();
@@ -177,9 +175,7 @@ fn decimal_year(epoch: &Epoch) -> f64 {
     dt.year as f64 + (epoch.jd() - jan1.jd()) / denom
 }
 
-// ---------------------------------------------------------------------------
 // Coefficient interpolation
-// ---------------------------------------------------------------------------
 
 fn interpolate_builtin(year: f64, max_degree: usize) -> (IgrfCoeffArray, IgrfCoeffArray) {
     let n = N_COEFFS;
@@ -281,9 +277,7 @@ fn interpolate_custom(
     (g, h)
 }
 
-// ---------------------------------------------------------------------------
 // Spherical harmonic evaluation
-// ---------------------------------------------------------------------------
 
 /// Evaluate the IGRF spherical harmonic expansion.
 ///

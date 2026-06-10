@@ -5,9 +5,7 @@
  * Unknown fields are silently ignored by JSON.parse.
  */
 
-// ---------------------------------------------------------------------------
 // Top-level
-// ---------------------------------------------------------------------------
 
 export type Id = number;
 
@@ -44,9 +42,7 @@ export type ItemKind =
   | "macro"
   | "variant";
 
-// ---------------------------------------------------------------------------
 // Item
-// ---------------------------------------------------------------------------
 
 /**
  * Rustdoc JSON Attribute enum. Simple variants serialize as plain strings
@@ -124,18 +120,14 @@ type ItemInnerMap = {
   variant: VariantItem;
 };
 
-// ---------------------------------------------------------------------------
 // Module
-// ---------------------------------------------------------------------------
 
 export interface ModuleItem {
   is_crate: boolean;
   items: Id[];
 }
 
-// ---------------------------------------------------------------------------
 // Struct
-// ---------------------------------------------------------------------------
 
 export interface StructItem {
   kind: StructKind;
@@ -148,9 +140,7 @@ export type StructKind =
   | { tuple: (Id | null)[] }
   | "unit";
 
-// ---------------------------------------------------------------------------
 // Enum
-// ---------------------------------------------------------------------------
 
 export interface EnumItem {
   generics: Generics;
@@ -168,9 +158,7 @@ export type VariantKind =
   | { tuple: (Id | null)[] }
   | { struct: { fields: Id[]; has_stripped_fields: boolean } };
 
-// ---------------------------------------------------------------------------
 // Trait
-// ---------------------------------------------------------------------------
 
 export interface TraitItem {
   is_auto: boolean;
@@ -182,9 +170,7 @@ export interface TraitItem {
   implementations: Id[];
 }
 
-// ---------------------------------------------------------------------------
 // Function
-// ---------------------------------------------------------------------------
 
 export interface FunctionItem {
   sig: FunctionSignature;
@@ -205,9 +191,7 @@ export interface FunctionHeader {
   abi: string; // "Rust", "C", etc.
 }
 
-// ---------------------------------------------------------------------------
 // Impl
-// ---------------------------------------------------------------------------
 
 export interface ImplItem {
   is_unsafe: boolean;
@@ -220,9 +204,7 @@ export interface ImplItem {
   blanket_impl: Type | null;
 }
 
-// ---------------------------------------------------------------------------
 // Type alias / Constant / Static / Use
-// ---------------------------------------------------------------------------
 
 export interface TypeAliasItem {
   generics: Generics;
@@ -247,9 +229,7 @@ export interface UseItem {
   is_glob: boolean;
 }
 
-// ---------------------------------------------------------------------------
 // Generics
-// ---------------------------------------------------------------------------
 
 export interface Generics {
   params: GenericParam[];
@@ -285,9 +265,7 @@ export interface BoundPredicate {
   generic_params: GenericParam[];
 }
 
-// ---------------------------------------------------------------------------
 // Type
-// ---------------------------------------------------------------------------
 
 export type Type =
   | { resolved_path: TypePath }

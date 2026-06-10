@@ -83,7 +83,7 @@ mod tests {
         );
     }
 
-    // --- Propagation tests using RK4 ---
+    // Propagation tests using RK4
 
     use std::f64::consts::PI;
     use utsuroi::{Integrator, Rk4};

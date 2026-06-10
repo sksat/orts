@@ -56,7 +56,7 @@ use crate::math::F64Ext;
 
 use super::{Arcsec, Rad};
 
-// ─── IAU 2006 precession constants ───────────────────────────────
+// IAU 2006 precession constants
 
 /// Mean obliquity of the ecliptic at J2000.0 (`ε₀`).
 ///
@@ -65,7 +65,7 @@ use super::{Arcsec, Rad};
 /// J2000.0 of the ecliptic (while the IAU 2000 value was `84381.448″`)."
 pub const EPSILON_0: Arcsec = Arcsec::new(84_381.406);
 
-// ─── 4-rotation Fukushima-Williams angles (TN36 Eq. 5.40) ────────
+// 4-rotation Fukushima-Williams angles (TN36 Eq. 5.40)
 
 /// The Fukushima-Williams angles at a given `t`, all as [`Rad`].
 ///
@@ -134,7 +134,7 @@ pub fn ecliptic_precession_angles(t: f64) -> EclipticPrecessionAngles {
     }
 }
 
-// ─── Polynomial kernels (all in arcseconds) ──────────────────────
+// Polynomial kernels (all in arcseconds)
 //
 // Coefficients transcribed from IERS Conventions 2010 (TN36) Eq. (5.39)
 // and (5.40). Each helper evaluates its polynomial with Horner's rule

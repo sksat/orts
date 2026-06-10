@@ -1,8 +1,6 @@
 import type { Attribute, Crate, Id, ImplItem, Item, ModuleItem, UseItem } from "./types.js";
 
-// ---------------------------------------------------------------------------
 // Collected item — a public API item that will get its own page
-// ---------------------------------------------------------------------------
 
 export type ApiItemCategory = "trait" | "struct" | "enum" | "function" | "type_alias" | "constant";
 
@@ -19,9 +17,7 @@ export interface ApiItem {
   inheritedAttrs: Attribute[];
 }
 
-// ---------------------------------------------------------------------------
 // LinkResolver — maps item IDs to page paths and external URLs
-// ---------------------------------------------------------------------------
 
 export class LinkResolver {
   /** "crateName:id" → stored page path — keyed by crate to avoid ID collisions */
@@ -163,9 +159,7 @@ export class LinkResolver {
   }
 }
 
-// ---------------------------------------------------------------------------
 // collectApiItems — collect all public items from a crate
-// ---------------------------------------------------------------------------
 
 const INNER_KIND_TO_CATEGORY: Record<string, ApiItemCategory | undefined> = {
   trait: "trait",
@@ -252,9 +246,7 @@ function collectFromModule(
   }
 }
 
-// ---------------------------------------------------------------------------
 // Relative URL computation
-// ---------------------------------------------------------------------------
 
 /**
  * Compute a relative URL from a source logical page path to a target logical
@@ -300,9 +292,7 @@ export function computeRelativeUrl(fromPath: string, toPath: string): string {
   return rel || "./";
 }
 
-// ---------------------------------------------------------------------------
 // collectImpls — collect inherent impls for a type
-// ---------------------------------------------------------------------------
 
 export interface CollectedImpl {
   implItem: ImplItem;
