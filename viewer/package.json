@@ -9,6 +9,9 @@
     "directory": "viewer"
   },
   "type": "module",
+  "exports": {
+    "./lib": "./src/lib/index.ts"
+  },
   "scripts": {
     "dev": "vite",
     "build:wasm:arika": "wasm-pack build ../arika/wasm --target web --out-dir ../../viewer/src/wasm/arika --out-name arika -- --locked",
