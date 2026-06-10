@@ -179,4 +179,31 @@ describe("dispatchServerMessage", () => {
     const msg: ServerMessage = { type: "textures_ready", body: "moon" };
     expect(() => dispatchServerMessage(msg, callbacks)).not.toThrow();
   });
+
+  it("dispatches satellite_added message with normalized info", () => {
+    const onSatelliteAdded = vi.fn();
+    const callbacks = { ...baseCallbacks, onSatelliteAdded };
+
+    const msg: ServerMessage = {
+      type: "satellite_added",
+      satellite: { id: "iss", altitude: 420, period: 5560, perturbations: ["drag"] },
+      t: 120.5,
+    };
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onSatelliteAdded).toHaveBeenCalledOnce();
+    expect(onSatelliteAdded).toHaveBeenCalledWith(
+      { id: "iss", name: null, altitude: 420, period: 5560, perturbations: ["drag"] },
+      120.5,
+    );
+  });
+
+  it("handles satellite_added without callback", () => {
+    const msg: ServerMessage = {
+      type: "satellite_added",
+      satellite: { id: "sat-1", altitude: 500, period: 5677, perturbations: [] },
+      t: 0,
+    };
+    expect(() => dispatchServerMessage(msg, { ...baseCallbacks })).not.toThrow();
+  });
 });

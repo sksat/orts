@@ -3,6 +3,7 @@ import type { OrbitPoint } from "../orbit.js";
 import type { AttitudePayload } from "../protocol/generated/AttitudePayload.js";
 import type { ClientMessage } from "../protocol/generated/ClientMessage.js";
 import type { HistoryState } from "../protocol/generated/HistoryState.js";
+import type { SatelliteInfo as WireSatelliteInfo } from "../protocol/generated/SatelliteInfo.js";
 import type { WsMessage } from "../protocol/generated/WsMessage.js";
 
 /** Per-satellite info from the server, normalized for app use. */
@@ -70,6 +71,8 @@ export interface UseWebSocketOptions {
   onError?: (message: string) => void;
   /** Called when the server notifies that high-res textures are available for a body. */
   onTexturesReady?: (body: string) => void;
+  /** Called when the server confirms a satellite was added to a running simulation. */
+  onSatelliteAdded?: (satellite: SatelliteInfo, t: number) => void;
 }
 
 /** Callbacks for message dispatch (subset of UseWebSocketOptions used by dispatchServerMessage). */
@@ -82,6 +85,18 @@ export interface DispatchCallbacks {
   onStatus?: (state: string) => void;
   onError?: (message: string) => void;
   onTexturesReady?: (body: string) => void;
+  onSatelliteAdded?: (satellite: SatelliteInfo, t: number) => void;
+}
+
+/** Normalize a wire SatelliteInfo (absent fields) into the app-level shape. */
+function normalizeSatelliteInfo(s: WireSatelliteInfo): SatelliteInfo {
+  return {
+    id: s.id,
+    name: s.name ?? null,
+    altitude: s.altitude,
+    period: s.period,
+    perturbations: s.perturbations ?? [],
+  };
 }
 
 function parseAccelerations(accels?: Record<string, number>) {
@@ -156,13 +171,7 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
     });
   } else if (msg.type === "info") {
     // The `??` fallbacks tolerate older servers that predate these fields.
-    const satellites: SatelliteInfo[] = (msg.satellites ?? []).map((s) => ({
-      id: s.id,
-      name: s.name ?? null,
-      altitude: s.altitude,
-      period: s.period,
-      perturbations: s.perturbations ?? [],
-    }));
+    const satellites: SatelliteInfo[] = (msg.satellites ?? []).map(normalizeSatelliteInfo);
     callbacks.onInfo?.({
       mu: msg.mu,
       dt: msg.dt,
@@ -189,6 +198,8 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
     callbacks.onError?.(msg.message);
   } else if (msg.type === "textures_ready") {
     callbacks.onTexturesReady?.(msg.body);
+  } else if (msg.type === "satellite_added") {
+    callbacks.onSatelliteAdded?.(normalizeSatelliteInfo(msg.satellite), msg.t);
   }
 }
 
@@ -225,6 +236,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onStatus: options.onStatus,
     onError: options.onError,
     onTexturesReady: options.onTexturesReady,
+    onSatelliteAdded: options.onSatelliteAdded,
   });
   callbacksRef.current = {
     onState: options.onState,
@@ -235,6 +247,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     onStatus: options.onStatus,
     onError: options.onError,
     onTexturesReady: options.onTexturesReady,
+    onSatelliteAdded: options.onSatelliteAdded,
   };
 
   const urlRef = useRef(options.url);
