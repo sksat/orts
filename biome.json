@@ -15,6 +15,7 @@
       "!tobari/examples/web/src/wasm/arika",
       "!arika/tests/fixtures",
       "!orts/tests/fixtures",
+      "!viewer/src/protocol/generated",
       "!docs/.astro",
       "!docs/dist",
       "!docs/public",

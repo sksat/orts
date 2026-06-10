@@ -6,6 +6,7 @@ use orts::orbital::kepler::KeplerianElements;
 use orts::record::entity_path::EntityPath;
 use orts::setup::SatelliteParams;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::satellite::{OrbitSpec, SatelliteSpec};
 
@@ -14,7 +15,8 @@ use crate::satellite::{OrbitSpec, SatelliteSpec};
 /// Encapsulates quaternion and angular velocity as a single unit to prevent
 /// half-populated states. The `source` field distinguishes how the attitude
 /// was produced (propagated dynamics vs. derived).
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct AttitudePayload {
     /// Body-to-inertial quaternion [w, x, y, z] (Hamilton scalar-first).
     pub quaternion_wxyz: [f64; 4],
@@ -24,19 +26,23 @@ pub struct AttitudePayload {
     pub source: AttitudeSource,
     /// Reaction wheel angular momentum [N·m·s] per wheel (if RW is present).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub rw_momentum: Option<Vec<f64>>,
 }
 
 /// How the attitude data was produced.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, TS)]
+#[ts(export)]
 pub enum AttitudeSource {
     #[serde(rename = "propagated")]
     Propagated,
 }
 
 /// A single state snapshot used in history messages.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct HistoryState {
+    #[ts(type = "string")]
     pub entity_path: EntityPath,
     pub t: f64,
     pub position: [f64; 3],
@@ -57,10 +63,13 @@ pub struct HistoryState {
     #[serde(default)]
     pub velocity_mag: f64,
     /// Per-force acceleration magnitudes [km/s²]: "gravity", "drag", "srp", etc.
+    /// Omitted from the wire when empty.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    #[ts(as = "Option<_>", optional)]
     pub accelerations: HashMap<String, f64>,
     /// Attitude telemetry (present only when SpacecraftDynamics is used).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub attitude: Option<AttitudePayload>,
 }
 

@@ -16,6 +16,7 @@ import { StatusBar } from "./components/StatusBar.js";
 import { useFileSource } from "./hooks/useFileSource.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
 import { useSimulationData } from "./hooks/useSimulationData.js";
+import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
@@ -77,7 +78,7 @@ export function App() {
   goLiveRef.current = realtimePlayback.goLive;
 
   // --- queryRange callback for useSimulationData fallback ---
-  const sendRef = useRef<(msg: unknown) => void>(() => {});
+  const sendRef = useRef<(msg: ClientMessage) => void>(() => {});
   const queryRange = useCallback((satId: string, tMin: number, tMax: number, maxPoints: number) => {
     sendRef.current({
       type: "query_range",

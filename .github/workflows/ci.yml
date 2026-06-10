@@ -191,6 +191,13 @@ jobs:
       - name: Test (all except orts)
         run: cargo test --locked --workspace --exclude orts
 
+      # The orts-cli export tests above regenerate the ts-rs WebSocket
+      # protocol bindings (viewer/src/protocol/generated/). A dirty tree
+      # here means the Rust protocol types changed without regenerating
+      # the TypeScript side: run `cargo test -p orts-cli` and commit.
+      - name: Check generated protocol bindings are up to date
+        run: git diff --exit-code viewer/src/protocol/generated
+
   # orts unit tests + doc tests + example unit tests (lightweight).
   rust-test-orts:
     runs-on: ubuntu-latest

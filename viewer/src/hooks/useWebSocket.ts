@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OrbitPoint } from "../orbit.js";
+import type { AttitudePayload } from "../protocol/generated/AttitudePayload.js";
+import type { ClientMessage } from "../protocol/generated/ClientMessage.js";
+import type { HistoryState } from "../protocol/generated/HistoryState.js";
+import type { WsMessage } from "../protocol/generated/WsMessage.js";
 
-/** Per-satellite info from the server. */
+/** Per-satellite info from the server, normalized for app use. */
 export interface SatelliteInfo {
   id: string;
   name: string | null;
@@ -12,7 +16,8 @@ export interface SatelliteInfo {
 }
 
 /**
- * Simulation metadata sent by the server on initial connection.
+ * Simulation metadata sent by the server on initial connection,
+ * normalized for app use (absent fields resolved to defaults).
  *
  * Corresponds to the `{"type":"info",...}` message from
  * `orts serve`.
@@ -30,120 +35,15 @@ export interface SimInfo {
   satellites: SatelliteInfo[];
 }
 
-/** Attitude telemetry payload from the server. */
-interface AttitudePayload {
-  quaternion_wxyz: [number, number, number, number];
-  angular_velocity_body: [number, number, number];
-  source: "propagated";
-}
-
 /**
- * Raw state message received over the WebSocket.
- * The server sends position as [x, y, z] and velocity as [vx, vy, vz].
+ * Raw server→client wire message.
+ *
+ * Generated from the Rust `WsMessage` enum
+ * (`cli/src/commands/serve/protocol.rs`) by ts-rs; regenerate with
+ * `cargo test -p orts-cli`. The dispatch below still applies runtime
+ * fallbacks for fields that older servers omitted.
  */
-interface StateMessage {
-  type: "state";
-  entity_path: string;
-  t: number;
-  position: [number, number, number];
-  velocity: [number, number, number];
-  semi_major_axis: number;
-  eccentricity: number;
-  inclination: number;
-  raan: number;
-  argument_of_periapsis: number;
-  true_anomaly: number;
-  altitude?: number;
-  specific_energy?: number;
-  angular_momentum?: number;
-  velocity_mag?: number;
-  accelerations?: Record<string, number>;
-  attitude?: AttitudePayload;
-}
-
-/** Raw info message received over the WebSocket. */
-interface InfoMessage {
-  type: "info";
-  mu: number;
-  dt: number;
-  output_interval: number;
-  stream_interval?: number;
-  central_body?: string;
-  central_body_radius?: number;
-  epoch_jd?: number | null;
-  satellites?: SatelliteInfoMsg[];
-}
-
-interface SatelliteInfoMsg {
-  id: string;
-  name?: string | null;
-  altitude: number;
-  period: number;
-  perturbations?: string[];
-}
-
-interface HistoryStateMsg {
-  entity_path?: string;
-  t: number;
-  position: [number, number, number];
-  velocity: [number, number, number];
-  semi_major_axis: number;
-  eccentricity: number;
-  inclination: number;
-  raan: number;
-  argument_of_periapsis: number;
-  true_anomaly: number;
-  altitude?: number;
-  specific_energy?: number;
-  angular_momentum?: number;
-  velocity_mag?: number;
-  accelerations?: Record<string, number>;
-  attitude?: AttitudePayload;
-}
-
-interface HistoryMessage {
-  type: "history";
-  states: HistoryStateMsg[];
-}
-
-interface QueryRangeResponseMessage {
-  type: "query_range_response";
-  t_min: number;
-  t_max: number;
-  states: HistoryStateMsg[];
-}
-
-interface SimulationTerminatedMessage {
-  type: "simulation_terminated";
-  entity_path: string;
-  t: number;
-  reason: string;
-}
-
-interface StatusMessage {
-  type: "status";
-  state: string;
-}
-
-interface ErrorMessage {
-  type: "error";
-  message: string;
-}
-
-interface TexturesReadyMessage {
-  type: "textures_ready";
-  body: string;
-}
-
-export type ServerMessage =
-  | StateMessage
-  | InfoMessage
-  | HistoryMessage
-  | QueryRangeResponseMessage
-  | SimulationTerminatedMessage
-  | StatusMessage
-  | ErrorMessage
-  | TexturesReadyMessage;
+export type ServerMessage = WsMessage;
 
 /** Response data from a query_range request. */
 export interface QueryRangeResponse {
@@ -201,7 +101,7 @@ function parseAttitude(attitude?: AttitudePayload) {
   return { qw, qx, qy, qz, wx, wy, wz };
 }
 
-function parseHistoryPoints(states: HistoryStateMsg[]): OrbitPoint[] {
+function parseHistoryPoints(states: HistoryState[]): OrbitPoint[] {
   return states.map((s) => ({
     entityPath: s.entity_path,
     t: s.t,
@@ -232,32 +132,31 @@ function parseHistoryPoints(states: HistoryStateMsg[]): OrbitPoint[] {
  */
 export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCallbacks): void {
   if (msg.type === "state") {
-    const stateMsg = msg as StateMessage;
     callbacks.onState({
-      entityPath: stateMsg.entity_path,
-      t: stateMsg.t,
-      x: stateMsg.position[0],
-      y: stateMsg.position[1],
-      z: stateMsg.position[2],
-      vx: stateMsg.velocity[0],
-      vy: stateMsg.velocity[1],
-      vz: stateMsg.velocity[2],
-      a: stateMsg.semi_major_axis,
-      e: stateMsg.eccentricity,
-      inc: stateMsg.inclination,
-      raan: stateMsg.raan,
-      omega: stateMsg.argument_of_periapsis,
-      nu: stateMsg.true_anomaly,
-      altitude: stateMsg.altitude,
-      specific_energy: stateMsg.specific_energy,
-      angular_momentum: stateMsg.angular_momentum,
-      velocity_mag: stateMsg.velocity_mag,
-      ...parseAccelerations(stateMsg.accelerations),
-      ...parseAttitude(stateMsg.attitude),
+      entityPath: msg.entity_path,
+      t: msg.t,
+      x: msg.position[0],
+      y: msg.position[1],
+      z: msg.position[2],
+      vx: msg.velocity[0],
+      vy: msg.velocity[1],
+      vz: msg.velocity[2],
+      a: msg.semi_major_axis,
+      e: msg.eccentricity,
+      inc: msg.inclination,
+      raan: msg.raan,
+      omega: msg.argument_of_periapsis,
+      nu: msg.true_anomaly,
+      altitude: msg.altitude,
+      specific_energy: msg.specific_energy,
+      angular_momentum: msg.angular_momentum,
+      velocity_mag: msg.velocity_mag,
+      ...parseAccelerations(msg.accelerations),
+      ...parseAttitude(msg.attitude),
     });
   } else if (msg.type === "info") {
-    const infoMsg = msg as InfoMessage;
-    const satellites: SatelliteInfo[] = (infoMsg.satellites ?? []).map((s) => ({
+    // The `??` fallbacks tolerate older servers that predate these fields.
+    const satellites: SatelliteInfo[] = (msg.satellites ?? []).map((s) => ({
       id: s.id,
       name: s.name ?? null,
       altitude: s.altitude,
@@ -265,36 +164,31 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
       perturbations: s.perturbations ?? [],
     }));
     callbacks.onInfo?.({
-      mu: infoMsg.mu,
-      dt: infoMsg.dt,
-      output_interval: infoMsg.output_interval,
-      stream_interval: infoMsg.stream_interval ?? infoMsg.output_interval,
-      central_body: infoMsg.central_body ?? "earth",
-      central_body_radius: infoMsg.central_body_radius ?? 6378.137,
-      epoch_jd: infoMsg.epoch_jd ?? null,
+      mu: msg.mu,
+      dt: msg.dt,
+      output_interval: msg.output_interval,
+      stream_interval: msg.stream_interval ?? msg.output_interval,
+      central_body: msg.central_body ?? "earth",
+      central_body_radius: msg.central_body_radius ?? 6378.137,
+      epoch_jd: msg.epoch_jd ?? null,
       satellites,
     });
   } else if (msg.type === "history") {
-    const histMsg = msg as HistoryMessage;
-    const points = parseHistoryPoints(histMsg.states);
-    callbacks.onHistory?.(points);
+    callbacks.onHistory?.(parseHistoryPoints(msg.states));
   } else if (msg.type === "query_range_response") {
-    const qrMsg = msg as QueryRangeResponseMessage;
-    const points = parseHistoryPoints(qrMsg.states);
     callbacks.onQueryRangeResponse?.({
-      tMin: qrMsg.t_min,
-      tMax: qrMsg.t_max,
-      points,
+      tMin: msg.t_min,
+      tMax: msg.t_max,
+      points: parseHistoryPoints(msg.states),
     });
   } else if (msg.type === "simulation_terminated") {
-    const termMsg = msg as SimulationTerminatedMessage;
-    callbacks.onSimulationTerminated?.(termMsg.entity_path, termMsg.t, termMsg.reason);
+    callbacks.onSimulationTerminated?.(msg.entity_path, msg.t, msg.reason);
   } else if (msg.type === "status") {
-    callbacks.onStatus?.((msg as StatusMessage).state);
+    callbacks.onStatus?.(msg.state);
   } else if (msg.type === "error") {
-    callbacks.onError?.((msg as ErrorMessage).message);
+    callbacks.onError?.(msg.message);
   } else if (msg.type === "textures_ready") {
-    callbacks.onTexturesReady?.((msg as TexturesReadyMessage).body);
+    callbacks.onTexturesReady?.(msg.body);
   }
 }
 
@@ -305,8 +199,8 @@ export interface UseWebSocketReturn {
   disconnect: () => void;
   /** Whether a WebSocket connection is currently open. */
   isConnected: boolean;
-  /** Send a JSON message to the server. */
-  send: (msg: Record<string, unknown>) => void;
+  /** Send a client→server message (typed against the generated wire contract). */
+  send: (msg: ClientMessage) => void;
 }
 
 /**
@@ -397,7 +291,7 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     });
   }, []);
 
-  const send = useCallback((msg: Record<string, unknown>) => {
+  const send = useCallback((msg: ClientMessage) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(msg));
     }

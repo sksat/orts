@@ -42,6 +42,10 @@ describe("dispatchServerMessage", () => {
       raan: 0,
       argument_of_periapsis: 0,
       true_anomaly: 0,
+      altitude: 399.863,
+      specific_energy: -29.4,
+      angular_momentum: 51988.882,
+      velocity_mag: 7.669,
     };
 
     dispatchServerMessage(msg, callbacks);
@@ -77,6 +81,10 @@ describe("dispatchServerMessage", () => {
           raan: 0,
           argument_of_periapsis: 0,
           true_anomaly: 0,
+          altitude: 399.863,
+          specific_energy: -29.4,
+          angular_momentum: 51988.882,
+          velocity_mag: 7.669,
         },
         {
           entity_path: "sat-a",
@@ -89,6 +97,10 @@ describe("dispatchServerMessage", () => {
           raan: 0,
           argument_of_periapsis: 0,
           true_anomaly: 0.01,
+          altitude: 410.3,
+          specific_energy: -29.4,
+          angular_momentum: 51988.882,
+          velocity_mag: 7.616,
         },
       ],
     };

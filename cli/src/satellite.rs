@@ -105,10 +105,12 @@ impl SatelliteSpec {
 }
 
 /// Satellite info sent in the WebSocket info message.
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, ts_rs::TS)]
+#[ts(export)]
 pub struct SatelliteInfo {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub name: Option<String>,
     pub altitude: f64,
     pub period: f64,

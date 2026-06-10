@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::cli::{AtmosphereChoice, IntegratorChoice};
 use crate::satellite::{OrbitSpec, SatelliteSpec};
@@ -10,31 +11,49 @@ use orts::plugin::{Message, NamedValue, NodeId, Payload, Value};
 use orts::tle::Tle;
 
 /// JSON/TOML/YAML simulation configuration.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+///
+/// Also the payload of the `start_simulation` WebSocket message, so the
+/// whole tree derives [`TS`]. Fields the server defaults when absent are
+/// `#[ts(optional)]` so TypeScript clients may omit them too.
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct SimConfig {
     #[serde(default = "default_body")]
+    #[ts(as = "Option<_>", optional)]
     pub body: String,
     #[serde(default = "default_dt")]
+    #[ts(as = "Option<_>", optional)]
     pub dt: f64,
+    #[ts(optional)]
     pub output_interval: Option<f64>,
+    #[ts(optional)]
     pub stream_interval: Option<f64>,
+    #[ts(optional)]
     pub epoch: Option<String>,
     #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
     pub integrator: IntegratorConfig,
     #[serde(default = "default_atmosphere")]
+    #[ts(as = "Option<_>", optional)]
     pub atmosphere: String,
     #[serde(default = "default_f107")]
+    #[ts(as = "Option<_>", optional)]
     pub f107: f64,
     #[serde(default = "default_ap")]
+    #[ts(as = "Option<_>", optional)]
     pub ap: f64,
+    #[ts(optional)]
     pub space_weather: Option<String>,
+    #[ts(optional)]
     pub duration: Option<f64>,
     #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
     pub satellites: Vec<SatelliteConfig>,
     /// 時刻指定コマンドシーケンス（FSW への C&T アップリンク）。
     /// 各エントリは指定 sim 時刻に対象衛星のコントローラへ配送される。
     /// TOML では `[[command]]`（単数）/ `[[commands]]`（複数）の両方可。
     #[serde(default, alias = "command")]
+    #[ts(as = "Option<_>", optional)]
     pub commands: Vec<CommandConfig>,
 }
 
@@ -43,7 +62,8 @@ pub struct SimConfig {
 /// `orts.toml` の `[[command]]` として宣言し、`t` 秒の時点で `sat` の
 /// コントローラ(FSW)へ `kind` + `args`(key-value payload) を配送する。
 /// host が配送 tick を確定するので決定論的。
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct CommandConfig {
     /// 配送するシミュレーション時刻 \[s\]。
     pub t: f64,
@@ -55,6 +75,7 @@ pub struct CommandConfig {
     /// （string→text, integer→integer, float→number, bool→boolean）。
     /// 省略時は空の key-value。
     #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
     pub args: serde_json::Value,
 }
 
@@ -136,13 +157,17 @@ fn default_ap() -> f64 {
 }
 
 /// Integrator configuration within a config file.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct IntegratorConfig {
     #[serde(rename = "type", default = "default_integrator")]
+    #[ts(as = "Option<_>", optional)]
     pub kind: String,
     #[serde(default = "default_atol")]
+    #[ts(as = "Option<_>", optional)]
     pub atol: f64,
     #[serde(default = "default_rtol")]
+    #[ts(as = "Option<_>", optional)]
     pub rtol: f64,
 }
 
@@ -167,20 +192,24 @@ impl Default for IntegratorConfig {
 }
 
 /// Attitude dynamics configuration for a satellite.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct AttitudeConfig {
     /// Diagonal inertia tensor [Ixx, Iyy, Izz] kg·m².
     pub inertia_diag: [f64; 3],
     /// Off-diagonal inertia elements [Ixy, Ixz, Iyz] (default: all zero).
     #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
     pub inertia_off_diag: [f64; 3],
     /// Spacecraft mass [kg].
     pub mass: f64,
     /// Initial quaternion [w, x, y, z] body-to-inertial (default: identity).
     #[serde(default = "default_identity_quat")]
+    #[ts(as = "Option<_>", optional)]
     pub initial_quaternion: [f64; 4],
     /// Initial angular velocity [wx, wy, wz] rad/s body frame (default: zero).
     #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
     pub initial_angular_velocity: [f64; 3],
 }
 
@@ -202,8 +231,9 @@ impl AttitudeConfig {
 }
 
 /// コントローラ設定。
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[serde(tag = "type")]
+#[ts(export)]
 pub enum ControllerConfig {
     /// WASM Component ゲストプラグイン。
     #[serde(rename = "wasm")]
@@ -212,13 +242,15 @@ pub enum ControllerConfig {
         path: String,
         /// ゲストの `init` に渡す設定 (JSON value)。
         #[serde(default)]
+        #[ts(as = "Option<_>", optional)]
         config: serde_json::Value,
     },
 }
 
 /// センサ選択。
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export)]
 pub enum SensorChoice {
     Magnetometer,
     Gyroscope,
@@ -227,8 +259,9 @@ pub enum SensorChoice {
 }
 
 /// リアクションホイール設定。
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[serde(tag = "type")]
+#[ts(export)]
 pub enum ReactionWheelConfig {
     /// 直交 3 軸配置。
     #[serde(rename = "three_axis")]
@@ -241,13 +274,15 @@ pub enum ReactionWheelConfig {
         max_torque: f64,
         /// 速度制御ゲイン [N·m / (rad/s)]。省略時はデフォルト (I_wheel * 10)。
         #[serde(default)]
+        #[ts(optional)]
         speed_control_gain: Option<f64>,
     },
 }
 
 /// MTQ (磁気トルカ) 設定。
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[serde(tag = "type")]
+#[ts(export)]
 pub enum MtqConfig {
     /// 直交 3 軸配置。
     #[serde(rename = "three_axis")]
@@ -258,7 +293,8 @@ pub enum MtqConfig {
 }
 
 /// 推進器一機分の静的パラメータ。
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct ThrusterSpecConfig {
     /// 最大推力 [N]。
     pub thrust_n: f64,
@@ -268,6 +304,7 @@ pub struct ThrusterSpecConfig {
     pub direction_body: [f64; 3],
     /// CoM からの取り付けオフセット [m, body frame]。省略時は 0。
     #[serde(default)]
+    #[ts(optional)]
     pub offset_body: Option<[f64; 3]>,
 }
 
@@ -275,44 +312,59 @@ pub struct ThrusterSpecConfig {
 ///
 /// `thrusters` に各推進器の静的パラメータを並べ、`dry_mass` で
 /// 推進剤枯渇時の停止閾値 (spacecraft total mass [kg]) を指定する。
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct ThrusterConfig {
     /// 推進器一覧（空リストは reject）。
     pub thrusters: Vec<ThrusterSpecConfig>,
     /// Assembly-level propellant floor [kg]。
     /// spacecraft total mass がこの値以下になったら全推進器を停止。
     #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
     pub dry_mass: f64,
 }
 
 /// Per-satellite configuration.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
 pub struct SatelliteConfig {
+    #[ts(optional)]
     pub id: Option<String>,
+    #[ts(optional)]
     pub name: Option<String>,
     pub orbit: OrbitConfig,
+    #[ts(optional)]
     pub ballistic_coeff: Option<f64>,
+    #[ts(optional)]
     pub srp_area_to_mass: Option<f64>,
+    #[ts(optional)]
     pub srp_cr: Option<f64>,
     /// Attitude dynamics configuration. When present, SpacecraftDynamics is used.
+    #[ts(optional)]
     pub attitude: Option<AttitudeConfig>,
     /// プラグインコントローラ設定。
+    #[ts(optional)]
     pub controller: Option<ControllerConfig>,
     /// 有効にするセンサ一覧。
+    #[ts(optional)]
     pub sensors: Option<Vec<SensorChoice>>,
     /// リアクションホイール設定。
+    #[ts(optional)]
     pub reaction_wheels: Option<ReactionWheelConfig>,
     /// MTQ 設定。
     #[serde(alias = "magnetorquers")]
+    #[ts(optional)]
     pub mtq: Option<MtqConfig>,
     /// 推進器 (thruster) 設定。
     #[serde(alias = "thrusters")]
+    #[ts(optional)]
     pub thruster: Option<ThrusterConfig>,
 }
 
 /// Orbit specification in config files.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[serde(tag = "type")]
+#[ts(export)]
 pub enum OrbitConfig {
     /// Circular orbit at given altitude.
     #[serde(rename = "circular")]
@@ -320,9 +372,11 @@ pub enum OrbitConfig {
         altitude: f64,
         /// Inclination in degrees (default: 0).
         #[serde(default)]
+        #[ts(as = "Option<_>", optional)]
         inclination: f64,
         /// RAAN in degrees (default: 0).
         #[serde(default)]
+        #[ts(as = "Option<_>", optional)]
         raan: f64,
     },
     /// Two-line element set.

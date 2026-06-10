@@ -49,6 +49,7 @@ wasmtime = { workspace = true, optional = true }
 rayon = "1"
 notalawyer = "0.2"
 notalawyer-clap = "0.2"
+ts-rs.workspace = true
 
 [build-dependencies]
 notalawyer-build = "0.2"
