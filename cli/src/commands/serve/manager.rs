@@ -867,6 +867,19 @@ impl SimLoopContext {
                     .to_string(),
             );
         }
+        // A duplicate (sat, stream) pair would pump the same controller
+        // stream twice per tick and alias one endpoint; reject it.
+        {
+            let mut seen = std::collections::HashSet::new();
+            for key in &stream_keys {
+                if !seen.insert(key) {
+                    return Err(format!(
+                        "duplicate stream declaration '{}' on satellite '{}'",
+                        key.1, key.0
+                    ));
+                }
+            }
+        }
         for (sat, stream) in &stream_keys {
             eprintln!("stream-io endpoint: /stream/{sat}/{stream}");
         }
@@ -936,7 +949,10 @@ impl SimLoopContext {
             return Ok(());
         };
         for (i, sat) in sats.iter_mut().enumerate() {
-            for (name, endpoint) in &self.sat_streams[i] {
+            let Some(streams) = self.sat_streams.get(i) else {
+                continue; // defensive: sat_streams is kept metas-aligned
+            };
+            for (name, endpoint) in streams {
                 let (bytes, overflowed) = endpoint.take_staged();
                 if overflowed {
                     return Err(format!(
@@ -960,7 +976,10 @@ impl SimLoopContext {
             return Ok(());
         };
         for (i, sat) in sats.iter_mut().enumerate() {
-            for (name, endpoint) in &self.sat_streams[i] {
+            let Some(streams) = self.sat_streams.get(i) else {
+                continue; // defensive: sat_streams is kept metas-aligned
+            };
+            for (name, endpoint) in streams {
                 let bytes = sat.controller.stream_take(name);
                 if bytes.is_empty() {
                     continue;
@@ -1119,6 +1138,9 @@ impl SimLoopContext {
                         + self.metas.last().map_or(5554.0, |m| m.spec.period),
                     next_save_t: self.current_t + self.params.output_interval,
                 });
+                // Keep `sat_streams` index-aligned with `metas` (dynamic
+                // adds cannot declare streams, so the entry is empty).
+                self.sat_streams.push(Vec::new());
 
                 let body_radius = self.params.body.properties().radius;
                 let hs = make_history_state(
@@ -1250,6 +1272,9 @@ impl SimLoopContext {
             orbit_end_t: self.current_t + sat_info.period,
             next_save_t: self.current_t + self.params.output_interval,
         });
+        // Keep `sat_streams` index-aligned with `metas` (dynamic adds
+        // cannot declare streams, so the entry is empty).
+        self.sat_streams.push(Vec::new());
 
         let body_radius = self.params.body.properties().radius;
         let attitude_payload = AttitudePayload {
