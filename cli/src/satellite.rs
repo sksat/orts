@@ -205,19 +205,19 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
 
     // Determine orbit
     let (orbit, period, derived_name) = if let Some(norad) = norad_id {
-        let tle = fetch_tle_by_norad_id(norad);
-        let elements = tle.to_keplerian_elements(mu);
+        let omm = fetch_tle_by_norad_id(norad);
+        let elements = omm.to_keplerian_elements(mu);
         let period = elements.period(mu);
-        let tle_name = tle.object_name.clone();
-        (OrbitSpec::Omm { omm: tle, elements }, period, tle_name)
+        let obj_name = omm.object_name.clone();
+        (OrbitSpec::Omm { omm, elements }, period, obj_name)
     } else if let (Some(l1), Some(l2)) = (tle_line1, tle_line2) {
         let text = format!("{l1}\n{l2}");
-        let tle = arika::tle::parse(&text)
+        let omm = arika::tle::parse(&text)
             .unwrap_or_else(|e| panic!("Failed to parse TLE in --sat: {e}"));
-        let elements = tle.to_keplerian_elements(mu);
+        let elements = omm.to_keplerian_elements(mu);
         let period = elements.period(mu);
-        let tle_name = tle.object_name.clone();
-        (OrbitSpec::Omm { omm: tle, elements }, period, tle_name)
+        let obj_name = omm.object_name.clone();
+        (OrbitSpec::Omm { omm, elements }, period, obj_name)
     } else {
         let alt = altitude.unwrap_or(400.0);
         let r0 = body.properties().radius + alt;

@@ -6,6 +6,7 @@
 //! and angles arrive in degrees / mean motion in rev/day — converted to the
 //! `Omm` conventions (radians, rad/s) here.
 
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::f64::consts::PI;
@@ -43,21 +44,64 @@ impl std::error::Error for JsonParseError {}
 
 /// CCSDS OMM fields as they appear in CelesTrak / Space-Track JSON
 /// (SCREAMING_SNAKE_CASE keys). Angles in degrees, mean motion in rev/day.
+/// Numeric fields accept JSON numbers **or** strings — Space-Track exports
+/// encode numbers as strings (e.g. `"NORAD_CAT_ID": "25544"`).
 #[derive(Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 struct OmmJson {
     object_name: Option<String>,
     object_id: Option<String>,
+    #[serde(deserialize_with = "u32_or_string")]
     norad_cat_id: u32,
     epoch: String,
+    #[serde(deserialize_with = "f64_or_string")]
     mean_motion: f64,
+    #[serde(deserialize_with = "f64_or_string")]
     eccentricity: f64,
+    #[serde(deserialize_with = "f64_or_string")]
     inclination: f64,
+    #[serde(deserialize_with = "f64_or_string")]
     ra_of_asc_node: f64,
+    #[serde(deserialize_with = "f64_or_string")]
     arg_of_pericenter: f64,
+    #[serde(deserialize_with = "f64_or_string")]
     mean_anomaly: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "f64_or_string")]
     bstar: f64,
+}
+
+fn f64_or_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    use serde::de::Error;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumOrStr {
+        Num(f64),
+        Str(String),
+    }
+    match NumOrStr::deserialize(d)? {
+        NumOrStr::Num(n) => Ok(n),
+        NumOrStr::Str(s) => s
+            .trim()
+            .parse()
+            .map_err(|_| D::Error::custom(format!("invalid numeric string: '{s}'"))),
+    }
+}
+
+fn u32_or_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    use serde::de::Error;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumOrStr {
+        Num(u32),
+        Str(String),
+    }
+    match NumOrStr::deserialize(d)? {
+        NumOrStr::Num(n) => Ok(n),
+        NumOrStr::Str(s) => s
+            .trim()
+            .parse()
+            .map_err(|_| D::Error::custom(format!("invalid numeric string: '{s}'"))),
+    }
 }
 
 /// Parse an OMM JSON document — a single object or a 1-element array — into an [`Omm`].
@@ -195,6 +239,30 @@ mod tests {
         assert!(matches!(parse("[]"), Err(JsonParseError::Malformed(_))));
         let two = ["[", ISS_OMM_JSON, ",", ISS_OMM_JSON, "]"].concat();
         assert!(matches!(parse(&two), Err(JsonParseError::Malformed(_))));
+    }
+
+    #[test]
+    fn parse_space_track_string_encoded_numbers() {
+        // Space-Track JSON exports encode numeric fields as strings.
+        let j = r#"{
+            "OBJECT_NAME": "ISS (ZARYA)",
+            "NORAD_CAT_ID": "25544",
+            "EPOCH": "2024-03-19T12:00:00.000000",
+            "MEAN_MOTION": "15.49561654",
+            "ECCENTRICITY": "0.0007417",
+            "INCLINATION": "51.6400",
+            "RA_OF_ASC_NODE": "208.6520",
+            "ARG_OF_PERICENTER": "35.3910",
+            "MEAN_ANOMALY": "324.7580",
+            "BSTAR": "0.00003"
+        }"#;
+        let omm = parse(j).unwrap();
+        assert_eq!(omm.norad_cat_id, 25544);
+        assert!((omm.inclination.to_degrees() - 51.64).abs() < 1e-9);
+        assert!((omm.bstar - 3.0e-5).abs() < 1e-10);
+        // Mixed numeric/string in the same document also works (CelesTrak style).
+        let mixed = j.replace("\"15.49561654\"", "15.49561654");
+        assert!(parse(&mixed).is_ok());
     }
 
     #[test]
