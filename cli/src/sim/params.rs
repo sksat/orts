@@ -462,6 +462,12 @@ impl SimParams {
         if args.tle.is_some() && args.omm.is_some() {
             panic!("Cannot specify both --tle and --omm");
         }
+        // A file-based source would otherwise win silently over inline lines.
+        if (args.tle.is_some() || args.omm.is_some())
+            && (args.tle_line1.is_some() || args.tle_line2.is_some())
+        {
+            panic!("Cannot combine --tle / --omm with --tle-line1 / --tle-line2");
+        }
 
         if let Some(path) = &args.tle {
             let text = Self::read_orbit_source(path, "TLE");

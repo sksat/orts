@@ -217,10 +217,13 @@ fn decode_catalog_number(field: &str) -> Result<u32, TleParseError> {
         Some(pos) => pos as u32,
         None => return Err(invalid()),
     };
-    let rest: u32 = chars.as_str().parse().map_err(|_| invalid())?;
-    if rest > 9999 {
+    // Alpha-5 is exactly 1 letter + 4 decimal digits; reject short or padded
+    // fields (e.g. "A000") instead of silently decoding corrupt input.
+    let rest_str = chars.as_str();
+    if rest_str.len() != 4 || !rest_str.bytes().all(|b| b.is_ascii_digit()) {
         return Err(invalid());
     }
+    let rest: u32 = rest_str.parse().map_err(|_| invalid())?;
     Ok(leading * 10000 + rest)
 }
 
@@ -553,6 +556,11 @@ ISS (ZARYA)
         assert!(decode_catalog_number("O0000").is_err());
         // Non-digit trailing is rejected.
         assert!(decode_catalog_number("A00X0").is_err());
+        // Alpha-5 must be exactly 1 letter + 4 digits — short fields are
+        // corrupt input, not value 100000.
+        assert!(decode_catalog_number("A000").is_err());
+        assert!(decode_catalog_number("A").is_err());
+        assert!(decode_catalog_number("A00000").is_err());
     }
 
     #[test]
