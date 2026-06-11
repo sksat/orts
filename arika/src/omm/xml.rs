@@ -48,6 +48,8 @@ impl std::error::Error for XmlParseError {}
 
 /// Parse an OMM XML document into an [`Omm`].
 pub fn parse(xml: &str) -> Result<Omm, XmlParseError> {
+    // BOM-tolerant even when called directly (not via the unified entrypoint).
+    let xml = crate::omm::strip_bom(xml);
     let epoch_raw = required(xml, "EPOCH")?;
     let epoch = crate::omm::parse_epoch(epoch_raw)
         .ok_or_else(|| XmlParseError::InvalidEpoch(epoch_raw.to_string()))?;

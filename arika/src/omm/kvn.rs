@@ -45,6 +45,8 @@ impl std::error::Error for KvnParseError {}
 
 /// Parse an OMM KVN document into an [`Omm`].
 pub fn parse(kvn: &str) -> Result<Omm, KvnParseError> {
+    // BOM-tolerant even when called directly (not via the unified entrypoint).
+    let kvn = crate::omm::strip_bom(kvn);
     let mut object_name = None;
     let mut object_id = None;
     let mut norad_cat_id = None;
@@ -230,5 +232,12 @@ MEAN_ANOMALY = 0.0
 NORAD_CAT_ID = 1";
         let omm = parse(kvn).unwrap();
         assert_eq!(omm.object_name.as_deref(), Some("SAT [TEST]"));
+    }
+
+    #[test]
+    fn bom_prefixed_kvn_parses_directly() {
+        // Direct calls (not via omm::parse) must also tolerate a leading BOM.
+        let bom = ["\u{feff}", ISS_OMM_KVN].concat();
+        assert_eq!(parse(&bom).unwrap().norad_cat_id, 25544);
     }
 }

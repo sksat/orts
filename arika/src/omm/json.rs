@@ -62,6 +62,8 @@ struct OmmJson {
 
 /// Parse an OMM JSON document — a single object or a 1-element array — into an [`Omm`].
 pub fn parse(json: &str) -> Result<Omm, JsonParseError> {
+    // BOM-tolerant even when called directly (not via the unified entrypoint).
+    let json = crate::omm::strip_bom(json);
     // Accept a single OMM object, or a 1-element array — some producers
     // (incl. CelesTrak single-satellite GP queries) wrap the object in a JSON
     // array. Reject empty / multi-element arrays with a clear error.
@@ -193,5 +195,12 @@ mod tests {
         assert!(matches!(parse("[]"), Err(JsonParseError::Malformed(_))));
         let two = ["[", ISS_OMM_JSON, ",", ISS_OMM_JSON, "]"].concat();
         assert!(matches!(parse(&two), Err(JsonParseError::Malformed(_))));
+    }
+
+    #[test]
+    fn bom_prefixed_json_parses_directly() {
+        // Direct calls (not via omm::parse) must also tolerate a leading BOM.
+        let bom = ["\u{feff}", ISS_OMM_JSON].concat();
+        assert_eq!(parse(&bom).unwrap().norad_cat_id, 25544);
     }
 }

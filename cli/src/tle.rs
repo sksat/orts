@@ -2,8 +2,8 @@ use arika::omm::Omm;
 
 /// Try fetching a TLE by NORAD catalog number. Tries CelesTrak first, falls back to SatNOGS.
 pub fn try_fetch_tle_by_norad_id(norad_id: u32) -> Option<Omm> {
-    if let Some(tle) = fetch_tle_celestrak(norad_id) {
-        return Some(tle);
+    if let Some(omm) = fetch_tle_celestrak(norad_id) {
+        return Some(omm);
     }
     eprintln!("CelesTrak failed, trying SatNOGS...");
     fetch_tle_satnogs(norad_id)
@@ -90,14 +90,14 @@ mod tests {
     #[test]
     #[ignore] // Requires network access
     fn fetch_iss_tle_from_celestrak() {
-        let tle = fetch_tle_celestrak(25544);
-        assert!(tle.is_some());
+        let omm = fetch_tle_celestrak(25544);
+        assert!(omm.is_some());
     }
 
     #[test]
     #[ignore] // Requires network access
     fn fetch_iss_tle_satnogs_fallback() {
-        let tle = fetch_tle_satnogs(25544);
-        assert!(tle.is_some());
+        let omm = fetch_tle_satnogs(25544);
+        assert!(omm.is_some());
     }
 }
