@@ -868,14 +868,24 @@ impl SimLoopContext {
             );
         }
         // A duplicate (sat, stream) pair would pump the same controller
-        // stream twice per tick and alias one endpoint; reject it.
+        // stream twice per tick and alias one endpoint; reject it. Both
+        // parts also become URL path segments (`/stream/{sat}/{stream}`),
+        // so an empty or '/'-containing name would mint an unreachable
+        // endpoint — reject those too.
         {
             let mut seen = std::collections::HashSet::new();
             for key in &stream_keys {
+                let (sat, stream) = key;
+                if invalid_path_segment(sat) || invalid_path_segment(stream) {
+                    return Err(format!(
+                        "invalid stream declaration '{stream}' on satellite '{sat}': \
+                         satellite ids and stream names must be non-empty and must \
+                         not contain '/' (they form the endpoint URL path)"
+                    ));
+                }
                 if !seen.insert(key) {
                     return Err(format!(
-                        "duplicate stream declaration '{}' on satellite '{}'",
-                        key.1, key.0
+                        "duplicate stream declaration '{stream}' on satellite '{sat}'"
                     ));
                 }
             }
@@ -1464,6 +1474,12 @@ impl SimLoopContext {
     }
 }
 
+/// Whether `s` cannot be used as one path segment of a stream endpoint URL
+/// (`/stream/{sat}/{stream}`): empty or containing a path separator.
+fn invalid_path_segment(s: &str) -> bool {
+    s.is_empty() || s.contains('/')
+}
+
 /// The single sample period shared by all controllers, or an error when the
 /// fleet mixes periods (the stream-io bridge steps every controller on the
 /// same global tick, so mixed rates would over-step the slower ones).
@@ -1653,6 +1669,14 @@ async fn run_simulation_loop(
 mod tests {
     use super::*;
     use arika::body::KnownBody;
+
+    #[test]
+    fn invalid_path_segment_rejects_empty_and_slash() {
+        assert!(invalid_path_segment(""));
+        assert!(invalid_path_segment("a/b"));
+        assert!(!invalid_path_segment("comlink"));
+        assert!(!invalid_path_segment("uart-0"));
+    }
 
     #[test]
     fn uniform_tick_accepts_a_single_shared_period() {
