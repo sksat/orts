@@ -23,7 +23,8 @@ pub enum KvnParseError {
     MissingField(&'static str),
     /// A keyword's value could not be parsed as the expected number.
     InvalidValue { key: &'static str, value: String },
-    /// `EPOCH` was not a parseable ISO-8601 UTC calendar timestamp.
+    /// `EPOCH` was not a parseable ISO-8601 UTC timestamp (calendar or
+    /// ordinal / day-of-year form).
     InvalidEpoch(String),
 }
 

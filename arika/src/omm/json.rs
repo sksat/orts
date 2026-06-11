@@ -24,7 +24,8 @@ use crate::omm::Omm;
 pub enum JsonParseError {
     /// The input was not a JSON object with the required OMM fields.
     Malformed(String),
-    /// `EPOCH` was not a parseable ISO-8601 UTC calendar timestamp.
+    /// `EPOCH` was not a parseable ISO-8601 UTC timestamp (calendar or
+    /// ordinal / day-of-year form).
     InvalidEpoch(String),
 }
 
