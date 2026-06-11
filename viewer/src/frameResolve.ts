@@ -68,8 +68,13 @@ export function resolveSceneFrame(
   const state = getEntity(id);
   if (state == null) return { ...inert, centeredSatId: id };
 
-  const originPosition = state.position;
-  const originVelocity = state.velocity;
+  // Snapshot the caller-owned tuples: the context is returned from public API
+  // surfaces, and an embedder mutating its position array in place must not
+  // retroactively change an already-resolved frame.
+  const originPosition: [number, number, number] = [...state.position];
+  const originVelocity: [number, number, number] | null = state.velocity
+    ? [...state.velocity]
+    : null;
   const localOrbital = frame.orientation === "local_orbital";
 
   // Data-LVLH: only for a real satellite (bodies keep their IAU orientation in

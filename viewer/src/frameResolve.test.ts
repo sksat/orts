@@ -74,6 +74,21 @@ describe("resolveSceneFrame — satellite centred, local_orbital", () => {
   });
 });
 
+describe("resolveSceneFrame — snapshot semantics", () => {
+  it("returns copies of the caller-owned tuples (in-place mutation can't alias)", () => {
+    const state = { position: [7000, 0, 0] as V3, velocity: [0, 7.5, 0] as V3 };
+    const f: ReferenceFrame = {
+      center: { type: "satellite", id: "a" },
+      orientation: "local_orbital",
+    };
+    const ctx = resolveSceneFrame(f, () => state, noBody);
+    state.position[0] = 9999; // caller reuses its array
+    state.velocity[1] = -1;
+    expect(ctx.originPosition).toEqual([7000, 0, 0]);
+    expect(ctx.originVelocity).toEqual([0, 7.5, 0]);
+  });
+});
+
 describe("resolveSceneFrame — satellite centred, inertial (#90)", () => {
   const f: ReferenceFrame = { center: { type: "satellite", id: "a" }, orientation: "inertial" };
 
