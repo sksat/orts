@@ -9,6 +9,7 @@ import {
   type DisplayScaleProfile,
   getDisplayScaleProfile,
 } from "../displayScale.js";
+import { resolveSceneFrame } from "../frameResolve.js";
 import { rotateZ } from "../frameTransform.js";
 import type { OrbitPoint } from "../orbit.js";
 import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
@@ -403,39 +404,31 @@ export function OrbitSceneContents({
   // Effective scale radius: smaller when amplified, so positions appear larger
   const effectiveScaleRadius = centralBodyRadius / sceneAmplification;
 
-  // Compute origin position for satellite-centered view
-  const originPosition: [number, number, number] | null = useMemo(() => {
-    if (!isSatCentered || centeredSatId == null) return null;
-
-    const satPos = satellitePositions?.get(centeredSatId);
-    if (satPos) return [satPos.x, satPos.y, satPos.z];
-
-    return null;
-  }, [isSatCentered, centeredSatId, satellitePositions]);
-
-  // Compute origin velocity for LVLH axes
-  const originVelocity: [number, number, number] | null = useMemo(() => {
-    if (!isSatCentered || centeredSatId == null) return null;
-
-    const satPos = satellitePositions?.get(centeredSatId);
-    if (satPos) return [satPos.vx, satPos.vy, satPos.vz];
-
-    return null;
-  }, [isSatCentered, centeredSatId, satellitePositions]);
-
-  // Compute LVLH axes for body-frame transformation
-  const lvlhAxes: LvlhAxes | null = useMemo(
-    () => computeLvlhAxes(originPosition, originVelocity),
-    [originPosition, originVelocity],
+  // Resolve the frame semantics (origin, LVLH axes, camera behaviour) through
+  // the shared kernel — the one place that honours `orientation` (#90).
+  const { originPosition, originVelocity, lvlhAxes, lvlhActive, cameraTracking } = useMemo(
+    () =>
+      resolveSceneFrame(
+        referenceFrame,
+        (id) => {
+          const p = satellitePositions?.get(id);
+          return p ? { position: [p.x, p.y, p.z], velocity: [p.vx, p.vy, p.vz] } : null;
+        },
+        (id) => entityPathToBodyId(id) != null,
+      ),
+    [referenceFrame, satellitePositions],
   );
 
-  // LVLH body-frame mode: active when satellite-centered (not body entity) with valid axes.
-  // Body entities (Moon, Mars) use IAU rotation in ECI, not LVLH.
-  // TODO(#90): this is inferred purely from "satellite-centered + velocity"; it
-  // ignores any caller-selected orientation, so a satellite-centered *inertial*
-  // frame still renders as LVLH. Honouring inertial needs an explicit signal here.
-  const lvlhActive =
-    isSatCentered && centeredBodyId == null && lvlhAxes != null && originPosition != null;
+  // Dev/E2E-only: expose the resolved frame semantics so tests can assert
+  // inertial vs local-orbital behaviour without reading pixels.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__debug_scene_frame = { lvlhActive, cameraTracking, originPosition };
+    return () => {
+      delete w.__debug_scene_frame;
+    };
+  }, [lvlhActive, cameraTracking, originPosition]);
 
   // Determine sim time for sun direction from first available satellite position
   const firstPosition = satellitePositions
@@ -562,8 +555,10 @@ export function OrbitSceneContents({
         minDistance={displayProfile.minDistance}
         maxDistance={displayProfile.maxDistance}
       />
+      {/* Camera co-rotation only when the kernel asked for it (local-orbital
+          approximated by the camera); an inertial centre keeps star-fixed axes. */}
       <CameraLvlhTracker
-        originPosition={originPosition}
+        originPosition={cameraTracking ? originPosition : null}
         originVelocity={originVelocity}
         lvlhActive={lvlhActive}
       />

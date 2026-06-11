@@ -91,11 +91,9 @@ export function OrbitViewer({
   // Persistent per-satellite trail buffers (stable identity → incremental upload).
   const trailBuffers = useTrailBuffers(satellites);
 
-  // Map the public frame onto the renderer's internal ReferenceFrame; origin and
-  // LVLH axes are derived inside OrbitSceneContents from the satellite positions.
-  // TODO(#90): satellite-centred `inertial` and `localOrbital` both collapse to
-  // the same internal frame, and OrbitSceneContents always applies LVLH for a
-  // satellite-centred view — so the `inertial` option is currently ignored.
+  // Map the public frame onto the renderer's internal ReferenceFrame (incl.
+  // local_orbital); the scene resolves the geometry itself via the shared
+  // resolveSceneFrame kernel from the satellite positions it receives.
   const internalFrame = useMemo(
     () => resolveFrameContext(referenceFrame, () => undefined).referenceFrame,
     [referenceFrame],

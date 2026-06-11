@@ -3,13 +3,15 @@
  * primitives consume: an internal `ReferenceFrame`, the frame-centre's ECI
  * position, and (for local-orbital views) the LVLH axes.
  *
- * Pure and renderer-agnostic so the frame logic can be unit tested without a
- * canvas — and so the same kernel can back both the library viewer and the app's
- * richer Scene later.
+ * The mapping is the only logic that lives here; the frame *semantics*
+ * (origin, axes, what the camera does) are delegated to the shared
+ * `resolveSceneFrame` kernel that the scene itself renders from, so the
+ * library and the app cannot drift apart (#90).
  */
 
+import { resolveSceneFrame } from "../frameResolve.js";
 import type { ReferenceFrame } from "../referenceFrame.js";
-import { computeLvlhAxes, type LvlhAxes } from "../sceneFrame.js";
+import type { LvlhAxes } from "../sceneFrame.js";
 import type { Vec3, ViewerReferenceFrame } from "./types.js";
 
 /** Minimal satellite state the frame resolver needs. */
@@ -53,25 +55,29 @@ export function resolveFrameContext(
     };
   }
 
-  // Satellite-centred. The internal frame always uses "inertial" orientation:
-  // LVLH is driven by the presence of `lvlhAxes`, not the orientation field.
-  const id = frame.center.satelliteId;
-  const sat = getSatellite(id);
-  const originPosition = sat ? ([...sat.position] as [number, number, number]) : null;
-
-  let lvlhAxes: LvlhAxes | null = null;
-  let localOrbitalFallback = false;
-  if (frame.orientation === "localOrbital") {
-    lvlhAxes = sat ? computeLvlhAxes(sat.position, sat.velocity ?? null) : null;
-    // Flag the fallback only when we actually had a satellite to frame on.
-    if (lvlhAxes === null && sat) localOrbitalFallback = true;
-  }
+  // Satellite-centred: map the public orientation onto the internal one and
+  // let the shared kernel resolve the geometry. The public API has no body
+  // entities, so the body predicate is constantly false.
+  const localOrbital = frame.orientation === "localOrbital";
+  const referenceFrame: ReferenceFrame = {
+    center: { type: "satellite", id: frame.center.satelliteId },
+    orientation: localOrbital ? "local_orbital" : "inertial",
+  };
+  const ctx = resolveSceneFrame(
+    referenceFrame,
+    (id) => {
+      const sat = getSatellite(id);
+      return sat ? { position: sat.position, velocity: sat.velocity ?? null } : null;
+    },
+    () => false,
+  );
 
   return {
-    referenceFrame: { center: { type: "satellite", id }, orientation: "inertial" },
-    originPosition,
-    lvlhAxes,
+    referenceFrame,
+    originPosition: ctx.originPosition,
+    lvlhAxes: ctx.lvlhAxes,
     bodyFixed: false,
-    localOrbitalFallback,
+    // LVLH was requested but the axes weren't computable (no velocity).
+    localOrbitalFallback: localOrbital && !ctx.lvlhActive && ctx.originPosition != null,
   };
 }
