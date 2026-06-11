@@ -25,7 +25,9 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
-const SYNC: [u8; 2] = [0xEB, 0x90];
+#[path = "framed_protocol/mod.rs"]
+mod framed_protocol;
+use framed_protocol::{build_frame, parse_frame};
 
 fn orts_binary() -> String {
     if let Ok(path) = std::env::var("ORTS_BIN") {
@@ -190,51 +192,6 @@ fn spawn_serve(port: u16, config_path: &str) -> ChildGuard {
     rx.recv_timeout(Duration::from_secs(30))
         .expect("server did not register the stream endpoint within 30 seconds");
     ChildGuard(child)
-}
-
-// ─── framing (mirror of the guest's wire format) ────────────────
-
-fn crc16_ccitt(bytes: &[u8]) -> u16 {
-    let mut crc: u16 = 0xFFFF;
-    for &b in bytes {
-        crc ^= (b as u16) << 8;
-        for _ in 0..8 {
-            crc = if crc & 0x8000 != 0 {
-                (crc << 1) ^ 0x1021
-            } else {
-                crc << 1
-            };
-        }
-    }
-    crc
-}
-
-fn build_frame(payload: &[u8]) -> Vec<u8> {
-    let len = payload.len() as u16;
-    let mut body = Vec::new();
-    body.extend_from_slice(&len.to_be_bytes());
-    body.extend_from_slice(payload);
-    let crc = crc16_ccitt(&body);
-    let mut frame = Vec::new();
-    frame.extend_from_slice(&SYNC);
-    frame.extend_from_slice(&body);
-    frame.extend_from_slice(&crc.to_be_bytes());
-    frame
-}
-
-fn parse_frame(bytes: &[u8]) -> Option<Vec<u8>> {
-    let pos = bytes.windows(2).position(|w| w == SYNC)?;
-    let rest = &bytes[pos..];
-    if rest.len() < 4 {
-        return None;
-    }
-    let len = u16::from_be_bytes([rest[2], rest[3]]) as usize;
-    if rest.len() < 4 + len + 2 {
-        return None;
-    }
-    let crc_calc = crc16_ccitt(&rest[2..4 + len]);
-    let crc_rx = u16::from_be_bytes([rest[4 + len], rest[5 + len]]);
-    (crc_calc == crc_rx).then(|| rest[4..4 + len].to_vec())
 }
 
 // ─────────────────────────── test ──────────────────────────────
