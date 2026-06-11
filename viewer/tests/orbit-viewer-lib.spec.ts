@@ -103,7 +103,7 @@ test("a marker-only satellite (no trail prop) gets no trail buffer", async ({ pa
   const markerTrail = await page.evaluate(() => {
     const dbg = (window as unknown as { __debug_orbit_viewer?: { trail(id: string): TrailInfo } })
       .__debug_orbit_viewer;
-    return dbg ? dbg.trail("marker") : undefined;
+    return dbg ? dbg.trail("marker") : null;
   });
   expect(markerTrail).toBeNull(); // no buffer allocated, no OrbitTrail mounted
 });
