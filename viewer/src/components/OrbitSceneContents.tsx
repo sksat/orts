@@ -646,7 +646,11 @@ export function OrbitSceneContents({
           const bodyId = entityPathToBodyId(satId);
           return (
             <group key={satId}>
-              {buf && buf.length > 0 && (
+              {/* Mount on buffer *existence*, not current length: contents may be
+                  filled in a commit-phase effect after this render (#91), and an
+                  empty buffer draws nothing while OrbitTrail picks up points in
+                  useFrame — no re-render needed when they arrive. */}
+              {buf && (
                 <OrbitTrail
                   trailBuffer={buf}
                   visibleCount={trailVisibleCounts?.get(satId)}
