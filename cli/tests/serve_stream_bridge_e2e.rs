@@ -155,6 +155,14 @@ impl Server {
     }
 }
 
+// Kill the server even when a test panics / returns early, so a leaked
+// child can't hold the port and destabilise later tests.
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
 // ─── framing (mirror of the guest's wire format) ────────────────
 
 fn crc16_ccitt(bytes: &[u8]) -> u16 {
@@ -263,14 +271,23 @@ async fn undeclared_stream_endpoint_is_rejected() {
     let port = test_port() + 1;
     let mut server = Server::spawn_with_config(port, config.path().to_str().unwrap());
 
-    // `uart0` is not declared in the config → the HTTP upgrade must fail
-    // (404), not silently accept a connection to nowhere.
+    // `uart0` is not declared in the config → the HTTP upgrade must be
+    // rejected with 404 specifically (any other failure — e.g. server not
+    // reachable — must not pass this test).
     let url = format!("ws://127.0.0.1:{port}/stream/sat0/uart0");
-    let err = connect_async(&url).await.err();
-    assert!(
-        err.is_some(),
-        "connecting to an undeclared stream endpoint must fail"
-    );
+    let err = connect_async(&url)
+        .await
+        .expect_err("connecting to an undeclared stream endpoint must fail");
+    match err {
+        tokio_tungstenite::tungstenite::Error::Http(response) => {
+            assert_eq!(
+                response.status(),
+                tokio_tungstenite::tungstenite::http::StatusCode::NOT_FOUND,
+                "undeclared stream must be rejected with 404"
+            );
+        }
+        other => panic!("expected an HTTP 404 rejection, got: {other:?}"),
+    }
 
     server.kill();
 }

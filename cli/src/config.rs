@@ -362,6 +362,7 @@ pub struct SatelliteConfig {
     /// stream-io の名前付きバイトストリーム宣言（kble 統合）。
     /// 宣言した stream は serve の `ws://…/stream/{sat}/{name}` に公開される。
     #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
     pub streams: Vec<String>,
 }
 
