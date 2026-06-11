@@ -141,17 +141,29 @@ impl From<Geodetic> for SimpleEcef {
     /// Convert geodetic (latitude, longitude, height) to a WGS-84 Cartesian
     /// `SimpleEcef` vector.
     fn from(geo: Geodetic) -> Self {
-        let sin_lat = geo.latitude.sin();
-        let cos_lat = geo.latitude.cos();
-        let sin_lon = geo.longitude.sin();
-        let cos_lon = geo.longitude.cos();
+        geo.to_ecef()
+    }
+}
+
+impl Geodetic {
+    /// Convert to a WGS-84 Earth-fixed Cartesian vector \[km\] on any
+    /// [`frame::Ecef`] frame marker.
+    ///
+    /// Generic counterpart of `SimpleEcef::from(geodetic)`, mirroring
+    /// [`Vec3::to_geodetic`] — the ellipsoid math is identical for the
+    /// simple and precise Ecef markers.
+    pub fn to_ecef<F: frame::Ecef>(&self) -> Vec3<F> {
+        let sin_lat = self.latitude.sin();
+        let cos_lat = self.latitude.cos();
+        let sin_lon = self.longitude.sin();
+        let cos_lon = self.longitude.cos();
 
         let n = WGS84_A / (1.0 - WGS84_E2 * sin_lat * sin_lat).sqrt();
 
-        SimpleEcef::from_raw(Vector3::new(
-            (n + geo.altitude) * cos_lat * cos_lon,
-            (n + geo.altitude) * cos_lat * sin_lon,
-            (n * (1.0 - WGS84_E2) + geo.altitude) * sin_lat,
+        Vec3::from_raw(Vector3::new(
+            (n + self.altitude) * cos_lat * cos_lon,
+            (n + self.altitude) * cos_lat * sin_lon,
+            (n * (1.0 - WGS84_E2) + self.altitude) * sin_lat,
         ))
     }
 }
@@ -400,6 +412,22 @@ mod tests {
             geo_out.altitude,
             geo_in.altitude
         );
+    }
+
+    /// `Geodetic::to_ecef::<Itrs>()` roundtrips through the generic
+    /// `to_geodetic()` on the precise Ecef marker.
+    #[test]
+    fn generic_to_ecef_roundtrips_on_itrs() {
+        let geo_in = Geodetic {
+            latitude: 0.7,
+            longitude: 2.1,
+            altitude: 350.0,
+        };
+        let itrs: crate::frame::Vec3<crate::frame::Itrs> = geo_in.to_ecef();
+        let geo_out = itrs.to_geodetic();
+        assert!((geo_out.latitude - geo_in.latitude).abs() < 1e-12);
+        assert!((geo_out.longitude - geo_in.longitude).abs() < 1e-12);
+        assert!((geo_out.altitude - geo_in.altitude).abs() < 1e-6);
     }
 
     #[test]
