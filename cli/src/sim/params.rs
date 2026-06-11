@@ -111,6 +111,8 @@ pub struct SimParams {
     pub satellites: Vec<SatelliteSpec>,
     /// 時刻指定コマンドシーケンス（config transport）。CLI 引数経由では空。
     pub commands: Vec<crate::config::CommandConfig>,
+    /// 地上局（contact window 検出用）。config ファイル経由でのみ設定。
+    pub ground_stations: Vec<orts::visibility::GroundStation>,
     pub integrator: IntegratorChoice,
     pub tolerances: Tolerances,
     pub atmosphere: AtmosphereChoice,
@@ -273,6 +275,7 @@ impl SimParams {
             satellites,
             // CLI-arg path has no command timeline (config-file only).
             commands: Vec::new(),
+            ground_stations: Vec::new(),
             integrator: args.integrator,
             tolerances: Tolerances {
                 atol: args.atol,
@@ -335,6 +338,11 @@ impl SimParams {
             duration: config.duration,
             satellites,
             commands: config.commands.clone(),
+            ground_stations: config
+                .ground_stations
+                .iter()
+                .map(|g| g.to_ground_station())
+                .collect(),
             integrator: config.integrator_choice(),
             tolerances: Tolerances {
                 atol: config.integrator.atol,
