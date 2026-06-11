@@ -11,7 +11,7 @@ use orts::orbital::gravity::GravityField;
 use orts::spacecraft::{SpacecraftDynamics, SpacecraftState};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use super::stream_bridge::{OutboundPush, StreamBridge};
+use super::stream_bridge::{OutboundPush, StreamBridge, StreamEndpoint};
 use crate::cli::{IntegratorChoice, PluginBackendChoice, SimArgs};
 
 /// CLI-time backend overrides that must apply to every `SimParams`
@@ -590,9 +590,13 @@ struct SimLoopContext {
     paused: bool,
     current_t: f64,
     has_perturbations: bool,
-    /// stream-io kble bridge (binary WS endpoints). Endpoints for this
+    /// stream-io bridge (binary WS endpoints). Endpoints for this
     /// context's declared streams are registered in `new()`.
     bridge: Arc<StreamBridge>,
+    /// Each satellite's `(stream name, endpoint)` handles, indexed like
+    /// `metas`. Resolved once at construction so the per-tick pumps don't
+    /// do a (key-allocating) registry lookup on the hot path.
+    sat_streams: Vec<Vec<(String, Arc<StreamEndpoint>)>>,
     /// Sim-time step per propagation iteration. Equal to
     /// `params.stream_interval` normally; lowered to the controller tick
     /// when stream-io streams are wired so the bridge pumps (and the wall
@@ -868,6 +872,20 @@ impl SimLoopContext {
         }
         bridge.reset(stream_keys);
 
+        // Resolve each satellite's endpoint handles once — the per-tick
+        // pumps use these directly instead of a registry lookup (which
+        // would allocate a key on every tick). Indexed like `metas`.
+        let sat_streams: Vec<Vec<(String, Arc<StreamEndpoint>)>> = metas
+            .iter()
+            .map(|m| {
+                m.spec
+                    .streams
+                    .iter()
+                    .filter_map(|name| bridge.lookup(&m.spec.id, name).map(|ep| (name.clone(), ep)))
+                    .collect()
+            })
+            .collect();
+
         let stream_step = params.stream_interval;
         Ok(SimLoopContext {
             params,
@@ -881,6 +899,7 @@ impl SimLoopContext {
             current_t: 0.0,
             has_perturbations,
             bridge,
+            sat_streams,
             stream_step,
             #[cfg(feature = "plugin-wasm")]
             wasm_cache,
@@ -917,16 +936,12 @@ impl SimLoopContext {
             return Ok(());
         };
         for (i, sat) in sats.iter_mut().enumerate() {
-            let spec = &self.metas[i].spec;
-            for name in &spec.streams {
-                let Some(endpoint) = self.bridge.lookup(&spec.id, name) else {
-                    continue;
-                };
+            for (name, endpoint) in &self.sat_streams[i] {
                 let (bytes, overflowed) = endpoint.take_staged();
                 if overflowed {
                     return Err(format!(
                         "stream-io: inbound staging overflow on {}/{name} (sim not draining fast enough)",
-                        spec.id
+                        self.metas[i].spec.id
                     ));
                 }
                 if !bytes.is_empty() {
@@ -945,21 +960,17 @@ impl SimLoopContext {
             return Ok(());
         };
         for (i, sat) in sats.iter_mut().enumerate() {
-            let spec = &self.metas[i].spec;
-            for name in &spec.streams {
+            for (name, endpoint) in &self.sat_streams[i] {
                 let bytes = sat.controller.stream_take(name);
                 if bytes.is_empty() {
                     continue;
                 }
-                let Some(endpoint) = self.bridge.lookup(&spec.id, name) else {
-                    continue;
-                };
                 match endpoint.push_outbound(bytes) {
                     OutboundPush::Sent | OutboundPush::NoPeer => {}
                     OutboundPush::Stuck => {
                         return Err(format!(
                             "stream-io: peer on {}/{name} is connected but not draining",
-                            spec.id
+                            self.metas[i].spec.id
                         ));
                     }
                 }
@@ -1573,6 +1584,13 @@ async fn run_simulation_loop(
                 .expect("failed to serialize error");
                 let _ = ctx.tx.send(msg);
                 ctx.paused = true;
+                // Clients drive their server-state UI off `status` messages;
+                // without this they'd show a stale "running" after the halt.
+                let status = serde_json::to_string(&WsMessage::Status {
+                    state: "paused".to_string(),
+                })
+                .expect("failed to serialize status");
+                let _ = ctx.tx.send(status);
                 continue;
             }
         };
