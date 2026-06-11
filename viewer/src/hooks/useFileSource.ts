@@ -55,6 +55,14 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
     }
   }, []);
 
+  // Stop an adapter and release the ref if it is still the active one.
+  // Safe to call from inside a load wrapper: the superseded-adapter guard
+  // only compares identity. Shared by the CSV and RRD loaders.
+  const retireAdapter = useCallback((adapter: SourceAdapter) => {
+    adapter.stop();
+    if (fileAdapterRef.current === adapter) fileAdapterRef.current = null;
+  }, []);
+
   // Cleanup adapter (abort reader / terminate worker) on unmount
   useEffect(() => stopFileAdapter, [stopFileAdapter]);
 
@@ -73,13 +81,6 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
       let tMin = Number.POSITIVE_INFINITY;
       let tMax = Number.NEGATIVE_INFINITY;
 
-      // Stop the adapter and release the ref. Safe to call from inside the
-      // wrapper: the superseded-adapter guard only compares identity.
-      const retire = () => {
-        adapter.stop();
-        if (fileAdapterRef.current === adapter) fileAdapterRef.current = null;
-      };
-
       const wrapped: typeof handleEvent = (sourceId, event) => {
         // Ignore events from an adapter that has been superseded (a newer
         // load or a Connect stopped it); its worker may still flush messages.
@@ -87,7 +88,13 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
 
         switch (event.kind) {
           case "info":
-            pendingInfo = event;
+            // Buffer only while the gate is closed; once data has proven
+            // the file valid, forward sim info immediately.
+            if (gateOpened) {
+              handleEvent(sourceId, event);
+            } else {
+              pendingInfo = event;
+            }
             return;
           case "history-chunk": {
             if (!gateOpened && event.points.length > 0) {
@@ -107,21 +114,23 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
           case "complete":
             if (!gateOpened) {
               setOrbitInfo("No valid orbit data found in file.");
-              retire();
+              retireAdapter(adapter);
               return;
             }
             handleEvent(sourceId, event);
             setOrbitInfo(
               `Loaded: ${file.name} | ${pointCount} points | Duration: ${(tMax - tMin).toFixed(1)} s`,
             );
-            retire();
+            retireAdapter(adapter);
             return;
           case "error":
             // Worker/file errors are fatal — surface them and clean up so
-            // a late message can never resurrect this load.
+            // a late message can never resurrect this load. After the gate
+            // opened, partial data is already on screen; fileSourceActive
+            // stays true so auto-connect doesn't wipe that view.
             if (gateOpened) handleEvent(sourceId, event);
             setOrbitInfo(`Failed to load ${file.name}: ${event.message}`);
-            retire();
+            retireAdapter(adapter);
             return;
           default:
             if (gateOpened) handleEvent(sourceId, event);
@@ -133,7 +142,7 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
       setOrbitInfo(`Loading: ${file.name}...`);
       adapter.start();
     },
-    [handleEvent],
+    [handleEvent, retireAdapter],
   );
 
   const loadRrdFile = useCallback(
@@ -141,10 +150,6 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
       // RRD validation happens in the worker, so switch sources eagerly
       onBeforeEmit?.();
       let totalPoints = 0;
-      const retire = () => {
-        adapter.stop();
-        if (fileAdapterRef.current === adapter) fileAdapterRef.current = null;
-      };
       const wrapped: typeof handleEvent = (sourceId, event) => {
         if (fileAdapterRef.current !== adapter) return;
         handleEvent(sourceId, event);
@@ -153,13 +158,15 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
         }
         if (event.kind === "complete") {
           setOrbitInfo(`Loaded: ${file.name} | ${totalPoints} points`);
-          retire();
+          retireAdapter(adapter);
         }
         if (event.kind === "error") {
-          // Surface the failure (the UI would otherwise stay on "Loading…")
-          // and clean up the worker.
+          // Surface the failure (the UI would otherwise stay on "Loading…"),
+          // clean up the worker, and release the eagerly-set file-source
+          // flag so a dead load doesn't keep suppressing auto-connect.
           setOrbitInfo(`Failed to load ${file.name}: ${event.message}`);
-          retire();
+          setFileSourceActive(false);
+          retireAdapter(adapter);
         }
       };
 
@@ -169,7 +176,7 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
       setFileSourceActive(true);
       setOrbitInfo(`Loading: ${file.name}...`);
     },
-    [handleEvent],
+    [handleEvent, retireAdapter],
   );
 
   /** Route file to appropriate loader based on extension. */
