@@ -109,7 +109,7 @@ pub enum Format {
 /// Strip a leading UTF-8 BOM (U+FEFF). It is not whitespace, so `trim_start`
 /// alone won't remove it, and a BOM-prefixed file would otherwise confuse both
 /// format sniffing and the JSON/XML parsers (failing at byte 0).
-fn strip_bom(text: &str) -> &str {
+pub(crate) fn strip_bom(text: &str) -> &str {
     text.strip_prefix('\u{feff}').unwrap_or(text)
 }
 

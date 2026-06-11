@@ -4,7 +4,9 @@
 //! It is *not* a general XML parser: it extracts the text of named leaf
 //! elements (`<KEYWORD ...>value</KEYWORD>`) by exact name, skipping any
 //! attributes (e.g. `units="deg"`), and assumes well-formed OMM with no
-//! namespace prefixes or markup inside leaf values.
+//! namespace prefixes or markup inside leaf values. XML entity references are
+//! **not decoded**: an escaped `OBJECT_NAME` like `A &amp; B` is returned
+//! verbatim (`A &amp; B`), not unescaped.
 
 use alloc::string::{String, ToString};
 use core::f64::consts::PI;
