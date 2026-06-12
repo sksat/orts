@@ -60,8 +60,11 @@ export class RrdFileAdapter implements SourceAdapter {
   }
 
   start(): void {
+    // Reset state for restartability
     this.estimatedDt = 10;
+    this.pendingMetadata = null;
     this.pendingEntityPaths = new Set();
+    this.lastTByEntity.clear();
     this.infoEmitted = false;
     this.stopped = false;
 
