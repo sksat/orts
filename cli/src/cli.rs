@@ -31,6 +31,14 @@ pub enum Commands {
         /// WebSocket server port
         #[arg(long, default_value_t = 9001)]
         port: u16,
+
+        /// Wire one declared stream-io stream to stdin/stdout with the
+        /// kble-socket protocol, for running as a kble `exec:` plug
+        /// (e.g. `--stream-stdio sat0/comlink`). The stream is reserved
+        /// (its WS endpoint answers 409); when the stdio peer closes,
+        /// the server shuts down (the kble harness owns this process).
+        #[arg(long, value_name = "SAT/STREAM")]
+        stream_stdio: Option<String>,
     },
     /// Replay a recorded simulation file through the WebSocket viewer
     Replay {

@@ -31,13 +31,32 @@ struct AppState {
     tx: broadcast::Sender<String>,
     cmd_tx: mpsc::Sender<SimCommand>,
     textures: Arc<TextureCache>,
-    /// stream-io kble bridge endpoints (binary WS per declared stream).
+    /// stream-io bridge endpoints (binary WS per declared stream).
     bridge: Arc<StreamBridge>,
+    /// The (sat, stream) wired to stdio via `--stream-stdio`, if any. Its
+    /// WS endpoint is reserved (answers 409) — one transport per stream.
+    reserved_stdio: Option<stream_bridge::StreamKey>,
 }
 
-pub fn run_server(sim: &SimArgs, port: u16) {
+pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) {
+    // Parse + reject malformed flags before starting the runtime so a typo
+    // fails fast instead of surfacing as a dead endpoint later.
+    let stdio_key = stream_stdio.map(|s| {
+        parse_stream_stdio(s).unwrap_or_else(|e| panic!("Error: --stream-stdio {s}: {e}"))
+    });
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    rt.block_on(async_server(sim, port));
+    rt.block_on(async_server(sim, port, stdio_key));
+}
+
+/// Parse a `--stream-stdio` value of the form `sat/stream` (both halves
+/// non-empty, exactly one `/` — they are endpoint path segments).
+fn parse_stream_stdio(s: &str) -> Result<stream_bridge::StreamKey, String> {
+    match s.split_once('/') {
+        Some((sat, stream)) if !sat.is_empty() && !stream.is_empty() && !stream.contains('/') => {
+            Ok((sat.to_string(), stream.to_string()))
+        }
+        _ => Err("expected SAT/STREAM with non-empty halves".to_string()),
+    }
 }
 
 /// Detect whether CLI args specify an explicit simulation configuration.
@@ -55,12 +74,24 @@ async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl
 }
 
 /// Binary WS endpoint for a declared `stream-io` stream — the shape of a
-/// kble `ws://` plug. 404 for undeclared `(sat, stream)` pairs.
+/// kble `ws://` plug. 404 for undeclared `(sat, stream)` pairs; 409 for a
+/// stream reserved by `--stream-stdio` (one transport per stream).
 async fn stream_ws_handler(
     ws: WebSocketUpgrade,
     AxumPath((sat, stream)): AxumPath<(String, String)>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
+    if state
+        .reserved_stdio
+        .as_ref()
+        .is_some_and(|(s, n)| *s == sat && *n == stream)
+    {
+        return (
+            StatusCode::CONFLICT,
+            format!("stream {sat}/{stream} is reserved for the stdio plug (--stream-stdio)\n"),
+        )
+            .into_response();
+    }
     let Some(endpoint) = state.bridge.lookup(&sat, &stream) else {
         return (
             StatusCode::NOT_FOUND,
@@ -72,7 +103,7 @@ async fn stream_ws_handler(
         .into_response()
 }
 
-async fn async_server(sim: &SimArgs, port: u16) {
+async fn async_server(sim: &SimArgs, port: u16, stdio_key: Option<stream_bridge::StreamKey>) {
     let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr)
         .await
@@ -102,6 +133,22 @@ async fn async_server(sim: &SimArgs, port: u16) {
     if let Some(cfg) = &initial_config {
         cfg.ensure_serve_supported()
             .unwrap_or_else(|e| panic!("Error: {e}"));
+    }
+
+    // With an explicit config, a `--stream-stdio` typo would otherwise be a
+    // silent forever-retry; validate the declaration up front. (Without a
+    // config the sim starts later via WS, so the stdio task just waits.)
+    if let (Some(cfg), Some((sat, stream))) = (&initial_config, &stdio_key) {
+        let body = crate::satellite::parse_body(&cfg.body);
+        let declared = cfg.satellites.iter().enumerate().any(|(i, s)| {
+            let spec = s.to_satellite_spec(i, body, body.properties().mu);
+            spec.id == *sat && spec.streams.iter().any(|n| n == stream)
+        });
+        if !declared {
+            panic!(
+                "Error: --stream-stdio {sat}/{stream} is not declared in the config (streams = [...])"
+            );
+        }
     }
 
     let texture_cache = Arc::new(TextureCache::new());
@@ -138,11 +185,26 @@ async fn async_server(sim: &SimArgs, port: u16) {
         ));
     }
 
+    // The stdio plug task drives stdin/stdout with the kble-socket protocol
+    // and signals shutdown when the peer (the kble harness that spawned us)
+    // closes the connection.
+    let shutdown_rx = stdio_key.clone().map(|(sat, stream)| {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(stream_bridge::run_stdio_plug(
+            Arc::clone(&bridge),
+            sat,
+            stream,
+            shutdown_tx,
+        ));
+        shutdown_rx
+    });
+
     let state = AppState {
         tx,
         cmd_tx,
         textures: texture_cache,
         bridge,
+        reserved_stdio: stdio_key,
     };
 
     let app = Router::new()
@@ -158,5 +220,37 @@ async fn async_server(sim: &SimArgs, port: u16) {
 
     let app = app.with_state(state);
 
-    axum::serve(listener, app).await.expect("server error");
+    match shutdown_rx {
+        Some(rx) => {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = rx.await;
+                    eprintln!("stdio plug closed; shutting down");
+                })
+                .await
+                .expect("server error");
+        }
+        None => axum::serve(listener, app).await.expect("server error"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_stream_stdio;
+
+    #[test]
+    fn parse_stream_stdio_accepts_sat_slash_stream() {
+        assert_eq!(
+            parse_stream_stdio("sat0/comlink"),
+            Ok(("sat0".to_string(), "comlink".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_stream_stdio_rejects_malformed_values() {
+        assert!(parse_stream_stdio("nodelimiter").is_err());
+        assert!(parse_stream_stdio("/comlink").is_err());
+        assert!(parse_stream_stdio("sat0/").is_err());
+        assert!(parse_stream_stdio("sat0/a/b").is_err());
+    }
 }

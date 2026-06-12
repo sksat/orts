@@ -658,7 +658,8 @@ core は host が所有する transport 非依存のキュー。各入力経路�
 - **bounded queue + overrun**: 双方向で有界。溢れたら **byte drop せず `overrun`**（drop はフレーム破壊を隠す）。guest には `Err(overrun)` を即時通知しつつ、**host が authoritative に sim を停止**する（guest が read しなくても halt）。
 - **named streams**: guest は自分の local 名（`"comlink"` / `"uart0"`）だけを見る。host が外部 URL の (sat, stream) に対応づけ、guest から他衛星 stream は不可。宣言は controller 構築時（config）に固定。
 - **live ブリッジ（実装済み）**: config で宣言した stream ごとに `orts serve` が **素の binary WebSocket** endpoint を公開する。**kble 専用プロトコルではない**（binary WS を喋るものなら何でも繋がる）— kble の `ws://` plug がちょうどこの形なのでそのまま刺さる、という関係。stream 宣言があると serve は **realtime pacing（1 sim 秒 = 1 wall 秒）** に自動切替し、controller tick ごとに wall clock と同期しつつ pump する。WS 切断は **transient**（guest の `closed` は latch しない・再接続可）、同一 stream への新接続は **後勝ち**（generation fencing）。peer 不在時の送信は破棄、接続中に peer が詰まったら halt（no-drop 契約）。使い方（URL 形式・kble spaghetti との対応）は `cli/src/commands/serve/stream_bridge.rs` の doc comment 参照。
-- **replay モード（将来）**: 録った byte chunks を tick-stamp して決定論再生。stdio (`exec:`) ブリッジも将来。
+- **stdio ブリッジ（実装済み）**: `orts serve --stream-stdio sat/stream` で宣言済み stream 1 本を stdin/stdout（kble-socket プロトコル = WebSocket over stdio）に配線し、kble の `exec:` plug の子プロセスとして動ける。stdio は**専有ケーブル**: 当該 stream の WS endpoint は 409、config reload は透過再 attach（FSW から見て連続リンク — WS の「再接続=新ストリーム」と意図的に非対称）、stdio close（harness 終了）で serve ごと graceful shutdown。
+- **replay モード（将来）**: 録った byte chunks を tick-stamp して決定論再生。
 - 将来の RF: `RF/channel → modem/decoder → byte stream → framing → message` の **データ面** seam として妥当。ただし RF observable（soft-decision / lock / SNR / 精密 RX 時刻・Doppler）は byte 継ぎ目で失われるので、必要なら別の sideband（modem を 1 デバイスとして模型化）で扱う。`stream-read` を variant にしてあるのは将来 gap/erasure イベントを足す余地のため（追加は API version bump）。
 
 ### ミッション規模と力学モデル
