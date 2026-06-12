@@ -99,7 +99,7 @@ export class CSVFileAdapter implements SourceAdapter {
 
     switch (msg.type) {
       case "metadata": {
-        // Defer info emission until first chunk arrives so dt is accurate
+        // Held until "complete", where info is emitted with the final dt
         this.pendingMetadata = msg.metadata;
         break;
       }
@@ -121,10 +121,11 @@ export class CSVFileAdapter implements SourceAdapter {
             this.lastTByEntity.set(key, p.t);
           }
         }
-        // Info emission is deferred to "complete": the first chunk may not
-        // contain a same-entity timestamp pair (many satellites interleaved,
-        // or a pair split across the chunk boundary), so dt is only final
-        // once every chunk has been scanned.
+        // Info emission is deferred to "complete": dt latches on the first
+        // same-entity increasing timestamp pair, which may only appear in a
+        // later chunk (many satellites interleaved, or a pair split across
+        // the chunk boundary), so emitting info here could bake in the
+        // fallback dt.
         this.onEvent(id, {
           kind: "history-chunk",
           points: msg.points,

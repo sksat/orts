@@ -70,11 +70,13 @@ export function useFileSource({ handleEvent }: UseFileSourceOptions): FileSource
     (file: File, onBeforeEmit?: () => void) => {
       // The CSV worker always produces metadata — even for junk input — so
       // an "info" event alone does not prove the file is valid. Gate source
-      // switching on the first non-empty history-chunk instead: buffer the
-      // info event, and only when actual data points arrive fire
-      // onBeforeEmit, flush the buffered info, and start forwarding.
-      // A file with zero valid rows therefore never disturbs the current
-      // source (matching the old synchronous-validation behavior).
+      // switching on the first non-empty history-chunk instead: only when
+      // actual data points arrive fire onBeforeEmit and start forwarding.
+      // The adapter emits info on "complete" (after the gate), which is
+      // forwarded directly; pre-gate info is buffered defensively in case
+      // the ordering ever changes. A file with zero valid rows therefore
+      // never disturbs the current source (matching the old
+      // synchronous-validation behavior).
       let pendingInfo: SourceEvent | null = null;
       let gateOpened = false;
       let pointCount = 0;
