@@ -286,17 +286,20 @@ export function App() {
 
   // Derived values
   const textureBaseUrl = useMemo(() => {
-    // High-res textures are served by a connected orts server, which downloads
-    // and resizes them on demand. Without a live server — file replay, or no
-    // connection — stay on the bundled 2K base rather than fetching resolutions
-    // that may not exist (which otherwise stalls on big decodes / 404 retries).
-    if (!wsSource.isConnected) return undefined;
-    try {
-      const u = new URL(wsUrl.replace(/^ws/, "http"));
-      return `${u.origin}/textures/`;
-    } catch {
-      return undefined;
+    // Prefer WS server when connected — it fetches and resizes textures on demand.
+    if (wsSource.isConnected) {
+      try {
+        const u = new URL(wsUrl.replace(/^ws/, "http"));
+        return `${u.origin}/textures/`;
+      } catch {
+        return undefined;
+      }
     }
+    // Static deployments that ship high-res textures alongside the viewer can
+    // set VITE_TEXTURE_BASE_URL at build time (e.g. /orts/viewer/textures/).
+    // Without the env var — local dev without a server, third-party embeds —
+    // we keep the bundled 2K and avoid probing paths that likely don't exist.
+    return import.meta.env.VITE_TEXTURE_BASE_URL ?? undefined;
   }, [wsSource.isConnected, wsUrl]);
 
   const satelliteNames = useMemo(() => {
