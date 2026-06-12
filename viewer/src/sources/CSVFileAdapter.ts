@@ -29,7 +29,9 @@ export class CSVFileAdapter implements SourceAdapter {
   }
 
   start(): void {
-    // Reset state for restartability
+    // Make restart safe: kill any in-flight read/worker first, then reset
+    // per-load state (stop() sets `stopped`; the reset below re-arms it).
+    this.stop();
     this.estimatedDt = null;
     this.lastTByEntity.clear();
     this.pendingMetadata = null;
