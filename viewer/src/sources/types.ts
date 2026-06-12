@@ -1,8 +1,10 @@
 /**
  * Source-based data architecture types.
  *
- * All data inputs (WebSocket, CSV files, RRD files) are abstracted as
- * SourceAdapters that emit SourceEvents into a unified pipeline.
+ * Every data input normalizes into the SourceEvent stream consumed by
+ * useSourceRuntime / eventDispatcher. The live WebSocket path bridges
+ * through the useWebSocket hook (see useWebSocketSource); file-replay
+ * sources (CSV, RRD) implement the SourceAdapter interface.
  */
 
 import type { SatelliteInfo, SimInfo } from "../hooks/useWebSocket.js";
@@ -11,20 +13,12 @@ import type { OrbitPoint } from "../orbit.js";
 // Re-export for convenience
 export type { SatelliteInfo, SimInfo };
 
-// Source specification
-
-/** Describes how to connect to / load a data source. */
-export type SourceSpec =
-  | { type: "websocket"; url: string }
-  | { type: "csv-file"; file: File }
-  | { type: "rrd-file"; file: File }; // Phase 2+
-
 /** Opaque identifier for a source instance. */
 export type SourceId = string;
 
 // Source events (discriminated union)
 
-/** Events emitted by a SourceAdapter into the runtime. */
+/** Events emitted by a source into the runtime. */
 export type SourceEvent =
   | { kind: "info"; info: SimInfo }
   | { kind: "state"; point: OrbitPoint }
@@ -40,21 +34,12 @@ export type SourceEvent =
   | { kind: "server-state"; state: string }
   | { kind: "error"; message: string }
   | { kind: "textures-ready"; body: string }
-  | { kind: "progress"; loaded: number; total: number }
   | { kind: "complete" };
 
-// Source capabilities & connection state
-
-/** What a source can do. */
-export interface SourceCapabilities {
-  /** Source is still receiving new data (WS streaming). */
-  live: boolean;
-  /** Can send control messages (pause/resume/terminate). */
-  control: boolean;
-  /** Supports query_range requests. */
-  rangeQuery: boolean;
-}
-
+/**
+ * Runtime-level connection state, derived from the event stream by
+ * the event dispatcher (not reported by sources themselves).
+ */
 export type SourceConnectionState =
   | "disconnected"
   | "connecting"
@@ -65,27 +50,23 @@ export type SourceConnectionState =
 
 // Source adapter interface
 
-/** Callback signature for receiving events from an adapter. */
+/** Callback signature for receiving events from a source. */
 export type SourceEventHandler = (sourceId: SourceId, event: SourceEvent) => void;
 
 /**
- * Abstract interface for a data source.
+ * File-replay source adapter (CSV, RRD).
  *
- * Implementations: WebSocketAdapter, CSVFileAdapter, (future) RrdFileAdapter.
- * Each adapter normalizes its transport-specific protocol into SourceEvents.
+ * Each adapter parses its file format off the main thread and normalizes
+ * the result into SourceEvents. The live WebSocket path does not implement
+ * this interface — it bridges through useWebSocket/useWebSocketSource,
+ * which owns React connection state and the typed control channel.
  */
 export interface SourceAdapter {
   readonly sourceId: SourceId;
-  readonly spec: SourceSpec;
-  readonly capabilities: SourceCapabilities;
-  readonly connectionState: SourceConnectionState;
 
-  /** Start receiving data. Events are emitted via the handler passed at construction. */
+  /** Start loading. Events are emitted via the handler passed at construction. */
   start(): void;
 
-  /** Stop receiving data and clean up resources. */
+  /** Stop loading and clean up resources (abort reader, terminate worker). */
   stop(): void;
-
-  /** Send a control message (only meaningful for WS adapters). */
-  send?(msg: Record<string, unknown>): void;
 }

@@ -145,7 +145,7 @@ change.
 sequenceDiagram
   participant sim as orts-cli serve
   participant ws as WebSocket :9001
-  participant src as SourceAdapter
+  participant src as Source layer
   participant trail as TrailBuffer (GPU)
   participant chart as ChartBuffer (ring)
   participant duck as DuckDB (uneri)
@@ -165,9 +165,11 @@ sequenceDiagram
 - **History path (cold):** `IngestBuffer` → DuckDB is the cache used for
   zoom, downsampling, and post-hoc queries. Eventually consistent with
   the ring buffer.
-- **Source abstraction:** `WebSocketAdapter` / `CSVFileAdapter` /
-  `RrdFileAdapter` all normalize into the same `SourceEvent` stream,
-  so live and replay go through one pipeline.
+- **Source abstraction:** every input normalizes into the same
+  `SourceEvent` stream, so live and replay go through one pipeline.
+  The live WebSocket path bridges through the `useWebSocket` hook
+  (`useWebSocketSource`); file replay (`CSVFileAdapter` /
+  `RrdFileAdapter`) parses off the main thread in Web Workers.
 
 ## 6. Design principles
 

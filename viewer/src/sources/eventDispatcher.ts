@@ -279,9 +279,6 @@ export function createEventDispatcher(
           }
         }
         break;
-
-      case "progress":
-        break;
     }
   };
 }
