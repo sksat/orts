@@ -86,14 +86,13 @@ export interface CentralBody {
  * - `centralBody` + `inertial` — ECI-like, central body at the origin (default).
  * - `centralBody` + `bodyFixed` — body-fixed (ECEF-like); the body is static and
  *   positions rotate with it.
- * - `{ satelliteId }` + `inertial` — that satellite at the origin, inertial axes.
+ * - `{ satelliteId }` + `inertial` — that satellite at the origin with the axes
+ *   star-fixed: the central body appears to move around the satellite as it
+ *   orbits, and the camera does not co-rotate.
  * - `{ satelliteId }` + `localOrbital` — that satellite at the origin, LVLH axes
- *   (radial / along-track / cross-track). Requires the satellite's velocity;
- *   falls back to `inertial` if it's missing.
- *
- * KNOWN LIMITATION (#90): satellite-centred views currently always render in
- * LVLH when velocity is available — the `inertial` vs `localOrbital` choice is
- * not yet honoured for a satellite centre.
+ *   (radial / along-track / cross-track): the central body stays "below" as the
+ *   satellite orbits. Requires the satellite's velocity; without it the view
+ *   falls back to a radial-up camera follow.
  */
 export type ViewerReferenceFrame =
   | { center: "centralBody"; orientation?: "inertial" | "bodyFixed" }

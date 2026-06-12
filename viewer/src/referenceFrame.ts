@@ -3,7 +3,9 @@
  *
  * A reference frame has two components:
  * - **center**: which object is at the origin (central body, satellite, etc.)
- * - **orientation**: how the axes are aligned (inertial or body-fixed)
+ * - **orientation**: how the axes are aligned — inertial, body-fixed (rotating
+ *   with the central body), or local-orbital (LVLH; following the centred
+ *   entity's orbit, only meaningful with a satellite centre)
  */
 
 /** Center of the reference frame (what object is at the origin). */
@@ -14,7 +16,7 @@ export type FrameCenter =
   | { type: "satellite"; id: string };
 
 /** Orientation of the reference frame axes. */
-export type FrameOrientation = "inertial" | "body_fixed";
+export type FrameOrientation = "inertial" | "body_fixed" | "local_orbital";
 
 /** Complete reference frame specification. */
 export interface ReferenceFrame {

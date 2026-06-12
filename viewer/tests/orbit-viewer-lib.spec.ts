@@ -96,6 +96,42 @@ test("local-orbital (LVLH) frame renders without error", async ({ page }) => {
   expect((await readTrail(page))?.length).toBeGreaterThan(0);
 });
 
+test("satellite-centred inertial and LVLH are distinct frames (#90)", async ({ page }) => {
+  type SceneFrame = {
+    lvlhActive: boolean;
+    cameraTracking: boolean;
+    originPosition: [number, number, number] | null;
+  };
+  // The scene mounts inside the r3f reconciler, whose effects can flush after
+  // the page-level ones — wait for the global rather than reading immediately.
+  const readFrame = async () => {
+    await page.waitForFunction(
+      () => (window as unknown as { __debug_scene_frame?: unknown }).__debug_scene_frame != null,
+      undefined,
+      { timeout: 10000 },
+    );
+    return page.evaluate(
+      () => (window as unknown as { __debug_scene_frame?: SceneFrame }).__debug_scene_frame ?? null,
+    );
+  };
+
+  // LVLH: data is transformed into the orbit frame; the camera stays put.
+  await page.goto("/examples/orbit-viewer/?frame=lvlh&animate=0");
+  await waitForTrail(page);
+  const lvlh = await readFrame();
+  expect(lvlh?.lvlhActive).toBe(true);
+  expect(lvlh?.cameraTracking).toBe(false);
+
+  // Inertial: satellite is still centred, but axes stay star-fixed —
+  // no LVLH data transform and no camera co-rotation.
+  await page.goto("/examples/orbit-viewer/?frame=sat&animate=0");
+  await waitForTrail(page);
+  const inertial = await readFrame();
+  expect(inertial?.originPosition).not.toBeNull();
+  expect(inertial?.lvlhActive).toBe(false);
+  expect(inertial?.cameraTracking).toBe(false);
+});
+
 test("a marker-only satellite (no trail prop) gets no trail buffer", async ({ page }) => {
   await page.goto("/examples/orbit-viewer/?animate=0");
   await waitForTrail(page); // scene is up: the demo satellite's trail is filled

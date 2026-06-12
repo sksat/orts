@@ -43,12 +43,26 @@ describe("resolveFrameContext — central body", () => {
 describe("resolveFrameContext — satellite centred", () => {
   const get = lookup({ a: sat([7000, 0, 0], [0, 7.5, 0]) });
 
-  it("inertial: origin at the satellite, no LVLH axes", () => {
+  it("inertial: origin at the satellite, no LVLH axes, internal orientation inertial", () => {
     const ctx = resolveFrameContext({ center: { satelliteId: "a" }, orientation: "inertial" }, get);
-    expect(ctx.referenceFrame.center).toEqual({ type: "satellite", id: "a" });
+    expect(ctx.referenceFrame).toEqual({
+      center: { type: "satellite", id: "a" },
+      orientation: "inertial",
+    });
     expect(ctx.originPosition).toEqual([7000, 0, 0]);
     expect(ctx.lvlhAxes).toBeNull();
     expect(ctx.localOrbitalFallback).toBe(false);
+  });
+
+  it("localOrbital: maps to the internal local_orbital orientation (#90)", () => {
+    const ctx = resolveFrameContext(
+      { center: { satelliteId: "a" }, orientation: "localOrbital" },
+      get,
+    );
+    expect(ctx.referenceFrame).toEqual({
+      center: { type: "satellite", id: "a" },
+      orientation: "local_orbital",
+    });
   });
 
   it("localOrbital: computes LVLH axes (radial = normalized position)", () => {
