@@ -26,9 +26,19 @@
 //! links: { sat0_comlink: gs, gs: sat0_comlink }
 //! ```
 //!
-//! (kble's `exec:` plugs speak the kble-socket protocol over stdio — not raw
-//! bytes — so processes wired via `exec:` need kble-socket, while `ws://`
-//! plugs work as-is.)
+//! Alternatively, kble can spawn orts itself as an `exec:` plug: kble's
+//! exec plugs speak the kble-socket protocol (WebSocket over stdio), which
+//! `--stream-stdio sat/stream` serves via [`run_stdio_plug`]:
+//!
+//! ```yaml
+//! plugs:
+//!   orts: "exec:/path/to/launch-orts.sh"   # orts serve --config … --stream-stdio sat0/comlink
+//!   gs: ws://…
+//! links: { orts: gs, gs: orts }
+//! ```
+//!
+//! (kble passes the `exec:` URL path to `sh -c` without percent-decoding,
+//! so command lines with spaces must be wrapped in a script.)
 //!
 //! ## Architecture
 //!
@@ -227,6 +237,137 @@ impl StreamEndpoint {
             Err(mpsc::error::TrySendError::Full(_)) => OutboundPush::Stuck,
         }
     }
+}
+
+/// Drive the stdio plug for `(sat, stream)`: stdin/stdout speak the
+/// kble-socket protocol (WebSocket over stdio) — the shape of a kble `exec:`
+/// plug, where kble spawns `orts serve --stream-stdio sat/stream` as a child
+/// and wires its stdio into the harness.
+///
+/// Unlike a WS connection, the stdio peer is a permanently-attached cable:
+/// - it is exclusive (the WS endpoint for this stream answers 409), so
+///   last-wins fencing never applies to it;
+/// - a config reload (endpoint defunct / writer channel closed) re-attaches
+///   transparently to the fresh endpoint — the FSW sees one continuous
+///   link, like a serial cable that stays plugged across resets;
+/// - when the peer closes the connection (harness teardown), the whole
+///   server shuts down via `shutdown` — kble owns this process.
+pub async fn run_stdio_plug(
+    bridge: Arc<StreamBridge>,
+    sat: String,
+    stream: String,
+    shutdown: tokio::sync::oneshot::Sender<()>,
+) {
+    let (mut sink, mut socket_rx) = kble_socket::from_stdio().await;
+    log::info!("stream-io stdio plug active: {sat}/{stream}");
+
+    // Bytes received while no endpoint exists yet (sim not started / reload
+    // gap), delivered right after attaching. Bounded like any other stream
+    // buffer — and the socket keeps being polled during the wait so a
+    // harness hang-up in that window still shuts the server down.
+    let mut pending: Vec<u8> = Vec::new();
+
+    'attach: loop {
+        // Resolve the endpoint, waiting out "sim not started yet" / "config
+        // reloading" windows (both legitimate idle states for serve).
+        let endpoint = {
+            let mut waited = 0u32;
+            loop {
+                if let Some(ep) = bridge.lookup(&sat, &stream) {
+                    break ep;
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                        waited += 1;
+                        if waited.is_multiple_of(20) {
+                            eprintln!(
+                                "stream-io stdio plug: waiting for endpoint {sat}/{stream} \
+                                 (no running simulation declares it yet)"
+                            );
+                        }
+                    }
+                    item = socket_rx.next() => match item {
+                        Some(Ok(bytes)) => {
+                            if pending.len() + bytes.len() > STAGING_CAPACITY {
+                                log::error!(
+                                    "stream-io stdio plug: over {STAGING_CAPACITY} bytes \
+                                     buffered with no simulation declaring {sat}/{stream}; \
+                                     giving up"
+                                );
+                                break 'attach;
+                            }
+                            pending.extend_from_slice(&bytes);
+                        }
+                        Some(Err(e)) => {
+                            log::warn!("stream-io stdio plug protocol error: {e}");
+                            break 'attach;
+                        }
+                        // EOF / Close while idle: the harness hung up.
+                        None => break 'attach,
+                    },
+                }
+            }
+        };
+        let Some((generation, mut out_rx)) = endpoint.attach_peer() else {
+            // Lost a race with a teardown between lookup and attach.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            continue 'attach;
+        };
+        log::info!("stream-io stdio plug attached: {sat}/{stream} (generation {generation})");
+
+        // Deliver anything that arrived before the endpoint existed.
+        if !pending.is_empty() {
+            match endpoint.push_inbound(generation, &pending) {
+                InboundPush::Ok => pending.clear(),
+                InboundPush::Defunct => continue 'attach,
+                InboundPush::StaleGeneration => {
+                    log::warn!("stream-io stdio plug displaced on {sat}/{stream}; stopping");
+                    break 'attach;
+                }
+            }
+        }
+
+        loop {
+            tokio::select! {
+                item = socket_rx.next() => match item {
+                    Some(Ok(bytes)) => match endpoint.push_inbound(generation, &bytes) {
+                        InboundPush::Ok => {}
+                        // Reload: re-attach to the fresh endpoint.
+                        InboundPush::Defunct => continue 'attach,
+                        // Cannot happen while the stream is reserved for
+                        // stdio (the WS route answers 409); treat as a
+                        // broken invariant and stop rather than fight.
+                        InboundPush::StaleGeneration => {
+                            log::warn!(
+                                "stream-io stdio plug displaced on {sat}/{stream}; stopping"
+                            );
+                            break 'attach;
+                        }
+                    },
+                    Some(Err(e)) => {
+                        log::warn!("stream-io stdio plug protocol error: {e}");
+                        break 'attach;
+                    }
+                    // EOF / Close: the harness hung up.
+                    None => break 'attach,
+                },
+                out = out_rx.recv() => match out {
+                    Some(bytes) => {
+                        if let Err(e) = sink.send(bytes::Bytes::from(bytes)).await {
+                            log::warn!("stream-io stdio plug write failed: {e}");
+                            break 'attach;
+                        }
+                    }
+                    // Writer channel replaced/dropped (teardown): re-attach.
+                    None => continue 'attach,
+                },
+            }
+        }
+    }
+
+    // The stdio peer is gone (or unrecoverable): this process exists to be
+    // the harness's plug, so shut the server down.
+    let _ = shutdown.send(());
 }
 
 /// Drive one WS connection for `(sat, stream)`: socket → staging (inbound)
