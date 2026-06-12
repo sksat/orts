@@ -261,6 +261,12 @@ pub async fn run_stdio_plug(
     let (mut sink, mut socket_rx) = kble_socket::from_stdio().await;
     log::info!("stream-io stdio plug active: {sat}/{stream}");
 
+    // Bytes received while no endpoint exists yet (sim not started / reload
+    // gap), delivered right after attaching. Bounded like any other stream
+    // buffer — and the socket keeps being polled during the wait so a
+    // harness hang-up in that window still shuts the server down.
+    let mut pending: Vec<u8> = Vec::new();
+
     'attach: loop {
         // Resolve the endpoint, waiting out "sim not started yet" / "config
         // reloading" windows (both legitimate idle states for serve).
@@ -270,13 +276,35 @@ pub async fn run_stdio_plug(
                 if let Some(ep) = bridge.lookup(&sat, &stream) {
                     break ep;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                waited += 1;
-                if waited.is_multiple_of(20) {
-                    eprintln!(
-                        "stream-io stdio plug: waiting for endpoint {sat}/{stream} \
-                         (no running simulation declares it yet)"
-                    );
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                        waited += 1;
+                        if waited.is_multiple_of(20) {
+                            eprintln!(
+                                "stream-io stdio plug: waiting for endpoint {sat}/{stream} \
+                                 (no running simulation declares it yet)"
+                            );
+                        }
+                    }
+                    item = socket_rx.next() => match item {
+                        Some(Ok(bytes)) => {
+                            if pending.len() + bytes.len() > STAGING_CAPACITY {
+                                log::error!(
+                                    "stream-io stdio plug: over {STAGING_CAPACITY} bytes \
+                                     buffered with no simulation declaring {sat}/{stream}; \
+                                     giving up"
+                                );
+                                break 'attach;
+                            }
+                            pending.extend_from_slice(&bytes);
+                        }
+                        Some(Err(e)) => {
+                            log::warn!("stream-io stdio plug protocol error: {e}");
+                            break 'attach;
+                        }
+                        // EOF / Close while idle: the harness hung up.
+                        None => break 'attach,
+                    },
                 }
             }
         };
@@ -286,6 +314,18 @@ pub async fn run_stdio_plug(
             continue 'attach;
         };
         log::info!("stream-io stdio plug attached: {sat}/{stream} (generation {generation})");
+
+        // Deliver anything that arrived before the endpoint existed.
+        if !pending.is_empty() {
+            match endpoint.push_inbound(generation, &pending) {
+                InboundPush::Ok => pending.clear(),
+                InboundPush::Defunct => continue 'attach,
+                InboundPush::StaleGeneration => {
+                    log::warn!("stream-io stdio plug displaced on {sat}/{stream}; stopping");
+                    break 'attach;
+                }
+            }
+        }
 
         loop {
             tokio::select! {

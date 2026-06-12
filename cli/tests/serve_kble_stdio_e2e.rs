@@ -266,3 +266,57 @@ async fn framed_command_round_trips_through_kble_exec_stdio() {
 
     kble_child.kill();
 }
+
+/// Idle serve (no config yet) + stdio plug: closing stdin must shut the
+/// server down even though no stream endpoint ever existed — the harness
+/// hang-up has to be observed while waiting for the endpoint, not only
+/// inside the attached pump. (No kble needed: EOF on the pipe is enough.)
+#[tokio::test]
+async fn stdio_eof_while_idle_shuts_the_server_down() {
+    let port = test_port() + 2;
+    let mut child = ChildGuard(
+        Command::new(orts_binary())
+            .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
+            .args([
+                "serve",
+                "--port",
+                &port.to_string(),
+                "--stream-stdio",
+                "sat0/comlink",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn orts serve"),
+    );
+
+    // Wait for the server to come up (stderr line), then hang up stdin.
+    let stderr = child.0.stderr.take().expect("stderr");
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            eprintln!("[server stderr] {line}");
+            if line.contains("Server listening on") {
+                let _ = tx.send(());
+            }
+        }
+    });
+    rx.recv_timeout(Duration::from_secs(15))
+        .expect("server did not start");
+    drop(child.0.stdin.take());
+
+    // The idle stdio plug must observe the EOF and bring the server down.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child.0.try_wait().expect("try_wait") {
+            eprintln!("server exited: {status}");
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "server did not exit within 10 s of stdio EOF"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
