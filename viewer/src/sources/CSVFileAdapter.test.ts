@@ -72,7 +72,7 @@ function collectEvents(sourceId: SourceId) {
 }
 
 describe("CSVFileAdapter", () => {
-  it("defers info event until first chunk arrives (dt estimation)", () => {
+  it("defers info event until complete (dt needs the full file)", () => {
     const { events, handler } = collectEvents("csv-0");
     const file = new File(["0,7000,0,0,0,7.5,0"], "test.csv");
     const adapter = new CSVFileAdapter("csv-0", file, handler);
@@ -119,13 +119,17 @@ describe("CSVFileAdapter", () => {
     const point2 = { ...point1, t: 5 };
     worker.simulateMessage({ type: "chunk", points: [point1, point2] });
 
-    expect(events).toHaveLength(2); // info + history-chunk
-    expect(events[0].kind).toBe("info");
-    if (events[0].kind === "info") {
-      expect(events[0].info.epoch_jd).toBe(2451545.0);
-      expect(events[0].info.dt).toBe(5); // estimated from points
+    // Chunks stream through immediately; info waits for the final dt
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe("history-chunk");
+
+    worker.simulateMessage({ type: "complete", totalPoints: 2 });
+    const info = events.find((e) => e.kind === "info");
+    expect(info).toBeDefined();
+    if (info?.kind === "info") {
+      expect(info.info.epoch_jd).toBe(2451545.0);
+      expect(info.info.dt).toBe(5); // estimated from points
     }
-    expect(events[1].kind).toBe("history-chunk");
   });
 
   it("emits history-chunk events from chunk worker messages", async () => {
@@ -239,7 +243,8 @@ describe("CSVFileAdapter", () => {
       return { events, worker };
     }
 
-    function infoDt(events: SourceEvent[]): number | undefined {
+    function completeAndGetDt(worker: MockWorker, events: SourceEvent[]): number | undefined {
+      worker.simulateMessage({ type: "complete", totalPoints: 0 });
       const info = events.find((e) => e.kind === "info");
       return info?.kind === "info" ? info.info.dt : undefined;
     }
@@ -251,25 +256,23 @@ describe("CSVFileAdapter", () => {
         type: "chunk",
         points: [makePoint("sat1", 0), makePoint("sat2", 0), makePoint("sat1", 5)],
       });
-      expect(infoDt(events)).toBe(5);
+      expect(completeAndGetDt(worker, events)).toBe(5);
     });
 
     it("persists last-seen timestamps across chunk boundaries", () => {
       const { events, worker } = startAdapter();
-      // First chunk has one point per entity — no same-entity pair yet,
-      // so info falls back to the default dt for this chunk...
+      // First chunk has one point per entity — no same-entity pair yet.
       worker.simulateMessage({
         type: "chunk",
         points: [makePoint("sat1", 0), makePoint("sat2", 0)],
       });
-      // ...but the second chunk's sat1@7 pairs with chunk 1's sat1@0.
+      // The second chunk's sat1@7 pairs with chunk 1's sat1@0, and info
+      // is deferred to complete, so the estimate is exact.
       worker.simulateMessage({
         type: "chunk",
         points: [makePoint("sat1", 7), makePoint("sat2", 7)],
       });
-      // Info was already emitted on the first chunk with the fallback dt;
-      // what must NOT happen is a dt=0 latch from the equal-t interleave.
-      expect(infoDt(events)).not.toBe(0);
+      expect(completeAndGetDt(worker, events)).toBe(7);
     });
 
     it("estimates dt from consecutive same-entity points in one chunk", () => {
@@ -283,7 +286,7 @@ describe("CSVFileAdapter", () => {
           makePoint("sat2", 2.5),
         ],
       });
-      expect(infoDt(events)).toBe(2.5);
+      expect(completeAndGetDt(worker, events)).toBe(2.5);
     });
   });
 });

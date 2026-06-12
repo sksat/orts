@@ -121,16 +121,10 @@ export class CSVFileAdapter implements SourceAdapter {
             this.lastTByEntity.set(key, p.t);
           }
         }
-        // Emit info event on first chunk (now dt is known)
-        if (!this.infoEmitted && this.pendingMetadata) {
-          const info = csvMetadataToSimInfo(
-            this.pendingMetadata,
-            this.file.name,
-            this.estimatedDt ?? CSVFileAdapter.DEFAULT_DT,
-          );
-          this.onEvent(id, { kind: "info", info });
-          this.infoEmitted = true;
-        }
+        // Info emission is deferred to "complete": the first chunk may not
+        // contain a same-entity timestamp pair (many satellites interleaved,
+        // or a pair split across the chunk boundary), so dt is only final
+        // once every chunk has been scanned.
         this.onEvent(id, {
           kind: "history-chunk",
           points: msg.points,
@@ -140,7 +134,7 @@ export class CSVFileAdapter implements SourceAdapter {
       }
 
       case "complete":
-        // Emit info if never emitted (e.g., file with metadata but no valid data rows)
+        // Emit info with the final dt estimate before signalling completion
         if (!this.infoEmitted && this.pendingMetadata) {
           const info = csvMetadataToSimInfo(
             this.pendingMetadata,
