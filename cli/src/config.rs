@@ -358,6 +358,11 @@ pub struct SatelliteConfig {
     #[serde(alias = "thrusters")]
     #[ts(optional)]
     pub thruster: Option<ThrusterConfig>,
+    /// stream-io の名前付きバイトストリーム宣言（kble 統合）。
+    /// 宣言した stream は serve の `ws://…/stream/{sat}/{name}` に公開される。
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub streams: Vec<String>,
 }
 
 /// Orbit specification in config files.
@@ -500,6 +505,7 @@ impl SatelliteConfig {
             rw_config: self.reaction_wheels.clone(),
             mtq_config: self.mtq.clone(),
             thruster_config: self.thruster.clone(),
+            streams: self.streams.clone(),
         }
     }
 }
@@ -799,6 +805,7 @@ mod tests {
             reaction_wheels: None,
             mtq: None,
             thruster: None,
+            streams: Vec::new(),
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -835,6 +842,7 @@ mod tests {
             reaction_wheels: None,
             mtq: None,
             thruster: None,
+            streams: Vec::new(),
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -862,6 +870,7 @@ mod tests {
             reaction_wheels: None,
             mtq: None,
             thruster: None,
+            streams: Vec::new(),
         };
         let body = KnownBody::Earth;
         let mu = body.properties().mu;
@@ -967,6 +976,7 @@ satellites:
                 reaction_wheels: None,
                 mtq: None,
                 thruster: None,
+                streams: Vec::new(),
             }],
             commands: vec![],
         };
@@ -1142,6 +1152,34 @@ satellites:
             && (*max_momentum - 1.0).abs() < 1e-9
             && (*max_torque - 0.5).abs() < 1e-9
         ));
+    }
+
+    #[test]
+    fn deserialize_satellite_streams() {
+        let toml = r#"
+[[satellites]]
+orbit = { type = "circular", altitude = 400 }
+streams = ["comlink", "uart0"]
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        let body = KnownBody::Earth;
+        let spec = config.satellites[0].to_satellite_spec(0, body, body.properties().mu);
+        assert_eq!(
+            spec.streams,
+            vec!["comlink".to_string(), "uart0".to_string()]
+        );
+    }
+
+    #[test]
+    fn satellite_streams_default_empty() {
+        let toml = r#"
+[[satellites]]
+orbit = { type = "circular", altitude = 400 }
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        let body = KnownBody::Earth;
+        let spec = config.satellites[0].to_satellite_spec(0, body, body.properties().mu);
+        assert!(spec.streams.is_empty());
     }
 
     #[test]

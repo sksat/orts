@@ -61,6 +61,9 @@ pub struct SatelliteSpec {
     /// Thruster configuration (plugin-commanded thruster assembly).
     #[allow(dead_code)]
     pub thruster_config: Option<crate::config::ThrusterConfig>,
+    /// Declared stream-io byte streams (kble bridge). Passed to the WASM
+    /// controller at construction; exposed by `serve` as binary WS endpoints.
+    pub streams: Vec<String>,
 }
 
 impl SatelliteSpec {
@@ -254,6 +257,7 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         rw_config: None,
         mtq_config: None,
         thruster_config: None,
+        streams: Vec::new(),
     }
 }
 

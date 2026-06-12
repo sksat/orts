@@ -172,8 +172,9 @@ pub fn build_controlled_satellite(
     };
     let state = dynamics.initial_augmented_state(plant);
 
-    // コントローラを構築（cache 経由）。
-    let controller = build_controller(ctrl_config, &spec.id, ctx)?;
+    // コントローラを構築（cache 経由）。宣言された stream-io stream も
+    // ここで配線される（serve が WS endpoint として公開する）。
+    let controller = build_controller(ctrl_config, &spec.id, &spec.streams, ctx)?;
 
     // センサを構築。
     let sensors = build_sensor_bundle(spec.sensor_choices.as_deref());
@@ -339,6 +340,7 @@ pub fn step_controlled(
 fn build_controller(
     config: &ControllerConfig,
     label: &str,
+    streams: &[String],
     ctx: &mut ControlledBuildContext<'_>,
 ) -> Result<Box<dyn PluginController>, String> {
     match config {
@@ -350,7 +352,12 @@ fn build_controller(
                 ResolvedPluginBackend::Sync => {
                     let ctrl = ctx
                         .wasm_cache
-                        .build_sync_controller(wasm_path, label, &config_str)
+                        .build_sync_controller_with_streams(
+                            wasm_path,
+                            label,
+                            &config_str,
+                            streams.to_vec(),
+                        )
                         .map_err(|e| format!("WasmController build failed: {e}"))?;
                     Ok(Box::new(ctrl))
                 }
@@ -358,7 +365,12 @@ fn build_controller(
                 ResolvedPluginBackend::Async => {
                     let ctrl = ctx
                         .wasm_cache
-                        .build_async_controller(wasm_path, label, &config_str)
+                        .build_async_controller_with_streams(
+                            wasm_path,
+                            label,
+                            &config_str,
+                            streams.to_vec(),
+                        )
                         .map_err(|e| format!("AsyncWasmController build failed: {e}"))?;
                     Ok(Box::new(ctrl))
                 }
@@ -368,6 +380,7 @@ fn build_controller(
         ControllerConfig::Wasm { .. } => {
             let _ = ctx;
             let _ = label;
+            let _ = streams;
             Err("WASM controller requires the 'plugin-wasm' feature. \
              Rebuild with: cargo build --features plugin-wasm"
                 .to_string())

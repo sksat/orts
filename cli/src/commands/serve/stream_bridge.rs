@@ -1,0 +1,435 @@
+//! Binary WebSocket endpoints for `stream-io` byte streams.
+//!
+//! Each stream declared in the config (`streams = ["comlink"]` on a
+//! satellite) is exposed at `ws://…/stream/{sat_id}/{stream_name}` as a
+//! **plain binary WebSocket**: every binary message is a chunk of the byte
+//! stream, nothing more. This is not a kble-specific protocol — anything
+//! that speaks binary WS (websocat, custom ground tools, …) connects
+//! directly. orts stays a dumb byte conduit.
+//!
+//! ## Name correspondence
+//!
+//! The stream-name string is a contract across three places: the FSW code
+//! (`stream::read("comlink", …)`), the config declaration, and the endpoint
+//! URL path. Nothing else links them.
+//!
+//! ## kble integration
+//!
+//! An [`arkedge/kble`](https://github.com/arkedge/kble) `ws://` plug is
+//! exactly this shape, so wiring the FSW into a virtual harness is just
+//! pointing a plug at the endpoint URL in the spaghetti:
+//!
+//! ```yaml
+//! plugs:
+//!   sat0_comlink: ws://localhost:9001/stream/sat0/comlink
+//!   gs: ws://…   # any external tool
+//! links: { sat0_comlink: gs, gs: sat0_comlink }
+//! ```
+//!
+//! (kble's `exec:` plugs speak the kble-socket protocol over stdio — not raw
+//! bytes — so processes wired via `exec:` need kble-socket, while `ws://`
+//! plugs work as-is.)
+//!
+//! ## Architecture
+//!
+//! ```text
+//! WS reader task ──append──▶ staging buffer ──take_staged──▶ sim loop
+//!                                                       (stream_deliver)
+//! WS writer task ◀──mpsc──── push_outbound ◀──stream_take── sim loop
+//! ```
+//!
+//! - **Directory vs data path**: the [`StreamBridge`] map (`RwLock`) is only
+//!   for endpoint lookup; per-endpoint state lives behind a short-critical-
+//!   section `Mutex` (no `.await` while locked).
+//! - **Transient disconnect**: a WS peer dropping does *not* close the
+//!   guest-side stream (`stream_close` is never called) — the stream just
+//!   goes idle and a reconnect resumes it.
+//! - **Last-wins with generation fencing**: a new connection replaces the
+//!   active peer; the old connection's late inbound is rejected by
+//!   generation mismatch (kble reconnects can race the old socket teardown).
+//! - **No byte drops**: the inbound staging buffer is bounded; overflowing it
+//!   latches a flag that halts the simulation (mirroring the host-side
+//!   `stream-io` overrun contract). Outbound to a *connected but stuck* peer
+//!   likewise halts; outbound with *no* peer is discarded (transient policy).
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, RwLock};
+
+use axum::extract::ws::{Message, WebSocket};
+use futures_util::{SinkExt, StreamExt};
+use tokio::sync::mpsc;
+
+/// Bound for bytes staged between WS arrival and the next sim tick. Matches
+/// the per-direction stream capacity used by the guest-side buffers.
+const STAGING_CAPACITY: usize = 1 << 20;
+
+/// Chunks queued towards the WS writer task before the peer counts as stuck.
+const PEER_QUEUE_CHUNKS: usize = 64;
+
+/// Key: (satellite id, stream name).
+pub type StreamKey = (String, String);
+
+/// Registry shared between the axum handlers (lookup) and the sim loop
+/// (registration + pumping).
+#[derive(Default)]
+pub struct StreamBridge {
+    endpoints: RwLock<HashMap<StreamKey, Arc<StreamEndpoint>>>,
+}
+
+impl StreamBridge {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Install endpoints for the given keys, replacing the previous set.
+    /// Old endpoints are marked defunct so their lingering WS tasks shut
+    /// down instead of staging bytes nobody will drain (config reload).
+    pub fn reset(&self, keys: impl IntoIterator<Item = StreamKey>) {
+        let fresh: HashMap<StreamKey, Arc<StreamEndpoint>> = keys
+            .into_iter()
+            .map(|k| (k, Arc::new(StreamEndpoint::default())))
+            .collect();
+        let mut map = self.endpoints.write().expect("bridge lock poisoned");
+        for ep in map.values() {
+            let mut inner = ep.inner.lock().expect("endpoint lock poisoned");
+            inner.defunct = true;
+            // Drop the writer-side sender too: an *idle* connection's task
+            // only learns about the teardown through `out_rx` yielding
+            // `None` (it may never receive another inbound byte to observe
+            // `Defunct` on).
+            inner.peer_tx = None;
+        }
+        *map = fresh;
+    }
+
+    /// Look up the endpoint for `(sat, stream)`, if declared.
+    pub fn lookup(&self, sat: &str, stream: &str) -> Option<Arc<StreamEndpoint>> {
+        self.endpoints
+            .read()
+            .expect("bridge lock poisoned")
+            .get(&(sat.to_string(), stream.to_string()))
+            .cloned()
+    }
+}
+
+/// One `(sat, stream)` endpoint.
+#[derive(Default)]
+pub struct StreamEndpoint {
+    inner: Mutex<EndpointInner>,
+}
+
+#[derive(Default)]
+struct EndpointInner {
+    /// Bumped on every `attach_peer`; inbound from older generations is
+    /// rejected (fencing against a half-dead predecessor socket).
+    generation: u64,
+    /// Bytes received from the active peer, awaiting the next sim tick.
+    staged: Vec<u8>,
+    /// Staging exceeded [`STAGING_CAPACITY`]. Sticky; halts the sim.
+    overflowed: bool,
+    /// Endpoint belongs to a torn-down sim context (config reload).
+    defunct: bool,
+    /// Sender towards the active peer's WS writer task.
+    peer_tx: Option<mpsc::Sender<Vec<u8>>>,
+}
+
+/// Result of staging inbound bytes from a WS reader task.
+#[derive(Debug, PartialEq, Eq)]
+pub enum InboundPush {
+    Ok,
+    /// A newer connection took over; the caller should close its socket.
+    StaleGeneration,
+    /// The sim context owning this endpoint is gone; close the socket.
+    Defunct,
+}
+
+/// Result of forwarding sim-produced bytes towards the active peer.
+#[derive(Debug, PartialEq, Eq)]
+pub enum OutboundPush {
+    Sent,
+    /// No connected peer — bytes discarded (transient-disconnect policy).
+    NoPeer,
+    /// Peer connected but its queue is full (not draining). The sim must
+    /// halt rather than drop or buffer without bound.
+    Stuck,
+}
+
+impl StreamEndpoint {
+    /// Register a new active peer (last-wins). Returns the connection's
+    /// generation token and the receiver feeding its WS writer task, or
+    /// `None` when the endpoint is defunct (a WS upgrade racing a config
+    /// reload / teardown) — nothing will ever pump it, so the caller must
+    /// close the socket instead of accepting into a void.
+    /// Replacing the previous sender ends the old writer task's `recv()`.
+    ///
+    /// A new connection starts a **fresh byte stream**: bytes staged by the
+    /// previous connection (and a latched staging overflow) are discarded
+    /// rather than spliced into the new peer's stream — interleaving two
+    /// connections' bytes would corrupt framing nondeterministically. Same
+    /// semantics as re-plugging a serial cable.
+    pub fn attach_peer(&self) -> Option<(u64, mpsc::Receiver<Vec<u8>>)> {
+        let (tx, rx) = mpsc::channel(PEER_QUEUE_CHUNKS);
+        let mut inner = self.inner.lock().expect("endpoint lock poisoned");
+        if inner.defunct {
+            return None;
+        }
+        inner.generation += 1;
+        inner.peer_tx = Some(tx);
+        inner.staged.clear();
+        inner.overflowed = false;
+        Some((inner.generation, rx))
+    }
+
+    /// Stage bytes from the WS reader task with generation `generation`.
+    pub fn push_inbound(&self, generation: u64, bytes: &[u8]) -> InboundPush {
+        let mut inner = self.inner.lock().expect("endpoint lock poisoned");
+        if inner.defunct {
+            return InboundPush::Defunct;
+        }
+        if generation != inner.generation {
+            return InboundPush::StaleGeneration;
+        }
+        if inner.staged.len() + bytes.len() > STAGING_CAPACITY {
+            // Don't drop bytes — latch overflow; the sim halts on next pump.
+            inner.overflowed = true;
+        } else {
+            inner.staged.extend_from_slice(bytes);
+        }
+        InboundPush::Ok
+    }
+
+    /// Drain everything staged since the last tick. `overflowed == true`
+    /// means bytes were lost to the bound — the caller must halt the sim.
+    pub fn take_staged(&self) -> (Vec<u8>, bool) {
+        let mut inner = self.inner.lock().expect("endpoint lock poisoned");
+        (std::mem::take(&mut inner.staged), inner.overflowed)
+    }
+
+    /// Forward FSW-produced bytes to the active peer (non-blocking; called
+    /// from the sync sim loop).
+    pub fn push_outbound(&self, bytes: Vec<u8>) -> OutboundPush {
+        let mut inner = self.inner.lock().expect("endpoint lock poisoned");
+        let Some(tx) = inner.peer_tx.as_ref() else {
+            return OutboundPush::NoPeer;
+        };
+        match tx.try_send(bytes) {
+            Ok(()) => OutboundPush::Sent,
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                // Writer task ended (peer disconnected): transient — drop the
+                // sender and discard, a reconnect will re-attach.
+                inner.peer_tx = None;
+                OutboundPush::NoPeer
+            }
+            // The unsent bytes are dropped, but `Stuck` makes the caller
+            // halt the simulation — the loss is loud, never silent (the
+            // no-drop contract is about not corrupting the stream while the
+            // sim keeps running).
+            Err(mpsc::error::TrySendError::Full(_)) => OutboundPush::Stuck,
+        }
+    }
+}
+
+/// Drive one WS connection for `(sat, stream)`: socket → staging (inbound)
+/// and writer queue → socket (outbound), until the peer disconnects, a newer
+/// connection takes over, or the owning sim context is torn down.
+pub async fn handle_stream_socket(
+    mut socket: WebSocket,
+    endpoint: Arc<StreamEndpoint>,
+    sat: String,
+    stream: String,
+) {
+    let Some((generation, mut out_rx)) = endpoint.attach_peer() else {
+        // Upgrade raced a sim teardown: the endpoint is defunct.
+        log::info!("stream-io peer rejected (endpoint defunct): {sat}/{stream}");
+        let _ = socket.close().await;
+        return;
+    };
+    log::info!("stream-io peer connected: {sat}/{stream} (generation {generation})");
+    let (mut ws_tx, mut ws_rx) = socket.split();
+
+    loop {
+        tokio::select! {
+            msg = ws_rx.next() => match msg {
+                Some(Ok(Message::Binary(bytes))) => {
+                    match endpoint.push_inbound(generation, &bytes) {
+                        InboundPush::Ok => {}
+                        InboundPush::StaleGeneration => {
+                            log::info!(
+                                "stream-io peer superseded: {sat}/{stream} (generation {generation})"
+                            );
+                            break;
+                        }
+                        InboundPush::Defunct => break,
+                    }
+                }
+                // kble plugs speak binary only; ignore text. Ping/pong is
+                // handled by axum automatically.
+                Some(Ok(Message::Close(_))) | None => break,
+                Some(Ok(_)) => {}
+                Some(Err(e)) => {
+                    log::warn!("stream-io socket error on {sat}/{stream}: {e}");
+                    break;
+                }
+            },
+            out = out_rx.recv() => match out {
+                Some(bytes) => {
+                    if ws_tx.send(Message::Binary(bytes.into())).await.is_err() {
+                        break;
+                    }
+                }
+                // Sender replaced (newer peer) or endpoint dropped.
+                None => break,
+            },
+        }
+    }
+    log::info!("stream-io peer disconnected: {sat}/{stream} (generation {generation})");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_only_registered_keys() {
+        let bridge = StreamBridge::new();
+        bridge.reset(vec![("sat0".into(), "comlink".into())]);
+        assert!(bridge.lookup("sat0", "comlink").is_some());
+        assert!(bridge.lookup("sat0", "uart0").is_none());
+        assert!(bridge.lookup("sat1", "comlink").is_none());
+    }
+
+    #[test]
+    fn inbound_stages_and_drains() {
+        let ep = StreamEndpoint::default();
+        let (generation, _rx) = ep.attach_peer().expect("attach");
+        assert_eq!(ep.push_inbound(generation, &[1, 2]), InboundPush::Ok);
+        assert_eq!(ep.push_inbound(generation, &[3]), InboundPush::Ok);
+        assert_eq!(ep.take_staged(), (vec![1, 2, 3], false));
+        assert_eq!(ep.take_staged(), (vec![], false));
+    }
+
+    #[test]
+    fn staging_overflow_latches_without_dropping_silently() {
+        let ep = StreamEndpoint::default();
+        let (generation, _rx) = ep.attach_peer().expect("attach");
+        ep.push_inbound(generation, &vec![0u8; STAGING_CAPACITY]);
+        ep.push_inbound(generation, &[1]); // would exceed → latch
+        let (bytes, overflowed) = ep.take_staged();
+        assert_eq!(bytes.len(), STAGING_CAPACITY);
+        assert!(overflowed, "overflow must be reported, not silent");
+    }
+
+    #[test]
+    fn new_peer_fences_out_the_old_one() {
+        let ep = StreamEndpoint::default();
+        let (old_generation, mut old_rx) = ep.attach_peer().expect("attach");
+        let (new_generation, _new_rx) = ep.attach_peer().expect("attach");
+        assert_ne!(old_generation, new_generation);
+        // Old connection's late inbound is rejected.
+        assert_eq!(
+            ep.push_inbound(old_generation, &[9]),
+            InboundPush::StaleGeneration
+        );
+        // New connection works.
+        assert_eq!(ep.push_inbound(new_generation, &[1]), InboundPush::Ok);
+        // The old writer's channel is closed (sender replaced + dropped).
+        assert!(matches!(
+            old_rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn outbound_without_peer_is_discarded() {
+        let ep = StreamEndpoint::default();
+        assert_eq!(ep.push_outbound(vec![1, 2]), OutboundPush::NoPeer);
+    }
+
+    #[test]
+    fn outbound_to_disconnected_peer_downgrades_to_no_peer() {
+        let ep = StreamEndpoint::default();
+        let (_generation, rx) = ep.attach_peer().expect("attach");
+        drop(rx); // peer writer task ended
+        assert_eq!(ep.push_outbound(vec![1]), OutboundPush::NoPeer);
+        assert_eq!(ep.push_outbound(vec![2]), OutboundPush::NoPeer);
+    }
+
+    #[test]
+    fn outbound_to_stuck_peer_reports_stuck() {
+        let ep = StreamEndpoint::default();
+        let (_generation, _rx) = ep.attach_peer().expect("attach");
+        // Fill the writer queue without draining it.
+        let mut last = OutboundPush::Sent;
+        for _ in 0..=PEER_QUEUE_CHUNKS {
+            last = ep.push_outbound(vec![0]);
+        }
+        assert_eq!(last, OutboundPush::Stuck);
+    }
+
+    #[test]
+    fn reset_marks_old_endpoints_defunct() {
+        let bridge = StreamBridge::new();
+        bridge.reset(vec![("sat0".into(), "comlink".into())]);
+        let ep = bridge.lookup("sat0", "comlink").unwrap();
+        let (generation, _rx) = ep.attach_peer().expect("attach");
+        bridge.reset(vec![("sat0".into(), "comlink".into())]);
+        // Old Arc still held by a lingering WS task → must report defunct.
+        assert_eq!(ep.push_inbound(generation, &[1]), InboundPush::Defunct);
+        // The fresh endpoint is a different object and works.
+        let fresh = bridge.lookup("sat0", "comlink").unwrap();
+        let (g2, _rx2) = fresh.attach_peer().expect("attach");
+        assert_eq!(fresh.push_inbound(g2, &[1]), InboundPush::Ok);
+    }
+
+    #[test]
+    fn reset_ends_idle_connections_via_writer_channel() {
+        let bridge = StreamBridge::new();
+        bridge.reset(vec![("sat0".into(), "comlink".into())]);
+        let ep = bridge.lookup("sat0", "comlink").unwrap();
+        let (_generation, mut rx) = ep.attach_peer().expect("attach");
+        bridge.reset(Vec::new());
+        // An idle connection never observes `Defunct` through inbound; its
+        // task must end via the writer channel closing instead.
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Disconnected)
+        ));
+    }
+
+    #[test]
+    fn attach_to_defunct_endpoint_is_refused() {
+        let bridge = StreamBridge::new();
+        bridge.reset(vec![("sat0".into(), "comlink".into())]);
+        let ep = bridge.lookup("sat0", "comlink").unwrap();
+        bridge.reset(Vec::new()); // teardown races an in-flight upgrade
+        assert!(
+            ep.attach_peer().is_none(),
+            "a defunct endpoint must refuse new peers (nothing will pump it)"
+        );
+    }
+
+    #[test]
+    fn attach_starts_a_fresh_stream() {
+        let ep = StreamEndpoint::default();
+        let (g1, _rx1) = ep.attach_peer().expect("attach");
+        ep.push_inbound(g1, &[1, 2, 3]);
+        // Reconnect before the sim pumped: the old connection's tail must
+        // not be spliced into the new peer's stream.
+        let (g2, _rx2) = ep.attach_peer().expect("attach");
+        assert_eq!(ep.take_staged(), (vec![], false));
+        ep.push_inbound(g2, &[9]);
+        assert_eq!(ep.take_staged(), (vec![9], false));
+    }
+
+    #[test]
+    fn attach_clears_a_latched_overflow() {
+        let ep = StreamEndpoint::default();
+        let (g1, _rx1) = ep.attach_peer().expect("attach");
+        ep.push_inbound(g1, &vec![0u8; STAGING_CAPACITY]);
+        ep.push_inbound(g1, &[1]); // latch overflow
+        // The overflow belonged to the dead connection's stream; a fresh
+        // link must not halt the sim for it.
+        let (_g2, _rx2) = ep.attach_peer().expect("attach");
+        assert_eq!(ep.take_staged(), (vec![], false));
+    }
+}

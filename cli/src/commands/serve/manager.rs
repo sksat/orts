@@ -11,6 +11,7 @@ use orts::orbital::gravity::GravityField;
 use orts::spacecraft::{SpacecraftDynamics, SpacecraftState};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
+use super::stream_bridge::{OutboundPush, StreamBridge, StreamEndpoint};
 use crate::cli::{IntegratorChoice, PluginBackendChoice, SimArgs};
 
 /// CLI-time backend overrides that must apply to every `SimParams`
@@ -89,9 +90,19 @@ impl SimGroup {
     }
 
     /// Step controlled satellites up to target time `t` in dt_ctrl increments.
-    fn step_controlled_to(&mut self, current_t: f64, target_t: f64, params: &SimParams) {
+    ///
+    /// Controller errors are fatal: a `PluginError` from `update()` means the
+    /// controller output cannot be trusted (bad command, guest trap, stream-io
+    /// overrun fault, ...), so the error is propagated and the caller halts
+    /// the simulation instead of integrating bad state forward.
+    fn step_controlled_to(
+        &mut self,
+        current_t: f64,
+        target_t: f64,
+        params: &SimParams,
+    ) -> Result<(), String> {
         let SimGroup::Controlled(sats) = self else {
-            return;
+            return Ok(());
         };
         for sat in sats.iter_mut() {
             let dt_ctrl = sat.controller.sample_period();
@@ -100,12 +111,11 @@ impl SimGroup {
             while t < target_t - 1e-12 {
                 let dt = dt_ctrl.min(target_t - t);
                 crate::sim::controlled::step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref())
-                    .unwrap_or_else(|e| {
-                        log::error!("controlled simulation error at t={t:.3}: {e}");
-                    });
+                    .map_err(|e| format!("controlled simulation error at t={t:.3}: {e}"))?;
                 t += dt;
             }
         }
+        Ok(())
     }
 
     /// Number of satellites.
@@ -358,6 +368,7 @@ pub(super) async fn simulation_manager_with_params(
     cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     texture_tx: super::textures::TextureRequestSender,
+    bridge: Arc<StreamBridge>,
 ) {
     // Request texture downloads for all bodies in the system.
     let _ = texture_tx.send(system_body_names(&params)).await;
@@ -365,7 +376,7 @@ pub(super) async fn simulation_manager_with_params(
     let data_dir = std::env::temp_dir().join(format!("orts-{}", std::process::id()));
     let body_radius = params.body.properties().radius;
     let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
-    match run_simulation_loop(params, cmd_rx, tx.clone(), history).await {
+    match run_simulation_loop(params, cmd_rx, tx.clone(), history, Arc::clone(&bridge)).await {
         (LoopExit::Terminated, mut returned_rx) => {
             // Legacy path: after terminate, go idle and allow restart.
             eprintln!("Simulation manager: idle, waiting for start_simulation...");
@@ -377,6 +388,7 @@ pub(super) async fn simulation_manager_with_params(
                     returned_rx,
                     tx,
                     texture_tx,
+                    bridge,
                 )
                 .await;
             }
@@ -489,6 +501,7 @@ pub(super) async fn simulation_manager(
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     texture_tx: super::textures::TextureRequestSender,
+    bridge: Arc<StreamBridge>,
 ) {
     // Determine the first config to start with.
     let mut next_config = if let Some(config) = initial_config {
@@ -511,7 +524,7 @@ pub(super) async fn simulation_manager(
         let body_radius = params.body.properties().radius;
         let history = HistoryBuffer::new(5000, data_dir, params.mu, body_radius);
         eprintln!("Simulation manager: starting simulation...");
-        match run_simulation_loop(params, cmd_rx, tx.clone(), history).await {
+        match run_simulation_loop(params, cmd_rx, tx.clone(), history, Arc::clone(&bridge)).await {
             (LoopExit::Terminated, returned_rx) => {
                 cmd_rx = returned_rx;
                 eprintln!("Simulation manager: idle, waiting for start_simulation...");
@@ -577,6 +590,18 @@ struct SimLoopContext {
     paused: bool,
     current_t: f64,
     has_perturbations: bool,
+    /// stream-io bridge (binary WS endpoints). Endpoints for this
+    /// context's declared streams are registered in `new()`.
+    bridge: Arc<StreamBridge>,
+    /// Each satellite's `(stream name, endpoint)` handles, indexed like
+    /// `metas`. Resolved once at construction so the per-tick pumps don't
+    /// do a (key-allocating) registry lookup on the hot path.
+    sat_streams: Vec<Vec<(String, Arc<StreamEndpoint>)>>,
+    /// Sim-time step per propagation iteration. Equal to
+    /// `params.stream_interval` normally; lowered to the controller tick
+    /// when stream-io streams are wired so the bridge pumps (and the wall
+    /// clock syncs) at tick granularity.
+    stream_step: f64,
     /// Shared WASM plugin cache, kept alive for the whole sim loop so
     /// dynamic `AddSatellite` commands can reuse the compiled guest
     /// components and (for the async backend) the shared runtime
@@ -596,6 +621,7 @@ impl SimLoopContext {
         params: Arc<SimParams>,
         tx: broadcast::Sender<String>,
         mut history: HistoryBuffer,
+        bridge: Arc<StreamBridge>,
     ) -> Result<Self, String> {
         let config = match params.integrator {
             IntegratorChoice::Rk4 => IntegratorConfig::Rk4 { dt: params.dt },
@@ -817,6 +843,73 @@ impl SimLoopContext {
             let _ = tx.send(msg);
         }
 
+        // Register stream-io bridge endpoints for every declared stream of
+        // this context's satellites (replacing any endpoints from a previous
+        // config — their lingering WS connections see `defunct` and close).
+        let stream_keys: Vec<(String, String)> = metas
+            .iter()
+            .flat_map(|m| {
+                let id = m.spec.id.clone();
+                m.spec
+                    .streams
+                    .iter()
+                    .map(move |s| (id.clone(), s.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        // Streams are pumped through the controller; in orbit-only /
+        // spacecraft mode the endpoints would be black holes (accepted but
+        // never drained). Reject loudly instead.
+        if !stream_keys.is_empty() && !matches!(group, SimGroup::Controlled(_)) {
+            return Err(
+                "stream-io streams are declared but no satellite has a controller; \
+                 streams require a plugin-controlled simulation"
+                    .to_string(),
+            );
+        }
+        // A duplicate (sat, stream) pair would pump the same controller
+        // stream twice per tick and alias one endpoint; reject it. Both
+        // parts also become URL path segments (`/stream/{sat}/{stream}`),
+        // so an empty or '/'-containing name would mint an unreachable
+        // endpoint — reject those too.
+        {
+            let mut seen = std::collections::HashSet::new();
+            for key in &stream_keys {
+                let (sat, stream) = key;
+                if invalid_path_segment(sat) || invalid_path_segment(stream) {
+                    return Err(format!(
+                        "invalid stream declaration '{stream}' on satellite '{sat}': \
+                         satellite ids and stream names must be non-empty and must \
+                         not contain '/' (they form the endpoint URL path)"
+                    ));
+                }
+                if !seen.insert(key) {
+                    return Err(format!(
+                        "duplicate stream declaration '{stream}' on satellite '{sat}'"
+                    ));
+                }
+            }
+        }
+        for (sat, stream) in &stream_keys {
+            eprintln!("stream-io endpoint: /stream/{sat}/{stream}");
+        }
+        bridge.reset(stream_keys);
+
+        // Resolve each satellite's endpoint handles once — the per-tick
+        // pumps use these directly instead of a registry lookup (which
+        // would allocate a key on every tick). Indexed like `metas`.
+        let sat_streams: Vec<Vec<(String, Arc<StreamEndpoint>)>> = metas
+            .iter()
+            .map(|m| {
+                m.spec
+                    .streams
+                    .iter()
+                    .filter_map(|name| bridge.lookup(&m.spec.id, name).map(|ep| (name.clone(), ep)))
+                    .collect()
+            })
+            .collect();
+
+        let stream_step = params.stream_interval;
         Ok(SimLoopContext {
             params,
             group,
@@ -828,11 +921,91 @@ impl SimLoopContext {
             paused: false,
             current_t: 0.0,
             has_perturbations,
+            bridge,
+            sat_streams,
+            stream_step,
             #[cfg(feature = "plugin-wasm")]
             wasm_cache,
             #[cfg(feature = "plugin-wasm")]
             plugin_backend,
         })
+    }
+
+    /// Whether any satellite in this context has declared stream-io streams
+    /// (i.e. the kble bridge is active and the loop must pace in realtime).
+    fn has_streams(&self) -> bool {
+        self.metas.iter().any(|m| !m.spec.streams.is_empty())
+    }
+
+    /// The realtime bridge tick: the controllers' common sample period.
+    ///
+    /// `step_controlled_to` steps **every** controller over each interval,
+    /// so a global tick shorter than a controller's own period would update
+    /// it too often (changing FSW behavior and dynamics). Until per-sat
+    /// tick tracking exists, the bridge requires a uniform sample period.
+    fn realtime_tick(&self) -> Result<f64, String> {
+        let SimGroup::Controlled(sats) = &self.group else {
+            return Err("stream-io bridge requires a controlled simulation".to_string());
+        };
+        let periods: Vec<f64> = sats.iter().map(|s| s.controller.sample_period()).collect();
+        uniform_tick(&periods)
+    }
+
+    /// Pump staged inbound bytes from the bridge into each controller
+    /// (frozen into the FSW's next tick). A staging overflow halts the sim
+    /// (bytes were lost to the bound — the no-drop contract is broken).
+    fn pump_streams_inbound(&mut self) -> Result<(), String> {
+        let SimGroup::Controlled(sats) = &mut self.group else {
+            return Ok(());
+        };
+        for (i, sat) in sats.iter_mut().enumerate() {
+            let Some(streams) = self.sat_streams.get(i) else {
+                continue; // defensive: sat_streams is kept metas-aligned
+            };
+            for (name, endpoint) in streams {
+                let (bytes, overflowed) = endpoint.take_staged();
+                if overflowed {
+                    return Err(format!(
+                        "stream-io: inbound staging overflow on {}/{name} (sim not draining fast enough)",
+                        self.metas[i].spec.id
+                    ));
+                }
+                if !bytes.is_empty() {
+                    sat.controller.stream_deliver(name, bytes);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Pump FSW-written bytes out to the connected peers. A connected but
+    /// stuck peer halts the sim (no-drop contract); no peer discards
+    /// (transient-disconnect policy).
+    fn pump_streams_outbound(&mut self) -> Result<(), String> {
+        let SimGroup::Controlled(sats) = &mut self.group else {
+            return Ok(());
+        };
+        for (i, sat) in sats.iter_mut().enumerate() {
+            let Some(streams) = self.sat_streams.get(i) else {
+                continue; // defensive: sat_streams is kept metas-aligned
+            };
+            for (name, endpoint) in streams {
+                let bytes = sat.controller.stream_take(name);
+                if bytes.is_empty() {
+                    continue;
+                }
+                match endpoint.push_outbound(bytes) {
+                    OutboundPush::Sent | OutboundPush::NoPeer => {}
+                    OutboundPush::Stuck => {
+                        return Err(format!(
+                            "stream-io: peer on {}/{name} is connected but not draining",
+                            self.metas[i].spec.id
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Handle a single command from the connection handler.
@@ -900,6 +1073,18 @@ impl SimLoopContext {
                 return ControlFlow::Break(());
             }
             SimCommand::AddSatellite { satellite, respond } => {
+                // stream-io streams require an endpoint registered before
+                // the loop's realtime/pacing mode was decided; dynamic
+                // wiring is not supported yet.
+                if !satellite.streams.is_empty() {
+                    let _ = respond.send(Err(
+                        "Dynamically added satellites cannot declare stream-io streams; \
+                         declare them in the initial config."
+                            .to_string(),
+                    ));
+                    return ControlFlow::Continue(());
+                }
+
                 // Branch on the running simulation mode. Controlled
                 // and spacecraft paths are handled inline; the
                 // orbit-only path continues to the main body below.
@@ -963,6 +1148,9 @@ impl SimLoopContext {
                         + self.metas.last().map_or(5554.0, |m| m.spec.period),
                     next_save_t: self.current_t + self.params.output_interval,
                 });
+                // Keep `sat_streams` index-aligned with `metas` (dynamic
+                // adds cannot declare streams, so the entry is empty).
+                self.sat_streams.push(Vec::new());
 
                 let body_radius = self.params.body.properties().radius;
                 let hs = make_history_state(
@@ -1094,6 +1282,9 @@ impl SimLoopContext {
             orbit_end_t: self.current_t + sat_info.period,
             next_save_t: self.current_t + self.params.output_interval,
         });
+        // Keep `sat_streams` index-aligned with `metas` (dynamic adds
+        // cannot declare streams, so the entry is empty).
+        self.sat_streams.push(Vec::new());
 
         let body_radius = self.params.body.properties().radius;
         let attitude_payload = AttitudePayload {
@@ -1147,12 +1338,18 @@ impl SimLoopContext {
     }
 
     /// Propagate one chunk of simulation time, collecting outputs.
-    fn propagate_chunk(&mut self, outputs_per_chunk: usize) -> Vec<crate::sim::core::HistoryState> {
+    /// Propagate `outputs_per_chunk` stream intervals. A controller error
+    /// (e.g. a stream-io overrun fault) aborts the chunk with `Err`; the
+    /// caller halts the simulation.
+    fn propagate_chunk(
+        &mut self,
+        outputs_per_chunk: usize,
+    ) -> Result<Vec<crate::sim::core::HistoryState>, String> {
         let mut all_outputs = Vec::new();
         let body_radius = self.params.body.properties().radius;
 
         for _ in 0..outputs_per_chunk {
-            let target_t = self.current_t + self.params.stream_interval;
+            let target_t = self.current_t + self.stream_step;
 
             // Orbit boundary reset (only for unperturbed 2-body, orbit-only mode)
             if !self.has_perturbations {
@@ -1184,9 +1381,17 @@ impl SimLoopContext {
                 }
             }
 
+            // stream-io bridge: freeze this interval's inbound bytes into the
+            // controllers before stepping; flush FSW output to the peers
+            // after. (With streams wired, `stream_step` equals the controller
+            // tick, so this is the tick-boundary pump.)
+            self.pump_streams_inbound()?;
+
             // Controlled satellites: step in dt_ctrl increments up to target_t.
             self.group
-                .step_controlled_to(self.current_t, target_t, &self.params);
+                .step_controlled_to(self.current_t, target_t, &self.params)?;
+
+            self.pump_streams_outbound()?;
 
             let outcome = self.group.propagate_to(target_t).unwrap();
 
@@ -1246,7 +1451,7 @@ impl SimLoopContext {
         }
 
         all_outputs.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
-        all_outputs
+        Ok(all_outputs)
     }
 
     /// Build the bounded history overview that is replayed to a (re)connecting
@@ -1269,6 +1474,51 @@ impl SimLoopContext {
     }
 }
 
+/// Whether `s` cannot be used as one path segment of a stream endpoint URL
+/// (`/stream/{sat}/{stream}`): empty or containing a path separator.
+fn invalid_path_segment(s: &str) -> bool {
+    s.is_empty() || s.contains('/')
+}
+
+/// The single sample period shared by all controllers, or an error when the
+/// fleet mixes periods (the stream-io bridge steps every controller on the
+/// same global tick, so mixed rates would over-step the slower ones).
+fn uniform_tick(periods: &[f64]) -> Result<f64, String> {
+    let Some(&first) = periods.first() else {
+        return Err("stream-io bridge requires at least one controller".to_string());
+    };
+    if periods.iter().any(|p| (p - first).abs() > 1e-9) {
+        return Err(format!(
+            "stream-io bridge requires a uniform controller sample period, got {periods:?}; \
+             mixed-rate fleets are not supported with streams yet"
+        ));
+    }
+    Ok(first)
+}
+
+/// Serialize one history state as a `WsMessage::State` JSON string.
+fn state_json(out: &crate::sim::core::HistoryState) -> String {
+    serde_json::to_string(&WsMessage::State {
+        entity_path: out.entity_path.clone(),
+        t: out.t,
+        position: out.position,
+        velocity: out.velocity,
+        semi_major_axis: out.semi_major_axis,
+        eccentricity: out.eccentricity,
+        inclination: out.inclination,
+        raan: out.raan,
+        argument_of_periapsis: out.argument_of_periapsis,
+        true_anomaly: out.true_anomaly,
+        altitude: out.altitude,
+        specific_energy: out.specific_energy,
+        angular_momentum: out.angular_momentum,
+        velocity_mag: out.velocity_mag,
+        accelerations: out.accelerations.clone(),
+        attitude: out.attitude.clone(),
+    })
+    .expect("failed to serialize state")
+}
+
 /// Core simulation loop: builds group, propagates, handles commands.
 /// Returns the exit reason and gives back the command receiver for reuse.
 async fn run_simulation_loop(
@@ -1276,13 +1526,14 @@ async fn run_simulation_loop(
     mut cmd_rx: mpsc::Receiver<SimCommand>,
     tx: broadcast::Sender<String>,
     history: HistoryBuffer,
+    bridge: Arc<StreamBridge>,
 ) -> (LoopExit, mpsc::Receiver<SimCommand>) {
     const OUTPUTS_PER_CHUNK: usize = 10;
     let chunk_sim_time = params.stream_interval * OUTPUTS_PER_CHUNK as f64;
     let wall_per_sim_sec = ((params.dt / 100.0).max(0.01)) / params.stream_interval;
     let chunk_wall_time = std::time::Duration::from_secs_f64(chunk_sim_time * wall_per_sim_sec);
 
-    let mut ctx = match SimLoopContext::new(params, tx.clone(), history) {
+    let mut ctx = match SimLoopContext::new(params, tx.clone(), history, bridge) {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("Simulation startup error: {e}");
@@ -1293,6 +1544,32 @@ async fn run_simulation_loop(
         }
     };
 
+    // With stream-io streams wired, the loop runs in **realtime**:
+    // interactive byte protocols on the other side of kble assume wall-clock
+    // time, so the default compute-a-chunk-ahead-then-sleep pacing (which
+    // also runs much faster than 1:1) would break them. Step one controller
+    // tick at a time, pumping the bridge at each boundary, and sync each
+    // tick to the wall clock (1 sim s = 1 wall s).
+    let realtime = ctx.has_streams();
+    let (outputs_per_chunk, chunk_wall_time) = if realtime {
+        let tick = match ctx.realtime_tick() {
+            Ok(tick) => tick,
+            Err(e) => {
+                eprintln!("Simulation startup error: {e}");
+                let err_msg = serde_json::to_string(&WsMessage::Error { message: e })
+                    .expect("failed to serialize error");
+                let _ = tx.send(err_msg);
+                ctx.bridge.reset(Vec::new());
+                return (LoopExit::Terminated, cmd_rx);
+            }
+        };
+        ctx.stream_step = tick;
+        eprintln!("stream-io bridge active: realtime pacing (1 sim s = 1 wall s), tick = {tick} s");
+        (1, std::time::Duration::from_secs_f64(tick))
+    } else {
+        (OUTPUTS_PER_CHUNK, chunk_wall_time)
+    };
+
     loop {
         let chunk_start = tokio::time::Instant::now();
 
@@ -1301,11 +1578,16 @@ async fn run_simulation_loop(
             match cmd_rx.try_recv() {
                 Ok(cmd) => {
                     if ctx.handle_command(cmd).is_break() {
+                        // Tear down the bridge endpoints with the loop —
+                        // while the manager is idle there is nothing to
+                        // drain them (lingering peers see `defunct`).
+                        ctx.bridge.reset(Vec::new());
                         return (LoopExit::Terminated, cmd_rx);
                     }
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
+                    ctx.bridge.reset(Vec::new());
                     return (LoopExit::Disconnected, cmd_rx);
                 }
             }
@@ -1322,38 +1604,52 @@ async fn run_simulation_loop(
         // and command dispatch while the physics/controller step runs.
         // This also keeps `Handle::block_on` inside WASM async backends
         // from starving the serve runtime.
-        let (all_outputs, ctx_back) = tokio::task::spawn_blocking(move || {
-            let outputs = ctx.propagate_chunk(OUTPUTS_PER_CHUNK);
+        let (chunk_result, ctx_back) = tokio::task::spawn_blocking(move || {
+            let outputs = ctx.propagate_chunk(outputs_per_chunk);
             (outputs, ctx)
         })
         .await
         .expect("simulation blocking task panicked");
         ctx = ctx_back;
 
-        if !all_outputs.is_empty() {
+        let all_outputs = match chunk_result {
+            Ok(outputs) => outputs,
+            Err(e) => {
+                // Controller fault (bad command / guest trap / stream-io
+                // overrun). The sim state can no longer be trusted; halt
+                // (pause) instead of integrating forward, and tell clients.
+                log::error!("simulation halted: {e}");
+                let msg = serde_json::to_string(&WsMessage::Error {
+                    message: format!("simulation halted: {e}"),
+                })
+                .expect("failed to serialize error");
+                let _ = ctx.tx.send(msg);
+                ctx.paused = true;
+                // Clients drive their server-state UI off `status` messages;
+                // without this they'd show a stale "running" after the halt.
+                let status = serde_json::to_string(&WsMessage::Status {
+                    state: "paused".to_string(),
+                })
+                .expect("failed to serialize status");
+                let _ = ctx.tx.send(status);
+                continue;
+            }
+        };
+
+        if realtime {
+            // Realtime: ship states immediately, then sync this tick to the
+            // wall clock (anchored to chunk_start so compute time is not
+            // added on top — the controller never runs more than one tick
+            // ahead of the peers).
+            for out in &all_outputs {
+                let _ = ctx.tx.send(state_json(out));
+            }
+            tokio::time::sleep_until(chunk_start + chunk_wall_time).await;
+        } else if !all_outputs.is_empty() {
             let send_interval = chunk_wall_time / all_outputs.len() as u32;
             for out in &all_outputs {
                 let send_start = tokio::time::Instant::now();
-                let msg = serde_json::to_string(&WsMessage::State {
-                    entity_path: out.entity_path.clone(),
-                    t: out.t,
-                    position: out.position,
-                    velocity: out.velocity,
-                    semi_major_axis: out.semi_major_axis,
-                    eccentricity: out.eccentricity,
-                    inclination: out.inclination,
-                    raan: out.raan,
-                    argument_of_periapsis: out.argument_of_periapsis,
-                    true_anomaly: out.true_anomaly,
-                    altitude: out.altitude,
-                    specific_energy: out.specific_energy,
-                    angular_momentum: out.angular_momentum,
-                    velocity_mag: out.velocity_mag,
-                    accelerations: out.accelerations.clone(),
-                    attitude: out.attitude.clone(),
-                })
-                .expect("failed to serialize state");
-                let _ = ctx.tx.send(msg);
+                let _ = ctx.tx.send(state_json(out));
 
                 let send_elapsed = send_start.elapsed();
                 if send_elapsed < send_interval {
@@ -1373,6 +1669,32 @@ async fn run_simulation_loop(
 mod tests {
     use super::*;
     use arika::body::KnownBody;
+
+    #[test]
+    fn invalid_path_segment_rejects_empty_and_slash() {
+        assert!(invalid_path_segment(""));
+        assert!(invalid_path_segment("a/b"));
+        assert!(!invalid_path_segment("comlink"));
+        assert!(!invalid_path_segment("uart-0"));
+    }
+
+    #[test]
+    fn uniform_tick_accepts_a_single_shared_period() {
+        assert_eq!(uniform_tick(&[1.0]), Ok(1.0));
+        assert_eq!(uniform_tick(&[0.5, 0.5, 0.5]), Ok(0.5));
+    }
+
+    #[test]
+    fn uniform_tick_rejects_mixed_periods() {
+        // A 1.0 s controller stepped on a 0.1 s global tick would update
+        // 10x too often — must be rejected, not silently mis-simulated.
+        assert!(uniform_tick(&[0.1, 1.0]).is_err());
+    }
+
+    #[test]
+    fn uniform_tick_rejects_empty_fleet() {
+        assert!(uniform_tick(&[]).is_err());
+    }
 
     #[test]
     fn terminated_events_ring_buffer_caps_at_limit() {
