@@ -90,6 +90,7 @@ pub enum FrameDescriptor {
     Cirs,
     Tirs,
     Itrs,
+    Teme,
     Rsw,
     Body,
 }
@@ -103,6 +104,7 @@ impl FrameDescriptor {
             FrameDescriptor::Cirs => "Cirs",
             FrameDescriptor::Tirs => "Tirs",
             FrameDescriptor::Itrs => "Itrs",
+            FrameDescriptor::Teme => "Teme",
             FrameDescriptor::Rsw => "Rsw",
             FrameDescriptor::Body => "Body",
         }
@@ -110,9 +112,10 @@ impl FrameDescriptor {
 
     pub const fn category(self) -> FrameCategory {
         match self {
-            FrameDescriptor::SimpleEci | FrameDescriptor::Gcrs | FrameDescriptor::Cirs => {
-                FrameCategory::Eci
-            }
+            FrameDescriptor::SimpleEci
+            | FrameDescriptor::Gcrs
+            | FrameDescriptor::Cirs
+            | FrameDescriptor::Teme => FrameCategory::Eci,
             FrameDescriptor::SimpleEcef | FrameDescriptor::Tirs | FrameDescriptor::Itrs => {
                 FrameCategory::Ecef
             }
@@ -274,6 +277,26 @@ impl Frame for Itrs {
     const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Itrs;
 }
 impl Ecef for Itrs {}
+
+/// True Equator, Mean Equinox — the quasi-inertial frame in which SGP4 / TLE /
+/// OMM mean elements are expressed. Belongs to the [`Eci`] category.
+///
+/// # Phase status
+///
+/// **marker only**. The TEME ↔ [`Gcrs`] / [`SimpleEci`] rotation (GMST +
+/// equation of the equinoxes + precession/nutation) is deferred to a later
+/// phase, as is tagging element-set-derived state vectors as `Vec3<Teme>` —
+/// today the parsers return mean elements ([`crate::omm::Omm`]), not
+/// frame-tagged vectors. The marker exists so those future APIs have an
+/// explicit frame to name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Teme;
+impl sealed::Sealed for Teme {}
+impl Frame for Teme {
+    const NAME: &'static str = "Teme";
+    const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Teme;
+}
+impl Eci for Teme {}
 
 /// Local orbital frame: Radial / Along-track / Cross-track.
 ///
@@ -711,6 +734,17 @@ mod tests {
         assert_eq!(FrameDescriptor::Itrs.category(), FrameCategory::Ecef);
         assert_eq!(FrameDescriptor::Rsw.category(), FrameCategory::LocalOrbital);
         assert_eq!(FrameDescriptor::Body.category(), FrameCategory::Body);
+    }
+
+    #[test]
+    fn teme_frame_marker() {
+        // TEME (True Equator, Mean Equinox) is the SGP4 / TLE output frame.
+        // It is quasi-inertial, so it belongs to the Eci category.
+        assert_eq!(<Teme as Frame>::NAME, "Teme");
+        assert_eq!(<Teme as Frame>::DESCRIPTOR, FrameDescriptor::Teme);
+        assert_eq!(FrameDescriptor::Teme.name(), "Teme");
+        assert_eq!(FrameDescriptor::Teme.category(), FrameCategory::Eci);
+        assert_eq!(Vec3::<Teme>::frame_descriptor(), FrameDescriptor::Teme);
     }
 
     #[test]

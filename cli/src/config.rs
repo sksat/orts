@@ -8,7 +8,6 @@ use crate::satellite::{OrbitSpec, SatelliteSpec};
 use crate::tle::fetch_tle_by_norad_id;
 use arika::body::KnownBody;
 use orts::plugin::{Message, NamedValue, NodeId, Payload, Value};
-use orts::tle::Tle;
 
 /// JSON/TOML/YAML simulation configuration.
 ///
@@ -471,33 +470,19 @@ impl SatelliteConfig {
             }
             OrbitConfig::Tle { line1, line2 } => {
                 let text = format!("{line1}\n{line2}");
-                let tle = Tle::parse(&text)
+                let tle = arika::tle::parse(&text)
                     .unwrap_or_else(|e| panic!("Failed to parse TLE in config: {e}"));
                 let elements = tle.to_keplerian_elements(mu);
                 let period = elements.period(mu);
-                let tle_name = tle.name.clone();
-                (
-                    OrbitSpec::Tle {
-                        tle_data: tle,
-                        elements,
-                    },
-                    period,
-                    tle_name,
-                )
+                let tle_name = tle.object_name.clone();
+                (OrbitSpec::Omm { omm: tle, elements }, period, tle_name)
             }
             OrbitConfig::Norad { norad_id } => {
                 let tle = fetch_tle_by_norad_id(*norad_id);
                 let elements = tle.to_keplerian_elements(mu);
                 let period = elements.period(mu);
-                let tle_name = tle.name.clone();
-                (
-                    OrbitSpec::Tle {
-                        tle_data: tle,
-                        elements,
-                    },
-                    period,
-                    tle_name,
-                )
+                let tle_name = tle.object_name.clone();
+                (OrbitSpec::Omm { omm: tle, elements }, period, tle_name)
             }
         };
 
@@ -883,7 +868,7 @@ mod tests {
         let spec = sat_cfg.to_satellite_spec(0, body, mu);
 
         assert_eq!(spec.id, "iss");
-        assert!(matches!(spec.orbit, OrbitSpec::Tle { .. }));
+        assert!(matches!(spec.orbit, OrbitSpec::Omm { .. }));
         assert!(spec.period > 0.0);
     }
 

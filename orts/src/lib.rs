@@ -13,7 +13,6 @@ pub mod record;
 pub mod sensor;
 pub mod setup;
 pub mod spacecraft;
-pub mod tle;
 
 pub use orbital::OrbitalState;
 pub use spacecraft::SpacecraftState;

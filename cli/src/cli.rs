@@ -88,6 +88,10 @@ pub struct SimArgs {
     #[arg(long)]
     pub tle: Option<String>,
 
+    /// OMM file path (CCSDS JSON / KVN / XML), use "-" for stdin
+    #[arg(long)]
+    pub omm: Option<String>,
+
     /// TLE line 1 (direct input, use with --tle-line2)
     #[arg(long)]
     pub tle_line1: Option<String>,
@@ -201,6 +205,7 @@ impl SimArgs {
     pub fn has_orbit_args(&self) -> bool {
         !self.sats.is_empty()
             || self.tle.is_some()
+            || self.omm.is_some()
             || self.tle_line1.is_some()
             || self.tle_line2.is_some()
             || self.norad_id.is_some()

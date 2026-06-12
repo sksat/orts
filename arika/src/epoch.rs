@@ -368,36 +368,57 @@ impl Epoch<Utc> {
         }
     }
 
-    /// Parse a UTC epoch from ISO 8601 format: `YYYY-MM-DDTHH:MM:SSZ`.
+    /// Parse a UTC epoch from ISO 8601 (CCSDS-compatible).
     ///
-    /// Only UTC (Z suffix) is supported. Returns `None` if parsing fails.
+    /// Accepts both the calendar form `YYYY-MM-DDTHH:MM:SS[.fff]` and the
+    /// ordinal / day-of-year form `YYYY-DDDTHH:MM:SS[.fff]` (used by CCSDS
+    /// OMM). The `Z` suffix is optional — the timestamp is interpreted as UTC
+    /// either way. Returns `None` if parsing fails.
     pub fn from_iso8601(s: &str) -> Option<Self> {
         let s = s.trim();
-        let s = s.strip_suffix('Z')?;
+        let s = s.strip_suffix('Z').unwrap_or(s);
         let (date, time) = s.split_once('T')?;
 
-        let (year_s, rest) = date.split_once('-')?;
-        let (month_s, day_s) = rest.split_once('-')?;
-        let year: i32 = year_s.parse().ok()?;
-        let month: u32 = month_s.parse().ok()?;
-        let day: u32 = day_s.parse().ok()?;
-
+        // Time of day, shared by both date forms.
         let (hour_s, rest) = time.split_once(':')?;
         let (min_s, sec_s) = rest.split_once(':')?;
         let hour: u32 = hour_s.parse().ok()?;
         let min: u32 = min_s.parse().ok()?;
         let sec: f64 = sec_s.parse().ok()?;
-
-        if !(1..=12).contains(&month)
-            || !(1..=31).contains(&day)
-            || hour > 23
-            || min > 59
-            || sec >= 60.0
-        {
+        if hour > 23 || min > 59 || sec >= 60.0 {
             return None;
         }
 
-        Some(Self::from_gregorian(year, month, day, hour, min, sec))
+        let (year_s, rest) = date.split_once('-')?;
+        let year: i32 = year_s.parse().ok()?;
+        match rest.split_once('-') {
+            // Calendar date: YYYY-MM-DD.
+            Some((month_s, day_s)) => {
+                let month: u32 = month_s.parse().ok()?;
+                let day: u32 = day_s.parse().ok()?;
+                if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+                    return None;
+                }
+                Some(Self::from_gregorian(year, month, day, hour, min, sec))
+            }
+            // Ordinal date: YYYY-DDD (zero-padded 3-digit day of year). The
+            // 3-digit requirement disambiguates from a truncated calendar date
+            // such as "2024-03", which is rejected rather than read as day 3.
+            None => {
+                if rest.len() != 3 {
+                    return None;
+                }
+                let doy: u32 = rest.parse().ok()?;
+                // Reject day 366 in a common year (it would roll into the next).
+                let max_doy = if Self::is_leap_year(year) { 366 } else { 365 };
+                if !(1..=max_doy).contains(&doy) {
+                    return None;
+                }
+                let day_of_year =
+                    doy as f64 + (hour as f64 * 3600.0 + min as f64 * 60.0 + sec) / 86400.0;
+                Some(Self::from_year_day_of_year(year, day_of_year))
+            }
+        }
     }
 
     /// Create a UTC epoch from the current system time.
@@ -413,6 +434,22 @@ impl Epoch<Utc> {
         }
     }
 
+    /// Create a UTC epoch from a 4-digit year and a fractional day of year
+    /// (`1.0` = Jan 1 00:00, `1.5` = Jan 1 12:00, …).
+    pub fn from_year_day_of_year(year: i32, day_of_year: f64) -> Self {
+        // JD of Jan 1 00:00 of that year, offset by the fractional day.
+        let jan1 = Self::from_gregorian(year, 1, 1, 0, 0, 0.0);
+        Epoch {
+            jd: jan1.jd + (day_of_year - 1.0),
+            _scale: PhantomData,
+        }
+    }
+
+    /// Gregorian leap-year test.
+    fn is_leap_year(year: i32) -> bool {
+        year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+    }
+
     /// Create a UTC epoch from a TLE epoch (2-digit year + fractional day of year).
     ///
     /// 2-digit year convention (NORAD): 57-99 → 1957-1999, 00-56 → 2000-2056.
@@ -422,13 +459,7 @@ impl Epoch<Utc> {
         } else {
             2000 + year_2digit as i32
         };
-        // JD of January 0.0 of that year = JD of Dec 31 of previous year at 0h
-        let jan1 = Self::from_gregorian(year, 1, 1, 0, 0, 0.0);
-        // day_of_year: 1.0 = Jan 1 00:00, 1.5 = Jan 1 12:00, etc.
-        Epoch {
-            jd: jan1.jd + (day_of_year - 1.0),
-            _scale: PhantomData,
-        }
+        Self::from_year_day_of_year(year, day_of_year)
     }
 
     /// Julian centuries since J2000.0, computed directly from the UTC JD.
@@ -952,6 +983,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn from_iso8601_ordinal_day_of_year() {
+        // CCSDS ordinal form: 2024-079 is the 79th day of 2024 = March 19.
+        let calendar = Epoch::<Utc>::from_iso8601("2024-03-19T12:00:00Z").unwrap();
+        let ordinal = Epoch::<Utc>::from_iso8601("2024-079T12:00:00Z").unwrap();
+        assert!(
+            (calendar.jd() - ordinal.jd()).abs() < 1e-9,
+            "ordinal and calendar forms must denote the same instant"
+        );
+    }
+
+    #[test]
+    fn from_iso8601_ordinal_validation() {
+        // A truncated calendar date (2-/1-digit field) must NOT be read as ordinal.
+        assert!(Epoch::<Utc>::from_iso8601("2024-03T12:00:00Z").is_none());
+        assert!(Epoch::<Utc>::from_iso8601("2024-3T12:00:00Z").is_none());
+        // Day 366 is valid only in a leap year.
+        assert!(Epoch::<Utc>::from_iso8601("2024-366T00:00:00Z").is_some()); // 2024 leap
+        assert!(Epoch::<Utc>::from_iso8601("2023-366T00:00:00Z").is_none()); // 2023 common
+        // Out-of-range ordinals are rejected.
+        assert!(Epoch::<Utc>::from_iso8601("2024-000T00:00:00Z").is_none());
+        assert!(Epoch::<Utc>::from_iso8601("2024-367T00:00:00Z").is_none());
+    }
+
+    #[test]
+    fn from_iso8601_z_suffix_optional() {
+        let with_z = Epoch::<Utc>::from_iso8601("2024-03-19T12:00:00Z").unwrap();
+        let no_z = Epoch::<Utc>::from_iso8601("2024-03-19T12:00:00").unwrap();
+        assert_eq!(with_z.jd(), no_z.jd());
+        // Fractional seconds without 'Z' (CelesTrak OMM style).
+        let frac = Epoch::<Utc>::from_iso8601("2024-03-19T12:00:00.000000").unwrap();
+        assert_eq!(frac.jd(), with_z.jd());
+    }
+
+    #[test]
+    fn from_year_day_of_year_matches_tle_pivot() {
+        // The 4-digit DOY constructor agrees with the 2-digit TLE one for 2024.
+        let direct = Epoch::<Utc>::from_year_day_of_year(2024, 79.5);
+        let via_tle = Epoch::<Utc>::from_tle_epoch(24, 79.5);
+        assert_eq!(direct.jd(), via_tle.jd());
+    }
+
     /// **Discriminating test**: Converting a UTC epoch to TDB must produce a
     /// JD that differs by ~69.184 s (leap count + TT-TAI + Fairhead).
     ///
@@ -1054,8 +1127,9 @@ mod tests {
     }
 
     #[test]
-    fn iso8601_invalid_no_z() {
-        assert!(Epoch::from_iso8601("2024-03-20T12:00:00").is_none());
+    fn iso8601_no_z_is_accepted() {
+        // 'Z' is now optional — a bare UTC timestamp parses (CCSDS OMM omits it).
+        assert!(Epoch::from_iso8601("2024-03-20T12:00:00").is_some());
     }
 
     #[test]

@@ -1,7 +1,8 @@
 use arika::body::KnownBody;
+use arika::omm::Omm;
 use orts::OrbitalState;
+use orts::orbital::kepler::KeplerianElements;
 use orts::record::entity_path::EntityPath;
-use orts::{orbital::kepler::KeplerianElements, tle::Tle};
 use serde::Serialize;
 
 use crate::tle::fetch_tle_by_norad_id;
@@ -18,9 +19,10 @@ pub enum OrbitSpec {
         /// Right Ascension of Ascending Node in radians.
         raan: f64,
     },
-    /// From a TLE (parsed into Keplerian elements).
-    Tle {
-        tle_data: Tle,
+    /// From a parsed element set — TLE or OMM input, both decode into the
+    /// canonical [`Omm`] record — plus the derived Keplerian elements.
+    Omm {
+        omm: Omm,
         elements: KeplerianElements,
     },
 }
@@ -81,7 +83,7 @@ impl SatelliteSpec {
                 let (pos, vel) = elements.to_state_vector(mu);
                 OrbitalState::new(pos, vel)
             }
-            OrbitSpec::Tle { elements, .. } => {
+            OrbitSpec::Omm { elements, .. } => {
                 let (pos, vel) = elements.to_state_vector(mu);
                 OrbitalState::new(pos, vel)
             }
@@ -92,7 +94,7 @@ impl SatelliteSpec {
     pub fn altitude(&self, body: &KnownBody) -> f64 {
         match &self.orbit {
             OrbitSpec::Circular { altitude, .. } => *altitude,
-            OrbitSpec::Tle { elements, .. } => {
+            OrbitSpec::Omm { elements, .. } => {
                 let perigee_r = elements.semi_major_axis * (1.0 - elements.eccentricity);
                 perigee_r - body.properties().radius
             }
@@ -203,32 +205,19 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
 
     // Determine orbit
     let (orbit, period, derived_name) = if let Some(norad) = norad_id {
-        let tle = fetch_tle_by_norad_id(norad);
-        let elements = tle.to_keplerian_elements(mu);
+        let omm = fetch_tle_by_norad_id(norad);
+        let elements = omm.to_keplerian_elements(mu);
         let period = elements.period(mu);
-        let tle_name = tle.name.clone();
-        (
-            OrbitSpec::Tle {
-                tle_data: tle,
-                elements,
-            },
-            period,
-            tle_name,
-        )
+        let obj_name = omm.object_name.clone();
+        (OrbitSpec::Omm { omm, elements }, period, obj_name)
     } else if let (Some(l1), Some(l2)) = (tle_line1, tle_line2) {
         let text = format!("{l1}\n{l2}");
-        let tle = Tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE in --sat: {e}"));
-        let elements = tle.to_keplerian_elements(mu);
+        let omm = arika::tle::parse(&text)
+            .unwrap_or_else(|e| panic!("Failed to parse TLE in --sat: {e}"));
+        let elements = omm.to_keplerian_elements(mu);
         let period = elements.period(mu);
-        let tle_name = tle.name.clone();
-        (
-            OrbitSpec::Tle {
-                tle_data: tle,
-                elements,
-            },
-            period,
-            tle_name,
-        )
+        let obj_name = omm.object_name.clone();
+        (OrbitSpec::Omm { omm, elements }, period, obj_name)
     } else {
         let alt = altitude.unwrap_or(400.0);
         let r0 = body.properties().radius + alt;
@@ -318,7 +307,7 @@ mod tests {
             KnownBody::Earth,
         );
         assert_eq!(spec.id, "iss");
-        assert!(matches!(spec.orbit, OrbitSpec::Tle { .. }));
+        assert!(matches!(spec.orbit, OrbitSpec::Omm { .. }));
     }
 
     #[test]
