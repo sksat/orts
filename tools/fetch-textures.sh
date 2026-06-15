@@ -80,9 +80,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Returns 0 if the given body should be processed.
+# Normalises case and strips spaces so --body "Earth, Moon" works as expected.
 include_body() {
-  local body="$1"
-  [[ "$BODIES" == "all" ]] || [[ ",$BODIES," == *",$body,"* ]]
+  local body="${1,,}"
+  local bodies="${BODIES,,}"; bodies="${bodies// /}"
+  [[ "$bodies" == "all" ]] || [[ ",$bodies," == *",$body,"* ]]
 }
 
 # --- Check prerequisites ---
@@ -107,7 +109,7 @@ fi
 download() {
   local url="$1" dest="$2"
   echo "  Downloading $(basename "$dest")..."
-  curl -fSL --progress-bar -o "$dest" "$url"
+  curl -fSL --retry 3 --retry-delay 5 --progress-bar -o "$dest" "$url"
 }
 
 resize_jpeg() {
