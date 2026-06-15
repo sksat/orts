@@ -20,6 +20,7 @@ import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
+import { resolveTextureBaseUrl } from "./textureBaseUrl.js";
 import { planInitialRangeQuery } from "./utils/initialRangeQuery.js";
 import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
 
@@ -285,24 +286,19 @@ export function App() {
   }, [fileSource.fileSourceActive, wsSource.isConnected, noAutoConnect]);
 
   // Derived values
-  const textureBaseUrl = useMemo(() => {
-    // Prefer WS server when connected — it fetches and resizes textures on demand.
-    if (wsSource.isConnected) {
-      try {
-        const u = new URL(wsUrl.replace(/^ws/, "http"));
-        return `${u.origin}/textures/`;
-      } catch {
-        return undefined;
-      }
-    }
-    // Static deployments that ship high-res textures alongside the viewer can
-    // set VITE_TEXTURE_BASE_URL at build time (e.g. /orts/viewer/textures/).
-    // Without the env var — local dev without a server, third-party embeds —
-    // we keep the bundled 2K and avoid probing paths that likely don't exist.
-    const raw = import.meta.env.VITE_TEXTURE_BASE_URL?.trim();
-    if (!raw) return undefined;
-    return raw.endsWith("/") ? raw : `${raw}/`;
-  }, [wsSource.isConnected, wsUrl]);
+  const textureBaseUrl = useMemo(
+    () => resolveTextureBaseUrl(wsSource.isConnected, wsUrl, import.meta.env.VITE_TEXTURE_BASE_URL),
+    [wsSource.isConnected, wsUrl],
+  );
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__debug_texture_base_url = textureBaseUrl;
+    return () => {
+      delete w.__debug_texture_base_url;
+    };
+  }, [textureBaseUrl]);
 
   const satelliteNames = useMemo(() => {
     if (!simInfo) return undefined;
