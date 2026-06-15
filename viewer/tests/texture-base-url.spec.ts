@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { resolveTextureBaseUrl } from "../src/textureBaseUrl.js";
 
 // Verify the textureBaseUrl resolution for the static-deployment path (#105).
 //
@@ -28,8 +27,9 @@ test("textureBaseUrl matches VITE_TEXTURE_BASE_URL when disconnected", async ({ 
     () => (window as unknown as Record<string, unknown>).__debug_texture_base_url,
   );
 
-  // Derive expected value the same way the app does — handles the case where
-  // a developer or CI has VITE_TEXTURE_BASE_URL set in their environment.
-  const expected = resolveTextureBaseUrl(false, "", process.env.VITE_TEXTURE_BASE_URL);
+  // Inline the same normalization the app uses — avoids importing src code
+  // into a Node/Playwright context where .js→.ts rewriting may not apply.
+  const rawEnv = process.env.VITE_TEXTURE_BASE_URL?.trim();
+  const expected = rawEnv ? (rawEnv.endsWith("/") ? rawEnv : `${rawEnv}/`) : undefined;
   expect(url).toBe(expected);
 });
