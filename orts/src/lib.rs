@@ -13,6 +13,7 @@ pub mod record;
 pub mod sensor;
 pub mod setup;
 pub mod spacecraft;
+pub mod visibility;
 
 pub use orbital::OrbitalState;
 pub use spacecraft::SpacecraftState;

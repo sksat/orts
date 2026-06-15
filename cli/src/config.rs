@@ -54,6 +54,49 @@ pub struct SimConfig {
     #[serde(default, alias = "command")]
     #[ts(as = "Option<_>", optional)]
     pub commands: Vec<CommandConfig>,
+    /// 地上局定義（contact window 検出用）。Earth 中心のシミュレーション
+    /// でのみ有効。TOML では `[[ground_station]]` / `[[ground_stations]]`。
+    #[serde(default, alias = "ground_station")]
+    #[ts(as = "Option<_>", optional)]
+    pub ground_stations: Vec<GroundStationConfig>,
+}
+
+/// Ground station definition for visibility / contact window detection.
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
+pub struct GroundStationConfig {
+    pub name: String,
+    /// Geodetic latitude [deg] (WGS-84).
+    pub latitude_deg: f64,
+    /// Longitude [deg].
+    pub longitude_deg: f64,
+    /// Height above the WGS-84 ellipsoid [km].
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub altitude_km: f64,
+    /// Minimum elevation mask [deg] (default: 5°).
+    #[serde(default = "default_min_elevation_deg")]
+    #[ts(as = "Option<_>", optional)]
+    pub min_elevation_deg: f64,
+}
+
+fn default_min_elevation_deg() -> f64 {
+    5.0
+}
+
+impl GroundStationConfig {
+    /// Convert to the orts domain type (degrees → radians at the boundary).
+    pub fn to_ground_station(&self) -> orts::visibility::GroundStation {
+        orts::visibility::GroundStation {
+            name: self.name.clone(),
+            geodetic: arika::earth::Geodetic {
+                latitude: self.latitude_deg.to_radians(),
+                longitude: self.longitude_deg.to_radians(),
+                altitude: self.altitude_km,
+            },
+            min_elevation: self.min_elevation_deg.to_radians(),
+        }
+    }
 }
 
 /// 時刻指定コマンド（config transport）。
@@ -749,6 +792,7 @@ mod tests {
             duration: None,
             satellites: vec![],
             commands: vec![],
+            ground_stations: vec![],
         };
         assert!(matches!(config.integrator_choice(), IntegratorChoice::Rk4));
     }
@@ -769,6 +813,7 @@ mod tests {
             duration: None,
             satellites: vec![],
             commands: vec![],
+            ground_stations: vec![],
         };
         assert!(matches!(
             config.atmosphere_choice(),
@@ -979,6 +1024,7 @@ satellites:
                 streams: Vec::new(),
             }],
             commands: vec![],
+            ground_stations: vec![],
         };
         let json = serde_json::to_string(&config).unwrap();
         let roundtrip: SimConfig = serde_json::from_str(&json).unwrap();

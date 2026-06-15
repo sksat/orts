@@ -5,6 +5,7 @@
 //!
 //! - [`ellipsoid`] — WGS-84 reference ellipsoid constants
 //! - [`geodetic`] — WGS-84 Cartesian ↔ geodetic conversions, [`Geodetic`] type
+//! - [`topocentric`] — ground-site look angles ([`TopocentricSite`], [`LookAngles`])
 //! - [`rotation`] — IAU 2009 WGCCRE rotation model (`EARTH` const)
 //! - [`eop`] — Earth Orientation Parameters provider traits
 //!   ([`Ut1Offset`](eop::Ut1Offset), [`PolarMotion`](eop::PolarMotion),
@@ -22,9 +23,11 @@ pub mod eop;
 pub mod geodetic;
 pub mod iau2006;
 pub mod rotation;
+pub mod topocentric;
 
 pub use ellipsoid::{WGS84_A, WGS84_B, WGS84_E2, WGS84_F};
 pub use geodetic::{Geodetic, geodetic_altitude};
+pub use topocentric::{LookAngles, TopocentricSite};
 
 // Physical constants
 

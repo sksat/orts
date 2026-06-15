@@ -241,6 +241,21 @@ where
     }
 
     pub fn propagate_to(&mut self, t_target: f64) -> Result<PropGroupOutcome, IntegrationError> {
+        self.propagate_to_with(t_target, |_, _, _| {})
+    }
+
+    /// Propagate all satellites to `t_target`, invoking `observer` with
+    /// `(satellite id, t, state)` at every accepted integrator step.
+    ///
+    /// The observer does not influence step selection, so trajectories are
+    /// bit-identical to [`propagate_to`](Self::propagate_to). Useful for
+    /// non-terminating monitoring (e.g. ground-station visibility) at the
+    /// integrator's resolution instead of the caller's output cadence.
+    pub fn propagate_to_with(
+        &mut self,
+        t_target: f64,
+        mut observer: impl FnMut(&SatId, f64, &D::State),
+    ) -> Result<PropGroupOutcome, IntegrationError> {
         let mut terminations = Vec::new();
         let integrator = self.integrator.clone();
         let event_checker = &self.event_checker;
@@ -270,15 +285,14 @@ where
                         tolerances.clone(),
                     );
 
-                    let result = if let Some(checker) = event_checker {
-                        stepper.advance_to(effective_target, |_, _| {}, |t, s| checker(t, s))
-                    } else {
-                        stepper.advance_to(
-                            effective_target,
-                            |_, _| {},
-                            |_, _| ControlFlow::<String>::Continue(()),
-                        )
-                    };
+                    let result = stepper.advance_to(
+                        effective_target,
+                        |t, s| observer(&entry.id, t, s),
+                        |t, s| match event_checker {
+                            Some(checker) => checker(t, s),
+                            None => ControlFlow::Continue(()),
+                        },
+                    );
 
                     match result {
                         Ok(AdvanceOutcome::Reached) => {
@@ -319,15 +333,14 @@ where
                         tolerances.clone(),
                     );
 
-                    let result = if let Some(checker) = event_checker {
-                        stepper.advance_to(effective_target, |_, _| {}, |t, s| checker(t, s))
-                    } else {
-                        stepper.advance_to(
-                            effective_target,
-                            |_, _| {},
-                            |_, _| ControlFlow::<String>::Continue(()),
-                        )
-                    };
+                    let result = stepper.advance_to(
+                        effective_target,
+                        |t, s| observer(&entry.id, t, s),
+                        |t, s| match event_checker {
+                            Some(checker) => checker(t, s),
+                            None => ControlFlow::Continue(()),
+                        },
+                    );
 
                     match result {
                         Ok(AdvanceOutcome853::Reached) => {
@@ -381,6 +394,10 @@ where
                             });
                             break;
                         }
+
+                        // Same ordering as the adaptive steppers: observe the
+                        // accepted step before the event check.
+                        observer(&entry.id, current_t, &current_state);
 
                         if let Some(checker) = event_checker
                             && let ControlFlow::Break(reason) = checker(current_t, &current_state)
@@ -466,6 +483,80 @@ mod tests {
             atol: 1e-10,
             rtol: 1e-8,
         }
+    }
+
+    #[test]
+    fn propagate_to_with_observes_every_accepted_rk4_step() {
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(10.0).add_satellite(
+            "iss",
+            iss_state(),
+            TwoBodySystem { mu: MU_EARTH },
+        );
+        let mut seen: Vec<f64> = Vec::new();
+        group
+            .propagate_to_with(100.0, |id, t, _state| {
+                assert_eq!(AsRef::<str>::as_ref(id), "iss");
+                seen.push(t);
+            })
+            .unwrap();
+        // Fixed-step RK4: one observation per dt, including the final step.
+        assert_eq!(seen.len(), 10);
+        assert!((seen[0] - 10.0).abs() < 1e-12);
+        assert!((seen[9] - 100.0).abs() < 1e-9);
+        assert!(seen.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    #[test]
+    fn propagate_to_with_observes_adaptive_steps_up_to_target() {
+        let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::dp45(
+            10.0,
+            default_tol(),
+        )
+        .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut seen: Vec<f64> = Vec::new();
+        group
+            .propagate_to_with(100.0, |_, t, _| seen.push(t))
+            .unwrap();
+        assert!(!seen.is_empty());
+        assert!((seen.last().unwrap() - 100.0).abs() < 1e-9);
+        assert!(seen.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    #[test]
+    fn observer_does_not_perturb_trajectory() {
+        let build = || -> IndependentGroup<TwoBodySystem> {
+            IndependentGroup::dp45(10.0, default_tol()).add_satellite(
+                "iss",
+                iss_state(),
+                TwoBodySystem { mu: MU_EARTH },
+            )
+        };
+        let mut plain = build();
+        plain.propagate_to(600.0).unwrap();
+        let mut observed = build();
+        observed.propagate_to_with(600.0, |_, _, _| {}).unwrap();
+
+        let p = plain.satellites().next().unwrap().state.clone();
+        let o = observed.satellites().next().unwrap().state.clone();
+        // Bit-identical: the observer must not affect step selection.
+        assert_eq!(p.position(), o.position());
+        assert_eq!(p.velocity(), o.velocity());
+    }
+
+    #[test]
+    fn observer_reports_each_satellite_id() {
+        let mut group: IndependentGroup<TwoBodySystem> =
+            IndependentGroup::dp45(10.0, default_tol())
+                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH })
+                .add_satellite("sso", sso_state(), TwoBodySystem { mu: MU_EARTH });
+        let mut ids: Vec<String> = Vec::new();
+        group
+            .propagate_to_with(50.0, |id, _, _| {
+                ids.push(AsRef::<str>::as_ref(id).to_string())
+            })
+            .unwrap();
+        assert!(ids.iter().any(|i| i == "iss"));
+        assert!(ids.iter().any(|i| i == "sso"));
     }
 
     #[test]

@@ -1,5 +1,7 @@
 use std::ops::ControlFlow;
 
+use arika::body::KnownBody;
+use arika::frame::{SimpleEci, Vec3};
 use orts::OrbitalState;
 use orts::group::{IndependentGroup, IntegratorConfig};
 use orts::orbital::kepler::KeplerianElements;
@@ -11,6 +13,7 @@ use orts::record::components::{
 use orts::record::entity_path::EntityPath;
 use orts::record::recording::Recording;
 use orts::record::timeline::TimePoint;
+use orts::visibility::{StationContact, VisibilityMonitor};
 
 use crate::cli::{IntegratorChoice, OutputFormat, SimArgs};
 use crate::satellite::OrbitSpec;
@@ -77,6 +80,96 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
             });
             eprintln!("Saved to {path}");
         }
+    }
+}
+
+/// Build one visibility monitor per satellite, or `None` when ground
+/// stations are not configured / not applicable (non-Earth body, no epoch).
+fn build_visibility_monitors(params: &SimParams) -> Option<Vec<VisibilityMonitor<SimpleEci>>> {
+    if params.ground_stations.is_empty() {
+        return None;
+    }
+    if params.body != KnownBody::Earth {
+        eprintln!(
+            "Warning: ground stations require Earth as the central body (got {}); \
+             contact window detection disabled",
+            params.body.properties().name
+        );
+        return None;
+    }
+    let Some(epoch) = params.epoch else {
+        eprintln!("Warning: ground stations require an epoch; contact window detection disabled");
+        return None;
+    };
+    Some(
+        params
+            .satellites
+            .iter()
+            .map(|_| VisibilityMonitor::new(epoch, (), params.ground_stations.clone()))
+            .collect(),
+    )
+}
+
+/// Feed per-satellite `(t, ECI position)` samples to the monitors.
+///
+/// `last_t` guards against re-feeding a satellite whose time did not advance
+/// (finished or terminated), so call sites can pass every satellite each time.
+fn feed_visibility(
+    monitors: &mut [VisibilityMonitor<SimpleEci>],
+    last_t: &mut [f64],
+    states: impl Iterator<Item = (f64, nalgebra::Vector3<f64>)>,
+) {
+    for (i, (t, pos)) in states.enumerate() {
+        if t > last_t[i] {
+            monitors[i].update(t, &Vec3::from_raw(pos));
+            last_t[i] = t;
+        }
+    }
+}
+
+/// Print all detected contact windows to stderr, chronologically by AOS.
+///
+/// AOS/LOS are linear interpolations between visibility samples (accepted
+/// integrator steps on the uncontrolled path, control ticks on the
+/// controlled path); passes shorter than one sample gap can still be missed.
+fn report_contact_windows(params: &SimParams, monitors: Vec<VisibilityMonitor<SimpleEci>>) {
+    let Some(epoch) = params.epoch else { return };
+    let mut rows: Vec<(&str, StationContact)> = monitors
+        .into_iter()
+        .zip(&params.satellites)
+        .flat_map(|(monitor, spec)| {
+            monitor
+                .finish()
+                .into_iter()
+                .map(move |contact| (spec.id.as_str(), contact))
+        })
+        .collect();
+    if rows.is_empty() {
+        eprintln!("Contact windows: none detected");
+        return;
+    }
+    rows.sort_by(|a, b| a.1.window.aos.total_cmp(&b.1.window.aos));
+
+    eprintln!("Contact windows ({}):", rows.len());
+    let mut clipped = false;
+    for (sat, contact) in &rows {
+        let w = &contact.window;
+        clipped |= w.open_start || w.open_end;
+        eprintln!(
+            "  {sat} × {}  AOS{} {} (t={:.1}s)  LOS{} {} (t={:.1}s)  max el {:.1}° @ t={:.1}s",
+            contact.station,
+            if w.open_start { "*" } else { "" },
+            epoch.add_seconds(w.aos).to_datetime_normalized(),
+            w.aos,
+            if w.open_end { "*" } else { "" },
+            epoch.add_seconds(w.los).to_datetime_normalized(),
+            w.los,
+            w.max_elevation.to_degrees(),
+            w.max_elevation_time,
+        );
+    }
+    if clipped {
+        eprintln!("  (* = clipped by the simulation span)");
     }
 }
 
@@ -147,6 +240,17 @@ pub fn run_simulation(params: &SimParams) -> Recording {
         group = group.add_satellite_until(sat.id.as_str(), initial, sat.period, system);
     }
 
+    // Ground-station visibility monitors, fed from accepted integrator
+    // steps via the propagation observer (independent of output_interval).
+    let mut visibility = build_visibility_monitors(params);
+    let mut vis_last_t: Vec<f64> = vec![f64::NEG_INFINITY; params.satellites.len()];
+    let sat_index: std::collections::HashMap<&str, usize> = params
+        .satellites
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.id.as_str(), i))
+        .collect();
+
     // Record initial states
     let mut steps: Vec<u64> = vec![0; params.satellites.len()];
     let mut last_output_t: Vec<f64> = vec![0.0; params.satellites.len()];
@@ -155,6 +259,15 @@ pub fn run_simulation(params: &SimParams) -> Recording {
         let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
         rec.log_orbital_state(&sat_paths[i], &tp, &os);
         steps[i] = 1;
+    }
+    if let Some(monitors) = visibility.as_mut() {
+        feed_visibility(
+            monitors,
+            &mut vis_last_t,
+            group
+                .satellites_with_dynamics()
+                .map(|(e, _)| (e.t, *e.state.position())),
+        );
     }
 
     // Propagate in output_interval steps
@@ -171,7 +284,21 @@ pub fn run_simulation(params: &SimParams) -> Recording {
             t = max_period;
         }
 
-        let outcome = group.propagate_to(t).unwrap();
+        let outcome = if let Some(monitors) = visibility.as_mut() {
+            group
+                .propagate_to_with(t, |id, ts, state| {
+                    let Some(&i) = sat_index.get(AsRef::<str>::as_ref(id)) else {
+                        return;
+                    };
+                    if ts > vis_last_t[i] {
+                        monitors[i].update(ts, &Vec3::from_raw(*state.position()));
+                        vis_last_t[i] = ts;
+                    }
+                })
+                .unwrap()
+        } else {
+            group.propagate_to(t).unwrap()
+        };
 
         // Record states for satellites that reached this output time
         for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
@@ -213,6 +340,10 @@ pub fn run_simulation(params: &SimParams) -> Recording {
             let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
             rec.log_orbital_state(&sat_paths[i], &tp, &os);
         }
+    }
+
+    if let Some(monitors) = visibility.take() {
+        report_contact_windows(params, monitors);
     }
 
     // Use first satellite for metadata (backward compatibility)
@@ -594,6 +725,19 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
         log_controlled_state(&mut rec, &sat_paths[i], &tp, sat);
     }
 
+    // 地上局可視性 monitor（制御 tick ごとにサンプリング）。
+    let mut visibility = build_visibility_monitors(params);
+    let mut vis_last_t: Vec<f64> = vec![f64::NEG_INFINITY; params.satellites.len()];
+    if let Some(monitors) = visibility.as_mut() {
+        feed_visibility(
+            monitors,
+            &mut vis_last_t,
+            satellites
+                .iter()
+                .map(|s| (0.0, *s.state.plant.orbit.position())),
+        );
+    }
+
     // 全衛星の sample_period の最小値をグローバル tick に使う。
     let dt_ctrl = satellites
         .iter()
@@ -658,6 +802,17 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
 
         t += dt;
 
+        // 可視性は出力間引きと独立に、制御 tick ごとにサンプリングする。
+        if let Some(monitors) = visibility.as_mut() {
+            feed_visibility(
+                monitors,
+                &mut vis_last_t,
+                satellites
+                    .iter()
+                    .map(|s| (t, *s.state.plant.orbit.position())),
+            );
+        }
+
         if t >= next_output_t - 1e-12 {
             for (i, sat) in satellites.iter().enumerate() {
                 let tp = TimePoint::new().with_sim_time(t).with_step(step);
@@ -675,6 +830,10 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
             let tp = TimePoint::new().with_sim_time(t).with_step(step);
             log_controlled_state(&mut rec, &sat_paths[i], &tp, sat);
         }
+    }
+
+    if let Some(monitors) = visibility.take() {
+        report_contact_windows(params, monitors);
     }
 
     let first_sat = params.satellites.first();
