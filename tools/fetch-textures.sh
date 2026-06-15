@@ -54,8 +54,8 @@ FORCE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --resolution) RESOLUTION="$2"; shift 2 ;;
-    --body)       BODIES="$2"; shift 2 ;;
+    --resolution) [[ $# -ge 2 ]] || { echo "Error: --resolution requires a value" >&2; exit 1; }; RESOLUTION="$2"; shift 2 ;;
+    --body)       [[ $# -ge 2 ]] || { echo "Error: --body requires a value" >&2; exit 1; }; BODIES="$2"; shift 2 ;;
     --force)      FORCE=true; shift ;;
     -h|--help)
       echo "Usage: $0 [--resolution 2k|4k|8k|16k|all] [--body earth,moon,mars,sun|all] [--force]"

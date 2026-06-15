@@ -51,7 +51,7 @@ jobs:
             viewer/public/textures/moon_4k.jpg
             viewer/public/textures/moon_8k.jpg
             viewer/public/textures/sun_4k.jpg
-          key: viewer-textures-${{ hashFiles('tools/fetch-textures.sh') }}-${{ runner.os }}
+          key: viewer-textures-${{ hashFiles('tools/fetch-textures.sh', '.github/workflows/deploy.yml') }}-${{ runner.os }}
 
       - name: Fetch viewer textures (4k/8k — skips mars to avoid 12 GB source)
         if: steps.texture-cache.outputs.cache-hit != 'true'
