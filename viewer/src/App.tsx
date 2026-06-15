@@ -299,7 +299,9 @@ export function App() {
     // set VITE_TEXTURE_BASE_URL at build time (e.g. /orts/viewer/textures/).
     // Without the env var — local dev without a server, third-party embeds —
     // we keep the bundled 2K and avoid probing paths that likely don't exist.
-    return import.meta.env.VITE_TEXTURE_BASE_URL ?? undefined;
+    const raw = import.meta.env.VITE_TEXTURE_BASE_URL;
+    if (!raw) return undefined;
+    return raw.endsWith("/") ? raw : `${raw}/`;
   }, [wsSource.isConnected, wsUrl]);
 
   const satelliteNames = useMemo(() => {
