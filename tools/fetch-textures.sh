@@ -130,8 +130,10 @@ fi
 
 download() {
   local url="$1" dest="$2"
+  local tmp="$TEMP_DIR/$(basename "$dest").partial"
   echo "  Downloading $(basename "$dest")..."
-  curl -fSL --retry 3 --retry-delay 5 --progress-bar -o "$dest" "$url"
+  curl -fSL --retry 3 --retry-delay 5 --progress-bar -o "$tmp" "$url"
+  mv "$tmp" "$dest"
 }
 
 resize_jpeg() {
