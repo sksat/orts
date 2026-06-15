@@ -57,7 +57,7 @@ jobs:
 
       - name: Fetch viewer textures (4k/8k — skips mars to avoid 12 GB source)
         if: steps.texture-cache.outputs.cache-hit != 'true'
-        run: ./tools/fetch-textures.sh --resolution 4k --body earth,moon,sun && ./tools/fetch-textures.sh --resolution 8k --body earth,moon,sun
+        run: ./tools/fetch-textures.sh --resolution 4k --body earth,moon,sun && ./tools/fetch-textures.sh --resolution 8k --body earth,moon
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain

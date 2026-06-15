@@ -86,7 +86,8 @@ case "$RESOLUTION" in
 esac
 
 # Validate --body entries
-_bodies_norm="${BODIES,,}"; _bodies_norm="${_bodies_norm// /}"
+_bodies_norm=$(tr '[:upper:]' '[:lower:]' <<< "$BODIES")
+_bodies_norm="${_bodies_norm// /}"
 IFS=',' read -ra _BODY_LIST <<< "$_bodies_norm"
 for _b in "${_BODY_LIST[@]}"; do
   case "$_b" in
@@ -102,8 +103,9 @@ unset _bodies_norm _BODY_LIST _b
 # Returns 0 if the given body should be processed.
 # Normalises case and strips spaces so --body "Earth, Moon" works as expected.
 include_body() {
-  local body="${1,,}"
-  local bodies="${BODIES,,}"; bodies="${bodies// /}"
+  local body; body=$(tr '[:upper:]' '[:lower:]' <<< "$1")
+  local bodies; bodies=$(tr '[:upper:]' '[:lower:]' <<< "$BODIES")
+  bodies="${bodies// /}"
   [[ "$bodies" == "all" ]] || [[ ",$bodies," == *",$body,"* ]]
 }
 
