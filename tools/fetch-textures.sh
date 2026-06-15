@@ -49,14 +49,16 @@ SUN_SOURCE_URL="https://svs.gsfc.nasa.gov/vis/a030000/a030300/a030362/euvi_aia30
 # --- Parse arguments ---
 
 RESOLUTION="all"
+BODIES="all"
 FORCE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --resolution) RESOLUTION="$2"; shift 2 ;;
+    --resolution) [[ $# -ge 2 ]] || { echo "Error: --resolution requires a value" >&2; exit 1; }; RESOLUTION="$2"; shift 2 ;;
+    --body)       [[ $# -ge 2 ]] || { echo "Error: --body requires a value" >&2; exit 1; }; BODIES="$2"; shift 2 ;;
     --force)      FORCE=true; shift ;;
     -h|--help)
-      echo "Usage: $0 [--resolution 2k|4k|8k|16k|all] [--force]"
+      echo "Usage: $0 [--resolution 2k|4k|8k|16k|all] [--body earth,moon,mars,sun|all] [--force]"
       echo ""
       echo "Downloads NASA/USGS textures and converts to power-of-two JPEG."
       echo ""
@@ -68,12 +70,44 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --resolution  Which resolutions to download: 2k, 4k, 8k, 16k, or all (default: all)"
+      echo "  --body        Comma-separated list of bodies: earth,moon,mars,sun or all (default: all)"
+      echo "                Tip: omit mars to skip the 12GB source download required for mars 4k/8k/16k"
       echo "  --force       Re-download even if files already exist"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+# Validate --resolution
+case "$RESOLUTION" in
+  2k|4k|8k|16k|all) ;;
+  *) echo "Error: unknown resolution '$RESOLUTION' (expected: 2k|4k|8k|16k|all)" >&2; exit 1 ;;
+esac
+
+# Validate --body entries
+_bodies_norm=$(tr '[:upper:]' '[:lower:]' <<< "$BODIES")
+_bodies_norm="${_bodies_norm// /}"
+IFS=',' read -ra _BODY_LIST <<< "$_bodies_norm"
+for _b in "${_BODY_LIST[@]}"; do
+  case "$_b" in
+    earth|moon|mars|sun|all) ;;
+    *) echo "Error: unknown body '$_b' (expected: earth,moon,mars,sun or all)" >&2; exit 1 ;;
+  esac
+done
+if [[ "$_bodies_norm" != "all" ]] && [[ ",$_bodies_norm," == *",all,"* ]]; then
+  echo "Error: 'all' cannot be combined with specific bodies; use '--body all' alone" >&2; exit 1
+fi
+unset _bodies_norm _BODY_LIST _b
+
+# Returns 0 if the given body should be processed.
+# Normalises case and strips spaces so --body "Earth, Moon" works as expected.
+include_body() {
+  local body; body=$(tr '[:upper:]' '[:lower:]' <<< "$1")
+  local bodies; bodies=$(tr '[:upper:]' '[:lower:]' <<< "$BODIES")
+  bodies="${bodies// /}"
+  [[ "$bodies" == "all" ]] || [[ ",$bodies," == *",$body,"* ]]
+}
 
 # --- Check prerequisites ---
 
@@ -96,8 +130,10 @@ fi
 
 download() {
   local url="$1" dest="$2"
+  local tmp="$TEMP_DIR/$(basename "$dest").partial"
   echo "  Downloading $(basename "$dest")..."
-  curl -fSL --progress-bar -o "$dest" "$url"
+  curl -fSL --retry 3 --retry-delay 5 --progress-bar -o "$tmp" "$url"
+  mv "$tmp" "$dest"
 }
 
 resize_jpeg() {
@@ -327,11 +363,13 @@ process_sun() {
   fi
 }
 
-process_day
-process_night
-process_moon
-process_mars
-process_sun
+if include_body earth; then
+  process_day
+  process_night
+fi
+if include_body moon; then process_moon; fi
+if include_body mars; then process_mars; fi
+if include_body sun;  then process_sun;  fi
 
 echo ""
 echo "==> All done! Texture files in $TEXTURE_DIR:"

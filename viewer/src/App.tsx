@@ -20,12 +20,16 @@ import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
+import { resolveTextureBaseUrl } from "./textureBaseUrl.js";
 import { planInitialRangeQuery } from "./utils/initialRangeQuery.js";
 import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
 
 const DEFAULT_WS_URL: string =
   import.meta.env.VITE_WS_URL ??
   `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
+
+// Build-time texture base URL — present when VITE_TEXTURE_BASE_URL is set at Vite startup.
+const VITE_TEXTURE_BASE_URL = import.meta.env.VITE_TEXTURE_BASE_URL;
 
 export function App() {
   // WASM initialization (must complete before rendering ECEF transforms)
@@ -284,19 +288,19 @@ export function App() {
   }, [fileSource.fileSourceActive, wsSource.isConnected, noAutoConnect]);
 
   // Derived values
-  const textureBaseUrl = useMemo(() => {
-    // High-res textures are served by a connected orts server, which downloads
-    // and resizes them on demand. Without a live server — file replay, or no
-    // connection — stay on the bundled 2K base rather than fetching resolutions
-    // that may not exist (which otherwise stalls on big decodes / 404 retries).
-    if (!wsSource.isConnected) return undefined;
-    try {
-      const u = new URL(wsUrl.replace(/^ws/, "http"));
-      return `${u.origin}/textures/`;
-    } catch {
-      return undefined;
-    }
-  }, [wsSource.isConnected, wsUrl]);
+  const textureBaseUrl = useMemo(
+    () => resolveTextureBaseUrl(wsSource.isConnected, wsUrl, VITE_TEXTURE_BASE_URL),
+    [wsSource.isConnected, wsUrl, VITE_TEXTURE_BASE_URL],
+  );
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as Record<string, unknown>;
+    w.__debug_texture_base_url = textureBaseUrl;
+    return () => {
+      delete w.__debug_texture_base_url;
+    };
+  }, [textureBaseUrl]);
 
   const satelliteNames = useMemo(() => {
     if (!simInfo) return undefined;
