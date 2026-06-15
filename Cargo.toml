@@ -59,7 +59,7 @@ ts-rs = { version = "12", features = ["serde-json-impl"] }
 # See DESIGN.md Phase P for the rationale. Minor-pinned so that
 # `cargo update` picks up patch fixes (including security) automatically.
 wasmtime-wasi = { version = "~43.0", default-features = false }
-wasmtime = { version = "~43.0", default-features = false, features = [
+wasmtime = { version = "~45.0.0", default-features = false, features = [
     "runtime",
     "cranelift",
     "pulley",
