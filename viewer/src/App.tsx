@@ -291,7 +291,7 @@ export function App() {
   // Derived values
   const textureBaseUrl = useMemo(
     () => resolveTextureBaseUrl(wsSource.isConnected, wsUrl, VITE_TEXTURE_BASE_URL),
-    [wsSource.isConnected, wsUrl],
+    [wsSource.isConnected, wsUrl, VITE_TEXTURE_BASE_URL],
   );
 
   useEffect(() => {
