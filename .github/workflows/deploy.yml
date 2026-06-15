@@ -36,8 +36,19 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
+      - name: Install mold linker and ImageMagick
+        run: sudo apt-get install -y mold imagemagick
+
+      - name: Cache viewer textures (4k/8k)
+        id: texture-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: viewer/public/textures
+          key: viewer-textures-${{ hashFiles('tools/fetch-textures.sh') }}
+
+      - name: Fetch viewer textures (4k/8k — skips mars to avoid 12 GB source)
+        if: steps.texture-cache.outputs.cache-hit != 'true'
+        run: ./tools/fetch-textures.sh --resolution 4k --body earth,moon,sun && ./tools/fetch-textures.sh --resolution 8k --body earth,moon,sun
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain

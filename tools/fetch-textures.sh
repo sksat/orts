@@ -49,14 +49,16 @@ SUN_SOURCE_URL="https://svs.gsfc.nasa.gov/vis/a030000/a030300/a030362/euvi_aia30
 # --- Parse arguments ---
 
 RESOLUTION="all"
+BODIES="all"
 FORCE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --resolution) RESOLUTION="$2"; shift 2 ;;
+    --body)       BODIES="$2"; shift 2 ;;
     --force)      FORCE=true; shift ;;
     -h|--help)
-      echo "Usage: $0 [--resolution 2k|4k|8k|16k|all] [--force]"
+      echo "Usage: $0 [--resolution 2k|4k|8k|16k|all] [--body earth,moon,mars,sun|all] [--force]"
       echo ""
       echo "Downloads NASA/USGS textures and converts to power-of-two JPEG."
       echo ""
@@ -68,12 +70,20 @@ while [[ $# -gt 0 ]]; do
       echo ""
       echo "Options:"
       echo "  --resolution  Which resolutions to download: 2k, 4k, 8k, 16k, or all (default: all)"
+      echo "  --body        Comma-separated list of bodies: earth,moon,mars,sun or all (default: all)"
+      echo "                Tip: omit mars to skip the 12GB source download required for mars 4k/8k/16k"
       echo "  --force       Re-download even if files already exist"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+# Returns 0 if the given body should be processed.
+include_body() {
+  local body="$1"
+  [[ "$BODIES" == "all" ]] || echo ",$BODIES," | grep -q ",$body,"
+}
 
 # --- Check prerequisites ---
 
@@ -327,11 +337,13 @@ process_sun() {
   fi
 }
 
-process_day
-process_night
-process_moon
-process_mars
-process_sun
+if include_body earth; then
+  process_day
+  process_night
+fi
+if include_body moon; then process_moon; fi
+if include_body mars; then process_mars; fi
+if include_body sun;  then process_sun;  fi
 
 echo ""
 echo "==> All done! Texture files in $TEXTURE_DIR:"
