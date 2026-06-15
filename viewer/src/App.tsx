@@ -28,6 +28,9 @@ const DEFAULT_WS_URL: string =
   import.meta.env.VITE_WS_URL ??
   `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 
+// Build-time texture base URL (static deployments only). Undefined in dev/embed.
+const VITE_TEXTURE_BASE_URL = import.meta.env.VITE_TEXTURE_BASE_URL;
+
 export function App() {
   // WASM initialization (must complete before rendering ECEF transforms)
   const [wasmReady, setWasmReady] = useState(false);
@@ -287,7 +290,7 @@ export function App() {
 
   // Derived values
   const textureBaseUrl = useMemo(
-    () => resolveTextureBaseUrl(wsSource.isConnected, wsUrl, import.meta.env.VITE_TEXTURE_BASE_URL),
+    () => resolveTextureBaseUrl(wsSource.isConnected, wsUrl, VITE_TEXTURE_BASE_URL),
     [wsSource.isConnected, wsUrl],
   );
 
