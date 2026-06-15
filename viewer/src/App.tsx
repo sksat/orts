@@ -28,7 +28,7 @@ const DEFAULT_WS_URL: string =
   import.meta.env.VITE_WS_URL ??
   `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 
-// Build-time texture base URL (static deployments only). Undefined in dev/embed.
+// Build-time texture base URL — present when VITE_TEXTURE_BASE_URL is set at Vite startup.
 const VITE_TEXTURE_BASE_URL = import.meta.env.VITE_TEXTURE_BASE_URL;
 
 export function App() {

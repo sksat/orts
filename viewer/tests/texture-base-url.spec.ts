@@ -1,20 +1,16 @@
 import { expect, test } from "@playwright/test";
+import { resolveTextureBaseUrl } from "../src/textureBaseUrl.js";
 
 // Verify the textureBaseUrl resolution for the static-deployment path (#105).
 //
-// VITE_TEXTURE_BASE_URL is read at Vite startup: it is defined only when the
-// env var is set before `vite` (or `vite build`) runs. In the default test
-// environment the env var is absent, so the var resolves to undefined.
+// VITE_TEXTURE_BASE_URL is read at Vite startup and can be set in any mode
+// (dev, build, or custom). The expected value is derived from
+// process.env.VITE_TEXTURE_BASE_URL so the test remains correct whether or
+// not the env var is present in the test environment.
 //
-// (a) No env var + no WS → textureBaseUrl is undefined (2K bundled textures).
-//     Covered here via window.__debug_texture_base_url (DEV-mode only hook).
-//
-// (b) Env var set + no WS → textureBaseUrl derived from env var.
-//     Covered by unit tests in src/textureBaseUrl.test.ts.
+// The "env var set" path is covered by unit tests in src/textureBaseUrl.test.ts.
 
-test("textureBaseUrl is undefined when disconnected and VITE_TEXTURE_BASE_URL is not set", async ({
-  page,
-}) => {
+test("textureBaseUrl matches VITE_TEXTURE_BASE_URL when disconnected", async ({ page }) => {
   await page.goto("/?noAutoConnect=1");
 
   // Wait for the React app to mount (canvas appears when Three.js scene initialises).
@@ -31,5 +27,9 @@ test("textureBaseUrl is undefined when disconnected and VITE_TEXTURE_BASE_URL is
   const url = await page.evaluate(
     () => (window as unknown as Record<string, unknown>).__debug_texture_base_url,
   );
-  expect(url).toBeUndefined();
+
+  // Derive expected value the same way the app does — handles the case where
+  // a developer or CI has VITE_TEXTURE_BASE_URL set in their environment.
+  const expected = resolveTextureBaseUrl(false, "", process.env.VITE_TEXTURE_BASE_URL);
+  expect(url).toBe(expected);
 });
