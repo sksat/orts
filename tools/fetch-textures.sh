@@ -82,7 +82,7 @@ done
 # Returns 0 if the given body should be processed.
 include_body() {
   local body="$1"
-  [[ "$BODIES" == "all" ]] || echo ",$BODIES," | grep -q ",$body,"
+  [[ "$BODIES" == "all" ]] || [[ ",$BODIES," == *",$body,"* ]]
 }
 
 # --- Check prerequisites ---

@@ -37,14 +37,21 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Install mold linker and ImageMagick
-        run: sudo apt-get install -y mold imagemagick
+        run: sudo apt-get update && sudo apt-get install -y mold imagemagick
 
       - name: Cache viewer textures (4k/8k)
         id: texture-cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: viewer/public/textures
-          key: viewer-textures-${{ hashFiles('tools/fetch-textures.sh') }}
+          path: |
+            viewer/public/textures/earth_4k.jpg
+            viewer/public/textures/earth_night_4k.jpg
+            viewer/public/textures/earth_8k.jpg
+            viewer/public/textures/earth_night_8k.jpg
+            viewer/public/textures/moon_4k.jpg
+            viewer/public/textures/moon_8k.jpg
+            viewer/public/textures/sun_4k.jpg
+          key: viewer-textures-${{ hashFiles('tools/fetch-textures.sh') }}-${{ runner.os }}
 
       - name: Fetch viewer textures (4k/8k — skips mars to avoid 12 GB source)
         if: steps.texture-cache.outputs.cache-hit != 'true'
