@@ -19,6 +19,8 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      VITE_BASE_PATH: /orts/viewer/
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
@@ -83,8 +85,7 @@ jobs:
       - name: Build site
         run: pnpm build:site
         env:
-          VITE_BASE_PATH: /orts/viewer/
-          VITE_TEXTURE_BASE_URL: /orts/viewer/textures/
+          VITE_TEXTURE_BASE_URL: ${{ env.VITE_BASE_PATH }}textures/
           PUBLIC_GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
           VITE_GA_MEASUREMENT_ID: ${{ vars.GA_MEASUREMENT_ID }}
 
