@@ -86,15 +86,18 @@ case "$RESOLUTION" in
 esac
 
 # Validate --body entries
-IFS=',' read -ra _BODY_LIST <<< "${BODIES,,}"
+_bodies_norm="${BODIES,,}"; _bodies_norm="${_bodies_norm// /}"
+IFS=',' read -ra _BODY_LIST <<< "$_bodies_norm"
 for _b in "${_BODY_LIST[@]}"; do
-  _b="${_b// /}"
   case "$_b" in
     earth|moon|mars|sun|all) ;;
     *) echo "Error: unknown body '$_b' (expected: earth,moon,mars,sun or all)" >&2; exit 1 ;;
   esac
 done
-unset _BODY_LIST _b
+if [[ "$_bodies_norm" != "all" ]] && [[ ",$_bodies_norm," == *",all,"* ]]; then
+  echo "Error: 'all' cannot be combined with specific bodies; use '--body all' alone" >&2; exit 1
+fi
+unset _bodies_norm _BODY_LIST _b
 
 # Returns 0 if the given body should be processed.
 # Normalises case and strips spaces so --body "Earth, Moon" works as expected.
