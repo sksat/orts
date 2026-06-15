@@ -9,9 +9,9 @@ describe("resolveTextureBaseUrl", () => {
   });
 
   it("WS takes priority over env var when connected", () => {
-    expect(
-      resolveTextureBaseUrl(true, "ws://example.com/ws", "/orts/viewer/textures/"),
-    ).toBe("http://example.com/textures/");
+    expect(resolveTextureBaseUrl(true, "ws://example.com/ws", "/orts/viewer/textures/")).toBe(
+      "http://example.com/textures/",
+    );
   });
 
   it("falls back to envBaseUrl when disconnected", () => {
