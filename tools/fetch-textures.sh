@@ -79,6 +79,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Validate --resolution
+case "$RESOLUTION" in
+  2k|4k|8k|16k|all) ;;
+  *) echo "Error: unknown resolution '$RESOLUTION' (expected: 2k|4k|8k|16k|all)" >&2; exit 1 ;;
+esac
+
+# Validate --body entries
+IFS=',' read -ra _BODY_LIST <<< "${BODIES,,}"
+for _b in "${_BODY_LIST[@]}"; do
+  _b="${_b// /}"
+  case "$_b" in
+    earth|moon|mars|sun|all) ;;
+    *) echo "Error: unknown body '$_b' (expected: earth,moon,mars,sun or all)" >&2; exit 1 ;;
+  esac
+done
+unset _BODY_LIST _b
+
 # Returns 0 if the given body should be processed.
 # Normalises case and strips spaces so --body "Earth, Moon" works as expected.
 include_body() {
