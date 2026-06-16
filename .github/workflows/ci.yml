@@ -465,7 +465,7 @@ jobs:
           tool: cargo-binstall
       - name: Install kble
         run: |
-          # renovate: datasource=crates depName=kble
+          # renovate: datasource=crate depName=kble
           KBLE_VERSION=0.4.2
           cargo binstall --no-confirm "kble@${KBLE_VERSION}"
 
