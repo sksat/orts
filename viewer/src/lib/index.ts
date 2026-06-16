@@ -10,7 +10,7 @@
  * they widen the semver surface (their internals changing is a breaking change).
  * That's an accepted trade-off for the "minimal component + primitives" goal —
  * consumers who only need the component should import just OrbitViewer + types.
- * See ./README.md.
+ * See the package README (../../README.md).
  */
 
 // Lower-level building blocks for assembling a custom scene.

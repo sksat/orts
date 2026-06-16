@@ -33,7 +33,7 @@ import { OrbitViewer } from "<pkg>/lib";
 
 `position` is ECI in km. Advance a `time` prop (and pass `epochJd`) for
 physically-correct Sun lighting and body rotation; otherwise a fixed Sun is used
-and the body is static. See [`examples/orbit-viewer`](../../examples/orbit-viewer)
+and the body is static. See [`examples/orbit-viewer`](./examples/orbit-viewer)
 for an animated, backend-free example.
 
 ### Reference frames
@@ -91,7 +91,7 @@ pnpm --filter orts-viewer run build:lib   # → dist-lib/ (JS + .d.ts, wasm inli
 pnpm --filter orts-viewer exec pnpm pack   # inspect the would-be tarball
 ```
 
-`build:lib` (see [vite.lib.config.ts](../../vite.lib.config.ts)) externalises the
+`build:lib` (see [vite.lib.config.ts](./vite.lib.config.ts)) externalises the
 peer deps and emits to `dist-lib/`, separate from the app build (`dist/`). The
 top-level `exports["./lib"]` points at source for in-repo dev; `publishConfig`
 repoints it at `dist-lib` on publish.
