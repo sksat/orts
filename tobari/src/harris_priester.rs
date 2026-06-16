@@ -395,11 +395,8 @@ impl HarrisPriester {
     ///
     /// Uses scale-height interpolation (log-linear) between table entries.
     fn interpolate_table(&self, altitude_km: f64) -> (f64, f64) {
-        // Find the bracket
-        let idx = HP_TABLE
-            .iter()
-            .position(|e| e.h > altitude_km)
-            .unwrap_or(HP_TABLE.len());
+        // Find the bracket (binary search; this runs every drag RHS evaluation).
+        let idx = upper_bound_by(HP_TABLE, altitude_km, |e| e.h);
 
         if idx == 0 {
             return (HP_TABLE[0].rho_min, HP_TABLE[0].rho_max);
@@ -461,6 +458,25 @@ fn scale_height_interp(h: f64, h_lo: f64, h_hi: f64, rho_lo: f64, rho_hi: f64) -
     }
     let scale_h = (h_hi - h_lo) / (rho_lo / rho_hi).ln();
     rho_lo * (-(h - h_lo) / scale_h).exp()
+}
+
+/// Index of the first entry whose key exceeds `x`, by binary search.
+///
+/// Splits the ascending table into entries with `key <= x` (before the
+/// returned index) and `key > x` (at/after). O(log n) comparisons instead of a
+/// linear scan — the atmospheric density lookup is on the per-step drag hot path.
+///
+/// The predicate is `!(key > x)` rather than `key <= x` so that a `NaN` query
+/// returns `len`: when `x` is `NaN`, `key > x` is false for every entry (all
+/// comparisons against `NaN` are false), so the negated predicate is true
+/// everywhere and `partition_point` returns `len` — exactly matching the
+/// previous `position(|e| key > x).unwrap_or(len)` scan. For finite `x` the two
+/// predicates are identical.
+// The negated comparison is deliberate: `!(key > x)` and `key <= x` differ for
+// NaN, and the NaN case is exactly the behavior we must preserve here.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+fn upper_bound_by<T>(table: &[T], x: f64, key: impl Fn(&T) -> f64) -> usize {
+    table.partition_point(|e| !(key(e) > x))
 }
 
 #[cfg(test)]
@@ -731,6 +747,68 @@ mod tests {
         assert!(
             ratio > 0.1 && ratio < 10.0,
             "HP/Exponential ratio at 400 km: {ratio:.2} (HP={rho_hp:.3e}, Exp={rho_exp:.3e})"
+        );
+    }
+
+    #[test]
+    fn upper_bound_matches_previous_linear_scan() {
+        // Behavior preservation: the binary-search bracket index must equal the
+        // previous linear-scan formula `position(|e| e.h > x).unwrap_or(len)`
+        // across the full domain — below the first knot, at each knot exactly,
+        // between knots, above the last knot, and the non-finite edge cases.
+        // NaN in particular must yield `len` (clamp to the last entry), not 0:
+        // the `!(key > x)` predicate is what preserves this.
+        let linear = |x: f64| {
+            HP_TABLE
+                .iter()
+                .position(|e| e.h > x)
+                .unwrap_or(HP_TABLE.len())
+        };
+        let last = HP_TABLE[HP_TABLE.len() - 1].h;
+        let mut samples = vec![
+            HP_TABLE[0].h - 50.0,
+            last + 50.0,
+            last,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for w in HP_TABLE.windows(2) {
+            samples.push(w[0].h); // exact knot
+            samples.push(0.5 * (w[0].h + w[1].h)); // midpoint between knots
+        }
+        for x in samples {
+            assert_eq!(
+                upper_bound_by(HP_TABLE, x, |e| e.h),
+                linear(x),
+                "bracket index mismatch at altitude {x}"
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_uses_logarithmic_comparisons() {
+        // "Is it actually fast?" — assert the lookup is O(log n), not O(n).
+        // Wall-clock timing would be flaky; instead count how many times the
+        // key extractor is invoked (once per binary-search step). A linear scan
+        // would invoke it ~n times; binary search stays at ⌊log2 n⌋ + a small
+        // constant. The `⌊log2 n⌋ + 2` bound (= 7 for n=50) is comfortably below
+        // n=50, so this fails loudly if the search regresses to a linear scan on
+        // the per-step drag hot path.
+        use std::cell::Cell;
+        let n = HP_TABLE.len();
+        let bound = n.ilog2() as usize + 2;
+        // Highest bracket: the worst case a linear scan would walk to (~n).
+        let target = HP_TABLE[n - 1].h - 1.0;
+        let comparisons = Cell::new(0usize);
+        let _ = upper_bound_by(HP_TABLE, target, |e| {
+            comparisons.set(comparisons.get() + 1);
+            e.h
+        });
+        assert!(
+            comparisons.get() <= bound,
+            "lookup made {} comparisons for n={n}; expected ≤{bound} (binary, not linear)",
+            comparisons.get()
         );
     }
 }
