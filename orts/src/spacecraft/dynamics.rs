@@ -4,7 +4,7 @@ use crate::effector::{AugmentedState, AuxRegistry, StateEffector};
 use crate::model::Model;
 use crate::orbital::gravity::GravityField;
 use arika::epoch::Epoch;
-use arika::frame::{Eci, SimpleEci, Vec3};
+use arika::frame::{Eci, SimpleEci};
 use nalgebra::Matrix3;
 use utsuroi::DynamicalSystem;
 
@@ -35,7 +35,7 @@ pub struct SpacecraftDynamics<G: GravityField, F: Eci = SimpleEci> {
     inertia: Matrix3<f64>,
     inertia_inv: Matrix3<f64>,
     models: Vec<Box<dyn Model<SpacecraftState<F>, F>>>,
-    effectors: Vec<Box<dyn StateEffector<SpacecraftState<F>>>>,
+    effectors: Vec<Box<dyn StateEffector<SpacecraftState<F>, F>>>,
     registry: AuxRegistry,
     epoch_0: Option<Epoch>,
     body_radius: Option<f64>,
@@ -79,10 +79,13 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// Add a state effector (builder pattern).
     ///
     /// Effectors have auxiliary state (e.g. RW angular momentum) that
-    /// is integrated alongside the plant state.
+    /// is integrated alongside the plant state. The effector must produce
+    /// its loads in this system's inertial frame `F` (its
+    /// [`StateEffector::derivatives`] returns [`ExternalLoads<F>`]), so the
+    /// dynamics never re-tag coordinates. See issue #103.
     pub fn with_effector(
         mut self,
-        effector: impl StateEffector<SpacecraftState<F>> + 'static,
+        effector: impl StateEffector<SpacecraftState<F>, F> + 'static,
     ) -> Self {
         let dim = effector.state_dim();
         self.registry.register(effector.name(), dim);
@@ -122,7 +125,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Downcast a state effector by index (immutable).
-    pub fn effector<T: StateEffector<SpacecraftState<F>> + 'static>(
+    pub fn effector<T: StateEffector<SpacecraftState<F>, F> + 'static>(
         &self,
         index: usize,
     ) -> Option<&T> {
@@ -132,7 +135,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Downcast a state effector by index (mutable).
-    pub fn effector_mut<T: StateEffector<SpacecraftState<F>> + 'static>(
+    pub fn effector_mut<T: StateEffector<SpacecraftState<F>, F> + 'static>(
         &mut self,
         index: usize,
     ) -> Option<&mut T> {
@@ -142,7 +145,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Find and downcast a state effector by name (immutable).
-    pub fn effector_by_name<T: StateEffector<SpacecraftState<F>> + 'static>(
+    pub fn effector_by_name<T: StateEffector<SpacecraftState<F>, F> + 'static>(
         &self,
         name: &str,
     ) -> Option<&T> {
@@ -155,7 +158,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Find and downcast a state effector by name (mutable).
-    pub fn effector_by_name_mut<T: StateEffector<SpacecraftState<F>> + 'static>(
+    pub fn effector_by_name_mut<T: StateEffector<SpacecraftState<F>, F> + 'static>(
         &mut self,
         name: &str,
     ) -> Option<&mut T> {
@@ -252,26 +255,21 @@ impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G
             total += model.eval(t, &state.plant, epoch.as_ref());
         }
 
-        // Evaluate state effectors
-        // Note: StateEffector::derivatives returns ExternalLoads (= ExternalLoads<SimpleEci>).
-        // We convert to ExternalLoads<F> via raw vectors, which is safe because the
-        // underlying representation is identical (Vec3 is a newtype over Vector3<f64>).
+        // Evaluate state effectors.
+        //
+        // INVARIANT: a `StateEffector<S, F>` returns `ExternalLoads<F>` —
+        // already expressed in this system's inertial frame `F` — so loads
+        // accumulate directly with no coordinate re-tag. Torque-only
+        // effectors (reaction wheels) are `impl<.., F: Eci>` because
+        // body-frame torque is frame-independent; a translational effector
+        // must produce its inertial acceleration in `F` itself. This is what
+        // makes the SimpleEci→`F` mislabel from issue #103 unrepresentable.
         let mut aux_rates = vec![0.0; self.registry.total_dim()];
         for (i, eff) in self.effectors.iter().enumerate() {
             let entry = &self.registry.entries()[i];
             let aux_slice = &state.aux[entry.offset..entry.offset + entry.dim];
             let rates_slice = &mut aux_rates[entry.offset..entry.offset + entry.dim];
-            let eff_loads =
-                eff.derivatives(t, &state.plant, aux_slice, rates_slice, epoch.as_ref());
-            // TODO: StateEffector::derivatives returns ExternalLoads<SimpleEci>.
-            // When F != SimpleEci, this raw re-tag is only correct if the effector
-            // produces zero translational acceleration (torque-only, like RW).
-            // Making StateEffector frame-generic is needed for Gcrs effectors
-            // that contribute translational loads.
-            total.acceleration_inertial +=
-                Vec3::<F>::from_raw(*eff_loads.acceleration_inertial.inner());
-            total.torque_body += eff_loads.torque_body;
-            total.mass_rate += eff_loads.mass_rate;
+            total += eff.derivatives(t, &state.plant, aux_slice, rates_slice, epoch.as_ref());
         }
 
         // Total translational acceleration
@@ -810,5 +808,190 @@ mod tests {
             "spacecraft should react to RW torque"
         );
         assert!(result.is_finite());
+    }
+
+    // Step 8: frame-generic StateEffector (issue #103 fix)
+    //
+    // A `StateEffector<S, F>` returns `ExternalLoads<F>` — already in the
+    // host inertial frame — so the dynamics accumulate effector loads with
+    // no coordinate re-tag. Torque-only effectors work on any `F`; a
+    // translational effector produces its inertial acceleration in `F`
+    // itself (e.g. by rotating a body-frame thrust via
+    // `rotation_to_inertial::<F>`). This makes the old SimpleEci→`F`
+    // mislabel unrepresentable.
+
+    use crate::model::HasAttitude;
+    use arika::frame::{Body, Gcrs, Vec3 as FrameVec3};
+
+    /// Translational mock: contributes a constant acceleration already
+    /// expressed in the host frame `F`.
+    struct ConstAccelEffector {
+        accel: Vector3<f64>,
+    }
+
+    impl<S, F: Eci> StateEffector<S, F> for ConstAccelEffector {
+        fn name(&self) -> &str {
+            "const_accel"
+        }
+        fn state_dim(&self) -> usize {
+            0
+        }
+        fn derivatives(
+            &self,
+            _t: f64,
+            _state: &S,
+            _aux: &[f64],
+            _aux_rates: &mut [f64],
+            _epoch: Option<&Epoch>,
+        ) -> ExternalLoads<F> {
+            ExternalLoads::<F>::acceleration(self.accel)
+        }
+    }
+
+    /// Realistic translational mock: a body-frame thrust rotated into the
+    /// host inertial frame `F` — the correct pattern for a thruster effector
+    /// on any frame, with no silent re-tag.
+    struct BodyThrustEffector {
+        accel_body: Vector3<f64>,
+    }
+
+    impl<S: HasAttitude, F: Eci> StateEffector<S, F> for BodyThrustEffector {
+        fn name(&self) -> &str {
+            "body_thrust"
+        }
+        fn state_dim(&self) -> usize {
+            0
+        }
+        fn derivatives(
+            &self,
+            _t: f64,
+            state: &S,
+            _aux: &[f64],
+            _aux_rates: &mut [f64],
+            _epoch: Option<&Epoch>,
+        ) -> ExternalLoads<F> {
+            let a_body = FrameVec3::<Body>::from_raw(self.accel_body);
+            let a_inertial = state
+                .attitude()
+                .rotation_to_inertial::<F>()
+                .transform(&a_body);
+            ExternalLoads {
+                acceleration_inertial: a_inertial,
+                torque_body: FrameVec3::zeros(),
+                mass_rate: 0.0,
+            }
+        }
+    }
+
+    fn gcrs_spacecraft(attitude: AttitudeState) -> SpacecraftState<Gcrs> {
+        SpacecraftState {
+            orbit: crate::OrbitalState::new_in_frame(
+                Vector3::new(7000.0, 0.0, 0.0),
+                Vector3::new(0.0, 7.5, 0.0),
+            ),
+            attitude,
+            mass: 500.0,
+        }
+    }
+
+    #[test]
+    fn torque_only_effector_works_on_gcrs() {
+        // A torque-only effector (RW) registers and integrates on a
+        // non-SimpleEci system: the types now permit it because RW is
+        // `StateEffector<S, F>` for every `F`, and torque is frame-independent.
+        use crate::spacecraft::ReactionWheelAssembly;
+        let rw = ReactionWheelAssembly::three_axis(0.01, 1.0, 0.5);
+        let mut dyn_sc: SpacecraftDynamics<PointMass, Gcrs> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0)).with_effector(rw);
+        dyn_sc
+            .effector_mut::<ReactionWheelAssembly>(0)
+            .unwrap()
+            .command = crate::plugin::command::RwCommand::Torques(vec![0.01, 0.0, 0.0]);
+
+        let state = dyn_sc.initial_augmented_state(gcrs_spacecraft(AttitudeState::identity()));
+        let d = dyn_sc.derivatives(0.0, &state);
+
+        assert_eq!(d.aux.len(), 3);
+        // RW reaction torque produces a body angular acceleration, ...
+        assert!(d.plant.attitude.angular_velocity.magnitude() > 1e-9);
+        // ... and contributes zero inertial acceleration (gravity only).
+        let dyn_grav: SpacecraftDynamics<PointMass, Gcrs> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
+        let d_grav = dyn_grav.derivatives(
+            0.0,
+            &dyn_grav.initial_augmented_state(gcrs_spacecraft(AttitudeState::identity())),
+        );
+        assert!((d.plant.orbit.velocity() - d_grav.plant.orbit.velocity()).magnitude() < 1e-15);
+    }
+
+    #[test]
+    fn translational_effector_acceleration_applied_in_gcrs() {
+        // The effector's ExternalLoads<Gcrs> acceleration reaches the Gcrs
+        // translational EOM directly — no coordinate re-tag.
+        let accel = Vector3::new(1e-6, 2e-6, 3e-6);
+        let dyn_sc: SpacecraftDynamics<PointMass, Gcrs> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+                .with_effector(ConstAccelEffector { accel });
+        let plant = gcrs_spacecraft(AttitudeState::identity());
+        let d = dyn_sc.derivatives(0.0, &dyn_sc.initial_augmented_state(plant.clone()));
+
+        let dyn_grav: SpacecraftDynamics<PointMass, Gcrs> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
+        let d_grav = dyn_grav.derivatives(0.0, &dyn_grav.initial_augmented_state(plant));
+
+        let diff = d.plant.orbit.velocity() - d_grav.plant.orbit.velocity();
+        assert!((diff - accel).magnitude() < 1e-15);
+    }
+
+    #[test]
+    fn body_thrust_effector_rotates_into_gcrs() {
+        // Regression guard for #103: a body-frame thrust is rotated into the
+        // host frame `F = Gcrs` via rotation_to_inertial::<F>, not re-tagged.
+        // 90° about +Z: body +X thrust → inertial +Y acceleration.
+        let half = std::f64::consts::FRAC_PI_2 / 2.0;
+        let attitude = AttitudeState {
+            quaternion: Vector4::new(half.cos(), 0.0, 0.0, half.sin()),
+            angular_velocity: Vector3::zeros(),
+        };
+        let dyn_sc: SpacecraftDynamics<PointMass, Gcrs> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0)).with_effector(
+                BodyThrustEffector {
+                    accel_body: Vector3::new(1e-6, 0.0, 0.0),
+                },
+            );
+        let plant = gcrs_spacecraft(attitude);
+        let d = dyn_sc.derivatives(0.0, &dyn_sc.initial_augmented_state(plant.clone()));
+
+        let dyn_grav: SpacecraftDynamics<PointMass, Gcrs> =
+            SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
+        let d_grav = dyn_grav.derivatives(0.0, &dyn_grav.initial_augmented_state(plant));
+
+        let inertial_accel = d.plant.orbit.velocity() - d_grav.plant.orbit.velocity();
+        assert!(
+            inertial_accel[0].abs() < 1e-12,
+            "x ~0, got {}",
+            inertial_accel[0]
+        );
+        assert!(
+            (inertial_accel[1] - 1e-6).abs() < 1e-12,
+            "y = 1e-6, got {}",
+            inertial_accel[1]
+        );
+        assert!(inertial_accel[2].abs() < 1e-15);
+    }
+
+    #[test]
+    fn translational_effector_on_simple_eci_still_works() {
+        // Backward compatibility: the default `F = SimpleEci` path is unchanged.
+        let accel = Vector3::new(1e-6, 2e-6, 3e-6);
+        let dyn_sc = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0))
+            .with_effector(ConstAccelEffector { accel });
+        let d = dyn_sc.derivatives(0.0, &dyn_sc.initial_augmented_state(sample_spacecraft()));
+
+        let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));
+        let d_grav = dyn_grav.derivatives(0.0, &augment(sample_spacecraft()));
+
+        let diff = d.plant.orbit.velocity() - d_grav.plant.orbit.velocity();
+        assert!((diff - accel).magnitude() < 1e-15);
     }
 }

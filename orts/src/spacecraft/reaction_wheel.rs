@@ -15,6 +15,7 @@
 //! integrates wheel angular momentum.
 
 use arika::epoch::Epoch;
+use arika::frame::Eci;
 use nalgebra::Vector3;
 
 use super::ExternalLoads;
@@ -431,7 +432,11 @@ impl RwAssembly {
     }
 }
 
-impl<S: HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
+// Reaction wheels are frame-agnostic: their entire contribution is body-frame
+// reaction + gyroscopic torque, which is independent of the host inertial
+// frame `F`. The inertial acceleration is identically zero, so `RwAssembly`
+// implements `StateEffector<S, F>` for every `F: Eci`.
+impl<S: HasAttitude + Send + Sync, F: Eci> StateEffector<S, F> for RwAssembly {
     fn name(&self) -> &str {
         "reaction_wheels"
     }
@@ -463,7 +468,7 @@ impl<S: HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         aux: &[f64],
         aux_rates: &mut [f64],
         _epoch: Option<&Epoch>,
-    ) -> ExternalLoads {
+    ) -> ExternalLoads<F> {
         let n = self.core.num_wheels();
         let omega = &state.attitude().angular_velocity;
         let momentum = self.core.momentum_slice(aux);
@@ -529,7 +534,8 @@ impl<S: HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         // Gyroscopic coupling: −ω × H_rw
         let gyro = self.core.gyroscopic_torque(omega, momentum);
 
-        ExternalLoads::torque(reaction + gyro)
+        // Body-frame torque only; zero inertial acceleration in any frame `F`.
+        ExternalLoads::<F>::torque(reaction + gyro)
     }
 }
 
@@ -547,6 +553,18 @@ mod tests {
 
     fn test_state_at_rest() -> AttitudeState {
         AttitudeState::identity()
+    }
+
+    // `RwAssembly` is now `StateEffector<S, F>` for every frame `F`, so a bare
+    // `rw.derivatives(..)` is ambiguous in `F`. These single-frame tests pin
+    // `F = SimpleEci` via the return type.
+    fn rw_derivatives(
+        rw: &RwAssembly,
+        state: &AttitudeState,
+        aux: &[f64],
+        rates: &mut [f64],
+    ) -> ExternalLoads {
+        rw.derivatives(0.0, state, aux, rates, None)
     }
 
     // Core tests
@@ -840,7 +858,7 @@ mod tests {
         let state = test_state_at_rest();
         let aux = vec![0.0, 0.0, 0.0];
         let mut rates = vec![0.0, 0.0, 0.0];
-        let loads = rw.derivatives(0.0, &state, &aux, &mut rates, None);
+        let loads = rw_derivatives(&rw, &state, &aux, &mut rates);
         assert_eq!(rates, vec![0.0, 0.0, 0.0]);
         assert!(loads.torque_body.magnitude() < 1e-15);
     }
@@ -854,7 +872,7 @@ mod tests {
         let state = test_state_at_rest();
         let aux = vec![0.0, 0.0, 0.0];
         let mut rates = vec![0.0, 0.0, 0.0];
-        let loads = rw.derivatives(0.0, &state, &aux, &mut rates, None);
+        let loads = rw_derivatives(&rw, &state, &aux, &mut rates);
 
         // Z-wheel rate = -0.05
         assert!(rates[0].abs() < 1e-15);
@@ -874,7 +892,7 @@ mod tests {
         let state = test_state_at_rest();
         let aux = vec![0.0, 0.0, 0.0];
         let mut rates = vec![0.0, 0.0, 0.0];
-        rw.derivatives(0.0, &state, &aux, &mut rates, None);
+        rw_derivatives(&rw, &state, &aux, &mut rates);
 
         // Clamped to 0.1
         assert!((rates[0] - 0.1).abs() < 1e-15);
@@ -889,7 +907,7 @@ mod tests {
         let state = test_state_at_rest();
         let aux = vec![1.0, 0.0, 0.0];
         let mut rates = vec![0.0, 0.0, 0.0];
-        rw.derivatives(0.0, &state, &aux, &mut rates, None);
+        rw_derivatives(&rw, &state, &aux, &mut rates);
 
         assert!(rates[0].abs() < 1e-15);
     }
@@ -903,7 +921,7 @@ mod tests {
         let state = test_state_at_rest();
         let aux = vec![-1.0, 0.0, 0.0];
         let mut rates = vec![0.0, 0.0, 0.0];
-        rw.derivatives(0.0, &state, &aux, &mut rates, None);
+        rw_derivatives(&rw, &state, &aux, &mut rates);
 
         assert!(rates[0].abs() < 1e-15);
     }
@@ -917,7 +935,7 @@ mod tests {
         let state = test_state_at_rest();
         let aux = vec![1.0, 0.0, 0.0];
         let mut rates = vec![0.0, 0.0, 0.0];
-        rw.derivatives(0.0, &state, &aux, &mut rates, None);
+        rw_derivatives(&rw, &state, &aux, &mut rates);
 
         assert!((rates[0] - (-0.05)).abs() < 1e-15);
     }
@@ -932,7 +950,7 @@ mod tests {
         let state = test_state_at_rest();
         let aux = vec![0.0, 0.0, 0.0];
         let mut rates = vec![0.0, 0.0, 0.0];
-        let loads = rw.derivatives(0.0, &state, &aux, &mut rates, None);
+        let loads = rw_derivatives(&rw, &state, &aux, &mut rates);
 
         // At rest (no gyroscopic coupling), body torque should match desired
         let tb = loads.torque_body.into_inner();
@@ -1035,7 +1053,7 @@ mod tests {
         // aux = [h, τ_realized], both start at 0
         let aux = vec![0.0, 0.0];
         let mut rates = vec![0.0, 0.0];
-        let _loads = rw.derivatives(0.0, &state, &aux, &mut rates, None);
+        let _loads = rw_derivatives(&rw, &state, &aux, &mut rates);
 
         // dτ_realized/dt = (τ_target - τ_realized) / T_m = (0.1 - 0.0) / 0.05 = 2.0
         assert!((rates[1] - 2.0).abs() < 1e-12);
@@ -1055,7 +1073,7 @@ mod tests {
         // τ_realized has caught up to 0.06
         let aux = vec![0.0, 0.06];
         let mut rates = vec![0.0, 0.0];
-        let loads = rw.derivatives(0.0, &state, &aux, &mut rates, None);
+        let loads = rw_derivatives(&rw, &state, &aux, &mut rates);
 
         // dτ_realized/dt = (0.1 - 0.06) / 0.05 = 0.8
         assert!((rates[1] - 0.8).abs() < 1e-12);
@@ -1075,7 +1093,7 @@ mod tests {
         };
         let aux = vec![5.0, 0.0, 0.0];
         let mut rates = vec![0.0, 0.0, 0.0];
-        let loads = rw.derivatives(0.0, &state, &aux, &mut rates, None);
+        let loads = rw_derivatives(&rw, &state, &aux, &mut rates);
 
         // H_rw = [5, 0, 0], omega = [0, 0, 1]
         // gyro = -omega × H_rw = -[0,5,0] = [0,-5,0]
