@@ -19,6 +19,9 @@ export type { OrbitPoint } from "../orbit.js";
 export { DEFAULT_FRAME, type ReferenceFrame } from "../referenceFrame.js";
 export { computeLvlhAxes, type LvlhAxes } from "../sceneFrame.js";
 export { TrailBuffer } from "../utils/TrailBuffer.js";
+// arika WASM control (Sun direction / body rotation). OrbitViewer auto-inits when
+// given an epoch; these let an embedder pre-load or point at an external .wasm.
+export { type InitArikaOptions, initArika, isArikaReady } from "../wasm/arikaInit.js";
 // Pure adapters and frame/trail logic (useful for custom scenes / advanced use).
 export { toOrbitPoint, toTrailBuffer, trailPointToOrbitPoint } from "./adapt.js";
 export {
