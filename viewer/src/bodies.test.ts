@@ -1,33 +1,78 @@
 import * as THREE from "three";
 import { describe, expect, it } from "vitest";
-import { entityPathToBodyId, getBodyRadius } from "./bodies.js";
+import {
+  type BodyDefinition,
+  DEFAULT_BODIES,
+  entityPathToBodyId,
+  getBodyRadius,
+  getBodyRenderInfo,
+  resolveBodyDefinitions,
+} from "./bodies.js";
 
-describe("entityPathToBodyId", () => {
-  it("returns null for satellite paths", () => {
-    expect(entityPathToBodyId("/world/sat/iss")).toBeNull();
-    expect(entityPathToBodyId("/world/sat/apollo11")).toBeNull();
+const DEFAULTS = resolveBodyDefinitions();
+
+describe("resolveBodyDefinitions", () => {
+  it("returns the built-in bodies when given nothing", () => {
+    expect(Object.keys(DEFAULTS).sort()).toEqual(["earth", "mars", "moon", "sun"]);
   });
 
-  it("returns body id for known body paths", () => {
-    expect(entityPathToBodyId("/world/moon")).toBe("moon");
-    expect(entityPathToBodyId("/world/sun")).toBe("sun");
-    expect(entityPathToBodyId("/world/mars")).toBe("mars");
-    expect(entityPathToBodyId("/world/earth")).toBe("earth");
+  it("adds a custom body while keeping the defaults", () => {
+    const pluto: BodyDefinition = { id: "pluto", radiusKm: 1188.3, fallbackColor: 0x8a7f72 };
+    const defs = resolveBodyDefinitions({ pluto });
+    expect(defs.pluto).toBe(pluto);
+    expect(defs.earth).toBe(DEFAULT_BODIES.earth); // defaults preserved
   });
 
-  it("returns null for unknown body paths", () => {
-    expect(entityPathToBodyId("/world/pluto")).toBeNull();
+  it("overrides a default body by id (shallow, whole-definition replace)", () => {
+    const earth: BodyDefinition = { id: "earth", radiusKm: 1, fallbackColor: 0x111111 };
+    const defs = resolveBodyDefinitions({ earth });
+    expect(defs.earth).toBe(earth);
+    expect(getBodyRadius("earth", defs)).toBe(1);
   });
 });
 
-describe("getBodyRadius", () => {
-  it("returns radius for known bodies", () => {
-    expect(getBodyRadius("moon")).toBeCloseTo(1737.4, 0);
-    expect(getBodyRadius("earth")).toBeCloseTo(6378.137, 0);
+describe("entityPathToBodyId", () => {
+  it("returns null for satellite paths", () => {
+    expect(entityPathToBodyId("/world/sat/iss", DEFAULTS)).toBeNull();
+    expect(entityPathToBodyId("/world/sat/apollo11", DEFAULTS)).toBeNull();
   });
 
-  it("returns null for unknown bodies", () => {
-    expect(getBodyRadius("pluto")).toBeNull();
+  it("returns body id for known body paths", () => {
+    expect(entityPathToBodyId("/world/moon", DEFAULTS)).toBe("moon");
+    expect(entityPathToBodyId("/world/earth", DEFAULTS)).toBe("earth");
+  });
+
+  it("returns null for bodies not in the given set", () => {
+    expect(entityPathToBodyId("/world/pluto", DEFAULTS)).toBeNull();
+  });
+
+  it("recognises a custom body once it's in the definitions", () => {
+    const defs = resolveBodyDefinitions({ pluto: { id: "pluto", radiusKm: 1188.3 } });
+    expect(entityPathToBodyId("/world/pluto", defs)).toBe("pluto");
+  });
+});
+
+describe("getBodyRadius / getBodyRenderInfo", () => {
+  it("returns radius for known bodies", () => {
+    expect(getBodyRadius("moon", DEFAULTS)).toBeCloseTo(1737.4, 0);
+    expect(getBodyRadius("earth", DEFAULTS)).toBeCloseTo(6378.137, 0);
+  });
+
+  it("returns null radius for bodies not in the set", () => {
+    expect(getBodyRadius("pluto", DEFAULTS)).toBeNull();
+  });
+
+  it("falls back to a grey unknown body for render info", () => {
+    const info = getBodyRenderInfo("pluto", DEFAULTS);
+    expect(info.id).toBe("unknown");
+    expect(info.texture?.day ?? null).toBeNull();
+  });
+
+  it("returns the custom render definition when present", () => {
+    const defs = resolveBodyDefinitions({
+      pluto: { id: "pluto", radiusKm: 1188.3, texture: { day: "https://cdn/pluto.jpg" } },
+    });
+    expect(getBodyRenderInfo("pluto", defs).texture?.day).toBe("https://cdn/pluto.jpg");
   });
 });
 

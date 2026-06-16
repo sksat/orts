@@ -16,6 +16,7 @@
  */
 
 import type { CSSProperties } from "react";
+import type { BodyDefinitions } from "../bodies.js";
 
 /** A 3D vector `[x, y, z]`. Distances are in kilometres. */
 export type Vec3 = [number, number, number];
@@ -71,12 +72,16 @@ export interface SatelliteState {
 /** The central body rendered at the scene origin. */
 export interface CentralBody {
   /**
-   * Body identifier understood by the renderer, e.g. `"earth"`, `"moon"`,
-   * `"mars"`. Unknown ids fall back to a plain coloured sphere.
+   * Body id. One of the built-in bodies (`"earth"`, `"moon"`, `"sun"`,
+   * `"mars"`), or a custom body supplied via {@link OrbitViewerProps.bodies}.
+   * Unknown ids fall back to a plain coloured sphere.
    */
   id: string;
-  /** Physical radius in km. Used as the scene scale factor. */
-  radiusKm: number;
+  /**
+   * Physical radius in km (scene scale factor). Optional when the id resolves
+   * to a known/custom {@link BodyDefinition} — its `radiusKm` is used then.
+   */
+  radiusKm?: number;
 }
 
 /**
@@ -102,6 +107,14 @@ export type ViewerReferenceFrame =
 export interface OrbitViewerProps {
   /** The central body at the origin. */
   centralBody: CentralBody;
+  /**
+   * Custom body definitions, merged over the built-in {@link DEFAULT_BODIES}
+   * (Earth / Moon / Sun / Mars). Add new bodies or override the defaults — e.g.
+   * `{ pluto: { id: "pluto", radiusKm: 1188.3, texture: { day: "/pluto.jpg" } } }`.
+   * Note: physical Sun lighting / rotation only apply to bodies the arika model
+   * knows; a custom body renders (radius / texture / colour) but does not spin.
+   */
+  bodies?: BodyDefinitions;
   /** Satellites to display. */
   satellites: readonly SatelliteState[];
   /** Display frame. Defaults to central-body inertial (ECI-like). */

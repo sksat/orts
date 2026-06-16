@@ -13,6 +13,13 @@
  * See the package README (../../README.md).
  */
 
+// Central-body definitions: built-in bodies + the type for adding custom ones.
+export {
+  type BodyDefinition,
+  type BodyDefinitions,
+  type BodyTexture,
+  DEFAULT_BODIES,
+} from "../bodies.js";
 // Lower-level building blocks for assembling a custom scene.
 export { BodyAxes } from "../components/BodyAxes.js";
 export { CelestialBody } from "../components/CelestialBody.js";

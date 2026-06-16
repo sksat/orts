@@ -1,8 +1,36 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { type BodyRenderInfo, getBodyRenderInfo } from "../bodies.js";
+import {
+  type BodyDefinition,
+  type BodyDefinitions,
+  DEFAULT_BODIES,
+  getBodyRenderInfo,
+} from "../bodies.js";
 import { type TextureResolution, useTextureResolution } from "../hooks/useTextureResolution.js";
 import { EarthBody } from "./EarthBody.js";
+
+/** Flat render fields the sphere sub-components consume (derived from a {@link BodyDefinition}). */
+interface RenderInfo {
+  texturePath: string | null;
+  nightTexturePath: string | null;
+  textureBaseName?: string;
+  nightTextureBaseName?: string;
+  fallbackColor: number;
+  emissiveColor: number;
+  isSelfLuminous: boolean;
+}
+
+function toRenderInfo(def: BodyDefinition): RenderInfo {
+  return {
+    texturePath: def.texture?.day ?? null,
+    nightTexturePath: def.texture?.night ?? null,
+    textureBaseName: def.texture?.baseName,
+    nightTextureBaseName: def.texture?.nightBaseName,
+    fallbackColor: def.fallbackColor ?? 0x666666,
+    emissiveColor: def.emissiveColor ?? 0x222222,
+    isSelfLuminous: def.selfLuminous ?? false,
+  };
+}
 
 interface CelestialBodyProps {
   /** Body identifier from the server (e.g., "earth"). */
@@ -27,6 +55,8 @@ interface CelestialBodyProps {
   textureRevision?: number;
   /** Base URL for fetching high-res textures. */
   textureBaseUrl?: string;
+  /** Body definitions to resolve `bodyId` against. Defaults to the built-in bodies. */
+  bodyDefinitions?: BodyDefinitions;
 }
 
 const FALLBACK_CHAIN: TextureResolution[] = ["16k", "8k", "4k"];
@@ -61,7 +91,7 @@ function TexturedBody({
   textureRevision,
   textureBaseUrl,
 }: {
-  renderInfo: BodyRenderInfo;
+  renderInfo: RenderInfo;
   radius: number;
   targetResolution?: TextureResolution;
   textureRevision?: number;
@@ -199,7 +229,7 @@ function TexturedBody({
   );
 }
 
-function FallbackBody({ renderInfo, radius }: { renderInfo: BodyRenderInfo; radius: number }) {
+function FallbackBody({ renderInfo, radius }: { renderInfo: RenderInfo; radius: number }) {
   return (
     <group>
       <mesh>
@@ -235,8 +265,9 @@ export function CelestialBody({
   physicalScale,
   textureRevision,
   textureBaseUrl,
+  bodyDefinitions = DEFAULT_BODIES,
 }: CelestialBodyProps) {
-  const renderInfo = getBodyRenderInfo(bodyId);
+  const renderInfo = toRenderInfo(getBodyRenderInfo(bodyId, bodyDefinitions));
   const isSatelliteCentered = lvlhPosition != null;
   const targetResolution = useTextureResolution(isSatelliteCentered);
 
