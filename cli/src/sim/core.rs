@@ -38,6 +38,21 @@ pub enum AttitudeSource {
     Propagated,
 }
 
+/// Viewer marker shape a satellite is rendered with when it has no 3D model.
+///
+/// Display concern only — carried from config through `SatelliteInfo` so a sim can
+/// declare its preferred shape; the viewer may still override it per satellite.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, TS)]
+#[ts(export)]
+pub enum MarkerShape {
+    /// Featureless sphere (orientation not shown).
+    #[serde(rename = "sphere")]
+    Sphere,
+    /// XYZ orientation cube (faces colored per body axis).
+    #[serde(rename = "axes-cube")]
+    AxesCube,
+}
+
 /// A single state snapshot used in history messages.
 #[derive(Serialize, Deserialize, Clone, Debug, TS)]
 #[ts(export)]

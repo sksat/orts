@@ -334,6 +334,16 @@ export function App() {
     return m;
   }, [simInfo]);
 
+  // Sim-declared marker shapes (from SatelliteInfo); the viewer can override these.
+  const satelliteSimShapes = useMemo(() => {
+    if (!simInfo) return undefined;
+    const m = new Map<string, MarkerShape>();
+    for (const sat of simInfo.satellites) {
+      if (sat.shape) m.set(sat.id, sat.shape);
+    }
+    return m;
+  }, [simInfo]);
+
   const centralBody = simInfo?.central_body ?? "earth";
   const centralBodyRadius = simInfo?.central_body_radius ?? 6378.137;
   const epochJd = simInfo?.epoch_jd ?? undefined;
@@ -458,6 +468,7 @@ export function App() {
           referenceFrame={referenceFrame}
           satelliteNames={satelliteNames}
           satelliteShapes={markerShapeOverrides}
+          satelliteSimShapes={satelliteSimShapes}
           defaultMarkerShape={defaultMarkerShape}
           physicalScale={false}
           textureRevision={textureRevision}

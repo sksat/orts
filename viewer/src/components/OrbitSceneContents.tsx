@@ -342,6 +342,8 @@ export interface OrbitSceneContentsProps {
   satelliteColors?: Map<string, number | undefined>;
   /** Per-satellite marker shape override; falls back to {@link defaultMarkerShape} then auto. */
   satelliteShapes?: Map<string, MarkerShape>;
+  /** Sim-declared per-satellite marker shapes (from SatelliteInfo); below override, above default. */
+  satelliteSimShapes?: Map<string, MarkerShape>;
   /** Global default marker shape (null/undefined = automatic per attitude). */
   defaultMarkerShape?: MarkerShape | null;
   /** When true, atmosphere uses physical scale. Default: auto (true for satellite-centered). */
@@ -370,6 +372,7 @@ export function OrbitSceneContents({
   satelliteNames,
   satelliteColors,
   satelliteShapes,
+  satelliteSimShapes,
   defaultMarkerShape,
   physicalScale,
   textureRevision,
@@ -619,6 +622,7 @@ export function OrbitSceneContents({
               lvlhAxes={lvlhAxes}
               markerShape={resolveMarkerShape({
                 override: satelliteShapes?.get(centeredSatId),
+                simShape: satelliteSimShapes?.get(centeredSatId),
                 globalDefault: defaultMarkerShape,
                 hasAttitude: pos.qw != null,
               })}
@@ -697,6 +701,7 @@ export function OrbitSceneContents({
                   lvlhAxes={lvlhActive ? lvlhAxes : null}
                   markerShape={resolveMarkerShape({
                     override: satelliteShapes?.get(satId),
+                    simShape: satelliteSimShapes?.get(satId),
                     globalDefault: defaultMarkerShape,
                     hasAttitude: pos.qw != null,
                   })}

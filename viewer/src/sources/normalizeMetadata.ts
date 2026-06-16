@@ -31,6 +31,7 @@ export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt
           altitude: 0,
           period: 0,
           perturbations: [] as string[],
+          shape: null,
         }))
       : [
           {
@@ -39,6 +40,7 @@ export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt
             altitude: 0,
             period: 0,
             perturbations: [] as string[],
+            shape: null,
           },
         ];
 
@@ -78,6 +80,7 @@ export function rrdMetadataToSimInfo(
       altitude: metadata.altitude ?? 0,
       period: metadata.period ?? 0,
       perturbations: [] as string[],
+      shape: null,
     };
   });
 
@@ -89,6 +92,7 @@ export function rrdMetadataToSimInfo(
       altitude: 0,
       period: 0,
       perturbations: [],
+      shape: null,
     });
   }
 

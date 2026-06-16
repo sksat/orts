@@ -82,7 +82,9 @@ function makeSimInfo(overrides: Partial<SimInfo> = {}): SimInfo {
     central_body: "earth",
     central_body_radius: 6378.137,
     epoch_jd: 2451545.0,
-    satellites: [{ id: "sat1", name: "Test", altitude: 400, period: 5400, perturbations: [] }],
+    satellites: [
+      { id: "sat1", name: "Test", altitude: 400, period: 5400, perturbations: [], shape: null },
+    ],
     ...overrides,
   };
 }

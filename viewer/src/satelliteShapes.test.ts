@@ -20,14 +20,24 @@ describe("isMarkerShape", () => {
 
 describe("resolveMarkerShape precedence", () => {
   it("per-satellite override wins over everything", () => {
-    // override = sphere beats both the global default (axes-cube) and the
-    // attitude-based automatic choice (axes-cube).
+    // override = sphere beats sim shape, global default, and the automatic choice.
     expect(
-      resolveMarkerShape({ override: "sphere", globalDefault: "axes-cube", hasAttitude: true }),
+      resolveMarkerShape({
+        override: "sphere",
+        simShape: "axes-cube",
+        globalDefault: "axes-cube",
+        hasAttitude: true,
+      }),
     ).toBe("sphere");
   });
 
-  it("global default applies when there is no override", () => {
+  it("sim-declared shape beats the global default and auto", () => {
+    expect(
+      resolveMarkerShape({ simShape: "sphere", globalDefault: "axes-cube", hasAttitude: true }),
+    ).toBe("sphere");
+  });
+
+  it("global default applies when there is no override or sim shape", () => {
     expect(resolveMarkerShape({ globalDefault: "sphere", hasAttitude: true })).toBe("sphere");
   });
 

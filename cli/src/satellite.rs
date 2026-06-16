@@ -46,6 +46,8 @@ pub struct SatelliteSpec {
     pub srp_cr: Option<f64>,
     /// Attitude dynamics configuration. When present, SpacecraftDynamics is used.
     pub attitude_config: Option<crate::config::AttitudeConfig>,
+    /// Viewer marker shape hint (display only; carried through to SatelliteInfo).
+    pub shape: Option<crate::sim::core::MarkerShape>,
     /// Plugin controller configuration (used in Step 3: controlled.rs).
     #[allow(dead_code)]
     pub controller_config: Option<crate::config::ControllerConfig>,
@@ -121,6 +123,10 @@ pub struct SatelliteInfo {
     pub period: f64,
     /// Names of active perturbation force models (e.g. "drag", "srp", "third_body_sun").
     pub perturbations: Vec<String>,
+    /// Sim-declared viewer marker shape hint (display only; the viewer may override it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub shape: Option<crate::sim::core::MarkerShape>,
 }
 
 /// Parse a satellite specification string (key=value,key=value).
@@ -252,6 +258,7 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         srp_area_to_mass,
         srp_cr,
         attitude_config: None, // CLI --sat does not yet support attitude; use config file
+        shape: None,
         controller_config: None,
         sensor_choices: None,
         rw_config: None,

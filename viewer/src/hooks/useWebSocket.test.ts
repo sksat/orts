@@ -193,8 +193,25 @@ describe("dispatchServerMessage", () => {
 
     expect(onSatelliteAdded).toHaveBeenCalledOnce();
     expect(onSatelliteAdded).toHaveBeenCalledWith(
-      { id: "iss", name: null, altitude: 420, period: 5560, perturbations: ["drag"] },
+      { id: "iss", name: null, altitude: 420, period: 5560, perturbations: ["drag"], shape: null },
       120.5,
+    );
+  });
+
+  it("normalizes a sim-declared marker shape", () => {
+    const onSatelliteAdded = vi.fn();
+    const callbacks = { ...baseCallbacks, onSatelliteAdded };
+
+    const msg: ServerMessage = {
+      type: "satellite_added",
+      satellite: { id: "s", altitude: 400, period: 5400, perturbations: [], shape: "axes-cube" },
+      t: 0,
+    };
+    dispatchServerMessage(msg, callbacks);
+
+    expect(onSatelliteAdded).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s", shape: "axes-cube" }),
+      0,
     );
   });
 

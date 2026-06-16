@@ -26,16 +26,21 @@ export function isMarkerShape(value: string): value is MarkerShape {
 }
 
 /**
- * Resolve the marker shape for a satellite. A null/undefined override or global
- * default falls through to the next level; the automatic level keys off whether
- * the satellite has attitude data.
+ * Resolve the marker shape for a satellite. Precedence (most specific first):
+ *   1. `override`     — per-satellite viewer choice
+ *   2. `simShape`     — shape declared by the simulation (via SatelliteInfo)
+ *   3. `globalDefault`— viewer-wide default
+ *   4. automatic      — orientation cube when attitude is present, else sphere
+ * A null/undefined value at any level falls through to the next.
  */
 export function resolveMarkerShape(opts: {
   override?: MarkerShape | null;
+  simShape?: MarkerShape | null;
   globalDefault?: MarkerShape | null;
   hasAttitude: boolean;
 }): MarkerShape {
   if (opts.override) return opts.override;
+  if (opts.simShape) return opts.simShape;
   if (opts.globalDefault) return opts.globalDefault;
   return opts.hasAttitude ? DEFAULT_ATTITUDE_SHAPE : "sphere";
 }

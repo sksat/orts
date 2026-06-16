@@ -374,6 +374,10 @@ pub struct SatelliteConfig {
     pub id: Option<String>,
     #[ts(optional)]
     pub name: Option<String>,
+    /// Viewer marker shape when this satellite has no 3D model (sphere / axes-cube).
+    /// Display hint only; the viewer can override it. Defaults to automatic.
+    #[ts(optional)]
+    pub shape: Option<crate::sim::core::MarkerShape>,
     pub orbit: OrbitConfig,
     #[ts(optional)]
     pub ballistic_coeff: Option<f64>,
@@ -543,6 +547,7 @@ impl SatelliteConfig {
             srp_area_to_mass: self.srp_area_to_mass,
             srp_cr: self.srp_cr,
             attitude_config: self.attitude.clone(),
+            shape: self.shape,
             controller_config: self.controller.clone(),
             sensor_choices: self.sensors.clone(),
             rw_config: self.reaction_wheels.clone(),
@@ -844,6 +849,7 @@ mod tests {
             ballistic_coeff: Some(0.005),
             srp_area_to_mass: None,
             srp_cr: None,
+            shape: None,
             attitude: None,
             controller: None,
             sensors: None,
@@ -881,6 +887,7 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            shape: None,
             attitude: None,
             controller: None,
             sensors: None,
@@ -909,6 +916,7 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            shape: None,
             attitude: None,
             controller: None,
             sensors: None,
@@ -1015,6 +1023,7 @@ satellites:
                 ballistic_coeff: Some(0.01),
                 srp_area_to_mass: Some(0.02),
                 srp_cr: Some(1.5),
+                shape: None,
                 attitude: None,
                 controller: None,
                 sensors: None,
@@ -1076,6 +1085,31 @@ altitude = 400.0
         assert_eq!(config.satellites.len(), 1);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn satellite_shape_parses_and_propagates() {
+        use crate::sim::core::MarkerShape;
+        let orbit =
+            r#""orbit": { "type": "circular", "altitude": 500, "inclination": 0, "raan": 0 }"#;
+
+        // kebab-case rename: "axes-cube" → AxesCube.
+        let cfg: SatelliteConfig =
+            serde_json::from_str(&format!(r#"{{ {orbit}, "shape": "axes-cube" }}"#)).unwrap();
+        assert_eq!(cfg.shape, Some(MarkerShape::AxesCube));
+        // Carried into the runtime spec.
+        let spec = cfg.to_satellite_spec(0, KnownBody::Earth, 398_600.4418);
+        assert_eq!(spec.shape, Some(MarkerShape::AxesCube));
+
+        // Absent → None (the viewer decides).
+        let none: SatelliteConfig = serde_json::from_str(&format!(r#"{{ {orbit} }}"#)).unwrap();
+        assert_eq!(none.shape, None);
+
+        // Serializes back to the kebab-case wire form sent in SatelliteInfo.
+        assert_eq!(
+            serde_json::to_string(&MarkerShape::AxesCube).unwrap(),
+            "\"axes-cube\""
+        );
     }
 
     #[test]
