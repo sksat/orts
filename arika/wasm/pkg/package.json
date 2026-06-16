@@ -1,0 +1,39 @@
+{
+  "name": "arika-wasm",
+  "version": "0.2.0",
+  "description": "WebAssembly bindings for the arika coordinate/epoch/ephemeris library.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sksat/orts",
+    "directory": "arika/wasm"
+  },
+  "homepage": "https://sksat.github.io/orts/",
+  "keywords": [
+    "wasm",
+    "coordinates",
+    "ephemeris",
+    "astronomy"
+  ],
+  "exports": {
+    ".": {
+      "types": "./arika.d.ts",
+      "default": "./arika.js"
+    }
+  },
+  "main": "arika.js",
+  "module": "arika.js",
+  "types": "arika.d.ts",
+  "sideEffects": [
+    "./arika.js",
+    "./snippets/*"
+  ],
+  "files": [
+    "arika.js",
+    "arika_bg.wasm",
+    "arika.d.ts",
+    "arika_bg.wasm.d.ts"
+  ]
+}

@@ -14,7 +14,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build:wasm:arika": "wasm-pack build ../arika/wasm --target web --out-dir ../../viewer/src/wasm/arika --out-name arika -- --locked",
+    "build:wasm:arika": "wasm-pack build ../arika/wasm --target web --out-dir pkg-build --out-name arika -- --locked && cp ../arika/wasm/pkg-build/arika.js ../arika/wasm/pkg-build/arika_bg.wasm ../arika/wasm/pkg-build/arika.d.ts ../arika/wasm/pkg-build/arika_bg.wasm.d.ts ../arika/wasm/pkg/",
     "build:wasm:rrd": "wasm-pack build ../rrd-wasm --target web --out-dir ../viewer/src/wasm/rrd-wasm --out-name rrd_wasm -- --locked --features wasm",
     "build:wasm": "pnpm run build:wasm:arika && pnpm run build:wasm:rrd",
     "build": "pnpm run build:wasm && tsc && vite build",
@@ -37,6 +37,7 @@
   "peerDependencies": {
     "@react-three/drei": "^10.0.0",
     "@react-three/fiber": "^9.0.0",
+    "arika-wasm": "workspace:*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "three": ">=0.176.0"
@@ -52,6 +53,7 @@
     "@types/three": "^0.183.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.0",
+    "arika-wasm": "workspace:*",
     "happy-dom": "^20.5.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
