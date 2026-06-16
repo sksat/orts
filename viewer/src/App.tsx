@@ -21,12 +21,16 @@ import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
 import { resolveTextureBaseUrl } from "./textureBaseUrl.js";
+import { resolveDefaultWsUrl } from "./utils/defaultWsUrl.js";
 import { planInitialRangeQuery } from "./utils/initialRangeQuery.js";
 import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
 
-const DEFAULT_WS_URL: string =
-  import.meta.env.VITE_WS_URL ??
-  `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
+const DEFAULT_WS_URL: string = resolveDefaultWsUrl({
+  explicitWsUrl: import.meta.env.VITE_WS_URL,
+  baseUrl: import.meta.env.BASE_URL,
+  protocol: window.location.protocol,
+  host: window.location.host,
+});
 
 // Build-time texture base URL — present when VITE_TEXTURE_BASE_URL is set at Vite startup.
 const VITE_TEXTURE_BASE_URL = import.meta.env.VITE_TEXTURE_BASE_URL;
