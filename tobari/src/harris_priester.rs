@@ -462,12 +462,19 @@ fn scale_height_interp(h: f64, h_lo: f64, h_hi: f64, rho_lo: f64, rho_hi: f64) -
 
 /// Index of the first entry whose key exceeds `x`, by binary search.
 ///
-/// Equivalent to `table.partition_point(|e| key(e) <= x)`: it splits the
-/// ascending table into entries with `key <= x` (before the index) and
-/// `key > x` (at/after). O(log n) comparisons instead of a linear scan — the
-/// atmospheric density lookup is on the per-step drag hot path.
+/// Splits the ascending table into entries with `key <= x` (before the
+/// returned index) and `key > x` (at/after). O(log n) comparisons instead of a
+/// linear scan — the atmospheric density lookup is on the per-step drag hot path.
+///
+/// The predicate is `!(key > x)` rather than `key <= x` so that a `NaN` query
+/// returns `len` (every `NaN > k` is false → predicate true everywhere),
+/// exactly matching the previous `position(|e| key > x).unwrap_or(len)` scan.
+/// For finite `x` the two predicates are identical.
+// The negated comparison is deliberate: `!(key > x)` and `key <= x` differ for
+// NaN, and the NaN case is exactly the behavior we must preserve here.
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
 fn upper_bound_by<T>(table: &[T], x: f64, key: impl Fn(&T) -> f64) -> usize {
-    table.partition_point(|e| key(e) <= x)
+    table.partition_point(|e| !(key(e) > x))
 }
 
 #[cfg(test)]
@@ -746,7 +753,9 @@ mod tests {
         // Behavior preservation: the binary-search bracket index must equal the
         // previous linear-scan formula `position(|e| e.h > x).unwrap_or(len)`
         // across the full domain — below the first knot, at each knot exactly,
-        // between knots, and above the last knot.
+        // between knots, above the last knot, and the non-finite edge cases.
+        // NaN in particular must yield `len` (clamp to the last entry), not 0:
+        // the `!(key > x)` predicate is what preserves this.
         let linear = |x: f64| {
             HP_TABLE
                 .iter()
@@ -754,7 +763,14 @@ mod tests {
                 .unwrap_or(HP_TABLE.len())
         };
         let last = HP_TABLE[HP_TABLE.len() - 1].h;
-        let mut samples = vec![HP_TABLE[0].h - 50.0, last + 50.0, last];
+        let mut samples = vec![
+            HP_TABLE[0].h - 50.0,
+            last + 50.0,
+            last,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
         for w in HP_TABLE.windows(2) {
             samples.push(w[0].h); // exact knot
             samples.push(0.5 * (w[0].h + w[1].h)); // midpoint between knots
@@ -771,10 +787,12 @@ mod tests {
     #[test]
     fn lookup_uses_logarithmic_comparisons() {
         // "Is it actually fast?" — assert the lookup is O(log n), not O(n).
-        // Wall-clock timing would be flaky; instead count key comparisons via an
-        // instrumented closure. A linear scan would touch ~n entries; binary
-        // search touches ⌈log2 n⌉+1. This fails loudly if the search ever
-        // regresses to a linear scan on the per-step drag hot path.
+        // Wall-clock timing would be flaky; instead count how many times the
+        // key extractor is invoked (once per binary-search step). A linear scan
+        // would invoke it ~n times; binary search stays at ⌊log2 n⌋ + a small
+        // constant. The `⌊log2 n⌋ + 2` bound (= 7 for n=50) is comfortably below
+        // n=50, so this fails loudly if the search regresses to a linear scan on
+        // the per-step drag hot path.
         use std::cell::Cell;
         let n = HP_TABLE.len();
         let bound = n.ilog2() as usize + 2;
