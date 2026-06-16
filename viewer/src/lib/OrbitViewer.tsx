@@ -1,5 +1,6 @@
 import { Canvas } from "@react-three/fiber";
 import { useEffect, useMemo, useState } from "react";
+import { getBodyRadius, resolveBodyDefinitions } from "../bodies.js";
 import { OrbitSceneContents } from "../components/OrbitSceneContents.js";
 import type { OrbitPoint } from "../orbit.js";
 import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "../sceneFrame.js";
@@ -56,6 +57,7 @@ function useArikaReady(enabled: boolean): boolean {
  */
 export function OrbitViewer({
   centralBody,
+  bodies,
   satellites,
   referenceFrame = DEFAULT_VIEWER_FRAME,
   epochJd,
@@ -66,6 +68,19 @@ export function OrbitViewer({
 }: OrbitViewerProps) {
   // Only load the arika WASM when an epoch is supplied (Sun/rotation features).
   const arikaReady = useArikaReady(epochJd != null);
+
+  // Body definitions: consumer-supplied bodies merged over the built-in defaults.
+  const bodyDefinitions = useMemo(() => resolveBodyDefinitions(bodies), [bodies]);
+  // Central-body radius: explicit prop wins; otherwise from the body definition.
+  // Fail loudly rather than guess a scale — a wrong radius silently breaks the
+  // entire scene's sizing.
+  const centralBodyRadius = centralBody.radiusKm ?? getBodyRadius(centralBody.id, bodyDefinitions);
+  if (centralBodyRadius == null) {
+    throw new Error(
+      `OrbitViewer: central body "${centralBody.id}" has no radius. Pass ` +
+        "centralBody.radiusKm, or add the body to `bodies` with a radiusKm.",
+    );
+  }
 
   // Current position per satellite. `time` is stamped onto each point; the scene
   // reads it back as the simulation time that drives Sun direction and rotation.
@@ -136,7 +151,8 @@ export function OrbitViewer({
           satelliteNames={satelliteNames}
           satelliteColors={satelliteColors}
           centralBody={centralBody.id}
-          centralBodyRadius={centralBody.radiusKm}
+          centralBodyRadius={centralBodyRadius}
+          bodyDefinitions={bodyDefinitions}
           epochJd={effectiveEpochJd}
           referenceFrame={internalFrame}
           textureBaseUrl={textureBaseUrl}

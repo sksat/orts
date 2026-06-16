@@ -132,6 +132,20 @@ test("satellite-centred inertial and LVLH are distinct frames (#90)", async ({ p
   expect(inertial?.cameraTracking).toBe(false);
 });
 
+test("renders a custom central body (bodies prop, radiusKm from the definition)", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // ?body=custom centres on a user-defined body with no built-in entry and an
+  // omitted centralBody.radiusKm (resolved from the definition).
+  await page.goto("/examples/orbit-viewer/?body=custom&animate=0");
+  await expect(page.locator("canvas").first()).toBeVisible();
+  await waitForTrail(page); // scene composes around the custom body without error
+  expect((await readTrail(page))?.length ?? 0).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
+
 test("a marker-only satellite (no trail prop) gets no trail buffer", async ({ page }) => {
   await page.goto("/examples/orbit-viewer/?animate=0");
   await waitForTrail(page); // scene is up: the demo satellite's trail is filled

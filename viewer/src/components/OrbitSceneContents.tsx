@@ -2,7 +2,12 @@ import { OrbitControls } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
-import { entityPathToBodyId, getBodyRadius } from "../bodies.js";
+import {
+  type BodyDefinitions,
+  DEFAULT_BODIES,
+  entityPathToBodyId,
+  getBodyRadius,
+} from "../bodies.js";
 import { transformToLvlh } from "../coordTransform.js";
 import {
   computeSceneAmplification,
@@ -238,6 +243,7 @@ function SecondaryBody({
   lvlhAxes = null,
   textureRevision,
   textureBaseUrl,
+  bodyDefinitions,
 }: {
   bodyId: string;
   position: OrbitPoint;
@@ -249,8 +255,9 @@ function SecondaryBody({
   lvlhAxes?: LvlhAxes | null;
   textureRevision?: number;
   textureBaseUrl?: string;
+  bodyDefinitions: BodyDefinitions;
 }) {
-  const bodyRadiusKm = getBodyRadius(bodyId);
+  const bodyRadiusKm = getBodyRadius(bodyId, bodyDefinitions);
   const radius = bodyRadiusKm != null ? bodyRadiusKm / scaleRadius : 0.01;
 
   // Position transform: same pipeline as Satellite (ECI → ECEF → LVLH)
@@ -307,6 +314,7 @@ function SecondaryBody({
         sunDirection={sunDirection}
         textureRevision={textureRevision}
         textureBaseUrl={textureBaseUrl}
+        bodyDefinitions={bodyDefinitions}
       />
     </group>
   );
@@ -323,6 +331,8 @@ export interface OrbitSceneContentsProps {
   trailDrawStarts?: Map<string, number>;
   centralBody: string;
   centralBodyRadius: number;
+  /** Body definitions (render info + radii) for the central body and any secondary bodies. */
+  bodyDefinitions?: BodyDefinitions;
   /** Julian Date of the simulation epoch, or null if not set. */
   epochJd?: number | null;
   /** Reference frame for display (default: central-body inertial). */
@@ -358,6 +368,7 @@ export function OrbitSceneContents({
   trailDrawStarts,
   centralBody,
   centralBodyRadius,
+  bodyDefinitions = DEFAULT_BODIES,
   epochJd,
   referenceFrame = DEFAULT_FRAME,
   satelliteNames,
@@ -375,7 +386,8 @@ export function OrbitSceneContents({
     referenceFrame.center.type === "satellite" ? referenceFrame.center.id : null;
 
   // Detect if centered entity is a celestial body
-  const centeredBodyId = centeredSatId != null ? entityPathToBodyId(centeredSatId) : null;
+  const centeredBodyId =
+    centeredSatId != null ? entityPathToBodyId(centeredSatId, bodyDefinitions) : null;
 
   // Display scale profile for the current view center
   const displayProfile = useMemo(
@@ -386,11 +398,11 @@ export function OrbitSceneContents({
   // Override camera distance when centering on a known body
   const cameraDistanceOverride = useMemo(() => {
     if (centeredBodyId == null) return undefined;
-    const bodyRadiusKm = getBodyRadius(centeredBodyId);
+    const bodyRadiusKm = getBodyRadius(centeredBodyId, bodyDefinitions);
     if (bodyRadiusKm == null) return undefined;
     // Camera at ~3x body radius in scene units
     return (bodyRadiusKm / centralBodyRadius) * 3;
-  }, [centeredBodyId, centralBodyRadius]);
+  }, [centeredBodyId, centralBodyRadius, bodyDefinitions]);
 
   // Scene amplification: scale up environment to show correct proportions
   // relative to the satellite's exaggerated model at origin.
@@ -415,9 +427,9 @@ export function OrbitSceneContents({
           const p = satellitePositions?.get(id);
           return p ? { position: [p.x, p.y, p.z], velocity: [p.vx, p.vy, p.vz] } : null;
         },
-        (id) => entityPathToBodyId(id) != null,
+        (id) => entityPathToBodyId(id, bodyDefinitions) != null,
       ),
-    [referenceFrame, satellitePositions],
+    [referenceFrame, satellitePositions, bodyDefinitions],
   );
 
   // Dev/E2E-only: expose the resolved frame semantics so tests can assert
@@ -546,10 +558,10 @@ export function OrbitSceneContents({
           const color =
             satelliteColors?.get(centeredSatId) ??
             SATELLITE_COLORS[(idx < 0 ? 0 : idx) % SATELLITE_COLORS.length];
-          const centeredBodyId = entityPathToBodyId(centeredSatId);
+          const centeredBodyId = entityPathToBodyId(centeredSatId, bodyDefinitions);
           if (centeredBodyId != null) {
             // Render as CelestialBody at origin with physical radius + IAU orientation
-            const bodyRadiusKm = getBodyRadius(centeredBodyId);
+            const bodyRadiusKm = getBodyRadius(centeredBodyId, bodyDefinitions);
             const bodyRadius = bodyRadiusKm != null ? bodyRadiusKm / centralBodyRadius : 0.01;
             const q =
               epochJd != null ? body_orientation(centeredBodyId, epochJd, pos.t) : undefined;
@@ -566,6 +578,7 @@ export function OrbitSceneContents({
                   sunDirection={sunDirection}
                   textureRevision={textureRevision}
                   textureBaseUrl={textureBaseUrl}
+                  bodyDefinitions={bodyDefinitions}
                 />
               </group>
             );
@@ -607,6 +620,7 @@ export function OrbitSceneContents({
           physicalScale={physicalScale}
           textureRevision={textureRevision}
           textureBaseUrl={textureBaseUrl}
+          bodyDefinitions={bodyDefinitions}
         />
 
         {/* One entry per satellite that has a trail and/or a position. */}
@@ -615,7 +629,7 @@ export function OrbitSceneContents({
             satelliteColors?.get(satId) ?? SATELLITE_COLORS[index % SATELLITE_COLORS.length];
           const isCenteredSat = satId === centeredSatId;
           const trailScale = lvlhActive ? effectiveScaleRadius : centralBodyRadius;
-          const bodyId = entityPathToBodyId(satId);
+          const bodyId = entityPathToBodyId(satId, bodyDefinitions);
           return (
             <group key={satId}>
               {/* Mount on buffer *existence*, not current length: contents may be
@@ -647,6 +661,7 @@ export function OrbitSceneContents({
                   lvlhAxes={lvlhActive ? lvlhAxes : null}
                   textureRevision={textureRevision}
                   textureBaseUrl={textureBaseUrl}
+                  bodyDefinitions={bodyDefinitions}
                 />
               )}
               {pos && !isCenteredSat && bodyId == null && (

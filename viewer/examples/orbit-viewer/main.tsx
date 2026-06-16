@@ -8,6 +8,7 @@
  * Query params:
  *   ?frame=eci|ecef|sat|lvlh   reference frame (default eci)
  *   ?animate=0                 freeze (deterministic for E2E)
+ *   ?body=earth|custom         central body (custom = a user-defined planet)
  *
  * Exposes `window.__example` (advanceTime / appendTrail) so the E2E can drive
  * state changes and assert the trail buffer stays stable.
@@ -16,6 +17,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  type BodyDefinition,
   OrbitViewer,
   type SatelliteState,
   type TrailPoint,
@@ -28,6 +30,14 @@ const MU = 398600.4418; // km^3/s^2
 const ORBIT_RADIUS_KM = 7378; // ~1000 km altitude
 const STEP_SECONDS = 30;
 const EPOCH_JD = 2451545.0; // J2000
+
+/** A user-defined central body (no texture → flat colour; rotation is not modelled). */
+const CUSTOM_BODY: BodyDefinition = {
+  name: "Kerbin",
+  radiusKm: 6000,
+  fallbackColor: 0x33aa55,
+  emissiveColor: 0x113322,
+};
 
 /** Deterministic circular equatorial orbit state at step `i`. */
 function orbitStep(i: number): { position: Vec3; velocity: Vec3 } {
@@ -58,6 +68,12 @@ function Example() {
   const [timeOffset, setTimeOffset] = useState(0); // extra sim time (for the E2E hook)
   const frame = useMemo(frameFromQuery, []);
   const animate = useMemo(() => new URLSearchParams(location.search).get("animate") !== "0", []);
+  // Custom central body via the public `bodies` prop; centralBody.radiusKm is
+  // omitted so it's resolved from the definition.
+  const useCustomBody = useMemo(
+    () => new URLSearchParams(location.search).get("body") === "custom",
+    [],
+  );
 
   // Advance along the orbit ~16x/s: the satellite moves and the trail grows.
   useEffect(() => {
@@ -92,7 +108,8 @@ function Example() {
 
   return (
     <OrbitViewer
-      centralBody={{ id: "earth", radiusKm: EARTH_RADIUS_KM }}
+      centralBody={useCustomBody ? { id: "kerbin" } : { id: "earth", radiusKm: EARTH_RADIUS_KM }}
+      bodies={useCustomBody ? { kerbin: CUSTOM_BODY } : undefined}
       satellites={satellites}
       referenceFrame={frame}
       epochJd={EPOCH_JD}
