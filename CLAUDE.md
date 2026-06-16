@@ -16,9 +16,6 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 ## Build Commands
 
 ### Rust (Cargo workspace)
-- `cargo build --workspace` — build all crates
-- `cargo test --workspace` — run all tests
-- `cargo clippy --workspace` — lint all crates
 - `cargo run --bin orts -- run` — run a simulation (auto-detects orts.toml in CWD)
 - `cargo run --bin orts -- serve` — start WebSocket server (port 9001)
 - `cargo run --bin orts -- serve --sat "altitude=800" --dt 5` — custom parameters
@@ -29,20 +26,10 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 - `cargo test -p orts` — test the simulation library (orts crate)
 - `cargo test -p orts-cli` — run CLI E2E tests
 
-### Viewer (React + TypeScript)
-- `cd viewer && pnpm install` — install dependencies
-- `cd viewer && pnpm dev` — start dev server (hot reload)
-- `cd viewer && pnpm build` — production build
-
-### Docs (Starlight + Astro)
-- `cd docs && pnpm dev` — start docs dev server (hot reload)
-- `cd docs && pnpm build` — production build
-
 ## Development Methodology
 
 - **TDD-first**: Write unit tests before integration. Every module (numerical integration, coordinate transforms, etc.) must have unit tests verifying behavior before being integrated.
 - **Reference validation**: Use GMAT and Orekit as reference implementations for E2E black-box testing.
-- **Test cases**: SSO orbits, satellite constellations, multi-year solar system trajectories, Lagrange points, gravity assists (swing-by).
 - **Playwright** for viewer E2E tests.
 - **CLI execution** enables simple E2E testing of the simulator independently from the viewer.
 - **Validate the design before implementing**: an issue or spec is a starting point, not a fixed prescription. For non-trivial designs or refactors, sanity-check the approach with an independent design review (the `smart-friend` skill / Codex) before writing code — the stated plan is not always the cleanest one (a proposed "shared utility" may already exist in `std`; a literal file split may be the wrong granularity).
@@ -79,5 +66,4 @@ WebSocket 通信、データフロー、UI 統合など mock しにくい部分�
 ## Architecture Notes
 
 - Systems and precision are configurable — e.g., Earth-Moon-Sun for SSO vs. full N-body for solar system simulations; detailed atmospheric drag vs. simple drag coefficients.
-- Start simple (2-body/3-body at low precision), build test infrastructure, then progressively increase accuracy and problem complexity.
 - Strict separation of concerns across modules to enable parallel development.
