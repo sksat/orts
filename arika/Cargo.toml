@@ -12,7 +12,7 @@ keywords = ["coordinates", "ephemeris", "astronomy", "geodesy", "orbital"]
 categories = ["science", "science::geo"]
 
 [dependencies]
-nalgebra = { version = "0.34", default-features = false, features = ["libm"] }
+nalgebra = { version = "0.35", default-features = false, features = ["libm"] }
 serde = { version = "1", default-features = false, features = ["derive"] }
 # OMM JSON parsing (arika::omm::json). no_std via `alloc`; pulled in only when
 # the `alloc` feature is on (the element-set parsers live behind `alloc`).

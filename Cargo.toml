@@ -28,7 +28,7 @@ utsuroi = { path = "utsuroi", version = "=0.2.0" }
 arika = { path = "arika", version = "=0.2.0" }
 orts = { path = "orts", version = "=0.2.0" }
 tobari = { path = "tobari", version = "=0.2.0" }
-nalgebra = "0.34"
+nalgebra = "0.35"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "fs", "io-util"] }
 tokio-tungstenite = "0.28"
