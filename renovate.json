@@ -2,6 +2,9 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["github>sksat/renovate-config"],
   "platformAutomerge": false,
+  "constraints": {
+    "pnpm": "10"
+  },
   "customManagers": [
     {
       "description": "Match '# renovate: datasource=... depName=...' followed by a VARNAME=value assignment in shell/CI",
