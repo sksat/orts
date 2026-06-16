@@ -45,6 +45,9 @@ Rust libraries are split by responsibility (e.g., coordinate transforms, numeric
 - **Test cases**: SSO orbits, satellite constellations, multi-year solar system trajectories, Lagrange points, gravity assists (swing-by).
 - **Playwright** for viewer E2E tests.
 - **CLI execution** enables simple E2E testing of the simulator independently from the viewer.
+- **Validate the design before implementing**: an issue or spec is a starting point, not a fixed prescription. For non-trivial designs or refactors, sanity-check the approach with an independent design review (the `smart-friend` skill / Codex) before writing code — the stated plan is not always the cleanest one (a proposed "shared utility" may already exist in `std`; a literal file split may be the wrong granularity).
+- **External review before merge**: get a code review (Codex / Copilot) on non-trivial PRs. Independent reviewers catch complementary issues — design/whole-program vs. line-level edge cases.
+- **Behavior-preserving refactors**: pin the existing behavior with a characterization test, and include boundary *and* non-finite inputs (`NaN`, `±∞`) — float predicate rewrites can match for finite values yet diverge at `NaN`.
 
 ## Pre-commit Checklist
 
@@ -54,6 +57,7 @@ Before committing, always run the relevant checks and confirm they pass.
 - `cargo fmt --all` — format all crates (CI enforces `--check`)
 - `cargo clippy --workspace -- -D warnings` — lint with warnings as errors
 - `cargo test --workspace` — run all tests
+- Some crates are `no_std` and/or built for `wasm` beyond the default std build, and CI checks each applicable tier per crate. When changing a crate, run the tiers that apply to it — not just the std `--workspace` checks above.
 
 ### TypeScript (viewer + uneri)
 - `pnpm lint` — lint & format check (Biome, CI enforces)
