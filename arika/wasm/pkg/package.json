@@ -20,7 +20,7 @@
   "exports": {
     ".": {
       "types": "./arika.d.ts",
-      "default": "./arika.js"
+      "import": "./arika.js"
     }
   },
   "main": "arika.js",
