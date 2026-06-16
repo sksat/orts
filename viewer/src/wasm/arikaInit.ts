@@ -37,13 +37,31 @@ let wasmJdToUtc: JdToUtcString | undefined;
 let wasmBodyOrientation: BodyOrientation | undefined;
 let wasmBodyQuatToRsw: BodyQuatToRsw | undefined;
 
-/** Initialize the arika WASM module. Safe to call multiple times. Rejects on failure. */
-export function initArika(): Promise<void> {
+/** Options for {@link initArika}. */
+export interface InitArikaOptions {
+  /**
+   * Where to load the arika `.wasm` from. Omit to use the build's bundled wasm
+   * (the library build inlines it, so this is rarely needed). Supply a URL to
+   * fetch it from elsewhere — e.g. a CDN, or when a bundler can't resolve the
+   * inlined asset. Only the first init call's options take effect.
+   */
+  wasmUrl?: string | URL;
+}
+
+/**
+ * Initialize the arika WASM module. Safe to call multiple times (idempotent;
+ * the first call wins). Rejects on failure.
+ *
+ * `OrbitViewer` calls this for you when given an `epochJd`; call it explicitly
+ * only to pre-load, or to override where the wasm is fetched from via
+ * {@link InitArikaOptions.wasmUrl}.
+ */
+export function initArika(options?: InitArikaOptions): Promise<void> {
   if (initialized) return Promise.resolve();
   if (initPromise) return initPromise;
 
   const p: Promise<void> = import("./arika/arika.js").then(async (mod) => {
-    await mod.default();
+    await mod.default(options?.wasmUrl);
     wasmBatch = mod.eci_to_ecef_batch;
     wasmSingle = mod.eci_to_ecef;
     wasmEra = mod.earth_rotation_angle;
