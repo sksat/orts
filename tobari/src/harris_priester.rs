@@ -395,11 +395,8 @@ impl HarrisPriester {
     ///
     /// Uses scale-height interpolation (log-linear) between table entries.
     fn interpolate_table(&self, altitude_km: f64) -> (f64, f64) {
-        // Find the bracket
-        let idx = HP_TABLE
-            .iter()
-            .position(|e| e.h > altitude_km)
-            .unwrap_or(HP_TABLE.len());
+        // Find the bracket (binary search; this runs every drag RHS evaluation).
+        let idx = upper_bound_by(HP_TABLE, altitude_km, |e| e.h);
 
         if idx == 0 {
             return (HP_TABLE[0].rho_min, HP_TABLE[0].rho_max);
@@ -461,6 +458,16 @@ fn scale_height_interp(h: f64, h_lo: f64, h_hi: f64, rho_lo: f64, rho_hi: f64) -
     }
     let scale_h = (h_hi - h_lo) / (rho_lo / rho_hi).ln();
     rho_lo * (-(h - h_lo) / scale_h).exp()
+}
+
+/// Index of the first entry whose key exceeds `x`, by binary search.
+///
+/// Equivalent to `table.partition_point(|e| key(e) <= x)`: it splits the
+/// ascending table into entries with `key <= x` (before the index) and
+/// `key > x` (at/after). O(log n) comparisons instead of a linear scan — the
+/// atmospheric density lookup is on the per-step drag hot path.
+fn upper_bound_by<T>(table: &[T], x: f64, key: impl Fn(&T) -> f64) -> usize {
+    table.partition_point(|e| key(e) <= x)
 }
 
 #[cfg(test)]
@@ -731,6 +738,57 @@ mod tests {
         assert!(
             ratio > 0.1 && ratio < 10.0,
             "HP/Exponential ratio at 400 km: {ratio:.2} (HP={rho_hp:.3e}, Exp={rho_exp:.3e})"
+        );
+    }
+
+    #[test]
+    fn upper_bound_matches_previous_linear_scan() {
+        // Behavior preservation: the binary-search bracket index must equal the
+        // previous linear-scan formula `position(|e| e.h > x).unwrap_or(len)`
+        // across the full domain — below the first knot, at each knot exactly,
+        // between knots, and above the last knot.
+        let linear = |x: f64| {
+            HP_TABLE
+                .iter()
+                .position(|e| e.h > x)
+                .unwrap_or(HP_TABLE.len())
+        };
+        let last = HP_TABLE[HP_TABLE.len() - 1].h;
+        let mut samples = vec![HP_TABLE[0].h - 50.0, last + 50.0, last];
+        for w in HP_TABLE.windows(2) {
+            samples.push(w[0].h); // exact knot
+            samples.push(0.5 * (w[0].h + w[1].h)); // midpoint between knots
+        }
+        for x in samples {
+            assert_eq!(
+                upper_bound_by(HP_TABLE, x, |e| e.h),
+                linear(x),
+                "bracket index mismatch at altitude {x}"
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_uses_logarithmic_comparisons() {
+        // "Is it actually fast?" — assert the lookup is O(log n), not O(n).
+        // Wall-clock timing would be flaky; instead count key comparisons via an
+        // instrumented closure. A linear scan would touch ~n entries; binary
+        // search touches ⌈log2 n⌉+1. This fails loudly if the search ever
+        // regresses to a linear scan on the per-step drag hot path.
+        use std::cell::Cell;
+        let n = HP_TABLE.len();
+        let bound = n.ilog2() as usize + 2;
+        // Highest bracket: the worst case a linear scan would walk to (~n).
+        let target = HP_TABLE[n - 1].h - 1.0;
+        let comparisons = Cell::new(0usize);
+        let _ = upper_bound_by(HP_TABLE, target, |e| {
+            comparisons.set(comparisons.get() + 1);
+            e.h
+        });
+        assert!(
+            comparisons.get() <= bound,
+            "lookup made {} comparisons for n={n}; expected ≤{bound} (binary, not linear)",
+            comparisons.get()
         );
     }
 }
