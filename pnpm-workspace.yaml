@@ -4,3 +4,11 @@ packages:
   - "docs"
   - "tobari/examples/web"
   - "starlight-rustdoc"
+
+# Supply-chain hardening: refuse to resolve a version published less than
+# 7 days ago (10080 minutes), so a compromised release has time to be
+# detected and yanked before it can enter the lockfile. Applies to
+# pnpm add/update and Renovate's lockfile regen; --frozen-lockfile installs
+# (CI) are unaffected. Use minimumReleaseAgeExclude to fast-track a package
+# when an urgent fix is needed. (pnpm 10.16+; pnpm 11 defaults this to 1 day.)
+minimumReleaseAge: 10080

@@ -8,6 +8,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 ## [Unreleased]
 
+### `tobari` (Rust, crates.io)
+
+#### Changed
+- CSSI 宇宙天気ダウンロードの feature `fetch` を `fetch-cssi` にリネーム。
+  `fetch-<source>` 規約(`fetch-igrf`、arika の `fetch-horizons`)に揃えた。
+  `fetch` は全 `fetch-*` 源を束ねる傘 feature として存続するため、
+  `features = ["fetch"]` は引き続きビルド可能(加えて `fetch-igrf` も有効化)。
+
 ## [0.2.0](https://github.com/sksat/orts/releases/tag/v0.2.0) - 2026-04-20
 
 リリースブログ記事: [orts: 人工衛星シミュレーションプラットフォームを作りました](https://sksat.hatenablog.com/entry/orts-release)

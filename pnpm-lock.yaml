@@ -19,16 +19,16 @@ importers:
         version: 5.0.7(@types/node@25.9.3)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(lightningcss@1.32.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(tsx@4.21.0)(yaml@2.8.3)
       '@astrojs/starlight':
         specifier: ^0.38.1
-        version: 0.38.3(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))
+        version: 0.38.3(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))
       '@sksat/uneri':
         specifier: workspace:*
         version: link:../uneri
       astro:
         specifier: ^6.0.5
-        version: 6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
+        version: 6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
       astro-mermaid:
         specifier: ^2.0.1
-        version: 2.0.2(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))(mermaid@11.15.0)
+        version: 2.0.2(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))(mermaid@11.15.0)
       katex:
         specifier: ^0.16.45
         version: 0.16.45
@@ -52,7 +52,7 @@ importers:
         version: link:../starlight-rustdoc
       starlight-typedoc:
         specifier: ^0.21.5
-        version: 0.21.5(@astrojs/starlight@0.38.3(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)))(typedoc-plugin-markdown@4.12.0(typedoc@0.28.19(typescript@5.9.3)))(typedoc@0.28.19(typescript@5.9.3))
+        version: 0.21.5(@astrojs/starlight@0.38.3(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)))(typedoc-plugin-markdown@4.12.0(typedoc@0.28.19(typescript@5.9.3)))(typedoc@0.28.19(typescript@5.9.3))
       typedoc:
         specifier: ^0.28.17
         version: 0.28.19(typescript@5.9.3)
@@ -182,7 +182,7 @@ importers:
         version: 4.1.8(@types/node@25.9.3)(happy-dom@20.10.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.7)(tsx@4.21.0)(yaml@2.8.3))
       ws:
         specifier: ^8.18.0
-        version: 8.20.1
+        version: 8.21.0
 
   viewer:
     dependencies:
@@ -246,7 +246,7 @@ importers:
         version: 4.1.8(@types/node@25.9.3)(happy-dom@20.10.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.27.7)(tsx@4.21.0)(yaml@2.8.3))
       ws:
         specifier: ^8.19.0
-        version: 8.20.1
+        version: 8.21.0
 
 packages:
 
@@ -1801,6 +1801,11 @@ packages:
 
   astro@6.4.6:
     resolution: {integrity: sha512-48OBTBKR9ctbf+DQxpOuxGl8ebfn59zTuNQMBzptmG/Mi/H8IdfMSbJgGuX1I/4U6g9yazG1p4BHlf4+2hWU4Q==}
+    engines: {node: '>=22.12.0', npm: '>=9.6.5', pnpm: '>=7.1.0'}
+    hasBin: true
+
+  astro@6.4.7:
+    resolution: {integrity: sha512-5vsXx0H52u23Jpshs9tM81D03Tb3Oh2Vt2Zo0bpqjXN+njkAWjFyGjTfmWJLAcrCQd9Q+iWB1eqfhR1sZJEaUA==}
     engines: {node: '>=22.12.0', npm: '>=9.6.5', pnpm: '>=7.1.0'}
     hasBin: true
 
@@ -3945,18 +3950,6 @@ packages:
     resolution: {integrity: sha512-0yweIbkINJodk27gX9LBGMzyQdBDan3s/dEAiwBOj+Mf0PPyWL6/rikalkv8EeD0E8jm4o5RXEOrFTP3NXbhJg==}
     engines: {node: '>=12.17'}
 
-  ws@8.20.1:
-    resolution: {integrity: sha512-It4dO0K5v//JtTXuPkfEOaI3uUN87iYPnqo/ZzqCoG3g8uhA66QUMs/SrM0YK7/NAu+r4LMh/9dq2A7k+rHs+w==}
-    engines: {node: '>=10.0.0'}
-    peerDependencies:
-      bufferutil: ^4.0.1
-      utf-8-validate: '>=5.0.2'
-    peerDependenciesMeta:
-      bufferutil:
-        optional: true
-      utf-8-validate:
-        optional: true
-
   ws@8.21.0:
     resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
     engines: {node: '>=10.0.0'}
@@ -4149,12 +4142,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@astrojs/mdx@5.0.3(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))':
+  '@astrojs/mdx@5.0.3(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))':
     dependencies:
       '@astrojs/markdown-remark': 7.1.0
       '@mdx-js/mdx': 3.1.1
       acorn: 8.16.0
-      astro: 6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
+      astro: 6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
       es-module-lexer: 2.1.0
       estree-util-visit: 2.0.0
       hast-util-to-html: 9.0.5
@@ -4247,17 +4240,17 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@astrojs/starlight@0.38.3(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))':
+  '@astrojs/starlight@0.38.3(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))':
     dependencies:
       '@astrojs/markdown-remark': 7.1.0
-      '@astrojs/mdx': 5.0.3(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))
+      '@astrojs/mdx': 5.0.3(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))
       '@astrojs/sitemap': 3.7.2
       '@pagefind/default-ui': 1.5.2
       '@types/hast': 3.0.4
       '@types/js-yaml': 4.0.9
       '@types/mdast': 4.0.4
-      astro: 6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
-      astro-expressive-code: 0.41.7(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))
+      astro: 6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
+      astro-expressive-code: 0.41.7(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))
       bcp-47: 2.1.0
       hast-util-from-html: 2.0.3
       hast-util-select: 6.0.4
@@ -5678,14 +5671,14 @@ snapshots:
       astro: 6.4.6(@types/node@22.19.21)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
       rehype-expressive-code: 0.41.7
 
-  astro-expressive-code@0.41.7(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)):
+  astro-expressive-code@0.41.7(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)):
     dependencies:
-      astro: 6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
+      astro: 6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
       rehype-expressive-code: 0.41.7
 
-  astro-mermaid@2.0.2(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))(mermaid@11.15.0):
+  astro-mermaid@2.0.2(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))(mermaid@11.15.0):
     dependencies:
-      astro: 6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
+      astro: 6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)
       import-meta-resolve: 4.2.0
       mdast-util-to-string: 4.0.0
       mermaid: 11.15.0
@@ -5784,7 +5777,7 @@ snapshots:
       - uploadthing
       - yaml
 
-  astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3):
+  astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3):
     dependencies:
       '@astrojs/compiler': 4.0.0
       '@astrojs/internal-helpers': 0.10.0
@@ -8098,9 +8091,9 @@ snapshots:
 
   stackback@0.0.2: {}
 
-  starlight-typedoc@0.21.5(@astrojs/starlight@0.38.3(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)))(typedoc-plugin-markdown@4.12.0(typedoc@0.28.19(typescript@5.9.3)))(typedoc@0.28.19(typescript@5.9.3)):
+  starlight-typedoc@0.21.5(@astrojs/starlight@0.38.3(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3)))(typedoc-plugin-markdown@4.12.0(typedoc@0.28.19(typescript@5.9.3)))(typedoc@0.28.19(typescript@5.9.3)):
     dependencies:
-      '@astrojs/starlight': 0.38.3(astro@6.4.6(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))
+      '@astrojs/starlight': 0.38.3(astro@6.4.7(@types/node@25.9.3)(lightningcss@1.32.0)(rollup@4.62.0)(tsx@4.21.0)(yaml@2.8.3))
       github-slugger: 2.0.0
       typedoc: 0.28.19(typescript@5.9.3)
       typedoc-plugin-markdown: 4.12.0(typedoc@0.28.19(typescript@5.9.3))
@@ -8542,8 +8535,6 @@ snapshots:
       stackback: 0.0.2
 
   wordwrapjs@5.1.1: {}
-
-  ws@8.20.1: {}
 
   ws@8.21.0: {}
 

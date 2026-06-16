@@ -22,8 +22,8 @@
 //!
 //! The [`space_weather`] module defines [`SpaceWeather`] conditions and the
 //! [`SpaceWeatherProvider`] trait for supplying time-varying solar/geomagnetic data.
-//! [`CssiSpaceWeather`] parses CelesTrak CSSI-format files and (with the `fetch`
-//! feature) downloads them automatically with local caching.
+//! [`CssiSpaceWeather`] parses CelesTrak CSSI-format files and (with the
+//! `fetch-cssi` feature) downloads them automatically with local caching.
 //!
 //! ## Data attribution
 //!

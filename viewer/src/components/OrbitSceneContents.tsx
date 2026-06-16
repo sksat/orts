@@ -10,27 +10,18 @@ import {
   getDisplayScaleProfile,
 } from "../displayScale.js";
 import { resolveSceneFrame } from "../frameResolve.js";
-import { rotateZ } from "../frameTransform.js";
 import type { OrbitPoint } from "../orbit.js";
 import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import { computeCameraUp, computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
-import {
-  body_orientation,
-  earth_rotation_angle,
-  eci_to_ecef,
-  sun_direction_from_body,
-  sun_distance_from_body,
-} from "../wasm/arikaInit.js";
+import { body_orientation, earth_rotation_angle, eci_to_ecef } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
 import { buildRenderEntries } from "./renderEntries.js";
 import { Satellite } from "./Satellite.js";
-
-// Default sun direction when no epoch is provided: ECI +X (vernal equinox).
-const DEFAULT_SUN_DIRECTION = new THREE.Vector3(1, 0, 0);
+import { AMBIENT_INTENSITY, SunLighting, useSunLighting } from "./SunLighting.js";
 
 /** Color palette for multiple satellites. */
 const SATELLITE_COLORS = [0x00ff88, 0xff4488, 0x44aaff, 0xffaa44, 0xaa44ff];
@@ -447,53 +438,24 @@ export function OrbitSceneContents({
   const simTime = firstPosition?.t ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
-  // Sun direction in body-centered inertial frame (via WASM)
-  const sunDirectionEci = useMemo(() => {
-    if (epochJd == null) return DEFAULT_SUN_DIRECTION;
-    const dir = sun_direction_from_body(centralBody, epochJd, quantizedSimTime);
-    return new THREE.Vector3(dir[0], dir[1], dir[2]);
-  }, [centralBody, epochJd, quantizedSimTime]);
-
-  // Sun intensity: inverse square law based on body-Sun distance
-  const AU_KM = 149_597_870.7;
-  const sunIntensity = useMemo(() => {
-    if (epochJd == null) return 1.0;
-    const distKm = sun_distance_from_body(centralBody, epochJd, quantizedSimTime);
-    return (AU_KM / distKm) ** 2;
-  }, [centralBody, epochJd, quantizedSimTime]);
-
   // Earth rotation angle (ERA) via WASM — updates every frame via simTime (not quantized)
   const era = useMemo(() => {
     if (epochJd == null) return undefined;
     return earth_rotation_angle(epochJd, simTime);
   }, [epochJd, simTime]);
 
-  // Sun direction in the display frame
-  const sunDirection = useMemo(() => {
-    if (lvlhActive && lvlhAxes) {
-      // LVLH: rotate sun direction into satellite body frame
-      const s = sunDirectionEci;
-      const ax = lvlhAxes;
-      return new THREE.Vector3(
-        ax.inTrack[0] * s.x + ax.inTrack[1] * s.y + ax.inTrack[2] * s.z,
-        ax.crossTrack[0] * s.x + ax.crossTrack[1] * s.y + ax.crossTrack[2] * s.z,
-        ax.radial[0] * s.x + ax.radial[1] * s.y + ax.radial[2] * s.z,
-      );
-    }
-    if (!isEcef || era == null) return sunDirectionEci;
-    // ECEF: rotate sun direction by -ERA to match Earth-fixed frame
-    const [sx, sy, sz] = rotateZ(sunDirectionEci.x, sunDirectionEci.y, sunDirectionEci.z, -era);
-    return new THREE.Vector3(sx, sy, sz);
-  }, [sunDirectionEci, isEcef, era, lvlhActive, lvlhAxes]);
-
-  const lightDistance = sceneAmplification * 10;
-  const lightPosition = useMemo<[number, number, number]>(() => {
-    return [
-      sunDirection.x * lightDistance,
-      sunDirection.y * lightDistance,
-      sunDirection.z * lightDistance,
-    ];
-  }, [sunDirection, lightDistance]);
+  // Sun direction + intensity (display frame). Shared by the lights and by the
+  // lit bodies below, so the scene holds them and passes them down explicitly.
+  const { sunDirection, sunIntensity, lightPosition } = useSunLighting({
+    centralBody,
+    epochJd,
+    quantizedSimTime,
+    isEcef,
+    era,
+    lvlhActive,
+    lvlhAxes,
+    sceneAmplification,
+  });
 
   // Earth rotation angle for the mesh: ERA in ECI, 0 in ECEF (Earth is static)
   const earthRotation = isEcef ? 0 : era;
@@ -573,8 +535,7 @@ export function OrbitSceneContents({
         lvlhActive={lvlhActive}
       />
 
-      <ambientLight intensity={0.15} />
-      <directionalLight intensity={3.0 * sunIntensity} position={lightPosition} />
+      <SunLighting intensity={sunIntensity} position={lightPosition} />
 
       {/* Centered satellite/body: always exactly at world origin (0,0,0). */}
       {centeredSatId != null &&
@@ -641,7 +602,7 @@ export function OrbitSceneContents({
           rotationAngle={earthRotation}
           lvlhPosition={lvlhActive ? bodyLvlhPosition : null}
           lvlhQuaternion={lvlhActive ? bodyLvlhQuaternion : null}
-          ambientIntensity={0.15}
+          ambientIntensity={AMBIENT_INTENSITY}
           sunIntensity={sunIntensity}
           physicalScale={physicalScale}
           textureRevision={textureRevision}

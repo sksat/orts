@@ -1,0 +1,115 @@
+import { useMemo } from "react";
+import * as THREE from "three";
+import type { LvlhAxes } from "../sceneFrame.js";
+import { inverseSquareIntensity, sunDirectionInDisplayFrame } from "../sunLighting.js";
+import { sun_direction_from_body, sun_distance_from_body } from "../wasm/arikaInit.js";
+
+// Default sun direction when no epoch is provided: ECI +X (vernal equinox).
+const DEFAULT_SUN_DIRECTION_ECI: [number, number, number] = [1, 0, 0];
+
+/** Directional light distance from the origin, as a multiple of sceneAmplification. */
+const LIGHT_DISTANCE_FACTOR = 10;
+
+/** Ambient light intensity. Shared with the lit bodies' ambient term. */
+export const AMBIENT_INTENSITY = 0.15;
+
+/** Directional intensity at 1 AU, before the inverse-square distance scale. */
+const BASE_DIRECTIONAL_INTENSITY = 3.0;
+
+export interface SunLightingParams {
+  centralBody: string;
+  epochJd?: number | null;
+  /** Sim time, quantised (e.g. to 60s) to limit WASM recomputation. */
+  quantizedSimTime: number;
+  /** True when the display frame is Earth-fixed (ECEF). */
+  isEcef: boolean;
+  /** Earth rotation angle (radians); undefined when no epoch. */
+  era: number | undefined;
+  /** True when LVLH (local-orbital) rotation lives in the data. */
+  lvlhActive: boolean;
+  lvlhAxes: LvlhAxes | null;
+  /** Environment scale-up factor for satellite-centred views. */
+  sceneAmplification: number;
+}
+
+export interface SunLightingState {
+  /** Sun direction in the active display frame. */
+  sunDirection: THREE.Vector3;
+  /** Inverse-square intensity scale relative to 1 AU. */
+  sunIntensity: number;
+  /** Directional light position (sun direction scaled out by the light distance). */
+  lightPosition: [number, number, number];
+}
+
+/**
+ * Compute sun direction + intensity for the scene via the arika WASM model.
+ *
+ * `sunDirection`/`sunIntensity` are consumed both by {@link SunLighting} and by
+ * the lit bodies (CelestialBody/SecondaryBody), so the scene holds them and
+ * threads them down explicitly — there is no implicit lighting context (which
+ * would also leak into the embeddable OrbitViewer's prop-driven scene graph).
+ */
+export function useSunLighting({
+  centralBody,
+  epochJd,
+  quantizedSimTime,
+  isEcef,
+  era,
+  lvlhActive,
+  lvlhAxes,
+  sceneAmplification,
+}: SunLightingParams): SunLightingState {
+  // Sun direction in the body-centred inertial frame (ECI), via WASM.
+  const sunDirectionEci = useMemo<[number, number, number]>(() => {
+    if (epochJd == null) return DEFAULT_SUN_DIRECTION_ECI;
+    const dir = sun_direction_from_body(centralBody, epochJd, quantizedSimTime);
+    return [dir[0], dir[1], dir[2]];
+  }, [centralBody, epochJd, quantizedSimTime]);
+
+  // Sun intensity: inverse-square law based on the body-Sun distance.
+  const sunIntensity = useMemo(() => {
+    if (epochJd == null) return 1.0;
+    return inverseSquareIntensity(sun_distance_from_body(centralBody, epochJd, quantizedSimTime));
+  }, [centralBody, epochJd, quantizedSimTime]);
+
+  // Sun direction rotated into the active display frame.
+  const sunDirection = useMemo(
+    () =>
+      new THREE.Vector3(
+        ...sunDirectionInDisplayFrame(sunDirectionEci, { isEcef, era, lvlhActive, lvlhAxes }),
+      ),
+    [sunDirectionEci, isEcef, era, lvlhActive, lvlhAxes],
+  );
+
+  const lightDistance = sceneAmplification * LIGHT_DISTANCE_FACTOR;
+  const lightPosition = useMemo<[number, number, number]>(
+    () => [
+      sunDirection.x * lightDistance,
+      sunDirection.y * lightDistance,
+      sunDirection.z * lightDistance,
+    ],
+    [sunDirection, lightDistance],
+  );
+
+  return { sunDirection, sunIntensity, lightPosition };
+}
+
+/**
+ * Scene lighting: a fixed ambient term plus a sun-tracking directional light.
+ * Pair with {@link useSunLighting} for the position/intensity inputs.
+ */
+export function SunLighting({
+  intensity,
+  position,
+}: {
+  /** Inverse-square sun intensity scale (from {@link useSunLighting}). */
+  intensity: number;
+  position: [number, number, number];
+}) {
+  return (
+    <>
+      <ambientLight intensity={AMBIENT_INTENSITY} />
+      <directionalLight intensity={BASE_DIRECTIONAL_INTENSITY * intensity} position={position} />
+    </>
+  );
+}
