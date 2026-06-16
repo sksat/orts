@@ -43,7 +43,7 @@ tokio = { version = "1", default-features = false, features = [
 ], optional = true }
 
 [features]
-fetch-weather = ["tobari/fetch"]
+fetch-weather = ["tobari/fetch-cssi"]
 fetch-horizons = ["arika/fetch-horizons"]
 # Phase P1: load WASM Component guest controllers at runtime via
 # wasmtime + Pulley interpreter. See `orts::plugin::wasm`.

@@ -11,6 +11,15 @@ section is subdivided by package.
 
 ## [Unreleased]
 
+### `tobari` (Rust, crates.io)
+
+#### Changed
+- Renamed the CSSI space-weather download feature `fetch` to `fetch-cssi`,
+  matching the `fetch-<source>` convention (`fetch-igrf`, and `arika`'s
+  `fetch-horizons`). `fetch` is retained as an umbrella feature that enables
+  every `fetch-*` source, so `features = ["fetch"]` keeps building (and now
+  also pulls in `fetch-igrf`).
+
 ## [0.2.0](https://github.com/sksat/orts/releases/tag/v0.2.0) - 2026-04-20
 
 Release blog post: [orts: 人工衛星シミュレーションプラットフォームを作りました](https://sksat.hatenablog.com/entry/orts-release)
