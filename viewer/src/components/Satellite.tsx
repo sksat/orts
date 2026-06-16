@@ -6,6 +6,7 @@ import { getSatelliteModelConfig } from "../satelliteModels.js";
 import type { LvlhAxes } from "../sceneFrame.js";
 import { body_quat_to_rsw, eci_to_ecef } from "../wasm/arikaInit.js";
 import { BodyAxes } from "./BodyAxes.js";
+import { PrimitiveMarker } from "./PrimitiveMarker.js";
 import { SatelliteModel } from "./SatelliteModel.js";
 
 /** Default radius of the sphere fallback marker in scene units. */
@@ -134,6 +135,7 @@ export function Satellite({
       position={scenePos}
       quaternion={displayQuaternion}
       axisLength={modelConfig ? modelConfig.scale * 5 : DEFAULT_SPHERE_RADIUS * 6}
+      debugId={satId}
     />
   ) : null;
 
@@ -149,9 +151,18 @@ export function Satellite({
   }
 
   if (hideSphereFallback) return bodyAxes;
+
+  // With attitude data, render an orientation-revealing primitive so the attitude
+  // is actually visible — a sphere looks identical at every orientation. Orbit-only
+  // satellites keep the lightweight sphere dot.
+  const fallbackMarker = displayQuaternion ? (
+    <PrimitiveMarker position={scenePos} color={color} quaternion={displayQuaternion} />
+  ) : (
+    <SphereMarker position={scenePos} color={color} />
+  );
   return (
     <>
-      <SphereMarker position={scenePos} color={color} />
+      {fallbackMarker}
       {bodyAxes}
     </>
   );

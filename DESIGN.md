@@ -364,7 +364,7 @@ CLI でのランタイム選択は `enum Sim { Orbit(...), Spacecraft(...) }` �
 | Phase B' | Capability-based `Model<S>` trait 移行 **実装済み** |
 | Phase C | 複数衛星: group + scheduler モジュール、CLI 簡素化 |
 | Phase D | 姿勢制御検証基盤 **実装中** |
-| Phase E | 姿勢 viewer 接続: serve→WS→viewer パイプラインに姿勢データ追加、SimGroup enum |
+| Phase E | 姿勢 viewer 接続: serve→WS→viewer パイプラインに姿勢データ追加、SimGroup enum。viewer は衛星メッシュ姿勢 + body axes を描画し、姿勢ありの衛星は向きが分かる primitive marker（球ではなく）で表示。レンダリング姿勢を `__debug_get_sat_world_quat` 経由で E2E 回帰テスト済み **実装済み** |
 | Phase P | プラグイン可能な制御則・ミッションロジック（WASM guest で制御則を再コンパイルなしに差し替え） |
 
 #### Phase D 詳細: 姿勢制御シミュレーション 3層アーキテクチャ
