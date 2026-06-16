@@ -17,6 +17,7 @@ import { useSimInfoDerived } from "./hooks/useSimInfoDerived.js";
 import { useSimulationData } from "./hooks/useSimulationData.js";
 import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
+import { type MarkerShape, readSatShapeParam, writeSatShapeParam } from "./satelliteShapes.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
 import { resolveTextureBaseUrl } from "./textureBaseUrl.js";
@@ -52,6 +53,25 @@ export function App() {
   }, [timeRange]);
 
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
+
+  // Satellite marker shape: global default (persisted to URL) + per-satellite overrides.
+  const [defaultMarkerShape, setDefaultMarkerShape] = useState<MarkerShape | null>(() =>
+    readSatShapeParam(),
+  );
+  useEffect(() => {
+    writeSatShapeParam(defaultMarkerShape);
+  }, [defaultMarkerShape]);
+  const [markerShapeOverrides, setMarkerShapeOverrides] = useState<Map<string, MarkerShape>>(
+    () => new Map(),
+  );
+  const handleMarkerShapeOverride = useCallback((satId: string, shape: MarkerShape | null) => {
+    setMarkerShapeOverrides((prev) => {
+      const next = new Map(prev);
+      if (shape == null) next.delete(satId);
+      else next.set(satId, shape);
+      return next;
+    });
+  }, []);
 
   const [simConfigOpen, setSimConfigOpen] = useState(false);
 
@@ -309,6 +329,16 @@ export function App() {
   const { centralBody, centralBodyRadius, epochJd, satelliteNames, activePerturbations } =
     useSimInfoDerived(simInfo);
 
+  // Sim-declared marker shapes (from SatelliteInfo); the viewer can override these.
+  const satelliteSimShapes = useMemo(() => {
+    if (!simInfo) return undefined;
+    const m = new Map<string, MarkerShape>();
+    for (const sat of simInfo.satellites) {
+      if (sat.shape) m.set(sat.id, sat.shape);
+    }
+    return m;
+  }, [simInfo]);
+
   // Total points across all satellite buffers.
   // chartBufferVersion bumps on data ingest AND on resetBuffers (clear),
   // so this recalculates when data arrives or buffers are cleared.
@@ -381,6 +411,10 @@ export function App() {
           simInfo={simInfo}
           totalPoints={totalPoints}
           activePerturbations={activePerturbations}
+          defaultMarkerShape={defaultMarkerShape}
+          onDefaultMarkerShapeChange={setDefaultMarkerShape}
+          markerShapeOverrides={markerShapeOverrides}
+          onMarkerShapeOverride={handleMarkerShapeOverride}
         />
 
         <Scene
@@ -399,6 +433,9 @@ export function App() {
           epochJd={epochJd ?? null}
           referenceFrame={referenceFrame}
           satelliteNames={satelliteNames}
+          satelliteShapes={markerShapeOverrides}
+          satelliteSimShapes={satelliteSimShapes}
+          defaultMarkerShape={defaultMarkerShape}
           physicalScale={false}
           textureRevision={textureRevision}
           textureBaseUrl={textureBaseUrl}

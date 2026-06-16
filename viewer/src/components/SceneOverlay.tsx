@@ -1,7 +1,9 @@
 import styles from "../App.module.css";
 import type { SatelliteInfo, SimInfo } from "../hooks/useWebSocket.js";
 import type { ReferenceFrame } from "../referenceFrame.js";
+import type { MarkerShape } from "../satelliteShapes.js";
 import { FrameSelector } from "./FrameSelector.js";
+import { MarkerShapeSelector } from "./MarkerShapeSelector.js";
 import { SimInfoBar } from "./SimInfoBar.js";
 
 export interface SceneOverlayProps {
@@ -17,6 +19,12 @@ export interface SceneOverlayProps {
   simInfo: SimInfo | null;
   totalPoints: number;
   activePerturbations: string[];
+  /** Global default marker shape (null = automatic). */
+  defaultMarkerShape: MarkerShape | null;
+  onDefaultMarkerShapeChange: (shape: MarkerShape | null) => void;
+  /** Per-satellite marker shape overrides. */
+  markerShapeOverrides: Map<string, MarkerShape>;
+  onMarkerShapeOverride: (satId: string, shape: MarkerShape | null) => void;
 }
 
 /**
@@ -34,6 +42,10 @@ export function SceneOverlay({
   simInfo,
   totalPoints,
   activePerturbations,
+  defaultMarkerShape,
+  onDefaultMarkerShapeChange,
+  markerShapeOverrides,
+  onMarkerShapeOverride,
 }: SceneOverlayProps) {
   return (
     <div className={styles.sceneOverlay}>
@@ -43,6 +55,13 @@ export function SceneOverlay({
         satellites={satellites}
         hasEpoch={epochJd != null}
         centralBody={centralBody}
+      />
+      <MarkerShapeSelector
+        defaultShape={defaultMarkerShape}
+        onDefaultChange={onDefaultMarkerShapeChange}
+        satellites={satellites}
+        overrides={markerShapeOverrides}
+        onOverrideChange={onMarkerShapeOverride}
       />
       {orbitInfo && (
         <div className={styles.orbitInfo} data-testid="orbit-info-file">

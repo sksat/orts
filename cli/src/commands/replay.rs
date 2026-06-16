@@ -121,6 +121,7 @@ fn load_replay_data(path: &str) -> ReplayData {
                 altitude: r_mag - body_radius,
                 period: 0.0,
                 perturbations: vec![],
+                shape: None,
             }
         })
         .collect();

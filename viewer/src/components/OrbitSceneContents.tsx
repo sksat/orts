@@ -13,6 +13,7 @@ import { resolveSceneFrame } from "../frameResolve.js";
 import type { OrbitPoint } from "../orbit.js";
 import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
+import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import { computeCameraUp, computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
 import type { TrailBuffer } from "../utils/TrailBuffer.js";
 import { body_orientation, earth_rotation_angle, eci_to_ecef } from "../wasm/arikaInit.js";
@@ -330,6 +331,12 @@ export interface OrbitSceneContentsProps {
   satelliteNames?: Map<string, string | null>;
   /** Per-satellite marker/trail colour override (0xRRGGBB); falls back to the palette. */
   satelliteColors?: Map<string, number | undefined>;
+  /** Per-satellite marker shape override; falls back to {@link defaultMarkerShape} then auto. */
+  satelliteShapes?: Map<string, MarkerShape>;
+  /** Sim-declared per-satellite marker shapes (from SatelliteInfo); below override, above default. */
+  satelliteSimShapes?: Map<string, MarkerShape>;
+  /** Global default marker shape (null/undefined = automatic per attitude). */
+  defaultMarkerShape?: MarkerShape | null;
   /** When true, atmosphere uses physical scale. Default: auto (true for satellite-centered). */
   physicalScale?: boolean;
   /** Bumped when server notifies high-res textures are available. */
@@ -355,6 +362,9 @@ export function OrbitSceneContents({
   referenceFrame = DEFAULT_FRAME,
   satelliteNames,
   satelliteColors,
+  satelliteShapes,
+  satelliteSimShapes,
+  defaultMarkerShape,
   physicalScale,
   textureRevision,
   textureBaseUrl,
@@ -571,6 +581,12 @@ export function OrbitSceneContents({
               satName={satelliteNames?.get(centeredSatId)}
               originPosition={originPosition}
               lvlhAxes={lvlhAxes}
+              markerShape={resolveMarkerShape({
+                override: satelliteShapes?.get(centeredSatId),
+                simShape: satelliteSimShapes?.get(centeredSatId),
+                globalDefault: defaultMarkerShape,
+                hasAttitude: pos.qw != null,
+              })}
             />
           );
         })()}
@@ -644,6 +660,12 @@ export function OrbitSceneContents({
                   satName={satelliteNames?.get(satId)}
                   originPosition={lvlhActive ? originPosition : null}
                   lvlhAxes={lvlhActive ? lvlhAxes : null}
+                  markerShape={resolveMarkerShape({
+                    override: satelliteShapes?.get(satId),
+                    simShape: satelliteSimShapes?.get(satId),
+                    globalDefault: defaultMarkerShape,
+                    hasAttitude: pos.qw != null,
+                  })}
                 />
               )}
             </group>

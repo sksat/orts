@@ -7,6 +7,7 @@ const sat = (over: Partial<SatelliteInfo> & { id: string }): SatelliteInfo => ({
   altitude: 0,
   period: 0,
   perturbations: [],
+  shape: null,
   ...over,
 });
 

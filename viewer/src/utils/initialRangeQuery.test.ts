@@ -9,6 +9,7 @@ function makeSatellite(id: string): SatelliteInfo {
     altitude: 400,
     period: 5554,
     perturbations: [],
+    shape: null,
   };
 }
 

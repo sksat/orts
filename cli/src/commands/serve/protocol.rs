@@ -266,6 +266,7 @@ mod tests {
                     altitude: 800.0,
                     period: 6052.5,
                     perturbations: vec![],
+                    shape: None,
                 },
                 SatelliteInfo {
                     id: "iss".to_string(),
@@ -273,6 +274,7 @@ mod tests {
                     altitude: 420.0,
                     period: 5560.0,
                     perturbations: vec![],
+                    shape: None,
                 },
             ],
         };
@@ -305,6 +307,7 @@ mod tests {
                 altitude: 400.0,
                 period: 5554.0,
                 perturbations: vec![],
+                shape: None,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();
@@ -348,6 +351,7 @@ mod tests {
                 altitude: 420.0,
                 period: 5560.0,
                 perturbations: vec![],
+                shape: None,
             }],
         };
         let json = serde_json::to_string(&msg).unwrap();

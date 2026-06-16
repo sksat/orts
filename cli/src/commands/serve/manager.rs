@@ -556,6 +556,7 @@ fn build_info_message(params: &SimParams) -> WsMessage {
                 altitude: s.altitude(&params.body),
                 period: s.period,
                 perturbations: system.model_names().into_iter().map(String::from).collect(),
+                shape: s.shape,
             }
         })
         .collect();
@@ -1138,6 +1139,7 @@ impl SimLoopContext {
                     altitude: spec.altitude(&self.params.body),
                     period: spec.period,
                     perturbations: vec![],
+                    shape: spec.shape,
                 };
                 let t = self.current_t;
                 let sat_entity_path = spec.entity_path();
@@ -1273,6 +1275,7 @@ impl SimLoopContext {
             altitude: spec.altitude(&self.params.body),
             period: spec.period,
             perturbations: vec![],
+            shape: spec.shape,
         };
         let t = self.current_t;
         let sat_entity_path = spec.entity_path();

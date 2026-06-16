@@ -5,6 +5,7 @@ import type { ClientMessage } from "../protocol/generated/ClientMessage.js";
 import type { HistoryState } from "../protocol/generated/HistoryState.js";
 import type { SatelliteInfo as WireSatelliteInfo } from "../protocol/generated/SatelliteInfo.js";
 import type { WsMessage } from "../protocol/generated/WsMessage.js";
+import type { MarkerShape } from "../satelliteShapes.js";
 
 /** Per-satellite info from the server, normalized for app use. */
 export interface SatelliteInfo {
@@ -14,6 +15,8 @@ export interface SatelliteInfo {
   period: number;
   /** Names of active perturbation force models (e.g. "drag", "srp"). */
   perturbations: string[];
+  /** Sim-declared viewer marker shape, or null when unset (viewer decides). */
+  shape: MarkerShape | null;
 }
 
 /**
@@ -96,6 +99,7 @@ function normalizeSatelliteInfo(s: WireSatelliteInfo): SatelliteInfo {
     altitude: s.altitude,
     period: s.period,
     perturbations: s.perturbations ?? [],
+    shape: s.shape ?? null,
   };
 }
 
