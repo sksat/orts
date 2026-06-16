@@ -30,6 +30,12 @@
       ]
     },
     {
+      "description": "wasmtime and wasmtime-wasi release in lockstep and must share a major; group them so they bump together (a split bump leaves two wasmtime versions and fails to build)",
+      "matchManagers": ["cargo"],
+      "groupName": "wasmtime",
+      "matchPackageNames": ["/^wasmtime/"]
+    },
+    {
       "description": "Auto-merge patch-level updates once required CI checks pass",
       "matchUpdateTypes": ["patch"],
       "automerge": true
