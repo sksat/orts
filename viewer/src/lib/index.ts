@@ -5,6 +5,12 @@
  * of satellites and you get an interactive 3D scene you can orbit the camera
  * around. The lower-level Three.js / react-three-fiber building blocks and the
  * pure frame/trail adapters are also exported for assembling custom scenes.
+ *
+ * Surface note: the primitives below wrap internal Three.js/r3f components, so
+ * they widen the semver surface (their internals changing is a breaking change).
+ * That's an accepted trade-off for the "minimal component + primitives" goal —
+ * consumers who only need the component should import just OrbitViewer + types.
+ * See ./README.md.
  */
 
 // Lower-level building blocks for assembling a custom scene.
