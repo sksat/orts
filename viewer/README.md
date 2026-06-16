@@ -4,6 +4,10 @@ A React component that renders a central body (Earth, a planet, …) and a set o
 satellites around it, with an orbit-controls camera. It's the reusable core of
 the orts viewer, exposed via the package's `./lib` entry.
 
+| Central-body view (ECI) | Satellite-centred view (LVLH) |
+| :---: | :---: |
+| ![Earth at the origin with a satellite and its orbit trail](./docs/orbit-viewer-central-body.png) | ![Camera tracking a satellite, Earth's limb below](./docs/orbit-viewer-satellite.png) |
+
 > **Status: not yet published.** The package is still `private`. This entry is
 > consumed inside the monorepo today (the app imports it from source). The build
 > and packaging below are set up so it _can_ be published later without rework;
