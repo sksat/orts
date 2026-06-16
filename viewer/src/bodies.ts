@@ -16,7 +16,11 @@
 export interface BodyTexture {
   /** Day-side texture URL/path, or null/omitted for a flat fallback colour. */
   day?: string | null;
-  /** Night-side (city lights) texture URL/path. */
+  /**
+   * Night-side (city lights) texture URL/path. Currently only the built-in
+   * Earth renders a day/night terminator; for other bodies this is ignored
+   * (they render with `day` as a flat-lit sphere).
+   */
   night?: string | null;
   /**
    * Base name for an orts server's multi-resolution upgrade (e.g. "earth" →

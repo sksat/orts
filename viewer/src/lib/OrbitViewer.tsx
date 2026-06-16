@@ -72,8 +72,15 @@ export function OrbitViewer({
   // Body definitions: consumer-supplied bodies merged over the built-in defaults.
   const bodyDefinitions = useMemo(() => resolveBodyDefinitions(bodies), [bodies]);
   // Central-body radius: explicit prop wins; otherwise from the body definition.
-  const centralBodyRadius =
-    centralBody.radiusKm ?? getBodyRadius(centralBody.id, bodyDefinitions) ?? 1;
+  // Fail loudly rather than guess a scale — a wrong radius silently breaks the
+  // entire scene's sizing.
+  const centralBodyRadius = centralBody.radiusKm ?? getBodyRadius(centralBody.id, bodyDefinitions);
+  if (centralBodyRadius == null) {
+    throw new Error(
+      `OrbitViewer: central body "${centralBody.id}" has no radius. Pass ` +
+        "centralBody.radiusKm, or add the body to `bodies` with a radiusKm.",
+    );
+  }
 
   // Current position per satellite. `time` is stamped onto each point; the scene
   // reads it back as the simulation time that drives Sun direction and rotation.

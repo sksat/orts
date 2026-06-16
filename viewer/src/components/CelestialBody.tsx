@@ -273,7 +273,11 @@ export function CelestialBody({
 
   let body: React.ReactNode;
 
-  if (renderInfo.nightTexturePath && renderInfo.texturePath && sunDirection) {
+  // The day/night terminator shader + atmosphere + ERA rotation in EarthBody are
+  // Earth-specific — gate them to the built-in Earth so a *custom* body with a
+  // night texture doesn't inherit Earth's atmosphere/rotation (it renders via the
+  // generic textured-sphere path below instead).
+  if (bodyId === "earth" && renderInfo.nightTexturePath && renderInfo.texturePath && sunDirection) {
     body = (
       <EarthBody
         radius={radius}
