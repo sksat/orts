@@ -15,13 +15,7 @@ import { defineConfig } from "vite";
  */
 
 /** Packages the consumer provides (peerDependencies); never bundled. */
-const PEERS = [
-  "react",
-  "react-dom",
-  "three",
-  "@react-three/fiber",
-  "@react-three/drei",
-];
+const PEERS = ["react", "react-dom", "three", "@react-three/fiber", "@react-three/drei"];
 
 const isPeer = (id: string) => PEERS.some((p) => id === p || id.startsWith(`${p}/`));
 

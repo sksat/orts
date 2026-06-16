@@ -23,7 +23,9 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "files": ["dist-lib"],
+  "files": [
+    "dist-lib"
+  ],
   "publishConfig": {
     "exports": {
       "./lib": {
