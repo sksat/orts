@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./dist-lib",
+    "rootDir": "./src"
+  },
+  "include": ["src/lib/index.ts", "src/vite-env.d.ts"]
+}

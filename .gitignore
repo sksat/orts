@@ -2,6 +2,7 @@
 plugin-sdk/examples/target/
 node_modules/
 dist/
+dist-lib/
 test-results/
 .playwright-mcp/
 
