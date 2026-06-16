@@ -439,9 +439,9 @@ impl SpaceWeatherProvider for CssiSpaceWeather {
     }
 }
 
-// fetch feature: HTTP download + cache
+// fetch-cssi feature: HTTP download + cache
 
-#[cfg(feature = "fetch")]
+#[cfg(feature = "fetch-cssi")]
 mod fetch_impl {
     use super::*;
     use std::time::{Duration, SystemTime};

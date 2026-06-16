@@ -38,8 +38,12 @@ ureq.workspace = true
 default = ["std", "fetch-igrf"]
 std = ["alloc", "nalgebra/std", "arika/std"]
 alloc = []
-fetch = ["std", "dep:ureq"]
+# CelesTrak CSSI space-weather HTTP download + cache.
+fetch-cssi = ["std", "dep:ureq"]
 fetch-igrf = []
+# Umbrella enabling every `fetch-*` data source. Kept for back-compat: external
+# users who selected the old `fetch` feature still build (and now also get IGRF).
+fetch = ["fetch-cssi", "fetch-igrf"]
 
 [dev-dependencies]
 serde = { workspace = true }
