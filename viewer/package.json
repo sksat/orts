@@ -23,26 +23,40 @@
     "test": "vitest run",
     "test:watch": "vitest"
   },
-  "dependencies": {
-    "@duckdb/duckdb-wasm": "1.32.0",
-    "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.5.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "three": "^0.183.0",
-    "@sksat/uneri": "workspace:*",
-    "uplot": "^1.6.32"
+  "files": ["dist-lib"],
+  "publishConfig": {
+    "exports": {
+      "./lib": {
+        "types": "./dist-lib/lib/index.d.ts",
+        "import": "./dist-lib/lib/index.js"
+      }
+    }
+  },
+  "peerDependencies": {
+    "@react-three/drei": "^10.0.0",
+    "@react-three/fiber": "^9.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": ">=0.176.0"
   },
   "devDependencies": {
+    "@duckdb/duckdb-wasm": "1.32.0",
     "@playwright/test": "^1.58.2",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
+    "@sksat/uneri": "workspace:*",
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.183.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.0",
     "happy-dom": "^20.5.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "rollup-plugin-license": "^3.7.1",
+    "three": "^0.183.0",
     "typescript": "^5.7.0",
+    "uplot": "^1.6.32",
     "vite": "^8.0.8",
     "vitest": "^4.1.4",
     "ws": "^8.19.0"
