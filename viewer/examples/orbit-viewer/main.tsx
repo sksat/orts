@@ -33,7 +33,6 @@ const EPOCH_JD = 2451545.0; // J2000
 
 /** A user-defined central body (no texture → flat colour; rotation is not modelled). */
 const CUSTOM_BODY: BodyDefinition = {
-  id: "kerbin",
   name: "Kerbin",
   radiusKm: 6000,
   fallbackColor: 0x33aa55,

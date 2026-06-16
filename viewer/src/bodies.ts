@@ -31,9 +31,11 @@ export interface BodyTexture {
   nightBaseName?: string;
 }
 
-/** How a body should be rendered. */
+/**
+ * How a body should be rendered. The body's id is the key in a
+ * {@link BodyDefinitions} map, so it isn't repeated here.
+ */
 export interface BodyDefinition {
-  id: string;
   name?: string;
   /** Physical radius in km (sets the scene scale and secondary-body sizing). */
   radiusKm: number;
@@ -54,7 +56,6 @@ const base = import.meta.env.BASE_URL;
 /** Built-in bodies. Consumers merge their own over these. */
 export const DEFAULT_BODIES: BodyDefinitions = {
   earth: {
-    id: "earth",
     name: "Earth",
     radiusKm: 6378.137,
     texture: {
@@ -68,7 +69,6 @@ export const DEFAULT_BODIES: BodyDefinitions = {
     selfLuminous: false,
   },
   moon: {
-    id: "moon",
     name: "Moon",
     radiusKm: 1737.4,
     texture: { day: `${base}textures/moon.jpg`, baseName: "moon" },
@@ -77,7 +77,6 @@ export const DEFAULT_BODIES: BodyDefinitions = {
     selfLuminous: false,
   },
   sun: {
-    id: "sun",
     name: "Sun",
     radiusKm: 695700,
     texture: { day: `${base}textures/sun.jpg`, baseName: "sun" },
@@ -86,7 +85,6 @@ export const DEFAULT_BODIES: BodyDefinitions = {
     selfLuminous: true,
   },
   mars: {
-    id: "mars",
     name: "Mars",
     radiusKm: 3389.5,
     texture: { day: `${base}textures/mars.jpg`, baseName: "mars" },
@@ -98,7 +96,6 @@ export const DEFAULT_BODIES: BodyDefinitions = {
 
 /** Render fallback for an id with no definition (flat grey sphere). */
 const UNKNOWN_BODY: BodyDefinition = {
-  id: "unknown",
   name: "Unknown Body",
   radiusKm: 1,
   fallbackColor: 0x666666,
@@ -109,14 +106,6 @@ const UNKNOWN_BODY: BodyDefinition = {
 /** Merge consumer-supplied bodies over the defaults (shallow, per id). */
 export function resolveBodyDefinitions(custom?: BodyDefinitions): BodyDefinitions {
   return custom ? { ...DEFAULT_BODIES, ...custom } : DEFAULT_BODIES;
-}
-
-/** Look up a body definition, or undefined if absent. */
-export function getBodyDefinition(
-  bodyId: string,
-  bodies: BodyDefinitions,
-): BodyDefinition | undefined {
-  return bodies[bodyId];
 }
 
 /** Look up a body's render definition, falling back to a flat grey sphere. */

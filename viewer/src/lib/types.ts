@@ -108,11 +108,15 @@ export interface OrbitViewerProps {
   /** The central body at the origin. */
   centralBody: CentralBody;
   /**
-   * Custom body definitions, merged over the built-in {@link DEFAULT_BODIES}
-   * (Earth / Moon / Sun / Mars). Add new bodies or override the defaults — e.g.
-   * `{ pluto: { id: "pluto", radiusKm: 1188.3, texture: { day: "/pluto.jpg" } } }`.
-   * Note: physical Sun lighting / rotation only apply to bodies the arika model
-   * knows; a custom body renders (radius / texture / colour) but does not spin.
+   * Custom body definitions, keyed by body id and merged over the built-in
+   * {@link DEFAULT_BODIES} (Earth / Moon / Sun / Mars) — e.g.
+   * `{ pluto: { radiusKm: 1188.3, texture: { day: "/pluto.jpg" } } }`.
+   *
+   * The merge is per-id and shallow: overriding a default replaces its *entire*
+   * definition, so a partial override drops the default's other fields (texture,
+   * colour, …). Note that physical Sun lighting / rotation only apply to bodies
+   * the arika model knows; a custom body renders (radius / texture / colour) but
+   * does not spin.
    */
   bodies?: BodyDefinitions;
   /** Satellites to display. */
