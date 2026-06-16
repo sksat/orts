@@ -6,15 +6,14 @@ import { initArika } from "./wasm/arikaInit.js";
 const arikaReady = initArika();
 
 import type { TimeRange } from "@sksat/uneri";
-import styles from "./App.module.css";
-import { FrameSelector } from "./components/FrameSelector.js";
 import { GraphPanel } from "./components/GraphPanel.js";
 import { PlaybackBar } from "./components/PlaybackBar.js";
+import { SceneOverlay } from "./components/SceneOverlay.js";
 import { SimConfigModal } from "./components/SimConfigModal.js";
-import { SimInfoBar } from "./components/SimInfoBar.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
+import { useSimInfoDerived } from "./hooks/useSimInfoDerived.js";
 import { useSimulationData } from "./hooks/useSimulationData.js";
 import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
@@ -306,16 +305,9 @@ export function App() {
     };
   }, [textureBaseUrl]);
 
-  const satelliteNames = useMemo(() => {
-    if (!simInfo) return undefined;
-    const m = new Map<string, string | null>();
-    for (const sat of simInfo.satellites) m.set(sat.id, sat.name);
-    return m;
-  }, [simInfo]);
-
-  const centralBody = simInfo?.central_body ?? "earth";
-  const centralBodyRadius = simInfo?.central_body_radius ?? 6378.137;
-  const epochJd = simInfo?.epoch_jd ?? undefined;
+  // Values derived from the simulation metadata (with absent-simInfo defaults).
+  const { centralBody, centralBodyRadius, epochJd, satelliteNames, activePerturbations } =
+    useSimInfoDerived(simInfo);
 
   // Total points across all satellite buffers.
   // chartBufferVersion bumps on data ingest AND on resetBuffers (clear),
@@ -329,16 +321,6 @@ export function App() {
   }, [chartBufferVersion]);
 
   const showPlaybackBar = totalPoints > 0;
-
-  // Union of active perturbation names across all satellites
-  const activePerturbations = useMemo(() => {
-    if (!simInfo) return [];
-    const set = new Set<string>();
-    for (const sat of simInfo.satellites) {
-      for (const p of sat.perturbations) set.add(p);
-    }
-    return [...set];
-  }, [simInfo]);
 
   // Auto-close SimConfig modal when leaving idle state or disconnecting
   useEffect(() => {
@@ -389,29 +371,17 @@ export function App() {
 
       {/* 3D Scene (row 2, column 1) */}
       <div className="scene-container">
-        {/* Scene overlay: frame selector + sim info (top-left of canvas) */}
-        <div className={styles.sceneOverlay}>
-          <FrameSelector
-            referenceFrame={referenceFrame}
-            onChange={setReferenceFrame}
-            satellites={simInfo?.satellites}
-            hasEpoch={epochJd != null}
-            centralBody={centralBody}
-          />
-          {fileSource.orbitInfo && (
-            <div className={styles.orbitInfo} data-testid="orbit-info-file">
-              {fileSource.orbitInfo}
-            </div>
-          )}
-          {simInfo && (
-            <SimInfoBar
-              simInfo={simInfo}
-              totalPoints={totalPoints}
-              epochJd={epochJd}
-              activePerturbations={activePerturbations}
-            />
-          )}
-        </div>
+        <SceneOverlay
+          referenceFrame={referenceFrame}
+          onReferenceFrameChange={setReferenceFrame}
+          satellites={simInfo?.satellites}
+          centralBody={centralBody}
+          epochJd={epochJd}
+          orbitInfo={fileSource.orbitInfo}
+          simInfo={simInfo}
+          totalPoints={totalPoints}
+          activePerturbations={activePerturbations}
+        />
 
         <Scene
           trailBuffers={trailBuffersMap}
