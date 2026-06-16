@@ -29,11 +29,11 @@ impl ComponentColumn {
     }
 
     pub fn num_rows(&self) -> usize {
-        if self.scalars_per_row == 0 {
-            0
-        } else {
-            self.data.len() / self.scalars_per_row
-        }
+        // checked_div yields None when scalars_per_row == 0 (avoids div-by-zero).
+        self.data
+            .len()
+            .checked_div(self.scalars_per_row)
+            .unwrap_or(0)
     }
 
     pub fn get_row(&self, index: usize) -> Option<&[f64]> {
