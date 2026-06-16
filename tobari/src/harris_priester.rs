@@ -467,9 +467,11 @@ fn scale_height_interp(h: f64, h_lo: f64, h_hi: f64, rho_lo: f64, rho_hi: f64) -
 /// linear scan — the atmospheric density lookup is on the per-step drag hot path.
 ///
 /// The predicate is `!(key > x)` rather than `key <= x` so that a `NaN` query
-/// returns `len` (every `NaN > k` is false → predicate true everywhere),
-/// exactly matching the previous `position(|e| key > x).unwrap_or(len)` scan.
-/// For finite `x` the two predicates are identical.
+/// returns `len`: when `x` is `NaN`, `key > x` is false for every entry (all
+/// comparisons against `NaN` are false), so the negated predicate is true
+/// everywhere and `partition_point` returns `len` — exactly matching the
+/// previous `position(|e| key > x).unwrap_or(len)` scan. For finite `x` the two
+/// predicates are identical.
 // The negated comparison is deliberate: `!(key > x)` and `key <= x` differ for
 // NaN, and the NaN case is exactly the behavior we must preserve here.
 #[allow(clippy::neg_cmp_op_on_partial_ord)]
