@@ -488,7 +488,7 @@ pub fn write_satellite_csv(
         .iter()
         .filter(|(name, _)| !skip.contains(name))
         .collect();
-    extra_cols.sort_by(|(a, _), (b, _)| a.cmp(b));
+    extra_cols.sort_by_key(|(a, _)| *a);
 
     let id = sat_path.to_string();
     let id = id.rsplit('/').next().unwrap_or("default");
