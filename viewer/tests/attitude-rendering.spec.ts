@@ -192,3 +192,24 @@ test("rendered satellite adopts the delivered body-to-inertial attitude", async 
   expect(Math.abs(bodyXinWorld[0]), "body +X should have no scene-X component").toBeLessThan(0.1);
   expect(Math.abs(bodyXinWorld[2]), "body +X should have no scene-Z component").toBeLessThan(0.1);
 });
+
+test("marker shape: global default persists to URL and per-satellite override is offered", async ({
+  page,
+}) => {
+  await page.goto("/?noAutoConnect=1");
+  await page.locator('[data-testid="ws-url-input"]').fill(wsUrl);
+  await page.locator('[data-testid="ws-connect-btn"]').click();
+  await expect(page.locator('[data-testid="ws-status-text"]')).toContainText("Connected", {
+    timeout: 15000,
+  });
+
+  // Expand the (collapsed) Markers panel, then change the global default.
+  await page.locator('[data-testid="marker-shape-selector"] summary').click();
+  await page.locator('[data-testid="marker-shape-default"]').selectOption("sphere");
+  await expect.poll(() => new URL(page.url()).searchParams.get("satShape")).toBe("sphere");
+
+  // A per-satellite override control is offered for the streamed satellite.
+  await expect(
+    page.locator(`[data-testid="marker-shape-override-${SAT_ENTITY_PATH}"]`),
+  ).toBeVisible();
+});

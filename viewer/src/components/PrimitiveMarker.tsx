@@ -4,40 +4,36 @@ import type * as THREE from "three";
 interface PrimitiveMarkerProps {
   /** Position in scene units (already divided by scaleRadius). */
   position: [number, number, number];
-  /** Marker color. */
-  color: number;
   /**
    * Body-to-display quaternion [w, x, y, z] (Hamilton scalar-first). When present,
-   * the shape is oriented by it so the attitude is visible. Same convention as
+   * the cube is oriented by it so the attitude is visible. Same convention as
    * SatelliteModel / BodyAxes.
    */
   quaternion?: [number, number, number, number];
-  /** Half-length of the body along its longest (X) axis, in scene units. */
+  /** Half-extent of the cube in scene units. */
   size?: number;
 }
 
-/** Default body half-length, matching the legacy sphere marker's footprint. */
+/** Default half-extent, matching the legacy sphere marker's footprint. */
 const DEFAULT_SIZE = 0.008;
 
 /**
- * Orientation-revealing fallback marker for satellites without a 3D model.
- *
- * Unlike a sphere (rotationally symmetric → attitude invisible), this is an
- * asymmetric primitive: a box body whose three edge lengths differ, plus a cone
- * "nose" marking the body +X axis. Rendered with unlit materials so it is visible
- * under the scene's faint ambient light. Pair with {@link BodyAxes} for explicit
- * RGB axes.
- *
- * --- Customize the shape here ---
- * The geometry below is a deliberately simple default. Swap it for a bus + solar
- * paddles, a CubeSat, an arrow, etc. — anything asymmetric across all three body
- * axes. Conventions assumed by the default: +X is the "front"/boresight (cone),
- * the box is widest along X then Y then Z. Only the JSX between the markers needs
- * to change; the quaternion wiring and registration stay as-is.
+ * Per-face colors of the XYZ orientation cube, in Three.js BoxGeometry face order
+ * [+X, -X, +Y, -Y, +Z, -Z]. Positive faces use the bright RGB axis colors (X=red,
+ * Y=green, Z=blue, matching {@link BodyAxes}); negative faces are dimmed so each of
+ * the six faces — hence the full orientation — is unambiguous at a glance.
+ */
+const AXES_CUBE_FACE_COLORS = [0xff4444, 0x802222, 0x44ff44, 0x228022, 0x4488ff, 0x224488] as const;
+
+/**
+ * Orientation-revealing fallback marker for satellites without a 3D model: an XYZ
+ * cube whose six faces are colored per body axis. A sphere is rotationally
+ * symmetric → attitude invisible; this cube reads orientation at a glance. Unlit
+ * materials so it is visible under the scene's faint ambient light. Pair with
+ * {@link BodyAxes} for explicit RGB axes.
  */
 export function PrimitiveMarker({
   position,
-  color,
   quaternion,
   size = DEFAULT_SIZE,
 }: PrimitiveMarkerProps) {
@@ -54,18 +50,13 @@ export function PrimitiveMarker({
 
   return (
     <group position={position} ref={groupRef}>
-      {/* --- shape begin --- */}
       <mesh>
-        <boxGeometry args={[size * 2, size * 1.2, size * 0.8]} />
-        <meshBasicMaterial color={color} />
+        <boxGeometry args={[size * 2, size * 2, size * 2]} />
+        {AXES_CUBE_FACE_COLORS.map((c, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: fixed-length face list, index is the face id.
+          <meshBasicMaterial key={i} attach={`material-${i}`} color={c} />
+        ))}
       </mesh>
-      {/* +X nose cone marks the body's front/boresight. coneGeometry points +Y by
-          default, so rotate -90° about Z to aim it along +X. */}
-      <mesh position={[size * 1.5, 0, 0]} rotation={[0, 0, -Math.PI / 2]}>
-        <coneGeometry args={[size * 0.6, size, 16]} />
-        <meshBasicMaterial color={color} />
-      </mesh>
-      {/* --- shape end --- */}
     </group>
   );
 }

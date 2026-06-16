@@ -3,6 +3,7 @@ import { transformToLvlh } from "../coordTransform.js";
 import type { OrbitPoint } from "../orbit.js";
 import { isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
+import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import type { LvlhAxes } from "../sceneFrame.js";
 import { body_quat_to_rsw, eci_to_ecef } from "../wasm/arikaInit.js";
 import { BodyAxes } from "./BodyAxes.js";
@@ -31,8 +32,14 @@ interface SatelliteProps {
   originPosition?: [number, number, number] | null;
   /** LVLH axes for satellite body-frame transform. */
   lvlhAxes?: LvlhAxes | null;
-  /** When true, suppress the sphere fallback (used for centered satellite at origin). */
+  /** When true, suppress the marker fallback (used for centered satellite at origin). */
   hideSphereFallback?: boolean;
+  /**
+   * Resolved marker shape for satellites without a 3D model. When omitted, falls
+   * back to automatic (orientation-revealing cube when attitude is present, else
+   * a sphere). A GLTF model, when available, always takes precedence.
+   */
+  markerShape?: MarkerShape;
 }
 
 const DEFAULT_REF_FRAME: ReferenceFrame = {
@@ -72,6 +79,7 @@ export function Satellite({
   originPosition = null,
   lvlhAxes = null,
   hideSphereFallback = false,
+  markerShape,
 }: SatelliteProps) {
   let scenePos: [number, number, number];
 
@@ -152,14 +160,19 @@ export function Satellite({
 
   if (hideSphereFallback) return bodyAxes;
 
-  // With attitude data, render an orientation-revealing primitive so the attitude
-  // is actually visible — a sphere looks identical at every orientation. Orbit-only
-  // satellites keep the lightweight sphere dot.
-  const fallbackMarker = displayQuaternion ? (
-    <PrimitiveMarker position={scenePos} color={color} quaternion={displayQuaternion} />
-  ) : (
-    <SphereMarker position={scenePos} color={color} />
-  );
+  // Pick the marker shape: caller-resolved override/default, else automatic
+  // (orientation-revealing cube when attitude is present — a sphere looks identical
+  // at every orientation — sphere otherwise).
+  const shape = resolveMarkerShape({
+    override: markerShape,
+    hasAttitude: displayQuaternion != null,
+  });
+  const fallbackMarker =
+    shape === "sphere" ? (
+      <SphereMarker position={scenePos} color={color} />
+    ) : (
+      <PrimitiveMarker position={scenePos} quaternion={displayQuaternion} />
+    );
   return (
     <>
       {fallbackMarker}

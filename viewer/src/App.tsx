@@ -9,6 +9,7 @@ import type { TimeRange } from "@sksat/uneri";
 import styles from "./App.module.css";
 import { FrameSelector } from "./components/FrameSelector.js";
 import { GraphPanel } from "./components/GraphPanel.js";
+import { MarkerShapeSelector } from "./components/MarkerShapeSelector.js";
 import { PlaybackBar } from "./components/PlaybackBar.js";
 import { SimConfigModal } from "./components/SimConfigModal.js";
 import { SimInfoBar } from "./components/SimInfoBar.js";
@@ -18,6 +19,7 @@ import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
 import { useSimulationData } from "./hooks/useSimulationData.js";
 import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
+import { type MarkerShape, readSatShapeParam, writeSatShapeParam } from "./satelliteShapes.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
 import { resolveTextureBaseUrl } from "./textureBaseUrl.js";
@@ -53,6 +55,25 @@ export function App() {
   }, [timeRange]);
 
   const [wsUrl, setWsUrl] = useState(DEFAULT_WS_URL);
+
+  // Satellite marker shape: global default (persisted to URL) + per-satellite overrides.
+  const [defaultMarkerShape, setDefaultMarkerShape] = useState<MarkerShape | null>(() =>
+    readSatShapeParam(),
+  );
+  useEffect(() => {
+    writeSatShapeParam(defaultMarkerShape);
+  }, [defaultMarkerShape]);
+  const [markerShapeOverrides, setMarkerShapeOverrides] = useState<Map<string, MarkerShape>>(
+    () => new Map(),
+  );
+  const handleMarkerShapeOverride = useCallback((satId: string, shape: MarkerShape | null) => {
+    setMarkerShapeOverrides((prev) => {
+      const next = new Map(prev);
+      if (shape == null) next.delete(satId);
+      else next.set(satId, shape);
+      return next;
+    });
+  }, []);
 
   const [simConfigOpen, setSimConfigOpen] = useState(false);
 
@@ -398,6 +419,13 @@ export function App() {
             hasEpoch={epochJd != null}
             centralBody={centralBody}
           />
+          <MarkerShapeSelector
+            defaultShape={defaultMarkerShape}
+            onDefaultChange={setDefaultMarkerShape}
+            satellites={simInfo?.satellites}
+            overrides={markerShapeOverrides}
+            onOverrideChange={handleMarkerShapeOverride}
+          />
           {fileSource.orbitInfo && (
             <div className={styles.orbitInfo} data-testid="orbit-info-file">
               {fileSource.orbitInfo}
@@ -429,6 +457,8 @@ export function App() {
           epochJd={epochJd ?? null}
           referenceFrame={referenceFrame}
           satelliteNames={satelliteNames}
+          satelliteShapes={markerShapeOverrides}
+          defaultMarkerShape={defaultMarkerShape}
           physicalScale={false}
           textureRevision={textureRevision}
           textureBaseUrl={textureBaseUrl}
