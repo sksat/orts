@@ -1,4 +1,3 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChartDataWorkerClient, IngestBuffer as IngestBufferType } from "@sksat/uneri";
 import {
   type ChartBuffer,
@@ -13,8 +12,10 @@ import type {
   MultiChartDataResult,
   MultiChartDataWorkerClient,
 } from "@sksat/uneri/multiWorkerClient";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { METRIC_NAMES } from "../chartMetrics.js";
 import { createOrbitSchema } from "../db/orbitSchema.js";
+import { duckdbBundles } from "../duckdbBundles.js";
 import type { OrbitPoint } from "../orbit.js";
 import type { MultiChartDataMap } from "./buildMultiChartData.js";
 import type { SatelliteConfig } from "./useMultiSatelliteStore.js";
@@ -248,6 +249,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     timeRange,
     enabled: !isMultiSatellite,
     clientRef: workerClientRef,
+    duckDB: { bundles: duckdbBundles },
   });
 
   // Charts: multi-satellite mode (Worker-based)
@@ -259,6 +261,7 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     timeRange,
     enabled: isMultiSatellite,
     clientRef: multiWorkerClientRef,
+    duckDB: { bundles: duckdbBundles },
   });
 
   // When the user zooms, the one-shot multi-zoom-query result takes

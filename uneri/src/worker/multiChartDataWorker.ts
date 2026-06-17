@@ -320,7 +320,7 @@ self.onmessage = async (e: MessageEvent<MultiMainToWorkerMessage>) => {
         if (msg.queryEveryN != null) QUERY_EVERY_N = msg.queryEveryN;
         if (msg.compactEveryN != null) COMPACT_EVERY_N = msg.compactEveryN;
 
-        const db = await initDuckDB();
+        const db = await initDuckDB(msg.duckDB);
         conn = await db.connect();
 
         // Create tables for initial satellite configs

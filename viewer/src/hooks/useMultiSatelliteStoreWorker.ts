@@ -5,13 +5,19 @@
  * buildMultiChartData entirely to a Web Worker.
  */
 
-import { useEffect, useRef, useState } from "react";
-import type { IngestBuffer, TableSchema, TimePoint, TimeRange } from "@sksat/uneri";
+import type {
+  DuckDBInitOptions,
+  IngestBuffer,
+  TableSchema,
+  TimePoint,
+  TimeRange,
+} from "@sksat/uneri";
 import type {
   MultiChartDataResult,
   MultiChartDataWorkerClient,
 } from "@sksat/uneri/multiWorkerClient";
 import type { WorkerSatelliteConfig, WorkerTableSchema } from "@sksat/uneri/workerProtocol";
+import { useEffect, useRef, useState } from "react";
 import type { MultiChartDataMap, SatelliteConfig } from "./buildMultiChartData.js";
 
 export interface UseMultiSatelliteStoreWorkerOptions<T extends TimePoint> {
@@ -31,6 +37,11 @@ export interface UseMultiSatelliteStoreWorkerOptions<T extends TimePoint> {
    * (e.g. `handleChartZoom`) and fire ad-hoc `zoomQuery` requests.
    */
   clientRef?: React.RefObject<MultiChartDataWorkerClient | null>;
+  /**
+   * How the Worker should source DuckDB-wasm assets. Pass self-hosted bundle
+   * URLs here to avoid the jsDelivr CDN. Defaults to the CDN when omitted.
+   */
+  duckDB?: DuckDBInitOptions;
 }
 
 export interface UseMultiSatelliteStoreWorkerReturn {
@@ -80,7 +91,10 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
     drainInterval = 500,
     enabled = true,
     clientRef: externalClientRef,
+    duckDB,
   } = options;
+  const duckDBRef = useRef(duckDB);
+  duckDBRef.current = duckDB;
 
   const [data, setData] = useState<MultiChartDataMap | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -152,6 +166,7 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
         toWorkerSchema(baseSchemaRef.current),
         toWorkerConfigs(configsRef.current),
         metricNamesRef.current,
+        { duckDB: duckDBRef.current },
       );
 
       client.configure(timeRangeRef.current, maxPointsRef.current);

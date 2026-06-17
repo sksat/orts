@@ -2,6 +2,7 @@
  * Main-thread typed wrapper for the multi-satellite chart data Web Worker.
  */
 
+import type { DuckDBInitOptions } from "../db/duckdb.js";
 import type { TimeRange } from "../hooks/useTimeSeriesStore.js";
 import type {
   MultiMainToWorkerMessage,
@@ -53,7 +54,12 @@ export class MultiChartDataWorkerClient {
     baseSchema: WorkerTableSchema,
     satelliteConfigs: WorkerSatelliteConfig[],
     metricNames: string[],
-    opts?: { tickInterval?: number; queryEveryN?: number; compactEveryN?: number },
+    opts?: {
+      tickInterval?: number;
+      queryEveryN?: number;
+      compactEveryN?: number;
+      duckDB?: DuckDBInitOptions;
+    },
   ): void {
     this.send({
       type: "multi-init",

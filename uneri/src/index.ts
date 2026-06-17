@@ -11,7 +11,8 @@ export {
   TimeSeriesChart,
 } from "./components/TimeSeriesChart.js";
 // DB
-export { initDuckDB } from "./db/duckdb.js";
+export type { DuckDBBundleUrls, DuckDBInitOptions } from "./db/duckdb.js";
+export { initDuckDB, resolveBundleSource } from "./db/duckdb.js";
 export { IngestBuffer } from "./db/IngestBuffer.js";
 export type { CompactOptions } from "./db/store.js";
 export {

@@ -5,6 +5,7 @@
  * and typed callbacks for chart data and errors.
  */
 
+import type { DuckDBInitOptions } from "../db/duckdb.js";
 import type { TimeRange } from "../hooks/useTimeSeriesStore.js";
 import type { ChartDataMap } from "../types.js";
 import type {
@@ -42,7 +43,12 @@ export class ChartDataWorkerClient {
   /** Initialize the Worker with a table schema and optional tick parameters. */
   init(
     schema: WorkerTableSchema,
-    opts?: { tickInterval?: number; coldRefreshEveryN?: number; hotRowBudget?: number },
+    opts?: {
+      tickInterval?: number;
+      coldRefreshEveryN?: number;
+      hotRowBudget?: number;
+      duckDB?: DuckDBInitOptions;
+    },
   ): void {
     this.send({ type: "init", schema, ...opts });
   }
