@@ -1,6 +1,9 @@
 packages:
   - "uneri"
   - "viewer"
+  # Standalone consumer of the viewer's shadcn registry (dogfoods the registry
+  # output): its own package so `shadcn add` can install the item's deps.
+  - "viewer/examples/orbit-viewer"
   - "docs"
   - "tobari/examples/web"
   - "starlight-rustdoc"

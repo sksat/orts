@@ -1,0 +1,330 @@
+import { useEffect, useRef, useState } from "react";
+import * as THREE from "three";
+import {
+  type BodyDefinition,
+  type BodyDefinitions,
+  DEFAULT_BODIES,
+  getBodyRenderInfo,
+} from "../bodies.js";
+import { type TextureResolution, useTextureResolution } from "../hooks/useTextureResolution.js";
+import { EarthBody } from "./EarthBody.js";
+
+/** Flat render fields the sphere sub-components consume (derived from a {@link BodyDefinition}). */
+interface RenderInfo {
+  texturePath: string | null;
+  nightTexturePath: string | null;
+  textureBaseName?: string;
+  nightTextureBaseName?: string;
+  fallbackColor: number;
+  emissiveColor: number;
+  isSelfLuminous: boolean;
+}
+
+function toRenderInfo(def: BodyDefinition): RenderInfo {
+  return {
+    texturePath: def.texture?.day ?? null,
+    nightTexturePath: def.texture?.night ?? null,
+    textureBaseName: def.texture?.baseName,
+    nightTextureBaseName: def.texture?.nightBaseName,
+    fallbackColor: def.fallbackColor ?? 0x666666,
+    emissiveColor: def.emissiveColor ?? 0x222222,
+    isSelfLuminous: def.selfLuminous ?? false,
+  };
+}
+
+interface CelestialBodyProps {
+  /** Body identifier from the server (e.g., "earth"). */
+  bodyId: string;
+  /** Radius in scene units (default 1). */
+  radius?: number;
+  /** Normalized sun direction in world space (ECI). */
+  sunDirection?: THREE.Vector3;
+  /** Earth Rotation Angle in radians (for Earth self-rotation in ECI). */
+  rotationAngle?: number;
+  /** Position in LVLH frame (scene units). When set, body is placed here instead of origin. */
+  lvlhPosition?: [number, number, number] | null;
+  /** Quaternion [x,y,z,w] for body orientation in LVLH frame. Replaces ERA-based euler. */
+  lvlhQuaternion?: [number, number, number, number] | null;
+  /** Ambient light intensity for shader-based bodies (matches scene ambient). */
+  ambientIntensity?: number;
+  /** Sun intensity scale factor: (1 AU / distance)². Default 1.0. */
+  sunIntensity?: number;
+  /** When true, atmosphere uses physical scale. Default false (amplified). */
+  physicalScale?: boolean;
+  /** Bumped when server notifies high-res textures are available. Triggers re-upgrade. */
+  textureRevision?: number;
+  /** Base URL for fetching high-res textures. */
+  textureBaseUrl?: string;
+  /** Body definitions to resolve `bodyId` against. Defaults to the built-in bodies. */
+  bodyDefinitions?: BodyDefinitions;
+}
+
+const FALLBACK_CHAIN: TextureResolution[] = ["16k", "8k", "4k"];
+
+// Decode off the main thread via createImageBitmap (see EarthBody). The bitmap
+// is pre-flipped to match TextureLoader; WebGL can't flip an ImageBitmap on
+// upload, so texture.flipY is off.
+const bitmapLoader = new THREE.ImageBitmapLoader();
+bitmapLoader.setOptions({ imageOrientation: "flipY" });
+
+function loadTexture(url: string): Promise<THREE.Texture | null> {
+  return new Promise((resolve) => {
+    bitmapLoader.load(
+      url,
+      (bitmap) => {
+        const tex = new THREE.Texture(bitmap);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.flipY = false;
+        tex.needsUpdate = true;
+        resolve(tex);
+      },
+      undefined,
+      () => resolve(null),
+    );
+  });
+}
+
+function TexturedBody({
+  renderInfo,
+  radius,
+  targetResolution,
+  textureRevision,
+  textureBaseUrl,
+}: {
+  renderInfo: RenderInfo;
+  radius: number;
+  targetResolution?: TextureResolution;
+  textureRevision?: number;
+  textureBaseUrl?: string;
+}) {
+  const [texture, setTexture] = useState<THREE.Texture | null>(null);
+  const [baseLoaded, setBaseLoaded] = useState(false);
+  const [upgraded, setUpgraded] = useState(false);
+  // Persisted across effect re-runs (e.g. textureRevision bumps) so upgrades
+  // never overlap, not just within a single effect execution.
+  const inFlightRef = useRef(false);
+
+  // Load base texture
+  useEffect(() => {
+    let cancelled = false;
+    setBaseLoaded(false);
+    setUpgraded(false);
+    new THREE.TextureLoader().load(
+      renderInfo.texturePath!,
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        if (!cancelled) {
+          setTexture(tex);
+          setBaseLoaded(true);
+        }
+      },
+      undefined,
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [renderInfo.texturePath]);
+
+  // Upgrade to higher resolution — re-runs on textureRevision bump (server notification)
+  // and retries periodically until successful.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: textureRevision is an intentional trigger to re-attempt texture upgrade when server notifies new textures are available.
+  useEffect(() => {
+    if (!baseLoaded || !renderInfo.textureBaseName) return;
+    if (!targetResolution || targetResolution === "2k") return;
+    if (upgraded) return;
+    // Only upgrade when a real texture source is provided (a connected orts
+    // server, or an explicit base URL). No source → keep the bundled 2K.
+    if (!textureBaseUrl) return;
+
+    let cancelled = false;
+    const basePath = textureBaseUrl;
+    const startIdx = FALLBACK_CHAIN.indexOf(targetResolution);
+    const candidates = startIdx >= 0 ? FALLBACK_CHAIN.slice(startIdx) : [];
+
+    async function tryUpgrade() {
+      // Don't stack a second load while one is in flight: decode is off-thread
+      // (ImageBitmapLoader) but the GPU upload is still synchronous on the main thread.
+      if (inFlightRef.current) return;
+      inFlightRef.current = true;
+      try {
+        for (const res of candidates) {
+          if (cancelled) return;
+          const url = `${basePath}${renderInfo.textureBaseName}_${res}.jpg`;
+          const newTex = await loadTexture(url);
+          if (cancelled) {
+            newTex?.dispose();
+            return;
+          }
+          if (newTex) {
+            setTexture((old) => {
+              old?.dispose();
+              return newTex;
+            });
+            setUpgraded(true);
+            return;
+          }
+        }
+      } finally {
+        inFlightRef.current = false;
+      }
+    }
+    tryUpgrade();
+
+    // Bounded fallback poll (textureRevision bump is the primary re-trigger).
+    // Stop after MAX_RETRIES so a permanently unavailable resolution doesn't
+    // loop forever, and never re-upload while a load is already running.
+    let attempts = 0;
+    const MAX_RETRIES = 3;
+    const timer = setInterval(() => {
+      if (cancelled) return;
+      // A load is still in flight — skip without spending a retry, so a slow load
+      // (>10s) doesn't exhaust the budget on ticks that tryUpgrade would bail on.
+      if (inFlightRef.current) return;
+      if (attempts >= MAX_RETRIES) {
+        clearInterval(timer);
+        return;
+      }
+      attempts += 1;
+      tryUpgrade();
+    }, 10_000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [
+    baseLoaded,
+    targetResolution,
+    renderInfo.textureBaseName,
+    textureRevision,
+    upgraded,
+    textureBaseUrl,
+  ]);
+
+  return (
+    <group>
+      <mesh>
+        <sphereGeometry args={[radius, 64, 64]} />
+        {texture ? (
+          renderInfo.isSelfLuminous ? (
+            <meshBasicMaterial map={texture} />
+          ) : (
+            <meshStandardMaterial map={texture} />
+          )
+        ) : (
+          <meshPhongMaterial
+            color={renderInfo.fallbackColor}
+            emissive={renderInfo.emissiveColor}
+            emissiveIntensity={0.1}
+            shininess={25}
+          />
+        )}
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[radius * 1.002, 24, 24]} />
+        <meshBasicMaterial color={0x4488cc} wireframe transparent opacity={0.15} />
+      </mesh>
+    </group>
+  );
+}
+
+function FallbackBody({ renderInfo, radius }: { renderInfo: RenderInfo; radius: number }) {
+  return (
+    <group>
+      <mesh>
+        <sphereGeometry args={[radius, 64, 64]} />
+        <meshPhongMaterial
+          color={renderInfo.fallbackColor}
+          emissive={renderInfo.emissiveColor}
+          emissiveIntensity={0.1}
+          shininess={25}
+        />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[radius * 1.002, 24, 24]} />
+        <meshBasicMaterial color={0x4488cc} wireframe transparent opacity={0.15} />
+      </mesh>
+    </group>
+  );
+}
+
+/**
+ * Renders a celestial body sphere with texture if available,
+ * falling back to a colored Phong sphere.
+ */
+export function CelestialBody({
+  bodyId,
+  radius = 1,
+  sunDirection,
+  rotationAngle,
+  lvlhPosition = null,
+  lvlhQuaternion = null,
+  ambientIntensity,
+  sunIntensity,
+  physicalScale,
+  textureRevision,
+  textureBaseUrl,
+  bodyDefinitions = DEFAULT_BODIES,
+}: CelestialBodyProps) {
+  const renderInfo = toRenderInfo(getBodyRenderInfo(bodyId, bodyDefinitions));
+  const isSatelliteCentered = lvlhPosition != null;
+  const targetResolution = useTextureResolution(isSatelliteCentered);
+
+  let body: React.ReactNode;
+
+  // The day/night terminator shader + atmosphere + ERA rotation in EarthBody are
+  // Earth-specific — gate them to the built-in Earth so a *custom* body with a
+  // night texture doesn't inherit Earth's atmosphere/rotation (it renders via the
+  // generic textured-sphere path below instead).
+  if (bodyId === "earth" && renderInfo.nightTexturePath && renderInfo.texturePath && sunDirection) {
+    body = (
+      <EarthBody
+        radius={radius}
+        sunDirection={sunDirection}
+        dayTexturePath={renderInfo.texturePath}
+        nightTexturePath={renderInfo.nightTexturePath}
+        rotationAngle={lvlhQuaternion != null ? undefined : rotationAngle}
+        targetResolution={targetResolution}
+        textureBaseName={renderInfo.textureBaseName}
+        nightTextureBaseName={renderInfo.nightTextureBaseName}
+        ambientIntensity={ambientIntensity}
+        sunIntensity={sunIntensity}
+        physicalScale={physicalScale}
+        textureRevision={textureRevision}
+        textureBaseUrl={textureBaseUrl}
+      />
+    );
+  } else if (renderInfo.texturePath) {
+    body = (
+      <TexturedBody
+        renderInfo={renderInfo}
+        radius={radius}
+        targetResolution={targetResolution}
+        textureRevision={textureRevision}
+        textureBaseUrl={textureBaseUrl}
+      />
+    );
+  } else {
+    body = <FallbackBody renderInfo={renderInfo} radius={radius} />;
+  }
+
+  // In LVLH mode: position and orient the body via an outer group
+  if (lvlhPosition != null || lvlhQuaternion != null) {
+    const quat = lvlhQuaternion
+      ? new THREE.Quaternion(
+          lvlhQuaternion[0],
+          lvlhQuaternion[1],
+          lvlhQuaternion[2],
+          lvlhQuaternion[3],
+        )
+      : undefined;
+    return (
+      <group position={lvlhPosition ?? undefined} quaternion={quat}>
+        {body}
+      </group>
+    );
+  }
+
+  return <>{body}</>;
+}
