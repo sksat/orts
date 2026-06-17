@@ -41,6 +41,13 @@ export default defineConfig({
     outDir: "dist",
   },
   optimizeDeps: {
-    exclude: ["@duckdb/duckdb-wasm"],
+    // Force pre-bundling of duckdb-wasm. Without it, the chart Web Worker pulls
+    // duckdb's transitive graph (apache-arrow et al., ~140 modules) as raw ESM
+    // requests; on a cold CI dev server one of them intermittently 404s and
+    // kills the worker — the dominant cause of viewer-e2e flakiness (#70).
+    // Pre-bundling collapses that to a handful of requests. (Previously
+    // `exclude` — a cargo-culted duckdb-wasm default; pre-bundling works here.
+    // `include` also forces it even when Vite's dep scan skips pre-bundling.)
+    include: ["@duckdb/duckdb-wasm"],
   },
 });
