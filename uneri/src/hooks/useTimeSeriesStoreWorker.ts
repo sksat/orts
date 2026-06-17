@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import type { DuckDBInitOptions } from "../db/duckdb.js";
 import type { IngestBuffer } from "../db/IngestBuffer.js";
 import type { ChartDataMap, TableSchema, TimePoint } from "../types.js";
 import { ChartDataWorkerClient } from "../worker/chartDataWorkerClient.js";
@@ -37,6 +38,11 @@ export interface UseTimeSeriesStoreWorkerOptions<T extends TimePoint> {
   clientRef?: React.MutableRefObject<ChartDataWorkerClient | null>;
   /** Set to false to disable the Worker (no Worker is spawned). Default: true. */
   enabled?: boolean;
+  /**
+   * How the Worker should source DuckDB-wasm assets. Pass self-hosted bundle
+   * URLs here to avoid the jsDelivr CDN. Defaults to the CDN when omitted.
+   */
+  duckDB?: DuckDBInitOptions;
 }
 
 /** Extract the serializable portion of a TableSchema (excluding toRow). */
@@ -62,7 +68,10 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
     hotRowBudget,
     clientRef: externalClientRef,
     enabled = true,
+    duckDB,
   } = options;
+  const duckDBRef = useRef(duckDB);
+  duckDBRef.current = duckDB;
 
   const [data, setData] = useState<ChartDataMap | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -107,6 +116,7 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
       tickInterval,
       coldRefreshEveryN,
       hotRowBudget,
+      duckDB: duckDBRef.current,
     });
 
     // Send initial configuration

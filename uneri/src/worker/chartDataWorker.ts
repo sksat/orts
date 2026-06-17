@@ -277,7 +277,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMessage>) => {
           useAdaptiveAllMode = false;
         }
         if (msg.hotRowBudget != null) HOT_ROW_BUDGET = msg.hotRowBudget;
-        const db = await initDuckDB();
+        const db = await initDuckDB(msg.duckDB);
         conn = await db.connect();
         await createTable(conn, toTableSchema(schema));
 

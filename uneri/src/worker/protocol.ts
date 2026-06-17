@@ -6,6 +6,7 @@
  * ready-to-render ChartDataMap via zero-copy ArrayBuffer transfer.
  */
 
+import type { DuckDBInitOptions } from "../db/duckdb.js";
 import type { TimeRange } from "../hooks/useTimeSeriesStore.js";
 import type { ColumnDef, DerivedColumn } from "../types.js";
 
@@ -33,6 +34,8 @@ export type MainToWorkerMessage =
       tickInterval?: number;
       coldRefreshEveryN?: number;
       hotRowBudget?: number;
+      /** How the Worker should source DuckDB-wasm assets (self-host vs CDN). */
+      duckDB?: DuckDBInitOptions;
     }
   | { type: "ingest"; rows: RowTuple[]; latestT: number }
   | { type: "rebuild"; rows: RowTuple[]; latestT: number }
@@ -63,6 +66,8 @@ export type MultiMainToWorkerMessage =
       tickInterval?: number;
       queryEveryN?: number;
       compactEveryN?: number;
+      /** How the Worker should source DuckDB-wasm assets (self-host vs CDN). */
+      duckDB?: DuckDBInitOptions;
     }
   | { type: "multi-ingest"; satelliteId: string; rows: RowTuple[]; latestT: number }
   | { type: "multi-rebuild"; satelliteId: string; rows: RowTuple[]; latestT: number }
