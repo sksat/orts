@@ -16,7 +16,7 @@ export default defineConfig({
     },
   },
   webServer: {
-    command: `vite --port ${PORT} --strictPort`,
+    command: `npx vite --port ${PORT} --strictPort`,
     port: PORT,
     reuseExistingServer: !!process.env.CI,
   },
