@@ -1,0 +1,31 @@
+{
+  "name": "orts-viewer-orbit-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone consumer of the orts-viewer shadcn registry: installs the orbit-viewer item via `shadcn add` and renders it. Dogfoods the registry output.",
+  "scripts": {
+    "sync:registry": "pnpm --filter orts-viewer registry:build && pnpm dlx shadcn@4.11.0 add ../../public/r/orbit-viewer.json --yes --overwrite",
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.0.0",
+    "@react-three/fiber": "^9.0.0",
+    "arika-wasm": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "three": ">=0.176.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.183.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^8.0.8"
+  }
+}

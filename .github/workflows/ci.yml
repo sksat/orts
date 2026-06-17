@@ -1005,6 +1005,16 @@ jobs:
           ORTS_WS_URL: "ws://localhost:9001/ws"
           ORTS_BINARY: "${{ github.workspace }}/bin/orts"
 
+      # The registry-consumer example is a standalone package that imports the
+      # shadcn-distributed source (committed under components/orbit-viewer) and
+      # serves itself on its own Vite — this exercises the copied registry output
+      # end to end. Backend-free; reuses the wasm/Playwright setup above.
+      - name: Run registry-consumer example E2E
+        working-directory: viewer/examples/orbit-viewer
+        run: npx playwright test
+        env:
+          EXAMPLE_PORT: "5273"
+
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

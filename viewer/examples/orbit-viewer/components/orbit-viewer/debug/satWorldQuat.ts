@@ -1,0 +1,40 @@
+import type * as THREE from "three";
+import { Quaternion } from "three";
+import { IS_DEV } from "../env.js";
+
+type GroupGetter = () => THREE.Object3D | null;
+
+interface DebugWindow extends Record<string, unknown> {
+  __debug_sat_quat_registry?: Map<string, GroupGetter>;
+  __debug_get_sat_world_quat?: (id: string) => [number, number, number, number] | null;
+}
+
+function ensureRegistry(): Map<string, GroupGetter> {
+  const w = window as unknown as DebugWindow;
+  let reg = w.__debug_sat_quat_registry;
+  if (!reg) {
+    reg = new Map();
+    w.__debug_sat_quat_registry = reg;
+    // Three.js (x, y, z, w) order, matching __debug_get_earth_world_quat.
+    w.__debug_get_sat_world_quat = (id) => {
+      const group = w.__debug_sat_quat_registry?.get(id)?.();
+      if (!group) return null;
+      const q = group.getWorldQuaternion(new Quaternion());
+      return [q.x, q.y, q.z, q.w];
+    };
+  }
+  return reg;
+}
+
+/**
+ * Register a satellite group so its world quaternion is queryable by `id`.
+ * Returns a cleanup function; a no-op (returning a no-op) outside dev builds.
+ */
+export function registerSatWorldQuat(id: string, getGroup: GroupGetter): () => void {
+  if (!IS_DEV) return () => {};
+  const reg = ensureRegistry();
+  reg.set(id, getGroup);
+  return () => {
+    reg.delete(id);
+  };
+}

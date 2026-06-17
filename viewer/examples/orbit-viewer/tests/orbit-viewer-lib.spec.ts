@@ -1,6 +1,9 @@
 /**
- * E2E for the embeddable <OrbitViewer> (viewer/src/lib), driven by the standalone
- * example page (examples/orbit-viewer) — no backend.
+ * E2E for the embeddable <OrbitViewer> as a *registry consumer*: this example is
+ * a standalone workspace package that imports the shadcn-distributed source
+ * (`shadcn add`-copied into `components/orbit-viewer/`), not viewer/src/lib, and
+ * runs on its own Vite — so this also proves the registry output is consumable.
+ * No backend.
  *
  * The headline guarantee is performance: a satellite's trail is backed by a
  * *persistent* GPU buffer, so neither advancing `time` nor appending points
@@ -37,7 +40,7 @@ async function waitForTrail(page: import("@playwright/test").Page): Promise<void
 }
 
 test("renders a central body + satellite with a trail", async ({ page }) => {
-  await page.goto("/examples/orbit-viewer/");
+  await page.goto("/");
   await expect(page.locator("canvas").first()).toBeVisible();
   await waitForTrail(page);
 
@@ -47,7 +50,7 @@ test("renders a central body + satellite with a trail", async ({ page }) => {
 });
 
 test("advancing time does not rebuild the trail buffer (stable generation)", async ({ page }) => {
-  await page.goto("/examples/orbit-viewer/?animate=0"); // freeze so only the hook mutates state
+  await page.goto("/?animate=0"); // freeze so only the hook mutates state
   await waitForTrail(page);
 
   const before = await readTrail(page);
@@ -71,7 +74,7 @@ test("advancing time does not rebuild the trail buffer (stable generation)", asy
 test("appending trail points uploads incrementally (grows length, same generation)", async ({
   page,
 }) => {
-  await page.goto("/examples/orbit-viewer/?animate=0"); // freeze so only the hook mutates state
+  await page.goto("/?animate=0"); // freeze so only the hook mutates state
   await waitForTrail(page);
 
   const before = await readTrail(page);
@@ -90,7 +93,7 @@ test("appending trail points uploads incrementally (grows length, same generatio
 });
 
 test("local-orbital (LVLH) frame renders without error", async ({ page }) => {
-  await page.goto("/examples/orbit-viewer/?frame=lvlh");
+  await page.goto("/?frame=lvlh");
   await expect(page.locator("canvas").first()).toBeVisible();
   await waitForTrail(page);
   expect((await readTrail(page))?.length).toBeGreaterThan(0);
@@ -116,7 +119,7 @@ test("satellite-centred inertial and LVLH are distinct frames (#90)", async ({ p
   };
 
   // LVLH: data is transformed into the orbit frame; the camera stays put.
-  await page.goto("/examples/orbit-viewer/?frame=lvlh&animate=0");
+  await page.goto("/?frame=lvlh&animate=0");
   await waitForTrail(page);
   const lvlh = await readFrame();
   expect(lvlh?.lvlhActive).toBe(true);
@@ -124,7 +127,7 @@ test("satellite-centred inertial and LVLH are distinct frames (#90)", async ({ p
 
   // Inertial: satellite is still centred, but axes stay star-fixed —
   // no LVLH data transform and no camera co-rotation.
-  await page.goto("/examples/orbit-viewer/?frame=sat&animate=0");
+  await page.goto("/?frame=sat&animate=0");
   await waitForTrail(page);
   const inertial = await readFrame();
   expect(inertial?.originPosition).not.toBeNull();
@@ -139,7 +142,7 @@ test("renders a custom central body (bodies prop, radiusKm from the definition)"
   page.on("pageerror", (e) => errors.push(e.message));
   // ?body=custom centres on a user-defined body with no built-in entry and an
   // omitted centralBody.radiusKm (resolved from the definition).
-  await page.goto("/examples/orbit-viewer/?body=custom&animate=0");
+  await page.goto("/?body=custom&animate=0");
   await expect(page.locator("canvas").first()).toBeVisible();
   await waitForTrail(page); // scene composes around the custom body without error
   expect((await readTrail(page))?.length ?? 0).toBeGreaterThan(0);
@@ -147,7 +150,7 @@ test("renders a custom central body (bodies prop, radiusKm from the definition)"
 });
 
 test("a marker-only satellite (no trail prop) gets no trail buffer", async ({ page }) => {
-  await page.goto("/examples/orbit-viewer/?animate=0");
+  await page.goto("/?animate=0");
   await waitForTrail(page); // scene is up: the demo satellite's trail is filled
 
   const markerTrail = await page.evaluate(() => {

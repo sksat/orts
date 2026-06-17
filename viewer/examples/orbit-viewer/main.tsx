@@ -23,7 +23,7 @@ import {
   type TrailPoint,
   type Vec3,
   type ViewerReferenceFrame,
-} from "../../src/lib/index.js";
+} from "@/components/orbit-viewer/lib/index.js";
 
 const EARTH_RADIUS_KM = 6378.137;
 const MU = 398600.4418; // km^3/s^2

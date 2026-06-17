@@ -16,6 +16,7 @@
       "!arika/tests/fixtures",
       "!orts/tests/fixtures",
       "!viewer/src/protocol/generated",
+      "!viewer/examples/orbit-viewer/components/orbit-viewer",
       "!docs/.astro",
       "!docs/dist",
       "!docs/public",
