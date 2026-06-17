@@ -6,7 +6,7 @@
 // Run from the viewer package root: `node scripts/gen-registry.mjs`
 // (wired as the `registry:gen` script). CI re-runs it and diffs registry.json
 // to catch drift between the closure and the committed manifest.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 
 const SRC = resolve("src");
@@ -37,9 +37,11 @@ const IMPORT_RE =
 function resolveSpec(fromFile, spec) {
   if (!spec.startsWith(".")) return null; // bare package — external, not copied
   const base = resolve(dirname(fromFile), spec);
-  // Resolve the TS/TSX file behind a `.js` (or extensionless) specifier. The raw
-  // `base` is intentionally excluded: for `import "./foo"` where `foo/` is a
-  // directory it would match the dir and make readFileSync throw.
+  // Candidate TS/TSX files behind a `.js` or extensionless specifier. The
+  // isFile() guard is what actually prevents a directory match: for an
+  // extensionless `import "./foo"`, `base.replace(/\.js$/, ".ts")` is just `base`
+  // again, so without the guard a same-named `foo/` directory would be returned
+  // and readFileSync would throw.
   const cands = [
     base.replace(/\.js$/, ".ts"),
     base.replace(/\.js$/, ".tsx"),
@@ -48,7 +50,7 @@ function resolveSpec(fromFile, spec) {
     resolve(base, "index.ts"),
     resolve(base, "index.tsx"),
   ];
-  for (const c of cands) if (existsSync(c)) return c;
+  for (const c of cands) if (existsSync(c) && statSync(c).isFile()) return c;
   throw new Error(`Cannot resolve ${spec} from ${relative(SRC, fromFile)}`);
 }
 
