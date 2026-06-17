@@ -7,7 +7,7 @@
 // (wired as the `registry:gen` script). CI re-runs it and diffs registry.json
 // to catch drift between the closure and the committed manifest.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 
 const SRC = resolve("src");
 const ENTRY = resolve(SRC, "lib/index.ts");
@@ -19,23 +19,34 @@ const ENTRY = resolve(SRC, "lib/index.ts");
 const DEPENDENCIES = [
   "react@^19.0.0",
   "react-dom@^19.0.0",
-  "three@^0.183.0",
+  // three uses 0.x (minor-as-major) versioning, and the *copied* source compiles
+  // against the consumer's three — unlike the type-erased compiled library whose
+  // peer floor can be looser. Floor at the tested version, open upper (not `^`,
+  // which on 0.x would pin to 0.183.x and block newer three).
+  "three@>=0.183.0",
   "@react-three/fiber@^9.0.0",
   "@react-three/drei@^10.0.0",
 ];
 
-const IMPORT_RE = /(?:import|export)[\s\S]*?from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\)/g;
+// Capture import specifiers: side-effect `import "x"`, any `... from "x"`
+// (import/export), and dynamic `import("x")`. Kept as three separate branches so
+// a leading side-effect import isn't swallowed by a later `from` on another line.
+const IMPORT_RE =
+  /(?:^|[;\n])\s*import\s+["']([^"']+)["']|from\s*["']([^"']+)["']|import\(\s*["']([^"']+)["']\)/gm;
 
 function resolveSpec(fromFile, spec) {
   if (!spec.startsWith(".")) return null; // bare package — external, not copied
   const base = resolve(dirname(fromFile), spec);
+  // Resolve the TS/TSX file behind a `.js` (or extensionless) specifier. The raw
+  // `base` is intentionally excluded: for `import "./foo"` where `foo/` is a
+  // directory it would match the dir and make readFileSync throw.
   const cands = [
-    base,
     base.replace(/\.js$/, ".ts"),
     base.replace(/\.js$/, ".tsx"),
     `${base}.ts`,
     `${base}.tsx`,
     resolve(base, "index.ts"),
+    resolve(base, "index.tsx"),
   ];
   for (const c of cands) if (existsSync(c)) return c;
   throw new Error(`Cannot resolve ${spec} from ${relative(SRC, fromFile)}`);
@@ -50,11 +61,13 @@ function traceClosure() {
     seen.add(file);
     const src = readFileSync(file, "utf8");
     for (const m of src.matchAll(IMPORT_RE)) {
-      const spec = m[1] ?? m[2];
+      const spec = m[1] ?? m[2] ?? m[3];
       if (!spec) continue;
       const target = resolveSpec(file, spec);
       if (target) {
-        if (!target.startsWith(SRC)) throw new Error(`closure escapes src/: ${target}`);
+        if (target !== SRC && !target.startsWith(SRC + sep)) {
+          throw new Error(`closure escapes src/: ${target}`);
+        }
         queue.push(target);
       }
     }

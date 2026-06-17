@@ -22,8 +22,8 @@ npm install <pkg>            # name TBD
 
 `react`, `react-dom`, `three`, `@react-three/fiber`, `@react-three/drei` are
 **peer dependencies** — you supply your single copy. The arika WASM engine
-(Sun direction / body rotation) is a separate [`arika-wasm`](../arika/wasm/pkg)
-dependency, not bundled.
+(Sun direction / body rotation) is also a peer dependency
+([`arika-wasm`](../arika/wasm/pkg)), not bundled.
 
 ## Usage
 
