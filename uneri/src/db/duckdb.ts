@@ -154,12 +154,12 @@ async function instantiateWithRetry(bundles: duckdb.DuckDBBundles): Promise<duck
 }
 
 /**
- * Initialize DuckDB-wasm (singleton). By default the worker/wasm are loaded
- * from self-hosted URLs supplied via `options.bundles`; with no options the
- * jsDelivr CDN is used (legacy behavior). Retries a few times so a transient
- * hiccup doesn't fail the whole session — historically a source of viewer E2E
- * flakiness (see #70/#65). Safe to call multiple times — returns the same
- * promise, so the first caller's `options` win.
+ * Initialize DuckDB-wasm (singleton). When `options.bundles` is provided, the
+ * worker/wasm are loaded from those (self-hosted) URLs; with no options it
+ * falls back to the jsDelivr CDN (legacy behavior). Retries a few times so a
+ * transient hiccup doesn't fail the whole session — historically a source of
+ * viewer E2E flakiness (see #70/#65). Safe to call multiple times — returns the
+ * same promise, so the first caller's `options` win.
  */
 export function initDuckDB(options?: DuckDBInitOptions): Promise<duckdb.AsyncDuckDB> {
   if (dbPromise) return dbPromise;
