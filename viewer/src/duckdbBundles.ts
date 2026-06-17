@@ -21,7 +21,16 @@ import type { DuckDBBundleUrls } from "@sksat/uneri";
  * `crossOriginIsolated` is true. The mvp + eh variants cover every browser we
  * target.
  */
+// Vite resolves `?url` to a *root-relative* path (`/assets/…` in a build,
+// `/@fs/…` in dev). DuckDB instantiates its worker via a Blob that calls
+// `importScripts(mainWorker)`; inside that Blob worker the base URL is the
+// opaque `blob:` URL, against which a root-relative path cannot be resolved
+// ("invalid URL"). Resolving to an absolute URL against the document origin
+// up front makes both the `importScripts` and the worker's own wasm fetch
+// work regardless of the worker's base.
+const abs = (url: string): string => new URL(url, window.location.origin).href;
+
 export const duckdbBundles: DuckDBBundleUrls = {
-  mvp: { mainModule: mvpWasm, mainWorker: mvpWorker },
-  eh: { mainModule: ehWasm, mainWorker: ehWorker },
+  mvp: { mainModule: abs(mvpWasm), mainWorker: abs(mvpWorker) },
+  eh: { mainModule: abs(ehWasm), mainWorker: abs(ehWorker) },
 };
