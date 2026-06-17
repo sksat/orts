@@ -1,0 +1,213 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry.json",
+  "name": "orts-viewer",
+  "homepage": "https://github.com/sksat/orts",
+  "items": [
+    {
+      "name": "orbit-viewer",
+      "type": "registry:block",
+      "title": "OrbitViewer",
+      "description": "Embeddable React Three Fiber orbit viewer: the OrbitViewer component, its primitives, frame/trail logic, body definitions, and arika-wasm bindings.",
+      "docs": "Also requires the `arika-wasm` package (the Rust→wasm coordinate/ephemeris engine). It is not yet on npm; install it from the orts workspace until it is published.",
+      "dependencies": [
+        "react@^19.0.0",
+        "react-dom@^19.0.0",
+        "three@>=0.176.0",
+        "@react-three/fiber@^9.0.0",
+        "@react-three/drei@^10.0.0"
+      ],
+      "files": [
+        {
+          "path": "src/bodies.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/bodies.ts"
+        },
+        {
+          "path": "src/components/BodyAxes.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/BodyAxes.tsx"
+        },
+        {
+          "path": "src/components/CelestialBody.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/CelestialBody.tsx"
+        },
+        {
+          "path": "src/components/EarthAtmosphere.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/EarthAtmosphere.tsx"
+        },
+        {
+          "path": "src/components/EarthBody.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/EarthBody.tsx"
+        },
+        {
+          "path": "src/components/OrbitSceneContents.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/OrbitSceneContents.tsx"
+        },
+        {
+          "path": "src/components/OrbitTrail.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/OrbitTrail.tsx"
+        },
+        {
+          "path": "src/components/PrimitiveMarker.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/PrimitiveMarker.tsx"
+        },
+        {
+          "path": "src/components/Satellite.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/Satellite.tsx"
+        },
+        {
+          "path": "src/components/SatelliteModel.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/SatelliteModel.tsx"
+        },
+        {
+          "path": "src/components/SunLighting.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/components/SunLighting.tsx"
+        },
+        {
+          "path": "src/components/renderEntries.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/components/renderEntries.ts"
+        },
+        {
+          "path": "src/coordTransform.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/coordTransform.ts"
+        },
+        {
+          "path": "src/debug/satWorldQuat.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/debug/satWorldQuat.ts"
+        },
+        {
+          "path": "src/displayScale.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/displayScale.ts"
+        },
+        {
+          "path": "src/env.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/env.ts"
+        },
+        {
+          "path": "src/frameResolve.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/frameResolve.ts"
+        },
+        {
+          "path": "src/frameTransform.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/frameTransform.ts"
+        },
+        {
+          "path": "src/hooks/useTextureResolution.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/hooks/useTextureResolution.ts"
+        },
+        {
+          "path": "src/lib/OrbitViewer.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/lib/OrbitViewer.tsx"
+        },
+        {
+          "path": "src/lib/adapt.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/lib/adapt.ts"
+        },
+        {
+          "path": "src/lib/frameContext.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/lib/frameContext.ts"
+        },
+        {
+          "path": "src/lib/index.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/lib/index.ts"
+        },
+        {
+          "path": "src/lib/trailReconcile.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/lib/trailReconcile.ts"
+        },
+        {
+          "path": "src/lib/trailSync.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/lib/trailSync.ts"
+        },
+        {
+          "path": "src/lib/types.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/lib/types.ts"
+        },
+        {
+          "path": "src/lib/useTrailBuffers.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/lib/useTrailBuffers.ts"
+        },
+        {
+          "path": "src/orbit.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/orbit.ts"
+        },
+        {
+          "path": "src/referenceFrame.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/referenceFrame.ts"
+        },
+        {
+          "path": "src/satelliteModels.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/satelliteModels.ts"
+        },
+        {
+          "path": "src/satelliteShapes.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/satelliteShapes.ts"
+        },
+        {
+          "path": "src/sceneFrame.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/sceneFrame.ts"
+        },
+        {
+          "path": "src/shaders/atmosphere.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/shaders/atmosphere.ts"
+        },
+        {
+          "path": "src/shaders/earthDayNight.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/shaders/earthDayNight.ts"
+        },
+        {
+          "path": "src/shaders/orbitTrail.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/shaders/orbitTrail.ts"
+        },
+        {
+          "path": "src/sunLighting.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/sunLighting.ts"
+        },
+        {
+          "path": "src/utils/TrailBuffer.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/utils/TrailBuffer.ts"
+        },
+        {
+          "path": "src/wasm/arikaInit.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/wasm/arikaInit.ts"
+        }
+      ]
+    }
+  ]
+}

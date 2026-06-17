@@ -19,6 +19,8 @@
     "build:wasm": "pnpm run build:wasm:arika && pnpm run build:wasm:rrd",
     "build": "pnpm run build:wasm && tsc && vite build",
     "build:lib": "pnpm run build:wasm:arika && vite build --config vite.lib.config.ts && tsc -p tsconfig.lib.json",
+    "registry:gen": "node scripts/gen-registry.mjs",
+    "registry:build": "pnpm run registry:gen && pnpm dlx shadcn@4.11.0 build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

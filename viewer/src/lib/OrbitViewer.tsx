@@ -2,6 +2,7 @@ import { Canvas } from "@react-three/fiber";
 import { useEffect, useMemo, useState } from "react";
 import { getBodyRadius, resolveBodyDefinitions } from "../bodies.js";
 import { OrbitSceneContents } from "../components/OrbitSceneContents.js";
+import { IS_DEV } from "../env.js";
 import type { OrbitPoint } from "../orbit.js";
 import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "../sceneFrame.js";
 import { initArika, isArikaReady } from "../wasm/arikaInit.js";
@@ -122,7 +123,7 @@ export function OrbitViewer({
   // advancing `time` (or appending points) does not rebuild the trail — a stable
   // `generation` means no full GPU re-upload. See tests/orbit-viewer-lib.spec.ts.
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!IS_DEV) return;
     const w = window as unknown as Record<string, unknown>;
     w.__debug_orbit_viewer = {
       trail: (id: string) => {

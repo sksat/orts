@@ -9,6 +9,7 @@
  */
 import type * as THREE from "three";
 import { Quaternion } from "three";
+import { IS_DEV } from "../env.js";
 
 type GroupGetter = () => THREE.Object3D | null;
 
@@ -39,7 +40,7 @@ function ensureRegistry(): Map<string, GroupGetter> {
  * Returns a cleanup function; a no-op (returning a no-op) outside dev builds.
  */
 export function registerSatWorldQuat(id: string, getGroup: GroupGetter): () => void {
-  if (!import.meta.env.DEV) return () => {};
+  if (!IS_DEV) return () => {};
   const reg = ensureRegistry();
   reg.set(id, getGroup);
   return () => {

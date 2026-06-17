@@ -1,6 +1,7 @@
 import { useGLTF } from "@react-three/drei";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
+import { IS_DEV } from "../env.js";
 import type { SatelliteModelConfig } from "../satelliteModels.js";
 
 interface SatelliteModelProps {
@@ -19,7 +20,7 @@ export function SatelliteModel({ position, config, quaternion }: SatelliteModelP
 
   // Dev-time measurement: log the model's native bounding box span
   useEffect(() => {
-    if (import.meta.env.DEV && config.nativeSpanUnits == null) {
+    if (IS_DEV && config.nativeSpanUnits == null) {
       const box = new THREE.Box3().setFromObject(scene);
       const size = box.getSize(new THREE.Vector3());
       const span = Math.max(size.x, size.y, size.z);

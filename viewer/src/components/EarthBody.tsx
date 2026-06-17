@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { IS_DEV } from "../env.js";
 import type { TextureResolution } from "../hooks/useTextureResolution.js";
 import { earthDayNightFrag, earthDayNightVert } from "../shaders/earthDayNight.js";
 import { EarthAtmosphere } from "./EarthAtmosphere.js";
@@ -255,7 +256,7 @@ export function EarthBody({
   // the central-body orientation from the live scene graph without reading pixels.
   // See viewer/tests/lvlh-orientation.spec.ts.
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!IS_DEV) return;
     const w = window as unknown as Record<string, unknown>;
     w.__debug_get_earth_world_quat = (): [number, number, number, number] | null => {
       const g = poleGroupRef.current;

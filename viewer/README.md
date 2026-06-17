@@ -21,8 +21,9 @@ npm install <pkg>            # name TBD
 ```
 
 `react`, `react-dom`, `three`, `@react-three/fiber`, `@react-three/drei` are
-**peer dependencies** — you supply your single copy. The library bundles nothing
-else; the arika WASM (Sun direction / body rotation) is inlined.
+**peer dependencies** — you supply your single copy. The arika WASM engine
+(Sun direction / body rotation) is also a peer dependency
+([`arika-wasm`](../arika/wasm/pkg)), not bundled.
 
 ## Usage
 
@@ -87,6 +88,40 @@ a custom scene: the primitives (`CelestialBody`, `EarthBody`, `OrbitTrail`,
 react-three-fiber components, so they carry a wider semver surface — refactors to
 their internals are breaking changes. If you only need the component, import just
 `OrbitViewer` and its types.
+
+## Or copy the source (shadcn registry)
+
+Instead of depending on a published package, you can **own the source**: the
+viewer is also distributed as a [shadcn](https://ui.shadcn.com/docs/registry)
+registry. `shadcn add` copies the component tree into your project so you can
+read and modify it freely — only the compiled `arika-wasm` engine stays a
+dependency.
+
+Build the registry, then `shadcn add` from the generated file (the manifest in
+[`registry.json`](./registry.json) is generated from the library's import
+closure; `registry:build` emits `public/r/*.json`):
+
+```sh
+pnpm --filter orts-viewer run registry:build       # → viewer/public/r/orbit-viewer.json
+npx shadcn@4.11.0 add ./viewer/public/r/orbit-viewer.json
+```
+
+> Hosting `public/r/` at a stable URL — so `shadcn add https://…/r/orbit-viewer.json`
+> works without a checkout — isn't wired up yet (the deployed site currently
+> serves only the docs).
+
+The `orbit-viewer` item installs the full public closure (the `OrbitViewer`
+component, its primitives, frame/trail logic, shaders, and body definitions)
+under `<your components alias>/orbit-viewer/`, preserving the internal relative
+imports. It declares `react` / `react-dom` / `three` / `@react-three/fiber` /
+`@react-three/drei` as dependencies; you must **also** add `arika-wasm` yourself
+(it isn't on npm yet — install it from the orts workspace until it's published).
+
+Your `components.json` needs a `tailwind` block even if you don't use Tailwind
+(the shadcn schema requires it) and `"rsc": false` (the components are
+client-only — see Caveats). No Tailwind, Next.js, or CSS is otherwise required.
+The copied source is bundler-neutral (it reads Vite's `import.meta.env` behind a
+guarded shim), so it also compiles under non-Vite bundlers.
 
 ## Building / packaging (in-repo)
 
