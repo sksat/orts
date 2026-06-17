@@ -40,10 +40,10 @@ let wasmBodyQuatToRsw: BodyQuatToRsw | undefined;
 /** Options for {@link initArika}. */
 export interface InitArikaOptions {
   /**
-   * Where to load the arika `.wasm` from. Omit to use the build's bundled wasm
-   * (the library build inlines it, so this is rarely needed). Supply a URL to
-   * fetch it from elsewhere — e.g. a CDN, or when a bundler can't resolve the
-   * inlined asset. Only the first init call's options take effect.
+   * Where to load the arika `.wasm` from. Omit to let the bundler resolve it
+   * from the `arika-wasm` package (the usual case). Supply a URL to fetch it
+   * from elsewhere — e.g. a CDN, or when a bundler can't resolve the asset.
+   * Only the first init call's options take effect.
    */
   wasmUrl?: string | URL;
 }
@@ -60,7 +60,7 @@ export function initArika(options?: InitArikaOptions): Promise<void> {
   if (initialized) return Promise.resolve();
   if (initPromise) return initPromise;
 
-  const p: Promise<void> = import("./arika/arika.js").then(async (mod) => {
+  const p: Promise<void> = import("arika-wasm").then(async (mod) => {
     await mod.default(options?.wasmUrl);
     wasmBatch = mod.eci_to_ecef_batch;
     wasmSingle = mod.eci_to_ecef;

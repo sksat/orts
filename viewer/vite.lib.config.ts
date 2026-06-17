@@ -12,10 +12,22 @@ import { defineConfig } from "vite";
  * react / react-dom / three / @react-three/* are externalised so a consumer
  * supplies its single copy (they're peerDependencies) — bundling them would
  * cause duplicate-React / "multiple instances of three" failures.
+ *
+ * arika-wasm (the Rust→wasm coordinate/ephemeris engine) is externalised too:
+ * the compiled engine is a versioned dependency consumers install, not bundled
+ * source. Until it's published this is a workspace:* peer; the publish follow-up
+ * sets a real range.
  */
 
 /** Packages the consumer provides (peerDependencies); never bundled. */
-const PEERS = ["react", "react-dom", "three", "@react-three/fiber", "@react-three/drei"];
+const PEERS = [
+  "react",
+  "react-dom",
+  "three",
+  "@react-three/fiber",
+  "@react-three/drei",
+  "arika-wasm",
+];
 
 const isPeer = (id: string) => PEERS.some((p) => id === p || id.startsWith(`${p}/`));
 

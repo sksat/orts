@@ -14,10 +14,13 @@ test-results/
 viewer/public/textures/*_4k.*
 viewer/public/textures/*_8k.*
 
-# arika WASM build artifacts (wasm-pack generates .gitignore; .d.ts is force-tracked)
-viewer/src/wasm/arika/*.js
-viewer/src/wasm/arika/*.wasm
-viewer/src/wasm/arika/package.json
+# arika WASM. The arika-wasm package (arika/wasm/pkg) commits a hand-maintained
+# package.json + force-tracked arika.d.ts; the wasm-pack build outputs copied in
+# are ignored, as is the throwaway pkg-build/ that wasm-pack fully manages.
+arika/wasm/pkg/*.js
+arika/wasm/pkg/*.wasm
+arika/wasm/pkg/*_bg.wasm.d.ts
+arika/wasm/pkg-build/
 
 # rrd-wasm WASM build artifacts (.d.ts is force-tracked)
 viewer/src/wasm/rrd-wasm/*.js

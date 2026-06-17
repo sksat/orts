@@ -4,6 +4,10 @@ packages:
   - "docs"
   - "tobari/examples/web"
   - "starlight-rustdoc"
+  # wasm-pack output of the arika-wasm Rust crate, exposed as a package so it's
+  # imported by name (import("arika-wasm")) instead of a relative path into
+  # another package's source tree — required for the registry-distributed viewer.
+  - "arika/wasm/pkg"
 
 # Supply-chain hardening: refuse to resolve a version published less than
 # 7 days ago (10080 minutes), so a compromised release has time to be

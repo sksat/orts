@@ -9,7 +9,7 @@
     "ignoreUnknown": false,
     "includes": [
       "**",
-      "!viewer/src/wasm/arika",
+      "!arika/wasm/pkg/arika.d.ts",
       "!viewer/src/wasm/rrd-wasm",
       "!tobari/examples/web/src/wasm/tobari",
       "!tobari/examples/web/src/wasm/arika",
