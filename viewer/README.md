@@ -97,10 +97,18 @@ registry. `shadcn add` copies the component tree into your project so you can
 read and modify it freely — only the compiled `arika-wasm` engine stays a
 dependency.
 
+Build the registry, then `shadcn add` from the generated file (the manifest in
+[`registry.json`](./registry.json) is generated from the library's import
+closure; `registry:build` emits `public/r/*.json`):
+
 ```sh
-# once served from a deployed orts site:
-npx shadcn@latest add https://<orts-site>/r/orbit-viewer.json
+pnpm --filter orts-viewer run registry:build       # → viewer/public/r/orbit-viewer.json
+npx shadcn@latest add ./viewer/public/r/orbit-viewer.json
 ```
+
+> Hosting `public/r/` at a stable URL — so `shadcn add https://…/r/orbit-viewer.json`
+> works without a checkout — isn't wired up yet (the deployed site currently
+> serves only the docs).
 
 The `orbit-viewer` item installs the full public closure (the `OrbitViewer`
 component, its primitives, frame/trail logic, shaders, and body definitions)
@@ -112,14 +120,8 @@ imports. It declares `react` / `react-dom` / `three` / `@react-three/fiber` /
 Your `components.json` needs a `tailwind` block even if you don't use Tailwind
 (the shadcn schema requires it) and `"rsc": false` (the components are
 client-only — see Caveats). No Tailwind, Next.js, or CSS is otherwise required.
-
-Building the registry locally (emits `public/r/*.json` from
-[`registry.json`](./registry.json), which is generated from the library's import
-closure):
-
-```sh
-pnpm --filter orts-viewer run registry:build
-```
+The copied source is bundler-neutral (it reads Vite's `import.meta.env` behind a
+guarded shim), so it also compiles under non-Vite bundlers.
 
 ## Building / packaging (in-repo)
 

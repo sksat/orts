@@ -12,6 +12,8 @@
  * (radius, texture, colour) but does not get physical lighting/rotation.
  */
 
+import { BASE_URL } from "./env.js";
+
 /** Texture sources for a body. Provide direct URLs/paths via `day`/`night`. */
 export interface BodyTexture {
   /** Day-side texture URL/path, or null/omitted for a flat fallback colour. */
@@ -51,7 +53,7 @@ export interface BodyDefinition {
 /** A map of body id → definition. */
 export type BodyDefinitions = Record<string, BodyDefinition>;
 
-const base = import.meta.env.BASE_URL;
+const base = BASE_URL;
 
 /** Built-in bodies. Consumers merge their own over these. */
 export const DEFAULT_BODIES: BodyDefinitions = {

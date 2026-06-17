@@ -14,6 +14,7 @@ import {
   type DisplayScaleProfile,
   getDisplayScaleProfile,
 } from "../displayScale.js";
+import { IS_DEV } from "../env.js";
 import { resolveSceneFrame } from "../frameResolve.js";
 import type { OrbitPoint } from "../orbit.js";
 import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
@@ -435,7 +436,7 @@ export function OrbitSceneContents({
   // Dev/E2E-only: expose the resolved frame semantics so tests can assert
   // inertial vs local-orbital behaviour without reading pixels.
   useEffect(() => {
-    if (!import.meta.env.DEV) return;
+    if (!IS_DEV) return;
     const w = window as unknown as Record<string, unknown>;
     w.__debug_scene_frame = { lvlhActive, cameraTracking, originPosition };
     return () => {

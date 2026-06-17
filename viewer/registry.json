@@ -93,6 +93,11 @@
           "target": "@components/orbit-viewer/displayScale.ts"
         },
         {
+          "path": "src/env.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/env.ts"
+        },
+        {
           "path": "src/frameResolve.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/frameResolve.ts"
