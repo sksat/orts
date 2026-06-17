@@ -103,7 +103,7 @@ closure; `registry:build` emits `public/r/*.json`):
 
 ```sh
 pnpm --filter orts-viewer run registry:build       # → viewer/public/r/orbit-viewer.json
-npx shadcn@latest add ./viewer/public/r/orbit-viewer.json
+npx shadcn@4.11.0 add ./viewer/public/r/orbit-viewer.json
 ```
 
 > Hosting `public/r/` at a stable URL — so `shadcn add https://…/r/orbit-viewer.json`

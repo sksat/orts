@@ -19,11 +19,11 @@ const ENTRY = resolve(SRC, "lib/index.ts");
 const DEPENDENCIES = [
   "react@^19.0.0",
   "react-dom@^19.0.0",
-  // three uses 0.x (minor-as-major) versioning, and the *copied* source compiles
-  // against the consumer's three — unlike the type-erased compiled library whose
-  // peer floor can be looser. Floor at the tested version, open upper (not `^`,
-  // which on 0.x would pin to 0.183.x and block newer three).
-  "three@>=0.183.0",
+  // three uses 0.x (minor-as-major) versioning. Match the package's own
+  // peerDependencies floor (see viewer/package.json) so `shadcn add` doesn't
+  // force-upgrade a consumer already on a compatible three; not `^`, which on a
+  // 0.x version pins to a single minor.
+  "three@>=0.176.0",
   "@react-three/fiber@^9.0.0",
   "@react-three/drei@^10.0.0",
 ];
@@ -77,13 +77,18 @@ function traceClosure() {
   return [...seen].map((f) => relative(SRC, f)).sort();
 }
 
-const files = traceClosure().map((rel) => ({
-  path: `src/${rel}`,
-  type: rel.endsWith(".tsx") ? "registry:component" : "registry:lib",
-  // Single root in the consumer so the dense relative-import graph stays valid:
-  // every file keeps its src-relative path under <components alias>/orbit-viewer.
-  target: `@components/orbit-viewer/${rel}`,
-}));
+const files = traceClosure().map((rel) => {
+  // Normalize to POSIX separators so the manifest is identical on Windows
+  // (path.relative yields "\" there) and shadcn gets the "/"-paths it expects.
+  const posix = rel.split(sep).join("/");
+  return {
+    path: `src/${posix}`,
+    type: posix.endsWith(".tsx") ? "registry:component" : "registry:lib",
+    // Single root in the consumer so the dense relative-import graph stays valid:
+    // every file keeps its src-relative path under <components alias>/orbit-viewer.
+    target: `@components/orbit-viewer/${posix}`,
+  };
+});
 
 const registry = {
   $schema: "https://ui.shadcn.com/schema/registry.json",
