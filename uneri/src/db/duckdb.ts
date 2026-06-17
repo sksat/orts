@@ -65,6 +65,19 @@ export function resolveBundleSource(options?: DuckDBInitOptions): {
 }
 
 /**
+ * Resolve a (possibly root-relative) bundle URL to an absolute URL against
+ * `base`. DuckDB instantiates its worker from a Blob whose base is the opaque
+ * `blob:` URL, against which a root-relative path like `/assets/duckdb-eh.wasm`
+ * (what a Vite `?url` import yields) cannot be resolved — `importScripts` throws
+ * "invalid URL". Absolutizing here lets callers pass the URLs their bundler
+ * produces verbatim. Already-absolute URLs (e.g. jsDelivr) pass through
+ * unchanged. Pure.
+ */
+export function toAbsoluteBundleUrl(url: string, base: string): string {
+  return new URL(url, base).href;
+}
+
+/**
  * One DuckDB-wasm instantiation attempt against an already-selected bundle set.
  *
  * Rejects (rather than hanging) when the worker/wasm can't be fetched: a failed
@@ -73,10 +86,21 @@ export function resolveBundleSource(options?: DuckDBInitOptions): {
  * timeout both abort the attempt so the caller can retry.
  */
 async function instantiateOnce(bundles: duckdb.DuckDBBundles): Promise<duckdb.AsyncDuckDB> {
-  const bundle = await duckdb.selectBundle(bundles);
+  const selected = await duckdb.selectBundle(bundles);
+
+  if (!selected.mainWorker) {
+    throw new Error("Selected DuckDB bundle has no mainWorker URL");
+  }
+  // Absolutize against the worker's own origin so root-relative bundler URLs
+  // work inside the blob worker below (see `toAbsoluteBundleUrl`).
+  const base = self.location.href;
+  const mainWorker = toAbsoluteBundleUrl(selected.mainWorker, base);
+  const mainModule = toAbsoluteBundleUrl(selected.mainModule, base);
+  const pthreadWorker =
+    selected.pthreadWorker != null ? toAbsoluteBundleUrl(selected.pthreadWorker, base) : undefined;
 
   const workerUrl = URL.createObjectURL(
-    new Blob([`importScripts("${bundle.mainWorker!}");`], { type: "text/javascript" }),
+    new Blob([`importScripts("${mainWorker}");`], { type: "text/javascript" }),
   );
   const worker = new Worker(workerUrl);
   const db = new duckdb.AsyncDuckDB(new duckdb.VoidLogger(), worker);
@@ -99,7 +123,7 @@ async function instantiateOnce(bundles: duckdb.DuckDBBundles): Promise<duckdb.As
           ),
         { once: true },
       );
-      db.instantiate(bundle.mainModule, bundle.pthreadWorker).then(
+      db.instantiate(mainModule, pthreadWorker).then(
         () => settle(resolve),
         (err) => settle(() => reject(err)),
       );
