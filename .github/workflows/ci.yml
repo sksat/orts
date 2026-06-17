@@ -784,6 +784,15 @@ jobs:
       - name: Test viewer
         run: pnpm --filter orts-viewer test
 
+      # The shadcn registry manifest is generated from the library's import
+      # closure; build it (proves it's well-formed) and fail if the committed
+      # registry.json drifted from the closure (someone changed imports without
+      # re-running registry:gen).
+      - name: Verify shadcn registry
+        run: |
+          pnpm --filter orts-viewer run registry:build
+          git diff --exit-code -- viewer/registry.json
+
       - name: Upload viewer dist
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

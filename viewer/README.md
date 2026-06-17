@@ -21,8 +21,9 @@ npm install <pkg>            # name TBD
 ```
 
 `react`, `react-dom`, `three`, `@react-three/fiber`, `@react-three/drei` are
-**peer dependencies** — you supply your single copy. The library bundles nothing
-else; the arika WASM (Sun direction / body rotation) is inlined.
+**peer dependencies** — you supply your single copy. The arika WASM engine
+(Sun direction / body rotation) is a separate [`arika-wasm`](../arika/wasm/pkg)
+dependency, not bundled.
 
 ## Usage
 
@@ -87,6 +88,38 @@ a custom scene: the primitives (`CelestialBody`, `EarthBody`, `OrbitTrail`,
 react-three-fiber components, so they carry a wider semver surface — refactors to
 their internals are breaking changes. If you only need the component, import just
 `OrbitViewer` and its types.
+
+## Or copy the source (shadcn registry)
+
+Instead of depending on a published package, you can **own the source**: the
+viewer is also distributed as a [shadcn](https://ui.shadcn.com/docs/registry)
+registry. `shadcn add` copies the component tree into your project so you can
+read and modify it freely — only the compiled `arika-wasm` engine stays a
+dependency.
+
+```sh
+# once served from a deployed orts site:
+npx shadcn@latest add https://<orts-site>/r/orbit-viewer.json
+```
+
+The `orbit-viewer` item installs the full public closure (the `OrbitViewer`
+component, its primitives, frame/trail logic, shaders, and body definitions)
+under `<your components alias>/orbit-viewer/`, preserving the internal relative
+imports. It declares `react` / `react-dom` / `three` / `@react-three/fiber` /
+`@react-three/drei` as dependencies; you must **also** add `arika-wasm` yourself
+(it isn't on npm yet — install it from the orts workspace until it's published).
+
+Your `components.json` needs a `tailwind` block even if you don't use Tailwind
+(the shadcn schema requires it) and `"rsc": false` (the components are
+client-only — see Caveats). No Tailwind, Next.js, or CSS is otherwise required.
+
+Building the registry locally (emits `public/r/*.json` from
+[`registry.json`](./registry.json), which is generated from the library's import
+closure):
+
+```sh
+pnpm --filter orts-viewer run registry:build
+```
 
 ## Building / packaging (in-repo)
 
