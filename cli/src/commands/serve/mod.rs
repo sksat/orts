@@ -1,5 +1,6 @@
 pub mod compute;
 mod connection;
+mod engine;
 mod history;
 mod manager;
 pub mod protocol;
