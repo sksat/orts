@@ -9,9 +9,11 @@
 
 use std::env;
 use std::fs;
+#[cfg(feature = "fetch-igrf")]
 use std::io::Write;
 use std::path::Path;
 
+#[cfg(feature = "fetch-igrf")]
 const MAX_DEGREE: usize = 13;
 
 fn main() {
@@ -65,11 +67,13 @@ fn download_and_generate(url: &str, dest: &Path) -> Result<(), String> {
 
 // Parsing
 
+#[cfg(feature = "fetch-igrf")]
 struct ParsedIgrf {
     columns: Vec<String>,
     rows: Vec<CoeffRow>,
 }
 
+#[cfg(feature = "fetch-igrf")]
 struct CoeffRow {
     gh: char,
     n: usize,
@@ -77,6 +81,7 @@ struct CoeffRow {
     values: Vec<f64>,
 }
 
+#[cfg(feature = "fetch-igrf")]
 fn parse_igrf(raw: &str) -> ParsedIgrf {
     let mut columns = Vec::new();
     let mut rows = Vec::new();
@@ -122,14 +127,17 @@ fn parse_igrf(raw: &str) -> ParsedIgrf {
 
 // Code generation
 
+#[cfg(feature = "fetch-igrf")]
 fn coeff_index(n: usize, m: usize) -> usize {
     (n - 1) * n / 2 + (n - 1) + m
 }
 
+#[cfg(feature = "fetch-igrf")]
 fn total_coeffs() -> usize {
     MAX_DEGREE * (MAX_DEGREE + 3) / 2
 }
 
+#[cfg(feature = "fetch-igrf")]
 fn extract_array(rows: &[CoeffRow], col_idx: usize, is_g: bool) -> Vec<f64> {
     let n = total_coeffs();
     let mut arr = vec![0.0_f64; n];
@@ -148,6 +156,7 @@ fn extract_array(rows: &[CoeffRow], col_idx: usize, is_g: bool) -> Vec<f64> {
     arr
 }
 
+#[cfg(feature = "fetch-igrf")]
 fn parse_year(label: &str) -> Option<f64> {
     if label.contains('-') {
         return None;
@@ -155,6 +164,7 @@ fn parse_year(label: &str) -> Option<f64> {
     label.parse::<f64>().ok()
 }
 
+#[cfg(feature = "fetch-igrf")]
 fn generate_rust(path: &Path, parsed: &ParsedIgrf) {
     let n = total_coeffs();
     let mut out = fs::File::create(path).unwrap();
@@ -236,6 +246,7 @@ fn generate_rust(path: &Path, parsed: &ParsedIgrf) {
     writeln!(out, "}}").unwrap();
 }
 
+#[cfg(feature = "fetch-igrf")]
 fn write_inner_array(out: &mut fs::File, arr: &[f64]) {
     write!(out, "    [").unwrap();
     for (i, val) in arr.iter().enumerate() {
@@ -247,6 +258,7 @@ fn write_inner_array(out: &mut fs::File, arr: &[f64]) {
     writeln!(out, "],").unwrap();
 }
 
+#[cfg(feature = "fetch-igrf")]
 fn write_flat_array(out: &mut fs::File, name: &str, arr: &[f64]) {
     let n = arr.len();
     writeln!(out, "#[rustfmt::skip]").unwrap();
