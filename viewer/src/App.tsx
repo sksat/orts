@@ -365,6 +365,9 @@ export function App() {
         id,
         position: [pos.x, pos.y, pos.z],
         velocity: [pos.vx, pos.vy, pos.vz],
+        // The interpolated point's own time — clamped for terminated/out-of-span
+        // satellites — so its body-fixed marker transform uses the right epoch.
+        time: pos.t,
         attitude:
           pos.qw != null && pos.qx != null && pos.qy != null && pos.qz != null
             ? [pos.qw, pos.qx, pos.qy, pos.qz]

@@ -88,11 +88,13 @@ export function OrbitScene({
     );
   }
 
-  // Current position per satellite. `time` is stamped onto each point; the scene
-  // reads it back as the simulation time that drives Sun direction and rotation.
+  // Current position per satellite. Each point is stamped with the satellite's
+  // own `time` when given (else the scene-level `time`); the scene reads it back
+  // as the simulation time driving that marker's body-fixed/ECEF transform, so
+  // satellites frozen at different times stay aligned with their own trails.
   const satellitePositions = useMemo(() => {
     const map = new Map<string, OrbitPoint>();
-    for (const sat of satellites) map.set(sat.id, toOrbitPoint(sat, time));
+    for (const sat of satellites) map.set(sat.id, toOrbitPoint(sat, sat.time ?? time));
     return map;
   }, [satellites, time]);
 

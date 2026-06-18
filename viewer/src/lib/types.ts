@@ -50,6 +50,15 @@ export interface SatelliteBaseState {
   velocity?: Vec3;
   /** Body→inertial attitude quaternion `[w, x, y, z]`. Optional. */
   attitude?: Quat;
+  /**
+   * Seconds since the epoch for THIS satellite's current position (the marker),
+   * overriding the scene-level {@link OrbitSceneDataProps.time}. Needed when
+   * satellites are at different times — e.g. a terminated satellite frozen at its
+   * last sample while others keep advancing, or scrubbing past one satellite's
+   * data span — so body-fixed/ECEF marker transforms use the right epoch and the
+   * marker stays aligned with its own trail. Defaults to the scene-level time.
+   */
+  time?: number;
   /** Marker/trail colour as a 0xRRGGBB integer. Defaults to a palette colour. */
   color?: number;
   /** Human-readable name. Used for 3D model lookup and labels. */
