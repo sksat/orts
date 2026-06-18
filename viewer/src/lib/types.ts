@@ -175,10 +175,14 @@ export interface OrbitViewerProps extends OrbitSceneDataProps {
    * {@link OrbitScene} into your own `<Canvas>` instead.
    */
   canvas?: {
-    /** Perspective camera overrides merged onto the defaults. */
+    /**
+     * Perspective camera overrides merged onto the defaults. `position`/`up` are
+     * in Three.js scene units/directions (NOT the km-valued {@link Vec3}); the
+     * central body is one scene unit in radius.
+     */
     camera?: {
-      position?: Vec3;
-      up?: Vec3;
+      position?: [number, number, number];
+      up?: [number, number, number];
       fov?: number;
       near?: number;
       far?: number;
