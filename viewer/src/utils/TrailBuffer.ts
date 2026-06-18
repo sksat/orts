@@ -18,7 +18,7 @@ export interface TrailBufferLike {
   /** Number of points currently held. */
   readonly length: number;
   /** Points, oldest first. May return the internal array (no copy) — do not mutate. */
-  getAll(): OrbitPoint[];
+  getAll(): readonly OrbitPoint[];
 }
 
 /**

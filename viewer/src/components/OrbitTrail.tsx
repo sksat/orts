@@ -146,7 +146,7 @@ export function OrbitTrail({
   lvlhAxesRef.current = lvlhAxes;
 
   // Unified writePoints: encode source coordinates into high/low buffers
-  function writePoints(src: OrbitPoint[], from: number, to: number): void {
+  function writePoints(src: readonly OrbitPoint[], from: number, to: number): void {
     if (isLegacyEcef(referenceFrame) && epochJd != null) {
       batchEncodeEcefHighLow(
         src,
@@ -264,7 +264,7 @@ export function OrbitTrail({
   }
 
   /** Append points[from..to) to the GPU buffers. */
-  function appendPoints(src: OrbitPoint[], from: number, to: number): void {
+  function appendPoints(src: readonly OrbitPoint[], from: number, to: number): void {
     ensureCapacity(to);
     writePoints(src, from, to);
     writtenCountRef.current = to;

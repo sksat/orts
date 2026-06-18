@@ -7,7 +7,7 @@ import { eci_to_ecef_batch as wasmBatch } from "./wasm/arikaInit.js";
  * results into `outBuf` starting at vertex index `outOffset`.
  */
 export function batchEciToEcef(
-  points: OrbitPoint[],
+  points: readonly OrbitPoint[],
   from: number,
   to: number,
   epochJd: number,
@@ -47,7 +47,7 @@ export function batchEciToEcef(
  * @param origin  Position of the new origin in ECI [km], or null for no offset.
  */
 export function batchTransformWithOffset(
-  points: OrbitPoint[],
+  points: readonly OrbitPoint[],
   from: number,
   to: number,
   origin: [number, number, number] | null,
@@ -107,7 +107,7 @@ export function transformToLvlh(
  * coordinates.
  */
 export function batchTransformToLvlh(
-  points: OrbitPoint[],
+  points: readonly OrbitPoint[],
   from: number,
   to: number,
   origin: [number, number, number],
@@ -160,7 +160,7 @@ export function encodeFloat64ToHighLow(value: number): [high: number, low: numbe
  * scaleRadius changes don't invalidate the buffer.
  */
 export function batchEncodeEciHighLow(
-  points: OrbitPoint[],
+  points: readonly OrbitPoint[],
   from: number,
   to: number,
   highBuf: Float32Array,
@@ -189,7 +189,7 @@ export function batchEncodeEciHighLow(
  * Calls WASM ECI→ECEF first, then splits the resulting km values.
  */
 export function batchEncodeEcefHighLow(
-  points: OrbitPoint[],
+  points: readonly OrbitPoint[],
   from: number,
   to: number,
   epochJd: number,

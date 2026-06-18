@@ -35,6 +35,12 @@ function useArikaReady(enabled: boolean): boolean {
   return ready;
 }
 
+/** Sanitize a public trail-clip index to a finite, non-negative integer (else undefined). */
+function clampTrailIndex(value: number | undefined): number | undefined {
+  if (value == null || !Number.isFinite(value) || value < 0) return undefined;
+  return Math.floor(value);
+}
+
 /**
  * The orbit scene graph, for mounting inside your own @react-three/fiber `<Canvas>`.
  *
@@ -121,12 +127,13 @@ export function OrbitScene({
     return map;
   }, [satellites]);
 
-  // Per-satellite trail clipping (playback scrub / time window). Absent entries
-  // draw the whole trail.
+  // Per-satellite trail clipping (playback scrub / time window). Public inputs are
+  // sanitized to finite non-negative integers so a bad value can't produce an
+  // invalid GPU draw range; absent entries draw the whole trail.
   const trailVisibleCounts = useMemo(() => {
     const map = new Map<string, number>();
     for (const sat of satellites) {
-      const vc = sat.trailDisplay?.visibleCount;
+      const vc = clampTrailIndex(sat.trailDisplay?.visibleCount);
       if (vc != null) map.set(sat.id, vc);
     }
     return map;
@@ -135,7 +142,7 @@ export function OrbitScene({
   const trailDrawStarts = useMemo(() => {
     const map = new Map<string, number>();
     for (const sat of satellites) {
-      const ds = sat.trailDisplay?.drawStart;
+      const ds = clampTrailIndex(sat.trailDisplay?.drawStart);
       if (ds != null) map.set(sat.id, ds);
     }
     return map;
