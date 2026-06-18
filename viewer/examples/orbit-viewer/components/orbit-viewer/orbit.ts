@@ -139,6 +139,11 @@ export function updateOrbitTrail(line: THREE.Line, visibleCount: number, totalCo
   line.geometry.setDrawRange(0, clamped);
 }
 
+/** Whether a point carries a complete quaternion (all of qw/qx/qy/qz). */
+function hasQuaternion(p: OrbitPoint): boolean {
+  return p.qw != null && p.qx != null && p.qy != null && p.qz != null;
+}
+
 /**
  * Linearly interpolate between two OrbitPoints at the given fraction (0..1)
  * between them. Quaternion attitude is interpolated via slerp.
@@ -161,8 +166,10 @@ export function lerpPoint(a: OrbitPoint, b: OrbitPoint, frac: number): OrbitPoin
     nu: a.nu * inv + b.nu * frac,
   };
 
-  // Quaternion slerp for attitude interpolation
-  if (a.qw != null && b.qw != null) {
+  // Quaternion slerp for attitude interpolation. Require a *complete* quaternion
+  // on both points — guarding on qw alone would let a partial one (missing
+  // qx/qy/qz, which Three defaults to 0) build an un-normalized rotation.
+  if (hasQuaternion(a) && hasQuaternion(b)) {
     const qa = new THREE.Quaternion(a.qx, a.qy, a.qz, a.qw);
     const qb = new THREE.Quaternion(b.qx, b.qy, b.qz, b.qw);
     // Ensure shortest-path interpolation
