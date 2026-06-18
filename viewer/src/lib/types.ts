@@ -15,7 +15,9 @@
  *   scalar-first order `[w, x, y, z]`.
  */
 
+import type { OrbitControlsProps } from "@react-three/drei";
 import type { CSSProperties } from "react";
+import type { WebGLRendererParameters } from "three";
 import type { BodyDefinitions } from "../bodies.js";
 
 /** A 3D vector `[x, y, z]`. Distances are in kilometres. */
@@ -103,8 +105,11 @@ export type ViewerReferenceFrame =
   | { center: "centralBody"; orientation?: "inertial" | "bodyFixed" }
   | { center: { satelliteId: string }; orientation?: "inertial" | "localOrbital" };
 
-/** Props for the {@link OrbitViewer} component. */
-export interface OrbitViewerProps {
+/**
+ * Scene data + display props shared by {@link OrbitViewer} (which owns its own
+ * `<Canvas>`) and {@link OrbitScene} (which you mount inside your own `<Canvas>`).
+ */
+export interface OrbitSceneDataProps {
   /** The central body at the origin. */
   centralBody: CentralBody;
   /**
@@ -133,10 +138,59 @@ export interface OrbitViewerProps {
   time?: number;
   /** Base URL for high-resolution body textures (e.g. `"/textures/"`). */
   textureBaseUrl?: string;
+}
+
+/**
+ * Enable/disable the default orbit camera controls, or pass an
+ * {@link OrbitControlsProps} object to configure them. Default: enabled.
+ */
+export type ControlsProp = boolean | Partial<OrbitControlsProps>;
+
+/**
+ * Props for {@link OrbitScene}: the orbit scene graph rendered inside a
+ * caller-supplied @react-three/fiber `<Canvas>`. Bring your own Canvas to
+ * compose the scene with your own lights, meshes or post-processing.
+ *
+ * The caller's Canvas camera should be initialised with `up = SCENE_UP`
+ * (exported); the default camera rig keeps `camera.up` correct each frame, but
+ * OrbitControls reads the initial camera state at mount.
+ */
+export interface OrbitSceneProps extends OrbitSceneDataProps {
+  /** Default orbit camera/controls. `true` (default) | `false` | an OrbitControls config. */
+  controls?: ControlsProp;
+  /** Render the reference axes helper. Default `true`. */
+  axes?: boolean;
+}
+
+/** Props for the {@link OrbitViewer} component. */
+export interface OrbitViewerProps extends OrbitSceneDataProps {
   /** Class applied to the wrapping element. */
   className?: string;
   /** Inline style applied to the wrapping element. */
   style?: CSSProperties;
+  /**
+   * Overrides merged onto the internal `<Canvas>` setup: perspective-camera
+   * framing and WebGL renderer flags. For full control (a custom WebGLRenderer
+   * or camera instance, your own controls, extra meshes/lights), drop
+   * {@link OrbitScene} into your own `<Canvas>` instead.
+   */
+  canvas?: {
+    /** Perspective camera overrides merged onto the defaults. */
+    camera?: {
+      position?: Vec3;
+      up?: Vec3;
+      fov?: number;
+      near?: number;
+      far?: number;
+      zoom?: number;
+    };
+    /** WebGL renderer flags merged onto the defaults. */
+    gl?: Partial<WebGLRendererParameters>;
+  };
+  /** See {@link OrbitSceneProps.controls}. */
+  controls?: ControlsProp;
+  /** See {@link OrbitSceneProps.axes}. */
+  axes?: boolean;
 }
 
 /** Default frame when none is supplied: central-body inertial (ECI-like). */

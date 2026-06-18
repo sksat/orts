@@ -1,4 +1,4 @@
-import { OrbitControls } from "@react-three/drei";
+import { OrbitControls, type OrbitControlsProps } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
@@ -354,6 +354,16 @@ export interface OrbitSceneContentsProps {
   textureRevision?: number;
   /** Base URL for fetching high-res textures (e.g., "http://localhost:9001/textures/"). */
   textureBaseUrl?: string;
+  /**
+   * Default orbit camera package: OrbitControls plus the frame-aware camera rig
+   * (near/far configurator, distance transitions, LVLH tracking). `true`
+   * (default) renders it; `false` hands the camera entirely to the caller; an
+   * object enables it and is spread onto OrbitControls. Disabling it means the
+   * caller is responsible for camera placement, near/far, and `camera.up`.
+   */
+  controls?: boolean | Partial<OrbitControlsProps>;
+  /** Render the reference axes helper. Default `true`. */
+  axes?: boolean;
 }
 
 /**
@@ -380,7 +390,14 @@ export function OrbitSceneContents({
   physicalScale,
   textureRevision,
   textureBaseUrl,
+  controls = true,
+  axes = true,
 }: OrbitSceneContentsProps) {
+  // Default camera package (controls + frame-aware rig). `false` opts out
+  // entirely; an object enables it and is spread onto OrbitControls.
+  const controlsEnabled = controls !== false;
+  const controlsProps = typeof controls === "object" ? controls : undefined;
+
   const isEcef = isLegacyEcef(referenceFrame);
   const isSatCentered = referenceFrame.center.type === "satellite";
   const centeredSatId =
@@ -537,24 +554,31 @@ export function OrbitSceneContents({
 
   return (
     <>
-      <CameraConfigurator profile={displayProfile} />
-      <CameraDistanceTransition
-        profile={displayProfile}
-        overrideDistance={cameraDistanceOverride}
-      />
-      <OrbitControls
-        enableDamping
-        dampingFactor={0.1}
-        minDistance={displayProfile.minDistance}
-        maxDistance={displayProfile.maxDistance}
-      />
-      {/* Camera co-rotation only when the kernel asked for it (local-orbital
-          approximated by the camera); an inertial centre keeps star-fixed axes. */}
-      <CameraLvlhTracker
-        originPosition={cameraTracking ? originPosition : null}
-        originVelocity={originVelocity}
-        lvlhActive={lvlhActive}
-      />
+      {/* Default camera package: render only when `controls` is not false, so a
+          bring-your-own-Canvas caller can take over the camera entirely. */}
+      {controlsEnabled && (
+        <>
+          <CameraConfigurator profile={displayProfile} />
+          <CameraDistanceTransition
+            profile={displayProfile}
+            overrideDistance={cameraDistanceOverride}
+          />
+          <OrbitControls
+            enableDamping
+            dampingFactor={0.1}
+            minDistance={displayProfile.minDistance}
+            maxDistance={displayProfile.maxDistance}
+            {...controlsProps}
+          />
+          {/* Camera co-rotation only when the kernel asked for it (local-orbital
+              approximated by the camera); an inertial centre keeps star-fixed axes. */}
+          <CameraLvlhTracker
+            originPosition={cameraTracking ? originPosition : null}
+            originVelocity={originVelocity}
+            lvlhActive={lvlhActive}
+          />
+        </>
+      )}
 
       <SunLighting intensity={sunIntensity} position={lightPosition} />
 
@@ -698,7 +722,7 @@ export function OrbitSceneContents({
       </SmoothOriginGroup>
 
       {/* Reference axes: full ECI axes for body-centered, small LVLH reference for satellite-centered */}
-      <axesHelper args={[isSatCentered ? 0.015 : 2]} />
+      {axes && <axesHelper args={[isSatCentered ? 0.015 : 2]} />}
     </>
   );
 }
