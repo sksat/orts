@@ -349,7 +349,7 @@ export function App() {
   // persistent TrailBuffer straight through (streaming mode), so trail growth stays
   // decoupled from React re-renders — no per-render point materialization.
   const snapshot = realtimePlayback.snapshot;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: trailBuffersMap is a stable ref-held Map mutated in place; `snapshot` is the observational trigger that changes when positions/buffers update.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: trailBuffersMap is a stable ref-held Map mutated in place; `snapshot` triggers rebuilds on position/playback changes, and `chartBufferVersion` (bumped on ingest AND on resetBuffers) triggers rebuilds when the map is cleared — without it a reset would leave stale satellites referencing detached buffers, since an empty-buffer reset publishes no new snapshot.
   const satellites = useMemo<SatelliteState[]>(() => {
     const list: SatelliteState[] = [];
     for (const [id, buf] of trailBuffersMap) {
@@ -379,7 +379,14 @@ export function App() {
       });
     }
     return list;
-  }, [snapshot, satelliteNames, markerShapeOverrides, satelliteSimShapes, timeRange]);
+  }, [
+    snapshot,
+    chartBufferVersion,
+    satelliteNames,
+    markerShapeOverrides,
+    satelliteSimShapes,
+    timeRange,
+  ]);
 
   // Total points across all satellite buffers.
   // chartBufferVersion bumps on data ingest AND on resetBuffers (clear),
