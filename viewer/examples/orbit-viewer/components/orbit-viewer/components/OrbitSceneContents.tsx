@@ -444,10 +444,18 @@ export function OrbitSceneContents({
     };
   }, [lvlhActive, cameraTracking, originPosition]);
 
-  // Determine sim time for sun direction from first available satellite position
-  const firstPosition = satellitePositions
-    ? (Array.from(satellitePositions.values()).find((p) => p != null) ?? null)
-    : null;
+  // Determine sim time for sun direction from the first available satellite
+  // position. Iterate the Map's values directly rather than materializing an
+  // array every render just to find the first non-null entry.
+  let firstPosition: OrbitPoint | null = null;
+  if (satellitePositions) {
+    for (const p of satellitePositions.values()) {
+      if (p != null) {
+        firstPosition = p;
+        break;
+      }
+    }
+  }
   const simTime = firstPosition?.t ?? 0;
   const quantizedSimTime = Math.floor(simTime / 60) * 60;
 
