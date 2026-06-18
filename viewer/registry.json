@@ -113,6 +113,11 @@
           "target": "@components/orbit-viewer/hooks/useTextureResolution.ts"
         },
         {
+          "path": "src/lib/OrbitScene.tsx",
+          "type": "registry:component",
+          "target": "@components/orbit-viewer/lib/OrbitScene.tsx"
+        },
+        {
           "path": "src/lib/OrbitViewer.tsx",
           "type": "registry:component",
           "target": "@components/orbit-viewer/lib/OrbitViewer.tsx"

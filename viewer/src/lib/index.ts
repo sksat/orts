@@ -30,7 +30,9 @@ export { SatelliteModel } from "../components/SatelliteModel.js";
 // Domain types and helpers used across the building blocks.
 export type { OrbitPoint } from "../orbit.js";
 export { DEFAULT_FRAME, type ReferenceFrame } from "../referenceFrame.js";
-export { computeLvlhAxes, type LvlhAxes } from "../sceneFrame.js";
+// `SCENE_UP`: camera up convention — initialise a bring-your-own `<Canvas>`
+// camera with it (see OrbitScene); OrbitViewer applies it for you.
+export { computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
 export { TrailBuffer } from "../utils/TrailBuffer.js";
 // arika WASM control (Sun direction / body rotation). OrbitViewer auto-inits when
 // given an epoch; these let an embedder pre-load or point at an external .wasm.
@@ -43,11 +45,15 @@ export {
   type FrameSatelliteLookup,
   resolveFrameContext,
 } from "./frameContext.js";
-// Headline component + its public types.
+// Headline component (own Canvas) + the mid-layer scene (bring your own Canvas).
+export { OrbitScene } from "./OrbitScene.js";
 export { OrbitViewer } from "./OrbitViewer.js";
 export {
   type CentralBody,
+  type ControlsProp,
   DEFAULT_VIEWER_FRAME,
+  type OrbitSceneDataProps,
+  type OrbitSceneProps,
   type OrbitViewerProps,
   type Quat,
   type SatelliteState,
