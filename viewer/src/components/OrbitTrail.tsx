@@ -10,7 +10,7 @@ import type { OrbitPoint } from "../orbit.js";
 import { frameCenterEquals, isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import type { LvlhAxes } from "../sceneFrame.js";
 import { orbitTrailFrag, orbitTrailVert } from "../shaders/orbitTrail.js";
-import type { TrailBuffer } from "../utils/TrailBuffer.js";
+import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 
 /** Initial capacity for the streaming vertex buffer. Grows as needed. */
 const INITIAL_CAPACITY = 2048;
@@ -18,8 +18,8 @@ const INITIAL_CAPACITY = 2048;
 interface OrbitTrailProps {
   /** Number of vertices to render. */
   visibleCount?: number;
-  /** TrailBuffer (bounded, generation-based invalidation). */
-  trailBuffer: TrailBuffer;
+  /** Trail source (bounded, generation-based invalidation). */
+  trailBuffer: TrailBufferLike;
   /** Central body radius in km, used as the scale factor. */
   scaleRadius: number;
   /** Trail color (default: 0x00ff88). */
@@ -146,7 +146,7 @@ export function OrbitTrail({
   lvlhAxesRef.current = lvlhAxes;
 
   // Unified writePoints: encode source coordinates into high/low buffers
-  function writePoints(src: OrbitPoint[], from: number, to: number): void {
+  function writePoints(src: readonly OrbitPoint[], from: number, to: number): void {
     if (isLegacyEcef(referenceFrame) && epochJd != null) {
       batchEncodeEcefHighLow(
         src,
@@ -264,7 +264,7 @@ export function OrbitTrail({
   }
 
   /** Append points[from..to) to the GPU buffers. */
-  function appendPoints(src: OrbitPoint[], from: number, to: number): void {
+  function appendPoints(src: readonly OrbitPoint[], from: number, to: number): void {
     ensureCapacity(to);
     writePoints(src, from, to);
     writtenCountRef.current = to;

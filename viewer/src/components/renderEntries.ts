@@ -1,10 +1,10 @@
 import type { OrbitPoint } from "../orbit.js";
-import type { TrailBuffer } from "../utils/TrailBuffer.js";
+import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 
 /** A satellite to render: its trail buffer (if any) and current position (if any). */
 export interface RenderEntry {
   satId: string;
-  buf: TrailBuffer | undefined;
+  buf: TrailBufferLike | undefined;
   pos: OrbitPoint | null | undefined;
 }
 
@@ -23,7 +23,7 @@ export interface RenderEntry {
  * transitions are rare — pass an explicit `color` if you need guaranteed stability.
  */
 export function buildRenderEntries(
-  trailBuffers: Map<string, TrailBuffer> | undefined,
+  trailBuffers: Map<string, TrailBufferLike> | undefined,
   satellitePositions: Map<string, OrbitPoint | null> | undefined,
 ): RenderEntry[] {
   const ids: string[] = [];
