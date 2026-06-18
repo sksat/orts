@@ -1,16 +1,18 @@
 /**
- * Public, embeddable API of the orts viewer.
+ * Public API of the orts viewer.
  *
- * The headline export is {@link OrbitViewer}: give it a central body and a list
- * of satellites and you get an interactive 3D scene you can orbit the camera
- * around. The lower-level Three.js / react-three-fiber building blocks and the
- * pure frame/trail adapters are also exported for assembling custom scenes.
+ * Two entry components: {@link OrbitViewer} (batteries-included — its own sized
+ * `<div>` + `<Canvas>`) and {@link OrbitScene} (the scene graph to mount inside
+ * your own @react-three/fiber `<Canvas>`). Drive either with a central body and a
+ * list of {@link SatelliteState}.
  *
- * Surface note: the primitives below wrap internal Three.js/r3f components, so
- * they widen the semver surface (their internals changing is a breaking change).
- * That's an accepted trade-off for the "minimal component + primitives" goal —
- * consumers who only need the component should import just OrbitViewer + types.
- * See the package README (../../README.md).
+ * The Three.js / react-three-fiber building blocks (CelestialBody, Satellite,
+ * OrbitTrail, …) and the internal frame wiring are intentionally NOT exported:
+ * they ride internal types and are an implementation detail. The streaming
+ * {@link TrailBuffer} is the one renderer primitive that is public, since a
+ * high-rate feed needs to hand the scene a buffer it mutates directly
+ * (`SatelliteState.trailBuffer`); the {@link TrailPoint} adapters to fill one are
+ * exported alongside it. See the package README (../../README.md).
  */
 
 // Central-body definitions: built-in bodies + the type for adding custom ones.
@@ -20,36 +22,21 @@ export {
   type BodyTexture,
   DEFAULT_BODIES,
 } from "../bodies.js";
-// Lower-level building blocks for assembling a custom scene.
-export { BodyAxes } from "../components/BodyAxes.js";
-export { CelestialBody } from "../components/CelestialBody.js";
-export { EarthBody } from "../components/EarthBody.js";
-export { OrbitTrail } from "../components/OrbitTrail.js";
-export { Satellite } from "../components/Satellite.js";
-export { SatelliteModel } from "../components/SatelliteModel.js";
-// Domain types and helpers used across the building blocks.
+// Streaming trail buffer (SatelliteState.trailBuffer): the built-in buffer, its
+// read contract, the point type it holds, and adapters to fill one from TrailPoints.
 export type { OrbitPoint } from "../orbit.js";
-export { DEFAULT_FRAME, type ReferenceFrame } from "../referenceFrame.js";
 // Marker shape for a satellite (SatelliteState.markerShape / defaultMarkerShape).
 export type { MarkerShape } from "../satelliteShapes.js";
-// `SCENE_UP`: camera up convention — initialise a bring-your-own `<Canvas>`
-// camera with it (see OrbitScene); OrbitViewer applies it for you.
-export { computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
-// Trail buffer: the built-in streaming buffer (SatelliteState.trailBuffer) plus
-// the read interface the scene accepts for a bring-your-own buffer.
+// Camera up convention: initialise a bring-your-own `<Canvas>` camera with it
+// (see OrbitScene); OrbitViewer applies it for you.
+export { SCENE_UP } from "../sceneFrame.js";
 export { TrailBuffer, type TrailBufferLike } from "../utils/TrailBuffer.js";
-// arika WASM control (Sun direction / body rotation). OrbitViewer auto-inits when
-// given an epoch; these let an embedder pre-load or point at an external .wasm.
+// arika WASM control (Sun direction / body rotation). OrbitViewer/OrbitScene
+// auto-init when given an epoch; these let an embedder pre-load or point at an
+// external .wasm.
 export { type InitArikaOptions, initArika, isArikaReady } from "../wasm/arikaInit.js";
-// Pure adapters and frame/trail logic (useful for custom scenes / advanced use).
-export { toOrbitPoint, toTrailBuffer, trailPointToOrbitPoint } from "./adapt.js";
-export {
-  type FrameContext,
-  type FrameSatellite,
-  type FrameSatelliteLookup,
-  resolveFrameContext,
-} from "./frameContext.js";
-// Headline component (own Canvas) + the mid-layer scene (bring your own Canvas).
+export { toTrailBuffer, trailPointToOrbitPoint } from "./adapt.js";
+// Entry components: headline (own Canvas) + mid-layer (bring your own Canvas).
 export { OrbitScene } from "./OrbitScene.js";
 export { OrbitViewer } from "./OrbitViewer.js";
 export {
