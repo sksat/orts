@@ -1,6 +1,27 @@
 import { lerpPoint, type OrbitPoint } from "../orbit.js";
 
 /**
+ * Read contract a trail source must satisfy for the renderer to draw it.
+ *
+ * This is what `<OrbitScene>` accepts for the "bring your own buffer" streaming
+ * mode (`SatelliteState.trailBuffer`): a caller owns the buffer, mutates it
+ * outside React (append as data streams in), and the scene reads it each frame —
+ * so streamed points reach the GPU without a React re-render. The renderer only
+ * needs `generation` (bumped on trim/clear → full re-upload) and `getAll()`
+ * (the points, oldest first; the implementation may return its internal array
+ * without copying, so callers must not mutate it). Use the {@link TrailBuffer}
+ * class for the built-in implementation.
+ */
+export interface TrailBufferLike {
+  /** Bumped on trim/clear so consumers know to do a full GPU rewrite, not append. */
+  readonly generation: number;
+  /** Number of points currently held. */
+  readonly length: number;
+  /** Points, oldest first. May return the internal array (no copy) — do not mutate. */
+  getAll(): OrbitPoint[];
+}
+
+/**
  * Bounded buffer for orbit trail rendering.
  *
  * Keeps at most `capacity` points. When the buffer grows beyond
@@ -8,7 +29,7 @@ import { lerpPoint, type OrbitPoint } from "../orbit.js";
  * is incremented so that consumers (e.g. OrbitTrail GPU buffer)
  * know to do a full rewrite instead of an incremental append.
  */
-export class TrailBuffer {
+export class TrailBuffer implements TrailBufferLike {
   private points: OrbitPoint[] = [];
   private _generation = 0;
 

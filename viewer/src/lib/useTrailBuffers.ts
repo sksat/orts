@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
-import { TrailBuffer } from "../utils/TrailBuffer.js";
+import { TrailBuffer, type TrailBufferLike } from "../utils/TrailBuffer.js";
 import { reconcileTrailEntry, type TrailEntry } from "./trailReconcile.js";
 import type { SatelliteState } from "./types.js";
 
@@ -29,19 +29,31 @@ const INITIAL_CAPACITY = 4096;
  * `OrbitTrail` reads contents in `useFrame` (after layout effects run, before
  * the next animation frame), so the commit-phase fill adds no frame lag.
  *
- * `satellites` (and each `sat.trail`) must be treated immutably — supply new
- * array references when points change, as with any React prop. The reconcile is
- * keyed on the array's identity, so in-place mutation won't be picked up.
+ * Two trail modes per satellite (see {@link SatelliteState}):
+ * - **value** (`sat.trail`): this hook owns a buffer and reconciles it from the
+ *   point array. `sat.trail` must be treated immutably (new array reference on
+ *   change) — the reconcile is keyed on the array's identity.
+ * - **streaming** (`sat.trailBuffer`): the caller owns the buffer and mutates it
+ *   outside React; it's used as-is (no reconcile, no second buffer). Keep its
+ *   identity stable across renders.
  */
-export function useTrailBuffers(satellites: readonly SatelliteState[]): Map<string, TrailBuffer> {
+export function useTrailBuffers(
+  satellites: readonly SatelliteState[],
+): Map<string, TrailBufferLike> {
   const store = useRef(new Map<string, TrailEntry>());
 
-  // Render phase: ensure a stable buffer identity exists for each satellite
-  // that asked for a trail. Marker-only satellites (no `trail` prop) get no
-  // buffer, so no OrbitTrail is mounted for them.
+  // Render phase: assemble the buffer map with stable identities. A caller-owned
+  // buffer (streaming mode) is used directly; a value-mode satellite gets a
+  // stable owned buffer whose *contents* are filled in the commit phase below.
+  // Marker-only satellites (neither trail nor buffer) get no buffer, so no
+  // OrbitTrail is mounted for them.
   const live = useMemo(() => {
-    const map = new Map<string, TrailBuffer>();
+    const map = new Map<string, TrailBufferLike>();
     for (const sat of satellites) {
+      if (sat.trailBuffer != null) {
+        map.set(sat.id, sat.trailBuffer);
+        continue;
+      }
       if (sat.trail === undefined) continue;
       let entry = store.current.get(sat.id);
       if (!entry) {
@@ -56,20 +68,19 @@ export function useTrailBuffers(satellites: readonly SatelliteState[]): Map<stri
     return map;
   }, [satellites]);
 
-  // Commit phase: apply content mutations only for renders that actually
-  // committed. reconcileTrailEntry is idempotent per input set, which also
-  // covers StrictMode's double-invoked effects.
+  // Commit phase: fill value-mode buffers (idempotent per input set, covering
+  // StrictMode's double-invoked effects). Forget owned buffers for satellites
+  // that vanished or switched to a caller-owned buffer.
   useLayoutEffect(() => {
-    const seen = new Set<string>();
+    const owned = new Set<string>();
     for (const sat of satellites) {
-      if (sat.trail === undefined) continue;
-      seen.add(sat.id);
+      if (sat.trailBuffer != null || sat.trail === undefined) continue;
+      owned.add(sat.id);
       const entry = store.current.get(sat.id);
       if (entry) reconcileTrailEntry(entry, sat.trail, sat.trailVersion);
     }
-    // Forget buffers for satellites that vanished or dropped their trail.
     for (const id of store.current.keys()) {
-      if (!seen.has(id)) store.current.delete(id);
+      if (!owned.has(id)) store.current.delete(id);
     }
   }, [satellites]);
 

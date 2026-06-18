@@ -3,6 +3,7 @@ import { getBodyRadius, resolveBodyDefinitions } from "../bodies.js";
 import { OrbitSceneContents } from "../components/OrbitSceneContents.js";
 import { IS_DEV } from "../env.js";
 import type { OrbitPoint } from "../orbit.js";
+import type { MarkerShape } from "../satelliteShapes.js";
 import { initArika, isArikaReady } from "../wasm/arikaInit.js";
 import { toOrbitPoint } from "./adapt.js";
 import { resolveFrameContext } from "./frameContext.js";
@@ -65,6 +66,9 @@ export function OrbitScene({
   epochJd,
   time = 0,
   textureBaseUrl,
+  textureVersion,
+  defaultMarkerShape,
+  atmosphereScale,
   controls = true,
   axes = true,
 }: OrbitSceneProps) {
@@ -105,7 +109,42 @@ export function OrbitScene({
     return map;
   }, [satellites]);
 
+  // Per-satellite marker shape overrides (the renderer falls back to
+  // defaultMarkerShape, then to an automatic shape). null/omitted = no override.
+  const satelliteShapes = useMemo(() => {
+    const map = new Map<string, MarkerShape>();
+    for (const sat of satellites) {
+      if (sat.markerShape != null) map.set(sat.id, sat.markerShape);
+    }
+    return map;
+  }, [satellites]);
+
+  // Per-satellite trail clipping (playback scrub / time window). Absent entries
+  // draw the whole trail.
+  const trailVisibleCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const sat of satellites) {
+      const vc = sat.trailDisplay?.visibleCount;
+      if (vc != null) map.set(sat.id, vc);
+    }
+    return map;
+  }, [satellites]);
+
+  const trailDrawStarts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const sat of satellites) {
+      const ds = sat.trailDisplay?.drawStart;
+      if (ds != null) map.set(sat.id, ds);
+    }
+    return map;
+  }, [satellites]);
+
+  // "auto" (and undefined) defers to the renderer's per-view default.
+  const physicalScale =
+    atmosphereScale === "physical" ? true : atmosphereScale === "visual" ? false : undefined;
+
   // Persistent per-satellite trail buffers (stable identity → incremental upload).
+  // Streaming-mode satellites pass their own buffer through unchanged.
   const trailBuffers = useTrailBuffers(satellites);
 
   // Map the public frame onto the renderer's internal ReferenceFrame (incl.
@@ -143,12 +182,18 @@ export function OrbitScene({
       satellitePositions={satellitePositions}
       satelliteNames={satelliteNames}
       satelliteColors={satelliteColors}
+      satelliteShapes={satelliteShapes}
+      defaultMarkerShape={defaultMarkerShape}
+      trailVisibleCounts={trailVisibleCounts}
+      trailDrawStarts={trailDrawStarts}
       centralBody={centralBody.id}
       centralBodyRadius={centralBodyRadius}
       bodyDefinitions={bodyDefinitions}
       epochJd={effectiveEpochJd}
       referenceFrame={internalFrame}
+      physicalScale={physicalScale}
       textureBaseUrl={textureBaseUrl}
+      textureRevision={textureVersion}
       controls={controls}
       axes={axes}
     />

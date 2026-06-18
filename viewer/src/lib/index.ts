@@ -30,10 +30,14 @@ export { SatelliteModel } from "../components/SatelliteModel.js";
 // Domain types and helpers used across the building blocks.
 export type { OrbitPoint } from "../orbit.js";
 export { DEFAULT_FRAME, type ReferenceFrame } from "../referenceFrame.js";
+// Marker shape for a satellite (SatelliteState.markerShape / defaultMarkerShape).
+export type { MarkerShape } from "../satelliteShapes.js";
 // `SCENE_UP`: camera up convention — initialise a bring-your-own `<Canvas>`
 // camera with it (see OrbitScene); OrbitViewer applies it for you.
 export { computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
-export { TrailBuffer } from "../utils/TrailBuffer.js";
+// Trail buffer: the built-in streaming buffer (SatelliteState.trailBuffer) plus
+// the read interface the scene accepts for a bring-your-own buffer.
+export { TrailBuffer, type TrailBufferLike } from "../utils/TrailBuffer.js";
 // arika WASM control (Sun direction / body rotation). OrbitViewer auto-inits when
 // given an epoch; these let an embedder pre-load or point at an external .wasm.
 export { type InitArikaOptions, initArika, isArikaReady } from "../wasm/arikaInit.js";

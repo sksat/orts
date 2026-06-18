@@ -21,7 +21,7 @@ import { DEFAULT_FRAME, isLegacyEcef, type ReferenceFrame } from "../referenceFr
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import { computeCameraUp, computeLvlhAxes, type LvlhAxes, SCENE_UP } from "../sceneFrame.js";
-import type { TrailBuffer } from "../utils/TrailBuffer.js";
+import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 import { body_orientation, earth_rotation_angle, eci_to_ecef } from "../wasm/arikaInit.js";
 import { CelestialBody } from "./CelestialBody.js";
 import { OrbitTrail } from "./OrbitTrail.js";
@@ -254,7 +254,7 @@ function SecondaryBody({
   epochJd?: number | null;
   originPosition?: [number, number, number] | null;
   lvlhAxes?: LvlhAxes | null;
-  textureRevision?: number;
+  textureRevision?: number | string;
   textureBaseUrl?: string;
   bodyDefinitions: BodyDefinitions;
 }) {
@@ -322,8 +322,8 @@ function SecondaryBody({
 }
 
 export interface OrbitSceneContentsProps {
-  /** Per-satellite TrailBuffers (all source types). */
-  trailBuffers?: Map<string, TrailBuffer>;
+  /** Per-satellite trail buffers (all source types). */
+  trailBuffers?: Map<string, TrailBufferLike>;
   /** Per-satellite positions. */
   satellitePositions?: Map<string, OrbitPoint | null>;
   /** Per-satellite visible counts (when not live). */
@@ -351,7 +351,7 @@ export interface OrbitSceneContentsProps {
   /** When true, atmosphere uses physical scale. Default: auto (true for satellite-centered). */
   physicalScale?: boolean;
   /** Bumped when server notifies high-res textures are available. */
-  textureRevision?: number;
+  textureRevision?: number | string;
   /** Base URL for fetching high-res textures (e.g., "http://localhost:9001/textures/"). */
   textureBaseUrl?: string;
   /**

@@ -10,7 +10,7 @@ import type { OrbitPoint } from "../orbit.js";
 import { frameCenterEquals, isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import type { LvlhAxes } from "../sceneFrame.js";
 import { orbitTrailFrag, orbitTrailVert } from "../shaders/orbitTrail.js";
-import type { TrailBuffer } from "../utils/TrailBuffer.js";
+import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 
 /** Initial capacity for the streaming vertex buffer. Grows as needed. */
 const INITIAL_CAPACITY = 2048;
@@ -18,8 +18,8 @@ const INITIAL_CAPACITY = 2048;
 interface OrbitTrailProps {
   /** Number of vertices to render. */
   visibleCount?: number;
-  /** TrailBuffer (bounded, generation-based invalidation). */
-  trailBuffer: TrailBuffer;
+  /** Trail source (bounded, generation-based invalidation). */
+  trailBuffer: TrailBufferLike;
   /** Central body radius in km, used as the scale factor. */
   scaleRadius: number;
   /** Trail color (default: 0x00ff88). */

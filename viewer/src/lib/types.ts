@@ -19,6 +19,8 @@ import type { OrbitControlsProps } from "@react-three/drei";
 import type { CSSProperties } from "react";
 import type { WebGLRendererParameters } from "three";
 import type { BodyDefinitions } from "../bodies.js";
+import type { MarkerShape } from "../satelliteShapes.js";
+import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 
 /** A 3D vector `[x, y, z]`. Distances are in kilometres. */
 export type Vec3 = [number, number, number];
@@ -38,8 +40,8 @@ export interface TrailPoint {
   time?: number;
 }
 
-/** One satellite (or arbitrary point object) to display in the scene. */
-export interface SatelliteState {
+/** Per-satellite display state shared by both trail input modes. */
+export interface SatelliteBaseState {
   /** Stable identifier. Used for React keys, default colour, and trail buffers. */
   id: string;
   /** Position in km, central-body-centred inertial frame. */
@@ -48,28 +50,70 @@ export interface SatelliteState {
   velocity?: Vec3;
   /** Body→inertial attitude quaternion `[w, x, y, z]`. Optional. */
   attitude?: Quat;
-  /**
-   * Past trajectory, oldest first, rendered as a trailing line. Appending to
-   * this list re-uses the existing GPU buffer (only new points are uploaded);
-   * shrinking it, or bumping {@link SatelliteState.trailVersion}, forces a rebuild.
-   *
-   * Treat this immutably (new array reference on change), as with any React
-   * prop — in-place mutation is not detected.
-   */
-  trail?: readonly TrailPoint[];
-  /**
-   * Opaque token that, when changed, forces the trail's GPU buffer to be rebuilt
-   * from scratch. The append/rebuild diff only inspects the trail's length and
-   * its last point, so you MUST bump this whenever you rewrite *existing* points
-   * (seeking, a new run, editing earlier history) — otherwise a same-length edit
-   * to interior points is mistaken for "unchanged" and won't reach the GPU.
-   */
-  trailVersion?: string | number;
   /** Marker/trail colour as a 0xRRGGBB integer. Defaults to a palette colour. */
   color?: number;
   /** Human-readable name. Used for 3D model lookup and labels. */
   name?: string;
+  /**
+   * Marker shape for this satellite. Overrides the scene-level
+   * {@link OrbitSceneDataProps.defaultMarkerShape}; `null`/omitted falls through
+   * to that default, then to an automatic shape (based on whether attitude is set).
+   */
+  markerShape?: MarkerShape | null;
+  /**
+   * Clip how much of the trail is drawn — for playback scrubbing / time windows.
+   * `visibleCount` caps the number of most-recent points shown; `drawStart` is the
+   * first index to draw. Omit to draw the whole trail.
+   */
+  trailDisplay?: {
+    visibleCount?: number;
+    drawStart?: number;
+  };
 }
+
+/**
+ * How a satellite supplies its trail. Two mutually exclusive modes:
+ *
+ * - **value** ({@link TrailPoint}[]): the scene owns and reconciles a buffer for
+ *   you — simplest for snapshot data.
+ * - **streaming** ({@link TrailBufferLike}): you own the buffer and mutate it
+ *   outside React (append as data arrives); the scene reads it each frame, so
+ *   points reach the GPU without a React re-render. Best for high-rate feeds.
+ */
+export type SatelliteTrailInput =
+  | {
+      /**
+       * Past trajectory, oldest first, rendered as a trailing line. Appending to
+       * this list re-uses the existing GPU buffer (only new points are uploaded);
+       * shrinking it, or bumping {@link SatelliteTrailInput.trailVersion}, forces a
+       * rebuild. Treat it immutably (new array reference on change) — in-place
+       * mutation is not detected.
+       */
+      trail?: readonly TrailPoint[];
+      /**
+       * Opaque token that, when changed, forces the trail's GPU buffer to be rebuilt
+       * from scratch. The append/rebuild diff only inspects the trail's length and
+       * its last point, so you MUST bump this whenever you rewrite *existing* points
+       * (seeking, a new run, editing earlier history) — otherwise a same-length edit
+       * to interior points is mistaken for "unchanged" and won't reach the GPU.
+       */
+      trailVersion?: string | number;
+      trailBuffer?: never;
+    }
+  | {
+      /**
+       * Caller-owned trail buffer for high-rate streaming. Mutate it outside React
+       * (append as data arrives); the scene reads it every frame, so points reach
+       * the GPU without a React re-render. Keep its identity stable across renders;
+       * the buffer's own `generation` drives full re-uploads. See {@link TrailBuffer}.
+       */
+      trailBuffer?: TrailBufferLike;
+      trail?: never;
+      trailVersion?: never;
+    };
+
+/** One satellite (or arbitrary point object) to display in the scene. */
+export type SatelliteState = SatelliteBaseState & SatelliteTrailInput;
 
 /** The central body rendered at the scene origin. */
 export interface CentralBody {
@@ -138,6 +182,24 @@ export interface OrbitSceneDataProps {
   time?: number;
   /** Base URL for high-resolution body textures (e.g. `"/textures/"`). */
   textureBaseUrl?: string;
+  /**
+   * Cache-invalidation token for body textures: bump it (any new value) to make
+   * the bodies re-fetch their textures — e.g. when higher-resolution textures
+   * become available at {@link OrbitSceneDataProps.textureBaseUrl}.
+   */
+  textureVersion?: string | number;
+  /**
+   * Default marker shape for satellites without their own
+   * {@link SatelliteBaseState.markerShape}. `null`/omitted means automatic
+   * (chosen per satellite from whether it has attitude).
+   */
+  defaultMarkerShape?: MarkerShape | null;
+  /**
+   * Atmosphere sizing for bodies that have one (e.g. Earth). `"visual"` keeps a
+   * visible shell at body-centred scale; `"physical"` uses the true scale-height
+   * thickness (useful satellite-centred); `"auto"` (default) picks per view.
+   */
+  atmosphereScale?: "visual" | "physical" | "auto";
 }
 
 /**
