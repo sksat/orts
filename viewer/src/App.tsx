@@ -1,5 +1,5 @@
+import { Canvas } from "@react-three/fiber";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Scene } from "./components/Scene.js";
 import { initArika } from "./wasm/arikaInit.js";
 
 // Start loading arika WASM module immediately.
@@ -11,13 +11,16 @@ import { PlaybackBar } from "./components/PlaybackBar.js";
 import { SceneOverlay } from "./components/SceneOverlay.js";
 import { SimConfigModal } from "./components/SimConfigModal.js";
 import { StatusBar } from "./components/StatusBar.js";
+import { toViewerReferenceFrame } from "./frameToViewer.js";
 import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
 import { useSimInfoDerived } from "./hooks/useSimInfoDerived.js";
 import { useSimulationData } from "./hooks/useSimulationData.js";
+import { OrbitScene, type SatelliteState } from "./lib/index.js";
 import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
 import { type MarkerShape, readSatShapeParam, writeSatShapeParam } from "./satelliteShapes.js";
+import { DEFAULT_CAMERA_POSITION, SCENE_UP } from "./sceneFrame.js";
 import { useSourceRuntime } from "./sources/useSourceRuntime.js";
 import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.js";
 import { resolveTextureBaseUrl } from "./textureBaseUrl.js";
@@ -339,6 +342,42 @@ export function App() {
     return m;
   }, [simInfo]);
 
+  // Public display frame for <OrbitScene> (the app's UI state is the internal frame).
+  const viewerFrame = useMemo(() => toViewerReferenceFrame(referenceFrame), [referenceFrame]);
+
+  // Build the public SatelliteState[] for <OrbitScene>. Each satellite passes its
+  // persistent TrailBuffer straight through (streaming mode), so trail growth stays
+  // decoupled from React re-renders — no per-render point materialization.
+  const snapshot = realtimePlayback.snapshot;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: trailBuffersMap is a stable ref-held Map mutated in place; `snapshot` is the observational trigger that changes when positions/buffers update.
+  const satellites = useMemo<SatelliteState[]>(() => {
+    const list: SatelliteState[] = [];
+    for (const [id, buf] of trailBuffersMap) {
+      const pos = snapshot.satellitePositions.get(id);
+      // No current position means an empty buffer (positions are interpolated from
+      // the buffers) — nothing to render, so skip it.
+      if (!pos) continue;
+      const visibleCount = snapshot.isLive ? undefined : snapshot.trailVisibleCounts.get(id);
+      const drawStart = timeRange != null ? snapshot.trailDrawStarts.get(id) : undefined;
+      const trailDisplay =
+        visibleCount != null || drawStart != null ? { visibleCount, drawStart } : undefined;
+      list.push({
+        id,
+        position: [pos.x, pos.y, pos.z],
+        velocity: [pos.vx, pos.vy, pos.vz],
+        attitude:
+          pos.qw != null && pos.qx != null && pos.qy != null && pos.qz != null
+            ? [pos.qw, pos.qx, pos.qy, pos.qz]
+            : undefined,
+        name: satelliteNames?.get(id) ?? undefined,
+        markerShape: markerShapeOverrides.get(id) ?? satelliteSimShapes?.get(id),
+        trailBuffer: buf,
+        trailDisplay,
+      });
+    }
+    return list;
+  }, [snapshot, satelliteNames, markerShapeOverrides, satelliteSimShapes, timeRange]);
+
   // Total points across all satellite buffers.
   // chartBufferVersion bumps on data ingest AND on resetBuffers (clear),
   // so this recalculates when data arrives or buffers are cleared.
@@ -417,29 +456,32 @@ export function App() {
           onMarkerShapeOverride={handleMarkerShapeOverride}
         />
 
-        <Scene
-          trailBuffers={trailBuffersMap}
-          satellitePositions={realtimePlayback.snapshot.satellitePositions}
-          trailVisibleCounts={
-            !realtimePlayback.snapshot.isLive
-              ? realtimePlayback.snapshot.trailVisibleCounts
-              : undefined
-          }
-          trailDrawStarts={
-            timeRange != null ? realtimePlayback.snapshot.trailDrawStarts : undefined
-          }
-          centralBody={centralBody}
-          centralBodyRadius={centralBodyRadius}
-          epochJd={epochJd ?? null}
-          referenceFrame={referenceFrame}
-          satelliteNames={satelliteNames}
-          satelliteShapes={markerShapeOverrides}
-          satelliteSimShapes={satelliteSimShapes}
-          defaultMarkerShape={defaultMarkerShape}
-          physicalScale={false}
-          textureRevision={textureRevision}
-          textureBaseUrl={textureBaseUrl}
-        />
+        {/* The orts app dogfoods the public <OrbitScene> API: it owns the Canvas
+            (camera up = SCENE_UP, no global THREE.Object3D.DEFAULT_UP mutation)
+            and feeds the scene the public SatelliteState[]. */}
+        <Canvas
+          camera={{
+            position: DEFAULT_CAMERA_POSITION,
+            up: SCENE_UP,
+            fov: 60,
+            near: 0.01,
+            far: 1000,
+          }}
+          gl={{ logarithmicDepthBuffer: true }}
+          style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
+        >
+          <OrbitScene
+            centralBody={{ id: centralBody, radiusKm: centralBodyRadius }}
+            satellites={satellites}
+            referenceFrame={viewerFrame}
+            epochJd={epochJd ?? undefined}
+            time={snapshot.currentTime}
+            defaultMarkerShape={defaultMarkerShape}
+            atmosphereScale="visual"
+            textureVersion={textureRevision}
+            textureBaseUrl={textureBaseUrl}
+          />
+        </Canvas>
       </div>
 
       {/* Graph panel (row 2, column 2) */}
