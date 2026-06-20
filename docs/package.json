@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@astrojs/react": "^5.0.0",
-    "@astrojs/starlight": "^0.38.1",
+    "@astrojs/starlight": "^0.40.0",
     "@sksat/uneri": "workspace:*",
     "astro": "^6.0.5",
     "astro-mermaid": "^2.0.1",
