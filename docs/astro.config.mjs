@@ -216,10 +216,22 @@ export default defineConfig({
               collapsed: true,
               items: [
                 { label: "Classes", items: [{ autogenerate: { directory: "uneri/api/classes" } }] },
-                { label: "Interfaces", items: [{ autogenerate: { directory: "uneri/api/interfaces" } }] },
-                { label: "Functions", items: [{ autogenerate: { directory: "uneri/api/functions" } }] },
-                { label: "Type Aliases", items: [{ autogenerate: { directory: "uneri/api/type-aliases" } }] },
-                { label: "Variables", items: [{ autogenerate: { directory: "uneri/api/variables" } }] },
+                {
+                  label: "Interfaces",
+                  items: [{ autogenerate: { directory: "uneri/api/interfaces" } }],
+                },
+                {
+                  label: "Functions",
+                  items: [{ autogenerate: { directory: "uneri/api/functions" } }],
+                },
+                {
+                  label: "Type Aliases",
+                  items: [{ autogenerate: { directory: "uneri/api/type-aliases" } }],
+                },
+                {
+                  label: "Variables",
+                  items: [{ autogenerate: { directory: "uneri/api/variables" } }],
+                },
               ],
             },
           ],
