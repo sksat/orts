@@ -11,6 +11,152 @@ section is subdivided by package.
 
 ## [Unreleased]
 
+### `orts` (Rust, crates.io)
+
+#### Added
+- Ground-station contact-window detection (`visibility` module): `GroundStation`
+  (WGS-84 location + elevation mask), `ContactWindow` (interpolated AOS/LOS, max
+  elevation, span-clip flags), the pure `PassTracker` state machine, and a
+  frame-aware `VisibilityMonitor<F: EarthFrameBridge>` that turns ECI samples
+  into per-station topocentric look angles.
+- `IndependentGroup::propagate_to_with(t_target, observer)` — propagate while a
+  `FnMut(&SatId, f64, &State)` observer runs on every accepted integration step,
+  so callers can sample state at integrator resolution. `propagate_to` delegates
+  to it with a no-op observer; trajectories stay bit-identical.
+- Node-messaging layer (`plugin::message`, "msg-io") for flight-software command
+  & telemetry: `Message`, `NodeId` (`Ground` / `Satellite(u32)`), `Payload`,
+  `NamedValue`, and `Value` (`Boolean`/`Integer`/`Number`/`Text`/`Bytes`),
+  re-exported from `orts::plugin`.
+- `PluginController` transport hooks (default no-op, implemented by the WASM
+  backends): msg-io `deliver` / `take_outbound`, and stream-io `stream_deliver`
+  / `stream_take` / `stream_close` for raw byte streams.
+- WIT v0 plugin interface extended with the msg-io and stream-io channels.
+
+#### Changed
+- `StateEffector` is now frame-generic — `StateEffector<S, F: frame::Eci =
+  SimpleEci>` returning `ExternalLoads<F>`, like `Model<S, F>` — so effectors
+  produce loads already in the host inertial frame. The defaulted `F` keeps
+  existing `StateEffector<S>` impls compiling unchanged.
+
+#### Fixed
+- Removed an unsound frame re-tag in `SpacecraftDynamics`: effector loads tagged
+  `ExternalLoads<SimpleEci>` were relabeled as the host frame `F` without
+  conversion, silently mislabeling coordinates for any `F != SimpleEci`. Latent
+  (the only shipped effector is torque-only) but wrong for a translational
+  effector. (#103)
+
+#### Removed
+- **BREAKING**: the `orts::tle` module is removed; TLE parsing moved to
+  `arika::tle` (decoding into the shared `arika::omm::Omm` record). Downstream
+  code using `orts::tle` must migrate to `arika`.
+
+### `orts-cli` (Rust, crates.io, binary)
+
+#### Added
+- Ground-station contact-window reporting in `orts run`: declare stations with
+  `[[ground_station]]` (`name`, `latitude_deg`, `longitude_deg`, `altitude_km`,
+  `min_elevation_deg`); detected windows print to stderr ordered by AOS, with
+  UTC timestamps, sim-time offsets, and max elevation (`*` marks windows clipped
+  by the sim span). Earth-centered, epoch-required.
+- Contact windows are sampled at integrator resolution (every accepted step /
+  control tick) rather than at `--output-interval`, so detection no longer
+  depends on the output decimation. (A pass shorter than one integrator /
+  control sample gap can still be missed.)
+- `--omm <file>` for CCSDS OMM input (JSON / KVN / XML; `-` for stdin), parsed
+  with `arika::omm`; rejects a TLE payload and points to `--tle`.
+- `--stream-stdio SAT/STREAM` on `orts serve` — wire one declared stream-io
+  stream to stdin/stdout over the kble-socket protocol so orts can run as a kble
+  `exec:` plug. That stream's WebSocket endpoint then answers HTTP 409; the
+  server shuts down when the stdio peer closes.
+- stream-io kble bridge in `orts serve`: each declared stream is a binary
+  WebSocket endpoint at `/stream/{sat}/{stream}` driven by a realtime loop;
+  undeclared pairs return HTTP 404. Streams are declared per satellite via the
+  config `streams` field.
+- Config-driven command timeline for flight-software command & telemetry:
+  `[[command]]` entries with `t` (sim-time), `sat`, `kind`, and an optional typed
+  `args` table, delivered deterministically by the host at the scheduled tick
+  (`orts run`).
+- WebSocket protocol TypeScript types are generated from the Rust types via
+  `ts-rs` (`#[derive(TS)]` on the protocol enums, `SimConfig`, `SatelliteInfo`,
+  …). Bindings are emitted into the viewer when `cargo test -p orts-cli` runs,
+  and CI fails if they drift.
+
+#### Changed
+- `--tle` is TLE-only again (2LE/3LE; `-` for stdin) and pairs with the new
+  `--omm`; element-set parsing is now backed by `arika::tle` / `arika::omm`
+  instead of the removed `orts::tle`. (Previously `--tle` also auto-accepted OMM.)
+- Mutually-exclusive orbit-source flags now error instead of silently letting one
+  win: `--sat` vs `--tle` / `--omm` / `--tle-line1` / `--tle-line2` /
+  `--norad-id`; `--tle` vs `--omm`; file sources vs inline `--tle-line1` /
+  `--tle-line2`; and `--tle-line1` / `--tle-line2` must be given together.
+- TLE epoch day-of-year is validated against the (leap-aware) year length, so a
+  malformed field is rejected rather than rolling into another year.
+
+#### Fixed
+- `orts serve` started with a `--config` file now rejects a `[[command]]`
+  timeline with a clear error (command timelines run only under `orts run`)
+  instead of silently dropping it.
+
+### `orts-plugin-sdk` (Rust, crates.io)
+
+#### Added
+- `msg-io` node-messaging layer for flight-software command & telemetry (and
+  future inter-satellite links): a WIT `interface msg-io` (`recv-batch` /
+  `send-message`) carrying datagrams addressed by logical `node-id`
+  (`ground` / `satellite(u32)`) with a typed `payload`, separate from the
+  `tick-io` control plane. The SDK adds a `msg` module (`recv_batch`, `recv_all`,
+  `send`, `send_to`, `key_value`, `get`, `get_text`) re-exporting `Message` /
+  `Outbound` / `NodeId` / `Payload` / `Value` / `NamedValue`.
+- `stream-io` raw byte-stream channel for kble virtual-harness integration: a WIT
+  `interface stream-io` (`read` / `write` over named streams). orts is a dumb
+  byte conduit; framing is left to the FSW + kble pipeline. The SDK adds a
+  `stream` module (`read`, `write`, `read_bytes`) re-exporting `StreamRead` /
+  `StreamError`.
+- Example FSWs gain a detumble→nadir mode-transition guard (`commandable-mode-ff`,
+  `commandable-mode-rr`).
+
+#### Changed
+- **BREAKING**: `world plugin` now also imports `msg-io` and `stream-io`. The
+  change is purely additive (nothing removed or altered), so callback-style
+  guests using `orts_plugin!` are unaffected; hand-written `impl Guest` guests
+  must regenerate bindings and link the two new host imports.
+
+### `arika` (Rust, crates.io)
+
+#### Added
+- Element-set parsing. A shared `omm::Omm` CCSDS mean-element record (identity,
+  UTC epoch, six SGP4 mean Keplerian elements, B\* drag; angles in radians, mean
+  motion in rad/s) with `semi_major_axis(mu)` / `to_keplerian_elements(mu)`.
+  - `tle` — NORAD TLE / 2LE / 3LE parser (`tle::parse`) → `Omm`, with Alpha-5
+    alphanumeric catalog numbers and `OBJECT_ID` normalization.
+  - `omm::json` / `omm::kvn` / `omm::xml` — CCSDS OMM parsers for the JSON, KVN,
+    and XML serializations. JSON accepts a single object or a 1-element array
+    (CelesTrak single-satellite GP) and Space-Track string-encoded numbers.
+  - `omm::detect` + `omm::parse` — format sniffing (`omm::Format`) plus a
+    unified, BOM-tolerant entry point that auto-detects and dispatches
+    TLE / OMM-JSON / OMM-KVN / OMM-XML.
+- `kepler` module (moved into `arika` from `orts`): `KeplerianElements`
+  (`from_state_vector` / `to_state_vector` / `period` / `energy`) and the anomaly
+  conversions (`solve_kepler_equation`, `mean_to_true_anomaly`, …). Now a public
+  `arika::kepler` surface; `orts::orbital::kepler` re-exports it.
+- `frame::Teme` marker — True Equator, Mean Equinox (the SGP4 / TLE output
+  frame). Marker only; the TEME ↔ GCRS rotation is not yet implemented.
+- `earth::topocentric` — ground-site look angles: `TopocentricSite<F: Ecef>`
+  (from a WGS-84 `Geodetic`, precomputing the local ENU basis) and `LookAngles`
+  (azimuth / elevation / slant range), via `look_angles(target)`.
+
+#### Changed
+- `Epoch::from_iso8601` also accepts the ordinal / day-of-year form
+  (`YYYY-DDDTHH:MM:SS`, used by CCSDS OMM), and the trailing `Z` is now optional.
+  A strict relaxation — previously-accepted inputs still parse.
+
+### `utsuroi` (Rust, crates.io)
+
+#### Added
+- `IntegrationError` now implements `core::error::Error` (by hand, no
+  `thiserror`, works under `no_std`), so it participates in `?` chains and
+  `Box<dyn Error>`.
+
 ### `tobari` (Rust, crates.io)
 
 #### Changed
@@ -19,6 +165,116 @@ section is subdivided by package.
   `fetch-horizons`). `fetch` is retained as an umbrella feature that enables
   every `fetch-*` source, so `features = ["fetch"]` keeps building (and now
   also pulls in `fetch-igrf`).
+
+### `viewer`
+
+#### Added
+- Embeddable viewer library at a new `./lib` entry (`viewer/src/lib`), so the
+  orbit viewer can be dropped into any React + `@react-three/fiber` app, not only
+  the bundled SPA. Layered API:
+  - `OrbitViewer` — batteries-included: renders its own sized `<div>` +
+    `<Canvas>`; drive it with a `centralBody` and a `SatelliteState[]`.
+  - `OrbitScene` — the scene graph to mount inside your own `<Canvas>`
+    (bring-your-own Canvas), initialised with the exported `SCENE_UP`.
+  - The viewer's own app is now built on the public `OrbitScene` API
+    (dogfooded), so the library and the app cannot drift apart.
+- Distribution as a shadcn registry (`registry.json`, item `orbit-viewer`): the
+  component and its primitives can be vendored into a consumer app via
+  `shadcn add`. Ships a standalone consumer example (`viewer/examples/orbit-viewer/`)
+  that installs and renders the registry item.
+- Extensible central bodies: custom definitions via the `bodies` prop
+  (`BodyDefinitions`) merged over the built-in `DEFAULT_BODIES`
+  (Earth / Moon / Sun / Mars). Exports `BodyDefinition` / `BodyDefinitions` /
+  `BodyTexture` / `DEFAULT_BODIES`.
+- Injectable arika WASM: `initArika({ wasmUrl? })` / `isArikaReady()` are
+  exported so an embedder can preload the module or point at an external `.wasm`
+  URL. The arika WASM was extracted into its own workspace package (`arika-wasm`),
+  imported by name (required for registry distribution).
+- Public `TrailBuffer` streaming primitive (`TrailBuffer` + `TrailBufferLike`): a
+  caller can own a bounded trail buffer and mutate it outside React
+  (`SatelliteState.trailBuffer`); the scene reads it each frame so streamed points
+  reach the GPU without a React re-render. Exports `toTrailBuffer` /
+  `trailPointToOrbitPoint` and the `OrbitPoint` / `TrailPoint` types.
+- Per-satellite display props on `SatelliteState`: `color`, `name`,
+  `markerShape`, `trailDisplay` (`visibleCount` / `drawStart`, for playback
+  scrubbing), and a per-satellite `time` so a frozen/scrubbed satellite keeps its
+  marker aligned with its own body-fixed trail.
+- Satellites render from their current position, not only from trails — a
+  position-only satellite still shows a marker.
+- Selectable marker shapes (`MarkerShape`: `"sphere"` | `"axes-cube"`), including
+  a non-sphere XYZ orientation cube that shows attitude without a hosted 3D
+  model; resolvable per-satellite or scene-wide, and declarable by the simulation
+  over the wire (viewer-overridable).
+- Satellite-centred frames now honour the requested orientation: star-fixed
+  `inertial` (axes don't co-rotate) or `localOrbital` (LVLH). Previously a
+  satellite-centred view always collapsed to LVLH. (#90)
+
+#### Changed
+- The `./lib` public barrel is intentionally narrow: the Three.js / r3f building
+  blocks and the internal frame wiring are not exported. Supported surface:
+  `OrbitViewer`, `OrbitScene`, `TrailBuffer` / `TrailBufferLike`, `toTrailBuffer`
+  / `trailPointToOrbitPoint`, `initArika` / `isArikaReady`, `SCENE_UP`,
+  `DEFAULT_BODIES`, `DEFAULT_VIEWER_FRAME`, and the supporting types.
+- DuckDB-wasm assets are self-hosted by the viewer (Vite `?url` imports passed to
+  uneri's `initDuckDB({ bundles })`) instead of the jsDelivr CDN, removing a
+  third-party-CDN runtime dependency.
+- Earth-specific rendering (day/night terminator, atmosphere, Earth spin) is
+  gated to the `earth` body id, not "has a night texture"; custom bodies render
+  via the generic textured-sphere path.
+- `OrbitScene` / `OrbitViewer` throw a clear error when the central body has no
+  resolvable radius, instead of silently using radius 1 and a wrong scene scale.
+- The arika WASM loads only when an `epochJd` is supplied; epoch-less embedders
+  pay no init cost (fixed Sun direction, no body rotation).
+- WS protocol types are now the `ts-rs`-generated bindings (see `orts-cli`),
+  replacing the hand-written wire types and adding the `satellite_added` variant.
+
+#### Fixed
+- Default WebSocket URL on static deploys falls back to `ws://localhost:9001/ws`
+  instead of deriving an unreachable host from `window.location`.
+- High-resolution body textures restored in static deployment (server-only fetch,
+  off-thread decode, bounded upgrade retries, in-flight guard). (#105)
+- LVLH (satellite-centred) central-body orientation corrected, with separate
+  Earth (ERA) vs non-Earth (`body_orientation` + pole) paths.
+- Quaternion slerp guards on a complete quaternion (all of qw/qx/qy/qz) rather
+  than `qw` alone; NaN passes through. Dropped a per-render allocation in the
+  scene.
+- Trail-buffer mutations are applied in the commit phase; `satellites[]` is
+  rebuilt on a trail-buffer reset; per-satellite position time is preserved for
+  body-fixed markers; `SatelliteState.color` is honoured; file / RRD adapters
+  reset cleanly on restart and tear down on fatal worker errors.
+
+#### Performance
+- Trail-less satellites skip trail-buffer allocation and per-frame trail work.
+
+### `uneri` (npm: `@sksat/uneri`)
+
+#### Added
+- `initDuckDB` can load the DuckDB-wasm worker / wasm from caller-injected,
+  self-hosted bundle URLs instead of the jsDelivr CDN. New `DuckDBInitOptions`
+  (`bundles?`, `fallbackToJsDelivr?`) and `DuckDBBundleUrls` types, plus a pure
+  `resolveBundleSource(options?)`. uneri stays bundler-neutral; the app resolves
+  and passes the URLs.
+- Resilient init: `initDuckDB` retries with linear backoff, fast-fails on a dead
+  worker via an `error` listener instead of hanging, and drops the cached
+  rejected promise after terminal failure so a later call retries. (#70)
+
+#### Changed
+- Calling `initDuckDB()` with no options is unchanged — it still sources bundles
+  from the jsDelivr CDN — so existing consumers keep working; self-hosting is
+  opt-in via `options.bundles`.
+
+#### Fixed
+- Worker 404 / "invalid URL" on init: bundle URLs are absolutized against the
+  worker origin inside `initDuckDB`, because DuckDB instantiates its worker from a
+  `blob:` URL against which a root-relative path cannot resolve.
+
+### Dependencies
+
+- Rust toolchain → 1.96.0.
+- Rust: `wasmtime` / `wasmtime-wasi` 44 (security), `rerun` 0.33,
+  `tokio-tungstenite` 0.29, `nalgebra` 0.35, `tokio` 1.52, `axum` 0.8.9.
+- npm: `vite` 8, `@vitejs/plugin-react` 6, the React monorepo, `ws` 8.21
+  (security), `mermaid` 11.15 (security).
 
 ## [0.2.0](https://github.com/sksat/orts/releases/tag/v0.2.0) - 2026-04-20
 
