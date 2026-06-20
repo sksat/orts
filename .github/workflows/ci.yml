@@ -384,9 +384,22 @@ jobs:
         run: |
           # renovate: datasource=github-releases depName=WebAssembly/wasi-sdk extractVersion=^wasi-sdk-(?<version>\d+)$
           WASI_SDK_VERSION=33
-          curl -sfL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}/wasi-sysroot-${WASI_SDK_VERSION}.0.tar.gz" \
-            | sudo tar xzf - -C /tmp/
-          sudo mv "/tmp/wasi-sysroot-${WASI_SDK_VERSION}.0" /usr/share/wasi-sysroot
+          # The sysroot asset gained a "+m" build-metadata suffix in wasi-sdk
+          # v33 (wasi-sysroot-33.0+m.tar.gz); older releases have none. Try the
+          # suffixed name first, then fall back, and adopt whatever single
+          # top-level directory the tarball extracts to, so a version bump
+          # alone does not break this step.
+          base="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${WASI_SDK_VERSION}"
+          rm -rf /tmp/wasi-sysroot-extract && mkdir -p /tmp/wasi-sysroot-extract
+          for name in "wasi-sysroot-${WASI_SDK_VERSION}.0+m" "wasi-sysroot-${WASI_SDK_VERSION}.0"; do
+            if curl -sfL "${base}/${name}.tar.gz" -o /tmp/wasi-sysroot.tar.gz; then
+              sudo tar xzf /tmp/wasi-sysroot.tar.gz -C /tmp/wasi-sysroot-extract
+              inner=$(ls /tmp/wasi-sysroot-extract)
+              sudo mv "/tmp/wasi-sysroot-extract/${inner}" /usr/share/wasi-sysroot
+              break
+            fi
+          done
+          test -d /usr/share/wasi-sysroot/include
           echo "WASI_SYSROOT=/usr/share/wasi-sysroot" >> "$GITHUB_ENV"
 
       - name: Download orts binary (debug)
