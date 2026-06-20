@@ -37,6 +37,12 @@
       "matchPackageNames": ["/^wasmtime/"]
     },
     {
+      "description": "three.js, @types/three and the @react-three/* ecosystem must move in lockstep across all workspaces (viewer, tobari/examples/web, orbit-viewer); a split bump leaves two @types/three versions in the tree and fails the viewer TypeScript build (TS2322)",
+      "matchManagers": ["npm"],
+      "groupName": "three",
+      "matchPackageNames": ["three", "@types/three", "/^@react-three//"]
+    },
+    {
       "description": "Auto-merge patch-level updates once required CI checks pass",
       "matchUpdateTypes": ["patch"],
       "automerge": true
