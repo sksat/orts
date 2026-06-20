@@ -14,7 +14,7 @@ runs:
       run: |
         set -euo pipefail
         # renovate: datasource=github-releases depName=wasm-bindgen/wasm-pack extractVersion=^v(?<version>.+)$
-        WP_VERSION=0.13.1
+        WP_VERSION=0.15.0
         WP_SHA256=c539d91ccab2591a7e975bcf82c82e1911b03335c80aa83d67ad25ed2ad06539
         url="https://github.com/wasm-bindgen/wasm-pack/releases/download/v${WP_VERSION}/wasm-pack-v${WP_VERSION}-x86_64-unknown-linux-musl.tar.gz"
         curl -fsSL -o /tmp/wasm-pack.tar.gz "$url"
