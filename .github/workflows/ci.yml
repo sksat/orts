@@ -702,6 +702,113 @@ jobs:
       - name: Test
         run: pnpm --filter starlight-rustdoc test
 
+  # Build the full docs site (astro/starlight) on PRs. The Deploy Site
+  # workflow only builds on push to main, so a docs-build regression — e.g.
+  # a Starlight sidebar schema change — would otherwise not surface until
+  # after merge (the required `starlight-rustdoc` check builds the
+  # starlight-rustdoc *package*, not the orts docs site). Path-gated: the
+  # heavy build runs only when docs-affecting files change; on unrelated PRs
+  # the job exits early as a success so the required check still passes. The
+  # job always runs (only inner steps are conditional) to avoid the
+  # skipped-required-check ambiguity. Textures and the Pages deploy are
+  # omitted — this validates the build, it does not publish.
+  build-site:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    env:
+      VITE_BASE_PATH: /orts/viewer/
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Detect docs-affecting changes
+        id: changes
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            pull_request) base="${{ github.event.pull_request.base.sha }}" ;;
+            merge_group)  base="${{ github.event.merge_group.base_sha }}" ;;
+            *)            base="" ;;
+          esac
+          if [ -z "$base" ] || ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
+            echo "Base ref unavailable; building to be safe."
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "$base" HEAD)
+          echo "Changed files:"; echo "$changed"
+          # Inputs the docs site build consumes: docs config/content, the
+          # local starlight-rustdoc plugin (imported by astro.config.mjs), the
+          # embedded viewer/tobari demos, the typedoc source (uneri), JS deps
+          # (manifest + lockfile), and this workflow itself. NOTE: this does
+          # not gate on Rust crate sources, so a rustdoc-content regression
+          # driven purely by a doc-comment change is not caught here.
+          if echo "$changed" | grep -qE '^(docs/|starlight-rustdoc/|viewer/|uneri/|tobari/|package\.json|pnpm-lock\.yaml|\.github/workflows/ci\.yml)'; then
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docs=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: No docs-affecting changes — skip site build
+        if: steps.changes.outputs.docs != 'true'
+        run: echo "No docs-affecting files changed; skipping site build (required check passes)."
+
+      - name: Setup pnpm
+        if: steps.changes.outputs.docs == 'true'
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        if: steps.changes.outputs.docs == 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version-file: package.json
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.changes.outputs.docs == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Install mold linker
+        if: steps.changes.outputs.docs == 'true'
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Parse rust-toolchain.toml
+        if: steps.changes.outputs.docs == 'true'
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
+        if: steps.changes.outputs.docs == 'true'
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: wasm32-unknown-unknown
+
+      - name: Install Rust nightly (for rustdoc JSON)
+        if: steps.changes.outputs.docs == 'true'
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: nightly
+
+      - name: Cache Cargo artifacts
+        if: steps.changes.outputs.docs == 'true'
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: build-site
+
+      - name: Install wasm-pack
+        if: steps.changes.outputs.docs == 'true'
+        uses: ./.github/actions/install-wasm-pack
+
+      - name: Build site
+        if: steps.changes.outputs.docs == 'true'
+        run: pnpm build:site
+        env:
+          VITE_TEXTURE_BASE_URL: ${{ env.VITE_BASE_PATH }}textures/
+
   uneri:
     runs-on: ubuntu-latest
     steps:
