@@ -2,7 +2,9 @@
 
 A React component that renders a central body (Earth, a planet, …) and a set of
 satellites around it, with an orbit-controls camera. It's the reusable core of
-the orts viewer, exposed via the package's `./lib` entry.
+the orts viewer, exposed via the package's `./lib` entry — as `OrbitViewer`
+(batteries-included) or `OrbitScene` (for mounting inside your own
+`@react-three/fiber` Canvas).
 
 | Central-body view (ECI) | Satellite-centred view (LVLH) |
 | :---: | :---: |
@@ -41,6 +43,26 @@ physically-correct Sun lighting and body rotation; otherwise a fixed Sun is used
 and the body is static. See [`examples/orbit-viewer`](./examples/orbit-viewer)
 for an animated, backend-free example.
 
+### Bring your own Canvas
+
+`OrbitViewer` owns its `<Canvas>`. To compose the scene with your own lights,
+meshes, post-processing or camera, mount `OrbitScene` (the same data props, minus
+the wrapper/canvas) inside your Canvas — initialise the camera with `SCENE_UP`:
+
+```tsx
+import { Canvas } from "@react-three/fiber";
+import { OrbitScene, SCENE_UP } from "<pkg>/lib";
+
+<Canvas camera={{ up: SCENE_UP }}>
+  <ambientLight intensity={0.3} />
+  <OrbitScene
+    centralBody={{ id: "earth", radiusKm: 6378.137 }}
+    satellites={[{ id: "sat-1", position: [7000, 0, 1500] }]}
+    controls={false}
+  />
+</Canvas>;
+```
+
 ### Reference frames
 
 `referenceFrame` selects what's at the origin and how the axes are aligned:
@@ -58,6 +80,11 @@ Pass `trail` (an array of points) per satellite. Trails are uploaded
 incrementally: **append** to the array (new reference) to add points cheaply;
 treat `satellites`/`trail` as immutable (a new reference on change — in-place
 mutation isn't detected). Bump `trailVersion` to force a rebuild.
+
+For high-rate streaming, pass a `trailBuffer` (a `TrailBuffer` you own and mutate
+outside React) instead of `trail`: the scene reads it each frame, so appended
+points reach the GPU without a React re-render. `trail` and `trailBuffer` are
+mutually exclusive per satellite.
 
 ## Caveats
 
@@ -77,17 +104,21 @@ mutation isn't detected). Bump `trailVersion` to force a rebuild.
 
 ## Public API & stability
 
-The headline export is `OrbitViewer` plus its prop types
-(`OrbitViewerProps`, `SatelliteState`, `ViewerReferenceFrame`, `Vec3`, …).
+The entry points are **`OrbitViewer`** (batteries-included — its own `<div>` +
+`<Canvas>`) and **`OrbitScene`** (the scene graph to mount inside your own
+`@react-three/fiber` `<Canvas>`), plus their prop types (`OrbitViewerProps`,
+`OrbitSceneProps`, `SatelliteState`, `ViewerReferenceFrame`, `Vec3`, …), the body
+definitions (`DEFAULT_BODIES`, `BodyDefinition`), `MarkerShape`, `SCENE_UP`, and
+`initArika`.
 
-Lower-level building blocks are **also exported on purpose** so you can assemble
-a custom scene: the primitives (`CelestialBody`, `EarthBody`, `OrbitTrail`,
-`Satellite`, `SatelliteModel`, `BodyAxes`), the pure adapters/frame logic
-(`toOrbitPoint`, `resolveFrameContext`, `computeLvlhAxes`, `TrailBuffer`), and
-`initArika`. Note the trade-off: these primitives wrap internal Three.js /
-react-three-fiber components, so they carry a wider semver surface — refactors to
-their internals are breaking changes. If you only need the component, import just
-`OrbitViewer` and its types.
+The Three.js / react-three-fiber building blocks (`CelestialBody`, `Satellite`,
+`OrbitTrail`, …) and the internal frame wiring are **not** exported — they ride
+internal types and are an implementation detail. The one renderer primitive that
+_is_ public is the streaming **`TrailBuffer`** (with `TrailBufferLike`, the
+`OrbitPoint` it holds, and `toTrailBuffer` / `trailPointToOrbitPoint` to fill
+one), so a high-rate feed can hand the scene a buffer it mutates directly. To
+build a fully custom scene, drop `OrbitScene` into your own Canvas rather than
+wiring primitives by hand.
 
 ## Or copy the source (shadcn registry)
 
@@ -110,10 +141,11 @@ npx shadcn@4.11.0 add ./viewer/public/r/orbit-viewer.json
 > works without a checkout — isn't wired up yet (the deployed site currently
 > serves only the docs).
 
-The `orbit-viewer` item installs the full public closure (the `OrbitViewer`
-component, its primitives, frame/trail logic, shaders, and body definitions)
-under `<your components alias>/orbit-viewer/`, preserving the internal relative
-imports. It declares `react` / `react-dom` / `three` / `@react-three/fiber` /
+The `orbit-viewer` item installs the full import closure (the `OrbitViewer` /
+`OrbitScene` components plus the internal building blocks they use — frame/trail
+logic, shaders, body definitions) under `<your components alias>/orbit-viewer/`,
+preserving the internal relative imports. Copying the source gives you everything,
+including the internals that `./lib` doesn't re-export. It declares `react` / `react-dom` / `three` / `@react-three/fiber` /
 `@react-three/drei` as dependencies; you must **also** add `arika-wasm` yourself
 (it isn't on npm yet — install it from the orts workspace until it's published).
 
