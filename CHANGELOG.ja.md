@@ -363,6 +363,30 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - `@duckdb/duckdb-wasm` 1.32.0 によるブラウザ内 OLAP + `uplot` 1.6
   rendering 層。React ≥ 18 を peer dependency として要求。
 
+### `viewer`
+
+- React + `@react-three/fiber` (Three.js) + Vite によるリアルタイム 3D
+  軌道ビューア。`orts-cli` バイナリに同梱し `http://localhost:9001` で配信。
+  standalone SPA としても deploy 済。
+- 3D シーン: 汎用 `CelestialBody` component によるテクスチャ付き中心天体
+  (Earth/Moon/Sun/Mars)。地球の day/night terminator と大気散乱の
+  カスタム GLSL shader、orbit-controls カメラ。
+- 衛星ごとの可視化: 3D 軌跡 trail、表示スケール設定可能な 3D 衛星モデル
+  (衛星中心ビューでは実スケール表示)、姿勢 quaternion による body-frame
+  の姿勢軸表示。
+- 参照フレーム選択: 中心天体中心の inertial (ECI) / body-fixed (ECEF) 表示、
+  または衛星を中心にしてその局所軌道 (LVLH) フレームで追尾。ECI ↔ ECEF
+  変換は `arika` WASM ビルドでブラウザ内実行。
+- データソース: CSV と `.rrd` 軌道ファイルの読込 (`.rrd` は `rrd-wasm` で
+  ブラウザ内 decode)、および `orts serve` から telemetry を streaming する
+  ライブ WebSocket モード (`useWebSocket`)。単一・多数の衛星に対応。
+- ブラウザ内シミュレーション制御: シミュレーション parameter を設定し、
+  実行中の `orts serve` シミュレーションを UI から pause / resume / terminate。
+- replay / playback: `useRealtimePlayback` hook が時刻ベースの軌道再生を駆動。
+  軌跡の漸進描画と `PlaybackBar` scrubber (再生 / 一時停止 / シーク)。
+- ブラウザ内解析: DuckDB-wasm + uPlot 時系列チャート (`uneri` ベース)。
+  ドラッグズーム、マルチ衛星 series。
+
 ### `starlight-rustdoc` (npm)
 
 - Astro / Starlight 統合。`cargo rustdoc --output-format json` 出力を
