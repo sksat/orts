@@ -160,7 +160,7 @@ export default defineConfig({
       sidebar: [
         { label: "Getting Started", slug: "getting-started" },
         { label: "Architecture", slug: "architecture" },
-        { label: "Examples", autogenerate: { directory: "examples" } },
+        { label: "Examples", items: [{ autogenerate: { directory: "examples" } }] },
         {
           label: "orts",
           items: [
@@ -168,7 +168,7 @@ export default defineConfig({
             {
               label: "API",
               collapsed: true,
-              autogenerate: { directory: "orts/api" },
+              items: [{ autogenerate: { directory: "orts/api", collapsed: true } }],
             },
           ],
         },
@@ -179,7 +179,7 @@ export default defineConfig({
             {
               label: "API",
               collapsed: true,
-              autogenerate: { directory: "arika/api" },
+              items: [{ autogenerate: { directory: "arika/api", collapsed: true } }],
             },
           ],
         },
@@ -190,7 +190,7 @@ export default defineConfig({
             {
               label: "API",
               collapsed: true,
-              autogenerate: { directory: "utsuroi/api" },
+              items: [{ autogenerate: { directory: "utsuroi/api", collapsed: true } }],
             },
           ],
         },
@@ -198,11 +198,11 @@ export default defineConfig({
           label: "tobari",
           items: [
             { label: "Overview", slug: "tobari/overview" },
-            { label: "Examples", autogenerate: { directory: "tobari/examples" } },
+            { label: "Examples", items: [{ autogenerate: { directory: "tobari/examples" } }] },
             {
               label: "API",
               collapsed: true,
-              autogenerate: { directory: "tobari/api" },
+              items: [{ autogenerate: { directory: "tobari/api", collapsed: true } }],
             },
           ],
         },
@@ -210,16 +210,28 @@ export default defineConfig({
           label: "uneri",
           items: [
             { label: "Overview", slug: "uneri/api/readme" },
-            { label: "Examples", autogenerate: { directory: "uneri/examples" } },
+            { label: "Examples", items: [{ autogenerate: { directory: "uneri/examples" } }] },
             {
               label: "API Reference",
               collapsed: true,
               items: [
-                { label: "Classes", autogenerate: { directory: "uneri/api/classes" } },
-                { label: "Interfaces", autogenerate: { directory: "uneri/api/interfaces" } },
-                { label: "Functions", autogenerate: { directory: "uneri/api/functions" } },
-                { label: "Type Aliases", autogenerate: { directory: "uneri/api/type-aliases" } },
-                { label: "Variables", autogenerate: { directory: "uneri/api/variables" } },
+                { label: "Classes", items: [{ autogenerate: { directory: "uneri/api/classes" } }] },
+                {
+                  label: "Interfaces",
+                  items: [{ autogenerate: { directory: "uneri/api/interfaces" } }],
+                },
+                {
+                  label: "Functions",
+                  items: [{ autogenerate: { directory: "uneri/api/functions" } }],
+                },
+                {
+                  label: "Type Aliases",
+                  items: [{ autogenerate: { directory: "uneri/api/type-aliases" } }],
+                },
+                {
+                  label: "Variables",
+                  items: [{ autogenerate: { directory: "uneri/api/variables" } }],
+                },
               ],
             },
           ],
