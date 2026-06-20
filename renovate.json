@@ -6,6 +6,17 @@
     "pnpm": "10"
   },
   "minimumReleaseAge": "7 days",
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**",
+    "orts/examples/**",
+    "plugin-sdk/examples/**"
+  ],
   "customManagers": [
     {
       "description": "Match '# renovate: datasource=... depName=...' followed by a VARNAME=value assignment in shell/CI",
