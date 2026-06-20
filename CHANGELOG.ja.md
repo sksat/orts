@@ -15,36 +15,36 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   (WGS-84 位置 + 仰角マスク)、`ContactWindow` (補間した AOS/LOS、最大仰角、
   span クリップフラグ)、純粋な `PassTracker` ステートマシン、frame-aware な
   `VisibilityMonitor<F: EarthFrameBridge>` (ECI サンプルを地上局ごとの
-  topocentric look angle に変換)。
+  topocentric look angle に変換)。([#112](https://github.com/sksat/orts/pull/112))
 - `IndependentGroup::propagate_to_with(t_target, observer)` — 受理された全
   積分ステップで `FnMut(&SatId, f64, &State)` observer を呼びながら伝播。
   integrator 解像度で状態をサンプリングできる。`propagate_to` は no-op
-  observer で委譲し、軌道はビット単位で不変。
+  observer で委譲し、軌道はビット単位で不変。([#112](https://github.com/sksat/orts/pull/112))
 - node messaging 層 (`plugin::message`、"msg-io"): FSW のコマンド & テレメトリ
   用。`Message`、`NodeId` (`Ground` / `Satellite(u32)`)、`Payload`、
   `NamedValue`、`Value` (`Boolean`/`Integer`/`Number`/`Text`/`Bytes`) を
-  `orts::plugin` から再エクスポート。
+  `orts::plugin` から再エクスポート。([#58](https://github.com/sksat/orts/pull/58))
 - `PluginController` の transport hook (既定 no-op、WASM backend が実装):
   msg-io の `deliver` / `take_outbound`、raw byte stream 用 stream-io の
-  `stream_deliver` / `stream_take` / `stream_close`。
-- WIT v0 plugin interface に msg-io / stream-io チャネルを追加。
+  `stream_deliver` / `stream_take` / `stream_close`。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
+- WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
 - `StateEffector` を frame-generic 化 — `StateEffector<S, F: frame::Eci =
   SimpleEci>` で `ExternalLoads<F>` を返す (`Model<S, F>` と同様)。effector は
   host の慣性 frame で荷重を生成するようになった。既定の `F` により既存の
-  `StateEffector<S>` 実装はそのままコンパイル可能。
+  `StateEffector<S>` 実装はそのままコンパイル可能。([#148](https://github.com/sksat/orts/pull/148))
 
 #### Fixed
 - `SpacecraftDynamics` の不正な frame 再タグを除去。`ExternalLoads<SimpleEci>`
   とタグ付けされた effector 荷重を変換なしで host frame `F` に貼り替えており、
   `F != SimpleEci` (例: `Gcrs`) で座標を黙って誤ラベルしていた。出荷済み
-  effector が torque のみのため潜在的だったが、並進 effector では誤りとなる。(#103)
+  effector が torque のみのため潜在的だったが、並進 effector では誤りとなる。([#148](https://github.com/sksat/orts/pull/148), [#103](https://github.com/sksat/orts/issues/103))
 
 #### Removed
 - **BREAKING**: `orts::tle` module を削除。TLE パースは `arika::tle`
   (共有 `arika::omm::Omm` record へデコード) に移管。`orts::tle` を使う
-  下流コードは `arika` へ移行が必要。
+  下流コードは `arika` へ移行が必要。([#87](https://github.com/sksat/orts/pull/87))
 
 ### `orts-cli` (Rust, crates.io, binary)
 
@@ -53,42 +53,42 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   (`name`、`latitude_deg`、`longitude_deg`、`altitude_km`、`min_elevation_deg`)
   で局を宣言。検出したウィンドウを AOS 順に stderr へ出力 (UTC 時刻、
   sim-time オフセット、最大仰角。`*` は sim span でクリップされたウィンドウ)。
-  Earth 中心・エポック必須。
+  Earth 中心・エポック必須。([#112](https://github.com/sksat/orts/pull/112))
 - コンタクトウィンドウは `--output-interval` でなく integrator 解像度
   (受理ステップごと / 制御 tick ごと) でサンプリング。検出が出力間引きに
-  依存しなくなった (1 サンプル間隔より短いパスは依然取りこぼし得る)。
+  依存しなくなった (1 サンプル間隔より短いパスは依然取りこぼし得る)。([#112](https://github.com/sksat/orts/pull/112))
 - `--omm <file>` で CCSDS OMM 入力 (JSON / KVN / XML、`-` で stdin) を
-  `arika::omm` でパース。TLE ペイロードは拒否し `--tle` を案内。
+  `arika::omm` でパース。TLE ペイロードは拒否し `--tle` を案内。([#87](https://github.com/sksat/orts/pull/87))
 - `orts serve` の `--stream-stdio SAT/STREAM` — 宣言済み stream-io stream の
   1 本を kble-socket protocol で stdin/stdout に接続し、orts を kble の
   `exec:` plug として実行可能にする。その stream の WebSocket endpoint は
-  HTTP 409 を返し、stdio peer が閉じるとサーバを停止。
+  HTTP 409 を返し、stdio peer が閉じるとサーバを停止。([#114](https://github.com/sksat/orts/pull/114))
 - `orts serve` の stream-io kble ブリッジ: 宣言済み各 stream を
   `/stream/{sat}/{stream}` のバイナリ WebSocket endpoint として realtime
   loop で駆動。未宣言ペアは HTTP 404。stream は config の `streams` で
-  衛星ごとに宣言。
+  衛星ごとに宣言。([#106](https://github.com/sksat/orts/pull/106))
 - config 駆動のコマンドタイムライン (FSW コマンド & テレメトリ):
   `[[command]]` entry (`t` sim-time、`sat`、`kind`、任意の型付き `args`)。
-  host がスケジュール tick で決定論的に配送 (`orts run` のみ)。
+  host がスケジュール tick で決定論的に配送 (`orts run` のみ)。([#58](https://github.com/sksat/orts/pull/58))
 - WebSocket protocol の TypeScript 型を `ts-rs` で Rust 型から生成
   (protocol enum、`SimConfig`、`SatelliteInfo` 等に `#[derive(TS)]`)。
-  `cargo test -p orts-cli` 実行時に viewer へ出力し、ドリフトすると CI が落ちる。
+  `cargo test -p orts-cli` 実行時に viewer へ出力し、ドリフトすると CI が落ちる。([#95](https://github.com/sksat/orts/pull/95))
 
 #### Changed
 - `--tle` を再び TLE 専用 (2LE/3LE、`-` で stdin) とし、新規 `--omm` と
   対にした。要素セットのパースは削除した `orts::tle` でなく
-  `arika::tle` / `arika::omm` を使用 (従来は `--tle` が OMM も自動受理)。
+  `arika::tle` / `arika::omm` を使用 (従来は `--tle` が OMM も自動受理)。([#87](https://github.com/sksat/orts/pull/87))
 - 軌道ソースの排他フラグは、片方を黙って優先するのでなくエラーにする:
   `--sat` と `--tle` / `--omm` / `--tle-line1` / `--tle-line2` / `--norad-id`、
   `--tle` と `--omm`、ファイルソースとインライン `--tle-line1` / `--tle-line2`
-  は併用不可。`--tle-line1` / `--tle-line2` は両方指定が必須。
+  は併用不可。`--tle-line1` / `--tle-line2` は両方指定が必須。([#87](https://github.com/sksat/orts/pull/87))
 - TLE epoch の day-of-year を (閏考慮の) 年日数で検証。不正値はそのまま別の
-  年に繰り上がらず拒否される。
+  年に繰り上がらず拒否される。([#87](https://github.com/sksat/orts/pull/87))
 
 #### Fixed
 - `--config` ファイルで起動した `orts serve` は `[[command]]` タイムラインを
   含む config を明確なエラーで拒否する (コマンドタイムラインは `orts run`
-  のみ)。従来は黙って破棄していた。
+  のみ)。従来は黙って破棄していた。([#58](https://github.com/sksat/orts/pull/58))
 
 ### `orts-plugin-sdk` (Rust, crates.io)
 
@@ -99,27 +99,28 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `tick-io` 制御プレーンとは別に運ぶ。SDK は `msg` module (`recv_batch`、
   `recv_all`、`send`、`send_to`、`key_value`、`get`、`get_text`) を追加し
   `Message` / `Outbound` / `NodeId` / `Payload` / `Value` / `NamedValue` を
-  再エクスポート。
+  再エクスポート。([#58](https://github.com/sksat/orts/pull/58))
 - `stream-io` raw byte-stream チャネル (kble 仮想ハーネス統合用): WIT
   `interface stream-io` (名前付き stream の `read` / `write`)。orts は単なる
   byte 導管で、framing は FSW + kble パイプライン側に委ねる。SDK は `stream`
   module (`read`、`write`、`read_bytes`) を追加し `StreamRead` / `StreamError`
-  を再エクスポート。
+  を再エクスポート。([#84](https://github.com/sksat/orts/pull/84))
 - example FSW に detumble→nadir モード遷移ガードを追加 (`commandable-mode-ff`、
-  `commandable-mode-rr`)。
+  `commandable-mode-rr`)。([#58](https://github.com/sksat/orts/pull/58))
 
 #### Changed
 - **BREAKING**: `world plugin` が `msg-io` と `stream-io` を追加で import する。
   変更は純粋に追加的 (既存の interface / import / export / record の削除・改変
   なし) のため、`orts_plugin!` の callback 型 guest は影響なし。手書きの
-  `impl Guest` guest は binding を再生成し新規 host import をリンクする必要がある。
+  `impl Guest` guest は binding を再生成し新規 host import をリンクする必要がある。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 ### `arika` (Rust, crates.io)
 
 #### Added
-- 要素セットのパース。共有 `omm::Omm` (CCSDS 平均要素 record: 識別子、UTC
-  epoch、6 個の SGP4 平均ケプラー要素、B\* drag。角度は rad、平均運動は rad/s)
-  に `semi_major_axis(mu)` / `to_keplerian_elements(mu)`。
+- 要素セットのパース ([#87](https://github.com/sksat/orts/pull/87))。共有
+  `omm::Omm` (CCSDS 平均要素 record: 識別子、UTC epoch、6 個の SGP4 平均
+  ケプラー要素、B\* drag。角度は rad、平均運動は rad/s) に
+  `semi_major_axis(mu)` / `to_keplerian_elements(mu)`。
   - `tle` — NORAD TLE / 2LE / 3LE パーサ (`tle::parse`) が `Omm` を生成。
     Alpha-5 英数字カタログ番号と `OBJECT_ID` 正規化に対応。
   - `omm::json` / `omm::kvn` / `omm::xml` — JSON / KVN / XML 各シリアライズの
@@ -130,23 +131,23 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - `kepler` module (`orts` から `arika` へ移管): `KeplerianElements`
   (`from_state_vector` / `to_state_vector` / `period` / `energy`) と anomaly
   変換群 (`solve_kepler_equation`、`mean_to_true_anomaly` 等)。公開
-  `arika::kepler` surface となり、`orts::orbital::kepler` が再エクスポート。
+  `arika::kepler` surface となり、`orts::orbital::kepler` が再エクスポート。([#87](https://github.com/sksat/orts/pull/87))
 - `frame::Teme` marker — True Equator, Mean Equinox (SGP4 / TLE 出力 frame)。
-  marker のみで、TEME ↔ GCRS 回転は未実装。
+  marker のみで、TEME ↔ GCRS 回転は未実装。([#87](https://github.com/sksat/orts/pull/87))
 - `earth::topocentric` — 地上局の look angle: `TopocentricSite<F: Ecef>`
   (WGS-84 `Geodetic` から構築し局所 ENU 基底を事前計算) と `LookAngles`
-  (方位 / 仰角 / slant range)。`look_angles(target)` で算出。
+  (方位 / 仰角 / slant range)。`look_angles(target)` で算出。([#112](https://github.com/sksat/orts/pull/112))
 
 #### Changed
 - `Epoch::from_iso8601` が ordinal / day-of-year 形式
   (`YYYY-DDDTHH:MM:SS`、CCSDS OMM で使用) も受理し、末尾の `Z` が任意になった。
-  厳密な緩和で、従来受理した入力は引き続きパース可能。
+  厳密な緩和で、従来受理した入力は引き続きパース可能。([#87](https://github.com/sksat/orts/pull/87))
 
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
 - `IntegrationError` が `core::error::Error` を実装 (手書き、`thiserror` 不使用、
-  `no_std` でも動作)。`?` 連鎖や `Box<dyn Error>` に乗るようになった。
+  `no_std` でも動作)。`?` 連鎖や `Box<dyn Error>` に乗るようになった。([#147](https://github.com/sksat/orts/pull/147))
 
 ### `tobari` (Rust, crates.io)
 
@@ -154,7 +155,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - CSSI 宇宙天気ダウンロードの feature `fetch` を `fetch-cssi` にリネーム。
   `fetch-<source>` 規約(`fetch-igrf`、arika の `fetch-horizons`)に揃えた。
   `fetch` は全 `fetch-*` 源を束ねる傘 feature として存続するため、
-  `features = ["fetch"]` は引き続きビルド可能(加えて `fetch-igrf` も有効化)。
+  `features = ["fetch"]` は引き続きビルド可能(加えて `fetch-igrf` も有効化)。([#150](https://github.com/sksat/orts/pull/150))
 
 ### `viewer`
 
@@ -168,70 +169,71 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
     (bring-your-own Canvas)。エクスポートされた `SCENE_UP` で初期化。
   - viewer 自身のアプリも公開 `OrbitScene` API 上に構築 (dogfooding)。
     ライブラリとアプリが乖離しない。
+  ([#89](https://github.com/sksat/orts/pull/89), [#175](https://github.com/sksat/orts/pull/175), [#176](https://github.com/sksat/orts/pull/176))
 - shadcn registry としての配布 (`registry.json`、item `orbit-viewer`):
   component とその primitive を `shadcn add` で consumer アプリに取り込める。
   registry item を導入して描画するスタンドアロン consumer example
-  (`viewer/examples/orbit-viewer/`) を同梱。
+  (`viewer/examples/orbit-viewer/`) を同梱。([#168](https://github.com/sksat/orts/pull/168), [#169](https://github.com/sksat/orts/pull/169))
 - 拡張可能な中心天体: `bodies` prop (`BodyDefinitions`) でカスタム定義を渡し、
   組み込みの `DEFAULT_BODIES` (Earth / Moon / Sun / Mars) に重ねる。
   `BodyDefinition` / `BodyDefinitions` / `BodyTexture` / `DEFAULT_BODIES` を
-  エクスポート。
+  エクスポート。([#164](https://github.com/sksat/orts/pull/164))
 - 注入可能な arika WASM: `initArika({ wasmUrl? })` / `isArikaReady()` を
   エクスポート。embedder が module を事前ロードしたり外部 `.wasm` URL を
   指定できる。arika WASM は独自 workspace package (`arika-wasm`) に切り出し、
-  名前で import する (registry 配布に必要)。
+  名前で import する (registry 配布に必要)。([#159](https://github.com/sksat/orts/pull/159), [#167](https://github.com/sksat/orts/pull/167))
 - 公開 `TrailBuffer` streaming primitive (`TrailBuffer` + `TrailBufferLike`):
   呼び出し側が bounded な trail buffer を所有し React の外で mutate でき
   (`SatelliteState.trailBuffer`)、scene が毎フレーム読むため streaming した
   点が React 再レンダーなしで GPU に届く。`toTrailBuffer` /
-  `trailPointToOrbitPoint` と `OrbitPoint` / `TrailPoint` 型をエクスポート。
+  `trailPointToOrbitPoint` と `OrbitPoint` / `TrailPoint` 型をエクスポート。([#176](https://github.com/sksat/orts/pull/176))
 - `SatelliteState` の衛星ごと表示プロパティ: `color`、`name`、`markerShape`、
   `trailDisplay` (`visibleCount` / `drawStart`、playback スクラブ用)、
   および衛星ごとの `time` (凍結 / スクラブした衛星のマーカーをその body-fixed
-  trail に整合させる)。
+  trail に整合させる)。([#89](https://github.com/sksat/orts/pull/89), [#176](https://github.com/sksat/orts/pull/176))
 - 衛星を trail だけでなく現在位置から描画 — 位置のみ (trail なし) の衛星も
-  マーカーを表示する。
+  マーカーを表示する。([#89](https://github.com/sksat/orts/pull/89))
 - 選択可能なマーカー形状 (`MarkerShape`: `"sphere"` | `"axes-cube"`)。
   3D モデルなしで姿勢を示す非球の XYZ 姿勢キューブを含む。衛星ごと / scene
-  全体で解決でき、シミュレーションが wire 越しに宣言可能 (viewer 上書き可)。
+  全体で解決でき、シミュレーションが wire 越しに宣言可能 (viewer 上書き可)。([#158](https://github.com/sksat/orts/pull/158))
 - 衛星中心 frame が要求された向きを尊重: star-fixed `inertial` (軸が共回転
   しない) または `localOrbital` (LVLH)。従来は衛星中心ビューが常に LVLH に
-  収束していた。(#90)
+  収束していた。([#111](https://github.com/sksat/orts/pull/111), [#90](https://github.com/sksat/orts/issues/90))
 
 #### Changed
 - `./lib` の公開 barrel は意図的に絞っている: Three.js / r3f の構成要素と内部
   frame 配線はエクスポートしない。公開 surface は `OrbitViewer`、`OrbitScene`、
   `TrailBuffer` / `TrailBufferLike`、`toTrailBuffer` / `trailPointToOrbitPoint`、
   `initArika` / `isArikaReady`、`SCENE_UP`、`DEFAULT_BODIES`、
-  `DEFAULT_VIEWER_FRAME` と対応する型。
+  `DEFAULT_VIEWER_FRAME` と対応する型。([#177](https://github.com/sksat/orts/pull/177))
 - DuckDB-wasm アセットを viewer 側で self-host (Vite `?url` import を uneri の
-  `initDuckDB({ bundles })` に渡す)。jsDelivr CDN への runtime 依存を排除。
+  `initDuckDB({ bundles })` に渡す)。jsDelivr CDN への runtime 依存を排除。([#171](https://github.com/sksat/orts/pull/171))
 - Earth 固有の描画 (day/night terminator、大気、Earth の自転) を「night
   texture を持つか」でなく `earth` body id に限定。カスタム天体は汎用の
-  textured-sphere 経路で描画。
+  textured-sphere 経路で描画。([#164](https://github.com/sksat/orts/pull/164))
 - 中心天体に解決可能な半径がない場合、`OrbitScene` / `OrbitViewer` は半径 1 で
-  黙ってフォールバックして scene scale を狂わせるのでなく、明確なエラーを出す。
+  黙ってフォールバックして scene scale を狂わせるのでなく、明確なエラーを出す。([#164](https://github.com/sksat/orts/pull/164))
 - arika WASM は `epochJd` が与えられた時のみロード。epoch なしの embedder は
-  init コストを払わない (固定の Sun 方向、天体回転なし)。
+  init コストを払わない (固定の Sun 方向、天体回転なし)。([#89](https://github.com/sksat/orts/pull/89))
 - WS protocol 型は `ts-rs` 生成 binding になった (`orts-cli` 参照)。手書きの
-  wire 型を置き換え、`satellite_added` variant を追加。
+  wire 型を置き換え、`satellite_added` variant を追加。([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
 - static deploy での既定 WebSocket URL を、`window.location` から到達不能な
-  host を導出するのでなく `ws://localhost:9001/ws` にフォールバック。
+  host を導出するのでなく `ws://localhost:9001/ws` にフォールバック。([#143](https://github.com/sksat/orts/pull/143))
 - static deployment で高解像度天体テクスチャを復元 (サーバからのみ取得、
-  off-thread デコード、bounded な upgrade retry、in-flight guard)。(#105)
+  off-thread デコード、bounded な upgrade retry、in-flight guard)。([#88](https://github.com/sksat/orts/pull/88), [#113](https://github.com/sksat/orts/pull/113), [#105](https://github.com/sksat/orts/issues/105))
 - LVLH (衛星中心) の中心天体の向きを修正。Earth (ERA) と非 Earth
-  (`body_orientation` + pole) で経路を分離。
+  (`body_orientation` + pole) で経路を分離。([#51](https://github.com/sksat/orts/pull/51))
 - quaternion slerp が `qw` だけでなく完全な quaternion (qw/qx/qy/qz 全て) を
-  guard し、NaN はそのまま通す。scene の per-render アロケーションを削除。
+  guard し、NaN はそのまま通す。scene の per-render アロケーションを削除。([#172](https://github.com/sksat/orts/pull/172))
 - trail buffer の mutation を commit phase で適用、trail buffer reset 時に
   `satellites[]` を再構築、body-fixed マーカーで衛星ごとの位置時刻を保持、
   `SatelliteState.color` を尊重、file / RRD adapter は restart 時にクリーンに
-  リセットし fatal な worker error で破棄。
+  リセットし fatal な worker error で破棄。([#89](https://github.com/sksat/orts/pull/89), [#107](https://github.com/sksat/orts/pull/107), [#108](https://github.com/sksat/orts/pull/108), [#176](https://github.com/sksat/orts/pull/176))
 
 #### Performance
-- trail なしの衛星は trail buffer 確保と毎フレームの trail 処理を丸ごとスキップ。
+- trail なしの衛星は trail buffer 確保と毎フレームの trail 処理を丸ごとスキップ。([#107](https://github.com/sksat/orts/pull/107))
 
 ### `uneri` (npm: `@sksat/uneri`)
 
@@ -240,20 +242,20 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   呼び出し側が注入する self-host bundle URL からロード可能に。新しい
   `DuckDBInitOptions` (`bundles?`、`fallbackToJsDelivr?`) と `DuckDBBundleUrls`
   型、純粋関数 `resolveBundleSource(options?)` を追加。uneri は bundler 中立の
-  まま、アプリ側が URL を解決して渡す。
+  まま、アプリ側が URL を解決して渡す。([#171](https://github.com/sksat/orts/pull/171))
 - 堅牢な init: `initDuckDB` は linear backoff でリトライし、死んだ worker は
   `error` listener で即 fail (ハングしない)、terminal failure 後はキャッシュ
-  された reject promise を破棄して次回呼び出しでリトライする。(#70)
+  された reject promise を破棄して次回呼び出しでリトライする。([#76](https://github.com/sksat/orts/pull/76), [#70](https://github.com/sksat/orts/issues/70))
 
 #### Changed
 - 引数なしの `initDuckDB()` の既定動作は不変 — 引き続き jsDelivr CDN から
   bundle を取得するため既存 consumer はそのまま動く。self-host は
-  `options.bundles` で opt-in。
+  `options.bundles` で opt-in。([#171](https://github.com/sksat/orts/pull/171))
 
 #### Fixed
 - init 時の worker 404 / "invalid URL": bundle URL を `initDuckDB` 内で worker
   origin に対して絶対化する。DuckDB が worker を `blob:` URL から生成するため、
-  root-relative パスでは解決できないことへの対処。
+  root-relative パスでは解決できないことへの対処。([#171](https://github.com/sksat/orts/pull/171))
 
 ### Dependencies
 

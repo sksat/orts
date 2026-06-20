@@ -18,37 +18,37 @@ section is subdivided by package.
   (WGS-84 location + elevation mask), `ContactWindow` (interpolated AOS/LOS, max
   elevation, span-clip flags), the pure `PassTracker` state machine, and a
   frame-aware `VisibilityMonitor<F: EarthFrameBridge>` that turns ECI samples
-  into per-station topocentric look angles.
+  into per-station topocentric look angles. ([#112](https://github.com/sksat/orts/pull/112))
 - `IndependentGroup::propagate_to_with(t_target, observer)` — propagate while a
   `FnMut(&SatId, f64, &State)` observer runs on every accepted integration step,
   so callers can sample state at integrator resolution. `propagate_to` delegates
-  to it with a no-op observer; trajectories stay bit-identical.
+  to it with a no-op observer; trajectories stay bit-identical. ([#112](https://github.com/sksat/orts/pull/112))
 - Node-messaging layer (`plugin::message`, "msg-io") for flight-software command
   & telemetry: `Message`, `NodeId` (`Ground` / `Satellite(u32)`), `Payload`,
   `NamedValue`, and `Value` (`Boolean`/`Integer`/`Number`/`Text`/`Bytes`),
-  re-exported from `orts::plugin`.
+  re-exported from `orts::plugin`. ([#58](https://github.com/sksat/orts/pull/58))
 - `PluginController` transport hooks (default no-op, implemented by the WASM
   backends): msg-io `deliver` / `take_outbound`, and stream-io `stream_deliver`
-  / `stream_take` / `stream_close` for raw byte streams.
-- WIT v0 plugin interface extended with the msg-io and stream-io channels.
+  / `stream_take` / `stream_close` for raw byte streams. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
+- WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
 - `StateEffector` is now frame-generic — `StateEffector<S, F: frame::Eci =
   SimpleEci>` returning `ExternalLoads<F>`, like `Model<S, F>` — so effectors
   produce loads already in the host inertial frame. The defaulted `F` keeps
-  existing `StateEffector<S>` impls compiling unchanged.
+  existing `StateEffector<S>` impls compiling unchanged. ([#148](https://github.com/sksat/orts/pull/148))
 
 #### Fixed
 - Removed an unsound frame re-tag in `SpacecraftDynamics`: effector loads tagged
   `ExternalLoads<SimpleEci>` were relabeled as the host frame `F` without
   conversion, silently mislabeling coordinates for any `F != SimpleEci`. Latent
   (the only shipped effector is torque-only) but wrong for a translational
-  effector. (#103)
+  effector. ([#148](https://github.com/sksat/orts/pull/148), [#103](https://github.com/sksat/orts/issues/103))
 
 #### Removed
 - **BREAKING**: the `orts::tle` module is removed; TLE parsing moved to
   `arika::tle` (decoding into the shared `arika::omm::Omm` record). Downstream
-  code using `orts::tle` must migrate to `arika`.
+  code using `orts::tle` must migrate to `arika`. ([#87](https://github.com/sksat/orts/pull/87))
 
 ### `orts-cli` (Rust, crates.io, binary)
 
@@ -57,45 +57,45 @@ section is subdivided by package.
   `[[ground_station]]` (`name`, `latitude_deg`, `longitude_deg`, `altitude_km`,
   `min_elevation_deg`); detected windows print to stderr ordered by AOS, with
   UTC timestamps, sim-time offsets, and max elevation (`*` marks windows clipped
-  by the sim span). Earth-centered, epoch-required.
+  by the sim span). Earth-centered, epoch-required. ([#112](https://github.com/sksat/orts/pull/112))
 - Contact windows are sampled at integrator resolution (every accepted step /
   control tick) rather than at `--output-interval`, so detection no longer
   depends on the output decimation. (A pass shorter than one integrator /
-  control sample gap can still be missed.)
+  control sample gap can still be missed.) ([#112](https://github.com/sksat/orts/pull/112))
 - `--omm <file>` for CCSDS OMM input (JSON / KVN / XML; `-` for stdin), parsed
-  with `arika::omm`; rejects a TLE payload and points to `--tle`.
+  with `arika::omm`; rejects a TLE payload and points to `--tle`. ([#87](https://github.com/sksat/orts/pull/87))
 - `--stream-stdio SAT/STREAM` on `orts serve` — wire one declared stream-io
   stream to stdin/stdout over the kble-socket protocol so orts can run as a kble
   `exec:` plug. That stream's WebSocket endpoint then answers HTTP 409; the
-  server shuts down when the stdio peer closes.
+  server shuts down when the stdio peer closes. ([#114](https://github.com/sksat/orts/pull/114))
 - stream-io kble bridge in `orts serve`: each declared stream is a binary
   WebSocket endpoint at `/stream/{sat}/{stream}` driven by a realtime loop;
   undeclared pairs return HTTP 404. Streams are declared per satellite via the
-  config `streams` field.
+  config `streams` field. ([#106](https://github.com/sksat/orts/pull/106))
 - Config-driven command timeline for flight-software command & telemetry:
   `[[command]]` entries with `t` (sim-time), `sat`, `kind`, and an optional typed
   `args` table, delivered deterministically by the host at the scheduled tick
-  (`orts run`).
+  (`orts run`). ([#58](https://github.com/sksat/orts/pull/58))
 - WebSocket protocol TypeScript types are generated from the Rust types via
   `ts-rs` (`#[derive(TS)]` on the protocol enums, `SimConfig`, `SatelliteInfo`,
   …). Bindings are emitted into the viewer when `cargo test -p orts-cli` runs,
-  and CI fails if they drift.
+  and CI fails if they drift. ([#95](https://github.com/sksat/orts/pull/95))
 
 #### Changed
 - `--tle` is TLE-only again (2LE/3LE; `-` for stdin) and pairs with the new
   `--omm`; element-set parsing is now backed by `arika::tle` / `arika::omm`
-  instead of the removed `orts::tle`. (Previously `--tle` also auto-accepted OMM.)
+  instead of the removed `orts::tle`. (Previously `--tle` also auto-accepted OMM.) ([#87](https://github.com/sksat/orts/pull/87))
 - Mutually-exclusive orbit-source flags now error instead of silently letting one
   win: `--sat` vs `--tle` / `--omm` / `--tle-line1` / `--tle-line2` /
   `--norad-id`; `--tle` vs `--omm`; file sources vs inline `--tle-line1` /
-  `--tle-line2`; and `--tle-line1` / `--tle-line2` must be given together.
+  `--tle-line2`; and `--tle-line1` / `--tle-line2` must be given together. ([#87](https://github.com/sksat/orts/pull/87))
 - TLE epoch day-of-year is validated against the (leap-aware) year length, so a
-  malformed field is rejected rather than rolling into another year.
+  malformed field is rejected rather than rolling into another year. ([#87](https://github.com/sksat/orts/pull/87))
 
 #### Fixed
 - `orts serve` started with a `--config` file now rejects a `[[command]]`
   timeline with a clear error (command timelines run only under `orts run`)
-  instead of silently dropping it.
+  instead of silently dropping it. ([#58](https://github.com/sksat/orts/pull/58))
 
 ### `orts-plugin-sdk` (Rust, crates.io)
 
@@ -106,27 +106,28 @@ section is subdivided by package.
   (`ground` / `satellite(u32)`) with a typed `payload`, separate from the
   `tick-io` control plane. The SDK adds a `msg` module (`recv_batch`, `recv_all`,
   `send`, `send_to`, `key_value`, `get`, `get_text`) re-exporting `Message` /
-  `Outbound` / `NodeId` / `Payload` / `Value` / `NamedValue`.
+  `Outbound` / `NodeId` / `Payload` / `Value` / `NamedValue`. ([#58](https://github.com/sksat/orts/pull/58))
 - `stream-io` raw byte-stream channel for kble virtual-harness integration: a WIT
   `interface stream-io` (`read` / `write` over named streams). orts is a dumb
   byte conduit; framing is left to the FSW + kble pipeline. The SDK adds a
   `stream` module (`read`, `write`, `read_bytes`) re-exporting `StreamRead` /
-  `StreamError`.
+  `StreamError`. ([#84](https://github.com/sksat/orts/pull/84))
 - Example FSWs gain a detumble→nadir mode-transition guard (`commandable-mode-ff`,
-  `commandable-mode-rr`).
+  `commandable-mode-rr`). ([#58](https://github.com/sksat/orts/pull/58))
 
 #### Changed
 - **BREAKING**: `world plugin` now also imports `msg-io` and `stream-io`. The
   change is purely additive (nothing removed or altered), so callback-style
   guests using `orts_plugin!` are unaffected; hand-written `impl Guest` guests
-  must regenerate bindings and link the two new host imports.
+  must regenerate bindings and link the two new host imports. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 ### `arika` (Rust, crates.io)
 
 #### Added
-- Element-set parsing. A shared `omm::Omm` CCSDS mean-element record (identity,
-  UTC epoch, six SGP4 mean Keplerian elements, B\* drag; angles in radians, mean
-  motion in rad/s) with `semi_major_axis(mu)` / `to_keplerian_elements(mu)`.
+- Element-set parsing ([#87](https://github.com/sksat/orts/pull/87)). A shared
+  `omm::Omm` CCSDS mean-element record (identity, UTC epoch, six SGP4 mean
+  Keplerian elements, B\* drag; angles in radians, mean motion in rad/s) with
+  `semi_major_axis(mu)` / `to_keplerian_elements(mu)`.
   - `tle` — NORAD TLE / 2LE / 3LE parser (`tle::parse`) → `Omm`, with Alpha-5
     alphanumeric catalog numbers and `OBJECT_ID` normalization.
   - `omm::json` / `omm::kvn` / `omm::xml` — CCSDS OMM parsers for the JSON, KVN,
@@ -138,24 +139,24 @@ section is subdivided by package.
 - `kepler` module (moved into `arika` from `orts`): `KeplerianElements`
   (`from_state_vector` / `to_state_vector` / `period` / `energy`) and the anomaly
   conversions (`solve_kepler_equation`, `mean_to_true_anomaly`, …). Now a public
-  `arika::kepler` surface; `orts::orbital::kepler` re-exports it.
+  `arika::kepler` surface; `orts::orbital::kepler` re-exports it. ([#87](https://github.com/sksat/orts/pull/87))
 - `frame::Teme` marker — True Equator, Mean Equinox (the SGP4 / TLE output
-  frame). Marker only; the TEME ↔ GCRS rotation is not yet implemented.
+  frame). Marker only; the TEME ↔ GCRS rotation is not yet implemented. ([#87](https://github.com/sksat/orts/pull/87))
 - `earth::topocentric` — ground-site look angles: `TopocentricSite<F: Ecef>`
   (from a WGS-84 `Geodetic`, precomputing the local ENU basis) and `LookAngles`
-  (azimuth / elevation / slant range), via `look_angles(target)`.
+  (azimuth / elevation / slant range), via `look_angles(target)`. ([#112](https://github.com/sksat/orts/pull/112))
 
 #### Changed
 - `Epoch::from_iso8601` also accepts the ordinal / day-of-year form
   (`YYYY-DDDTHH:MM:SS`, used by CCSDS OMM), and the trailing `Z` is now optional.
-  A strict relaxation — previously-accepted inputs still parse.
+  A strict relaxation — previously-accepted inputs still parse. ([#87](https://github.com/sksat/orts/pull/87))
 
 ### `utsuroi` (Rust, crates.io)
 
 #### Added
 - `IntegrationError` now implements `core::error::Error` (by hand, no
   `thiserror`, works under `no_std`), so it participates in `?` chains and
-  `Box<dyn Error>`.
+  `Box<dyn Error>`. ([#147](https://github.com/sksat/orts/pull/147))
 
 ### `tobari` (Rust, crates.io)
 
@@ -164,7 +165,7 @@ section is subdivided by package.
   matching the `fetch-<source>` convention (`fetch-igrf`, and `arika`'s
   `fetch-horizons`). `fetch` is retained as an umbrella feature that enables
   every `fetch-*` source, so `features = ["fetch"]` keeps building (and now
-  also pulls in `fetch-igrf`).
+  also pulls in `fetch-igrf`). ([#150](https://github.com/sksat/orts/pull/150))
 
 ### `viewer`
 
@@ -178,73 +179,74 @@ section is subdivided by package.
     (bring-your-own Canvas), initialised with the exported `SCENE_UP`.
   - The viewer's own app is now built on the public `OrbitScene` API
     (dogfooded), so the library and the app cannot drift apart.
+  ([#89](https://github.com/sksat/orts/pull/89), [#175](https://github.com/sksat/orts/pull/175), [#176](https://github.com/sksat/orts/pull/176))
 - Distribution as a shadcn registry (`registry.json`, item `orbit-viewer`): the
   component and its primitives can be vendored into a consumer app via
   `shadcn add`. Ships a standalone consumer example (`viewer/examples/orbit-viewer/`)
-  that installs and renders the registry item.
+  that installs and renders the registry item. ([#168](https://github.com/sksat/orts/pull/168), [#169](https://github.com/sksat/orts/pull/169))
 - Extensible central bodies: custom definitions via the `bodies` prop
   (`BodyDefinitions`) merged over the built-in `DEFAULT_BODIES`
   (Earth / Moon / Sun / Mars). Exports `BodyDefinition` / `BodyDefinitions` /
-  `BodyTexture` / `DEFAULT_BODIES`.
+  `BodyTexture` / `DEFAULT_BODIES`. ([#164](https://github.com/sksat/orts/pull/164))
 - Injectable arika WASM: `initArika({ wasmUrl? })` / `isArikaReady()` are
   exported so an embedder can preload the module or point at an external `.wasm`
   URL. The arika WASM was extracted into its own workspace package (`arika-wasm`),
-  imported by name (required for registry distribution).
+  imported by name (required for registry distribution). ([#159](https://github.com/sksat/orts/pull/159), [#167](https://github.com/sksat/orts/pull/167))
 - Public `TrailBuffer` streaming primitive (`TrailBuffer` + `TrailBufferLike`): a
   caller can own a bounded trail buffer and mutate it outside React
   (`SatelliteState.trailBuffer`); the scene reads it each frame so streamed points
   reach the GPU without a React re-render. Exports `toTrailBuffer` /
-  `trailPointToOrbitPoint` and the `OrbitPoint` / `TrailPoint` types.
+  `trailPointToOrbitPoint` and the `OrbitPoint` / `TrailPoint` types. ([#176](https://github.com/sksat/orts/pull/176))
 - Per-satellite display props on `SatelliteState`: `color`, `name`,
   `markerShape`, `trailDisplay` (`visibleCount` / `drawStart`, for playback
   scrubbing), and a per-satellite `time` so a frozen/scrubbed satellite keeps its
-  marker aligned with its own body-fixed trail.
+  marker aligned with its own body-fixed trail. ([#89](https://github.com/sksat/orts/pull/89), [#176](https://github.com/sksat/orts/pull/176))
 - Satellites render from their current position, not only from trails — a
-  position-only satellite still shows a marker.
+  position-only satellite still shows a marker. ([#89](https://github.com/sksat/orts/pull/89))
 - Selectable marker shapes (`MarkerShape`: `"sphere"` | `"axes-cube"`), including
   a non-sphere XYZ orientation cube that shows attitude without a hosted 3D
   model; resolvable per-satellite or scene-wide, and declarable by the simulation
-  over the wire (viewer-overridable).
+  over the wire (viewer-overridable). ([#158](https://github.com/sksat/orts/pull/158))
 - Satellite-centred frames now honour the requested orientation: star-fixed
   `inertial` (axes don't co-rotate) or `localOrbital` (LVLH). Previously a
-  satellite-centred view always collapsed to LVLH. (#90)
+  satellite-centred view always collapsed to LVLH. ([#111](https://github.com/sksat/orts/pull/111), [#90](https://github.com/sksat/orts/issues/90))
 
 #### Changed
 - The `./lib` public barrel is intentionally narrow: the Three.js / r3f building
   blocks and the internal frame wiring are not exported. Supported surface:
   `OrbitViewer`, `OrbitScene`, `TrailBuffer` / `TrailBufferLike`, `toTrailBuffer`
   / `trailPointToOrbitPoint`, `initArika` / `isArikaReady`, `SCENE_UP`,
-  `DEFAULT_BODIES`, `DEFAULT_VIEWER_FRAME`, and the supporting types.
+  `DEFAULT_BODIES`, `DEFAULT_VIEWER_FRAME`, and the supporting types. ([#177](https://github.com/sksat/orts/pull/177))
 - DuckDB-wasm assets are self-hosted by the viewer (Vite `?url` imports passed to
   uneri's `initDuckDB({ bundles })`) instead of the jsDelivr CDN, removing a
-  third-party-CDN runtime dependency.
+  third-party-CDN runtime dependency. ([#171](https://github.com/sksat/orts/pull/171))
 - Earth-specific rendering (day/night terminator, atmosphere, Earth spin) is
   gated to the `earth` body id, not "has a night texture"; custom bodies render
-  via the generic textured-sphere path.
+  via the generic textured-sphere path. ([#164](https://github.com/sksat/orts/pull/164))
 - `OrbitScene` / `OrbitViewer` throw a clear error when the central body has no
-  resolvable radius, instead of silently using radius 1 and a wrong scene scale.
+  resolvable radius, instead of silently using radius 1 and a wrong scene scale. ([#164](https://github.com/sksat/orts/pull/164))
 - The arika WASM loads only when an `epochJd` is supplied; epoch-less embedders
-  pay no init cost (fixed Sun direction, no body rotation).
+  pay no init cost (fixed Sun direction, no body rotation). ([#89](https://github.com/sksat/orts/pull/89))
 - WS protocol types are now the `ts-rs`-generated bindings (see `orts-cli`),
-  replacing the hand-written wire types and adding the `satellite_added` variant.
+  replacing the hand-written wire types and adding the `satellite_added` variant. ([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
 - Default WebSocket URL on static deploys falls back to `ws://localhost:9001/ws`
-  instead of deriving an unreachable host from `window.location`.
+  instead of deriving an unreachable host from `window.location`. ([#143](https://github.com/sksat/orts/pull/143))
 - High-resolution body textures restored in static deployment (server-only fetch,
-  off-thread decode, bounded upgrade retries, in-flight guard). (#105)
+  off-thread decode, bounded upgrade retries, in-flight guard). ([#88](https://github.com/sksat/orts/pull/88), [#113](https://github.com/sksat/orts/pull/113), [#105](https://github.com/sksat/orts/issues/105))
 - LVLH (satellite-centred) central-body orientation corrected, with separate
-  Earth (ERA) vs non-Earth (`body_orientation` + pole) paths.
+  Earth (ERA) vs non-Earth (`body_orientation` + pole) paths. ([#51](https://github.com/sksat/orts/pull/51))
 - Quaternion slerp guards on a complete quaternion (all of qw/qx/qy/qz) rather
   than `qw` alone; NaN passes through. Dropped a per-render allocation in the
-  scene.
+  scene. ([#172](https://github.com/sksat/orts/pull/172))
 - Trail-buffer mutations are applied in the commit phase; `satellites[]` is
   rebuilt on a trail-buffer reset; per-satellite position time is preserved for
   body-fixed markers; `SatelliteState.color` is honoured; file / RRD adapters
-  reset cleanly on restart and tear down on fatal worker errors.
+  reset cleanly on restart and tear down on fatal worker errors. ([#89](https://github.com/sksat/orts/pull/89), [#107](https://github.com/sksat/orts/pull/107), [#108](https://github.com/sksat/orts/pull/108), [#176](https://github.com/sksat/orts/pull/176))
 
 #### Performance
-- Trail-less satellites skip trail-buffer allocation and per-frame trail work.
+- Trail-less satellites skip trail-buffer allocation and per-frame trail work. ([#107](https://github.com/sksat/orts/pull/107))
 
 ### `uneri` (npm: `@sksat/uneri`)
 
@@ -253,20 +255,20 @@ section is subdivided by package.
   self-hosted bundle URLs instead of the jsDelivr CDN. New `DuckDBInitOptions`
   (`bundles?`, `fallbackToJsDelivr?`) and `DuckDBBundleUrls` types, plus a pure
   `resolveBundleSource(options?)`. uneri stays bundler-neutral; the app resolves
-  and passes the URLs.
+  and passes the URLs. ([#171](https://github.com/sksat/orts/pull/171))
 - Resilient init: `initDuckDB` retries with linear backoff, fast-fails on a dead
   worker via an `error` listener instead of hanging, and drops the cached
-  rejected promise after terminal failure so a later call retries. (#70)
+  rejected promise after terminal failure so a later call retries. ([#76](https://github.com/sksat/orts/pull/76), [#70](https://github.com/sksat/orts/issues/70))
 
 #### Changed
 - Calling `initDuckDB()` with no options is unchanged — it still sources bundles
   from the jsDelivr CDN — so existing consumers keep working; self-hosting is
-  opt-in via `options.bundles`.
+  opt-in via `options.bundles`. ([#171](https://github.com/sksat/orts/pull/171))
 
 #### Fixed
 - Worker 404 / "invalid URL" on init: bundle URLs are absolutized against the
   worker origin inside `initDuckDB`, because DuckDB instantiates its worker from a
-  `blob:` URL against which a root-relative path cannot resolve.
+  `blob:` URL against which a root-relative path cannot resolve. ([#171](https://github.com/sksat/orts/pull/171))
 
 ### Dependencies
 
