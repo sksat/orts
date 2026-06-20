@@ -397,6 +397,32 @@ Release blog post: [orts: 人工衛星シミュレーションプラットフォ
 - Built on `@duckdb/duckdb-wasm` 1.32.0 for in-browser OLAP with `uplot`
   1.6 as the render layer. React ≥ 18 as peer dependency.
 
+### `viewer`
+
+- Web-based real-time 3D orbit viewer built on React + `@react-three/fiber`
+  (Three.js) + Vite. Bundled into the `orts-cli` binary and served at
+  `http://localhost:9001`, and also deployed as a standalone SPA.
+- 3D scene: textured central bodies via a generic `CelestialBody` component
+  (Earth / Moon / Sun / Mars), with custom GLSL shaders for Earth's day/night
+  terminator and atmospheric scattering, plus an orbit-controls camera.
+- Per-satellite visualization: 3D trajectory trails, 3D satellite models with
+  a configurable display scale (true-scale sizing in the satellite-centered
+  view), and body-frame attitude axes driven by the attitude quaternion.
+- Reference-frame selection: a central-body-centered inertial (ECI) or
+  body-fixed (ECEF) view, or recenter on a satellite to track it in its
+  local-orbital (LVLH) frame. ECI ↔ ECEF transforms run in-browser via the
+  `arika` WASM build.
+- Data sources: CSV and `.rrd` orbit-file loading (`.rrd` decoded in-browser
+  via `rrd-wasm`) and a live WebSocket mode (`useWebSocket`) streaming
+  telemetry from `orts serve` for one or many satellites.
+- In-browser simulation control: configure simulation parameters and
+  pause / resume / terminate the running `orts serve` simulation from the UI.
+- Replay / playback: a `useRealtimePlayback` hook drives time-based orbit replay
+  with progressive trail drawing and a `PlaybackBar` scrubber
+  (play / pause / seek).
+- In-browser analytics: DuckDB-wasm + uPlot time-series charts (built on
+  `uneri`) with drag-zoom and multi-satellite series.
+
 ### `starlight-rustdoc` (npm)
 
 - Astro / Starlight integration that turns `cargo rustdoc --output-format
