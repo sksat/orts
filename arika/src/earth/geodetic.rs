@@ -87,11 +87,11 @@ impl<F: frame::Ecef> Vec3<F> {
     /// Convert this Earth-fixed Cartesian vector to WGS-84 geodetic
     /// coordinates via Bowring iteration.
     ///
-    /// Available on any `Vec3<F>` where `F: `[`frame::Ecef`]
+    /// Available on any `Vec3<F>` where `F` implements [`frame::Ecef`]
     /// ([`SimpleEcef`](crate::frame::SimpleEcef), [`Tirs`](crate::frame::Tirs),
     /// [`Itrs`](crate::frame::Itrs)). The Tirs / Itrs variants assume the caller
     /// has already applied the IAU 2006 rotation chain (e.g.
-    /// [`Rotation::<Gcrs, Itrs>::iau2006_full_from_utc`](crate::frame::Rotation))
+    /// [`Rotation::<Gcrs, Itrs>::iau2006_full_from_utc`](crate::frame::Rotation::iau2006_full_from_utc))
     /// to produce the ECEF vector.
     pub fn to_geodetic(&self) -> Geodetic {
         let v = self.inner();

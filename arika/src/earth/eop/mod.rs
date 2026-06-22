@@ -14,7 +14,7 @@
 //! - [`FullEopProvider`] — 上記 4 つを全て実装した型に対する便宜 trait
 //!   (auto-blanket impl で自動付与される)
 //!
-//! 高精度 rotation API ([`Rotation<Gcrs, Cirs>::iau2006`](crate::frame::Rotation)
+//! 高精度 rotation API ([`Rotation<Gcrs, Cirs>::iau2006`](crate::frame::Rotation::iau2006)
 //! など) は必要な trait bound で gate される。`NullEop` を渡すと compile error に
 //! なるため、silent degradation は起こらない。
 //!
@@ -52,7 +52,7 @@ pub trait Ut1Offset {
 ///
 /// 極運動は Earth の瞬間的な rotation 軸が CIP (Celestial Intermediate Pole) から
 /// どれだけずれているかを表すパラメータで、通常は < 0.5 arcsec の範囲にある。
-/// [`Rotation<Tirs, Itrs>::polar_motion`](crate::frame::Rotation) で使用する。
+/// [`Rotation<Tirs, Itrs>::polar_motion`](crate::frame::Rotation::polar_motion) で使用する。
 pub trait PolarMotion {
     /// Return the x component of the polar motion [arcsec] at the given UTC MJD.
     fn x_pole(&self, utc_mjd: f64) -> f64;
@@ -104,7 +104,7 @@ impl<T> FullEopProvider for T where T: Ut1Offset + PolarMotion + NutationCorrect
 /// これを受け付けるのは provider-free な API (`Epoch<Utc>::to_ut1_naive` など) のみで、
 /// EOP trait bound を要求する全ての API では **compile error** になる。例えば
 /// `Epoch<Utc>::to_ut1<P: Ut1Offset>` や
-/// [`Rotation<Gcrs, Cirs>::iau2006`](crate::frame::Rotation) に `NullEop` を渡すと
+/// [`Rotation<Gcrs, Cirs>::iau2006`](crate::frame::Rotation::iau2006) に `NullEop` を渡すと
 /// 型エラーになる。
 ///
 /// # 存在意義
