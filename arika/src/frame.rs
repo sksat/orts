@@ -140,9 +140,10 @@ pub trait Frame: sealed::Sealed {
 
 /// Structural category for earth-centered inertial frames.
 ///
-/// 近似系 (`SimpleEci`) と厳密系 (`Gcrs`/`Cirs`/`Teme`) の両方を含む category。
-/// precision-aware な処理は concrete 型を関数シグネチャに書き、`<F: Eci>` generic
-/// bound は precision-agnostic な math (magnitude / dot / 等) のみに使う。
+/// 近似系 (`SimpleEci`)、厳密系 (`Gcrs`/`Cirs`)、SGP4 の quasi-inertial 系 (`Teme`)
+/// をまとめて含む category。precision-aware な処理は concrete 型を関数シグネチャに
+/// 書き、`<F: Eci>` generic bound は precision-agnostic な math (magnitude / dot /
+/// 等) のみに使う。
 pub trait Eci: Frame {}
 
 /// Structural category for earth-centered earth-fixed frames.
@@ -237,8 +238,8 @@ impl Frame for Tirs {
 impl Ecef for Tirs {}
 
 /// International Terrestrial Reference System. IAU 2006 CIO chain の Earth-fixed
-/// side (polar motion 適用済み)。WGS84 ellipsoid の geodetic 変換
-/// ([`Vec3::to_geodetic`]) はこの frame に紐づく。
+/// side (polar motion 適用済み)。geodetic 変換 ([`Vec3::to_geodetic`]) は任意の
+/// `Ecef` frame で使えるが、高精度 path では通常この ITRS から変換する。
 ///
 /// GCRS からの完全 chain は [`Rotation::<Gcrs, Itrs>::iau2006_full`]、polar motion
 /// 単体は [`Rotation::<Tirs, Itrs>::polar_motion`] を参照。
