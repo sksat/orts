@@ -1,7 +1,7 @@
 //! Public `Rotation` constructors for the IAU 2006 CIO-based
 //! GCRS ↔ ITRS chain.
 //!
-//! Phase 3B wires the pure-math evaluators from
+//! Wires the pure-math evaluators from
 //! [`super::cip`], [`super::precession`], [`super::fundamental_arguments`],
 //! and the EOP provider traits from [`crate::earth::eop`] into typed
 //! [`crate::frame::Rotation`] constructors.
@@ -79,9 +79,7 @@ use crate::frame::{Cirs, Gcrs, Itrs, Rotation, Tirs};
 /// s'(t) ≈ −47 µas × t
 /// ```
 ///
-/// Used by [`Rotation<Tirs, Itrs>::polar_motion`]. Exposed as a private
-/// helper; Phase 3A-1 / 3A-2 did not surface it because no consumer
-/// existed until the polar motion constructor below.
+/// Private helper used by [`Rotation<Tirs, Itrs>::polar_motion`].
 fn tio_locator_s_prime(tt_centuries: f64) -> Rad {
     Uas::new(-47.0 * tt_centuries).to_radians()
 }

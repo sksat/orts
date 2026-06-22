@@ -12,20 +12,17 @@
 //! # Frame marker
 //!
 //! - [`SimpleEci`] — 歳差・章動・極運動を無視した近似的な Earth-centered inertial。
-//!   ERA-only Z 回転の親フレーム。Meeus ephemeris と可視化グレード計算の出発点
-//! - [`SimpleEcef`] — [`SimpleEci`] からの ERA Z 回転先。簡易地球固定系。
-//!   極運動や章動を一切適用しない近似的 Earth-fixed
-//! - [`Gcrs`] — Geocentric Celestial Reference System (IAU 2006 CIO chain の
-//!   celestial side)。Meeus ephemeris の返り型としても使う (strict な GCRS では
-//!   なく "geocentric inertial as returned by low-precision analytic models" の
-//!   意味。後続 Phase で precession/nutation 補正が加わると厳密な GCRS に近づく)
-//! - [`Cirs`] — Celestial Intermediate Reference System (IAU 2006 CIO chain 中間)。
-//!   Phase 2 では marker のみ、rotation chain impl は Phase 3 で追加
-//! - [`Tirs`] — Terrestrial Intermediate Reference System (polar motion 未適用)。
-//!   Phase 2 では marker のみ、rotation chain impl は Phase 3 で追加
-//! - [`Itrs`] — International Terrestrial Reference System。polar motion 適用済み
-//!   Earth-fixed frame で geodetic 変換はここに紐づく (本格的な bind は Phase 3+)。
-//!   Phase 2 では marker のみ、rotation chain impl は Phase 3 で追加
+//!   ERA-only Z 回転の親フレーム。可視化グレード計算の出発点
+//! - [`SimpleEcef`] — [`SimpleEci`] からの ERA-only Z 回転先。近似的 Earth-fixed
+//! - [`Gcrs`] — Geocentric Celestial Reference System。IAU 2006 CIO chain の
+//!   celestial side。Meeus ephemeris の返り型でもあり、その値は低精度 analytic
+//!   model 由来なので strict な GCRS とは限らない
+//! - [`Cirs`] — Celestial Intermediate Reference System (CIO chain の中間)
+//! - [`Tirs`] — Terrestrial Intermediate Reference System (polar motion 未適用)
+//! - [`Itrs`] — International Terrestrial Reference System (polar motion 適用済み)。
+//!   geodetic 変換はこの frame に紐づく
+//! - [`Teme`] — True Equator, Mean Equinox。SGP4 / TLE / OMM の平均要素フレーム
+//!   (marker のみ; ↔ Gcrs 回転は未実装)
 //! - [`Rsw`] — Radial / Along-track / Cross-track 軌道ローカル系。
 //!   軸順は標準 RSW 規約 [R̂, Ŝ, Ŵ] (R̂=normalize(r), Ŵ=normalize(r×v), Ŝ=Ŵ×R̂)
 //! - [`Body`] — 宇宙機機体座標系
@@ -33,7 +30,7 @@
 //! # Category trait
 //!
 //! - [`Eci`] — structural category for earth-centered inertial frames.
-//!   実装者: `SimpleEci`, `Gcrs`, `Cirs`
+//!   実装者: `SimpleEci`, `Gcrs`, `Cirs`, `Teme`
 //! - [`Ecef`] — structural category for earth-fixed frames.
 //!   実装者: `SimpleEcef`, `Tirs`, `Itrs`
 //! - [`LocalOrbital`] — structural category for local orbital frames.
@@ -143,20 +140,19 @@ pub trait Frame: sealed::Sealed {
 
 /// Structural category for earth-centered inertial frames.
 ///
-/// 実装者: [`SimpleEci`], [`Gcrs`]。近似系 (`SimpleEci`) と将来の厳密系
-/// (`Gcrs`/`Cirs` 等) の両方を含む category。precision-aware な処理は concrete
-/// 型を関数シグネチャに書き、`<F: Eci>` generic bound は precision-agnostic
-/// な math (magnitude / dot / 等) のみに使う。
+/// 近似系 (`SimpleEci`) と厳密系 (`Gcrs`/`Cirs`/`Teme`) の両方を含む category。
+/// precision-aware な処理は concrete 型を関数シグネチャに書き、`<F: Eci>` generic
+/// bound は precision-agnostic な math (magnitude / dot / 等) のみに使う。
 pub trait Eci: Frame {}
 
 /// Structural category for earth-centered earth-fixed frames.
 ///
-/// 実装者: [`SimpleEcef`]。将来 `Itrs`/`Tirs`/`Pef` が追加される。同上の注意。
+/// 実装者: [`SimpleEcef`] (近似), [`Tirs`], [`Itrs`] (厳密)。同上の注意。
 pub trait Ecef: Frame {}
 
 /// Structural category for local orbital frames.
 ///
-/// 実装者: [`Rsw`]。将来 `Ntw`/`Vvlh`/`Perifocal` 等が追加される。
+/// 実装者: [`Rsw`]。
 pub trait LocalOrbital: Frame {}
 
 // Concrete frame markers
@@ -193,9 +189,9 @@ impl Ecef for SimpleEcef {}
 
 /// Geocentric Celestial Reference System. IAU 2006 CIO chain の celestial side。
 ///
-/// 現 Phase では Meeus ephemeris (低精度 analytic model) の返り型として使用。
-/// 厳密な IAU 2006/2000A の precession-nutation 補正は後続 Phase で追加される。
-/// `Rotation<Gcrs, Itrs>::iau2006_full` など高精度 chain は Phase 3 で提供予定。
+/// Meeus ephemeris (低精度 analytic model) の返り型としても使うため、その値は
+/// 厳密な GCRS とは限らない。GCRS → ITRS の高精度変換は
+/// [`Rotation::<Gcrs, Itrs>::iau2006_full`] を参照。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gcrs;
 impl sealed::Sealed for Gcrs {}
@@ -208,19 +204,12 @@ impl Eci for Gcrs {}
 /// Celestial Intermediate Reference System. IAU 2006 CIO chain の中間フレーム
 /// (precession/nutation 適用後、ERA による Z 回転の直前の celestial side)。
 ///
-/// # Phase 2 status
-///
-/// 本 Phase では **marker のみ** を提供する。`Rotation<Gcrs, Cirs>::iau2006(tt, eop)`
-/// などの rotation chain constructor は Phase 3 で実装予定。現状ではこのフレームを
-/// 使う API は存在しないため、runtime では `FrameDescriptor::Cirs` と
-/// `<Cirs as Frame>::DESCRIPTOR` 経由でのみ参照できる。
-///
 /// # Independent variable
 ///
-/// `Rotation<Gcrs, Cirs>` は TT (Terrestrial Time) の Julian centuries を独立変数と
-/// する — IAU 2006 precession と IAU 2000A/B nutation の series は TT centuries で
-/// 定義されているため。詳細は [`arika/DESIGN.md`](../../DESIGN.md) の「Frame rotation
-/// の time scale は definitional」を参照。
+/// [`Rotation::<Gcrs, Cirs>::iau2006`] は TT (Terrestrial Time) の Julian centuries
+/// を独立変数とする — IAU 2006 precession と IAU 2000A/B nutation の series は TT
+/// centuries で定義されているため。詳細は [`arika/DESIGN.md`](../../DESIGN.md) の
+/// 「Frame rotation の time scale は definitional」を参照。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cirs;
 impl sealed::Sealed for Cirs {}
@@ -233,15 +222,11 @@ impl Eci for Cirs {}
 /// Terrestrial Intermediate Reference System. polar motion 未適用の Earth-fixed
 /// 中間フレーム ([`Cirs`] から ERA による Z 回転で得られる)。
 ///
-/// # Phase 2 status
-///
-/// 本 Phase では **marker のみ** を提供する。`Rotation<Cirs, Tirs>::from_era(ut1)` と
-/// `Rotation<Tirs, Itrs>::polar_motion(utc, eop)` は Phase 3 で実装予定。
-///
 /// # Independent variable
 ///
-/// [`Cirs`] → [`Tirs`] の変換は UT1 (Earth rotation angle) を独立変数とする — ERA は
-/// UT1 の definitional な関数であり、他の scale では物理的に意味をなさない。
+/// [`Cirs`] → [`Tirs`] の変換 ([`Rotation::<Cirs, Tirs>::from_era`]) は UT1 (Earth
+/// rotation angle) を独立変数とする — ERA は UT1 の definitional な関数であり、
+/// 他の scale では物理的に意味をなさない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tirs;
 impl sealed::Sealed for Tirs {}
@@ -252,16 +237,11 @@ impl Frame for Tirs {
 impl Ecef for Tirs {}
 
 /// International Terrestrial Reference System. IAU 2006 CIO chain の Earth-fixed
-/// side (polar motion 適用済み)。WGS84 / GRS80 ellipsoid の geodetic 変換はこの
-/// frame に紐づく — ただし本 Phase では変換 impl は [`SimpleEcef`] にしか生えて
-/// いない。
+/// side (polar motion 適用済み)。WGS84 ellipsoid の geodetic 変換
+/// ([`Vec3::to_geodetic`]) はこの frame に紐づく。
 ///
-/// # Phase 2 status
-///
-/// 本 Phase では **marker のみ** を提供する。Phase 3 以降:
-/// - `Rotation<Tirs, Itrs>::polar_motion(utc, eop)` の実装
-/// - `Rotation<Gcrs, Itrs>::iau2006_full(...)` の完全 chain
-/// - `Vec3<Itrs>::to_geodetic()` / `Vec3<Itrs>::to_geodetic_with::<E>()` の追加
+/// GCRS からの完全 chain は [`Rotation::<Gcrs, Itrs>::iau2006_full`]、polar motion
+/// 単体は [`Rotation::<Tirs, Itrs>::polar_motion`] を参照。
 ///
 /// # 独立性
 ///
@@ -281,14 +261,11 @@ impl Ecef for Itrs {}
 /// True Equator, Mean Equinox — the quasi-inertial frame in which SGP4 / TLE /
 /// OMM mean elements are expressed. Belongs to the [`Eci`] category.
 ///
-/// # Phase status
-///
-/// **marker only**. The TEME ↔ [`Gcrs`] / [`SimpleEci`] rotation (GMST +
-/// equation of the equinoxes + precession/nutation) is deferred to a later
-/// phase, as is tagging element-set-derived state vectors as `Vec3<Teme>` —
-/// today the parsers return mean elements ([`crate::omm::Omm`]), not
-/// frame-tagged vectors. The marker exists so those future APIs have an
-/// explicit frame to name.
+/// **marker only**: the TEME ↔ [`Gcrs`] / [`SimpleEci`] rotation (GMST +
+/// equation of the equinoxes + precession/nutation) is not implemented, and the
+/// element-set parsers return mean elements ([`crate::omm::Omm`]) rather than
+/// `Vec3<Teme>` state vectors. The marker exists so those APIs have an explicit
+/// frame to name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Teme;
 impl sealed::Sealed for Teme {}
@@ -532,7 +509,7 @@ impl Rotation<SimpleEci, SimpleEcef> {
     ///
     /// `SimpleEcef = R_z(−ERA(UT1)) × SimpleEci`. Applies only the ERA Z
     /// rotation — no precession, nutation, or polar motion. For high-precision
-    /// work use the IAU 2006 CIO chain (not yet implemented: Phase 3).
+    /// work use the IAU 2006 CIO chain ([`Rotation::<Gcrs, Itrs>::iau2006_full`]).
     pub fn from_ut1(epoch: &Epoch<Ut1>) -> Self {
         Self::from_era(epoch.era())
     }
