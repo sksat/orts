@@ -106,10 +106,14 @@ impl ThirdBodyGravity {
 impl ThirdBodyGravity {
     /// Compute third-body gravitational acceleration [km/s²].
     ///
-    /// The tidal formula is pure vector arithmetic on raw `Vector3<f64>`.
-    /// The body position closure returns `Vec3<Gcrs>` whose raw inner
-    /// value is numerically equal to any other ECI frame at Meeus
-    /// precision, so this function is frame-independent.
+    /// Pure vector arithmetic on raw `Vector3<f64>`: the `Vec3<Gcrs>` body
+    /// position (Meeus) is used directly, whatever frame the satellite state is
+    /// tagged with. This is an intentional raw-vector approximation — the
+    /// default `SimpleEci` frame is only loosely related to GCRS (`arika::frame`:
+    /// it omits precession, nutation, and frame bias), so the raw mix is
+    /// appropriate at the Meeus / visualization precision this path targets, not
+    /// for high-accuracy GCRS work. The orbital effect is bounded against Orekit
+    /// by the GCRF oracle tests.
     pub(crate) fn acceleration(
         &self,
         sat_position: &Vector3<f64>,

@@ -227,8 +227,8 @@ fn build_gcrs_system_real_eop(scenario: &Scenario) -> OrbitalSystem<frame::Gcrs>
     build_gcrs_system_with_eop(scenario, GcrsEopStorage::new(load_eop_table()))
 }
 
-/// Propagate with Gcrs path and return final position error vs Orekit.
-fn final_pos_err_gcrs(scenario: &Scenario, system: &OrbitalSystem<frame::Gcrs>) -> f64 {
+/// Propagate the Gcrs path and return the final position [km].
+fn final_pos_gcrs(scenario: &Scenario, system: &OrbitalSystem<frame::Gcrs>) -> Vector3<f64> {
     let ic = &scenario.initial_cartesian;
     let initial = OrbitalState::<frame::Gcrs>::new_in_frame(
         Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
@@ -241,24 +241,23 @@ fn final_pos_err_gcrs(scenario: &Scenario, system: &OrbitalSystem<frame::Gcrs>) 
 
     let dp = DormandPrince;
     let duration = scenario.trajectory.last().unwrap().t_seconds;
-    let final_state = dp.integrate(system, initial, 0.0, duration, 30.0, |_, _| {});
+    *dp.integrate(system, initial, 0.0, duration, 30.0, |_, _| {})
+        .position()
+}
 
+/// Final position error of the Gcrs propagation vs the Orekit GCRF fixture.
+fn final_pos_err_gcrs(scenario: &Scenario, system: &OrbitalSystem<frame::Gcrs>) -> f64 {
     let final_orekit = scenario.trajectory.last().unwrap();
     (Vector3::new(
         final_orekit.position_km[0],
         final_orekit.position_km[1],
         final_orekit.position_km[2],
-    ) - *final_state.position())
+    ) - final_pos_gcrs(scenario, system))
     .magnitude()
 }
 
-/// Propagate with SimpleEci path (same initial conditions) and return
-/// final position error vs the GCRF Orekit fixture.
-///
-/// The GCRF fixture and EME2000 differ by ~23 mas (frame bias), which
-/// is sub-meter at LEO. So comparing SimpleEci against the GCRF fixture
-/// gives a meaningful (if slightly pessimistic) error measure.
-fn final_pos_err_simple(scenario: &Scenario) -> f64 {
+/// Propagate the SimpleEci (default) path and return the final position [km].
+fn final_pos_simple(scenario: &Scenario) -> Vector3<f64> {
     let ic = &scenario.initial_cartesian;
     let initial = OrbitalState::new(
         Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
@@ -318,15 +317,57 @@ fn final_pos_err_simple(scenario: &Scenario) -> f64 {
 
     let dp = DormandPrince;
     let duration = scenario.trajectory.last().unwrap().t_seconds;
-    let final_state = dp.integrate(&system, initial, 0.0, duration, 30.0, |_, _| {});
+    *dp.integrate(&system, initial, 0.0, duration, 30.0, |_, _| {})
+        .position()
+}
 
+/// Final position error of the SimpleEci propagation vs the GCRF Orekit fixture.
+///
+/// The GCRF fixture and EME2000 differ by ~23 mas (frame bias), which is
+/// sub-meter at LEO, so comparing SimpleEci against the GCRF fixture gives a
+/// meaningful (if slightly pessimistic) error measure.
+fn final_pos_err_simple(scenario: &Scenario) -> f64 {
     let final_orekit = scenario.trajectory.last().unwrap();
     (Vector3::new(
         final_orekit.position_km[0],
         final_orekit.position_km[1],
         final_orekit.position_km[2],
-    ) - *final_state.position())
+    ) - final_pos_simple(scenario))
     .magnitude()
+}
+
+/// All force models in this scenario — J2 zonal gravity and sun/moon
+/// third-body — read the satellite state and the Meeus ephemeris (`Vec3<Gcrs>`)
+/// as raw `Vector3`, so the integration-frame phantom (`SimpleEci` vs `Gcrs`)
+/// never enters the numbers. This pins that frame-agnostic treatment: the two
+/// propagations of this fixture must be numerically identical. (Drag is the one
+/// force that *does* depend on the frame, via the Earth-fixed rotation, so this
+/// fixture is required to be drag-free.)
+///
+/// Scope: the GCRF fixtures never construct [`SolarRadiationPressure`], so SRP
+/// is not exercised here — but it uses the identical raw-vector pattern (see its
+/// `acceleration` rationale). If any force in this scenario (third-body **or**
+/// J2) is later made frame-aware, this test fails and forces that to be a
+/// deliberate, reviewed decision rather than a silent behavior shift.
+#[test]
+fn j2_thirdbody_propagation_is_frame_agnostic() {
+    let fixtures = load_fixtures();
+    let scenario = find_scenario(&fixtures, "gcrf_j2_thirdbody_iss_10orbits");
+    assert!(
+        scenario.force_model.drag.is_none(),
+        "this invariant only holds without drag; scenario must stay drag-free"
+    );
+
+    let pos_simple = final_pos_simple(scenario);
+    let pos_gcrs = final_pos_gcrs(scenario, &build_gcrs_system(scenario));
+
+    let diff = (pos_simple - pos_gcrs).magnitude();
+    assert!(
+        diff < 1e-6,
+        "J2 + third-body must propagate identically in SimpleEci and Gcrs: \
+         final positions differ by {diff:.3e} km (expected ~0; a real frame \
+         effect would be meters)"
+    );
 }
 
 #[test]
