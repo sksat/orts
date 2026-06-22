@@ -2,34 +2,22 @@
 //!
 //! # Scope
 //!
-//! This module provides the pure-math building blocks for the IAU 2006 CIO-based
-//! Earth rotation chain. In Phase 3 it is populated incrementally:
+//! The pure-math building blocks for the IAU 2006 CIO-based Earth rotation
+//! chain, plus the public [`crate::frame::Rotation`] constructors that wrap
+//! them:
 //!
-//! - **Phase 3A-1**: typed angle primitives, fundamental arguments
-//!   `F1..F14`, and IAU 2006 precession polynomial expressions from
+//! - typed angle primitives, fundamental arguments `F1..F14`, and IAU 2006
+//!   precession polynomials ([`fundamental_arguments`], [`precession`]) from
 //!   [IERS Conventions 2010 TN36](https://www.iers.org/IERS/EN/Publications/TechnicalNotes/tn36.html)
 //!   Eq. (5.39), (5.40), (5.43), (5.44)
-//! - **Phase 3A-2**: CIP `X`, `Y` and CIO locator `s + XY/2` series
-//!   generated from the IERS electronic tables `tab5.2a.txt`,
-//!   `tab5.2b.txt`, `tab5.2d.txt` — stored as the crate-private
-//!   `tables_gen` submodule. The generator lives at
-//!   `arika/tools/generate_iau2006_tables.py`
-//! - **Phase 3A-3** (this commit): [`cip`] evaluators — `cip_xy`,
-//!   `cio_locator_s`, `cip_coordinates` — that consume the generated
-//!   series and return `Rad`-typed CIP coordinates + CIO locator
-//! - **Phase 3A-4**: GCRS→CIRS matrix composition in [`cip`] using
-//!   `(X, Y, s)` plus SOFA-style `R_z · R_y · R_z` assembly
-//! - **Phase 3B** (this commit): public [`crate::frame::Rotation`]
-//!   constructors in [`cio_chain`] —
-//!   `Rotation<Gcrs, Cirs>::iau2006(tt, utc, eop)`,
-//!   `Rotation<Cirs, Tirs>::from_era(ut1)`,
-//!   `Rotation<Tirs, Itrs>::polar_motion(tt, utc, eop)`,
-//!   `Rotation<Gcrs, Itrs>::iau2006_full(tt, ut1, utc, eop)`,
-//!   and the convenience `iau2006_full_from_utc(utc, eop)`. All EOP
-//!   trait bounds from Phase 2 are now enforced end-to-end
-//!
-//! No public [`crate::frame::Rotation`] constructors are exposed from this
-//! module yet — they appear in Phase 3B.
+//! - CIP `X`, `Y` and CIO locator `s + XY/2` series plus the GCRS→CIRS matrix
+//!   composition ([`cip`]). The series are generated from the IERS electronic
+//!   tables `tab5.2{a,b,d}.txt` into the crate-private `tables_gen` submodule
+//!   (generator: `arika/tools/generate_iau2006_tables.py`)
+//! - the GCRS → CIRS → TIRS → ITRS `Rotation` constructors ([`cio_chain`]):
+//!   `Rotation<Gcrs, Cirs>::iau2006`, `<Cirs, Tirs>::from_era`,
+//!   `<Tirs, Itrs>::polar_motion`, `<Gcrs, Itrs>::iau2006_full`, each gated by
+//!   the [`crate::earth::eop`] provider trait bounds
 //!
 //! # Independent variable
 //!

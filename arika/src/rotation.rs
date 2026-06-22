@@ -14,8 +14,8 @@
 //! - [`crate::sun::rotation::SUN`] (via [`crate::sun::SUN`] re-export)
 //! - [`crate::planets::rotation::MARS`]
 //!
-//! Phase 3 will add strict IAU 2006 CIO-based precession / nutation / ERA /
-//! polar motion models under `earth/` as a sibling to this dispatcher.
+//! The strict IAU 2006 CIO-based precession / nutation / ERA / polar motion
+//! chain lives under [`crate::earth::iau2006`] as a sibling to this dispatcher.
 //!
 //! Reference: Archinal et al. (2011), "Report of the IAU Working Group on
 //! Cartographic Coordinates and Rotational Elements: 2009",

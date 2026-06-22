@@ -11,12 +11,11 @@
 //!   ([`Ut1Offset`](eop::Ut1Offset), [`PolarMotion`](eop::PolarMotion),
 //!   [`NutationCorrections`](eop::NutationCorrections),
 //!   [`LengthOfDay`](eop::LengthOfDay)) and [`NullEop`](eop::NullEop) placeholder
-//! - [`iau2006`] — IAU 2006 / 2000A_R06 precession-nutation supporting math
-//!   (angular units, fundamental arguments, precession polynomials; Phase 3A-1)
-//!
-//! Phase 3 will add `Rotation<Gcrs, Cirs>::iau2006` / `Rotation<Cirs, Tirs>::from_era`
-//! / `Rotation<Tirs, Itrs>::polar_motion` constructors that consume these EOP
-//! traits for the full IAU 2006 CIO-based Earth rotation chain.
+//! - [`iau2006`] — full IAU 2006 / 2000A_R06 CIO-based Earth rotation chain:
+//!   the supporting math (angular units, fundamental arguments, precession /
+//!   nutation polynomials) plus the `Rotation<Gcrs, Cirs>::iau2006` /
+//!   `Rotation<Cirs, Tirs>::from_era` / `Rotation<Tirs, Itrs>::polar_motion`
+//!   constructors that consume the [`eop`] traits.
 
 pub mod ellipsoid;
 pub mod eop;

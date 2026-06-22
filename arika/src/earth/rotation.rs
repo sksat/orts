@@ -3,10 +3,8 @@
 //! This is the base linear model (α₁, δ₁ ≠ 0, so the pole drifts from the
 //! ECI Z-axis over centuries). For short-term simulations where precession is
 //! negligible, the simpler ERA-only rotation
-//! (`Rotation::<SimpleEci, SimpleEcef>::from_ut1`) is preferred.
-//!
-//! For Phase 3 the strict IAU 2006 CIO-based precession / nutation chain
-//! will be added as a sibling module under `earth/`.
+//! (`Rotation::<SimpleEci, SimpleEcef>::from_ut1`) is preferred; for high
+//! precision use the IAU 2006 CIO chain in [`crate::earth::iau2006`].
 
 use crate::rotation::IauRotationModel;
 

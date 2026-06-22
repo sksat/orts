@@ -75,30 +75,24 @@ impl From<SimpleEcef> for Geodetic {
     }
 }
 
-// Generic `to_geodetic()` method on any Earth-fixed `Vec3<F>`.
+// Generic `to_geodetic()` on any Earth-fixed `Vec3<F>`.
 //
-// Works for both [`crate::frame::SimpleEcef`] (the ERA-only simple path) and
-// [`crate::frame::Itrs`] (the full IAU 2006 CIO-based precise path). The
-// Bowring iteration is identical for both — the distinction only matters
-// up-stream, in the rotation that produced the ECEF vector in the first
-// place.
-//
-// The pre-existing `impl From<SimpleEcef> for Geodetic` is kept for
-// backwards source compatibility of `.into()` call sites that predate
-// Phase 4; new code should prefer `.to_geodetic()` because it works for
-// both the simple and precise Ecef markers without rewriting the
-// signature when the frame is upgraded from `SimpleEcef` to `Itrs`.
+// The Bowring iteration is identical for the approximate ([`crate::frame::SimpleEcef`])
+// and precise ([`crate::frame::Itrs`]) markers — the distinction only matters
+// upstream, in the rotation that produced the ECEF vector. The older
+// `impl From<SimpleEcef> for Geodetic` is kept for existing `.into()` call sites;
+// new code should prefer `.to_geodetic()` since it also works on `Itrs` without
+// changing signatures.
 impl<F: frame::Ecef> Vec3<F> {
     /// Convert this Earth-fixed Cartesian vector to WGS-84 geodetic
     /// coordinates via Bowring iteration.
     ///
-    /// Available on any `Vec3<F>` where `F` implements the
-    /// [`frame::Ecef`] category trait — currently
-    /// [`crate::frame::SimpleEcef`], [`crate::frame::Tirs`], and
-    /// [`crate::frame::Itrs`]. Tirs / Itrs variants require the caller
-    /// to have already applied the appropriate IAU 2006 rotation chain
-    /// (Phase 3B `Rotation<Gcrs, Itrs>::iau2006_full_from_utc` or
-    /// similar) to produce an Itrs vector.
+    /// Available on any `Vec3<F>` where `F` implements [`frame::Ecef`]
+    /// ([`SimpleEcef`](crate::frame::SimpleEcef), [`Tirs`](crate::frame::Tirs),
+    /// [`Itrs`](crate::frame::Itrs)). The Tirs / Itrs variants assume the caller
+    /// has already applied the IAU 2006 rotation chain (e.g.
+    /// [`Rotation::<Gcrs, Itrs>::iau2006_full_from_utc`](crate::frame::Rotation::iau2006_full_from_utc))
+    /// to produce the ECEF vector.
     pub fn to_geodetic(&self) -> Geodetic {
         let v = self.inner();
         let p = (v.x * v.x + v.y * v.y).sqrt();

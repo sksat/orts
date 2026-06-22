@@ -21,8 +21,7 @@
 //!   Matches ERFA `c2ixys`
 //!
 //! None of these are public [`crate::frame::Rotation`] constructors —
-//! those are Phase 3B. Phase 3A-3 ships the raw scalar evaluators, and
-//! Phase 3A-4 adds the 3×3 matrix composition that Phase 3B will wrap.
+//! those live in [`super::cio_chain`], which wraps the matrix composition here.
 //!
 //! # Independent variable
 //!

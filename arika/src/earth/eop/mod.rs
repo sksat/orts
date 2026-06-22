@@ -14,25 +14,15 @@
 //! - [`FullEopProvider`] — 上記 4 つを全て実装した型に対する便宜 trait
 //!   (auto-blanket impl で自動付与される)
 //!
-//! 高精度 rotation API (Phase 3 で追加予定の `Rotation<Gcrs, Cirs>::iau2006` など)
-//! は必要な trait bound で gate される。`NullEop` を渡すと compile error になるため、
-//! silent degradation は起こらない。
+//! 高精度 rotation API ([`Rotation<Gcrs, Cirs>::iau2006`](crate::frame::Rotation::iau2006)
+//! など) は必要な trait bound で gate される。`NullEop` を渡すと compile error に
+//! なるため、silent degradation は起こらない。
 //!
 //! # `NullEop`
 //!
 //! [`NullEop`] は **EOP 系 trait を一つも実装しない** placeholder 型。これを受け付ける
 //! のは provider-free な API (例: `Epoch<Utc>::to_ut1_naive`、`Epoch<Tai>::to_tt`) のみ
 //! で、EOP trait bound を要求する全ての API では compile error を誘発する。
-//!
-//! # Phase 2 の範囲
-//!
-//! 本 Phase では:
-//! - EOP trait 4 種 + `FullEopProvider` + `NullEop` を追加
-//! - [`Epoch::<Utc>::to_ut1<P: Ut1Offset>`](crate::epoch::Epoch::to_ut1) を追加
-//! - trybuild compile-fail test で `NullEop` が EOP trait を実装しないことを pin
-//!
-//! Phase 3 で rotation constructor (`iau2006`, `from_era`, `polar_motion`,
-//! `iau2006_full`) が追加された段階で、これらの trait bound を要求する。
 //!
 //! # Leap second は別体系
 //!
@@ -62,7 +52,7 @@ pub trait Ut1Offset {
 ///
 /// 極運動は Earth の瞬間的な rotation 軸が CIP (Celestial Intermediate Pole) から
 /// どれだけずれているかを表すパラメータで、通常は < 0.5 arcsec の範囲にある。
-/// `Rotation<Tirs, Itrs>::polar_motion(utc, eop)` (Phase 3) で使用する。
+/// [`Rotation<Tirs, Itrs>::polar_motion`](crate::frame::Rotation::polar_motion) で使用する。
 pub trait PolarMotion {
     /// Return the x component of the polar motion [arcsec] at the given UTC MJD.
     fn x_pole(&self, utc_mjd: f64) -> f64;
@@ -90,8 +80,8 @@ pub trait NutationCorrections {
 /// (通常 ~1 ms 程度)。Earth の自転速度変動を表し、速度変換 (velocity
 /// transformation between inertial and rotating frames) に使われる。
 ///
-/// Phase 3 の position-only rotation では LOD は不要だが、将来 velocity
-/// transformation を追加する際にこの trait が役に立つ。
+/// 現状の position-only な rotation chain では LOD は不要 (どの constructor も
+/// 要求しない)。velocity transformation を追加する際の bound として用意してある。
 pub trait LengthOfDay {
     /// Return the LOD [seconds] at the given UTC MJD.
     fn lod(&self, utc_mjd: f64) -> f64;
@@ -101,8 +91,8 @@ pub trait LengthOfDay {
 ///
 /// Implemented automatically via an auto-blanket impl for any type that
 /// implements [`Ut1Offset`] + [`PolarMotion`] + [`NutationCorrections`] +
-/// [`LengthOfDay`]. Phase 3 で `Rotation<Gcrs, Itrs>::iau2006_full<P: FullEopProvider>`
-/// のような完全 chain の bound として使う想定。
+/// [`LengthOfDay`]. position-only な chain は LOD を含まない個別 bound を使うため、
+/// この alias は LOD を要する velocity transform 用の便宜 bound。
 pub trait FullEopProvider: Ut1Offset + PolarMotion + NutationCorrections + LengthOfDay {}
 
 impl<T> FullEopProvider for T where T: Ut1Offset + PolarMotion + NutationCorrections + LengthOfDay {}
@@ -113,8 +103,9 @@ impl<T> FullEopProvider for T where T: Ut1Offset + PolarMotion + NutationCorrect
 ///
 /// これを受け付けるのは provider-free な API (`Epoch<Utc>::to_ut1_naive` など) のみで、
 /// EOP trait bound を要求する全ての API では **compile error** になる。例えば
-/// `Epoch<Utc>::to_ut1<P: Ut1Offset>` や Phase 3 で追加予定の
-/// `Rotation<Gcrs, Cirs>::iau2006` に `NullEop` を渡すと型エラーになる。
+/// `Epoch<Utc>::to_ut1<P: Ut1Offset>` や
+/// [`Rotation<Gcrs, Cirs>::iau2006`](crate::frame::Rotation::iau2006) に `NullEop` を渡すと
+/// 型エラーになる。
 ///
 /// # 存在意義
 ///
