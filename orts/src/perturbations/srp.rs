@@ -87,8 +87,8 @@ impl SolarRadiationPressure {
     /// Sun position comes from Meeus ephemeris (`Vec3<Gcrs>`); the geometry is
     /// pure raw vector arithmetic, used directly whatever frame the satellite
     /// state is tagged with. Same intentional raw-vector approximation as
-    /// [`ThirdBodyGravity::acceleration`](crate::perturbations::ThirdBodyGravity)
-    /// — suited to Meeus / visualization precision, not high-accuracy GCRS work.
+    /// `ThirdBodyGravity::acceleration` — suited to Meeus / visualization
+    /// precision, not high-accuracy GCRS work.
     pub(crate) fn acceleration(
         &self,
         sat_position: &Vector3<f64>,
