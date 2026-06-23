@@ -59,6 +59,12 @@
       "matchSourceUrls": ["/^https:\\/\\/github\\.com\\/arkedge\\/kble(?:\\.git)?\\/?$/"]
     },
     {
+      "description": "Group the arkedge/notalawyer crates (released in lockstep). Matched by source URL, not name, to keep notalawyer-* squatters out",
+      "matchManagers": ["cargo"],
+      "groupName": "notalawyer",
+      "matchSourceUrls": ["/^https:\\/\\/github\\.com\\/arkedge\\/notalawyer(?:\\.git)?\\/?$/"]
+    },
+    {
       "description": "Auto-merge patch-level updates once required CI checks pass",
       "matchUpdateTypes": ["patch"],
       "automerge": true
