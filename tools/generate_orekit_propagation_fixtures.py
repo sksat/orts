@@ -51,7 +51,16 @@ DEFAULT_BALLISTIC_COEFF = 0.01      # m²/kg
 
 def setup_orekit():
     """Initialize Orekit JVM and data."""
+    import os
+
+    import jdk4py
     import orekit_jpype as orekit
+
+    # jpype finds the JVM via JAVA_HOME; point it at the bundled jdk4py JDK when
+    # unset or empty so `uv run` needs no system Java install. An explicit,
+    # non-empty JAVA_HOME is respected.
+    if not os.environ.get("JAVA_HOME"):
+        os.environ["JAVA_HOME"] = str(jdk4py.JAVA_HOME)
 
     orekit.initVM()
 
