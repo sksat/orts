@@ -840,3 +840,21 @@ fn duration_since_recovers_sub_microsecond_interval() {
     // Precondition: differencing the f64 read-outs floors the 1 ns to 0.
     assert_eq!((e1.jd() - e0.jd()) * 86400.0, 0.0);
 }
+
+/// `add_si_seconds` is an exact SI add on the uniform TAI line: `duration_since`
+/// recovers exactly the added amount, including across a leap-second boundary.
+/// (The pre-canonical UTC-iteration version drifted by ~1 s for results landing
+/// inside the inserted second; the canonical uniform-TAI add is correct, as the
+/// time-systems guidance prescribes — "do duration math in TAI/TT".)
+#[test]
+fn add_si_seconds_is_exact_si_across_leap() {
+    // Starts just before the 2017-01-01 leap so several steps land in/after it.
+    let e = Epoch::<Utc>::from_iso8601("2016-12-31T23:59:59Z").unwrap();
+    for dt in [0.5_f64, 1.0, 1.5, 2.0, 10.0, 86_400.0] {
+        let elapsed = e.add_si_seconds(dt).duration_since(&e).as_si_seconds();
+        assert!(
+            (elapsed - dt).abs() < 1e-6,
+            "add_si_seconds({dt}) → elapsed {elapsed} s"
+        );
+    }
+}

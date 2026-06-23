@@ -57,8 +57,6 @@ use convert::TaiLens;
 use convert::era_formula;
 use datetime::to_datetime_from_jd;
 use jd2::TwoPartJd;
-#[allow(unused_imports)]
-use leap::tai_minus_utc_at_mjd;
 
 /// Julian Date of J2000.0 epoch (JD 2451545.0).
 ///
@@ -157,7 +155,13 @@ macro_rules! impl_jd_accessors {
                 <$scale as TaiLens>::scale_from_tai(self.tai).jd()
             }
 
-            /// The Julian Date as a precise two-part `(hi, lo)` value.
+            /// The Julian Date as a precise two-part `(hi, lo)` value — for
+            /// feeding SOFA-style two-part consumers without the `jd()` collapse.
+            ///
+            /// `lo` carries the conversion's sub-`f64` residual; since every
+            /// constructor currently ingests a single `f64`, it reflects the
+            /// lens arithmetic, not user-supplied sub-`f64` input precision (a
+            /// two-part ingestion path is future work).
             pub fn jd_parts(&self) -> (f64, f64) {
                 <$scale as TaiLens>::scale_from_tai(self.tai).parts()
             }
