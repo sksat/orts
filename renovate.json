@@ -54,6 +54,11 @@
       "matchPackageNames": ["three", "@types/three", "/^@react-three//"]
     },
     {
+      "description": "Group the arkedge/kble workspace crates (released in lockstep) into one PR. Matched by source URL, not name, so a third-party kble-* squatter can't slip in; spans both the cargo dep kble-socket and the custom-regex kble binary (KBLE_VERSION). Anchored regex tolerates a .git suffix / trailing slash in the resolved repository URL",
+      "groupName": "kble",
+      "matchSourceUrls": ["/^https:\\/\\/github\\.com\\/arkedge\\/kble(?:\\.git)?\\/?$/"]
+    },
+    {
       "description": "Auto-merge patch-level updates once required CI checks pass",
       "matchUpdateTypes": ["patch"],
       "automerge": true
