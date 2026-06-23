@@ -6,7 +6,9 @@ use arika::body::KnownBody;
 use arika::epoch::Epoch;
 
 use crate::orbital::OrbitalSystem;
-use crate::perturbations::{AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity};
+use crate::perturbations::{
+    AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity, ZonalGravity,
+};
 
 /// Physical parameters of a satellite relevant to force model construction.
 pub struct SatelliteParams {
@@ -20,18 +22,28 @@ pub struct SatelliteParams {
     pub srp_cr: Option<f64>,
 }
 
-/// Build a gravity field model for the given body.
-fn build_gravity_field(body: &KnownBody) -> Box<dyn GravityField> {
+/// Central (point-mass) gravity field. Oblateness is added separately as a
+/// [`ZonalGravity`] perturbation via [`build_zonal_gravity`], because the zonal
+/// terms depend on the rotation-pole orientation in the integration frame and
+/// are no longer frame-independent like the point-mass term.
+fn build_gravity_field() -> Box<dyn GravityField> {
+    Box::new(gravity::PointMass)
+}
+
+/// Zonal (J2/J3/J4) perturbation for the body, if it has an oblateness model.
+///
+/// These builders produce `SimpleEci` systems, where `EarthPoleBridge` returns
+/// the frame's `+Z` axis as the pole — the legacy frame-Z convention. So
+/// `ZonalGravity` reproduces the previous `ZonalHarmonics` behaviour for every
+/// body; for a non-Earth body that is correct only insofar as its state is
+/// expressed in a frame whose `+Z` is that body's spin axis (the pre-existing
+/// assumption, unchanged here). The Earth-specific CIP only enters for the
+/// geocentric `Gcrs` frame, which is Earth-only by construction.
+fn build_zonal_gravity(body: &KnownBody, mu: f64) -> Option<ZonalGravity> {
     let props = body.properties();
-    match props.j2 {
-        Some(j2) => Box::new(gravity::ZonalHarmonics {
-            r_body: props.radius,
-            j2,
-            j3: props.j3,
-            j4: props.j4,
-        }),
-        None => Box::new(gravity::PointMass),
-    }
+    props
+        .j2
+        .map(|j2| ZonalGravity::new(mu, props.radius, j2, props.j3, props.j4))
 }
 
 /// Return the default third-body perturbations for a given central body.
@@ -66,8 +78,12 @@ pub fn build_orbital_system(
     atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
 ) -> OrbitalSystem {
     let props = body.properties();
-    let gravity_field = build_gravity_field(body);
-    let mut system = OrbitalSystem::new(mu, gravity_field).with_body_radius(props.radius);
+    let mut system = OrbitalSystem::new(mu, build_gravity_field()).with_body_radius(props.radius);
+
+    // Oblateness (J2/J3/J4) as a pole-aware perturbation.
+    if let Some(zonal) = build_zonal_gravity(body, mu) {
+        system = system.with_model(zonal);
+    }
 
     // Third-body gravity (requires epoch for ephemeris)
     if let Some(epoch) = epoch {
@@ -120,9 +136,13 @@ pub fn build_spacecraft_dynamics(
     atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
 ) -> SpacecraftDynamics<Box<dyn GravityField>> {
     let props = body.properties();
-    let gravity_field = build_gravity_field(body);
     let mut system =
-        SpacecraftDynamics::new(mu, gravity_field, inertia).with_body_radius(props.radius);
+        SpacecraftDynamics::new(mu, build_gravity_field(), inertia).with_body_radius(props.radius);
+
+    // Oblateness (J2/J3/J4) as a pole-aware perturbation.
+    if let Some(zonal) = build_zonal_gravity(body, mu) {
+        system = system.with_model(zonal);
+    }
 
     // Third-body gravity (requires epoch for ephemeris)
     if let Some(epoch) = epoch {
