@@ -1,0 +1,34 @@
+{
+  "skill_name": "coordinate-time-implementation",
+  "note": "Implementation-specific evals (typing discipline and property-based testing) where this skill, not the companion concerns skill, is the primary driver. The cross-skill behavioural cases live under ../../coordinate-time-systems/evals/. Run with-skill vs baseline, ideally repository-denied.",
+  "evals": [
+    {
+      "id": 0,
+      "name": "review-typed-api",
+      "prompt": "Review this draft of our Rust frame/time API for type-safety. Does it let coordinate frames, time scales, or precision tiers get mixed or silently confused, and what would you change?\n\n```rust\n// position in some Earth-centered inertial frame\npub fn j2_accel(pos: Vector3<f64>, mu: f64, j2: f64) -> Vector3<f64> { /* ... */ }\n\npub trait Eci {}\n// \"works for any inertial frame\"\nimpl<F: Eci> ThirdBodyGravity<F> {\n    pub fn acceleration(&self, sun_pos: Vector3<f64>) -> Vector3<f64> { /* uses sun_pos raw */ }\n}\n\n// convenience conversions\nimpl From<Epoch<Utc>> for Epoch<Ut1> { fn from(u: Epoch<Utc>) -> Self { /* assume dUT1 = 0 */ } }\nimpl From<SimpleEci> for Gcrs { /* just reinterpret the axes */ }\n\nimpl Epoch<Utc> { pub fn era(&self) -> f64 { /* earth rotation angle */ } }\n```\n\nWhat is unsafe here and how should each part be typed?",
+      "expected_output": "Identifies each type-safety hole and gives the fix: bare Vector3 should be frame-tagged Vec3<F>; the blanket impl<F: Eci> using a raw vector lets an approximation propagate to future frames silently (use explicit per-frame impls); the Utc->Ut1 From assuming dUT1=0 is a silent EOP-free downgrade (require an EOP provider); the SimpleEci->Gcrs From is a silent precision upgrade that should not exist; era() belongs only on Epoch<Ut1>. Overall: make meaningful operations expressible and meaningless ones uncompilable.",
+      "expectations": [
+        "Flags the bare Vector3<f64> position/acceleration types and recommends frame-tagging them (e.g. Vec3<F>) so frames cannot be mixed silently",
+        "Flags the blanket impl<F: Eci> over a precision-aware operation as letting an approximation propagate to future frames with no compile error, and recommends explicit per-frame impls",
+        "Flags the Epoch<Utc> -> Epoch<Ut1> conversion that assumes dUT1 = 0 and recommends requiring an EOP provider instead (no EOP-free UT1)",
+        "Flags the SimpleEci -> Gcrs conversion as a silent precision upgrade (approximate masquerading as rigorous) that should not be provided",
+        "Flags that era() is defined on Epoch<Utc> and should exist only on Epoch<Ut1> (ERA is a UT1 observable)",
+        "Frames the fix as making the meaningful operations expressible and the meaningless ones fail to compile (type the frame/scale; don't launder raw values on public APIs)"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "proptest-rotation-scale",
+      "prompt": "We have a unit-quaternion `Rotation<From, To>` type (with `inverse`, composition, and `transform(Vec3<From>) -> Vec3<To>`) and a scale-tagged `Epoch<S>` with conversions (`to_tai`, `to_utc`, `to_tt`, ...). Write a property-based test plan using `proptest`: which invariants should hold, what must the input generators cover, and sketch the key tests.",
+      "expected_output": "Rotation round-trip (inverse(r) composed with r is identity) and magnitude preservation; composition associativity and identity; scale round-trip (utc->tai->utc) including a generator that lands on a leap-second boundary and a duration-across-boundary check; assert with an explicit tolerance, never == on a transformed f64; generators cover degenerate inputs (near-zero/parallel vectors, element singularities) and non-finite (NaN/+/-inf); quaternion unit-norm/renormalization (and/or covariance PSD) as an invariant.",
+      "expectations": [
+        "Includes a rotation round-trip invariant (inverse(r) o r approximately identity) and magnitude preservation (|r.v| approximately |v|)",
+        "Includes composition invariants (associativity and/or r o inverse(r) approximately identity)",
+        "Includes a scale round-trip (e.g. utc->tai->utc) and explicitly exercises a leap-second boundary (duration across it)",
+        "Specifies asserting with an explicit tolerance, never == on a transformed f64",
+        "Says generators must cover degenerate inputs (near-zero/parallel vectors) and non-finite inputs (NaN/+/-inf)",
+        "Mentions quaternion unit-norm hygiene / renormalization (or covariance positive-semidefiniteness) as an invariant"
+      ]
+    }
+  ]
+}
