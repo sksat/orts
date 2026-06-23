@@ -653,3 +653,179 @@ fn duration_si_seconds() {
     assert_eq!(Duration::from_minutes(1.0).as_si_seconds(), 60.0);
     assert_eq!(Duration::from_hours(1.0).as_si_seconds(), 3600.0);
 }
+
+// Scale taxonomy metadata
+
+#[test]
+fn scale_kind_metadata() {
+    assert_eq!(Utc::KIND, TimeScaleKind::Hybrid);
+    assert_eq!(Tai::KIND, TimeScaleKind::Atomic);
+    assert_eq!(Tt::KIND, TimeScaleKind::CoordinateDerived);
+    assert_eq!(Ut1::KIND, TimeScaleKind::EarthRotation);
+    assert_eq!(Tdb::KIND, TimeScaleKind::CoordinateDerived);
+}
+
+#[test]
+fn fixed_offset_from_tai_constants() {
+    assert_eq!(<Tai as FixedOffsetFromTai>::SECONDS_AFTER_TAI, 0.0);
+    assert_eq!(
+        <Tt as FixedOffsetFromTai>::SECONDS_AFTER_TAI,
+        TT_MINUS_TAI_SEC
+    );
+    assert_eq!(<Gps as FixedOffsetFromTai>::SECONDS_AFTER_TAI, -19.0);
+}
+
+// GPS Time
+
+#[test]
+fn gps_kind_and_offset() {
+    assert_eq!(Gps::KIND, TimeScaleKind::Atomic);
+    assert_eq!(Epoch::<Gps>::scale_name(), "GPS");
+}
+
+// Tolerance for sub-second offsets recovered by subtracting two ~2.46e6-day
+// Julian Dates: the difference inherits ~1 ULP of the operands (≈48 µs at
+// modern JDs). This f64 single-JD floor is removed by the planned two-part
+// representation; until then offset assertions stay above it.
+const OFFSET_TOL_SEC: f64 = 1e-4;
+
+#[test]
+fn gps_is_tai_minus_19s() {
+    // TAI − GPS = 19 s exactly, with no leap-second dependence.
+    let tai = Epoch::<Tai>::from_jd_tai(2460000.5);
+    let gps = tai.to_gps();
+    let delta_sec = (tai.jd() - gps.jd()) * 86400.0;
+    assert!(
+        (delta_sec - 19.0).abs() < OFFSET_TOL_SEC,
+        "TAI − GPS: expected 19 s, got {delta_sec} s"
+    );
+}
+
+#[test]
+fn gps_tai_roundtrip_is_bit_exact() {
+    // GPS is a fixed offset, so GPS → TAI → GPS recovers the input exactly.
+    let gps = Epoch::<Gps>::from_jd_gps(2460123.456);
+    assert_eq!(gps.to_tai().to_gps().jd().to_bits(), gps.jd().to_bits());
+}
+
+#[test]
+fn gps_minus_utc_is_18s_after_2017() {
+    // 2017-01-01 onward: leap = 37 s, so GPS − UTC = 37 − 19 = 18 s.
+    let utc = Epoch::<Utc>::from_iso8601("2024-03-20T12:00:00Z").unwrap();
+    let gps = utc.to_gps();
+    let delta_sec = (gps.jd() - utc.jd()) * 86400.0;
+    assert!(
+        (delta_sec - 18.0).abs() < OFFSET_TOL_SEC,
+        "GPS − UTC in 2024: expected 18 s, got {delta_sec} s"
+    );
+}
+
+/// **Discriminating test**: GPS tracks TAI continuously (no leap second), so
+/// `GPS − UTC` must *step* by exactly the leap-second insertion (17 s → 18 s)
+/// across the 2017-01-01 boundary, while GPS itself stays uniform.
+#[test]
+fn gps_minus_utc_steps_across_2017_leap() {
+    let before = Epoch::<Utc>::from_iso8601("2016-06-01T00:00:00Z").unwrap();
+    let after = Epoch::<Utc>::from_iso8601("2017-06-01T00:00:00Z").unwrap();
+    let d_before = (before.to_gps().jd() - before.jd()) * 86400.0;
+    let d_after = (after.to_gps().jd() - after.jd()) * 86400.0;
+    assert!(
+        (d_before - 17.0).abs() < OFFSET_TOL_SEC,
+        "GPS − UTC before 2017 leap: expected 17 s, got {d_before} s"
+    );
+    assert!(
+        (d_after - 18.0).abs() < OFFSET_TOL_SEC,
+        "GPS − UTC after 2017 leap: expected 18 s, got {d_after} s"
+    );
+}
+
+#[test]
+fn gps_utc_roundtrip() {
+    let utc = Epoch::<Utc>::from_iso8601("2024-06-15T08:30:45Z").unwrap();
+    let recovered = utc.to_gps().to_utc();
+    assert!(
+        (recovered.jd() - utc.jd()).abs() < 1e-10,
+        "UTC → GPS → UTC diverged: original={}, recovered={}",
+        utc.jd(),
+        recovered.jd()
+    );
+}
+
+// Behavior-preserving characterization of the scale conversion graph.
+//
+// Each row pins the bit-exact f64 output of every conversion edge for a UTC
+// input given by `cols[0]` (its own `jd()` bits). Captured from the
+// pre-taxonomy-refactor implementation; the taxonomy refactor must keep these
+// bit-for-bit. Inputs include leap-second boundaries, a pre-1972 date, and
+// non-finite values (NaN, ±∞), per the project's behavior-preserving policy.
+//
+// Column order:
+//   0: utc.jd()                       5: utc.to_tai().to_tt().jd()
+//   1: utc.to_tai().jd()              6: utc.to_tai().to_utc().jd()
+//   2: utc.to_tt().jd()               7: utc.to_tt().to_tai().jd()
+//   3: utc.to_tdb().jd()              8: utc.to_tt().to_tdb().jd()
+//   4: utc.to_ut1_naive().jd()        9: utc.to_tdb().to_tt().jd()
+#[rustfmt::skip]
+const CONVERSION_GOLDEN: &[(&str, [u64; 10])] = &[
+    ("j2000",         [0x4142b42c80000000, 0x4142b42c800c22e4, 0x4142b42c801857a6, 0x4142b42c801857a4, 0x4142b42c80000000, 0x4142b42c801857a6, 0x4142b42c80000000, 0x4142b42c800c22e4, 0x4142b42c801857a4, 0x4142b42c801857a6]),
+    ("y2024",         [0x4142c57300000000, 0x4142c573000e0858, 0x4142c573001a3d1a, 0x4142c573001a3d42, 0x4142c57300000000, 0x4142c573001a3d1a, 0x4142c57300000000, 0x4142c573000e0858, 0x4142c573001a3d42, 0x4142c573001a3d1a]),
+    ("pre_leap_2017", [0x4142c04d3fff9ee9, 0x4142c04d400d462a, 0x4142c04d40197aec, 0x4142c04d40197aea, 0x4142c04d3fff9ee9, 0x4142c04d40197aec, 0x4142c04d3fff9ee9, 0x4142c04d400d462a, 0x4142c04d40197aea, 0x4142c04d40197aec]),
+    ("apollo11",      [0x41429e73ac2d82d8, 0x41429e73ac314dbf, 0x41429e73ac3d8281, 0x41429e73ac3d8276, 0x41429e73ac2d82d8, 0x41429e73ac3d8281, 0x41429e73ac2d82d8, 0x41429e73ac314dbf, 0x41429e73ac3d8276, 0x41429e73ac3d8281]),
+    ("nan",           [0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000]),
+    ("pinf",          [0x7ff0000000000000, 0x7ff0000000000000, 0x7ff0000000000000, 0xfff8000000000000, 0x7ff0000000000000, 0x7ff0000000000000, 0x7ff0000000000000, 0x7ff0000000000000, 0xfff8000000000000, 0xfff8000000000000]),
+    ("ninf",          [0xfff0000000000000, 0xfff0000000000000, 0xfff0000000000000, 0xfff8000000000000, 0xfff0000000000000, 0xfff0000000000000, 0xfff0000000000000, 0xfff0000000000000, 0xfff8000000000000, 0xfff8000000000000]),
+];
+
+#[test]
+fn conversion_graph_is_bit_preserving() {
+    const LABELS: [&str; 10] = [
+        "utc.jd",
+        "utc.to_tai",
+        "utc.to_tt",
+        "utc.to_tdb",
+        "utc.to_ut1_naive",
+        "utc.to_tai.to_tt",
+        "utc.to_tai.to_utc",
+        "utc.to_tt.to_tai",
+        "utc.to_tt.to_tdb",
+        "utc.to_tdb.to_tt",
+    ];
+    for (name, want) in CONVERSION_GOLDEN {
+        let utc = Epoch::<Utc>::from_jd(f64::from_bits(want[0]));
+        let tai = utc.to_tai();
+        let tt = utc.to_tt();
+        let tdb = utc.to_tdb();
+        let got: [u64; 10] = [
+            utc.jd().to_bits(),
+            tai.jd().to_bits(),
+            tt.jd().to_bits(),
+            tdb.jd().to_bits(),
+            utc.to_ut1_naive().jd().to_bits(),
+            tai.to_tt().jd().to_bits(),
+            tai.to_utc().jd().to_bits(),
+            tt.to_tai().jd().to_bits(),
+            tt.to_tdb().jd().to_bits(),
+            tdb.to_tt().jd().to_bits(),
+        ];
+        for i in 0..10 {
+            // IEEE-754 leaves the NaN sign/payload unspecified, and libm may
+            // emit a different NaN bit pattern across targets/versions. So for
+            // NaN expectations assert only is_nan(); finite and ±∞ values have
+            // well-defined bit patterns and stay bit-exact.
+            if f64::from_bits(want[i]).is_nan() {
+                assert!(
+                    f64::from_bits(got[i]).is_nan(),
+                    "{name}: {} expected NaN, got {:#x}",
+                    LABELS[i],
+                    got[i]
+                );
+            } else {
+                assert_eq!(
+                    got[i], want[i],
+                    "{name}: {} diverged: want {:#x}, got {:#x}",
+                    LABELS[i], want[i], got[i]
+                );
+            }
+        }
+    }
+}

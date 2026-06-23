@@ -1,37 +1,86 @@
 //! Scale conversions between `Epoch<S>` variants and scale-specific JD
 //! constructors.
 //!
-//! Conversions route through TAI so leap seconds and the Fairhead-Bretagnon
-//! TDB correction are applied consistently: `UTC ↔ TAI ↔ TT ↔ TDB`, with
-//! `UT1` reached from `UTC` via a `dUT1` offset.
+//! # Conversion model: explicit one-hop edges
+//!
+//! Conversions are modelled as the **edges of the scale graph**, each a single
+//! `to_*()` method between physically adjacent scales:
+//!
+//! ```text
+//! UTC ──leap──→ TAI ──+32.184s──→ TT ──Fairhead──→ TDB
+//!                 └────−19s────→ GPS
+//! ```
+//!
+//! There is no hidden TAI pivot abstraction — each edge computes its own one
+//! step directly. The few multi-step conversions that span several edges
+//! (`Utc::to_tt`, `Utc::to_tdb`, `Utc::to_gps`, `Gps::to_utc`) are **thin
+//! convenience methods that compose the edges explicitly** (e.g. `to_tdb` is
+//! literally `self.to_tai().to_tt().to_tdb()`), not a generic conversion
+//! engine.
+//!
+//! `UT1` is reachable only through a `dUT1` provider
+//! ([`Epoch::<Utc>::to_ut1`]); there is no `Epoch<Ut1>::to_tai()`, which keeps
+//! the Earth-rotation scale isolated from the atomic/dynamical edges.
 
 use core::f64::consts::TAU;
 
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
+use super::TimeScale;
 use super::leap::tai_minus_utc_at_mjd;
-use super::{Epoch, Tai, Tdb, Tt, Ut1, Utc};
-use super::{J2000_JD, JULIAN_CENTURY, MJD_OFFSET, TT_MINUS_TAI_SEC};
+use super::{Epoch, Gps, Tai, Tdb, Tt, Ut1, Utc};
+use super::{GPS_MINUS_TAI_SEC, J2000_JD, JULIAN_CENTURY, MJD_OFFSET, TT_MINUS_TAI_SEC};
 
-// Epoch<Utc> conversions (outbound from UTC)
+/// Scales whose offset from TAI is a fixed number of SI seconds:
+///
+/// ```text
+/// JD_scale = JD_TAI + SECONDS_AFTER_TAI / 86400
+/// ```
+///
+/// Holds for TAI (`0`), TT (`+32.184`), and GPS (`−19`). UTC (leap-second
+/// piecewise), TDB (periodic series), and UT1 (EOP-dependent) deliberately do
+/// **not** implement this — their offset from TAI is not constant. The constant
+/// is the single source of truth for the corresponding edge methods.
+pub trait FixedOffsetFromTai: TimeScale {
+    /// `scale − TAI` in SI seconds.
+    const SECONDS_AFTER_TAI: f64;
+}
+
+impl FixedOffsetFromTai for Tai {
+    const SECONDS_AFTER_TAI: f64 = 0.0;
+}
+impl FixedOffsetFromTai for Tt {
+    const SECONDS_AFTER_TAI: f64 = TT_MINUS_TAI_SEC;
+}
+impl FixedOffsetFromTai for Gps {
+    const SECONDS_AFTER_TAI: f64 = GPS_MINUS_TAI_SEC;
+}
+
+// UTC edges
 
 impl Epoch<Utc> {
-    /// Convert to TAI by applying the current leap-second offset.
+    /// Convert to TAI by applying the current leap-second offset (one hop).
     pub fn to_tai(&self) -> Epoch<Tai> {
         let utc_mjd = self.jd() - MJD_OFFSET;
         let leap = tai_minus_utc_at_mjd(utc_mjd);
         Epoch::<Tai>::from_jd_raw(self.jd() + leap / 86400.0)
     }
 
-    /// Convert to TT via UTC → TAI → TT.
+    /// Convert to TT. Convenience for the two-edge path `UTC → TAI → TT`.
     pub fn to_tt(&self) -> Epoch<Tt> {
         self.to_tai().to_tt()
     }
 
-    /// Convert to TDB via UTC → TAI → TT → TDB (Fairhead-Bretagnon periodic).
+    /// Convert to TDB. Convenience for the path `UTC → TAI → TT → TDB`.
     pub fn to_tdb(&self) -> Epoch<Tdb> {
-        self.to_tt().to_tdb()
+        self.to_tai().to_tt().to_tdb()
+    }
+
+    /// Convert to GPS Time. Convenience for the path `UTC → TAI → GPS`.
+    /// `GPS − UTC` equals the current leap count minus 19 s (18 s since 2017).
+    pub fn to_gps(&self) -> Epoch<Gps> {
+        self.to_tai().to_gps()
     }
 
     /// Convert to UT1 assuming UT1 ≈ UTC (naive, legacy behavior).
@@ -69,7 +118,7 @@ impl Epoch<Utc> {
     }
 }
 
-// Epoch<Tai> API
+// TAI edges
 
 impl Epoch<Tai> {
     /// Create a TAI epoch from a Julian Date value interpreted as TAI JD.
@@ -77,14 +126,10 @@ impl Epoch<Tai> {
         Epoch::<Tai>::from_jd_raw(jd)
     }
 
-    /// Convert to TT by adding the constant 32.184 s offset.
-    pub fn to_tt(&self) -> Epoch<Tt> {
-        Epoch::<Tt>::from_jd_raw(self.jd() + TT_MINUS_TAI_SEC / 86400.0)
-    }
-
-    /// Convert to UTC by subtracting the current leap-second offset.
+    /// Convert to UTC by subtracting the current leap-second offset (one hop).
+    ///
+    /// Iterates to land on the correct leap count at the resulting UTC instant.
     pub fn to_utc(&self) -> Epoch<Utc> {
-        // Iterate to find the right leap count (guess → refine).
         let mut guess_utc_jd = self.jd() - 37.0 / 86400.0; // initial guess
         for _ in 0..3 {
             let guess_mjd = guess_utc_jd - MJD_OFFSET;
@@ -93,9 +138,44 @@ impl Epoch<Tai> {
         }
         Epoch::<Utc>::from_jd_raw(guess_utc_jd)
     }
+
+    /// Convert to TT by adding the constant 32.184 s offset (one hop).
+    pub fn to_tt(&self) -> Epoch<Tt> {
+        Epoch::<Tt>::from_jd_raw(
+            self.jd() + <Tt as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0,
+        )
+    }
+
+    /// Convert to GPS Time by subtracting the constant 19 s offset (one hop).
+    pub fn to_gps(&self) -> Epoch<Gps> {
+        Epoch::<Gps>::from_jd_raw(
+            self.jd() + <Gps as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0,
+        )
+    }
 }
 
-// Epoch<Tt> API
+// GPS edges
+
+impl Epoch<Gps> {
+    /// Create a GPS epoch from a Julian Date value interpreted as GPS JD.
+    pub fn from_jd_gps(jd: f64) -> Self {
+        Epoch::<Gps>::from_jd_raw(jd)
+    }
+
+    /// Convert to TAI by adding the constant 19 s offset (one hop).
+    pub fn to_tai(&self) -> Epoch<Tai> {
+        Epoch::<Tai>::from_jd_raw(
+            self.jd() - <Gps as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0,
+        )
+    }
+
+    /// Convert to UTC. Convenience for the path `GPS → TAI → UTC`.
+    pub fn to_utc(&self) -> Epoch<Utc> {
+        self.to_tai().to_utc()
+    }
+}
+
+// TT edges
 
 impl Epoch<Tt> {
     /// Create a TT epoch from a Julian Date value interpreted as TT JD.
@@ -110,19 +190,21 @@ impl Epoch<Tt> {
         (self.jd() - J2000_JD) / JULIAN_CENTURY
     }
 
-    /// Convert to TAI by subtracting the constant 32.184 s offset.
+    /// Convert to TAI by subtracting the constant 32.184 s offset (one hop).
     pub fn to_tai(&self) -> Epoch<Tai> {
-        Epoch::<Tai>::from_jd_raw(self.jd() - TT_MINUS_TAI_SEC / 86400.0)
+        Epoch::<Tai>::from_jd_raw(
+            self.jd() - <Tt as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0,
+        )
     }
 
-    /// Convert to TDB via the Fairhead-Bretagnon periodic correction.
+    /// Convert to TDB via the Fairhead-Bretagnon periodic correction (one hop).
     pub fn to_tdb(&self) -> Epoch<Tdb> {
         let delta = tdb_minus_tt(self.jd());
         Epoch::<Tdb>::from_jd_raw(self.jd() + delta / 86400.0)
     }
 }
 
-// Epoch<Tdb> API
+// TDB edges
 
 impl Epoch<Tdb> {
     /// Create a TDB epoch from a Julian Date value interpreted as TDB JD.
@@ -140,15 +222,15 @@ impl Epoch<Tdb> {
         (self.jd() - J2000_JD) / JULIAN_CENTURY
     }
 
-    /// Convert to TT by applying the inverse Fairhead-Bretagnon correction.
+    /// Convert to TT by applying the inverse Fairhead-Bretagnon correction
+    /// (one hop). Since `|TDB − TT| < 2 ms`, a single-step inversion suffices.
     pub fn to_tt(&self) -> Epoch<Tt> {
-        // Since |TDB - TT| < 2 ms, a single-step inversion is accurate enough.
         let delta = tdb_minus_tt(self.jd());
         Epoch::<Tt>::from_jd_raw(self.jd() - delta / 86400.0)
     }
 }
 
-// Epoch<Ut1> API
+// UT1 API
 
 impl Epoch<Ut1> {
     /// Create a UT1 epoch from a Julian Date value interpreted as UT1 JD.

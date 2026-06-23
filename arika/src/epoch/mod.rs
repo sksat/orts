@@ -38,12 +38,15 @@ use crate::math::F64Ext;
 mod convert;
 mod datetime;
 mod duration;
+mod gps;
 mod leap;
 mod scale;
 
+pub use convert::FixedOffsetFromTai;
 pub use datetime::DateTime;
 pub use duration::Duration;
-pub use scale::{Tai, Tdb, TimeScale, Tt, Ut1, Utc};
+pub use gps::{GpsWeek, SecondsOfWeek};
+pub use scale::{Gps, Tai, Tdb, TimeScale, TimeScaleKind, Tt, Ut1, Utc};
 
 use convert::era_formula;
 use datetime::to_datetime_from_jd;
@@ -63,6 +66,17 @@ const JULIAN_CENTURY: f64 = 36525.0;
 
 /// TT - TAI (constant offset, IAU 2000 B1.9 / BIPM-TAI).
 const TT_MINUS_TAI_SEC: f64 = 32.184;
+
+/// GPS - TAI (constant offset). GPS Time runs `TAI − 19 s` with no leap
+/// seconds, fixed at the GPS epoch (1980-01-06) and unchanged since.
+const GPS_MINUS_TAI_SEC: f64 = -19.0;
+
+/// Julian Date of the GPS epoch: 1980-01-06 00:00:00 UTC.
+///
+/// At that instant `TAI − UTC` was 19 s, so `GPS = UTC` there and the GPS-scale
+/// JD of the epoch equals the UTC JD. GPS week / seconds-of-week are measured
+/// from this instant.
+pub const GPS_EPOCH_JD: f64 = 2444244.5;
 
 /// Unix epoch (1970-01-01 00:00:00 UTC) in Julian Date.
 #[cfg(feature = "std")]
