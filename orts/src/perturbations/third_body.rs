@@ -4,8 +4,6 @@ use arika::epoch::Epoch;
 use arika::frame::{self, Vec3};
 use nalgebra::Vector3;
 
-use arika::frame::Eci;
-
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
 
@@ -136,15 +134,28 @@ impl ThirdBodyGravity {
     }
 }
 
-impl<F: Eci, S: HasOrbit<Frame = F>> Model<S, F> for ThirdBodyGravity {
-    fn name(&self) -> &str {
-        self.name
-    }
+// `ThirdBodyGravity` consumes the Meeus ephemeris (`Vec3<Gcrs>`) as a raw
+// vector (see `acceleration` above), so it is implemented only for the
+// currently-supported inertial frames that are (approximately) GCRS-aligned:
+// `SimpleEci` and `Gcrs`. This is deliberately NOT a blanket `impl<F: Eci>` —
+// a new inertial frame whose axes differ from GCRS (e.g. `Teme`) must add a
+// frame-aware impl that rotates the ephemeris rather than silently inherit the
+// raw-vector treatment. See #191.
+macro_rules! impl_third_body_model {
+    ($frame:ty) => {
+        impl<S: HasOrbit<Frame = $frame>> Model<S, $frame> for ThirdBodyGravity {
+            fn name(&self) -> &str {
+                self.name
+            }
 
-    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
-        ExternalLoads::acceleration(self.acceleration(state.orbit().position(), epoch))
-    }
+            fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<$frame> {
+                ExternalLoads::acceleration(self.acceleration(state.orbit().position(), epoch))
+            }
+        }
+    };
 }
+impl_third_body_model!(frame::SimpleEci);
+impl_third_body_model!(frame::Gcrs);
 
 // Static assertion that `ThirdBodyGravity` can cross thread boundaries.
 // This is required so `OrbitalSystem` remains `Send + Sync` when it contains
