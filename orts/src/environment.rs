@@ -115,7 +115,9 @@ impl EarthPoleBridge for frame::Gcrs {
         let t = utc.to_tt().centuries_since_j2000();
         let (x, y) = cip_xy(t);
         let (x, y) = (x.raw(), y.raw());
-        let z = (1.0 - x * x - y * y).sqrt();
+        // `.max(0.0)` guards against a slightly-negative radicand from f64
+        // round-off (x²+y² is ~1e-5 for real CIP values, never near 1).
+        let z = (1.0 - x * x - y * y).max(0.0).sqrt();
         Vec3::new(x, y, z)
     }
 }
