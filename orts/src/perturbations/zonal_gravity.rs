@@ -69,7 +69,9 @@ impl<F: EarthPoleBridge> ZonalGravity<F> {
         let r_mag = r2.sqrt();
         let r5 = r2 * r2 * r_mag;
         let zeta = r.dot(&pole); // component along the pole
-        let s2 = (zeta * zeta) / r2; // sin²(latitude measured from pole)
+        // ζ/r = cos(colatitude) = sin(geocentric latitude φ from the equator),
+        // so s2 = sin²φ — the same argument as the classic J2 formula.
+        let s2 = (zeta * zeta) / r2;
         let re2 = self.r_body * self.r_body;
 
         // J2: a = c2·(5s²−1)·r − 2·c2·ζ·p̂
