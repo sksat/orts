@@ -50,13 +50,13 @@ pub struct SimConfig {
     pub satellites: Vec<SatelliteConfig>,
     /// 時刻指定コマンドシーケンス（FSW への C&T アップリンク）。
     /// 各エントリは指定 sim 時刻に対象衛星のコントローラへ配送される。
-    /// TOML では `[[command]]`（単数）/ `[[commands]]`（複数）の両方可。
-    #[serde(default, alias = "command")]
+    /// TOML では array-of-tables の慣習に従い `[[command]]`（単数）で宣言する。
+    #[serde(default, rename = "command")]
     #[ts(as = "Option<_>", optional)]
     pub commands: Vec<CommandConfig>,
     /// 地上局定義（contact window 検出用）。Earth 中心のシミュレーション
-    /// でのみ有効。TOML では `[[ground_station]]` / `[[ground_stations]]`。
-    #[serde(default, alias = "ground_station")]
+    /// でのみ有効。TOML では `[[ground_station]]`（単数）で宣言する。
+    #[serde(default, rename = "ground_station")]
     #[ts(as = "Option<_>", optional)]
     pub ground_stations: Vec<GroundStationConfig>,
 }
@@ -397,12 +397,11 @@ pub struct SatelliteConfig {
     /// リアクションホイール設定。
     #[ts(optional)]
     pub reaction_wheels: Option<ReactionWheelConfig>,
-    /// MTQ 設定。
-    #[serde(alias = "magnetorquers")]
+    /// MTQ 設定。TOML キーは隣の `reaction_wheels` に揃えてフルワード `magnetorquers`。
+    #[serde(rename = "magnetorquers")]
     #[ts(optional)]
     pub mtq: Option<MtqConfig>,
     /// 推進器 (thruster) 設定。
-    #[serde(alias = "thrusters")]
     #[ts(optional)]
     pub thruster: Option<ThrusterConfig>,
     /// stream-io の名前付きバイトストリーム宣言（kble 統合）。
@@ -1491,26 +1490,6 @@ offset_body = [0.1, 0.0, 0.0]
         assert!(t.thrusters[0].offset_body.is_none());
         assert_eq!(t.thrusters[1].offset_body.unwrap(), [0.1, 0.0, 0.0]);
         t.validate().expect("valid");
-    }
-
-    #[test]
-    fn thruster_config_alias_thrusters() {
-        // `[satellites.thrusters]` (plural) is accepted as an alias.
-        let toml = r#"
-[[satellites]]
-[satellites.orbit]
-type = "circular"
-altitude = 500
-
-[satellites.thrusters]
-
-[[satellites.thrusters.thrusters]]
-thrust_n = 1.0
-isp_s = 200.0
-direction_body = [1.0, 0.0, 0.0]
-"#;
-        let config: SimConfig = toml::from_str(toml).expect("parse");
-        assert!(config.satellites[0].thruster.is_some());
     }
 
     #[test]
