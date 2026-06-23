@@ -97,9 +97,10 @@ impl<F: Eci> DynamicalSystem for OrbitalSystem<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::orbital::gravity::{PointMass, ZonalHarmonics};
+    use crate::orbital::gravity::PointMass;
     use crate::orbital::kepler::KeplerianElements;
     use crate::orbital::two_body::TwoBodySystem;
+    use crate::perturbations::ZonalGravity;
     use arika::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
     use nalgebra::vector;
     use std::f64::consts::PI;
@@ -154,15 +155,8 @@ mod tests {
     }
 
     fn earth_j2_system() -> OrbitalSystem {
-        OrbitalSystem::new(
-            MU_EARTH,
-            Box::new(ZonalHarmonics {
-                r_body: R_EARTH,
-                j2: J2_EARTH,
-                j3: None,
-                j4: None,
-            }),
-        )
+        OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+            .with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None))
     }
 
     /// Propagate and return the final RAAN after duration seconds.
@@ -302,15 +296,13 @@ mod tests {
     }
 
     fn earth_j2_j3_j4_system() -> OrbitalSystem {
-        OrbitalSystem::new(
+        OrbitalSystem::new(MU_EARTH, Box::new(PointMass)).with_model(ZonalGravity::new(
             MU_EARTH,
-            Box::new(ZonalHarmonics {
-                r_body: R_EARTH,
-                j2: J2_EARTH,
-                j3: Some(arika::earth::J3),
-                j4: Some(arika::earth::J4),
-            }),
-        )
+            R_EARTH,
+            J2_EARTH,
+            Some(arika::earth::J3),
+            Some(arika::earth::J4),
+        ))
     }
 
     #[test]
