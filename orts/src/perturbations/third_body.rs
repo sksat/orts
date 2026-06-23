@@ -106,10 +106,14 @@ impl ThirdBodyGravity {
 impl ThirdBodyGravity {
     /// Compute third-body gravitational acceleration [km/s²].
     ///
-    /// The tidal formula is pure vector arithmetic on raw `Vector3<f64>`.
-    /// The body position closure returns `Vec3<Gcrs>` whose raw inner
-    /// value is numerically equal to any other ECI frame at Meeus
-    /// precision, so this function is frame-independent.
+    /// Pure vector arithmetic on raw `Vector3<f64>`: the `Vec3<Gcrs>` body
+    /// position (Meeus) is used directly, whatever frame the satellite state is
+    /// tagged with — the integration-frame orientation is never consulted. This
+    /// is an intentional raw-vector approximation for Meeus / visualization
+    /// precision: `SimpleEci` is only loosely related to GCRS (omits precession,
+    /// nutation, frame bias), and `Gcrs` gains no accuracy over `SimpleEci` here.
+    /// A frame whose axes differ from GCRS (e.g. `Teme`) would be silently wrong;
+    /// the frame-aware force-model redesign is tracked in issue #191.
     pub(crate) fn acceleration(
         &self,
         sat_position: &Vector3<f64>,

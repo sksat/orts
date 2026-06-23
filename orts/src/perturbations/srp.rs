@@ -84,9 +84,11 @@ impl SolarRadiationPressure {
 impl SolarRadiationPressure {
     /// Compute SRP acceleration [km/s²].
     ///
-    /// Sun position comes from Meeus ephemeris (`Vec3<Gcrs>`).
-    /// The tidal geometry is pure raw vector arithmetic — frame-independent
-    /// at Meeus precision.
+    /// Sun position comes from Meeus ephemeris (`Vec3<Gcrs>`); the geometry is
+    /// pure raw vector arithmetic, used directly whatever frame the satellite
+    /// state is tagged with. Same intentional raw-vector approximation as
+    /// `ThirdBodyGravity::acceleration` — suited to Meeus / visualization
+    /// precision, not high-accuracy GCRS work.
     pub(crate) fn acceleration(
         &self,
         sat_position: &Vector3<f64>,
