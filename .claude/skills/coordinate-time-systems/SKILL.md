@@ -2,172 +2,148 @@
 name: coordinate-time-systems
 description: >-
   Reason about coordinate reference frames and time scales correctly (any
-  astrodynamics work) — which frame/scale a value is actually in, the concerns
-  to resolve before trusting it, and what to look up. Use when interpreting or
-  choosing frames (ECI/ECEF, GCRS/ITRS/CIRS/TIRS, J2000/EME2000, TEME, ICRF,
-  LVLH/RTN/RSW, body-fixed) or time scales (TAI/UTC/UT1/TT/TDB/GPS), or when
-  reasoning about conversions, leap seconds, ERA/GMST, EOP/ΔUT1, polar motion,
-  frame bias, or realizations. The companion skill `coordinate-time-typing`
-  covers expressing and testing these in orts/arika code.
+  astrodynamics work) — which frame/scale/representation a value is actually in,
+  the concerns to resolve before trusting it, and what to look up. Use when
+  interpreting or choosing frames (ECI/ECEF, GCRS/ITRS/CIRS/TIRS, J2000/EME2000,
+  TEME, ICRF, LVLH/RTN/RSW, body-fixed), time scales (TAI/UTC/UT1/TT/TDB/GPS),
+  or state representations (Cartesian/Keplerian/equinoctial); or when reasoning
+  about frame/scale conversions, covariance transforms, interpolation, leap
+  seconds, ERA/GMST/GAST, EOP/ΔUT1, polar motion, frame bias, or realizations.
+  The companion skill `coordinate-time-typing` covers expressing and testing
+  these in orts/arika code.
 ---
 
 # Coordinate frames & time scales — the concerns
 
 Getting frames and time scales right is genuinely hard — for humans and for LLMs
-alike. This skill does **not** bake in a catalog of every frame and scale: the
-landscape is large and it shifts (new frames, successive ITRF/ICRF realizations,
-the planned end of leap seconds around 2035), so a frozen table goes stale and a
-half-remembered one is worse than looking up the primary source on demand.
-Instead it gives you the durable parts: the **concerns to resolve** for any
-frame, scale, or transform, and **what to look up and where**.
+alike. A capable model already knows the textbook mechanics cold (that
+precession takes TT, ERA takes UT1, `GPS = TAI − 19 s`, a phantom-typed epoch is
+a good idea). It does *not* reliably catch the structural traps below on its
+own. So this skill spends its words on the **non-obvious concerns** and on
+**what to look up**, not on a catalog you'd anyway re-derive — the frame/scale
+landscape shifts (new realizations, the ~2035 end of leap seconds) and a frozen
+table goes stale.
 
-For *how* to encode all of this in code — expressing frame and scale in the type
-system, and property-based testing — see the companion skill
+For *how* to encode all of this in code, see the companion skill
 **`coordinate-time-typing`**.
 
 ## The concerns to resolve
 
-For every frame, scale, or transform you touch, resolve the following. Look them
-up (last section) rather than trusting memory or one tool's defaults.
-
 ### A time scale is usually the *independent variable* of a transform, not a label
 
-This is the deepest trap. Frames and time scales are coupled at the
-**definitional** level: a transform is *defined* as a function of one *specific*
-scale, and feeding it the wrong scale is not a units error you can rescale away —
-it is the wrong physics. So always ask *which scale* a transform or model
-requires:
-
-- Earth Rotation Angle (and sidereal time) is *defined* from **UT1**.
-- Precession/nutation series are *defined* in **TT** Julian centuries.
-- Planetary/lunar ephemerides and body-rotation models take **TDB**.
-- EOP tables (polar motion, ΔUT1) are *indexed* by **UTC** by convention.
-
-"What time is it" is never enough; you need "in which scale, for which purpose".
+A transform is *defined* as a function of one *specific* scale; the wrong scale
+is the wrong physics, not a rescalable units error. ERA/sidereal time is defined
+from **UT1**; precession/nutation series in **TT**; ephemerides/body rotation in
+**TDB**; EOP tables are indexed by **UTC**. (The UT1 one is the bit most often
+missed — "I have a UTC timestamp" is *not* enough for a sidereal angle.) A
+related piece-level trap: **GMST + the equation of the equinoxes = GAST**, and
+mixing a CIO-path rotation with an equinox-path sidereal term is subtly wrong —
+pick one paradigm and stay in it.
 
 ### A name never pins a value — resolve *which system*, *which realization*, *which scale*
 
-The casual labels you get handed — "ECI", "ECEF", "inertial", "GMT", "epoch",
-"GPS time", "Zulu" — under-specify the system, its realization, and (for time)
-the scale. "ECI" might mean J2000/EME2000, GCRS, TEME, MOD, or TOD; "ECEF" might
-mean ITRF, WGS84, or PEF; "GMT" conflates UT1 and UTC. Even precise names
-collide: "J2000", "GCRS", and "ICRF" are *not* identical (frame bias ~23 mas);
-"RTN", "RSW", and "RIC" name one idea but communities disagree on axis
-order/sign; TEME *looks* like an ECI but is its own quasi-inertial frame. Pin the
-exact meaning before you trust the value.
+Everyday labels under-specify: "ECI" might mean J2000/EME2000, GCRS, TEME, MOD,
+or TOD; "ECEF" might mean ITRF, WGS84, or PEF; "GMT" conflates UT1 and UTC. Even
+precise names collide — "J2000", "GCRS", "ICRF" are not identical (frame bias
+~23 mas), and "RTN"/"RSW"/"RIC" name one idea with communities disagreeing on
+axis order/sign. Pin the exact meaning before you trust the value.
 
 ### Reference System ≠ Reference Frame
 
-A distinction worth internalizing (IERS/IAU usage), because it is easy to lose:
+A **System** is the conceptual definition (ICRS, GCRS, ITRS — the conventions
+and models). A **Frame** is a *realization* of it from data (ICRF3 realizes
+ICRS; ITRF2014/ITRF2020 realize ITRS). "Which realization" is an independent
+axis a system name does not answer — and it matters the moment you ingest
+external data.
 
-- A **Reference System** is the *conceptual definition* — the conventions,
-  models, and constants defining how the axes are oriented (**ICRS**, **GCRS**,
-  **ITRS** are *systems*). Abstract; not directly measurable.
-- A **Reference Frame** is a *realization* of a system — a concrete catalog of
-  fiducial coordinates / EOP materializing those axes from data (**ICRF3**
-  realizes ICRS; **ITRF2014 / ITRF2020** realize ITRS).
+### Representation ≠ frame (and its singularities)
 
-"Which realization" is an independent axis from "which system". For Earth-
-satellite dynamics the realization difference is often sub-cm and ignored
-deliberately — but it matters the moment you ingest external data, and a system
-name does not answer the realization question; that question usually just hasn't
-been asked yet.
+A separate axis from "which frame": *how* the state is parameterized. Cartesian,
+Keplerian, equinoctial, spherical are different representations of the same
+physical state in the same frame. **Keplerian is singular at e→0 and i→0,
+spherical at the poles** — the canonical "my sun-sync (i≈98°, e≈0) test NaNs"
+bug. Equinoctial/modified-equinoctial elements exist to remove those
+singularities. Treat frame and representation as two independent choices.
 
-### Pin it down as a tuple, not a name
+### It's rarely just one position vector
 
-A frame/scale reference is really a *tuple*, and a name fixes at most one or two
-of its slots. Resolve every slot:
+The frame question repeats for every quantity, and some carry *extra* traps:
 
-- **Orientation model + version.** Which precession/nutation/sidereal-time model
-  realizes it (IAU-76/FK5 vs 2000A vs 2006), and which path — the CIO-based
-  (X, Y, s, ERA) or the classical equinox-based (precession/nutation/GAST). Both
-  are valid and agree to ~tens of µas; mixing pieces from the two is a bug.
-- **Origin / center.** Orientation does not fix the point the coordinates are
-  about — geocentric vs barycentric vs topocentric. Light-time, parallax, and
-  aberration hinge on the origin, not the axes.
-- **Frozen vs of-date.** Is the frame inertial-at-an-epoch (frozen) or does it
-  rotate with the model (of-date)? TEME-of-epoch ≠ TEME-of-date; CCSDS encodes
-  this as the `_INERTIAL` vs `_ROTATING` suffix. Distinct from the
-  independent-variable scale.
-- **Independent-variable time scale** (the first concern above).
-- **Realization, and its currency.** Which ITRF/ICRF realization (concern above)
-  — *and* whether the data materializing it is current: EOP tables, the
-  leap-second table, the ITRF/ICRF realization, the DE ephemeris, and body-
-  rotation reports all expire. Keep provenance/version with the value.
-- **What the conversion requires:** EOP (ΔUT1, polar motion, dX/dY) vs a
-  leap-second table vs a constant offset vs a periodic series vs nothing.
-- **Handedness & active vs passive.** Rotation-*of-frame* (passive/alias — what a
-  coordinate transform is) vs rotation-*of-vector* (active/alibi); plus the
-  quaternion convention (Hamilton vs JPL, scalar-first vs scalar-last).
-- **Ellipsoid / datum — orthogonal to the rotation frame.** WGS84 is both an
-  ellipsoid (for geodetic lat/lon/height) and a TRF realization; don't fuse "the
-  frame" with "the shape".
-- **Position vs velocity.** A rotating↔inertial transform that is right for
-  position is wrong for velocity without the **ω×r** term.
-- **Error budget** vs the rigorous model (acceptable here?) and **units**
-  (km vs m, rad vs deg, SI seconds vs days).
+- **Velocity:** a rotating↔inertial transform that is right for position is wrong
+  for velocity without the **ω×r** term.
+- **Covariance:** a covariance rotates as **`R·P·Rᵀ`** (both sides), *never*
+  `R·P`; and a Cartesian↔Keplerian/RTN covariance change needs the **Jacobian**
+  of that nonlinear map, not a rotation. A covariance also has its own frame,
+  representation, and epoch — track them like you track a vector's.
+- **Measurements:** an observation lives in a sensor/topocentric frame at a
+  *specific* time tag, and you must distinguish transmit vs receive epoch
+  (radar/GNSS: the satellite state at signal emission, not reception); apparent
+  direction ≠ geometric (aberration ~20.5″, deflection near the Sun).
+
+### Resolve the rest as a tuple, not a name
+
+A frame/scale reference is really a tuple; a name fixes at most one or two slots:
+orientation **model + version** (IAU-76/FK5 vs 2000A vs 2006; CIO X/Y/s/ERA path
+vs equinox precession/nutation/GAST path — both valid, mixing pieces is a bug);
+**origin/center** (geocentric/barycentric/topocentric — light-time and parallax
+hinge on this, not the axes); **frozen vs of-date** (TEME-of-epoch ≠ of-date;
+CCSDS `_INERTIAL` vs `_ROTATING`); **realization + data currency** (EOP, leap,
+ITRF/ICRF, DE ephemeris all expire — keep provenance with the value); **what the
+conversion needs** (EOP vs leap table vs constant vs periodic series); **handedness
+& active-vs-passive** (rotation-of-frame vs rotation-of-vector; quaternion
+Hamilton vs JPL, scalar-first vs -last); **ellipsoid/datum** (orthogonal to the
+rotation frame — WGS84 is both an ellipsoid and a TRF); **units** (km vs m, rad
+vs deg, SI s vs days).
 
 ### The traps that bite most
 
-Durable, high-cost mistakes (rough magnitudes — verify specifics against the
-sources below):
+Durable, high-cost mistakes (rough magnitudes — verify against the sources below):
 
-- **TEME treated as J2000/GCRS** — full accumulated precession+nutation since
-  J2000.0, growing to tens–thousands of km over years. SGP4/TLE output is TEME
-  only; convert explicitly.
+- **TEME treated as J2000/GCRS** — accumulated precession+nutation since J2000.0,
+  growing to tens–thousands of km. SGP4/TLE output is TEME only; convert.
 - **Ignoring ΔUT1 / feeding UTC into sidereal time** — up to ~419 m of LEO ground
-  track (ΔUT1 bound ±0.9 s × ~465 m/s). GMST/ERA are functions of UT1, not UTC.
-- **Dropping polar motion** (TIRS→ITRF) — up to ~9 m of Earth-fixed surface error.
-- **Leap-second arithmetic in UTC** — ~1 s (~465 m) error when differencing across
-  a boundary; `23:59:60` is legal. Do duration math in TAI/TT.
-- **TDB vs TT for ephemerides** — the ~1.7 ms annual term → ~50 m for Earth.
-- **GPS 10-bit week rollover** — ~19.6 yr jumps; needs a pivot epoch.
-- **J2000/EME2000 vs GCRS frame bias** — only ~0.8 m at LEO, but the *naming* trap
-  is worse than the magnitude: SPICE `J2000` ≈ ICRF (bias *not* applied) while
-  GMAT/Orekit `EME2000` *is* the biased frame — same string, different frame.
-- **"LVLH" axis-convention split** — Vallado/STK (X=radial, Z=orbit-normal) vs
-  CCSDS/Wertz (Z=nadir, Y=−orbit-normal): incompatible rotations under one name.
+  track. **Dropping polar motion** — up to ~9 m of Earth-fixed error.
+- **Interpolating in the wrong space** — lerp an ECEF position across a span and
+  you lose the km of sagitta from Earth rotation (interpolate in ECI, then
+  rotate); Euler-angle lerp ≠ quaternion SLERP; interpolating osculating elements
+  through perigee is garbage.
+- **Covariance done as `R·P`** instead of `R·P·Rᵀ`, or rotated when a Jacobian was
+  needed.
+- **Leap-second arithmetic in UTC** — do duration math in TAI/TT (`23:59:60` is
+  legal). **TDB vs TT for ephemerides** — ~50 m for Earth.
+- **J2000/EME2000 vs GCRS frame bias** — ~0.8 m at LEO, but the *naming* trap is
+  worse: SPICE `J2000` ≈ ICRF (bias not applied) while GMAT/Orekit `EME2000` *is*
+  the biased frame — same string, different frame.
+- **"LVLH" axis-convention split** — Vallado/STK (X=radial, Z=normal) vs
+  CCSDS/Wertz (Z=nadir, Y=−normal): incompatible rotations under one name.
 
-## TAI and TEME — two worth understanding
+## TEME and onboard clocks — two underestimated cases
 
-**TAI** is the continuous atomic timeline — the one scale that never jumps. It is
-the natural hub the others are defined against: the fixed-offset scales
-(`TT = TAI + 32.184 s`, `GPS = TAI − 19 s`) differ from it by a constant; UTC
-differs by an integer number of leap seconds (so `GPS − UTC` *steps* at each leap
-second even though `GPS − TAI` is constant); TDB differs by a sub-millisecond
-periodic series. **UT1 is the odd one out** — it is an Earth-rotation observable,
-not an atomic scale, reachable only through an EOP (ΔUT1) measurement, so it
-cannot be derived from TAI alone. Do duration arithmetic in TAI/TT, not UTC.
+**TEME** (the SGP4/TLE frame) is *not* J2000/GCRS — treating a TEME state as a
+generic ECI is a silent km-scale error. A real TEME→GCRS conversion is GMST +
+equation of the equinoxes (+ precession/nutation), model-version dependent —
+never a relabel. (TAI is the natural hub for the *atomic* scales, but **UT1 is
+reachable only through an EOP/ΔUT1 measurement**, never from TAI alone.)
 
-**TEME** (True Equator, Mean Equinox) is the quasi-inertial frame SGP4 propagates
-in, and the frame TLE/OMM mean elements are expressed against. It is **not**
-J2000/EME2000 and **not** GCRS — treating a TEME state as a generic ECI is a
-classic, silent error that grows to kilometres. A correct TEME→GCRS conversion
-applies GMST + the equation of the equinoxes (plus precession/nutation), and
-depends on the model version you pick — it is never a relabel.
+**Onboard clocks** differ from a ground scale by a *rate*, not a constant: a GPS
+SV clock runs ~38 µs/day fast (plus an eccentricity periodic term), and TCG/TCB
+differ from TT by rate. Model the rate, don't subtract an offset.
 
 ## Where to look it up — fresh, each time
 
-Verify against the primary standard, not from memory and not from a single tool's
-conventions:
+Verify against the primary standard, not from memory or one tool's conventions:
 
-- **IERS Conventions (2010, TN36)** — *the* source for the GCRS↔ITRS chain, the
-  ERA formula, frame-bias constants, and CIP/CIO/TIO definitions.
-- **IERS EOP products** (e.g. the `finals2000A` readme) — the exact column
-  *units* (xp,yp in arcsec, ΔUT1 in s, dX/dY in **mas** — a classic 1000× trap),
-  and Bulletin A (rapid+predicted) vs B (final).
-- **IAU resolutions** (2000 B1.x, 2006 B3) — definitional authority for
-  ICRS/GCRS/BCRS, TT/TCG, and the exact TDB transform; ICRF realizations.
-- **SOFA / ERFA** — the canonical algorithms *and* reference values to test
-  against (and which routine takes TT vs UT1).
-- **Vallado, *Fundamentals of Astrodynamics and Applications*** — the astrodynamics
-  community's conventions and worked reductions (RSW/NTW/SEZ, the equinox chain).
-- **CCSDS ODM (502.0-B) + SANA registries** — the exact `REF_FRAME` /
-  `TIME_SYSTEM` / orbit-relative tokens when exchanging data.
-- **NASA SPICE / NAIF** — body-fixed and lunar frame authority (`IAU_*`,
-  `ITRF93`, `MOON_PA`/`MOON_ME`); note SPICE `J2000` ≈ ICRF.
-- A tool's own docs (Orekit / GMAT / STK / Skyfield) — use these to learn *that
-  tool's* naming, never as the definition itself.
-
-Prefer fetching the current authoritative text: the numbers and realizations
-change, and a tool's defaults are not the standard.
+- **IERS Conventions (2010, TN36)** — the GCRS↔ITRS chain, ERA formula, frame-bias
+  constants, CIP/CIO/TIO definitions.
+- **IERS EOP products** (`finals2000A` readme) — exact column *units* (xp,yp
+  arcsec; ΔUT1 s; dX/dY in **mas** — a 1000× trap), Bulletin A vs B.
+- **IAU resolutions** (2000 B1.x, 2006 B3) — ICRS/GCRS/TT/TDB definitions; ICRF.
+- **SOFA / ERFA** — canonical algorithms and reference values (and which routine
+  takes TT vs UT1; note its two-part date arguments exist for precision).
+- **Vallado** — astrodynamics conventions and worked reductions (RSW/NTW/SEZ,
+  the equinox chain, the TEME reduction).
+- **CCSDS ODM (502.0-B) + SANA registries** — exact `REF_FRAME`/`TIME_SYSTEM`
+  tokens when exchanging data.
+- **NASA SPICE / NAIF** — body-fixed and lunar frames (note SPICE `J2000` ≈ ICRF).
+- Tool docs (Orekit/GMAT/STK/Skyfield) — for *that tool's* naming, never as the
+  definition itself.
