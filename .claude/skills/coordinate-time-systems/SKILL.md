@@ -74,36 +74,86 @@ deliberately — but it matters the moment you ingest external data, and a syste
 name does not answer the realization question; that question usually just hasn't
 been asked yet.
 
-### The per-item checklist
+### Pin it down as a tuple, not a name
 
-For a concrete frame / scale / transform, resolve:
+A frame/scale reference is really a *tuple*, and a name fixes at most one or two
+of its slots. Resolve every slot:
 
-- **Definition** and the defining standard / realization.
-- **Independent-variable time scale** (see the first concern above).
-- **What its conversions require:** EOP (ΔUT1, polar motion, dX/dY) vs a
-  leap-second table vs a constant offset vs a periodic series.
-- **Error budget / approximation level** versus the rigorous model — and whether
-  that budget is acceptable here.
-- **Axis order and sign conventions:** local-orbital frame axis order, longitude
-  sign, quaternion convention, and rotation-*of-frame* vs rotation-*of-vector*.
-- **Units** (km vs m, rad vs deg, SI seconds vs days).
+- **Orientation model + version.** Which precession/nutation/sidereal-time model
+  realizes it (IAU-76/FK5 vs 2000A vs 2006), and which path — the CIO-based
+  (X, Y, s, ERA) or the classical equinox-based (precession/nutation/GAST). Both
+  are valid and agree to ~tens of µas; mixing pieces from the two is a bug.
+- **Origin / center.** Orientation does not fix the point the coordinates are
+  about — geocentric vs barycentric vs topocentric. Light-time, parallax, and
+  aberration hinge on the origin, not the axes.
+- **Frozen vs of-date.** Is the frame inertial-at-an-epoch (frozen) or does it
+  rotate with the model (of-date)? TEME-of-epoch ≠ TEME-of-date; CCSDS encodes
+  this as the `_INERTIAL` vs `_ROTATING` suffix. Distinct from the
+  independent-variable scale.
+- **Independent-variable time scale** (the first concern above).
+- **Realization, and its currency.** Which ITRF/ICRF realization (concern above)
+  — *and* whether the data materializing it is current: EOP tables, the
+  leap-second table, the ITRF/ICRF realization, the DE ephemeris, and body-
+  rotation reports all expire. Keep provenance/version with the value.
+- **What the conversion requires:** EOP (ΔUT1, polar motion, dX/dY) vs a
+  leap-second table vs a constant offset vs a periodic series vs nothing.
+- **Handedness & active vs passive.** Rotation-*of-frame* (passive/alias — what a
+  coordinate transform is) vs rotation-*of-vector* (active/alibi); plus the
+  quaternion convention (Hamilton vs JPL, scalar-first vs scalar-last).
+- **Ellipsoid / datum — orthogonal to the rotation frame.** WGS84 is both an
+  ellipsoid (for geodetic lat/lon/height) and a TRF realization; don't fuse "the
+  frame" with "the shape".
+- **Position vs velocity.** A rotating↔inertial transform that is right for
+  position is wrong for velocity without the **ω×r** term.
+- **Error budget** vs the rigorous model (acceptable here?) and **units**
+  (km vs m, rad vs deg, SI seconds vs days).
+
+Each slot in that tuple is exactly what How #1 turns into a type or a
+typed-conversion parameter.
+
+### The traps that bite most
+
+Durable, high-cost mistakes (rough magnitudes — verify specifics against the
+sources below):
+
+- **TEME treated as J2000/GCRS** — full accumulated precession+nutation since
+  J2000.0, growing to tens–thousands of km over years. SGP4/TLE output is TEME
+  only; convert explicitly.
+- **Ignoring ΔUT1 / feeding UTC into sidereal time** — up to ~419 m of LEO ground
+  track (ΔUT1 bound ±0.9 s × ~465 m/s). GMST/ERA are functions of UT1, not UTC.
+- **Dropping polar motion** (TIRS→ITRF) — up to ~9 m of Earth-fixed surface error.
+- **Leap-second arithmetic in UTC** — ~1 s (~465 m) error when differencing across
+  a boundary; `23:59:60` is legal. Do duration math in TAI/TT.
+- **TDB vs TT for ephemerides** — the ~1.7 ms annual term → ~50 m for Earth.
+- **GPS 10-bit week rollover** — ~19.6 yr jumps; needs a pivot epoch.
+- **J2000/EME2000 vs GCRS frame bias** — only ~0.8 m at LEO, but the *naming* trap
+  is worse than the magnitude: SPICE `J2000` ≈ ICRF (bias *not* applied) while
+  GMAT/Orekit `EME2000` *is* the biased frame — same string, different frame.
+- **"LVLH" axis-convention split** — Vallado/STK (X=radial, Z=orbit-normal) vs
+  CCSDS/Wertz (Z=nadir, Y=−orbit-normal): incompatible rotations under one name.
 
 ### Where to look it up — fresh, each time
 
 Verify against the primary standard, not from memory and not from a single
 tool's conventions:
 
-- **IERS Conventions (2010, TN36)** and the IERS EOP products — frames, the
-  GCRS↔ITRS transformation chain, EOP definitions and units.
-- **IAU resolutions** (2000 B1.x, 2006 B3) — system definitions, TT/TDB.
+- **IERS Conventions (2010, TN36)** — *the* source for the GCRS↔ITRS chain, the
+  ERA formula, frame-bias constants, and CIP/CIO/TIO definitions.
+- **IERS EOP products** (e.g. the `finals2000A` readme) — the exact column
+  *units* (xp,yp in arcsec, ΔUT1 in s, dX/dY in **mas** — a classic 1000× trap),
+  and Bulletin A (rapid+predicted) vs B (final).
+- **IAU resolutions** (2000 B1.x, 2006 B3) — definitional authority for
+  ICRS/GCRS/BCRS, TT/TCG, and the exact TDB transform; ICRF realizations.
 - **SOFA / ERFA** — the canonical algorithms *and* reference values to test
-  against.
-- **Vallado, *Fundamentals of Astrodynamics and Applications*** — practical
-  conventions and worked transforms.
-- **CCSDS ODM (502.0-B)** — the exact `REF_FRAME` / `TIME_SYSTEM` tokens when
-  exchanging data.
-- A tool's own docs (Orekit / GMAT / SPICE / Skyfield) — use these to learn
-  *that tool's* naming, never as the definition itself.
+  against (and which routine takes TT vs UT1).
+- **Vallado, *Fundamentals of Astrodynamics and Applications*** — the astrodynamics
+  community's conventions and worked reductions (RSW/NTW/SEZ, the equinox chain).
+- **CCSDS ODM (502.0-B) + SANA registries** — the exact `REF_FRAME` /
+  `TIME_SYSTEM` / orbit-relative tokens when exchanging data.
+- **NASA SPICE / NAIF** — body-fixed and lunar frame authority (`IAU_*`,
+  `ITRF93`, `MOON_PA`/`MOON_ME`); note SPICE `J2000` ≈ ICRF.
+- A tool's own docs (Orekit / GMAT / STK / Skyfield) — use these to learn *that
+  tool's* naming, never as the definition itself.
 
 Prefer fetching the current authoritative text: the numbers and realizations
 change, and a tool's defaults are not the standard.
