@@ -29,6 +29,7 @@ use core::f64::consts::TAU;
 use crate::math::F64Ext;
 
 use super::TimeScale;
+use super::jd2::TwoPartJd;
 use super::leap::tai_minus_utc_at_mjd;
 use super::{Epoch, Gps, Tai, Tdb, Tt, Utc};
 use super::{GPS_MINUS_TAI_SEC, J2000_JD, JULIAN_CENTURY, MJD_OFFSET, TT_MINUS_TAI_SEC};
@@ -56,6 +57,74 @@ impl FixedOffsetFromTai for Tt {
 }
 impl FixedOffsetFromTai for Gps {
     const SECONDS_AFTER_TAI: f64 = GPS_MINUS_TAI_SEC;
+}
+
+// Canonical-TAI lens
+//
+// Every scale in the `Epoch<S>` family converts to/from canonical TAI without
+// external data. `TaiLens` is that conversion as a pair of pure functions over
+// the two-part [`TwoPartJd`] representation: the math (leap table, fixed
+// offset, Fairhead periodic) that the canonical-TAI `Epoch` will apply once at
+// construction (scale JD → TAI) and once at read-out (TAI → scale JD), keeping
+// full precision in between. (UT1 is not in the family — it needs EOP — so it
+// has no lens; see `Ut1Epoch`.)
+
+/// Data-free lens between canonical TAI and a scale's own Julian Date.
+// Consumed by the canonical-TAI `Epoch<S>` representation in the next commit;
+// the allow is temporary until that integration lands (the lens is currently
+// exercised only by its equivalence tests).
+#[allow(dead_code)]
+pub(crate) trait TaiLens: TimeScale {
+    /// This scale's JD → the canonical TAI JD.
+    fn tai_from_scale(scale_jd: TwoPartJd) -> TwoPartJd;
+    /// Canonical TAI JD → this scale's JD.
+    fn scale_from_tai(tai: TwoPartJd) -> TwoPartJd;
+}
+
+/// Derive [`TaiLens`] for a [`FixedOffsetFromTai`] scale: `scale = TAI + off`.
+macro_rules! impl_tai_lens_fixed {
+    ($scale:ty) => {
+        impl TaiLens for $scale {
+            fn tai_from_scale(scale_jd: TwoPartJd) -> TwoPartJd {
+                scale_jd.add_days(-<$scale as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0)
+            }
+            fn scale_from_tai(tai: TwoPartJd) -> TwoPartJd {
+                tai.add_days(<$scale as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0)
+            }
+        }
+    };
+}
+impl_tai_lens_fixed!(Tai);
+impl_tai_lens_fixed!(Tt);
+impl_tai_lens_fixed!(Gps);
+
+impl TaiLens for Utc {
+    fn tai_from_scale(utc: TwoPartJd) -> TwoPartJd {
+        let leap = tai_minus_utc_at_mjd(utc.jd() - MJD_OFFSET);
+        utc.add_days(leap / 86400.0)
+    }
+    fn scale_from_tai(tai: TwoPartJd) -> TwoPartJd {
+        // Converge on the leap count at the resulting UTC instant.
+        let mut utc = tai.add_days(-37.0 / 86400.0); // initial guess
+        for _ in 0..3 {
+            let leap = tai_minus_utc_at_mjd(utc.jd() - MJD_OFFSET);
+            utc = tai.add_days(-leap / 86400.0);
+        }
+        utc
+    }
+}
+
+impl TaiLens for Tdb {
+    fn tai_from_scale(tdb: TwoPartJd) -> TwoPartJd {
+        // TDB → TT (single-step inversion, |TDB − TT| < 2 ms) → TAI.
+        let tt = tdb.add_days(-tdb_minus_tt(tdb.jd()) / 86400.0);
+        tt.add_days(-TT_MINUS_TAI_SEC / 86400.0)
+    }
+    fn scale_from_tai(tai: TwoPartJd) -> TwoPartJd {
+        // TAI → TT → TDB (Fairhead-Bretagnon periodic).
+        let tt = tai.add_days(TT_MINUS_TAI_SEC / 86400.0);
+        tt.add_days(tdb_minus_tt(tt.jd()) / 86400.0)
+    }
 }
 
 // UTC edges
@@ -298,4 +367,70 @@ fn tdb_minus_tt(tt_jd: f64) -> f64 {
     let g_deg = 357.53 + 0.985_600_28 * d;
     let g = g_deg.to_radians();
     0.001_658 * g.sin() + 0.000_014 * (2.0 * g).sin()
+}
+
+#[cfg(test)]
+mod lens_tests {
+    //! The `TaiLens` math must agree with the existing one-hop edge methods
+    //! (which it will replace once `Epoch<S>` stores canonical TAI), and must
+    //! round-trip. Agreement is to f64 noise since the lens does the same
+    //! arithmetic in two parts.
+    use super::*;
+
+    const TOL_DAY: f64 = 1e-9; // ~86 µs — well above f64 noise, below the regime we care about
+
+    fn tpj(jd: f64) -> TwoPartJd {
+        TwoPartJd::from_jd(jd)
+    }
+
+    #[test]
+    fn lens_tai_from_scale_matches_edges() {
+        let x = 2_460_390.5; // 2024-03-20-ish
+        // scale-JD x interpreted in each scale → TAI must match the edge `to_tai` path.
+        let utc_edge = Epoch::<Utc>::from_jd(x).to_tai().jd();
+        assert!((Utc::tai_from_scale(tpj(x)).jd() - utc_edge).abs() < TOL_DAY);
+
+        let tt_edge = Epoch::<Tt>::from_jd_tt(x).to_tai().jd();
+        assert!((Tt::tai_from_scale(tpj(x)).jd() - tt_edge).abs() < TOL_DAY);
+
+        let gps_edge = Epoch::<Gps>::from_jd_gps(x).to_tai().jd();
+        assert!((Gps::tai_from_scale(tpj(x)).jd() - gps_edge).abs() < TOL_DAY);
+
+        // TDB → TAI edge path is tdb.to_tt().to_tai().
+        let tdb_edge = Epoch::<Tdb>::from_jd_tdb(x).to_tt().to_tai().jd();
+        assert!((Tdb::tai_from_scale(tpj(x)).jd() - tdb_edge).abs() < TOL_DAY);
+    }
+
+    #[test]
+    fn lens_scale_from_tai_matches_edges() {
+        let tai = 2_460_390.500_8; // a TAI JD
+        let utc_edge = Epoch::<Tai>::from_jd_tai(tai).to_utc().jd();
+        assert!((Utc::scale_from_tai(tpj(tai)).jd() - utc_edge).abs() < TOL_DAY);
+
+        let tt_edge = Epoch::<Tai>::from_jd_tai(tai).to_tt().jd();
+        assert!((Tt::scale_from_tai(tpj(tai)).jd() - tt_edge).abs() < TOL_DAY);
+
+        let gps_edge = Epoch::<Tai>::from_jd_tai(tai).to_gps().jd();
+        assert!((Gps::scale_from_tai(tpj(tai)).jd() - gps_edge).abs() < TOL_DAY);
+    }
+
+    #[test]
+    fn lens_roundtrips_each_scale() {
+        let x = 2_460_390.123_456;
+        macro_rules! rt {
+            ($s:ty) => {{
+                let back = <$s as TaiLens>::scale_from_tai(<$s as TaiLens>::tai_from_scale(tpj(x)));
+                assert!(
+                    (back.jd() - x).abs() < TOL_DAY,
+                    "{} round-trip diverged",
+                    <$s as TimeScale>::NAME
+                );
+            }};
+        }
+        rt!(Utc);
+        rt!(Tai);
+        rt!(Tt);
+        rt!(Gps);
+        rt!(Tdb);
+    }
 }
