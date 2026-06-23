@@ -70,10 +70,7 @@ impl FixedOffsetFromTai for Gps {
 // has no lens; see `Ut1Epoch`.)
 
 /// Data-free lens between canonical TAI and a scale's own Julian Date.
-// Consumed by the canonical-TAI `Epoch<S>` representation in the next commit;
-// the allow is temporary until that integration lands (the lens is currently
-// exercised only by its equivalence tests).
-#[allow(dead_code)]
+/// Crate-internal: the canonical-TAI `Epoch<S>` accessors call it per scale.
 pub(crate) trait TaiLens: TimeScale {
     /// This scale's JD → the canonical TAI JD.
     fn tai_from_scale(scale_jd: TwoPartJd) -> TwoPartJd;
@@ -127,30 +124,34 @@ impl TaiLens for Tdb {
     }
 }
 
-// UTC edges
+/// Construct an `Epoch<S>` from a JD interpreted in scale `S`, converting to
+/// the stored canonical TAI instant via the lens.
+pub(crate) fn from_scale_jd<S: TaiLens>(scale_jd: f64) -> Epoch<S> {
+    Epoch::<S>::from_tai_raw(S::tai_from_scale(TwoPartJd::from_jd(scale_jd)))
+}
+
+// UTC outbound conversions (re-tags of the shared canonical TAI instant)
 
 impl Epoch<Utc> {
-    /// Convert to TAI by applying the current leap-second offset (one hop).
+    /// Convert to TAI (re-tag of the shared canonical instant).
     pub fn to_tai(&self) -> Epoch<Tai> {
-        let utc_mjd = self.jd() - MJD_OFFSET;
-        let leap = tai_minus_utc_at_mjd(utc_mjd);
-        Epoch::<Tai>::from_jd_raw(self.jd() + leap / 86400.0)
+        Epoch::<Tai>::from_tai_raw(self.tai_raw())
     }
 
-    /// Convert to TT. Convenience for the two-edge path `UTC → TAI → TT`.
+    /// Convert to TT (re-tag of the shared canonical instant).
     pub fn to_tt(&self) -> Epoch<Tt> {
-        self.to_tai().to_tt()
+        Epoch::<Tt>::from_tai_raw(self.tai_raw())
     }
 
-    /// Convert to TDB. Convenience for the path `UTC → TAI → TT → TDB`.
+    /// Convert to TDB (re-tag of the shared canonical instant).
     pub fn to_tdb(&self) -> Epoch<Tdb> {
-        self.to_tai().to_tt().to_tdb()
+        Epoch::<Tdb>::from_tai_raw(self.tai_raw())
     }
 
-    /// Convert to GPS Time. Convenience for the path `UTC → TAI → GPS`.
+    /// Convert to GPS Time (re-tag of the shared canonical instant).
     /// `GPS − UTC` equals the current leap count minus 19 s (18 s since 2017).
     pub fn to_gps(&self) -> Epoch<Gps> {
-        self.to_tai().to_gps()
+        Epoch::<Gps>::from_tai_raw(self.tai_raw())
     }
 
     /// Convert to UT1 assuming UT1 ≈ UTC (naive, legacy behavior).
@@ -193,34 +194,22 @@ impl Epoch<Utc> {
 impl Epoch<Tai> {
     /// Create a TAI epoch from a Julian Date value interpreted as TAI JD.
     pub fn from_jd_tai(jd: f64) -> Self {
-        Epoch::<Tai>::from_jd_raw(jd)
+        from_scale_jd::<Tai>(jd)
     }
 
-    /// Convert to UTC by subtracting the current leap-second offset (one hop).
-    ///
-    /// Iterates to land on the correct leap count at the resulting UTC instant.
+    /// Convert to UTC (re-tag of the shared canonical instant).
     pub fn to_utc(&self) -> Epoch<Utc> {
-        let mut guess_utc_jd = self.jd() - 37.0 / 86400.0; // initial guess
-        for _ in 0..3 {
-            let guess_mjd = guess_utc_jd - MJD_OFFSET;
-            let leap = tai_minus_utc_at_mjd(guess_mjd);
-            guess_utc_jd = self.jd() - leap / 86400.0;
-        }
-        Epoch::<Utc>::from_jd_raw(guess_utc_jd)
+        Epoch::<Utc>::from_tai_raw(self.tai_raw())
     }
 
-    /// Convert to TT by adding the constant 32.184 s offset (one hop).
+    /// Convert to TT (re-tag of the shared canonical instant).
     pub fn to_tt(&self) -> Epoch<Tt> {
-        Epoch::<Tt>::from_jd_raw(
-            self.jd() + <Tt as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0,
-        )
+        Epoch::<Tt>::from_tai_raw(self.tai_raw())
     }
 
-    /// Convert to GPS Time by subtracting the constant 19 s offset (one hop).
+    /// Convert to GPS Time (re-tag of the shared canonical instant).
     pub fn to_gps(&self) -> Epoch<Gps> {
-        Epoch::<Gps>::from_jd_raw(
-            self.jd() + <Gps as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0,
-        )
+        Epoch::<Gps>::from_tai_raw(self.tai_raw())
     }
 }
 
@@ -229,19 +218,17 @@ impl Epoch<Tai> {
 impl Epoch<Gps> {
     /// Create a GPS epoch from a Julian Date value interpreted as GPS JD.
     pub fn from_jd_gps(jd: f64) -> Self {
-        Epoch::<Gps>::from_jd_raw(jd)
+        from_scale_jd::<Gps>(jd)
     }
 
-    /// Convert to TAI by adding the constant 19 s offset (one hop).
+    /// Convert to TAI (re-tag of the shared canonical instant).
     pub fn to_tai(&self) -> Epoch<Tai> {
-        Epoch::<Tai>::from_jd_raw(
-            self.jd() - <Gps as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0,
-        )
+        Epoch::<Tai>::from_tai_raw(self.tai_raw())
     }
 
-    /// Convert to UTC. Convenience for the path `GPS → TAI → UTC`.
+    /// Convert to UTC (re-tag of the shared canonical instant).
     pub fn to_utc(&self) -> Epoch<Utc> {
-        self.to_tai().to_utc()
+        Epoch::<Utc>::from_tai_raw(self.tai_raw())
     }
 }
 
@@ -250,7 +237,7 @@ impl Epoch<Gps> {
 impl Epoch<Tt> {
     /// Create a TT epoch from a Julian Date value interpreted as TT JD.
     pub fn from_jd_tt(jd: f64) -> Self {
-        Epoch::<Tt>::from_jd_raw(jd)
+        from_scale_jd::<Tt>(jd)
     }
 
     /// Return TT Julian centuries since J2000.0.
@@ -260,17 +247,14 @@ impl Epoch<Tt> {
         (self.jd() - J2000_JD) / JULIAN_CENTURY
     }
 
-    /// Convert to TAI by subtracting the constant 32.184 s offset (one hop).
+    /// Convert to TAI (re-tag of the shared canonical instant).
     pub fn to_tai(&self) -> Epoch<Tai> {
-        Epoch::<Tai>::from_jd_raw(
-            self.jd() - <Tt as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0,
-        )
+        Epoch::<Tai>::from_tai_raw(self.tai_raw())
     }
 
-    /// Convert to TDB via the Fairhead-Bretagnon periodic correction (one hop).
+    /// Convert to TDB (re-tag of the shared canonical instant).
     pub fn to_tdb(&self) -> Epoch<Tdb> {
-        let delta = tdb_minus_tt(self.jd());
-        Epoch::<Tdb>::from_jd_raw(self.jd() + delta / 86400.0)
+        Epoch::<Tdb>::from_tai_raw(self.tai_raw())
     }
 }
 
@@ -282,7 +266,7 @@ impl Epoch<Tdb> {
     /// JPL DE ephemerides use `Teph` which is for practical purposes
     /// indistinguishable from TDB (IAU 2006 Resolution B3).
     pub fn from_jd_tdb(jd: f64) -> Self {
-        Epoch::<Tdb>::from_jd_raw(jd)
+        from_scale_jd::<Tdb>(jd)
     }
 
     /// Return TDB Julian centuries since J2000.0.
@@ -292,11 +276,9 @@ impl Epoch<Tdb> {
         (self.jd() - J2000_JD) / JULIAN_CENTURY
     }
 
-    /// Convert to TT by applying the inverse Fairhead-Bretagnon correction
-    /// (one hop). Since `|TDB − TT| < 2 ms`, a single-step inversion suffices.
+    /// Convert to TT (re-tag of the shared canonical instant).
     pub fn to_tt(&self) -> Epoch<Tt> {
-        let delta = tdb_minus_tt(self.jd());
-        Epoch::<Tt>::from_jd_raw(self.jd() - delta / 86400.0)
+        Epoch::<Tt>::from_tai_raw(self.tai_raw())
     }
 }
 

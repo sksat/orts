@@ -43,9 +43,6 @@ mod convert;
 mod datetime;
 mod duration;
 mod gps;
-// Consumed by the canonical-TAI Epoch representation in a follow-up commit;
-// the allow is temporary until that integration lands.
-#[allow(dead_code)]
 mod jd2;
 mod leap;
 mod scale;
@@ -56,8 +53,11 @@ pub use duration::Duration;
 pub use gps::{GpsWeek, SecondsOfWeek};
 pub use scale::{Gps, Tai, Tdb, TimeScale, Tt, Utc};
 
+use convert::TaiLens;
 use convert::era_formula;
 use datetime::to_datetime_from_jd;
+use jd2::TwoPartJd;
+#[allow(unused_imports)]
 use leap::tai_minus_utc_at_mjd;
 
 /// Julian Date of J2000.0 epoch (JD 2451545.0).
@@ -95,18 +95,21 @@ const UNIX_EPOCH_JD: f64 = 2440587.5;
 /// `S` defaults to [`Utc`] so that `Epoch` (without type parameter) means
 /// `Epoch<Utc>` — the most common user-facing scale.
 ///
-/// # Scale 解釈
+/// # 内部表現: canonical TAI
 ///
-/// 内部表現は単一の `jd: f64` だが、その値は **scale `S` で解釈される** JD である。
-/// つまり `Epoch<Utc>::from_jd(x).jd() == x` (UTC JD として round-trip)、
-/// `Epoch<Tdb>::from_jd_tdb(x).jd() == x` (TDB JD として round-trip) となる。
+/// 内部は **canonical な TAI instant を two-part ([`TwoPartJd`]) で保持**し、`S` は
+/// 読み出しレンズである。`jd()` は格納された TAI を scale `S` の JD に変換して返す:
+/// `Epoch<Utc>::from_jd(x).jd() == x` (UTC JD として round-trip)、
+/// `Epoch<Tdb>::from_jd_tdb(x).jd() == x` (TDB JD として round-trip)。
 ///
-/// Scale 間の変換 (`to_tdb()`, `to_tt()` 等) は内部で TAI を経由し leap second や
-/// Fairhead 補正を適用して別 scale の JD を計算する。
+/// scale 変換 (`to_tt()`, `to_tdb()` 等) は同じ TAI instant の **非破壊な再ラベル**で、
+/// leap second / Fairhead 補正は構築時 (`from_*`) と読み出し時 (`jd()`) の lens
+/// ([`TaiLens`]) でのみ適用される。同一物理 instant は同一内部値なので
+/// `duration_since` は leap 跨ぎ・cross-scale でも厳密な SI 秒を返す。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Epoch<S: TimeScale = Utc> {
-    /// JD interpreted in scale `S`.
-    jd: f64,
+    /// Canonical TAI instant (two-part JD). Read out in scale `S` via the lens.
+    tai: TwoPartJd,
     /// Scale tag (zero-sized).
     _scale: PhantomData<S>,
 }
@@ -114,51 +117,78 @@ pub struct Epoch<S: TimeScale = Utc> {
 // Generic accessors (available on all scales)
 
 impl<S: TimeScale> Epoch<S> {
-    /// Return the Julian Date value, interpreted in scale `S`.
-    pub fn jd(&self) -> f64 {
-        self.jd
-    }
-
-    /// Return the Modified Julian Date value, interpreted in scale `S`.
-    pub fn mjd(&self) -> f64 {
-        self.jd - MJD_OFFSET
-    }
-
     /// The human-readable scale name (e.g. "UTC", "TDB").
     pub fn scale_name() -> &'static str {
         S::NAME
     }
 
-    /// Crate-internal constructor from raw JD (bypasses scale semantics).
-    /// Used for scale-conversion helpers and tests.
-    pub(crate) fn from_jd_raw(jd: f64) -> Self {
+    /// Crate-internal constructor from the canonical TAI instant, tagging scale
+    /// `S`. Scale conversions are exactly this (a re-tag of the same `tai`).
+    pub(crate) fn from_tai_raw(tai: TwoPartJd) -> Self {
         Self {
-            jd,
+            tai,
             _scale: PhantomData,
         }
     }
+
+    /// Crate-internal accessor for the canonical TAI instant.
+    pub(crate) fn tai_raw(&self) -> TwoPartJd {
+        self.tai
+    }
+
+    /// Exact SI-second interval since `earlier`, measured on the TAI timeline
+    /// (correct across leap seconds and regardless of `S`).
+    pub fn duration_since(&self, earlier: &Epoch<S>) -> Duration {
+        Duration::from_si_seconds(self.tai.diff_days(earlier.tai) * 86400.0)
+    }
 }
+
+// Read-out accessors: lens the stored canonical TAI into scale `S`'s JD.
+//
+// Concrete per scale (not a generic `impl<S: TaiLens>`) so the crate-internal
+// `TaiLens` / `TwoPartJd` types stay off the public API — a public generic
+// bounded by them would leak them (`private_interfaces`).
+macro_rules! impl_jd_accessors {
+    ($scale:ty) => {
+        impl Epoch<$scale> {
+            /// Return the Julian Date, interpreted in this scale (lens read-out
+            /// of the canonical TAI instant; single-`f64` collapse).
+            pub fn jd(&self) -> f64 {
+                <$scale as TaiLens>::scale_from_tai(self.tai).jd()
+            }
+
+            /// The Julian Date as a precise two-part `(hi, lo)` value.
+            pub fn jd_parts(&self) -> (f64, f64) {
+                <$scale as TaiLens>::scale_from_tai(self.tai).parts()
+            }
+
+            /// Return the Modified Julian Date, interpreted in this scale.
+            pub fn mjd(&self) -> f64 {
+                self.jd() - MJD_OFFSET
+            }
+        }
+    };
+}
+impl_jd_accessors!(Utc);
+impl_jd_accessors!(Tai);
+impl_jd_accessors!(Tt);
+impl_jd_accessors!(Tdb);
+impl_jd_accessors!(Gps);
 
 // Epoch<Utc> API (main user-facing scale)
 
 impl Epoch<Utc> {
-    /// Create a UTC epoch from a raw Julian Date (treated as UTC JD).
+    /// Create a UTC epoch from a Julian Date (treated as UTC JD).
     ///
-    /// Legacy API matching the pre-refactor `Epoch::from_jd`. The resulting
-    /// `Epoch<Utc>::jd()` returns `jd` unchanged (round-trip identity).
+    /// `Epoch<Utc>::from_jd(x).jd() == x` (round-trip identity). The value is
+    /// stored internally as the corresponding canonical TAI instant.
     pub fn from_jd(jd: f64) -> Self {
-        Epoch {
-            jd,
-            _scale: PhantomData,
-        }
+        convert::from_scale_jd::<Utc>(jd)
     }
 
     /// Create a UTC epoch from a Modified Julian Date value.
     pub fn from_mjd(mjd: f64) -> Self {
-        Epoch {
-            jd: mjd + MJD_OFFSET,
-            _scale: PhantomData,
-        }
+        Self::from_jd(mjd + MJD_OFFSET)
     }
 
     /// The J2000.0 reference epoch (JD 2451545.0).
@@ -167,10 +197,7 @@ impl Epoch<Utc> {
     /// UTC scale で JD 2451545.0 を返す (後方互換のため)。厳密な TT J2000
     /// を得るには [`Epoch::<Tt>::from_jd_tt`] を使う。
     pub fn j2000() -> Self {
-        Epoch {
-            jd: J2000_JD,
-            _scale: PhantomData,
-        }
+        Self::from_jd(J2000_JD)
     }
 
     /// Create a UTC epoch from a [`DateTime`] value.
@@ -200,10 +227,7 @@ impl Epoch<Utc> {
             - 1524.5
             + (hour as f64 + min as f64 / 60.0 + sec / 3600.0) / 24.0;
 
-        Epoch {
-            jd,
-            _scale: PhantomData,
-        }
+        Self::from_jd(jd)
     }
 
     /// Parse a UTC epoch from ISO 8601 (CCSDS-compatible).
@@ -266,21 +290,15 @@ impl Epoch<Utc> {
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock before Unix epoch")
             .as_secs_f64();
-        Epoch {
-            jd: UNIX_EPOCH_JD + unix_secs / 86400.0,
-            _scale: PhantomData,
-        }
+        Self::from_jd(UNIX_EPOCH_JD + unix_secs / 86400.0)
     }
 
     /// Create a UTC epoch from a 4-digit year and a fractional day of year
     /// (`1.0` = Jan 1 00:00, `1.5` = Jan 1 12:00, …).
     pub fn from_year_day_of_year(year: i32, day_of_year: f64) -> Self {
         // JD of Jan 1 00:00 of that year, offset by the fractional day.
-        let jan1 = Self::from_gregorian(year, 1, 1, 0, 0, 0.0);
-        Epoch {
-            jd: jan1.jd + (day_of_year - 1.0),
-            _scale: PhantomData,
-        }
+        let jan1_jd = Self::from_gregorian(year, 1, 1, 0, 0, 0.0).jd();
+        Self::from_jd(jan1_jd + (day_of_year - 1.0))
     }
 
     /// Gregorian leap-year test.
@@ -308,52 +326,32 @@ impl Epoch<Utc> {
     /// This method is kept for legacy bit-level compatibility where UTC
     /// centuries were used interchangeably with dynamical-time centuries.
     pub fn centuries_since_j2000(&self) -> f64 {
-        (self.jd - J2000_JD) / JULIAN_CENTURY
+        (self.jd() - J2000_JD) / JULIAN_CENTURY
     }
 
-    /// Advance the epoch by `dt` seconds using naive JD arithmetic
-    /// (`jd + dt/86400`). Does NOT handle leap second boundaries.
+    /// Advance the epoch by `dt` seconds using naive UTC-JD arithmetic
+    /// (`utc_jd + dt/86400`). Does NOT handle leap second boundaries.
     ///
-    /// Legacy API for bit-level compatibility with pre-refactor `Epoch::add_seconds`.
-    /// For leap-second-aware arithmetic use [`add_si_seconds`](Self::add_si_seconds)
-    /// instead.
+    /// Legacy API. For leap-second-aware (SI-second) arithmetic use
+    /// [`add_si_seconds`](Self::add_si_seconds) instead.
     pub fn add_seconds(&self, dt: f64) -> Self {
-        Epoch {
-            jd: self.jd + dt / 86400.0,
-            _scale: PhantomData,
-        }
+        Self::from_jd(self.jd() + dt / 86400.0)
     }
 
     /// Advance the epoch by `dt` SI seconds, handling leap second boundaries.
     ///
-    /// Internally converts UTC → TAI, adds `dt` TAI seconds, and converts
-    /// back to UTC. Crossing a leap second boundary correctly absorbs the
-    /// extra second: 5 SI seconds from 2016-12-31T23:59:58 lands at
-    /// 2017-01-01T00:00:02 (not 00:00:03), because one SI second is "consumed"
-    /// by the 2017-01-01 leap.
+    /// Adds `dt` directly on the stored canonical TAI instant (a uniform SI
+    /// timeline), so leap seconds are handled automatically on read-out:
+    /// 5 SI seconds from 2016-12-31T23:59:58 lands at 2017-01-01T00:00:02
+    /// (not 00:00:03), because one SI second is "consumed" by the 2017-01-01
+    /// leap.
     pub fn add_si_seconds(&self, dt: f64) -> Self {
-        let utc_mjd = self.jd - MJD_OFFSET;
-        let leap_before = tai_minus_utc_at_mjd(utc_mjd);
-        let tai_jd = self.jd + leap_before / 86400.0;
-        let new_tai_jd = tai_jd + dt / 86400.0;
-
-        // Converge on the correct leap count at the new instant.
-        let mut guess_utc_jd = new_tai_jd - leap_before / 86400.0;
-        for _ in 0..3 {
-            let guess_mjd = guess_utc_jd - MJD_OFFSET;
-            let new_leap = tai_minus_utc_at_mjd(guess_mjd);
-            guess_utc_jd = new_tai_jd - new_leap / 86400.0;
-        }
-
-        Epoch {
-            jd: guess_utc_jd,
-            _scale: PhantomData,
-        }
+        Self::from_tai_raw(self.tai_raw().add_days(dt / 86400.0))
     }
 
     /// Convert to Gregorian calendar date and time (UTC).
     pub fn to_datetime(&self) -> DateTime {
-        to_datetime_from_jd(self.jd)
+        to_datetime_from_jd(self.jd())
     }
 
     /// Convert to Gregorian calendar date and time (UTC), with leap second
@@ -376,7 +374,7 @@ impl Epoch<Utc> {
     /// `Epoch::gmst` method. Will be removed when downstream callers migrate
     /// to [`Ut1Epoch::era`].
     pub fn gmst(&self) -> f64 {
-        era_formula(self.jd)
+        era_formula(self.jd())
     }
 }
 
