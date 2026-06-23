@@ -12,77 +12,101 @@ description: >-
 # Coordinate frames & time scales
 
 Getting frames and time scales right is genuinely hard — for humans and for
-LLMs alike. This skill has two halves: the **general cautions** that make the
-domain treacherous, and the **how** — the two techniques that actually defend
-against those traps: **expressing frame and scale in the type system**, and
-**property-based testing**.
+LLMs alike. This skill does **not** bake in a catalog of every frame and scale:
+the landscape is large and it shifts (new frames, successive ITRF/ICRF
+realizations, the planned end of leap seconds around 2035), so a frozen table
+goes stale and a vague memory of one is worse than useless. Instead it gives you
+three durable things:
 
-Verify domain facts against the authoritative standards rather than from memory
-or from one tool's conventions: IERS Conventions (2010, TN36), IAU resolutions
-(2000 B1.x, 2006 B3), SOFA/ERFA, Vallado *Fundamentals of Astrodynamics and
-Applications*, CCSDS ODM. Full catalogs with citations and cross-tool alias
-tables: [references/frames.md](references/frames.md),
-[references/time-scales.md](references/time-scales.md).
+1. the **concerns to resolve** for any frame, scale, or transform;
+2. **what to look up, and where** — fresh each time, because the current
+   authoritative text is simpler and more accurate than recall;
+3. the **how** — the two techniques that defend against the traps: express
+   frame and scale in the **type system**, and **property-based testing**.
 
 ---
 
-## Part 1 — General cautions (what makes this hard)
+## Part 1 — The concerns to resolve
 
-### 1. A time scale is usually the *independent variable* of a transform, not a label
+For every frame, scale, or transform you touch, resolve the following. Look them
+up (next section) rather than trusting memory or one tool's defaults.
+
+### A time scale is usually the *independent variable* of a transform, not a label
 
 This is the deepest trap. Frames and time scales are coupled at the
 **definitional** level: a transform is *defined* as a function of one *specific*
-time scale, and feeding it the wrong scale is not a units error you can rescale
-away — it is the wrong physics.
+scale, and feeding it the wrong scale is not a units error you can rescale away —
+it is the wrong physics. So always ask *which scale* a transform or model
+requires:
 
-- Earth Rotation Angle (and sidereal time) is *defined* as a function of **UT1**.
+- Earth Rotation Angle (and sidereal time) is *defined* from **UT1**.
 - Precession/nutation series are *defined* in **TT** Julian centuries.
 - Planetary/lunar ephemerides and body-rotation models take **TDB**.
 - EOP tables (polar motion, ΔUT1) are *indexed* by **UTC** by convention.
 
-So "what time is it" is never enough; you need "in which scale, for which
-purpose". The exact couplings are in [references/time-scales.md](references/time-scales.md).
+"What time is it" is never enough; you need "in which scale, for which purpose".
 
-### 2. Names are overloaded — and the everyday ones are ambiguous by themselves
+### A name never pins a value — resolve *which system*, *which realization*, *which scale*
 
 The casual labels you get handed — "ECI", "ECEF", "inertial", "GMT", "epoch",
-"GPS time", "Zulu" — under-specify the actual system, its realization, and (for
-time) the scale. "ECI" might mean J2000/EME2000, GCRS, TEME, MOD, or TOD;
-"ECEF" might mean ITRF, WGS84, or PEF; "GMT" conflates UT1 and UTC. Even the
-precise names collide: "J2000", "GCRS", and "ICRF" are *not* identical (frame
-bias ~23 mas); "RTN", "RSW", and "RIC" name one idea but communities disagree on
-axis order/sign; TEME *looks* like an ECI but is its own quasi-inertial frame.
+"GPS time", "Zulu" — under-specify the system, its realization, and (for time)
+the scale. "ECI" might mean J2000/EME2000, GCRS, TEME, MOD, or TOD; "ECEF" might
+mean ITRF, WGS84, or PEF; "GMT" conflates UT1 and UTC. Even precise names
+collide: "J2000", "GCRS", and "ICRF" are *not* identical (frame bias ~23 mas);
+"RTN", "RSW", and "RIC" name one idea but communities disagree on axis
+order/sign; TEME *looks* like an ECI but is its own quasi-inertial frame. Pin the
+exact meaning before you trust the value.
 
-**A name alone never pins a value — always resolve *which system*, *which
-realization*, and *which scale*.**
-
-### 3. Reference System ≠ Reference Frame
+### Reference System ≠ Reference Frame
 
 A distinction worth internalizing (IERS/IAU usage), because it is easy to lose:
 
 - A **Reference System** is the *conceptual definition* — the conventions,
-  models, and constants that define how the axes are oriented (e.g. **ICRS**,
-  **GCRS**, **ITRS** are *systems*). Abstract; not directly measurable.
+  models, and constants defining how the axes are oriented (**ICRS**, **GCRS**,
+  **ITRS** are *systems*). Abstract; not directly measurable.
 - A **Reference Frame** is a *realization* of a system — a concrete catalog of
-  fiducial coordinates / EOP that materializes those axes from data (e.g.
-  **ICRF3** realizes ICRS; **ITRF2014 / ITRF2020** realize ITRS; the WGS84
-  G-realizations are aligned to ITRF at the cm level).
+  fiducial coordinates / EOP materializing those axes from data (**ICRF3**
+  realizes ICRS; **ITRF2014 / ITRF2020** realize ITRS).
 
 "Which realization" is an independent axis from "which system". For Earth-
 satellite dynamics the realization difference is often sub-cm and ignored
-deliberately — but the *concept* matters the moment you ingest external data
-(which ITRF does this GNSS product use? which EOP series? which ICRF realizes
-the star catalog?). A system name does not answer the realization question; that
-question usually just hasn't been asked yet.
+deliberately — but it matters the moment you ingest external data, and a system
+name does not answer the realization question; that question usually just hasn't
+been asked yet.
 
-### Recurring concrete traps
+### The per-item checklist
 
-Each is catalogued with its error budget and source in
-[references/](references/): leap seconds and arithmetic across their boundaries;
-ignoring ΔUT1 (up to ~0.9 s → ~0.46 km of LEO ground track) and using UTC where
-UT1 is required; omitting polar motion; conflating J2000/GCRS (frame bias);
-treating a TEME state as J2000/GCRS; GPS week rollover; TDB-vs-TT for ephemeris
-lookups.
+For a concrete frame / scale / transform, resolve:
+
+- **Definition** and the defining standard / realization.
+- **Independent-variable time scale** (see the first concern above).
+- **What its conversions require:** EOP (ΔUT1, polar motion, dX/dY) vs a
+  leap-second table vs a constant offset vs a periodic series.
+- **Error budget / approximation level** versus the rigorous model — and whether
+  that budget is acceptable here.
+- **Axis order and sign conventions:** local-orbital frame axis order, longitude
+  sign, quaternion convention, and rotation-*of-frame* vs rotation-*of-vector*.
+- **Units** (km vs m, rad vs deg, SI seconds vs days).
+
+### Where to look it up — fresh, each time
+
+Verify against the primary standard, not from memory and not from a single
+tool's conventions:
+
+- **IERS Conventions (2010, TN36)** and the IERS EOP products — frames, the
+  GCRS↔ITRS transformation chain, EOP definitions and units.
+- **IAU resolutions** (2000 B1.x, 2006 B3) — system definitions, TT/TDB.
+- **SOFA / ERFA** — the canonical algorithms *and* reference values to test
+  against.
+- **Vallado, *Fundamentals of Astrodynamics and Applications*** — practical
+  conventions and worked transforms.
+- **CCSDS ODM (502.0-B)** — the exact `REF_FRAME` / `TIME_SYSTEM` tokens when
+  exchanging data.
+- A tool's own docs (Orekit / GMAT / SPICE / Skyfield) — use these to learn
+  *that tool's* naming, never as the definition itself.
+
+Prefer fetching the current authoritative text: the numbers and realizations
+change, and a tool's defaults are not the standard.
 
 ---
 
@@ -90,7 +114,7 @@ lookups.
 
 ### How #1: Express frame and scale in the type system
 
-This is the single best defense against every trap in Part 1: **a frame or a
+This is the single best defense against every concern in Part 1: **a frame or a
 time scale should be a type parameter, not a convention you have to remember.**
 The wrong combination then fails to compile instead of silently producing the
 wrong physics.
@@ -101,14 +125,13 @@ wrong physics.
 - Instants carry their scale: `Epoch<S>` where `S` is a scale marker (`Utc`,
   `Tai`, `Tt`, `Ut1`, `Tdb`, …). Subtracting two different scales does not
   compile; convert explicitly first.
-- A transform's *required* scale (Part 1 trap #1) is encoded in its signature so
-  the wrong scale cannot be passed: the GCRS→CIRS rotation takes an `Epoch<Tt>`,
-  the CIRS→TIRS rotation takes an `Epoch<Ut1>`, a Sun-position call takes an
+- A transform's *required* scale (Part 1) is encoded in its signature so the
+  wrong scale cannot be passed: the GCRS→CIRS rotation takes an `Epoch<Tt>`, the
+  CIRS→TIRS rotation takes an `Epoch<Ut1>`, a Sun-position call takes an
   `Epoch<Tdb>`. `Epoch<Tdb>::era()` should not exist.
 
 The bar when you touch this code: **make the physically-meaningful operations
-expressible and the meaningless ones fail to compile.** Sharper rules that
-follow:
+expressible and the meaningless ones fail to compile.** Sharper rules:
 
 - **Don't launder a bare `Vector3<f64>` / `f64` JD across a boundary** where its
   frame or scale is ambiguous. Raw-access escape hatches (`into_inner`,
@@ -119,10 +142,10 @@ follow:
   count vs a 10-bit *broadcast* GPS week). Don't add trait bounds for
   philosophical taxonomy (proper-time vs coordinate-time) that change nothing
   about what compiles — that just misleads about precision.
-- **No silent upgrade between precision tiers.** A visualization-grade
-  (e.g. ERA-only) value must not silently masquerade as a rigorous (full
-  IAU 2006) one. Don't provide approximate→rigorous conversions; let a naming
-  convention (e.g. a `Simple` prefix) carry the precision warning in the type.
+- **No silent upgrade between precision tiers.** A visualization-grade (e.g.
+  ERA-only) value must not silently masquerade as a rigorous (full IAU 2006)
+  one. Don't provide approximate→rigorous conversions; let a naming convention
+  (e.g. a `Simple` prefix) carry the precision warning in the type.
 - **A blanket `impl<F: Frame>` over a precision-aware operation is a trap.** It
   lets an approximation written for one frame propagate, with no compile error,
   to a future frame where it is wrong. Prefer explicit per-frame impls so adding
@@ -179,9 +202,9 @@ its independent variable, and cross-validate against a reference (ERFA/Orekit).
 
 ## Workflow: changing coordinate/time code
 
-1. **Anchor on the standard.** Confirm the definition, the independent-variable
-   scale, and the error budget against the external sources in
-   [references/](references/) before you write anything.
+1. **Anchor on the standard.** Resolve the Part 1 concerns by looking up the
+   primary sources before you write anything — definition, independent-variable
+   scale, error budget, conventions.
 2. **Keep it expressible-or-uncompilable** (How #1): add the marker/scale; encode
    the required scale in transform signatures; refuse silent precision upgrades
    and blanket precision-aware impls.
@@ -197,16 +220,10 @@ its independent variable, and cross-validate against a reference (ERFA/Orekit).
 6. **Sanity-check non-trivial designs with `smart-friend`/Codex** before coding,
    and get an external review before merge (project methodology).
 
-## References & where the types live
+## Where the types live (in this repo)
 
-- [references/frames.md](references/frames.md) — coordinate frame catalog
-  (celestial → terrestrial → local → body-fixed), with definitions, the
-  transformation chains, the System-vs-Frame realizations, alias tables, and
-  sources.
-- [references/time-scales.md](references/time-scales.md) — time scale catalog
-  (TAI/UTC/UT1/TT/TDB/TCB/TCG/GPS + GMST/GAST), the conversion graph, which
-  conversions need EOP vs leap seconds vs constants, and sources.
-- In this repo the frame/time types live in `arika/src/frame.rs` (`Vec3<F>`,
-  `Rotation<From,To>`, frame markers, category traits) and `arika/src/epoch/`
-  (`Epoch<S>`, scale markers, conversions, leap seconds); the IAU 2006 chain is
-  under `arika/src/earth/`. `arika/DESIGN.md` records the design rationale.
+- `arika/src/frame.rs` — `Vec3<F>`, `Rotation<From,To>`, frame markers, category
+  traits.
+- `arika/src/epoch/` — `Epoch<S>`, scale markers, conversions, leap seconds.
+- `arika/src/earth/` — the IAU 2006 precession/nutation / CIO chain and EOP traits.
+- `arika/DESIGN.md` — the design rationale (read the code alongside it).
