@@ -37,7 +37,7 @@ descriptions against these queries by hand.
 ## What we learned (keep in mind when editing)
 
 - A capable model already answers the textbook mechanics (per-step time scales,
-  `GPS = TAI − 19 s`, the TAI hub, phantom-typed epochs) unaided — so the skill's
+  `GPS = TAI - 19 s`, the TAI hub, phantom-typed epochs) unaided — so the skill's
   value, and these evals' signal, live in the **non-obvious** parts: typing the
   *frame* of a vector (not just the scale), `UT1` as the sidereal independent
   variable, representation-vs-frame singularities, covariance/interpolation.

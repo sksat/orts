@@ -19,7 +19,7 @@ description: >-
 
 Getting frames and time scales right is genuinely hard — for humans and for LLMs
 alike. A capable model already knows the textbook mechanics cold (that
-precession takes TT, ERA takes UT1, `GPS = TAI − 19 s`, a phantom-typed epoch is
+precession takes TT, ERA takes UT1, `GPS = TAI - 19 s`, a phantom-typed epoch is
 a good idea). It does *not* reliably catch the structural traps below on its
 own. So this skill spends its words on the **non-obvious concerns** and on
 **what to look up**, not on a catalog you'd anyway re-derive — the frame/scale
@@ -117,7 +117,7 @@ Durable, high-cost mistakes (rough magnitudes — verify against the sources bel
   worse: SPICE `J2000` ≈ ICRF (bias not applied) while GMAT/Orekit `EME2000` *is*
   the biased frame — same string, different frame.
 - **"LVLH" axis-convention split** — Vallado/STK (X=radial, Z=normal) vs
-  CCSDS/Wertz (Z=nadir, Y=−normal): incompatible rotations under one name.
+  CCSDS/Wertz (Z=nadir, Y=-normal): incompatible rotations under one name.
 
 ## TEME and onboard clocks — two underestimated cases
 

@@ -79,7 +79,7 @@ Assert with an explicit tolerance — never `==` on a transformed `f64`:
 - **Rotation round-trip & isometry:** `inverse(r)∘r ≈ identity`; `|r·v| ≈ |v|`.
 - **Composition:** `(a∘b)∘c ≈ a∘(b∘c)`; `r ∘ inverse(r) ≈ identity`.
 - **Scale round-trip:** `utc → tai → utc ≈ utc`, including a generator that lands
-  *on a leap-second boundary* (where `(epoch + d) − epoch ≈ d` is easy to break).
+  *on a leap-second boundary* (where `(epoch + d) - epoch ≈ d` is easy to break).
 - **Covariance:** stays symmetric positive-semidefinite under transform; a
   representation round-trip preserves it within tolerance.
 - **Quaternion / angle hygiene:** results stay unit-norm (renormalize in
@@ -120,7 +120,7 @@ Technique 1 doing the property test's job for free.
 2. **Keep it expressible-or-uncompilable** (Technique 1): tag frame/scale/
    representation; encode the required scale in signatures; refuse silent
    precision upgrades and blanket precision-aware impls.
-3. **Pin behavior before refactoring** (project rule): characterization tests with
+3. **Pin behavior before refactoring** (per CLAUDE.md): characterization tests with
    boundary *and* non-finite inputs (`NaN`, `±∞`); bit-for-bit where required.
 4. **Add property-based tests** (Technique 2) for the invariants above.
 5. **Cross-validate against references** — ERFA for the IAU 2006/2000A chain,
