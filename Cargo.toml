@@ -48,12 +48,7 @@ thiserror = "2"
 # WebSocket protocol type codegen (Rust → TypeScript). Generated bindings
 # land in viewer/src/protocol/generated/ via TS_RS_EXPORT_DIR (set in
 # .cargo/config.toml) whenever `cargo test -p orts-cli` runs.
-# `no-serde-warnings`: our config types use `#[serde(alias = "...")]` for TOML
-# back-compat (e.g. `[[command]]`/`[[commands]]`). `alias` is deserialize-only —
-# it has no TS representation, so ts-rs correctly ignores it but otherwise warns
-# on every build. Drift between Rust and the generated TS is guarded by the CI
-# diff of viewer/src/protocol/generated/, not by these low-signal warnings.
-ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
+ts-rs = { version = "12", features = ["serde-json-impl"] }
 
 # wasmtime: Pulley single-backend + Component Model. Cranelift is
 # enabled for runtime compile path (plugin-wasm default), runtime-only
