@@ -15,6 +15,7 @@
 
 use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
 use arika::earth::geodetic::Geodetic;
+use arika::earth::iau2006::cip::cip_xy;
 use arika::epoch::{Epoch, Utc};
 use arika::frame::{self, Ecef, Eci, Rotation, Vec3};
 
@@ -76,6 +77,49 @@ impl NutationCorrections for GcrsEopStorage {
     }
 }
 
+// EarthPoleBridge trait
+
+/// ECI frame that knows Earth's rotation-pole direction expressed in itself.
+///
+/// Zonal harmonics (J2/J3/J4) are axially symmetric about the true rotation
+/// pole, so a zonal gravity model only needs the pole *direction* in the
+/// integration frame — not the full Earth-fixed rotation. This is the minimal
+/// capability `ZonalGravity` requires, kept separate from the heavier
+/// [`EarthFrameBridge`] (which also provides the ECEF rotation that drag,
+/// magnetic field, and geodetic conversions need).
+///
+/// EOP is intentionally not a parameter: the IAU 2006 model CIP is accurate to
+/// well under a milliarcsecond without the observed dX/dY corrections, which is
+/// negligible next to the ~0.1–0.3° offset of the true pole from the GCRS Z
+/// axis that this captures.
+///
+/// # Implementations
+///
+/// - `SimpleEci`: pole = `+Z` (the simple frame defines its Z axis as the pole).
+/// - `Gcrs`: pole = the IAU 2006 CIP direction `(X, Y, √(1−X²−Y²))` at the epoch.
+pub trait EarthPoleBridge: Eci + Sized + 'static {
+    /// Unit vector along Earth's rotation pole, expressed in this frame.
+    fn earth_pole(utc: &Epoch<Utc>) -> Vec3<Self>;
+}
+
+impl EarthPoleBridge for frame::SimpleEci {
+    fn earth_pole(_utc: &Epoch<Utc>) -> Vec3<frame::SimpleEci> {
+        Vec3::new(0.0, 0.0, 1.0)
+    }
+}
+
+impl EarthPoleBridge for frame::Gcrs {
+    fn earth_pole(utc: &Epoch<Utc>) -> Vec3<frame::Gcrs> {
+        // CIP direction cosines (X, Y) in GCRS from the IAU 2006 model; Z closes
+        // the unit vector. The model (no observed dX/dY) is sub-mas accurate.
+        let t = utc.to_tt().centuries_since_j2000();
+        let (x, y) = cip_xy(t);
+        let (x, y) = (x.raw(), y.raw());
+        let z = (1.0 - x * x - y * y).sqrt();
+        Vec3::new(x, y, z)
+    }
+}
+
 // EarthFrameBridge trait
 
 /// ECI frame that can bridge to Earth-fixed (ECEF) coordinates.
@@ -91,7 +135,7 @@ impl NutationCorrections for GcrsEopStorage {
 ///   no EOP needed (`EopStorage = ()`).
 /// - `Gcrs`: Full IAU 2006 CIO chain (`Rotation<Gcrs, Itrs>`),
 ///   requires EOP provider (`EopStorage = GcrsEopStorage`).
-pub trait EarthFrameBridge: Eci + Sized + 'static {
+pub trait EarthFrameBridge: EarthPoleBridge {
     /// The ECEF frame paired with this ECI frame.
     type Fixed: Ecef;
 
@@ -262,6 +306,57 @@ mod tests {
             "simple alt={}, gcrs alt={}",
             geo_simple.altitude,
             geo_gcrs.altitude
+        );
+    }
+
+    // EarthPoleBridge
+
+    #[test]
+    fn simple_eci_pole_is_plus_z() {
+        let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let p = <frame::SimpleEci as EarthPoleBridge>::earth_pole(&utc);
+        assert_eq!(p, Vec3::<frame::SimpleEci>::new(0.0, 0.0, 1.0));
+    }
+
+    fn pole_offset_from_z_deg<F: EarthPoleBridge>(utc: &Epoch<Utc>) -> f64 {
+        let p = F::earth_pole(utc);
+        let z = Vec3::<F>::new(0.0, 0.0, 1.0);
+        assert!(
+            (p.magnitude() - 1.0).abs() < 1e-12,
+            "pole must be a unit vector, got {}",
+            p.magnitude()
+        );
+        p.dot(&z).clamp(-1.0, 1.0).acos().to_degrees()
+    }
+
+    #[test]
+    fn gcrs_pole_offset_from_z_is_precession_scale_at_2024() {
+        // The true CIP is offset from the GCRS Z axis by precession + nutation;
+        // at 2024 this is ~0.1°. This is exactly the J2 axis error the simple
+        // (frame-Z) treatment ignores.
+        let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let angle = pole_offset_from_z_deg::<frame::Gcrs>(&utc);
+        assert!(
+            angle > 0.05 && angle < 0.5,
+            "2024 CIP offset from GCRS Z should be ~0.1°, got {angle}°"
+        );
+    }
+
+    #[test]
+    fn gcrs_pole_offset_grows_with_precession() {
+        // The CIP offset from GCRS Z is precession-dominated and grows with
+        // time: ~arcsec (nutation only) near J2000, ~0.1° (precession) by 2024.
+        let j2000 =
+            pole_offset_from_z_deg::<frame::Gcrs>(&Epoch::from_gregorian(2000, 1, 1, 12, 0, 0.0));
+        let y2024 =
+            pole_offset_from_z_deg::<frame::Gcrs>(&Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0));
+        assert!(
+            j2000 < 0.01,
+            "J2000 CIP offset should be arcsec-scale, got {j2000}°"
+        );
+        assert!(
+            y2024 > 10.0 * j2000,
+            "CIP offset should grow with precession: 2024={y2024}°, J2000={j2000}°"
         );
     }
 }
