@@ -12,8 +12,9 @@ Key differences from the EME2000 fixtures:
   - Frame: GCRF (includes frame bias) vs EME2000 (J2000 mean equator)
   - Drag geodetic: Orekit uses ITRF via IERS 2010 internally (proper
     IAU 2006 chain), matching our EarthFrameBridge<Gcrs> implementation
-  - Gravity body frame: GCRF (pole = GCRS Z-axis), matching our Rust
-    ZonalHarmonics which uses raw position.z as polar component
+  - Gravity body frame: CIRF (pole = IAU 2006 CIP), matching our Rust
+    ZonalGravity<Gcrs> which evaluates the zonal harmonics about the CIP
+    (polar motion excluded; zonal terms are longitude-independent)
 
 Scenarios focus on configurations where the frame choice matters most:
   - Atmospheric drag (requires ECI -> ECEF -> geodetic conversion)
@@ -142,7 +143,7 @@ def create_propagator(pos_km, vel_km_s, epoch_date, scenario):
     propagator.setInitialState(SpacecraftState(orbit, 1.0))
 
     fm = scenario["force_model"]
-    _add_gravity(propagator, fm["gravity"], gcrf)
+    _add_gravity(propagator, fm["gravity"])
 
     if fm.get("third_body_sun"):
         _add_third_body_sun(propagator)
@@ -154,20 +155,25 @@ def create_propagator(pos_km, vel_km_s, epoch_date, scenario):
     return propagator
 
 
-def _add_gravity(propagator, grav_config, gcrf):
-    """Add gravity field with GCRF as body frame.
+def _add_gravity(propagator, grav_config):
+    """Add the zonal gravity field about the CIP, using CIRF as the body frame.
 
-    Our Rust ZonalHarmonics uses raw position.z as the polar component,
-    which in the GCRS frame equals the GCRS Z-axis (CIP at J2000.0).
-    Using GCRF as the Orekit body frame matches this behavior.
+    Our Rust `ZonalGravity<Gcrs>` evaluates the zonal harmonics about the IAU
+    2006 CIP (precession + nutation; polar motion excluded). The matching Orekit
+    body frame is therefore CIRF, whose Z axis is the CIP — not GCRF (GCRS Z) and
+    not full ITRF (which adds polar motion). These harmonics are zonal (order 0),
+    so ERA/longitude is irrelevant and only the pole direction matters.
     """
     from org.orekit.forces.gravity import HolmesFeatherstoneAttractionModel
     from org.orekit.forces.gravity.potential import GravityFieldFactory
+    from org.orekit.frames import FramesFactory
+    from org.orekit.utils import IERSConventions
 
     degree = grav_config["degree"]
     order = grav_config.get("order", 0)
     provider = GravityFieldFactory.getNormalizedProvider(degree, order)
-    hf = HolmesFeatherstoneAttractionModel(gcrf, provider)
+    cirf = FramesFactory.getCIRF(IERSConventions.IERS_2010, True)
+    hf = HolmesFeatherstoneAttractionModel(cirf, provider)
     propagator.addForceModel(hf)
 
 
@@ -391,7 +397,7 @@ def main():
         "generator": "tools/generate_gcrf_propagation_fixtures.py",
         "frame": "GCRF (IAU GCRS)",
         "note": "Propagation in GCRF frame with IERS 2010 conventions. "
-        "Gravity body frame = GCRF (matches Rust ZonalHarmonics using raw z-axis). "
+        "Gravity body frame = CIRF (CIP pole), matching Rust ZonalGravity<Gcrs>. "
         "Drag uses ITRF internally via full IAU 2006 CIO chain + EOP.",
         "constants": {
             "mu_earth_km3_s2": MU_EARTH_KM3_S2,
