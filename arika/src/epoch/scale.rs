@@ -7,11 +7,11 @@ mod sealed {
 /// Category of a time scale, exposed as introspection metadata.
 ///
 /// This is **descriptive only** — it is deliberately not used as a trait
-/// bound. Conversion capability is modelled by the
-/// [`FixedOffsetFromTai`](super::FixedOffsetFromTai) /  `TaiConvertible`
-/// (crate-internal) traits instead, because what generic conversion code
-/// needs to dispatch on is "how does this scale bridge to TAI", not its
-/// physical category.
+/// bound or for conversion dispatch. Conversions are the explicit one-hop
+/// `Epoch::<S>::to_*()` edge methods (with [`FixedOffsetFromTai`] supplying the
+/// fixed offsets), not something keyed off this category.
+///
+/// [`FixedOffsetFromTai`]: super::FixedOffsetFromTai
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeScaleKind {
     /// Atomic-clock-realized scale (TAI, GPS).
