@@ -59,6 +59,11 @@
       "matchSourceUrls": ["/^https:\\/\\/github\\.com\\/arkedge\\/kble(?:\\.git)?\\/?$/"]
     },
     {
+      "description": "Group the arkedge/notalawyer workspace crates (notalawyer / -clap / -build, released in lockstep) into one PR. Matched by source URL, not name, so a third-party notalawyer-* squatter can't slip in. Anchored regex tolerates a .git suffix / trailing slash in the resolved repository URL",
+      "groupName": "notalawyer",
+      "matchSourceUrls": ["/^https:\\/\\/github\\.com\\/arkedge\\/notalawyer(?:\\.git)?\\/?$/"]
+    },
+    {
       "description": "Auto-merge patch-level updates once required CI checks pass",
       "matchUpdateTypes": ["patch"],
       "automerge": true
