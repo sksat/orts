@@ -171,6 +171,14 @@ def _add_gravity(propagator, grav_config):
 
     degree = grav_config["degree"]
     order = grav_config.get("order", 0)
+    if order != 0:
+        # CIRF supplies only the CIP pole direction (no Earth rotation about Z),
+        # which is correct for longitude-independent zonal terms only. Tesseral
+        # terms (order > 0) would need ITRF; fail fast rather than emit a
+        # silently-wrong fixture.
+        raise ValueError(
+            f"CIRF body frame supports zonal-only gravity (order=0); got order={order}"
+        )
     provider = GravityFieldFactory.getNormalizedProvider(degree, order)
     cirf = FramesFactory.getCIRF(IERSConventions.IERS_2010, True)
     hf = HolmesFeatherstoneAttractionModel(cirf, provider)

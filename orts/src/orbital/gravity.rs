@@ -32,7 +32,7 @@ impl GravityField for PointMass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arika::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
+    use arika::earth::{MU as MU_EARTH, R as R_EARTH};
 
     #[test]
     fn point_mass_acceleration_direction() {
