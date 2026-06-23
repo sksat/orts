@@ -124,35 +124,58 @@ impl<F: EarthPoleBridge, S: HasOrbit<Frame = F>> Model<S, F> for ZonalGravity<F>
 mod tests {
     use super::*;
     use crate::OrbitalState;
-    use crate::orbital::gravity::{GravityField, PointMass, ZonalHarmonics};
     use arika::earth::{J2 as J2_E, J3 as J3_E, J4 as J4_E, MU as MU_E, R as R_E};
     use arika::frame::SimpleEci;
     use proptest::prelude::*;
-
-    fn legacy(j3: Option<f64>, j4: Option<f64>) -> ZonalHarmonics {
-        ZonalHarmonics {
-            r_body: R_E,
-            j2: J2_E,
-            j3,
-            j4,
-        }
-    }
 
     fn zonal(j3: Option<f64>, j4: Option<f64>) -> ZonalGravity<SimpleEci> {
         ZonalGravity::new(MU_E, R_E, J2_E, j3, j4)
     }
 
-    /// The legacy `ZonalHarmonics` returns point-mass + zonal; `ZonalGravity`
-    /// returns the zonal perturbation only. So the reference is the difference.
-    fn legacy_zonal_only(zh: &ZonalHarmonics, pos: &Vector3<f64>) -> Vector3<f64> {
-        zh.acceleration(MU_E, pos) - PointMass.acceleration(MU_E, pos)
+    /// Independent textbook reference: the zonal (J2/J3/J4) perturbation about
+    /// the +Z pole in the classic component form (Vallado). Written separately
+    /// from `ZonalGravity`'s frame-covariant `A·r + B·p̂` formulation, so
+    /// agreement is a genuine cross-check rather than a tautology.
+    fn textbook_zonal_plus_z(j3: Option<f64>, j4: Option<f64>, pos: &Vector3<f64>) -> Vector3<f64> {
+        let (x, y, z) = (pos.x, pos.y, pos.z);
+        let r2 = pos.norm_squared();
+        let r = r2.sqrt();
+        let r5 = r2 * r2 * r;
+        let r7 = r5 * r2;
+        let s2 = z * z / r2;
+        let re2 = R_E * R_E;
+
+        let c2 = 1.5 * J2_E * MU_E * re2 / r5;
+        let mut a = Vector3::new(
+            c2 * x * (5.0 * s2 - 1.0),
+            c2 * y * (5.0 * s2 - 1.0),
+            c2 * z * (5.0 * s2 - 3.0),
+        );
+        if let Some(j3) = j3 {
+            let c3 = 0.5 * j3 * MU_E * re2 * R_E;
+            a += Vector3::new(
+                -c3 * 5.0 * x * z / r7 * (3.0 - 7.0 * s2),
+                -c3 * 5.0 * y * z / r7 * (3.0 - 7.0 * s2),
+                c3 / r5 * (3.0 - 30.0 * s2 + 35.0 * s2 * s2),
+            );
+        }
+        if let Some(j4) = j4 {
+            let re4 = re2 * re2;
+            let s4 = s2 * s2;
+            a += Vector3::new(
+                (15.0 / 8.0) * j4 * MU_E * re4 * x / r7 * (1.0 - 14.0 * s2 + 21.0 * s4),
+                (15.0 / 8.0) * j4 * MU_E * re4 * y / r7 * (1.0 - 14.0 * s2 + 21.0 * s4),
+                (5.0 / 8.0) * j4 * MU_E * re4 * z / r7 * (15.0 - 70.0 * s2 + 63.0 * s4),
+            );
+        }
+        a
     }
 
-    /// Characterization: with pole = +Z (`SimpleEci`), `ZonalGravity` must
-    /// reproduce the legacy frame-Z `ZonalHarmonics` perturbation to f64
-    /// round-off, across J2 / J3 / J4 variants and representative positions.
+    /// With pole = +Z (`SimpleEci`), `ZonalGravity`'s `A·r + B·p̂` form must match
+    /// the classic component-form textbook reference to f64 round-off, across
+    /// J2 / J3 / J4 variants and representative positions.
     #[test]
-    fn matches_legacy_zonal_harmonics_for_simple_eci() {
+    fn matches_textbook_zonal_for_simple_eci() {
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0); // ignored: SimpleEci pole = +Z
         let cases = [
             (None, None),
@@ -168,10 +191,9 @@ mod tests {
             Vector3::new(-5000.0, 2000.0, -3000.0), // generic
         ];
         for (j3, j4) in cases {
-            let zh = legacy(j3, j4);
             let zg = zonal(j3, j4);
             for p in positions {
-                let a_ref = legacy_zonal_only(&zh, &p);
+                let a_ref = textbook_zonal_plus_z(j3, j4, &p);
                 let a_new = zg.acceleration(&p, &epoch);
                 let rel = (a_new - a_ref).norm() / a_ref.norm().max(1e-30);
                 assert!(
@@ -184,11 +206,11 @@ mod tests {
 
     /// Garbage in → garbage out: a non-finite or degenerate position must not
     /// be silently turned into an all-finite (wrong) acceleration (CLAUDE.md:
-    /// pin NaN/∞ behaviour too). The exact NaN pattern differs from the legacy
-    /// frame-Z formula — the pole generalization uses `ζ = r·p̂`, and `inf·0` in
-    /// that dot product yields NaN where component extraction did not — which is
-    /// fine: inf positions are non-physical, and finite inputs are pinned
-    /// exactly by [`matches_legacy_zonal_harmonics_for_simple_eci`].
+    /// pin NaN/∞ behaviour too). The exact NaN pattern differs from the
+    /// component-form textbook reference — the pole generalization uses
+    /// `ζ = r·p̂`, and `inf·0` in that dot product yields NaN where component
+    /// extraction did not — which is fine: inf positions are non-physical, and
+    /// finite inputs are pinned exactly by [`matches_textbook_zonal_for_simple_eci`].
     #[test]
     fn non_finite_inputs_yield_non_finite_output() {
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
@@ -221,13 +243,13 @@ mod tests {
 
     proptest! {
         /// Property generalization of the characterization test: for `SimpleEci`
-        /// (pole = +Z), `ZonalGravity` equals the legacy frame-Z `ZonalHarmonics`
-        /// perturbation at *any* position, for every J2/J3/J4 variant. Bounded
-        /// in absolute terms scaled by the (non-vanishing) point-mass
-        /// acceleration, so the J2 zero-crossing geometry (where the zonal term
-        /// itself vanishes) doesn't blow up a relative error.
+        /// (pole = +Z), `ZonalGravity`'s `A·r + B·p̂` form equals the component-form
+        /// textbook reference at *any* position, for every J2/J3/J4 variant.
+        /// Bounded in absolute terms scaled by the (non-vanishing) point-mass
+        /// acceleration `μ/r²`, so the J2 zero-crossing geometry (where the zonal
+        /// term itself vanishes) doesn't blow up a relative error.
         #[test]
-        fn zonal_gravity_equals_legacy_over_random_positions(
+        fn zonal_gravity_matches_textbook_over_random_positions(
             x in -60000.0f64..60000.0,
             y in -60000.0f64..60000.0,
             z in -60000.0f64..60000.0,
@@ -239,14 +261,13 @@ mod tests {
 
             let j3 = j3_on.then_some(J3_E);
             let j4 = j4_on.then_some(J4_E);
-            let zh = legacy(j3, j4);
             let zg = zonal(j3, j4);
 
             let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0); // ignored: SimpleEci pole = +Z
-            let a_ref = legacy_zonal_only(&zh, &r);
+            let a_ref = textbook_zonal_plus_z(j3, j4, &r);
             let a_new = zg.acceleration(&r, &epoch);
 
-            let pm = PointMass.acceleration(MU_E, &r).norm();
+            let pm = MU_E / r.norm_squared(); // point-mass acceleration magnitude
             let diff = (a_new - a_ref).norm();
             prop_assert!(
                 diff <= 1e-9 * pm,

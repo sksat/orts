@@ -24,9 +24,10 @@ use arika::epoch::Epoch;
 use arika::moon::{MU as MU_MOON, MeeusMoonEphemeris, MoonEphemeris};
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
-use orts::orbital::gravity::ZonalHarmonics;
+use orts::orbital::gravity::PointMass;
 use orts::orbital::kepler::KeplerianElements;
 use orts::perturbations::ThirdBodyGravity;
+use orts::perturbations::ZonalGravity;
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
 use orts::record::components::{BodyRadius, GravitationalParameter};
 use orts::record::entity_path::EntityPath;
@@ -518,21 +519,20 @@ fn build_translunar_system(epoch: Epoch, moon_ephem: &Arc<dyn MoonEphemeris>) ->
     let earth = KnownBody::Earth;
     let props = earth.properties();
 
-    OrbitalSystem::new(
-        MU_EARTH,
-        Box::new(ZonalHarmonics {
-            r_body: props.radius,
-            j2: J2_EARTH,
-            j3: Some(J3_EARTH),
-            j4: Some(J4_EARTH),
-        }),
-    )
-    .with_epoch(epoch)
-    .with_model(ThirdBodyGravity::sun())
-    .with_model(ThirdBodyGravity::moon_with_ephemeris(Arc::clone(
-        moon_ephem,
-    )))
-    .with_body_radius(props.radius)
+    OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ZonalGravity::new(
+            MU_EARTH,
+            props.radius,
+            J2_EARTH,
+            Some(J3_EARTH),
+            Some(J4_EARTH),
+        ))
+        .with_epoch(epoch)
+        .with_model(ThirdBodyGravity::sun())
+        .with_model(ThirdBodyGravity::moon_with_ephemeris(Arc::clone(
+            moon_ephem,
+        )))
+        .with_body_radius(props.radius)
 }
 
 /// Propagate and record orbital state. Returns (final_state, min_moon_distance, min_moon_dist_time).

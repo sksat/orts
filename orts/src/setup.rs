@@ -34,7 +34,7 @@ fn build_gravity_field() -> Box<dyn GravityField> {
 ///
 /// These builders produce `SimpleEci` systems, where `EarthPoleBridge` returns
 /// the frame's `+Z` axis as the pole — the legacy frame-Z convention. So
-/// `ZonalGravity` reproduces the previous `ZonalHarmonics` behaviour for every
+/// `ZonalGravity` reproduces the previous frame-Z behaviour for every
 /// body; for a non-Earth body that is correct only insofar as its state is
 /// expressed in a frame whose `+Z` is that body's spin axis (the pre-existing
 /// assumption, unchanged here). The Earth-specific CIP only enters for the

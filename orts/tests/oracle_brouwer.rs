@@ -13,8 +13,9 @@
 use arika::earth::{J2 as J2_EARTH, MU as MU_EARTH, R as R_EARTH};
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
-use orts::orbital::gravity::ZonalHarmonics;
+use orts::orbital::gravity::PointMass;
 use orts::orbital::kepler::KeplerianElements;
+use orts::perturbations::ZonalGravity;
 use std::f64::consts::PI;
 use std::ops::ControlFlow;
 use utsuroi::{DormandPrince, IntegrationOutcome, Tolerances};
@@ -26,15 +27,8 @@ const SSO_RATE_DEG_PER_DAY: f64 = 0.985_647_359_894_798_1;
 const SSO_RATE_RAD_PER_SEC: f64 = SSO_RATE_DEG_PER_DAY * PI / (180.0 * 86400.0);
 
 fn earth_j2_system() -> OrbitalSystem {
-    OrbitalSystem::new(
-        MU_EARTH,
-        Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: None,
-            j4: None,
-        }),
-    )
+    OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None))
 }
 
 /// First-order secular RAAN rate [rad/s] (Lagrange planetary equations).

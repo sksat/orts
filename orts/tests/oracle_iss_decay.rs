@@ -26,8 +26,9 @@ use arika::epoch::Epoch;
 use nalgebra::Vector3;
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
-use orts::orbital::gravity::ZonalHarmonics;
+use orts::orbital::gravity::PointMass;
 use orts::perturbations::AtmosphericDrag;
+use orts::perturbations::ZonalGravity;
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
 use utsuroi::{DormandPrince, Tolerances};
@@ -93,13 +94,8 @@ fn load_fixture() -> FixtureData {
 }
 
 fn build_iss_system(epoch: Epoch) -> OrbitalSystem {
-    let gravity = ZonalHarmonics {
-        r_body: R_EARTH,
-        j2: J2_EARTH,
-        j3: None,
-        j4: None,
-    };
-    OrbitalSystem::new(MU_EARTH, Box::new(gravity))
+    OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH)
         .with_model(
@@ -334,14 +330,9 @@ fn iss_decay_solar_max_2024d() {
 // overshoot is expected vs reality where conditions vary day-to-day.
 
 fn build_iss_system_msise(epoch: Epoch, f107: f64, ap: f64) -> OrbitalSystem {
-    let gravity = ZonalHarmonics {
-        r_body: R_EARTH,
-        j2: J2_EARTH,
-        j3: None,
-        j4: None,
-    };
     let weather = Box::new(ConstantWeather::new(f107, ap));
-    OrbitalSystem::new(MU_EARTH, Box::new(gravity))
+    OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH)
         .with_model(
@@ -464,13 +455,8 @@ fn build_iss_system_msise_cssi(epoch: Epoch) -> OrbitalSystem {
     let cssi_text = include_str!("fixtures/cssi_test_weather.txt");
     let cssi_data = CssiData::parse(cssi_text).expect("Failed to parse CSSI fixture");
     let weather = Box::new(CssiSpaceWeather::new(cssi_data));
-    let gravity = ZonalHarmonics {
-        r_body: R_EARTH,
-        j2: J2_EARTH,
-        j3: None,
-        j4: None,
-    };
-    OrbitalSystem::new(MU_EARTH, Box::new(gravity))
+    OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH)
         .with_model(

@@ -19,8 +19,8 @@ use nalgebra::Vector3;
 use orts::environment::GcrsEopStorage;
 use orts::orbital::OrbitalState;
 use orts::orbital::OrbitalSystem;
-use orts::orbital::gravity::ZonalHarmonics;
-use orts::perturbations::{AtmosphericDrag, ThirdBodyGravity};
+use orts::orbital::gravity::PointMass;
+use orts::perturbations::{AtmosphericDrag, ThirdBodyGravity, ZonalGravity};
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, Nrlmsise00};
 use utsuroi::{DormandPrince, Integrator};
@@ -161,26 +161,30 @@ fn build_gcrs_system_with_eop(
     let fm = &scenario.force_model;
     let epoch = parse_epoch(&scenario.epoch_utc);
 
-    let gravity: Box<dyn orts::orbital::gravity::GravityField> = match fm.gravity.degree {
-        0 => Box::new(orts::orbital::gravity::PointMass),
-        2 => Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: None,
-            j4: None,
-        }),
-        d if d >= 4 => Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: Some(J3_EARTH),
-            j4: Some(J4_EARTH),
-        }),
-        d => panic!("Unsupported gravity degree: {d}"),
-    };
-
-    let mut system = OrbitalSystem::<frame::Gcrs>::new(MU_EARTH, gravity)
+    let mut system = OrbitalSystem::<frame::Gcrs>::new(MU_EARTH, Box::new(PointMass))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH);
+
+    // Zonal gravity about the CIP (the Gcrs true pole) — the accuracy gain over
+    // the SimpleEci +Z path. The Orekit fixtures use a CIRF body frame to match.
+    match fm.gravity.degree {
+        0 => {}
+        2 => {
+            system = system.with_model(ZonalGravity::<frame::Gcrs>::new(
+                MU_EARTH, R_EARTH, J2_EARTH, None, None,
+            ));
+        }
+        d if d >= 4 => {
+            system = system.with_model(ZonalGravity::<frame::Gcrs>::new(
+                MU_EARTH,
+                R_EARTH,
+                J2_EARTH,
+                Some(J3_EARTH),
+                Some(J4_EARTH),
+            ));
+        }
+        d => panic!("Unsupported gravity degree: {d}"),
+    }
 
     if fm.third_body_sun {
         system = system.with_model(ThirdBodyGravity::sun());
@@ -271,19 +275,13 @@ fn final_pos_simple(scenario: &Scenario) -> Vector3<f64> {
     let fm = &scenario.force_model;
     let epoch = parse_epoch(&scenario.epoch_utc);
 
-    let gravity: Box<dyn orts::orbital::gravity::GravityField> = match fm.gravity.degree {
-        2 => Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: None,
-            j4: None,
-        }),
-        _ => Box::new(orts::orbital::gravity::PointMass),
-    };
-
-    let mut system = OrbitalSystem::new(MU_EARTH, gravity)
+    let mut system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH);
+
+    if fm.gravity.degree == 2 {
+        system = system.with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None));
+    }
 
     if fm.third_body_sun {
         system = system.with_model(ThirdBodyGravity::sun());
@@ -336,40 +334,43 @@ fn final_pos_err_simple(scenario: &Scenario) -> f64 {
     .magnitude()
 }
 
-/// All force models in this scenario — J2 zonal gravity and sun/moon
-/// third-body — read the satellite state and the Meeus ephemeris (`Vec3<Gcrs>`)
-/// as raw `Vector3`, so the integration-frame phantom (`SimpleEci` vs `Gcrs`)
-/// never enters the numbers. This pins that frame-agnostic treatment: the two
-/// propagations of this fixture must be numerically identical. (Drag is the one
-/// force that *does* depend on the frame, via the Earth-fixed rotation, so this
-/// fixture is required to be drag-free.)
+/// The `Gcrs` path now evaluates J2 about the true IAU 2006 CIP, while the
+/// `SimpleEci` path uses the frame +Z axis (the legacy approximation). On this
+/// drag-free J2 + third-body scenario the two propagations therefore *differ* —
+/// by the ~0.1° precession offset of the pole, tens of metres over 10 orbits —
+/// and the `Gcrs` result is markedly closer to the Orekit reference (whose
+/// gravity body frame is CIRF = the CIP).
 ///
-/// Scope: the GCRF fixtures never construct [`SolarRadiationPressure`], so SRP
-/// is not exercised here — but it uses the identical raw-vector pattern (see its
-/// `acceleration` rationale). This numerical identity is also a known limitation:
-/// the forces ignore the integration-frame orientation, so `Gcrs` is no more
-/// accurate than `SimpleEci` here, and a non-GCRS-aligned frame would be silently
-/// wrong (frame-aware force-model redesign tracked in issue #191). If any force
-/// in this scenario (third-body **or** J2) is later made frame-aware, this test
-/// fails and forces that to be a deliberate, reviewed decision.
+/// This replaces the earlier "frame-agnostic" pin from before J2 became
+/// pole-aware: that test guarded the old `Gcrs ≡ SimpleEci` behaviour and was
+/// designed to fail once a force became frame-aware, forcing this deliberate
+/// update (#191 step②). Drag is excluded so the J2-axis effect is isolated.
 #[test]
-fn j2_thirdbody_propagation_is_frame_agnostic() {
+fn gcrs_true_pole_beats_simpleeci_for_j2() {
     let fixtures = load_fixtures();
     let scenario = find_scenario(&fixtures, "gcrf_j2_thirdbody_iss_10orbits");
     assert!(
         scenario.force_model.drag.is_none(),
-        "this invariant only holds without drag; scenario must stay drag-free"
+        "isolate the J2-pole effect: scenario must stay drag-free"
     );
 
+    // The CIP-vs-+Z pole difference makes the two paths diverge by a
+    // precession-scale amount (not ~0 as in the pre-pole-aware design).
     let pos_simple = final_pos_simple(scenario);
     let pos_gcrs = final_pos_gcrs(scenario, &build_gcrs_system(scenario));
-
-    let diff = (pos_simple - pos_gcrs).magnitude();
+    let spread = (pos_simple - pos_gcrs).magnitude();
     assert!(
-        diff < 1e-6,
-        "J2 + third-body must propagate identically in SimpleEci and Gcrs: \
-         final positions differ by {diff:.3e} km (expected ~0; a real frame \
-         effect would be meters)"
+        spread > 0.01,
+        "Gcrs (CIP) and SimpleEci (+Z) J2 should differ by the precession offset, \
+         got {spread:.3e} km"
+    );
+
+    // And the true-pole Gcrs path is closer to the Orekit (CIRF) reference.
+    let gcrs_err = final_pos_err_gcrs(scenario, &build_gcrs_system(scenario));
+    let simple_err = final_pos_err_simple(scenario);
+    assert!(
+        gcrs_err < simple_err,
+        "true-pole Gcrs J2 should beat SimpleEci: gcrs={gcrs_err:.6} km, simple={simple_err:.6} km"
     );
 }
 

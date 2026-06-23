@@ -24,10 +24,11 @@ use arika::epoch::Epoch;
 use nalgebra::Vector3;
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
-use orts::orbital::gravity::{PointMass, ZonalHarmonics};
+use orts::orbital::gravity::PointMass;
 use orts::perturbations::AtmosphericDrag;
 use orts::perturbations::SolarRadiationPressure;
 use orts::perturbations::ThirdBodyGravity;
+use orts::perturbations::ZonalGravity;
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, HarrisPriester, Nrlmsise00};
 use utsuroi::{DormandPrince, DynamicalSystem, Tolerances};
@@ -182,33 +183,35 @@ fn build_system(scenario: &Scenario) -> OrbitalSystem {
     let fm = &scenario.force_model;
     let epoch = parse_epoch(&scenario.epoch_utc);
 
-    // Gravity model
-    let gravity: Box<dyn orts::orbital::gravity::GravityField> = match fm.gravity.degree {
-        0 => Box::new(PointMass),
-        2 => Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: None,
-            j4: None,
-        }),
-        3 => Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: Some(J3_EARTH),
-            j4: None,
-        }),
-        d if d >= 4 => Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: Some(J3_EARTH),
-            j4: Some(J4_EARTH),
-        }),
+    // Gravity: point-mass central term plus a zonal (J2/J3/J4) perturbation
+    // whose coefficients depend on the requested degree.
+    let zonal: Option<ZonalGravity> = match fm.gravity.degree {
+        0 => None,
+        2 => Some(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None)),
+        3 => Some(ZonalGravity::new(
+            MU_EARTH,
+            R_EARTH,
+            J2_EARTH,
+            Some(J3_EARTH),
+            None,
+        )),
+        d if d >= 4 => Some(ZonalGravity::new(
+            MU_EARTH,
+            R_EARTH,
+            J2_EARTH,
+            Some(J3_EARTH),
+            Some(J4_EARTH),
+        )),
         d => panic!("Unsupported gravity degree: {d}"),
     };
 
-    let mut system = OrbitalSystem::new(MU_EARTH, gravity)
+    let mut system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH);
+
+    if let Some(zonal) = zonal {
+        system = system.with_model(zonal);
+    }
 
     // Third-body perturbations
     if fm.third_body_sun {
