@@ -265,9 +265,9 @@ use orts::OrbitalState;
 #[cfg(feature = "fetch-horizons")]
 use orts::orbital::OrbitalSystem;
 #[cfg(feature = "fetch-horizons")]
-use orts::orbital::gravity::ZonalHarmonics;
+use orts::orbital::gravity::PointMass;
 #[cfg(feature = "fetch-horizons")]
-use orts::perturbations::{ConstantThrust, ThirdBodyGravity};
+use orts::perturbations::{ConstantThrust, ThirdBodyGravity, ZonalGravity};
 #[cfg(feature = "fetch-horizons")]
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
 #[cfg(feature = "fetch-horizons")]
@@ -2744,21 +2744,20 @@ fn build_artemis_system(
             .unwrap_or_else(|| arika::sun::sun_position_eci(e))
     });
 
-    OrbitalSystem::new(
-        MU_EARTH,
-        Box::new(ZonalHarmonics {
-            r_body: props.radius,
-            j2: J2_EARTH,
-            j3: Some(J3_EARTH),
-            j4: Some(J4_EARTH),
-        }),
-    )
-    .with_epoch(epoch)
-    .with_model(sun_model)
-    .with_model(ThirdBodyGravity::moon_with_ephemeris(Arc::clone(
-        moon_ephem,
-    )))
-    .with_body_radius(props.radius)
+    OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ZonalGravity::new(
+            MU_EARTH,
+            props.radius,
+            J2_EARTH,
+            Some(J3_EARTH),
+            Some(J4_EARTH),
+        ))
+        .with_epoch(epoch)
+        .with_model(sun_model)
+        .with_model(ThirdBodyGravity::moon_with_ephemeris(Arc::clone(
+            moon_ephem,
+        )))
+        .with_body_radius(props.radius)
 }
 
 #[cfg(feature = "fetch-horizons")]

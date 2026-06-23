@@ -20,9 +20,10 @@ use nalgebra::Vector3;
 use orts::OrbitalState;
 use orts::events::SimulationEvent;
 use orts::orbital::OrbitalSystem;
-use orts::orbital::gravity::ZonalHarmonics;
+use orts::orbital::gravity::PointMass;
 use orts::orbital::kepler::KeplerianElements;
 use orts::perturbations::AtmosphericDrag;
+use orts::perturbations::ZonalGravity;
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
 use orts::record::components::{BodyRadius, GravitationalParameter};
 use orts::record::entity_path::EntityPath;
@@ -171,13 +172,8 @@ fn build_system(
     ballistic_coeff: f64,
     atmosphere: Box<dyn tobari::AtmosphereModel>,
 ) -> OrbitalSystem {
-    let gravity = ZonalHarmonics {
-        r_body: R_EARTH,
-        j2: J2_EARTH,
-        j3: None,
-        j4: None,
-    };
-    OrbitalSystem::new(MU_EARTH, Box::new(gravity))
+    OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH)
         .with_model(AtmosphericDrag::for_earth(Some(ballistic_coeff)).with_atmosphere(atmosphere))

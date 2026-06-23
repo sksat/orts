@@ -19,8 +19,8 @@ use nalgebra::Vector3;
 use orts::environment::GcrsEopStorage;
 use orts::orbital::OrbitalState;
 use orts::orbital::OrbitalSystem;
-use orts::orbital::gravity::ZonalHarmonics;
-use orts::perturbations::{AtmosphericDrag, ThirdBodyGravity};
+use orts::orbital::gravity::{PointMass, ZonalHarmonics};
+use orts::perturbations::{AtmosphericDrag, ThirdBodyGravity, ZonalGravity};
 use serde::Deserialize;
 use tobari::{ConstantWeather, CssiData, CssiSpaceWeather, Nrlmsise00};
 use utsuroi::{DormandPrince, Integrator};
@@ -271,19 +271,13 @@ fn final_pos_simple(scenario: &Scenario) -> Vector3<f64> {
     let fm = &scenario.force_model;
     let epoch = parse_epoch(&scenario.epoch_utc);
 
-    let gravity: Box<dyn orts::orbital::gravity::GravityField> = match fm.gravity.degree {
-        2 => Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: None,
-            j4: None,
-        }),
-        _ => Box::new(orts::orbital::gravity::PointMass),
-    };
-
-    let mut system = OrbitalSystem::new(MU_EARTH, gravity)
+    let mut system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
         .with_epoch(epoch)
         .with_body_radius(R_EARTH);
+
+    if fm.gravity.degree == 2 {
+        system = system.with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None));
+    }
 
     if fm.third_body_sun {
         system = system.with_model(ThirdBodyGravity::sun());

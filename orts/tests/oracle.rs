@@ -17,48 +17,38 @@ use arika::epoch::Epoch;
 use nalgebra::vector;
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
-use orts::orbital::gravity::ZonalHarmonics;
+use orts::orbital::gravity::PointMass;
 use orts::orbital::kepler::KeplerianElements;
 use orts::perturbations::AtmosphericDrag;
 use orts::perturbations::ThirdBodyGravity;
+use orts::perturbations::ZonalGravity;
 use std::f64::consts::PI;
 use std::ops::ControlFlow;
 use utsuroi::{DormandPrince, IntegrationOutcome, Integrator, Rk4, Tolerances};
 
 fn earth_j2_system() -> OrbitalSystem {
-    OrbitalSystem::new(
-        MU_EARTH,
-        Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: None,
-            j4: None,
-        }),
-    )
+    OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None))
 }
 
 fn earth_j2_j3_system() -> OrbitalSystem {
-    OrbitalSystem::new(
+    OrbitalSystem::new(MU_EARTH, Box::new(PointMass)).with_model(ZonalGravity::new(
         MU_EARTH,
-        Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: Some(J3_EARTH),
-            j4: None,
-        }),
-    )
+        R_EARTH,
+        J2_EARTH,
+        Some(J3_EARTH),
+        None,
+    ))
 }
 
 fn earth_j2_j3_j4_system() -> OrbitalSystem {
-    OrbitalSystem::new(
+    OrbitalSystem::new(MU_EARTH, Box::new(PointMass)).with_model(ZonalGravity::new(
         MU_EARTH,
-        Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: Some(J3_EARTH),
-            j4: Some(J4_EARTH),
-        }),
-    )
+        R_EARTH,
+        J2_EARTH,
+        Some(J3_EARTH),
+        Some(J4_EARTH),
+    ))
 }
 
 /// Propagate and collect orbital elements at each orbit completion.
@@ -407,15 +397,8 @@ fn drag_monotonic_sma_decay() {
     let a = R_EARTH + 400.0;
     let v = (MU_EARTH / a).sqrt();
 
-    let mut system = OrbitalSystem::new(
-        MU_EARTH,
-        Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: None,
-            j4: None,
-        }),
-    );
+    let mut system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None));
     system = system.with_model(AtmosphericDrag {
         body: Some(KnownBody::Earth),
         body_radius: R_EARTH,
@@ -483,15 +466,8 @@ fn drag_scaling_with_ballistic_coefficient() {
     let dt = 10.0;
 
     let run_with_b = |b: f64| -> f64 {
-        let mut system = OrbitalSystem::new(
-            MU_EARTH,
-            Box::new(ZonalHarmonics {
-                r_body: R_EARTH,
-                j2: J2_EARTH,
-                j3: None,
-                j4: None,
-            }),
-        );
+        let mut system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+            .with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None));
         system = system.with_model(AtmosphericDrag {
             body: Some(KnownBody::Earth),
             body_radius: R_EARTH,
@@ -1527,15 +1503,8 @@ fn drag_decay_200_orbits() {
     let a = R_EARTH + 400.0;
     let v = (MU_EARTH / a).sqrt();
 
-    let mut system = OrbitalSystem::new(
-        MU_EARTH,
-        Box::new(ZonalHarmonics {
-            r_body: R_EARTH,
-            j2: J2_EARTH,
-            j3: None,
-            j4: None,
-        }),
-    );
+    let mut system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+        .with_model(ZonalGravity::new(MU_EARTH, R_EARTH, J2_EARTH, None, None));
     // Use DEFAULT_BALLISTIC_COEFF (0.01) — this test needs enough decay
     // to observe acceleration (positive feedback from exponential atmosphere).
     // ISS physical B=0.005 decays too slowly over 200 orbits (~1 km) relative
