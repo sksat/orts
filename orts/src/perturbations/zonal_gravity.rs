@@ -39,8 +39,9 @@ pub struct ZonalGravity<F: EarthPoleBridge = arika::frame::SimpleEci> {
     pub j3: Option<f64>,
     /// J4 coefficient (dimensionless, optional).
     pub j4: Option<f64>,
-    // `fn() -> F` so the marker never imposes `Send`/`Sync` (or variance)
-    // requirements on `F`; `ZonalGravity<F>` is unconditionally `Send + Sync`.
+    // `fn() -> F` (rather than `F`) so the marker carries no auto-trait or
+    // drop obligation tied to `F`: function-pointer types are always
+    // `Send + Sync`, so `ZonalGravity<F>` is `Send + Sync` regardless of `F`.
     _frame: PhantomData<fn() -> F>,
 }
 
