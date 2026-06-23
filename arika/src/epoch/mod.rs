@@ -134,10 +134,11 @@ impl<S: TimeScale> Epoch<S> {
         self.tai
     }
 
-    /// Exact SI-second interval since `earlier`, measured on the TAI timeline
-    /// (correct across leap seconds and regardless of `S`).
-    pub fn duration_since(&self, earlier: &Epoch<S>) -> Duration {
-        Duration::from_si_seconds(self.tai.diff_days(earlier.tai) * 86400.0)
+    /// Exact SI-second interval since `earlier`, measured on the shared TAI
+    /// timeline — correct across leap seconds and across *any* scales (both
+    /// epochs store canonical TAI, so `earlier` may be in a different scale).
+    pub fn duration_since<T: TimeScale>(&self, earlier: &Epoch<T>) -> Duration {
+        Duration::from_si_seconds(self.tai.diff_days(earlier.tai_raw()) * 86400.0)
     }
 }
 

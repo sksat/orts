@@ -90,9 +90,10 @@ mod tests {
 
     #[test]
     fn from_parts_normalizes() {
-        // hi has no room for a sub-µs residual, but lo carries it exactly.
+        // 1e-9 day ≈ 86 µs — a couple of ulp at this JD (ulp ≈ 40 µs), so it
+        // does not fit in `hi` alone; `lo` retains it where single-f64 would not.
         let hi = 2_460_000.0;
-        let lo = 1e-9; // ~86 µs is 1e-9 day; this is well below single-f64 ulp here
+        let lo = 1e-9;
         let t = TwoPartJd::from_parts(hi, lo);
         let (h, l) = t.parts();
         // The residual survives in lo (single-f64 jd() would lose it).
@@ -120,7 +121,7 @@ mod tests {
 
     #[test]
     fn add_days_accumulates_without_drift() {
-        // Add 1 µs-day a million times; compare to the exact 1e6× value.
+        // Add a micro-day (1e-6 day) a million times → exactly 1.0 day.
         const STEP: f64 = 1e-6;
         let mut t = TwoPartJd::from_jd(2_460_000.5);
         for _ in 0..1_000_000 {

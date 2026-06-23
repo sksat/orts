@@ -101,8 +101,10 @@ impl TaiLens for Utc {
         utc.add_days(leap / 86400.0)
     }
     fn scale_from_tai(tai: TwoPartJd) -> TwoPartJd {
-        // Converge on the leap count at the resulting UTC instant.
-        let mut utc = tai.add_days(-37.0 / 86400.0); // initial guess
+        // Seed the leap-count search with the current maximum TAI − UTC; any
+        // seed within one leap step of the true offset converges in 3 iters.
+        const LEAP_SEED_SEC: f64 = 37.0; // TAI − UTC since 2017-01-01
+        let mut utc = tai.add_days(-LEAP_SEED_SEC / 86400.0);
         for _ in 0..3 {
             let leap = tai_minus_utc_at_mjd(utc.jd() - MJD_OFFSET);
             utc = tai.add_days(-leap / 86400.0);
