@@ -346,9 +346,12 @@ fn final_pos_err_simple(scenario: &Scenario) -> f64 {
 ///
 /// Scope: the GCRF fixtures never construct [`SolarRadiationPressure`], so SRP
 /// is not exercised here — but it uses the identical raw-vector pattern (see its
-/// `acceleration` rationale). If any force in this scenario (third-body **or**
-/// J2) is later made frame-aware, this test fails and forces that to be a
-/// deliberate, reviewed decision rather than a silent behavior shift.
+/// `acceleration` rationale). This numerical identity is also a known limitation:
+/// the forces ignore the integration-frame orientation, so `Gcrs` is no more
+/// accurate than `SimpleEci` here, and a non-GCRS-aligned frame would be silently
+/// wrong (frame-aware force-model redesign tracked in issue #191). If any force
+/// in this scenario (third-body **or** J2) is later made frame-aware, this test
+/// fails and forces that to be a deliberate, reviewed decision.
 #[test]
 fn j2_thirdbody_propagation_is_frame_agnostic() {
     let fixtures = load_fixtures();

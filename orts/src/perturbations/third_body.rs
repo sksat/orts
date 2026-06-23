@@ -108,12 +108,12 @@ impl ThirdBodyGravity {
     ///
     /// Pure vector arithmetic on raw `Vector3<f64>`: the `Vec3<Gcrs>` body
     /// position (Meeus) is used directly, whatever frame the satellite state is
-    /// tagged with. This is an intentional raw-vector approximation — the
-    /// default `SimpleEci` frame is only loosely related to GCRS (`arika::frame`:
-    /// it omits precession, nutation, and frame bias), so the raw mix is
-    /// appropriate at the Meeus / visualization precision this path targets, not
-    /// for high-accuracy GCRS work. The orbital effect is bounded against Orekit
-    /// by the GCRF oracle tests.
+    /// tagged with — the integration-frame orientation is never consulted. This
+    /// is an intentional raw-vector approximation for Meeus / visualization
+    /// precision: `SimpleEci` is only loosely related to GCRS (omits precession,
+    /// nutation, frame bias), and `Gcrs` gains no accuracy over `SimpleEci` here.
+    /// A frame whose axes differ from GCRS (e.g. `Teme`) would be silently wrong;
+    /// the frame-aware force-model redesign is tracked in issue #191.
     pub(crate) fn acceleration(
         &self,
         sat_position: &Vector3<f64>,
