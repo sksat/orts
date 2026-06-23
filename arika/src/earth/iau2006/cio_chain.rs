@@ -64,7 +64,7 @@ use crate::math::F64Ext;
 use super::cip::{cio_locator_s, cip_xy, gcrs_to_cirs_matrix, rotation_x, rotation_y, rotation_z};
 use super::{Arcsec, Mas, Rad, Uas};
 use crate::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
-use crate::epoch::{Epoch, Tt, Ut1, Utc};
+use crate::epoch::{Epoch, Tt, Ut1Epoch, Utc};
 use crate::frame::{Cirs, Gcrs, Itrs, Rotation, Tirs};
 
 // TIO locator s'(t)
@@ -157,14 +157,14 @@ impl Rotation<Cirs, Tirs> {
     ///
     /// The Earth Rotation Angle `ERA` is a definitional function of
     /// UT1 (TN36 Eq. 5.14 / SOFA `iauEra00`), already implemented by
-    /// [`Epoch::<Ut1>::era`]. The `Rotation<Cirs, Tirs>` is the pure
+    /// [`Ut1Epoch::era`]. The `Rotation<Cirs, Tirs>` is the pure
     /// z-axis rotation by `−ERA`.
     ///
     /// This constructor takes no EOP provider — every quantity is
     /// definitional once `ut1` is known, and the `ut1` epoch was
     /// itself derived from `utc` + `dUT1` upstream (via
     /// [`Epoch::<Utc>::to_ut1`]).
-    pub fn from_era(ut1: &Epoch<Ut1>) -> Self {
+    pub fn from_era(ut1: &Ut1Epoch) -> Self {
         let era = ut1.era();
         let axis = nalgebra::Unit::new_normalize(Vector3::z());
         Self::from_raw(UnitQuaternion::from_axis_angle(&axis, -era))
@@ -228,12 +228,12 @@ impl Rotation<Gcrs, Itrs> {
     /// ```
     ///
     /// Taking three separate epochs is intentional: `Epoch<Tt>`,
-    /// `Epoch<Ut1>`, and `Epoch<Utc>` are **definitionally** distinct
+    /// `Ut1Epoch`, and `Epoch<Utc>` are **definitionally** distinct
     /// time scales (TN36 §5.2) and the compiler enforces that the
     /// caller thought about each one. See
     /// [`Rotation::<Gcrs, Itrs>::iau2006_full_from_utc`] for the
     /// convenience form that derives all three from a single UTC.
-    pub fn iau2006_full<P>(tt: &Epoch<Tt>, ut1: &Epoch<Ut1>, utc: &Epoch<Utc>, eop: &P) -> Self
+    pub fn iau2006_full<P>(tt: &Epoch<Tt>, ut1: &Ut1Epoch, utc: &Epoch<Utc>, eop: &P) -> Self
     where
         P: NutationCorrections + PolarMotion + ?Sized,
     {
@@ -307,7 +307,7 @@ mod tests {
         }
     }
 
-    fn sample_epochs() -> (Epoch<Tt>, Epoch<Ut1>, Epoch<Utc>) {
+    fn sample_epochs() -> (Epoch<Tt>, Ut1Epoch, Epoch<Utc>) {
         // Pick a non-pathological post-J2000 instant.
         let utc = Epoch::<Utc>::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let tt = utc.to_tt();
@@ -343,12 +343,12 @@ mod tests {
     /// At the J2000.0 UT1 reference instant the ERA is
     /// `2π × 0.7790572732640` ≈ `4.895 rad`, and the resulting
     /// `R_3(−ERA)` matrix has a non-trivial element in (0,1). Pins the
-    /// sign and axis of `from_era` against `Epoch<Ut1>::era`.
+    /// sign and axis of `from_era` against `Ut1Epoch::era`.
     #[test]
     fn from_era_uses_z_axis_with_negative_era() {
         use crate::epoch::J2000_JD;
 
-        let ut1 = Epoch::<Ut1>::from_jd_ut1(J2000_JD);
+        let ut1 = Ut1Epoch::from_jd_ut1(J2000_JD);
         let rot = Rotation::<Cirs, Tirs>::from_era(&ut1);
 
         // Compare with a hand-constructed reference: the underlying

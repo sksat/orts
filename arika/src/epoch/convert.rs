@@ -19,7 +19,8 @@
 //! engine.
 //!
 //! `UT1` is reachable only through a `dUT1` provider
-//! ([`Epoch::<Utc>::to_ut1`]); there is no `Epoch<Ut1>::to_tai()`, which keeps
+//! ([`Epoch::<Utc>::to_ut1`]) and lives in its own [`Ut1Epoch`] type — UT1 is
+//! not part of the `Epoch<S>` family at all, which keeps
 //! the Earth-rotation scale isolated from the atomic/dynamical edges.
 
 use core::f64::consts::TAU;
@@ -29,7 +30,7 @@ use crate::math::F64Ext;
 
 use super::TimeScale;
 use super::leap::tai_minus_utc_at_mjd;
-use super::{Epoch, Gps, Tai, Tdb, Tt, Ut1, Utc};
+use super::{Epoch, Gps, Tai, Tdb, Tt, Utc};
 use super::{GPS_MINUS_TAI_SEC, J2000_JD, JULIAN_CENTURY, MJD_OFFSET, TT_MINUS_TAI_SEC};
 
 /// Scales whose offset from TAI is a fixed number of SI seconds:
@@ -88,8 +89,8 @@ impl Epoch<Utc> {
     /// 真の UT1 が必要な場合は [`Epoch::<Utc>::to_ut1`] (`Ut1Offset` provider を
     /// 引数に取る) を使う。本 method は `NullEop` 相当の `dUT1 = 0` 仮定で、
     /// current arika の `gmst()` 実装との bit-level 互換を保つため提供される。
-    pub fn to_ut1_naive(&self) -> Epoch<Ut1> {
-        Epoch::<Ut1>::from_jd_raw(self.jd())
+    pub fn to_ut1_naive(&self) -> Ut1Epoch {
+        Ut1Epoch::from_jd_ut1(self.jd())
     }
 
     /// Convert to UT1 using the `dUT1 = UT1 − UTC` correction provided by
@@ -111,10 +112,10 @@ impl Epoch<Utc> {
     ///
     /// For a naive `dUT1 = 0` conversion used by the legacy simple rotation
     /// path, use [`Epoch::<Utc>::to_ut1_naive`] instead.
-    pub fn to_ut1<P: crate::earth::eop::Ut1Offset + ?Sized>(&self, eop: &P) -> Epoch<Ut1> {
+    pub fn to_ut1<P: crate::earth::eop::Ut1Offset + ?Sized>(&self, eop: &P) -> Ut1Epoch {
         let mjd = self.jd() - MJD_OFFSET;
         let dut1 = eop.dut1(mjd);
-        Epoch::<Ut1>::from_jd_raw(self.jd() + dut1 / 86400.0)
+        Ut1Epoch::from_jd_ut1(self.jd() + dut1 / 86400.0)
     }
 }
 
@@ -230,12 +231,32 @@ impl Epoch<Tdb> {
     }
 }
 
-// UT1 API
+// UT1 — isolated from the Epoch<S> family.
+//
+// UT1 − TAI (ΔUT1) is a *measured* Earth-orientation quantity (EOP), not a
+// data-free offset like the other scales, so UT1 cannot live on the canonical
+// timeline the `Epoch<S>` family shares. It is therefore its own type, reached
+// only through a `dUT1` provider ([`Epoch::<Utc>::to_ut1`]).
 
-impl Epoch<Ut1> {
+/// An epoch on the UT1 (Earth-rotation) time scale, stored as a UT1 Julian Date.
+///
+/// Separate from [`Epoch`] because UT1 is realized by Earth's rotation, not
+/// atomic clocks: reaching it requires a measured `dUT1` (see
+/// [`Epoch::<Utc>::to_ut1`]). Carries the definitional Earth Rotation Angle.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ut1Epoch {
+    jd: f64,
+}
+
+impl Ut1Epoch {
     /// Create a UT1 epoch from a Julian Date value interpreted as UT1 JD.
     pub fn from_jd_ut1(jd: f64) -> Self {
-        Epoch::<Ut1>::from_jd_raw(jd)
+        Self { jd }
+    }
+
+    /// The UT1 Julian Date.
+    pub fn jd(&self) -> f64 {
+        self.jd
     }
 
     /// Earth Rotation Angle (ERA) in radians.
@@ -244,15 +265,13 @@ impl Epoch<Ut1> {
     /// `ERA(T_u) = 2π × (0.7790572732640 + 1.00273781191135448 × T_u)`
     /// where `T_u = JD_UT1 − 2451545.0`.
     ///
-    /// ERA は UT1 の definitional な関数であり、他の scale で計算することは
-    /// 意味論的に間違い。したがって `era()` method は `Epoch<Ut1>` にのみ
-    /// 提供される (`Epoch<Tdb>::era()` はコンパイルエラー)。
+    /// ERA は UT1 の definitional な関数。`Ut1Epoch` にのみ提供される。
     pub fn era(&self) -> f64 {
-        era_formula(self.jd())
+        era_formula(self.jd)
     }
 }
 
-/// Earth Rotation Angle (ERA) formula, shared by `Epoch<Ut1>::era` and the
+/// Earth Rotation Angle (ERA) formula, shared by `Ut1Epoch::era` and the
 /// legacy `Epoch<Utc>::gmst` method.
 ///
 /// Note: the current arika source value `1.002_737_811_911_354_6` differs

@@ -15,7 +15,6 @@ fn scale_name_via_type() {
     assert_eq!(Epoch::<Utc>::scale_name(), "UTC");
     assert_eq!(Epoch::<Tai>::scale_name(), "TAI");
     assert_eq!(Epoch::<Tt>::scale_name(), "TT");
-    assert_eq!(Epoch::<Ut1>::scale_name(), "UT1");
     assert_eq!(Epoch::<Tdb>::scale_name(), "TDB");
 }
 
@@ -467,9 +466,9 @@ fn to_ut1_accepts_trait_object_provider() {
     }
     let utc = Epoch::<Utc>::from_gregorian(2024, 3, 20, 12, 0, 0.0);
     let boxed: Box<dyn crate::earth::eop::Ut1Offset> = Box::new(Fixed(-0.100));
-    let _ut1_box: Epoch<Ut1> = utc.to_ut1(boxed.as_ref());
+    let _ut1_box: Ut1Epoch = utc.to_ut1(boxed.as_ref());
     let dyn_ref: &dyn crate::earth::eop::Ut1Offset = &Fixed(-0.100);
-    let _ut1_dyn: Epoch<Ut1> = utc.to_ut1(dyn_ref);
+    let _ut1_dyn: Ut1Epoch = utc.to_ut1(dyn_ref);
 }
 
 #[test]

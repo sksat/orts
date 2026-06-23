@@ -65,13 +65,14 @@ impl TwoPartJd {
 
     /// Difference `self - other` in days, in extended precision.
     ///
-    /// The high parts subtract first (exact by Sterbenz when they are within a
-    /// factor of two — i.e. epochs close together, the case that matters near
-    /// J2000), then the residuals are folded in.
+    /// `two_sum` on the high parts captures their subtraction's rounding error
+    /// exactly (for any magnitudes), so no significance is lost even when the
+    /// high parts are large and close — the J2000-cancellation case. The
+    /// residual difference is then folded into that error term.
     #[inline]
     pub(crate) fn diff_days(self, other: Self) -> f64 {
         let (dh, eh) = two_sum(self.hi, -other.hi);
-        // dh + eh + (self.lo - other.lo)
+        // (hi diff) + (hi-diff rounding error) + (lo diff)
         dh + (eh + (self.lo - other.lo))
     }
 }
@@ -111,7 +112,10 @@ mod tests {
         assert!(rel_err < 1e-6, "1 ns diff lost: got {d}, want {ONE_NS_DAY}");
         // Sanity: naive single-f64 subtraction loses it entirely.
         let naive = (2_451_545.0_f64 + ONE_NS_DAY) - 2_451_545.0_f64;
-        assert_eq!(naive, 0.0, "precondition: single-f64 floors a 1 ns step to 0");
+        assert_eq!(
+            naive, 0.0,
+            "precondition: single-f64 floors a 1 ns step to 0"
+        );
     }
 
     #[test]

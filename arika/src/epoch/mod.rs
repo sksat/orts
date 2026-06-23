@@ -3,8 +3,12 @@
 //! # 概要
 //!
 //! `Epoch<S>` は scale `S` で解釈される瞬間を表す。`S` は [`TimeScale`] trait を
-//! 実装した marker (`Utc`, `Tai`, `Tt`, `Ut1`, `Tdb` のいずれか) で、
-//! 時刻体系 (UTC, TAI, TT, UT1, TDB) をコンパイル時に区別する。
+//! 実装した marker (`Utc`, `Tai`, `Tt`, `Tdb`, `Gps` のいずれか) で、
+//! 時刻体系をコンパイル時に区別する。
+//!
+//! UT1 は EOP (測定された dUT1) 依存で他の scale と data-free に換算できないため
+//! `Epoch<S>` の仲間ではなく独立型 [`Ut1Epoch`] として扱う ([`Epoch<Utc>::to_ut1`]
+//! 経由で生成)。
 //!
 //! 既存コードとの互換性のため、型パラメータはデフォルト値 `Utc` を持ち、
 //! `Epoch` という bare 名は `Epoch<Utc>` と等価。
@@ -25,8 +29,8 @@
 //!   [`Epoch<Utc>::from_datetime`], [`Epoch<Utc>::now`],
 //!   [`Epoch<Utc>::from_tle_epoch`] — UTC 入口
 //! - [`Epoch<Tt>::from_jd_tt`], [`Epoch<Tdb>::from_jd_tdb`],
-//!   [`Epoch<Ut1>::from_jd_ut1`], [`Epoch<Tai>::from_jd_tai`] — scale 固有 JD 入口
-//! - [`Epoch<Ut1>::era`] — Earth Rotation Angle (IAU 2000 B1.8)
+//!   [`Epoch<Tai>::from_jd_tai`], [`Ut1Epoch::from_jd_ut1`] — scale 固有 JD 入口
+//! - [`Ut1Epoch::era`] — Earth Rotation Angle (IAU 2000 B1.8)
 //!
 //! 変換は `to_tai()` / `to_tt()` / `to_tdb()` 等の method で明示的に行う。
 
@@ -39,18 +43,18 @@ mod convert;
 mod datetime;
 mod duration;
 mod gps;
-// TODO(phase2): consumed by the canonical-TAI Epoch representation next; the
-// allow is temporary until that integration lands.
+// Consumed by the canonical-TAI Epoch representation in a follow-up commit;
+// the allow is temporary until that integration lands.
 #[allow(dead_code)]
 mod jd2;
 mod leap;
 mod scale;
 
-pub use convert::FixedOffsetFromTai;
+pub use convert::{FixedOffsetFromTai, Ut1Epoch};
 pub use datetime::DateTime;
 pub use duration::Duration;
 pub use gps::{GpsWeek, SecondsOfWeek};
-pub use scale::{Gps, Tai, Tdb, TimeScale, Tt, Ut1, Utc};
+pub use scale::{Gps, Tai, Tdb, TimeScale, Tt, Utc};
 
 use convert::era_formula;
 use datetime::to_datetime_from_jd;
@@ -365,12 +369,12 @@ impl Epoch<Utc> {
     ///
     /// Actually computes the Earth Rotation Angle (IAU 2000 B1.8 / SOFA
     /// `iauEra00`) assuming UT1 ≈ UTC (ignores dUT1). For the proper
-    /// canonical form use [`Epoch::<Ut1>::era`] after an explicit UT1
+    /// canonical form use [`Ut1Epoch::era`] after an explicit UT1
     /// conversion via a proper EOP provider.
     ///
     /// Kept on `Epoch<Utc>` for bit-level compatibility with the pre-refactor
     /// `Epoch::gmst` method. Will be removed when downstream callers migrate
-    /// to `Epoch<Ut1>::era`.
+    /// to [`Ut1Epoch::era`].
     pub fn gmst(&self) -> f64 {
         era_formula(self.jd)
     }
