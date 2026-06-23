@@ -34,9 +34,9 @@ sensors?: Array<SensorChoice>,
  */
 reaction_wheels?: ReactionWheelConfig, 
 /**
- * MTQ 設定。
+ * MTQ 設定。TOML キーは隣の `reaction_wheels` に揃えてフルワード `magnetorquers`。
  */
-mtq?: MtqConfig, 
+magnetorquers?: MtqConfig, 
 /**
  * 推進器 (thruster) 設定。
  */

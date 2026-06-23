@@ -15,11 +15,11 @@ export type SimConfig = { body?: string, dt?: number, output_interval?: number, 
 /**
  * 時刻指定コマンドシーケンス（FSW への C&T アップリンク）。
  * 各エントリは指定 sim 時刻に対象衛星のコントローラへ配送される。
- * TOML では `[[command]]`（単数）/ `[[commands]]`（複数）の両方可。
+ * TOML では array-of-tables の慣習に従い `[[command]]`（単数）で宣言する。
  */
-commands?: Array<CommandConfig>, 
+command?: Array<CommandConfig>, 
 /**
  * 地上局定義（contact window 検出用）。Earth 中心のシミュレーション
- * でのみ有効。TOML では `[[ground_station]]` / `[[ground_stations]]`。
+ * でのみ有効。TOML では `[[ground_station]]`（単数）で宣言する。
  */
-ground_stations?: Array<GroundStationConfig>, };
+ground_station?: Array<GroundStationConfig>, };
