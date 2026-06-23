@@ -1,0 +1,49 @@
+{
+  "skill_name": "coordinate-time-systems + coordinate-time-implementation",
+  "note": "These evals exercise the companion pair together. Run an agent on each prompt WITH both skills available and WITHOUT them (baseline), and grade the answer against `expectations`. The most informative variant denies repository access (so the baseline can't recover the answer from arika's self-documenting code) — see README.md.",
+  "skills_under_test": ["../../coordinate-time-systems", "../../coordinate-time-implementation"],
+  "evals": [
+    {
+      "id": 0,
+      "name": "teme-to-gcrs",
+      "prompt": "I'm working in the orts/arika Rust astrodynamics codebase. I've got a TLE for a satellite and I'm propagating it with an SGP4 implementation. I need the resulting position in the same inertial frame our numerical propagator uses (GCRS), so I can compare them. How do I get from the SGP4 output to GCRS, and what do I need to watch out for?",
+      "expected_output": "Flags that SGP4 output is in TEME (not GCRS/J2000, not a relabel; error grows to km). Names the real conversion (GMST + equation of the equinoxes + precession/nutation, model-version dependent), the right time scales (UT1 for sidereal/GMST, TT for precession/nutation), a frame-explicit typed conversion (not raw vectors), and cross-validation against ERFA/Orekit.",
+      "expectations": [
+        "Identifies that the SGP4 output is in the TEME frame",
+        "States TEME is not GCRS/J2000 and must not be treated as the same frame or relabeled",
+        "Names the real conversion ingredients: GMST and the equation of the equinoxes (and/or precession/nutation)",
+        "Specifies the correct time-scale input(s): UT1 for sidereal/GMST, TT for precession/nutation",
+        "Recommends a frame-explicit, typed conversion (e.g. Vec3<Teme> -> Vec3<Gcrs> via a typed Rotation), not raw vectors or a blanket impl",
+        "Recommends cross-validating the conversion against a reference implementation (ERFA/Orekit/Vallado)"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "gcrs-itrs-timescale",
+      "prompt": "I'm working in orts/arika (Rust). I'm writing a function that converts a position from GCRS to ITRS at a given time. I have the time as a UTC timestamp. What time scales does this conversion actually need, and how should the function signature take time so I don't mix things up?",
+      "expected_output": "Explains the chain needs several scales as independent variables: TT for precession/nutation, UT1 for ERA/sidereal time, UTC(+EOP) for polar motion. UT1 needs dUT1 (EOP), not derivable from UTC alone. Recommends a signature taking scale-tagged epochs plus an EOP provider rather than a bare UTC value, and mentions the error of ignoring dUT1 / polar motion.",
+      "expectations": [
+        "States precession/nutation uses TT as its independent variable",
+        "States the Earth-rotation (ERA/sidereal) step uses UT1",
+        "States polar motion (the step to ITRS) needs EOP (xp, yp), conventionally indexed by UTC",
+        "Notes UT1 = UTC + dUT1 requires an EOP provider and is not derivable from UTC alone",
+        "Recommends the signature take scale-tagged epochs and/or an explicit EOP provider rather than a bare UTC value",
+        "Mentions the error from ignoring dUT1 and/or polar motion (with a rough magnitude)"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "add-gps-time",
+      "prompt": "In orts/arika (Rust) we need to support GPS time in our epoch types. I want it to interoperate with the existing UTC/TAI/TT conversions without me writing a conversion for every pair of scales. How should I model it in the type system, and are there any gotchas specific to GPS time?",
+      "expected_output": "Recommends modeling GPS as a fixed offset from TAI (GPS = TAI - 19 s) routed through a single TAI pivot/hub (one constant + one impl, not pairwise), as a scale-tagged Epoch<Gps>. Gotchas: GPS-UTC steps at each leap second (GPS-TAI constant), the 10-bit week rollover needing a pivot epoch, continuous vs broadcast week. Suggests property-based round-trip tests.",
+      "expectations": [
+        "States GPS = TAI - 19 s (a fixed constant offset, no leap seconds)",
+        "Recommends routing conversions through a single TAI pivot/hub so a new scale is 'one constant + one impl', avoiding pairwise conversions",
+        "Models GPS as a scale-tagged epoch (e.g. Epoch<Gps>) / a new TimeScale marker",
+        "Notes GPS-UTC steps at each leap second while GPS-TAI stays constant",
+        "Mentions the 10-bit GPS week rollover (~19.6 yr) needing a pivot/reference epoch (continuous vs broadcast week)",
+        "Suggests property-based / round-trip tests for the conversions"
+      ]
+    }
+  ]
+}
