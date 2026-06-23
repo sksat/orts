@@ -4,7 +4,7 @@ use arika::sun;
 use nalgebra::Vector3;
 
 use arika::earth::R as R_EARTH;
-use arika::frame::Eci;
+use arika::frame::{Gcrs, SimpleEci};
 
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
@@ -145,15 +145,27 @@ impl SolarRadiationPressure {
     }
 }
 
-impl<F: Eci, S: HasOrbit<Frame = F>> Model<S, F> for SolarRadiationPressure {
-    fn name(&self) -> &str {
-        "srp"
-    }
+// SRP consumes the Meeus sun ephemeris (`Vec3<Gcrs>`) as a raw vector, so it is
+// implemented only for the frames where that is valid: `SimpleEci`
+// (visualization-grade approximation) and `Gcrs` (exact). Deliberately NOT a
+// blanket `impl<F: Eci>` — a new inertial frame whose axes differ from GCRS
+// (e.g. `Teme`) must add a frame-aware impl rather than silently inherit the
+// raw-vector treatment. See #191.
+macro_rules! impl_srp_model {
+    ($frame:ty) => {
+        impl<S: HasOrbit<Frame = $frame>> Model<S, $frame> for SolarRadiationPressure {
+            fn name(&self) -> &str {
+                "srp"
+            }
 
-    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
-        ExternalLoads::acceleration(self.acceleration(state.orbit().position(), epoch))
-    }
+            fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<$frame> {
+                ExternalLoads::acceleration(self.acceleration(state.orbit().position(), epoch))
+            }
+        }
+    };
 }
+impl_srp_model!(SimpleEci);
+impl_srp_model!(Gcrs);
 
 #[cfg(test)]
 mod tests {
