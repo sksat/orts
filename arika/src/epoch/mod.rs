@@ -46,7 +46,7 @@ pub use convert::FixedOffsetFromTai;
 pub use datetime::DateTime;
 pub use duration::Duration;
 pub use gps::{GpsWeek, SecondsOfWeek};
-pub use scale::{Gps, Tai, Tdb, TimeScale, TimeScaleKind, Tt, Ut1, Utc};
+pub use scale::{Gps, Tai, Tdb, TimeScale, Tt, Ut1, Utc};
 
 use convert::era_formula;
 use datetime::to_datetime_from_jd;

@@ -654,17 +654,6 @@ fn duration_si_seconds() {
     assert_eq!(Duration::from_hours(1.0).as_si_seconds(), 3600.0);
 }
 
-// Scale taxonomy metadata
-
-#[test]
-fn scale_kind_metadata() {
-    assert_eq!(Utc::KIND, TimeScaleKind::Hybrid);
-    assert_eq!(Tai::KIND, TimeScaleKind::Atomic);
-    assert_eq!(Tt::KIND, TimeScaleKind::CoordinateDerived);
-    assert_eq!(Ut1::KIND, TimeScaleKind::EarthRotation);
-    assert_eq!(Tdb::KIND, TimeScaleKind::CoordinateDerived);
-}
-
 #[test]
 fn fixed_offset_from_tai_constants() {
     assert_eq!(<Tai as FixedOffsetFromTai>::SECONDS_AFTER_TAI, 0.0);
@@ -678,8 +667,7 @@ fn fixed_offset_from_tai_constants() {
 // GPS Time
 
 #[test]
-fn gps_kind_and_offset() {
-    assert_eq!(Gps::KIND, TimeScaleKind::Atomic);
+fn gps_scale_name() {
     assert_eq!(Epoch::<Gps>::scale_name(), "GPS");
 }
 
