@@ -11,7 +11,7 @@ description: >-
   seconds, ERA/GMST/GAST, EOP/ΔUT1, polar motion, frame bias, or realizations —
   and also when reviewing or verifying frame/time/coordinate work (use it as a
   checklist of the traps, even for code you could write unaided). The companion
-  skill `coordinate-time-typing` covers expressing and testing these in
+  skill `coordinate-time-implementation` covers expressing and testing these in
   orts/arika code.
 ---
 
@@ -27,7 +27,7 @@ landscape shifts (new realizations, the ~2035 end of leap seconds) and a frozen
 table goes stale.
 
 For *how* to encode all of this in code, see the companion skill
-**`coordinate-time-typing`**.
+**`coordinate-time-implementation`**.
 
 ## The concerns to resolve
 

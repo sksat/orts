@@ -1,5 +1,5 @@
 ---
-name: coordinate-time-typing
+name: coordinate-time-implementation
 description: >-
   Express coordinate reference frames, time scales, and state representations in
   the type system, and test them with property-based tests — durable design
