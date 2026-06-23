@@ -625,8 +625,10 @@ impl SimConfig {
             // A non-finite or negative `t` would never satisfy the
             // schedule's `t <= t_due`, silently dropping the command.
             if !cmd.t.is_finite() || cmd.t < 0.0 {
+                // Use the TOML key (`[[command]]`) in the message, not the
+                // Rust field name, so the index matches what the user wrote.
                 return Err(format!(
-                    "commands[{i}]: t must be finite and >= 0 (got {})",
+                    "command[{i}]: t must be finite and >= 0 (got {})",
                     cmd.t
                 ));
             }
@@ -1296,6 +1298,44 @@ kind = "orts.cmd.ping.v1"
         let json = r#"{ "satellites": [] }"#;
         let config: SimConfig = serde_json::from_str(json).unwrap();
         assert!(config.commands.is_empty());
+    }
+
+    #[test]
+    fn deserialize_ground_station() {
+        // Canonical TOML key is the singular `[[ground_station]]` (the
+        // `ground_stations` Rust field is renamed); pin that it parses.
+        let toml = r#"
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[ground_station]]
+name = "tokyo"
+latitude_deg = 35.68
+longitude_deg = 139.69
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        assert_eq!(config.ground_stations.len(), 1);
+        assert_eq!(config.ground_stations[0].name, "tokyo");
+    }
+
+    #[test]
+    fn deserialize_magnetorquers() {
+        // The MTQ block's canonical TOML key is `magnetorquers` (the `mtq`
+        // Rust field is renamed to match the sibling `reaction_wheels`).
+        let toml = r#"
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[satellites.magnetorquers]
+type = "three_axis"
+max_moment = 10.0
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        assert!(config.satellites[0].mtq.is_some());
     }
 
     #[test]
