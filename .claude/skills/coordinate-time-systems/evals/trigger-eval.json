@@ -1,0 +1,22 @@
+{
+  "note": "Trigger eval for the companion skills' descriptions: should the skill fire? should_trigger=true are substantive, skill-worthy tasks (implement / redesign / reconcile / verify) — NOT the simple one-shot questions a capable model answers inline without a skill (those legitimately won't trigger and are excluded by design). should_trigger=false are near-misses that share keywords but belong to another domain. See README.md.",
+  "queries": [
+    {"query": "I'm adding a TEME-to-GCRS conversion to our Rust astrodynamics library so I can compare SGP4 output against our numerical propagator. Walk me through what it actually needs and how to type it so I can't mix frames or time scales.", "should_trigger": true},
+    {"query": "We're reworking our Epoch types to add GPS time without hand-writing a conversion for every pair of scales, and we keep getting UT1-vs-UTC and frame-mixing bugs. How should we structure the conversions and what should the types enforce?", "should_trigger": true},
+    {"query": "One of our ephemerides is TEME from a TLE and the other is GCRS from the propagator. Are these the same frame, and how do I reconcile them before differencing the positions?", "should_trigger": true},
+    {"query": "Can you review this GCRS-to-ITRS rotation I wrote and check I'm not missing a time-scale or EOP subtlety before I merge it?", "should_trigger": true},
+    {"query": "Double-check how I'm transforming this orbit state covariance between the RTN frame and ECI — I rotated it but I'm not sure that's right.", "should_trigger": true},
+    {"query": "I'm interpolating satellite positions between two ECEF samples a few minutes apart and the ground track comes out slightly wrong. What am I doing wrong?", "should_trigger": true},
+    {"query": "My near-circular sun-synchronous orbit test throws NaNs when I convert the Cartesian state to classical Keplerian elements. How should I handle this?", "should_trigger": true},
+    {"query": "Is feeding my UTC timestamp straight into the sidereal-time / Earth-rotation-angle formula correct, or am I introducing an error?", "should_trigger": true},
+
+    {"query": "In my Three.js scene I'm rotating a 3D mesh around the Y axis and composing it with the camera quaternion, but the orientation comes out wrong. How do I compose these rotations correctly?", "should_trigger": false},
+    {"query": "I need to convert a column of UTC datetimes to US/Pacific local time for a report, handling DST correctly, in pandas.", "should_trigger": false},
+    {"query": "Parse this ISO 8601 timestamp string into a Unix epoch integer for my Go log formatter.", "should_trigger": false},
+    {"query": "Set up a GitHub Actions workflow that runs cargo test and clippy on every PR to main.", "should_trigger": false},
+    {"query": "How do I use PhantomData to make a typed wrapper around a u64 so I can't accidentally mix a UserId with an OrderId in my web backend?", "should_trigger": false},
+    {"query": "Design a Postgres schema for storing time-series sensor readings with a timestamp column and efficient time-range queries.", "should_trigger": false},
+    {"query": "Convert these GPS latitude/longitude points to Leaflet map markers and compute the great-circle distance between two of them in km.", "should_trigger": false},
+    {"query": "My game's rigid body rotation keeps drifting off unit norm after many physics ticks — how do I renormalize the quaternion each frame?", "should_trigger": false}
+  ]
+}
