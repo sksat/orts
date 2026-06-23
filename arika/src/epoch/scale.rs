@@ -57,3 +57,14 @@ define_scale!(
      IAU 2006 Resolution B3)。Meeus / JPL DE (Teph ≈ TDB) ephemeris と \
      IAU 2009 body rotation の formally な独立変数。"
 );
+define_scale!(
+    Gps,
+    "GPS",
+    "GPS Time. Atomic scale realized by the GPS control segment; a fixed \
+     `TAI − 19 s` with NO leap seconds. Continuous since the GPS epoch \
+     1980-01-06 00:00:00 UTC. GNSS 受信機・機上時刻の入口。`GPS − UTC` は \
+     leap second の挿入ごとに 1 s ずつ増える (2017-01-01 以降は 18 s)。\
+     \n\n個々の GPS 衛星クロックの補正 (rate ~38 µs/day + 離心率項) は scope 外 \
+     — これは GPS *system time* であり、受信機が SV クロック補正を適用した後の \
+     時刻系を表す。"
+);
