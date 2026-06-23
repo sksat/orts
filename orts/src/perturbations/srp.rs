@@ -145,12 +145,12 @@ impl SolarRadiationPressure {
     }
 }
 
-// SRP consumes the Meeus sun ephemeris (`Vec3<Gcrs>`) as a raw vector, so it is
-// implemented only for the frames where that is valid: `SimpleEci`
-// (visualization-grade approximation) and `Gcrs` (exact). Deliberately NOT a
-// blanket `impl<F: Eci>` — a new inertial frame whose axes differ from GCRS
-// (e.g. `Teme`) must add a frame-aware impl rather than silently inherit the
-// raw-vector treatment. See #191.
+// SRP consumes the Meeus sun ephemeris (`Vec3<Gcrs>`) as a raw vector (see
+// `acceleration` above), so it is implemented only for the currently-supported
+// inertial frames that are (approximately) GCRS-aligned: `SimpleEci` and
+// `Gcrs`. Deliberately NOT a blanket `impl<F: Eci>` — a new inertial frame
+// whose axes differ from GCRS (e.g. `Teme`) must add a frame-aware impl rather
+// than silently inherit the raw-vector treatment. See #191.
 macro_rules! impl_srp_model {
     ($frame:ty) => {
         impl<S: HasOrbit<Frame = $frame>> Model<S, $frame> for SolarRadiationPressure {

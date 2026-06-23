@@ -135,11 +135,12 @@ impl ThirdBodyGravity {
 }
 
 // `ThirdBodyGravity` consumes the Meeus ephemeris (`Vec3<Gcrs>`) as a raw
-// vector, so it is implemented only for the frames where that is valid:
-// `SimpleEci` (visualization-grade approximation) and `Gcrs` (exact). This is
-// deliberately NOT a blanket `impl<F: Eci>` — a new inertial frame whose axes
-// differ from GCRS (e.g. `Teme`) must add a frame-aware impl that rotates the
-// ephemeris rather than silently inherit the raw-vector treatment. See #191.
+// vector (see `acceleration` above), so it is implemented only for the
+// currently-supported inertial frames that are (approximately) GCRS-aligned:
+// `SimpleEci` and `Gcrs`. This is deliberately NOT a blanket `impl<F: Eci>` —
+// a new inertial frame whose axes differ from GCRS (e.g. `Teme`) must add a
+// frame-aware impl that rotates the ephemeris rather than silently inherit the
+// raw-vector treatment. See #191.
 macro_rules! impl_third_body_model {
     ($frame:ty) => {
         impl<S: HasOrbit<Frame = $frame>> Model<S, $frame> for ThirdBodyGravity {
