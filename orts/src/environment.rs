@@ -112,6 +112,13 @@ impl EarthPoleBridge for frame::Gcrs {
     fn earth_pole(utc: &Epoch<Utc>) -> Vec3<frame::Gcrs> {
         // CIP direction cosines (X, Y) in GCRS from the IAU 2006 model; Z closes
         // the unit vector. The model (no observed dX/dY) is sub-mas accurate.
+        //
+        // This is the CIP (precession + nutation), NOT the ITRS figure axis: it
+        // omits polar motion, which offsets the figure axis from the CIP by
+        // < ~0.3″. That is ~5 orders of magnitude below the ~0.1° precession
+        // offset this captures, and keeping it out is what lets the pole be
+        // EOP-free. (When cross-validating zonal gravity against Orekit, match
+        // its gravity body frame to the CIP rather than full ITRF accordingly.)
         let t = utc.to_tt().centuries_since_j2000();
         let (x, y) = cip_xy(t);
         let (x, y) = (x.raw(), y.raw());

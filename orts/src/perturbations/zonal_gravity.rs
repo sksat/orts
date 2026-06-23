@@ -124,6 +124,7 @@ mod tests {
     use crate::orbital::gravity::{GravityField, PointMass, ZonalHarmonics};
     use arika::earth::{J2 as J2_E, J3 as J3_E, J4 as J4_E, MU as MU_E, R as R_E};
     use arika::frame::SimpleEci;
+    use proptest::prelude::*;
 
     fn legacy(j3: Option<f64>, j4: Option<f64>) -> ZonalHarmonics {
         ZonalHarmonics {
@@ -213,5 +214,42 @@ mod tests {
         let loads = Model::<OrbitalState>::eval(&zg, 0.0, &state, None);
         let a = zg.acceleration(state.position(), &Epoch::from_jd(2451545.0));
         assert_eq!(loads.acceleration_inertial.into_inner(), a);
+    }
+
+    proptest! {
+        /// Property generalization of the characterization test: for `SimpleEci`
+        /// (pole = +Z), `ZonalGravity` equals the legacy frame-Z `ZonalHarmonics`
+        /// perturbation at *any* position, for every J2/J3/J4 variant. Bounded
+        /// in absolute terms scaled by the (non-vanishing) point-mass
+        /// acceleration, so the J2 zero-crossing geometry (where the zonal term
+        /// itself vanishes) doesn't blow up a relative error.
+        #[test]
+        fn zonal_gravity_equals_legacy_over_random_positions(
+            x in -60000.0f64..60000.0,
+            y in -60000.0f64..60000.0,
+            z in -60000.0f64..60000.0,
+            j3_on in any::<bool>(),
+            j4_on in any::<bool>(),
+        ) {
+            let r = Vector3::new(x, y, z);
+            prop_assume!(r.norm() > 100.0); // skip near-origin (formula is singular at r=0)
+
+            let j3 = j3_on.then_some(J3_E);
+            let j4 = j4_on.then_some(J4_E);
+            let zh = legacy(j3, j4);
+            let zg = zonal(j3, j4);
+
+            let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0); // ignored: SimpleEci pole = +Z
+            let a_ref = legacy_zonal_only(&zh, &r);
+            let a_new = zg.acceleration(&r, &epoch);
+
+            let pm = PointMass.acceleration(MU_E, &r).norm();
+            let diff = (a_new - a_ref).norm();
+            prop_assert!(
+                diff <= 1e-9 * pm,
+                "diff {diff:e} exceeds 1e-9·|pm| ({:e}) at {r:?}",
+                1e-9 * pm
+            );
+        }
     }
 }
