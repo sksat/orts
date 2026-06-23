@@ -39,6 +39,10 @@ mod convert;
 mod datetime;
 mod duration;
 mod gps;
+// TODO(phase2): consumed by the canonical-TAI Epoch representation next; the
+// allow is temporary until that integration lands.
+#[allow(dead_code)]
+mod jd2;
 mod leap;
 mod scale;
 
