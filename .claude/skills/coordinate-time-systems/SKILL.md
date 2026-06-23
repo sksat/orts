@@ -1,35 +1,34 @@
 ---
 name: coordinate-time-systems
 description: >-
-  Handle coordinate reference frames and time scales correctly in orts/arika.
-  Use when working with frames (ECI/ECEF, GCRS/ITRS/CIRS/TIRS, J2000/EME2000,
-  TEME, LVLH/RTN/RSW, body-fixed), time scales (TAI/UTC/UT1/TT/TDB/GPS),
-  `Epoch<S>`, `Vec3<F>`, `Rotation<From,To>`, frame or scale conversions, leap
-  seconds, ERA/GMST/EOP, ephemeris/SGP4/TLE frames — or whenever you need to
-  type, convert, or reason about the coordinate-or-time semantics of a value.
+  Reason about coordinate reference frames and time scales correctly (any
+  astrodynamics work) — which frame/scale a value is actually in, the concerns
+  to resolve before trusting it, and what to look up. Use when interpreting or
+  choosing frames (ECI/ECEF, GCRS/ITRS/CIRS/TIRS, J2000/EME2000, TEME, ICRF,
+  LVLH/RTN/RSW, body-fixed) or time scales (TAI/UTC/UT1/TT/TDB/GPS), or when
+  reasoning about conversions, leap seconds, ERA/GMST, EOP/ΔUT1, polar motion,
+  frame bias, or realizations. The companion skill `coordinate-time-typing`
+  covers expressing and testing these in orts/arika code.
 ---
 
-# Coordinate frames & time scales
+# Coordinate frames & time scales — the concerns
 
-Getting frames and time scales right is genuinely hard — for humans and for
-LLMs alike. This skill does **not** bake in a catalog of every frame and scale:
-the landscape is large and it shifts (new frames, successive ITRF/ICRF
-realizations, the planned end of leap seconds around 2035), so a frozen table
-goes stale and a vague memory of one is worse than useless. Instead it gives you
-three durable things:
+Getting frames and time scales right is genuinely hard — for humans and for LLMs
+alike. This skill does **not** bake in a catalog of every frame and scale: the
+landscape is large and it shifts (new frames, successive ITRF/ICRF realizations,
+the planned end of leap seconds around 2035), so a frozen table goes stale and a
+half-remembered one is worse than looking up the primary source on demand.
+Instead it gives you the durable parts: the **concerns to resolve** for any
+frame, scale, or transform, and **what to look up and where**.
 
-1. the **concerns to resolve** for any frame, scale, or transform;
-2. **what to look up, and where** — fresh each time, because the current
-   authoritative text is simpler and more accurate than recall;
-3. the **how** — the two techniques that defend against the traps: express
-   frame and scale in the **type system**, and **property-based testing**.
+For *how* to encode all of this in code — expressing frame and scale in the type
+system, and property-based testing — see the companion skill
+**`coordinate-time-typing`**.
 
----
-
-## Part 1 — The concerns to resolve
+## The concerns to resolve
 
 For every frame, scale, or transform you touch, resolve the following. Look them
-up (next section) rather than trusting memory or one tool's defaults.
+up (last section) rather than trusting memory or one tool's defaults.
 
 ### A time scale is usually the *independent variable* of a transform, not a label
 
@@ -108,9 +107,6 @@ of its slots. Resolve every slot:
 - **Error budget** vs the rigorous model (acceptable here?) and **units**
   (km vs m, rad vs deg, SI seconds vs days).
 
-Each slot in that tuple is exactly what How #1 turns into a type or a
-typed-conversion parameter.
-
 ### The traps that bite most
 
 Durable, high-cost mistakes (rough magnitudes — verify specifics against the
@@ -132,10 +128,28 @@ sources below):
 - **"LVLH" axis-convention split** — Vallado/STK (X=radial, Z=orbit-normal) vs
   CCSDS/Wertz (Z=nadir, Y=−orbit-normal): incompatible rotations under one name.
 
-### Where to look it up — fresh, each time
+## TAI and TEME — two worth understanding
 
-Verify against the primary standard, not from memory and not from a single
-tool's conventions:
+**TAI** is the continuous atomic timeline — the one scale that never jumps. It is
+the natural hub the others are defined against: the fixed-offset scales
+(`TT = TAI + 32.184 s`, `GPS = TAI − 19 s`) differ from it by a constant; UTC
+differs by an integer number of leap seconds (so `GPS − UTC` *steps* at each leap
+second even though `GPS − TAI` is constant); TDB differs by a sub-millisecond
+periodic series. **UT1 is the odd one out** — it is an Earth-rotation observable,
+not an atomic scale, reachable only through an EOP (ΔUT1) measurement, so it
+cannot be derived from TAI alone. Do duration arithmetic in TAI/TT, not UTC.
+
+**TEME** (True Equator, Mean Equinox) is the quasi-inertial frame SGP4 propagates
+in, and the frame TLE/OMM mean elements are expressed against. It is **not**
+J2000/EME2000 and **not** GCRS — treating a TEME state as a generic ECI is a
+classic, silent error that grows to kilometres. A correct TEME→GCRS conversion
+applies GMST + the equation of the equinoxes (plus precession/nutation), and
+depends on the model version you pick — it is never a relabel.
+
+## Where to look it up — fresh, each time
+
+Verify against the primary standard, not from memory and not from a single tool's
+conventions:
 
 - **IERS Conventions (2010, TN36)** — *the* source for the GCRS↔ITRS chain, the
   ERA formula, frame-bias constants, and CIP/CIO/TIO definitions.
@@ -157,123 +171,3 @@ tool's conventions:
 
 Prefer fetching the current authoritative text: the numbers and realizations
 change, and a tool's defaults are not the standard.
-
----
-
-## Part 2 — The how
-
-### How #1: Express frame and scale in the type system
-
-This is the single best defense against every concern in Part 1: **a frame or a
-time scale should be a type parameter, not a convention you have to remember.**
-The wrong combination then fails to compile instead of silently producing the
-wrong physics.
-
-- Vectors carry their frame: `Vec3<F>` where `F` is a frame marker (`Gcrs`,
-  `Itrs`, `Teme`, `Rsw`, …). Mixing frames is a compile error; you cross frames
-  only through a typed `Rotation<From, To>`.
-- Instants carry their scale: `Epoch<S>` where `S` is a scale marker (`Utc`,
-  `Tai`, `Tt`, `Ut1`, `Tdb`, …). Subtracting two different scales does not
-  compile; convert explicitly first.
-- A transform's *required* scale (Part 1) is encoded in its signature so the
-  wrong scale cannot be passed: the GCRS→CIRS rotation takes an `Epoch<Tt>`, the
-  CIRS→TIRS rotation takes an `Epoch<Ut1>`, a Sun-position call takes an
-  `Epoch<Tdb>`. `Epoch<Tdb>::era()` should not exist.
-
-The bar when you touch this code: **make the physically-meaningful operations
-expressible and the meaningless ones fail to compile.** Sharper rules:
-
-- **Don't launder a bare `Vector3<f64>` / `f64` JD across a boundary** where its
-  frame or scale is ambiguous. Raw-access escape hatches (`into_inner`,
-  `from_raw`) are sometimes necessary — keep them local and name them so the
-  unchecked nature is obvious, never on a public path.
-- **Type the invariant, not the vibe.** Add a type when a value carries a real,
-  easily-confused invariant or semantic (a frame; a scale; a *continuous* week
-  count vs a 10-bit *broadcast* GPS week). Don't add trait bounds for
-  philosophical taxonomy (proper-time vs coordinate-time) that change nothing
-  about what compiles — that just misleads about precision.
-- **No silent upgrade between precision tiers.** A visualization-grade (e.g.
-  ERA-only) value must not silently masquerade as a rigorous (full IAU 2006)
-  one. Don't provide approximate→rigorous conversions; let a naming convention
-  (e.g. a `Simple` prefix) carry the precision warning in the type.
-- **A blanket `impl<F: Frame>` over a precision-aware operation is a trap.** It
-  lets an approximation written for one frame propagate, with no compile error,
-  to a future frame where it is wrong. Prefer explicit per-frame impls so adding
-  a frame *forces* you to write — or deliberately refuse — its handling.
-
-### How #2: Property-based testing for the invariants
-
-Frames and time scales are *full* of algebraic invariants, and generated inputs
-catch the worst-case float that hand-picked cases miss. (The technique is
-*property-based testing*; in Rust the usual crate is `proptest`.) Assert with an
-explicit tolerance — never `==` on a transformed `f64`:
-
-- **Rotation round-trip:** `r.inverse().transform(r.transform(v)) ≈ v`.
-- **Magnitude preservation:** `|r.transform(v)| ≈ |v|` (rotations are isometries).
-- **Composition / associativity & identity:** `a.then(b).then(c)` ≈
-  `a.then(b.then(c))`; `r.then(r.inverse()) ≈ identity`.
-- **Scale round-trip:** `utc → tai → utc ≈ utc`; chained `tt → tdb` and back
-  within the model's stated tolerance.
-- **Duration across discontinuities:** `(epoch + d) − epoch ≈ d` *even across a
-  leap-second boundary* — a hand-written test rarely lands on one; a generator
-  will, and shrinking hands you the minimal failing case.
-- **Generators must include the nasty inputs:** near-zero and parallel position/
-  velocity (local-orbital-frame degeneracy), huge magnitudes, sub-µs JD deltas,
-  and `NaN`/`±∞` where the function claims total behavior. (A float-predicate
-  rewrite can agree on finite values yet diverge at `NaN`.)
-
-Frame *mixing* itself is enforced at compile time, not as a runtime property —
-that is How #1 doing the property test's job for free.
-
----
-
-## TAI and TEME — two worth getting right
-
-**TAI** is the continuous atomic timeline and the natural **pivot** for every
-data-free scale conversion. Model the scales that are a fixed SI offset from TAI
-(`TAI`, `TT = TAI + 32.184 s`, `GPS = TAI − 19 s`) as sharing one capability, and
-route data-free conversions through a single TAI pivot. UTC adds leap seconds;
-TDB adds a periodic series; **UT1 must stay off that pivot** because it is an
-Earth-rotation observable reachable only through an EOP (ΔUT1) provider — keeping
-it off makes the EOP dependency visible in the type (there is no scale-free
-`UT1 → TAI`). Adding a new affine scale should then be "one constant + one trait
-impl", nothing more. Don't conflate TAI with UTC: `GPS − UTC` *steps* at each
-leap second even though `GPS − TAI` is constant.
-
-**TEME** (True Equator, Mean Equinox) is the quasi-inertial frame SGP4
-propagates in. It is **not** J2000/EME2000 and **not** GCRS — treating a TEME
-state as ECI is a classic, silent error (hundreds of metres to kilometres).
-Converting TEME→GCRS needs GMST + the equation of the equinoxes (plus
-precession/nutation), *not* a relabel. When you implement such a conversion:
-make the rotation frame-explicit (no blanket impl), take the correct scale as
-its independent variable, and cross-validate against a reference (ERFA/Orekit).
-
----
-
-## Workflow: changing coordinate/time code
-
-1. **Anchor on the standard.** Resolve the Part 1 concerns by looking up the
-   primary sources before you write anything — definition, independent-variable
-   scale, error budget, conventions.
-2. **Keep it expressible-or-uncompilable** (How #1): add the marker/scale; encode
-   the required scale in transform signatures; refuse silent precision upgrades
-   and blanket precision-aware impls.
-3. **Pin behavior before refactoring** (project rule): characterization tests
-   including boundary *and* non-finite inputs (`NaN`, `±∞`); pin bit-for-bit
-   where behavior must be preserved.
-4. **Add property-based tests** (How #2) for the round-trip / isometry /
-   composition / leap-second invariants, with degenerate and non-finite
-   generators.
-5. **Cross-validate against references.** ERFA for the IAU 2006/2000A chain,
-   Orekit/GMAT for propagation and body rotations — see the `orekit-fixtures`
-   skill and `arika/tests/` (`iau2006_vs_erfa.rs`, `iau_rotation_orekit.rs`).
-6. **Sanity-check non-trivial designs with `smart-friend`/Codex** before coding,
-   and get an external review before merge (project methodology).
-
-## Where the types live (in this repo)
-
-- `arika/src/frame.rs` — `Vec3<F>`, `Rotation<From,To>`, frame markers, category
-  traits.
-- `arika/src/epoch/` — `Epoch<S>`, scale markers, conversions, leap seconds.
-- `arika/src/earth/` — the IAU 2006 precession/nutation / CIO chain and EOP traits.
-- `arika/DESIGN.md` — the design rationale (read the code alongside it).
