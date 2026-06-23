@@ -32,11 +32,13 @@ fn build_gravity_field() -> Box<dyn GravityField> {
 
 /// Zonal (J2/J3/J4) perturbation for the body, if it has an oblateness model.
 ///
-/// These builders produce `SimpleEci` systems, where `EarthPoleBridge` yields
-/// the frame's `+Z` axis — i.e. each body's own assumed spin axis — so
-/// `ZonalGravity` reproduces the legacy frame-Z behaviour for *every* body,
-/// non-Earth included. The Earth-specific CIP in `EarthPoleBridge` only enters
-/// for the geocentric `Gcrs` frame, which is Earth-only by construction.
+/// These builders produce `SimpleEci` systems, where `EarthPoleBridge` returns
+/// the frame's `+Z` axis as the pole — the legacy frame-Z convention. So
+/// `ZonalGravity` reproduces the previous `ZonalHarmonics` behaviour for every
+/// body; for a non-Earth body that is correct only insofar as its state is
+/// expressed in a frame whose `+Z` is that body's spin axis (the pre-existing
+/// assumption, unchanged here). The Earth-specific CIP only enters for the
+/// geocentric `Gcrs` frame, which is Earth-only by construction.
 fn build_zonal_gravity(body: &KnownBody, mu: f64) -> Option<ZonalGravity> {
     let props = body.properties();
     props

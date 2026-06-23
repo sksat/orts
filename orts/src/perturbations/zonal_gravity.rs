@@ -2,13 +2,15 @@
 //!
 //! Unlike the spherically symmetric central term
 //! ([`PointMass`](crate::orbital::gravity::PointMass)), the zonal harmonics are
-//! symmetric about Earth's *rotation pole*, so the acceleration depends on the
-//! orientation of the integration frame relative to that pole. [`ZonalGravity`]
-//! therefore takes the pole direction from [`EarthPoleBridge`] instead of
-//! assuming the frame's Z axis is the pole.
+//! symmetric about the central body's *rotation pole*, so the acceleration
+//! depends on the orientation of the integration frame relative to that pole.
+//! [`ZonalGravity`] therefore takes the pole direction from [`EarthPoleBridge`]
+//! instead of assuming the frame's Z axis is the pole.
 //!
-//! - `SimpleEci`: pole = `+Z`, reproducing the classic frame-Z formula.
-//! - `Gcrs`: pole = the IAU 2006 CIP, so J2 is evaluated about the true pole
+//! - `SimpleEci`: pole = `+Z`, reproducing the classic frame-Z formula (for a
+//!   non-Earth body this assumes its state is expressed with `+Z` along that
+//!   body's spin axis).
+//! - `Gcrs`: pole = the IAU 2006 CIP, so J2 is evaluated about Earth's true pole
 //!   (offset ~0.1° from GCRS Z by 2024), more accurate than `SimpleEci`.
 //!
 //! Add it to a system that already carries a central
