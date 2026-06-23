@@ -8,9 +8,11 @@ description: >-
   TEME, ICRF, LVLH/RTN/RSW, body-fixed), time scales (TAI/UTC/UT1/TT/TDB/GPS),
   or state representations (Cartesian/Keplerian/equinoctial); or when reasoning
   about frame/scale conversions, covariance transforms, interpolation, leap
-  seconds, ERA/GMST/GAST, EOP/ΔUT1, polar motion, frame bias, or realizations.
-  The companion skill `coordinate-time-typing` covers expressing and testing
-  these in orts/arika code.
+  seconds, ERA/GMST/GAST, EOP/ΔUT1, polar motion, frame bias, or realizations —
+  and also when reviewing or verifying frame/time/coordinate work (use it as a
+  checklist of the traps, even for code you could write unaided). The companion
+  skill `coordinate-time-typing` covers expressing and testing these in
+  orts/arika code.
 ---
 
 # Coordinate frames & time scales — the concerns

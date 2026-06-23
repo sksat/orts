@@ -8,8 +8,9 @@ description: >-
   code: adding a frame, scale, or transform; typing vectors, epochs, covariances,
   or rotations; deciding which time scale a transform takes; isolating EOP
   dependencies; choosing an interpolation space; or writing tests for rotation
-  and scale-conversion invariants. Companion to `coordinate-time-systems`, which
-  covers the domain concerns (which frame/scale/representation, the traps).
+  and scale-conversion invariants — and also when reviewing or verifying
+  frame/scale code for type-safety. Companion to `coordinate-time-systems`,
+  which covers the domain concerns (which frame/scale/representation, the traps).
 ---
 
 # Typing & testing coordinate frames and time scales
