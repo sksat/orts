@@ -1,10 +1,7 @@
 {
   "skill_name": "coordinate-time-systems + coordinate-time-implementation",
   "note": "These evals exercise the companion pair together. Run an agent on each prompt WITH both skills available and WITHOUT them (baseline), and grade the answer against `expectations`. The most informative variant denies repository access (so the baseline can't recover the answer from arika's self-documenting code) — see README.md.",
-  "skills_under_test": [
-    "../../coordinate-time-systems",
-    "../../coordinate-time-implementation"
-  ],
+  "skills_under_test": ["../../coordinate-time-systems", "../../coordinate-time-implementation"],
   "evals": [
     {
       "id": 0,
