@@ -29,8 +29,9 @@ use core::f64::consts::TAU;
 use crate::math::F64Ext;
 
 use super::TimeScale;
-use super::jd2::TwoPartJd;
+use super::jd2::JdRepr;
 use super::leap::tai_minus_utc_at_mjd;
+use super::precision::{Precise, Precision};
 use super::{Epoch, Gps, Tai, Tdb, Tt, Utc};
 use super::{GPS_MINUS_TAI_SEC, J2000_JD, JULIAN_CENTURY, MJD_OFFSET, TT_MINUS_TAI_SEC};
 
@@ -69,23 +70,25 @@ impl FixedOffsetFromTai for Gps {
 // full precision in between. (UT1 is not in the family — it needs EOP — so it
 // has no lens; see `Ut1Epoch`.)
 
-/// Data-free lens between canonical TAI and a scale's own Julian Date.
-/// Crate-internal: the canonical-TAI `Epoch<S>` accessors call it per scale.
+/// Data-free lens between canonical TAI and a scale's own Julian Date. Generic
+/// over the JD storage [`R: JdRepr`](JdRepr) so one implementation serves every
+/// [`Precision`] tier. Crate-internal: the canonical-TAI `Epoch` accessors call
+/// it per scale.
 pub(crate) trait TaiLens: TimeScale {
     /// This scale's JD → the canonical TAI JD.
-    fn tai_from_scale(scale_jd: TwoPartJd) -> TwoPartJd;
+    fn tai_from_scale<R: JdRepr>(scale_jd: R) -> R;
     /// Canonical TAI JD → this scale's JD.
-    fn scale_from_tai(tai: TwoPartJd) -> TwoPartJd;
+    fn scale_from_tai<R: JdRepr>(tai: R) -> R;
 }
 
 /// Derive [`TaiLens`] for a [`FixedOffsetFromTai`] scale: `scale = TAI + off`.
 macro_rules! impl_tai_lens_fixed {
     ($scale:ty) => {
         impl TaiLens for $scale {
-            fn tai_from_scale(scale_jd: TwoPartJd) -> TwoPartJd {
+            fn tai_from_scale<R: JdRepr>(scale_jd: R) -> R {
                 scale_jd.add_days(-<$scale as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0)
             }
-            fn scale_from_tai(tai: TwoPartJd) -> TwoPartJd {
+            fn scale_from_tai<R: JdRepr>(tai: R) -> R {
                 tai.add_days(<$scale as FixedOffsetFromTai>::SECONDS_AFTER_TAI / 86400.0)
             }
         }
@@ -96,11 +99,11 @@ impl_tai_lens_fixed!(Tt);
 impl_tai_lens_fixed!(Gps);
 
 impl TaiLens for Utc {
-    fn tai_from_scale(utc: TwoPartJd) -> TwoPartJd {
+    fn tai_from_scale<R: JdRepr>(utc: R) -> R {
         let leap = tai_minus_utc_at_mjd(utc.jd() - MJD_OFFSET);
         utc.add_days(leap / 86400.0)
     }
-    fn scale_from_tai(tai: TwoPartJd) -> TwoPartJd {
+    fn scale_from_tai<R: JdRepr>(tai: R) -> R {
         // Seed the leap-count search with the current maximum TAI − UTC; any
         // seed within one leap step of the true offset converges in 3 iters.
         const LEAP_SEED_SEC: f64 = 37.0; // TAI − UTC since 2017-01-01
@@ -114,46 +117,46 @@ impl TaiLens for Utc {
 }
 
 impl TaiLens for Tdb {
-    fn tai_from_scale(tdb: TwoPartJd) -> TwoPartJd {
+    fn tai_from_scale<R: JdRepr>(tdb: R) -> R {
         // TDB → TT (single-step inversion, |TDB − TT| < 2 ms) → TAI.
         let tt = tdb.add_days(-tdb_minus_tt(tdb.jd()) / 86400.0);
         tt.add_days(-TT_MINUS_TAI_SEC / 86400.0)
     }
-    fn scale_from_tai(tai: TwoPartJd) -> TwoPartJd {
+    fn scale_from_tai<R: JdRepr>(tai: R) -> R {
         // TAI → TT → TDB (Fairhead-Bretagnon periodic).
         let tt = tai.add_days(TT_MINUS_TAI_SEC / 86400.0);
         tt.add_days(tdb_minus_tt(tt.jd()) / 86400.0)
     }
 }
 
-/// Construct an `Epoch<S>` from a JD interpreted in scale `S`, converting to
-/// the stored canonical TAI instant via the lens.
-pub(crate) fn from_scale_jd<S: TaiLens>(scale_jd: f64) -> Epoch<S> {
-    Epoch::<S>::from_tai_raw(S::tai_from_scale(TwoPartJd::from_jd(scale_jd)))
+/// Construct an `Epoch<S, P>` from a JD interpreted in scale `S`, converting to
+/// the stored canonical TAI instant (at precision tier `P`) via the lens.
+pub(crate) fn from_scale_jd<S: TaiLens, P: Precision>(scale_jd: f64) -> Epoch<S, P> {
+    Epoch::<S, P>::from_tai_raw(S::tai_from_scale(<P::Repr as JdRepr>::from_jd(scale_jd)))
 }
 
 // UTC outbound conversions (re-tags of the shared canonical TAI instant)
 
-impl Epoch<Utc> {
+impl<P: Precision> Epoch<Utc, P> {
     /// Convert to TAI (re-tag of the shared canonical instant).
-    pub fn to_tai(&self) -> Epoch<Tai> {
-        Epoch::<Tai>::from_tai_raw(self.tai_raw())
+    pub fn to_tai(&self) -> Epoch<Tai, P> {
+        Epoch::<Tai, P>::from_tai_raw(self.tai_raw())
     }
 
     /// Convert to TT (re-tag of the shared canonical instant).
-    pub fn to_tt(&self) -> Epoch<Tt> {
-        Epoch::<Tt>::from_tai_raw(self.tai_raw())
+    pub fn to_tt(&self) -> Epoch<Tt, P> {
+        Epoch::<Tt, P>::from_tai_raw(self.tai_raw())
     }
 
     /// Convert to TDB (re-tag of the shared canonical instant).
-    pub fn to_tdb(&self) -> Epoch<Tdb> {
-        Epoch::<Tdb>::from_tai_raw(self.tai_raw())
+    pub fn to_tdb(&self) -> Epoch<Tdb, P> {
+        Epoch::<Tdb, P>::from_tai_raw(self.tai_raw())
     }
 
     /// Convert to GPS Time (re-tag of the shared canonical instant).
     /// `GPS − UTC` equals the current leap count minus 19 s (18 s since 2017).
-    pub fn to_gps(&self) -> Epoch<Gps> {
-        Epoch::<Gps>::from_tai_raw(self.tai_raw())
+    pub fn to_gps(&self) -> Epoch<Gps, P> {
+        Epoch::<Gps, P>::from_tai_raw(self.tai_raw())
     }
 
     /// Convert to UT1 assuming UT1 ≈ UTC (naive, legacy behavior).
@@ -184,7 +187,7 @@ impl Epoch<Utc> {
     ///
     /// For a naive `dUT1 = 0` conversion used by the legacy simple rotation
     /// path, use [`Epoch::<Utc>::to_ut1_naive`] instead.
-    pub fn to_ut1<P: crate::earth::eop::Ut1Offset + ?Sized>(&self, eop: &P) -> Ut1Epoch {
+    pub fn to_ut1<E: crate::earth::eop::Ut1Offset + ?Sized>(&self, eop: &E) -> Ut1Epoch {
         let mjd = self.jd() - MJD_OFFSET;
         let dut1 = eop.dut1(mjd);
         Ut1Epoch::from_jd_ut1(self.jd() + dut1 / 86400.0)
@@ -196,22 +199,24 @@ impl Epoch<Utc> {
 impl Epoch<Tai> {
     /// Create a TAI epoch from a Julian Date value interpreted as TAI JD.
     pub fn from_jd_tai(jd: f64) -> Self {
-        from_scale_jd::<Tai>(jd)
+        from_scale_jd::<Tai, Precise>(jd)
     }
+}
 
+impl<P: Precision> Epoch<Tai, P> {
     /// Convert to UTC (re-tag of the shared canonical instant).
-    pub fn to_utc(&self) -> Epoch<Utc> {
-        Epoch::<Utc>::from_tai_raw(self.tai_raw())
+    pub fn to_utc(&self) -> Epoch<Utc, P> {
+        Epoch::<Utc, P>::from_tai_raw(self.tai_raw())
     }
 
     /// Convert to TT (re-tag of the shared canonical instant).
-    pub fn to_tt(&self) -> Epoch<Tt> {
-        Epoch::<Tt>::from_tai_raw(self.tai_raw())
+    pub fn to_tt(&self) -> Epoch<Tt, P> {
+        Epoch::<Tt, P>::from_tai_raw(self.tai_raw())
     }
 
     /// Convert to GPS Time (re-tag of the shared canonical instant).
-    pub fn to_gps(&self) -> Epoch<Gps> {
-        Epoch::<Gps>::from_tai_raw(self.tai_raw())
+    pub fn to_gps(&self) -> Epoch<Gps, P> {
+        Epoch::<Gps, P>::from_tai_raw(self.tai_raw())
     }
 }
 
@@ -220,17 +225,19 @@ impl Epoch<Tai> {
 impl Epoch<Gps> {
     /// Create a GPS epoch from a Julian Date value interpreted as GPS JD.
     pub fn from_jd_gps(jd: f64) -> Self {
-        from_scale_jd::<Gps>(jd)
+        from_scale_jd::<Gps, Precise>(jd)
     }
+}
 
+impl<P: Precision> Epoch<Gps, P> {
     /// Convert to TAI (re-tag of the shared canonical instant).
-    pub fn to_tai(&self) -> Epoch<Tai> {
-        Epoch::<Tai>::from_tai_raw(self.tai_raw())
+    pub fn to_tai(&self) -> Epoch<Tai, P> {
+        Epoch::<Tai, P>::from_tai_raw(self.tai_raw())
     }
 
     /// Convert to UTC (re-tag of the shared canonical instant).
-    pub fn to_utc(&self) -> Epoch<Utc> {
-        Epoch::<Utc>::from_tai_raw(self.tai_raw())
+    pub fn to_utc(&self) -> Epoch<Utc, P> {
+        Epoch::<Utc, P>::from_tai_raw(self.tai_raw())
     }
 }
 
@@ -239,9 +246,11 @@ impl Epoch<Gps> {
 impl Epoch<Tt> {
     /// Create a TT epoch from a Julian Date value interpreted as TT JD.
     pub fn from_jd_tt(jd: f64) -> Self {
-        from_scale_jd::<Tt>(jd)
+        from_scale_jd::<Tt, Precise>(jd)
     }
+}
 
+impl<P: Precision> Epoch<Tt, P> {
     /// Return TT Julian centuries since J2000.0.
     ///
     /// この値が IAU 2006 precession / IAU 2000A/B nutation の独立変数。
@@ -250,13 +259,13 @@ impl Epoch<Tt> {
     }
 
     /// Convert to TAI (re-tag of the shared canonical instant).
-    pub fn to_tai(&self) -> Epoch<Tai> {
-        Epoch::<Tai>::from_tai_raw(self.tai_raw())
+    pub fn to_tai(&self) -> Epoch<Tai, P> {
+        Epoch::<Tai, P>::from_tai_raw(self.tai_raw())
     }
 
     /// Convert to TDB (re-tag of the shared canonical instant).
-    pub fn to_tdb(&self) -> Epoch<Tdb> {
-        Epoch::<Tdb>::from_tai_raw(self.tai_raw())
+    pub fn to_tdb(&self) -> Epoch<Tdb, P> {
+        Epoch::<Tdb, P>::from_tai_raw(self.tai_raw())
     }
 }
 
@@ -268,9 +277,11 @@ impl Epoch<Tdb> {
     /// JPL DE ephemerides use `Teph` which is for practical purposes
     /// indistinguishable from TDB (IAU 2006 Resolution B3).
     pub fn from_jd_tdb(jd: f64) -> Self {
-        from_scale_jd::<Tdb>(jd)
+        from_scale_jd::<Tdb, Precise>(jd)
     }
+}
 
+impl<P: Precision> Epoch<Tdb, P> {
     /// Return TDB Julian centuries since J2000.0.
     ///
     /// Meeus / JPL DE ephemeris と IAU 2009 WGCCRE body rotation の独立変数。
@@ -279,8 +290,8 @@ impl Epoch<Tdb> {
     }
 
     /// Convert to TT (re-tag of the shared canonical instant).
-    pub fn to_tt(&self) -> Epoch<Tt> {
-        Epoch::<Tt>::from_tai_raw(self.tai_raw())
+    pub fn to_tt(&self) -> Epoch<Tt, P> {
+        Epoch::<Tt, P>::from_tai_raw(self.tai_raw())
     }
 }
 
@@ -355,11 +366,12 @@ fn tdb_minus_tt(tt_jd: f64) -> f64 {
 
 #[cfg(test)]
 mod lens_tests {
-    //! The `TaiLens` math must agree with the existing one-hop edge methods
-    //! (which it will replace once `Epoch<S>` stores canonical TAI), and must
-    //! round-trip. Agreement is to f64 noise since the lens does the same
-    //! arithmetic in two parts.
+    //! The `TaiLens` math must agree with the one-hop edge `to_*()` methods and
+    //! must round-trip. Agreement is to f64 noise since the lens does the same
+    //! arithmetic. Exercised on the [`TwoPartJd`] representation (the lens is
+    //! generic over [`JdRepr`], so the coarse `f64` path is the same code).
     use super::*;
+    use super::super::jd2::{JdRepr, TwoPartJd};
 
     const TOL_DAY: f64 = 1e-9; // ~86 µs — well above f64 noise, below the regime we care about
 

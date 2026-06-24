@@ -14,7 +14,7 @@
 //! to pick a rollover convention — keeps the constructor unambiguous and makes
 //! broadcast de-rolling an explicit, separately testable step.
 
-use super::{Epoch, GPS_EPOCH_JD, Gps};
+use super::{Epoch, GPS_EPOCH_JD, Gps, Precision};
 // `floor`/`round` resolve to inherent std methods under `std`; this import
 // provides them for `no_std` (libm) and is unused otherwise.
 #[allow(unused_imports)]
@@ -54,7 +54,7 @@ impl GpsWeek {
     /// to be within ~9.8 years (half a rollover period) of the true epoch for
     /// the resolution to be correct — e.g. the receiver's build date or a coarse
     /// current time. A non-finite / pre-epoch `reference` is treated as era 0.
-    pub fn from_broadcast(raw10: u16, reference: &Epoch<Gps>) -> Self {
+    pub fn from_broadcast<P: Precision>(raw10: u16, reference: &Epoch<Gps, P>) -> Self {
         let raw = (raw10 as i64) % BROADCAST_WEEK_MODULUS;
         let r = reference
             .to_week_seconds()
@@ -93,7 +93,9 @@ impl Epoch<Gps> {
     pub fn from_week_seconds(week: GpsWeek, sow: SecondsOfWeek) -> Self {
         Self::from_jd_gps(GPS_EPOCH_JD + week.get() as f64 * 7.0 + sow.get() / 86400.0)
     }
+}
 
+impl<P: Precision> Epoch<Gps, P> {
     /// Decompose into `(continuous week, seconds-of-week)`.
     ///
     /// Returns `None` unless this is a valid GPS instant — finite and at or

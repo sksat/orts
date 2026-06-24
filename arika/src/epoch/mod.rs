@@ -45,18 +45,20 @@ mod duration;
 mod gps;
 mod jd2;
 mod leap;
+mod precision;
 mod scale;
 
 pub use convert::{FixedOffsetFromTai, Ut1Epoch};
 pub use datetime::DateTime;
 pub use duration::Duration;
 pub use gps::{GpsWeek, SecondsOfWeek};
+pub use jd2::{JdRepr, TwoPartJd};
+pub use precision::{Coarse, Precise, Precision};
 pub use scale::{Gps, Tai, Tdb, TimeScale, Tt, Utc};
 
 use convert::TaiLens;
 use convert::era_formula;
 use datetime::to_datetime_from_jd;
-use jd2::TwoPartJd;
 
 /// Julian Date of J2000.0 epoch (JD 2451545.0).
 ///
@@ -88,41 +90,84 @@ pub const GPS_EPOCH_JD: f64 = 2444244.5;
 #[cfg(feature = "std")]
 const UNIX_EPOCH_JD: f64 = 2440587.5;
 
-/// An astronomical epoch represented as Julian Date in scale `S`.
+/// An astronomical epoch represented as Julian Date in scale `S`, stored at
+/// precision tier `P`.
 ///
-/// `S` defaults to [`Utc`] so that `Epoch` (without type parameter) means
-/// `Epoch<Utc>` — the most common user-facing scale.
+/// `S` defaults to [`Utc`] and `P` to [`Precise`], so that `Epoch` (without type
+/// parameters) means `Epoch<Utc, Precise>` — the most common user-facing scale
+/// at sub-nanosecond precision.
 ///
 /// # 内部表現: canonical TAI
 ///
-/// 内部は **canonical な TAI instant を two-part ([`TwoPartJd`]) で保持**し、`S` は
-/// 読み出しレンズである。`jd()` は格納された TAI を scale `S` の JD に変換して返す:
-/// `Epoch<Utc>::from_jd(x).jd() == x` (UTC JD として round-trip)、
+/// 内部は **canonical な TAI instant を精度 tier `P` の表現 ([`P::Repr`](Precision::Repr))
+/// で保持**し、`S` は読み出しレンズである。`P = Precise` なら two-part [`TwoPartJd`]、
+/// `P = Coarse` なら単一 [`f64`]。`jd()` は格納された TAI を scale `S` の JD に
+/// 変換して返す: `Epoch<Utc>::from_jd(x).jd() == x` (UTC JD として round-trip)、
 /// `Epoch<Tdb>::from_jd_tdb(x).jd() == x` (TDB JD として round-trip)。
 ///
 /// scale 変換 (`to_tt()`, `to_tdb()` 等) は同じ TAI instant の **非破壊な再ラベル**で、
 /// leap second / Fairhead 補正は構築時 (`from_*`) と読み出し時 (`jd()`) の lens
 /// ([`TaiLens`]) でのみ適用される。同一物理 instant は同一内部値なので
 /// `duration_since` は leap 跨ぎ・cross-scale でも厳密な SI 秒を返す。
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Epoch<S: TimeScale = Utc> {
-    /// Canonical TAI instant (two-part JD). Read out in scale `S` via the lens.
-    tai: TwoPartJd,
+///
+/// # 精度 tier の選択
+///
+/// 豊富なコンストラクタ (`from_jd`, `from_gregorian`, …) は既定の [`Precise`] を
+/// 作る。[`Coarse`] が欲しい場合は [`to_precision`](Self::to_precision) で
+/// 変換する (例: `epoch.to_precision::<Coarse>()`)。tier は型の一部なので、
+/// 別 tier の `Epoch` 同士の演算は明示的な変換を要する。
+pub struct Epoch<S: TimeScale = Utc, P: Precision = Precise> {
+    /// Canonical TAI instant, stored at precision tier `P`. Read out in scale
+    /// `S` via the lens.
+    tai: P::Repr,
     /// Scale tag (zero-sized).
     _scale: PhantomData<S>,
 }
 
-// Generic accessors (available on all scales)
+// Manual `Copy`/`Clone`/`PartialEq`/`Debug`: `#[derive]` would bound them on
+// `P: Trait` rather than on the stored field `P::Repr`, which doesn't hold. The
+// `P: Precision` bound gives `P::Repr: JdRepr`, hence `Copy + PartialEq + Debug`.
 
-impl<S: TimeScale> Epoch<S> {
+impl<S: TimeScale, P: Precision> Clone for Epoch<S, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S: TimeScale, P: Precision> Copy for Epoch<S, P> {}
+
+impl<S: TimeScale, P: Precision> PartialEq for Epoch<S, P> {
+    fn eq(&self, other: &Self) -> bool {
+        self.tai == other.tai
+    }
+}
+
+impl<S: TimeScale, P: Precision> core::fmt::Debug for Epoch<S, P> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Epoch")
+            .field("scale", &S::NAME)
+            .field("precision", &P::NAME)
+            .field("tai", &self.tai)
+            .finish()
+    }
+}
+
+// Generic accessors (available on all scales and precision tiers)
+
+impl<S: TimeScale, P: Precision> Epoch<S, P> {
     /// The human-readable scale name (e.g. "UTC", "TDB").
     pub fn scale_name() -> &'static str {
         S::NAME
     }
 
+    /// The precision-tier name ("precise" / "coarse").
+    pub fn precision_name() -> &'static str {
+        P::NAME
+    }
+
     /// Crate-internal constructor from the canonical TAI instant, tagging scale
     /// `S`. Scale conversions are exactly this (a re-tag of the same `tai`).
-    pub(crate) fn from_tai_raw(tai: TwoPartJd) -> Self {
+    pub(crate) fn from_tai_raw(tai: P::Repr) -> Self {
         Self {
             tai,
             _scale: PhantomData,
@@ -130,26 +175,41 @@ impl<S: TimeScale> Epoch<S> {
     }
 
     /// Crate-internal accessor for the canonical TAI instant.
-    pub(crate) fn tai_raw(&self) -> TwoPartJd {
+    pub(crate) fn tai_raw(&self) -> P::Repr {
         self.tai
     }
 
     /// Exact SI-second interval since `earlier`, measured on the shared TAI
     /// timeline — correct across leap seconds and across *any* scales (both
     /// epochs store canonical TAI, so `earlier` may be in a different scale).
-    pub fn duration_since<T: TimeScale>(&self, earlier: &Epoch<T>) -> Duration {
+    ///
+    /// Both epochs must share the precision tier `P`; difference a mixed pair by
+    /// first aligning tiers with [`to_precision`](Self::to_precision).
+    pub fn duration_since<T: TimeScale>(&self, earlier: &Epoch<T, P>) -> Duration {
         Duration::from_si_seconds(self.tai.diff_days(earlier.tai_raw()) * 86400.0)
+    }
+
+    /// Re-express this epoch at precision tier `Q`, preserving the same scale
+    /// `S` and canonical TAI instant.
+    ///
+    /// The instant is carried across via its `(hi, lo)` parts: [`Precise`] →
+    /// [`Precise`] is exact, [`Coarse`] → [`Precise`] lifts the `f64` (residual
+    /// zero), and [`Precise`] → [`Coarse`] collapses to `hi + lo` (dropping the
+    /// sub-`f64` residual the coarse tier cannot hold).
+    pub fn to_precision<Q: Precision>(&self) -> Epoch<S, Q> {
+        let (hi, lo) = self.tai.parts();
+        Epoch::<S, Q>::from_tai_raw(<Q::Repr as JdRepr>::from_parts(hi, lo))
     }
 }
 
 // Read-out accessors: lens the stored canonical TAI into scale `S`'s JD.
 //
-// Concrete per scale (not a generic `impl<S: TaiLens>`) so the crate-internal
-// `TaiLens` / `TwoPartJd` types stay off the public API — a public generic
-// bounded by them would leak them (`private_interfaces`).
+// Concrete per scale (not a generic `impl<S: TaiLens, P>`) so the crate-internal
+// `TaiLens` trait stays off the public API — a public generic bounded by it
+// would leak it (`private_interfaces`/`private_bounds`).
 macro_rules! impl_jd_accessors {
     ($scale:ty) => {
-        impl Epoch<$scale> {
+        impl<P: Precision> Epoch<$scale, P> {
             /// Return the Julian Date, interpreted in this scale (lens read-out
             /// of the canonical TAI instant; single-`f64` collapse).
             pub fn jd(&self) -> f64 {
@@ -159,10 +219,11 @@ macro_rules! impl_jd_accessors {
             /// The Julian Date as a precise two-part `(hi, lo)` value — for
             /// feeding SOFA-style two-part consumers without the `jd()` collapse.
             ///
-            /// `lo` carries the conversion's sub-`f64` residual; since every
-            /// constructor currently ingests a single `f64`, it reflects the
-            /// lens arithmetic, not user-supplied sub-`f64` input precision (a
-            /// two-part ingestion path is future work).
+            /// On the [`Precise`] tier `lo` carries the conversion's sub-`f64`
+            /// residual; since every constructor currently ingests a single
+            /// `f64`, it reflects the lens arithmetic, not user-supplied sub-`f64`
+            /// input precision (a two-part ingestion path is future work). On the
+            /// [`Coarse`] tier `lo` is always `0.0`.
             pub fn jd_parts(&self) -> (f64, f64) {
                 <$scale as TaiLens>::scale_from_tai(self.tai).parts()
             }
@@ -180,7 +241,14 @@ impl_jd_accessors!(Tt);
 impl_jd_accessors!(Tdb);
 impl_jd_accessors!(Gps);
 
-// Epoch<Utc> API (main user-facing scale)
+// Epoch<Utc> constructors (main user-facing scale).
+//
+// Constructors build the default `Precise` tier. They stay on the concrete
+// `impl Epoch<Utc>` (= `Epoch<Utc, Precise>`) rather than `impl<P> Epoch<Utc, P>`
+// so that bare calls like `Epoch::from_jd(x)` infer the tier — a default type
+// parameter is not a fallback for an unconstrained inference variable in
+// expression position. For a `Coarse` epoch, build `Precise` then
+// [`to_precision`](Self::to_precision).
 
 impl Epoch<Utc> {
     /// Create a UTC epoch from a Julian Date (treated as UTC JD).
@@ -188,7 +256,7 @@ impl Epoch<Utc> {
     /// `Epoch<Utc>::from_jd(x).jd() == x` (round-trip identity). The value is
     /// stored internally as the corresponding canonical TAI instant.
     pub fn from_jd(jd: f64) -> Self {
-        convert::from_scale_jd::<Utc>(jd)
+        convert::from_scale_jd::<Utc, Precise>(jd)
     }
 
     /// Create a UTC epoch from a Modified Julian Date value.
@@ -322,7 +390,12 @@ impl Epoch<Utc> {
         };
         Self::from_year_day_of_year(year, day_of_year)
     }
+}
 
+// Epoch<Utc> methods (available on every precision tier; `P` is inferred from
+// `self`, so these need no concrete-tier pinning).
+
+impl<P: Precision> Epoch<Utc, P> {
     /// Julian centuries since J2000.0, computed directly from the UTC JD.
     ///
     /// **Note**: This treats the UTC JD as if it were a dynamical-time JD,
@@ -340,7 +413,7 @@ impl Epoch<Utc> {
     /// Legacy API. For leap-second-aware (SI-second) arithmetic use
     /// [`add_si_seconds`](Self::add_si_seconds) instead.
     pub fn add_seconds(&self, dt: f64) -> Self {
-        Self::from_jd(self.jd() + dt / 86400.0)
+        convert::from_scale_jd::<Utc, P>(self.jd() + dt / 86400.0)
     }
 
     /// Advance the epoch by `dt` SI seconds, handling leap second boundaries.
