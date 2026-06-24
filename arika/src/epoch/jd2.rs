@@ -23,13 +23,19 @@ fn two_sum(a: f64, b: f64) -> (f64, f64) {
     (s, e)
 }
 
+mod sealed {
+    pub trait Sealed {}
+}
+impl sealed::Sealed for f64 {}
+impl sealed::Sealed for TwoPartJd {}
+
 /// The Julian Date storage behind a canonical-TAI [`Epoch`](super::Epoch): a JD
 /// value plus the day-level arithmetic the epoch applies (lens conversion,
-/// `duration_since`, `add_si_seconds`). Implemented by [`f64`] (the coarse tier)
-/// and [`TwoPartJd`] (the precise tier); which one an `Epoch` stores is selected
-/// by its [`Precision`](super::Precision). The two impls are the only intended
-/// ones.
-pub trait JdRepr: Copy + PartialEq + core::fmt::Debug {
+/// `duration_since`, `add_si_seconds`). Sealed — the only impls are [`f64`] (the
+/// coarse tier) and [`TwoPartJd`] (the precise tier); which one an `Epoch` stores
+/// is selected by its (also sealed) [`Precision`](super::Precision), so this is a
+/// closed set, not a downstream extension point.
+pub trait JdRepr: sealed::Sealed + Copy + PartialEq + core::fmt::Debug {
     /// From a single `f64` JD. For [`TwoPartJd`] the residual is zero — precision
     /// beyond `f64` is only created by the arithmetic methods, never ingested
     /// here.

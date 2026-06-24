@@ -888,7 +888,6 @@ fn coarse_and_precise_agree_on_jd_readout() {
     let x = 2_460_390.123_456;
     let precise = Epoch::<Utc>::from_jd(x);
     let coarse = precise.to_precision::<Coarse>();
-    assert_eq!(Epoch::<Utc, Coarse>::precision_name(), "coarse");
     assert!((coarse.jd() - precise.jd()).abs() < 1e-9);
     assert!((coarse.jd() - x).abs() < 1e-9);
 }
@@ -918,6 +917,12 @@ fn conversions_and_arithmetic_preserve_the_tier() {
     // And a Coarse epoch round-trips scale conversions to f64 tolerance.
     let rt = coarse.to_tdb().to_tt().to_tai().to_utc();
     assert!((rt.jd() - coarse.jd()).abs() < 1e-8);
+
+    // `to_precision` is defined on the scale-generic impl, so it must work from
+    // a non-Utc scale too: it preserves the scale `S` and round-trips the JD.
+    let tt = Epoch::<Tt>::from_jd_tt(2_460_390.5);
+    let tt_coarse: Epoch<Tt, Coarse> = tt.to_precision::<Coarse>();
+    assert!((tt_coarse.jd() - tt.jd()).abs() < 1e-9);
 }
 
 /// **Discriminating test**: the tier's whole reason to exist. A 1 ns SI step is
