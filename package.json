@@ -8,7 +8,7 @@
     "build:site": "pnpm --filter uneri build && pnpm --filter orts-viewer build && pnpm --filter orts-docs build"
   },
   "devDependencies": {
-    "@biomejs/biome": "~2.4.7"
+    "@biomejs/biome": "~2.5.0"
   },
   "volta": {
     "node": "24.16.0"
