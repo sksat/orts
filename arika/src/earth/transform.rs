@@ -101,9 +101,10 @@ impl EarthRotationPole for frame::Gcrs {
 /// # Implementations
 ///
 /// - `SimpleEci` / `Gcrs`: identity. `Gcrs` *is* the ephemeris frame; `SimpleEci`
-///   is the visualization-grade frame defined as GCRS minus precession/nutation/
-///   frame-bias, so the ephemeris is treated as already in it — preserving the
-///   historical raw-vector behavior exactly.
+///   is the simple/visualization-grade frame (no precession/nutation/bias model,
+///   and no strict relation to GCRS — see [`SimpleEci`](crate::frame::SimpleEci)),
+///   so the analytic ephemeris is treated as already expressed in it, preserving
+///   the historical Meeus/simple-path behavior exactly.
 /// - `Cirs`: the EOP-free IAU 2006 **model** GCRS→CIRS rotation (precession +
 ///   nutation), rotating the ephemeris into the of-date intermediate frame.
 ///

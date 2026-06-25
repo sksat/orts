@@ -189,6 +189,46 @@ mod tests {
         OrbitalState::new(vector![r, 0.0, 0.0], vector![0.0, v, 0.0])
     }
 
+    /// **Discriminating test (#191)**: in a non-GCRS-aligned frame (`Cirs`), the
+    /// frame-correct `Model::eval` rotates the Meeus (GCRS) Sun ephemeris into
+    /// the integration frame before the SRP geometry. It therefore equals
+    /// `srp_accel` on the rotated Sun and differs measurably from the raw
+    /// GCRS-aligned result by the precession/nutation rotation. (Identity for
+    /// `SimpleEci`/`Gcrs`, so those are unchanged.)
+    #[test]
+    fn cirs_eval_rotates_the_sun_ephemeris() {
+        use arika::frame::{Cirs, Gcrs, Rotation};
+
+        let srp = SolarRadiationPressure {
+            cr: 1.5,
+            area_to_mass: 0.02,
+            shadow_body_radius: None,
+            shadow_model: ShadowModel::Cylindrical,
+        };
+        let epoch = test_epoch();
+        let sat = vector![7000.0, 1000.0, 500.0];
+
+        let state = OrbitalState::<Cirs>::new_in_frame(sat, vector![0.0, 7.5, 0.0]);
+        let a_cirs = *srp
+            .eval(0.0, &state, Some(&epoch))
+            .acceleration_inertial
+            .inner();
+
+        let sun_gcrs = sun::sun_position_eci(&epoch.to_tdb());
+        let sun_cirs = Rotation::<Gcrs, Cirs>::iau2006_model(&epoch.to_tt()).transform(&sun_gcrs);
+        let expected = srp.srp_accel(&sat, sun_cirs.inner());
+        assert!(
+            (a_cirs - expected).norm() < 1e-18,
+            "CIRS eval must apply the GCRS→CIRS Sun-ephemeris rotation"
+        );
+
+        let raw = srp.srp_accel(&sat, sun_gcrs.inner());
+        assert!(
+            (a_cirs - raw).norm() > raw.norm() * 1e-4,
+            "CIRS eval should differ from the raw GCRS-aligned result"
+        );
+    }
+
     #[test]
     fn srp_direction_away_from_sun() {
         let srp = SolarRadiationPressure {
