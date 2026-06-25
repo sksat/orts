@@ -3,7 +3,7 @@
 //! Provides tools for parsing state-vector tables exported from the JPL
 //! Horizons system (<https://ssd.jpl.nasa.gov/horizons/>) and querying them
 //! via Hermite interpolation. The parser is always available. When compiled
-//! with the `fetch-horizons` feature, [`HorizonsTable::fetch_vector_table`]
+//! with the `fetch-horizons` feature, `HorizonsTable::fetch_vector_table`
 //! downloads tables over HTTP and caches them on disk.
 //!
 //! ## Supported input format
@@ -14,11 +14,21 @@
 //! Each row has the shape:
 //!
 //! ```text
-//! JDTDB, Calendar Date, X, Y, Z, VX, VY, VZ,
+//! JD, Calendar Date, X, Y, Z, VX, VY, VZ,
 //! ```
 //!
 //! Position is in km, velocity in km/s. The parser accepts either
 //! whitespace- or comma-separated rows after splitting on commas.
+//!
+//! The leading column is a Julian Date, read positionally and parsed into the
+//! sample's epoch via [`Epoch::from_jd`], which interprets it as a UTC (UT-like)
+//! Julian Date. Tables from `HorizonsTable::fetch_vector_table` use
+//! `TIME_TYPE=UT`, so the column is `JDUT` — UT-like, matching `arika`'s
+//! UTC-wall-clock epochs, so interpolation lookups are correct. A table exported
+//! with Horizons' default `TIME_TYPE` is `JDTDB`; parsing it would misread those
+//! TDB Julian Dates as UTC and shift every sample ~69 s in physical time, so
+//! re-export with `TIME_TYPE=UT` (the column's scale is not recoverable after
+//! parsing). See the `TIME_TYPE` discussion on the fetcher.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -31,12 +41,18 @@ use crate::epoch::Epoch;
 /// One state-vector sample from a Horizons vector table.
 #[derive(Debug, Clone, Copy)]
 pub struct HorizonsSample {
-    /// Epoch (reconstructed from the JDTDB column).
+    /// Epoch reconstructed from the leading Julian Date column.
     ///
-    /// Note: Horizons JDTDB is in the TDB time scale, while `Epoch::from_jd`
-    /// is agnostic. The difference between TDB and UTC is ≤ ~69 seconds for
-    /// modern epochs. For sub-kilometer accuracy at Moon distance, callers
-    /// should be aware of this time-scale mismatch — see README.
+    /// [`Epoch::from_jd`] interprets that JD as a UTC (UT-like) Julian Date, so
+    /// this is always a UTC epoch and the column must be UT-like for it to denote
+    /// the intended instant. Tables from `HorizonsTable::fetch_vector_table` use
+    /// `TIME_TYPE=UT` (`JDUT`), matching `arika`'s UTC-wall-clock epochs — so an
+    /// interpolated lookup keyed by such an epoch returns the state at the
+    /// requested instant (to within Horizons' sub-second UT−UT1 residual). A
+    /// `JDTDB`-exported table parsed via `HorizonsTable::from_file` would have its
+    /// TDB Julian Dates misread as UTC, shifting samples ~69 s in physical time;
+    /// re-export it with `TIME_TYPE=UT` before parsing (the scale cannot be
+    /// recovered afterwards).
     pub epoch: Epoch,
     /// Position in ECI/J2000 [km].
     pub position: Vector3<f64>,
@@ -115,7 +131,11 @@ impl HorizonsTable {
     /// Parse a Horizons CSV vector-table string.
     ///
     /// The input must contain `$$SOE` / `$$EOE` markers bracketing CSV rows
-    /// of the form `JDTDB, Calendar, X, Y, Z, VX, VY, VZ`.
+    /// of the form `JD, Calendar, X, Y, Z, VX, VY, VZ`. The leading Julian Date
+    /// column is parsed into each sample's epoch via [`Epoch::from_jd`], which
+    /// interprets it as a UTC (UT-like) JD — so the column must be UT-like
+    /// (`JDUT`, as `TIME_TYPE=UT` produces), not `JDTDB` (see the module-level
+    /// "Supported input format").
     pub fn parse_csv(text: &str) -> Result<Self, HorizonsError> {
         // Locate the $$SOE and $$EOE markers.
         let lines: Vec<&str> = text.lines().collect();
@@ -147,8 +167,8 @@ impl HorizonsTable {
                 });
             }
 
-            let jd = parse_field(fields[0], "JDTDB", line_number)?;
-            // fields[1] is the calendar date string — we ignore it and use JDTDB.
+            let jd = parse_field(fields[0], "JD", line_number)?;
+            // fields[1] is the calendar date string — we ignore it and use the JD column.
             let x = parse_field(fields[2], "X", line_number)?;
             let y = parse_field(fields[3], "Y", line_number)?;
             let z = parse_field(fields[4], "Z", line_number)?;
