@@ -20,14 +20,15 @@
 //! Position is in km, velocity in km/s. The parser accepts either
 //! whitespace- or comma-separated rows after splitting on commas.
 //!
-//! The leading column is a Julian Date; the parser reads it positionally and
-//! stores it verbatim (scale-agnostic — [`Epoch::from_jd`] holds the JD value
-//! without interpreting a scale). Its time scale depends on how the table was
-//! produced: Horizons' default vector export is `JDTDB`, whereas
-//! `HorizonsTable::fetch_vector_table` forces `TIME_TYPE=UT` so the column is
-//! `JDUT`, whose numerical JD matches `arika`'s UTC-wall-clock epochs. Match a
-//! manually exported table's scale to the epochs you query it with (see the
-//! `TIME_TYPE` discussion on the fetcher).
+//! The leading column is a Julian Date, read positionally and parsed into the
+//! sample's epoch via [`Epoch::from_jd`], which interprets it as a UTC (UT-like)
+//! Julian Date. Tables from `HorizonsTable::fetch_vector_table` use
+//! `TIME_TYPE=UT`, so the column is `JDUT` — UT-like, matching `arika`'s
+//! UTC-wall-clock epochs, so interpolation lookups are correct. A table exported
+//! with Horizons' default `TIME_TYPE` is `JDTDB`; parsing it would misread those
+//! TDB Julian Dates as UTC and shift every sample ~69 s in physical time, so
+//! re-export with `TIME_TYPE=UT` (the column's scale is not recoverable after
+//! parsing). See the `TIME_TYPE` discussion on the fetcher.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -40,19 +41,18 @@ use crate::epoch::Epoch;
 /// One state-vector sample from a Horizons vector table.
 #[derive(Debug, Clone, Copy)]
 pub struct HorizonsSample {
-    /// Epoch, reconstructed verbatim from the leading Julian Date column.
+    /// Epoch reconstructed from the leading Julian Date column.
     ///
-    /// [`Epoch::from_jd`] stores the JD without interpreting a scale, so this
-    /// carries whatever scale the source table used (see the module-level
-    /// "Supported input format"). Tables from
-    /// `HorizonsTable::fetch_vector_table` are `JDUT` (`TIME_TYPE=UT`), whose
-    /// numerical JD matches `arika`'s UTC-wall-clock epochs — so an interpolated
-    /// lookup keyed by such an epoch returns the state at the requested instant
-    /// (to within Horizons' sub-second UT−UT1 residual, vs the ~69 s a TDB-indexed
-    /// table would be off by). A
-    /// manually exported table parsed via `HorizonsTable::from_file` carries
-    /// its export's scale (Horizons' default is `JDTDB`, ~69 s from UTC);
-    /// reconcile that with your query epochs.
+    /// [`Epoch::from_jd`] interprets that JD as a UTC (UT-like) Julian Date, so
+    /// this is always a UTC epoch and the column must be UT-like for it to denote
+    /// the intended instant. Tables from `HorizonsTable::fetch_vector_table` use
+    /// `TIME_TYPE=UT` (`JDUT`), matching `arika`'s UTC-wall-clock epochs — so an
+    /// interpolated lookup keyed by such an epoch returns the state at the
+    /// requested instant (to within Horizons' sub-second UT−UT1 residual). A
+    /// `JDTDB`-exported table parsed via `HorizonsTable::from_file` would have its
+    /// TDB Julian Dates misread as UTC, shifting samples ~69 s in physical time;
+    /// re-export it with `TIME_TYPE=UT` before parsing (the scale cannot be
+    /// recovered afterwards).
     pub epoch: Epoch,
     /// Position in ECI/J2000 [km].
     pub position: Vector3<f64>,
@@ -132,8 +132,10 @@ impl HorizonsTable {
     ///
     /// The input must contain `$$SOE` / `$$EOE` markers bracketing CSV rows
     /// of the form `JD, Calendar, X, Y, Z, VX, VY, VZ`. The leading Julian Date
-    /// column is stored verbatim regardless of its time scale (see the
-    /// module-level "Supported input format").
+    /// column is parsed into each sample's epoch via [`Epoch::from_jd`], which
+    /// interprets it as a UTC (UT-like) JD — so the column must be UT-like
+    /// (`JDUT`, as `TIME_TYPE=UT` produces), not `JDTDB` (see the module-level
+    /// "Supported input format").
     pub fn parse_csv(text: &str) -> Result<Self, HorizonsError> {
         // Locate the $$SOE and $$EOE markers.
         let lines: Vec<&str> = text.lines().collect();
