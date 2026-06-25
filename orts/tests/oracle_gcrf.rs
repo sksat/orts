@@ -542,3 +542,111 @@ fn gcrf_real_eop_improves_drag_30day() {
         "Real EOP ({real_err:.6} km) should be better than SimpleEci ({simple_err:.6} km)"
     );
 }
+
+/// Decomposes the 30-day Gcrs error into its physical contributors, so the
+/// `gcrf_j2_msise_cssi_thirdbody_iss_30day` floor doesn't have to be
+/// re-investigated by hand. It propagates the scenario three ways (full, no
+/// third-body, no drag) and pins the *structure* of the error budget:
+///
+/// - Drag dominates the 30-day trajectory by orders of magnitude (~8400 km of
+///   along-track motion), so the residual vs Orekit is mostly the inherent
+///   ~0.05-0.3% density difference between our NRLMSISE-00 and Orekit's,
+///   amplified over that arc.
+/// - Third-body (Meeus vs Orekit DE) is a minor contributor (~a few km).
+/// - The Gcrs frame handling itself is not the error source (the full error
+///   stays in the floor band; removing third-body does not blow it up).
+///
+/// `#[ignore]`d: three 30-day propagations take many minutes — too slow for the
+/// default suite. Run on demand to re-verify the floor:
+///   `cargo test -p orts --test oracle_gcrf -- --ignored gcrf_30day_error_floor`
+#[test]
+#[ignore = "three 30-day propagations (~tens of minutes); on-demand floor diagnostic"]
+fn gcrf_30day_error_floor_is_drag_dominated() {
+    let fixtures = load_fixtures();
+    let scenario = find_scenario(&fixtures, "gcrf_j2_msise_cssi_thirdbody_iss_30day");
+    let ic = &scenario.initial_cartesian;
+    let duration = scenario.trajectory.last().unwrap().t_seconds;
+
+    // Build the scenario's force model with individual terms toggled off.
+    let build = |with_third_body: bool, with_drag: bool| -> OrbitalSystem<frame::Gcrs> {
+        let epoch = parse_epoch(&scenario.epoch_utc);
+        let mut system = OrbitalSystem::<frame::Gcrs>::new(MU_EARTH, Box::new(PointMass))
+            .with_epoch(epoch)
+            .with_body_radius(R_EARTH)
+            .with_model(ZonalGravity::<frame::Gcrs>::new(
+                MU_EARTH, R_EARTH, J2_EARTH, None, None,
+            ));
+        if with_third_body {
+            system = system
+                .with_model(ThirdBodyGravity::sun())
+                .with_model(ThirdBodyGravity::moon());
+        }
+        if with_drag {
+            let b = scenario.satellite.ballistic_coeff_m2_kg.unwrap_or(0.01);
+            let cssi_text = include_str!("fixtures/cssi_test_weather.txt");
+            let cssi_data = CssiData::parse(cssi_text).expect("Failed to parse CSSI fixture");
+            let provider = Box::new(CssiSpaceWeather::new(cssi_data));
+            let drag = AtmosphericDrag::<frame::Gcrs>::for_earth_in_frame(
+                Some(b),
+                GcrsEopStorage::new(ZeroEop),
+            )
+            .with_atmosphere(Box::new(Nrlmsise00::new(provider)));
+            system = system.with_model(drag);
+        }
+        system
+    };
+
+    let propagate = |system: &OrbitalSystem<frame::Gcrs>| -> Vector3<f64> {
+        let initial = OrbitalState::<frame::Gcrs>::new_in_frame(
+            Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
+            Vector3::new(ic.velocity_km_s[0], ic.velocity_km_s[1], ic.velocity_km_s[2]),
+        );
+        *DormandPrince
+            .integrate(system, initial, 0.0, duration, 30.0, |_, _| {})
+            .position()
+    };
+
+    let fx = scenario.trajectory.last().unwrap();
+    let fixture_final = Vector3::new(fx.position_km[0], fx.position_km[1], fx.position_km[2]);
+
+    let p_full = propagate(&build(true, true));
+    let p_no_third_body = propagate(&build(false, true));
+    let p_no_drag = propagate(&build(true, false));
+
+    let err_full = (p_full - fixture_final).norm();
+    let err_no_third_body = (p_no_third_body - fixture_final).norm();
+    let third_body_contrib = (p_full - p_no_third_body).norm();
+    let drag_contrib = (p_full - p_no_drag).norm();
+
+    println!("30-day error-floor decomposition (Gcrs, correct CIP co-rotation, ZeroEop):");
+    println!("  err vs Orekit (full):           {err_full:.3} km");
+    println!("  err vs Orekit (no third-body):  {err_no_third_body:.3} km");
+    println!("  drag trajectory contribution:   {drag_contrib:.1} km");
+    println!("  third-body trajectory contrib:  {third_body_contrib:.3} km");
+
+    // Drag dominates the trajectory by orders of magnitude over 30 days.
+    assert!(
+        drag_contrib > 1000.0,
+        "drag should move the 30-day trajectory by >1000 km, got {drag_contrib:.1} km"
+    );
+    assert!(
+        drag_contrib > 100.0 * third_body_contrib,
+        "drag ({drag_contrib:.1} km) should dominate third-body ({third_body_contrib:.3} km) by >100x"
+    );
+    // Third-body (Meeus vs DE) is a minor, bounded contributor.
+    assert!(
+        third_body_contrib < 20.0,
+        "third-body contribution should be a few km, got {third_body_contrib:.3} km"
+    );
+    // The Gcrs frame handling is not the error source: the error stays in the
+    // floor band and third-body is not what dominates it.
+    assert!(
+        err_full < 20.0,
+        "full Gcrs error should sit in the model-fidelity floor band, got {err_full:.3} km"
+    );
+    assert!(
+        (err_full - err_no_third_body).abs() < 10.0,
+        "third-body should not be the dominant error term (Δerr={:.3} km)",
+        (err_full - err_no_third_body).abs()
+    );
+}
