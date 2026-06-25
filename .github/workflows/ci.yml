@@ -905,6 +905,14 @@ jobs:
       - name: Test viewer
         run: pnpm --filter orts-viewer test
 
+      # The registry-consumer example is only exercised via Playwright (a Vite
+      # build, which does not type-check), so its `tsc --noEmit` was ungated —
+      # a TypeScript 6 deprecation error in its tsconfig slipped through here.
+      # Run its typecheck so config/type regressions fail at build time.
+      - name: Typecheck registry-consumer example
+        working-directory: viewer/examples/orbit-viewer
+        run: pnpm typecheck
+
       # The shadcn registry manifest is generated from the library's import
       # closure; build it (proves it's well-formed) and fail if the committed
       # registry.json drifted from the closure (someone changed imports without
