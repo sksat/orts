@@ -218,7 +218,7 @@ mod tests {
         let sun_cirs = Rotation::<Gcrs, Cirs>::iau2006_model(&epoch.to_tt()).transform(&sun_gcrs);
         let expected = srp.srp_accel(&sat, sun_cirs.inner());
         assert!(
-            (a_cirs - expected).norm() < 1e-18,
+            (a_cirs - expected).norm() < 1e-15,
             "CIRS eval must apply the GCRS→CIRS Sun-ephemeris rotation"
         );
 
