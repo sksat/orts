@@ -167,8 +167,12 @@ impl<F: EarthFrameBridge> AtmosphericDrag<F> {
         // differs by polar motion); LOD variation in |Ω| is omitted.
         //
         // `earth_pole` is Earth-specific, so for any other central body we keep
-        // the frame Z axis (the pre-existing behavior, matching the spherical
-        // geodetic fallback above — `F` is an Earth ECI frame regardless).
+        // the frame Z axis with that body's `omega_body` (the pre-existing
+        // behavior, matching the spherical geodetic fallback above — `F` is an
+        // Earth ECI frame regardless). A non-Earth body's true spin-axis
+        // orientation is not modeled: it would need a per-body pole and a
+        // body-fixed frame, so non-Earth drag here stays a coarse approximation.
+        // Tracked in #210.
         let omega = match self.body {
             Some(KnownBody::Earth) => F::earth_pole(utc).into_inner() * self.omega_body,
             _ => Vector3::new(0.0, 0.0, self.omega_body),
