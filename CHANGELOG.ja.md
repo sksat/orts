@@ -155,6 +155,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   へ伝播。`sgp4` crate を AFSPC compatibility mode (WGS72) でラップ。依存は
   `libm` のみで引くため no_std-no-alloc ビルドでも動作。Vallado 検証ベクタの
   near-earth (SGP4) と deep-space (SDP4) で検証済み。([#235](https://github.com/sksat/orts/pull/235))
+- TEME↔GCRS / TEME↔SimpleEci フレーム回転。SGP4 の `Vec3<Teme>` 状態を積分
+  フレームへ変換する。`earth::iau1980` に equinox ベースの IAU-76/FK5 換算
+  (IAU-76 precession、フル 106 項 IAU-80 nutation、mean obliquity、equation of
+  the equinoxes、GMST 1982。各々対応する ERFA ルーチンを再現)、`earth::teme` に
+  `Rotation<Teme, Gcrs>::teme_to_gcrs`、`Rotation<Teme, SimpleEci>::teme_to_simple_eci`
+  (`R3(GMST−ERA)` の z 回転)、`FrameTransform<Teme, Gcrs>::teme_to_gcrs`(ω=0)。
+  J2000→GCRS の frame bias (< 1 mas) は無視。ERFA(component, 1e-11)と Orekit
+  (authoritative TEME, ~0.8 m)で交差検証。([#240](https://github.com/sksat/orts/pull/240))
 - `kepler` module (`orts` から `arika` へ移管): `KeplerianElements`
   (`from_state_vector` / `to_state_vector` / `period` / `energy`) と anomaly
   変換群 (`solve_kepler_equation`、`mean_to_true_anomaly` 等)。公開
