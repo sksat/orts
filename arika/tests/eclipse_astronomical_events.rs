@@ -34,8 +34,8 @@ fn solar_eclipse_2024_04_08_total() {
     // The Moon should be between the spacecraft and the Sun.
     let epoch = Epoch::from_gregorian(2024, 4, 8, 18, 18, 0.0);
 
-    let sun_pos = sun::sun_position_eci(&epoch).into_inner();
-    let moon_pos = moon::moon_position_eci(&epoch).into_inner();
+    let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+    let moon_pos = moon::moon_position_eci(&epoch.to_tdb()).into_inner();
 
     // Place observer at a point along the Earth-Sun line (subsolar point)
     // at LEO altitude. During a solar eclipse, the Moon passes between
@@ -85,8 +85,8 @@ fn solar_eclipse_2023_10_14_annular() {
     // Greatest eclipse at approximately 17:59 UTC
     let epoch = Epoch::from_gregorian(2023, 10, 14, 17, 59, 0.0);
 
-    let sun_pos = sun::sun_position_eci(&epoch).into_inner();
-    let moon_pos = moon::moon_position_eci(&epoch).into_inner();
+    let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+    let moon_pos = moon::moon_position_eci(&epoch.to_tdb()).into_inner();
 
     // Observer at subsolar LEO
     let sun_dir = sun_pos.normalize();
@@ -125,8 +125,8 @@ fn lunar_eclipse_2025_03_14() {
     // From the Moon's position, the Earth should occult the Sun.
     let epoch = Epoch::from_gregorian(2025, 3, 14, 6, 58, 0.0);
 
-    let sun_pos = sun::sun_position_eci(&epoch).into_inner();
-    let moon_pos = moon::moon_position_eci(&epoch).into_inner();
+    let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+    let moon_pos = moon::moon_position_eci(&epoch.to_tdb()).into_inner();
 
     // Observer is at the Moon's position, occulter is Earth (at origin)
     let illum = eclipse::illumination(
@@ -153,8 +153,8 @@ fn no_lunar_eclipse_at_first_quarter() {
     // Pick an arbitrary first quarter date
     let epoch = Epoch::from_gregorian(2024, 5, 15, 12, 0, 0.0);
 
-    let sun_pos = sun::sun_position_eci(&epoch).into_inner();
-    let moon_pos = moon::moon_position_eci(&epoch).into_inner();
+    let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+    let moon_pos = moon::moon_position_eci(&epoch.to_tdb()).into_inner();
 
     let illum = eclipse::illumination(
         &moon_pos,
@@ -180,7 +180,7 @@ fn leo_orbit_has_eclipse_region() {
     // orbit and verify that there exists at least one shadow region
     // and at least one sunlit region.
     let epoch = Epoch::from_gregorian(2024, 6, 21, 12, 0, 0.0);
-    let sun_pos = sun::sun_position_eci(&epoch).into_inner();
+    let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
 
     let r = EARTH_RADIUS_KM + 400.0;
     let mut has_shadow = false;
@@ -220,7 +220,7 @@ fn leo_eclipse_fraction_reasonable() {
     // For a LEO orbit, approximately 30-40% of the orbit is in shadow
     // (varies with beta angle). We just check it's in a reasonable range.
     let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0); // equinox
-    let sun_pos = sun::sun_position_eci(&epoch).into_inner();
+    let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
 
     let r = EARTH_RADIUS_KM + 400.0;
     let n = 3600; // 1° resolution

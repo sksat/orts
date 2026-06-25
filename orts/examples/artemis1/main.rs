@@ -216,14 +216,15 @@
 //!    tidal coupling and repeated integration through the eclipse /
 //!    illumination boundary could push this into the low-km range.
 //!    Currently missing from the force model entirely.
-//! 2. **TDB / UTC time-scale handling**: Horizons queries use
-//!    `TIME_TYPE=TDB` while our `Epoch` parses ISO 8601 strings as if
-//!    they were UTC. TDB − UTC ≈ 69 s for modern epochs; at orbital
-//!    velocity ~1 km/s that's ~69 km of position offset at the Horizons
-//!    reference endpoints. Whether this actually produces error depends on
-//!    internal consistency: if every fetch *and* the integrator's clock
-//!    treat the Epoch's JD as TDB uniformly, the offset cancels out. If
-//!    not, there's a hidden ~km error. Worth auditing.
+//! 2. **Horizons table time scale**: the analytic Meeus ephemerides now
+//!    take `Epoch<Tdb>` explicitly (the UTC→TDB conversion happens at the
+//!    call boundary), so the analytic path no longer risks feeding UTC as
+//!    TDB. The JPL-Horizons tables, however, are fetched and indexed in UT
+//!    (`TIME_TYPE=UT`) and looked up here via a UTC bridge. Whether a
+//!    tabulated vector ephemeris indexed in UT rather than its native TDB
+//!    introduces a residual offset (TDB − UTC ≈ 69 s; at ~1 km/s up to ~km
+//!    near the table endpoints) is a property of the Horizons layer that
+//!    still warrants a dedicated scale audit.
 //! 3. **Asymmetric burn profile modelling** (for the chain only): uniform
 //!    continuous thrust has now been tried and is mathematically
 //!    equivalent to impulsive-at-midpoint for symmetric profiles (see
@@ -2737,9 +2738,12 @@ fn build_artemis_system(
     // this closure with a dedicated `SunEphemeris` trait + type in
     // arika.
     let sun_table_for_closure: Arc<HorizonsTable> = Arc::clone(sun_table);
+    // `e` is the TDB callback epoch. The Horizons table is UTC-indexed (see
+    // `arika::horizons`), so bridge back to UTC for the lookup — an exact
+    // canonical-TAI re-tag round-trip. The Meeus fallback takes TDB directly.
     let sun_model = ThirdBodyGravity::custom("third_body_sun", MU_SUN, move |e| {
         sun_table_for_closure
-            .interpolate(e)
+            .interpolate(&e.to_tt().to_tai().to_utc())
             .map(|s| arika::frame::Vec3::from_raw(s.position))
             .unwrap_or_else(|| arika::sun::sun_position_eci(e))
     });

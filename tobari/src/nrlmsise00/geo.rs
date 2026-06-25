@@ -105,7 +105,9 @@ fn day_of_year(year: i32, month: u32, day: u32) -> u32 {
 /// where EoT accounts for Earth's orbital eccentricity and axial tilt
 /// (up to ±16 minutes correction).
 pub fn local_solar_time(ut_sec: f64, longitude_deg: f64, epoch: &Epoch) -> f64 {
-    let eot_hours = arika::sun::equation_of_time(epoch);
+    // Equation of Time is a solar-ephemeris (TDB) quantity; convert here. The
+    // UTC `epoch` itself supplies the mean-solar-time terms above.
+    let eot_hours = arika::sun::equation_of_time(&epoch.to_tdb());
     let lst = ut_sec / 3600.0 + longitude_deg / 15.0 + eot_hours;
     // Normalize to [0, 24)
     ((lst % 24.0) + 24.0) % 24.0

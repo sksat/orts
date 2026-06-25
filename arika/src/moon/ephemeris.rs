@@ -7,7 +7,7 @@
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::epoch::Epoch;
+use crate::epoch::{Epoch, Tdb};
 use crate::frame::{self, Vec3};
 
 /// Moon position vector in ECI (J2000) frame [km].
@@ -20,12 +20,13 @@ use crate::frame::{self, Vec3};
 ///
 /// # Time scale
 ///
-/// Meeus ephemerides take a dynamical time argument (TDB). The public signature
-/// accepts `&Epoch<Utc>` (the default alias) for backward compatibility; the
-/// UTC epoch is converted to TDB internally via leap seconds + TT offset +
-/// Fairhead-Bretagnon periodic correction.
-pub fn moon_position_eci(epoch: &Epoch) -> Vec3<frame::Gcrs> {
-    let t = epoch.to_tdb().centuries_since_j2000();
+/// Meeus ephemerides take a dynamical time argument (TDB), so this signature
+/// requires `&Epoch<Tdb>` — the caller converts at the boundary
+/// (`utc.to_tdb()`). (The [`MoonEphemeris`] trait, which also abstracts a
+/// UTC-indexed Horizons table, deliberately keeps a `&Epoch<Utc>` interface;
+/// see [`MeeusMoonEphemeris`].)
+pub fn moon_position_eci(epoch: &Epoch<Tdb>) -> Vec3<frame::Gcrs> {
+    let t = epoch.centuries_since_j2000();
     let t2 = t * t;
     let t3 = t2 * t;
     let t4 = t3 * t;
@@ -284,7 +285,9 @@ pub struct MeeusMoonEphemeris;
 
 impl MoonEphemeris for MeeusMoonEphemeris {
     fn position_eci(&self, epoch: &Epoch) -> Vec3<frame::Gcrs> {
-        moon_position_eci(epoch)
+        // The trait is UTC-indexed (shared with the Horizons-backed impl); the
+        // analytic free function requires TDB, so convert at this boundary.
+        moon_position_eci(&epoch.to_tdb())
     }
 
     fn name(&self) -> &str {
@@ -435,7 +438,7 @@ mod tests {
         ];
 
         for epoch in &dates {
-            let pos = moon_position_eci(epoch);
+            let pos = moon_position_eci(&epoch.to_tdb());
             let dist = pos.magnitude();
             assert!(
                 dist > 340_000.0 && dist < 420_000.0,
@@ -452,7 +455,7 @@ mod tests {
         let total_dist: f64 = (0..n)
             .map(|i| {
                 let epoch = epoch0.add_seconds(i as f64 * 86400.0);
-                moon_position_eci(&epoch).magnitude()
+                moon_position_eci(&epoch.to_tdb()).magnitude()
             })
             .sum();
         let mean_dist = total_dist / n as f64;
@@ -466,10 +469,10 @@ mod tests {
     #[test]
     fn moon_orbital_period() {
         let epoch0 = Epoch::from_gregorian(2024, 3, 10, 0, 0, 0.0);
-        let pos0 = moon_position_eci(&epoch0).normalize();
+        let pos0 = moon_position_eci(&epoch0.to_tdb()).normalize();
 
         let epoch1 = epoch0.add_seconds(27.3 * 86400.0);
-        let pos1 = moon_position_eci(&epoch1).normalize();
+        let pos1 = moon_position_eci(&epoch1.to_tdb()).normalize();
 
         let dot = pos0.dot(&pos1);
         assert!(
@@ -478,7 +481,7 @@ mod tests {
         );
 
         let epoch_half = epoch0.add_seconds(13.7 * 86400.0);
-        let pos_half = moon_position_eci(&epoch_half).normalize();
+        let pos_half = moon_position_eci(&epoch_half.to_tdb()).normalize();
         let dot_half = pos0.dot(&pos_half);
         assert!(
             dot_half < 0.0,
@@ -489,13 +492,13 @@ mod tests {
     #[test]
     fn moon_not_in_ecliptic() {
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
-        let pos = moon_position_eci(&epoch);
+        let pos = moon_position_eci(&epoch.to_tdb());
         let z_frac = pos.z().abs() / pos.magnitude();
 
         let mut max_z_frac = 0.0_f64;
         for i in 0..28 {
             let ep = epoch.add_seconds(i as f64 * 86400.0);
-            let p = moon_position_eci(&ep);
+            let p = moon_position_eci(&ep.to_tdb());
             max_z_frac = max_z_frac.max(p.z().abs() / p.magnitude());
         }
         assert!(
@@ -509,7 +512,7 @@ mod tests {
     fn moon_distance_apollo11_epoch() {
         // Apollo 11 TLI: 1969-07-16. Moon was near apogee, ~394,000 km (JPL Horizons)
         let epoch = Epoch::from_iso8601("1969-07-16T16:22:03Z").unwrap();
-        let dist = moon_position_eci(&epoch).magnitude();
+        let dist = moon_position_eci(&epoch.to_tdb()).magnitude();
         // Meeus analytical model has ~2-3% distance error
         assert!(
             (dist - 394_000.0).abs() < 15_000.0,
@@ -523,7 +526,10 @@ mod tests {
         // any transformation — trait wrapper should be a zero-cost abstraction.
         let ephem = MeeusMoonEphemeris;
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
-        assert_eq!(ephem.position_eci(&epoch), moon_position_eci(&epoch));
+        assert_eq!(
+            ephem.position_eci(&epoch),
+            moon_position_eci(&epoch.to_tdb())
+        );
         assert_eq!(ephem.name(), "meeus");
     }
 
@@ -541,8 +547,8 @@ mod tests {
         );
         // Cross-check against a manual central difference with a larger step.
         let dt = 10.0;
-        let expected = (moon_position_eci(&epoch.add_seconds(dt))
-            - moon_position_eci(&epoch.add_seconds(-dt)))
+        let expected = (moon_position_eci(&epoch.add_seconds(dt).to_tdb())
+            - moon_position_eci(&epoch.add_seconds(-dt).to_tdb()))
             / (2.0 * dt);
         let err = (v - expected).magnitude();
         assert!(
@@ -641,8 +647,14 @@ $$EOE
         // Calls must go through the blanket impl on `Arc<_>`, not through
         // auto-deref, because `moon_with_ephemeris<E: MoonEphemeris>` takes
         // the value by generic bound.
-        assert_eq!(owned.position_eci(&epoch), moon_position_eci(&epoch));
-        assert_eq!(erased.position_eci(&epoch), moon_position_eci(&epoch));
+        assert_eq!(
+            owned.position_eci(&epoch),
+            moon_position_eci(&epoch.to_tdb())
+        );
+        assert_eq!(
+            erased.position_eci(&epoch),
+            moon_position_eci(&epoch.to_tdb())
+        );
         assert_eq!(owned.name(), "meeus");
         assert_eq!(erased.name(), "meeus");
 

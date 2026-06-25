@@ -80,7 +80,7 @@ impl SunSensor {
     /// - `illumination` in \[0, 1\]: actual eclipse-aware illumination fraction
     pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> SunSensorOutput {
         // Satellite-to-Sun vector in ECI
-        let sun_eci = sun_position_eci(epoch);
+        let sun_eci = sun_position_eci(&epoch.to_tdb());
         let sc_pos = state.orbit.position_eci();
         let sat_to_sun = sun_eci.into_inner() - sc_pos.into_inner();
         let norm = sat_to_sun.magnitude();
@@ -190,7 +190,7 @@ mod tests {
 
         // With identity quaternion, body == ECI
         use arika::sun::sun_position_eci;
-        let sun_eci = sun_position_eci(&epoch).into_inner();
+        let sun_eci = sun_position_eci(&epoch.to_tdb()).into_inner();
         let sc_pos = state.orbit.position_eci().into_inner();
         let expected = (sun_eci - sc_pos).normalize();
         assert!(

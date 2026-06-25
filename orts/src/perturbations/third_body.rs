@@ -1,17 +1,20 @@
 use std::sync::Arc;
 
-use arika::epoch::Epoch;
+use arika::epoch::{Epoch, Tdb};
 use arika::frame::{self, Vec3};
 use nalgebra::Vector3;
 
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
 
-/// Type alias for a position function: `Epoch -> ECI position [km]`.
+/// Type alias for a body-position function: `Epoch<Tdb> -> ECI position [km]`.
 ///
-/// Stored as an `Arc<dyn Fn>` so the struct is cheaply cloneable and can hold
-/// closures that capture state (e.g., an interpolated ephemeris table).
-pub type BodyPositionFn = Arc<dyn Fn(&Epoch) -> Vec3<frame::Gcrs> + Send + Sync>;
+/// Takes a TDB epoch because it computes a celestial-body ephemeris (a
+/// dynamical-time quantity); the integration loop converts its UTC epoch with
+/// `.to_tdb()` at the call boundary. Stored as an `Arc<dyn Fn>` so the struct is
+/// cheaply cloneable and can hold closures that capture state (e.g., an
+/// interpolated ephemeris table).
+pub type BodyPositionFn = Arc<dyn Fn(&Epoch<Tdb>) -> Vec3<frame::Gcrs> + Send + Sync>;
 
 /// Third-body gravitational perturbation.
 ///
@@ -80,7 +83,13 @@ impl ThirdBodyGravity {
         Self {
             name: "third_body_moon",
             mu_body: arika::moon::MU,
-            body_position_fn: Arc::new(move |epoch| ephem.position_eci(epoch)),
+            // `MoonEphemeris` is UTC-indexed (shared with the Horizons-backed
+            // impl), so bridge the TDB callback epoch back to UTC. This is an
+            // exact canonical-TAI round-trip (no precision loss): the integrator
+            // passes UTC, `acceleration` re-tags it to TDB, and this undoes it.
+            body_position_fn: Arc::new(move |epoch: &Epoch<Tdb>| {
+                ephem.position_eci(&epoch.to_tt().to_tai().to_utc())
+            }),
         }
     }
 
@@ -91,7 +100,7 @@ impl ThirdBodyGravity {
     /// a higher-accuracy ephemeris source (e.g., a precomputed table).
     pub fn custom<F>(name: &'static str, mu_body: f64, position_fn: F) -> Self
     where
-        F: Fn(&Epoch) -> Vec3<frame::Gcrs> + Send + Sync + 'static,
+        F: Fn(&Epoch<Tdb>) -> Vec3<frame::Gcrs> + Send + Sync + 'static,
     {
         Self {
             name,
@@ -122,7 +131,9 @@ impl ThirdBodyGravity {
             None => return Vector3::zeros(),
         };
 
-        let r_body = (self.body_position_fn)(epoch).into_inner();
+        // The ephemeris callback wants TDB; convert the integrator's epoch at
+        // this boundary (re-tag of the canonical TAI instant).
+        let r_body = (self.body_position_fn)(&epoch.to_tdb()).into_inner();
 
         let r_sat_to_body = r_body - sat_position;
         let d = r_sat_to_body.magnitude();

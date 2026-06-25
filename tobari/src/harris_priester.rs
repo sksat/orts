@@ -6,7 +6,7 @@
 //!
 //! Reference: Montenbruck & Gill, "Satellite Orbits" (2000), Section 3.5.2.
 
-use arika::epoch::Epoch;
+use arika::epoch::{Epoch, Tdb};
 use arika::frame;
 use arika::sun;
 
@@ -297,8 +297,10 @@ pub struct HarrisPriester {
     ///
     /// Default: π/6 ≈ 30° (~2 hours in local solar time).
     pub lag_angle: f64,
-    /// Function returning the Sun direction (unit vector) in ECI at a given epoch.
-    sun_direction_fn: fn(&Epoch) -> frame::Vec3<frame::Gcrs>,
+    /// Function returning the Sun direction (unit vector) in ECI at a given
+    /// epoch. Takes a TDB epoch (a solar-ephemeris quantity); the model converts
+    /// its UTC epoch with `.to_tdb()` at the call boundary.
+    sun_direction_fn: fn(&Epoch<Tdb>) -> frame::Vec3<frame::Gcrs>,
 }
 
 impl HarrisPriester {
@@ -326,7 +328,7 @@ impl HarrisPriester {
     }
 
     /// Override the Sun direction function (for testing).
-    pub fn with_sun_direction_fn(mut self, f: fn(&Epoch) -> frame::Vec3<frame::Gcrs>) -> Self {
+    pub fn with_sun_direction_fn(mut self, f: fn(&Epoch<Tdb>) -> frame::Vec3<frame::Gcrs>) -> Self {
         self.sun_direction_fn = f;
         self
     }
@@ -348,7 +350,10 @@ impl HarrisPriester {
     /// and satellite altitude, matching the original 3D vector dot product
     /// to < 1e-10 relative error.
     fn bulge_cos_psi(&self, input: &AtmosphereInput<'_>) -> f64 {
-        let sun_dir = (self.sun_direction_fn)(input.utc);
+        // Sun direction is a solar-ephemeris (TDB) quantity; convert the UTC
+        // input at this boundary. `input.utc` stays UTC for the local-time
+        // geometry below (hour angle / GMST).
+        let sun_dir = (self.sun_direction_fn)(&input.utc.to_tdb());
         let sun_r = sun_dir.inner();
         let sun_mag = sun_r.magnitude();
         if sun_mag < 1e-30 {

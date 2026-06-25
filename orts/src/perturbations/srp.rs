@@ -99,7 +99,8 @@ impl SolarRadiationPressure {
             None => return Vector3::zeros(),
         };
 
-        let sun_pos = sun::sun_position_eci(epoch).into_inner();
+        // Solar ephemeris wants TDB; convert the integrator's epoch here.
+        let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
         let sat_to_sun = sun_pos - sat_position;
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
@@ -196,7 +197,7 @@ mod tests {
         let epoch = test_epoch();
         let a = srp.acceleration(state.position(), Some(&epoch));
 
-        let sun_dir = sun::sun_direction_eci(&epoch).into_inner();
+        let sun_dir = sun::sun_direction_eci(&epoch.to_tdb()).into_inner();
         let cos_angle = a.normalize().dot(&sun_dir);
         assert!(
             cos_angle < -0.5,
