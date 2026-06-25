@@ -477,6 +477,12 @@ impl<From, To> Rotation<From, To> {
         Self(q, PhantomData)
     }
 
+    /// 恒等回転。`From` と `To` が同一視できるフレーム（例: GCRS と、歳差章動を
+    /// 無視する可視化グレードの近似フレーム）を型レベルで橋渡しするのに使う。
+    pub fn identity() -> Self {
+        Self(UnitQuaternion::identity(), PhantomData)
+    }
+
     /// 内部の `UnitQuaternion` への参照。
     pub fn inner(&self) -> &UnitQuaternion<f64> {
         &self.0

@@ -4,7 +4,7 @@ use arika::sun;
 use nalgebra::Vector3;
 
 use arika::earth::R as R_EARTH;
-use arika::frame::{Gcrs, SimpleEci};
+use arika::earth::transform::EphemerisFrameBridge;
 
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
@@ -82,25 +82,10 @@ impl SolarRadiationPressure {
 }
 
 impl SolarRadiationPressure {
-    /// Compute SRP acceleration [km/s²].
-    ///
-    /// Sun position comes from Meeus ephemeris (`Vec3<Gcrs>`); the geometry is
-    /// pure raw vector arithmetic, used directly whatever frame the satellite
-    /// state is tagged with. Same intentional raw-vector approximation as
-    /// `ThirdBodyGravity::acceleration` — suited to Meeus / visualization
-    /// precision, not high-accuracy GCRS work.
-    pub(crate) fn acceleration(
-        &self,
-        sat_position: &Vector3<f64>,
-        epoch: Option<&Epoch>,
-    ) -> Vector3<f64> {
-        let epoch = match epoch {
-            Some(e) => e,
-            None => return Vector3::zeros(),
-        };
-
-        // Solar ephemeris wants TDB; convert the integrator's epoch here.
-        let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+    /// SRP acceleration [km/s²] given the satellite and Sun positions in the
+    /// **same** inertial frame: shadow model + inverse-square distance scaling +
+    /// `Cr·(A/m)`, directed away from the Sun.
+    fn srp_accel(&self, sat_position: &Vector3<f64>, sun_pos: &Vector3<f64>) -> Vector3<f64> {
         let sat_to_sun = sun_pos - sat_position;
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
@@ -109,7 +94,7 @@ impl SolarRadiationPressure {
         if let Some(body_r) = self.shadow_body_radius {
             let illum = eclipse::illumination_central(
                 sat_position,
-                &sun_pos,
+                sun_pos,
                 body_r,
                 SUN_RADIUS_KM,
                 self.shadow_model,
@@ -144,29 +129,48 @@ impl SolarRadiationPressure {
         // Acceleration is away from the Sun (opposite to ŝ)
         -a_mag * s_hat
     }
+
+    /// GCRS-aligned SRP acceleration [km/s²] — the Meeus `Vec3<Gcrs>` Sun
+    /// position is used as-is, so the result is correct only for GCRS-aligned
+    /// integration frames. The **frame-correct** path is the [`Model::eval`]
+    /// impl below, which rotates the Sun ephemeris into the integration frame via
+    /// [`EphemerisFrameBridge`]. Kept as a test helper.
+    #[cfg(test)]
+    pub(crate) fn acceleration(
+        &self,
+        sat_position: &Vector3<f64>,
+        epoch: Option<&Epoch>,
+    ) -> Vector3<f64> {
+        let epoch = match epoch {
+            Some(e) => e,
+            None => return Vector3::zeros(),
+        };
+        let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+        self.srp_accel(sat_position, &sun_pos)
+    }
 }
 
-// SRP consumes the Meeus sun ephemeris (`Vec3<Gcrs>`) as a raw vector (see
-// `acceleration` above), so it is implemented only for the currently-supported
-// inertial frames that are (approximately) GCRS-aligned: `SimpleEci` and
-// `Gcrs`. Deliberately NOT a blanket `impl<F: Eci>` — a new inertial frame
-// whose axes differ from GCRS (e.g. `Teme`) must add a frame-aware impl rather
-// than silently inherit the raw-vector treatment. See #191.
-macro_rules! impl_srp_model {
-    ($frame:ty) => {
-        impl<S: HasOrbit<Frame = $frame>> Model<S, $frame> for SolarRadiationPressure {
-            fn name(&self) -> &str {
-                "srp"
-            }
+// Frame-correct SRP model. The Meeus Sun ephemeris (`Vec3<Gcrs>`) is rotated into
+// the integration frame `F` via `EphemerisFrameBridge` before the geometry, so
+// the force is valid for any such frame instead of assuming GCRS alignment.
+// Identity for GCRS-aligned `SimpleEci` / `Gcrs` (historical behavior preserved
+// exactly); `Cirs` applies the precession/nutation rotation. A frame without an
+// `EphemerisFrameBridge` impl (e.g. `Teme`) is rejected at compile time. See #191.
+impl<F: EphemerisFrameBridge, S: HasOrbit<Frame = F>> Model<S, F> for SolarRadiationPressure {
+    fn name(&self) -> &str {
+        "srp"
+    }
 
-            fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<$frame> {
-                ExternalLoads::acceleration(self.acceleration(state.orbit().position(), epoch))
-            }
-        }
-    };
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
+        let epoch = match epoch {
+            Some(e) => e,
+            None => return ExternalLoads::zeros(),
+        };
+        let sun_gcrs = sun::sun_position_eci(&epoch.to_tdb());
+        let sun_f = F::ephemeris_rotation(epoch).transform(&sun_gcrs);
+        ExternalLoads::acceleration(self.srp_accel(state.orbit().position(), sun_f.inner()))
+    }
 }
-impl_srp_model!(SimpleEci);
-impl_srp_model!(Gcrs);
 
 #[cfg(test)]
 mod tests {

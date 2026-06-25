@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use arika::earth::transform::EphemerisFrameBridge;
 use arika::epoch::{Epoch, Tdb};
 use arika::frame::{self, Vec3};
 use nalgebra::Vector3;
@@ -110,17 +111,24 @@ impl ThirdBodyGravity {
     }
 }
 
+/// Third-body acceleration [km/s²], with the satellite and third-body positions
+/// expressed in the **same** inertial frame:
+/// `a = μ₃·[(r_body − r_sat)/|r_body − r_sat|³ − r_body/|r_body|³]`.
+fn third_body_accel(mu_body: f64, sat: &Vector3<f64>, body: &Vector3<f64>) -> Vector3<f64> {
+    let r_sat_to_body = body - sat;
+    let d = r_sat_to_body.magnitude();
+    let r_body_mag = body.magnitude();
+    mu_body * (r_sat_to_body / (d * d * d) - body / (r_body_mag * r_body_mag * r_body_mag))
+}
+
 impl ThirdBodyGravity {
-    /// Compute third-body gravitational acceleration [km/s²].
-    ///
-    /// Pure vector arithmetic on raw `Vector3<f64>`: the `Vec3<Gcrs>` body
-    /// position (Meeus) is used directly, whatever frame the satellite state is
-    /// tagged with — the integration-frame orientation is never consulted. This
-    /// is an intentional raw-vector approximation for Meeus / visualization
-    /// precision: `SimpleEci` is only loosely related to GCRS (omits precession,
-    /// nutation, frame bias), and `Gcrs` gains no accuracy over `SimpleEci` here.
-    /// A frame whose axes differ from GCRS (e.g. `Teme`) would be silently wrong;
-    /// the frame-aware force-model redesign is tracked in issue #191.
+    /// GCRS-aligned third-body acceleration [km/s²] — the Meeus `Vec3<Gcrs>`
+    /// ephemeris is used as-is, so the result is correct only for GCRS-aligned
+    /// integration frames (`SimpleEci` / `Gcrs`). The **frame-correct** path is
+    /// the [`Model::eval`] impl below, which rotates the ephemeris into the
+    /// integration frame via [`EphemerisFrameBridge`]. Kept as a test helper for
+    /// the third-body physics (the satellite state there is GCRS-aligned).
+    #[cfg(test)]
     pub(crate) fn acceleration(
         &self,
         sat_position: &Vector3<f64>,
@@ -130,43 +138,36 @@ impl ThirdBodyGravity {
             Some(e) => e,
             None => return Vector3::zeros(),
         };
-
-        // The ephemeris callback wants TDB; convert the integrator's epoch at
-        // this boundary (re-tag of the canonical TAI instant).
+        // The ephemeris callback wants TDB; convert at this boundary.
         let r_body = (self.body_position_fn)(&epoch.to_tdb()).into_inner();
-
-        let r_sat_to_body = r_body - sat_position;
-        let d = r_sat_to_body.magnitude();
-        let r_body_mag = r_body.magnitude();
-
-        // a = μ₃ * [(r_body - r_sat)/d³ - r_body/R³]
-        self.mu_body
-            * (r_sat_to_body / (d * d * d) - r_body / (r_body_mag * r_body_mag * r_body_mag))
+        third_body_accel(self.mu_body, sat_position, &r_body)
     }
 }
 
-// `ThirdBodyGravity` consumes the Meeus ephemeris (`Vec3<Gcrs>`) as a raw
-// vector (see `acceleration` above), so it is implemented only for the
-// currently-supported inertial frames that are (approximately) GCRS-aligned:
-// `SimpleEci` and `Gcrs`. This is deliberately NOT a blanket `impl<F: Eci>` —
-// a new inertial frame whose axes differ from GCRS (e.g. `Teme`) must add a
-// frame-aware impl that rotates the ephemeris rather than silently inherit the
-// raw-vector treatment. See #191.
-macro_rules! impl_third_body_model {
-    ($frame:ty) => {
-        impl<S: HasOrbit<Frame = $frame>> Model<S, $frame> for ThirdBodyGravity {
-            fn name(&self) -> &str {
-                self.name
-            }
+// Frame-correct third-body model. The Meeus ephemeris (`Vec3<Gcrs>`) is rotated
+// into the integration frame `F` via `EphemerisFrameBridge` before differencing
+// with the satellite state, so the force is valid for any such frame — instead
+// of a raw-vector mix that silently assumed GCRS alignment. For GCRS-aligned
+// `SimpleEci` / `Gcrs` the rotation is identity (historical behavior preserved
+// exactly); `Cirs` applies the precession/nutation rotation. A frame with no
+// `EphemerisFrameBridge` impl (e.g. `Teme`) is rejected at compile time rather
+// than silently mistreated. See #191.
+impl<F: EphemerisFrameBridge, S: HasOrbit<Frame = F>> Model<S, F> for ThirdBodyGravity {
+    fn name(&self) -> &str {
+        self.name
+    }
 
-            fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<$frame> {
-                ExternalLoads::acceleration(self.acceleration(state.orbit().position(), epoch))
-            }
-        }
-    };
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
+        let epoch = match epoch {
+            Some(e) => e,
+            None => return ExternalLoads::zeros(),
+        };
+        let body_gcrs = (self.body_position_fn)(&epoch.to_tdb());
+        let body_f = F::ephemeris_rotation(epoch).transform(&body_gcrs);
+        let accel = third_body_accel(self.mu_body, state.orbit().position(), body_f.inner());
+        ExternalLoads::acceleration(accel)
+    }
 }
-impl_third_body_model!(frame::SimpleEci);
-impl_third_body_model!(frame::Gcrs);
 
 // Static assertion that `ThirdBodyGravity` can cross thread boundaries.
 // This is required so `OrbitalSystem` remains `Send + Sync` when it contains
@@ -192,6 +193,45 @@ mod tests {
 
     fn test_epoch() -> Epoch {
         Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0)
+    }
+
+    /// **Discriminating test (#191)**: in a non-GCRS-aligned frame (`Cirs`), the
+    /// frame-correct `Model::eval` rotates the Meeus (GCRS) ephemeris into the
+    /// integration frame before the formula. It therefore equals the formula
+    /// evaluated on the rotated body, and differs measurably from the raw
+    /// GCRS-aligned treatment by the precession/nutation rotation. (For
+    /// `SimpleEci`/`Gcrs` that rotation is identity — see the order-of-magnitude
+    /// tests here and `oracle_gcrf`, which are unchanged.)
+    #[test]
+    fn cirs_eval_rotates_the_ephemeris_into_frame() {
+        use arika::frame::{Cirs, Gcrs, Rotation};
+
+        let epoch = test_epoch();
+        let sat = vector![7000.0, 1000.0, 500.0];
+        let tb = ThirdBodyGravity::sun();
+
+        let state = OrbitalState::<Cirs>::new_in_frame(sat, vector![0.0, 7.5, 0.0]);
+        let a_cirs = *tb
+            .eval(0.0, &state, Some(&epoch))
+            .acceleration_inertial
+            .inner();
+
+        // The eval must use the GCRS Sun ephemeris rotated into CIRS.
+        let body_gcrs = arika::sun::sun_position_eci(&epoch.to_tdb());
+        let body_cirs = Rotation::<Gcrs, Cirs>::iau2006_model(&epoch.to_tt()).transform(&body_gcrs);
+        let expected = third_body_accel(arika::sun::MU, &sat, body_cirs.inner());
+        assert!(
+            (a_cirs - expected).norm() < 1e-15,
+            "CIRS eval must apply the GCRS→CIRS ephemeris rotation"
+        );
+
+        // And it must differ from the raw GCRS-aligned result — proving the
+        // rotation is actually applied (precession+nutation ≈ 0.3° at 2024).
+        let raw = third_body_accel(arika::sun::MU, &sat, body_gcrs.inner());
+        assert!(
+            (a_cirs - raw).norm() > raw.norm() * 1e-4,
+            "CIRS eval should differ from the raw GCRS-aligned result by ~precession/nutation"
+        );
     }
 
     #[test]
