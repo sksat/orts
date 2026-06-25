@@ -62,7 +62,7 @@ impl<F: Eci> OrbitalSystem<F> {
     /// Returns a vec of (name, magnitude) pairs: `"gravity"` first,
     /// then each model by its [`Model::name()`].
     pub fn acceleration_breakdown(&self, t: f64, state: &OrbitalState<F>) -> Vec<(&str, f64)> {
-        let epoch = self.epoch_0.map(|e| e.add_seconds(t));
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
         let grav = self
             .gravity
             .acceleration(self.mu, state.position())
@@ -84,7 +84,7 @@ impl<F: Eci> OrbitalSystem<F> {
 impl<F: Eci> DynamicalSystem for OrbitalSystem<F> {
     type State = OrbitalState<F>;
     fn derivatives(&self, t: f64, state: &OrbitalState<F>) -> OrbitalState<F> {
-        let epoch = self.epoch_0.map(|e| e.add_seconds(t));
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
         let mut accel = self.gravity.acceleration(self.mu, state.position());
         for m in &self.models {
             let loads = m.eval(t, state, epoch.as_ref());
@@ -152,6 +152,63 @@ mod tests {
     fn orbital_system_default_no_body_radius() {
         let system: OrbitalSystem = OrbitalSystem::new(MU_EARTH, Box::new(PointMass));
         assert_eq!(system.body_radius, None);
+    }
+
+    /// **Discriminating test**: the absolute epoch handed to force models is
+    /// `epoch_0 + t` on the *uniform SI timeline* (`t` is the ODE's elapsed-time
+    /// variable). Across the 2017-01-01 leap second, leap-naive `add_seconds`
+    /// would land one UTC second short — i.e. report 3 SI seconds elapsed for a
+    /// `t = 2.0` step. The leap-aware mapping reports exactly 2.0.
+    #[test]
+    fn epoch_handed_to_models_advances_on_uniform_si_timeline_across_leap() {
+        use arika::epoch::Utc;
+        use std::sync::{Arc, Mutex};
+
+        // Records the absolute epoch each `eval` is handed.
+        struct EpochRecorder(Arc<Mutex<Vec<Epoch>>>);
+        impl Model<OrbitalState<SimpleEci>> for EpochRecorder {
+            fn name(&self) -> &str {
+                "epoch_recorder"
+            }
+            fn eval(
+                &self,
+                _t: f64,
+                _state: &OrbitalState<SimpleEci>,
+                epoch: Option<&Epoch>,
+            ) -> crate::model::ExternalLoads {
+                if let Some(e) = epoch {
+                    self.0.lock().unwrap().push(*e);
+                }
+                crate::model::ExternalLoads::zeros()
+            }
+        }
+
+        // epoch_0 sits 1 s before the 2017-01-01 leap second.
+        let epoch_0 = Epoch::<Utc>::from_iso8601("2016-12-31T23:59:59Z").unwrap();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let system = OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
+            .with_epoch(epoch_0)
+            .with_model(EpochRecorder(log.clone()));
+
+        // A 2 s step whose interval contains the 23:59:60 leap.
+        let dt = 2.0;
+        let state = OrbitalState::new(vector![6778.137, 0.0, 0.0], vector![0.0, 7.6693, 0.0]);
+        let _ = system.derivatives(dt, &state);
+
+        let recorded = {
+            let g = log.lock().unwrap();
+            assert_eq!(
+                g.len(),
+                1,
+                "recorder model should be evaluated exactly once"
+            );
+            g[0]
+        };
+        let elapsed = recorded.duration_since(&epoch_0).as_si_seconds();
+        assert!(
+            (elapsed - dt).abs() < 1e-6,
+            "epoch advanced non-uniformly across the leap: {elapsed} s elapsed for a {dt} s step"
+        );
     }
 
     fn earth_j2_system() -> OrbitalSystem {

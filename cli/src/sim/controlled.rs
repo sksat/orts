@@ -288,7 +288,7 @@ pub fn step_controlled(
     );
 
     // センサ評価 + プラグイン呼び出し。
-    let current_epoch = epoch.map(|e| e.add_seconds(t_next));
+    let current_epoch = epoch.map(|e| e.add_si_seconds(t_next));
     let sensors = sat
         .sensors
         .evaluate(&sat.state.plant, &current_epoch.unwrap_or(Epoch::j2000()));

@@ -213,7 +213,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
         t: f64,
         state: &SpacecraftState<F>,
     ) -> Vec<(&str, ExternalLoads<F>)> {
-        let epoch = self.epoch_0.map(|e| e.add_seconds(t));
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
         self.models
             .iter()
             .map(|m| (m.name(), m.eval(t, state, epoch.as_ref())))
@@ -242,7 +242,7 @@ impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G
         t: f64,
         state: &AugmentedState<SpacecraftState<F>>,
     ) -> AugmentedState<SpacecraftState<F>> {
-        let epoch = self.epoch_0.map(|e| e.add_seconds(t));
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
 
         // Gravitational acceleration
         let grav_accel = self
@@ -612,7 +612,7 @@ mod tests {
 
         let d = dyn_sc.derivatives(t, &augment(sc.clone()));
 
-        let expected_epoch = epoch.add_seconds(t);
+        let expected_epoch = epoch.add_si_seconds(t);
         let expected_accel_x = expected_epoch.jd() * 1e-10;
 
         let dyn_grav = SpacecraftDynamics::new(MU_EARTH, PointMass, symmetric_inertia(10.0));

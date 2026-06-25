@@ -122,7 +122,7 @@ impl DynamicalSystem for DecoupledAttitudeSystem {
     type State = AttitudeState;
 
     fn derivatives(&self, t: f64, state: &AttitudeState) -> AttitudeState {
-        let epoch = self.epoch_0.map(|e| e.add_seconds(t));
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
 
         // 1. Construct context with prescribed orbit and mass
         let context = DecoupledContext {
