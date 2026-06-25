@@ -3,7 +3,7 @@
   "extends": ["github>sksat/renovate-config"],
   "platformAutomerge": false,
   "constraints": {
-    "pnpm": "10"
+    "pnpm": "11"
   },
   "minimumReleaseAge": "7 days",
   "ignorePaths": [
