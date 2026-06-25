@@ -858,3 +858,98 @@ fn add_si_seconds_is_exact_si_across_leap() {
         );
     }
 }
+
+// Precision tier (Coarse / Precise)
+//
+// The tier is a type parameter (`Epoch<S, P>`, default `Precise`). These tests
+// pin the two payoffs the tier exists for: an 8-vs-16-byte footprint and a
+// `jd()` read-out that agrees with `Precise` to f64 noise, while documenting the
+// resolution it trades away.
+
+#[test]
+fn coarse_tier_has_smaller_footprint() {
+    // The embedded/wasm motivation: a single `f64` (8 B) vs a two-part JD (16 B).
+    assert_eq!(core::mem::size_of::<Epoch<Utc, Coarse>>(), 8);
+    assert_eq!(core::mem::size_of::<Epoch<Utc, Precise>>(), 16);
+}
+
+#[test]
+fn precision_name_reports_the_tier() {
+    assert_eq!(Epoch::<Utc, Coarse>::precision_name(), "coarse");
+    assert_eq!(Epoch::<Utc, Precise>::precision_name(), "precise");
+    // Default tier is Precise.
+    assert_eq!(Epoch::<Utc>::precision_name(), "precise");
+}
+
+#[test]
+fn coarse_and_precise_agree_on_jd_readout() {
+    // Same UTC instant, both tiers: the single-f64 read-out must match (the
+    // coarse tier only loses precision *below* the f64 floor).
+    let x = 2_460_390.123_456;
+    let precise = Epoch::<Utc>::from_jd(x);
+    let coarse = precise.to_precision::<Coarse>();
+    assert!((coarse.jd() - precise.jd()).abs() < 1e-9);
+    assert!((coarse.jd() - x).abs() < 1e-9);
+}
+
+#[test]
+fn to_precision_preserves_scale_and_is_reversible_to_f64() {
+    // Precise → Coarse → Precise recovers the f64 value (the residual the coarse
+    // tier could not hold is gone, but the single-f64 instant is intact).
+    let utc = Epoch::<Utc>::from_iso8601("2024-06-15T08:30:45Z").unwrap();
+    let back: Epoch<Utc, Precise> = utc.to_precision::<Coarse>().to_precision::<Precise>();
+    assert!((back.jd() - utc.jd()).abs() < 1e-12);
+
+    // Precise → Precise carries the full (hi, lo) parts unchanged (identity).
+    let same = utc.to_precision::<Precise>();
+    assert_eq!(same.jd_parts(), utc.jd_parts());
+}
+
+#[test]
+fn conversions_and_arithmetic_preserve_the_tier() {
+    // Scale conversions on a Coarse epoch stay Coarse (type-level assertion:
+    // these bindings only compile if the tier is threaded through).
+    let coarse = Epoch::<Utc>::from_jd(2_460_390.5).to_precision::<Coarse>();
+    let _tai: Epoch<Tai, Coarse> = coarse.to_tai();
+    let _tt: Epoch<Tt, Coarse> = coarse.to_tt();
+    let _gps: Epoch<Gps, Coarse> = coarse.to_gps();
+    let _stepped: Epoch<Utc, Coarse> = coarse.add_si_seconds(60.0);
+    // And a Coarse epoch round-trips scale conversions to f64 tolerance.
+    let rt = coarse.to_tdb().to_tt().to_tai().to_utc();
+    assert!((rt.jd() - coarse.jd()).abs() < 1e-8);
+
+    // `to_precision` is defined on the scale-generic impl, so it must work from
+    // a non-Utc scale too: it preserves the scale `S` and round-trips the JD.
+    let tt = Epoch::<Tt>::from_jd_tt(2_460_390.5);
+    let tt_coarse: Epoch<Tt, Coarse> = tt.to_precision::<Coarse>();
+    assert!((tt_coarse.jd() - tt.jd()).abs() < 1e-9);
+}
+
+/// **Discriminating test**: the tier's whole reason to exist. A 1 ns SI step is
+/// below the single-f64 JD floor near modern epochs, so the `Coarse` tier floors
+/// `duration_since` to 0 — while `Precise` (the default) recovers it. Picking the
+/// tier is therefore picking a resolution/footprint trade-off, in the type.
+#[test]
+fn coarse_floors_sub_microsecond_step_that_precise_recovers() {
+    let precise = Epoch::<Utc>::from_iso8601("2024-06-15T08:30:45Z").unwrap();
+    let coarse = precise.to_precision::<Coarse>();
+
+    let dt = 1e-9; // 1 ns
+    let precise_elapsed = precise
+        .add_si_seconds(dt)
+        .duration_since(&precise)
+        .as_si_seconds();
+    let coarse_elapsed = coarse
+        .add_si_seconds(dt)
+        .duration_since(&coarse)
+        .as_si_seconds();
+
+    assert!(
+        (precise_elapsed - dt).abs() < 1e-12,
+        "Precise must recover the 1 ns step, got {precise_elapsed} s"
+    );
+    assert_eq!(
+        coarse_elapsed, 0.0,
+        "Coarse floors the sub-f64 step to 0, got {coarse_elapsed} s"
+    );
+}

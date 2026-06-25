@@ -1,13 +1,17 @@
-//! Two-part Julian Date (`hi + lo`) for sub-nanosecond time precision.
+//! Julian Date storage for the canonical-TAI [`Epoch`](super::Epoch).
 //!
-//! A single `f64` Julian Date floors resolution at tens of µs near modern
-//! epochs (the mantissa is spent on the ~2.46e6 integer part) and cancels
-//! catastrophically when differencing epochs near J2000. Carrying the value as
-//! two `f64`s — a high part plus a small residual, as SOFA's two-part date
-//! arguments do — keeps the full mantissa available for the sub-day fraction.
+//! [`JdRepr`] abstracts the day-level arithmetic an `Epoch` needs over its two
+//! precision tiers (selected by [`Precision`](super::Precision)):
 //!
-//! Internal building block for the canonical-TAI [`Epoch`](super::Epoch); not a
-//! public API.
+//! - [`f64`] — the [`Coarse`](super::Coarse) tier. A single `f64` Julian Date
+//!   floors resolution at tens of µs near modern epochs (the mantissa is spent
+//!   on the ~2.46e6 integer part) and cancels catastrophically when differencing
+//!   epochs near J2000. Lighter (8 bytes, no residual arithmetic) for wasm /
+//!   `no_std` embedded targets that don't need sub-µs time.
+//! - [`TwoPartJd`] — the [`Precise`](super::Precise) tier (the default). Carries
+//!   the value as two `f64`s, a high part plus a small residual, as SOFA's
+//!   two-part date arguments do — keeping the full mantissa available for the
+//!   sub-day fraction (sub-nanosecond resolution, exact J2000-relative diffs).
 
 /// Knuth's two-sum: exact `a + b = s + e` with `s = fl(a+b)` and `e` the
 /// rounding error. No ordering requirement on `|a|`, `|b|`.
@@ -19,58 +23,119 @@ fn two_sum(a: f64, b: f64) -> (f64, f64) {
     (s, e)
 }
 
+mod sealed {
+    pub trait Sealed {}
+}
+impl sealed::Sealed for f64 {}
+impl sealed::Sealed for TwoPartJd {}
+
+/// The Julian Date storage behind a canonical-TAI [`Epoch`](super::Epoch): a JD
+/// value plus the day-level arithmetic the epoch applies (lens conversion,
+/// `duration_since`, `add_si_seconds`). Sealed — the only impls are [`f64`] (the
+/// coarse tier) and [`TwoPartJd`] (the precise tier); which one an `Epoch` stores
+/// is selected by its (also sealed) [`Precision`](super::Precision), so this is a
+/// closed set, not a downstream extension point.
+pub trait JdRepr: sealed::Sealed + Copy + PartialEq + core::fmt::Debug {
+    /// From a single `f64` JD. For [`TwoPartJd`] the residual is zero — precision
+    /// beyond `f64` is only created by the arithmetic methods, never ingested
+    /// here.
+    fn from_jd(jd: f64) -> Self;
+
+    /// From an explicit high part and residual. For [`f64`] this collapses to
+    /// `hi + lo`; for [`TwoPartJd`] it retains the residual (renormalized). This
+    /// is the lossless bridge between tiers (see
+    /// [`Epoch::to_precision`](super::Epoch::to_precision)).
+    fn from_parts(hi: f64, lo: f64) -> Self;
+
+    /// The value as a single `f64` (a lossy collapse for the precise tier).
+    fn jd(self) -> f64;
+
+    /// The `(hi, lo)` parts; `lo` is always `0.0` for the coarse `f64` tier.
+    fn parts(self) -> (f64, f64);
+
+    /// Add `days`, keeping whatever precision the representation carries.
+    fn add_days(self, days: f64) -> Self;
+
+    /// Difference `self - other` in days.
+    fn diff_days(self, other: Self) -> f64;
+}
+
+/// Coarse tier: a single `f64` JD. ~tens-of-µs resolution near modern epochs.
+impl JdRepr for f64 {
+    #[inline]
+    fn from_jd(jd: f64) -> Self {
+        jd
+    }
+
+    #[inline]
+    fn from_parts(hi: f64, lo: f64) -> Self {
+        hi + lo
+    }
+
+    #[inline]
+    fn jd(self) -> f64 {
+        self
+    }
+
+    #[inline]
+    fn parts(self) -> (f64, f64) {
+        (self, 0.0)
+    }
+
+    #[inline]
+    fn add_days(self, days: f64) -> Self {
+        self + days
+    }
+
+    #[inline]
+    fn diff_days(self, other: Self) -> f64 {
+        self - other
+    }
+}
+
 /// A Julian Date carried as `hi + lo`, normalized so `hi == fl(hi + lo)` and
 /// `lo` holds the residual. The represented value is exactly `hi + lo` in
-/// extended precision.
+/// extended precision. The [`Precise`](super::Precise) tier's storage.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct TwoPartJd {
+pub struct TwoPartJd {
     hi: f64,
     lo: f64,
 }
 
-impl TwoPartJd {
-    /// From a single `f64` JD (residual zero). This is the f64-precision entry
-    /// point; precision beyond `f64` requires [`from_parts`](Self::from_parts).
+impl JdRepr for TwoPartJd {
     #[inline]
-    pub(crate) fn from_jd(jd: f64) -> Self {
+    fn from_jd(jd: f64) -> Self {
         Self { hi: jd, lo: 0.0 }
     }
 
-    /// From an explicit high part and residual, renormalized so the invariant
-    /// `hi == fl(hi + lo)` holds.
     #[inline]
-    pub(crate) fn from_parts(hi: f64, lo: f64) -> Self {
+    fn from_parts(hi: f64, lo: f64) -> Self {
         let (s, e) = two_sum(hi, lo);
         Self { hi: s, lo: e }
     }
 
-    /// The value as a single `f64` (lossy combine; for back-compat / display).
     #[inline]
-    pub(crate) fn jd(self) -> f64 {
+    fn jd(self) -> f64 {
         self.hi + self.lo
     }
 
-    /// The `(hi, lo)` parts (lossless).
     #[inline]
-    pub(crate) fn parts(self) -> (f64, f64) {
+    fn parts(self) -> (f64, f64) {
         (self.hi, self.lo)
     }
 
-    /// Add `days` (a full-precision `f64`) keeping extended precision.
     #[inline]
-    pub(crate) fn add_days(self, days: f64) -> Self {
+    fn add_days(self, days: f64) -> Self {
         let (s, e) = two_sum(self.hi, days);
-        Self::from_parts(s, e + self.lo)
+        <Self as JdRepr>::from_parts(s, e + self.lo)
     }
 
-    /// Difference `self - other` in days, in extended precision.
-    ///
     /// `two_sum` on the high parts captures their subtraction's rounding error
     /// exactly (for any magnitudes), so no significance is lost even when the
     /// high parts are large and close — the J2000-cancellation case. The
     /// residual difference is then folded into that error term.
     #[inline]
-    pub(crate) fn diff_days(self, other: Self) -> f64 {
+    fn diff_days(self, other: Self) -> f64 {
         let (dh, eh) = two_sum(self.hi, -other.hi);
         // (hi diff) + (hi-diff rounding error) + (lo diff)
         dh + (eh + (self.lo - other.lo))
@@ -142,5 +207,16 @@ mod tests {
         let nan = TwoPartJd::from_jd(f64::NAN);
         let ok = TwoPartJd::from_jd(2_460_000.0);
         assert!(nan.diff_days(ok).is_nan());
+    }
+
+    #[test]
+    fn coarse_f64_tier_collapses_residual() {
+        // The coarse (f64) tier carries no residual: from_parts collapses to
+        // hi+lo and parts() reports lo == 0. (Contrast from_parts_normalizes.)
+        let hi = 2_460_000.0;
+        let lo = 1e-9;
+        let c = <f64 as JdRepr>::from_parts(hi, lo);
+        assert_eq!(c, hi + lo);
+        assert_eq!(<f64 as JdRepr>::parts(c), (hi + lo, 0.0));
     }
 }
