@@ -715,6 +715,14 @@ jobs:
       - name: Test
         run: pnpm --filter starlight-rustdoc test
 
+      # `astro build` does not type-check, so the docs site's `.astro`/`.ts`
+      # sources were never gated. Run `astro check` here — this job already
+      # builds the `starlight-rustdoc` plugin that `astro.config.mjs` imports,
+      # and the check skips the (Rust-dependent) rustdoc generation via
+      # STARLIGHT_RUSTDOC_SKIP, so it needs no toolchain beyond Node.
+      - name: Typecheck docs site (astro check)
+        run: pnpm --filter orts-docs check
+
   # Build the full docs site (astro/starlight) on PRs. The Deploy Site
   # workflow only builds on push to main, so a docs-build regression — e.g.
   # a Starlight sidebar schema change — would otherwise not surface until
