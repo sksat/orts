@@ -239,7 +239,7 @@ NORAD_CAT_ID = 1";
 
     #[test]
     fn bom_prefixed_kvn_parses_directly() {
-        // Direct calls (not via omm::parse) must also tolerate a leading BOM.
+        // Direct calls (not via elements::parse) must also tolerate a leading BOM.
         let bom = ["\u{feff}", ISS_OMM_KVN].concat();
         assert_eq!(parse(&bom).unwrap().elements.norad_cat_id, 25544);
     }

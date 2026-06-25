@@ -6,7 +6,8 @@
 //! `NORAD_CAT_ID` has no fixed width.
 //!
 //! These submodules decode the three OMM serializations — [`json`], [`kvn`],
-//! [`xml`] — into the shared [`crate::elements::Sgp4Elements`] record. The
+//! [`xml`] — into a [`crate::elements::ParsedElementSet`] (the shared
+//! [`crate::elements::Sgp4Elements`] plus identity strings). The
 //! format-detecting [`crate::elements::parse`] entry point dispatches to them.
 //!
 //! Angles are converted to **radians** and mean motion to **rad/s** (orts

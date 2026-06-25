@@ -64,7 +64,7 @@ impl std::error::Error for TleParseError {}
 /// - 2 lines: line 1 + line 2
 /// - 3 lines: name + line 1 + line 2
 pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
-    // BOM-tolerant like the unified omm entrypoints: a BOM is not whitespace,
+    // BOM-tolerant like the unified `elements::parse` entry point: a BOM is not whitespace,
     // so without this a BOM-prefixed file fails the line-1 prefix check.
     let text = crate::elements::strip_bom(text);
     let lines: Vec<&str> = text
@@ -390,7 +390,7 @@ ISS (ZARYA)
     #[test]
     fn bom_prefixed_tle_parses() {
         // A leading UTF-8 BOM must not break the line-1 prefix check
-        // (matches the BOM tolerance of the unified omm entrypoints).
+        // (matches the BOM tolerance of the unified `elements::parse` entry point).
         let bom_tle = ["\u{feff}", ISS_TLE_2LINE].concat();
         assert_eq!(parse(&bom_tle).unwrap().elements.norad_cat_id, 25544);
     }
