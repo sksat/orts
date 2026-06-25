@@ -17,7 +17,7 @@ use core::str::FromStr;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::omm::Omm;
+use crate::elements::{ParsedElementSet, Sgp4Elements};
 
 /// Error type for OMM XML parsing.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,12 +46,12 @@ impl fmt::Display for XmlParseError {
 #[cfg(feature = "std")]
 impl std::error::Error for XmlParseError {}
 
-/// Parse an OMM XML document into an [`Omm`].
-pub fn parse(xml: &str) -> Result<Omm, XmlParseError> {
+/// Parse an OMM XML document into a [`ParsedElementSet`].
+pub fn parse(xml: &str) -> Result<ParsedElementSet, XmlParseError> {
     // BOM-tolerant even when called directly (not via the unified entrypoint).
-    let xml = crate::omm::strip_bom(xml);
+    let xml = crate::elements::strip_bom(xml);
     let epoch_raw = required(xml, "EPOCH")?;
-    let epoch = crate::omm::parse_epoch(epoch_raw)
+    let epoch = crate::elements::parse_epoch(epoch_raw)
         .ok_or_else(|| XmlParseError::InvalidEpoch(epoch_raw.to_string()))?;
 
     let mean_motion = parse_num::<f64>("MEAN_MOTION", required(xml, "MEAN_MOTION")?)?;
@@ -66,18 +66,20 @@ pub fn parse(xml: &str) -> Result<Omm, XmlParseError> {
         None => 0.0,
     };
 
-    Ok(Omm {
+    Ok(ParsedElementSet {
+        elements: Sgp4Elements {
+            norad_cat_id,
+            epoch,
+            mean_motion: mean_motion * 2.0 * PI / 86400.0, // rev/day → rad/s
+            eccentricity,
+            inclination: inclination.to_radians(),
+            raan: raan.to_radians(),
+            argument_of_perigee: arg_perigee.to_radians(),
+            mean_anomaly: mean_anomaly.to_radians(),
+            bstar,
+        },
         object_name: element_text(xml, "OBJECT_NAME").map(String::from),
         object_id: element_text(xml, "OBJECT_ID").map(String::from),
-        norad_cat_id,
-        epoch,
-        mean_motion: mean_motion * 2.0 * PI / 86400.0, // rev/day → rad/s
-        eccentricity,
-        inclination: inclination.to_radians(),
-        raan: raan.to_radians(),
-        argument_of_perigee: arg_perigee.to_radians(),
-        mean_anomaly: mean_anomaly.to_radians(),
-        bstar,
     })
 }
 
@@ -164,9 +166,10 @@ mod tests {
 
     #[test]
     fn parse_iss_omm_xml() {
-        let omm = parse(ISS_OMM_XML).unwrap();
-        assert_eq!(omm.object_name.as_deref(), Some("ISS (ZARYA)"));
-        assert_eq!(omm.object_id.as_deref(), Some("1998-067A"));
+        let set = parse(ISS_OMM_XML).unwrap();
+        let omm = set.elements;
+        assert_eq!(set.object_name.as_deref(), Some("ISS (ZARYA)"));
+        assert_eq!(set.object_id.as_deref(), Some("1998-067A"));
         assert_eq!(omm.norad_cat_id, 25544);
 
         let dt = omm.epoch.to_datetime();

@@ -1,7 +1,7 @@
-use arika::omm::Omm;
+use arika::elements::ParsedElementSet;
 
 /// Try fetching a TLE by NORAD catalog number. Tries CelesTrak first, falls back to SatNOGS.
-pub fn try_fetch_tle_by_norad_id(norad_id: u32) -> Option<Omm> {
+pub fn try_fetch_tle_by_norad_id(norad_id: u32) -> Option<ParsedElementSet> {
     if let Some(omm) = fetch_tle_celestrak(norad_id) {
         return Some(omm);
     }
@@ -10,13 +10,13 @@ pub fn try_fetch_tle_by_norad_id(norad_id: u32) -> Option<Omm> {
 }
 
 /// Fetch a TLE by NORAD catalog number, panicking on failure.
-pub fn fetch_tle_by_norad_id(norad_id: u32) -> Omm {
+pub fn fetch_tle_by_norad_id(norad_id: u32) -> ParsedElementSet {
     try_fetch_tle_by_norad_id(norad_id)
         .unwrap_or_else(|| panic!("Failed to fetch TLE for NORAD ID {norad_id} from any source"))
 }
 
 /// Try fetching TLE from CelesTrak (3LE format).
-fn fetch_tle_celestrak(norad_id: u32) -> Option<Omm> {
+fn fetch_tle_celestrak(norad_id: u32) -> Option<ParsedElementSet> {
     let url = format!("https://celestrak.org/NORAD/elements/gp.php?CATNR={norad_id}&FORMAT=3LE");
     eprintln!("Fetching TLE for NORAD ID {norad_id} from CelesTrak...");
     let body = match ureq::get(&url).call() {
@@ -46,7 +46,7 @@ fn fetch_tle_celestrak(norad_id: u32) -> Option<Omm> {
 }
 
 /// Try fetching TLE from SatNOGS DB (JSON API).
-fn fetch_tle_satnogs(norad_id: u32) -> Option<Omm> {
+fn fetch_tle_satnogs(norad_id: u32) -> Option<ParsedElementSet> {
     let url = format!("https://db.satnogs.org/api/tle/?norad_cat_id={norad_id}&format=json");
     eprintln!("Fetching TLE for NORAD ID {norad_id} from SatNOGS...");
     let body = match ureq::get(&url).call() {

@@ -43,7 +43,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Removed
 - **BREAKING**: `orts::tle` module を削除。TLE パースは `arika::tle`
-  (共有 `arika::omm::Omm` record へデコード) に移管。`orts::tle` を使う
+  (共有 `arika::elements::Sgp4Elements` へデコード) に移管。`orts::tle` を使う
   下流コードは `arika` へ移行が必要。([#87](https://github.com/sksat/orts/pull/87))
 
 ### `orts-cli` (Rust, crates.io, binary)
@@ -58,7 +58,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   (受理ステップごと / 制御 tick ごと) でサンプリング。検出が出力間引きに
   依存しなくなった (1 サンプル間隔より短いパスは依然取りこぼし得る)。([#112](https://github.com/sksat/orts/pull/112))
 - `--omm <file>` で CCSDS OMM 入力 (JSON / KVN / XML、`-` で stdin) を
-  `arika::omm` でパース。TLE ペイロードは拒否し `--tle` を案内。([#87](https://github.com/sksat/orts/pull/87))
+  `arika::elements::parse` でパース。TLE ペイロードは拒否し `--tle` を案内。([#87](https://github.com/sksat/orts/pull/87))
 - `orts serve` の `--stream-stdio SAT/STREAM` — 宣言済み stream-io stream の
   1 本を kble-socket protocol で stdin/stdout に接続し、orts を kble の
   `exec:` plug として実行可能にする。その stream の WebSocket endpoint は
@@ -136,16 +136,18 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `arika` (Rust, crates.io)
 
 #### Added
-- 要素セットのパース ([#87](https://github.com/sksat/orts/pull/87))。共有
-  `omm::Omm` (CCSDS 平均要素 record: 識別子、UTC epoch、6 個の SGP4 平均
-  ケプラー要素、B\* drag。角度は rad、平均運動は rad/s) に
-  `semi_major_axis(mu)` / `to_keplerian_elements(mu)`。
-  - `tle` — NORAD TLE / 2LE / 3LE パーサ (`tle::parse`) が `Omm` を生成。
+- 要素セットのパース ([#87](https://github.com/sksat/orts/pull/87))。共有の
+  no-alloc な `elements::Sgp4Elements` (平均要素セット: カタログ番号、UTC epoch、
+  6 個の SGP4 平均要素、B\* drag。角度は rad、平均運動は rad/s) に
+  `semi_major_axis(mu)` / `to_keplerian_elements(mu)`。テキストパーサは
+  `elements::ParsedElementSet` (要素 + 所有する `OBJECT_NAME` / `OBJECT_ID`
+  識別子) を返し、形式判定する `elements::parse` がそれらに振り分ける。
+  - `tle` — NORAD TLE / 2LE / 3LE パーサ (`tle::parse`) が `ParsedElementSet` を生成。
     Alpha-5 英数字カタログ番号と `OBJECT_ID` 正規化に対応。
   - `omm::json` / `omm::kvn` / `omm::xml` — JSON / KVN / XML 各シリアライズの
     CCSDS OMM パーサ。JSON は単一オブジェクトまたは 1 要素配列 (CelesTrak の
     単一衛星 GP) と Space-Track の文字列エンコード数値を受理。
-  - `omm::detect` + `omm::parse` — 形式判定 (`omm::Format`) と、TLE / OMM-JSON /
+  - `elements::detect` + `elements::parse` — 形式判定 (`elements::Format`) と、TLE / OMM-JSON /
     OMM-KVN / OMM-XML を自動判定して振り分ける BOM 許容の統一エントリ。
 - `kepler` module (`orts` から `arika` へ移管): `KeplerianElements`
   (`from_state_vector` / `to_state_vector` / `period` / `energy`) と anomaly

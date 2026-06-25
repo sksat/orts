@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use arika::body::KnownBody;
+use arika::elements::ParsedElementSet;
 use arika::epoch::Epoch;
-use arika::omm::Omm;
 use utsuroi::Tolerances;
 
 use crate::cli::{
@@ -215,10 +215,11 @@ impl SimParams {
             // No --sat flags: use legacy single-satellite args
             let omm_opt = Self::parse_orbit_from_args(args);
 
-            if let Some(omm) = omm_opt {
+            if let Some(parsed) = omm_opt {
+                let omm = parsed.elements;
                 let elements = omm.to_keplerian_elements(mu);
                 let period = elements.period(mu);
-                let sat_name = omm.object_name.clone();
+                let sat_name = parsed.object_name.clone();
                 vec![SatelliteSpec {
                     id: "default".to_string(),
                     name: sat_name,
@@ -415,7 +416,7 @@ impl SimParams {
         });
 
         // ISS: try online sources, fall back to embedded TLE
-        let iss_tle = try_fetch_tle_by_norad_id(25544).unwrap_or_else(|| {
+        let parsed_iss = try_fetch_tle_by_norad_id(25544).unwrap_or_else(|| {
             eprintln!("Online TLE sources unavailable. Using embedded ISS TLE.");
             // Embedded ISS TLE (updated 2026-02-13)
             arika::tle::parse(
@@ -425,9 +426,10 @@ impl SimParams {
             )
             .expect("embedded ISS TLE must be valid")
         });
+        let iss_tle = parsed_iss.elements;
         let elements = iss_tle.to_keplerian_elements(mu);
         let period = elements.period(mu);
-        let sat_name = iss_tle.object_name.clone();
+        let sat_name = parsed_iss.object_name.clone();
         sats.push(SatelliteSpec {
             id: "iss".to_string(),
             name: sat_name,
@@ -460,8 +462,8 @@ impl SimParams {
     }
 
     /// Parse the orbit-source CLI args (`--norad-id` / `--tle` / `--omm` /
-    /// `--tle-line1/2`) into the canonical [`Omm`] record, if any was given.
-    pub fn parse_orbit_from_args(args: &SimArgs) -> Option<Omm> {
+    /// `--tle-line1/2`) into a [`ParsedElementSet`], if any was given.
+    pub fn parse_orbit_from_args(args: &SimArgs) -> Option<ParsedElementSet> {
         // --norad-id: fetch from CelesTrak / SatNOGS.
         if let Some(norad_id) = args.norad_id {
             if args.tle.is_some()
@@ -489,10 +491,13 @@ impl SimParams {
         } else if let Some(path) = &args.omm {
             let text = Self::read_orbit_source(path, "OMM");
             // --omm is for OMM serializations (JSON/KVN/XML); route TLE to --tle.
-            if arika::omm::detect(&text) == Some(arika::omm::Format::Tle) {
+            if arika::elements::detect(&text) == Some(arika::elements::Format::Tle) {
                 panic!("--omm expects an OMM file (JSON/KVN/XML); use --tle for TLE");
             }
-            Some(arika::omm::parse(&text).unwrap_or_else(|e| panic!("Failed to parse OMM: {e}")))
+            Some(
+                arika::elements::parse(&text)
+                    .unwrap_or_else(|e| panic!("Failed to parse OMM: {e}")),
+            )
         } else if let (Some(line1), Some(line2)) = (&args.tle_line1, &args.tle_line2) {
             let text = format!("{line1}\n{line2}");
             Some(arika::tle::parse(&text).unwrap_or_else(|e| panic!("Failed to parse TLE: {e}")))

@@ -1,8 +1,9 @@
 //! Two-Line Element set (TLE / 2LE / 3LE) parser.
 //!
-//! Parses the legacy NORAD fixed-width TLE format into the shared
-//! [`crate::omm::Omm`] mean-element record — TLE is treated as a serialization
-//! of the same mean elements that OMM standardizes. Supports the classic
+//! Parses the legacy NORAD fixed-width TLE format into a
+//! [`crate::elements::ParsedElementSet`] (the shared
+//! [`crate::elements::Sgp4Elements`] plus identity) — TLE is treated as a
+//! serialization of the same mean elements that OMM standardizes. Supports the classic
 //! 5-digit catalog number and the Alpha-5 alphanumeric extension (the official
 //! interim scheme for catalog numbers past 99 999; see `decode_catalog_number`).
 //!
@@ -21,8 +22,8 @@ use core::str::FromStr;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
+use crate::elements::{ParsedElementSet, Sgp4Elements};
 use crate::epoch::Epoch;
-use crate::omm::Omm;
 
 /// Error type for TLE parsing failures.
 #[derive(Debug, Clone, PartialEq)]
@@ -57,15 +58,15 @@ impl fmt::Display for TleParseError {
 #[cfg(feature = "std")]
 impl std::error::Error for TleParseError {}
 
-/// Parse a TLE into an [`Omm`].
+/// Parse a TLE into a [`ParsedElementSet`].
 ///
 /// Accepts:
 /// - 2 lines: line 1 + line 2
 /// - 3 lines: name + line 1 + line 2
-pub fn parse(text: &str) -> Result<Omm, TleParseError> {
+pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
     // BOM-tolerant like the unified omm entrypoints: a BOM is not whitespace,
     // so without this a BOM-prefixed file fails the line-1 prefix check.
-    let text = crate::omm::strip_bom(text);
+    let text = crate::elements::strip_bom(text);
     let lines: Vec<&str> = text
         .lines()
         .map(|l| l.trim())
@@ -156,18 +157,20 @@ pub fn parse(text: &str) -> Result<Omm, TleParseError> {
     let mean_anomaly_deg = parse_field::<f64>(line2, 43, 51, 2, "mean_anomaly")?;
     let mean_motion_rev_day = parse_field::<f64>(line2, 52, 63, 2, "mean_motion")?;
 
-    Ok(Omm {
+    Ok(ParsedElementSet {
+        elements: Sgp4Elements {
+            norad_cat_id,
+            epoch,
+            mean_motion: mean_motion_rev_day * 2.0 * PI / 86400.0, // rev/day → rad/s
+            eccentricity,
+            inclination: inclination_deg.to_radians(),
+            raan: raan_deg.to_radians(),
+            argument_of_perigee: arg_perigee_deg.to_radians(),
+            mean_anomaly: mean_anomaly_deg.to_radians(),
+            bstar,
+        },
         object_name: name,
         object_id,
-        norad_cat_id,
-        epoch,
-        mean_motion: mean_motion_rev_day * 2.0 * PI / 86400.0, // rev/day → rad/s
-        eccentricity,
-        inclination: inclination_deg.to_radians(),
-        raan: raan_deg.to_radians(),
-        argument_of_perigee: arg_perigee_deg.to_radians(),
-        mean_anomaly: mean_anomaly_deg.to_radians(),
-        bstar,
     })
 }
 
@@ -358,9 +361,10 @@ ISS (ZARYA)
 
     #[test]
     fn parse_iss_3line() {
-        let omm = parse(ISS_TLE).unwrap();
-        assert_eq!(omm.object_name.as_deref(), Some("ISS (ZARYA)"));
-        assert_eq!(omm.object_id.as_deref(), Some("1998-067A"));
+        let set = parse(ISS_TLE).unwrap();
+        let omm = set.elements;
+        assert_eq!(set.object_name.as_deref(), Some("ISS (ZARYA)"));
+        assert_eq!(set.object_id.as_deref(), Some("1998-067A"));
         assert_eq!(omm.norad_cat_id, 25544);
         assert!((omm.inclination.to_degrees() - 51.64).abs() < 0.01);
         assert!((omm.raan.to_degrees() - 208.652).abs() < 0.01);
@@ -376,8 +380,9 @@ ISS (ZARYA)
 
     #[test]
     fn parse_iss_2line() {
-        let omm = parse(ISS_TLE_2LINE).unwrap();
-        assert!(omm.object_name.is_none());
+        let set = parse(ISS_TLE_2LINE).unwrap();
+        let omm = set.elements;
+        assert!(set.object_name.is_none());
         assert_eq!(omm.norad_cat_id, 25544);
         assert!((omm.inclination.to_degrees() - 51.64).abs() < 0.01);
     }
@@ -387,7 +392,7 @@ ISS (ZARYA)
         // A leading UTF-8 BOM must not break the line-1 prefix check
         // (matches the BOM tolerance of the unified omm entrypoints).
         let bom_tle = ["\u{feff}", ISS_TLE_2LINE].concat();
-        assert_eq!(parse(&bom_tle).unwrap().norad_cat_id, 25544);
+        assert_eq!(parse(&bom_tle).unwrap().elements.norad_cat_id, 25544);
     }
 
     #[test]
@@ -403,7 +408,7 @@ ISS (ZARYA)
 
     #[test]
     fn parse_geo_satellite() {
-        let omm = parse(GEO_TLE).unwrap();
+        let omm = parse(GEO_TLE).unwrap().elements;
         assert_eq!(omm.norad_cat_id, 28358);
         assert!(
             omm.inclination.to_degrees() < 1.0,
@@ -428,7 +433,7 @@ ISS (ZARYA)
 
     #[test]
     fn iss_epoch() {
-        let omm = parse(ISS_TLE).unwrap();
+        let omm = parse(ISS_TLE).unwrap().elements;
         let dt = omm.epoch.to_datetime();
         assert_eq!(dt.year, 2024);
         assert_eq!(dt.month, 3);
@@ -447,7 +452,7 @@ ISS (ZARYA)
 
     #[test]
     fn iss_semi_major_axis() {
-        let omm = parse(ISS_TLE).unwrap();
+        let omm = parse(ISS_TLE).unwrap().elements;
         let a = omm.semi_major_axis(MU_EARTH);
         let earth_radius = KnownBody::Earth.properties().radius;
         let altitude = a - earth_radius;
@@ -459,7 +464,7 @@ ISS (ZARYA)
 
     #[test]
     fn iss_keplerian_elements() {
-        let omm = parse(ISS_TLE).unwrap();
+        let omm = parse(ISS_TLE).unwrap().elements;
         let elements = omm.to_keplerian_elements(MU_EARTH);
         let a = omm.semi_major_axis(MU_EARTH);
         assert!((elements.semi_major_axis - a).abs() < 1e-6);
@@ -469,7 +474,7 @@ ISS (ZARYA)
 
     #[test]
     fn iss_state_vector_plausible() {
-        let omm = parse(ISS_TLE).unwrap();
+        let omm = parse(ISS_TLE).unwrap().elements;
         let elements = omm.to_keplerian_elements(MU_EARTH);
         let (pos, vel) = elements.to_state_vector(MU_EARTH);
 
@@ -494,7 +499,7 @@ ISS (ZARYA)
 
     #[test]
     fn geo_semi_major_axis() {
-        let omm = parse(GEO_TLE).unwrap();
+        let omm = parse(GEO_TLE).unwrap().elements;
         let a = omm.semi_major_axis(MU_EARTH);
         assert!(
             (a - 42164.0).abs() < 50.0,
@@ -504,8 +509,8 @@ ISS (ZARYA)
 
     #[test]
     fn three_line_and_two_line_produce_same_result() {
-        let omm3 = parse(ISS_TLE).unwrap();
-        let omm2 = parse(ISS_TLE_2LINE).unwrap();
+        let omm3 = parse(ISS_TLE).unwrap().elements;
+        let omm2 = parse(ISS_TLE_2LINE).unwrap().elements;
         assert_eq!(omm3.norad_cat_id, omm2.norad_cat_id);
         assert!((omm3.inclination - omm2.inclination).abs() < 1e-15);
         assert!((omm3.raan - omm2.raan).abs() < 1e-15);
@@ -516,7 +521,7 @@ ISS (ZARYA)
     #[test]
     fn iss_bstar() {
         // ISS TLE has "30000-4" → 0.30000e-4 = 3.0e-5
-        let omm = parse(ISS_TLE).unwrap();
+        let omm = parse(ISS_TLE).unwrap().elements;
         assert!(
             (omm.bstar - 3.0e-5).abs() < 1e-10,
             "ISS B* should be 3.0e-5, got {:.6e}",
@@ -527,7 +532,7 @@ ISS (ZARYA)
     #[test]
     fn geo_bstar_zero() {
         // GEO TLE has "00000+0" → 0.0
-        let omm = parse(GEO_TLE).unwrap();
+        let omm = parse(GEO_TLE).unwrap().elements;
         assert_eq!(omm.bstar, 0.0, "GEO B* should be 0.0, got {}", omm.bstar);
     }
 
@@ -543,7 +548,7 @@ ISS (ZARYA)
     #[test]
     fn alpha5_catalog_number() {
         // Alpha-5: leading 'A' = 10 → 10 * 10000 + 0000 = 100000.
-        let omm = parse(ALPHA5_TLE).unwrap();
+        let omm = parse(ALPHA5_TLE).unwrap().elements;
         assert_eq!(omm.norad_cat_id, 100000);
         // The rest of the element set must still parse normally.
         assert!((omm.inclination.to_degrees() - 51.64).abs() < 0.01);

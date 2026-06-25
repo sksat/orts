@@ -1,10 +1,10 @@
 //! OMM JSON parser (CelesTrak / Space-Track "GP" JSON).
 //!
 //! Deserializes a CCSDS OMM keyword-value object — or a 1-element array of one
-//! — into [`Omm`]. The catalog number is already numeric in JSON (no Alpha-5
+//! — into a [`ParsedElementSet`]. The catalog number is already numeric in JSON (no Alpha-5
 //! 5-character limit),
 //! and angles arrive in degrees / mean motion in rev/day — converted to the
-//! `Omm` conventions (radians, rad/s) here.
+//! `Sgp4Elements` conventions (radians, rad/s) here.
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -18,7 +18,7 @@ use crate::math::F64Ext;
 
 use serde::Deserialize;
 
-use crate::omm::Omm;
+use crate::elements::{ParsedElementSet, Sgp4Elements};
 
 /// Error type for OMM JSON parsing.
 #[derive(Debug, Clone, PartialEq)]
@@ -104,10 +104,11 @@ fn u32_or_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error
     }
 }
 
-/// Parse an OMM JSON document — a single object or a 1-element array — into an [`Omm`].
-pub fn parse(json: &str) -> Result<Omm, JsonParseError> {
+/// Parse an OMM JSON document — a single object or a 1-element array — into a
+/// [`ParsedElementSet`].
+pub fn parse(json: &str) -> Result<ParsedElementSet, JsonParseError> {
     // BOM-tolerant even when called directly (not via the unified entrypoint).
-    let json = crate::omm::strip_bom(json);
+    let json = crate::elements::strip_bom(json);
     // Accept a single OMM object, or a 1-element array — some producers
     // (incl. CelesTrak single-satellite GP queries) wrap the object in a JSON
     // array. Reject empty / multi-element arrays with a clear error.
@@ -132,21 +133,23 @@ pub fn parse(json: &str) -> Result<Omm, JsonParseError> {
         serde_json::from_str(json).map_err(|e| JsonParseError::Malformed(e.to_string()))?
     };
 
-    let epoch = crate::omm::parse_epoch(&raw.epoch)
+    let epoch = crate::elements::parse_epoch(&raw.epoch)
         .ok_or_else(|| JsonParseError::InvalidEpoch(raw.epoch.clone()))?;
 
-    Ok(Omm {
+    Ok(ParsedElementSet {
+        elements: Sgp4Elements {
+            norad_cat_id: raw.norad_cat_id,
+            epoch,
+            mean_motion: raw.mean_motion * 2.0 * PI / 86400.0, // rev/day → rad/s
+            eccentricity: raw.eccentricity,
+            inclination: raw.inclination.to_radians(),
+            raan: raw.ra_of_asc_node.to_radians(),
+            argument_of_perigee: raw.arg_of_pericenter.to_radians(),
+            mean_anomaly: raw.mean_anomaly.to_radians(),
+            bstar: raw.bstar,
+        },
         object_name: raw.object_name,
         object_id: raw.object_id,
-        norad_cat_id: raw.norad_cat_id,
-        epoch,
-        mean_motion: raw.mean_motion * 2.0 * PI / 86400.0, // rev/day → rad/s
-        eccentricity: raw.eccentricity,
-        inclination: raw.inclination.to_radians(),
-        raan: raw.ra_of_asc_node.to_radians(),
-        argument_of_perigee: raw.arg_of_pericenter.to_radians(),
-        mean_anomaly: raw.mean_anomaly.to_radians(),
-        bstar: raw.bstar,
     })
 }
 
@@ -174,9 +177,10 @@ mod tests {
 
     #[test]
     fn parse_iss_omm_json() {
-        let omm = parse(ISS_OMM_JSON).unwrap();
-        assert_eq!(omm.object_name.as_deref(), Some("ISS (ZARYA)"));
-        assert_eq!(omm.object_id.as_deref(), Some("1998-067A"));
+        let set = parse(ISS_OMM_JSON).unwrap();
+        let omm = set.elements;
+        assert_eq!(set.object_name.as_deref(), Some("ISS (ZARYA)"));
+        assert_eq!(set.object_id.as_deref(), Some("1998-067A"));
         assert_eq!(omm.norad_cat_id, 25544);
 
         let dt = omm.epoch.to_datetime();
@@ -199,8 +203,8 @@ mod tests {
     fn epoch_without_z_suffix_is_accepted() {
         // CelesTrak omits the trailing 'Z'; ensure both forms parse identically.
         let with_z = ISS_OMM_JSON.replace("12:00:00.000000", "12:00:00.000000Z");
-        let a = parse(ISS_OMM_JSON).unwrap();
-        let b = parse(&with_z).unwrap();
+        let a = parse(ISS_OMM_JSON).unwrap().elements;
+        let b = parse(&with_z).unwrap().elements;
         assert_eq!(a.epoch, b.epoch);
     }
 
@@ -231,7 +235,7 @@ mod tests {
     fn parse_single_element_array() {
         // CelesTrak single-satellite OMM JSON is sometimes a 1-element array.
         let arr = ["[", ISS_OMM_JSON, "]"].concat();
-        assert_eq!(parse(&arr).unwrap().norad_cat_id, 25544);
+        assert_eq!(parse(&arr).unwrap().elements.norad_cat_id, 25544);
     }
 
     #[test]
@@ -256,7 +260,7 @@ mod tests {
             "MEAN_ANOMALY": "324.7580",
             "BSTAR": "0.00003"
         }"#;
-        let omm = parse(j).unwrap();
+        let omm = parse(j).unwrap().elements;
         assert_eq!(omm.norad_cat_id, 25544);
         assert!((omm.inclination.to_degrees() - 51.64).abs() < 1e-9);
         assert!((omm.bstar - 3.0e-5).abs() < 1e-10);
@@ -269,6 +273,6 @@ mod tests {
     fn bom_prefixed_json_parses_directly() {
         // Direct calls (not via omm::parse) must also tolerate a leading BOM.
         let bom = ["\u{feff}", ISS_OMM_JSON].concat();
-        assert_eq!(parse(&bom).unwrap().norad_cat_id, 25544);
+        assert_eq!(parse(&bom).unwrap().elements.norad_cat_id, 25544);
     }
 }
