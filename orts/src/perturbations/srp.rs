@@ -216,9 +216,13 @@ mod tests {
 
         let sun_gcrs = sun::sun_position_eci(&epoch.to_tdb());
         let sun_cirs = Rotation::<Gcrs, Cirs>::iau2006_model(&epoch.to_tt()).transform(&sun_gcrs);
+        // `eval` recomputes the *identical* rotation + formula, so this is
+        // bit-exact (the difference is 0.0, not f64 noise). The tight bound is
+        // intentional: it also pins that CIRS uses the EOP-free model rotation —
+        // an EOP-corrected (dX/dY) variant would shift the result ~5e-18.
         let expected = srp.srp_accel(&sat, sun_cirs.inner());
         assert!(
-            (a_cirs - expected).norm() < 1e-15,
+            (a_cirs - expected).norm() < 1e-18,
             "CIRS eval must apply the GCRS→CIRS Sun-ephemeris rotation"
         );
 

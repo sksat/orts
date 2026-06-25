@@ -219,9 +219,12 @@ mod tests {
         // The eval must use the GCRS Sun ephemeris rotated into CIRS.
         let body_gcrs = arika::sun::sun_position_eci(&epoch.to_tdb());
         let body_cirs = Rotation::<Gcrs, Cirs>::iau2006_model(&epoch.to_tt()).transform(&body_gcrs);
+        // `eval` recomputes the *identical* rotation + formula, so this is
+        // bit-exact (the difference is 0.0, not f64 noise). The tight bound also
+        // pins that CIRS uses the EOP-free model rotation.
         let expected = third_body_accel(arika::sun::MU, &sat, body_cirs.inner());
         assert!(
-            (a_cirs - expected).norm() < 1e-15,
+            (a_cirs - expected).norm() < 1e-18,
             "CIRS eval must apply the GCRS→CIRS ephemeris rotation"
         );
 
