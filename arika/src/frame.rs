@@ -262,11 +262,12 @@ impl Ecef for Itrs {}
 /// True Equator, Mean Equinox — the quasi-inertial frame in which SGP4 / TLE /
 /// OMM mean elements are expressed. Belongs to the [`Eci`] category.
 ///
-/// **marker only**: the TEME ↔ [`Gcrs`] / [`SimpleEci`] rotation (GMST +
-/// equation of the equinoxes + precession/nutation) is not implemented, and the
-/// element-set parsers return mean elements ([`crate::elements::Sgp4Elements`]) rather than
-/// `Vec3<Teme>` state vectors. The marker exists so those APIs have an explicit
-/// frame to name.
+/// The `sgp4` module (behind the `sgp4` feature) propagates an
+/// [`crate::elements::Sgp4Elements`] set to a `Vec3<Teme>` state, and
+/// [`crate::earth::teme`] rotates TEME into the
+/// integration frames: the precise [`Rotation<Teme, Gcrs>`](Rotation)
+/// (IAU-76/FK5 reduction) and the visualization-grade
+/// [`Rotation<Teme, SimpleEci>`](Rotation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Teme;
 impl sealed::Sealed for Teme {}

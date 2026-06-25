@@ -70,3 +70,44 @@ impl FrameTransform<Teme, Gcrs> {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const J2000_JD: f64 = 2451545.0;
+
+    #[test]
+    fn teme_to_gcrs_preserves_magnitude() {
+        // A rotation is an isometry: |r| is unchanged.
+        let tt = Epoch::<Tt>::from_jd_tt(J2000_JD + 0.24 * 36525.0);
+        let r = Vec3::<Teme>::new(4500.0, -3000.0, 5000.0);
+        let r_gcrs = Rotation::<Teme, Gcrs>::teme_to_gcrs(tt).transform(&r);
+        assert!((r_gcrs.into_inner().norm() - r.into_inner().norm()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn teme_to_simple_eci_is_a_z_rotation() {
+        // GMST − ERA is a rotation about +Z, so the z-component is preserved and
+        // the transform is an isometry.
+        let ut1 = Ut1Epoch::from_jd_ut1(J2000_JD + 0.1 * 36525.0);
+        let r = Vec3::<Teme>::new(4500.0, -3000.0, 5000.0);
+        let r_eci = Rotation::<Teme, SimpleEci>::teme_to_simple_eci(ut1).transform(&r);
+        let (a, b) = (r.into_inner(), r_eci.into_inner());
+        assert!((b[2] - a[2]).abs() < 1e-9, "z preserved by a z-rotation");
+        assert!((b.norm() - a.norm()).abs() < 1e-9, "isometry");
+    }
+
+    #[test]
+    fn teme_to_gcrs_near_identity_close_to_j2000() {
+        // Months from J2000 the precession/nutation is tiny: a TEME vector maps
+        // to nearly itself in GCRS.
+        let tt = Epoch::<Tt>::from_jd_tt(J2000_JD + 60.0); // ~2 months
+        let r = Vec3::<Teme>::new(7000.0, 0.0, 0.0);
+        let r_gcrs = Rotation::<Teme, Gcrs>::teme_to_gcrs(tt).transform(&r);
+        assert!(
+            (r_gcrs.into_inner() - r.into_inner()).norm() < 5.0,
+            "≪ 5 km near J2000"
+        );
+    }
+}
