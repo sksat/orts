@@ -93,11 +93,10 @@ impl PanelSrp {
         };
 
         // Rotate the GCRS Sun ephemeris into the integration frame `F` (identity
-        // for GCRS-aligned frames; see `EphemerisFrameBridge`).
-        let sun_pos = F::ephemeris_rotation(epoch)
-            .transform(&sun::sun_position_eci(&epoch.to_tdb()))
-            .into_inner();
-        let sat_to_sun = sun_pos - *orbit.position();
+        // for GCRS-aligned frames; see `EphemerisFrameBridge`). Keep the typed
+        // `Vec3<F>` in scope and borrow `.inner()` only at raw-API boundaries.
+        let sun_f = F::ephemeris_rotation(epoch).transform(&sun::sun_position_eci(&epoch.to_tdb()));
+        let sat_to_sun = sun_f.inner() - orbit.position();
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
 
@@ -105,7 +104,7 @@ impl PanelSrp {
         let illum = if let Some(body_r) = self.shadow_body_radius {
             let v = eclipse::illumination_central(
                 orbit.position(),
-                &sun_pos,
+                sun_f.inner(),
                 body_r,
                 SUN_RADIUS_KM,
                 self.shadow_model,
