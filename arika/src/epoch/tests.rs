@@ -935,8 +935,14 @@ fn coarse_floors_sub_microsecond_step_that_precise_recovers() {
     let coarse = precise.to_precision::<Coarse>();
 
     let dt = 1e-9; // 1 ns
-    let precise_elapsed = precise.add_si_seconds(dt).duration_since(&precise).as_si_seconds();
-    let coarse_elapsed = coarse.add_si_seconds(dt).duration_since(&coarse).as_si_seconds();
+    let precise_elapsed = precise
+        .add_si_seconds(dt)
+        .duration_since(&precise)
+        .as_si_seconds();
+    let coarse_elapsed = coarse
+        .add_si_seconds(dt)
+        .duration_since(&coarse)
+        .as_si_seconds();
 
     assert!(
         (precise_elapsed - dt).abs() < 1e-12,

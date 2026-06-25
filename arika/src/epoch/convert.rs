@@ -370,8 +370,8 @@ mod lens_tests {
     //! must round-trip. Agreement is to f64 noise since the lens does the same
     //! arithmetic. Exercised on the [`TwoPartJd`] representation (the lens is
     //! generic over [`JdRepr`], so the coarse `f64` path is the same code).
-    use super::*;
     use super::super::jd2::{JdRepr, TwoPartJd};
+    use super::*;
 
     const TOL_DAY: f64 = 1e-9; // ~86 µs — well above f64 noise, below the regime we care about
 
