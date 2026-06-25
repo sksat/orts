@@ -34,5 +34,6 @@ fn main() {
             format,
             output,
         } => commands::convert::run_convert(&input, format, output.as_deref()),
+        Commands::Config { command } => commands::config::run_config(command),
     }
 }

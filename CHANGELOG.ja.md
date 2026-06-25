@@ -81,6 +81,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `--json` とデータの stdout 出力の併用は拒否する。([#214](https://github.com/sksat/orts/pull/214))
 - `orts run --output -` でシミュレーションデータを stdout に出力。`-` を正準の
   stdout sentinel とし、従来の `stdout` キーワードは alias として残す。([#214](https://github.com/sksat/orts/pull/214))
+- `orts config` サブコマンド群。config ファイルを正準入力として誘導する:
+  `config example [--format toml|json|yaml]` で編集可能な example config を出力、
+  `config validate <path> [--json]` で config を検証し結果を報告(人間向けは
+  stderr、`--json` で機械可読 verdict を stdout に。exit 0=valid / 2=invalid)。
+  `--sat` の help もこの経路を案内するようにした。([#216](https://github.com/sksat/orts/pull/216))
 
 #### Changed
 - `--tle` を再び TLE 専用 (2LE/3LE、`-` で stdin) とし、新規 `--omm` と
