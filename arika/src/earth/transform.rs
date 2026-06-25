@@ -20,7 +20,7 @@
 use crate::earth::geodetic::Geodetic;
 use crate::earth::iau2006::cip::cip_xy;
 use crate::epoch::{Epoch, Utc};
-use crate::frame::{self, Ecef, Eci, Rotation, Vec3};
+use crate::frame::{self, Ecef, Eci, FrameTransform, Rotation, Vec3};
 // Used only on no_std (libm-backed `.sqrt()`); std uses the inherent f64 method.
 #[allow(unused_imports)]
 use crate::math::F64Ext;
@@ -114,6 +114,35 @@ pub trait EarthFixedTransform: EarthRotationPole {
     /// Used to transform ECEF-frame vectors (e.g., magnetic field,
     /// atmosphere co-rotation velocity) back into the propagation frame.
     fn fixed_to_inertial(utc: &Epoch<Utc>, eop: &Self::EopStorage) -> Rotation<Self::Fixed, Self>;
+
+    /// ECI → ECEF state transform: the orientation plus Earth's spin angular
+    /// velocity, so it transforms velocities (and full position+velocity
+    /// states), not just positions.
+    ///
+    /// The angular velocity is `OMEGA · earth_pole` — Earth's nominal rotation
+    /// rate ([`earth::OMEGA`](crate::earth::OMEGA)) about the spin axis from
+    /// [`EarthRotationPole`]. This models **Earth spin transport only**: it is
+    /// not the full time-derivative of the IAU 2006 W·R·Q chain (the
+    /// precession/nutation/polar-motion rates Q̇/Ẇ, ~sub-µrad/s, are omitted),
+    /// and it uses the nominal rate with no LOD correction.
+    fn inertial_to_fixed_transform(
+        utc: &Epoch<Utc>,
+        eop: &Self::EopStorage,
+    ) -> FrameTransform<Self, Self::Fixed> {
+        // ω of ECEF relative to ECI, expressed in ECI: Earth's spin vector.
+        let omega =
+            Vec3::<Self>::from_raw(Self::earth_pole(utc).into_inner() * crate::earth::OMEGA);
+        let rotation = Self::fixed_to_inertial(utc, eop).inverse();
+        FrameTransform::new(rotation, omega)
+    }
+
+    /// ECEF → ECI state transform (inverse of [`inertial_to_fixed_transform`](Self::inertial_to_fixed_transform)).
+    fn fixed_to_inertial_transform(
+        utc: &Epoch<Utc>,
+        eop: &Self::EopStorage,
+    ) -> FrameTransform<Self::Fixed, Self> {
+        Self::inertial_to_fixed_transform(utc, eop).inverse()
+    }
 }
 
 impl EarthFixedTransform for frame::SimpleEci {
@@ -316,5 +345,59 @@ mod tests {
             y2024 > 10.0 * j2000,
             "CIP offset should grow with precession: 2024={y2024}°, J2000={j2000}°"
         );
+    }
+
+    // State transforms (FrameTransform factories)
+
+    #[test]
+    fn simple_eci_corotating_point_is_static_in_ecef() {
+        // A point on the equator co-rotating with Earth (inertial velocity ω×r)
+        // must be static in ECEF, regardless of ERA — validates the factory's
+        // ω = OMEGA·(+Z) wiring.
+        let utc = Epoch::from_gregorian(2024, 3, 20, 7, 30, 0.0);
+        let ft = <frame::SimpleEci as EarthFixedTransform>::inertial_to_fixed_transform(&utc, &());
+        let r_km = 6378.137;
+        let r = Vec3::<frame::SimpleEci>::new(r_km, 0.0, 0.0);
+        let v = Vec3::<frame::SimpleEci>::new(0.0, crate::earth::OMEGA * r_km, 0.0);
+        let v_ecef = ft.transform_velocity(&r, &v);
+        assert!(
+            v_ecef.inner().norm() < 1e-12,
+            "co-rotating point should be static in ECEF, got {:?}",
+            v_ecef.inner()
+        );
+    }
+
+    #[test]
+    fn gcrs_transform_omega_is_omega_times_cip() {
+        let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let eop = GcrsEopStorage::new(ZeroEop);
+        let ft = <frame::Gcrs as EarthFixedTransform>::inertial_to_fixed_transform(&utc, &eop);
+        // ω of ITRS relative to GCRS, in GCRS, is OMEGA along the CIP.
+        let expected =
+            <frame::Gcrs as EarthRotationPole>::earth_pole(&utc).into_inner() * crate::earth::OMEGA;
+        assert!(
+            (ft.angular_velocity_in_from().inner() - expected).norm() < 1e-18,
+            "Gcrs spin angular velocity should be OMEGA·CIP"
+        );
+        // |ω| ≈ OMEGA (pole is a unit vector).
+        assert!((ft.angular_velocity_in_from().inner().norm() - crate::earth::OMEGA).abs() < 1e-16);
+    }
+
+    #[test]
+    fn gcrs_state_transform_roundtrip() {
+        let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let eop = GcrsEopStorage::new(ZeroEop);
+        let ft = <frame::Gcrs as EarthFixedTransform>::inertial_to_fixed_transform(&utc, &eop);
+        let r = Vec3::<frame::Gcrs>::new(6778.0, 1200.0, -3400.0);
+        let v = Vec3::<frame::Gcrs>::new(-1.2, 7.0, 2.5);
+        let (r_e, v_e) = ft.transform_state(&r, &v);
+        let (r_back, v_back) = ft.inverse().transform_state(&r_e, &v_e);
+        assert!((r_back.inner() - r.inner()).norm() < 1e-9);
+        assert!((v_back.inner() - v.inner()).norm() < 1e-12);
+        // fixed_to_inertial_transform is the inverse of inertial_to_fixed_transform.
+        let ft_inv = <frame::Gcrs as EarthFixedTransform>::fixed_to_inertial_transform(&utc, &eop);
+        let (r2, v2) = ft_inv.transform_state(&r_e, &v_e);
+        assert!((r2.inner() - r.inner()).norm() < 1e-9);
+        assert!((v2.inner() - v.inner()).norm() < 1e-12);
     }
 }

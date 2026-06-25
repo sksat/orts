@@ -503,6 +503,88 @@ impl<From, To> Rotation<From, To> {
     }
 }
 
+// ─── FrameTransform: rotation + angular velocity (state transforms) ─
+
+/// A frame transform carrying both the orientation ([`Rotation`]) and the
+/// angular velocity of the `To` frame relative to `From`, so it can transform
+/// **velocities** (and full position+velocity states), not just positions.
+///
+/// The stored angular velocity `ω` is that of `To` relative to `From`,
+/// **expressed in `From`**. Velocities follow the transport theorem:
+///
+/// ```text
+/// r_to = R · r_from
+/// v_to = R · (v_from − ω × r_from)
+/// ```
+///
+/// [`Rotation`] stays position-only; this is its kinematic (state) companion.
+/// Build Earth ECI↔ECEF instances via the
+/// [`EarthFixedTransform`](crate::earth::EarthFixedTransform) factories.
+pub struct FrameTransform<From, To> {
+    rotation: Rotation<From, To>,
+    /// Angular velocity of `To` relative to `From`, expressed in `From` [rad/s].
+    angular_velocity: Vec3<From>,
+}
+
+impl<From, To> FrameTransform<From, To> {
+    /// Build from a rotation and the angular velocity of `To` relative to
+    /// `From`, expressed in `From` [rad/s].
+    pub fn new(rotation: Rotation<From, To>, angular_velocity: Vec3<From>) -> Self {
+        Self {
+            rotation,
+            angular_velocity,
+        }
+    }
+
+    /// The orientation part (`From` → `To`).
+    pub fn rotation(&self) -> &Rotation<From, To> {
+        &self.rotation
+    }
+
+    /// Angular velocity of `To` relative to `From`, expressed in `From` [rad/s].
+    pub fn angular_velocity_in_from(&self) -> &Vec3<From> {
+        &self.angular_velocity
+    }
+
+    /// Transform a position (identical to [`Rotation::transform`]).
+    pub fn transform_position(&self, position: &Vec3<From>) -> Vec3<To> {
+        self.rotation.transform(position)
+    }
+
+    /// Transform a velocity via the transport theorem `v_to = R·(v_from − ω×r_from)`.
+    ///
+    /// The position is required because the rotating-frame correction is `ω × r`.
+    pub fn transform_velocity(&self, position: &Vec3<From>, velocity: &Vec3<From>) -> Vec3<To> {
+        let corotation = self.angular_velocity.cross(position); // ω × r, in From
+        let relative = Vec3::<From>::from_raw(velocity.inner() - corotation.inner());
+        self.rotation.transform(&relative)
+    }
+
+    /// Transform a full state (position, velocity).
+    pub fn transform_state(
+        &self,
+        position: &Vec3<From>,
+        velocity: &Vec3<From>,
+    ) -> (Vec3<To>, Vec3<To>) {
+        (
+            self.transform_position(position),
+            self.transform_velocity(position, velocity),
+        )
+    }
+
+    /// Inverse transform (`To` → `From`).
+    ///
+    /// The inverse angular velocity — of `From` relative to `To`, expressed in
+    /// `To` — is `−R·ω`.
+    pub fn inverse(&self) -> FrameTransform<To, From> {
+        let omega_in_to = self.rotation.transform(&self.angular_velocity); // R·ω, in To
+        FrameTransform {
+            rotation: self.rotation.inverse(),
+            angular_velocity: Vec3::<To>::from_raw(-omega_in_to.into_inner()),
+        }
+    }
+}
+
 // ─── Simple path (SimpleEci ↔ SimpleEcef) rotation constructors ─
 
 impl Rotation<SimpleEci, SimpleEcef> {
@@ -830,5 +912,79 @@ mod tests {
         assert!((a.x() - b.x()).abs() < 1e-14);
         assert!((a.y() - b.y()).abs() < 1e-14);
         assert!((a.z() - b.z()).abs() < 1e-14);
+    }
+
+    // FrameTransform (rotation + angular velocity) ─ state transforms
+
+    const OMEGA_E: f64 = 7.2921159e-5;
+
+    #[test]
+    fn frame_transform_zero_omega_equals_rotation() {
+        // With ω = 0, velocity transforms exactly like position (pure rotation).
+        let rot = Rotation::<SimpleEci, SimpleEcef>::from_era(0.7);
+        let ft = FrameTransform::new(rot, Vec3::<SimpleEci>::zeros());
+        let r = Vec3::<SimpleEci>::new(7000.0, -1200.0, 500.0);
+        let v = Vec3::<SimpleEci>::new(1.0, 7.5, -0.3);
+        let v_ft = ft.transform_velocity(&r, &v);
+        let v_rot = Rotation::<SimpleEci, SimpleEcef>::from_era(0.7).transform(&v);
+        assert!((v_ft.x() - v_rot.x()).abs() < 1e-12);
+        assert!((v_ft.y() - v_rot.y()).abs() < 1e-12);
+        assert!((v_ft.z() - v_rot.z()).abs() < 1e-12);
+    }
+
+    #[test]
+    fn frame_transform_inverse_state_roundtrip() {
+        let ft = FrameTransform::new(
+            Rotation::<SimpleEci, SimpleEcef>::from_era(1.1),
+            Vec3::<SimpleEci>::new(0.0, 0.0, OMEGA_E),
+        );
+        let r = Vec3::<SimpleEci>::new(6778.0, 0.0, 0.0);
+        let v = Vec3::<SimpleEci>::new(0.0, 7.5, 1.0);
+        let (r_e, v_e) = ft.transform_state(&r, &v);
+        let (r_back, v_back) = ft.inverse().transform_state(&r_e, &v_e);
+        assert!((r_back.inner() - r.inner()).norm() < 1e-9);
+        assert!((v_back.inner() - v.inner()).norm() < 1e-12);
+    }
+
+    #[test]
+    fn frame_transform_corotating_point_is_static_in_ecef() {
+        // At ERA = 0 the ECI→ECEF rotation is identity. A point on the equator
+        // co-rotating with Earth (inertial velocity ω × r) is static in ECEF.
+        let ft = FrameTransform::new(
+            Rotation::<SimpleEci, SimpleEcef>::from_era(0.0),
+            Vec3::<SimpleEci>::new(0.0, 0.0, OMEGA_E),
+        );
+        let r_km = 6378.137;
+        let r = Vec3::<SimpleEci>::new(r_km, 0.0, 0.0);
+        let v = Vec3::<SimpleEci>::new(0.0, OMEGA_E * r_km, 0.0); // ω × r
+        let v_ecef = ft.transform_velocity(&r, &v);
+        assert!(
+            v_ecef.inner().norm() < 1e-12,
+            "co-rotating point should be static in ECEF, got {:?}",
+            v_ecef.inner()
+        );
+    }
+
+    #[test]
+    fn frame_transform_velocity_matches_finite_difference() {
+        // For a point fixed in ECI (v = 0), d/dt[R(ERA(t))·r] = transform_velocity(r, 0).
+        let era = 0.9;
+        let r = Vec3::<SimpleEci>::new(7000.0, -1500.0, 800.0);
+        let ft = FrameTransform::new(
+            Rotation::<SimpleEci, SimpleEcef>::from_era(era),
+            Vec3::<SimpleEci>::new(0.0, 0.0, OMEGA_E),
+        );
+        let v_analytic = ft.transform_velocity(&r, &Vec3::<SimpleEci>::zeros());
+
+        let dt = 1.0e-3;
+        let p0 = Rotation::<SimpleEci, SimpleEcef>::from_era(era).transform(&r);
+        let p1 = Rotation::<SimpleEci, SimpleEcef>::from_era(era + OMEGA_E * dt).transform(&r);
+        let v_fd = (p1.inner() - p0.inner()) / dt;
+        assert!(
+            (v_analytic.inner() - v_fd).norm() < 1e-6,
+            "analytic {:?} vs finite-diff {:?}",
+            v_analytic.inner(),
+            v_fd
+        );
     }
 }
