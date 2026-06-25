@@ -2153,7 +2153,7 @@ fn j2_omega_precession_dp45_500_orbits() {
 // Validates that OrbitalSystem<Gcrs> compiles, runs, and produces
 // physically reasonable results. With zero EOP, SimpleEci and Gcrs
 // paths should agree closely (difference comes from precession/nutation
-// in the IAU 2006 chain used by EarthFrameBridge<Gcrs>).
+// in the IAU 2006 chain used by EarthFixedTransform<Gcrs>).
 
 #[test]
 fn gcrs_propagation_close_to_simple_eci() {

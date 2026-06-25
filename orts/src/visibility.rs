@@ -10,7 +10,7 @@ use arika::earth::{Geodetic, TopocentricSite};
 use arika::epoch::{Epoch, Utc};
 use arika::frame::Vec3;
 
-use arika::earth::EarthFrameBridge;
+use arika::earth::EarthFixedTransform;
 
 /// A ground station with an elevation mask.
 #[derive(Debug, Clone)]
@@ -168,22 +168,22 @@ pub struct StationContact {
 /// Streaming visibility monitor: ECI samples in, contact windows out.
 ///
 /// Wraps one [`PassTracker`] per station and performs the ECI → ECEF
-/// conversion at each sample via the [`EarthFrameBridge`] for `F`
+/// conversion at each sample via the [`EarthFixedTransform`] for `F`
 /// (`SimpleEci` = ERA-only rotation, `Gcrs` = full IAU 2006 chain).
-pub struct VisibilityMonitor<F: EarthFrameBridge> {
+pub struct VisibilityMonitor<F: EarthFixedTransform> {
     /// Simulation start epoch (`t = 0`).
     epoch: Epoch<Utc>,
     eop: F::EopStorage,
     stations: Vec<StationState<F>>,
 }
 
-struct StationState<F: EarthFrameBridge> {
+struct StationState<F: EarthFixedTransform> {
     station: GroundStation,
     site: TopocentricSite<F::Fixed>,
     tracker: PassTracker,
 }
 
-impl<F: EarthFrameBridge> VisibilityMonitor<F> {
+impl<F: EarthFixedTransform> VisibilityMonitor<F> {
     /// Create a monitor. `epoch` anchors simulation time `t = 0` (contact
     /// windows depend on Earth rotation, so it is required).
     pub fn new(epoch: Epoch<Utc>, eop: F::EopStorage, stations: Vec<GroundStation>) -> Self {

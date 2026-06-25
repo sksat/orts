@@ -10,7 +10,7 @@ use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
 use crate::orbital::OrbitalState;
-use arika::earth::EarthFrameBridge;
+use arika::earth::EarthFixedTransform;
 
 /// Default ballistic coefficient for LEO satellites \[m²/kg\].
 ///
@@ -30,7 +30,7 @@ pub const DEFAULT_BALLISTIC_COEFF: f64 = 0.01;
 /// which spin axis the atmosphere co-rotates about. `SimpleEci` uses the
 /// ERA-only ECEF rotation and a +Z spin axis; `Gcrs` uses the full IAU 2006
 /// CIO chain and the true CIP spin axis.
-pub struct AtmosphericDrag<F: EarthFrameBridge = frame::SimpleEci> {
+pub struct AtmosphericDrag<F: EarthFixedTransform = frame::SimpleEci> {
     /// Central body (enables WGS-84 geodetic altitude for Earth)
     pub body: Option<KnownBody>,
     /// Central body equatorial radius [km] (fallback for non-Earth bodies)
@@ -88,7 +88,7 @@ impl AtmosphericDrag<frame::SimpleEci> {
     }
 }
 
-impl<F: EarthFrameBridge> AtmosphericDrag<F> {
+impl<F: EarthFixedTransform> AtmosphericDrag<F> {
     /// Create drag model for Earth orbit in any frame.
     pub fn for_earth_in_frame(ballistic_coeff: Option<f64>, eop: F::EopStorage) -> Self {
         Self {
@@ -108,7 +108,7 @@ impl<F: EarthFrameBridge> AtmosphericDrag<F> {
     }
 }
 
-impl<F: EarthFrameBridge> AtmosphericDrag<F> {
+impl<F: EarthFixedTransform> AtmosphericDrag<F> {
     /// Compute drag acceleration [km/s²] from orbital state.
     pub(crate) fn acceleration(
         &self,
@@ -158,7 +158,7 @@ impl<F: EarthFrameBridge> AtmosphericDrag<F> {
 
         // Atmosphere co-rotation velocity Ω × r, with Ω along the central body's
         // spin axis (magnitude `omega_body`). For Earth the spin axis is the IAU
-        // 2006 CIP, which `EarthPoleBridge` expresses in the integration frame
+        // 2006 CIP, which `EarthRotationPole` expresses in the integration frame
         // `F`: +Z for `SimpleEci` (so this reduces exactly to the classic
         // [0, 0, ω] × r), the true CIP for `Gcrs` (correcting the ~0.1–0.3°
         // offset of the spin axis from the GCRS Z axis that a +Z assumption
@@ -195,7 +195,7 @@ impl<F: EarthFrameBridge> AtmosphericDrag<F> {
     }
 }
 
-impl<F: EarthFrameBridge, S: HasOrbit<Frame = F>> Model<S, F> for AtmosphericDrag<F> {
+impl<F: EarthFixedTransform, S: HasOrbit<Frame = F>> Model<S, F> for AtmosphericDrag<F> {
     fn name(&self) -> &str {
         "drag"
     }
@@ -387,9 +387,9 @@ mod tests {
         // The atmosphere co-rotates about Earth's spin axis. For `Gcrs` that axis
         // is the IAU 2006 CIP, offset from the GCRS Z axis by precession/nutation.
         // Pin that drag computes the co-rotation velocity about the CIP (not +Z)
-        // by reconstructing the acceleration from `EarthPoleBridge::earth_pole`.
+        // by reconstructing the acceleration from `EarthRotationPole::earth_pole`.
         use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
-        use arika::earth::{EarthPoleBridge, GcrsEopStorage};
+        use arika::earth::{EarthRotationPole, GcrsEopStorage};
 
         // Zero-EOP: model CIP only (no observed dX/dY, dUT1, polar motion) — the
         // same provider oracle_gcrf uses; keeps the CIP at sub-mas accuracy.
@@ -419,7 +419,7 @@ mod tests {
         let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
 
         // The check is only meaningful if the CIP differs from +Z at this epoch.
-        let pole = <frame::Gcrs as EarthPoleBridge>::earth_pole(&utc).into_inner();
+        let pole = <frame::Gcrs as EarthRotationPole>::earth_pole(&utc).into_inner();
         let off_axis = (pole - vector![0.0, 0.0, 1.0]).norm();
         assert!(
             off_axis > 1e-9,
@@ -442,7 +442,7 @@ mod tests {
         // Reconstruct the expected acceleration with Ω along the CIP spin axis.
         let omega = pole * OMEGA_EARTH;
         let v_rel = vel - omega.cross(&pos);
-        let geod = <frame::Gcrs as EarthFrameBridge>::to_geodetic(
+        let geod = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
             &Vec3::from_raw(pos),
             &utc,
             &GcrsEopStorage::new(ZeroEop),

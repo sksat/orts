@@ -6,7 +6,7 @@
 //! Key differences from the EME2000 fixtures (oracle_orekit.rs):
 //! - **Frame**: GCRF (includes IAU frame bias) vs EME2000 (J2000 mean equator)
 //! - **Drag geodetic**: Orekit uses ITRF via full IAU 2006 chain with real EOP;
-//!   our Gcrs path uses EarthFrameBridge<Gcrs> with ZeroEop (no dUT1, xp=yp=0)
+//!   our Gcrs path uses EarthFixedTransform<Gcrs> with ZeroEop (no dUT1, xp=yp=0)
 //! - **Known EOP gap**: ZeroEop vs real EOP introduces ~arcsec-level rotation
 //!   difference (~meter-level position error per orbit)
 

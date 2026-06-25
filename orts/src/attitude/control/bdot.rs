@@ -60,7 +60,7 @@ impl<F: MagneticFieldModel> BdotCross<F> {
 }
 
 // TODO: SimpleEci constraint comes from magnetic::field_eci. To make
-// frame-generic, BdotCross needs EarthFrameBridge<Fr> (like
+// frame-generic, BdotCross needs EarthFixedTransform<Fr> (like
 // AtmosphericDrag<Fr>) and should use magnetic::field_inertial<Fr>.
 impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci>> Model<S>
     for BdotCross<F>

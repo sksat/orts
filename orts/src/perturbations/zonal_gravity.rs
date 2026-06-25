@@ -4,7 +4,7 @@
 //! ([`PointMass`](crate::orbital::gravity::PointMass)), the zonal harmonics are
 //! symmetric about the central body's *rotation pole*, so the acceleration
 //! depends on the orientation of the integration frame relative to that pole.
-//! [`ZonalGravity`] therefore takes the pole direction from [`EarthPoleBridge`]
+//! [`ZonalGravity`] therefore takes the pole direction from [`EarthRotationPole`]
 //! instead of assuming the frame's Z axis is the pole.
 //!
 //! - `SimpleEci`: pole = `+Z`, reproducing the classic frame-Z formula (for a
@@ -24,11 +24,11 @@ use nalgebra::Vector3;
 
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
-use arika::earth::EarthPoleBridge;
+use arika::earth::EarthRotationPole;
 
 /// Zonal harmonics (J2, optional J3/J4) gravity perturbation about the
-/// rotation pole supplied by [`EarthPoleBridge`].
-pub struct ZonalGravity<F: EarthPoleBridge = arika::frame::SimpleEci> {
+/// rotation pole supplied by [`EarthRotationPole`].
+pub struct ZonalGravity<F: EarthRotationPole = arika::frame::SimpleEci> {
     /// Gravitational parameter of the central body [km³/s²].
     pub mu: f64,
     /// Equatorial radius of the central body [km].
@@ -45,7 +45,7 @@ pub struct ZonalGravity<F: EarthPoleBridge = arika::frame::SimpleEci> {
     _frame: PhantomData<fn() -> F>,
 }
 
-impl<F: EarthPoleBridge> ZonalGravity<F> {
+impl<F: EarthRotationPole> ZonalGravity<F> {
     /// Create a zonal gravity perturbation for a central body.
     pub fn new(mu: f64, r_body: f64, j2: f64, j3: Option<f64>, j4: Option<f64>) -> Self {
         Self {
@@ -106,7 +106,7 @@ impl<F: EarthPoleBridge> ZonalGravity<F> {
     }
 }
 
-impl<F: EarthPoleBridge, S: HasOrbit<Frame = F>> Model<S, F> for ZonalGravity<F> {
+impl<F: EarthRotationPole, S: HasOrbit<Frame = F>> Model<S, F> for ZonalGravity<F> {
     fn name(&self) -> &str {
         "zonal_gravity"
     }
