@@ -7,7 +7,7 @@
 //! composed `Rotation<Teme, Gcrs>` acting on a vector against ERFA's
 //! TEME→J2000.
 
-use arika::earth::iau1980;
+use arika::earth::fk5;
 use arika::epoch::{Epoch, Tt};
 use arika::frame::{Gcrs, Rotation, Teme, Vec3};
 use serde_json::Value;
@@ -49,7 +49,7 @@ fn teme_gcrs_components_and_transform_match_erfa() {
         let jd = J2000_JD + t * JULIAN_CENTURY_DAYS;
 
         // ── Scalar components ──
-        let (dpsi, deps) = iau1980::nutation(t);
+        let (dpsi, deps) = fk5::nutation(t);
         assert!(
             (dpsi - f64_at(&sample["nutation"], "dpsi")).abs() < COMPONENT_TOL_RAD,
             "Δψ at t={t}"
@@ -59,22 +59,23 @@ fn teme_gcrs_components_and_transform_match_erfa() {
             "Δε at t={t}"
         );
         assert!(
-            (iau1980::mean_obliquity(t) - f64_at(sample, "mean_obliquity")).abs()
-                < COMPONENT_TOL_RAD,
+            (fk5::mean_obliquity(t) - f64_at(sample, "mean_obliquity")).abs() < COMPONENT_TOL_RAD,
             "ε̄ at t={t}"
         );
         assert!(
-            (iau1980::equation_of_equinoxes(t) - f64_at(sample, "equation_of_equinoxes")).abs()
+            (fk5::equation_of_equinoxes(t) - f64_at(sample, "equation_of_equinoxes")).abs()
                 < COMPONENT_TOL_RAD,
             "Eqe at t={t}"
         );
         assert!(
-            (iau1980::gmst1982(jd) - f64_at(sample, "gmst82")).abs() < GMST_TOL_RAD,
+            (fk5::gmst1982(jd) - f64_at(sample, "gmst82")).abs() < GMST_TOL_RAD,
             "GMST82 at t={t}"
         );
 
         // ── Composed rotation (public factory) vs ERFA TEME→J2000 ──
-        let rot = Rotation::<Teme, Gcrs>::teme_to_gcrs(Epoch::<Tt>::from_jd_tt(jd));
+        let rot = Rotation::<Teme, Gcrs>::teme_to_gcrs(&Epoch::<Tt>::from_jd_tt(jd));
+
+        // On the test vector.
         let got = rot.transform(&teme).into_inner();
         let expected = sample["j2000_vec"].as_array().unwrap();
         for i in 0..3 {
@@ -84,6 +85,24 @@ fn teme_gcrs_components_and_transform_match_erfa() {
                 got[i],
                 expected[i].as_f64().unwrap()
             );
+        }
+
+        // Full 3×3 matrix: transforming basis vector eⱼ yields column j of the
+        // ERFA TEME→J2000 matrix (row-major in the fixture), validating every
+        // element — not just one composed direction.
+        let m = sample["teme_to_j2000"].as_array().unwrap();
+        for j in 0..3 {
+            let mut e = Vec3::<Teme>::zeros().into_inner();
+            e[j] = 1.0;
+            let col = rot.transform(&Vec3::<Teme>::from_raw(e)).into_inner();
+            for i in 0..3 {
+                let erfa_ij = m[i].as_array().unwrap()[j].as_f64().unwrap();
+                assert!(
+                    (col[i] - erfa_ij).abs() < 1e-12,
+                    "TEME→J2000 matrix [{i}][{j}] at t={t}: {} vs {erfa_ij}",
+                    col[i]
+                );
+            }
         }
     }
 }

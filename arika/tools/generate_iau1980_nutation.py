@@ -7,7 +7,7 @@
 Fetches the 106-term IAU 1980 nutation series from ERFA's `nut80.c`
 (liberfa/erfa, BSD-3) — the same machine-readable copy of the IAU 1980
 Theory of Nutation that ERFA evaluates — and emits it as a Rust table at
-`arika/src/earth/iau1980/nutation_table.rs`. Generating from ERFA's own
+`arika/src/earth/fk5/nutation_table.rs`. Generating from ERFA's own
 table guarantees arika's `nut80` matches ERFA to machine precision.
 
 The underlying coefficients are the IAU 1980 nutation standard (Wahr;
@@ -29,7 +29,7 @@ SOURCES = [
     "https://raw.githubusercontent.com/liberfa/erfa/master/src/nut80.c",
 ]
 
-OUT = Path("arika/src/earth/iau1980/nutation_table.rs")
+OUT = Path("arika/src/earth/fk5/nutation_table.rs")
 
 # Each data row: { nl, nlp, nf, nd, nom, sp, spt, ce, cet }
 ROW = re.compile(

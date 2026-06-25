@@ -159,8 +159,9 @@ pub(crate) fn prec_nut_matrix(t: f64) -> Matrix3<f64> {
 ///
 /// `r_J2000 = pnm80ᵀ · R3(−Eqe) · r_TEME`: TEME differs from the true equator,
 /// true equinox (TOD) frame by the equation of the equinoxes about the pole,
-/// then the IAU-76/80 precession-nutation maps TOD to J2000. The J2000→GCRS
-/// frame bias (< 1 mas) is neglected (≪ the SGP4 error this serves).
+/// then the IAU-76/80 precession-nutation maps TOD to J2000. This is the J2000
+/// (FK5) dynamical frame; the J2000→GCRS frame bias (~tens of mas) is neglected
+/// (≪ the SGP4 error this serves).
 pub(crate) fn teme_to_j2000_matrix(t: f64) -> Matrix3<f64> {
     prec_nut_matrix(t).transpose() * rot_z(-equation_of_equinoxes(t))
 }

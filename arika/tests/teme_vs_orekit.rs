@@ -39,7 +39,7 @@ fn teme_gcrs_transform_matches_orekit() {
     for sample in fixture["samples"].as_array().expect("samples array") {
         let t = sample["t"].as_f64().unwrap();
         let jd = J2000_JD + t * JULIAN_CENTURY_DAYS;
-        let rot = Rotation::<Teme, Gcrs>::teme_to_gcrs(Epoch::<Tt>::from_jd_tt(jd));
+        let rot = Rotation::<Teme, Gcrs>::teme_to_gcrs(&Epoch::<Tt>::from_jd_tt(jd));
         let got = rot.transform(&teme).into_inner();
         let expected = sample["gcrf_vec"].as_array().unwrap();
         for i in 0..3 {

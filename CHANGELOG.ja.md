@@ -156,7 +156,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `libm` のみで引くため no_std-no-alloc ビルドでも動作。Vallado 検証ベクタの
   near-earth (SGP4) と deep-space (SDP4) で検証済み。([#235](https://github.com/sksat/orts/pull/235))
 - TEME↔GCRS / TEME↔SimpleEci フレーム回転。SGP4 の `Vec3<Teme>` 状態を積分
-  フレームへ変換する。`earth::iau1980` に equinox ベースの IAU-76/FK5 換算
+  フレームへ変換する。`earth::fk5` に equinox ベースの IAU-76/FK5 換算
   (IAU-76 precession、フル 106 項 IAU-80 nutation、mean obliquity、equation of
   the equinoxes、GMST 1982。各々対応する ERFA ルーチンを再現)、`earth::teme` に
   `Rotation<Teme, Gcrs>::teme_to_gcrs`、`Rotation<Teme, SimpleEci>::teme_to_simple_eci`

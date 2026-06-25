@@ -167,7 +167,7 @@ section is subdivided by package.
   builds without `alloc`. Validated against the Vallado verification vectors for
   near-earth (SGP4) and deep-space (SDP4) satellites. ([#235](https://github.com/sksat/orts/pull/235))
 - TEME↔GCRS / TEME↔SimpleEci frame rotations, turning an SGP4 `Vec3<Teme>`
-  state into an integration-frame state. `earth::iau1980` adds the equinox-based
+  state into an integration-frame state. `earth::fk5` adds the equinox-based
   IAU-76/FK5 reduction (IAU-76 precession, full 106-term IAU-80 nutation, mean
   obliquity, equation of the equinoxes, GMST 1982, each reproducing the matching
   ERFA routine); `earth::teme` adds `Rotation<Teme, Gcrs>::teme_to_gcrs`,
