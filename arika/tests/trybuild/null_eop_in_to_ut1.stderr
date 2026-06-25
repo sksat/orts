@@ -14,5 +14,5 @@ help: the trait `Ut1Offset` is implemented for `EopTable`
 note: required by a bound in `epoch::convert::<impl Epoch>::to_ut1`
   --> src/epoch/convert.rs
    |
-   |     pub fn to_ut1<P: crate::earth::eop::Ut1Offset + ?Sized>(&self, eop: &P) -> Epoch<Ut1> {
+   |     pub fn to_ut1<P: crate::earth::eop::Ut1Offset + ?Sized>(&self, eop: &P) -> Ut1Epoch {
    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `epoch::convert::<impl Epoch>::to_ut1`

@@ -18,7 +18,7 @@
 
 use arika::SimpleEci;
 use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
-use arika::epoch::{Epoch, Ut1, Utc};
+use arika::epoch::{Epoch, Utc};
 use arika::frame::{self, Rotation, Vec3};
 
 /// Convert a simple-path ECI position to WGS-84 geodetic latitude and
@@ -66,12 +66,6 @@ where
     let geod = pos_itrs.to_geodetic();
     (geod.latitude.to_degrees(), geod.longitude.to_degrees())
 }
-
-/// Unused import suppression helper: keeps `Ut1` in scope for Phase
-/// 4B follow-up work that will accept an explicit `&Epoch<Ut1>` for
-/// users who already performed the UT1 derivation upstream.
-#[allow(dead_code)]
-fn _touch_ut1_for_phase_4b(_: &Epoch<Ut1>) {}
 
 /// Convert epoch to (day_of_year, ut_seconds).
 pub fn epoch_to_day_of_year_and_ut(epoch: &Epoch) -> (u32, f64) {

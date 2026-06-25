@@ -57,7 +57,7 @@ use core::ops::{Add, Div, Mul, Neg, Sub};
 use nalgebra::{UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
 
-use crate::epoch::{Epoch, Ut1, Utc};
+use crate::epoch::{Epoch, Ut1Epoch, Utc};
 
 // Runtime frame descriptor
 
@@ -511,7 +511,7 @@ impl Rotation<SimpleEci, SimpleEcef> {
     /// `SimpleEcef = R_z(−ERA(UT1)) × SimpleEci`. Applies only the ERA Z
     /// rotation — no precession, nutation, or polar motion. For high-precision
     /// work use the IAU 2006 CIO chain ([`Rotation::<Gcrs, Itrs>::iau2006_full`]).
-    pub fn from_ut1(epoch: &Epoch<Ut1>) -> Self {
+    pub fn from_ut1(epoch: &Ut1Epoch) -> Self {
         Self::from_era(epoch.era())
     }
 
@@ -537,7 +537,7 @@ impl Rotation<SimpleEci, SimpleEcef> {
 
 impl Rotation<SimpleEcef, SimpleEci> {
     /// Inverse of [`Rotation::<SimpleEci, SimpleEcef>::from_ut1`].
-    pub fn from_ut1(epoch: &Epoch<Ut1>) -> Self {
+    pub fn from_ut1(epoch: &Ut1Epoch) -> Self {
         Self::from_era(epoch.era())
     }
 
@@ -802,8 +802,7 @@ mod tests {
 
     #[test]
     fn from_ut1_matches_from_era() {
-        use crate::epoch::Epoch;
-        let ut1 = Epoch::<Ut1>::from_jd_ut1(2460390.5);
+        let ut1 = Ut1Epoch::from_jd_ut1(2460390.5);
         let era = ut1.era();
         let r_direct = Rotation::<SimpleEci, SimpleEcef>::from_era(era);
         let r_via_ut1 = Rotation::<SimpleEci, SimpleEcef>::from_ut1(&ut1);

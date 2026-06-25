@@ -39,7 +39,7 @@ use arika::earth::eop::{LengthOfDay, NutationCorrections, PolarMotion, Ut1Offset
 use arika::earth::iau2006::cip::{cio_locator_s, cip_xy, gcrs_to_cirs_matrix_at};
 use arika::earth::iau2006::fundamental_arguments::FundamentalArguments;
 use arika::earth::iau2006::precession::{ecliptic_precession_angles, fukushima_williams};
-use arika::epoch::{Epoch, Tt, Ut1, Utc};
+use arika::epoch::{Epoch, Tt, Ut1Epoch, Utc};
 use arika::frame::{Gcrs, Itrs, Rotation, Vec3};
 use serde_json::Value;
 
@@ -342,7 +342,7 @@ fn iau2006_full_matches_erfa_zero_eop_chain() {
         // unit test suite.
         let tt = Epoch::<Tt>::from_jd_tt(2451545.0 + t * 36525.0);
         // With dUT1 = 0, `ut1 = utc` as bit-equal Julian Dates.
-        let ut1 = Epoch::<Ut1>::from_jd_ut1(2451545.0 + t * 36525.0);
+        let ut1 = Ut1Epoch::from_jd_ut1(2451545.0 + t * 36525.0);
         let utc = Epoch::<Utc>::from_jd(2451545.0 + t * 36525.0);
         let rot = Rotation::<Gcrs, Itrs>::iau2006_full(&tt, &ut1, &utc, &ZeroEop);
 

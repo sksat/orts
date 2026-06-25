@@ -43,13 +43,10 @@ define_scale!(
      `dTT/dTCG = 1 - L_G`, `L_G = 6.969290134e-10`; IAU 2000 B1.9). \
      IAU 2006 precession と IAU 2000A/B nutation の独立変数。"
 );
-define_scale!(
-    Ut1,
-    "UT1",
-    "Universal Time (UT1). Earth rotation angle time scale — defining \
-     observable は ERA (IAU 2000 B1.8 / SOFA iauEra00)。atomic clock が \
-     刻む時刻ではなく Earth の瞬間的な向きを時間単位で表現したもの。"
-);
+// UT1 is deliberately NOT a `TimeScale` marker: it is realized by Earth's
+// rotation (a measured EOP quantity, not a data-free offset from TAI), so it
+// cannot share the canonical timeline of the atomic/dynamical scales. It lives
+// in its own type, `Ut1Epoch` (see `convert.rs`), reached via `to_ut1(eop)`.
 define_scale!(
     Tdb,
     "TDB",
