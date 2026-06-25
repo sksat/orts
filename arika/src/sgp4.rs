@@ -123,13 +123,19 @@ impl Sgp4Propagator {
     /// Propagate to `minutes` after the element-set epoch.
     ///
     /// Returns `(position, velocity)` in the [`Teme`] frame, in km and km/s.
+    ///
+    /// `minutes` should stay within SGP4's useful range (the model is fit for
+    /// roughly days-to-weeks around epoch and loses meaning far from it); the
+    /// caller owns that choice. Pathologically large magnitudes also make the
+    /// deep-space resonance integrator (a fixed 720-minute step toward the
+    /// target) iterate proportionally, so very large values are slow as well as
+    /// physically meaningless.
     pub fn propagate_minutes_since_epoch(
         &self,
         minutes: f64,
     ) -> Result<(Vec3<Teme>, Vec3<Teme>), Sgp4Error> {
         // Reject a non-finite time before handing it to sgp4: a NaN/±inf target
-        // can spin the deep-space resonance integrator (a fixed-step loop toward
-        // the target time) indefinitely.
+        // can spin the deep-space resonance integrator indefinitely.
         if !minutes.is_finite() {
             return Err(Sgp4Error::Diverged);
         }
@@ -137,6 +143,16 @@ impl Sgp4Propagator {
             .constants
             .propagate_afspc_compatibility_mode(MinutesSinceEpoch(minutes))
             .map_err(|_| Sgp4Error::Diverged)?;
+        // Guard the output too: a finite-but-extreme element set can drive sgp4
+        // to a non-finite state without tripping its own range checks.
+        if !p
+            .position
+            .iter()
+            .chain(p.velocity.iter())
+            .all(|x| x.is_finite())
+        {
+            return Err(Sgp4Error::Diverged);
+        }
         Ok((
             Vec3::<Teme>::new(p.position[0], p.position[1], p.position[2]),
             Vec3::<Teme>::new(p.velocity[0], p.velocity[1], p.velocity[2]),
