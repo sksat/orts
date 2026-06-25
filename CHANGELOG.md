@@ -159,6 +159,13 @@ section is subdivided by package.
   - `elements::detect` + `elements::parse` — format sniffing (`elements::Format`) plus a
     unified, BOM-tolerant entry point that auto-detects and dispatches
     TLE / OMM-JSON / OMM-KVN / OMM-XML.
+- SGP4 / SDP4 propagation behind the optional `sgp4` feature
+  (`propagation::Sgp4Propagator`): builds from an `Sgp4Elements`, reuses the
+  epoch `Constants`, and propagates to a `(Vec3<Teme>, Vec3<Teme>)` state in km /
+  km·s. Wraps the `sgp4` crate in AFSPC compatibility mode (WGS72). The
+  dependency is pulled with only `libm`, so propagation works in `no_std`
+  builds without `alloc`. Validated against the Vallado verification vectors for
+  near-earth (SGP4) and deep-space (SDP4) satellites. ([#235](https://github.com/sksat/orts/pull/235))
 - `kepler` module (moved into `arika` from `orts`): `KeplerianElements`
   (`from_state_vector` / `to_state_vector` / `period` / `energy`) and the anomaly
   conversions (`solve_kepler_equation`, `mean_to_true_anomaly`, …). Now a public
