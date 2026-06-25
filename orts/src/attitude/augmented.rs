@@ -163,7 +163,7 @@ impl DynamicalSystem for AugmentedAttitudeSystem {
         t: f64,
         state: &AugmentedState<AttitudeState>,
     ) -> AugmentedState<AttitudeState> {
-        let epoch = self.epoch_0.map(|e| e.add_seconds(t));
+        let epoch = self.epoch_0.map(|e| e.add_si_seconds(t));
 
         // 0. Validate auxiliary state length
         assert_eq!(

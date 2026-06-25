@@ -205,7 +205,7 @@ impl<F: EarthFrameBridge> VisibilityMonitor<F> {
     /// Feed one sample: simulation time `t` [s since epoch] and the
     /// satellite's ECI position [km]. `t` must be increasing.
     pub fn update(&mut self, t: f64, position: &Vec3<F>) {
-        let utc = self.epoch.add_seconds(t);
+        let utc = self.epoch.add_si_seconds(t);
         let ecef = F::fixed_to_inertial(&utc, &self.eop)
             .inverse()
             .transform(position);
