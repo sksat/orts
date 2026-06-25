@@ -3,10 +3,34 @@ use clap::{Parser, Subcommand, ValueEnum};
 /// orts CLI — orbital mechanics simulation tool
 #[derive(Parser, Debug)]
 #[command(name = "orts")]
+#[command(after_help = EXAMPLES)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 }
+
+/// Copy-pasteable examples shown at the end of `orts --help` (and `-h`).
+/// Kept here so the most common — and the most agent-relevant — workflows are
+/// discoverable without reading the docs.
+const EXAMPLES: &str = "\
+Examples:
+  # Run a simulation, recording to an .rrd file (the default)
+  orts run --sat altitude=400
+
+  # Run from a config file and write CSV to a path (use '-' for stdout)
+  orts run --config mission.toml --format csv --output orbit.csv
+
+  # Machine-readable run summary on stdout for scripts/agents
+  # (simulation data must go to a file when --json is set)
+  orts run --config mission.toml --json --output result.rrd
+
+  # Get a starting config, then validate it
+  orts config example > mission.toml
+  orts config validate mission.toml
+
+  # Live WebSocket server + embedded 3D viewer at http://localhost:9001
+  orts serve --config mission.toml
+";
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {

@@ -86,6 +86,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `config validate <path> [--json]` で config を検証し結果を報告(人間向けは
   stderr、`--json` で機械可読 verdict を stdout に。exit 0=valid / 2=invalid)。
   `--sat` の help もこの経路を案内するようにした。([#216](https://github.com/sksat/orts/pull/216))
+- `orts --help`(および `-h`)の末尾に、主要ワークフロー(ファイルへの run、
+  `--json` 実行サマリ、`config example`/`validate`、`serve`)のコピペ可能な実例を
+  追加。よく使う・agent に関係する経路を端末内で発見できるようにした。([#217](https://github.com/sksat/orts/pull/217))
 
 #### Changed
 - `--tle` を再び TLE 専用 (2LE/3LE、`-` で stdin) とし、新規 `--omm` と
