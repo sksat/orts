@@ -156,16 +156,23 @@ impl<F: EarthFrameBridge> AtmosphericDrag<F> {
             return Vector3::zeros();
         }
 
-        // Atmosphere co-rotation velocity Ω × r, with Ω along Earth's spin axis
-        // (magnitude `omega_body`). The spin axis is the IAU 2006 CIP, which
-        // `EarthPoleBridge` expresses in the integration frame `F`: +Z for
-        // `SimpleEci` (so this reduces exactly to the classic [0, 0, ω] × r), the
-        // true CIP for `Gcrs` (correcting the ~0.1–0.3° offset of the spin axis
-        // from the GCRS Z axis that a +Z assumption incurs). The CIP is the
-        // rotation axis itself, so this is more faithful than rotating the Itrs
-        // figure axis via `fixed_to_inertial` (which differs by polar motion);
-        // LOD variation in |Ω| is omitted.
-        let omega = F::earth_pole(utc).into_inner() * self.omega_body;
+        // Atmosphere co-rotation velocity Ω × r, with Ω along the central body's
+        // spin axis (magnitude `omega_body`). For Earth the spin axis is the IAU
+        // 2006 CIP, which `EarthPoleBridge` expresses in the integration frame
+        // `F`: +Z for `SimpleEci` (so this reduces exactly to the classic
+        // [0, 0, ω] × r), the true CIP for `Gcrs` (correcting the ~0.1–0.3°
+        // offset of the spin axis from the GCRS Z axis that a +Z assumption
+        // incurs). Using the CIP — the rotation axis itself — is more faithful
+        // than rotating the ITRS figure axis via `fixed_to_inertial` (which
+        // differs by polar motion); LOD variation in |Ω| is omitted.
+        //
+        // `earth_pole` is Earth-specific, so for any other central body we keep
+        // the frame Z axis (the pre-existing behavior, matching the spherical
+        // geodetic fallback above — `F` is an Earth ECI frame regardless).
+        let omega = match self.body {
+            Some(KnownBody::Earth) => F::earth_pole(utc).into_inner() * self.omega_body,
+            _ => Vector3::new(0.0, 0.0, self.omega_body),
+        };
         let v_rel = *state.velocity() - omega.cross(pos);
 
         // Convert v_rel from km/s to m/s for consistent units with ρ [kg/m³] and B [m²/kg]
