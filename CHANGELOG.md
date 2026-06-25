@@ -47,8 +47,8 @@ section is subdivided by package.
 
 #### Removed
 - **BREAKING**: the `orts::tle` module is removed; TLE parsing moved to
-  `arika::tle` (decoding into the shared `arika::omm::Omm` record). Downstream
-  code using `orts::tle` must migrate to `arika`. ([#87](https://github.com/sksat/orts/pull/87))
+  `arika::tle` (decoding into the shared `arika::elements::Sgp4Elements`).
+  Downstream code using `orts::tle` must migrate to `arika`. ([#87](https://github.com/sksat/orts/pull/87))
 
 ### `orts-cli` (Rust, crates.io, binary)
 
@@ -63,7 +63,7 @@ section is subdivided by package.
   depends on the output decimation. (A pass shorter than one integrator /
   control sample gap can still be missed.) ([#112](https://github.com/sksat/orts/pull/112))
 - `--omm <file>` for CCSDS OMM input (JSON / KVN / XML; `-` for stdin), parsed
-  with `arika::omm`; rejects a TLE payload and points to `--tle`. ([#87](https://github.com/sksat/orts/pull/87))
+  with `arika::elements::parse`; rejects a TLE payload and points to `--tle`. ([#87](https://github.com/sksat/orts/pull/87))
 - `--stream-stdio SAT/STREAM` on `orts serve` — wire one declared stream-io
   stream to stdin/stdout over the kble-socket protocol so orts can run as a kble
   `exec:` plug. That stream's WebSocket endpoint then answers HTTP 409; the
@@ -146,15 +146,17 @@ section is subdivided by package.
 
 #### Added
 - Element-set parsing ([#87](https://github.com/sksat/orts/pull/87)). A shared
-  `omm::Omm` CCSDS mean-element record (identity, UTC epoch, six SGP4 mean
-  Keplerian elements, B\* drag; angles in radians, mean motion in rad/s) with
-  `semi_major_axis(mu)` / `to_keplerian_elements(mu)`.
-  - `tle` — NORAD TLE / 2LE / 3LE parser (`tle::parse`) → `Omm`, with Alpha-5
+  no-alloc `elements::Sgp4Elements` mean-element set (catalog number, UTC epoch,
+  six SGP4 mean elements, B\* drag; angles in radians, mean motion in rad/s) with
+  `semi_major_axis(mu)` / `to_keplerian_elements(mu)`. The text parsers return
+  `elements::ParsedElementSet` (the elements plus owned `OBJECT_NAME` /
+  `OBJECT_ID` identity); the format-detecting `elements::parse` dispatches to them.
+  - `tle` — NORAD TLE / 2LE / 3LE parser (`tle::parse`) → `ParsedElementSet`, with Alpha-5
     alphanumeric catalog numbers and `OBJECT_ID` normalization.
   - `omm::json` / `omm::kvn` / `omm::xml` — CCSDS OMM parsers for the JSON, KVN,
     and XML serializations. JSON accepts a single object or a 1-element array
     (CelesTrak single-satellite GP) and Space-Track string-encoded numbers.
-  - `omm::detect` + `omm::parse` — format sniffing (`omm::Format`) plus a
+  - `elements::detect` + `elements::parse` — format sniffing (`elements::Format`) plus a
     unified, BOM-tolerant entry point that auto-detects and dispatches
     TLE / OMM-JSON / OMM-KVN / OMM-XML.
 - `kepler` module (moved into `arika` from `orts`): `KeplerianElements`

@@ -3,7 +3,7 @@
 //! KVN is a sequence of `KEYWORD = VALUE` lines. This hand-rolled reader skips
 //! `COMMENT` lines and block markers (`META_START` / `META_STOP`, lines without
 //! `=`), strips trailing unit annotations (`51.64 [deg]`), and collects the
-//! mean-element keywords into an [`Omm`]. Unknown keywords are ignored.
+//! mean-element keywords into a [`ParsedElementSet`]. Unknown keywords are ignored.
 
 use alloc::string::{String, ToString};
 use core::f64::consts::PI;
@@ -14,7 +14,7 @@ use core::str::FromStr;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::omm::Omm;
+use crate::elements::{ParsedElementSet, Sgp4Elements};
 
 /// Error type for OMM KVN parsing.
 #[derive(Debug, Clone, PartialEq)]
@@ -43,10 +43,10 @@ impl fmt::Display for KvnParseError {
 #[cfg(feature = "std")]
 impl std::error::Error for KvnParseError {}
 
-/// Parse an OMM KVN document into an [`Omm`].
-pub fn parse(kvn: &str) -> Result<Omm, KvnParseError> {
+/// Parse an OMM KVN document into a [`ParsedElementSet`].
+pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
     // BOM-tolerant even when called directly (not via the unified entrypoint).
-    let kvn = crate::omm::strip_bom(kvn);
+    let kvn = crate::elements::strip_bom(kvn);
     let mut object_name = None;
     let mut object_id = None;
     let mut norad_cat_id = None;
@@ -94,7 +94,7 @@ pub fn parse(kvn: &str) -> Result<Omm, KvnParseError> {
     }
 
     let epoch_str = epoch_str.ok_or(KvnParseError::MissingField("EPOCH"))?;
-    let epoch = crate::omm::parse_epoch(epoch_str)
+    let epoch = crate::elements::parse_epoch(epoch_str)
         .ok_or_else(|| KvnParseError::InvalidEpoch(epoch_str.to_string()))?;
 
     let mean_motion = mean_motion.ok_or(KvnParseError::MissingField("MEAN_MOTION"))?;
@@ -104,18 +104,20 @@ pub fn parse(kvn: &str) -> Result<Omm, KvnParseError> {
     let arg_perigee = arg_perigee.ok_or(KvnParseError::MissingField("ARG_OF_PERICENTER"))?;
     let mean_anomaly = mean_anomaly.ok_or(KvnParseError::MissingField("MEAN_ANOMALY"))?;
 
-    Ok(Omm {
+    Ok(ParsedElementSet {
+        elements: Sgp4Elements {
+            norad_cat_id: norad_cat_id.ok_or(KvnParseError::MissingField("NORAD_CAT_ID"))?,
+            epoch,
+            mean_motion: mean_motion * 2.0 * PI / 86400.0, // rev/day → rad/s
+            eccentricity,
+            inclination: inclination.to_radians(),
+            raan: raan.to_radians(),
+            argument_of_perigee: arg_perigee.to_radians(),
+            mean_anomaly: mean_anomaly.to_radians(),
+            bstar,
+        },
         object_name,
         object_id,
-        norad_cat_id: norad_cat_id.ok_or(KvnParseError::MissingField("NORAD_CAT_ID"))?,
-        epoch,
-        mean_motion: mean_motion * 2.0 * PI / 86400.0, // rev/day → rad/s
-        eccentricity,
-        inclination: inclination.to_radians(),
-        raan: raan.to_radians(),
-        argument_of_perigee: arg_perigee.to_radians(),
-        mean_anomaly: mean_anomaly.to_radians(),
-        bstar,
     })
 }
 
@@ -174,9 +176,10 @@ BSTAR = 0.00003
 
     #[test]
     fn parse_iss_omm_kvn() {
-        let omm = parse(ISS_OMM_KVN).unwrap();
-        assert_eq!(omm.object_name.as_deref(), Some("ISS (ZARYA)"));
-        assert_eq!(omm.object_id.as_deref(), Some("1998-067A"));
+        let set = parse(ISS_OMM_KVN).unwrap();
+        let omm = set.elements;
+        assert_eq!(set.object_name.as_deref(), Some("ISS (ZARYA)"));
+        assert_eq!(set.object_id.as_deref(), Some("1998-067A"));
         assert_eq!(omm.norad_cat_id, 25544);
 
         let dt = omm.epoch.to_datetime();
@@ -230,14 +233,14 @@ RA_OF_ASC_NODE = 0.0
 ARG_OF_PERICENTER = 0.0
 MEAN_ANOMALY = 0.0
 NORAD_CAT_ID = 1";
-        let omm = parse(kvn).unwrap();
-        assert_eq!(omm.object_name.as_deref(), Some("SAT [TEST]"));
+        let set = parse(kvn).unwrap();
+        assert_eq!(set.object_name.as_deref(), Some("SAT [TEST]"));
     }
 
     #[test]
     fn bom_prefixed_kvn_parses_directly() {
-        // Direct calls (not via omm::parse) must also tolerate a leading BOM.
+        // Direct calls (not via elements::parse) must also tolerate a leading BOM.
         let bom = ["\u{feff}", ISS_OMM_KVN].concat();
-        assert_eq!(parse(&bom).unwrap().norad_cat_id, 25544);
+        assert_eq!(parse(&bom).unwrap().elements.norad_cat_id, 25544);
     }
 }

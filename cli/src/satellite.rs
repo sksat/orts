@@ -1,5 +1,5 @@
 use arika::body::KnownBody;
-use arika::omm::Omm;
+use arika::elements::Sgp4Elements;
 use orts::OrbitalState;
 use orts::orbital::kepler::KeplerianElements;
 use orts::record::entity_path::EntityPath;
@@ -20,9 +20,9 @@ pub enum OrbitSpec {
         raan: f64,
     },
     /// From a parsed element set — TLE or OMM input, both decode into the
-    /// canonical [`Omm`] record — plus the derived Keplerian elements.
+    /// canonical [`Sgp4Elements`] record — plus the derived Keplerian elements.
     Omm {
-        omm: Omm,
+        omm: Sgp4Elements,
         elements: KeplerianElements,
     },
 }
@@ -214,18 +214,20 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
 
     // Determine orbit
     let (orbit, period, derived_name) = if let Some(norad) = norad_id {
-        let omm = fetch_tle_by_norad_id(norad);
+        let parsed = fetch_tle_by_norad_id(norad);
+        let omm = parsed.elements;
         let elements = omm.to_keplerian_elements(mu);
         let period = elements.period(mu);
-        let obj_name = omm.object_name.clone();
+        let obj_name = parsed.object_name.clone();
         (OrbitSpec::Omm { omm, elements }, period, obj_name)
     } else if let (Some(l1), Some(l2)) = (tle_line1, tle_line2) {
         let text = format!("{l1}\n{l2}");
-        let omm = arika::tle::parse(&text)
+        let parsed = arika::tle::parse(&text)
             .unwrap_or_else(|e| panic!("Failed to parse TLE in --sat: {e}"));
+        let omm = parsed.elements;
         let elements = omm.to_keplerian_elements(mu);
         let period = elements.period(mu);
-        let obj_name = omm.object_name.clone();
+        let obj_name = parsed.object_name.clone();
         (OrbitSpec::Omm { omm, elements }, period, obj_name)
     } else {
         let alt = altitude.unwrap_or(400.0);

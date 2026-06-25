@@ -264,7 +264,7 @@ impl Ecef for Itrs {}
 ///
 /// **marker only**: the TEME ↔ [`Gcrs`] / [`SimpleEci`] rotation (GMST +
 /// equation of the equinoxes + precession/nutation) is not implemented, and the
-/// element-set parsers return mean elements ([`crate::omm::Omm`]) rather than
+/// element-set parsers return mean elements ([`crate::elements::Sgp4Elements`]) rather than
 /// `Vec3<Teme>` state vectors. The marker exists so those APIs have an explicit
 /// frame to name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
