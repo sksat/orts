@@ -94,6 +94,10 @@ section is subdivided by package.
   checks a config and reports the verdict (human-readable on stderr, or a
   machine-readable JSON verdict on stdout with `--json`; exit 0 valid / 2
   invalid). The `--sat` help now points to this path. ([#216](https://github.com/sksat/orts/pull/216))
+- `orts --help` (and `-h`) now ends with copy-pasteable examples covering the
+  main workflows (run to a file, the `--json` run summary, `config
+  example`/`validate`, and `serve`), so the common — and agent-relevant — paths
+  are discoverable without leaving the terminal. ([#217](https://github.com/sksat/orts/pull/217))
 
 #### Changed
 - `--tle` is TLE-only again (2LE/3LE; `-` for stdin) and pairs with the new
