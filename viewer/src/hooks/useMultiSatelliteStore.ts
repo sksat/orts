@@ -1,5 +1,4 @@
 import type { AsyncDuckDBConnection } from "@duckdb/duckdb-wasm";
-import { useEffect, useRef, useState } from "react";
 import {
   type ChartDataMap,
   COMPACT_DEFAULTS,
@@ -15,6 +14,7 @@ import {
   type TimePoint,
   type TimeRange,
 } from "@sksat/uneri";
+import { useEffect, useRef, useState } from "react";
 import {
   buildMultiChartData,
   type MultiChartDataMap,
