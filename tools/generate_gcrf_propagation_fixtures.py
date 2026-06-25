@@ -11,7 +11,7 @@ as the propagation frame.
 Key differences from the EME2000 fixtures:
   - Frame: GCRF (includes frame bias) vs EME2000 (J2000 mean equator)
   - Drag geodetic: Orekit uses ITRF via IERS 2010 internally (proper
-    IAU 2006 chain), matching our EarthFrameBridge<Gcrs> implementation
+    IAU 2006 chain), matching our EarthFixedTransform<Gcrs> implementation
   - Gravity body frame: CIRF (pole = IAU 2006 CIP), matching our Rust
     ZonalGravity<Gcrs> which evaluates the zonal harmonics about the CIP
     (polar motion excluded; zonal terms are longitude-independent)

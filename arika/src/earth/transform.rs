@@ -75,11 +75,11 @@ impl EarthRotationPole for frame::Gcrs {
         let t = utc.to_tt().centuries_since_j2000();
         let (x, y) = cip_xy(t);
         let (x, y) = (x.raw(), y.raw());
-        // Guard against a slightly-negative radicand from f64 round-off (x²+y²
-        // is ~1e-5 for real CIP values, never near 1). `f64::max` is std-only,
-        // so clamp manually to stay no_std-compatible.
-        let radicand = 1.0 - x * x - y * y;
-        let z = if radicand > 0.0 { radicand.sqrt() } else { 0.0 };
+        // `.max(0.0)` guards against a slightly-negative radicand from f64
+        // round-off (x²+y² is ~1e-5 for real CIP values, never near 1).
+        // `.sqrt()` is the only std-only float op here; `F64Ext` (libm) supplies
+        // it on no_std, while `f64::max` is available in `core`.
+        let z = (1.0 - x * x - y * y).max(0.0).sqrt();
         Vec3::new(x, y, z)
     }
 }

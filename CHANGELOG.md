@@ -17,7 +17,7 @@ section is subdivided by package.
 - Ground-station contact-window detection (`visibility` module): `GroundStation`
   (WGS-84 location + elevation mask), `ContactWindow` (interpolated AOS/LOS, max
   elevation, span-clip flags), the pure `PassTracker` state machine, and a
-  frame-aware `VisibilityMonitor<F: EarthFrameBridge>` that turns ECI samples
+  frame-aware `VisibilityMonitor<F: EarthFixedTransform>` that turns ECI samples
   into per-station topocentric look angles. ([#112](https://github.com/sksat/orts/pull/112))
 - `IndependentGroup::propagate_to_with(t_target, observer)` — propagate while a
   `FnMut(&SatId, f64, &State)` observer runs on every accepted integration step,
