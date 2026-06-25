@@ -21,7 +21,8 @@ fn main() {
             sim,
             output,
             format,
-        } => commands::run::run_simulation_cmd(&sim, &output, format),
+            json,
+        } => commands::run::run_simulation_cmd(&sim, output.as_deref(), format, json),
         Commands::Serve {
             sim,
             port,
