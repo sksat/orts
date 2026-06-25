@@ -5,6 +5,7 @@ use nalgebra::Vector3;
 
 use crate::perturbations::SOLAR_RADIATION_PRESSURE;
 use arika::earth::R as R_EARTH;
+use arika::earth::transform::EphemerisFrameBridge;
 
 use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
 
@@ -79,20 +80,23 @@ impl PanelSrp {
 
 impl PanelSrp {
     /// Compute SRP loads from full state (using capability trait methods).
-    pub(crate) fn loads_from_state(
+    pub(crate) fn loads_from_state<F: EphemerisFrameBridge>(
         &self,
-        orbit: &crate::OrbitalState,
+        orbit: &crate::OrbitalState<F>,
         attitude: &crate::attitude::AttitudeState,
         mass: f64,
         epoch: Option<&Epoch>,
-    ) -> ExternalLoads {
+    ) -> ExternalLoads<F> {
         let epoch = match epoch {
             Some(e) => e,
             None => return ExternalLoads::zeros(),
         };
 
-        let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
-        let sat_to_sun = sun_pos - *orbit.position();
+        // Rotate the GCRS Sun ephemeris into the integration frame `F` (identity
+        // for GCRS-aligned frames; see `EphemerisFrameBridge`). Keep the typed
+        // `Vec3<F>` in scope and borrow `.inner()` only at raw-API boundaries.
+        let sun_f = F::ephemeris_rotation(epoch).transform(&sun::sun_position_eci(&epoch.to_tdb()));
+        let sat_to_sun = sun_f.inner() - orbit.position();
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
 
@@ -100,7 +104,7 @@ impl PanelSrp {
         let illum = if let Some(body_r) = self.shadow_body_radius {
             let v = eclipse::illumination_central(
                 orbit.position(),
-                &sun_pos,
+                sun_f.inner(),
                 body_r,
                 SUN_RADIUS_KM,
                 self.shadow_model,
@@ -131,8 +135,8 @@ impl PanelSrp {
             SpacecraftShape::Panels(panels) => {
                 // Transform Sun direction to body frame
                 let s_body = attitude
-                    .rotation_to_body()
-                    .transform(&arika::frame::Vec3::from_raw(s_hat))
+                    .rotation_from_inertial::<F>()
+                    .transform(&arika::frame::Vec3::<F>::from_raw(s_hat))
                     .into_inner();
 
                 let mut total_force_body = Vector3::zeros(); // [N]
@@ -155,7 +159,7 @@ impl PanelSrp {
 
                 // a_body [m/s²] → a_inertial [km/s²]
                 let a_body = arika::frame::Vec3::from_raw(total_force_body / mass);
-                let a_inertial = attitude.rotation_to_eci().transform(&a_body) / 1000.0;
+                let a_inertial = attitude.rotation_to_inertial::<F>().transform(&a_body) / 1000.0;
 
                 ExternalLoads {
                     acceleration_inertial: a_inertial,
@@ -167,12 +171,20 @@ impl PanelSrp {
     }
 }
 
-impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci> + HasMass> Model<S> for PanelSrp {
+// Frame-correct panel SRP: the Sun ephemeris (`Vec3<Gcrs>`) is rotated into the
+// integration frame `F` via `EphemerisFrameBridge`, and the attitude's
+// frame-generic `rotation_{to,from}_inertial::<F>` carry vectors between `F` and
+// the body frame — so panel SRP is valid for any such frame (identity for
+// GCRS-aligned `SimpleEci`/`Gcrs`). A frame without an `EphemerisFrameBridge`
+// impl (e.g. `Teme`) is rejected at compile time. See #191.
+impl<F: EphemerisFrameBridge, S: HasAttitude + HasOrbit<Frame = F> + HasMass> Model<S, F>
+    for PanelSrp
+{
     fn name(&self) -> &str {
         "panel_srp"
     }
 
-    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         self.loads_from_state(state.orbit(), state.attitude(), state.mass(), epoch)
     }
 }
@@ -508,6 +520,101 @@ mod tests {
             loads_shadow.acceleration_inertial.into_inner(),
             Vector3::zeros(),
             "With shadow body, same satellite should be in shadow"
+        );
+    }
+
+    // Frame-awareness (CIRS): the GCRS Sun ephemeris must be rotated into the
+    // integration frame. SimpleEci/Gcrs use an identity rotation (behaviour
+    // preserved by every test above); CIRS applies a real ~0.3° rotation.
+
+    /// Re-derives the sphere-branch acceleration [km/s²] for a given Sun
+    /// position, mirroring `loads_from_state` (no shadow → illumination = 1).
+    fn sphere_accel(
+        sat: &Vector3<f64>,
+        sun_pos: &Vector3<f64>,
+        area: f64,
+        cr: f64,
+        mass: f64,
+    ) -> Vector3<f64> {
+        let sat_to_sun = sun_pos - sat;
+        let r_sun = sat_to_sun.magnitude();
+        let s_hat = sat_to_sun / r_sun;
+        let dr = sun::AU_KM / r_sun;
+        let base_pressure = SOLAR_RADIATION_PRESSURE * dr * dr;
+        let a_mag = base_pressure * cr * area / mass / 1000.0;
+        -a_mag * s_hat
+    }
+
+    #[test]
+    fn cirs_sphere_eval_rotates_the_sun_ephemeris() {
+        use arika::frame::{Cirs, Gcrs, Rotation};
+
+        // Sphere is attitude-independent, so this isolates the Sun rotation.
+        let srp = PanelSrp::new(SpacecraftShape::sphere(20.0, 2.2, 1.5)); // no shadow
+        let epoch = test_epoch();
+        let sat = vector![7000.0, 1000.0, 500.0];
+        let orbit = OrbitalState::<Cirs>::new_in_frame(sat, vector![0.0, 7.5, 0.0]);
+        let att = AttitudeState::identity();
+
+        let a_cirs = *srp
+            .loads_from_state(&orbit, &att, 1000.0, Some(&epoch))
+            .acceleration_inertial
+            .inner();
+
+        let sun_gcrs = sun::sun_position_eci(&epoch.to_tdb());
+        let sun_cirs = Rotation::<Gcrs, Cirs>::iau2006_model(&epoch.to_tt()).transform(&sun_gcrs);
+        // `loads_from_state` recomputes the *identical* model rotation + formula,
+        // so this is bit-exact (the difference is 0.0, not f64 noise). The tight
+        // bound is intentional: it pins that CIRS uses the EOP-free model
+        // rotation — an EOP-corrected (dX/dY) variant would shift ~5e-18.
+        let expected = sphere_accel(&sat, sun_cirs.inner(), 20.0, 1.5, 1000.0);
+        assert!(
+            (a_cirs - expected).norm() < 1e-18,
+            "CIRS eval must apply the GCRS→CIRS Sun-ephemeris rotation"
+        );
+
+        let raw = sphere_accel(&sat, sun_gcrs.inner(), 20.0, 1.5, 1000.0);
+        assert!(
+            (a_cirs - raw).norm() > raw.norm() * 1e-4,
+            "CIRS eval should differ from the raw GCRS-aligned result"
+        );
+    }
+
+    #[test]
+    fn cirs_panel_eval_rotates_the_sun_ephemeris() {
+        use arika::frame::Cirs;
+
+        // A Sun-facing panel drives the longer panel code path
+        // (s_hat → body → force → back to F via `rotation_*_inertial::<F>`).
+        // With identity attitude those rotations are no-ops, so this pins the
+        // ephemeris rotation reaching the panel formula — not the attitude
+        // accessors, which are covered by SimpleEci behaviour-preservation and
+        // compile-time typing.
+        let panel = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2).with_cr(1.5);
+        let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
+        let epoch = test_epoch();
+        let sat = vector![7000.0, 1000.0, 500.0];
+        let att = AttitudeState::identity();
+
+        let cirs = OrbitalState::<Cirs>::new_in_frame(sat, vector![0.0, 7.5, 0.0]);
+        let simple = OrbitalState::new(sat, vector![0.0, 7.5, 0.0]); // SimpleEci
+        let a_cirs = *srp
+            .loads_from_state(&cirs, &att, 1000.0, Some(&epoch))
+            .acceleration_inertial
+            .inner();
+        let a_simple = *srp
+            .loads_from_state(&simple, &att, 1000.0, Some(&epoch))
+            .acceleration_inertial
+            .inner();
+
+        // Same raw position & attitude → the only numerical difference is the
+        // rotated Sun ephemeris propagating through the panel formula. A non-zero
+        // difference proves CIRS applies the GCRS→CIRS rotation (SimpleEci is
+        // identity); identical results would mean the frame was ignored.
+        assert!(a_simple.norm() > 0.0, "panel should receive SRP");
+        assert!(
+            (a_cirs - a_simple).norm() > a_simple.norm() * 1e-4,
+            "CIRS panel eval should differ from the SimpleEci (identity) result"
         );
     }
 
