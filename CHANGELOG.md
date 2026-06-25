@@ -88,6 +88,12 @@ section is subdivided by package.
   `--json` with data on stdout is rejected. ([#214](https://github.com/sksat/orts/pull/214))
 - `orts run --output -` writes the simulation data to stdout. `-` is the
   canonical stdout sentinel; the previous `stdout` keyword is kept as an alias. ([#214](https://github.com/sksat/orts/pull/214))
+- `orts config` subcommand group steering users and coding agents toward the
+  config file as canonical input: `config example [--format toml|json|yaml]`
+  prints a ready-to-edit example config, and `config validate <path> [--json]`
+  checks a config and reports the verdict (human-readable on stderr, or a
+  machine-readable JSON verdict on stdout with `--json`; exit 0 valid / 2
+  invalid). The `--sat` help now points to this path. ([#216](https://github.com/sksat/orts/pull/216))
 
 #### Changed
 - `--tle` is TLE-only again (2LE/3LE; `-` for stdin) and pairs with the new

@@ -73,6 +73,39 @@ pub enum Commands {
         #[arg(long)]
         output: Option<String>,
     },
+    /// Inspect and validate simulation config files
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigCommands {
+    /// Print an example simulation config to stdout
+    Example {
+        /// Config file format
+        #[arg(long, default_value = "toml")]
+        format: ConfigFormat,
+    },
+    /// Validate a simulation config file and report the result
+    Validate {
+        /// Path to the config file (.toml / .json / .yaml)
+        path: String,
+
+        /// Emit a machine-readable JSON verdict on stdout (the human-readable
+        /// message goes to stderr otherwise). Exit code is 0 when valid, 2
+        /// when invalid, either way.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ConfigFormat {
+    Toml,
+    Json,
+    Yaml,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -124,7 +157,9 @@ pub struct SimArgs {
     pub norad_id: Option<u32>,
 
     /// Satellite specifications (repeatable).
-    /// Format: key=value,key=value (keys: altitude, norad-id, tle-line1, tle-line2, id, name)
+    /// Format: key=value,key=value (keys: altitude, norad-id, tle-line1, tle-line2, id, name).
+    /// Quick shorthand for simple cases; for generated or multi-satellite setups
+    /// prefer a config file via --config (see `orts config example`).
     #[arg(long = "sat", num_args = 1)]
     pub sats: Vec<String>,
 

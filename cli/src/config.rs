@@ -615,11 +615,38 @@ impl SatelliteConfig {
 }
 
 impl SimConfig {
-    /// Validate every satellite entry. Idempotent and side-effect-free.
+    /// Validate the config. Idempotent and side-effect-free (no network /
+    /// filesystem access), so it is safe for both `config validate` and the
+    /// `SimConfig::load` path shared by `orts run` / `orts serve`.
+    ///
+    /// Covers the semantic fields that `SimParams::from_config` would otherwise
+    /// panic on (unknown body, malformed epoch, malformed inline TLE). It does
+    /// not resolve `norad` orbits — that requires a network fetch and is left
+    /// to run time.
     pub fn validate(&self) -> Result<(), String> {
+        if crate::satellite::try_parse_body(&self.body).is_none() {
+            return Err(format!(
+                "unknown body '{}' (expected one of: sun, mercury, venus, earth, \
+                 moon, mars, jupiter, saturn, uranus, neptune)",
+                self.body
+            ));
+        }
+        if let Some(epoch) = &self.epoch
+            && arika::epoch::Epoch::from_iso8601(epoch).is_none()
+        {
+            return Err(format!(
+                "invalid epoch '{epoch}': expected ISO 8601 (e.g. 2026-01-01T00:00:00Z)"
+            ));
+        }
         for (i, sat) in self.satellites.iter().enumerate() {
             sat.validate()
                 .map_err(|e| format!("satellites[{i}]: {e}"))?;
+            // Parse inline TLE lines with the same parser `from_config` uses, so
+            // a malformed element set is rejected here rather than panicking.
+            if let OrbitConfig::Tle { line1, line2 } = &sat.orbit {
+                arika::tle::parse(&format!("{line1}\n{line2}"))
+                    .map_err(|e| format!("satellites[{i}]: invalid TLE: {e}"))?;
+            }
         }
         for (i, cmd) in self.commands.iter().enumerate() {
             // A non-finite or negative `t` would never satisfy the

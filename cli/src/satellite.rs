@@ -269,7 +269,14 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
 }
 
 pub fn parse_body(s: &str) -> KnownBody {
-    match s {
+    try_parse_body(s).unwrap_or_else(|| panic!("Unknown body: {s}"))
+}
+
+/// Non-panicking body lookup, sharing the same name table as [`parse_body`].
+/// Used by config validation to reject an unknown body up front (with a clear
+/// error) instead of panicking later when the params are built.
+pub fn try_parse_body(s: &str) -> Option<KnownBody> {
+    Some(match s {
         "sun" => KnownBody::Sun,
         "mercury" => KnownBody::Mercury,
         "venus" => KnownBody::Venus,
@@ -280,8 +287,8 @@ pub fn parse_body(s: &str) -> KnownBody {
         "saturn" => KnownBody::Saturn,
         "uranus" => KnownBody::Uranus,
         "neptune" => KnownBody::Neptune,
-        _ => panic!("Unknown body: {s}"),
-    }
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
