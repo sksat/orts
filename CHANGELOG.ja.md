@@ -167,8 +167,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   (`from_state_vector` / `to_state_vector` / `period` / `energy`) と anomaly
   変換群 (`solve_kepler_equation`、`mean_to_true_anomaly` 等)。公開
   `arika::kepler` surface となり、`orts::orbital::kepler` が再エクスポート。([#87](https://github.com/sksat/orts/pull/87))
-- `frame::Teme` marker — True Equator, Mean Equinox (SGP4 / TLE 出力 frame)。
-  marker のみで、TEME ↔ GCRS 回転は未実装。([#87](https://github.com/sksat/orts/pull/87))
+- `frame::Teme` marker — True Equator, Mean Equinox (SGP4 / TLE 出力 frame)。([#87](https://github.com/sksat/orts/pull/87))
 - `earth::topocentric` — 地上局の look angle: `TopocentricSite<F: Ecef>`
   (WGS-84 `Geodetic` から構築し局所 ENU 基底を事前計算) と `LookAngles`
   (方位 / 仰角 / slant range)。`look_angles(target)` で算出。([#112](https://github.com/sksat/orts/pull/112))

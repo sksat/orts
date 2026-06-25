@@ -21,6 +21,8 @@ use crate::epoch::{Epoch, Tt, Ut1Epoch};
 use crate::frame::{FrameTransform, Gcrs, Rotation, SimpleEci, Teme, Vec3};
 
 fn matrix3_to_unit_quaternion(m: Matrix3<f64>) -> UnitQuaternion<f64> {
+    // `m` is always a product of elemental rotations (a proper orthonormal
+    // rotation matrix), so `from_matrix_unchecked` is sound here.
     UnitQuaternion::from_rotation_matrix(&Rotation3::from_matrix_unchecked(m))
 }
 

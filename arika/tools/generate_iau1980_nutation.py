@@ -21,12 +21,17 @@ Usage (from the repository root):
 
 from __future__ import annotations
 
+import os
 import re
 import urllib.request
 from pathlib import Path
 
+# Pinned to a release tag for reproducibility (the IAU 1980 series is fixed, but
+# pinning avoids a moving `master`). Override with ERFA_REF to regenerate from
+# another tag/commit.
+ERFA_REF = os.environ.get("ERFA_REF", "v2.0.1")
 SOURCES = [
-    "https://raw.githubusercontent.com/liberfa/erfa/master/src/nut80.c",
+    f"https://raw.githubusercontent.com/liberfa/erfa/{ERFA_REF}/src/nut80.c",
 ]
 
 OUT = Path("arika/src/earth/fk5/nutation_table.rs")

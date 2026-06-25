@@ -180,7 +180,7 @@ section is subdivided by package.
   conversions (`solve_kepler_equation`, `mean_to_true_anomaly`, …). Now a public
   `arika::kepler` surface; `orts::orbital::kepler` re-exports it. ([#87](https://github.com/sksat/orts/pull/87))
 - `frame::Teme` marker — True Equator, Mean Equinox (the SGP4 / TLE output
-  frame). Marker only; the TEME ↔ GCRS rotation is not yet implemented. ([#87](https://github.com/sksat/orts/pull/87))
+  frame). ([#87](https://github.com/sksat/orts/pull/87))
 - `earth::topocentric` — ground-site look angles: `TopocentricSite<F: Ecef>`
   (from a WGS-84 `Geodetic`, precomputing the local ENU basis) and `LookAngles`
   (azimuth / elevation / slant range), via `look_angles(target)`. ([#112](https://github.com/sksat/orts/pull/112))
