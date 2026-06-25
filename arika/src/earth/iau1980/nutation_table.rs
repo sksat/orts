@@ -17,6 +17,7 @@ pub(crate) struct NutationTerm {
     pub obliquity: [f64; 2],
 }
 
+#[rustfmt::skip]
 pub(crate) static IAU1980_NUTATION: [NutationTerm; 106] = [
     NutationTerm { mult: [0, 0, 0, 0, 1], longitude: [-171996.0, -174.2], obliquity: [92025.0, 8.9] },
     NutationTerm { mult: [0, 0, 0, 0, 2], longitude: [2062.0, 0.2], obliquity: [-895.0, 0.5] },

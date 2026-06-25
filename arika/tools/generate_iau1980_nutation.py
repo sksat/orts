@@ -75,6 +75,7 @@ def main() -> None:
         "    pub obliquity: [f64; 2],",
         "}",
         "",
+        "#[rustfmt::skip]",
         f"pub(crate) static IAU1980_NUTATION: [NutationTerm; {len(rows)}] = [",
     ]
     for nl, nlp, nf, nd, nom, sp, spt, ce, cet in rows:
