@@ -91,7 +91,7 @@ impl PanelSrp {
             None => return ExternalLoads::zeros(),
         };
 
-        let sun_pos = sun::sun_position_eci(epoch).into_inner();
+        let sun_pos = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
         let sat_to_sun = sun_pos - *orbit.position();
         let r_sun = sat_to_sun.magnitude();
         let s_hat = sat_to_sun / r_sun;
@@ -272,7 +272,7 @@ mod tests {
         let epoch = test_epoch();
         let loads = srp.eval(0.0, &iss_state(), Some(&epoch));
 
-        let sun_dir = sun::sun_direction_eci(&epoch).into_inner();
+        let sun_dir = sun::sun_direction_eci(&epoch.to_tdb()).into_inner();
         let cos_angle = loads
             .acceleration_inertial
             .into_inner()
@@ -337,7 +337,7 @@ mod tests {
         );
 
         // Direction should be away from Sun (roughly -X)
-        let sun_dir = sun::sun_direction_eci(&epoch).into_inner();
+        let sun_dir = sun::sun_direction_eci(&epoch.to_tdb()).into_inner();
         assert!(
             loads
                 .acceleration_inertial
@@ -410,7 +410,7 @@ mod tests {
     fn panels_different_attitude_different_srp() {
         // Use a panel normal aligned with the actual Sun direction for a clean test.
         let epoch = test_epoch();
-        let sun_dir = sun::sun_direction_eci(&epoch).into_inner();
+        let sun_dir = sun::sun_direction_eci(&epoch.to_tdb()).into_inner();
 
         let panel = SurfacePanel::at_com(10.0, sun_dir, 2.2).with_cr(1.5);
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
@@ -868,7 +868,7 @@ mod tests {
                     // The ratio should be approximately cos(angle), but the Sun
                     // direction is not exactly +X (it's approximately +X at equinox).
                     // So we compute the actual expected cos(θ) from the Sun direction.
-                    let sun_dir = sun::sun_direction_eci(&epoch).into_inner();
+                    let sun_dir = sun::sun_direction_eci(&epoch.to_tdb()).into_inner();
                     // At identity: panel normal in inertial = +X
                     // At rotated: panel normal in inertial = (cos(angle), sin(angle), 0)
                     let rotated_normal = Vector3::new(angle.cos(), angle.sin(), 0.0);

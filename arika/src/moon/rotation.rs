@@ -173,7 +173,7 @@ mod tests {
         let epoch_tdb = epoch_utc.to_tdb();
         let q = MOON.orientation(&epoch_tdb);
         let x_body_eci = q * Vector3::new(1.0, 0.0, 0.0);
-        let moon_pos = crate::moon::moon_position_eci(&epoch_utc).into_inner();
+        let moon_pos = crate::moon::moon_position_eci(&epoch_utc.to_tdb()).into_inner();
         let earth_dir = -moon_pos.normalize();
         let angle = x_body_eci.angle(&earth_dir).to_degrees();
         assert!(
@@ -195,7 +195,7 @@ mod tests {
             let epoch_tdb = epoch.to_tdb();
             let q = moon_orientation(&epoch_tdb);
             let x_body_eci = q * Vector3::new(1.0, 0.0, 0.0);
-            let moon_pos = crate::moon::moon_position_eci(epoch).into_inner();
+            let moon_pos = crate::moon::moon_position_eci(&epoch.to_tdb()).into_inner();
             let earth_dir = -moon_pos.normalize();
             let angle = x_body_eci.angle(&earth_dir).to_degrees();
             assert!(

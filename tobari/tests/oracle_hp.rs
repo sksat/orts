@@ -274,7 +274,7 @@ fn hp_sun_direction_vs_orekit() {
         let epoch = parse_epoch(&sun_pt.epoch);
 
         // Our Meeus Sun direction
-        let our_dir = arika::sun::sun_direction_eci(&epoch).into_inner();
+        let our_dir = arika::sun::sun_direction_eci(&epoch.to_tdb()).into_inner();
 
         let orekit_dir = Vector3::new(
             sun_pt.sun_direction_eci[0],

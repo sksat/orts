@@ -22,7 +22,7 @@ use nalgebra::Vector3;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::epoch::Epoch;
+use crate::epoch::{Epoch, Tdb};
 use crate::sun::AU_KM;
 
 /// Heliocentric orbital elements at J2000.0 and their century rates.
@@ -172,11 +172,11 @@ fn solve_kepler(mean_anomaly: f64, eccentricity: f64) -> f64 {
 ///
 /// # Time scale
 ///
-/// Meeus ephemerides take a dynamical time argument (TDB). The public signature
-/// accepts `&Epoch<Utc>` for backward compatibility; UTC is converted to TDB
-/// internally.
-pub fn obliquity(epoch: &Epoch) -> f64 {
-    let t = epoch.to_tdb().centuries_since_j2000();
+/// Meeus ephemerides take a dynamical time argument (TDB), so this signature
+/// requires `&Epoch<Tdb>` — the caller converts at the boundary
+/// (`utc.to_tdb()`).
+pub fn obliquity(epoch: &Epoch<Tdb>) -> f64 {
+    let t = epoch.centuries_since_j2000();
     (23.439_291 - 0.013_004_2 * t).to_radians()
 }
 
@@ -200,10 +200,10 @@ pub fn ecliptic_to_equatorial(v: &Vector3<f64>, epsilon: f64) -> Vector3<f64> {
 ///
 /// # Time scale
 ///
-/// Meeus ephemerides take a dynamical time argument (TDB). The public signature
-/// accepts `&Epoch<Utc>` for backward compatibility; UTC is converted to TDB
-/// internally.
-pub fn heliocentric_position_ecliptic(body: &str, epoch: &Epoch) -> Option<Vector3<f64>> {
+/// Meeus ephemerides take a dynamical time argument (TDB), so this signature
+/// requires `&Epoch<Tdb>` — the caller converts at the boundary
+/// (`utc.to_tdb()`).
+pub fn heliocentric_position_ecliptic(body: &str, epoch: &Epoch<Tdb>) -> Option<Vector3<f64>> {
     let elements = match body {
         "mercury" => &MERCURY_ELEMENTS,
         "venus" => &VENUS_ELEMENTS,
@@ -214,7 +214,7 @@ pub fn heliocentric_position_ecliptic(body: &str, epoch: &Epoch) -> Option<Vecto
         _ => return None,
     };
 
-    let t = epoch.to_tdb().centuries_since_j2000();
+    let t = epoch.centuries_since_j2000();
 
     // Compute elements at epoch
     let l = (elements.l0 + elements.l_rate * t).to_radians();
@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn earth_at_1au() {
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
-        let pos = heliocentric_position_ecliptic("earth", &epoch).unwrap();
+        let pos = heliocentric_position_ecliptic("earth", &epoch.to_tdb()).unwrap();
         let dist_au = pos.magnitude() / AU_KM;
         assert!(
             (dist_au - 1.0).abs() < 0.02,
@@ -328,7 +328,7 @@ mod tests {
     fn mars_at_correct_distance() {
         // Mars semi-major axis ~1.524 AU, varies between ~1.38 and ~1.67 AU
         let epoch = Epoch::from_gregorian(2024, 6, 15, 12, 0, 0.0);
-        let pos = heliocentric_position_ecliptic("mars", &epoch).unwrap();
+        let pos = heliocentric_position_ecliptic("mars", &epoch.to_tdb()).unwrap();
         let dist_au = pos.magnitude() / AU_KM;
         assert!(
             dist_au > 1.3 && dist_au < 1.7,
@@ -339,8 +339,8 @@ mod tests {
     #[test]
     fn venus_inside_earth() {
         let epoch = Epoch::from_gregorian(2024, 9, 1, 12, 0, 0.0);
-        let venus = heliocentric_position_ecliptic("venus", &epoch).unwrap();
-        let earth = heliocentric_position_ecliptic("earth", &epoch).unwrap();
+        let venus = heliocentric_position_ecliptic("venus", &epoch.to_tdb()).unwrap();
+        let earth = heliocentric_position_ecliptic("earth", &epoch.to_tdb()).unwrap();
         assert!(
             venus.magnitude() < earth.magnitude(),
             "Venus ({:.4} AU) should be closer than Earth ({:.4} AU)",
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn mercury_smallest_orbit() {
         let epoch = Epoch::from_gregorian(2024, 1, 15, 12, 0, 0.0);
-        let pos = heliocentric_position_ecliptic("mercury", &epoch).unwrap();
+        let pos = heliocentric_position_ecliptic("mercury", &epoch.to_tdb()).unwrap();
         let dist_au = pos.magnitude() / AU_KM;
         // Mercury: ~0.31-0.47 AU
         assert!(
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn jupiter_outer_planet() {
         let epoch = Epoch::from_gregorian(2024, 6, 1, 12, 0, 0.0);
-        let pos = heliocentric_position_ecliptic("jupiter", &epoch).unwrap();
+        let pos = heliocentric_position_ecliptic("jupiter", &epoch.to_tdb()).unwrap();
         let dist_au = pos.magnitude() / AU_KM;
         // Jupiter: ~4.95-5.46 AU
         assert!(
@@ -376,8 +376,8 @@ mod tests {
     #[test]
     fn unknown_body_returns_none() {
         let epoch = Epoch::from_gregorian(2024, 1, 1, 12, 0, 0.0);
-        assert!(heliocentric_position_ecliptic("pluto", &epoch).is_none());
-        assert!(heliocentric_position_ecliptic("foo", &epoch).is_none());
+        assert!(heliocentric_position_ecliptic("pluto", &epoch.to_tdb()).is_none());
+        assert!(heliocentric_position_ecliptic("foo", &epoch.to_tdb()).is_none());
     }
 
     #[test]
@@ -386,11 +386,11 @@ mod tests {
         use crate::sun;
 
         let epoch = Epoch::from_gregorian(2024, 6, 21, 12, 0, 0.0);
-        let earth_helio = heliocentric_position_ecliptic("earth", &epoch).unwrap();
-        let sun_dir = sun::sun_direction_eci(&epoch).into_inner();
+        let earth_helio = heliocentric_position_ecliptic("earth", &epoch.to_tdb()).unwrap();
+        let sun_dir = sun::sun_direction_eci(&epoch.to_tdb()).into_inner();
 
         // Convert Earth heliocentric to equatorial for comparison
-        let epsilon = obliquity(&epoch);
+        let epsilon = obliquity(&epoch.to_tdb());
         let earth_eq = ecliptic_to_equatorial(&earth_helio, epsilon).normalize();
 
         // They should be roughly anti-parallel (dot product ≈ -1)
@@ -427,7 +427,7 @@ mod tests {
     #[test]
     fn obliquity_near_23_degrees() {
         let epoch = Epoch::from_gregorian(2024, 1, 1, 0, 0, 0.0);
-        let eps = obliquity(&epoch).to_degrees();
+        let eps = obliquity(&epoch.to_tdb()).to_degrees();
         assert!(
             (eps - 23.44).abs() < 0.1,
             "Obliquity should be ~23.44°, got {eps:.2}°"
