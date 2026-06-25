@@ -32,7 +32,7 @@ nalgebra = "0.35"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "fs", "io-util"] }
 tokio-tungstenite = "0.29"
-kble-socket = { version = "0.4", features = ["stdio", "tungstenite"] }
+kble-socket = { version = "0.5", features = ["stdio", "tungstenite"] }
 bytes = "1"
 axum = { version = "0.8", features = ["ws"] }
 serde = { version = "1", features = ["derive"] }
