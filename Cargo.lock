@@ -2413,9 +2413,9 @@ dependencies = [
 
 [[package]]
 name = "kble-socket"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "127c5635f9c8e2e0ec9570d9f6014bb8e1986871e5f85af149d678ca8d2ace7d"
+checksum = "ed9d6928482a577bc97a6fcb745e9c3d63b4a3ae115898f1a87d1fb01b7b3987"
 dependencies = [
  "anyhow",
  "axum 0.6.20",
