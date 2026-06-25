@@ -65,15 +65,12 @@ fn main() {
 /// and therefore redistributed as part of the orts-cli binary. The `wasm`
 /// feature switches on optional deps such as `wasm-bindgen` and
 /// `serde-wasm-bindgen` that aren't reachable from the native cli graph, so
-/// these need a dedicated `cargo about` pass to be covered by the notice.
-/// (manifest_path, display_name, extra_cargo_about_args)
-const VIEWER_WASM_CRATES: &[(&str, &str, &[&str])] = &[
-    ("../arika/wasm/Cargo.toml", "arika-wasm", &[]),
-    (
-        "../rrd-wasm/Cargo.toml",
-        "rrd-wasm",
-        &["--features", "wasm", "--no-default-features"],
-    ),
+/// these need a dedicated license pass (with that feature enabled) to be
+/// covered by the notice.
+/// (manifest_path, display_name, no_default_features, cargo_features)
+const VIEWER_WASM_CRATES: &[(&str, &str, bool, &[&str])] = &[
+    ("../arika/wasm/Cargo.toml", "arika-wasm", false, &[]),
+    ("../rrd-wasm/Cargo.toml", "rrd-wasm", true, &["wasm"]),
 ];
 
 /// Generate the third-party license NOTICE via notalawyer/cargo-about.
@@ -81,31 +78,32 @@ const VIEWER_WASM_CRATES: &[(&str, &str, &[&str])] = &[
 /// The orts-cli binary redistributes code from two Rust dependency graphs:
 ///
 /// 1. The native cli graph (what cargo itself compiles into the `orts`
-///    binary). Covered by [`notalawyer_build::build`], which runs
-///    `cargo about generate` for the current crate and writes the result
-///    to `$OUT_DIR/notalawyer` for consumption via
+///    binary). Covered by [`notalawyer_build::build`], which gathers the
+///    current crate's licenses via the `cargo-about` library and writes the
+///    result to `$OUT_DIR/notalawyer` for consumption via
 ///    `notalawyer::include_notice!()`.
 /// 2. The `wasm-pack` outputs of workspace wasm crates (`arika`, `rrd-wasm`)
 ///    that are built with their `wasm` feature and bundled into the viewer,
 ///    whose compiled assets are embedded into cli via `rust-embed`. Those
-///    deps are scanned by an extra `cargo about` pass per crate, written to
+///    deps are gathered by [`gather_wasm_notice`] (the cargo-about library,
+///    pointed at each wasm manifest with its `wasm` feature), written to
 ///    `$OUT_DIR/notalawyer_wasm_<crate>`, and concatenated by
 ///    [`crate::license::combined_notice`] at runtime.
 ///
+/// Both passes use the cargo-about *library* (no `cargo about` binary is
+/// required), so a stale/missing binary can no longer silently skip the notice.
+///
 /// Behavior:
 ///
-/// - **docs.rs** (`DOCS_RS=1`): emit stub notices. Network and most cargo
-///   plugins are not available in the docs.rs sandbox.
-/// - **`cargo-about` available**: generate the real notices for every
-///   redistributed graph.
-/// - **`cargo-about` missing + `ORTS_REQUIRE_LICENSE_NOTICE=1`**: fail hard.
-///   Our release pipeline (`.github/workflows/ci.yml` `rust-dist` job) sets
-///   this env var so a misconfigured CI cannot ship a binary without a
-///   valid third-party license notice.
-/// - **`cargo-about` missing otherwise** (local dev, `cargo install` from
-///   crates.io, one-off release builds): fall back to stub notices and
-///   emit a `cargo:warning`. This keeps source-based installs working
-///   without requiring contributors/installers to have `cargo-about`.
+/// - **docs.rs** (`DOCS_RS=1`): emit stub notices. The docs.rs sandbox
+///   disallows network access, so we don't run the gatherer there.
+/// - **otherwise**: generate the real notices. The native pass
+///   ([`notalawyer_build::build`]) panics on failure. A wasm pass that fails —
+///   most commonly because the sibling manifest is absent (a packaged /
+///   single-crate source install only carries `cli/`) — falls back to a stub
+///   and a `cargo:warning`, unless `ORTS_REQUIRE_LICENSE_NOTICE=1` (set by the
+///   `.github/workflows/ci.yml` `rust-dist` release job), in which case it
+///   fails hard so a release binary can't ship an incomplete notice.
 fn run_license_notice() {
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let out_dir = Path::new(&out_dir);
@@ -116,7 +114,7 @@ fn run_license_notice() {
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=../Cargo.lock");
     println!("cargo:rerun-if-changed=about.toml");
-    for (manifest, _, _) in VIEWER_WASM_CRATES {
+    for (manifest, _, _, _) in VIEWER_WASM_CRATES {
         println!("cargo:rerun-if-changed={manifest}");
     }
     println!("cargo:rerun-if-env-changed=DOCS_RS");
@@ -128,138 +126,164 @@ fn run_license_notice() {
              third-party license notice. cargo-about is not run on docs.rs \
              because its sandbox disallows network access."
         );
-        write_stub_notice(
+        write_notice(
             &native_path,
             "(third-party license notice is not embedded in docs.rs builds)\n",
         );
-        for (_, name, _) in VIEWER_WASM_CRATES {
-            write_stub_notice(&wasm_notice_path(out_dir, name), "");
+        for (_, name, _, _) in VIEWER_WASM_CRATES {
+            write_notice(&wasm_notice_path(out_dir, name), "");
         }
         return;
     }
 
-    let cargo_about_available = std::process::Command::new("cargo")
-        .args(["about", "--version"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    // Native cli dep graph via notalawyer-build's default path (cargo-about
+    // library; no `cargo about` binary needed).
+    notalawyer_build::build();
 
-    if cargo_about_available {
-        // Native cli dep graph via notalawyer-build's default path.
-        notalawyer_build::build();
-
-        // Each wasm crate gets its own `cargo about` pass with the `wasm`
-        // feature enabled. We share `cli/about.toml` via `-c` so the
-        // accepted-license list is consistent across all passes.
-        let config_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("about.toml");
-        let template_path =
-            notalawyer_build::about_hbs().expect("failed to locate notalawyer about.hbs template");
-        for (manifest, name, extra_args) in VIEWER_WASM_CRATES {
-            let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest);
-            let output_path = wasm_notice_path(out_dir, name);
-            if let Err(err) = try_generate_wasm_notice(
-                &manifest_path,
-                &config_path,
-                &template_path,
-                &output_path,
-                extra_args,
-            ) {
-                // A missing sibling manifest happens on packaged / single-crate
-                // source installs; a non-zero cargo-about exit typically means a
-                // new license needs to be accepted. Either way we only hard-fail
-                // in the release pipeline where ORTS_REQUIRE_LICENSE_NOTICE=1.
-                if std::env::var_os("ORTS_REQUIRE_LICENSE_NOTICE").is_some() {
-                    panic!(
-                        "failed to generate wasm license notice for {name} ({}): {err}",
-                        manifest_path.display()
-                    );
-                }
+    // Each bundled wasm crate is gathered separately, pointed at its own
+    // manifest with the `wasm` feature, because notalawyer-build 0.3's
+    // gather() only covers the current crate (arkedge/notalawyer#32). The
+    // shared `cli/about.toml` keeps the accepted-license list / ignores
+    // consistent with the native pass, and gather_wasm_notice renders in the
+    // same format so the per-crate notices concatenate cleanly at runtime.
+    let require = std::env::var_os("ORTS_REQUIRE_LICENSE_NOTICE").is_some();
+    for (manifest, name, no_default_features, features) in VIEWER_WASM_CRATES {
+        let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest);
+        let output_path = wasm_notice_path(out_dir, name);
+        match gather_wasm_notice(&manifest_path, *no_default_features, features) {
+            Ok(notice) => write_notice(&output_path, &notice),
+            // A missing sibling manifest happens on packaged / single-crate
+            // source installs (only `cli/` is shipped). Hard-fail only in the
+            // release pipeline; otherwise embed a placeholder for this crate.
+            Err(err) if require => panic!(
+                "failed to generate wasm license notice for {name} ({}): {err}",
+                manifest_path.display()
+            ),
+            Err(err) => {
                 println!(
                     "cargo:warning=failed to generate wasm license notice for {name}: {err} — \
                      embedding a placeholder for this crate"
                 );
-                write_stub_notice(&output_path, "");
+                write_notice(&output_path, "");
             }
         }
-        return;
     }
+}
 
-    if std::env::var_os("ORTS_REQUIRE_LICENSE_NOTICE").is_some() {
-        panic!(
-            "cargo-about is required when ORTS_REQUIRE_LICENSE_NOTICE is set \
-             (release-pipeline builds) so the redistributable binary embeds \
-             a valid third-party license notice. Install it with \
-             `cargo install cargo-about --locked` or `cargo binstall \
-             cargo-about`."
-        );
-    }
+/// Gather the third-party license notice for a single (non-current) crate via
+/// the cargo-about library, rendered in the same format as
+/// [`notalawyer_build::build`] so per-crate notices concatenate cleanly.
+///
+/// This mirrors what `notalawyer-build` does internally, but parameterized by
+/// `manifest` + feature selection (which its public `gather()` can't express).
+/// `cli/about.toml` is loaded explicitly so the accepted-license list and
+/// `ignore-build-dependencies` / `ignore-dev-dependencies` match the native
+/// pass. No remote *license-file* fetching happens — the config has no
+/// `clarify.git` entries, so the gatherer is given no HTTP client. (Crate
+/// resolution still uses Cargo's normal index access.) See
+/// arkedge/notalawyer#32 for folding this back into notalawyer-build.
+fn gather_wasm_notice(
+    manifest: &Path,
+    no_default_features: bool,
+    features: &[&str],
+) -> Result<String, String> {
+    use cargo_about::licenses::config::{Config, KrateConfig};
+    use std::collections::BTreeMap;
+    use std::fmt::Write as _;
+    use std::sync::Arc;
+    use toml_span::Deserialize as _;
 
-    println!(
-        "cargo:warning=cargo-about not found — embedding a placeholder \
-         third-party license notice. Install cargo-about (and set \
-         ORTS_REQUIRE_LICENSE_NOTICE=1 if this is a release build) to embed \
-         the real notice."
-    );
-    write_stub_notice(
-        &native_path,
-        "(third-party license notice not embedded — cargo-about was not \
-         available at build time; rebuild with cargo-about installed to \
-         embed the real notice)\n",
-    );
-    for (_, name, _) in VIEWER_WASM_CRATES {
-        write_stub_notice(&wasm_notice_path(out_dir, name), "");
+    if !manifest.exists() {
+        return Err(format!("manifest not found at {}", manifest.display()));
     }
+    let manifest_path = camino::Utf8PathBuf::from_path_buf(manifest.to_path_buf())
+        .map_err(|_| "manifest path is not UTF-8".to_string())?;
+
+    let about_toml = Path::new(env!("CARGO_MANIFEST_DIR")).join("about.toml");
+    let contents = std::fs::read_to_string(&about_toml)
+        .map_err(|e| format!("failed to read {}: {e}", about_toml.display()))?;
+    let mut value =
+        toml_span::parse(&contents).map_err(|e| format!("failed to parse about.toml: {e}"))?;
+    let cfg = Config::deserialize(&mut value)
+        .map_err(|e| format!("failed to deserialize about.toml: {e:?}"))?;
+
+    let krates = cargo_about::get_all_crates(
+        &manifest_path,
+        no_default_features,
+        false, // all_features
+        features.iter().map(|s| (*s).to_string()).collect(),
+        false, // workspace
+        krates::LockOptions {
+            frozen: false,
+            locked: false,
+            offline: false,
+        },
+        &cfg,
+        &[],
+    )
+    .map_err(|e| format!("failed to resolve crates: {e}"))?;
+
+    let store =
+        cargo_about::licenses::store_from_cache().map_err(|e| format!("license store: {e}"))?;
+
+    // No HTTP client: `cli/about.toml` has no `clarify.git` entries, so the
+    // gatherer never needs to fetch remote license files.
+    let summary = cargo_about::licenses::Gatherer::with_store(Arc::new(store))
+        .with_confidence_threshold(0.8)
+        .with_max_depth(cfg.max_depth.map(|md| md as _))
+        .gather(&krates, &cfg, None);
+
+    let krate_cfg: BTreeMap<String, KrateConfig> = cfg
+        .crates
+        .into_iter()
+        .map(|(name, spanned)| (name, spanned.value))
+        .collect();
+
+    let mut files = cargo_about::licenses::resolution::Files::new();
+    let resolved = cargo_about::licenses::resolution::resolve(
+        &summary,
+        &cfg.accepted,
+        &krate_cfg,
+        &mut files,
+        false, // fail_on_missing
+    );
+
+    use codespan_reporting::term;
+    let stream = term::termcolor::StandardStream::stderr(term::termcolor::ColorChoice::Auto);
+    let diag_cfg = term::Config::default();
+    let license_list = cargo_about::generate::generate(&summary, &resolved, |diags| {
+        let mut stream = stream.lock();
+        for diag in diags {
+            let _ = term::emit_to_io_write(&mut stream, &diag_cfg, &files, diag);
+        }
+    })
+    .map_err(|e| format!("failed to generate license list: {e}"))?;
+
+    // Same layout as notalawyer-build's built-in default renderer, so the
+    // wasm notices match the native pass byte-for-byte.
+    let dashes = "-".repeat(74);
+    let mut out = String::new();
+    for license in &license_list.licenses {
+        writeln!(out, "{}\n Used by:", license.name).unwrap();
+        for used_by in &license.used_by {
+            let krate = used_by.krate;
+            let link = match krate.repository.as_deref() {
+                Some(repo) => format!(" {repo} "),
+                None => format!(" https://crates.io/crates/{} ", krate.name),
+            };
+            writeln!(out, "  - {} {} ({link})", krate.name, krate.version).unwrap();
+        }
+        writeln!(out, "\n{}\n{dashes}", license.text).unwrap();
+    }
+    Ok(out)
 }
 
 fn wasm_notice_path(out_dir: &Path, crate_name: &str) -> std::path::PathBuf {
     out_dir.join(format!("notalawyer_wasm_{crate_name}"))
 }
 
-fn try_generate_wasm_notice(
-    manifest: &Path,
-    config: &Path,
-    template: &Path,
-    output: &Path,
-    extra_args: &[&str],
-) -> Result<(), String> {
-    if !manifest.exists() {
-        // Happens when cli is built from a packaged crate that does not
-        // carry sibling workspace crates alongside it.
-        return Err(format!("manifest not found at {}", manifest.display()));
-    }
-    let file = std::fs::File::create(output)
-        .map_err(|e| format!("failed to create wasm notice file: {e}"))?;
-    let mut args = vec![
-        "about",
-        "generate",
-        "-c",
-        config
-            .to_str()
-            .ok_or_else(|| "about.toml path is not UTF-8".to_string())?,
-        "-m",
-        manifest
-            .to_str()
-            .ok_or_else(|| "manifest path is not UTF-8".to_string())?,
-    ];
-    args.extend_from_slice(extra_args);
-    args.push(
-        template
-            .to_str()
-            .ok_or_else(|| "about.hbs path is not UTF-8".to_string())?,
-    );
-    let status = std::process::Command::new("cargo")
-        .args(&args)
-        .stdout(std::process::Stdio::from(file))
-        .status()
-        .map_err(|e| format!("failed to spawn cargo-about: {e}"))?;
-    if !status.success() {
-        return Err(format!("cargo about exited with {status}"));
-    }
-    Ok(())
-}
-
-fn write_stub_notice(path: &Path, body: &str) {
-    std::fs::write(path, body).expect("failed to write stub license notice");
+fn write_notice(path: &Path, body: &str) {
+    std::fs::write(path, body).expect("failed to write license notice");
 }
 
 /// Recursively copy `src` to `dst`, skipping the `textures/` directory.

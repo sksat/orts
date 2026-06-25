@@ -577,18 +577,9 @@ jobs:
           shared-key: rust-release-${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # Host build (musl) needs cargo-about for the embedded third-party
-      # license notice. The gnu build gets cargo-about inside the cross
-      # container (Cross.toml `pre-build`), so it is not needed on the host
-      # for that target.
-      - name: Install cargo-about (musl host build)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
-        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
-        with:
-          # Pinned to match the in-container cargo-about used for the gnu
-          # build (Cross.toml), so both targets embed an identically-generated
-          # license notice. Keep these two versions in sync.
-          tool: cargo-about@0.9.0
+      # The third-party license notice is generated from build.rs via the
+      # cargo-about *library* (a build-dependency of orts-cli), so no
+      # `cargo about` binary needs to be installed for either target.
 
       - name: Download viewer dist
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

@@ -11,7 +11,7 @@ description = "orts CLI — orbital mechanics simulator with embedded 3D viewer 
 keywords = ["cli", "orbital-mechanics", "spacecraft", "simulation", "aerospace"]
 categories = ["command-line-utilities", "science"]
 # Include viewer-dist/ so `cargo publish` bundles the embedded SPA assets.
-# about.toml is required by notalawyer-build / cargo-about during build.
+# about.toml is read by build.rs (via the cargo-about library) during build.
 include = ["src/**/*", "build.rs", "tests/**/*", "viewer-dist/**/*", "textures/**/*", "about.toml", "README.md"]
 
 [[bin]]
@@ -49,12 +49,22 @@ serde_yaml.workspace = true
 rust-embed = { workspace = true, optional = true }
 wasmtime = { workspace = true, optional = true }
 rayon = "1"
-notalawyer = "0.2"
-notalawyer-clap = "0.2"
+notalawyer = "0.3"
+notalawyer-clap = "0.3"
 ts-rs.workspace = true
 
 [build-dependencies]
-notalawyer-build = "0.2"
+notalawyer-build = "0.3"
+# Used directly by build.rs to gather licenses for the bundled wasm crates
+# (a different manifest + the `wasm` feature), which notalawyer-build 0.3's
+# current-crate-only gather() can't target. See arkedge/notalawyer#32 — once a
+# manifest/feature-parameterized gather lands there, this can drop back to
+# notalawyer-build. These are already in the tree via notalawyer-build.
+cargo-about = { version = "0.9", default-features = false }
+camino = "1.2"
+krates = "0.21"
+toml-span = "0.7"
+codespan-reporting = "0.13"
 
 [dev-dependencies]
 tokio-tungstenite.workspace = true
