@@ -3,7 +3,7 @@
 //! Provides tools for parsing state-vector tables exported from the JPL
 //! Horizons system (<https://ssd.jpl.nasa.gov/horizons/>) and querying them
 //! via Hermite interpolation. The parser is always available. When compiled
-//! with the `fetch-horizons` feature, [`HorizonsTable::fetch_vector_table`]
+//! with the `fetch-horizons` feature, `HorizonsTable::fetch_vector_table`
 //! downloads tables over HTTP and caches them on disk.
 //!
 //! ## Supported input format
@@ -14,11 +14,20 @@
 //! Each row has the shape:
 //!
 //! ```text
-//! JDTDB, Calendar Date, X, Y, Z, VX, VY, VZ,
+//! JD, Calendar Date, X, Y, Z, VX, VY, VZ,
 //! ```
 //!
 //! Position is in km, velocity in km/s. The parser accepts either
 //! whitespace- or comma-separated rows after splitting on commas.
+//!
+//! The leading column is a Julian Date; the parser reads it positionally and
+//! stores it verbatim (scale-agnostic — [`Epoch::from_jd`] holds the JD value
+//! without interpreting a scale). Its time scale depends on how the table was
+//! produced: Horizons' default vector export is `JDTDB`, whereas
+//! `HorizonsTable::fetch_vector_table` forces `TIME_TYPE=UT` so the column is
+//! `JDUT`, whose numerical JD matches `arika`'s UTC-wall-clock epochs. Match a
+//! manually exported table's scale to the epochs you query it with (see the
+//! `TIME_TYPE` discussion on the fetcher).
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -31,12 +40,19 @@ use crate::epoch::Epoch;
 /// One state-vector sample from a Horizons vector table.
 #[derive(Debug, Clone, Copy)]
 pub struct HorizonsSample {
-    /// Epoch (reconstructed from the JDTDB column).
+    /// Epoch, reconstructed verbatim from the leading Julian Date column.
     ///
-    /// Note: Horizons JDTDB is in the TDB time scale, while `Epoch::from_jd`
-    /// is agnostic. The difference between TDB and UTC is ≤ ~69 seconds for
-    /// modern epochs. For sub-kilometer accuracy at Moon distance, callers
-    /// should be aware of this time-scale mismatch — see README.
+    /// [`Epoch::from_jd`] stores the JD without interpreting a scale, so this
+    /// carries whatever scale the source table used (see the module-level
+    /// "Supported input format"). Tables from
+    /// `HorizonsTable::fetch_vector_table` are `JDUT` (`TIME_TYPE=UT`), whose
+    /// numerical JD matches `arika`'s UTC-wall-clock epochs — so an interpolated
+    /// lookup keyed by such an epoch returns the state at the requested instant
+    /// (to within Horizons' sub-second UT−UT1 residual, vs the ~69 s a TDB-indexed
+    /// table would be off by). A
+    /// manually exported table parsed via `HorizonsTable::from_file` carries
+    /// its export's scale (Horizons' default is `JDTDB`, ~69 s from UTC);
+    /// reconcile that with your query epochs.
     pub epoch: Epoch,
     /// Position in ECI/J2000 [km].
     pub position: Vector3<f64>,
@@ -115,7 +131,9 @@ impl HorizonsTable {
     /// Parse a Horizons CSV vector-table string.
     ///
     /// The input must contain `$$SOE` / `$$EOE` markers bracketing CSV rows
-    /// of the form `JDTDB, Calendar, X, Y, Z, VX, VY, VZ`.
+    /// of the form `JD, Calendar, X, Y, Z, VX, VY, VZ`. The leading Julian Date
+    /// column is stored verbatim regardless of its time scale (see the
+    /// module-level "Supported input format").
     pub fn parse_csv(text: &str) -> Result<Self, HorizonsError> {
         // Locate the $$SOE and $$EOE markers.
         let lines: Vec<&str> = text.lines().collect();
@@ -147,8 +165,8 @@ impl HorizonsTable {
                 });
             }
 
-            let jd = parse_field(fields[0], "JDTDB", line_number)?;
-            // fields[1] is the calendar date string — we ignore it and use JDTDB.
+            let jd = parse_field(fields[0], "JD", line_number)?;
+            // fields[1] is the calendar date string — we ignore it and use the JD column.
             let x = parse_field(fields[2], "X", line_number)?;
             let y = parse_field(fields[3], "Y", line_number)?;
             let z = parse_field(fields[4], "Z", line_number)?;
