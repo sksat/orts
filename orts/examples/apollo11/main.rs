@@ -1532,7 +1532,7 @@ mod tests {
     #[test]
     fn moon_position_at_tli_epoch() {
         let epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
-        let moon_pos = arika::moon::moon_position_eci(&epoch);
+        let moon_pos = arika::moon::moon_position_eci(&epoch.to_tdb());
         let moon_dist = moon_pos.magnitude();
 
         // Moon distance should be ~384,400 km ± ~5%
@@ -1546,7 +1546,7 @@ mod tests {
     fn moon_position_at_loi_epoch() {
         let tli_epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
         let loi_epoch = tli_epoch.add_seconds(TLI_TO_LOI_SECONDS);
-        let moon_pos = arika::moon::moon_position_eci(&loi_epoch);
+        let moon_pos = arika::moon::moon_position_eci(&loi_epoch.to_tdb());
         let moon_dist = moon_pos.magnitude();
 
         // Moon should still be at roughly lunar distance
@@ -1560,8 +1560,8 @@ mod tests {
     fn moon_moves_during_transit() {
         let tli_epoch = Epoch::from_iso8601(TLI_EPOCH_ISO).unwrap();
         let loi_epoch = tli_epoch.add_seconds(TLI_TO_LOI_SECONDS);
-        let moon_tli = arika::moon::moon_position_eci(&tli_epoch);
-        let moon_loi = arika::moon::moon_position_eci(&loi_epoch);
+        let moon_tli = arika::moon::moon_position_eci(&tli_epoch.to_tdb());
+        let moon_loi = arika::moon::moon_position_eci(&loi_epoch.to_tdb());
 
         // Moon moves ~13°/day, so in ~3 days it should move ~39° ≈ significant displacement
         let displacement = (moon_loi - moon_tli).magnitude();

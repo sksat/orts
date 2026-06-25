@@ -400,9 +400,9 @@ mod tests {
 
     #[test]
     fn sun_position_magnitude_matches_distance() {
-        let epoch = Epoch::from_gregorian(2024, 6, 15, 12, 0, 0.0);
-        let pos = sun_position_eci(&epoch.to_tdb());
-        let dist = sun_distance_km(&epoch.to_tdb());
+        let epoch = Epoch::from_gregorian(2024, 6, 15, 12, 0, 0.0).to_tdb();
+        let pos = sun_position_eci(&epoch);
+        let dist = sun_distance_km(&epoch);
 
         let rel_err = (pos.magnitude() - dist).abs() / dist;
         assert!(
