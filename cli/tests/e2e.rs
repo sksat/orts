@@ -673,3 +673,189 @@ fn test_csv_convert_roundtrip_headers_match() {
 
     let _ = std::fs::remove_file(&rrd_path);
 }
+
+// --- Agent-friendly output contract ---------------------------------------
+// stdout carries exactly one of: simulation data XOR a JSON run summary.
+// Logs/diagnostics go to stderr. `--output -` (and the legacy "stdout"
+// alias) select stdout; any other value is a file path.
+
+/// Bug fix: `orts run --format csv --output <path>` must write the CSV to the
+/// file, not stdout. Previously every `--format csv` invocation went to stdout
+/// regardless of `--output`, silently ignoring the path.
+#[test]
+fn test_cli_csv_output_to_file() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let dir = std::env::temp_dir().join(format!("orts-e2e-csv-file-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let csv_path = dir.join("out.csv");
+
+    let output = Command::new(binary)
+        .args([
+            "run",
+            "--sat",
+            "altitude=400",
+            "--format",
+            "csv",
+            "--output",
+            csv_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to execute orts");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Data went to the file, so stdout must be empty.
+    assert!(
+        output.stdout.is_empty(),
+        "stdout should be empty when writing CSV to a file, got {} bytes",
+        output.stdout.len()
+    );
+    let contents = std::fs::read_to_string(&csv_path).expect("CSV file was not created");
+    assert!(
+        contents.contains("# orts simulation"),
+        "CSV file missing metadata header"
+    );
+    let data_lines: Vec<&str> = contents.lines().filter(|l| !l.starts_with('#')).collect();
+    assert!(
+        data_lines.len() > 10,
+        "expected many data lines in file, got {}",
+        data_lines.len()
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `--output -` is the canonical stdout sentinel.
+#[test]
+fn test_cli_csv_output_dash_is_stdout() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let output = Command::new(binary)
+        .args([
+            "run",
+            "--sat",
+            "altitude=400",
+            "--format",
+            "csv",
+            "--output",
+            "-",
+        ])
+        .output()
+        .expect("failed to execute orts");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("# orts simulation"),
+        "expected CSV on stdout for `--output -`"
+    );
+}
+
+/// `orts run --json` emits a machine-readable run summary on stdout while the
+/// recording data is written to the `--output` file.
+#[test]
+fn test_cli_run_json_summary() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let dir = std::env::temp_dir().join(format!("orts-e2e-json-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let csv_path = dir.join("data.csv");
+
+    let output = Command::new(binary)
+        .args([
+            "run",
+            "--sat",
+            "altitude=400",
+            "--epoch",
+            "2026-01-01T00:00:00Z",
+            "--json",
+            "--format",
+            "csv",
+            "--output",
+            csv_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to execute orts");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let v: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout={stdout}"));
+
+    assert_eq!(v["status"], "ok");
+    assert_eq!(v["command"], "run");
+    assert_eq!(v["simulation"]["body"], "earth");
+    assert_eq!(v["simulation"]["epoch"], "2026-01-01T00:00:00Z");
+
+    let sat0 = &v["satellites"][0];
+    assert!(
+        sat0["samples"].as_u64().unwrap() > 10,
+        "expected many samples"
+    );
+    let pos = sat0["final"]["position_km"]
+        .as_array()
+        .expect("final.position_km should be an array");
+    assert_eq!(pos.len(), 3);
+    let r = (pos[0].as_f64().unwrap().powi(2)
+        + pos[1].as_f64().unwrap().powi(2)
+        + pos[2].as_f64().unwrap().powi(2))
+    .sqrt();
+    assert!(
+        (r - 6778.0).abs() < 50.0,
+        "final radius {r:.1} km out of range"
+    );
+
+    let artifact = &v["artifacts"][0];
+    assert_eq!(artifact["format"], "csv");
+    assert!(
+        artifact["path"].as_str().unwrap().ends_with("data.csv"),
+        "artifact path should point to the CSV file"
+    );
+
+    assert!(csv_path.exists(), "CSV data file should exist");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `--json` plus simulation data destined for stdout is a usage error: both
+/// would collide on stdout. (`--format csv --output -` sends CSV to stdout.)
+#[test]
+fn test_cli_json_and_data_stdout_conflict() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let output = Command::new(binary)
+        .args([
+            "run",
+            "--sat",
+            "altitude=400",
+            "--json",
+            "--format",
+            "csv",
+            "--output",
+            "-",
+        ])
+        .output()
+        .expect("failed to execute orts");
+
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit for --json with data on stdout"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "stdout should be empty on usage error"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    assert!(
+        stderr.contains("stdout"),
+        "error should mention the stdout conflict, got: {stderr}"
+    );
+}

@@ -73,6 +73,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WebSocket protocol の TypeScript 型を `ts-rs` で Rust 型から生成
   (protocol enum、`SimConfig`、`SatelliteInfo` 等に `#[derive(TS)]`)。
   `cargo test -p orts-cli` 実行時に viewer へ出力し、ドリフトすると CI が落ちる。([#95](https://github.com/sksat/orts/pull/95))
+- `orts run --json` で機械可読な実行サマリを stdout に出力 — `status`、解決済み
+  の `simulation` パラメータ、各衛星の `samples` 数と `final` 位置/速度、出力
+  `artifacts`。診断ログは stderr に残すので、stdout はちょうど 1 つの機械可読
+  ドキュメントを運ぶ。スクリプトや orts を駆動する coding agent 向け。stdout が
+  JSON を運ぶため、シミュレーションデータはファイルへ出力する必要があり、
+  `--json` とデータの stdout 出力の併用は拒否する。([#214](https://github.com/sksat/orts/pull/214))
+- `orts run --output -` でシミュレーションデータを stdout に出力。`-` を正準の
+  stdout sentinel とし、従来の `stdout` キーワードは alias として残す。([#214](https://github.com/sksat/orts/pull/214))
 
 #### Changed
 - `--tle` を再び TLE 専用 (2LE/3LE、`-` で stdin) とし、新規 `--omm` と
@@ -86,6 +94,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   年に繰り上がらず拒否される。([#87](https://github.com/sksat/orts/pull/87))
 
 #### Fixed
+- `orts run --format csv --output <path>` が CSV を `<path>` に書き込むように
+  なった。従来は `--format csv` の実行が `--output` に関わらず常に stdout へ
+  出力し、指定パスを黙って無視していた。([#214](https://github.com/sksat/orts/pull/214))
 - `--config` ファイルで起動した `orts serve` は `[[command]]` タイムラインを
   含む config を明確なエラーで拒否する (コマンドタイムラインは `orts run`
   のみ)。従来は黙って破棄していた。([#58](https://github.com/sksat/orts/pull/58))

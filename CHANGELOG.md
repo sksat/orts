@@ -80,6 +80,14 @@ section is subdivided by package.
   `ts-rs` (`#[derive(TS)]` on the protocol enums, `SimConfig`, `SatelliteInfo`,
   …). Bindings are emitted into the viewer when `cargo test -p orts-cli` runs,
   and CI fails if they drift. ([#95](https://github.com/sksat/orts/pull/95))
+- `orts run --json` emits a machine-readable run summary on stdout — `status`,
+  the resolved `simulation` parameters, each satellite's `samples` count and
+  `final` position/velocity, and the output `artifacts` — while diagnostics stay
+  on stderr. Aimed at scripts and coding agents driving orts. Because stdout then
+  carries the JSON, the simulation data must be written to a file: combining
+  `--json` with data on stdout is rejected. ([#214](https://github.com/sksat/orts/pull/214))
+- `orts run --output -` writes the simulation data to stdout. `-` is the
+  canonical stdout sentinel; the previous `stdout` keyword is kept as an alias. ([#214](https://github.com/sksat/orts/pull/214))
 
 #### Changed
 - `--tle` is TLE-only again (2LE/3LE; `-` for stdin) and pairs with the new
@@ -93,6 +101,9 @@ section is subdivided by package.
   malformed field is rejected rather than rolling into another year. ([#87](https://github.com/sksat/orts/pull/87))
 
 #### Fixed
+- `orts run --format csv --output <path>` now writes the CSV to `<path>`.
+  Previously every `--format csv` run wrote to stdout regardless of `--output`,
+  silently ignoring the given path. ([#214](https://github.com/sksat/orts/pull/214))
 - `orts serve` started with a `--config` file now rejects a `[[command]]`
   timeline with a clear error (command timelines run only under `orts run`)
   instead of silently dropping it. ([#58](https://github.com/sksat/orts/pull/58))

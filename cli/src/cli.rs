@@ -15,13 +15,24 @@ pub enum Commands {
         #[command(flatten)]
         sim: SimArgs,
 
-        /// Output path (use "stdout" to write to standard output)
-        #[arg(long, default_value = "output.rrd")]
-        output: String,
+        /// Output path for the simulation data. Use "-" (or the legacy
+        /// "stdout" alias) to write to standard output. When omitted, the
+        /// default is "output.rrd" for --format rrd and standard output for
+        /// --format csv.
+        #[arg(long)]
+        output: Option<String>,
 
-        /// Output format
+        /// Output data format
         #[arg(long, default_value = "rrd")]
         format: OutputFormat,
+
+        /// Emit a machine-readable run summary as JSON on stdout (status,
+        /// per-satellite final state, and the output artifact). Diagnostics
+        /// and logs stay on stderr. Because stdout then carries the JSON,
+        /// the simulation data must go to a file: combining --json with data
+        /// on stdout is rejected.
+        #[arg(long)]
+        json: bool,
     },
     /// Start WebSocket server for real-time streaming
     Serve {

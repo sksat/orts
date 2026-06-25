@@ -19,7 +19,7 @@ use crate::cli::{IntegratorChoice, OutputFormat, SimArgs};
 use crate::satellite::OrbitSpec;
 use crate::sim::params::SimParams;
 
-pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
+pub fn run_simulation_cmd(sim: &SimArgs, output: Option<&str>, format: OutputFormat, json: bool) {
     let mut params = if let Some(config_path) = &sim.config {
         let config = crate::config::SimConfig::load(std::path::Path::new(config_path))
             .unwrap_or_else(|e| {
@@ -45,6 +45,11 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
             std::process::exit(1);
         }
     };
+    // Resolve and validate the stdout/output contract before running the
+    // (potentially long) simulation, so usage errors fail fast.
+    let sink = resolve_data_sink(output, format);
+    validate_output_contract(&sink, format, json);
+
     // CLI backend flags always override config-file defaults so
     // `orts run --config … --plugin-backend=sync|async` works.
     params.plugin_backend_choice = sim.plugin_backend;
@@ -63,24 +68,267 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: &str, format: OutputFormat) {
         run_simulation(&params)
     };
 
-    match (output, format) {
-        ("stdout", OutputFormat::Csv) | (_, OutputFormat::Csv) => {
-            print_recording_as_csv(&rec, &params);
-        }
-        ("stdout", OutputFormat::Rrd) => {
-            eprintln!(
-                "Error: cannot write .rrd format to stdout. Use --format csv or specify a file path."
-            );
+    let artifact = write_simulation_output(&rec, &params, &sink, format);
+
+    if json {
+        let summary = build_run_summary(&params, &rec, artifact);
+        serde_json::to_writer_pretty(std::io::stdout(), &summary).unwrap_or_else(|e| {
+            eprintln!("Error serializing run summary: {e}");
             std::process::exit(1);
+        });
+        // Trailing newline so the JSON document is its own line on stdout.
+        println!();
+    }
+}
+
+/// stdout/output contract for `orts run`: stdout carries exactly one of the
+/// simulation data or (with `--json`) the run summary; everything else
+/// (progress, errors) goes to stderr.
+enum DataSink<'a> {
+    Stdout,
+    File(&'a str),
+}
+
+/// `-` is the canonical stdout sentinel; `stdout` is kept as a legacy alias.
+fn is_stdout_sentinel(s: &str) -> bool {
+    s == "-" || s == "stdout"
+}
+
+/// Decide where the simulation data goes. With no `--output`, CSV defaults to
+/// stdout (text) while RRD defaults to `output.rrd` (binary should not land on
+/// a terminal).
+fn resolve_data_sink(output: Option<&str>, format: OutputFormat) -> DataSink<'_> {
+    match output {
+        Some(s) if is_stdout_sentinel(s) => DataSink::Stdout,
+        Some(path) => DataSink::File(path),
+        None => match format {
+            OutputFormat::Csv => DataSink::Stdout,
+            OutputFormat::Rrd => DataSink::File("output.rrd"),
+        },
+    }
+}
+
+/// Reject contradictory stdout requests before the simulation runs.
+fn validate_output_contract(sink: &DataSink, format: OutputFormat, json: bool) {
+    if matches!(sink, DataSink::Stdout) && matches!(format, OutputFormat::Rrd) {
+        eprintln!(
+            "Error: cannot write .rrd data to stdout. Use --format csv or pass --output <path>."
+        );
+        std::process::exit(2);
+    }
+    if json && matches!(sink, DataSink::Stdout) {
+        eprintln!(
+            "Error: --json writes the run summary to stdout, so simulation data cannot also go \
+             to stdout. Pass --output <path> for the data (e.g. --output result.csv)."
+        );
+        std::process::exit(2);
+    }
+}
+
+/// Write the recording to the resolved sink and return the file artifact (if
+/// any) for inclusion in the JSON summary.
+fn write_simulation_output(
+    rec: &Recording,
+    params: &SimParams,
+    sink: &DataSink,
+    format: OutputFormat,
+) -> Option<Artifact> {
+    match (sink, format) {
+        (DataSink::Stdout, OutputFormat::Csv) => {
+            print_recording_as_csv(rec, params);
+            None
         }
-        (path, OutputFormat::Rrd) => {
-            orts::record::rerun_export::save_as_rrd(&rec, "orts", path).unwrap_or_else(|e| {
+        // Rejected earlier by validate_output_contract.
+        (DataSink::Stdout, OutputFormat::Rrd) => {
+            unreachable!("rrd-to-stdout is rejected by validate_output_contract")
+        }
+        (DataSink::File(path), OutputFormat::Csv) => {
+            let mut file = std::fs::File::create(path).unwrap_or_else(|e| {
+                eprintln!("Error creating {path}: {e}");
+                std::process::exit(1);
+            });
+            write_recording_as_csv(&mut file, rec, Some(params)).unwrap_or_else(|e| {
+                eprintln!("Error writing {path}: {e}");
+                std::process::exit(1);
+            });
+            eprintln!("Saved to {path}");
+            Some(Artifact {
+                kind: "recording",
+                format: "csv",
+                path: (*path).to_string(),
+            })
+        }
+        (DataSink::File(path), OutputFormat::Rrd) => {
+            orts::record::rerun_export::save_as_rrd(rec, "orts", path).unwrap_or_else(|e| {
                 eprintln!("Error saving .rrd: {e}");
                 std::process::exit(1);
             });
             eprintln!("Saved to {path}");
+            Some(Artifact {
+                kind: "recording",
+                format: "rrd",
+                path: (*path).to_string(),
+            })
         }
     }
+}
+
+// --- Machine-readable run summary (`orts run --json`) ----------------------
+//
+// Stable, versioned JSON contract for coding agents and scripts: status,
+// the resolved simulation parameters, each satellite's final state, and the
+// output artifact. The `schema` field is a version tag, not a fetched URL.
+
+#[derive(serde::Serialize)]
+struct RunSummary {
+    schema: &'static str,
+    status: &'static str,
+    command: &'static str,
+    simulation: SimSummary,
+    satellites: Vec<SatSummary>,
+    artifacts: Vec<Artifact>,
+    warnings: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct SimSummary {
+    body: String,
+    epoch: Option<String>,
+    dt_s: f64,
+    output_interval_s: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_s: Option<f64>,
+    integrator: IntegratorSummary,
+}
+
+#[derive(serde::Serialize)]
+struct IntegratorSummary {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    /// Adaptive integrators only (dp45, dop853).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    atol: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rtol: Option<f64>,
+}
+
+#[derive(serde::Serialize)]
+struct SatSummary {
+    id: String,
+    samples: usize,
+    #[serde(rename = "final")]
+    final_state: Option<FinalState>,
+    // NOTE: early-termination reporting (e.g. atmospheric reentry detected by
+    // the event checker) is logged to stderr but not yet threaded into this
+    // summary. Rather than emit an always-null `termination` field that would
+    // let consumers mistake an early stop for normal completion, it is omitted
+    // from v1 and will be added once the reason is carried through accurately.
+}
+
+#[derive(serde::Serialize)]
+struct FinalState {
+    t_s: f64,
+    position_km: [f64; 3],
+    velocity_km_s: [f64; 3],
+}
+
+#[derive(serde::Serialize)]
+struct Artifact {
+    kind: &'static str,
+    format: &'static str,
+    path: String,
+}
+
+/// Assemble the JSON run summary from the resolved parameters and recording.
+fn build_run_summary(
+    params: &SimParams,
+    rec: &Recording,
+    artifact: Option<Artifact>,
+) -> RunSummary {
+    let satellites = params
+        .satellites
+        .iter()
+        .map(|s| {
+            let (samples, final_state) = satellite_final_state(rec, &s.entity_path());
+            SatSummary {
+                id: s.id.clone(),
+                samples,
+                final_state,
+            }
+        })
+        .collect();
+
+    let (integrator_type, adaptive) = match params.integrator {
+        IntegratorChoice::Rk4 => ("rk4", false),
+        IntegratorChoice::Dp45 => ("dp45", true),
+        IntegratorChoice::Dop853 => ("dop853", true),
+    };
+
+    RunSummary {
+        schema: "orts.run-summary/v1",
+        status: "ok",
+        command: "run",
+        simulation: SimSummary {
+            body: params.body.properties().name.to_lowercase(),
+            epoch: params.epoch.as_ref().map(|e| e.to_datetime().to_string()),
+            dt_s: params.dt,
+            output_interval_s: params.output_interval,
+            duration_s: params.duration,
+            integrator: IntegratorSummary {
+                kind: integrator_type,
+                atol: adaptive.then_some(params.tolerances.atol),
+                rtol: adaptive.then_some(params.tolerances.rtol),
+            },
+        },
+        satellites,
+        artifacts: artifact.into_iter().collect(),
+        warnings: Vec::new(),
+    }
+}
+
+/// Read a satellite's sample count and final position/velocity out of the
+/// recording. Returns `(0, None)` when the satellite has no recorded samples.
+fn satellite_final_state(rec: &Recording, sat_path: &EntityPath) -> (usize, Option<FinalState>) {
+    use orts::record::component::Component;
+    use orts::record::components::{Position3D, Velocity3D};
+    use orts::record::timeline::{TimeIndex, TimelineName};
+
+    let Some(store) = rec.entity(sat_path) else {
+        return (0, None);
+    };
+    let Some(pos_col) = store.columns.get(&Position3D::component_name()) else {
+        return (0, None);
+    };
+    let samples = pos_col.num_rows();
+    if samples == 0 {
+        return (0, None);
+    }
+    let i = samples - 1;
+
+    let t_s = store
+        .timelines
+        .get(&TimelineName::SimTime)
+        .and_then(|tl| tl.get(i))
+        .map(|ti| match ti {
+            TimeIndex::Seconds(s) => *s,
+            _ => 0.0,
+        })
+        .unwrap_or(0.0);
+
+    let vel_row = store
+        .columns
+        .get(&Velocity3D::component_name())
+        .and_then(|c| c.get_row(i));
+    let final_state = match (pos_col.get_row(i), vel_row) {
+        (Some(pos), Some(vel)) => Some(FinalState {
+            t_s,
+            position_km: [pos[0], pos[1], pos[2]],
+            velocity_km_s: [vel[0], vel[1], vel[2]],
+        }),
+        _ => None,
+    };
+
+    (samples, final_state)
 }
 
 /// Build one visibility monitor per satellite, or `None` when ground
