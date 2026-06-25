@@ -61,7 +61,7 @@
     "react-dom": "^19.2.4",
     "rollup-plugin-license": "^3.7.1",
     "three": "^0.184.0",
-    "typescript": "^5.7.0",
+    "typescript": "^6.0.0",
     "uplot": "^1.6.32",
     "vite": "^8.0.8",
     "vitest": "^4.1.4",
