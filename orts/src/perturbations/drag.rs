@@ -26,9 +26,10 @@ pub const DEFAULT_BALLISTIC_COEFF: f64 = 0.01;
 /// and a pluggable atmospheric density model.
 ///
 /// The frame parameter `F` selects how ECI positions are converted to
-/// geodetic coordinates (for density lookup) and how the atmosphere
-/// co-rotation velocity is computed. The default `SimpleEci` uses
-/// ERA-only Z rotation; `Gcrs` uses the full IAU 2006 CIO chain.
+/// geodetic coordinates (for density lookup, via the ECEF rotation) and
+/// which spin axis the atmosphere co-rotates about. `SimpleEci` uses the
+/// ERA-only ECEF rotation and a +Z spin axis; `Gcrs` uses the full IAU 2006
+/// CIO chain and the true CIP spin axis.
 pub struct AtmosphericDrag<F: EarthFrameBridge = frame::SimpleEci> {
     /// Central body (enables WGS-84 geodetic altitude for Earth)
     pub body: Option<KnownBody>,
@@ -155,10 +156,27 @@ impl<F: EarthFrameBridge> AtmosphericDrag<F> {
             return Vector3::zeros();
         }
 
-        // Relative velocity: v_rel = v - ω × r (atmosphere co-rotates with body)
-        // TODO: Phase 4D — precise path should use LOD-corrected ω and
-        // proper ECEF velocity transform via F::fixed_to_inertial.
-        let omega = Vector3::new(0.0, 0.0, self.omega_body);
+        // Atmosphere co-rotation velocity Ω × r, with Ω along the central body's
+        // spin axis (magnitude `omega_body`). For Earth the spin axis is the IAU
+        // 2006 CIP, which `EarthPoleBridge` expresses in the integration frame
+        // `F`: +Z for `SimpleEci` (so this reduces exactly to the classic
+        // [0, 0, ω] × r), the true CIP for `Gcrs` (correcting the ~0.1–0.3°
+        // offset of the spin axis from the GCRS Z axis that a +Z assumption
+        // incurs). Using the CIP — the rotation axis itself — is more faithful
+        // than rotating the ITRS figure axis via `fixed_to_inertial` (which
+        // differs by polar motion); LOD variation in |Ω| is omitted.
+        //
+        // `earth_pole` is Earth-specific, so for any other central body we keep
+        // the frame Z axis with that body's `omega_body` (the pre-existing
+        // behavior, matching the spherical geodetic fallback above — `F` is an
+        // Earth ECI frame regardless). A non-Earth body's true spin-axis
+        // orientation is not modeled: it would need a per-body pole and a
+        // body-fixed frame, so non-Earth drag here stays a coarse approximation.
+        // Tracked in #210.
+        let omega = match self.body {
+            Some(KnownBody::Earth) => F::earth_pole(utc).into_inner() * self.omega_body,
+            _ => Vector3::new(0.0, 0.0, self.omega_body),
+        };
         let v_rel = *state.velocity() - omega.cross(pos);
 
         // Convert v_rel from km/s to m/s for consistent units with ρ [kg/m³] and B [m²/kg]
@@ -361,6 +379,88 @@ mod tests {
         assert!(
             a.magnitude() > 0.0,
             "HP drag should be non-zero at ISS altitude"
+        );
+    }
+
+    #[test]
+    fn gcrs_co_rotation_uses_true_cip_spin_axis() {
+        // The atmosphere co-rotates about Earth's spin axis. For `Gcrs` that axis
+        // is the IAU 2006 CIP, offset from the GCRS Z axis by precession/nutation.
+        // Pin that drag computes the co-rotation velocity about the CIP (not +Z)
+        // by reconstructing the acceleration from `EarthPoleBridge::earth_pole`.
+        use crate::environment::{EarthPoleBridge, GcrsEopStorage};
+        use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
+
+        // Zero-EOP: model CIP only (no observed dX/dY, dUT1, polar motion) — the
+        // same provider oracle_gcrf uses; keeps the CIP at sub-mas accuracy.
+        struct ZeroEop;
+        impl Ut1Offset for ZeroEop {
+            fn dut1(&self, _: f64) -> f64 {
+                0.0
+            }
+        }
+        impl PolarMotion for ZeroEop {
+            fn x_pole(&self, _: f64) -> f64 {
+                0.0
+            }
+            fn y_pole(&self, _: f64) -> f64 {
+                0.0
+            }
+        }
+        impl NutationCorrections for ZeroEop {
+            fn dx(&self, _: f64) -> f64 {
+                0.0
+            }
+            fn dy(&self, _: f64) -> f64 {
+                0.0
+            }
+        }
+
+        let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+
+        // The check is only meaningful if the CIP differs from +Z at this epoch.
+        let pole = <frame::Gcrs as EarthPoleBridge>::earth_pole(&utc).into_inner();
+        let off_axis = (pole - vector![0.0, 0.0, 1.0]).norm();
+        assert!(
+            off_axis > 1e-9,
+            "Gcrs CIP should be measurably offset from +Z at 2024, got {off_axis:e}"
+        );
+
+        // 3D LEO state (all components non-zero so the spin-axis tilt is exercised).
+        let r = R_EARTH + 400.0;
+        let pos = vector![0.5_f64, 0.3, 0.8].normalize() * r;
+        let v = (MU_EARTH / r).sqrt();
+        let vel = vector![-v * 0.6, v * 0.5, v * 0.2];
+        let state = OrbitalState::<frame::Gcrs>::new_in_frame(pos, vel);
+
+        let drag = AtmosphericDrag::<frame::Gcrs>::for_earth_in_frame(
+            Some(0.005),
+            GcrsEopStorage::new(ZeroEop),
+        );
+        let a = drag.acceleration(&state, Some(&utc));
+
+        // Reconstruct the expected acceleration with Ω along the CIP spin axis.
+        let omega = pole * OMEGA_EARTH;
+        let v_rel = vel - omega.cross(&pos);
+        let geod = <frame::Gcrs as EarthFrameBridge>::to_geodetic(
+            &Vec3::from_raw(pos),
+            &utc,
+            &GcrsEopStorage::new(ZeroEop),
+        );
+        let rho = Exponential.density(&AtmosphereInput {
+            geodetic: geod,
+            utc: &utc,
+        });
+        assert!(rho > 0.0, "expected non-zero density at 400 km");
+        let v_rel_m = v_rel * 1000.0;
+        let expected = (-0.005 * rho * v_rel_m.magnitude() * v_rel_m) / 1000.0;
+
+        // If drag had kept the +Z assumption, it would disagree with this CIP
+        // reconstruction by ~ω·r·offset; a tight match proves the CIP is used.
+        assert!(
+            (a - expected).norm() < 1e-18,
+            "Gcrs drag must use the CIP spin axis for co-rotation; err={:e}",
+            (a - expected).norm()
         );
     }
 }
