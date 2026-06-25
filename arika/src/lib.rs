@@ -18,6 +18,8 @@ pub mod moon;
 #[cfg(feature = "alloc")]
 pub mod omm;
 pub mod planets;
+#[cfg(feature = "sgp4")]
+pub mod propagation;
 pub mod rotation;
 pub mod sun;
 #[cfg(feature = "alloc")]

@@ -65,6 +65,11 @@ jobs:
       - name: Clippy (arika no_std + alloc)
         run: cargo clippy --locked -p arika --no-default-features --features alloc -- -D warnings
 
+      # Guards the no-alloc SGP4 propagation path: `sgp4` must build with only
+      # `libm` (no std, no alloc).
+      - name: Clippy (arika no_std + sgp4)
+        run: cargo clippy --locked -p arika --no-default-features --features sgp4 -- -D warnings
+
       - name: Clippy (utsuroi no_std)
         run: cargo clippy --locked -p utsuroi --no-default-features -- -D warnings
 
