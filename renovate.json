@@ -54,15 +54,16 @@
       "matchPackageNames": ["three", "@types/three", "/^@react-three//"]
     },
     {
-      "description": "Group the arkedge/kble workspace crates (released in lockstep) into one PR. Matched by source URL, not name, so a third-party kble-* squatter can't slip in; spans both the cargo dep kble-socket and the custom-regex kble binary (KBLE_VERSION). Anchored regex tolerates a .git suffix / trailing slash in the resolved repository URL",
+      "description": "Group the arkedge/kble crates orts uses (cargo dep kble-socket + the custom-regex kble binary KBLE_VERSION) by exact name on the crate datasource. Exact names — not a kble-* prefix — so a same-named crate from another repo (e.g. an unrelated kble-foo) is never pulled in; matchSourceUrls would scope by repo directly but Renovate doesn't reliably resolve sourceUrl for these crates (depends on a rate-limited crates.io metadata call). Add new arkedge/kble crates here when orts adopts them",
       "groupName": "kble",
-      "matchSourceUrls": ["/^https:\\/\\/github\\.com\\/arkedge\\/kble(?:\\.git)?\\/?$/"]
+      "matchDatasources": ["crate"],
+      "matchPackageNames": ["kble", "kble-socket"]
     },
     {
-      "description": "Group the arkedge/notalawyer crates (released in lockstep). Matched by source URL, not name, to keep notalawyer-* squatters out",
-      "matchManagers": ["cargo"],
+      "description": "Group orts's arkedge/notalawyer crates (notalawyer / -clap / -build) by exact name on the crate datasource — exact, not a notalawyer-* prefix, to exclude an unrelated notalawyer-* from another repo (see the kble rule for why not matchSourceUrls)",
       "groupName": "notalawyer",
-      "matchSourceUrls": ["/^https:\\/\\/github\\.com\\/arkedge\\/notalawyer(?:\\.git)?\\/?$/"]
+      "matchDatasources": ["crate"],
+      "matchPackageNames": ["notalawyer", "notalawyer-clap", "notalawyer-build"]
     },
     {
       "description": "Auto-merge patch-level updates once required CI checks pass",
