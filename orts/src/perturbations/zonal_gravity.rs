@@ -22,9 +22,9 @@ use std::marker::PhantomData;
 use arika::epoch::{Epoch, Utc};
 use nalgebra::Vector3;
 
-use crate::environment::EarthPoleBridge;
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
+use arika::earth::EarthPoleBridge;
 
 /// Zonal harmonics (J2, optional J3/J4) gravity perturbation about the
 /// rotation pole supplied by [`EarthPoleBridge`].

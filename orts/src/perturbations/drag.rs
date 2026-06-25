@@ -7,10 +7,10 @@ use arika::frame::{self, Vec3};
 use nalgebra::Vector3;
 use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 
-use crate::environment::EarthFrameBridge;
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
 use crate::orbital::OrbitalState;
+use arika::earth::EarthFrameBridge;
 
 /// Default ballistic coefficient for LEO satellites \[m²/kg\].
 ///
@@ -388,8 +388,8 @@ mod tests {
         // is the IAU 2006 CIP, offset from the GCRS Z axis by precession/nutation.
         // Pin that drag computes the co-rotation velocity about the CIP (not +Z)
         // by reconstructing the acceleration from `EarthPoleBridge::earth_pole`.
-        use crate::environment::{EarthPoleBridge, GcrsEopStorage};
         use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
+        use arika::earth::{EarthPoleBridge, GcrsEopStorage};
 
         // Zero-EOP: model CIP only (no observed dX/dY, dUT1, polar motion) — the
         // same provider oracle_gcrf uses; keeps the CIP at sub-mas accuracy.

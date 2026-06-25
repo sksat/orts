@@ -10,7 +10,7 @@ use arika::earth::{Geodetic, TopocentricSite};
 use arika::epoch::{Epoch, Utc};
 use arika::frame::Vec3;
 
-use crate::environment::EarthFrameBridge;
+use arika::earth::EarthFrameBridge;
 
 /// A ground station with an elevation mask.
 #[derive(Debug, Clone)]

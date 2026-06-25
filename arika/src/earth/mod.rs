@@ -19,12 +19,17 @@
 
 pub mod ellipsoid;
 pub mod eop;
+pub mod frame_bridge;
 pub mod geodetic;
 pub mod iau2006;
 pub mod rotation;
 pub mod topocentric;
 
 pub use ellipsoid::{WGS84_A, WGS84_B, WGS84_E2, WGS84_F};
+#[cfg(feature = "alloc")]
+pub use eop::GcrsEopStorage;
+pub use eop::PositionEop;
+pub use frame_bridge::{EarthFrameBridge, EarthPoleBridge};
 pub use geodetic::{Geodetic, geodetic_altitude};
 pub use topocentric::{LookAngles, TopocentricSite};
 

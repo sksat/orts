@@ -1,92 +1,43 @@
-//! Frame-aware environment adapter for force models.
+//! Per-frame Earth rotation-pole and ECI↔ECEF bridges.
 //!
-//! [`EarthFrameBridge`] bridges an ECI propagation frame to its
-//! paired Earth-fixed (ECEF) frame, providing the geodetic conversion
-//! and ECEF↔ECI rotation that atmosphere and magnetic field models
-//! require.
+//! These traits express, for a given ECI frame, two coordinate facts that
+//! force models in downstream crates need:
+//!
+//! - [`EarthPoleBridge`] — the direction of Earth's rotation pole in the frame
+//!   (zonal gravity and atmosphere co-rotation only need the axis direction).
+//! - [`EarthFrameBridge`] — the paired Earth-fixed (ECEF) frame plus the
+//!   geodetic conversion and ECEF↔ECI rotation (atmosphere geodetic lookup,
+//!   magnetic field, wind co-rotation).
 //!
 //! Two implementations are provided:
 //!
-//! - [`arika::frame::SimpleEci`]: ERA-only Z rotation, no EOP needed.
-//!   This is the legacy/approximate path.
-//! - [`arika::frame::Gcrs`]: Full IAU 2006 CIO chain
-//!   (precession + nutation + ERA + polar motion). Requires an EOP
-//!   provider implementing [`PositionEop`].
+//! - [`SimpleEci`](crate::frame::SimpleEci): ERA-only Z rotation, pole = `+Z`,
+//!   no EOP needed (the approximate, visualization-grade path).
+//! - [`Gcrs`](crate::frame::Gcrs): full IAU 2006 CIO chain
+//!   (precession + nutation + ERA + polar motion); the pole is the true CIP and
+//!   the ECEF bridge takes an EOP provider via [`GcrsEopStorage`].
 
-use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
-use arika::earth::geodetic::Geodetic;
-use arika::earth::iau2006::cip::cip_xy;
-use arika::epoch::{Epoch, Utc};
-use arika::frame::{self, Ecef, Eci, Rotation, Vec3};
+use crate::earth::geodetic::Geodetic;
+use crate::earth::iau2006::cip::cip_xy;
+use crate::epoch::{Epoch, Utc};
+use crate::frame::{self, Ecef, Eci, Rotation, Vec3};
+// Used only on no_std (libm-backed `.sqrt()`); std uses the inherent f64 method.
+#[allow(unused_imports)]
+use crate::math::F64Ext;
 
-// PositionEop — combined trait for position-level rotation
+#[cfg(feature = "alloc")]
+use crate::earth::eop::GcrsEopStorage;
 
-/// Combined EOP capability needed for position-level Gcrs↔Itrs rotation.
-///
-/// Object-safe supertrait of the three EOP parameter traits required by
-/// [`Rotation::<Gcrs, Itrs>::iau2006_full_from_utc`](arika::frame::Rotation).
-/// LOD (Length of Day) is excluded because it is only needed for velocity
-/// transformation.
-pub trait PositionEop: Ut1Offset + PolarMotion + NutationCorrections + Send + Sync {}
-
-impl<T: Ut1Offset + PolarMotion + NutationCorrections + Send + Sync> PositionEop for T {}
-
-// GcrsEopStorage
-
-/// EOP storage for the Gcrs precise path.
-///
-/// Wraps a boxed [`PositionEop`] provider and delegates the individual
-/// EOP trait methods so it can be passed directly to arika's rotation
-/// constructors (which require `P: Ut1Offset + NutationCorrections + PolarMotion`).
-pub struct GcrsEopStorage(Box<dyn PositionEop>);
-
-impl GcrsEopStorage {
-    /// Create from any provider implementing [`PositionEop`].
-    pub fn new(provider: impl PositionEop + 'static) -> Self {
-        Self(Box::new(provider))
-    }
-}
-
-impl std::fmt::Debug for GcrsEopStorage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GcrsEopStorage").finish_non_exhaustive()
-    }
-}
-
-impl Ut1Offset for GcrsEopStorage {
-    fn dut1(&self, utc_mjd: f64) -> f64 {
-        self.0.dut1(utc_mjd)
-    }
-}
-
-impl PolarMotion for GcrsEopStorage {
-    fn x_pole(&self, utc_mjd: f64) -> f64 {
-        self.0.x_pole(utc_mjd)
-    }
-    fn y_pole(&self, utc_mjd: f64) -> f64 {
-        self.0.y_pole(utc_mjd)
-    }
-}
-
-impl NutationCorrections for GcrsEopStorage {
-    fn dx(&self, utc_mjd: f64) -> f64 {
-        self.0.dx(utc_mjd)
-    }
-    fn dy(&self, utc_mjd: f64) -> f64 {
-        self.0.dy(utc_mjd)
-    }
-}
-
-// EarthPoleBridge trait
+// EarthPoleBridge
 
 /// ECI frame that knows Earth's rotation-pole direction expressed in itself.
 ///
 /// Zonal harmonics (J2/J3/J4) are axially symmetric about the true rotation
-/// pole, so a zonal gravity model only needs the pole *direction* in the
-/// integration frame — not the full Earth-fixed rotation. This is the minimal
-/// capability `ZonalGravity` requires, kept separate from the heavier
-/// [`EarthFrameBridge`] (which also provides the ECEF rotation that drag,
-/// magnetic field, and geodetic conversions need).
+/// pole, and the atmosphere co-rotates about it, so those models only need the
+/// pole *direction* in the integration frame — not the full Earth-fixed
+/// rotation. This is the minimal capability they require, kept separate from the
+/// heavier [`EarthFrameBridge`] (which also provides the ECEF rotation that
+/// geodetic conversions and magnetic field need).
 ///
 /// EOP is intentionally not a parameter: the IAU 2006 model CIP is accurate to
 /// well under a milliarcsecond without the observed dX/dY corrections, which is
@@ -122,28 +73,30 @@ impl EarthPoleBridge for frame::Gcrs {
         let t = utc.to_tt().centuries_since_j2000();
         let (x, y) = cip_xy(t);
         let (x, y) = (x.raw(), y.raw());
-        // `.max(0.0)` guards against a slightly-negative radicand from f64
-        // round-off (x²+y² is ~1e-5 for real CIP values, never near 1).
-        let z = (1.0 - x * x - y * y).max(0.0).sqrt();
+        // Guard against a slightly-negative radicand from f64 round-off (x²+y²
+        // is ~1e-5 for real CIP values, never near 1). `f64::max` is std-only,
+        // so clamp manually to stay no_std-compatible.
+        let radicand = 1.0 - x * x - y * y;
+        let z = if radicand > 0.0 { radicand.sqrt() } else { 0.0 };
         Vec3::new(x, y, z)
     }
 }
 
-// EarthFrameBridge trait
+// EarthFrameBridge
 
 /// ECI frame that can bridge to Earth-fixed (ECEF) coordinates.
 ///
-/// This trait is the type-level dispatch point for force models that need
-/// geodetic coordinates (atmosphere, magnetic field) or ECEF↔ECI
-/// rotation (atmosphere wind velocity, magnetic field vector
-/// transformation).
+/// The type-level dispatch point for code that needs geodetic coordinates
+/// (atmosphere, magnetic field) or an ECEF↔ECI rotation (atmosphere wind
+/// velocity, magnetic field vector transformation).
 ///
 /// # Implementations
 ///
 /// - `SimpleEci`: ERA-only Z rotation (`Rotation<SimpleEci, SimpleEcef>`),
 ///   no EOP needed (`EopStorage = ()`).
-/// - `Gcrs`: Full IAU 2006 CIO chain (`Rotation<Gcrs, Itrs>`),
-///   requires EOP provider (`EopStorage = GcrsEopStorage`).
+/// - `Gcrs`: full IAU 2006 CIO chain (`Rotation<Gcrs, Itrs>`), requires an EOP
+///   provider (`EopStorage = GcrsEopStorage`, available with the `alloc`
+///   feature).
 pub trait EarthFrameBridge: EarthPoleBridge {
     /// The ECEF frame paired with this ECI frame.
     type Fixed: Ecef;
@@ -160,8 +113,6 @@ pub trait EarthFrameBridge: EarthPoleBridge {
     /// atmosphere co-rotation velocity) back into the propagation frame.
     fn fixed_to_inertial(utc: &Epoch<Utc>, eop: &Self::EopStorage) -> Rotation<Self::Fixed, Self>;
 }
-
-// SimpleEci implementation
 
 impl EarthFrameBridge for frame::SimpleEci {
     type Fixed = frame::SimpleEcef;
@@ -182,8 +133,7 @@ impl EarthFrameBridge for frame::SimpleEci {
     }
 }
 
-// Gcrs implementation
-
+#[cfg(feature = "alloc")]
 impl EarthFrameBridge for frame::Gcrs {
     type Fixed = frame::Itrs;
     type EopStorage = GcrsEopStorage;
@@ -201,12 +151,11 @@ impl EarthFrameBridge for frame::Gcrs {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
     use super::*;
-    use arika::earth::R as R_EARTH;
-    use arika::earth::eop::LengthOfDay;
-    use arika::epoch::Epoch;
+    use crate::earth::R as R_EARTH;
+    use crate::earth::eop::{LengthOfDay, NutationCorrections, PolarMotion, Ut1Offset};
 
     /// Minimal EOP provider for testing.
     struct ZeroEop;
@@ -317,8 +266,6 @@ mod tests {
             geo_gcrs.altitude
         );
     }
-
-    // EarthPoleBridge
 
     #[test]
     fn simple_eci_pole_is_plus_z() {

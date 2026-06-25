@@ -2157,9 +2157,9 @@ fn j2_omega_precession_dp45_500_orbits() {
 
 #[test]
 fn gcrs_propagation_close_to_simple_eci() {
+    use arika::earth::GcrsEopStorage;
     use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
     use arika::frame;
-    use orts::environment::GcrsEopStorage;
     use orts::orbital::gravity::PointMass;
 
     /// Zero EOP provider for testing.

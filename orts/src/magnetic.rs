@@ -14,7 +14,7 @@ use arika::epoch::{Epoch, Utc};
 use arika::frame::Vec3;
 use tobari::magnetic::{MagneticFieldInput, MagneticFieldModel};
 
-use crate::environment::EarthFrameBridge;
+use arika::earth::EarthFrameBridge;
 
 /// Evaluate a magnetic field model and return the result in the
 /// propagation frame `F`.
