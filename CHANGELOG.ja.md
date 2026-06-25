@@ -276,6 +276,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   origin に対して絶対化する。DuckDB が worker を `blob:` URL から生成するため、
   root-relative パスでは解決できないことへの対処。([#171](https://github.com/sksat/orts/pull/171))
 
+### Docs
+
+#### Added
+- ドキュメントサイトに `llms.txt` / `llms-full.txt` / `llms-small.txt` を生成
+  (`starlight-llms-txt`)。coding agent や LLM ツールが docs を取り込めるようにした
+  — 例: <https://sksat.github.io/orts/llms.txt> を agent に渡す。`llms-full.txt`
+  は全文、`llms-small.txt` は自動生成 API リファレンスを除いた要約版。([#225](https://github.com/sksat/orts/pull/225))
+
 ### Dependencies
 
 - Rust toolchain → 1.96.0。

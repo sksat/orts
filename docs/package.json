@@ -23,6 +23,7 @@
     "react-dom": "^19.1.0",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0",
+    "starlight-llms-txt": "^0.10.0",
     "starlight-rustdoc": "workspace:*",
     "starlight-typedoc": "^0.23.0",
     "typedoc": "^0.28.17",
