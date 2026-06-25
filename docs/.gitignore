@@ -1,3 +1,6 @@
+# Astro-generated content/types (created by `astro check`/`astro build`/`astro sync`)
+.astro/
+
 # Generated API docs (starlight-rustdoc)
 src/content/docs/en/utsuroi/api/
 src/content/docs/en/arika/api/

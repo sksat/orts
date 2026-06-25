@@ -7,6 +7,7 @@
     "dev": "ALLOW_MISSING_VIEWER_DIST=1 ALLOW_MISSING_TOBARI=1 STARLIGHT_RUSTDOC_SKIP=1 pnpm run setup && astro dev",
     "prebuild": "pnpm run setup",
     "build": "astro build",
+    "check": "STARLIGHT_RUSTDOC_SKIP=1 astro check",
     "preview": "astro preview",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -30,10 +31,14 @@
     "typedoc-plugin-markdown": "^4.10.0"
   },
   "devDependencies": {
+    "@astrojs/check": "^0.9.9",
+    "@types/mdast": "^4.0.4",
     "rehype-stringify": "^10.0.1",
     "remark-parse": "^11.0.0",
     "remark-rehype": "^11.1.2",
+    "typescript": "^6.0.0",
     "unified": "^11.0.5",
+    "vfile": "^6.0.3",
     "vitest": "^4.1.4"
   }
 }
