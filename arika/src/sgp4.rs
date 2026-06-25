@@ -34,8 +34,9 @@ pub enum Sgp4Error {
     /// The mean elements could not initialize a propagator — a non-positive
     /// mean motion or an epoch eccentricity outside `[0, 1)`.
     Initialization,
-    /// Propagation to the requested time diverged: orbital decay, a negative
-    /// semi-latus rectum, or a perturbed eccentricity outside `[0, 1)`.
+    /// Propagation to the requested time could not produce a valid state:
+    /// orbital decay, a negative semi-latus rectum, a perturbed eccentricity
+    /// outside `[0, 1)`, or a non-finite request time.
     Diverged,
 }
 
@@ -71,7 +72,9 @@ impl Sgp4Propagator {
     pub fn from_elements(elements: &Sgp4Elements) -> Result<Self, Sgp4Error> {
         // Reject non-finite inputs up front: a NaN slips through sgp4's `<= 0`
         // and range checks (every comparison is false), so guard the public
-        // entry point explicitly.
+        // entry point explicitly. The epoch is checked here too (before
+        // `to_datetime()`, whose float→int casts would otherwise turn a
+        // non-finite Julian date into a garbage calendar date).
         if ![
             elements.inclination,
             elements.raan,
@@ -80,6 +83,7 @@ impl Sgp4Propagator {
             elements.mean_anomaly,
             elements.mean_motion,
             elements.bstar,
+            elements.epoch.jd(),
         ]
         .iter()
         .all(|x| x.is_finite())
@@ -101,18 +105,10 @@ impl Sgp4Propagator {
         )
         .map_err(|_| Sgp4Error::Initialization)?;
 
-        // A non-finite epoch (e.g. an `Epoch` built from a NaN Julian date)
-        // would yield nonsensical datetime fields; reject it rather than
-        // silently initializing with a garbage epoch.
-        let epoch_years = afspc_years_since_j2000(&elements.epoch.to_datetime());
-        if !epoch_years.is_finite() {
-            return Err(Sgp4Error::Initialization);
-        }
-
         let constants = Constants::new(
             WGS72,
             afspc_epoch_to_sidereal_time,
-            epoch_years,
+            afspc_years_since_j2000(&elements.epoch.to_datetime()),
             elements.bstar,
             orbit,
         )
@@ -131,6 +127,12 @@ impl Sgp4Propagator {
         &self,
         minutes: f64,
     ) -> Result<(Vec3<Teme>, Vec3<Teme>), Sgp4Error> {
+        // Reject a non-finite time before handing it to sgp4: a NaN/±inf target
+        // can spin the deep-space resonance integrator (a fixed-step loop toward
+        // the target time) indefinitely.
+        if !minutes.is_finite() {
+            return Err(Sgp4Error::Diverged);
+        }
         let p = self
             .constants
             .propagate_afspc_compatibility_mode(MinutesSinceEpoch(minutes))
@@ -323,17 +325,38 @@ mod tests {
         let valid = tle::parse(&format!("{L1}\n{L2}")).unwrap().elements;
         assert!(Sgp4Propagator::from_elements(&valid).is_ok());
 
-        for spoil in [
-            |e: &mut Sgp4Elements| e.mean_motion = f64::NAN,
-            |e: &mut Sgp4Elements| e.eccentricity = f64::INFINITY,
-            |e: &mut Sgp4Elements| e.inclination = f64::NAN,
-            |e: &mut Sgp4Elements| e.bstar = f64::NEG_INFINITY,
-        ] {
+        let spoils: [fn(&mut Sgp4Elements); 5] = [
+            |e| e.mean_motion = f64::NAN,
+            |e| e.eccentricity = f64::INFINITY,
+            |e| e.inclination = f64::NAN,
+            |e| e.bstar = f64::NEG_INFINITY,
+            |e| e.epoch = Epoch::<Utc>::from_jd(f64::NAN),
+        ];
+        for spoil in spoils {
             let mut bad = valid;
             spoil(&mut bad);
             assert!(
                 Sgp4Propagator::from_elements(&bad).is_err(),
-                "non-finite element must be rejected"
+                "non-finite element / epoch must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_non_finite_propagation_time() {
+        // A non-finite minutes-since-epoch must error rather than spin the
+        // deep-space resonance integrator. Use the resonant deep-space sat.
+        const DL1: &str = "1 04632U 70093B   04031.91070959 -.00000084  00000-0  10000-3 0  9955";
+        const DL2: &str = "2 04632  11.4628 273.1101 1450506 207.6000 143.9350  1.20231981 44145";
+        let elements = tle::parse(&format!("{DL1}\n{DL2}")).unwrap().elements;
+        let prop = Sgp4Propagator::from_elements(&elements).unwrap();
+        for t in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                matches!(
+                    prop.propagate_minutes_since_epoch(t),
+                    Err(Sgp4Error::Diverged)
+                ),
+                "non-finite minutes ({t}) must be rejected"
             );
         }
     }
