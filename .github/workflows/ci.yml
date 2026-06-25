@@ -65,6 +65,11 @@ jobs:
       - name: Clippy (arika no_std + alloc)
         run: cargo clippy --locked -p arika --no-default-features --features alloc -- -D warnings
 
+      # Guards the no-alloc SGP4 propagation path: `sgp4` must build with only
+      # `libm` (no std, no alloc).
+      - name: Clippy (arika no_std + sgp4)
+        run: cargo clippy --locked -p arika --no-default-features --features sgp4 -- -D warnings
+
       - name: Clippy (utsuroi no_std)
         run: cargo clippy --locked -p utsuroi --no-default-features -- -D warnings
 
@@ -191,6 +196,12 @@ jobs:
 
       - name: Test (all except orts)
         run: cargo test --locked --workspace --exclude orts
+
+      # The SGP4 propagation tests (Vallado verification vectors) live behind
+      # arika's optional `sgp4` feature; run them explicitly so they execute
+      # regardless of which workspace members enable the feature.
+      - name: Test (arika sgp4 feature)
+        run: cargo test --locked -p arika --features sgp4
 
       # The orts-cli export tests above regenerate the ts-rs WebSocket
       # protocol bindings (viewer/src/protocol/generated/). A dirty tree

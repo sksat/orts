@@ -19,6 +19,8 @@ pub mod moon;
 pub mod omm;
 pub mod planets;
 pub mod rotation;
+#[cfg(feature = "sgp4")]
+pub mod sgp4;
 pub mod sun;
 #[cfg(feature = "alloc")]
 pub mod tle;
