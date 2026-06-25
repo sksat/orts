@@ -520,6 +520,7 @@ impl<From, To> Rotation<From, To> {
 /// [`Rotation`] stays position-only; this is its kinematic (state) companion.
 /// Build Earth ECI↔ECEF instances via the
 /// [`EarthFixedTransform`](crate::earth::EarthFixedTransform) factories.
+#[derive(Clone, Copy, PartialEq)]
 pub struct FrameTransform<From, To> {
     rotation: Rotation<From, To>,
     /// Angular velocity of `To` relative to `From`, expressed in `From` [rad/s].
@@ -555,9 +556,10 @@ impl<From, To> FrameTransform<From, To> {
     ///
     /// The position is required because the rotating-frame correction is `ω × r`.
     pub fn transform_velocity(&self, position: &Vec3<From>, velocity: &Vec3<From>) -> Vec3<To> {
+        // Transport theorem, kept frame-tagged via rotation linearity:
+        // v_to = R·(v_from − ω×r_from) = R·v_from − R·(ω×r_from).
         let corotation = self.angular_velocity.cross(position); // ω × r, in From
-        let relative = Vec3::<From>::from_raw(velocity.inner() - corotation.inner());
-        self.rotation.transform(&relative)
+        self.rotation.transform(velocity) - self.rotation.transform(&corotation)
     }
 
     /// Transform a full state (position, velocity).
@@ -580,7 +582,7 @@ impl<From, To> FrameTransform<From, To> {
         let omega_in_to = self.rotation.transform(&self.angular_velocity); // R·ω, in To
         FrameTransform {
             rotation: self.rotation.inverse(),
-            angular_velocity: Vec3::<To>::from_raw(-omega_in_to.into_inner()),
+            angular_velocity: omega_in_to * -1.0,
         }
     }
 }

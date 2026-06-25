@@ -130,8 +130,7 @@ pub trait EarthFixedTransform: EarthRotationPole {
         eop: &Self::EopStorage,
     ) -> FrameTransform<Self, Self::Fixed> {
         // ω of ECEF relative to ECI, expressed in ECI: Earth's spin vector.
-        let omega =
-            Vec3::<Self>::from_raw(Self::earth_pole(utc).into_inner() * crate::earth::OMEGA);
+        let omega = Self::earth_pole(utc) * crate::earth::OMEGA;
         let rotation = Self::fixed_to_inertial(utc, eop).inverse();
         FrameTransform::new(rotation, omega)
     }
