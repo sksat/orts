@@ -14,7 +14,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - 地上局コンタクトウィンドウ検出 (`visibility` module): `GroundStation`
   (WGS-84 位置 + 仰角マスク)、`ContactWindow` (補間した AOS/LOS、最大仰角、
   span クリップフラグ)、純粋な `PassTracker` ステートマシン、frame-aware な
-  `VisibilityMonitor<F: EarthFrameBridge>` (ECI サンプルを地上局ごとの
+  `VisibilityMonitor<F: EarthFixedTransform>` (ECI サンプルを地上局ごとの
   topocentric look angle に変換)。([#112](https://github.com/sksat/orts/pull/112))
 - `IndependentGroup::propagate_to_with(t_target, observer)` — 受理された全
   積分ステップで `FnMut(&SatId, f64, &State)` observer を呼びながら伝播。

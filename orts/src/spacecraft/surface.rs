@@ -303,7 +303,7 @@ impl PanelDrag {
 
 // PanelDrag remains SimpleEci-constrained because loads_from_state uses
 // ERA-based geodetic conversion internally (same as AtmosphericDrag before
-// EarthFrameBridge). To support Gcrs, PanelDrag needs EarthFrameBridge<F>
+// EarthFixedTransform). To support Gcrs, PanelDrag needs EarthFixedTransform<F>
 // with EOP storage, like AtmosphericDrag<F>.
 impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci> + HasMass> Model<S> for PanelDrag {
     fn name(&self) -> &str {

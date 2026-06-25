@@ -1,92 +1,43 @@
-//! Frame-aware environment adapter for force models.
+//! Per-frame Earth rotation pole and ECI↔ECEF transforms.
 //!
-//! [`EarthFrameBridge`] bridges an ECI propagation frame to its
-//! paired Earth-fixed (ECEF) frame, providing the geodetic conversion
-//! and ECEF↔ECI rotation that atmosphere and magnetic field models
-//! require.
+//! These traits express, for a given ECI frame, two coordinate facts that
+//! force models in downstream crates need:
+//!
+//! - [`EarthRotationPole`] — the direction of Earth's rotation pole in the frame
+//!   (zonal gravity and atmosphere co-rotation only need the axis direction).
+//! - [`EarthFixedTransform`] — the paired Earth-fixed (ECEF) frame plus the
+//!   geodetic conversion and ECEF↔ECI rotation (atmosphere geodetic lookup,
+//!   magnetic field, wind co-rotation).
 //!
 //! Two implementations are provided:
 //!
-//! - [`arika::frame::SimpleEci`]: ERA-only Z rotation, no EOP needed.
-//!   This is the legacy/approximate path.
-//! - [`arika::frame::Gcrs`]: Full IAU 2006 CIO chain
-//!   (precession + nutation + ERA + polar motion). Requires an EOP
-//!   provider implementing [`PositionEop`].
+//! - [`SimpleEci`](crate::frame::SimpleEci): ERA-only Z rotation, pole = `+Z`,
+//!   no EOP needed (the approximate, visualization-grade path).
+//! - [`Gcrs`](crate::frame::Gcrs): full IAU 2006 CIO chain
+//!   (precession + nutation + ERA + polar motion); the pole is the true CIP and
+//!   the ECEF transform takes an EOP provider via [`GcrsEopStorage`].
 
-use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
-use arika::earth::geodetic::Geodetic;
-use arika::earth::iau2006::cip::cip_xy;
-use arika::epoch::{Epoch, Utc};
-use arika::frame::{self, Ecef, Eci, Rotation, Vec3};
+use crate::earth::geodetic::Geodetic;
+use crate::earth::iau2006::cip::cip_xy;
+use crate::epoch::{Epoch, Utc};
+use crate::frame::{self, Ecef, Eci, Rotation, Vec3};
+// Used only on no_std (libm-backed `.sqrt()`); std uses the inherent f64 method.
+#[allow(unused_imports)]
+use crate::math::F64Ext;
 
-// PositionEop — combined trait for position-level rotation
+#[cfg(feature = "alloc")]
+use crate::earth::eop::GcrsEopStorage;
 
-/// Combined EOP capability needed for position-level Gcrs↔Itrs rotation.
-///
-/// Object-safe supertrait of the three EOP parameter traits required by
-/// [`Rotation::<Gcrs, Itrs>::iau2006_full_from_utc`](arika::frame::Rotation).
-/// LOD (Length of Day) is excluded because it is only needed for velocity
-/// transformation.
-pub trait PositionEop: Ut1Offset + PolarMotion + NutationCorrections + Send + Sync {}
-
-impl<T: Ut1Offset + PolarMotion + NutationCorrections + Send + Sync> PositionEop for T {}
-
-// GcrsEopStorage
-
-/// EOP storage for the Gcrs precise path.
-///
-/// Wraps a boxed [`PositionEop`] provider and delegates the individual
-/// EOP trait methods so it can be passed directly to arika's rotation
-/// constructors (which require `P: Ut1Offset + NutationCorrections + PolarMotion`).
-pub struct GcrsEopStorage(Box<dyn PositionEop>);
-
-impl GcrsEopStorage {
-    /// Create from any provider implementing [`PositionEop`].
-    pub fn new(provider: impl PositionEop + 'static) -> Self {
-        Self(Box::new(provider))
-    }
-}
-
-impl std::fmt::Debug for GcrsEopStorage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("GcrsEopStorage").finish_non_exhaustive()
-    }
-}
-
-impl Ut1Offset for GcrsEopStorage {
-    fn dut1(&self, utc_mjd: f64) -> f64 {
-        self.0.dut1(utc_mjd)
-    }
-}
-
-impl PolarMotion for GcrsEopStorage {
-    fn x_pole(&self, utc_mjd: f64) -> f64 {
-        self.0.x_pole(utc_mjd)
-    }
-    fn y_pole(&self, utc_mjd: f64) -> f64 {
-        self.0.y_pole(utc_mjd)
-    }
-}
-
-impl NutationCorrections for GcrsEopStorage {
-    fn dx(&self, utc_mjd: f64) -> f64 {
-        self.0.dx(utc_mjd)
-    }
-    fn dy(&self, utc_mjd: f64) -> f64 {
-        self.0.dy(utc_mjd)
-    }
-}
-
-// EarthPoleBridge trait
+// EarthRotationPole
 
 /// ECI frame that knows Earth's rotation-pole direction expressed in itself.
 ///
 /// Zonal harmonics (J2/J3/J4) are axially symmetric about the true rotation
-/// pole, so a zonal gravity model only needs the pole *direction* in the
-/// integration frame — not the full Earth-fixed rotation. This is the minimal
-/// capability `ZonalGravity` requires, kept separate from the heavier
-/// [`EarthFrameBridge`] (which also provides the ECEF rotation that drag,
-/// magnetic field, and geodetic conversions need).
+/// pole, and the atmosphere co-rotates about it, so those models only need the
+/// pole *direction* in the integration frame — not the full Earth-fixed
+/// rotation. This is the minimal capability they require, kept separate from the
+/// heavier [`EarthFixedTransform`] (which also provides the ECEF rotation that
+/// geodetic conversions and magnetic field need).
 ///
 /// EOP is intentionally not a parameter: the IAU 2006 model CIP is accurate to
 /// well under a milliarcsecond without the observed dX/dY corrections, which is
@@ -96,19 +47,21 @@ impl NutationCorrections for GcrsEopStorage {
 /// # Implementations
 ///
 /// - `SimpleEci`: pole = `+Z` (the simple frame defines its Z axis as the pole).
-/// - `Gcrs`: pole = the IAU 2006 CIP direction `(X, Y, √(1−X²−Y²))` at the epoch.
-pub trait EarthPoleBridge: Eci + Sized + 'static {
+/// - `Gcrs`: the IAU 2006 **model** CIP — precession + nutation, no observed
+///   dX/dY, no polar motion — as `(X, Y, √(1−X²−Y²))` at the epoch. For an
+///   exact observed pole, a separate EOP-taking API would be needed.
+pub trait EarthRotationPole: Eci + Sized + 'static {
     /// Unit vector along Earth's rotation pole, expressed in this frame.
     fn earth_pole(utc: &Epoch<Utc>) -> Vec3<Self>;
 }
 
-impl EarthPoleBridge for frame::SimpleEci {
+impl EarthRotationPole for frame::SimpleEci {
     fn earth_pole(_utc: &Epoch<Utc>) -> Vec3<frame::SimpleEci> {
         Vec3::new(0.0, 0.0, 1.0)
     }
 }
 
-impl EarthPoleBridge for frame::Gcrs {
+impl EarthRotationPole for frame::Gcrs {
     fn earth_pole(utc: &Epoch<Utc>) -> Vec3<frame::Gcrs> {
         // CIP direction cosines (X, Y) in GCRS from the IAU 2006 model; Z closes
         // the unit vector. The model (no observed dX/dY) is sub-mas accurate.
@@ -124,27 +77,29 @@ impl EarthPoleBridge for frame::Gcrs {
         let (x, y) = (x.raw(), y.raw());
         // `.max(0.0)` guards against a slightly-negative radicand from f64
         // round-off (x²+y² is ~1e-5 for real CIP values, never near 1).
+        // `.sqrt()` is the only std-only float op here; `F64Ext` (libm) supplies
+        // it on no_std, while `f64::max` is available in `core`.
         let z = (1.0 - x * x - y * y).max(0.0).sqrt();
         Vec3::new(x, y, z)
     }
 }
 
-// EarthFrameBridge trait
+// EarthFixedTransform
 
-/// ECI frame that can bridge to Earth-fixed (ECEF) coordinates.
+/// ECI frame with a transform to its paired Earth-fixed (ECEF) frame.
 ///
-/// This trait is the type-level dispatch point for force models that need
-/// geodetic coordinates (atmosphere, magnetic field) or ECEF↔ECI
-/// rotation (atmosphere wind velocity, magnetic field vector
-/// transformation).
+/// The type-level dispatch point for code that needs geodetic coordinates
+/// (atmosphere, magnetic field) or an ECEF↔ECI rotation (atmosphere wind
+/// velocity, magnetic field vector transformation).
 ///
 /// # Implementations
 ///
 /// - `SimpleEci`: ERA-only Z rotation (`Rotation<SimpleEci, SimpleEcef>`),
 ///   no EOP needed (`EopStorage = ()`).
-/// - `Gcrs`: Full IAU 2006 CIO chain (`Rotation<Gcrs, Itrs>`),
-///   requires EOP provider (`EopStorage = GcrsEopStorage`).
-pub trait EarthFrameBridge: EarthPoleBridge {
+/// - `Gcrs`: full IAU 2006 CIO chain (`Rotation<Gcrs, Itrs>`), requires an EOP
+///   provider (`EopStorage = GcrsEopStorage`, available with the `alloc`
+///   feature).
+pub trait EarthFixedTransform: EarthRotationPole {
     /// The ECEF frame paired with this ECI frame.
     type Fixed: Ecef;
 
@@ -161,9 +116,7 @@ pub trait EarthFrameBridge: EarthPoleBridge {
     fn fixed_to_inertial(utc: &Epoch<Utc>, eop: &Self::EopStorage) -> Rotation<Self::Fixed, Self>;
 }
 
-// SimpleEci implementation
-
-impl EarthFrameBridge for frame::SimpleEci {
+impl EarthFixedTransform for frame::SimpleEci {
     type Fixed = frame::SimpleEcef;
     type EopStorage = ();
 
@@ -182,9 +135,8 @@ impl EarthFrameBridge for frame::SimpleEci {
     }
 }
 
-// Gcrs implementation
-
-impl EarthFrameBridge for frame::Gcrs {
+#[cfg(feature = "alloc")]
+impl EarthFixedTransform for frame::Gcrs {
     type Fixed = frame::Itrs;
     type EopStorage = GcrsEopStorage;
 
@@ -201,12 +153,11 @@ impl EarthFrameBridge for frame::Gcrs {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 mod tests {
     use super::*;
-    use arika::earth::R as R_EARTH;
-    use arika::earth::eop::LengthOfDay;
-    use arika::epoch::Epoch;
+    use crate::earth::R as R_EARTH;
+    use crate::earth::eop::{LengthOfDay, NutationCorrections, PolarMotion, Ut1Offset};
 
     /// Minimal EOP provider for testing.
     struct ZeroEop;
@@ -243,7 +194,7 @@ mod tests {
         let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let alt_km = 400.0;
         let pos = Vec3::<frame::SimpleEci>::new(R_EARTH + alt_km, 0.0, 0.0);
-        let geo = <frame::SimpleEci as EarthFrameBridge>::to_geodetic(&pos, &utc, &());
+        let geo = <frame::SimpleEci as EarthFixedTransform>::to_geodetic(&pos, &utc, &());
         // Altitude should be close to 400 km (not exact due to ERA rotation
         // and WGS84 ellipsoidal correction)
         assert!(
@@ -259,7 +210,7 @@ mod tests {
         let alt_km = 400.0;
         let pos = Vec3::<frame::Gcrs>::new(R_EARTH + alt_km, 0.0, 0.0);
         let eop = GcrsEopStorage::new(ZeroEop);
-        let geo = <frame::Gcrs as EarthFrameBridge>::to_geodetic(&pos, &utc, &eop);
+        let geo = <frame::Gcrs as EarthFixedTransform>::to_geodetic(&pos, &utc, &eop);
         assert!(
             (geo.altitude - alt_km).abs() < 1.0,
             "expected ~{alt_km} km, got {}",
@@ -271,7 +222,7 @@ mod tests {
     fn simple_eci_fixed_to_inertial_roundtrip() {
         let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let v_ecef = Vec3::<frame::SimpleEcef>::new(1.0, 2.0, 3.0);
-        let rot = <frame::SimpleEci as EarthFrameBridge>::fixed_to_inertial(&utc, &());
+        let rot = <frame::SimpleEci as EarthFixedTransform>::fixed_to_inertial(&utc, &());
         let v_eci = rot.transform(&v_ecef);
         // Magnitude should be preserved
         assert!(
@@ -285,7 +236,7 @@ mod tests {
         let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let v_itrs = Vec3::<frame::Itrs>::new(1.0, 2.0, 3.0);
         let eop = GcrsEopStorage::new(ZeroEop);
-        let rot = <frame::Gcrs as EarthFrameBridge>::fixed_to_inertial(&utc, &eop);
+        let rot = <frame::Gcrs as EarthFixedTransform>::fixed_to_inertial(&utc, &eop);
         let v_gcrs = rot.transform(&v_itrs);
         assert!(
             (v_gcrs.magnitude() - v_itrs.magnitude()).abs() < 1e-14,
@@ -303,11 +254,11 @@ mod tests {
 
         let pos_simple = Vec3::<frame::SimpleEci>::new(R_EARTH + alt_km, 0.0, 0.0);
         let geo_simple =
-            <frame::SimpleEci as EarthFrameBridge>::to_geodetic(&pos_simple, &utc, &());
+            <frame::SimpleEci as EarthFixedTransform>::to_geodetic(&pos_simple, &utc, &());
 
         let pos_gcrs = Vec3::<frame::Gcrs>::new(R_EARTH + alt_km, 0.0, 0.0);
         let eop = GcrsEopStorage::new(ZeroEop);
-        let geo_gcrs = <frame::Gcrs as EarthFrameBridge>::to_geodetic(&pos_gcrs, &utc, &eop);
+        let geo_gcrs = <frame::Gcrs as EarthFixedTransform>::to_geodetic(&pos_gcrs, &utc, &eop);
 
         // Altitudes should agree within a few km (different rotation chains)
         assert!(
@@ -318,16 +269,14 @@ mod tests {
         );
     }
 
-    // EarthPoleBridge
-
     #[test]
     fn simple_eci_pole_is_plus_z() {
         let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
-        let p = <frame::SimpleEci as EarthPoleBridge>::earth_pole(&utc);
+        let p = <frame::SimpleEci as EarthRotationPole>::earth_pole(&utc);
         assert_eq!(p, Vec3::<frame::SimpleEci>::new(0.0, 0.0, 1.0));
     }
 
-    fn pole_offset_from_z_deg<F: EarthPoleBridge>(utc: &Epoch<Utc>) -> f64 {
+    fn pole_offset_from_z_deg<F: EarthRotationPole>(utc: &Epoch<Utc>) -> f64 {
         let p = F::earth_pole(utc);
         let z = Vec3::<F>::new(0.0, 0.0, 1.0);
         assert!(

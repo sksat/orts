@@ -32,7 +32,7 @@ fn build_gravity_field() -> Box<dyn GravityField> {
 
 /// Zonal (J2/J3/J4) perturbation for the body, if it has an oblateness model.
 ///
-/// These builders produce `SimpleEci` systems, where `EarthPoleBridge` returns
+/// These builders produce `SimpleEci` systems, where `EarthRotationPole` returns
 /// the frame's `+Z` axis as the pole — the legacy frame-Z convention. So
 /// `ZonalGravity` reproduces the previous frame-Z behaviour for every
 /// body; for a non-Earth body that is correct only insofar as its state is

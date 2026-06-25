@@ -3,10 +3,10 @@
 //! The model's [`MagneticFieldModel::field_ecef`] returns the field in
 //! ECEF Cartesian coordinates. Callers inside orts work in an ECI frame,
 //! so this module provides [`field_inertial`] which handles the full
-//! round-trip via [`EarthFrameBridge`]:
+//! round-trip via [`EarthFixedTransform`]:
 //!
 //! ```text
-//! ECI position → ECEF (via EarthFrameBridge) → geodetic
+//! ECI position → ECEF (via EarthFixedTransform) → geodetic
 //!   → field_ecef → ECEF field vector → ECI (inverse rotation)
 //! ```
 
@@ -14,14 +14,14 @@ use arika::epoch::{Epoch, Utc};
 use arika::frame::Vec3;
 use tobari::magnetic::{MagneticFieldInput, MagneticFieldModel};
 
-use crate::environment::EarthFrameBridge;
+use arika::earth::EarthFixedTransform;
 
 /// Evaluate a magnetic field model and return the result in the
 /// propagation frame `F`.
 ///
-/// Uses [`EarthFrameBridge`] for the ECI↔ECEF conversion, so it works
+/// Uses [`EarthFixedTransform`] for the ECI↔ECEF conversion, so it works
 /// with both `SimpleEci` (ERA rotation) and `Gcrs` (IAU 2006 chain).
-pub fn field_inertial<F: EarthFrameBridge>(
+pub fn field_inertial<F: EarthFixedTransform>(
     model: &dyn MagneticFieldModel,
     position: &Vec3<F>,
     epoch: &Epoch<Utc>,

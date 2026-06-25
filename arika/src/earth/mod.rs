@@ -16,6 +16,10 @@
 //!   nutation polynomials) plus the `Rotation<Gcrs, Cirs>::iau2006` /
 //!   `Rotation<Cirs, Tirs>::from_era` / `Rotation<Tirs, Itrs>::polar_motion`
 //!   constructors that consume the [`eop`] traits.
+//! - [`transform`] — per-frame Earth rotation pole
+//!   ([`EarthRotationPole`](transform::EarthRotationPole)) and ECI ↔ ECEF
+//!   transform ([`EarthFixedTransform`](transform::EarthFixedTransform)) for
+//!   `SimpleEci` / `Gcrs`, used by frame-aware force models
 
 pub mod ellipsoid;
 pub mod eop;
@@ -23,10 +27,15 @@ pub mod geodetic;
 pub mod iau2006;
 pub mod rotation;
 pub mod topocentric;
+pub mod transform;
 
 pub use ellipsoid::{WGS84_A, WGS84_B, WGS84_E2, WGS84_F};
+#[cfg(feature = "alloc")]
+pub use eop::GcrsEopStorage;
+pub use eop::PositionEop;
 pub use geodetic::{Geodetic, geodetic_altitude};
 pub use topocentric::{LookAngles, TopocentricSite};
+pub use transform::{EarthFixedTransform, EarthRotationPole};
 
 // Physical constants
 

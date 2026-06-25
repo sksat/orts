@@ -6,17 +6,17 @@
 //! Key differences from the EME2000 fixtures (oracle_orekit.rs):
 //! - **Frame**: GCRF (includes IAU frame bias) vs EME2000 (J2000 mean equator)
 //! - **Drag geodetic**: Orekit uses ITRF via full IAU 2006 chain with real EOP;
-//!   our Gcrs path uses EarthFrameBridge<Gcrs> with ZeroEop (no dUT1, xp=yp=0)
+//!   our Gcrs path uses EarthFixedTransform<Gcrs> with ZeroEop (no dUT1, xp=yp=0)
 //! - **Known EOP gap**: ZeroEop vs real EOP introduces ~arcsec-level rotation
 //!   difference (~meter-level position error per orbit)
 
+use arika::earth::GcrsEopStorage;
 use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
 use arika::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH};
 use arika::earth::{MU as MU_EARTH, R as R_EARTH};
 use arika::epoch::Epoch;
 use arika::frame;
 use nalgebra::Vector3;
-use orts::environment::GcrsEopStorage;
 use orts::orbital::OrbitalState;
 use orts::orbital::OrbitalSystem;
 use orts::orbital::gravity::PointMass;

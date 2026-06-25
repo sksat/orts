@@ -97,6 +97,70 @@ pub trait FullEopProvider: Ut1Offset + PolarMotion + NutationCorrections + Lengt
 
 impl<T> FullEopProvider for T where T: Ut1Offset + PolarMotion + NutationCorrections + LengthOfDay {}
 
+/// Convenience bound for the position-level (no-velocity) rotation chain.
+///
+/// Object-safe combination of the three parameter traits required by
+/// [`Rotation::<Gcrs, Itrs>::iau2006_full_from_utc`](crate::frame::Rotation).
+/// Unlike [`FullEopProvider`] it omits [`LengthOfDay`], which is only needed for
+/// velocity transformation. Thread-safety is intentionally *not* required here;
+/// callers that need to store a provider use the `Send + Sync` boxed
+/// [`GcrsEopStorage`].
+pub trait PositionEop: Ut1Offset + PolarMotion + NutationCorrections {}
+
+impl<T> PositionEop for T where T: Ut1Offset + PolarMotion + NutationCorrections {}
+
+/// Owned, type-erased [`PositionEop`] provider for the `Gcrs` precise path.
+///
+/// Wraps a boxed provider and delegates the EOP trait methods, so it can be
+/// stored inside a force model and passed directly to arika's rotation
+/// constructors (which take `P: Ut1Offset + NutationCorrections + PolarMotion`).
+/// `Send + Sync` is carried by the boxed trait object rather than by
+/// [`PositionEop`], keeping that trait a pure capability.
+#[cfg(feature = "alloc")]
+pub struct GcrsEopStorage(alloc::boxed::Box<dyn PositionEop + Send + Sync>);
+
+#[cfg(feature = "alloc")]
+impl GcrsEopStorage {
+    /// Create from any thread-safe [`PositionEop`] provider.
+    pub fn new(provider: impl PositionEop + Send + Sync + 'static) -> Self {
+        Self(alloc::boxed::Box::new(provider))
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl core::fmt::Debug for GcrsEopStorage {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GcrsEopStorage").finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl Ut1Offset for GcrsEopStorage {
+    fn dut1(&self, utc_mjd: f64) -> f64 {
+        self.0.dut1(utc_mjd)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PolarMotion for GcrsEopStorage {
+    fn x_pole(&self, utc_mjd: f64) -> f64 {
+        self.0.x_pole(utc_mjd)
+    }
+    fn y_pole(&self, utc_mjd: f64) -> f64 {
+        self.0.y_pole(utc_mjd)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl NutationCorrections for GcrsEopStorage {
+    fn dx(&self, utc_mjd: f64) -> f64 {
+        self.0.dx(utc_mjd)
+    }
+    fn dy(&self, utc_mjd: f64) -> f64 {
+        self.0.dy(utc_mjd)
+    }
+}
+
 // NullEop
 
 /// EOP placeholder that implements none of the EOP parameter traits.

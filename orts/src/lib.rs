@@ -1,7 +1,6 @@
 pub mod attitude;
 pub mod control;
 pub mod effector;
-pub mod environment;
 pub mod events;
 pub mod group;
 pub mod magnetic;
