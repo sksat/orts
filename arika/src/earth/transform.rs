@@ -84,6 +84,56 @@ impl EarthRotationPole for frame::Gcrs {
     }
 }
 
+// EphemerisFrameBridge
+
+/// ECI frame that a GCRS ephemeris vector can be rotated into, for frame-correct
+/// third-body / SRP forces.
+///
+/// The analytic Sun/Moon/planet ephemerides return positions in
+/// [`Gcrs`](crate::frame::Gcrs). A force model integrating in frame `F` must
+/// express that position in `F` before differencing it with the satellite state.
+/// This trait supplies the `GCRS → F` rotation so the force model can be written
+/// once, frame-generically, instead of inheriting a raw-vector mix that is only
+/// valid for GCRS-aligned frames. A frame without this impl cannot be used with
+/// those forces (a compile error), which is the point: a new of-date frame must
+/// state its `GCRS → F` rotation rather than silently reuse the raw treatment.
+///
+/// # Implementations
+///
+/// - `SimpleEci` / `Gcrs`: identity. `Gcrs` *is* the ephemeris frame; `SimpleEci`
+///   is the simple/visualization-grade frame (no precession/nutation/bias model,
+///   and no strict relation to GCRS — see [`SimpleEci`](crate::frame::SimpleEci)),
+///   so the analytic ephemeris is treated as already expressed in it, preserving
+///   the historical Meeus/simple-path behavior exactly.
+/// - `Cirs`: the EOP-free IAU 2006 **model** GCRS→CIRS rotation (precession +
+///   nutation), rotating the ephemeris into the of-date intermediate frame.
+///
+/// EOP is intentionally not a parameter, matching [`EarthRotationPole`]: the
+/// model CIP is sub-milliarcsecond, negligible next to the ~arcminute accuracy
+/// of the analytic ephemerides this serves.
+pub trait EphemerisFrameBridge: Eci + Sized + 'static {
+    /// Rotation carrying a GCRS ephemeris vector into this frame at `utc`.
+    fn ephemeris_rotation(utc: &Epoch<Utc>) -> Rotation<frame::Gcrs, Self>;
+}
+
+impl EphemerisFrameBridge for frame::Gcrs {
+    fn ephemeris_rotation(_utc: &Epoch<Utc>) -> Rotation<frame::Gcrs, frame::Gcrs> {
+        Rotation::identity()
+    }
+}
+
+impl EphemerisFrameBridge for frame::SimpleEci {
+    fn ephemeris_rotation(_utc: &Epoch<Utc>) -> Rotation<frame::Gcrs, frame::SimpleEci> {
+        Rotation::identity()
+    }
+}
+
+impl EphemerisFrameBridge for frame::Cirs {
+    fn ephemeris_rotation(utc: &Epoch<Utc>) -> Rotation<frame::Gcrs, frame::Cirs> {
+        Rotation::<frame::Gcrs, frame::Cirs>::iau2006_model(&utc.to_tt())
+    }
+}
+
 // EarthFixedTransform
 
 /// ECI frame with a transform to its paired Earth-fixed (ECEF) frame.

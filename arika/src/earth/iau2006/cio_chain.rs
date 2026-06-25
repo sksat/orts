@@ -148,6 +148,22 @@ impl Rotation<Gcrs, Cirs> {
         let m = gcrs_to_cirs_matrix(x_corrected, y_corrected, s);
         Self::from_raw(matrix3_to_unit_quaternion(m))
     }
+
+    /// GCRS → CIRS from the IAU 2006 **model** alone — precession + nutation
+    /// with no observed dX/dY corrections, hence EOP-free.
+    ///
+    /// This is [`iau2006`](Self::iau2006) with `dX = dY = 0`. The model CIP is
+    /// sub-milliarcsecond without the observed corrections, so this is the right
+    /// choice where an EOP provider is unavailable or unwarranted — e.g. carrying
+    /// an analytic (Meeus) ephemeris between GCRS and an of-date inertial frame
+    /// (see `EphemerisFrameBridge`), matching the EOP-free model CIP that
+    /// [`EarthRotationPole`](crate::earth::transform::EarthRotationPole) uses.
+    pub fn iau2006_model(tt: &Epoch<Tt>) -> Self {
+        let t = tt.centuries_since_j2000();
+        let (x, y) = cip_xy(t);
+        let s = cio_locator_s(t, x, y);
+        Self::from_raw(matrix3_to_unit_quaternion(gcrs_to_cirs_matrix(x, y, s)))
+    }
 }
 
 // Rotation<Cirs, Tirs>::from_era
@@ -421,6 +437,26 @@ mod tests {
         for i in 0..3 {
             let delta = (v_from_rotation[i] - v_from_reference[i]).abs();
             assert!(delta < 1e-14, "component {i} delta = {delta}");
+        }
+    }
+
+    /// `iau2006_model` (EOP-free) must equal `iau2006` given a zero-correction
+    /// EOP provider — it is exactly the model with dX = dY = 0.
+    #[test]
+    fn iau2006_model_matches_iau2006_with_zero_eop() {
+        let (tt, _ut1, utc) = sample_epochs();
+        let model = Rotation::<Gcrs, Cirs>::iau2006_model(&tt);
+        let zero_eop = Rotation::<Gcrs, Cirs>::iau2006(&tt, &utc, &ZeroEop);
+        let v = nalgebra::Vector3::new(0.3, -0.7, 0.65);
+        let from_model = model.inner().transform_vector(&v);
+        let from_zero = zero_eop.inner().transform_vector(&v);
+        for i in 0..3 {
+            assert!(
+                (from_model[i] - from_zero[i]).abs() < 1e-15,
+                "component {i}: {} vs {}",
+                from_model[i],
+                from_zero[i]
+            );
         }
     }
 
