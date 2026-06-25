@@ -95,10 +95,18 @@ impl Sgp4Propagator {
         )
         .map_err(|_| Sgp4Error::Initialization)?;
 
+        // A non-finite epoch (e.g. an `Epoch` built from a NaN Julian date)
+        // would yield nonsensical datetime fields; reject it rather than
+        // silently initializing with a garbage epoch.
+        let epoch_years = afspc_years_since_j2000(&elements.epoch.to_datetime());
+        if !epoch_years.is_finite() {
+            return Err(Sgp4Error::Initialization);
+        }
+
         let constants = Constants::new(
             WGS72,
             afspc_epoch_to_sidereal_time,
-            afspc_years_since_j2000(&elements.epoch.to_datetime()),
+            epoch_years,
             elements.bstar,
             orbit,
         )
@@ -300,6 +308,26 @@ mod tests {
             assert!(
                 (mine - reference).abs() < 1.0e-12,
                 "{y}-{mo}-{d}T{h}:{mi}:{s}.{ns}: {mine} vs {reference}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_non_finite_elements() {
+        let valid = tle::parse(&format!("{L1}\n{L2}")).unwrap().elements;
+        assert!(Sgp4Propagator::from_elements(&valid).is_ok());
+
+        for spoil in [
+            |e: &mut Sgp4Elements| e.mean_motion = f64::NAN,
+            |e: &mut Sgp4Elements| e.eccentricity = f64::INFINITY,
+            |e: &mut Sgp4Elements| e.inclination = f64::NAN,
+            |e: &mut Sgp4Elements| e.bstar = f64::NEG_INFINITY,
+        ] {
+            let mut bad = valid;
+            spoil(&mut bad);
+            assert!(
+                Sgp4Propagator::from_elements(&bad).is_err(),
+                "non-finite element must be rejected"
             );
         }
     }

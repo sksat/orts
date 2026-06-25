@@ -197,6 +197,12 @@ jobs:
       - name: Test (all except orts)
         run: cargo test --locked --workspace --exclude orts
 
+      # The SGP4 propagation tests (Vallado verification vectors) live behind
+      # arika's optional `sgp4` feature; run them explicitly so they execute
+      # regardless of which workspace members enable the feature.
+      - name: Test (arika sgp4 feature)
+        run: cargo test --locked -p arika --features sgp4
+
       # The orts-cli export tests above regenerate the ts-rs WebSocket
       # protocol bindings (viewer/src/protocol/generated/). A dirty tree
       # here means the Rust protocol types changed without regenerating
