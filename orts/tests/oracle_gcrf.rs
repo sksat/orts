@@ -599,7 +599,11 @@ fn gcrf_30day_error_floor_is_drag_dominated() {
     let propagate = |system: &OrbitalSystem<frame::Gcrs>| -> Vector3<f64> {
         let initial = OrbitalState::<frame::Gcrs>::new_in_frame(
             Vector3::new(ic.position_km[0], ic.position_km[1], ic.position_km[2]),
-            Vector3::new(ic.velocity_km_s[0], ic.velocity_km_s[1], ic.velocity_km_s[2]),
+            Vector3::new(
+                ic.velocity_km_s[0],
+                ic.velocity_km_s[1],
+                ic.velocity_km_s[2],
+            ),
         );
         *DormandPrince
             .integrate(system, initial, 0.0, duration, 30.0, |_, _| {})
