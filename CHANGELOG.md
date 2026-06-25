@@ -160,7 +160,7 @@ section is subdivided by package.
     unified, BOM-tolerant entry point that auto-detects and dispatches
     TLE / OMM-JSON / OMM-KVN / OMM-XML.
 - SGP4 / SDP4 propagation behind the optional `sgp4` feature
-  (`propagation::Sgp4Propagator`): builds from an `Sgp4Elements`, reuses the
+  (`sgp4::Sgp4Propagator`): builds from an `Sgp4Elements`, reuses the
   epoch `Constants`, and propagates to a `(Vec3<Teme>, Vec3<Teme>)` state in km /
   km·s. Wraps the `sgp4` crate in AFSPC compatibility mode (WGS72). The
   dependency is pulled with only `libm`, so propagation works in `no_std`

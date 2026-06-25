@@ -150,7 +150,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   - `elements::detect` + `elements::parse` — 形式判定 (`elements::Format`) と、TLE / OMM-JSON /
     OMM-KVN / OMM-XML を自動判定して振り分ける BOM 許容の統一エントリ。
 - optional な `sgp4` feature による SGP4 / SDP4 伝播
-  (`propagation::Sgp4Propagator`): `Sgp4Elements` から構築し、epoch の
+  (`sgp4::Sgp4Propagator`): `Sgp4Elements` から構築し、epoch の
   `Constants` を再利用して TEME の `(Vec3<Teme>, Vec3<Teme>)` 状態 (km / km·s)
   へ伝播。`sgp4` crate を AFSPC compatibility mode (WGS72) でラップ。依存は
   `libm` のみで引くため no_std-no-alloc ビルドでも動作。Vallado 検証ベクタの

@@ -21,10 +21,11 @@ serde_json = { version = "1", default-features = false, features = [
 ], optional = true }
 libm = "0.2"
 ureq = { workspace = true, optional = true }
-# SGP4/SDP4 propagation (arika::propagation). Pulled with only `libm` (never
-# sgp4's `std`, which conflicts with `libm`), so it builds in every arika tier
+# SGP4/SDP4 propagation (arika::sgp4). Aliased as `sgp4_rs` so the `arika::sgp4`
+# module can own the `sgp4` name. Pulled with only `libm` (never the crate's
+# `std`, which conflicts with `libm`), so it builds in every arika tier
 # including no_std without `alloc`.
-sgp4 = { version = "2.4", default-features = false, features = [
+sgp4_rs = { package = "sgp4", version = "2.4", default-features = false, features = [
     "libm",
 ], optional = true }
 
@@ -37,6 +38,6 @@ default = ["std"]
 std = ["alloc", "nalgebra/std", "serde/std", "serde_json?/std"]
 alloc = ["serde/alloc", "dep:serde_json"]
 fetch-horizons = ["std", "dep:ureq"]
-# SGP4/SDP4 propagation via the `sgp4` crate (arika::propagation). Optional and
-# off by default to keep minimal / wasm builds lean.
-sgp4 = ["dep:sgp4"]
+# SGP4/SDP4 propagation via the `sgp4` crate (arika::sgp4). Optional and off by
+# default to keep minimal / wasm builds lean.
+sgp4 = ["dep:sgp4_rs"]

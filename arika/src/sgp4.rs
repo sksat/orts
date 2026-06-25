@@ -1,22 +1,28 @@
 //! SGP4 / SDP4 propagation of [`Sgp4Elements`] into a TEME state vector.
 //!
-//! Wraps the [`sgp4`] crate (a reference-quality SGP4+SDP4 implementation
-//! validated against Vallado's "Revisiting Spacetrack Report #3"). The
-//! propagator runs in **AFSPC compatibility mode** — the WGS72 geopotential and
-//! the AFSPC sidereal-time / epoch expressions — because that is the convention
-//! TLE/OMM catalog element sets are generated for, and the mode `sgp4` validates
-//! against the official test vectors.
+//! Wraps the `sgp4` crate (a reference-quality SGP4+SDP4 implementation
+//! validated against Vallado's "Revisiting Spacetrack Report #3"; aliased as
+//! `sgp4_rs` so this module can own the `sgp4` name). The propagator runs in
+//! **AFSPC compatibility mode** — the WGS72 geopotential and the AFSPC
+//! sidereal-time / epoch expressions — because that is the convention TLE/OMM
+//! catalog element sets are generated for, and the mode the `sgp4` crate
+//! validates against the official test vectors.
+//!
+//! This is *analytical* propagation: it evaluates the closed-form SGP4 model
+//! the element set is defined against (no force models, no numerical
+//! integration), giving the state a TLE/OMM encodes at a given time. It is
+//! distinct from a numerical integrator's propagation.
 //!
 //! The propagation path is allocator-free: it feeds the numeric
-//! [`Sgp4Elements`] straight into `sgp4`'s `Orbit` / `Constants` API (the
-//! `sgp4` dependency is pulled with only its `libm` feature), so SGP4
-//! propagation works in `no_std` builds without `alloc`.
+//! [`Sgp4Elements`] straight into the crate's `Orbit` / `Constants` API (the
+//! dependency is pulled with only its `libm` feature), so SGP4 propagation
+//! works in `no_std` builds without `alloc`.
 //!
 //! Output is in the True Equator, Mean Equinox ([`Teme`]) frame, in km and
 //! km/s. Rotating TEME into an integration frame ([`Gcrs`](crate::frame::Gcrs) /
 //! [`SimpleEci`](crate::frame::SimpleEci)) is a separate step.
 
-use sgp4::{Constants, MinutesSinceEpoch, Orbit, WGS72, afspc_epoch_to_sidereal_time};
+use sgp4_rs::{Constants, MinutesSinceEpoch, Orbit, WGS72, afspc_epoch_to_sidereal_time};
 
 use crate::elements::Sgp4Elements;
 use crate::epoch::{DateTime, Epoch, Utc};
@@ -148,7 +154,7 @@ impl Sgp4Propagator {
 
 /// Julian years since J2000, AFSPC compatibility expression.
 ///
-/// Mirrors `sgp4::julian_years_since_j2000_afspc_compatibility_mode` but reads
+/// Mirrors `sgp4_rs::julian_years_since_j2000_afspc_compatibility_mode` but reads
 /// arika's [`DateTime`] fields directly, so the no-alloc path avoids
 /// constructing a `chrono` datetime. The integer arithmetic (truncating
 /// division) is preserved exactly so the epoch matches the AFSPC reference.
@@ -286,7 +292,7 @@ mod tests {
 
     #[test]
     fn afspc_epoch_matches_sgp4_reference() {
-        use sgp4::chrono::NaiveDate;
+        use sgp4_rs::chrono::NaiveDate;
 
         // (year, month, day, hour, min, sec, nanosecond) across Jan/Feb/Mar,
         // the year-2000 pivot, a leap day with a sub-second, and a far date.
@@ -304,7 +310,7 @@ mod tests {
                 .unwrap()
                 .and_hms_nano_opt(h, mi, s, ns)
                 .unwrap();
-            let reference = sgp4::julian_years_since_j2000_afspc_compatibility_mode(&ndt);
+            let reference = sgp4_rs::julian_years_since_j2000_afspc_compatibility_mode(&ndt);
             assert!(
                 (mine - reference).abs() < 1.0e-12,
                 "{y}-{mo}-{d}T{h}:{mi}:{s}.{ns}: {mine} vs {reference}"
