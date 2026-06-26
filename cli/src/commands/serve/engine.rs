@@ -449,8 +449,12 @@ impl ServeEngine {
                 #[cfg(not(feature = "plugin-wasm"))]
                 let mut ctx = crate::sim::controlled::ControlledBuildContext { params: &params };
                 for spec in &params.satellites {
-                    let sat = crate::sim::controlled::build_controlled_satellite(spec, &mut ctx)
-                        .map_err(|e| format!("controlled satellite '{}': {e}", spec.id))?;
+                    let sat = crate::sim::controlled::build_controlled_satellite(
+                        spec,
+                        params.epoch,
+                        &mut ctx,
+                    )
+                    .map_err(|e| format!("controlled satellite '{}': {e}", spec.id))?;
                     controlled_sats.push(sat);
                     metas.push(SatMeta {
                         spec: spec.clone(),
@@ -500,7 +504,9 @@ impl ServeEngine {
                 // Default torque: coupled gravity gradient
                 dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
 
-                let orbit = spec.initial_state(params.mu, params.epoch);
+                let orbit = spec
+                    .initial_state(params.mu, params.epoch)
+                    .map_err(|e| format!("satellite '{}': {e}", spec.id))?;
                 let plant = SpacecraftState {
                     orbit,
                     attitude: orts::attitude::AttitudeState {
@@ -550,7 +556,9 @@ impl ServeEngine {
                     &third_bodies,
                     params.build_atmosphere_model(),
                 );
-                let initial = spec.initial_state(params.mu, params.epoch);
+                let initial = spec
+                    .initial_state(params.mu, params.epoch)
+                    .map_err(|e| format!("satellite '{}': {e}", spec.id))?;
                 orbit_group = orbit_group.add_satellite(spec.id.as_str(), initial, system);
                 metas.push(SatMeta {
                     spec: spec.clone(),
@@ -801,9 +809,16 @@ impl ServeEngine {
                         {
                             Some((
                                 self.group.sat_id(i),
+                                // Periodic 2-body reset to the orbit's reference
+                                // (epoch) state. The element set was validated
+                                // when the satellite was built, so re-evaluating
+                                // it here cannot fail.
                                 self.metas[i]
                                     .spec
-                                    .initial_state(self.params.mu, self.params.epoch),
+                                    .initial_state(self.params.mu, self.params.epoch)
+                                    .expect(
+                                        "reset of an already-built initial state must not fail",
+                                    ),
                             ))
                         } else {
                             None
@@ -972,6 +987,8 @@ impl ServeEngine {
 
         let sat_index = self.metas.len();
         let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
+        // SGP4/TEME is Earth-centered; reject a TLE/OMM orbit on a non-Earth sim.
+        crate::sim::params::validate_omm_body(self.params.body, std::slice::from_ref(&spec))?;
         let third_bodies = default_third_bodies(&self.params.body);
         let system = build_orbital_system(
             &self.params.body,
@@ -981,7 +998,13 @@ impl ServeEngine {
             &third_bodies,
             self.params.build_atmosphere_model(),
         );
-        let initial = spec.initial_state(self.params.mu, self.params.epoch);
+        // Evaluate the initial state at the instant the satellite enters the
+        // running sim (epoch + current_t), so a TLE/OMM is propagated to "now"
+        // rather than to t = 0. The system above uses epoch (the t = 0 ref).
+        let initial = spec.initial_state(
+            self.params.mu,
+            self.params.epoch.map(|e| e.add_si_seconds(self.current_t)),
+        )?;
         self.group
             .push_orbit_satellite(spec.id.as_str(), initial.clone(), self.current_t, system);
 
@@ -1077,17 +1100,22 @@ impl ServeEngine {
 
         let sat_index = self.metas.len();
         let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
+        // SGP4/TEME is Earth-centered; reject a TLE/OMM orbit on a non-Earth sim.
+        crate::sim::params::validate_omm_body(self.params.body, std::slice::from_ref(&spec))?;
         // Re-use the startup validation so we cannot crash
         // build_controlled_satellite → build_spacecraft_dynamics on
         // a singular inertia tensor or non-positive mass.
         validate_satellite_spec(&spec)?;
+        // Evaluate the initial state at the instant the satellite enters the
+        // running sim (epoch + current_t), so a TLE/OMM is propagated to "now".
+        let initial_epoch = self.params.epoch.map(|e| e.add_si_seconds(self.current_t));
         let new_sat = {
             let mut ctx = crate::sim::controlled::ControlledBuildContext {
                 params: &self.params,
                 wasm_cache,
                 plugin_backend,
             };
-            crate::sim::controlled::build_controlled_satellite(&spec, &mut ctx)
+            crate::sim::controlled::build_controlled_satellite(&spec, initial_epoch, &mut ctx)
                 .map_err(|e| format!("build controlled satellite: {e}"))?
         };
 

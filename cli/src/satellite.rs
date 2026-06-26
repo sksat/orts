@@ -77,10 +77,23 @@ impl SatelliteSpec {
     /// For a TLE/OMM orbit this propagates the SGP4 mean elements to `epoch`
     /// and rotates the resulting TEME state into `SimpleEci` — the physically
     /// correct path (SGP4 mean elements are *not* osculating Keplerian
-    /// elements). `epoch` is the resolved simulation epoch, which defaults to
-    /// the element-set epoch (tsince = 0); it is required for a TLE/OMM orbit
-    /// and ignored for a circular orbit.
-    pub fn initial_state(&self, mu: f64, epoch: Option<Epoch<Utc>>) -> OrbitalState {
+    /// elements). `epoch` is the wall-clock instant at which the state is
+    /// evaluated: for a satellite present from the start it is the simulation
+    /// epoch (which itself defaults to the element-set epoch, so tsince = 0);
+    /// for a satellite added mid-run it is the simulation epoch advanced by
+    /// the current sim time, so SGP4 is propagated to the moment it enters.
+    /// It is required for a TLE/OMM orbit and ignored for a circular orbit.
+    ///
+    /// Returns `Err` if SGP4 initialization or propagation fails (e.g. a
+    /// malformed element set), so a caller on a fallible boundary — a dynamic
+    /// `add_satellite` over WebSocket — can reject it instead of crashing the
+    /// server. SGP4/TEME is Earth-centered; callers must ensure the central
+    /// body is Earth (see `validate_omm_body`).
+    pub fn initial_state(
+        &self,
+        mu: f64,
+        epoch: Option<Epoch<Utc>>,
+    ) -> Result<OrbitalState, String> {
         match &self.orbit {
             OrbitSpec::Circular {
                 r0,
@@ -97,21 +110,20 @@ impl SatelliteSpec {
                     true_anomaly: 0.0,
                 };
                 let (pos, vel) = elements.to_state_vector(mu);
-                OrbitalState::new(pos, vel)
+                Ok(OrbitalState::new(pos, vel))
             }
             OrbitSpec::Omm { omm, .. } => {
-                let epoch = epoch
-                    .expect("a TLE/OMM orbit requires a simulation epoch (defaults to the element-set epoch)");
+                let epoch = epoch.ok_or("a TLE/OMM orbit requires a simulation epoch")?;
                 let propagator = Sgp4Propagator::from_elements(omm)
-                    .unwrap_or_else(|e| panic!("SGP4 initialization failed: {e}"));
+                    .map_err(|e| format!("SGP4 initialization failed: {e}"))?;
                 let (r_teme, v_teme) = propagator
                     .propagate(epoch)
-                    .unwrap_or_else(|e| panic!("SGP4 propagation to {epoch:?} failed: {e}"));
+                    .map_err(|e| format!("SGP4 propagation to {epoch:?} failed: {e}"))?;
                 // TEME → SimpleEci (the integration frame); ω = 0 (both inertial).
                 let (pos, vel) =
                     FrameTransform::<Teme, SimpleEci>::teme_to_simple_eci(&epoch.to_ut1_naive())
                         .transform_state(&r_teme, &v_teme);
-                OrbitalState::new(pos.into_inner(), vel.into_inner())
+                Ok(OrbitalState::new(pos.into_inner(), vel.into_inner()))
             }
         }
     }
@@ -355,7 +367,7 @@ mod tests {
     fn satellite_spec_initial_state_circular() {
         let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth);
         let mu = KnownBody::Earth.properties().mu;
-        let state = spec.initial_state(mu, None);
+        let state = spec.initial_state(mu, None).unwrap();
         let r = state.position().magnitude();
         let expected_r = 6378.137 + 400.0;
         assert!(
@@ -371,7 +383,7 @@ mod tests {
             "altitude=800,inclination=98.6,id=sso-test",
             KnownBody::Earth,
         );
-        let state = spec.initial_state(mu, None);
+        let state = spec.initial_state(mu, None).unwrap();
 
         let r = state.position().magnitude();
         let expected_r = 6378.137 + 800.0;
@@ -405,7 +417,7 @@ mod tests {
             "altitude=400,inclination=51.6,raan=90,id=iss-like",
             KnownBody::Earth,
         );
-        let state = spec.initial_state(mu, None);
+        let state = spec.initial_state(mu, None).unwrap();
 
         let h = state.position().cross(state.velocity());
         let i = (h[2] / h.magnitude()).acos();
@@ -434,7 +446,7 @@ mod tests {
     fn satellite_spec_initial_state_equatorial_default() {
         let mu = KnownBody::Earth.properties().mu;
         let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth);
-        let state = spec.initial_state(mu, None);
+        let state = spec.initial_state(mu, None).unwrap();
         assert!(
             state.position()[2].abs() < 1e-10,
             "equatorial orbit should have z ≈ 0, got {}",
