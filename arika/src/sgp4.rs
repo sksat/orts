@@ -257,6 +257,52 @@ mod tests {
         let (r_min, v_min) = prop.propagate_minutes_since_epoch(0.0).unwrap();
         assert!((r_abs.into_inner() - r_min.into_inner()).norm() < 1.0e-6);
         assert!((v_abs.into_inner() - v_min.into_inner()).norm() < 1.0e-9);
+
+        // A *nonzero* offset pins the `(t − epoch) × 1440` conversion (factor
+        // and sign): 6 h later by the absolute clock must equal +360 minutes.
+        // At delta == 0 above, any broken scale or sign would still pass.
+        let t_6h = elements.epoch.add_seconds(360.0 * 60.0);
+        let (r6_abs, v6_abs) = prop.propagate(t_6h).unwrap();
+        let (r6_min, v6_min) = prop.propagate_minutes_since_epoch(360.0).unwrap();
+        assert!((r6_abs.into_inner() - r6_min.into_inner()).norm() < 1.0e-6);
+        assert!((v6_abs.into_inner() - v6_min.into_inner()).norm() < 1.0e-9);
+    }
+
+    #[test]
+    fn propagate_absolute_epoch_uses_naive_utc_across_leap_second() {
+        // `propagate` counts *naive* UTC minutes — `(t − epoch) × 1440`, ignoring
+        // intervening leap seconds — matching SGP4's leap-agnostic convention.
+        // Pin that by straddling the 2017-01-01 leap (TAI−UTC: 36 → 37 s).
+        // The orbit is arbitrary (Vallado 00005); only the internal consistency
+        // of the two propagate paths matters, not the absolute state.
+        let mut elements = tle::parse(&format!("{L1}\n{L2}")).unwrap().elements;
+        elements.epoch = Epoch::<Utc>::from_gregorian(2016, 12, 31, 23, 59, 0.0);
+        let prop = Sgp4Propagator::from_elements(&elements).unwrap();
+
+        let (r_min, _) = prop.propagate_minutes_since_epoch(2.0).unwrap();
+
+        // Naive +120 s (add_seconds) advances the UTC clock to 00:01:00 — 2 min
+        // by the wrapper's count — so it must match propagate_minutes(2). The
+        // tolerance is 1 m, not bit-exact: the UTC↔TAI leap-second search rounds
+        // the round-tripped epoch by ~7 µs here (≈6 cm of motion), far below the
+        // ~8 km the leap-aware path differs by.
+        let t_naive = elements.epoch.add_seconds(2.0 * 60.0);
+        let (r_naive, _) = prop.propagate(t_naive).unwrap();
+        assert!(
+            (r_naive.into_inner() - r_min.into_inner()).norm() < 1.0e-3,
+            "propagate() must use naive UTC minutes (no leap adjustment)"
+        );
+
+        // Leap-aware +120 SI s (add_si_seconds) lands at 00:00:59 — one second is
+        // consumed by the 23:59:60 leap — so the wrapper sees ~1 s less and the
+        // result must DIFFER. This is what discriminates the naive convention
+        // from a leap-safe one (≈1 s of orbital motion, ≫ 0.1 km).
+        let t_si = elements.epoch.add_si_seconds(2.0 * 60.0);
+        let (r_si, _) = prop.propagate(t_si).unwrap();
+        assert!(
+            (r_si.into_inner() - r_min.into_inner()).norm() > 0.1,
+            "a leap-aware epoch offset should differ from the naive minute count"
+        );
     }
 
     #[test]
