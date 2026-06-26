@@ -217,13 +217,12 @@ impl SimParams {
 
             if let Some(parsed) = omm_opt {
                 let omm = parsed.elements;
-                let elements = omm.to_keplerian_elements(mu);
-                let period = elements.period(mu);
+                let period = crate::satellite::orbital_period(&omm);
                 let sat_name = parsed.object_name.clone();
                 vec![SatelliteSpec {
                     id: "default".to_string(),
                     name: sat_name,
-                    orbit: OrbitSpec::Omm { omm, elements },
+                    orbit: OrbitSpec::Omm { omm },
                     period,
                     ballistic_coeff: None,
                     srp_area_to_mass: None,
@@ -427,16 +426,12 @@ impl SimParams {
             .expect("embedded ISS TLE must be valid")
         });
         let iss_tle = parsed_iss.elements;
-        let elements = iss_tle.to_keplerian_elements(mu);
-        let period = elements.period(mu);
+        let period = crate::satellite::orbital_period(&iss_tle);
         let sat_name = parsed_iss.object_name.clone();
         sats.push(SatelliteSpec {
             id: "iss".to_string(),
             name: sat_name,
-            orbit: OrbitSpec::Omm {
-                omm: iss_tle,
-                elements,
-            },
+            orbit: OrbitSpec::Omm { omm: iss_tle },
             period,
             ballistic_coeff: None,
             srp_area_to_mass: None,
@@ -857,7 +852,7 @@ mod tests {
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
-        let state = params.satellites[0].initial_state(params.mu);
+        let state = params.satellites[0].initial_state(params.mu, params.epoch);
 
         let r = state.position().magnitude();
         let v = state.velocity().magnitude();

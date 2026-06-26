@@ -1,5 +1,8 @@
 use arika::body::KnownBody;
 use arika::elements::Sgp4Elements;
+use arika::epoch::Epoch;
+use arika::frame::{FrameTransform, SimpleEci, Teme};
+use arika::sgp4::Sgp4Propagator;
 use orts::OrbitalState;
 use orts::orbital::kepler::KeplerianElements;
 use orts::record::entity_path::EntityPath;
@@ -20,11 +23,10 @@ pub enum OrbitSpec {
         raan: f64,
     },
     /// From a parsed element set — TLE or OMM input, both decode into the
-    /// canonical [`Sgp4Elements`] record — plus the derived Keplerian elements.
-    Omm {
-        omm: Sgp4Elements,
-        elements: KeplerianElements,
-    },
+    /// canonical [`Sgp4Elements`] record. The initial Cartesian state is
+    /// produced by SGP4 propagation (not a two-body conversion), so only the
+    /// raw mean elements are carried.
+    Omm { omm: Sgp4Elements },
 }
 
 /// Per-satellite specification.
@@ -69,7 +71,14 @@ pub struct SatelliteSpec {
 }
 
 impl SatelliteSpec {
-    pub fn initial_state(&self, mu: f64) -> OrbitalState {
+    /// Build the integrator's initial [`OrbitalState`] (frame `SimpleEci`).
+    ///
+    /// For an element set ([`OrbitSpec::Omm`]) the state comes from SGP4
+    /// propagation to `epoch`, then a TEME→`SimpleEci` rotation — not the
+    /// two-body conversion, which is tens of km off at epoch. `epoch` is the
+    /// resolved simulation-start epoch; when it is `None` the element-set epoch
+    /// is used (propagation Δt = 0), so a bare TLE simulates from its own epoch.
+    pub fn initial_state(&self, mu: f64, epoch: Option<Epoch>) -> OrbitalState {
         match &self.orbit {
             OrbitSpec::Circular {
                 r0,
@@ -88,9 +97,26 @@ impl SatelliteSpec {
                 let (pos, vel) = elements.to_state_vector(mu);
                 OrbitalState::new(pos, vel)
             }
-            OrbitSpec::Omm { elements, .. } => {
-                let (pos, vel) = elements.to_state_vector(mu);
-                OrbitalState::new(pos, vel)
+            OrbitSpec::Omm { omm } => {
+                let target = epoch.unwrap_or(omm.epoch);
+                let propagator = Sgp4Propagator::from_elements(omm).unwrap_or_else(|e| {
+                    panic!(
+                        "SGP4 propagator init failed for NORAD {}: {e}",
+                        omm.norad_cat_id
+                    )
+                });
+                let (r_teme, v_teme) = propagator.propagate(target).unwrap_or_else(|e| {
+                    panic!(
+                        "SGP4 propagation failed for NORAD {}: {e}",
+                        omm.norad_cat_id
+                    )
+                });
+                // SGP4 yields TEME; rotate the state (position+velocity, ω = 0)
+                // into the integration frame `SimpleEci` at the target epoch.
+                let (pos, vel) =
+                    FrameTransform::<Teme, SimpleEci>::teme_to_simple_eci(&target.to_ut1_naive())
+                        .transform_state(&r_teme, &v_teme);
+                OrbitalState::new(pos.into_inner(), vel.into_inner())
             }
         }
     }
@@ -99,8 +125,11 @@ impl SatelliteSpec {
     pub fn altitude(&self, body: &KnownBody) -> f64 {
         match &self.orbit {
             OrbitSpec::Circular { altitude, .. } => *altitude,
-            OrbitSpec::Omm { elements, .. } => {
-                let perigee_r = elements.semi_major_axis * (1.0 - elements.eccentricity);
+            OrbitSpec::Omm { omm } => {
+                // Perigee altitude from the mean elements' two-body semi-major
+                // axis (display only; the propagated state is SGP4).
+                let perigee_r =
+                    omm.semi_major_axis(body.properties().mu) * (1.0 - omm.eccentricity);
                 perigee_r - body.properties().radius
             }
         }
@@ -127,6 +156,12 @@ pub struct SatelliteInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub shape: Option<crate::sim::core::MarkerShape>,
+}
+
+/// Orbital period [s] from the SGP4 mean motion (`2π / n`). Equal to the
+/// two-body period of the mean semi-major axis, for display purposes.
+pub(crate) fn orbital_period(omm: &Sgp4Elements) -> f64 {
+    2.0 * std::f64::consts::PI / omm.mean_motion
 }
 
 /// Parse a satellite specification string (key=value,key=value).
@@ -216,19 +251,17 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
     let (orbit, period, derived_name) = if let Some(norad) = norad_id {
         let parsed = fetch_tle_by_norad_id(norad);
         let omm = parsed.elements;
-        let elements = omm.to_keplerian_elements(mu);
-        let period = elements.period(mu);
+        let period = orbital_period(&omm);
         let obj_name = parsed.object_name.clone();
-        (OrbitSpec::Omm { omm, elements }, period, obj_name)
+        (OrbitSpec::Omm { omm }, period, obj_name)
     } else if let (Some(l1), Some(l2)) = (tle_line1, tle_line2) {
         let text = format!("{l1}\n{l2}");
         let parsed = arika::tle::parse(&text)
             .unwrap_or_else(|e| panic!("Failed to parse TLE in --sat: {e}"));
         let omm = parsed.elements;
-        let elements = omm.to_keplerian_elements(mu);
-        let period = elements.period(mu);
+        let period = orbital_period(&omm);
         let obj_name = parsed.object_name.clone();
-        (OrbitSpec::Omm { omm, elements }, period, obj_name)
+        (OrbitSpec::Omm { omm }, period, obj_name)
     } else {
         let alt = altitude.unwrap_or(400.0);
         let r0 = body.properties().radius + alt;
@@ -334,7 +367,7 @@ mod tests {
     fn satellite_spec_initial_state_circular() {
         let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth);
         let mu = KnownBody::Earth.properties().mu;
-        let state = spec.initial_state(mu);
+        let state = spec.initial_state(mu, None);
         let r = state.position().magnitude();
         let expected_r = 6378.137 + 400.0;
         assert!(
@@ -350,7 +383,7 @@ mod tests {
             "altitude=800,inclination=98.6,id=sso-test",
             KnownBody::Earth,
         );
-        let state = spec.initial_state(mu);
+        let state = spec.initial_state(mu, None);
 
         let r = state.position().magnitude();
         let expected_r = 6378.137 + 800.0;
@@ -384,7 +417,7 @@ mod tests {
             "altitude=400,inclination=51.6,raan=90,id=iss-like",
             KnownBody::Earth,
         );
-        let state = spec.initial_state(mu);
+        let state = spec.initial_state(mu, None);
 
         let h = state.position().cross(state.velocity());
         let i = (h[2] / h.magnitude()).acos();
@@ -413,7 +446,7 @@ mod tests {
     fn satellite_spec_initial_state_equatorial_default() {
         let mu = KnownBody::Earth.properties().mu;
         let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth);
-        let state = spec.initial_state(mu);
+        let state = spec.initial_state(mu, None);
         assert!(
             state.position()[2].abs() < 1e-10,
             "equatorial orbit should have z ≈ 0, got {}",
@@ -426,5 +459,49 @@ mod tests {
         let spec = parse_sat_spec("altitude=400,id=my-sat", KnownBody::Earth);
         let path = spec.entity_path();
         assert_eq!(path.to_string(), "/world/sat/my-sat");
+    }
+
+    #[test]
+    fn omm_initial_state_is_sgp4_not_two_body() {
+        let mu = KnownBody::Earth.properties().mu;
+        let spec = parse_sat_spec(
+            "tle-line1=1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993,tle-line2=2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000,id=iss",
+            KnownBody::Earth,
+        );
+        let OrbitSpec::Omm { omm } = &spec.orbit else {
+            panic!("expected Omm orbit");
+        };
+
+        // No epoch → propagate to the element epoch (Δt = 0), then TEME→SimpleEci.
+        let p = *spec.initial_state(mu, None).position();
+
+        // Must equal a direct SGP4 propagation + rotation (pins the wiring).
+        let (r_teme, v_teme) = Sgp4Propagator::from_elements(omm)
+            .unwrap()
+            .propagate(omm.epoch)
+            .unwrap();
+        let (r_eci, _) =
+            FrameTransform::<Teme, SimpleEci>::teme_to_simple_eci(&omm.epoch.to_ut1_naive())
+                .transform_state(&r_teme, &v_teme);
+        assert!(
+            (p - r_eci.into_inner()).norm() < 1e-9,
+            "initial_state must be the SGP4→SimpleEci state"
+        );
+
+        // …and differ from the old two-body seed (`to_keplerian_elements` is a
+        // tens-of-km-off approximation): this is the behaviour PR4 fixes.
+        let (r_two_body, _) = omm.to_keplerian_elements(mu).to_state_vector(mu);
+        let diff = (p - r_two_body).norm();
+        assert!(
+            diff > 1.0,
+            "SGP4 seed should differ from the two-body seed by ≫ 1 km, got {diff:.2} km"
+        );
+
+        // Sanity: still a plausible LEO state.
+        assert!(
+            (p.magnitude() - 6778.0).abs() < 200.0,
+            "ISS radius ~6778 km, got {}",
+            p.magnitude()
+        );
     }
 }
