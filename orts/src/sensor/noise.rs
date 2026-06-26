@@ -9,7 +9,7 @@
 
 use nalgebra::Vector3;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_distr::Normal;
 
 /// Noise model that transforms a true measurement into a noisy one.
