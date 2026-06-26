@@ -155,12 +155,20 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   へ伝播。`sgp4` crate を AFSPC compatibility mode (WGS72) でラップ。依存は
   `libm` のみで引くため no_std-no-alloc ビルドでも動作。Vallado 検証ベクタの
   near-earth (SGP4) と deep-space (SDP4) で検証済み。([#235](https://github.com/sksat/orts/pull/235))
+- TEME↔GCRS / TEME↔SimpleEci フレーム回転。SGP4 の `Vec3<Teme>` 状態を積分
+  フレームへ変換する。`earth::fk5` に equinox ベースの IAU-76/FK5 換算
+  (IAU-76 precession、フル 106 項 IAU-80 nutation、mean obliquity、equation of
+  the equinoxes、GMST 1982。各々対応する ERFA ルーチンを再現)、`earth::teme` に
+  `Rotation<Teme, Gcrs>::teme_to_gcrs`、`Rotation<Teme, SimpleEci>::teme_to_simple_eci`
+  (`R3(GMST−ERA)` の z 回転)、`FrameTransform<Teme, Gcrs>` / `FrameTransform<Teme, SimpleEci>`
+  の状態(位置+速度)変換(ω=0)。
+  J2000→GCRS の frame bias (~数十 mas、LEO で ≈ サブメートル) は無視。
+  ERFA(component, 1e-11)と Orekit (authoritative TEME, ~0.8 m)で交差検証。([#240](https://github.com/sksat/orts/pull/240))
 - `kepler` module (`orts` から `arika` へ移管): `KeplerianElements`
   (`from_state_vector` / `to_state_vector` / `period` / `energy`) と anomaly
   変換群 (`solve_kepler_equation`、`mean_to_true_anomaly` 等)。公開
   `arika::kepler` surface となり、`orts::orbital::kepler` が再エクスポート。([#87](https://github.com/sksat/orts/pull/87))
-- `frame::Teme` marker — True Equator, Mean Equinox (SGP4 / TLE 出力 frame)。
-  marker のみで、TEME ↔ GCRS 回転は未実装。([#87](https://github.com/sksat/orts/pull/87))
+- `frame::Teme` marker — True Equator, Mean Equinox (SGP4 / TLE 出力 frame)。([#87](https://github.com/sksat/orts/pull/87))
 - `earth::topocentric` — 地上局の look angle: `TopocentricSite<F: Ecef>`
   (WGS-84 `Geodetic` から構築し局所 ENU 基底を事前計算) と `LookAngles`
   (方位 / 仰角 / slant range)。`look_angles(target)` で算出。([#112](https://github.com/sksat/orts/pull/112))

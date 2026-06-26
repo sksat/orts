@@ -166,12 +166,22 @@ section is subdivided by package.
   dependency is pulled with only `libm`, so propagation works in `no_std`
   builds without `alloc`. Validated against the Vallado verification vectors for
   near-earth (SGP4) and deep-space (SDP4) satellites. ([#235](https://github.com/sksat/orts/pull/235))
+- TEME↔GCRS / TEME↔SimpleEci frame rotations, turning an SGP4 `Vec3<Teme>`
+  state into an integration-frame state. `earth::fk5` adds the equinox-based
+  IAU-76/FK5 reduction (IAU-76 precession, full 106-term IAU-80 nutation, mean
+  obliquity, equation of the equinoxes, GMST 1982, each reproducing the matching
+  ERFA routine); `earth::teme` adds `Rotation<Teme, Gcrs>::teme_to_gcrs`,
+  `Rotation<Teme, SimpleEci>::teme_to_simple_eci` (an `R3(GMST−ERA)` z-rotation),
+  and the `FrameTransform<Teme, Gcrs>` / `FrameTransform<Teme, SimpleEci>` state
+  (position+velocity) transforms (ω = 0). The J2000→GCRS frame
+  bias (~tens of mas, ≈ sub-metre at LEO) is neglected. Cross-validated against
+  ERFA (components, 1e-11) and Orekit (authoritative TEME, ~0.8 m). ([#240](https://github.com/sksat/orts/pull/240))
 - `kepler` module (moved into `arika` from `orts`): `KeplerianElements`
   (`from_state_vector` / `to_state_vector` / `period` / `energy`) and the anomaly
   conversions (`solve_kepler_equation`, `mean_to_true_anomaly`, …). Now a public
   `arika::kepler` surface; `orts::orbital::kepler` re-exports it. ([#87](https://github.com/sksat/orts/pull/87))
 - `frame::Teme` marker — True Equator, Mean Equinox (the SGP4 / TLE output
-  frame). Marker only; the TEME ↔ GCRS rotation is not yet implemented. ([#87](https://github.com/sksat/orts/pull/87))
+  frame). ([#87](https://github.com/sksat/orts/pull/87))
 - `earth::topocentric` — ground-site look angles: `TopocentricSite<F: Ecef>`
   (from a WGS-84 `Geodetic`, precomputing the local ENU basis) and `LookAngles`
   (azimuth / elevation / slant range), via `look_angles(target)`. ([#112](https://github.com/sksat/orts/pull/112))

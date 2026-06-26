@@ -22,7 +22,7 @@
 //! - [`Itrs`] — International Terrestrial Reference System (polar motion 適用済み)。
 //!   geodetic 変換はこの frame に紐づく
 //! - [`Teme`] — True Equator, Mean Equinox。SGP4 / TLE / OMM の平均要素フレーム
-//!   (marker のみ; ↔ Gcrs 回転は未実装)
+//!   (↔ Gcrs/SimpleEci 回転は IAU-76/FK5 換算で実装済み: [`crate::earth::teme`])
 //! - [`Rsw`] — Radial / Along-track / Cross-track 軌道ローカル系。
 //!   軸順は標準 RSW 規約 [R̂, Ŝ, Ŵ] (R̂=normalize(r), Ŵ=normalize(r×v), Ŝ=Ŵ×R̂)
 //! - [`Body`] — 宇宙機機体座標系
@@ -262,11 +262,12 @@ impl Ecef for Itrs {}
 /// True Equator, Mean Equinox — the quasi-inertial frame in which SGP4 / TLE /
 /// OMM mean elements are expressed. Belongs to the [`Eci`] category.
 ///
-/// **marker only**: the TEME ↔ [`Gcrs`] / [`SimpleEci`] rotation (GMST +
-/// equation of the equinoxes + precession/nutation) is not implemented, and the
-/// element-set parsers return mean elements ([`crate::elements::Sgp4Elements`]) rather than
-/// `Vec3<Teme>` state vectors. The marker exists so those APIs have an explicit
-/// frame to name.
+/// The `sgp4` module (behind the `sgp4` feature) propagates an
+/// [`crate::elements::Sgp4Elements`] set to a `Vec3<Teme>` state, and
+/// [`crate::earth::teme`] rotates TEME into the
+/// integration frames: the precise [`Rotation<Teme, Gcrs>`](Rotation)
+/// (IAU-76/FK5 reduction) and the visualization-grade
+/// [`Rotation<Teme, SimpleEci>`](Rotation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Teme;
 impl sealed::Sealed for Teme {}
