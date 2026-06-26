@@ -172,7 +172,8 @@ section is subdivided by package.
   obliquity, equation of the equinoxes, GMST 1982, each reproducing the matching
   ERFA routine); `earth::teme` adds `Rotation<Teme, Gcrs>::teme_to_gcrs`,
   `Rotation<Teme, SimpleEci>::teme_to_simple_eci` (an `R3(GMST−ERA)` z-rotation),
-  and `FrameTransform<Teme, Gcrs>::teme_to_gcrs` (ω = 0). The J2000→GCRS frame
+  and the `FrameTransform<Teme, Gcrs>` / `FrameTransform<Teme, SimpleEci>` state
+  (position+velocity) transforms (ω = 0). The J2000→GCRS frame
   bias (~tens of mas, ≈ sub-metre at LEO) is neglected. Cross-validated against
   ERFA (components, 1e-11) and Orekit (authoritative TEME, ~0.8 m). ([#240](https://github.com/sksat/orts/pull/240))
 - `kepler` module (moved into `arika` from `orts`): `KeplerianElements`

@@ -32,8 +32,8 @@ impl Rotation<Teme, Gcrs> {
     ///
     /// The IAU-76/FK5 reduction lands in the J2000 (FK5) dynamical frame, which
     /// this returns as a GCRS approximation: the J2000→GCRS frame bias (~tens of
-    /// mas, ≈ sub-metre at LEO to a few metres at GEO) is neglected — far below
-    /// the SGP4 error this serves. Cross-validated against ERFA (components) and
+    /// mas, ≈ sub-metre at LEO) is neglected — far below the SGP4 error this
+    /// serves. Cross-validated against ERFA (components) and
     /// Orekit (`tests/teme_vs_erfa.rs` / `teme_vs_orekit.rs`).
     pub fn teme_to_gcrs(tt: &Epoch<Tt>) -> Self {
         Self::from_raw(matrix3_to_unit_quaternion(fk5::teme_to_j2000_matrix(
@@ -83,7 +83,7 @@ impl FrameTransform<Teme, SimpleEci> {
     /// `ut1`.
     ///
     /// Both frames are inertial, so the angular velocity is zero (the
-    /// `GMST − ERA` rate is the precession-in-right-ascension rate, ~1e-12
+    /// `GMST − ERA` rate is the precession-in-right-ascension rate, ~7e-12
     /// rad/s); position and velocity rotate by the same z-rotation. Pairs with
     /// [`Rotation<Teme, SimpleEci>::teme_to_simple_eci`] for the visualization
     /// frame.

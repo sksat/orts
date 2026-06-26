@@ -160,7 +160,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   (IAU-76 precession、フル 106 項 IAU-80 nutation、mean obliquity、equation of
   the equinoxes、GMST 1982。各々対応する ERFA ルーチンを再現)、`earth::teme` に
   `Rotation<Teme, Gcrs>::teme_to_gcrs`、`Rotation<Teme, SimpleEci>::teme_to_simple_eci`
-  (`R3(GMST−ERA)` の z 回転)、`FrameTransform<Teme, Gcrs>::teme_to_gcrs`(ω=0)。
+  (`R3(GMST−ERA)` の z 回転)、`FrameTransform<Teme, Gcrs>` / `FrameTransform<Teme, SimpleEci>`
+  の状態(位置+速度)変換(ω=0)。
   J2000→GCRS の frame bias (~数十 mas、LEO で ≈ サブメートル) は無視。
   ERFA(component, 1e-11)と Orekit (authoritative TEME, ~0.8 m)で交差検証。([#240](https://github.com/sksat/orts/pull/240))
 - `kepler` module (`orts` から `arika` へ移管): `KeplerianElements`

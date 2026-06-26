@@ -13,7 +13,7 @@ nutation, and precession) of arika's IAU-76/FK5 reduction. The ERFA fixture
 validates the assembled rotation end-to-end.
 
 arika's TEME→Gcrs uses the IAU-76/FK5 reduction and neglects the J2000→GCRS
-frame bias (< 1 mas), so agreement with Orekit's GCRF is expected only to that
+frame bias (~tens of mas), so agreement with Orekit's GCRF is expected only to that
 level — the test tolerance reflects it.
 
 Usage (from the repository root):

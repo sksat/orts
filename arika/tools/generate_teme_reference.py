@@ -61,7 +61,7 @@ def sample(t: float) -> dict:
     # polynomial form independent of any dUT1).
     gmst82 = float(erfa.gmst82(J2000_JD, offset))
 
-    # TEME → J2000 (≈GCRS, frame bias < 1 mas neglected):
+    # TEME → J2000 (≈GCRS, frame bias ~tens of mas neglected):
     #   r_TOD   = ROT3(-Eqe) · r_TEME           (TEME differs from TOD by Eqe)
     #   r_J2000 = pnm80ᵀ · r_TOD
     # so M = pnm80ᵀ · ROT3(-Eqe). (The -Eqe sign is anchored by Orekit.)
