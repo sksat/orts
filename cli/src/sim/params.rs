@@ -99,6 +99,43 @@ fn default_auto_threshold() -> usize {
     (cores * DEFAULT_THRESHOLD_PER_CORE).max(32)
 }
 
+/// The element-set epoch of the first TLE/OMM satellite, if any.
+///
+/// Used to default the simulation epoch when no `--epoch` is given. With a
+/// single TLE/OMM this makes tsince = 0 (no SGP4 extrapolation). With several
+/// element sets only the first one is at tsince = 0; the others are propagated
+/// from the shared simulation epoch, so their elements *are* extrapolated by
+/// the epoch difference. An explicit `--epoch` likewise extrapolates all of
+/// them.
+fn element_set_epoch(satellites: &[SatelliteSpec]) -> Option<Epoch> {
+    satellites.iter().find_map(|s| match &s.orbit {
+        OrbitSpec::Omm { omm, .. } => Some(omm.epoch),
+        OrbitSpec::Circular { .. } => None,
+    })
+}
+
+/// SGP4/TEME is Earth-centered (WGS72 geopotential, TEME output frame), so a
+/// TLE/OMM initial state is only physically meaningful about Earth. Reject the
+/// combination of a non-Earth central body with any TLE/OMM orbit up front, so
+/// we never integrate an Earth-relative SGP4 state under a foreign body's μ,
+/// radius and perturbation set (which would silently produce nonsense).
+pub(crate) fn validate_omm_body(
+    body: KnownBody,
+    satellites: &[SatelliteSpec],
+) -> Result<(), String> {
+    if body != KnownBody::Earth
+        && satellites
+            .iter()
+            .any(|s| matches!(s.orbit, OrbitSpec::Omm { .. }))
+    {
+        return Err(format!(
+            "TLE/OMM orbits are Earth-centered (SGP4/TEME, WGS72) and cannot be \
+             propagated about {body:?}; use the Earth body or specify Keplerian elements"
+        ));
+    }
+    Ok(())
+}
+
 /// Simulation parameters derived from CLI arguments.
 pub struct SimParams {
     pub body: KnownBody,
@@ -181,12 +218,14 @@ impl SimParams {
         let body = parse_body(&args.body);
         let mu = body.properties().mu;
 
-        let epoch = match &args.epoch {
-            Some(s) => Some(Epoch::from_iso8601(s).unwrap_or_else(|| {
+        // An explicit `--epoch` wins; `None` defers the default — a TLE/OMM
+        // orbit without `--epoch` starts at its element-set epoch (resolved
+        // after the satellites are built, below).
+        let epoch = args.epoch.as_ref().map(|s| {
+            Epoch::from_iso8601(s).unwrap_or_else(|| {
                 panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)")
-            })),
-            None => Some(Epoch::now()),
-        };
+            })
+        });
 
         let satellites = if !args.sats.is_empty() {
             // --sat flags provided: parse each spec
@@ -266,6 +305,15 @@ impl SimParams {
             satellites
         };
 
+        // Resolve the deferred epoch: an explicit `--epoch` wins; otherwise it
+        // defaults to the first TLE/OMM's element-set epoch (tsince = 0 for
+        // that satellite only — see `element_set_epoch`); otherwise "now".
+        let epoch = epoch
+            .or_else(|| element_set_epoch(&satellites))
+            .or_else(|| Some(Epoch::now()));
+
+        validate_omm_body(body, &satellites).unwrap_or_else(|e| panic!("{e}"));
+
         Self {
             body,
             mu,
@@ -298,12 +346,13 @@ impl SimParams {
         let body = config.known_body();
         let mu = body.properties().mu;
 
-        let epoch = match &config.epoch {
-            Some(s) => Some(Epoch::from_iso8601(s).unwrap_or_else(|| {
+        // `None` defers the default; resolved from the element-set epoch after
+        // the satellites are built (see `from_sim_args`).
+        let epoch = config.epoch.as_ref().map(|s| {
+            Epoch::from_iso8601(s).unwrap_or_else(|| {
                 panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)")
-            })),
-            None => Some(Epoch::now()),
-        };
+            })
+        });
 
         let satellites: Vec<SatelliteSpec> = config
             .satellites
@@ -329,6 +378,12 @@ impl SimParams {
         } else {
             satellites
         };
+
+        let epoch = epoch
+            .or_else(|| element_set_epoch(&satellites))
+            .or_else(|| Some(Epoch::now()));
+
+        validate_omm_body(body, &satellites).unwrap_or_else(|e| panic!("{e}"));
 
         Self {
             body,
@@ -857,7 +912,9 @@ mod tests {
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
-        let state = params.satellites[0].initial_state(params.mu);
+        let state = params.satellites[0]
+            .initial_state(params.mu, params.epoch)
+            .unwrap();
 
         let r = state.position().magnitude();
         let v = state.velocity().magnitude();
@@ -870,6 +927,48 @@ mod tests {
         );
         // ISS velocity ~7.66 km/s
         assert!((v - 7.66).abs() < 0.2, "ISS velocity: {v:.3} km/s");
+    }
+
+    #[test]
+    fn validate_omm_body_rejects_non_earth() {
+        let args = SimArgs {
+            body: "earth".to_string(),
+            dt: 10.0,
+            output_interval: None,
+            stream_interval: None,
+            epoch: None,
+            tle: None,
+            omm: None,
+            tle_line1: Some(
+                "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993".to_string(),
+            ),
+            tle_line2: Some(
+                "2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000".to_string(),
+            ),
+            norad_id: None,
+            sats: vec![],
+            integrator: IntegratorChoice::Dp45,
+            atol: 1e-10,
+            rtol: 1e-8,
+            atmosphere: AtmosphereChoice::Exponential,
+            f107: 150.0,
+            ap: 15.0,
+            space_weather: None,
+            duration: None,
+            config: None,
+            plugin_backend: PluginBackendChoice::Auto,
+            plugin_backend_threshold: None,
+            plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
+        };
+        let params = SimParams::from_sim_args(&args, false);
+        assert!(matches!(params.satellites[0].orbit, OrbitSpec::Omm { .. }));
+
+        // The same TLE-backed satellite is valid on Earth (SGP4/TEME is
+        // Earth-centered) but must be rejected about any other body.
+        assert!(validate_omm_body(KnownBody::Earth, &params.satellites).is_ok());
+        let err = validate_omm_body(KnownBody::Mars, &params.satellites)
+            .expect_err("a TLE/OMM orbit about Mars must be rejected");
+        assert!(err.contains("Earth-centered"), "unexpected error: {err}");
     }
 
     #[test]

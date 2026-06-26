@@ -483,7 +483,9 @@ pub fn run_simulation(params: &SimParams) -> Recording {
             &third_bodies,
             params.build_atmosphere_model(),
         );
-        let initial = sat.initial_state(params.mu);
+        let initial = sat
+            .initial_state(params.mu, params.epoch)
+            .unwrap_or_else(|e| panic!("satellite '{}': {e}", sat.id));
 
         group = group.add_satellite_until(sat.id.as_str(), initial, sat.period, system);
     }
@@ -923,10 +925,11 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
             plugin_backend,
         };
         for spec in &params.satellites {
-            let sat = build_controlled_satellite(spec, &mut ctx).unwrap_or_else(|e| {
-                eprintln!("Error building controlled satellite '{}': {e}", spec.id);
-                std::process::exit(1);
-            });
+            let sat =
+                build_controlled_satellite(spec, params.epoch, &mut ctx).unwrap_or_else(|e| {
+                    eprintln!("Error building controlled satellite '{}': {e}", spec.id);
+                    std::process::exit(1);
+                });
             satellites.push(sat);
         }
     }

@@ -74,8 +74,16 @@ pub struct ControlledSatellite {
 /// 複数衛星をループで構築する場合は、[`ControlledBuildContext`] 内の
 /// `wasm_cache` を使い回すことで WASM コンポーネントのコンパイルが
 /// 1 ファイルにつき 1 回だけで済む。
+/// `initial_epoch` is the wall-clock instant at which the orbital initial
+/// state is evaluated: the simulation epoch for a satellite present from the
+/// start, or the simulation epoch advanced by the current sim time for a
+/// dynamic add (so a TLE/OMM is propagated to the moment it enters). The
+/// dynamics themselves use `params.epoch` as the `t = 0` reference, so
+/// time-dependent force models stay aligned regardless of when the satellite
+/// is added.
 pub fn build_controlled_satellite(
     spec: &SatelliteSpec,
+    initial_epoch: Option<Epoch>,
     ctx: &mut ControlledBuildContext<'_>,
 ) -> Result<ControlledSatellite, String> {
     let params = ctx.params;
@@ -160,8 +168,8 @@ pub fn build_controlled_satellite(
         (Vec::new(), 0.0)
     };
 
-    // 初期状態。
-    let orbit = spec.initial_state(params.mu);
+    // 初期状態。`initial_epoch` で評価（動的追加なら epoch + current_t）。
+    let orbit = spec.initial_state(params.mu, initial_epoch)?;
     let plant = SpacecraftState {
         orbit,
         attitude: orts::attitude::AttitudeState {

@@ -224,6 +224,10 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
         .enumerate()
         .map(|(i, s)| s.to_satellite_spec(i, body, mu))
         .collect();
+    // SGP4/TEME is Earth-centered: reject a non-Earth TLE/OMM config here so a
+    // WebSocket `StartSimulation` returns an error to the client instead of
+    // reaching the panic in `SimParams::from_config`.
+    crate::sim::params::validate_omm_body(body, &specs)?;
     let any_att = specs.iter().any(|s| s.attitude_config.is_some());
     let all_att = !specs.is_empty() && specs.iter().all(|s| s.attitude_config.is_some());
     if any_att && !all_att {
@@ -647,5 +651,36 @@ mod tests {
         assert_eq!(names[0], "moon");
         assert!(names.contains(&"sun".to_string()));
         assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn validate_sim_config_rejects_non_earth_tle() {
+        // A WebSocket `StartSimulation` with a non-Earth body + TLE must be
+        // rejected here (graceful Err), not reach the panic in `from_config`.
+        let mars = r#"{
+            "body": "mars",
+            "satellites": [{
+                "id": "iss",
+                "orbit": {
+                    "type": "tle",
+                    "line1": "1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993",
+                    "line2": "2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000"
+                }
+            }]
+        }"#;
+        let config: SimConfig = serde_json::from_str(mars).unwrap();
+        let err = validate_sim_config(&config)
+            .expect_err("a non-Earth TLE config must be rejected, not panic");
+        assert!(err.contains("Earth-centered"), "unexpected error: {err}");
+
+        // The same satellite on Earth must not trip the body guard.
+        let earth: SimConfig =
+            serde_json::from_str(&mars.replace("\"mars\"", "\"earth\"")).unwrap();
+        if let Err(e) = validate_sim_config(&earth) {
+            assert!(
+                !e.contains("Earth-centered"),
+                "Earth config tripped the body guard: {e}"
+            );
+        }
     }
 }
