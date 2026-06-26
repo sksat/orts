@@ -91,6 +91,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   追加。よく使う・agent に関係する経路を端末内で発見できるようにした。([#217](https://github.com/sksat/orts/pull/217))
 
 #### Changed
+- TLE/OMM 軌道の初期状態を二体変換でなく SGP4 伝播で生成するようにした:
+  `SGP4 → TEME → SimpleEci`(位置・速度を回転)で求めるので、エポックで数十 km
+  ずれず SGP4 精度で要素セットに一致する。各衛星は自分の要素エポックから
+  シム開始まで伝播し、`--epoch` 未指定なら裸の TLE は自身のエポックから開始する
+  (要素エポックが無視されていた潜在バグも修正)。表示の period/altitude は不変。
+  `Sgp4Elements::to_keplerian_elements` は `arika` の API として残るが CLI は
+  使わなくなった。([#242](https://github.com/sksat/orts/pull/242))
 - `--tle` を再び TLE 専用 (2LE/3LE、`-` で stdin) とし、新規 `--omm` と
   対にした。要素セットのパースは削除した `orts::tle` でなく
   `arika::tle` / `arika::omm` を使用 (従来は `--tle` が OMM も自動受理)。([#87](https://github.com/sksat/orts/pull/87))
