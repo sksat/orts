@@ -483,7 +483,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
             &third_bodies,
             params.build_atmosphere_model(),
         );
-        let initial = sat.initial_state(params.mu);
+        let initial = sat.initial_state(params.mu, params.epoch);
 
         group = group.add_satellite_until(sat.id.as_str(), initial, sat.period, system);
     }

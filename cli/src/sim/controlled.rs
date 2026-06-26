@@ -161,7 +161,7 @@ pub fn build_controlled_satellite(
     };
 
     // 初期状態。
-    let orbit = spec.initial_state(params.mu);
+    let orbit = spec.initial_state(params.mu, params.epoch);
     let plant = SpacecraftState {
         orbit,
         attitude: orts::attitude::AttitudeState {

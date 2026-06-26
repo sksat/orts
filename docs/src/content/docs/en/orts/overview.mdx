@@ -9,7 +9,8 @@ and a WASM plugin host runtime.
 Provides the simulation engine at the heart of the
 [orts](https://github.com/sksat/orts) workspace:
 
-- Orbital dynamics (two-body, Brouwer mean-element propagator, TLE/SGP4-equivalent).
+- Orbital dynamics: two-body and perturbed numerical propagation; TLE/OMM
+  ingestion via SGP4/SDP4 (`arika`), rotated from TEME into the integration frame.
 - Attitude dynamics and control (reaction wheels, gravity gradient, PD / B-dot).
 - Force models: gravity harmonics, drag, SRP, third-body, constant thrust.
 - Sensor models: magnetometer, gyroscope, star tracker.

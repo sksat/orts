@@ -500,7 +500,7 @@ impl ServeEngine {
                 // Default torque: coupled gravity gradient
                 dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
 
-                let orbit = spec.initial_state(params.mu);
+                let orbit = spec.initial_state(params.mu, params.epoch);
                 let plant = SpacecraftState {
                     orbit,
                     attitude: orts::attitude::AttitudeState {
@@ -550,7 +550,7 @@ impl ServeEngine {
                     &third_bodies,
                     params.build_atmosphere_model(),
                 );
-                let initial = spec.initial_state(params.mu);
+                let initial = spec.initial_state(params.mu, params.epoch);
                 orbit_group = orbit_group.add_satellite(spec.id.as_str(), initial, system);
                 metas.push(SatMeta {
                     spec: spec.clone(),
@@ -801,7 +801,9 @@ impl ServeEngine {
                         {
                             Some((
                                 self.group.sat_id(i),
-                                self.metas[i].spec.initial_state(self.params.mu),
+                                self.metas[i]
+                                    .spec
+                                    .initial_state(self.params.mu, self.params.epoch),
                             ))
                         } else {
                             None
@@ -979,7 +981,7 @@ impl ServeEngine {
             &third_bodies,
             self.params.build_atmosphere_model(),
         );
-        let initial = spec.initial_state(self.params.mu);
+        let initial = spec.initial_state(self.params.mu, self.params.epoch);
         self.group
             .push_orbit_satellite(spec.id.as_str(), initial.clone(), self.current_t, system);
 

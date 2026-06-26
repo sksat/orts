@@ -99,6 +99,17 @@ fn default_auto_threshold() -> usize {
     (cores * DEFAULT_THRESHOLD_PER_CORE).max(32)
 }
 
+/// The element-set epoch of the first TLE/OMM satellite, if any.
+///
+/// Used to default the simulation epoch to the element-set epoch (tsince = 0)
+/// when no `--epoch` is given, so SGP4 is never extrapolated.
+fn element_set_epoch(satellites: &[SatelliteSpec]) -> Option<Epoch> {
+    satellites.iter().find_map(|s| match &s.orbit {
+        OrbitSpec::Omm { omm, .. } => Some(omm.epoch),
+        OrbitSpec::Circular { .. } => None,
+    })
+}
+
 /// Simulation parameters derived from CLI arguments.
 pub struct SimParams {
     pub body: KnownBody,
@@ -181,12 +192,14 @@ impl SimParams {
         let body = parse_body(&args.body);
         let mu = body.properties().mu;
 
-        let epoch = match &args.epoch {
-            Some(s) => Some(Epoch::from_iso8601(s).unwrap_or_else(|| {
+        // An explicit `--epoch` wins; `None` defers the default — a TLE/OMM
+        // orbit without `--epoch` starts at its element-set epoch (resolved
+        // after the satellites are built, below).
+        let epoch = args.epoch.as_ref().map(|s| {
+            Epoch::from_iso8601(s).unwrap_or_else(|| {
                 panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)")
-            })),
-            None => Some(Epoch::now()),
-        };
+            })
+        });
 
         let satellites = if !args.sats.is_empty() {
             // --sat flags provided: parse each spec
@@ -266,6 +279,13 @@ impl SimParams {
             satellites
         };
 
+        // Resolve the deferred epoch: an explicit `--epoch` wins; otherwise a
+        // TLE/OMM orbit starts at its element-set epoch (tsince = 0, no SGP4
+        // extrapolation); otherwise fall back to "now".
+        let epoch = epoch
+            .or_else(|| element_set_epoch(&satellites))
+            .or_else(|| Some(Epoch::now()));
+
         Self {
             body,
             mu,
@@ -298,12 +318,13 @@ impl SimParams {
         let body = config.known_body();
         let mu = body.properties().mu;
 
-        let epoch = match &config.epoch {
-            Some(s) => Some(Epoch::from_iso8601(s).unwrap_or_else(|| {
+        // `None` defers the default; resolved from the element-set epoch after
+        // the satellites are built (see `from_sim_args`).
+        let epoch = config.epoch.as_ref().map(|s| {
+            Epoch::from_iso8601(s).unwrap_or_else(|| {
                 panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)")
-            })),
-            None => Some(Epoch::now()),
-        };
+            })
+        });
 
         let satellites: Vec<SatelliteSpec> = config
             .satellites
@@ -329,6 +350,10 @@ impl SimParams {
         } else {
             satellites
         };
+
+        let epoch = epoch
+            .or_else(|| element_set_epoch(&satellites))
+            .or_else(|| Some(Epoch::now()));
 
         Self {
             body,
@@ -857,7 +882,7 @@ mod tests {
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
-        let state = params.satellites[0].initial_state(params.mu);
+        let state = params.satellites[0].initial_state(params.mu, params.epoch);
 
         let r = state.position().magnitude();
         let v = state.velocity().magnitude();

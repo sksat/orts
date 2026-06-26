@@ -1,5 +1,8 @@
 use arika::body::KnownBody;
 use arika::elements::Sgp4Elements;
+use arika::epoch::{Epoch, Utc};
+use arika::frame::{FrameTransform, SimpleEci, Teme};
+use arika::sgp4::Sgp4Propagator;
 use orts::OrbitalState;
 use orts::orbital::kepler::KeplerianElements;
 use orts::record::entity_path::EntityPath;
@@ -69,7 +72,15 @@ pub struct SatelliteSpec {
 }
 
 impl SatelliteSpec {
-    pub fn initial_state(&self, mu: f64) -> OrbitalState {
+    /// Build the satellite's initial Cartesian state (in `SimpleEci`).
+    ///
+    /// For a TLE/OMM orbit this propagates the SGP4 mean elements to `epoch`
+    /// and rotates the resulting TEME state into `SimpleEci` — the physically
+    /// correct path (SGP4 mean elements are *not* osculating Keplerian
+    /// elements). `epoch` is the resolved simulation epoch, which defaults to
+    /// the element-set epoch (tsince = 0); it is required for a TLE/OMM orbit
+    /// and ignored for a circular orbit.
+    pub fn initial_state(&self, mu: f64, epoch: Option<Epoch<Utc>>) -> OrbitalState {
         match &self.orbit {
             OrbitSpec::Circular {
                 r0,
@@ -88,9 +99,19 @@ impl SatelliteSpec {
                 let (pos, vel) = elements.to_state_vector(mu);
                 OrbitalState::new(pos, vel)
             }
-            OrbitSpec::Omm { elements, .. } => {
-                let (pos, vel) = elements.to_state_vector(mu);
-                OrbitalState::new(pos, vel)
+            OrbitSpec::Omm { omm, .. } => {
+                let epoch = epoch
+                    .expect("a TLE/OMM orbit requires a simulation epoch (defaults to the element-set epoch)");
+                let propagator = Sgp4Propagator::from_elements(omm)
+                    .unwrap_or_else(|e| panic!("SGP4 initialization failed: {e}"));
+                let (r_teme, v_teme) = propagator
+                    .propagate(epoch)
+                    .unwrap_or_else(|e| panic!("SGP4 propagation to {epoch:?} failed: {e}"));
+                // TEME → SimpleEci (the integration frame); ω = 0 (both inertial).
+                let (pos, vel) =
+                    FrameTransform::<Teme, SimpleEci>::teme_to_simple_eci(&epoch.to_ut1_naive())
+                        .transform_state(&r_teme, &v_teme);
+                OrbitalState::new(pos.into_inner(), vel.into_inner())
             }
         }
     }
@@ -334,7 +355,7 @@ mod tests {
     fn satellite_spec_initial_state_circular() {
         let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth);
         let mu = KnownBody::Earth.properties().mu;
-        let state = spec.initial_state(mu);
+        let state = spec.initial_state(mu, None);
         let r = state.position().magnitude();
         let expected_r = 6378.137 + 400.0;
         assert!(
@@ -350,7 +371,7 @@ mod tests {
             "altitude=800,inclination=98.6,id=sso-test",
             KnownBody::Earth,
         );
-        let state = spec.initial_state(mu);
+        let state = spec.initial_state(mu, None);
 
         let r = state.position().magnitude();
         let expected_r = 6378.137 + 800.0;
@@ -384,7 +405,7 @@ mod tests {
             "altitude=400,inclination=51.6,raan=90,id=iss-like",
             KnownBody::Earth,
         );
-        let state = spec.initial_state(mu);
+        let state = spec.initial_state(mu, None);
 
         let h = state.position().cross(state.velocity());
         let i = (h[2] / h.magnitude()).acos();
@@ -413,7 +434,7 @@ mod tests {
     fn satellite_spec_initial_state_equatorial_default() {
         let mu = KnownBody::Earth.properties().mu;
         let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth);
-        let state = spec.initial_state(mu);
+        let state = spec.initial_state(mu, None);
         assert!(
             state.position()[2].abs() < 1e-10,
             "equatorial orbit should have z ≈ 0, got {}",
