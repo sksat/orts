@@ -76,12 +76,14 @@ impl Sgp4Elements {
         (mu / (self.mean_motion * self.mean_motion)).cbrt()
     }
 
-    /// Orbital period [s] from the mean motion: `2π / n`.
+    /// Orbital period [s] from the mean motion: `2π / |n|`.
     ///
-    /// Exact for the (Kozai) mean motion the element set carries, and needs no
-    /// `mu` — this is the conventional period reported for a TLE/OMM.
+    /// A non-negative magnitude, so it stays sane even for a malformed element
+    /// set with a non-positive mean motion (the text parsers do not reject one).
+    /// Exact for the (Kozai) mean motion the set carries, and needs no `mu` —
+    /// this is the conventional period reported for a TLE/OMM.
     pub fn period(&self) -> f64 {
-        core::f64::consts::TAU / self.mean_motion
+        core::f64::consts::TAU / self.mean_motion.abs()
     }
 }
 
@@ -249,6 +251,19 @@ mod tests {
         assert!(
             (p - 5575.8).abs() < 2.0,
             "ISS period should be ≈5576 s, got {p}"
+        );
+    }
+
+    #[test]
+    fn period_stays_positive_for_negative_mean_motion() {
+        // A malformed element set with a non-positive mean motion must not yield
+        // a negative period (it flows into run horizons / reset boundaries).
+        let mut el = iss_elements();
+        el.mean_motion = -el.mean_motion;
+        assert!(
+            el.period() > 0.0,
+            "period must stay positive, got {}",
+            el.period()
         );
     }
 
