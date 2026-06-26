@@ -104,10 +104,14 @@ section is subdivided by package.
   conversion: the initial state is `SGP4 → TEME → SimpleEci` (rotating position
   and velocity), so it matches the element set within SGP4 accuracy rather than
   being tens of km off at epoch. Each satellite propagates from its own element
-  epoch to the simulation start; with no `--epoch` a bare TLE simulates from its
-  own epoch (this also fixes a latent bug where the element epoch was ignored).
-  Displayed period/altitude are unchanged; `Sgp4Elements::to_keplerian_elements`
-  remains an `arika` API but is no longer used by the CLI. ([#242](https://github.com/sksat/orts/pull/242))
+  epoch to the simulation start (fixing a latent bug where the element epoch was
+  stored but ignored). Epoch defaulting when `--epoch` is omitted: `run` with a
+  single TLE/OMM starts at that element epoch (so a bare TLE simulates from its
+  own epoch); `serve`, multi-satellite, and the embedded-ISS default use the
+  current time. A satellite added to a running `serve` is seeded at the current
+  simulation time, not the start. Displayed period/altitude are unchanged;
+  `Sgp4Elements::to_keplerian_elements` remains an `arika` API but is no longer
+  used by the CLI. ([#242](https://github.com/sksat/orts/pull/242))
 - `--tle` is TLE-only again (2LE/3LE; `-` for stdin) and pairs with the new
   `--omm`; element-set parsing is now backed by `arika::tle` / `arika::omm`
   instead of the removed `orts::tle`. (Previously `--tle` also auto-accepted OMM.) ([#87](https://github.com/sksat/orts/pull/87))

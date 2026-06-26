@@ -440,6 +440,7 @@ impl ServeEngine {
                 #[cfg(feature = "plugin-wasm")]
                 let mut ctx = crate::sim::controlled::ControlledBuildContext {
                     params: &params,
+                    seed_epoch: params.epoch,
                     wasm_cache: wasm_cache
                         .as_mut()
                         .expect("wasm_cache must be Some when has_controller"),
@@ -447,7 +448,10 @@ impl ServeEngine {
                         .expect("plugin_backend must be Some when has_controller"),
                 };
                 #[cfg(not(feature = "plugin-wasm"))]
-                let mut ctx = crate::sim::controlled::ControlledBuildContext { params: &params };
+                let mut ctx = crate::sim::controlled::ControlledBuildContext {
+                    params: &params,
+                    seed_epoch: params.epoch,
+                };
                 for spec in &params.satellites {
                     let sat = crate::sim::controlled::build_controlled_satellite(spec, &mut ctx)
                         .map_err(|e| format!("controlled satellite '{}': {e}", spec.id))?;
@@ -500,7 +504,7 @@ impl ServeEngine {
                 // Default torque: coupled gravity gradient
                 dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
 
-                let orbit = spec.initial_state(params.mu, params.epoch);
+                let orbit = spec.initial_state(params.mu, params.epoch)?;
                 let plant = SpacecraftState {
                     orbit,
                     attitude: orts::attitude::AttitudeState {
@@ -550,7 +554,7 @@ impl ServeEngine {
                     &third_bodies,
                     params.build_atmosphere_model(),
                 );
-                let initial = spec.initial_state(params.mu, params.epoch);
+                let initial = spec.initial_state(params.mu, params.epoch)?;
                 orbit_group = orbit_group.add_satellite(spec.id.as_str(), initial, system);
                 metas.push(SatMeta {
                     spec: spec.clone(),
@@ -803,7 +807,8 @@ impl ServeEngine {
                                 self.group.sat_id(i),
                                 self.metas[i]
                                     .spec
-                                    .initial_state(self.params.mu, self.params.epoch),
+                                    .initial_state(self.params.mu, self.params.epoch)
+                                    .unwrap_or_else(|e| panic!("{e}")),
                             ))
                         } else {
                             None
@@ -981,7 +986,8 @@ impl ServeEngine {
             &third_bodies,
             self.params.build_atmosphere_model(),
         );
-        let initial = spec.initial_state(self.params.mu, self.params.epoch);
+        let seed_epoch = self.params.epoch.map(|e| e.add_si_seconds(self.current_t));
+        let initial = spec.initial_state(self.params.mu, seed_epoch)?;
         self.group
             .push_orbit_satellite(spec.id.as_str(), initial.clone(), self.current_t, system);
 
@@ -1084,6 +1090,7 @@ impl ServeEngine {
         let new_sat = {
             let mut ctx = crate::sim::controlled::ControlledBuildContext {
                 params: &self.params,
+                seed_epoch: self.params.epoch.map(|e| e.add_si_seconds(self.current_t)),
                 wasm_cache,
                 plugin_backend,
             };
@@ -1287,7 +1294,7 @@ mod tests {
     /// no broadcast channel, and no stream bridge.
     fn engine_from_toml(toml: &str) -> Result<EngineInit, String> {
         let config: crate::config::SimConfig = toml::from_str(toml).expect("valid test toml");
-        let params = Arc::new(SimParams::from_config(&config));
+        let params = Arc::new(SimParams::from_config(&config, true));
         let data_dir = std::env::temp_dir().join(format!(
             "orts-engine-test-{}-{:?}",
             std::process::id(),

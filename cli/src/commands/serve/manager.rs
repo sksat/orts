@@ -299,7 +299,7 @@ pub(super) async fn simulation_manager(
 
     // Main manager loop: start simulation, run until terminated, return to idle.
     while let Some(config) = next_config {
-        let mut params_inner = SimParams::from_config(&config);
+        let mut params_inner = SimParams::from_config(&config, true);
         cli_plugin_overrides.apply(&mut params_inner);
         let params = Arc::new(params_inner);
 

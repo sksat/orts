@@ -41,6 +41,10 @@ use orts::plugin::wasm::WasmPluginCache;
 /// that 1000 satellites don't each pay the full WASM compilation cost.
 pub struct ControlledBuildContext<'a> {
     pub params: &'a SimParams,
+    /// Absolute epoch at which to seed the orbit (SGP4 propagation target).
+    /// For the initial fleet this is `params.epoch` (t = 0); for a dynamic
+    /// add after the sim has advanced it is `params.epoch + current_t`.
+    pub seed_epoch: Option<Epoch>,
     #[cfg(feature = "plugin-wasm")]
     pub wasm_cache: &'a mut WasmPluginCache,
     /// Which WASM backend to build controllers with. Resolved once by
@@ -161,7 +165,7 @@ pub fn build_controlled_satellite(
     };
 
     // 初期状態。
-    let orbit = spec.initial_state(params.mu, params.epoch);
+    let orbit = spec.initial_state(params.mu, ctx.seed_epoch)?;
     let plant = SpacecraftState {
         orbit,
         attitude: orts::attitude::AttitudeState {

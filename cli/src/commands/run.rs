@@ -26,7 +26,7 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: Option<&str>, format: OutputFor
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             });
-        SimParams::from_config(&config)
+        SimParams::from_config(&config, false)
     } else if sim.has_orbit_args() {
         SimParams::from_sim_args(sim, false)
     } else {
@@ -37,7 +37,7 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: Option<&str>, format: OutputFor
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             });
-            SimParams::from_config(&config)
+            SimParams::from_config(&config, false)
         } else {
             eprintln!("Error: no simulation configuration found.");
             eprintln!("Provide --config <path>, place orts.toml in the current directory,");
@@ -483,7 +483,9 @@ pub fn run_simulation(params: &SimParams) -> Recording {
             &third_bodies,
             params.build_atmosphere_model(),
         );
-        let initial = sat.initial_state(params.mu, params.epoch);
+        let initial = sat
+            .initial_state(params.mu, params.epoch)
+            .unwrap_or_else(|e| panic!("{e}"));
 
         group = group.add_satellite_until(sat.id.as_str(), initial, sat.period, system);
     }
@@ -917,6 +919,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
     {
         let mut ctx = ControlledBuildContext {
             params,
+            seed_epoch: params.epoch,
             #[cfg(feature = "plugin-wasm")]
             wasm_cache: &mut wasm_cache,
             #[cfg(feature = "plugin-wasm")]

@@ -78,7 +78,7 @@ impl SatelliteSpec {
     /// two-body conversion, which is tens of km off at epoch. `epoch` is the
     /// resolved simulation-start epoch; when it is `None` the element-set epoch
     /// is used (propagation Δt = 0), so a bare TLE simulates from its own epoch.
-    pub fn initial_state(&self, mu: f64, epoch: Option<Epoch>) -> OrbitalState {
+    pub fn initial_state(&self, mu: f64, epoch: Option<Epoch>) -> Result<OrbitalState, String> {
         match &self.orbit {
             OrbitSpec::Circular {
                 r0,
@@ -95,28 +95,28 @@ impl SatelliteSpec {
                     true_anomaly: 0.0,
                 };
                 let (pos, vel) = elements.to_state_vector(mu);
-                OrbitalState::new(pos, vel)
+                Ok(OrbitalState::new(pos, vel))
             }
             OrbitSpec::Omm { omm } => {
                 let target = epoch.unwrap_or(omm.epoch);
-                let propagator = Sgp4Propagator::from_elements(omm).unwrap_or_else(|e| {
-                    panic!(
+                let propagator = Sgp4Propagator::from_elements(omm).map_err(|e| {
+                    format!(
                         "SGP4 propagator init failed for NORAD {}: {e}",
                         omm.norad_cat_id
                     )
-                });
-                let (r_teme, v_teme) = propagator.propagate(target).unwrap_or_else(|e| {
-                    panic!(
+                })?;
+                let (r_teme, v_teme) = propagator.propagate(target).map_err(|e| {
+                    format!(
                         "SGP4 propagation failed for NORAD {}: {e}",
                         omm.norad_cat_id
                     )
-                });
+                })?;
                 // SGP4 yields TEME; rotate the state (position+velocity, ω = 0)
                 // into the integration frame `SimpleEci` at the target epoch.
                 let (pos, vel) =
                     FrameTransform::<Teme, SimpleEci>::teme_to_simple_eci(&target.to_ut1_naive())
                         .transform_state(&r_teme, &v_teme);
-                OrbitalState::new(pos.into_inner(), vel.into_inner())
+                Ok(OrbitalState::new(pos.into_inner(), vel.into_inner()))
             }
         }
     }
@@ -367,7 +367,7 @@ mod tests {
     fn satellite_spec_initial_state_circular() {
         let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth);
         let mu = KnownBody::Earth.properties().mu;
-        let state = spec.initial_state(mu, None);
+        let state = spec.initial_state(mu, None).unwrap();
         let r = state.position().magnitude();
         let expected_r = 6378.137 + 400.0;
         assert!(
@@ -383,7 +383,7 @@ mod tests {
             "altitude=800,inclination=98.6,id=sso-test",
             KnownBody::Earth,
         );
-        let state = spec.initial_state(mu, None);
+        let state = spec.initial_state(mu, None).unwrap();
 
         let r = state.position().magnitude();
         let expected_r = 6378.137 + 800.0;
@@ -417,7 +417,7 @@ mod tests {
             "altitude=400,inclination=51.6,raan=90,id=iss-like",
             KnownBody::Earth,
         );
-        let state = spec.initial_state(mu, None);
+        let state = spec.initial_state(mu, None).unwrap();
 
         let h = state.position().cross(state.velocity());
         let i = (h[2] / h.magnitude()).acos();
@@ -446,7 +446,7 @@ mod tests {
     fn satellite_spec_initial_state_equatorial_default() {
         let mu = KnownBody::Earth.properties().mu;
         let spec = parse_sat_spec("altitude=400,id=test", KnownBody::Earth);
-        let state = spec.initial_state(mu, None);
+        let state = spec.initial_state(mu, None).unwrap();
         assert!(
             state.position()[2].abs() < 1e-10,
             "equatorial orbit should have z ≈ 0, got {}",
@@ -473,7 +473,7 @@ mod tests {
         };
 
         // No epoch → propagate to the element epoch (Δt = 0), then TEME→SimpleEci.
-        let p = *spec.initial_state(mu, None).position();
+        let p = *spec.initial_state(mu, None).unwrap().position();
 
         // Must equal a direct SGP4 propagation + rotation (pins the wiring).
         let (r_teme, v_teme) = Sgp4Propagator::from_elements(omm)

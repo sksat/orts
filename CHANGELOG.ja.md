@@ -93,11 +93,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 #### Changed
 - TLE/OMM 軌道の初期状態を二体変換でなく SGP4 伝播で生成するようにした:
   `SGP4 → TEME → SimpleEci`(位置・速度を回転)で求めるので、エポックで数十 km
-  ずれず SGP4 精度で要素セットに一致する。各衛星は自分の要素エポックから
-  シム開始まで伝播し、`--epoch` 未指定なら裸の TLE は自身のエポックから開始する
-  (要素エポックが無視されていた潜在バグも修正)。表示の period/altitude は不変。
-  `Sgp4Elements::to_keplerian_elements` は `arika` の API として残るが CLI は
-  使わなくなった。([#242](https://github.com/sksat/orts/pull/242))
+  ずれず SGP4 精度で要素セットに一致する。各衛星は自分の要素エポックからシム
+  開始まで伝播する(要素エポックが保持されつつ無視されていた潜在バグも修正)。
+  `--epoch` 未指定時の既定: `run` で単一 TLE/OMM ならその要素エポック開始(裸の
+  TLE は自身のエポックから)、`serve`・複数衛星・埋め込み ISS は現在時刻。実行中の
+  `serve` に追加した衛星は開始時刻でなく現在のシム時刻で seed する。表示の
+  period/altitude は不変。`Sgp4Elements::to_keplerian_elements` は `arika` の
+  API として残るが CLI は使わなくなった。([#242](https://github.com/sksat/orts/pull/242))
 - `--tle` を再び TLE 専用 (2LE/3LE、`-` で stdin) とし、新規 `--omm` と
   対にした。要素セットのパースは削除した `orts::tle` でなく
   `arika::tle` / `arika::omm` を使用 (従来は `--tle` が OMM も自動受理)。([#87](https://github.com/sksat/orts/pull/87))

@@ -174,6 +174,19 @@ impl SimParams {
     }
 }
 
+/// Default sim-start epoch when none is given explicitly: a `run` (not serve)
+/// with a single TLE/OMM satellite starts at that element-set epoch, so a bare
+/// TLE simulates from its own epoch; otherwise the current wall-clock time.
+fn default_start_epoch(satellites: &[crate::satellite::SatelliteSpec], is_serve: bool) -> Epoch {
+    if !is_serve
+        && let [only] = satellites
+        && let crate::satellite::OrbitSpec::Omm { omm } = &only.orbit
+    {
+        return omm.epoch;
+    }
+    Epoch::now()
+}
+
 impl SimParams {
     /// Build SimParams from CLI arguments.
     /// `is_serve`: when true and no orbit args are given, defaults to SSO+ISS.
@@ -181,12 +194,11 @@ impl SimParams {
         let body = parse_body(&args.body);
         let mu = body.properties().mu;
 
-        let epoch = match &args.epoch {
-            Some(s) => Some(Epoch::from_iso8601(s).unwrap_or_else(|| {
+        let explicit_epoch = args.epoch.as_ref().map(|s| {
+            Epoch::from_iso8601(s).unwrap_or_else(|| {
                 panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)")
-            })),
-            None => Some(Epoch::now()),
-        };
+            })
+        });
 
         let satellites = if !args.sats.is_empty() {
             // --sat flags provided: parse each spec
@@ -265,6 +277,9 @@ impl SimParams {
             satellites
         };
 
+        let epoch =
+            Some(explicit_epoch.unwrap_or_else(|| default_start_epoch(&satellites, is_serve)));
+
         Self {
             body,
             mu,
@@ -293,16 +308,15 @@ impl SimParams {
     }
 
     /// Build SimParams from a config file.
-    pub fn from_config(config: &SimConfig) -> Self {
+    pub fn from_config(config: &SimConfig, is_serve: bool) -> Self {
         let body = config.known_body();
         let mu = body.properties().mu;
 
-        let epoch = match &config.epoch {
-            Some(s) => Some(Epoch::from_iso8601(s).unwrap_or_else(|| {
+        let explicit_epoch = config.epoch.as_ref().map(|s| {
+            Epoch::from_iso8601(s).unwrap_or_else(|| {
                 panic!("Invalid epoch format: {s}. Expected ISO 8601 (e.g. 2024-03-20T12:00:00Z)")
-            })),
-            None => Some(Epoch::now()),
-        };
+            })
+        });
 
         let satellites: Vec<SatelliteSpec> = config
             .satellites
@@ -328,6 +342,9 @@ impl SimParams {
         } else {
             satellites
         };
+
+        let epoch =
+            Some(explicit_epoch.unwrap_or_else(|| default_start_epoch(&satellites, is_serve)));
 
         Self {
             body,
@@ -852,7 +869,9 @@ mod tests {
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
-        let state = params.satellites[0].initial_state(params.mu, params.epoch);
+        let state = params.satellites[0]
+            .initial_state(params.mu, params.epoch)
+            .unwrap();
 
         let r = state.position().magnitude();
         let v = state.velocity().magnitude();
