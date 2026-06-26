@@ -7,7 +7,7 @@
 use arika::epoch::Epoch;
 use nalgebra::{UnitQuaternion, Vector3, Vector4};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_distr::Normal;
 
 use crate::SpacecraftState;
