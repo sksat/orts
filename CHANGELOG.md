@@ -148,7 +148,7 @@ section is subdivided by package.
 - Element-set parsing ([#87](https://github.com/sksat/orts/pull/87)). A shared
   no-alloc `elements::Sgp4Elements` mean-element set (catalog number, UTC epoch,
   six SGP4 mean elements, B\* drag; angles in radians, mean motion in rad/s) with
-  `semi_major_axis(mu)` / `to_keplerian_elements(mu)`. The text parsers return
+  `semi_major_axis(mu)` and `period()` display helpers. The text parsers return
   `elements::ParsedElementSet` (the elements plus owned `OBJECT_NAME` /
   `OBJECT_ID` identity); the format-detecting `elements::parse` dispatches to them.
   - `tle` — NORAD TLE / 2LE / 3LE parser (`tle::parse`) → `ParsedElementSet`, with Alpha-5

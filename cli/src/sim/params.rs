@@ -256,13 +256,12 @@ impl SimParams {
 
             if let Some(parsed) = omm_opt {
                 let omm = parsed.elements;
-                let elements = omm.to_keplerian_elements(mu);
-                let period = elements.period(mu);
+                let period = omm.period();
                 let sat_name = parsed.object_name.clone();
                 vec![SatelliteSpec {
                     id: "default".to_string(),
                     name: sat_name,
-                    orbit: OrbitSpec::Omm { omm, elements },
+                    orbit: OrbitSpec::Omm { omm },
                     period,
                     ballistic_coeff: None,
                     srp_area_to_mass: None,
@@ -482,16 +481,12 @@ impl SimParams {
             .expect("embedded ISS TLE must be valid")
         });
         let iss_tle = parsed_iss.elements;
-        let elements = iss_tle.to_keplerian_elements(mu);
-        let period = elements.period(mu);
+        let period = iss_tle.period();
         let sat_name = parsed_iss.object_name.clone();
         sats.push(SatelliteSpec {
             id: "iss".to_string(),
             name: sat_name,
-            orbit: OrbitSpec::Omm {
-                omm: iss_tle,
-                elements,
-            },
+            orbit: OrbitSpec::Omm { omm: iss_tle },
             period,
             ballistic_coeff: None,
             srp_area_to_mass: None,

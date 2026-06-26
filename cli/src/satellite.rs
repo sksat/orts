@@ -23,11 +23,8 @@ pub enum OrbitSpec {
         raan: f64,
     },
     /// From a parsed element set — TLE or OMM input, both decode into the
-    /// canonical [`Sgp4Elements`] record — plus the derived Keplerian elements.
-    Omm {
-        omm: Sgp4Elements,
-        elements: KeplerianElements,
-    },
+    /// canonical [`Sgp4Elements`] record (propagated with SGP4).
+    Omm { omm: Sgp4Elements },
 }
 
 /// Per-satellite specification.
@@ -134,8 +131,9 @@ impl SatelliteSpec {
     pub fn altitude(&self, body: &KnownBody) -> f64 {
         match &self.orbit {
             OrbitSpec::Circular { altitude, .. } => *altitude,
-            OrbitSpec::Omm { elements, .. } => {
-                let perigee_r = elements.semi_major_axis * (1.0 - elements.eccentricity);
+            OrbitSpec::Omm { omm } => {
+                let a = omm.semi_major_axis(body.properties().mu);
+                let perigee_r = a * (1.0 - omm.eccentricity);
                 perigee_r - body.properties().radius
             }
         }
@@ -251,19 +249,17 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
     let (orbit, period, derived_name) = if let Some(norad) = norad_id {
         let parsed = fetch_tle_by_norad_id(norad);
         let omm = parsed.elements;
-        let elements = omm.to_keplerian_elements(mu);
-        let period = elements.period(mu);
+        let period = omm.period();
         let obj_name = parsed.object_name.clone();
-        (OrbitSpec::Omm { omm, elements }, period, obj_name)
+        (OrbitSpec::Omm { omm }, period, obj_name)
     } else if let (Some(l1), Some(l2)) = (tle_line1, tle_line2) {
         let text = format!("{l1}\n{l2}");
         let parsed = arika::tle::parse(&text)
             .unwrap_or_else(|e| panic!("Failed to parse TLE in --sat: {e}"));
         let omm = parsed.elements;
-        let elements = omm.to_keplerian_elements(mu);
-        let period = elements.period(mu);
+        let period = omm.period();
         let obj_name = parsed.object_name.clone();
-        (OrbitSpec::Omm { omm, elements }, period, obj_name)
+        (OrbitSpec::Omm { omm }, period, obj_name)
     } else {
         let alt = altitude.unwrap_or(400.0);
         let r0 = body.properties().radius + alt;

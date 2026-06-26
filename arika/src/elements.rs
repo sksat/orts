@@ -14,8 +14,8 @@
 //!
 //! These are **mean** elements in the SGP4 (Brouwer-Kozai) sense, *not*
 //! osculating Keplerian elements: they are only physically meaningful when fed
-//! to the SGP4 propagator. Treating them as classical orbital elements (see
-//! [`Sgp4Elements::to_keplerian_elements`]) introduces tens-of-km error at epoch.
+//! to the SGP4 propagator. Treating them as classical orbital elements (a
+//! two-body interpretation) introduces tens-of-km error at epoch.
 //!
 //! Angles are stored in **radians** and mean motion in **rad/s** (orts
 //! conventions), converted from each format's native units (degrees, rev/day)
@@ -32,7 +32,6 @@ use core::fmt;
 use crate::math::F64Ext;
 
 use crate::epoch::{Epoch, Utc};
-use crate::kepler::{KeplerianElements, mean_to_true_anomaly};
 
 /// SGP4 mean orbital element set (no allocator required).
 ///
@@ -77,22 +76,16 @@ impl Sgp4Elements {
         (mu / (self.mean_motion * self.mean_motion)).cbrt()
     }
 
-    /// Convert to classical Keplerian elements.
+    /// Orbital period [s] from the mean motion: `2π / |n|`.
     ///
-    /// **Not the SGP4 orbit**: SGP4 mean elements are not osculating Keplerian
-    /// elements, so this two-body interpretation differs from the true SGP4
-    /// state by tens of km at epoch. It is the approximation the current
-    /// (pre-SGP4) ingestion path uses to seed an initial Cartesian state, and
-    /// will be replaced by proper SGP4 propagation.
-    pub fn to_keplerian_elements(&self, mu: f64) -> KeplerianElements {
-        KeplerianElements {
-            semi_major_axis: self.semi_major_axis(mu),
-            eccentricity: self.eccentricity,
-            inclination: self.inclination,
-            raan: self.raan,
-            argument_of_periapsis: self.argument_of_perigee,
-            true_anomaly: mean_to_true_anomaly(self.mean_anomaly, self.eccentricity),
-        }
+    /// Exact for the (Kozai) mean motion the set carries, and needs no `mu` —
+    /// this is the conventional period reported for a TLE/OMM. `|n|` keeps a
+    /// sign-flipped mean motion from producing a negative period (matching the
+    /// magnitude the prior derived path produced). A zero or NaN mean motion
+    /// still propagates to a non-finite result; rejecting such an element set is
+    /// the parser's / SGP4 propagator's job, not this display helper's.
+    pub fn period(&self) -> f64 {
+        core::f64::consts::TAU / self.mean_motion.abs()
     }
 }
 
@@ -254,20 +247,25 @@ mod tests {
     }
 
     #[test]
-    fn iss_to_keplerian_elements() {
-        let el = iss_elements();
-        let kep = el.to_keplerian_elements(MU_EARTH);
-
-        assert!((kep.semi_major_axis - el.semi_major_axis(MU_EARTH)).abs() < 1e-9);
-        assert_eq!(kep.eccentricity, el.eccentricity);
-        assert_eq!(kep.inclination, el.inclination);
-        assert_eq!(kep.raan, el.raan);
-        assert_eq!(kep.argument_of_periapsis, el.argument_of_perigee);
-        // Near-circular orbit (e ≈ 0.0007): true anomaly ≈ mean anomaly.
-        let d_nu = (kep.true_anomaly - el.mean_anomaly).abs();
+    fn iss_period() {
+        let p = iss_elements().period();
+        // ISS mean motion ≈ 15.4956 rev/day → period ≈ 92.9 min ≈ 5576 s.
         assert!(
-            d_nu < 0.01,
-            "ν should be ≈ M for near-circular orbit, Δ={d_nu}"
+            (p - 5575.8).abs() < 2.0,
+            "ISS period should be ≈5576 s, got {p}"
+        );
+    }
+
+    #[test]
+    fn period_stays_positive_for_negative_mean_motion() {
+        // A sign-flipped (negative) mean motion must not yield a negative
+        // period (it flows into run horizons / reset boundaries).
+        let mut el = iss_elements();
+        el.mean_motion = -el.mean_motion;
+        assert!(
+            el.period() > 0.0,
+            "period must stay positive, got {}",
+            el.period()
         );
     }
 

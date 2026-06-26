@@ -524,18 +524,16 @@ impl SatelliteConfig {
                 let parsed = arika::tle::parse(&text)
                     .unwrap_or_else(|e| panic!("Failed to parse TLE in config: {e}"));
                 let tle = parsed.elements;
-                let elements = tle.to_keplerian_elements(mu);
-                let period = elements.period(mu);
+                let period = tle.period();
                 let tle_name = parsed.object_name.clone();
-                (OrbitSpec::Omm { omm: tle, elements }, period, tle_name)
+                (OrbitSpec::Omm { omm: tle }, period, tle_name)
             }
             OrbitConfig::Norad { norad_id } => {
                 let parsed = fetch_tle_by_norad_id(*norad_id);
                 let tle = parsed.elements;
-                let elements = tle.to_keplerian_elements(mu);
-                let period = elements.period(mu);
+                let period = tle.period();
                 let tle_name = parsed.object_name.clone();
-                (OrbitSpec::Omm { omm: tle, elements }, period, tle_name)
+                (OrbitSpec::Omm { omm: tle }, period, tle_name)
             }
         };
 
