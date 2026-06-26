@@ -138,10 +138,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 #### Added
 - 要素セットのパース ([#87](https://github.com/sksat/orts/pull/87))。共有の
   no-alloc な `elements::Sgp4Elements` (平均要素セット: カタログ番号、UTC epoch、
-  6 個の SGP4 平均要素、B\* drag。角度は rad、平均運動は rad/s) に
-  表示用ヘルパ `semi_major_axis(mu)` と `period()`。テキストパーサは
-  `elements::ParsedElementSet` (要素 + 所有する `OBJECT_NAME` / `OBJECT_ID`
-  識別子) を返し、形式判定する `elements::parse` がそれらに振り分ける。
+  6 個の SGP4 平均要素、B\* drag。角度は rad、平均運動は rad/s) を**検証付き型**に。
+  `Sgp4Elements::try_new` / `TryFrom<Sgp4ElementsFields>` で構築し、各フィールド
+  有限・mean motion 正・eccentricity ∈ [0,1) を強制(違反は `ElementsError`)。
+  フィールドは `fields()` で読み、表示用ヘルパ `semi_major_axis(mu)` と `period()`
+  を持つ。テキストパーサは `elements::ParsedElementSet` (要素 + 所有する
+  `OBJECT_NAME` / `OBJECT_ID` 識別子) を返し、検証に失敗した要素セットは reject
+  する。形式判定する `elements::parse` がそれらに振り分ける。
   - `tle` — NORAD TLE / 2LE / 3LE パーサ (`tle::parse`) が `ParsedElementSet` を生成。
     Alpha-5 英数字カタログ番号と `OBJECT_ID` 正規化に対応。
   - `omm::json` / `omm::kvn` / `omm::xml` — JSON / KVN / XML 各シリアライズの

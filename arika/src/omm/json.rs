@@ -18,7 +18,7 @@ use crate::math::F64Ext;
 
 use serde::Deserialize;
 
-use crate::elements::{ParsedElementSet, Sgp4Elements};
+use crate::elements::{ElementsError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields};
 
 /// Error type for OMM JSON parsing.
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +28,9 @@ pub enum JsonParseError {
     /// `EPOCH` was not a parseable ISO-8601 UTC timestamp (calendar or
     /// ordinal / day-of-year form).
     InvalidEpoch(String),
+    /// The parsed values are not a valid element set (e.g. non-positive mean
+    /// motion or out-of-range eccentricity).
+    InvalidElements(ElementsError),
 }
 
 impl fmt::Display for JsonParseError {
@@ -35,6 +38,7 @@ impl fmt::Display for JsonParseError {
         match self {
             JsonParseError::Malformed(e) => write!(f, "malformed OMM JSON: {e}"),
             JsonParseError::InvalidEpoch(s) => write!(f, "invalid OMM EPOCH: '{s}'"),
+            JsonParseError::InvalidElements(e) => write!(f, "invalid OMM element set: {e}"),
         }
     }
 }
@@ -136,18 +140,21 @@ pub fn parse(json: &str) -> Result<ParsedElementSet, JsonParseError> {
     let epoch = crate::elements::parse_epoch(&raw.epoch)
         .ok_or_else(|| JsonParseError::InvalidEpoch(raw.epoch.clone()))?;
 
+    let elements = Sgp4Elements::try_new(Sgp4ElementsFields {
+        norad_cat_id: raw.norad_cat_id,
+        epoch,
+        mean_motion: raw.mean_motion * 2.0 * PI / 86400.0, // rev/day → rad/s
+        eccentricity: raw.eccentricity,
+        inclination: raw.inclination.to_radians(),
+        raan: raw.ra_of_asc_node.to_radians(),
+        argument_of_perigee: raw.arg_of_pericenter.to_radians(),
+        mean_anomaly: raw.mean_anomaly.to_radians(),
+        bstar: raw.bstar,
+    })
+    .map_err(JsonParseError::InvalidElements)?;
+
     Ok(ParsedElementSet {
-        elements: Sgp4Elements {
-            norad_cat_id: raw.norad_cat_id,
-            epoch,
-            mean_motion: raw.mean_motion * 2.0 * PI / 86400.0, // rev/day → rad/s
-            eccentricity: raw.eccentricity,
-            inclination: raw.inclination.to_radians(),
-            raan: raw.ra_of_asc_node.to_radians(),
-            argument_of_perigee: raw.arg_of_pericenter.to_radians(),
-            mean_anomaly: raw.mean_anomaly.to_radians(),
-            bstar: raw.bstar,
-        },
+        elements,
         object_name: raw.object_name,
         object_id: raw.object_id,
     })
@@ -178,7 +185,7 @@ mod tests {
     #[test]
     fn parse_iss_omm_json() {
         let set = parse(ISS_OMM_JSON).unwrap();
-        let omm = set.elements;
+        let omm = set.elements.to_fields();
         assert_eq!(set.object_name.as_deref(), Some("ISS (ZARYA)"));
         assert_eq!(set.object_id.as_deref(), Some("1998-067A"));
         assert_eq!(omm.norad_cat_id, 25544);
@@ -196,15 +203,15 @@ mod tests {
         assert!((omm.bstar - 3.0e-5).abs() < 1e-10);
 
         // Semi-major axis consistent with the ISS (~6796 km).
-        assert!((omm.semi_major_axis(MU_EARTH) - 6796.0).abs() < 5.0);
+        assert!((set.elements.semi_major_axis(MU_EARTH) - 6796.0).abs() < 5.0);
     }
 
     #[test]
     fn epoch_without_z_suffix_is_accepted() {
         // CelesTrak omits the trailing 'Z'; ensure both forms parse identically.
         let with_z = ISS_OMM_JSON.replace("12:00:00.000000", "12:00:00.000000Z");
-        let a = parse(ISS_OMM_JSON).unwrap().elements;
-        let b = parse(&with_z).unwrap().elements;
+        let a = parse(ISS_OMM_JSON).unwrap().elements.to_fields();
+        let b = parse(&with_z).unwrap().elements.to_fields();
         assert_eq!(a.epoch, b.epoch);
     }
 
@@ -235,7 +242,7 @@ mod tests {
     fn parse_single_element_array() {
         // CelesTrak single-satellite OMM JSON is sometimes a 1-element array.
         let arr = ["[", ISS_OMM_JSON, "]"].concat();
-        assert_eq!(parse(&arr).unwrap().elements.norad_cat_id, 25544);
+        assert_eq!(parse(&arr).unwrap().elements.fields().norad_cat_id, 25544);
     }
 
     #[test]
@@ -260,7 +267,7 @@ mod tests {
             "MEAN_ANOMALY": "324.7580",
             "BSTAR": "0.00003"
         }"#;
-        let omm = parse(j).unwrap().elements;
+        let omm = parse(j).unwrap().elements.to_fields();
         assert_eq!(omm.norad_cat_id, 25544);
         assert!((omm.inclination.to_degrees() - 51.64).abs() < 1e-9);
         assert!((omm.bstar - 3.0e-5).abs() < 1e-10);
@@ -273,6 +280,6 @@ mod tests {
     fn bom_prefixed_json_parses_directly() {
         // Direct calls (not via elements::parse) must also tolerate a leading BOM.
         let bom = ["\u{feff}", ISS_OMM_JSON].concat();
-        assert_eq!(parse(&bom).unwrap().elements.norad_cat_id, 25544);
+        assert_eq!(parse(&bom).unwrap().elements.fields().norad_cat_id, 25544);
     }
 }

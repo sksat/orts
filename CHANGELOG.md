@@ -146,11 +146,15 @@ section is subdivided by package.
 
 #### Added
 - Element-set parsing ([#87](https://github.com/sksat/orts/pull/87)). A shared
-  no-alloc `elements::Sgp4Elements` mean-element set (catalog number, UTC epoch,
-  six SGP4 mean elements, B\* drag; angles in radians, mean motion in rad/s) with
-  `semi_major_axis(mu)` and `period()` display helpers. The text parsers return
-  `elements::ParsedElementSet` (the elements plus owned `OBJECT_NAME` /
-  `OBJECT_ID` identity); the format-detecting `elements::parse` dispatches to them.
+  no-alloc `elements::Sgp4Elements` — a *validated* mean-element set (catalog
+  number, UTC epoch, six SGP4 mean elements, B\* drag; angles in radians, mean
+  motion in rad/s). Built with `Sgp4Elements::try_new` /
+  `TryFrom<Sgp4ElementsFields>`, which enforce finite fields, a positive mean
+  motion and an eccentricity in `[0, 1)` (returning `ElementsError`); fields are
+  read back with `fields()`, with `semi_major_axis(mu)` and `period()` display
+  helpers. The text parsers return `elements::ParsedElementSet` (the elements
+  plus owned `OBJECT_NAME` / `OBJECT_ID` identity) and reject element sets that
+  fail validation; the format-detecting `elements::parse` dispatches to them.
   - `tle` — NORAD TLE / 2LE / 3LE parser (`tle::parse`) → `ParsedElementSet`, with Alpha-5
     alphanumeric catalog numbers and `OBJECT_ID` normalization.
   - `omm::json` / `omm::kvn` / `omm::xml` — CCSDS OMM parsers for the JSON, KVN,
