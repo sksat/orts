@@ -48,6 +48,12 @@
       "matchPackageNames": ["/^wasmtime/"]
     },
     {
+      "description": "rand_distr's major hard-depends on the matching rand major (rand_distr 0.6 -> rand ^0.10), so a split bump leaves two rand majors in the tree and fails to build (Distribution trait mismatch); the maintainer co-releases the majors. Not filtered by matchUpdateTypes because Renovate classifies a 0.x breaking bump (0.9->0.10) as minor. Retire if rand_distr's rand dep ever spans two majors.",
+      "matchManagers": ["cargo"],
+      "groupName": "rand",
+      "matchPackageNames": ["rand", "rand_distr"]
+    },
+    {
       "description": "three.js, @types/three and the @react-three/* ecosystem must move in lockstep across all workspaces (viewer, tobari/examples/web, orbit-viewer); a split bump leaves two @types/three versions in the tree and fails the viewer TypeScript build (TS2322)",
       "matchManagers": ["npm"],
       "groupName": "three",
