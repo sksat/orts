@@ -463,41 +463,6 @@ ISS (ZARYA)
     }
 
     #[test]
-    fn iss_keplerian_elements() {
-        let omm = parse(ISS_TLE).unwrap().elements;
-        let elements = omm.to_keplerian_elements(MU_EARTH);
-        let a = omm.semi_major_axis(MU_EARTH);
-        assert!((elements.semi_major_axis - a).abs() < 1e-6);
-        assert!((elements.inclination - omm.inclination).abs() < 1e-12);
-        assert!((elements.eccentricity - omm.eccentricity).abs() < 1e-12);
-    }
-
-    #[test]
-    fn iss_state_vector_plausible() {
-        let omm = parse(ISS_TLE).unwrap().elements;
-        let elements = omm.to_keplerian_elements(MU_EARTH);
-        let (pos, vel) = elements.to_state_vector(MU_EARTH);
-
-        let r = pos.magnitude();
-        let v = vel.magnitude();
-        let earth_radius = KnownBody::Earth.properties().radius;
-
-        let altitude = r - earth_radius;
-        assert!(
-            (400.0 - altitude).abs() < 30.0,
-            "ISS altitude from state vector: {altitude:.1} km"
-        );
-        assert!((v - 7.66).abs() < 0.2, "ISS velocity: {v:.3} km/s");
-
-        let energy = v * v / 2.0 - MU_EARTH / r;
-        let expected_energy = -MU_EARTH / (2.0 * elements.semi_major_axis);
-        assert!(
-            (energy - expected_energy).abs() / expected_energy.abs() < 1e-10,
-            "Energy mismatch: {energy} vs {expected_energy}"
-        );
-    }
-
-    #[test]
     fn geo_semi_major_axis() {
         let omm = parse(GEO_TLE).unwrap().elements;
         let a = omm.semi_major_axis(MU_EARTH);

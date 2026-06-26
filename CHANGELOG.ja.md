@@ -139,7 +139,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - 要素セットのパース ([#87](https://github.com/sksat/orts/pull/87))。共有の
   no-alloc な `elements::Sgp4Elements` (平均要素セット: カタログ番号、UTC epoch、
   6 個の SGP4 平均要素、B\* drag。角度は rad、平均運動は rad/s) に
-  `semi_major_axis(mu)` / `to_keplerian_elements(mu)`。テキストパーサは
+  表示用ヘルパ `semi_major_axis(mu)` と `period()`。テキストパーサは
   `elements::ParsedElementSet` (要素 + 所有する `OBJECT_NAME` / `OBJECT_ID`
   識別子) を返し、形式判定する `elements::parse` がそれらに振り分ける。
   - `tle` — NORAD TLE / 2LE / 3LE パーサ (`tle::parse`) が `ParsedElementSet` を生成。

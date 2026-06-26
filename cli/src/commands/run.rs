@@ -605,12 +605,12 @@ pub fn run_simulation(params: &SimParams) -> Recording {
                 altitude, r0
             )
         }
-        OrbitSpec::Omm { elements, .. } => {
+        OrbitSpec::Omm { omm } => {
             format!(
                 "Initial orbit: from TLE/OMM (a = {:.1} km, e = {:.6}, i = {:.2}°)",
-                elements.semi_major_axis,
-                elements.eccentricity,
-                elements.inclination.to_degrees()
+                omm.semi_major_axis(params.mu),
+                omm.eccentricity,
+                omm.inclination.to_degrees()
             )
         }
     });
@@ -1095,12 +1095,12 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
                 altitude, r0
             )
         }
-        OrbitSpec::Omm { elements, .. } => {
+        OrbitSpec::Omm { omm } => {
             format!(
                 "Initial orbit: from TLE/OMM (a = {:.1} km, e = {:.6}, i = {:.2}°)",
-                elements.semi_major_axis,
-                elements.eccentricity,
-                elements.inclination.to_degrees()
+                omm.semi_major_axis(params.mu),
+                omm.eccentricity,
+                omm.inclination.to_degrees()
             )
         }
     });
