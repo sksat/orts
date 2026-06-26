@@ -22,7 +22,7 @@
 //! - [`Itrs`] — International Terrestrial Reference System (polar motion 適用済み)。
 //!   geodetic 変換はこの frame に紐づく
 //! - [`Teme`] — True Equator, Mean Equinox。SGP4 / TLE / OMM の平均要素フレーム
-//!   (marker のみ; ↔ Gcrs 回転は未実装)
+//!   (↔ Gcrs/SimpleEci 回転は IAU-76/FK5 換算で実装済み: [`crate::earth::teme`])
 //! - [`Rsw`] — Radial / Along-track / Cross-track 軌道ローカル系。
 //!   軸順は標準 RSW 規約 [R̂, Ŝ, Ŵ] (R̂=normalize(r), Ŵ=normalize(r×v), Ŝ=Ŵ×R̂)
 //! - [`Body`] — 宇宙機機体座標系

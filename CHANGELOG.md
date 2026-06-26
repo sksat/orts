@@ -173,8 +173,8 @@ section is subdivided by package.
   ERFA routine); `earth::teme` adds `Rotation<Teme, Gcrs>::teme_to_gcrs`,
   `Rotation<Teme, SimpleEci>::teme_to_simple_eci` (an `R3(GMST−ERA)` z-rotation),
   and `FrameTransform<Teme, Gcrs>::teme_to_gcrs` (ω = 0). The J2000→GCRS frame
-  bias (< 1 mas) is neglected. Cross-validated against ERFA (components, 1e-11)
-  and Orekit (authoritative TEME, ~0.8 m). ([#240](https://github.com/sksat/orts/pull/240))
+  bias (~tens of mas, ≈ sub-metre at LEO) is neglected. Cross-validated against
+  ERFA (components, 1e-11) and Orekit (authoritative TEME, ~0.8 m). ([#240](https://github.com/sksat/orts/pull/240))
 - `kepler` module (moved into `arika` from `orts`): `KeplerianElements`
   (`from_state_vector` / `to_state_vector` / `period` / `energy`) and the anomaly
   conversions (`solve_kepler_equation`, `mean_to_true_anomaly`, …). Now a public

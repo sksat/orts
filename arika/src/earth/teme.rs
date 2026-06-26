@@ -123,6 +123,37 @@ mod tests {
     }
 
     #[test]
+    fn teme_to_simple_eci_closure_matches_classical_gmst() {
+        // Pin the `GMST − ERA` *sign*: composing TEME → SimpleEci with the ERA
+        // rotation SimpleEci → SimpleEcef must reproduce the classical TEME → PEF
+        // map, R3(GMST1982) · r. (The two passive z-rotations add:
+        // R3(ERA) · R3(GMST − ERA) = R3(GMST).) A flipped `ERA − GMST` would
+        // instead give R3(2·ERA − GMST) and fail — the isometry test above would
+        // not catch it.
+        use crate::frame::SimpleEcef;
+
+        let ut1 = Ut1Epoch::from_jd_ut1(J2000_JD + 0.37 * 36525.0);
+        let r = Vec3::<Teme>::new(4500.0, -3000.0, 5000.0);
+
+        let teme_to_eci = Rotation::<Teme, SimpleEci>::teme_to_simple_eci(&ut1);
+        let eci_to_ecef = Rotation::<SimpleEci, SimpleEcef>::from_ut1(&ut1);
+        let via_frames = eci_to_ecef
+            .transform(&teme_to_eci.transform(&r))
+            .into_inner();
+
+        // Classical R3(GMST1982) applied directly to the TEME vector (same passive
+        // z-rotation convention as the factories).
+        let gmst = fk5::gmst1982(ut1.jd());
+        let (s, c) = (gmst.sin(), gmst.cos());
+        let classical = Matrix3::new(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0) * r.into_inner();
+
+        assert!(
+            (via_frames - classical).norm() < 1e-9,
+            "TEME→SimpleEci→SimpleEcef must equal classical R3(GMST)·TEME"
+        );
+    }
+
+    #[test]
     fn teme_to_gcrs_near_identity_close_to_j2000() {
         // Months from J2000 the precession/nutation is tiny: a TEME vector maps
         // to nearly itself in GCRS.

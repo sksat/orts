@@ -7,9 +7,9 @@
 //! ERFA component test cannot pin on its own).
 //!
 //! arika uses the IAU-76/FK5 reduction and neglects the J2000→GCRS frame bias
-//! (< 1 mas), so agreement with Orekit's GCRF is expected only to that level —
-//! the tolerance reflects it (and is still ~10⁴× tighter than the SGP4 error
-//! this serves).
+//! (~tens of mas, ≈ sub-metre at LEO), so agreement with Orekit's GCRF is
+//! expected only to that level — the tolerance reflects it (and is still
+//! ~10⁴× tighter than the SGP4 error this serves).
 
 use arika::epoch::{Epoch, Tt};
 use arika::frame::{Gcrs, Rotation, Teme, Vec3};
