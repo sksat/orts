@@ -70,53 +70,37 @@ impl Sgp4Propagator {
     ///
     /// Uses AFSPC compatibility mode (WGS72 + AFSPC sidereal time / epoch).
     pub fn from_elements(elements: &Sgp4Elements) -> Result<Self, Sgp4Error> {
-        // Reject non-finite inputs up front: a NaN slips through sgp4's `<= 0`
-        // and range checks (every comparison is false), so guard the public
-        // entry point explicitly. The epoch is checked here too (before
-        // `to_datetime()`, whose float→int casts would otherwise turn a
-        // non-finite Julian date into a garbage calendar date).
-        if ![
-            elements.inclination,
-            elements.raan,
-            elements.eccentricity,
-            elements.argument_of_perigee,
-            elements.mean_anomaly,
-            elements.mean_motion,
-            elements.bstar,
-            elements.epoch.jd(),
-        ]
-        .iter()
-        .all(|x| x.is_finite())
-        {
-            return Err(Sgp4Error::Initialization);
-        }
+        // `Sgp4Elements` is validated at construction (finite fields, positive
+        // mean motion, eccentricity in [0, 1)), so no defensive check is needed
+        // here — feed the fields straight to sgp4.
+        let f = elements.fields();
 
         // arika stores angles in radians and mean motion in rad/s; sgp4's
         // `from_kozai_elements` wants radians and the Kozai mean motion in
         // rad/min (rad/s × 60).
         let orbit = Orbit::from_kozai_elements(
             &WGS72,
-            elements.inclination,
-            elements.raan,
-            elements.eccentricity,
-            elements.argument_of_perigee,
-            elements.mean_anomaly,
-            elements.mean_motion * 60.0,
+            f.inclination,
+            f.raan,
+            f.eccentricity,
+            f.argument_of_perigee,
+            f.mean_anomaly,
+            f.mean_motion * 60.0,
         )
         .map_err(|_| Sgp4Error::Initialization)?;
 
         let constants = Constants::new(
             WGS72,
             afspc_epoch_to_sidereal_time,
-            afspc_years_since_j2000(&elements.epoch.to_datetime()),
-            elements.bstar,
+            afspc_years_since_j2000(&f.epoch.to_datetime()),
+            f.bstar,
             orbit,
         )
         .map_err(|_| Sgp4Error::Initialization)?;
 
         Ok(Self {
             constants,
-            epoch: elements.epoch,
+            epoch: f.epoch,
         })
     }
 
@@ -191,6 +175,7 @@ fn afspc_years_since_j2000(d: &DateTime) -> f64 {
 #[cfg(all(test, feature = "alloc"))]
 mod tests {
     use super::*;
+    use crate::elements::Sgp4ElementsFields;
     use crate::tle;
     use alloc::format;
 
@@ -253,7 +238,7 @@ mod tests {
         let prop = Sgp4Propagator::from_elements(&elements).unwrap();
 
         // propagate(epoch) must agree with propagate_minutes_since_epoch(0).
-        let (r_abs, v_abs) = prop.propagate(elements.epoch).unwrap();
+        let (r_abs, v_abs) = prop.propagate(elements.fields().epoch).unwrap();
         let (r_min, v_min) = prop.propagate_minutes_since_epoch(0.0).unwrap();
         assert!((r_abs.into_inner() - r_min.into_inner()).norm() < 1.0e-6);
         assert!((v_abs.into_inner() - v_min.into_inner()).norm() < 1.0e-9);
@@ -261,7 +246,7 @@ mod tests {
         // A *nonzero* offset pins the `(t − epoch) × 1440` conversion (factor
         // and sign): 6 h later by the absolute clock must equal +360 minutes.
         // At delta == 0 above, any broken scale or sign would still pass.
-        let t_6h = elements.epoch.add_seconds(360.0 * 60.0);
+        let t_6h = elements.fields().epoch.add_seconds(360.0 * 60.0);
         let (r6_abs, v6_abs) = prop.propagate(t_6h).unwrap();
         let (r6_min, v6_min) = prop.propagate_minutes_since_epoch(360.0).unwrap();
         assert!((r6_abs.into_inner() - r6_min.into_inner()).norm() < 1.0e-6);
@@ -275,8 +260,12 @@ mod tests {
         // Pin that by straddling the 2017-01-01 leap (TAI−UTC: 36 → 37 s).
         // The orbit is arbitrary (Vallado 00005); only the internal consistency
         // of the two propagate paths matters, not the absolute state.
-        let mut elements = tle::parse(&format!("{L1}\n{L2}")).unwrap().elements;
-        elements.epoch = Epoch::<Utc>::from_gregorian(2016, 12, 31, 23, 59, 0.0);
+        let parsed = tle::parse(&format!("{L1}\n{L2}")).unwrap().elements;
+        let elements = Sgp4Elements::try_new(Sgp4ElementsFields {
+            epoch: Epoch::<Utc>::from_gregorian(2016, 12, 31, 23, 59, 0.0),
+            ..parsed.to_fields()
+        })
+        .unwrap();
         let prop = Sgp4Propagator::from_elements(&elements).unwrap();
 
         let (r_min, _) = prop.propagate_minutes_since_epoch(2.0).unwrap();
@@ -286,7 +275,7 @@ mod tests {
         // tolerance is 1 m, not bit-exact: the UTC↔TAI leap-second search rounds
         // the round-tripped epoch by ~7 µs here (≈6 cm of motion), far below the
         // ~8 km the leap-aware path differs by.
-        let t_naive = elements.epoch.add_seconds(2.0 * 60.0);
+        let t_naive = elements.fields().epoch.add_seconds(2.0 * 60.0);
         let (r_naive, _) = prop.propagate(t_naive).unwrap();
         assert!(
             (r_naive.into_inner() - r_min.into_inner()).norm() < 1.0e-3,
@@ -297,7 +286,7 @@ mod tests {
         // consumed by the 23:59:60 leap — so the wrapper sees ~1 s less and the
         // result must DIFFER. This is what discriminates the naive convention
         // from a leap-safe one (≈1 s of orbital motion, ≫ 0.1 km).
-        let t_si = elements.epoch.add_si_seconds(2.0 * 60.0);
+        let t_si = elements.fields().epoch.add_si_seconds(2.0 * 60.0);
         let (r_si, _) = prop.propagate(t_si).unwrap();
         assert!(
             (r_si.into_inner() - r_min.into_inner()).norm() > 0.1,
@@ -378,28 +367,6 @@ mod tests {
             assert!(
                 (mine - reference).abs() < 1.0e-12,
                 "{y}-{mo}-{d}T{h}:{mi}:{s}.{ns}: {mine} vs {reference}"
-            );
-        }
-    }
-
-    #[test]
-    fn rejects_non_finite_elements() {
-        let valid = tle::parse(&format!("{L1}\n{L2}")).unwrap().elements;
-        assert!(Sgp4Propagator::from_elements(&valid).is_ok());
-
-        let spoils: [fn(&mut Sgp4Elements); 5] = [
-            |e| e.mean_motion = f64::NAN,
-            |e| e.eccentricity = f64::INFINITY,
-            |e| e.inclination = f64::NAN,
-            |e| e.bstar = f64::NEG_INFINITY,
-            |e| e.epoch = Epoch::<Utc>::from_jd(f64::NAN),
-        ];
-        for spoil in spoils {
-            let mut bad = valid;
-            spoil(&mut bad);
-            assert!(
-                Sgp4Propagator::from_elements(&bad).is_err(),
-                "non-finite element / epoch must be rejected"
             );
         }
     }

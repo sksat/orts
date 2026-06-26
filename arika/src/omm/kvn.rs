@@ -14,7 +14,7 @@ use core::str::FromStr;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::elements::{ParsedElementSet, Sgp4Elements};
+use crate::elements::{ElementsError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields};
 
 /// Error type for OMM KVN parsing.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +26,9 @@ pub enum KvnParseError {
     /// `EPOCH` was not a parseable ISO-8601 UTC timestamp (calendar or
     /// ordinal / day-of-year form).
     InvalidEpoch(String),
+    /// The parsed values are not a valid element set (e.g. non-positive mean
+    /// motion or out-of-range eccentricity).
+    InvalidElements(ElementsError),
 }
 
 impl fmt::Display for KvnParseError {
@@ -36,6 +39,7 @@ impl fmt::Display for KvnParseError {
                 write!(f, "invalid value for {key}: '{value}'")
             }
             KvnParseError::InvalidEpoch(s) => write!(f, "invalid OMM EPOCH: '{s}'"),
+            KvnParseError::InvalidElements(e) => write!(f, "invalid OMM element set: {e}"),
         }
     }
 }
@@ -104,18 +108,22 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
     let arg_perigee = arg_perigee.ok_or(KvnParseError::MissingField("ARG_OF_PERICENTER"))?;
     let mean_anomaly = mean_anomaly.ok_or(KvnParseError::MissingField("MEAN_ANOMALY"))?;
 
+    let norad_cat_id = norad_cat_id.ok_or(KvnParseError::MissingField("NORAD_CAT_ID"))?;
+    let elements = Sgp4Elements::try_new(Sgp4ElementsFields {
+        norad_cat_id,
+        epoch,
+        mean_motion: mean_motion * 2.0 * PI / 86400.0, // rev/day → rad/s
+        eccentricity,
+        inclination: inclination.to_radians(),
+        raan: raan.to_radians(),
+        argument_of_perigee: arg_perigee.to_radians(),
+        mean_anomaly: mean_anomaly.to_radians(),
+        bstar,
+    })
+    .map_err(KvnParseError::InvalidElements)?;
+
     Ok(ParsedElementSet {
-        elements: Sgp4Elements {
-            norad_cat_id: norad_cat_id.ok_or(KvnParseError::MissingField("NORAD_CAT_ID"))?,
-            epoch,
-            mean_motion: mean_motion * 2.0 * PI / 86400.0, // rev/day → rad/s
-            eccentricity,
-            inclination: inclination.to_radians(),
-            raan: raan.to_radians(),
-            argument_of_perigee: arg_perigee.to_radians(),
-            mean_anomaly: mean_anomaly.to_radians(),
-            bstar,
-        },
+        elements,
         object_name,
         object_id,
     })
@@ -177,7 +185,7 @@ BSTAR = 0.00003
     #[test]
     fn parse_iss_omm_kvn() {
         let set = parse(ISS_OMM_KVN).unwrap();
-        let omm = set.elements;
+        let omm = set.elements.to_fields();
         assert_eq!(set.object_name.as_deref(), Some("ISS (ZARYA)"));
         assert_eq!(set.object_id.as_deref(), Some("1998-067A"));
         assert_eq!(omm.norad_cat_id, 25544);
@@ -194,7 +202,7 @@ BSTAR = 0.00003
         assert!((mm_rev_day - 15.49561654).abs() < 1e-8);
         assert!((omm.bstar - 3.0e-5).abs() < 1e-10);
 
-        assert!((omm.semi_major_axis(MU_EARTH) - 6796.0).abs() < 5.0);
+        assert!((set.elements.semi_major_axis(MU_EARTH) - 6796.0).abs() < 5.0);
     }
 
     #[test]
@@ -241,6 +249,6 @@ NORAD_CAT_ID = 1";
     fn bom_prefixed_kvn_parses_directly() {
         // Direct calls (not via elements::parse) must also tolerate a leading BOM.
         let bom = ["\u{feff}", ISS_OMM_KVN].concat();
-        assert_eq!(parse(&bom).unwrap().elements.norad_cat_id, 25544);
+        assert_eq!(parse(&bom).unwrap().elements.fields().norad_cat_id, 25544);
     }
 }

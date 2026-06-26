@@ -133,7 +133,7 @@ impl SatelliteSpec {
             OrbitSpec::Circular { altitude, .. } => *altitude,
             OrbitSpec::Omm { omm } => {
                 let a = omm.semi_major_axis(body.properties().mu);
-                let perigee_r = a * (1.0 - omm.eccentricity);
+                let perigee_r = a * (1.0 - omm.fields().eccentricity);
                 perigee_r - body.properties().radius
             }
         }

@@ -109,7 +109,7 @@ fn default_auto_threshold() -> usize {
 /// them.
 fn element_set_epoch(satellites: &[SatelliteSpec]) -> Option<Epoch> {
     satellites.iter().find_map(|s| match &s.orbit {
-        OrbitSpec::Omm { omm, .. } => Some(omm.epoch),
+        OrbitSpec::Omm { omm, .. } => Some(omm.fields().epoch),
         OrbitSpec::Circular { .. } => None,
     })
 }

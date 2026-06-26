@@ -3,8 +3,8 @@
 //!
 //! [`Sgp4Elements`] holds the numeric SGP4 mean elements an SGP4 propagator
 //! consumes — epoch, the six mean elements, the B* drag term, and the catalog
-//! number. It is `Copy` and needs no allocator, so the propagation path works
-//! in `no_std` builds without `alloc`.
+//! number — validated at construction. It needs no allocator, so the
+//! propagation path works in `no_std` builds without `alloc`.
 //!
 //! Owned satellite identity (`OBJECT_NAME` / `OBJECT_ID`) is split off into
 //! [`ParsedElementSet`], the alloc-gated record the text parsers return. Text
@@ -33,26 +33,37 @@ use crate::math::F64Ext;
 
 use crate::epoch::{Epoch, Utc};
 
-/// SGP4 mean orbital element set (no allocator required).
+/// SGP4 mean orbital element set — a *validated* mean-element record.
 ///
-/// The numeric core that an SGP4 propagator consumes. Both the legacy TLE and
-/// the CCSDS OMM (JSON/KVN/XML) carry the same mean-element data, so
-/// [`crate::tle`] and [`crate::omm`] both decode into this type (wrapped with
-/// identity strings in [`ParsedElementSet`]).
+/// Holding a `Sgp4Elements` guarantees the elements are physically usable:
+/// every field is finite, the mean motion is positive, and the eccentricity is
+/// in `[0, 1)`. Build one with [`try_new`](Self::try_new) (or `TryFrom`) from a
+/// [`Sgp4ElementsFields`]; the text parsers ([`crate::tle`], [`crate::omm`]) go
+/// through the same path, so a parsed element set is always valid. Read the
+/// fields back with [`fields`](Self::fields).
 ///
-/// The six elements are **SGP4 mean elements** (Brouwer-Kozai), not osculating
+/// The elements are **SGP4 mean elements** (Brouwer-Kozai), not osculating
 /// Keplerian elements — propagate them with SGP4 rather than converting to a
-/// classical orbit.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// classical orbit. No allocator required.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Sgp4Elements {
+    fields: Sgp4ElementsFields,
+}
+
+/// The field bundle a [`Sgp4Elements`] wraps: the input to
+/// [`Sgp4Elements::try_new`] and the shape [`Sgp4Elements::fields`] hands back
+/// for reading. Holding a `Sgp4ElementsFields` does **not** imply validity —
+/// only a validated [`Sgp4Elements`] does.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Sgp4ElementsFields {
     /// `NORAD_CAT_ID` — catalog number. Alpha-5 alphanumeric ids are decoded to
     /// their numeric value (e.g. `"A0000"` → `100000`).
     pub norad_cat_id: u32,
     /// Element-set epoch (UTC).
     pub epoch: Epoch<Utc>,
-    /// Mean motion [rad/s].
+    /// Mean motion [rad/s] (positive).
     pub mean_motion: f64,
-    /// Eccentricity (dimensionless).
+    /// Eccentricity (dimensionless), in `[0, 1)`.
     pub eccentricity: f64,
     /// Inclination [rad].
     pub inclination: f64,
@@ -66,26 +77,110 @@ pub struct Sgp4Elements {
     pub bstar: f64,
 }
 
+/// An element field, reported by [`ElementsError`] to say which one is invalid.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ElementField {
+    Epoch,
+    MeanMotion,
+    Eccentricity,
+    Inclination,
+    Raan,
+    ArgumentOfPerigee,
+    MeanAnomaly,
+    Bstar,
+}
+
+/// Why a [`Sgp4ElementsFields`] is not a valid [`Sgp4Elements`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ElementsError {
+    /// A field was NaN or infinite.
+    NonFinite(ElementField),
+    /// Mean motion was not strictly positive.
+    MeanMotionNotPositive,
+    /// Eccentricity was outside `[0, 1)`.
+    EccentricityOutOfRange,
+}
+
+impl core::fmt::Display for ElementsError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ElementsError::NonFinite(field) => write!(f, "element field {field:?} is not finite"),
+            ElementsError::MeanMotionNotPositive => write!(f, "mean motion must be positive"),
+            ElementsError::EccentricityOutOfRange => write!(f, "eccentricity must be in [0, 1)"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for ElementsError {}
+
 impl Sgp4Elements {
+    /// Validate `fields` and wrap them as a `Sgp4Elements`.
+    ///
+    /// Returns an [`ElementsError`] if any field is non-finite, the mean motion
+    /// is not strictly positive, or the eccentricity is outside `[0, 1)`. Angles
+    /// are only checked for finiteness (not normalized — SGP4 reduces them mod
+    /// 2π), and `bstar` may be negative (it occurs in real element sets).
+    pub fn try_new(fields: Sgp4ElementsFields) -> Result<Self, ElementsError> {
+        use ElementField as F;
+        for (field, value) in [
+            (F::Epoch, fields.epoch.jd()),
+            (F::MeanMotion, fields.mean_motion),
+            (F::Eccentricity, fields.eccentricity),
+            (F::Inclination, fields.inclination),
+            (F::Raan, fields.raan),
+            (F::ArgumentOfPerigee, fields.argument_of_perigee),
+            (F::MeanAnomaly, fields.mean_anomaly),
+            (F::Bstar, fields.bstar),
+        ] {
+            if !value.is_finite() {
+                return Err(ElementsError::NonFinite(field));
+            }
+        }
+        if fields.mean_motion <= 0.0 {
+            return Err(ElementsError::MeanMotionNotPositive);
+        }
+        if !(0.0..1.0).contains(&fields.eccentricity) {
+            return Err(ElementsError::EccentricityOutOfRange);
+        }
+        Ok(Self { fields })
+    }
+
+    /// Read-only view of the validated fields.
+    pub fn fields(&self) -> &Sgp4ElementsFields {
+        &self.fields
+    }
+
+    /// Copy out the validated fields.
+    pub fn to_fields(&self) -> Sgp4ElementsFields {
+        self.fields.clone()
+    }
+
     /// Semi-major axis [km] from mean motion: `a = (μ/n²)^(1/3)`.
     ///
     /// A rough two-body estimate for display only — it ignores the J2 secular
     /// correction baked into the SGP4 (Kozai) mean motion, so it is not the
     /// semi-major axis SGP4 itself uses.
     pub fn semi_major_axis(&self, mu: f64) -> f64 {
-        (mu / (self.mean_motion * self.mean_motion)).cbrt()
+        (mu / (self.fields.mean_motion * self.fields.mean_motion)).cbrt()
     }
 
-    /// Orbital period [s] from the mean motion: `2π / |n|`.
+    /// Orbital period [s] from the mean motion: `2π / n`.
     ///
-    /// Exact for the (Kozai) mean motion the set carries, and needs no `mu` —
-    /// this is the conventional period reported for a TLE/OMM. `|n|` keeps a
-    /// sign-flipped mean motion from producing a negative period (matching the
-    /// magnitude the prior derived path produced). A zero or NaN mean motion
-    /// still propagates to a non-finite result; rejecting such an element set is
-    /// the parser's / SGP4 propagator's job, not this display helper's.
+    /// Positive — the mean motion is a validated, strictly-positive invariant
+    /// (so the period never goes negative or NaN; an absurdly tiny mean motion
+    /// could still overflow to `+∞`). Needs no `mu`; this is the conventional
+    /// period reported for a TLE/OMM.
     pub fn period(&self) -> f64 {
-        core::f64::consts::TAU / self.mean_motion.abs()
+        core::f64::consts::TAU / self.fields.mean_motion
+    }
+}
+
+impl TryFrom<Sgp4ElementsFields> for Sgp4Elements {
+    type Error = ElementsError;
+
+    fn try_from(fields: Sgp4ElementsFields) -> Result<Self, Self::Error> {
+        Self::try_new(fields)
     }
 }
 
@@ -223,7 +318,7 @@ mod tests {
 
     /// ISS-like element set, values from the canonical ISS TLE at epoch 2024-079.5.
     fn iss_elements() -> Sgp4Elements {
-        Sgp4Elements {
+        Sgp4Elements::try_new(Sgp4ElementsFields {
             norad_cat_id: 25544,
             epoch: Epoch::from_tle_epoch(24, 79.5),
             mean_motion: 15.49561654 * 2.0 * PI / 86400.0,
@@ -233,7 +328,8 @@ mod tests {
             argument_of_perigee: 35.3910_f64.to_radians(),
             mean_anomaly: 324.7580_f64.to_radians(),
             bstar: 3.0e-5,
-        }
+        })
+        .expect("valid ISS elements")
     }
 
     #[test]
@@ -257,16 +353,56 @@ mod tests {
     }
 
     #[test]
-    fn period_stays_positive_for_negative_mean_motion() {
-        // A sign-flipped (negative) mean motion must not yield a negative
-        // period (it flows into run horizons / reset boundaries).
-        let mut el = iss_elements();
-        el.mean_motion = -el.mean_motion;
-        assert!(
-            el.period() > 0.0,
-            "period must stay positive, got {}",
-            el.period()
+    fn try_new_rejects_invalid_elements() {
+        use ElementField as F;
+        let base = iss_elements().to_fields();
+
+        let bad = |f: Sgp4ElementsFields| Sgp4Elements::try_new(f).unwrap_err();
+        assert_eq!(
+            bad(Sgp4ElementsFields {
+                mean_motion: -base.mean_motion,
+                ..base.clone()
+            }),
+            ElementsError::MeanMotionNotPositive
         );
+        assert_eq!(
+            bad(Sgp4ElementsFields {
+                mean_motion: 0.0,
+                ..base.clone()
+            }),
+            ElementsError::MeanMotionNotPositive
+        );
+        assert_eq!(
+            bad(Sgp4ElementsFields {
+                mean_motion: f64::NAN,
+                ..base.clone()
+            }),
+            ElementsError::NonFinite(F::MeanMotion)
+        );
+        assert_eq!(
+            bad(Sgp4ElementsFields {
+                eccentricity: 1.0,
+                ..base.clone()
+            }),
+            ElementsError::EccentricityOutOfRange
+        );
+        assert_eq!(
+            bad(Sgp4ElementsFields {
+                eccentricity: -0.1,
+                ..base.clone()
+            }),
+            ElementsError::EccentricityOutOfRange
+        );
+        assert_eq!(
+            bad(Sgp4ElementsFields {
+                inclination: f64::INFINITY,
+                ..base.clone()
+            }),
+            ElementsError::NonFinite(F::Inclination)
+        );
+
+        // The unmodified base is valid.
+        assert!(Sgp4Elements::try_new(base).is_ok());
     }
 
     // ── Format detection / dispatch ──────────────────────────────
@@ -318,8 +454,8 @@ NORAD_CAT_ID = 25544";
     fn parse_dispatches_every_format() {
         for src in [TLE_2L, TLE_3L, JSON, KVN, XML] {
             let set = parse(src).unwrap();
-            assert_eq!(set.elements.norad_cat_id, 25544);
-            assert!((set.elements.inclination.to_degrees() - 51.64).abs() < 1e-6);
+            assert_eq!(set.elements.fields().norad_cat_id, 25544);
+            assert!((set.elements.fields().inclination.to_degrees() - 51.64).abs() < 1e-6);
         }
     }
 
@@ -329,7 +465,10 @@ NORAD_CAT_ID = 25544";
         // A UTF-8 BOM (not whitespace!) must not break sniffing or parsing.
         let bom_json = ["\u{feff}", JSON].concat();
         assert_eq!(detect(&bom_json), Some(Format::OmmJson));
-        assert_eq!(parse(&bom_json).unwrap().elements.norad_cat_id, 25544);
+        assert_eq!(
+            parse(&bom_json).unwrap().elements.fields().norad_cat_id,
+            25544
+        );
         let bom_xml = ["\u{feff}", XML].concat();
         assert_eq!(detect(&bom_xml), Some(Format::OmmXml));
         let bom_tle = ["\u{feff}", TLE_2L].concat();

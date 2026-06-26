@@ -609,8 +609,8 @@ pub fn run_simulation(params: &SimParams) -> Recording {
             format!(
                 "Initial orbit: from TLE/OMM (a = {:.1} km, e = {:.6}, i = {:.2}°)",
                 omm.semi_major_axis(params.mu),
-                omm.eccentricity,
-                omm.inclination.to_degrees()
+                omm.fields().eccentricity,
+                omm.fields().inclination.to_degrees()
             )
         }
     });
@@ -1099,8 +1099,8 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
             format!(
                 "Initial orbit: from TLE/OMM (a = {:.1} km, e = {:.6}, i = {:.2}°)",
                 omm.semi_major_axis(params.mu),
-                omm.eccentricity,
-                omm.inclination.to_degrees()
+                omm.fields().eccentricity,
+                omm.fields().inclination.to_degrees()
             )
         }
     });
