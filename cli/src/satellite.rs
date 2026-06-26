@@ -79,10 +79,12 @@ impl SatelliteSpec {
     /// correct path (SGP4 mean elements are *not* osculating Keplerian
     /// elements). `epoch` is the wall-clock instant at which the state is
     /// evaluated: for a satellite present from the start it is the simulation
-    /// epoch (which itself defaults to the element-set epoch, so tsince = 0);
-    /// for a satellite added mid-run it is the simulation epoch advanced by
-    /// the current sim time, so SGP4 is propagated to the moment it enters.
-    /// It is required for a TLE/OMM orbit and ignored for a circular orbit.
+    /// epoch (which, absent `--epoch`, defaults to the *first* element set's
+    /// epoch — so tsince = 0 for that satellite, but non-zero for any other
+    /// TLE/OMM whose own epoch differs); for a satellite added mid-run it is
+    /// the simulation epoch advanced by the current sim time, so SGP4 is
+    /// propagated to the moment it enters. It is required for a TLE/OMM orbit
+    /// and ignored for a circular orbit.
     ///
     /// Returns `Err` if SGP4 initialization or propagation fails (e.g. a
     /// malformed element set), so a caller on a fallible boundary — a dynamic

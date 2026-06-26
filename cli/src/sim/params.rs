@@ -305,9 +305,9 @@ impl SimParams {
             satellites
         };
 
-        // Resolve the deferred epoch: an explicit `--epoch` wins; otherwise a
-        // TLE/OMM orbit starts at its element-set epoch (tsince = 0, no SGP4
-        // extrapolation); otherwise fall back to "now".
+        // Resolve the deferred epoch: an explicit `--epoch` wins; otherwise it
+        // defaults to the first TLE/OMM's element-set epoch (tsince = 0 for
+        // that satellite only — see `element_set_epoch`); otherwise "now".
         let epoch = epoch
             .or_else(|| element_set_epoch(&satellites))
             .or_else(|| Some(Epoch::now()));
