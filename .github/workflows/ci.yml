@@ -336,7 +336,7 @@ jobs:
           save-if: false
 
       - name: Install cargo-component
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+        uses: taiki-e/install-action@ace6ebe54a6a0c86dfb5f7764b17f793b6925bc3 # v2.82.3
         with:
           tool: cargo-component@0.21.1
 
@@ -387,7 +387,7 @@ jobs:
           save-if: false
 
       - name: Install cargo-component
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+        uses: taiki-e/install-action@ace6ebe54a6a0c86dfb5f7764b17f793b6925bc3 # v2.82.3
         with:
           tool: cargo-component@0.21.1
 
@@ -472,7 +472,7 @@ jobs:
           save-if: false
 
       - name: Install cargo-component
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+        uses: taiki-e/install-action@ace6ebe54a6a0c86dfb5f7764b17f793b6925bc3 # v2.82.3
         with:
           tool: cargo-component@0.21.1
 
@@ -485,7 +485,7 @@ jobs:
       # Renovate bumps KBLE_VERSION via the custom regex manager in
       # renovate.json (crates datasource).
       - name: Install cargo-binstall
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+        uses: taiki-e/install-action@ace6ebe54a6a0c86dfb5f7764b17f793b6925bc3 # v2.82.3
         with:
           tool: cargo-binstall
       - name: Install kble
@@ -550,7 +550,7 @@ jobs:
       # stays a native static build.
       - name: Install cross (gnu target)
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+        uses: taiki-e/install-action@ace6ebe54a6a0c86dfb5f7764b17f793b6925bc3 # v2.82.3
         with:
           # Pinned: this PR's point is a reproducible, host-independent gnu
           # build, so the cross CLI version is fixed alongside the pinned
@@ -583,7 +583,7 @@ jobs:
       # for that target.
       - name: Install cargo-about (musl host build)
         if: matrix.target == 'x86_64-unknown-linux-musl'
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+        uses: taiki-e/install-action@ace6ebe54a6a0c86dfb5f7764b17f793b6925bc3 # v2.82.3
         with:
           # Pinned to match the in-container cargo-about used for the gnu
           # build (Cross.toml), so both targets embed an identically-generated
@@ -686,7 +686,7 @@ jobs:
           targets: wasm32-wasip1
 
       - name: Install cargo-component
-        uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+        uses: taiki-e/install-action@ace6ebe54a6a0c86dfb5f7764b17f793b6925bc3 # v2.82.3
         with:
           tool: cargo-component@0.21.1
 
