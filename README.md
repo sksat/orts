@@ -77,6 +77,7 @@ mass = 500
 [satellites.reaction_wheels]
 type = "three_axis"
 inertia = 0.01
+max_momentum = 5.0
 max_torque = 0.5
 ```
 
