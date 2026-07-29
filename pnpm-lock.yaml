@@ -199,7 +199,7 @@ importers:
         version: 4.1.10(@types/node@24.13.3)(happy-dom@20.10.6)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.22.4)(yaml@2.9.0))
       ws:
         specifier: ^8.18.0
-        version: 8.21.0
+        version: 8.21.1
 
   viewer:
     devDependencies:
@@ -265,7 +265,7 @@ importers:
         version: 4.1.10(@types/node@24.13.3)(happy-dom@20.10.6)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1)(tsx@4.22.4)(yaml@2.9.0))
       ws:
         specifier: ^8.19.0
-        version: 8.21.0
+        version: 8.21.1
 
   viewer/examples/orbit-viewer:
     dependencies:
@@ -4716,6 +4716,18 @@ packages:
 
   ws@8.21.0:
     resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
+  ws@8.21.1:
+    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -10159,6 +10171,8 @@ snapshots:
       strip-ansi: 6.0.1
 
   ws@8.21.0: {}
+
+  ws@8.21.1: {}
 
   xxhash-wasm@1.1.0: {}
 
