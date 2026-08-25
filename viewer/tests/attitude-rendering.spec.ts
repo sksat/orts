@@ -27,6 +27,10 @@
  * Zero angular velocity keeps the attitude ≈ constant over the short window: from
  * rest the gravity-gradient torque produces only sub-degree drift before the seek
  * time, far inside the tolerance below.
+ *
+ * A second test switches to the satellite-centred local-orbital (LVLH) view,
+ * where the scene axes are the orbit frame rather than ECI, and asserts the
+ * matching invariant there.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -191,6 +195,86 @@ test("rendered satellite adopts the delivered body-to-inertial attitude", async 
   ).toBeGreaterThan(0.9);
   expect(Math.abs(bodyXinWorld[0]), "body +X should have no scene-X component").toBeLessThan(0.1);
   expect(Math.abs(bodyXinWorld[2]), "body +X should have no scene-Z component").toBeLessThan(0.1);
+});
+
+test("LVLH view renders the attitude in the same basis as the positions", async ({ page }) => {
+  // The LVLH scene basis is [in-track, cross-track, radial] = scene [X, Y, Z]
+  // (coordTransform.ts), so the attitude must be expressed in that basis too.
+  // The orbit is equatorial (inclination defaults to 0), hence its normal — the
+  // cross-track axis — is inertial +Z. The satellite's attitude is a rotation
+  // *about* inertial Z, so it leaves the body +Z axis on inertial +Z: the
+  // rendered body +Z must point along scene +Y, at every orbital phase and for
+  // any Earth rotation angle.
+  //
+  // Deriving the attitude from an RSW-ordered ([radial, along-track,
+  // cross-track]) quaternion instead puts body +Z on scene +Z — the axes are
+  // cyclically permuted, which looks like a plausible attitude.
+  //
+  // Its own server, deliberately: this satellite's minimum-inertia axis (Izz)
+  // points along the orbit normal, which is a gravity-gradient *unstable*
+  // equilibrium, so the attitude only stays near its initial value for the
+  // first minutes of a run (measured: body +Z had swung ~78° off inertial Z by
+  // the time the shared server had served the test above). The inertial test
+  // relies on the same freshness implicitly; here it is explicit.
+  const { child, port } = await spawnServer(configPath);
+  const freshWsUrl = `ws://localhost:${port}/ws`;
+  try {
+    await page.goto("/?noAutoConnect=1");
+    await page.locator('[data-testid="ws-url-input"]').fill(freshWsUrl);
+    await page.locator('[data-testid="ws-connect-btn"]').click();
+    await expect(page.locator('[data-testid="ws-status-text"]')).toContainText("Connected", {
+      timeout: 15000,
+    });
+    await expect(page.locator("canvas").first()).toBeVisible();
+    await page.waitForFunction(
+      () =>
+        typeof (window as unknown as Record<string, unknown>).__debug_get_sat_world_quat ===
+        "function",
+      { timeout: 15000 },
+    );
+
+    // Deterministic state: pause playback so the captured frame is stable.
+    const playPause = page.locator('[data-testid="play-pause-btn"]');
+    if ((await playPause.textContent())?.includes("Pause")) {
+      await playPause.click();
+    }
+
+    // Centre on the satellite → the frame selector switches to LVLH.
+    await page
+      .locator('[data-testid="frame-selector-select"]')
+      .selectOption(`satellite:${SAT_ENTITY_PATH}`);
+
+    // Poll: the LVLH transform only activates once the scene has both a position
+    // and a velocity for the centred satellite, and the first frame after the
+    // switch can still be composited from the previous frame's basis.
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate((id) => {
+            const w = window as unknown as Record<string, unknown>;
+            const scene = w.__debug_scene_frame as { lvlhActive?: boolean } | undefined;
+            if (!scene?.lvlhActive) return null;
+            const get = w.__debug_get_sat_world_quat as
+              | ((id: string) => [number, number, number, number] | null)
+              | undefined;
+            const q = get?.(id);
+            if (!q) return null;
+            const [qx, qy, qz, qw] = q; // Three.js order (x, y, z, w)
+            // Scene-Y component of the rendered body +Z axis (third column of R).
+            return 2 * (qy * qz - qx * qw);
+          }, SAT_ENTITY_PATH),
+        {
+          timeout: 20000,
+          message:
+            "rendered body +Z should point along the LVLH cross-track axis (scene +Y). " +
+            "A value near 0 means the attitude is expressed in RSW axis order while the " +
+            "scene uses [in-track, cross-track, radial].",
+        },
+      )
+      .toBeGreaterThan(0.9);
+  } finally {
+    child.kill("SIGTERM");
+  }
 });
 
 test("marker shape: global default persists to URL and per-satellite override is offered", async ({
