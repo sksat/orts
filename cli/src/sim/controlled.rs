@@ -286,14 +286,20 @@ pub fn step_controlled(
     }
 
     // 結合伝播（軌道 + 姿勢 + RW）。
-    sat.state = Rk4.integrate(
-        &sat.dynamics,
-        sat.state.clone(),
-        t,
-        t_next,
-        dt_ode,
-        |_, _| {},
-    );
+    //
+    // `try_integrate` を使うのは、`integrate` が不正な刻み幅や停滞した時刻を
+    // panic にしてしまうため。この関数は `Result` を返すので、serve は
+    // graceful-halt 経路でクライアントへ Error を送れる。
+    sat.state = Rk4
+        .try_integrate(
+            &sat.dynamics,
+            sat.state.clone(),
+            t,
+            t_next,
+            dt_ode,
+            |_, _| {},
+        )
+        .map_err(|e| format!("integration failed on [{t:.3}, {t_next:.3}]: {e}"))?;
 
     // センサ評価 + プラグイン呼び出し。
     let current_epoch = epoch.map(|e| e.add_si_seconds(t_next));

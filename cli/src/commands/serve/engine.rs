@@ -111,6 +111,7 @@ impl SimGroup {
         };
         for sat in sats.iter_mut() {
             let dt_ctrl = sat.controller.sample_period();
+            crate::config::validate_sample_period(dt_ctrl)?;
             let dt_ode = params.dt.min(dt_ctrl);
             let mut t = current_t;
             while t < target_t - 1e-12 {

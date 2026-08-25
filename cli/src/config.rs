@@ -610,8 +610,151 @@ impl SatelliteConfig {
         if let Some(thruster) = &self.thruster {
             thruster.validate().map_err(|e| format!("thruster: {e}"))?;
         }
+        // A non-finite orbit number propagates into the derived orbital
+        // period. `run` then loops on `while !group.all_finished()` with a NaN
+        // end time that no comparison can ever satisfy, so the simulation
+        // never terminates. Reject the input instead.
+        if let OrbitConfig::Circular {
+            altitude,
+            inclination,
+            raan,
+        } = &self.orbit
+        {
+            for (name, value) in [
+                ("altitude", *altitude),
+                ("inclination", *inclination),
+                ("raan", *raan),
+            ] {
+                if !value.is_finite() {
+                    return Err(format!("orbit.{name} must be finite (got {value})"));
+                }
+            }
+        }
         Ok(())
     }
+
+    /// Reject a circular orbit whose semi-major axis is not positive.
+    ///
+    /// Split from [`validate`](Self::validate) because `a = R_body + altitude`
+    /// needs the central body, which lives on [`SimConfig`].
+    fn validate_against_body(&self, body: KnownBody) -> Result<(), String> {
+        if let OrbitConfig::Circular { altitude, .. } = &self.orbit {
+            let r0 = body.properties().radius + altitude;
+            if r0 <= 0.0 {
+                return Err(format!(
+                    "orbit.altitude ({altitude}) puts the semi-major axis at or below zero \
+                     for body '{}' (radius {} km)",
+                    body.properties().name,
+                    body.properties().radius
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Reject time knobs the integrator cannot make progress with.
+///
+/// Shared by the config-file path ([`SimConfig::validate`]) and the direct-CLI
+/// path (`orts run --sat ...`, `orts serve --dt ...`), which reach
+/// `SimParams` through different constructors and would otherwise disagree
+/// about what is accepted.
+///
+/// Each value is load-bearing:
+/// - `dt` drives `while t < t_end`, so zero never advances.
+/// - `output_interval` drives `t += output_interval` in `run`, so zero never
+///   reaches `max_period`.
+/// - `stream_interval` is a divisor in the serve loop's pacing, where zero
+///   yields `0 * inf = NaN` and panics `Duration::from_secs_f64`.
+/// - `duration` becomes each satellite's propagation period.
+///
+/// `output_interval < dt` is rejected too: `SimParams` clamps
+/// `stream_interval` into `[dt, output_interval]`, which panics outright on
+/// inverted bounds.
+pub fn validate_time_params(
+    dt: f64,
+    output_interval: Option<f64>,
+    stream_interval: Option<f64>,
+    duration: Option<f64>,
+) -> Result<(), String> {
+    if !dt.is_finite() || dt <= 0.0 {
+        return Err(format!("dt must be positive and finite (got {dt})"));
+    }
+    for (name, value) in [
+        ("output_interval", output_interval),
+        ("stream_interval", stream_interval),
+        ("duration", duration),
+    ] {
+        if let Some(v) = value
+            && (!v.is_finite() || v <= 0.0)
+        {
+            return Err(format!("{name} must be positive and finite (got {v})"));
+        }
+    }
+    if let Some(output_interval) = output_interval
+        && output_interval < dt
+    {
+        return Err(format!(
+            "output_interval ({output_interval}) must be >= dt ({dt}): the simulation \
+             cannot emit output more often than it steps"
+        ));
+    }
+    Ok(())
+}
+
+/// Reject a controller tick that cannot advance the control loop.
+///
+/// Both controlled-run loops step with `dt = sample_period.min(remaining)`, so
+/// a zero period leaves `t += 0` spinning and a negative one walks backwards.
+/// The period comes from the plugin/controller rather than from user config,
+/// so it has to be checked where it is first used.
+pub fn validate_sample_period(dt_ctrl: f64) -> Result<(), String> {
+    if dt_ctrl.is_finite() && dt_ctrl > 0.0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "controller sample period must be positive and finite (got {dt_ctrl})"
+        ))
+    }
+}
+
+/// Reject tolerances that cannot drive adaptive error control.
+///
+/// `sc = atol + rtol * |y|` is the adaptive error scale. With both zero, an
+/// exactly-zero state component gives `0 / 0 = NaN`, which the stepper can
+/// neither accept nor shrink away from.
+///
+/// Skipped for RK4, which ignores the tolerances entirely — rejecting them
+/// there would fail configs that carry unused `atol`/`rtol`.
+pub fn validate_tolerances(
+    integrator: IntegratorChoice,
+    atol: f64,
+    rtol: f64,
+) -> Result<(), String> {
+    if !matches!(
+        integrator,
+        IntegratorChoice::Dp45 | IntegratorChoice::Dop853
+    ) {
+        return Ok(());
+    }
+    if !atol.is_finite() || atol < 0.0 {
+        return Err(format!(
+            "integrator.atol must be non-negative and finite (got {atol})"
+        ));
+    }
+    if !rtol.is_finite() || rtol < 0.0 {
+        return Err(format!(
+            "integrator.rtol must be non-negative and finite (got {rtol})"
+        ));
+    }
+    if atol == 0.0 && rtol == 0.0 {
+        return Err(
+            "integrator.atol and integrator.rtol must not both be zero: adaptive \
+             error control needs at least one positive tolerance"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 impl SimConfig {
@@ -624,6 +767,17 @@ impl SimConfig {
     /// not resolve `norad` orbits — that requires a network fetch and is left
     /// to run time.
     pub fn validate(&self) -> Result<(), String> {
+        validate_time_params(
+            self.dt,
+            self.output_interval,
+            self.stream_interval,
+            self.duration,
+        )?;
+        validate_tolerances(
+            self.integrator_choice(),
+            self.integrator.atol,
+            self.integrator.rtol,
+        )?;
         if crate::satellite::try_parse_body(&self.body).is_none() {
             return Err(format!(
                 "unknown body '{}' (expected one of: sun, mercury, venus, earth, \
@@ -638,8 +792,12 @@ impl SimConfig {
                 "invalid epoch '{epoch}': expected ISO 8601 (e.g. 2026-01-01T00:00:00Z)"
             ));
         }
+        let body = crate::satellite::try_parse_body(&self.body)
+            .expect("body was validated as parseable above");
         for (i, sat) in self.satellites.iter().enumerate() {
             sat.validate()
+                .map_err(|e| format!("satellites[{i}]: {e}"))?;
+            sat.validate_against_body(body)
                 .map_err(|e| format!("satellites[{i}]: {e}"))?;
             // Parse inline TLE lines with the same parser `from_config` uses, so
             // a malformed element set is rejected here rather than panicking.
@@ -1453,6 +1611,224 @@ altitude = 500
             args: serde_json::json!({ "big": 9_223_372_036_854_775_808u64 }),
         };
         assert!(cmd.to_message(0).is_err());
+    }
+
+    fn config_with(extra: &str) -> SimConfig {
+        let toml = format!(
+            r#"
+{extra}
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+"#
+        );
+        toml::from_str(&toml).expect("test config should deserialize")
+    }
+
+    /// `dt <= 0` (and NaN) used to reach the integrator, where
+    /// `while t < t_end` never advances, so `orts run` hung instead of
+    /// reporting the bad config.
+    #[test]
+    fn validate_rejects_non_positive_dt() {
+        for dt in ["0.0", "-1.0", "nan", "inf"] {
+            let config = config_with(&format!("dt = {dt}"));
+            let err = config
+                .validate()
+                .expect_err(&format!("dt = {dt} should be rejected"));
+            assert!(err.contains("dt"), "dt = {dt} gave {err:?}");
+        }
+    }
+
+    #[test]
+    fn validate_accepts_positive_dt() {
+        assert!(config_with("dt = 5.0").validate().is_ok());
+    }
+
+    /// A non-finite orbit number reaches the derived orbital period, and a NaN
+    /// end time makes `while !group.all_finished()` loop forever.
+    #[test]
+    fn validate_rejects_non_finite_orbit_numbers() {
+        for field in ["altitude", "inclination", "raan"] {
+            // `altitude` is required, so only add the 500 km default when the
+            // field under test is one of the optional ones.
+            let base = if field == "altitude" {
+                String::new()
+            } else {
+                "altitude = 500\n".to_string()
+            };
+            let toml = format!(
+                r#"
+dt = 10.0
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+{base}{field} = nan
+"#
+            );
+            let config: SimConfig = toml::from_str(&toml).expect("deserializes");
+            let err = config
+                .validate()
+                .expect_err(&format!("{field} = nan should be rejected"));
+            assert!(err.contains(field), "{field} gave {err:?}");
+        }
+    }
+
+    /// `a = R_body + altitude`, so a large negative altitude has no orbit.
+    #[test]
+    fn validate_rejects_altitude_below_body_centre() {
+        let toml = r#"
+dt = 10.0
+body = "earth"
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = -7000.0
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("deserializes");
+        let err = config.validate().expect_err("altitude below body centre");
+        assert!(err.contains("semi-major axis"), "{err:?}");
+    }
+
+    #[test]
+    fn validate_accepts_negative_altitude_above_body_centre() {
+        // Physically underground but numerically a valid orbit; not this
+        // check's job to reject.
+        let toml = r#"
+dt = 10.0
+body = "earth"
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = -100.0
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("deserializes");
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn sample_period_validator() {
+        assert!(validate_sample_period(0.1).is_ok());
+        for dt in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(validate_sample_period(dt).is_err(), "dt_ctrl = {dt}");
+        }
+    }
+
+    /// Why the controlled-run loops validate each satellite's period rather
+    /// than only the folded minimum: `f64::min` returns the *other* argument
+    /// when one side is NaN, so a NaN period vanishes in the fold.
+    #[test]
+    fn fold_min_hides_a_nan_sample_period() {
+        let periods = [f64::NAN, 0.1];
+        let folded = periods.iter().copied().fold(f64::INFINITY, f64::min);
+        assert_eq!(
+            folded, 0.1,
+            "f64::min drops the NaN instead of propagating it"
+        );
+        assert!(
+            validate_sample_period(folded).is_ok(),
+            "so validating only the fold result accepts a fleet containing a NaN period"
+        );
+        assert!(
+            periods
+                .iter()
+                .copied()
+                .any(|p| validate_sample_period(p).is_err()),
+            "validating per satellite catches it"
+        );
+    }
+
+    #[test]
+    fn tolerance_validator_skips_rk4() {
+        // RK4 never reads the tolerances, so unused zeros must stay valid.
+        assert!(validate_tolerances(IntegratorChoice::Rk4, 0.0, 0.0).is_ok());
+        assert!(validate_tolerances(IntegratorChoice::Dp45, 0.0, 0.0).is_err());
+        assert!(validate_tolerances(IntegratorChoice::Dop853, 0.0, 0.0).is_err());
+    }
+
+    #[test]
+    fn validate_accepts_rk4_with_zero_tolerances() {
+        let config =
+            config_with("dt = 10.0\n\n[integrator]\ntype = \"rk4\"\natol = 0.0\nrtol = 0.0");
+        assert!(config.validate().is_ok(), "RK4 ignores tolerances");
+    }
+
+    /// `output_interval = 0` never reaches `max_period` in `run`;
+    /// `stream_interval = 0` is a divisor in the serve loop's pacing, where it
+    /// produces `NaN` and panics `Duration::from_secs_f64`.
+    #[test]
+    fn validate_rejects_non_positive_intervals() {
+        for key in ["output_interval", "stream_interval", "duration"] {
+            for value in ["0.0", "-1.0", "nan", "inf"] {
+                let config = config_with(&format!("dt = 1.0\n{key} = {value}"));
+                let err = config
+                    .validate()
+                    .expect_err(&format!("{key} = {value} should be rejected"));
+                assert!(err.contains(key), "{key} = {value} gave {err:?}");
+            }
+        }
+    }
+
+    /// `SimParams::from_config` clamps `stream_interval` into
+    /// `[dt, output_interval]`; inverted bounds used to panic inside `clamp`.
+    #[test]
+    fn validate_rejects_output_interval_below_dt() {
+        let config = config_with("dt = 10.0\noutput_interval = 1.0");
+        let err = config.validate().expect_err("output_interval < dt");
+        assert!(
+            err.contains("output_interval") && err.contains("dt"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_output_interval_at_or_above_dt() {
+        assert!(
+            config_with("dt = 10.0\noutput_interval = 10.0")
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            config_with("dt = 10.0\noutput_interval = 60.0")
+                .validate()
+                .is_ok()
+        );
+    }
+
+    /// With `atol == rtol == 0` the adaptive error scale is zero, so an
+    /// exactly-zero state component makes the error norm `0 / 0`.
+    #[test]
+    fn validate_rejects_both_zero_tolerances() {
+        let config = config_with("[integrator]\ntype = \"dp45\"\natol = 0.0\nrtol = 0.0");
+        let err = config.validate().expect_err("both-zero tolerances");
+        assert!(err.contains("atol") && err.contains("rtol"), "{err:?}");
+    }
+
+    #[test]
+    fn validate_rejects_non_finite_tolerances() {
+        for (atol, rtol) in [("nan", "1e-8"), ("1e-10", "-1.0"), ("1e-10", "inf")] {
+            let config = config_with(&format!(
+                "[integrator]\ntype = \"dp45\"\natol = {atol}\nrtol = {rtol}"
+            ));
+            assert!(
+                config.validate().is_err(),
+                "atol = {atol}, rtol = {rtol} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_one_zero_tolerance() {
+        // Only one of the two needs to be positive.
+        let config = config_with("[integrator]\ntype = \"dp45\"\natol = 0.0\nrtol = 1e-8");
+        assert!(
+            config.validate().is_ok(),
+            "atol = 0 with rtol > 0 is usable"
+        );
     }
 
     #[test]

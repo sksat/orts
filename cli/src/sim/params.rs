@@ -286,10 +286,12 @@ impl SimParams {
         };
 
         let output_interval = args.output_interval.unwrap_or(args.dt);
+        // `min` keeps the clamp bounds ordered so an unvalidated arg set
+        // cannot panic here; see the matching note in `from_config`.
         let stream_interval = args
             .stream_interval
             .unwrap_or(output_interval)
-            .clamp(args.dt, output_interval);
+            .clamp(args.dt.min(output_interval), output_interval);
 
         // Apply --duration override: replace each satellite's period with the user-specified duration
         let satellites = if let Some(dur) = args.duration {
@@ -361,10 +363,14 @@ impl SimParams {
             .collect();
 
         let output_interval = config.output_interval.unwrap_or(config.dt);
+        // `SimConfig::validate` rejects `output_interval < dt`, but this
+        // constructor is also reachable without it; `min` keeps the clamp
+        // bounds ordered so a bad config cannot panic here. For validated
+        // configs `dt <= output_interval`, so this is the plain `dt`.
         let stream_interval = config
             .stream_interval
             .unwrap_or(output_interval)
-            .clamp(config.dt, output_interval);
+            .clamp(config.dt.min(output_interval), output_interval);
 
         let satellites = if let Some(dur) = config.duration {
             satellites

@@ -327,6 +327,11 @@ where
             });
         }
 
+        // Reject a step size that cannot advance time before stepping: the
+        // fixed-step RK4 branch below would otherwise spin on `h = 0` (or walk
+        // backwards for `dt < 0`) forever.
+        self.integrator.validate()?;
+
         match &self.integrator {
             IntegratorConfig::Dp45 { dt, tolerances } => {
                 let mut stepper = DormandPrince.stepper(
@@ -392,10 +397,10 @@ where
                     }
                     Err(e) => {
                         self.terminated = true;
-                        let t = match &e {
-                            IntegrationError::NonFiniteState { t } => *t,
-                            IntegrationError::StepSizeTooSmall { t, .. } => *t,
-                        };
+                        // Pre-flight rejections (bad dt/tolerances) carry no
+                        // time of their own; attribute them to where the
+                        // stepper was asked to start.
+                        let t = e.time().unwrap_or(self.t);
                         let term = SatelliteTermination {
                             satellite_id: self
                                 .ids
@@ -475,10 +480,10 @@ where
                     }
                     Err(e) => {
                         self.terminated = true;
-                        let t = match &e {
-                            IntegrationError::NonFiniteState { t } => *t,
-                            IntegrationError::StepSizeTooSmall { t, .. } => *t,
-                        };
+                        // Pre-flight rejections (bad dt/tolerances) carry no
+                        // time of their own; attribute them to where the
+                        // stepper was asked to start.
+                        let t = e.time().unwrap_or(self.t);
                         let term = SatelliteTermination {
                             satellite_id: self
                                 .ids
@@ -502,6 +507,14 @@ where
 
                 while current_t < t_target - 1e-12 {
                     let h = dt.min(t_target - current_t);
+                    // `h > 0` after the validate() above, but for large
+                    // `|current_t|` it can still be below the f64 spacing there.
+                    if current_t + h == current_t {
+                        return Err(IntegrationError::TimeStagnated {
+                            t: current_t,
+                            dt: h,
+                        });
+                    }
                     current_state = Rk4.step(&self.dynamics, current_t, &current_state, h);
                     current_t += h;
 

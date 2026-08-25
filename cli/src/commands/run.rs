@@ -16,39 +16,59 @@ use orts::record::timeline::TimePoint;
 use orts::visibility::{StationContact, VisibilityMonitor};
 
 use crate::cli::{IntegratorChoice, OutputFormat, SimArgs};
+use crate::commands::CmdError;
 use crate::satellite::OrbitSpec;
 use crate::sim::params::SimParams;
 
-pub fn run_simulation_cmd(sim: &SimArgs, output: Option<&str>, format: OutputFormat, json: bool) {
+/// Apply the config-file validation rules to the direct-CLI argument path.
+///
+/// `SimParams::from_sim_args` builds the same `SimParams` as
+/// `SimParams::from_config` but skips `SimConfig::validate`, so without this
+/// `--dt 0` hangs, `--dt nan` panics in step-size control, and
+/// `--dt 10 --output-interval 1` panics inside `clamp`.
+pub(crate) fn validate_sim_args(sim: &SimArgs) -> Result<(), String> {
+    crate::config::validate_time_params(
+        sim.dt,
+        sim.output_interval,
+        sim.stream_interval,
+        sim.duration,
+    )?;
+    crate::config::validate_tolerances(sim.integrator, sim.atol, sim.rtol)
+}
+
+pub fn run_simulation_cmd(
+    sim: &SimArgs,
+    output: Option<&str>,
+    format: OutputFormat,
+    json: bool,
+) -> Result<(), CmdError> {
     let mut params = if let Some(config_path) = &sim.config {
-        let config = crate::config::SimConfig::load(std::path::Path::new(config_path))
-            .unwrap_or_else(|e| {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            });
+        let config = crate::config::SimConfig::load(std::path::Path::new(config_path))?;
         SimParams::from_config(&config)
     } else if sim.has_orbit_args() {
+        // The direct-CLI path bypasses `SimConfig::validate`, so apply the
+        // same time/tolerance checks here rather than letting a bad `--dt`
+        // hang the propagation loop or panic inside step-size control.
+        validate_sim_args(sim)?;
         SimParams::from_sim_args(sim, false)
     } else {
         // Auto-detect orts.toml in the current directory
         let config_path = std::path::Path::new("orts.toml");
         if config_path.exists() {
-            let config = crate::config::SimConfig::load(config_path).unwrap_or_else(|e| {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            });
+            let config = crate::config::SimConfig::load(config_path)?;
             SimParams::from_config(&config)
         } else {
-            eprintln!("Error: no simulation configuration found.");
-            eprintln!("Provide --config <path>, place orts.toml in the current directory,");
-            eprintln!("or specify an orbit with --sat / --tle / --norad-id.");
-            std::process::exit(1);
+            return Err(CmdError::usage(
+                "no simulation configuration found.\n\
+                 Provide --config <path>, place orts.toml in the current directory,\n\
+                 or specify an orbit with --sat / --tle / --norad-id.",
+            ));
         }
     };
     // Resolve and validate the stdout/output contract before running the
     // (potentially long) simulation, so usage errors fail fast.
     let sink = resolve_data_sink(output, format);
-    validate_output_contract(&sink, format, json);
+    validate_output_contract(&sink, format, json)?;
 
     // CLI backend flags always override config-file defaults so
     // `orts run --config … --plugin-backend=sync|async` works.
@@ -63,22 +83,27 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: Option<&str>, format: OutputFor
             .iter()
             .all(|s| s.controller_config.is_some());
     let rec = if has_controller {
-        run_controlled_simulation(&params, sim)
+        run_controlled_simulation(&params, sim)?
     } else {
-        run_simulation(&params)
+        run_simulation(&params)?
     };
 
-    let artifact = write_simulation_output(&rec, &params, &sink, format);
+    let artifact = write_simulation_output(&rec, &params, &sink, format)?;
 
     if json {
         let summary = build_run_summary(&params, &rec, artifact);
-        serde_json::to_writer_pretty(std::io::stdout(), &summary).unwrap_or_else(|e| {
-            eprintln!("Error serializing run summary: {e}");
-            std::process::exit(1);
-        });
+        use std::io::Write;
+        let mut stdout = std::io::stdout().lock();
+        serde_json::to_writer_pretty(&mut stdout, &summary)
+            .map_err(|e| CmdError::failure(format!("serializing run summary: {e}")))?;
         // Trailing newline so the JSON document is its own line on stdout.
-        println!();
+        // Written through the same locked writer so a failure is reported
+        // instead of being swallowed by `println!`.
+        stdout
+            .write_all(b"\n")
+            .map_err(|e| CmdError::failure(format!("writing run summary: {e}")))?;
     }
+    Ok(())
 }
 
 /// stdout/output contract for `orts run`: stdout carries exactly one of the
@@ -109,20 +134,23 @@ fn resolve_data_sink(output: Option<&str>, format: OutputFormat) -> DataSink<'_>
 }
 
 /// Reject contradictory stdout requests before the simulation runs.
-fn validate_output_contract(sink: &DataSink, format: OutputFormat, json: bool) {
+fn validate_output_contract(
+    sink: &DataSink,
+    format: OutputFormat,
+    json: bool,
+) -> Result<(), CmdError> {
     if matches!(sink, DataSink::Stdout) && matches!(format, OutputFormat::Rrd) {
-        eprintln!(
-            "Error: cannot write .rrd data to stdout. Use --format csv or pass --output <path>."
-        );
-        std::process::exit(2);
+        return Err(CmdError::usage(
+            "cannot write .rrd data to stdout. Use --format csv or pass --output <path>.",
+        ));
     }
     if json && matches!(sink, DataSink::Stdout) {
-        eprintln!(
-            "Error: --json writes the run summary to stdout, so simulation data cannot also go \
-             to stdout. Pass --output <path> for the data (e.g. --output result.csv)."
-        );
-        std::process::exit(2);
+        return Err(CmdError::usage(
+            "--json writes the run summary to stdout, so simulation data cannot also go \
+             to stdout. Pass --output <path> for the data (e.g. --output result.csv).",
+        ));
     }
+    Ok(())
 }
 
 /// Write the recording to the resolved sink and return the file artifact (if
@@ -132,43 +160,40 @@ fn write_simulation_output(
     params: &SimParams,
     sink: &DataSink,
     format: OutputFormat,
-) -> Option<Artifact> {
+) -> Result<Option<Artifact>, CmdError> {
     match (sink, format) {
         (DataSink::Stdout, OutputFormat::Csv) => {
-            print_recording_as_csv(rec, params);
-            None
+            // A reader that closes the pipe early (`orts run | head`) is an
+            // I/O error, not a reason to panic out of the writer.
+            print_recording_as_csv(rec, params)
+                .map_err(|e| CmdError::failure(format!("writing CSV to stdout: {e}")))?;
+            Ok(None)
         }
         // Rejected earlier by validate_output_contract.
         (DataSink::Stdout, OutputFormat::Rrd) => {
             unreachable!("rrd-to-stdout is rejected by validate_output_contract")
         }
         (DataSink::File(path), OutputFormat::Csv) => {
-            let mut file = std::fs::File::create(path).unwrap_or_else(|e| {
-                eprintln!("Error creating {path}: {e}");
-                std::process::exit(1);
-            });
-            write_recording_as_csv(&mut file, rec, Some(params)).unwrap_or_else(|e| {
-                eprintln!("Error writing {path}: {e}");
-                std::process::exit(1);
-            });
+            let mut file = std::fs::File::create(path)
+                .map_err(|e| CmdError::failure(format!("creating {path}: {e}")))?;
+            write_recording_as_csv(&mut file, rec, Some(params))
+                .map_err(|e| CmdError::failure(format!("writing {path}: {e}")))?;
             eprintln!("Saved to {path}");
-            Some(Artifact {
+            Ok(Some(Artifact {
                 kind: "recording",
                 format: "csv",
                 path: (*path).to_string(),
-            })
+            }))
         }
         (DataSink::File(path), OutputFormat::Rrd) => {
-            orts::record::rerun_export::save_as_rrd(rec, "orts", path).unwrap_or_else(|e| {
-                eprintln!("Error saving .rrd: {e}");
-                std::process::exit(1);
-            });
+            orts::record::rerun_export::save_as_rrd(rec, "orts", path)
+                .map_err(|e| CmdError::failure(format!("saving .rrd: {e}")))?;
             eprintln!("Saved to {path}");
-            Some(Artifact {
+            Ok(Some(Artifact {
                 kind: "recording",
                 format: "rrd",
                 path: (*path).to_string(),
-            })
+            }))
         }
     }
 }
@@ -422,7 +447,7 @@ fn report_contact_windows(params: &SimParams, monitors: Vec<VisibilityMonitor<Si
 }
 
 /// Run the simulation and return a Recording.
-pub fn run_simulation(params: &SimParams) -> Recording {
+pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
     use crate::sim::core::sat_params;
     use orts::setup::{build_orbital_system, default_third_bodies};
 
@@ -485,7 +510,7 @@ pub fn run_simulation(params: &SimParams) -> Recording {
         );
         let initial = sat
             .initial_state(params.mu, params.epoch)
-            .unwrap_or_else(|e| panic!("satellite '{}': {e}", sat.id));
+            .map_err(|e| CmdError::failure(format!("satellite '{}': {e}", sat.id)))?;
 
         group = group.add_satellite_until(sat.id.as_str(), initial, sat.period, system);
     }
@@ -534,6 +559,9 @@ pub fn run_simulation(params: &SimParams) -> Recording {
             t = max_period;
         }
 
+        // Propagation errors are reported, not unwrapped: an invalid step size
+        // or a stalled clock is a diagnosable condition, and panicking here
+        // discards the `IntegrationError` that says which.
         let outcome = if let Some(monitors) = visibility.as_mut() {
             group
                 .propagate_to_with(t, |id, ts, state| {
@@ -545,9 +573,11 @@ pub fn run_simulation(params: &SimParams) -> Recording {
                         vis_last_t[i] = ts;
                     }
                 })
-                .unwrap()
+                .map_err(|e| format!("integration failed while advancing to t={t:.3}: {e}"))?
         } else {
-            group.propagate_to(t).unwrap()
+            group
+                .propagate_to(t)
+                .map_err(|e| format!("integration failed while advancing to t={t:.3}: {e}"))?
         };
 
         // Record states for satellites that reached this output time
@@ -625,13 +655,13 @@ pub fn run_simulation(params: &SimParams) -> Recording {
         orbit_description: orbit_desc,
     };
 
-    rec
+    Ok(rec)
 }
 
 /// Print a Recording as CSV to stdout.
-pub fn print_recording_as_csv(rec: &Recording, params: &SimParams) {
+pub fn print_recording_as_csv(rec: &Recording, params: &SimParams) -> std::io::Result<()> {
     let mut stdout = std::io::stdout().lock();
-    write_recording_as_csv(&mut stdout, rec, Some(params)).unwrap();
+    write_recording_as_csv(&mut stdout, rec, Some(params))
 }
 
 /// Write a Recording as CSV to any writer.
@@ -856,7 +886,7 @@ fn lookup_field_names(component_name: &str, n: usize) -> Vec<String> {
 }
 
 /// 制御付きシミュレーション（プラグインコントローラ + RW + センサ）。
-fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
+fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Recording, CmdError> {
     use crate::sim::controlled::{
         ControlledBuildContext, build_controlled_satellite, step_controlled,
     };
@@ -887,19 +917,13 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
     let mut wasm_cache = {
         #[cfg(feature = "plugin-wasm-async")]
         {
-            orts::plugin::wasm::WasmPluginCache::new_with_async_mode(async_mode).unwrap_or_else(
-                |e| {
-                    eprintln!("Error initializing WASM plugin cache: {e}");
-                    std::process::exit(1);
-                },
-            )
+            orts::plugin::wasm::WasmPluginCache::new_with_async_mode(async_mode)
+                .map_err(|e| CmdError::failure(format!("initializing WASM plugin cache: {e}")))?
         }
         #[cfg(not(feature = "plugin-wasm-async"))]
         {
-            orts::plugin::wasm::WasmPluginCache::new().unwrap_or_else(|e| {
-                eprintln!("Error initializing WASM plugin cache: {e}");
-                std::process::exit(1);
-            })
+            orts::plugin::wasm::WasmPluginCache::new()
+                .map_err(|e| CmdError::failure(format!("initializing WASM plugin cache: {e}")))?
         }
     };
     // Only use rayon parallelism for the sim loop when the user
@@ -925,11 +949,9 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
             plugin_backend,
         };
         for spec in &params.satellites {
-            let sat =
-                build_controlled_satellite(spec, params.epoch, &mut ctx).unwrap_or_else(|e| {
-                    eprintln!("Error building controlled satellite '{}': {e}", spec.id);
-                    std::process::exit(1);
-                });
+            let sat = build_controlled_satellite(spec, params.epoch, &mut ctx).map_err(|e| {
+                CmdError::failure(format!("building controlled satellite '{}': {e}", spec.id))
+            })?;
             satellites.push(sat);
         }
     }
@@ -954,13 +976,14 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
         let mut scheduled = Vec::new();
         for cmd in &params.commands {
             let Some(&idx) = id_to_index.get(cmd.sat.as_str()) else {
-                eprintln!("command targets unknown satellite '{}'", cmd.sat);
-                std::process::exit(1);
+                return Err(CmdError::usage(format!(
+                    "command targets unknown satellite '{}'",
+                    cmd.sat
+                )));
             };
-            let message = cmd.to_message(idx).unwrap_or_else(|e| {
-                eprintln!("invalid command: {e}");
-                std::process::exit(1);
-            });
+            let message = cmd
+                .to_message(idx)
+                .map_err(|e| CmdError::usage(format!("invalid command: {e}")))?;
             scheduled.push(crate::sim::command_schedule::ScheduledCommand {
                 t: cmd.t,
                 sat_index: idx,
@@ -990,10 +1013,21 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
     }
 
     // 全衛星の sample_period の最小値をグローバル tick に使う。
+    //
+    // Validate per satellite *before* folding: `f64::min` returns the other
+    // argument when one side is NaN, so a NaN period would be silently
+    // discarded by the fold and never rejected.
+    for (i, sat) in satellites.iter().enumerate() {
+        crate::config::validate_sample_period(sat.controller.sample_period())
+            .map_err(|e| CmdError::failure(format!("satellites[{i}]: {e}")))?;
+    }
     let dt_ctrl = satellites
         .iter()
         .map(|sat| sat.controller.sample_period())
         .fold(f64::INFINITY, f64::min);
+    // `fold` also yields `INFINITY` for an empty fleet, which the loop below
+    // cannot step with either.
+    crate::config::validate_sample_period(dt_ctrl).map_err(CmdError::failure)?;
     let dt_ode = params.dt.min(dt_ctrl);
 
     let mut t = 0.0;
@@ -1012,20 +1046,19 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
                 .deliver(sc.message.clone());
         }
 
+        // `try_for_each` rather than `for_each` + exit: a rayon worker calling
+        // `std::process::exit` tears the process down from inside the pool,
+        // skipping every caller's cleanup. Collect the first error instead.
         if parallel_step {
             use rayon::prelude::*;
-            satellites.par_iter_mut().for_each(|sat| {
-                step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref()).unwrap_or_else(|e| {
-                    eprintln!("Simulation error at t={t:.3}: {e}");
-                    std::process::exit(1);
-                });
-            });
+            satellites
+                .par_iter_mut()
+                .try_for_each(|sat| step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref()))
+                .map_err(|e| CmdError::failure(format!("simulation error at t={t:.3}: {e}")))?;
         } else {
             for sat in &mut satellites {
-                step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref()).unwrap_or_else(|e| {
-                    eprintln!("Simulation error at t={t:.3}: {e}");
-                    std::process::exit(1);
-                });
+                step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref())
+                    .map_err(|e| CmdError::failure(format!("simulation error at t={t:.3}: {e}")))?;
             }
         }
 
@@ -1115,7 +1148,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
         orbit_description: orbit_desc,
     };
 
-    rec
+    Ok(rec)
 }
 
 /// Log controlled satellite state: orbit + attitude + commands + actuator telemetry.
@@ -1210,5 +1243,99 @@ fn log_controlled_state(
                 )),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// Build `SimArgs` the way the CLI does, so clap's defaults are exercised
+    /// too. `validate_sim_args` returning `Result` is what makes this testable
+    /// at all — it used to `process::exit(1)` at the point of detection.
+    fn args(extra: &[&str]) -> SimArgs {
+        let mut argv = vec!["orts", "--sat", "altitude=500"];
+        argv.extend_from_slice(extra);
+        SimArgs::try_parse_from(argv).expect("test argv should parse")
+    }
+
+    #[test]
+    fn default_args_are_valid() {
+        assert!(validate_sim_args(&args(&[])).is_ok());
+    }
+
+    #[test]
+    fn rejects_non_positive_dt() {
+        // `--dt=-1` rather than `--dt -1`: clap treats a bare `-1` as an
+        // unknown flag, so the negative value only reaches us through the
+        // `=` form (or a config file).
+        for dt in ["--dt=0", "--dt=-1", "--dt=nan", "--dt=inf"] {
+            let e = validate_sim_args(&args(&[dt])).expect_err(&format!("{dt} should be rejected"));
+            assert!(e.contains("dt"), "{dt} gave {e:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_output_interval_below_dt() {
+        let e = validate_sim_args(&args(&["--dt", "10", "--output-interval", "1"]))
+            .expect_err("output_interval < dt");
+        assert!(e.contains("output_interval"), "{e:?}");
+    }
+
+    #[test]
+    fn rejects_unusable_tolerances_for_adaptive_integrators() {
+        let e = validate_sim_args(&args(&[
+            "--integrator",
+            "dp45",
+            "--atol",
+            "0",
+            "--rtol",
+            "0",
+        ]))
+        .expect_err("both-zero tolerances with dp45");
+        assert!(e.contains("atol") && e.contains("rtol"), "{e:?}");
+    }
+
+    #[test]
+    fn accepts_unused_tolerances_for_rk4() {
+        // RK4 never reads them, so zeros must not fail the run.
+        assert!(
+            validate_sim_args(&args(&[
+                "--integrator",
+                "rk4",
+                "--atol",
+                "0",
+                "--rtol",
+                "0"
+            ]))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn rrd_to_stdout_is_a_usage_error() {
+        let err = validate_output_contract(&DataSink::Stdout, OutputFormat::Rrd, false)
+            .expect_err("rrd to stdout");
+        assert_eq!(err.code, 2, "contradictory flags are a usage error");
+        assert!(err.message.contains("stdout"), "{err:?}");
+    }
+
+    #[test]
+    fn json_plus_stdout_data_is_a_usage_error() {
+        let err = validate_output_contract(&DataSink::Stdout, OutputFormat::Csv, true)
+            .expect_err("json + csv-to-stdout");
+        assert_eq!(err.code, 2);
+    }
+
+    #[test]
+    fn compatible_output_contracts_are_accepted() {
+        assert!(validate_output_contract(&DataSink::Stdout, OutputFormat::Csv, false).is_ok());
+        assert!(
+            validate_output_contract(&DataSink::File("out.csv"), OutputFormat::Csv, true).is_ok()
+        );
+        assert!(
+            validate_output_contract(&DataSink::File("out.rrd"), OutputFormat::Rrd, false).is_ok()
+        );
     }
 }

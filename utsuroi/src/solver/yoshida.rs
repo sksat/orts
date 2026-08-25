@@ -9,6 +9,7 @@
 
 use core::ops::ControlFlow;
 
+use crate::error::{validate_step_size, validate_time_span};
 use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState, State};
 
 use super::verlet::StormerVerlet;
@@ -105,6 +106,10 @@ macro_rules! impl_yoshida {
                 yoshida_step(&$weights, system, t, state, dt)
             }
 
+            /// # Panics
+            ///
+            /// Panics if the arguments cannot produce a terminating
+            /// integration; see `try_integrate` for the fallible form.
             pub fn integrate<const DIM: usize, S, F>(
                 &self,
                 system: &S,
@@ -112,21 +117,48 @@ macro_rules! impl_yoshida {
                 t0: f64,
                 t_end: f64,
                 dt: f64,
-                mut callback: F,
+                callback: F,
             ) -> State<DIM, 2>
             where
                 S: DynamicalSystem<State = State<DIM, 2>>,
                 F: FnMut(f64, &State<DIM, 2>),
             {
+                match self.try_integrate(system, initial, t0, t_end, dt, callback) {
+                    Ok(state) => state,
+                    Err(e) => panic!("utsuroi: integrate() cannot run: {e}"),
+                }
+            }
+
+            /// Fallible variant of `integrate`, mirroring
+            /// [`Integrator::try_integrate`](crate::Integrator::try_integrate).
+            pub fn try_integrate<const DIM: usize, S, F>(
+                &self,
+                system: &S,
+                initial: State<DIM, 2>,
+                t0: f64,
+                t_end: f64,
+                dt: f64,
+                mut callback: F,
+            ) -> Result<State<DIM, 2>, IntegrationError>
+            where
+                S: DynamicalSystem<State = State<DIM, 2>>,
+                F: FnMut(f64, &State<DIM, 2>),
+            {
+                validate_step_size(dt)?;
+                validate_time_span(t0, t_end)?;
+
                 let mut state = initial;
                 let mut t = t0;
                 while t < t_end {
                     let h = dt.min(t_end - t);
+                    if t + h == t {
+                        return Err(IntegrationError::TimeStagnated { t, dt: h });
+                    }
                     state = self.step(system, t, &state, h);
                     t += h;
                     callback(t, &state);
                 }
-                state
+                Ok(state)
             }
 
             #[allow(clippy::too_many_arguments)]
@@ -145,10 +177,21 @@ macro_rules! impl_yoshida {
                 F: FnMut(f64, &State<DIM, 2>),
                 E: Fn(f64, &State<DIM, 2>) -> ControlFlow<B>,
             {
+                if let Err(e) = validate_step_size(dt).and_then(|()| validate_time_span(t0, t_end))
+                {
+                    return IntegrationOutcome::Error(e);
+                }
+
                 let mut state = initial;
                 let mut t = t0;
                 while t < t_end {
                     let h = dt.min(t_end - t);
+                    if t + h == t {
+                        return IntegrationOutcome::Error(IntegrationError::TimeStagnated {
+                            t,
+                            dt: h,
+                        });
+                    }
                     state = self.step(system, t, &state, h);
                     t += h;
                     if !state.is_finite() {
@@ -640,5 +683,46 @@ mod tests {
             "3D error: {:.2e}",
             (final_state.y().x - 1.0).abs()
         );
+    }
+
+    // Same guards as the trait-based solvers, on the inherent API.
+
+    #[test]
+    fn yoshida_try_integrate_rejects_non_advancing_step() {
+        let system = HarmonicOscillator1D;
+        let initial = State::<1, 2>::new(vector![1.0], vector![0.0]);
+        for dt in [0.0, -0.1, f64::NAN] {
+            let err = Yoshida4
+                .try_integrate(&system, initial.clone(), 0.0, 1.0, dt, |_, _| {})
+                .unwrap_err();
+            assert!(
+                matches!(err, IntegrationError::InvalidStepSize { .. }),
+                "dt = {dt} gave {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn yoshida_try_integrate_rejects_backward_span() {
+        let system = HarmonicOscillator1D;
+        let initial = State::<1, 2>::new(vector![1.0], vector![0.0]);
+        let err = Yoshida4
+            .try_integrate(&system, initial, 1.0, 0.0, 0.1, |_, _| {})
+            .unwrap_err();
+        assert!(
+            matches!(err, IntegrationError::InvalidTimeSpan { .. }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn yoshida_integrate_matches_try_integrate_for_valid_input() {
+        let system = HarmonicOscillator1D;
+        let initial = State::<1, 2>::new(vector![1.0], vector![0.0]);
+        let a = Yoshida4
+            .try_integrate(&system, initial.clone(), 0.0, 1.0, 0.01, |_, _| {})
+            .expect("valid input");
+        let b = Yoshida4.integrate(&system, initial, 0.0, 1.0, 0.01, |_, _| {});
+        assert_eq!(a, b);
     }
 }
