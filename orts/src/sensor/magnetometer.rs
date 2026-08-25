@@ -6,7 +6,9 @@
 
 use std::sync::Arc;
 
+use arika::earth::EarthFixedTransform;
 use arika::epoch::Epoch;
+use arika::frame;
 use tobari::magnetic::MagneticFieldModel;
 
 use super::noise::NoiseModel;
@@ -52,14 +54,36 @@ impl Magnetometer {
         self
     }
 
-    /// Measure the magnetic field in the body frame.
+    /// Measure the magnetic field in the body frame, for a `SimpleEci` state.
+    ///
+    /// Thin wrapper over [`Self::measure_in_frame`] (which needs no EOP for
+    /// `SimpleEci`).
     pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> MagneticFieldBody {
-        let b_eci = magnetic::field_eci(
+        self.measure_in_frame::<frame::SimpleEci>(state, epoch, &())
+    }
+
+    /// Measure the magnetic field in the body frame for a state propagated in
+    /// an arbitrary inertial frame `F`.
+    ///
+    /// The field is evaluated in `F` via [`magnetic::field_inertial`] — the
+    /// ERA-only rotation for `SimpleEci`, the full IAU 2006 chain for `Gcrs`
+    /// (which needs `eop`) — and then rotated into the body frame.
+    pub fn measure_in_frame<F: EarthFixedTransform>(
+        &mut self,
+        state: &SpacecraftState<F>,
+        epoch: &Epoch,
+        eop: &F::EopStorage,
+    ) -> MagneticFieldBody {
+        let b_inertial = magnetic::field_inertial::<F>(
             self.field_model.as_ref(),
-            &state.orbit.position_eci(),
+            &state.orbit.position_vec(),
             epoch,
+            eop,
         );
-        let b_body_typed = state.attitude.rotation_to_body().transform(&b_eci);
+        let b_body_typed = state
+            .attitude
+            .rotation_from_inertial::<F>()
+            .transform(&b_inertial);
         let mut b_body = b_body_typed.into_inner();
         for n in &mut self.noise {
             b_body = n.apply(b_body);
@@ -147,6 +171,52 @@ mod tests {
         assert!(
             (got.into_inner() - expected).magnitude() < 1e-30,
             "SimpleEci magnetometer reading changed: {got:?}"
+        );
+    }
+
+    /// **Discriminating test (#151)**: the same raw state read in `Gcrs` goes
+    /// through the full IAU 2006 chain, so the reading matches a
+    /// `field_inertial::<Gcrs>` reconstruction (bit-exact) and differs
+    /// measurably from the `SimpleEci` reading.
+    #[test]
+    fn gcrs_measurement_uses_the_iau2006_field_chain() {
+        use crate::test_support::zero_eop;
+
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let simple = snapshot_state();
+        let pos = *simple.orbit.position();
+        let state = SpacecraftState::<frame::Gcrs> {
+            orbit: OrbitalState::<frame::Gcrs>::new_in_frame(pos, *simple.orbit.velocity()),
+            attitude: simple.attitude.clone(),
+            mass: simple.mass,
+        };
+
+        let mut mag = Magnetometer::new(Arc::new(TiltedDipole::earth()));
+        let got = mag
+            .measure_in_frame::<frame::Gcrs>(&state, &epoch, &zero_eop())
+            .into_inner()
+            .into_inner();
+
+        let b_gcrs = magnetic::field_inertial::<frame::Gcrs>(
+            &TiltedDipole::earth(),
+            &arika::frame::Vec3::from_raw(pos),
+            &epoch,
+            &zero_eop(),
+        );
+        let expected = state
+            .attitude
+            .rotation_from_inertial::<frame::Gcrs>()
+            .transform(&b_gcrs)
+            .into_inner();
+        assert!(
+            (got - expected).magnitude() < 1e-30,
+            "Gcrs magnetometer must use the Gcrs field: {got:?} vs {expected:?}"
+        );
+
+        let simple_eci = mag.measure(&simple, &epoch).into_inner().into_inner();
+        assert!(
+            (got - simple_eci).magnitude() > simple_eci.magnitude() * 1e-4,
+            "Gcrs reading should differ from the SimpleEci reading"
         );
     }
 

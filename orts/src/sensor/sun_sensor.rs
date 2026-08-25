@@ -4,6 +4,7 @@
 //! true spacecraft state and epoch. The sun direction is the
 //! satellite→Sun unit vector rotated into the body frame.
 
+use arika::earth::transform::EphemerisFrameBridge;
 use arika::eclipse::{self, SUN_RADIUS_KM, ShadowModel};
 use arika::epoch::Epoch;
 use arika::frame::{self, Vec3};
@@ -79,10 +80,28 @@ impl SunSensor {
     /// - `direction: None` when in total eclipse (illumination = 0)
     /// - `illumination` in \[0, 1\]: actual eclipse-aware illumination fraction
     pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> SunSensorOutput {
-        // Satellite-to-Sun vector in ECI
-        let sun_eci = sun_position_eci(&epoch.to_tdb());
-        let sc_pos = state.orbit.position_eci();
-        let sat_to_sun = sun_eci.into_inner() - sc_pos.into_inner();
+        self.measure_in_frame::<frame::SimpleEci>(state, epoch)
+    }
+
+    /// Measure the sun direction in the body frame for a state propagated in an
+    /// arbitrary inertial frame `F`.
+    ///
+    /// The analytic Sun ephemeris is expressed in `Gcrs`, so it is rotated into
+    /// `F` via [`EphemerisFrameBridge`] before being differenced with the
+    /// spacecraft position — identity for `SimpleEci`/`Gcrs` (preserving the
+    /// historical behavior exactly), the precession/nutation rotation for an
+    /// of-date frame such as `Cirs`. A frame without that impl is a compile
+    /// error rather than a silent GCRS-alignment assumption.
+    pub fn measure_in_frame<F: EphemerisFrameBridge>(
+        &mut self,
+        state: &SpacecraftState<F>,
+        epoch: &Epoch,
+    ) -> SunSensorOutput {
+        // Satellite-to-Sun vector in the propagation frame `F`
+        let sun_gcrs = sun_position_eci(&epoch.to_tdb());
+        let sun_eci = *F::ephemeris_rotation(epoch).transform(&sun_gcrs).inner();
+        let sc_pos = *state.orbit.position_vec().inner();
+        let sat_to_sun = sun_eci - sc_pos;
         let norm = sat_to_sun.magnitude();
         let dir_eci = if norm > 1e-15 {
             sat_to_sun / norm
@@ -93,8 +112,8 @@ impl SunSensor {
         // Compute illumination if eclipse is enabled
         let illumination = if let Some(body_r) = self.shadow_body_radius {
             eclipse::illumination_central(
-                &sc_pos.into_inner(),
-                &sun_eci.into_inner(),
+                &sc_pos,
+                &sun_eci,
                 body_r,
                 SUN_RADIUS_KM,
                 self.shadow_model,
@@ -112,8 +131,11 @@ impl SunSensor {
         }
 
         // Rotate to body frame
-        let dir_eci_typed = Vec3::<frame::SimpleEci>::from_raw(dir_eci);
-        let dir_body = state.attitude.rotation_to_body().transform(&dir_eci_typed);
+        let dir_eci_typed = Vec3::<F>::from_raw(dir_eci);
+        let dir_body = state
+            .attitude
+            .rotation_from_inertial::<F>()
+            .transform(&dir_eci_typed);
         let mut d = dir_body.into_inner();
 
         for n in &mut self.noise {
@@ -240,6 +262,52 @@ mod tests {
             "SimpleEci sun direction changed: {got:?}"
         );
         assert_eq!(illumination, 1.0);
+    }
+
+    /// **Discriminating test (#151)**: in a non-GCRS-aligned frame (`Cirs`) the
+    /// Sun ephemeris must be rotated into the propagation frame before the
+    /// geometry. The measured direction therefore equals the reconstruction
+    /// through the GCRS→CIRS rotation (bit-exact) and differs measurably from
+    /// the raw GCRS-aligned direction a frame-blind sensor would report.
+    #[test]
+    fn cirs_measurement_rotates_the_sun_ephemeris() {
+        use arika::frame::{Cirs, Gcrs, Rotation};
+
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let simple = snapshot_state();
+        let pos = *simple.orbit.position();
+        let state = SpacecraftState::<Cirs> {
+            orbit: OrbitalState::<Cirs>::new_in_frame(pos, *simple.orbit.velocity()),
+            attitude: simple.attitude.clone(),
+            mass: simple.mass,
+        };
+
+        let mut sensor = SunSensor::for_earth();
+        let SunSensorOutput::Fine { direction, .. } =
+            sensor.measure_in_frame::<Cirs>(&state, &epoch)
+        else {
+            panic!("expected Fine output");
+        };
+        let got = direction.expect("sunlit").into_inner().into_inner();
+
+        let sun_gcrs = sun_position_eci(&epoch.to_tdb());
+        let sun_cirs = Rotation::<Gcrs, Cirs>::iau2006_model(&epoch.to_tt()).transform(&sun_gcrs);
+        let dir_cirs = (sun_cirs.into_inner() - pos).normalize();
+        let expected = state
+            .attitude
+            .rotation_from_inertial::<Cirs>()
+            .transform(&Vec3::<Cirs>::from_raw(dir_cirs))
+            .into_inner();
+        assert!(
+            (got - expected).magnitude() < 1e-30,
+            "Cirs sun direction must apply the GCRS→CIRS rotation: {got:?} vs {expected:?}"
+        );
+
+        let raw = Vector3::new(0.7903661281325338, -0.551312799346672, -0.2671620870882);
+        assert!(
+            (got - raw).magnitude() > 1e-8,
+            "Cirs direction should differ from the raw GCRS-aligned direction"
+        );
     }
 
     #[test]

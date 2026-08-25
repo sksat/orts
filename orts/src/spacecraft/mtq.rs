@@ -8,8 +8,9 @@
 //! realized dipole moment vector and `B` is the local geomagnetic
 //! field in the body frame.
 
+use arika::earth::EarthFixedTransform;
 use arika::epoch::Epoch;
-use arika::frame::{self, Vec3};
+use arika::frame;
 use nalgebra::Vector3;
 use tobari::magnetic::MagneticFieldModel;
 
@@ -150,34 +151,71 @@ impl MtqAssemblyCore {
 /// Per-MTQ command. Re-exported from `crate::plugin::command::MtqCommand` for convenience.
 pub use crate::plugin::command::MtqCommand;
 
-/// MTQ assembly with magnetic field model, usable as a [`Model<S>`]
+/// MTQ assembly with magnetic field model, usable as a [`Model<S, Fr>`]
 /// in the ODE system.
+///
+/// `Fr` is the inertial frame the assembly evaluates the geomagnetic field in:
+/// it selects the ECI↔ECEF transform used to reach the field model's geodetic
+/// input and to bring the field vector back (`SimpleEci` = ERA-only rotation,
+/// `Gcrs` = full IAU 2006 chain, which needs an EOP provider).
 ///
 /// The `command` field is `pub` so it can be updated between
 /// integration segments (zero-order hold, set by plugin or host controller).
-#[derive(Clone)]
-pub struct MtqAssembly<F: MagneticFieldModel> {
+pub struct MtqAssembly<F: MagneticFieldModel, Fr: EarthFixedTransform = frame::SimpleEci> {
     core: MtqAssemblyCore,
     /// Per-MTQ command (direct moments or normalized), updated between ODE segments.
     pub command: MtqCommand,
     /// Geomagnetic field model.
     field: F,
+    /// EOP storage for the frame adapter. `()` for `SimpleEci`.
+    eop: Fr::EopStorage,
 }
 
-impl<F: MagneticFieldModel> MtqAssembly<F> {
-    /// Create an assembly from a core and field model.
+// Manual `Clone`: `#[derive]` cannot express the `Fr::EopStorage: Clone` bound
+// (and would wrongly require `Fr: Clone`).
+impl<F: MagneticFieldModel + Clone, Fr: EarthFixedTransform> Clone for MtqAssembly<F, Fr>
+where
+    Fr::EopStorage: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            core: self.core.clone(),
+            command: self.command.clone(),
+            field: self.field.clone(),
+            eop: self.eop.clone(),
+        }
+    }
+}
+
+impl<F: MagneticFieldModel> MtqAssembly<F, frame::SimpleEci> {
+    /// Create an assembly from a core and field model, in the default
+    /// `SimpleEci` frame.
     pub fn new(core: MtqAssemblyCore, field: F) -> Self {
+        Self::new_in_frame(core, field, ())
+    }
+
+    /// Standard 3-axis orthogonal arrangement in the default `SimpleEci` frame.
+    pub fn three_axis(max_moment: f64, field: F) -> Self {
+        Self::new(MtqAssemblyCore::three_axis(max_moment), field)
+    }
+}
+
+impl<F: MagneticFieldModel, Fr: EarthFixedTransform> MtqAssembly<F, Fr> {
+    /// Create an assembly evaluating the field in an arbitrary inertial frame
+    /// `Fr`, with that frame's EOP storage (`()` for `SimpleEci`).
+    pub fn new_in_frame(core: MtqAssemblyCore, field: F, eop: Fr::EopStorage) -> Self {
         let n = core.num_mtqs();
         Self {
             core,
             command: MtqCommand::Moments(vec![0.0; n]),
             field,
+            eop,
         }
     }
 
-    /// Standard 3-axis orthogonal arrangement.
-    pub fn three_axis(max_moment: f64, field: F) -> Self {
-        Self::new(MtqAssemblyCore::three_axis(max_moment), field)
+    /// Standard 3-axis orthogonal arrangement in an arbitrary inertial frame `Fr`.
+    pub fn three_axis_in_frame(max_moment: f64, field: F, eop: Fr::EopStorage) -> Self {
+        Self::new_in_frame(MtqAssemblyCore::three_axis(max_moment), field, eop)
     }
 
     /// Access the core (geometry + constraint logic).
@@ -222,27 +260,35 @@ impl<F: MagneticFieldModel> MtqAssembly<F> {
     }
 }
 
-// TODO: Same SimpleEci constraint as CommandedMagnetorquer (magnetic::field_eci).
-impl<F: MagneticFieldModel, S: HasAttitude + HasOrbit<Frame = frame::SimpleEci>> Model<S>
-    for MtqAssembly<F>
+// Frame-generic MTQ torque: the geomagnetic field is evaluated in the state's
+// own inertial frame `Fr` via `magnetic::field_inertial` (ERA rotation for
+// `SimpleEci`, the IAU 2006 chain for `Gcrs`), and rotated to the body frame
+// with the matching `Fr → Body` rotation. A frame without an
+// `EarthFixedTransform` impl is rejected at compile time. See #151.
+impl<F: MagneticFieldModel, Fr: EarthFixedTransform, S: HasAttitude + HasOrbit<Frame = Fr>>
+    Model<S, Fr> for MtqAssembly<F, Fr>
 {
     fn name(&self) -> &str {
         "mtq_assembly"
     }
 
-    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<Fr> {
         let Some(epoch) = epoch else {
             return ExternalLoads::zeros();
         };
-        let b_eci =
-            magnetic::field_eci(&self.field, &state.orbit().position_eci(), epoch).into_inner();
-        if b_eci.magnitude() < 1e-30 {
+        let b_inertial = magnetic::field_inertial::<Fr>(
+            &self.field,
+            &state.orbit().position_vec(),
+            epoch,
+            &self.eop,
+        );
+        if b_inertial.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
         }
         let b_body = state
             .attitude()
-            .rotation_to_body()
-            .transform(&Vec3::<frame::SimpleEci>::from_raw(b_eci))
+            .rotation_from_inertial::<Fr>()
+            .transform(&b_inertial)
             .into_inner();
         let moments = self.resolved_moments();
         ExternalLoads::torque(self.core.torque(&moments, &b_body))
@@ -640,6 +686,82 @@ mod tests {
         assert!(
             (got - expected).magnitude() < 1e-30,
             "SimpleEci MTQ torque changed: {got:?}"
+        );
+    }
+
+    /// **Discriminating test (#151)**: the same raw state propagated in `Gcrs`
+    /// evaluates the geomagnetic field through the full IAU 2006 chain instead
+    /// of the ERA-only `SimpleEci` rotation. The torque must therefore match a
+    /// `field_inertial::<Gcrs>` reconstruction (bit-exact — the model recomputes
+    /// the identical rotation) and differ measurably from the `SimpleEci`
+    /// number, which is what proves the frame is actually honored.
+    #[test]
+    fn gcrs_assembly_uses_the_iau2006_field_chain() {
+        use crate::test_support::zero_eop;
+        use arika::frame::Vec3;
+
+        struct GcrsState {
+            attitude: AttitudeState,
+            orbit: OrbitalState<frame::Gcrs>,
+        }
+        impl HasAttitude for GcrsState {
+            fn attitude(&self) -> &AttitudeState {
+                &self.attitude
+            }
+        }
+        impl HasOrbit for GcrsState {
+            type Frame = frame::Gcrs;
+            fn orbit(&self) -> &OrbitalState<frame::Gcrs> {
+                &self.orbit
+            }
+        }
+
+        let epoch = snapshot_epoch();
+        let pos = Vector3::new(4000.0, -5000.0, 2500.0);
+        let state = GcrsState {
+            attitude: snapshot_attitude(),
+            orbit: OrbitalState::<frame::Gcrs>::new_in_frame(pos, Vector3::new(1.0, 2.0, 7.0)),
+        };
+
+        let mut assembly = MtqAssembly::<TiltedDipole, frame::Gcrs>::three_axis_in_frame(
+            1.0,
+            TiltedDipole::earth(),
+            zero_eop(),
+        );
+        assembly.command = MtqCommand::Moments(vec![0.7, -0.3, 0.2]);
+        let got = assembly
+            .eval(0.0, &state, Some(&epoch))
+            .torque_body
+            .into_inner();
+
+        let b_gcrs = magnetic::field_inertial::<frame::Gcrs>(
+            &TiltedDipole::earth(),
+            &Vec3::from_raw(pos),
+            &epoch,
+            &zero_eop(),
+        );
+        let b_body = state
+            .attitude
+            .rotation_from_inertial::<frame::Gcrs>()
+            .transform(&b_gcrs)
+            .into_inner();
+        let expected = assembly.core.torque(&[0.7, -0.3, 0.2], &b_body);
+        assert!(
+            (got - expected).magnitude() < 1e-30,
+            "Gcrs MTQ torque must use the Gcrs field: {got:?} vs {expected:?}"
+        );
+
+        // The SimpleEci-labeled result at the same raw state differs by the
+        // precession/nutation/polar-motion rotation; a frame-blind
+        // implementation would return the SimpleEci number here.
+        let simple_eci = Vector3::new(
+            8.248169347635774e-6,
+            4.093571188524861e-6,
+            -2.2728235933937917e-5,
+        );
+        assert!(
+            (got - simple_eci).magnitude() > simple_eci.magnitude() * 1e-4,
+            "Gcrs torque should differ from the SimpleEci result"
         );
     }
 

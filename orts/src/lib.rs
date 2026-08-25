@@ -12,6 +12,8 @@ pub mod record;
 pub mod sensor;
 pub mod setup;
 pub mod spacecraft;
+#[cfg(test)]
+mod test_support;
 pub mod visibility;
 
 pub use orbital::OrbitalState;
