@@ -23,11 +23,11 @@ include = [
 
 [dependencies]
 nalgebra.workspace = true
-re_sdk.workspace = true
-re_sdk_types.workspace = true
-re_log_encoding.workspace = true
-re_chunk.workspace = true
-re_log_types.workspace = true
+re_sdk = { workspace = true, optional = true }
+re_sdk_types = { workspace = true, optional = true }
+re_log_encoding = { workspace = true, optional = true }
+re_chunk = { workspace = true, optional = true }
+re_log_types = { workspace = true, optional = true }
 arika.workspace = true
 utsuroi.workspace = true
 tobari.workspace = true
@@ -47,6 +47,20 @@ tokio = { version = "1", default-features = false, features = [
 ], optional = true }
 
 [features]
+# Rerun (.rrd) export/import via `record::rerun_export`.
+#
+# Opt-in because the rerun subcrates are 230 of this crate's 271
+# dependencies, while `record`'s other modules and the whole simulation
+# core never touch them. Of the 651 lib tests only the 8 in
+# `record::rerun_export` need them, and all 23 integration tests under
+# `orts/tests/` build without them.
+rerun = [
+    "dep:re_sdk",
+    "dep:re_sdk_types",
+    "dep:re_log_encoding",
+    "dep:re_chunk",
+    "dep:re_log_types",
+]
 fetch-weather = ["tobari/fetch-cssi"]
 fetch-horizons = ["arika/fetch-horizons"]
 # Phase P1: load WASM Component guest controllers at runtime via

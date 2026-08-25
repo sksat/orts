@@ -284,6 +284,16 @@ jobs:
       - name: Test (all except orts)
         run: cargo test --locked --workspace --exclude orts
 
+      # orts's `rerun` feature is opt-in, so rust-test-orts (which builds orts
+      # with no features) does not run the .rrd round-trip tests. Select them
+      # via --workspace rather than `-p orts --features rerun`: the workspace
+      # feature union already enables orts/rerun through orts-cli, so the lib
+      # test binary is the one rust-build compiled and cached. Using `-p orts`
+      # would narrow the package set, change arika/tobari's features, and
+      # rebuild the whole graph.
+      - name: Test (orts rerun export)
+        run: cargo test --locked --workspace --lib record::rerun_export::
+
       # The SGP4 propagation tests (Vallado verification vectors) live behind
       # arika's optional `sgp4` feature; run them explicitly so they execute
       # regardless of which workspace members enable the feature.

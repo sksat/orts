@@ -370,7 +370,7 @@ const ORION_REF_STEP: &str = "1m";
 ///
 /// Matches the `apollo11.rrd` convention alongside the companion
 /// example and is `.gitignore`d via the top-level ignore list.
-#[cfg(feature = "fetch-horizons")]
+#[cfg(all(feature = "fetch-horizons", feature = "rerun"))]
 const RRD_OUTPUT_PATH: &str = "orts/examples/artemis1/artemis1.rrd";
 
 /// Mission epoch used as the `sim_time = 0` reference for the RRD
@@ -1059,10 +1059,13 @@ fn main() {
     // before the save call below takes `&rec`.
     drop(chain_recording);
 
-    println!("  saving RRD to {RRD_OUTPUT_PATH}");
-    orts::record::rerun_export::save_as_rrd(&rec, "orts-artemis1", RRD_OUTPUT_PATH)
-        .expect("save artemis1 RRD");
-    println!();
+    #[cfg(feature = "rerun")]
+    {
+        println!("  saving RRD to {RRD_OUTPUT_PATH}");
+        orts::record::rerun_export::save_as_rrd(&rec, "orts-artemis1", RRD_OUTPUT_PATH)
+            .expect("save artemis1 RRD");
+        println!();
+    }
 
     // Summary tables
     print_summary(&results);
