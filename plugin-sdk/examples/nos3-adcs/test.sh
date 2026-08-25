@@ -145,7 +145,24 @@ test_bdot() {
     gen_config 1 11100.0 0.1 1.0 "bdot_kb = 1e4
 bdot_b_range = 1e-9"
     read -r initial final elapsed < <(run_sim "$TMPTOML" bdot)
-    check_reduction "B-dot" 0.05 "$initial" "$final" "$elapsed"
+    # 0.10 (90% reduction) from measurement, not from a control requirement:
+    # with a correct IGRF field this run reaches 93.1% in 2 orbits.
+    #
+    # It used to be 0.05 (95%), which passed at 97.7% only because the field
+    # model was wrong — the eastward component was inverted and the
+    # intermediate-order Legendre terms were mis-scaled, which together
+    # overstated the achievable damping. B-dot torque is quadratic in B and
+    # only damps the omega component perpendicular to it, so a field that is
+    # off by ~8.6 deg in direction changes the reachable reduction, not just
+    # its magnitude.
+    #
+    # This is an integration check ("the NOS3 C FSW loads as a WASM component,
+    # reads the magnetometer, drives the MTQ, and omega comes down"), so the
+    # bound is deliberately looser than the measured value. Pinning the
+    # measured number would make every future field- or ephemeris-model
+    # improvement fail here. Validating the damping *rate* against NOS3's own
+    # simulator is separate work.
+    check_reduction "B-dot" 0.10 "$initial" "$final" "$elapsed"
 }
 
 test_sunsafe() {
@@ -156,6 +173,10 @@ sunsafe_sside = [1.0, 0.0, 0.0]
 sunsafe_vmax = 0.01
 momentum_management = true" "0.01, -0.005, 0.008"
     read -r initial final elapsed < <(run_sim "$TMPTOML" sunsafe)
+    # Integration check, as for B-dot: the bound is looser than the measured
+    # value (94.2%) so that field- and ephemeris-model improvements do not
+    # fail it. Sun-Safe uses reaction wheels, so it depends on the magnetic
+    # field only through momentum management.
     check_reduction "Sun-Safe" 0.2 "$initial" "$final" "$elapsed"
 }
 
@@ -166,6 +187,8 @@ inertial_kr = [2.0, 2.0, 2.0]
 inertial_phi_err_max = 1.0
 momentum_management = true" "0.01, -0.005, 0.008"
     read -r initial final elapsed < <(run_sim "$TMPTOML" inertial)
+    # Reaction-wheel quaternion PID, so essentially independent of the
+    # magnetic field; measured 100.0%. Tight bound is safe here.
     check_reduction "Inertial" 0.01 "$initial" "$final" "$elapsed"
 }
 
