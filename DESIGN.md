@@ -196,8 +196,8 @@ orts をその harness に組み込むための named byte stream の口が stre
 
 ## Viewer データフローアーキテクチャ
 
-viewer は **Source** を primitive とするデータ駆動アーキテクチャを採用する。
-モード切替の概念を持たないのは、WebSocket やローカルファイルといった入力源の差を adapter 層で吸収して同一パイプラインに統一しておけば、複数 source の同時接続・比較表示 (将来) に自然に拡張できるためである。
+viewer への入力 (WebSocket ストリーム、CSV / RRD ファイル) は、すべて **Source** という単一の抽象として扱い、同じパイプラインに流す。
+入力源ごとのモード切替を持たないのは、入力の差を adapter 層で吸収しておけば、複数 source の同時接続・比較表示 (将来) に自然に拡張できるためである。
 データフローの図と経路は [ARCHITECTURE.md](ARCHITECTURE.md) を参照。
 
 ### 設計原則
