@@ -35,18 +35,54 @@ impl core::fmt::Display for DateTime {
         // Round to integer seconds and normalize overflow (e.g. sec=59.999... → 60)
         let sec = self.sec.round() as u32;
         let (sec, carry) = if sec >= 60 { (0u32, 1u32) } else { (sec, 0) };
-        let min = self.min + carry;
+        let min = self.min.saturating_add(carry);
         let (min, carry) = if min >= 60 {
             (min - 60, 1u32)
         } else {
             (min, 0)
         };
-        let hour = self.hour + carry;
+        let hour = self.hour.saturating_add(carry);
+        // The carry must reach the calendar too: rounding 23:59:59.6 up gives
+        // hour 24, which is not a time this crate (or ISO 8601 as used here)
+        // can read back — it is the *next* day's 00:00:00.
+        let (year, month, day, hour) = if hour >= 24 {
+            let (year, month, day) = next_day(self.year, self.month, self.day);
+            (year, month, day, hour - 24)
+        } else {
+            (self.year, self.month, self.day, hour)
+        };
         write!(
             f,
-            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-            self.year, self.month, self.day, hour, min, sec
+            "{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z"
         )
+    }
+}
+
+/// Gregorian leap-year test.
+pub(crate) fn is_leap_year(year: i32) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+/// Length of a Gregorian month [days], leap-aware. An out-of-range `month`
+/// (only reachable from a hand-built [`DateTime`]) yields 31, the longest
+/// month, so callers never over-report a month's length.
+pub(crate) fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
+}
+
+/// The calendar day after `(year, month, day)`.
+fn next_day(year: i32, month: u32, day: u32) -> (i32, u32, u32) {
+    if day < days_in_month(year, month) {
+        (year, month, day + 1)
+    } else if month >= 12 {
+        (year + 1, 1, 1)
+    } else {
+        (year, month + 1, 1)
     }
 }
 

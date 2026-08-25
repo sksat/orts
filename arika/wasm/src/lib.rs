@@ -21,23 +21,44 @@ use nalgebra::{UnitQuaternion, Vector3, Vector4};
 ///
 /// For each point, computes ERA from `epoch_jd + t` and applies the
 /// Z-axis rotation (SimpleEci → SimpleEcef).
+///
+/// # Errors
+///
+/// Returns an error (a JS exception) unless `positions.len() == times.len() * 3`.
+/// The length agreement is the caller's half of the contract and is checked at
+/// run time, in every build: a short `positions` would otherwise index out of
+/// bounds and trap the whole wasm instance, and a long one would silently
+/// return fewer points than the caller sized its read loop for.
 #[wasm_bindgen]
-pub fn eci_to_ecef_batch(positions: &[f32], times: &[f32], epoch_jd: f64) -> Vec<f32> {
+pub fn eci_to_ecef_batch(
+    positions: &[f32],
+    times: &[f32],
+    epoch_jd: f64,
+) -> Result<Vec<f32>, JsValue> {
+    batch_eci_to_ecef(positions, times, epoch_jd).map_err(|e| JsValue::from_str(&e))
+}
+
+/// Length-checked core of [`eci_to_ecef_batch`], split out because `JsValue`
+/// exists only on `wasm32` — this half is unit-testable on the host target.
+fn batch_eci_to_ecef(positions: &[f32], times: &[f32], epoch_jd: f64) -> Result<Vec<f32>, String> {
     let n = times.len();
-    debug_assert_eq!(positions.len(), n * 3);
+    let expected = n
+        .checked_mul(3)
+        .ok_or("eci_to_ecef_batch: times is too long to address as N×3 positions")?;
+    if positions.len() != expected {
+        return Err(format!(
+            "eci_to_ecef_batch: positions has {} elements, expected {expected} (3 per time, {n} times)",
+            positions.len()
+        ));
+    }
 
-    let mut out = Vec::with_capacity(n * 3);
+    let mut out = Vec::with_capacity(expected);
 
-    for (i, &t) in times.iter().enumerate().take(n) {
+    for (chunk, &t) in positions.chunks_exact(3).zip(times) {
         let epoch = Epoch::from_jd(epoch_jd).add_seconds(t as f64);
         let r = Rotation::<frame::SimpleEci, frame::SimpleEcef>::from_era(epoch.gmst());
 
-        let off = i * 3;
-        let eci = SimpleEci::new(
-            positions[off] as f64,
-            positions[off + 1] as f64,
-            positions[off + 2] as f64,
-        );
+        let eci = SimpleEci::new(chunk[0] as f64, chunk[1] as f64, chunk[2] as f64);
         let ecef = r.transform(&eci);
 
         out.push(ecef.x() as f32);
@@ -45,7 +66,7 @@ pub fn eci_to_ecef_batch(positions: &[f32], times: &[f32], epoch_jd: f64) -> Vec
         out.push(ecef.z() as f32);
     }
 
-    out
+    Ok(out)
 }
 
 /// Single-point ECI→ECEF transform.
@@ -194,5 +215,47 @@ pub fn body_quat_to_rsw(
     match arika::body_quat_to_rsw(&pos, &vel, &q_body_eci) {
         Some(q) => vec![q.w, q.i, q.j, q.k],
         None => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const JD: f64 = 2460390.0;
+
+    #[test]
+    fn batch_requires_three_positions_per_time() {
+        // A short `positions` used to index out of bounds and trap the wasm
+        // instance (the length contract was a `debug_assert`, absent from the
+        // release build the viewer loads).
+        assert!(batch_eci_to_ecef(&[], &[0.0], JD).is_err());
+        assert!(batch_eci_to_ecef(&[1.0, 2.0], &[0.0], JD).is_err());
+        // A long `positions` used to silently return fewer points than the
+        // caller asked for, which a JS reader sizing its loop from
+        // `positions.length / 3` turns into NaNs in the vertex buffer.
+        assert!(batch_eci_to_ecef(&[1.0; 6], &[0.0], JD).is_err());
+        // The matched case is unaffected.
+        let out = batch_eci_to_ecef(&[7000.0, 0.0, 0.0], &[0.0], JD).unwrap();
+        assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn batch_agrees_with_the_single_point_transform() {
+        // Cross-path invariant: the batch loop must be the single-point
+        // transform, per point, with each point's own time.
+        let positions = [7000.0_f32, 0.0, 0.0, 0.0, 6800.0, 100.0];
+        let times = [0.0_f32, 600.0];
+        let batch = batch_eci_to_ecef(&positions, &times, JD).unwrap();
+        for (i, &t) in times.iter().enumerate() {
+            let single = eci_to_ecef(
+                positions[i * 3],
+                positions[i * 3 + 1],
+                positions[i * 3 + 2],
+                JD,
+                t,
+            );
+            assert_eq!(&batch[i * 3..i * 3 + 3], &single[..]);
+        }
     }
 }

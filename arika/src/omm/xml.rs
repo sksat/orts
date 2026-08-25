@@ -18,6 +18,7 @@ use core::str::FromStr;
 use crate::math::F64Ext;
 
 use crate::elements::{ElementsError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields};
+use crate::omm::{UnsupportedMetadata, check_all_metadata};
 
 /// Error type for OMM XML parsing.
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +30,9 @@ pub enum XmlParseError {
     /// `EPOCH` was not a parseable ISO-8601 UTC timestamp (calendar or
     /// ordinal / day-of-year form).
     InvalidEpoch(String),
+    /// A metadata element declares something this crate cannot read (non-Earth
+    /// center, non-TEME frame, non-UTC time system, non-SGP4 theory).
+    Unsupported(UnsupportedMetadata),
     /// The parsed values are not a valid element set (e.g. non-positive mean
     /// motion or out-of-range eccentricity).
     InvalidElements(ElementsError),
@@ -42,6 +46,7 @@ impl fmt::Display for XmlParseError {
                 write!(f, "invalid value for {key}: '{value}'")
             }
             XmlParseError::InvalidEpoch(s) => write!(f, "invalid OMM EPOCH: '{s}'"),
+            XmlParseError::Unsupported(e) => write!(f, "{e}"),
             XmlParseError::InvalidElements(e) => write!(f, "invalid OMM element set: {e}"),
         }
     }
@@ -54,6 +59,10 @@ impl std::error::Error for XmlParseError {}
 pub fn parse(xml: &str) -> Result<ParsedElementSet, XmlParseError> {
     // BOM-tolerant even when called directly (not via the unified entrypoint).
     let xml = crate::elements::strip_bom(xml);
+    // The metadata elements declare how the mean elements must be interpreted;
+    // reject anything this crate does not actually honor (see
+    // `crate::omm::METADATA`).
+    check_all_metadata(|key| element_text(xml, key)).map_err(XmlParseError::Unsupported)?;
     let epoch_raw = required(xml, "EPOCH")?;
     let epoch = crate::elements::parse_epoch(epoch_raw)
         .ok_or_else(|| XmlParseError::InvalidEpoch(epoch_raw.to_string()))?;
@@ -202,6 +211,40 @@ mod tests {
             parse(xml),
             Err(XmlParseError::MissingElement("MEAN_MOTION"))
         );
+    }
+
+    #[test]
+    fn rejects_unsupported_metadata() {
+        // Same table as the KVN parser: one metadata element mutated at a time.
+        for (from, to, key) in [
+            (
+                "<CENTER_NAME>EARTH</CENTER_NAME>",
+                "<CENTER_NAME>MARS</CENTER_NAME>",
+                "CENTER_NAME",
+            ),
+            (
+                "<REF_FRAME>TEME</REF_FRAME>",
+                "<REF_FRAME>GCRF</REF_FRAME>",
+                "REF_FRAME",
+            ),
+            (
+                "<TIME_SYSTEM>UTC</TIME_SYSTEM>",
+                "<TIME_SYSTEM>TAI</TIME_SYSTEM>",
+                "TIME_SYSTEM",
+            ),
+            (
+                "<MEAN_ELEMENT_THEORY>SGP4</MEAN_ELEMENT_THEORY>",
+                "<MEAN_ELEMENT_THEORY>DSST</MEAN_ELEMENT_THEORY>",
+                "MEAN_ELEMENT_THEORY",
+            ),
+        ] {
+            let xml = ISS_OMM_XML.replace(from, to);
+            assert_ne!(xml, ISS_OMM_XML, "fixture no longer contains '{from}'");
+            match parse(&xml) {
+                Err(XmlParseError::Unsupported(e)) => assert_eq!(e.key, key),
+                other => panic!("'{to}' must be rejected, got {other:?}"),
+            }
+        }
     }
 
     #[test]

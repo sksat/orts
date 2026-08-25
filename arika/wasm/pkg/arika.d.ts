@@ -51,6 +51,14 @@ export function eci_to_ecef(x: number, y: number, z: number, epoch_jd: number, t
  *
  * For each point, computes ERA from `epoch_jd + t` and applies the
  * Z-axis rotation (SimpleEci → SimpleEcef).
+ *
+ * # Errors
+ *
+ * Returns an error (a JS exception) unless `positions.len() == times.len() * 3`.
+ * The length agreement is the caller's half of the contract and is checked at
+ * run time, in every build: a short `positions` would otherwise index out of
+ * bounds and trap the whole wasm instance, and a long one would silently
+ * return fewer points than the caller sized its read loop for.
  */
 export function eci_to_ecef_batch(positions: Float32Array, times: Float32Array, epoch_jd: number): Float32Array;
 
@@ -109,7 +117,7 @@ export interface InitOutput {
     readonly body_quat_to_rsw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
     readonly earth_rotation_angle: (a: number, b: number) => number;
     readonly eci_to_ecef: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly eci_to_ecef_batch: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly eci_to_ecef_batch: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly geodetic_to_ecef: (a: number, b: number, c: number) => [number, number];
     readonly geodetic_to_eci: (a: number, b: number, c: number, d: number) => [number, number];
     readonly jd_to_utc_string: (a: number, b: number) => [number, number];

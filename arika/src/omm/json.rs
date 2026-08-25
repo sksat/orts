@@ -19,6 +19,7 @@ use crate::math::F64Ext;
 use serde::Deserialize;
 
 use crate::elements::{ElementsError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields};
+use crate::omm::{UnsupportedMetadata, check_metadata};
 
 /// Error type for OMM JSON parsing.
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +29,9 @@ pub enum JsonParseError {
     /// `EPOCH` was not a parseable ISO-8601 UTC timestamp (calendar or
     /// ordinal / day-of-year form).
     InvalidEpoch(String),
+    /// A metadata field declares something this crate cannot read (non-Earth
+    /// center, non-TEME frame, non-UTC time system, non-SGP4 theory).
+    Unsupported(UnsupportedMetadata),
     /// The parsed values are not a valid element set (e.g. non-positive mean
     /// motion or out-of-range eccentricity).
     InvalidElements(ElementsError),
@@ -38,6 +42,7 @@ impl fmt::Display for JsonParseError {
         match self {
             JsonParseError::Malformed(e) => write!(f, "malformed OMM JSON: {e}"),
             JsonParseError::InvalidEpoch(s) => write!(f, "invalid OMM EPOCH: '{s}'"),
+            JsonParseError::Unsupported(e) => write!(f, "{e}"),
             JsonParseError::InvalidElements(e) => write!(f, "invalid OMM element set: {e}"),
         }
     }
@@ -55,6 +60,12 @@ impl std::error::Error for JsonParseError {}
 struct OmmJson {
     object_name: Option<String>,
     object_id: Option<String>,
+    // Metadata: absent in the CelesTrak GP flavour, present in full OMM /
+    // Space-Track exports. Validated (not merely read) in `parse`.
+    center_name: Option<String>,
+    ref_frame: Option<String>,
+    time_system: Option<String>,
+    mean_element_theory: Option<String>,
     #[serde(deserialize_with = "u32_or_string")]
     norad_cat_id: u32,
     epoch: String,
@@ -137,6 +148,20 @@ pub fn parse(json: &str) -> Result<ParsedElementSet, JsonParseError> {
         serde_json::from_str(json).map_err(|e| JsonParseError::Malformed(e.to_string()))?
     };
 
+    // The metadata fields declare how the mean elements must be interpreted;
+    // reject anything this crate does not actually honor (see
+    // `crate::omm::METADATA`).
+    for (key, value) in [
+        ("CENTER_NAME", &raw.center_name),
+        ("REF_FRAME", &raw.ref_frame),
+        ("TIME_SYSTEM", &raw.time_system),
+        ("MEAN_ELEMENT_THEORY", &raw.mean_element_theory),
+    ] {
+        if let Some(value) = value {
+            check_metadata(key, value).map_err(JsonParseError::Unsupported)?;
+        }
+    }
+
     let epoch = crate::elements::parse_epoch(&raw.epoch)
         .ok_or_else(|| JsonParseError::InvalidEpoch(raw.epoch.clone()))?;
 
@@ -164,6 +189,7 @@ pub fn parse(json: &str) -> Result<ParsedElementSet, JsonParseError> {
 mod tests {
     use super::*;
     use crate::earth::MU as MU_EARTH;
+    use alloc::format;
 
     // ISS OMM JSON (CelesTrak GP format). EPOCH 2024-03-19T12:00 ≡ TLE 2024-079.5,
     // so the values match the ISS_TLE fixture in `crate::tle`.
@@ -236,6 +262,35 @@ mod tests {
             "MEAN_ANOMALY": 0.0
         }"#;
         assert!(matches!(parse(j), Err(JsonParseError::InvalidEpoch(_))));
+    }
+
+    #[test]
+    fn rejects_unsupported_metadata() {
+        // The GP flavour omits these keys (and is accepted, see the tests
+        // above); a full OMM / Space-Track export carries them, and a value
+        // this crate cannot honor must be refused rather than reinterpreted.
+        for (field, key) in [
+            (r#""CENTER_NAME": "MARS","#, "CENTER_NAME"),
+            (r#""REF_FRAME": "GCRF","#, "REF_FRAME"),
+            (r#""TIME_SYSTEM": "TAI","#, "TIME_SYSTEM"),
+            (r#""MEAN_ELEMENT_THEORY": "DSST","#, "MEAN_ELEMENT_THEORY"),
+        ] {
+            let json = ISS_OMM_JSON.replacen('{', &format!("{{{field}"), 1);
+            match parse(&json) {
+                Err(JsonParseError::Unsupported(e)) => assert_eq!(e.key, key),
+                other => panic!("'{field}' must be rejected, got {other:?}"),
+            }
+        }
+        // The supported values parse, in either case.
+        let conforming = ISS_OMM_JSON.replacen(
+            '{',
+            r#"{"CENTER_NAME": "EARTH", "REF_FRAME": "TEME", "TIME_SYSTEM": "utc", "MEAN_ELEMENT_THEORY": "SGP4","#,
+            1,
+        );
+        assert_eq!(
+            parse(&conforming).unwrap().elements.fields().norad_cat_id,
+            25544
+        );
     }
 
     #[test]

@@ -59,6 +59,8 @@ pub use scale::{Gps, Tai, Tdb, TimeScale, Tt, Utc};
 use convert::TaiLens;
 use convert::era_formula;
 use datetime::to_datetime_from_jd;
+// Gregorian calendar helpers, shared with the TLE parser's epoch-day check.
+pub(crate) use datetime::{days_in_month, is_leap_year};
 
 /// Julian Date of J2000.0 epoch (JD 2451545.0).
 ///
@@ -282,6 +284,11 @@ impl Epoch<Utc> {
     ///
     /// Uses the standard Julian Date algorithm valid for dates after
     /// the Gregorian calendar reform (1582-10-15).
+    ///
+    /// The arguments are not validated: a day past the end of the month (or an
+    /// out-of-range time field) rolls over into the following one. Parse
+    /// untrusted text with [`from_iso8601`](Self::from_iso8601), which rejects
+    /// such input instead.
     pub fn from_gregorian(year: i32, month: u32, day: u32, hour: u32, min: u32, sec: f64) -> Self {
         // Adjust year and month for the algorithm (Jan/Feb are months 13/14 of prev year)
         let (y, m) = if month <= 2 {
@@ -308,7 +315,14 @@ impl Epoch<Utc> {
     /// Accepts both the calendar form `YYYY-MM-DDTHH:MM:SS[.fff]` and the
     /// ordinal / day-of-year form `YYYY-DDDTHH:MM:SS[.fff]` (used by CCSDS
     /// OMM). The `Z` suffix is optional — the timestamp is interpreted as UTC
-    /// either way. Returns `None` if parsing fails.
+    /// either way.
+    ///
+    /// Returns `None` if parsing fails **or** the timestamp does not denote a
+    /// real instant: a day that does not exist in that month (`2023-02-30`), an
+    /// out-of-range time field, and a seconds field that is negative or
+    /// non-finite are all rejected rather than rolled over into an adjacent
+    /// day. Every accepted input therefore round-trips through
+    /// [`to_datetime`](Epoch::to_datetime) with the same calendar fields.
     pub fn from_iso8601(s: &str) -> Option<Self> {
         let s = s.trim();
         let s = s.strip_suffix('Z').unwrap_or(s);
@@ -320,7 +334,11 @@ impl Epoch<Utc> {
         let hour: u32 = hour_s.parse().ok()?;
         let min: u32 = min_s.parse().ok()?;
         let sec: f64 = sec_s.parse().ok()?;
-        if hour > 23 || min > 59 || sec >= 60.0 {
+        // `sec` must be a real second-of-minute. Without the lower bound and the
+        // finiteness check, "…:-1" silently rolls back into the previous day and
+        // "…:NaN" / "…:-inf" build an epoch whose JD is NaN, which then
+        // propagates through every downstream computation instead of failing here.
+        if hour > 23 || min > 59 || !(0.0..60.0).contains(&sec) {
             return None;
         }
 
@@ -331,7 +349,11 @@ impl Epoch<Utc> {
             Some((month_s, day_s)) => {
                 let month: u32 = month_s.parse().ok()?;
                 let day: u32 = day_s.parse().ok()?;
-                if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+                // The day must exist in that month of that year. A month-length
+                // table (not a flat 1..=31) is what stops "2023-02-30" from
+                // rolling into March 2 — the same rollover the ordinal form
+                // already rejects for day 366 of a common year, below.
+                if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
                     return None;
                 }
                 Some(Self::from_gregorian(year, month, day, hour, min, sec))
@@ -345,7 +367,7 @@ impl Epoch<Utc> {
                 }
                 let doy: u32 = rest.parse().ok()?;
                 // Reject day 366 in a common year (it would roll into the next).
-                let max_doy = if Self::is_leap_year(year) { 366 } else { 365 };
+                let max_doy = if is_leap_year(year) { 366 } else { 365 };
                 if !(1..=max_doy).contains(&doy) {
                     return None;
                 }
@@ -372,11 +394,6 @@ impl Epoch<Utc> {
         // JD of Jan 1 00:00 of that year, offset by the fractional day.
         let jan1_jd = Self::from_gregorian(year, 1, 1, 0, 0, 0.0).jd();
         Self::from_jd(jan1_jd + (day_of_year - 1.0))
-    }
-
-    /// Gregorian leap-year test.
-    fn is_leap_year(year: i32) -> bool {
-        year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
     }
 
     /// Create a UTC epoch from a TLE epoch (2-digit year + fractional day of year).

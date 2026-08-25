@@ -409,13 +409,13 @@ mod tests {
     // The same ISS element set (NORAD 25544, i = 51.64°) in each serialization.
 
     const TLE_2L: &str = "\
-1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993
-2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000";
+1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9996
+2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480008";
 
     const TLE_3L: &str = "\
 ISS (ZARYA)
-1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993
-2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000";
+1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9996
+2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480008";
 
     const JSON: &str = r#"{"NORAD_CAT_ID":25544,"EPOCH":"2024-03-19T12:00:00",
         "MEAN_MOTION":15.49561654,"ECCENTRICITY":0.0007417,"INCLINATION":51.64,
@@ -473,6 +473,41 @@ NORAD_CAT_ID = 25544";
         assert_eq!(detect(&bom_xml), Some(Format::OmmXml));
         let bom_tle = ["\u{feff}", TLE_2L].concat();
         assert_eq!(detect(&bom_tle), Some(Format::Tle));
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn every_omm_serialization_reads_the_metadata() {
+        // Cross-format invariant. The same satellite, declared in a time system
+        // this crate cannot honor, in all three OMM serializations: each must be
+        // refused. Before the metadata was read, all three parsed to a
+        // bit-identical epoch — the one the *conforming* documents mean, 37 s
+        // (≈ 285 km along-track at LEO) away from what these documents say —
+        // which is exactly why the omission was invisible.
+        let json_tai = JSON.replacen('{', r#"{"TIME_SYSTEM":"TAI","#, 1);
+        let kvn_tai = KVN.replace(
+            "CCSDS_OMM_VERS = 2.0",
+            "CCSDS_OMM_VERS = 2.0\nTIME_SYSTEM = TAI",
+        );
+        let xml_tai = XML.replace("<omm>", "<omm><TIME_SYSTEM>TAI</TIME_SYSTEM>");
+        for (name, src) in [("JSON", &json_tai), ("KVN", &kvn_tai), ("XML", &xml_tai)] {
+            assert!(
+                parse(src).is_err(),
+                "{name} with TIME_SYSTEM=TAI parsed as if it were UTC"
+            );
+        }
+        // The conforming documents (metadata absent, i.e. CCSDS defaults) still
+        // parse, and to the same epoch — the metadata check rejects, it does not
+        // shift anything.
+        use alloc::vec::Vec;
+        let epochs: Vec<f64> = [JSON, KVN, XML]
+            .iter()
+            .map(|src| parse(src).unwrap().elements.fields().epoch.jd())
+            .collect();
+        assert!(
+            epochs.windows(2).all(|w| w[0] == w[1]),
+            "conforming serializations disagree on the epoch: {epochs:?}"
+        );
     }
 
     #[cfg(feature = "alloc")]

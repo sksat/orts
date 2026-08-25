@@ -9,6 +9,11 @@
 //!
 //! Alpha-5 only extends the legacy format to 339 999 — for overflow-proof use
 //! the CCSDS OMM format ([`crate::omm`]) is the recommended successor.
+//!
+//! Both of the format's built-in integrity checks are enforced: each line's
+//! mod-10 checksum digit, and the catalog number that line 2 repeats from
+//! line 1. A TLE whose fields parse but whose lines disagree describes no real
+//! object, and reading it would produce a confidently wrong orbit.
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -40,6 +45,16 @@ pub enum TleParseError {
         field: &'static str,
         value: String,
     },
+    /// The line's mod-10 checksum digit (column 69) is absent or disagrees with
+    /// the line's contents — the line is corrupt or was hand-edited.
+    InvalidChecksum {
+        line: u8,
+        expected: u32,
+        found: Option<char>,
+    },
+    /// Line 1 and line 2 carry different satellite catalog numbers, i.e. the
+    /// two lines come from different objects.
+    CatalogNumberMismatch { line1: u32, line2: u32 },
     /// The parsed values are not a valid element set (e.g. non-positive mean
     /// motion or out-of-range eccentricity).
     InvalidElements(ElementsError),
@@ -54,6 +69,26 @@ impl fmt::Display for TleParseError {
             TleParseError::InvalidField { line, field, value } => {
                 write!(f, "Invalid {field} on line {line}: '{value}'")
             }
+            TleParseError::InvalidChecksum {
+                line,
+                expected,
+                found: Some(found),
+            } => write!(
+                f,
+                "TLE line {line} checksum mismatch: expected {expected}, found '{found}'"
+            ),
+            TleParseError::InvalidChecksum {
+                line,
+                expected,
+                found: None,
+            } => write!(
+                f,
+                "TLE line {line} has no checksum digit (expected {expected} in column 69)"
+            ),
+            TleParseError::CatalogNumberMismatch { line1, line2 } => write!(
+                f,
+                "TLE lines are from different satellites: line 1 has catalog number {line1}, line 2 has {line2}"
+            ),
             TleParseError::InvalidElements(e) => write!(f, "invalid TLE element set: {e}"),
         }
     }
@@ -67,6 +102,10 @@ impl std::error::Error for TleParseError {}
 /// Accepts:
 /// - 2 lines: line 1 + line 2
 /// - 3 lines: name + line 1 + line 2
+///
+/// Both lines must carry a correct mod-10 checksum digit and the same catalog
+/// number, so a hand-edited digit or a pair of lines from two different
+/// satellites is rejected rather than read as an orbit.
 pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
     // BOM-tolerant like the unified `elements::parse` entry point: a BOM is not whitespace,
     // so without this a BOM-prefixed file fails the line-1 prefix check.
@@ -100,13 +139,35 @@ pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
         return Err(TleParseError::InvalidLine2Prefix);
     }
 
+    // Both lines carry a mod-10 checksum over their first 68 columns. Verifying
+    // it before reading any field turns a corrupt or hand-edited digit into an
+    // error instead of a plausible-looking orbit.
+    verify_checksum(line1, 1)?;
+    verify_checksum(line2, 2)?;
+
     // ─── Line 1 ───
     let catnum_field = line1.get(2..7).ok_or(TleParseError::InvalidField {
         line: 1,
         field: "satellite_number",
         value: String::new(),
     })?;
-    let norad_cat_id = decode_catalog_number(catnum_field)?;
+    let norad_cat_id = decode_catalog_number(catnum_field, 1)?;
+
+    // The catalog number is repeated on line 2; a mismatch means the two lines
+    // describe different objects (the classic copy-paste error), which no
+    // checksum can catch because each line is individually well-formed.
+    let catnum_field2 = line2.get(2..7).ok_or(TleParseError::InvalidField {
+        line: 2,
+        field: "satellite_number",
+        value: String::new(),
+    })?;
+    let norad_cat_id_line2 = decode_catalog_number(catnum_field2, 2)?;
+    if norad_cat_id_line2 != norad_cat_id {
+        return Err(TleParseError::CatalogNumberMismatch {
+            line1: norad_cat_id,
+            line2: norad_cat_id_line2,
+        });
+    }
 
     let object_id = line1
         .get(9..17)
@@ -123,8 +184,11 @@ pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
     } else {
         2000 + epoch_year_2digit
     };
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let max_day = if leap { 367.0 } else { 366.0 };
+    let max_day = if crate::epoch::is_leap_year(year as i32) {
+        367.0
+    } else {
+        366.0
+    };
     if !(1.0..max_day).contains(&epoch_day) {
         return Err(TleParseError::InvalidField {
             line: 1,
@@ -202,10 +266,10 @@ pub fn parse(text: &str) -> Result<ParsedElementSet, TleParseError> {
 /// objects and `270000`–`339999` for Space-Fence analyst objects. It is a
 /// stopgap — Space-Track and CelesTrak recommend the CCSDS OMM format
 /// ([`crate::omm`]) as the overflow-proof long-term replacement.
-fn decode_catalog_number(field: &str) -> Result<u32, TleParseError> {
+fn decode_catalog_number(field: &str, line_num: u8) -> Result<u32, TleParseError> {
     let field = field.trim();
     let invalid = || TleParseError::InvalidField {
-        line: 1,
+        line: line_num,
         field: "satellite_number",
         value: field.to_string(),
     };
@@ -254,6 +318,42 @@ fn normalize_intl_designator(raw: &str) -> String {
     } else {
         String::from(raw)
     }
+}
+
+/// Verify a TLE line's mod-10 checksum (column 69).
+///
+/// The checksum is the last decimal digit of the sum of columns 1–68, counting
+/// each digit as its value and each minus sign as 1 (all other characters as 0).
+/// Both NORAD lines carry one, and every real feed emits it correctly, so a
+/// mismatch means the line was corrupted or hand-edited — the values can no
+/// longer be trusted to be the ones the publisher computed.
+fn verify_checksum(line: &str, line_num: u8) -> Result<(), TleParseError> {
+    let expected = line_checksum(line);
+    // Column 69 (index 68) is the checksum digit. Iterating by char keeps a
+    // stray multi-byte character from panicking on a non-char-boundary slice;
+    // a TLE is ASCII, so char count == column count.
+    let found = line.chars().nth(68);
+    match found.and_then(|c| c.to_digit(10)) {
+        Some(digit) if digit == expected => Ok(()),
+        _ => Err(TleParseError::InvalidChecksum {
+            line: line_num,
+            expected,
+            found,
+        }),
+    }
+}
+
+/// The mod-10 checksum of a TLE line's first 68 columns.
+fn line_checksum(line: &str) -> u32 {
+    line.chars()
+        .take(68)
+        .map(|c| match c {
+            '0'..='9' => c as u32 - '0' as u32,
+            '-' => 1,
+            _ => 0,
+        })
+        .sum::<u32>()
+        % 10
 }
 
 /// Parse a fixed-width numeric field from a TLE line.
@@ -349,22 +449,22 @@ mod tests {
 
     const ISS_TLE: &str = "\
 ISS (ZARYA)
-1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993
-2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000";
+1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9996
+2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480008";
 
     const ISS_TLE_2LINE: &str = "\
-1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993
-2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000";
+1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9996
+2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480008";
 
     // GEO satellite (INTELSAT 10-02)
     const GEO_TLE: &str = "\
 1 28358U 04022A   24079.50000000  .00000012  00000-0  00000+0 0  9993
-2 28358   0.0300 275.4700 0003500 135.2000 224.8000  1.00271000 72000";
+2 28358   0.0300 275.4700 0003500 135.2000 224.8000  1.00271000 72001";
 
     // Alpha-5 catalog number: "A0000" → 100000. Same orbit as the ISS TLE.
     const ALPHA5_TLE: &str = "\
-1 A0000U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993
-2 A0000  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000";
+1 A0000U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9996
+2 A0000  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480008";
 
     #[test]
     fn parse_iss_3line() {
@@ -410,8 +510,8 @@ ISS (ZARYA)
         // CelesTrak "3LE" prefixes the name line with the "0 " line number; it
         // must be stripped so the name matches the bare-name / OMM forms.
         let tle = "0 ISS (ZARYA)\n\
-1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9993\n\
-2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480000";
+1 25544U 98067A   24079.50000000  .00016717  00000-0  30000-4 0  9996\n\
+2 25544  51.6400 208.6520 0007417  35.3910 324.7580 15.49561654480008";
         let omm = parse(tle).unwrap();
         assert_eq!(omm.object_name.as_deref(), Some("ISS (ZARYA)"));
     }
@@ -451,13 +551,164 @@ ISS (ZARYA)
         assert_eq!(dt.hour, 12);
     }
 
+    /// Rewrite every TLE line's checksum digit so a *deliberately* mutated
+    /// fixture still exercises the check the test is about rather than tripping
+    /// the checksum first.
+    fn refresh_checksums(tle: &str) -> String {
+        let mut out = String::new();
+        for line in tle.lines() {
+            if (line.starts_with('1') || line.starts_with('2')) && line.chars().count() >= 69 {
+                let digit = line_checksum(line);
+                let kept: String = line.chars().take(68).collect();
+                out.push_str(&format!("{kept}{digit}"));
+            } else {
+                out.push_str(line);
+            }
+            out.push('\n');
+        }
+        out
+    }
+
     #[test]
     fn rejects_out_of_range_epoch_day() {
-        // day-of-year must be 1.0 ≤ day < 366 (367 in a leap year).
-        let day_zero = ISS_TLE_2LINE.replace("24079.50000000", "24000.00000000");
-        assert!(parse(&day_zero).is_err(), "day 0.0 must be rejected");
-        let day_high = ISS_TLE_2LINE.replace("24079.50000000", "24367.00000000");
-        assert!(parse(&day_high).is_err(), "day 367.0 must be rejected");
+        // day-of-year must be 1.0 ≤ day < 366 (367 in a leap year). The
+        // checksums are refreshed so this pins the day-of-year range check
+        // itself, not the checksum of the edited line.
+        let day_zero =
+            refresh_checksums(&ISS_TLE_2LINE.replace("24079.50000000", "24000.00000000"));
+        assert!(
+            matches!(
+                parse(&day_zero),
+                Err(TleParseError::InvalidField {
+                    field: "epoch_day",
+                    ..
+                })
+            ),
+            "day 0.0 must be rejected: {:?}",
+            parse(&day_zero)
+        );
+        let day_high =
+            refresh_checksums(&ISS_TLE_2LINE.replace("24079.50000000", "24367.00000000"));
+        assert!(
+            matches!(
+                parse(&day_high),
+                Err(TleParseError::InvalidField {
+                    field: "epoch_day",
+                    ..
+                })
+            ),
+            "day 367.0 must be rejected: {:?}",
+            parse(&day_high)
+        );
+    }
+
+    #[test]
+    fn fixture_checksums_are_self_consistent() {
+        // Pins every TLE literal in this module against checksum rot: each
+        // line's column-69 digit must be the mod-10 sum of columns 1-68.
+        for (name, tle) in [
+            ("ISS_TLE", ISS_TLE),
+            ("ISS_TLE_2LINE", ISS_TLE_2LINE),
+            ("GEO_TLE", GEO_TLE),
+            ("ALPHA5_TLE", ALPHA5_TLE),
+        ] {
+            for line in tle.lines() {
+                let num = match line.chars().next() {
+                    Some('1') => 1,
+                    Some('2') => 2,
+                    _ => continue,
+                };
+                assert_eq!(
+                    verify_checksum(line, num),
+                    Ok(()),
+                    "{name} line {num} has a wrong checksum digit (expected {})",
+                    line_checksum(line)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn single_digit_mutation_is_rejected() {
+        // Mutation invariant: bumping any one digit of either line changes the
+        // mod-10 sum, so a correct fixture can never survive a one-character
+        // edit. Needs no external data.
+        assert!(parse(ISS_TLE_2LINE).is_ok(), "base fixture must parse");
+        let lines: Vec<&str> = ISS_TLE_2LINE.lines().collect();
+        for (li, line) in lines.iter().enumerate() {
+            let chars: Vec<char> = line.chars().collect();
+            for (ci, c) in chars.iter().enumerate() {
+                let Some(d) = c.to_digit(10) else { continue };
+                let mut mutated = chars.clone();
+                mutated[ci] = char::from_digit((d + 1) % 10, 10).unwrap();
+                let mutated: String = mutated.into_iter().collect();
+                let text = if li == 0 {
+                    format!("{mutated}\n{}", lines[1])
+                } else {
+                    format!("{}\n{mutated}", lines[0])
+                };
+                assert!(
+                    parse(&text).is_err(),
+                    "digit at line {} column {} bumped from {d}: expected Err, got Ok",
+                    li + 1,
+                    ci + 1
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lines_from_different_satellites_are_rejected() {
+        // Cross-line invariant: both lines are individually well-formed (valid
+        // checksums), so only the catalog-number cross-check can catch this —
+        // and without it the result is an ISS-labelled GEO orbit.
+        let iss1 = ISS_TLE_2LINE.lines().next().unwrap();
+        let iss2 = ISS_TLE_2LINE.lines().nth(1).unwrap();
+        let geo1 = GEO_TLE.lines().next().unwrap();
+        let geo2 = GEO_TLE.lines().nth(1).unwrap();
+        assert_eq!(
+            parse(&format!("{iss1}\n{geo2}")),
+            Err(TleParseError::CatalogNumberMismatch {
+                line1: 25544,
+                line2: 28358,
+            })
+        );
+        assert_eq!(
+            parse(&format!("{geo1}\n{iss2}")),
+            Err(TleParseError::CatalogNumberMismatch {
+                line1: 28358,
+                line2: 25544,
+            })
+        );
+    }
+
+    #[test]
+    fn checksum_errors_report_the_expected_digit() {
+        let lines: Vec<&str> = ISS_TLE_2LINE.lines().collect();
+        // Wrong digit in column 69 of line 1 (the pre-fix state of this fixture).
+        let bad1: String = lines[0]
+            .chars()
+            .take(68)
+            .chain(core::iter::once('3'))
+            .collect();
+        assert_eq!(
+            parse(&format!("{bad1}\n{}", lines[1])),
+            Err(TleParseError::InvalidChecksum {
+                line: 1,
+                expected: 6,
+                found: Some('3'),
+            })
+        );
+        // A line truncated before column 69 has no checksum digit at all.
+        let short: String = lines[1].chars().take(68).collect();
+        assert_eq!(
+            parse(&format!("{}\n{short}", lines[0])),
+            Err(TleParseError::InvalidChecksum {
+                line: 2,
+                expected: 8,
+                found: None,
+            })
+        );
     }
 
     #[test]
@@ -532,26 +783,26 @@ ISS (ZARYA)
     #[test]
     fn decode_catalog_number_cases() {
         // Classic all-numeric (leading zeros allowed).
-        assert_eq!(decode_catalog_number("25544"), Ok(25544));
-        assert_eq!(decode_catalog_number("00005"), Ok(5));
+        assert_eq!(decode_catalog_number("25544", 1), Ok(25544));
+        assert_eq!(decode_catalog_number("00005", 1), Ok(5));
         // Alpha-5 boundaries — note the I/O skips.
-        assert_eq!(decode_catalog_number("A0000"), Ok(100000)); // A = 10
-        assert_eq!(decode_catalog_number("E8493"), Ok(148493)); // E = 14
-        assert_eq!(decode_catalog_number("H0000"), Ok(170000)); // H = 17 (before I)
-        assert_eq!(decode_catalog_number("J0000"), Ok(180000)); // J = 18 (I skipped)
-        assert_eq!(decode_catalog_number("N0000"), Ok(220000)); // N = 22 (before O)
-        assert_eq!(decode_catalog_number("P0000"), Ok(230000)); // P = 23 (O skipped)
-        assert_eq!(decode_catalog_number("Z9999"), Ok(339999)); // Z = 33 (max)
+        assert_eq!(decode_catalog_number("A0000", 1), Ok(100000)); // A = 10
+        assert_eq!(decode_catalog_number("E8493", 1), Ok(148493)); // E = 14
+        assert_eq!(decode_catalog_number("H0000", 1), Ok(170000)); // H = 17 (before I)
+        assert_eq!(decode_catalog_number("J0000", 1), Ok(180000)); // J = 18 (I skipped)
+        assert_eq!(decode_catalog_number("N0000", 1), Ok(220000)); // N = 22 (before O)
+        assert_eq!(decode_catalog_number("P0000", 1), Ok(230000)); // P = 23 (O skipped)
+        assert_eq!(decode_catalog_number("Z9999", 1), Ok(339999)); // Z = 33 (max)
         // I and O are not valid leading characters (look like 1 and 0).
-        assert!(decode_catalog_number("I0000").is_err());
-        assert!(decode_catalog_number("O0000").is_err());
+        assert!(decode_catalog_number("I0000", 1).is_err());
+        assert!(decode_catalog_number("O0000", 1).is_err());
         // Non-digit trailing is rejected.
-        assert!(decode_catalog_number("A00X0").is_err());
+        assert!(decode_catalog_number("A00X0", 1).is_err());
         // Alpha-5 must be exactly 1 letter + 4 digits — short fields are
         // corrupt input, not value 100000.
-        assert!(decode_catalog_number("A000").is_err());
-        assert!(decode_catalog_number("A").is_err());
-        assert!(decode_catalog_number("A00000").is_err());
+        assert!(decode_catalog_number("A000", 1).is_err());
+        assert!(decode_catalog_number("A", 1).is_err());
+        assert!(decode_catalog_number("A00000", 1).is_err());
     }
 
     #[test]
