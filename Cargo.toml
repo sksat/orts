@@ -21,6 +21,18 @@ repository = "https://github.com/sksat/orts"
 homepage = "https://sksat.github.io/orts/"
 authors = ["sksat <sksat@sksat.net>"]
 
+# Build scripts and their dependencies are compiled with opt-level 0 by default
+# — in every profile, release included. `cli/build.rs` runs the cargo-about
+# license gatherer in-process (three passes: the native graph plus each bundled
+# wasm crate), and askalono's license matching is CPU-bound text comparison, so
+# unoptimized it dominates every orts-cli build. Optimizing the build-script
+# graph trades a one-time compile for a much cheaper build.rs run.
+[profile.dev.build-override]
+opt-level = 2
+
+[profile.release.build-override]
+opt-level = 2
+
 [workspace.dependencies]
 # Internal workspace crates: path for local resolution + version for crates.io
 # publish. The version is kept in sync with [workspace.package] version above.
