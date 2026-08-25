@@ -279,28 +279,27 @@ fn interpolate_custom(
 
 // Spherical harmonic evaluation
 
-/// Evaluate the IGRF spherical harmonic expansion.
+/// Number of rows/columns in the fixed-size Legendre tables.
+const ND: usize = IGRF_MAX_DEGREE + 1;
+
+/// Schmidt semi-normalized associated Legendre functions `P[n][m]` and their
+/// colatitude derivatives `dP/dtheta`, for `n, m <= max_degree`.
 ///
-/// Returns (B_r, B_theta, B_phi) in nT, where:
-/// - B_r: radial (outward)
-/// - B_theta: southward (colatitude direction)
-/// - B_phi: eastward (longitude direction)
-fn evaluate_sh(
-    g: &[f64],
-    h: &[f64],
-    r_km: f64,
+/// Fixed-size `[IGRF_MAX_DEGREE+1][IGRF_MAX_DEGREE+1]` = `[14][14]`; only
+/// indices `0..=max_degree` are populated. ~3 KiB on the stack.
+///
+/// Schmidt semi-normalization means
+/// `P^m_n = sqrt(2 (n-m)! / (n+m)!) * P_{n,m}` for `m > 0` (and the plain
+/// Legendre function for `m = 0`), which is the convention the IGRF Gauss
+/// coefficients are defined in. It is characterised by
+/// `∫_{-1}^{1} [P^m_n(x)]^2 dx = 2/(2n+1)` for `m = 0` and `4/(2n+1)` for
+/// `m >= 1` — see `schmidt_normalization_holds`, which pins every recursion
+/// branch below without needing external reference values.
+fn schmidt_legendre(
     cos_theta: f64,
     sin_theta: f64,
-    phi: f64,
     max_degree: usize,
-) -> (f64, f64, f64) {
-    let a = IGRF_REFERENCE_RADIUS;
-    let ratio = a / r_km;
-
-    // Schmidt semi-normalized associated Legendre polynomials P[n][m] and dP/dtheta.
-    // Fixed-size [IGRF_MAX_DEGREE+1][IGRF_MAX_DEGREE+1] = [14][14]; only
-    // indices 0..=max_degree are used. ~3 KiB on stack.
-    const ND: usize = IGRF_MAX_DEGREE + 1;
+) -> ([[f64; ND]; ND], [[f64; ND]; ND]) {
     let nd = max_degree + 1;
     let mut p = [[0.0; ND]; ND];
     let mut dp = [[0.0; ND]; ND];
@@ -321,10 +320,18 @@ fn evaluate_sh(
     }
 
     // Sub-diagonal: P[n][n-1]
+    //
+    // The coefficient is `sqrt(2n-1)`, not `2n-1`: substituting `m = n-1` into
+    // the general recursion below gives `denom = sqrt(n^2 - (n-1)^2) =
+    // sqrt(2n-1)` and `k = 0`, so
+    //   P[n][n-1] = (2n-1) cos(theta) P[n-1][n-1] / sqrt(2n-1)
+    //             = sqrt(2n-1) cos(theta) P[n-1][n-1].
+    // Using `2n-1` broke Schmidt semi-normalization for every intermediate
+    // order (0 < m < n), since these values also seed the general recursion.
     for n in 1..nd {
-        p[n][n - 1] = cos_theta * (2 * n - 1) as f64 * p[n - 1][n - 1];
-        dp[n][n - 1] =
-            (2 * n - 1) as f64 * (cos_theta * dp[n - 1][n - 1] - sin_theta * p[n - 1][n - 1]);
+        let c = ((2 * n - 1) as f64).sqrt();
+        p[n][n - 1] = cos_theta * c * p[n - 1][n - 1];
+        dp[n][n - 1] = c * (cos_theta * dp[n - 1][n - 1] - sin_theta * p[n - 1][n - 1]);
     }
 
     // General recursion: P[n][m] for m < n-1
@@ -340,6 +347,30 @@ fn evaluate_sh(
                 / denom;
         }
     }
+
+    (p, dp)
+}
+
+/// Evaluate the IGRF spherical harmonic expansion.
+///
+/// Returns (B_r, B_theta, B_phi) in nT, where:
+/// - B_r: radial (outward)
+/// - B_theta: southward (colatitude direction)
+/// - B_phi: eastward (longitude direction)
+fn evaluate_sh(
+    g: &[f64],
+    h: &[f64],
+    r_km: f64,
+    cos_theta: f64,
+    sin_theta: f64,
+    phi: f64,
+    max_degree: usize,
+) -> (f64, f64, f64) {
+    let a = IGRF_REFERENCE_RADIUS;
+    let ratio = a / r_km;
+
+    let (p, dp) = schmidt_legendre(cos_theta, sin_theta, max_degree);
+    let nd = max_degree + 1;
 
     // Accumulate field components
     let mut b_r = 0.0;
@@ -370,9 +401,14 @@ fn evaluate_sh(
             b_theta -= r_power * gh_cos_sin * dp[n][m];
 
             // B_phi = -(1/(r sin theta)) dV/dphi
-            //       = sum (a/r)^(n+2) * m * (-g sin + h cos) * P / sin(theta)
+            //       = sum (a/r)^(n+2) * m * (g sin - h cos) * P / sin(theta)
+            //
+            // Note the outer minus sign: d/dphi (g cos m.phi + h sin m.phi) is
+            // m(-g sin + h cos), and B_phi negates it. Dropping that negation
+            // inverts the whole eastward component. This is the standard
+            // `Y = m (g sin m.phi - h cos m.phi) P / sin(theta)`.
             if m > 0 {
-                let gh_sin_cos = -g_nm * sin_m_phi + h_nm * cos_m_phi;
+                let gh_sin_cos = g_nm * sin_m_phi - h_nm * cos_m_phi;
                 if sin_theta.abs() > 1e-10 {
                     b_phi += r_power * m_f * gh_sin_cos * p[n][m] / sin_theta;
                 } else if m == 1 {
@@ -557,11 +593,31 @@ mod tests {
         };
         let input = make_input(geo, &epoch);
 
-        let b_igrf = b_magnitude(&igrf.field_ecef(&input));
-        let b_dipole = b_magnitude(&dipole.field_ecef(&input));
+        let v_igrf = igrf.field_ecef(&input);
+        let v_dipole = dipole.field_ecef(&input);
 
-        // At GEO the dipole dominates; expect <10% difference
+        // Compare the *vector direction*, not just the magnitude: a
+        // magnitude-only check is invariant under a full sign inversion of
+        // either model, which is exactly the kind of bug that hid here before.
+        //
+        // The tolerance is loose on purpose. `TiltedDipole` places its 11.5°
+        // tilt at longitude 0, while the real geomagnetic pole sits near
+        // 80.6°N 72.6°W — the two axes are 12.4° apart, which shows up here as
+        // roughly 21° between the field vectors (measured cos ≈ 0.933). So this
+        // guards against inversion, not against that tilt-longitude
+        // simplification. An inverted model gives cos ≈ -0.93.
+        let dot: f64 = (0..3).map(|i| v_igrf[i] * v_dipole[i]).sum();
+        let cos_angle = dot / (b_magnitude(&v_igrf) * b_magnitude(&v_dipole));
+        assert!(
+            cos_angle > 0.85,
+            "IGRF and dipole should point the same way at GEO, \
+             got cos(angle) = {cos_angle:.4} (IGRF {v_igrf:?}, dipole {v_dipole:?})"
+        );
+
+        // At GEO the dipole dominates; expect <15% difference
         // (TiltedDipole uses approximate parameters, so some difference is expected)
+        let b_igrf = b_magnitude(&v_igrf);
+        let b_dipole = b_magnitude(&v_dipole);
         let diff_pct = ((b_igrf - b_dipole) / b_dipole).abs() * 100.0;
         assert!(
             diff_pct < 15.0,
@@ -652,5 +708,201 @@ mod tests {
             diff_pct < 25.0,
             "Degree-1 truncation should be within 25% of full model, got {diff_pct:.1}%"
         );
+    }
+
+    /// Pin every branch of [`schmidt_legendre`] without external reference
+    /// values, via the orthogonality relation that *defines* Schmidt
+    /// semi-normalization:
+    ///
+    /// ```text
+    /// ∫_{-1}^{1} [P^m_n(x)]^2 dx = 2/(2n+1)   (m = 0)
+    ///                            = 4/(2n+1)   (m >= 1)
+    /// ```
+    ///
+    /// This is what catches a wrong recursion coefficient: using `2n-1`
+    /// instead of `sqrt(2n-1)` on the sub-diagonal leaves `m = 0` and `m = n`
+    /// correct but breaks every intermediate order, because those values also
+    /// seed the general recursion. So the test must cover `0 < m < n`, not just
+    /// the extremes.
+    #[test]
+    fn schmidt_normalization_holds() {
+        // Midpoint rule over x = cos(theta). Smooth integrand, so this is
+        // plenty for the 1e-3 relative tolerance below.
+        const STEPS: usize = 20_000;
+        const MAX_N: usize = 6;
+
+        let mut integrals = [[0.0_f64; ND]; ND];
+        for i in 0..STEPS {
+            let x = -1.0 + (i as f64 + 0.5) * 2.0 / STEPS as f64;
+            let sin_theta = (1.0 - x * x).max(0.0).sqrt();
+            let (p, _) = schmidt_legendre(x, sin_theta, MAX_N);
+            for n in 0..=MAX_N {
+                for m in 0..=n {
+                    integrals[n][m] += p[n][m] * p[n][m];
+                }
+            }
+        }
+
+        for n in 1..=MAX_N {
+            for m in 0..=n {
+                let got = integrals[n][m] * 2.0 / STEPS as f64;
+                let expected = if m == 0 { 2.0 } else { 4.0 } / (2 * n + 1) as f64;
+                let rel = (got - expected).abs() / expected;
+                assert!(
+                    rel < 1e-3,
+                    "P^{m}_{n} is not Schmidt semi-normalized: \
+                     ∫P² = {got:.6}, expected {expected:.6} (relative error {rel:.3e})"
+                );
+            }
+        }
+    }
+
+    /// The pole branch of `B_phi` uses the closed form
+    /// `lim_{θ→0} P^1_n(cos θ)/sin θ = sqrt(n(n+1)/2)`, derived straight from
+    /// the Schmidt definition. Check the recursion agrees with it, so the two
+    /// code paths cannot drift apart again.
+    #[test]
+    fn near_pole_p_n1_matches_closed_form_limit() {
+        let theta = 1e-7_f64;
+        let (p, _) = schmidt_legendre(theta.cos(), theta.sin(), 6);
+        for n in 1..=6 {
+            let n_f = n as f64;
+            let expected = (n_f * (n_f + 1.0) / 2.0).sqrt();
+            let got = p[n][1] / theta.sin();
+            assert!(
+                (got - expected).abs() < 1e-6 * expected,
+                "P^1_{n}/sin(theta) near the pole = {got:.9}, \
+                 closed form sqrt(n(n+1)/2) = {expected:.9}"
+            );
+        }
+    }
+
+    /// `dP/dtheta` must be the analytic derivative of `P`, for every recursion
+    /// branch. Compared against a central difference rather than a table, so
+    /// this needs no external reference values either.
+    #[test]
+    fn schmidt_legendre_derivative_matches_central_difference() {
+        const EPS: f64 = 1e-6;
+        for theta_deg in [7.0_f64, 31.0, 45.0, 88.0, 124.0, 170.0] {
+            let theta = theta_deg.to_radians();
+            let (_, dp) = schmidt_legendre(theta.cos(), theta.sin(), IGRF_MAX_DEGREE);
+            let (p_plus, _) =
+                schmidt_legendre((theta + EPS).cos(), (theta + EPS).sin(), IGRF_MAX_DEGREE);
+            let (p_minus, _) =
+                schmidt_legendre((theta - EPS).cos(), (theta - EPS).sin(), IGRF_MAX_DEGREE);
+            for n in 0..=IGRF_MAX_DEGREE {
+                for m in 0..=n {
+                    let numeric = (p_plus[n][m] - p_minus[n][m]) / (2.0 * EPS);
+                    // Scale the tolerance by the local magnitude; these grow
+                    // with degree.
+                    let scale = dp[n][m].abs().max(1.0);
+                    assert!(
+                        (dp[n][m] - numeric).abs() < 1e-5 * scale,
+                        "dP^{m}_{n}/dtheta at {theta_deg} deg: analytic {:.9}, \
+                         central difference {numeric:.9}",
+                        dp[n][m]
+                    );
+                }
+            }
+        }
+    }
+
+    /// Exercise the real `evaluate_sh` path with a single non-zero coefficient,
+    /// so the *eastward* sign convention is pinned end to end rather than only
+    /// the Legendre recursion.
+    ///
+    /// With only `h_1^1 > 0` the potential is `V ~ h sin(phi) sin(theta)`, so
+    /// `B_phi = -(1/(r sin theta)) dV/dphi < 0` at `phi = 0` on the equator.
+    /// The standard form is `Y = m (g sin m.phi - h cos m.phi) P / sin(theta)`;
+    /// dropping its outer minus sign inverts the whole component.
+    #[test]
+    fn b_phi_sign_matches_potential_derivative() {
+        let mut g = [0.0; N_COEFFS];
+        let mut h = [0.0; N_COEFFS];
+        h[coeff_index(1, 1)] = 1000.0;
+
+        // Equator, phi = 0.
+        let (_, _, b_phi) = evaluate_sh(&g, &h, IGRF_REFERENCE_RADIUS, 0.0, 1.0, 0.0, 1);
+        assert!(
+            b_phi < 0.0,
+            "with h_1^1 > 0 at phi = 0 on the equator, B_phi must be negative, got {b_phi}"
+        );
+
+        // A quarter turn east puts h_1^1 into the radial/southward terms
+        // instead, so B_phi passes through zero.
+        let (_, _, b_phi_quarter) = evaluate_sh(
+            &g,
+            &h,
+            IGRF_REFERENCE_RADIUS,
+            0.0,
+            1.0,
+            core::f64::consts::FRAC_PI_2,
+            1,
+        );
+        assert!(
+            b_phi_quarter.abs() < 1e-9,
+            "B_phi should vanish at phi = 90 deg for a pure h_1^1, got {b_phi_quarter}"
+        );
+
+        // Same check for a pure g_1^1: V ~ g cos(phi) sin(theta), so
+        // dV/dphi = -g sin(phi) sin(theta), which is zero at phi = 0 and
+        // positive-B_phi at phi = 90 deg.
+        g[coeff_index(1, 1)] = 1000.0;
+        h[coeff_index(1, 1)] = 0.0;
+        let (_, _, b_phi_g) = evaluate_sh(
+            &g,
+            &h,
+            IGRF_REFERENCE_RADIUS,
+            0.0,
+            1.0,
+            core::f64::consts::FRAC_PI_2,
+            1,
+        );
+        assert!(
+            b_phi_g > 0.0,
+            "with g_1^1 > 0 at phi = 90 deg, B_phi must be positive, got {b_phi_g}"
+        );
+    }
+
+    /// The `sin_theta <= 1e-10` pole branch must agree with the ordinary path
+    /// just off the pole — otherwise `B_phi` jumps discontinuously there. This
+    /// covers the closed-form limit, its south-pole parity, and the eastward
+    /// sign all at once, which the recursion-only test cannot.
+    #[test]
+    fn b_phi_pole_branch_is_continuous() {
+        let mut g = [0.0; N_COEFFS];
+        let mut h = [0.0; N_COEFFS];
+        // Both m=1 coefficients, so neither term is accidentally cancelled.
+        g[coeff_index(1, 1)] = 1000.0;
+        h[coeff_index(1, 1)] = -2000.0;
+        g[coeff_index(2, 1)] = 500.0;
+        h[coeff_index(2, 1)] = 300.0;
+        let phi = 0.7_f64;
+
+        for (name, cos_theta) in [("north", 1.0_f64), ("south", -1.0_f64)] {
+            // Exactly on the axis: takes the limit branch.
+            let (_, _, at_pole) =
+                evaluate_sh(&g, &h, IGRF_REFERENCE_RADIUS, cos_theta, 0.0, phi, 2);
+            // A hair off the axis: takes the ordinary `P / sin(theta)` path.
+            let theta = if cos_theta > 0.0 {
+                1e-8
+            } else {
+                core::f64::consts::PI - 1e-8
+            };
+            let (_, _, near_pole) = evaluate_sh(
+                &g,
+                &h,
+                IGRF_REFERENCE_RADIUS,
+                theta.cos(),
+                theta.sin(),
+                phi,
+                2,
+            );
+            assert!(
+                (at_pole - near_pole).abs() < 1e-6 * at_pole.abs().max(1.0),
+                "B_phi is discontinuous at the {name} pole: limit branch {at_pole:.9}, \
+                 ordinary path just off-axis {near_pole:.9}"
+            );
+        }
     }
 }

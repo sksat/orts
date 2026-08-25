@@ -44,15 +44,30 @@ impl TiltedDipole {
     /// Earth's tilted dipole (IGRF approximate).
     ///
     /// - Dipole strength: ~7.94e15 T*m^3 (= mu_0/(4*pi) * 7.94e22 A*m^2)
-    /// - Axis tilted ~11.5 deg from geographic north (simplified: tilt in x-z plane in ECEF)
+    /// - Geomagnetic pole tilted ~11.5 deg from geographic north (simplified:
+    ///   tilt in the x-z plane in ECEF)
+    ///
+    /// The dipole **moment** points roughly geographic *south*, i.e. opposite
+    /// the geomagnetic north pole — that is what makes field lines enter the
+    /// Earth in the northern hemisphere. IGRF says the same thing through
+    /// `g_1^0 < 0`. Concretely, with `m_hat` pointing south:
+    ///
+    /// - at the equator `m_hat . r_hat = 0`, so `B ~ -m_hat` points north;
+    /// - at the north pole `r_hat = +Z` and `m_hat . r_hat = -1`, so
+    ///   `3(m_hat . r_hat) r_hat - m_hat = +2 m_hat`, which points into the
+    ///   Earth.
+    ///
+    /// Both match the real field; using `+Z` here inverts the whole vector.
     ///
     /// The axis is stored in ECEF coordinates and will be rotated to ECI
     /// using the epoch's GMST when computing the field.
     pub fn earth() -> Self {
         let tilt = 11.5_f64.to_radians();
+        // Geomagnetic north pole direction, then negated to get the moment.
+        let pole = Vector3::new(tilt.sin(), 0.0, tilt.cos());
         Self {
             dipole_strength: EARTH_DIPOLE_STRENGTH,
-            axis_ecef: Vector3::new(tilt.sin(), 0.0, tilt.cos()).normalize(),
+            axis_ecef: -pole.normalize(),
         }
     }
 
@@ -279,6 +294,58 @@ mod tests {
         assert!(
             (mag_ratio - 1.0).abs() < 0.5,
             "Magnitudes should be similar, ratio={mag_ratio:.3}"
+        );
+    }
+
+    // Sign / direction. Every other test here compares magnitudes, which are
+    // invariant under a full inversion of the field — so these pin the actual
+    // vector against the real Earth's field.
+
+    /// At the geographic equator the field points geographic *north*: the
+    /// dipole moment is southward, `m_hat . r_hat = 0` there, so `B ~ -m_hat`.
+    #[test]
+    fn equatorial_field_points_north() {
+        let dipole = TiltedDipole::new(EARTH_DIPOLE_STRENGTH, Vector3::new(0.0, 0.0, -1.0));
+        let b = dipole.compute_field_ecef(&Vector3::new(7000.0, 0.0, 0.0));
+        assert!(
+            b.z > 0.0,
+            "equatorial field should point north (+Z), got {b:?}"
+        );
+        // Purely northward for an untilted dipole on the equator.
+        assert!(
+            b.x.abs() < 1e-12 * b.z.abs(),
+            "unexpected radial part: {b:?}"
+        );
+    }
+
+    /// At the north pole the field points *into* the Earth (radially inward),
+    /// which is why a compass needle dips downward there.
+    #[test]
+    fn north_polar_field_points_into_earth() {
+        let dipole = TiltedDipole::new(EARTH_DIPOLE_STRENGTH, Vector3::new(0.0, 0.0, -1.0));
+        let b = dipole.compute_field_ecef(&Vector3::new(0.0, 0.0, 7000.0));
+        assert!(
+            b.z < 0.0,
+            "field at the north pole should point into the Earth (-Z), got {b:?}"
+        );
+    }
+
+    /// `TiltedDipole::earth()` must use the southward moment, not the
+    /// geomagnetic pole direction. A sign slip here inverts every magnetometer
+    /// reading and every `m x B` torque in the simulator.
+    #[test]
+    fn earth_dipole_moment_points_south() {
+        let dipole = TiltedDipole::earth();
+        assert!(
+            dipole.axis_ecef.z < 0.0,
+            "Earth's dipole moment points geographic south, got axis {:?}",
+            dipole.axis_ecef
+        );
+        // Equatorial field is northward, as for the untilted case above.
+        let b = dipole.compute_field_ecef(&Vector3::new(0.0, 7000.0, 0.0));
+        assert!(
+            b.z > 0.0,
+            "equatorial field should point north (+Z), got {b:?}"
         );
     }
 }
