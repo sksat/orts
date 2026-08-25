@@ -1,12 +1,12 @@
 ---
-name: code-review
+name: code-review-gpt
 description: |
-  Run an external AI code review to get independent feedback on code changes.
+  Run an external AI code review (Codex) to get independent feedback on code changes.
   Use this skill when the user asks for a code review, says "コードレビューして", "レビュー", "変更を見て",
   "code review", or wants external feedback on their recent commits or uncommitted changes.
 ---
 
-# code-review: External AI Code Reviewer
+# code-review-gpt: External AI Code Reviewer
 
 Codex CLI (`codex review`) を使って、コード変更に対する独立したレビューを得る。
 diff の取得は codex が自動で行う。
