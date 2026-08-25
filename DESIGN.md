@@ -28,7 +28,7 @@ CLI はサブコマンド構造 + CWD の orts.toml 自動検出とし、シミ�
 attitude config (慣性テンソル、質量) がなければ OrbitalSystem、あれば SpacecraftDynamics を使う。
 軌道のみのユーザーに姿勢の複雑さを見せないための設計判断である。
 
-## Crate 構成の方針
+## crate 構成の方針
 
 crate の一覧と依存レイヤは [ARCHITECTURE.md](ARCHITECTURE.md) と [README.md](README.md) を参照。
 arika と tobari の詳細設計はそれぞれの [`arika/DESIGN.md`](arika/DESIGN.md) / [`tobari/DESIGN.md`](tobari/DESIGN.md) にある。
