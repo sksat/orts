@@ -1,0 +1,52 @@
+# cargo-deny — supply-chain policy for the Rust side of the workspace.
+#
+# Scope is deliberately narrow: advisories (RustSec), sources (where a crate may
+# come from) and bans (wildcard requirements, duplicate majors). License policy
+# is NOT checked here — cli/about.toml already drives the NOTICE embedded in the
+# distributed binary, and one source of truth beats two that can drift.
+#
+# CI runs `cargo deny check advisories bans sources` (see .github/workflows/ci.yml).
+# Renovate's `minimumReleaseAge` cooldown keeps a fresh release out of the
+# lockfile; this file is the complementary gate for "what is already in it".
+
+[advisories]
+# Deny every RustSec advisory. An exception goes in `ignore` with a comment
+# saying why it does not apply here and what would let us drop it again.
+yanked = "deny"
+# `unmaintained` and `unsound` take a *scope*, not a lint level — the per-category
+# levels were removed (cargo-deny#611), so every advisory is an error and only the
+# set of crates considered is configurable. Pin both to `all` so transitive
+# dependencies are covered too, instead of inheriting whichever default the
+# installed cargo-deny happens to ship. `vulnerability` and `notice` have no knob
+# at all.
+unmaintained = "all"
+unsound = "all"
+ignore = [
+  # wasmtime / wasmtime-wasi 44 sandbox advisories. Both need a major bump
+  # (>=45.0.3 / >=46.0.1 for -0188, >=46.0.2 / >=47.0.3 for -0222) and the
+  # manifest pins `~44.0.0`, so `cargo update` cannot reach the fix — it is a
+  # deliberate upgrade, tracked by the open wasmtime v47 Renovate PR (#181).
+  # Drop both entries when that lands, and note it has to resolve to 47.0.3 or
+  # newer to actually clear -0222.
+  { id = "RUSTSEC-2026-0188", reason = "wasmtime-wasi 44: WASI hard link / rename bypasses FilePerms; fixed by the wasmtime major bump in #181" },
+  { id = "RUSTSEC-2026-0222", reason = "wasmtime 44: stores can mix up type indices between engines; needs >=47.0.3, see #181" },
+  # `paste` is unmaintained with no successor and reaches us transitively, so
+  # there is no upgrade to take. Revisit when a dependent drops it.
+  { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained, pulled in transitively, no safe upgrade available" },
+]
+
+[bans]
+# A wildcard requirement lets an unreviewed release in on the next resolve,
+# which is exactly what the release-age cooldown exists to prevent.
+wildcards = "deny"
+# Duplicate majors are a build-size / correctness smell rather than a
+# supply-chain hole, and the wasmtime / rerun trees legitimately carry a few.
+# Warn so they stay visible without blocking CI.
+multiple-versions = "warn"
+
+[sources]
+# Everything must come from crates.io. There are no git dependencies today, so
+# adding one has to be a deliberate edit here.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
