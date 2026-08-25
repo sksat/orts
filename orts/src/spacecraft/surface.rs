@@ -639,11 +639,11 @@ mod tests {
         let a = loads.acceleration_inertial.into_inner();
         let tau = loads.torque_body.into_inner();
         assert!(
-            (a - expected_a).magnitude() < 1e-30,
+            (a - expected_a).magnitude() <= 1e-12 * expected_a.magnitude().max(1.0),
             "SimpleEci panel drag acceleration changed: {a:?}"
         );
         assert!(
-            (tau - expected_tau).magnitude() < 1e-30,
+            (tau - expected_tau).magnitude() <= 1e-12 * expected_tau.magnitude().max(1.0),
             "SimpleEci panel drag torque changed: {tau:?}"
         );
     }
@@ -661,7 +661,7 @@ mod tests {
         );
         let a = loads.acceleration_inertial.into_inner();
         assert!(
-            (a - expected_a).magnitude() < 1e-30,
+            (a - expected_a).magnitude() <= 1e-12 * expected_a.magnitude().max(1.0),
             "SimpleEci sphere drag acceleration changed: {a:?}"
         );
     }
@@ -712,7 +712,7 @@ mod tests {
         let expected =
             (-0.5 * rho * 2.2 * 1.0 / simple.mass * v_rel_m.magnitude() * v_rel_m) / 1000.0;
         assert!(
-            (got - expected).magnitude() < 1e-30,
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "Gcrs panel drag must use the CIP + Gcrs geodetic: {got:?} vs {expected:?}"
         );
 

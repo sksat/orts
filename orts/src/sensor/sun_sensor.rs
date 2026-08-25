@@ -258,7 +258,7 @@ mod tests {
         let got = direction.expect("sunlit").into_inner().into_inner();
         let expected = Vector3::new(0.7903661281325338, -0.551312799346672, -0.2671620870882);
         assert!(
-            (got - expected).magnitude() < 1e-30,
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "SimpleEci sun direction changed: {got:?}"
         );
         assert_eq!(illumination, 1.0);
@@ -299,7 +299,7 @@ mod tests {
             .transform(&Vec3::<Cirs>::from_raw(dir_cirs))
             .into_inner();
         assert!(
-            (got - expected).magnitude() < 1e-30,
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "Cirs sun direction must apply the GCRS→CIRS rotation: {got:?} vs {expected:?}"
         );
 

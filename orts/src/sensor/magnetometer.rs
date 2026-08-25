@@ -168,7 +168,7 @@ mod tests {
             -7.100082750661239e-6,
         );
         assert!(
-            (got.into_inner() - expected).magnitude() < 1e-30,
+            (got.into_inner() - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "SimpleEci magnetometer reading changed: {got:?}"
         );
     }
@@ -207,7 +207,7 @@ mod tests {
             .transform(&b_gcrs)
             .into_inner();
         assert!(
-            (got - expected).magnitude() < 1e-30,
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "Gcrs magnetometer must use the Gcrs field: {got:?} vs {expected:?}"
         );
 

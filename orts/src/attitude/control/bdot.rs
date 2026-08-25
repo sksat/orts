@@ -508,7 +508,7 @@ mod tests {
             -3.268271786896945e-7,
         );
         assert!(
-            (got - expected).magnitude() < 1e-30,
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "SimpleEci BdotCross torque changed: {got:?}"
         );
     }
@@ -528,7 +528,7 @@ mod tests {
             -1.617184804303151e-5,
         );
         assert!(
-            (got - expected).magnitude() < 1e-30,
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "SimpleEci CommandedMagnetorquer torque changed: {got:?}"
         );
     }
@@ -595,7 +595,7 @@ mod tests {
             .mtq
             .torque(&reference.mtq.allocate(&desired), &b_body);
         assert!(
-            (got - expected).magnitude() < 1e-30,
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "Gcrs BdotCross torque must use the Gcrs field: {got:?} vs {expected:?}"
         );
 

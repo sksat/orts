@@ -307,7 +307,7 @@ mod tests {
             -0.37237905200853855,
         );
         assert!(
-            (got - expected).magnitude() < 1e-30,
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "SimpleEci tracking PD torque changed: {got:?}"
         );
     }

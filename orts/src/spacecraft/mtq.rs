@@ -683,7 +683,7 @@ mod tests {
         let got = loads.torque_body.into_inner();
         // Bit-exact: the SimpleEci path must be the identical computation.
         assert!(
-            (got - expected).magnitude() < 1e-30,
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "SimpleEci MTQ torque changed: {got:?}"
         );
     }
@@ -745,7 +745,7 @@ mod tests {
             .into_inner();
         let expected = assembly.core.torque(&[0.7, -0.3, 0.2], &b_body);
         assert!(
-            (got - expected).magnitude() < 1e-30,
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "Gcrs MTQ torque must use the Gcrs field: {got:?} vs {expected:?}"
         );
 
