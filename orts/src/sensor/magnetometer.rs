@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use arika::earth::EarthFixedTransform;
+use arika::earth::{EarthFixedTransform, EarthOrientation};
 use arika::epoch::Epoch;
 use arika::frame;
 use tobari::magnetic::MagneticFieldModel;
@@ -59,7 +59,7 @@ impl Magnetometer {
     /// Thin wrapper over [`Self::measure_in_frame`] (which needs no EOP for
     /// `SimpleEci`).
     pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> MagneticFieldBody {
-        self.measure_in_frame::<frame::SimpleEci>(state, epoch, &())
+        self.measure_in_frame::<frame::SimpleEci>(state, &EarthOrientation::simple(*epoch))
     }
 
     /// Measure the magnetic field in the body frame for a state propagated in
@@ -67,18 +67,17 @@ impl Magnetometer {
     ///
     /// The field is evaluated in `F` via [`magnetic::field_inertial`] — the
     /// ERA-only rotation for `SimpleEci`, the full IAU 2006 chain for `Gcrs`
-    /// (which needs `eop`) — and then rotated into the body frame.
+    /// (whose `orientation` carries the EOP data) — and then rotated into the
+    /// body frame.
     pub fn measure_in_frame<F: EarthFixedTransform>(
         &mut self,
         state: &SpacecraftState<F>,
-        epoch: &Epoch,
-        eop: &F::EopStorage,
+        orientation: &EarthOrientation<'_, F>,
     ) -> MagneticFieldBody {
         let b_inertial = magnetic::field_inertial::<F>(
             self.field_model.as_ref(),
             &state.orbit.position_vec(),
-            epoch,
-            eop,
+            orientation,
         );
         let b_body_typed = state
             .attitude
@@ -193,15 +192,14 @@ mod tests {
 
         let mut mag = Magnetometer::new(Arc::new(TiltedDipole::earth()));
         let got = mag
-            .measure_in_frame::<frame::Gcrs>(&state, &epoch, &zero_eop())
+            .measure_in_frame::<frame::Gcrs>(&state, &EarthOrientation::new(epoch, &zero_eop()))
             .into_inner()
             .into_inner();
 
         let b_gcrs = magnetic::field_inertial::<frame::Gcrs>(
             &TiltedDipole::earth(),
             &arika::frame::Vec3::from_raw(pos),
-            &epoch,
-            &zero_eop(),
+            &EarthOrientation::new(epoch, &zero_eop()),
         );
         let expected = state
             .attitude

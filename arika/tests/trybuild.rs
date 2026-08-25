@@ -1,7 +1,8 @@
-//! Compile-fail tests that pin the "NullEop is rejected by precise APIs"
-//! guarantee. Each `.rs` file in `tests/trybuild/` must fail to compile for
-//! the documented reason; the corresponding `.stderr` file captures the
-//! expected diagnostic.
+//! Compile-fail tests that pin type-level guarantees about EOP data: that
+//! `NullEop` is rejected by the precise APIs, and that the EOP-free
+//! `EarthOrientation` constructor is unavailable to a frame that needs EOP.
+//! Each `.rs` file in `tests/trybuild/` must fail to compile for the documented
+//! reason; the corresponding `.stderr` file captures the expected diagnostic.
 //!
 //! Run with: `cargo test -p arika --test trybuild`.
 //!
@@ -18,4 +19,11 @@ fn null_eop_is_rejected_by_precise_apis() {
     t.compile_fail("tests/trybuild/null_eop_in_polar_motion.rs");
     // Phase 3B: NullEop → Rotation::<Gcrs, Itrs>::iau2006_full_from_utc
     t.compile_fail("tests/trybuild/null_eop_in_iau2006_full_from_utc.rs");
+}
+
+#[test]
+fn eop_free_orientation_is_rejected_for_a_frame_that_needs_eop() {
+    let t = trybuild::TestCases::new();
+    // EarthOrientation::simple is `EopStorage = ()`-only, so Gcrs cannot use it.
+    t.compile_fail("tests/trybuild/earth_orientation_simple_for_gcrs.rs");
 }

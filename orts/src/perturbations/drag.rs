@@ -10,7 +10,7 @@ use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
 use crate::orbital::OrbitalState;
-use arika::earth::EarthFixedTransform;
+use arika::earth::{EarthFixedTransform, EarthOrientation};
 
 /// Default ballistic coefficient for LEO satellites \[m²/kg\].
 ///
@@ -138,7 +138,7 @@ impl<F: EarthFixedTransform> AtmosphericDrag<F> {
         let geodetic = match self.body {
             Some(KnownBody::Earth) => {
                 let pos_vec = Vec3::<F>::from_raw(*pos);
-                F::to_geodetic(&pos_vec, utc, &self.eop)
+                F::to_geodetic(&pos_vec, &EarthOrientation::new(*utc, &self.eop))
             }
             _ => {
                 let r_mag = pos.magnitude();
@@ -535,8 +535,7 @@ mod tests {
         let v_rel = vel - omega.cross(&pos);
         let geod = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
             &Vec3::from_raw(pos),
-            &utc,
-            &GcrsEopStorage::new(ZeroEop),
+            &EarthOrientation::new(utc, &GcrsEopStorage::new(ZeroEop)),
         );
         let rho = Exponential.density(&AtmosphereInput {
             geodetic: geod,

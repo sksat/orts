@@ -1,4 +1,4 @@
-use arika::earth::EarthFixedTransform;
+use arika::earth::{EarthFixedTransform, EarthOrientation};
 use arika::epoch::Epoch;
 use arika::frame;
 use nalgebra::Vector3;
@@ -111,8 +111,11 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform, S: HasAttitude + HasOrbit<F
         let orbit = state.orbit();
 
         // 1. Compute B in the inertial frame (requires epoch for the ECEF rotation)
-        let b_inertial =
-            magnetic::field_inertial::<Fr>(&self.field, &orbit.position_vec(), epoch, &self.eop);
+        let b_inertial = magnetic::field_inertial::<Fr>(
+            &self.field,
+            &orbit.position_vec(),
+            &EarthOrientation::new(*epoch, &self.eop),
+        );
         if b_inertial.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
         }
@@ -193,8 +196,7 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform, S: HasAttitude + HasOrbit<F
         let b_inertial = magnetic::field_inertial::<Fr>(
             &self.field,
             &state.orbit().position_vec(),
-            epoch,
-            &self.eop,
+            &EarthOrientation::new(*epoch, &self.eop),
         );
         if b_inertial.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
@@ -315,8 +317,11 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform> DiscreteController<Fr>
         let Some(epoch) = epoch else {
             return Vector3::zeros();
         };
-        let b_inertial =
-            magnetic::field_inertial::<Fr>(&self.field, &orbit.position_vec(), epoch, &self.eop);
+        let b_inertial = magnetic::field_inertial::<Fr>(
+            &self.field,
+            &orbit.position_vec(),
+            &EarthOrientation::new(*epoch, &self.eop),
+        );
         if b_inertial.magnitude() < 1e-30 {
             return Vector3::zeros();
         }
@@ -577,8 +582,7 @@ mod tests {
         let b_gcrs = magnetic::field_inertial::<frame::Gcrs>(
             &TiltedDipole::earth(),
             &FrameVec3::from_raw(pos),
-            &epoch,
-            &zero_eop(),
+            &EarthOrientation::new(epoch, &zero_eop()),
         );
         let b_body = state
             .attitude

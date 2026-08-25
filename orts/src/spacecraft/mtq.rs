@@ -8,7 +8,7 @@
 //! realized dipole moment vector and `B` is the local geomagnetic
 //! field in the body frame.
 
-use arika::earth::EarthFixedTransform;
+use arika::earth::{EarthFixedTransform, EarthOrientation};
 use arika::epoch::Epoch;
 use arika::frame;
 use nalgebra::Vector3;
@@ -279,8 +279,7 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform, S: HasAttitude + HasOrbit<F
         let b_inertial = magnetic::field_inertial::<Fr>(
             &self.field,
             &state.orbit().position_vec(),
-            epoch,
-            &self.eop,
+            &EarthOrientation::new(*epoch, &self.eop),
         );
         if b_inertial.magnitude() < 1e-30 {
             return ExternalLoads::zeros();
@@ -737,8 +736,7 @@ mod tests {
         let b_gcrs = magnetic::field_inertial::<frame::Gcrs>(
             &TiltedDipole::earth(),
             &Vec3::from_raw(pos),
-            &epoch,
-            &zero_eop(),
+            &EarthOrientation::new(epoch, &zero_eop()),
         );
         let b_body = state
             .attitude
