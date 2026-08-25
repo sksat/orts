@@ -92,6 +92,11 @@ cargo run --example orbital_lifetime -p orts
 # All groups (requires network for CSSI fetch)
 cargo run --example orbital_lifetime -p orts --features fetch-weather
 
+# Either command above also writes orbital_lifetime.rrd once the `rerun`
+# feature is on; without it the run still prints its results and asserts,
+# but produces no .rrd for the plotting step below.
+cargo run --example orbital_lifetime -p orts --features rerun,fetch-weather
+
 # Generate plot
 cargo run --bin orts -- convert --format csv \
     orts/examples/orbital_lifetime/orbital_lifetime.rrd \

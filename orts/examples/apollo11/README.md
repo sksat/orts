@@ -30,9 +30,12 @@ https://github.com/sksat/orts/releases/download/v0.1.1/apollo11_combined.mp4
 
 ```sh
 # シミュレーション実行（RRD 出力）
-cargo run --example apollo11 -p orts
+# `rerun` feature が必要。これがないと apollo11.rrd を書き出さず、
+# 下の可視化セクションが入力を得られない。
+cargo run --example apollo11 -p orts --features rerun
 
 # テスト（タイミング・精度の assertion）
+# assertion は RRD 出力に依存しないので feature は不要。
 cargo test --example apollo11 -p orts
 ```
 
