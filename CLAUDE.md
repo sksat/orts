@@ -9,24 +9,7 @@ orts is a numerical computation and optimization platform for spacecraft simulat
 - Design doc: [DESIGN.md](DESIGN.md) (Japanese) / top-level structure: [ARCHITECTURE.md](ARCHITECTURE.md)
 - Crate / package inventory and roles: see the Project Structure tables in [README.md](README.md)
 
-## Languages
-
-- **Rust**: core simulation platform (Cargo workspace)
-- **TypeScript/React**: real-time viewer and related packages (pnpm workspace)
-- **Python**: helper scripts under examples/ and tools/, managed with uv
-
-## Build & Test
-
-- `plugin-sdk/examples/` is a standalone workspace (`cargo component build`, target `wasm32-wasip1`); `cargo test --workspace` does not cover it
-- Some crates have no_std / wasm checks in CI (per-feature clippy in the lint job for no_std; wasm32 via the wasm-pack jobs such as viewer-build). `.github/workflows/ci.yml` is the source of truth — when changing such a crate, run the same checks locally
-
-## Footguns
-
-- `cargo test -p orts-cli` regenerates the TypeScript bindings in `viewer/src/protocol/generated/` (`TS_RS_EXPORT_DIR` in `.cargo/config.toml`), and CI enforces a clean diff — after changing protocol types, regenerate and commit
-- `.cargo/config.toml` configures the mold + clang linker; a non-empty global `RUSTFLAGS` silently disables it
-- Release process: see [RELEASING.md](RELEASING.md)
-
-## Development Workflow
+## Development Policy
 
 - For architecture-level changes, update DESIGN.md first, then implement
 - Before starting implementation, get a smart-friend review of the plan
@@ -56,6 +39,23 @@ orts is a numerical computation and optimization platform for spacecraft simulat
 
 - Verify technical claims (CHANGELOG, docs, etc.) against the implementation and tests before writing them down
 - In Japanese documents, keep technical terms in English (crate, workspace, commit) — no katakana transliteration
+
+## Languages
+
+- **Rust**: core simulation platform (Cargo workspace)
+- **TypeScript/React**: real-time viewer and related packages (pnpm workspace)
+- **Python**: helper scripts under examples/ and tools/, managed with uv
+
+## Build & Test
+
+- `plugin-sdk/examples/` is a standalone workspace (`cargo component build`, target `wasm32-wasip1`); `cargo test --workspace` does not cover it
+- Some crates have no_std / wasm checks in CI (per-feature clippy in the lint job for no_std; wasm32 via the wasm-pack jobs such as viewer-build). `.github/workflows/ci.yml` is the source of truth — when changing such a crate, run the same checks locally
+
+## Footguns
+
+- `cargo test -p orts-cli` regenerates the TypeScript bindings in `viewer/src/protocol/generated/` (`TS_RS_EXPORT_DIR` in `.cargo/config.toml`), and CI enforces a clean diff — after changing protocol types, regenerate and commit
+- `.cargo/config.toml` configures the mold + clang linker; a non-empty global `RUSTFLAGS` silently disables it
+- Release process: see [RELEASING.md](RELEASING.md)
 
 ## Dependencies
 
