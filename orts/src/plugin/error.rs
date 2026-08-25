@@ -1,13 +1,12 @@
 //! Error type returned by plugin-layer operations.
 //!
 //! `PluginError` unifies failure modes across the various backends
-//! (Native / WASM / Rhai / ...). Phase P0.5 only needs a handful of
-//! variants for the Native adapter; later phases will light up the
-//! guest-runtime-specific cases (Trap, OutOfFuel, OutOfMemory,
-//! GuestPanic, Marshal, ApiVersionMismatch).
+//! (Native / WASM / Rhai / ...). Only a handful of variants exist so
+//! far; dedicated guest-runtime cases (Trap, OutOfFuel, OutOfMemory,
+//! GuestPanic, Marshal, ApiVersionMismatch) are planned.
 //!
-//! The shape matches the landmines identified in the Phase P0 research
-//! (wasmtime runtime survey): every failure path should be
+//! The shape matches the landmines identified in the wasmtime runtime
+//! survey: every failure path should be
 //! distinguishable so the host can decide per-case whether to halt the
 //! simulation, fall back to the last command, or switch the controller
 //! to a safemode.
@@ -16,10 +15,10 @@ use thiserror::Error;
 
 /// Errors produced by a plugin-layer controller or actuator bridge.
 ///
-/// Phase P1 will add dedicated variants for the WASM backend:
-/// `Trap`, `OutOfFuel`, `OutOfMemory`, `GuestPanic`, `Marshal`,
-/// `ApiVersionMismatch`. The current `Runtime(String)` catch-all
-/// will shrink as those land.
+/// Dedicated variants for the WASM backend (`Trap`, `OutOfFuel`,
+/// `OutOfMemory`, `GuestPanic`, `Marshal`, `ApiVersionMismatch`) are
+/// planned. The current `Runtime(String)` catch-all will shrink as
+/// those land.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum PluginError {
@@ -39,7 +38,7 @@ pub enum PluginError {
         command: &'static str,
     },
 
-    /// The host could not load / init a guest (Phase P1+).
+    /// The host could not load / init a guest.
     #[error("plugin init failed: {0}")]
     Init(String),
 
@@ -50,9 +49,8 @@ pub enum PluginError {
     UnsupportedOperation(&'static str),
 
     /// Catch-all for backends that have richer error taxonomies than
-    /// the ones listed above. Phase P1 will replace most uses of this
-    /// with dedicated variants (`Trap`, `OutOfFuel`, `OutOfMemory`,
-    /// `GuestPanic`, `Marshal`, `ApiVersionMismatch`).
+    /// the ones listed above. The planned dedicated variants will
+    /// replace most uses of this over time.
     #[error("plugin runtime error: {0}")]
     Runtime(String),
 }

@@ -12,9 +12,8 @@
 //!   (`sample-period-s`, `init`, `initial-command`, `update`,
 //!   `current-mode`) as strongly-typed methods.
 //!
-//! Phase P1-b1 only generates the bindings and confirms they
-//! compile. Phase P1-b2 wires them up inside `WasmController`, and
-//! P1-b3 provides the host `env` implementation.
+//! `WasmController` (`sync_controller.rs`) wires these bindings up
+//! and provides the host `env` implementation.
 //!
 //! The emitted types live under `orts::plugin::wasm::bindings::*`;
 //! downstream code in `orts::plugin::wasm` re-exports whatever it
@@ -28,11 +27,11 @@
 // root so the crate is self-contained and the `bindgen!` macro does
 // not reach out of its own source tree.
 //
-// Phase P1 runs guests synchronously on the Pulley interpreter
-// (wasmtime default is blocking, no `async` opt-in needed).
-// Phase P6 may revisit for hot reload or long-running operations.
+// This module runs guests synchronously on the Pulley interpreter
+// (wasmtime default is blocking, no `async` opt-in needed); the
+// async backend has its own bindings.
 //
-// Phase P1-b3 will likely need `trappable_imports: true` so that
+// `trappable_imports: true` may become necessary so that
 // host `host-env` functions (log, magnetic-field-eci) can return
 // `Result<_, wasmtime::Error>` and trap the guest cleanly on
 // failure instead of propagating a panic.

@@ -200,8 +200,9 @@ sequenceDiagram
 2. **Type-safe coordinate frames.** `Vec3<F: Frame>` makes ECI / ECEF / Body
    distinct types so frame mix-ups are compile errors, not silent bugs.
 3. **Monomorphization over dynamic dispatch on the hot path.** ODE state is
-   fixed-size (6D / 7D / 13D+) so the integrator inlines tightly. Variable-N
-   cases (constellations, flexible bodies) go through `GroupState<S: OdeState>`.
+   fixed-size (6D / 7D / 14D, plus auxiliary state via `AugmentedState`) so
+   the integrator inlines tightly. Variable-N cases (constellations,
+   flexible bodies) go through `GroupState<S: OdeState>`.
 4. **Deterministic plugin execution.** The Pulley interpreter makes guest
    behavior reproducible across hosts and CI environments.
 5. **Source abstraction at the viewer edge.** Transport (WS / CSV / RRD) is

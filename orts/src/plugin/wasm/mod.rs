@@ -1,4 +1,4 @@
-//! WASM backend for the plugin layer (Phase P1, `plugin-wasm` feature).
+//! WASM backend for the plugin layer (`plugin-wasm` feature).
 //!
 //! This module loads guest controllers written as WebAssembly
 //! [Components][wasm-component-model] and exposes them through the

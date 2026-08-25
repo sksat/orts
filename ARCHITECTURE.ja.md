@@ -196,8 +196,9 @@ sequenceDiagram
 2. **型安全な座標系。** `Vec3<F: Frame>` により ECI / ECEF / Body を別型に
    することで、frame の取り違えを silent bug ではなくコンパイルエラーにする。
 3. **ホットパスはモノモーフィゼーション重視。** ODE state は固定次元
-   (6D / 7D / 13D+) なので integrator はタイトにインライン化される。可変 N
-   (コンステレーション、柔軟構造) は `GroupState<S: OdeState>` で扱う。
+   (6D / 7D / 14D。補助状態は `AugmentedState` で拡張) なので integrator は
+   タイトにインライン化される。可変 N (コンステレーション、柔軟構造) は
+   `GroupState<S: OdeState>` で扱う。
 4. **決定論的 plugin 実行。** Pulley interpreter により、ホストや CI 環境に
    依らず guest の挙動が再現可能。
 5. **Viewer 端での Source 抽象化。** Transport (WS / CSV / RRD) は単一の

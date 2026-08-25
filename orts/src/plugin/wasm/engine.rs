@@ -70,8 +70,8 @@ impl WasmEngine {
 
     /// Access the underlying `wasmtime::Engine`.
     ///
-    /// Used by `WasmController` (Phase P1 follow-up) to instantiate
-    /// `Component`s and `Store`s against this engine.
+    /// Used by `WasmController` to instantiate `Component`s and
+    /// `Store`s against this engine.
     pub fn inner(&self) -> &Engine {
         &self.inner
     }

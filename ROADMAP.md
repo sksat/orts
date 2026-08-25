@@ -17,6 +17,8 @@
 - **`.cwasm` 配布**: `Engine::precompile_component` による事前コンパイルと deserialize path。untrusted な `.cwasm` のロードは任意コード実行リスクがあるため、trusted artifact 境界 (CI で生成・検証) の設計が前提
 - **plugin-wasm-runtime-only feature**: Cranelift を抜いた最小 runtime で配布サイズを削減する (`.cwasm` 配布とセット)
 - **第 2 backend**: pure Rust の embedded script 系 (Rhai 等) を評価して選定する。WASM backend との oracle 同等性テストを pass することが完了条件
+- **WASM guest のホットリロード**: 現在は restart 運用。`snapshot_state` / `restore_state` で同一 guest バイナリ間の状態引き継ぎを行う
+- **thruster コマンドの拡張**: 現在は throttle のみ。impulsive delta-v や force ベースの variant を追加する
 - **stream-io replay モード**: 録った byte chunks を tick-stamp して決定論再生する
 - **msg-io の WebSocket 対話入力**: viewer からの運用コンソール。tick 境界での gate、コマンドタイムラインの記録 (リプレイ用)、認証を含めて設計する
 - **RF sideband**: byte stream の継ぎ目で失われる RF observable (soft-decision, lock, SNR, Doppler) を modem のデバイス模型として扱う。必要な observable が固まってから設計する
@@ -29,12 +31,7 @@
 - **Phase 3 (自動監視)**: 摂動強度比で中心天体の妥当性を継続監視し、SOI 境界接近で警告、オプションで自動切替
 - **Phase 4 (完全 N 体)**: 太陽系規模。慣性系で全天体の重力を直接計算する
 
-設計メモ:
-
-- 第三体重力は差分形式 `a(sc) - a(primary)` で計算し、フレーム切替を純粋な座標変換にする
-- 切替時は積分器をリスタートする (FSAL 破棄、刻み幅リセット)
-- 地球-月系はネストした SOI が必要 (月は地球 SOI 内)
-- ラグランジュ点付近では SOI が破綻するため、摂動強度比ベースの監視で対応する
+切り替え実装時の設計制約は [DESIGN.md](DESIGN.md) の「ミッション規模と力学モデル」を参照。
 
 ## Viewer
 

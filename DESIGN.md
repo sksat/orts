@@ -36,6 +36,7 @@ arika と tobari の詳細設計はそれぞれの [`arika/DESIGN.md`](arika/DES
 - **命名規約**: orts 固有の crate は `orts-` prefix、ディレクトリ名は prefix なし。汎用的な独立ライブラリには固有名を付ける (arika, utsuroi, tobari, uneri)
 - **依存制約**: arika と utsuroi は workspace 内の他 crate に依存しない。tobari は arika のみに依存し、地球周辺環境モデルとして独立性を維持する。依存は常に一方向 (基盤 → 環境 → シミュレーション → アプリ)
 - **crate 追加の方針**: crate 数の増加を避け、必要になったら切り出す。spacecraft 型を独立 crate にせず orts に含めたのはこの判断による
+- **公開 API の正規パス**: モデル関連の公開 API (`Model`, capability traits, `ExternalLoads`) は `orts::model` を正規のインポートパスとして安定化させる
 
 ## 力学アーキテクチャ
 
@@ -173,16 +174,17 @@ orts をその harness に組み込むための named byte stream の口が stre
 | 外惑星探査 | 太陽↔各惑星 | 太陽・全惑星 | スイングバイ |
 | 太陽系シミュレーション | なし (SSB) | 全天体 | 相互重力 |
 
-モデルの適用範囲を逸脱した場合はシステムが検知して警告・対応する:
-
-| 状況 | デフォルト動作 |
-|---|---|
-| 未考慮の天体の摂動が大きくなった | 警告出力 |
-| SOI (影響圏) 逸脱 | 警告 + 積分停止 |
-| 数値発散 (NaN/Inf) | 積分停止 |
-| 大気圏突入 / 衝突 | 積分停止 |
+モデルの適用範囲を逸脱した場合はシステムが検知して積分を停止する。
+現在検知するのは数値発散 (NaN/Inf) と大気圏突入 / 衝突。
+未考慮天体の摂動監視と SOI (影響圏) 逸脱の検知は未実装 ([ROADMAP.md](ROADMAP.md) の惑星間遷移)。
 
 中心天体の切り替えが必要な惑星間ミッションへの対応は段階的に進める ([ROADMAP.md](ROADMAP.md) 参照)。
+切り替えを実装する際の設計制約:
+
+- 第三体重力は差分形式 `a(sc) - a(primary)` で計算し、フレーム切替を純粋な座標変換にする
+- 切替時は積分器をリスタートする (FSAL 破棄、刻み幅リセット)
+- 地球-月系はネストした SOI が必要 (月は地球 SOI 内)
+- ラグランジュ点付近では SOI が破綻するため、摂動強度比ベースの監視で対応する
 
 ## 設計規約
 
@@ -190,7 +192,7 @@ orts をその harness に組み込むための named byte stream の口が stre
 - **単位系**: km, km/s, kg (軌道力学の慣例)。SI (m) への変換は明示的に行う
 - **座標系の型付け**: フィールド名と型で座標系を明示する。`ExternalLoads<F>` の acceleration は慣性系 [km/s²]、torque は機体座標系 [N·m]。座標変換はモデル実装の内部で行う
 - **ExternalLoads の不変条件**: acceleration / torque / mass_rate は加算的に合成する。全モデルは同一の immutable state snapshot に対して評価され、評価順序に依存しない
-- **Model の純関数性**: `eval(&self, ...)` は副作用を持たない。内部状態が必要な計算は DiscreteController に置く
+- **Model の純関数性**: `eval(&self, ...)` は副作用を持たない。内部状態が必要な計算は、力学バックリアクションを持つ連続状態なら StateEffector に、フィルタやモード遷移などの離散状態なら DiscreteController に置く
 - **trait object ポリシー**: モデルや環境 trait (`GravityField`, `AtmosphereModel` 等) は `Box<dyn Trait>` で実行時差し替え可能とする。性能クリティカルなパスでは generic パラメータの monomorphization を使う
 - **feature gate**: 重いモデルや I/O (NRLMSISE-00, Rerun, WebSocket, CSSI HTTP, plugin-wasm) は feature flag で分離する
 
