@@ -274,6 +274,34 @@ args = { mode = "safe" }
     );
 }
 
+/// stream-io streams are pumped by `orts serve`'s realtime loop; `orts run`
+/// has no transport for them, so declaring one is rejected instead of leaving
+/// the endpoints dead.
+#[test]
+fn declared_streams_are_rejected_by_run() {
+    let config = r#"
+body = "earth"
+dt = 1.0
+duration = 60.0
+
+[[satellites]]
+id = "sat-1"
+orbit = { type = "circular", altitude = 400 }
+streams = ["comlink"]
+"#;
+    let out = run_config("streams", config);
+    assert!(
+        !out.status.success(),
+        "declared streams must fail under run, stdout:\n{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("orts serve") && stderr.contains("streams"),
+        "unhelpful rejection message: {stderr}"
+    );
+}
+
 /// Attitude has to be all-or-nothing across the fleet — the same rule `serve`
 /// enforces at engine construction.
 #[test]

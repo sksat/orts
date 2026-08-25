@@ -216,6 +216,10 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     // `StartSimulation` cannot smuggle in thruster config that panics later
     // in `ThrusterSpec::new()`.
     config.validate()?;
+    // The serve loop does not drain a `[[command]]` timeline, so a config that
+    // `orts serve --config` rejects must not slip in through a WebSocket
+    // `start_simulation` and have its uplinks dropped instead.
+    config.ensure_serve_supported()?;
 
     let body = crate::satellite::parse_body(&config.body);
     let mu = body.properties().mu;
@@ -622,6 +626,57 @@ async fn run_simulation_loop(
 mod tests {
     use super::*;
     use arika::body::KnownBody;
+
+    /// A WebSocket `start_simulation` goes through the same config gate as
+    /// `orts serve --config`: the serve loop never drains a `[[command]]`
+    /// timeline, so accepting one here would drop every scheduled uplink.
+    #[test]
+    fn ws_start_rejects_a_command_timeline() {
+        let config: SimConfig = toml::from_str(
+            r#"
+body = "earth"
+dt = 1.0
+
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+
+[[command]]
+t = 10.0
+sat = "sat-a"
+kind = "orts.cmd.set-mode.v1"
+"#,
+        )
+        .expect("valid test toml");
+        let err = validate_sim_config(&config).unwrap_err();
+        assert!(err.contains("`[[command]]`"), "got: {err}");
+    }
+
+    /// A fleet where only some satellites have a controller cannot be honored
+    /// by any mode, and is rejected here rather than at engine build.
+    #[test]
+    fn ws_start_rejects_mixed_controller_config() {
+        let config: SimConfig = toml::from_str(
+            r#"
+body = "earth"
+dt = 1.0
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 10, 10], mass = 50 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+attitude = { inertia_diag = [10, 10, 10], mass = 50 }
+"#,
+        )
+        .expect("valid test toml");
+        let err = validate_sim_config(&config).unwrap_err();
+        assert!(err.contains("Mixed controller config"), "got: {err}");
+    }
 
     #[test]
     fn body_names_for_earth_includes_sun_and_moon() {

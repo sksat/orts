@@ -138,18 +138,41 @@ pub fn ensure_commands_deliverable(mode: SimMode, command_count: usize) -> Resul
     ))
 }
 
-/// 宣言された stream-io ストリームは配送先のコントローラが必要。
+fn declares_streams(satellites: &[SatelliteSpec]) -> bool {
+    satellites.iter().any(|s| !s.streams.is_empty())
+}
+
+/// serve: 宣言された stream-io ストリームは配送先のコントローラが必要。
 ///
 /// ストリームはコントローラを通して pump されるので、orbit-only / spacecraft
-/// では受け取り手がなく、書いても読まれない（serve ならエンドポイントが
-/// black hole になる）。
+/// では受け取り手がなく、エンドポイントが black hole になる。
 pub fn ensure_streams_supported(mode: SimMode, satellites: &[SatelliteSpec]) -> Result<(), String> {
-    if mode == SimMode::Controlled || satellites.iter().all(|s| s.streams.is_empty()) {
+    if mode == SimMode::Controlled || !declares_streams(satellites) {
         return Ok(());
     }
     Err(
         "stream-io streams are declared but no satellite has a controller; \
          streams require a plugin-controlled simulation"
+            .to_string(),
+    )
+}
+
+/// run: stream-io ストリームは `orts run` では扱えない。
+///
+/// ストリームを実際に pump するのは serve の realtime ループ（WS / stdio
+/// bridge）だけで、`orts run` の制御ループには対向する transport がない。
+/// controlled モードでも inbound は永遠に届かず、guest が書いた outbound は
+/// 誰も取り出さないまま溜まって overrun する。開けない口を黙って開けるより
+/// 拒否する。
+pub fn ensure_streams_unused(satellites: &[SatelliteSpec]) -> Result<(), String> {
+    if !declares_streams(satellites) {
+        return Ok(());
+    }
+    Err(
+        "stream-io streams are declared but `orts run` has no transport to pump them: \
+         inbound bytes would never arrive and the guest's outbound writes would pile up \
+         until the stream faults. Use `orts serve` (WebSocket or --stream-stdio) for \
+         streams, or remove the `streams` declaration."
             .to_string(),
     )
 }
@@ -326,6 +349,27 @@ streams = ["comlink"]
         let err = ensure_streams_supported(SimMode::OrbitOnly, &streamed).unwrap_err();
         assert!(err.contains("streams require"), "got: {err}");
         assert!(ensure_streams_supported(SimMode::OrbitOnly, &specs(ORBIT)).is_ok());
+    }
+
+    /// `orts run` has no stream transport at all, so even controlled mode has
+    /// to reject declared streams — accepting them would leave inbound bytes
+    /// undelivered and outbound writes piling up until the stream faults.
+    #[test]
+    fn run_rejects_streams_in_every_mode() {
+        let toml = r#"
+body = "earth"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 400 }
+attitude = { inertia_diag = [10, 10, 10], mass = 500 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+streams = ["comlink"]
+"#;
+        let streamed = specs(toml);
+        assert_eq!(select_sim_mode(&streamed), Ok(SimMode::Controlled));
+        let err = ensure_streams_unused(&streamed).unwrap_err();
+        assert!(err.contains("`orts run` has no transport"), "got: {err}");
+        assert!(ensure_streams_unused(&specs(ORBIT)).is_ok());
     }
 
     #[test]

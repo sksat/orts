@@ -19,7 +19,7 @@ use crate::cli::{IntegratorChoice, OutputFormat, SimArgs};
 use crate::commands::CmdError;
 use crate::satellite::OrbitSpec;
 use crate::sim::mode::{
-    SimMode, ensure_commands_deliverable, ensure_streams_supported, select_sim_mode,
+    SimMode, ensure_commands_deliverable, ensure_streams_unused, select_sim_mode,
     unhonored_config_warnings,
 };
 use crate::sim::params::SimParams;
@@ -84,9 +84,10 @@ pub fn run_simulation_cmd(
     // どのダイナミクスで回すかは serve と共有の規則で決める。`run` だけが
     // orbit-only に落ちて姿勢・アクチュエータ設定を黙って捨てることがないように。
     let mode = select_sim_mode(&params.satellites).map_err(CmdError::usage)?;
-    // 時刻指定コマンドと stream-io ストリームは制御ループがなければ届かない。
+    // 時刻指定コマンドは制御ループがなければ届かず、stream-io ストリームは
+    // `orts run` にそもそも pump する transport がない。
     ensure_commands_deliverable(mode, params.commands.len()).map_err(CmdError::usage)?;
-    ensure_streams_supported(mode, &params.satellites).map_err(CmdError::usage)?;
+    ensure_streams_unused(&params.satellites).map_err(CmdError::usage)?;
     // 選択したモードで効かない設定は、無視する前に知らせる。
     let warnings = unhonored_config_warnings(&params.satellites, mode);
     for w in &warnings {

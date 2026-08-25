@@ -969,9 +969,25 @@ impl ServeEngine {
                     .to_string(),
             );
         }
+        // A controller here would never be stepped: the orbit-only group has no
+        // control loop, and the mode is fixed at construction. Reject rather
+        // than accept the satellite and drop its controller.
+        if satellite.controller.is_some() {
+            return Err(
+                "Cannot add a controlled satellite to orbit-only simulation: the control \
+                 loop is not running, so the controller would never be stepped. Start with \
+                 a controller on every satellite to use controlled mode."
+                    .to_string(),
+            );
+        }
 
         let sat_index = self.metas.len();
         let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
+        // Sensors / actuators only act through a control loop; say so instead
+        // of accepting them into an orbit-only fleet unnoticed.
+        for w in unhonored_config_warnings(std::slice::from_ref(&spec), SimMode::OrbitOnly) {
+            eprintln!("Warning: {w}");
+        }
         // SGP4/TEME is Earth-centered; reject a TLE/OMM orbit on a non-Earth sim.
         crate::sim::params::validate_omm_body(self.params.body, std::slice::from_ref(&spec))?;
         let third_bodies = default_third_bodies(&self.params.body);
@@ -1381,6 +1397,25 @@ orbit = { type = "circular", altitude = 50 }
         .expect("valid satellite config");
         let err = init.engine.add_satellite(cfg).err().unwrap();
         assert!(err.contains("orbit-only simulation"), "got: {err}");
+    }
+
+    /// A controller on a satellite added to an orbit-only sim would never be
+    /// stepped (the mode is fixed at construction), so the add is rejected
+    /// rather than silently dropping the controller.
+    #[test]
+    fn add_controlled_satellite_to_orbit_only_is_rejected() {
+        let mut init = engine_from_toml(ORBIT_ONLY).expect("engine builds");
+        let cfg: SatelliteConfig = serde_json::from_str(
+            r#"{
+                "id": "ctrl",
+                "orbit": { "type": "circular", "altitude": 700 },
+                "controller": { "type": "wasm", "path": "ctrl.wasm" }
+            }"#,
+        )
+        .expect("valid satellite config");
+        let err = init.engine.add_satellite(cfg).err().unwrap();
+        assert!(err.contains("orbit-only simulation"), "got: {err}");
+        assert!(err.contains("control loop"), "got: {err}");
     }
 
     #[test]
