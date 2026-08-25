@@ -61,7 +61,7 @@ jobs:
         id: report
         run: |
           set +e
-          cargo deny -L info check advisories > advisories.txt 2>&1
+          cargo deny --color never -L info check advisories > advisories.txt 2>&1
           deny_status=$?
           set -e
           live=$(grep -cE '^error\[(vulnerability|unmaintained|unsound|notice|yanked)\]' advisories.txt || true)
@@ -76,16 +76,39 @@ jobs:
           echo "state=$state" >> "$GITHUB_OUTPUT"
           echo "cargo-deny exit $deny_status, $live live advisories, state $state"
 
+          # `note[advisory-ignored]` is one per accepted exception; the RUSTSEC id
+          # sits on the deny.toml line the diagnostic points at.
+          accepted=$(grep -c '^note\[advisory-ignored\]' advisories.txt || true)
+
           {
             echo "### cargo-deny advisories — $state"
             echo
-            if [ "$state" = "error" ]; then
-              echo "cargo-deny exited $deny_status without reporting an advisory, so the state is **unknown** for this run. The tracking issue was left untouched."
+            case "$state" in
+              live)
+                echo "Live findings needing attention: $live"
+                ;;
+              clean)
+                echo "No live advisories."
+                ;;
+              error)
+                echo "cargo-deny exited $deny_status without reporting an advisory, so the state is **unknown** for this run. The tracking issue was left untouched."
+                ;;
+            esac
+            echo
+            echo "Accepted exceptions (see \`deny.toml\` for why each one is there): $accepted"
+            if [ "$accepted" -gt 0 ]; then
               echo
+              grep -oE 'id = "RUSTSEC-[0-9-]+"' advisories.txt \
+                | sed -E 's/id = "(.+)"/- [\1](https:\/\/rustsec.org\/advisories\/\1)/'
             fi
+            echo
+            echo '<details><summary>full cargo-deny output</summary>'
+            echo
             echo '```'
             cat advisories.txt
             echo '```'
+            echo
+            echo '</details>'
           } | tee report.md >> "$GITHUB_STEP_SUMMARY"
 
       # Skipped when the state is unknown — a run that checked nothing must not
