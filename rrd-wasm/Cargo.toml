@@ -19,7 +19,11 @@ crate-type = ["cdylib", "rlib"]
 re_log_encoding = { version = "0.33", features = ["decoder"] }
 re_chunk = "0.33"
 re_log_types = "0.33"
-re_sdk_types = "0.33"
+# `default-features = false` drops the default `ecolor` feature. This crate
+# decodes scalars and text and never touches a colour type. It matters beyond
+# this crate: features unify per build, so leaving it on here would pull ecolor
+# back into every `--workspace` build even though `orts` opts out.
+re_sdk_types = { version = "0.33", default-features = false }
 # Required for wasm32 target (getrandom needs js feature for browser)
 getrandom = { version = "0.3", features = ["wasm_js"] }
 

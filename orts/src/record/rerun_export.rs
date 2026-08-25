@@ -19,7 +19,7 @@ pub fn save_as_rrd(
     app_id: &str,
     path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let rec = rerun::RecordingStreamBuilder::new(app_id).save(path)?;
+    let rec = re_sdk::RecordingStreamBuilder::new(app_id).save(path)?;
 
     for entity_path in recording.entity_paths() {
         let store = recording.entity(entity_path).unwrap();
@@ -30,7 +30,10 @@ pub fn save_as_rrd(
             let fields = recording.lookup_component_fields(comp_name);
             for (k, field) in fields.iter().enumerate() {
                 if let Some(&val) = scalars.get(k) {
-                    rec.log_static(format!("{rr_path}/{field}"), &rerun::Scalars::new([val]))?;
+                    rec.log_static(
+                        format!("{rr_path}/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new([val]),
+                    )?;
                 }
             }
         }
@@ -62,7 +65,10 @@ pub fn save_as_rrd(
                         let fields = recording.lookup_component_fields(comp_name);
                         for (k, field) in fields.iter().enumerate() {
                             if let Some(&val) = row.get(k) {
-                                rec.log(format!("{rr_path}/{field}"), &rerun::Scalars::new([val]))?;
+                                rec.log(
+                                    format!("{rr_path}/{field}"),
+                                    &re_sdk_types::archetypes::Scalars::new([val]),
+                                )?;
                             }
                         }
                     }
@@ -77,7 +83,7 @@ pub fn save_as_rrd(
                 {
                     rec.log(
                         rr_path.clone(),
-                        &rerun::Points3D::new([[pos[0], pos[1], pos[2]]]),
+                        &re_sdk_types::archetypes::Points3D::new([[pos[0], pos[1], pos[2]]]),
                     )?;
                 }
             }
@@ -119,7 +125,7 @@ pub fn save_as_rrd(
             let schema_json = serde_json::to_string(&schema_entries).unwrap();
             rec.log_static(
                 format!("meta/schema/{rr_path}"),
-                &rerun::TextDocument::new(schema_json),
+                &re_sdk_types::archetypes::TextDocument::new(schema_json),
             )?;
         }
     }
@@ -127,36 +133,48 @@ pub fn save_as_rrd(
     // Log simulation metadata as static data under meta/sim/
     let meta = &recording.metadata;
     if let Some(epoch_jd) = meta.epoch_jd {
-        rec.log_static("meta/sim/epoch_jd", &rerun::Scalars::new([epoch_jd]))?;
+        rec.log_static(
+            "meta/sim/epoch_jd",
+            &re_sdk_types::archetypes::Scalars::new([epoch_jd]),
+        )?;
     }
     if let Some(mu) = meta.mu {
-        rec.log_static("meta/sim/mu", &rerun::Scalars::new([mu]))?;
+        rec.log_static("meta/sim/mu", &re_sdk_types::archetypes::Scalars::new([mu]))?;
     }
     if let Some(body_radius) = meta.body_radius {
-        rec.log_static("meta/sim/body_radius", &rerun::Scalars::new([body_radius]))?;
+        rec.log_static(
+            "meta/sim/body_radius",
+            &re_sdk_types::archetypes::Scalars::new([body_radius]),
+        )?;
     }
     if let Some(altitude) = meta.altitude {
-        rec.log_static("meta/sim/altitude", &rerun::Scalars::new([altitude]))?;
+        rec.log_static(
+            "meta/sim/altitude",
+            &re_sdk_types::archetypes::Scalars::new([altitude]),
+        )?;
     }
     if let Some(period) = meta.period {
-        rec.log_static("meta/sim/period", &rerun::Scalars::new([period]))?;
+        rec.log_static(
+            "meta/sim/period",
+            &re_sdk_types::archetypes::Scalars::new([period]),
+        )?;
     }
     if let Some(ref name) = meta.body_name {
         rec.log_static(
             "meta/sim/body_name",
-            &rerun::TextDocument::new(name.as_str()),
+            &re_sdk_types::archetypes::TextDocument::new(name.as_str()),
         )?;
     }
     if let Some(ref iso) = meta.epoch_iso {
         rec.log_static(
             "meta/sim/epoch_iso",
-            &rerun::TextDocument::new(iso.as_str()),
+            &re_sdk_types::archetypes::TextDocument::new(iso.as_str()),
         )?;
     }
     if let Some(ref desc) = meta.orbit_description {
         rec.log_static(
             "meta/sim/orbit_description",
-            &rerun::TextDocument::new(desc.as_str()),
+            &re_sdk_types::archetypes::TextDocument::new(desc.as_str()),
         )?;
     }
 
@@ -191,9 +209,9 @@ pub struct RrdData {
 
 /// Load orbital data and metadata from an .rrd file.
 pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> {
-    use rerun::external::re_log_encoding::DecoderApp;
-    use rerun::external::re_log_types::LogMsg;
-    use rerun::log::Chunk;
+    use re_chunk::Chunk;
+    use re_log_encoding::DecoderApp;
+    use re_log_types::LogMsg;
 
     let file = std::fs::File::open(path)?;
     let reader = std::io::BufReader::new(file);
@@ -224,8 +242,8 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                 let comp_name = comp_id.as_str();
                 if comp_name.contains("Scalar") || comp_name.contains("scalars") {
                     for row_idx in 0..n {
-                        let batch =
-                            chunk.component_batch::<rerun::components::Scalar>(comp_id, row_idx);
+                        let batch = chunk
+                            .component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx);
                         if let Some(Ok(scalar_vec)) = batch
                             && let Some(s) = scalar_vec.first()
                         {
@@ -235,8 +253,8 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                 }
                 if comp_name.contains("Text") || comp_name.contains("text") {
                     for row_idx in 0..n {
-                        let batch =
-                            chunk.component_batch::<rerun::components::Text>(comp_id, row_idx);
+                        let batch = chunk
+                            .component_batch::<re_sdk_types::components::Text>(comp_id, row_idx);
                         if let Some(Ok(text_vec)) = batch
                             && let Some(t) = text_vec.first()
                         {
@@ -263,7 +281,7 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
             if comp_name.contains("Scalar") || comp_name.contains("scalars") {
                 for (row_idx, &t) in times.iter().enumerate() {
                     let batch =
-                        chunk.component_batch::<rerun::components::Scalar>(comp_id, row_idx);
+                        chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx);
                     if let Some(Ok(scalar_vec)) = batch {
                         for s in scalar_vec {
                             scalars
@@ -376,9 +394,9 @@ pub fn load_from_rrd(path: &str) -> Result<Vec<RrdRow>, Box<dyn std::error::Erro
 /// This enables `orts convert` to produce the same CSV output as `orts run`.
 pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Error>> {
     use crate::record::recording::ComponentColumn;
-    use rerun::external::re_log_encoding::DecoderApp;
-    use rerun::external::re_log_types::LogMsg;
-    use rerun::log::Chunk;
+    use re_chunk::Chunk;
+    use re_log_encoding::DecoderApp;
+    use re_log_types::LogMsg;
     use std::borrow::Cow;
     use std::collections::BTreeSet;
 
@@ -407,8 +425,8 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
                 let comp_name = comp_id.as_str();
                 if comp_name.contains("Scalar") || comp_name.contains("scalars") {
                     for row_idx in 0..n {
-                        let batch =
-                            chunk.component_batch::<rerun::components::Scalar>(comp_id, row_idx);
+                        let batch = chunk
+                            .component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx);
                         if let Some(Ok(scalar_vec)) = batch
                             && let Some(s) = scalar_vec.first()
                         {
@@ -418,8 +436,8 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
                 }
                 if comp_name.contains("Text") || comp_name.contains("text") {
                     for row_idx in 0..n {
-                        let batch =
-                            chunk.component_batch::<rerun::components::Text>(comp_id, row_idx);
+                        let batch = chunk
+                            .component_batch::<re_sdk_types::components::Text>(comp_id, row_idx);
                         if let Some(Ok(text_vec)) = batch
                             && let Some(t) = text_vec.first()
                         {
@@ -446,7 +464,7 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
             if comp_name.contains("Scalar") || comp_name.contains("scalars") {
                 for (row_idx, &t) in times.iter().enumerate() {
                     let batch =
-                        chunk.component_batch::<rerun::components::Scalar>(comp_id, row_idx);
+                        chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx);
                     if let Some(Ok(scalar_vec)) = batch {
                         for s in scalar_vec {
                             scalars

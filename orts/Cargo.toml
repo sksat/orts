@@ -23,7 +23,11 @@ include = [
 
 [dependencies]
 nalgebra.workspace = true
-rerun.workspace = true
+re_sdk.workspace = true
+re_sdk_types.workspace = true
+re_log_encoding.workspace = true
+re_chunk.workspace = true
+re_log_types.workspace = true
 arika.workspace = true
 utsuroi.workspace = true
 tobari.workspace = true
