@@ -50,7 +50,15 @@ axum = { version = "0.8", features = ["ws"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 futures-util = "0.3"
-rerun = { version = "0.33", default-features = false, features = ["sdk"] }
+# rerun subcrates instead of the `rerun` umbrella: the umbrella re-exports
+# re_entity_db / re_capabilities with no #[cfg], so even features = ["sdk"]
+# drags in re_query, re_chunk_store, re_video, image, re_analytics...
+# Same approach rrd-wasm already takes.
+re_sdk = "0.33"
+re_sdk_types = "0.33"
+re_log_encoding = { version = "0.33", features = ["encoder", "decoder"] }
+re_chunk = "0.33"
+re_log_types = "0.33"
 ureq = "3"
 image = { version = "0.25", default-features = false, features = ["jpeg", "tiff"] }
 toml = "1.0"
