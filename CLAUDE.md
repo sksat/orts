@@ -40,7 +40,6 @@ orts is a numerical computation and optimization platform for spacecraft simulat
 
 - Verify technical claims (CHANGELOG, docs, etc.) against the implementation and tests before writing them down
 - In Japanese documents, keep technical terms in English (crate, workspace, commit) — no katakana transliteration
-- Technical terms and crate / package names stay lowercase even at the start of a sentence (crate, orts, arika — never Crate or Orts)
 - Use a negation ("not A, but B") only where it records a rejected alternative or an actual failure mode; decorative contrasts read as filler
 
 ## Languages
