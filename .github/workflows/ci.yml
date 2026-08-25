@@ -299,8 +299,11 @@ jobs:
       # the orts lib test unit with `rerun` on) but stated explicitly so the
       # step cannot silently degrade into matching zero tests if orts-cli ever
       # stops enabling the feature.
+      # Quoted: the trailing `::` of the test filter would otherwise be read
+      # as a YAML mapping separator (a `:` at end-of-line closes a key), which
+      # makes the whole workflow file fail to parse.
       - name: Test (orts rerun export)
-        run: cargo test --locked --workspace --features orts/rerun --lib record::rerun_export::
+        run: "cargo test --locked --workspace --features orts/rerun --lib record::rerun_export::"
 
       # The SGP4 propagation tests (Vallado verification vectors) live behind
       # arika's optional `sgp4` feature; run them explicitly so they execute
