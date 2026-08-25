@@ -4,59 +4,59 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-orts is a numerical computation and optimization platform primarily for orbital mechanics.
+orts is a numerical computation and optimization platform for spacecraft simulation — orbital and attitude dynamics.
 
-- 設計意図: [DESIGN.md](DESIGN.md)(日本語)/ 全体構造: [ARCHITECTURE.md](ARCHITECTURE.md)
-- crate / package の一覧と役割: [README.md](README.md) の Project Structure の表を参照
+- Design doc: [DESIGN.md](DESIGN.md) (Japanese) / top-level structure: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Crate / package inventory and roles: see the Project Structure tables in [README.md](README.md)
 
 ## Languages
 
-- **Rust**: コアシミュレーションプラットフォーム(Cargo workspace)
-- **TypeScript/React**: リアルタイムビューアなど(pnpm workspace)
-- **Python**: examples/ や tools/ の補助スクリプト。環境は uv で管理する
+- **Rust**: core simulation platform (Cargo workspace)
+- **TypeScript/React**: real-time viewer and related packages (pnpm workspace)
+- **Python**: helper scripts under examples/ and tools/, managed with uv
 
 ## Build & Test
 
-- `plugin-sdk/examples/` は独立した workspace(`cargo component build`, target は `wasm32-wasip1`)。`cargo test --workspace` には含まれない
-- 一部の crate は no_std / wasm 向けの check が CI にある(no_std の feature 構成ごとの clippy は lint job、wasm32 は viewer-build など wasm-pack を使う job)。何をどう check するかは `.github/workflows/ci.yml` が正。該当 crate を変更したら同じ check をローカルでも回す
+- `plugin-sdk/examples/` is a standalone workspace (`cargo component build`, target `wasm32-wasip1`); `cargo test --workspace` does not cover it
+- Some crates have no_std / wasm checks in CI (per-feature clippy in the lint job for no_std; wasm32 via the wasm-pack jobs such as viewer-build). `.github/workflows/ci.yml` is the source of truth — when changing such a crate, run the same checks locally
 
 ## Footguns
 
-- `cargo test -p orts-cli` は `viewer/src/protocol/generated/` の TypeScript bindings を再生成する(`TS_RS_EXPORT_DIR` @ `.cargo/config.toml`)。CI が diff を enforce するので、protocol 型を変更したら再生成して commit する
-- `.cargo/config.toml` が mold + clang linker を設定している。グローバルな `RUSTFLAGS` が非空だとこの設定は黙って無効化される
-- リリース手順は [RELEASING.md](RELEASING.md) を参照
+- `cargo test -p orts-cli` regenerates the TypeScript bindings in `viewer/src/protocol/generated/` (`TS_RS_EXPORT_DIR` in `.cargo/config.toml`), and CI enforces a clean diff — after changing protocol types, regenerate and commit
+- `.cargo/config.toml` configures the mold + clang linker; a non-empty global `RUSTFLAGS` silently disables it
+- Release process: see [RELEASING.md](RELEASING.md)
 
 ## Development Workflow
 
-- アーキテクチャレベルの変更は DESIGN.md を先に更新してから実装する
-- 設計判断を伴う実装(新しい module 構成、trait / public API の設計、設計の選択肢が複数あるとき)は、着手前に smart-friend で独立レビューにかけ、レビューが通るまで設計を見直す
-- TDD-first: 統合の前にユニットテストで挙動を検証する。GMAT / Orekit を参照実装とした E2E 検証(fixture 生成は tools/)
-- commit 前に `cargo fmt` / `cargo clippy --workspace -- -D warnings` / 関連テスト / `pnpm lint` を通す
-- ロジック・API・設計に触れる変更は commit 前に code-review skill で外部レビューを受ける(typo 修正や機械的な置換だけの commit は省略してよい)。指摘対応後は re-review し、通ってから commit する
-- push 後は CI 結果の確認までを一連の作業とする
-- WebSocket 通信・データフロー・UI 統合など mock しにくい部分を変更したら Playwright E2E も実行する(Playwright は CLI を使う。MCP ツールではない)
+- For architecture-level changes, update DESIGN.md first, then implement
+- Before starting implementation, get a smart-friend review of the plan
+- TDD-first: verify behavior with unit tests before integrating. Validate E2E against GMAT / Orekit as reference implementations (fixture generators live in tools/)
+- Before committing, run `cargo fmt` / `cargo clippy --workspace -- -D warnings` / the relevant tests / `pnpm lint`
+- Changes touching logic, APIs, or design get an external review via the code-review skill before commit (typo fixes and mechanical replacements may skip it); after addressing findings, re-review until it passes
+- After pushing, checking the CI result is part of the task
+- When changing parts that are hard to mock (WebSocket communication, data flow, UI integration), also run the Playwright E2E tests (use the Playwright CLI, not MCP tools)
 
 ## Testing Rules
 
-- テストは「何を検証したいか」を明確にする。トートロジーになっているテストは書かない
-- 不具合を見つけたら、まず再現テストを書いてから修正する(regression 防止)
-- テスト失敗やバグを「既存の問題」「flaky」と判断する場合は、再現確認などの根拠を示す
-- テストやテストモジュールの削除は、事前に対象・理由・カバー状況を列挙して user のレビューを受ける。依存関係の問題は削除ではなく依存の追加で解決する
-- 挙動を保存するリファクタでは characterization test で既存挙動を固定する。境界値と非有限値(`NaN`, `±∞`)も含める
+- Make every test state what it verifies; don't write tautological tests
+- When you find a bug, write a reproducing test first, then fix it (regression prevention)
+- Before attributing a failure to a "pre-existing issue" or "flakiness", show evidence such as a reproduction
+- To delete tests or test modules, first enumerate the targets, reasons, and coverage status for user review. Solve dependency problems by adding dependencies, not by deleting tests
+- For behavior-preserving refactors, pin the existing behavior with characterization tests, including boundary and non-finite inputs (`NaN`, `±∞`)
 
 ## Working Rules
 
-- 重いコマンド(`cargo test --workspace` など)はフルログをファイルに保存してから必要箇所を抽出する。最初から `| tail` で切り詰めない
-- サイズの大きいバイナリ生成物(gif、画像など)は Claude 自身で Read せず、人間の目視確認に委ねる。大きいバイナリファイルは commit しない
-- 命名は実態・意味に忠実にする(真値かノイズ入りか、暗黙のデフォルトの有無などが名前から読み取れるように)
-- 対応を先送りする判断をしたら TODO コメントを残す
-- マジックナンバーは定数として定義するか、根拠をコメントで書く
+- For heavy commands (e.g. `cargo test --workspace`), save the full log to a file and extract what you need from it; don't truncate with `| tail` from the start
+- Don't Read large binary artifacts (gifs, images, etc.) yourself — leave judging them to human eyes. Don't commit large binary files
+- Name things after what they actually are (e.g. whether a value is ground truth or noisy, whether an implicit default exists — make it readable from the name)
+- Leave a TODO comment when deferring work
+- Define magic numbers as constants, or comment their rationale
 
 ## Documentation
 
-- 技術的な主張(CHANGELOG、docs など)は実装・テストと照合して裏取りしてから書く
-- 日本語文書でも技術用語は英語表記のまま使う(crate, workspace, commit)。カタカナ化しない
+- Verify technical claims (CHANGELOG, docs, etc.) against the implementation and tests before writing them down
+- In Japanese documents, keep technical terms in English (crate, workspace, commit) — no katakana transliteration
 
 ## Dependencies
 
-- 新しいライブラリを追加する際は、最新の安定バージョンを調べてから指定する。古いバージョンを指定しない
+- When adding a new library, look up the latest stable version first; don't pin an old version
