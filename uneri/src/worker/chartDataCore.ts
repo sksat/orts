@@ -191,6 +191,11 @@ export class ChartDataCore {
         // is what keeps the rows that arrive while it runs.
         this.ingestQueue = [];
         this.ingestRetryCount = 0;
+        // The window bounds follow the replacement dataset from now on. Set
+        // here rather than when the rebuild finishes, so an `ingest` that
+        // arrives while it runs raises them instead of being rolled back.
+        this.latestT = msg.latestT;
+        this.earliestT = msg.rows.length > 0 && msg.rows[0][0] != null ? msg.rows[0][0] : Infinity;
         this.datasetEpoch++;
         this.queryEpoch++;
         // A newer full replacement supersedes an older one, including one that
@@ -408,9 +413,6 @@ export class ChartDataCore {
     this.pendingRebuild = null;
     this.rebuildRetryCount = 0;
     this.hasData = rebuild.rows.length > 0;
-    this.latestT = rebuild.latestT;
-    this.earliestT =
-      rebuild.rows.length > 0 && rebuild.rows[0][0] != null ? rebuild.rows[0][0] : Infinity;
     this.compactCooldown = COMPACT_COOLDOWN_AFTER_REBUILD;
     this.coldRefreshNeeded = true;
     this.coldSnapshot = null;
@@ -437,8 +439,6 @@ export class ChartDataCore {
     // newer rows into the table it is about to delete. They stay queued and go
     // in on the next tick, after the replacement.
     if (this.queuedRebuild != null) return;
-
-    const tableSchema = this.toTableSchema(this.schema);
 
     // 1. Flush ingest queue (atomically: a failed flush inserts nothing, so
     //    re-queuing the rows cannot duplicate them).
@@ -473,7 +473,12 @@ export class ChartDataCore {
     }
 
     // 2. Cold/hot query cycle
-    if (!this.hasData) return;
+    if (!this.hasData || this.disposed || !this.schema) return;
+    // The flush awaited DuckDB, so re-read everything the query depends on:
+    // a schema swap or a new replacement may have arrived in between.
+    if (this.queuedRebuild != null || this.pendingRebuild != null) return;
+    const tableSchema = this.toTableSchema(this.schema);
+    const epoch = this.queryEpoch;
 
     this.ticksSinceCold++;
     // From the same object the query is built with, so a mid-flight schema
@@ -492,8 +497,6 @@ export class ChartDataCore {
       this.coldRefreshNeeded ||
       this.ticksSinceCold >= effectiveColdEveryN ||
       (this.hotBuffer != null && this.hotBuffer.t.length > this.hotRowBudget);
-
-    const epoch = this.queryEpoch;
 
     if (needsCold) {
       // COLD PATH: full downsampled query

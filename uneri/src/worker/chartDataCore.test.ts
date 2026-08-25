@@ -205,6 +205,53 @@ describe("ChartDataCore rebuild", () => {
     expect(conn.tValuesOf("orbit")).toEqual([20, 21, 22]);
   });
 
+  it("queries with the new schema when it arrives during the insert flush", async () => {
+    const { core, conn } = setup();
+    await init(core);
+
+    // The flush of the tick is in flight when the schema changes: the query
+    // that follows it, in the same tick, must already use the new one.
+    core.handle({ type: "ingest", rows: rows(0, 1), latestT: 1 });
+    conn.stallOn((sql) => sql.startsWith("INSERT"));
+    const tick = core.tickOnce();
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    core.handle({ type: "update-schema", schema: MOON_SCHEMA });
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await tick;
+    await core.whenIdle();
+
+    expect(conn.queries.some((q) => q.includes("r - 6378.137"))).toBe(false);
+  });
+
+  it("keeps the window at rows that arrive while a rebuild runs", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "configure", timeRange: 50, maxPoints: 2000 });
+
+    conn.stallOn((sql) => sql.startsWith("INSERT"));
+    core.handle({ type: "rebuild", rows: rows(0, 1), latestT: 1 });
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    // Streaming has already moved past the rebuild's own latest t.
+    core.handle({ type: "ingest", rows: rows(100), latestT: 100 });
+
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await core.whenIdle();
+    const from = conn.queries.length;
+    await core.tickOnce();
+
+    // The 50 s window is anchored at t=100, not rolled back to the rebuild's
+    // t=1 (which would query `t >= -49` and re-show the whole dataset).
+    const queried = conn.queries.slice(from).filter((q) => q.includes("t >= "));
+    expect(queried.length).toBeGreaterThan(0);
+    expect(queried.every((q) => q.includes("t >= 50"))).toBe(true);
+  });
+
   it("does not query the table while a rebuild transaction is open", async () => {
     const { core, conn } = setup();
     await init(core);

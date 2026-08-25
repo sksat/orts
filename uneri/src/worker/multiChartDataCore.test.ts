@@ -150,6 +150,54 @@ describe("MultiChartDataCore", () => {
     expect(conn.tValuesOf(TABLE)).toEqual([20, 21, 22]);
   });
 
+  it("keeps the window at rows that arrive while a rebuild runs", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "multi-configure", timeRange: 50, maxPoints: 2000 });
+
+    conn.stallOn((sql) => sql.startsWith("INSERT"));
+    core.handle({ type: "multi-rebuild", satelliteId: SAT_ID, rows: rows(0, 1), latestT: 1 });
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    // Streaming has already moved past the rebuild's own latest t.
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(100), latestT: 100 });
+
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await core.whenIdle();
+    const from = conn.queries.length;
+    await core.tickOnce();
+
+    const queried = conn.queries.slice(from).filter((q) => q.includes("t >= "));
+    expect(queried.length).toBeGreaterThan(0);
+    expect(queried.every((q) => q.includes("t >= 50"))).toBe(true);
+  });
+
+  it("does not broadcast a payload for a window that changed mid-query", async () => {
+    const { core, conn, posted } = setup();
+    await init(core);
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+    expect(broadcastMetricCounts(posted)).toEqual([1]);
+
+    // The window changes while the per-satellite SELECT is in flight.
+    conn.stallOn((sql) => sql.includes("r - 6378.137"));
+    const tick = core.tickOnce();
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    core.handle({ type: "multi-configure", timeRange: 50, maxPoints: 2000 });
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await tick;
+
+    // The stale payload is dropped; the next tick queries the new window.
+    expect(broadcastMetricCounts(posted)).toEqual([1]);
+    await core.tickOnce();
+    expect(broadcastMetricCounts(posted)).toEqual([1, 1]);
+  });
+
   it("leaves the table untouched when the rebuild fails, and retries it", async () => {
     const { core, conn } = setup();
     await init(core);

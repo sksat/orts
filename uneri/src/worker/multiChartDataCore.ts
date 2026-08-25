@@ -100,8 +100,13 @@ export class MultiChartDataCore {
    * a failed flush must drop them instead of re-queuing them on top.
    */
   private readonly datasetEpochs = new Map<string, number>();
-  /** Bumped on every base-schema change, so a tick can drop a stale payload. */
-  private schemaEpoch = 0;
+  /**
+   * Bumped whenever a running query stops describing what should be broadcast:
+   * base-schema change, window or series-configuration change, or a dataset
+   * replacement. A query that started before the bump must not post its
+   * answer.
+   */
+  private queryEpoch = 0;
   /** Per-satellite latestT (for unified tMin computation). */
   private readonly latestTs = new Map<string, number>();
 
@@ -132,6 +137,9 @@ export class MultiChartDataCore {
       }
 
       case "multi-configure": {
+        if (msg.timeRange !== this.timeRange || msg.maxPoints !== this.maxPoints) {
+          this.queryEpoch++;
+        }
         this.timeRange = msg.timeRange;
         this.maxPoints = msg.maxPoints;
         break;
@@ -140,6 +148,7 @@ export class MultiChartDataCore {
       case "multi-update-configs": {
         this.satelliteConfigs = msg.satelliteConfigs;
         this.metricNames = msg.metricNames;
+        this.queryEpoch++;
         break;
       }
 
@@ -174,6 +183,11 @@ export class MultiChartDataCore {
         this.ingestRetryCounts.delete(satId);
         const epoch = (this.datasetEpochs.get(satId) ?? 0) + 1;
         this.datasetEpochs.set(satId, epoch);
+        this.queryEpoch++;
+        // The window bounds follow the replacement dataset from now on. Set
+        // here rather than when the rebuild finishes, so a `multi-ingest` that
+        // arrives while it runs raises them instead of being rolled back.
+        this.latestTs.set(satId, msg.latestT);
         // A newer full replacement supersedes an older one, including one that
         // is waiting for a retry: only the newest is ever applied.
         this.pendingRebuilds.delete(satId);
@@ -274,7 +288,7 @@ export class MultiChartDataCore {
     const prev = this.baseSchema;
     this.baseSchema = next;
     if (prev == null) return;
-    this.schemaEpoch++;
+    this.queryEpoch++;
     if (sameColumns(prev, next)) return; // derived-only change: rows stay valid
 
     // Queued rows came from the previous schema's toRow, so their tuples do
@@ -368,7 +382,6 @@ export class MultiChartDataCore {
       // A rebuild is a full replacement, so an empty one must empty the series.
       this.hasData.delete(satId);
     }
-    this.latestTs.set(satId, rebuild.latestT);
     this.compactCooldowns.set(satId, COMPACT_COOLDOWN_AFTER_REBUILD);
 
     // The tick loop stops querying once no satellite has data, so the
@@ -427,7 +440,9 @@ export class MultiChartDataCore {
     this.tickCount++;
     if (this.hasData.size === 0 || this.tickCount % this.queryEveryN !== 0) return;
 
-    const schemaEpoch = this.schemaEpoch;
+    // The flush awaited DuckDB, so read the generation after it: a schema,
+    // window or dataset change may have arrived in between.
+    const epoch = this.queryEpoch;
 
     try {
       const perSatData = new Map<string, ChartDataMap>();
@@ -455,9 +470,10 @@ export class MultiChartDataCore {
         }
       }
 
-      if (this.schemaEpoch !== schemaEpoch) {
-        // The base schema changed while these queries ran: the derived values
-        // describe the old one. The next tick re-queries.
+      if (this.queryEpoch !== epoch) {
+        // The schema, window, series configuration or a dataset changed while
+        // these queries ran: the payload describes the old one. The next tick
+        // re-queries.
         return;
       }
       this.sendMultiChartData(perSatData);
