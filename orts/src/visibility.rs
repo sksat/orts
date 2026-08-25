@@ -449,6 +449,69 @@ mod monitor_tests {
         assert_eq!(w.max_elevation_time, 0.0);
     }
 
+    // Characterization snapshots
+    //
+    // The tests above bound the pass geometry loosely (`los > 3000 && < 4500`),
+    // which a changed ECI→ECEF rotation could still satisfy. These pin the
+    // actual numbers of both frames' `EarthFixedTransform` paths — the `Gcrs`
+    // monitor path had no coverage at all.
+    //
+    // The 1e-12 relative tolerance is far tighter than any plausible change to
+    // the rotation chain (a mis-threaded epoch moves the LOS by seconds) while
+    // staying above last-ULP differences between platform libm implementations.
+
+    /// Samples the `pass_ends_as_earth_rotates_away` geometry and returns
+    /// `(los, max_elevation)` for the single detected window.
+    fn sampled_pass<F: EarthFixedTransform>(eop: F::EopStorage, pos: Vec3<F>) -> (f64, f64) {
+        let station = equator_station("gs0", 0.0);
+        let mut monitor = VisibilityMonitor::<F>::new(epoch(), eop, vec![station]);
+        let mut t = 0.0;
+        while t <= 21_600.0 {
+            monitor.update(t, &pos);
+            t += 60.0;
+        }
+        let contacts = monitor.finish();
+        assert_eq!(contacts.len(), 1);
+        let w = &contacts[0].window;
+        (w.los, w.max_elevation)
+    }
+
+    #[track_caller]
+    fn assert_close(got: f64, want: f64, what: &str) {
+        assert!(
+            (got - want).abs() <= 1e-12 * want.abs(),
+            "{what} changed: got {got}, want {want}"
+        );
+    }
+
+    #[test]
+    fn simple_eci_pass_snapshot() {
+        let geo = equator_station("gs0", 0.0).geodetic;
+        let (los, max_elevation) =
+            sampled_pass::<frame::SimpleEci>((), eci_at_zenith(geo, 400.0, &epoch()));
+        assert_close(los, 3681.1574873563354, "SimpleEci LOS");
+        assert_close(
+            max_elevation,
+            core::f64::consts::FRAC_PI_2,
+            "SimpleEci peak elevation",
+        );
+    }
+
+    #[test]
+    fn gcrs_pass_snapshot() {
+        // Same inertial position, propagated through the full IAU 2006 chain
+        // instead of the ERA-only rotation: the pass differs by the
+        // frame-bias/precession offset.
+        let geo = equator_station("gs0", 0.0).geodetic;
+        let raw = eci_at_zenith(geo, 400.0, &epoch()).into_inner();
+        let (los, max_elevation) = sampled_pass::<frame::Gcrs>(
+            crate::test_support::zero_eop(),
+            Vec3::<frame::Gcrs>::from_raw(raw),
+        );
+        assert_close(los, 3681.1588250119635, "Gcrs LOS");
+        assert_close(max_elevation, 1.5612210123114512, "Gcrs peak elevation");
+    }
+
     #[test]
     fn only_the_station_under_the_satellite_sees_it() {
         let near = equator_station("near", 0.0);
