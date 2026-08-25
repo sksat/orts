@@ -18,8 +18,9 @@
 //!   constructors that consume the [`eop`] traits.
 //! - [`transform`] — per-frame Earth rotation pole
 //!   ([`EarthRotationPole`](transform::EarthRotationPole)) and ECI ↔ ECEF
-//!   transform ([`EarthFixedTransform`](transform::EarthFixedTransform)) for
-//!   `SimpleEci` / `Gcrs`, used by frame-aware force models
+//!   transform ([`EarthFixedTransform`](transform::EarthFixedTransform), whose
+//!   inputs are bundled as [`EarthOrientation`](transform::EarthOrientation))
+//!   for `SimpleEci` / `Gcrs`, used by frame-aware force models
 
 pub mod ellipsoid;
 pub mod eop;
@@ -37,7 +38,7 @@ pub use eop::GcrsEopStorage;
 pub use eop::PositionEop;
 pub use geodetic::{Geodetic, geodetic_altitude};
 pub use topocentric::{LookAngles, TopocentricSite};
-pub use transform::{EarthFixedTransform, EarthRotationPole};
+pub use transform::{EarthFixedTransform, EarthOrientation, EarthRotationPole};
 
 // Physical constants
 

@@ -10,7 +10,7 @@ use arika::earth::{Geodetic, TopocentricSite};
 use arika::epoch::{Epoch, Utc};
 use arika::frame::Vec3;
 
-use arika::earth::EarthFixedTransform;
+use arika::earth::{EarthFixedTransform, EarthOrientation};
 
 /// A ground station with an elevation mask.
 #[derive(Debug, Clone)]
@@ -206,7 +206,7 @@ impl<F: EarthFixedTransform> VisibilityMonitor<F> {
     /// satellite's ECI position [km]. `t` must be increasing.
     pub fn update(&mut self, t: f64, position: &Vec3<F>) {
         let utc = self.epoch.add_si_seconds(t);
-        let ecef = F::fixed_to_inertial(&utc, &self.eop)
+        let ecef = F::fixed_to_inertial(&EarthOrientation::new(utc, &self.eop))
             .inverse()
             .transform(position);
         for s in &mut self.stations {
@@ -388,7 +388,7 @@ mod monitor_tests {
             ..geo
         };
         let ecef: Vec3<frame::SimpleEcef> = above.to_ecef();
-        frame::SimpleEci::fixed_to_inertial(utc, &()).transform(&ecef)
+        frame::SimpleEci::fixed_to_inertial(&EarthOrientation::simple(*utc)).transform(&ecef)
     }
 
     #[test]

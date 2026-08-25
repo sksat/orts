@@ -1,0 +1,18 @@
+error[E0599]: the associated function or constant `simple` exists for struct `EarthOrientation<'_, arika::frame::Gcrs>`, but its trait bounds were not satisfied
+  --> tests/trybuild/earth_orientation_simple_for_gcrs.rs:14:40
+   |
+14 |     let _o = EarthOrientation::<Gcrs>::simple(utc);
+   |                                        ^^^^^^ associated function or constant cannot be called on `EarthOrientation<'_, arika::frame::Gcrs>` due to unsatisfied trait bounds
+   |
+  ::: src/frame.rs
+   |
+   | pub struct Gcrs;
+   | --------------- doesn't satisfy `<_ as EarthFixedTransform>::EopStorage = ()`
+   |
+note: if you're trying to build a new `EarthOrientation<'_, arika::frame::Gcrs>`, consider using `EarthOrientation::<'a, F>::new` which returns `EarthOrientation<'_, _>`
+  --> src/earth/transform.rs
+   |
+   |     pub fn new(utc: Epoch<Utc>, eop: &'a F::EopStorage) -> Self {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: the following trait bounds were not satisfied:
+           `<arika::frame::Gcrs as EarthFixedTransform>::EopStorage = ()`

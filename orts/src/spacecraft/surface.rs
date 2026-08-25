@@ -1,8 +1,8 @@
 use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
 use crate::perturbations::OMEGA_EARTH;
 use arika::body::KnownBody;
-use arika::earth::EarthFixedTransform;
 use arika::earth::R as R_EARTH;
+use arika::earth::{EarthFixedTransform, EarthOrientation};
 use arika::epoch::Epoch;
 use arika::frame;
 use nalgebra::Vector3;
@@ -262,7 +262,7 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
         // the ERA-only rotation for `SimpleEci` (identical to the legacy
         // `Epoch::gmst`, which is the same ERA formula) and the full IAU 2006
         // chain for `Gcrs`.
-        let geodetic = F::to_geodetic(&pos_vec, utc, &self.eop);
+        let geodetic = F::to_geodetic(&pos_vec, &EarthOrientation::new(*utc, &self.eop));
         let rho = self.atmosphere.density(&AtmosphereInput { geodetic, utc });
         if rho == 0.0 {
             return ExternalLoads::zeros();
@@ -701,8 +701,7 @@ mod tests {
         let v_rel = vel - (pole * OMEGA_EARTH).cross(&pos);
         let geodetic = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
             &Vec3::from_raw(pos),
-            &epoch,
-            &zero_eop(),
+            &EarthOrientation::new(epoch, &zero_eop()),
         );
         let rho = Exponential.density(&AtmosphereInput {
             geodetic,
