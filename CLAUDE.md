@@ -1,69 +1,58 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
-orts is a numerical computation and optimization platform primarily for orbital mechanics. The design document is [DESIGN.md](DESIGN.md) (written in Japanese).
+orts is a numerical computation and optimization platform for spacecraft simulation — orbital and attitude dynamics.
 
-## Languages and Structure
+- Design doc (why): [DESIGN.md](DESIGN.md)
+- Architecture map (what): [ARCHITECTURE.md](ARCHITECTURE.md)
+- crate / package inventory and roles: see the Project Structure tables in [README.md](README.md)
 
-- **Rust**: Core simulation platform — coordinate transformations, numerical integration, orbital mechanics solvers, CLI interface
-- **TypeScript/React**: Web-based real-time viewer for simulation visualization (React + @react-three/fiber + Vite)
+## Development Policy
 
-Rust libraries are split by responsibility (e.g., coordinate transforms, numerical integration) with independent test suites per module.
+- Before starting implementation, get a smart-friend review of the plan
+- TDD-first: verify behavior with unit tests before integrating. For numerical-dynamics changes, validate against reference implementations such as Orekit (fixture generators live in tools/)
+- Keep responsibilities strictly separated across crates and modules — that separation is what enables parallel development and independent testing
+- For architecture-level changes, update DESIGN.md first, then implement; keep ARCHITECTURE.md (en/ja) in sync when the structure changes
+- Before committing, run `cargo fmt` / `cargo clippy --workspace -- -D warnings` / the relevant tests / `pnpm lint`
+- Changes touching logic, APIs, or design get an external review via the code-review-gpt skill before commit (typo fixes and mechanical replacements may skip it); after addressing findings, re-review until it passes
+- After pushing, checking the CI result is part of the task
+- When changing parts that are hard to mock (WebSocket communication, data flow, UI integration), also run the Playwright E2E tests (use the Playwright CLI, not MCP tools)
 
-## Build Commands
+## Testing Rules
 
-### Rust (Cargo workspace)
-- `cargo run --bin orts -- run` — run a simulation (auto-detects orts.toml in CWD)
-- `cargo run --bin orts -- serve` — start WebSocket server (port 9001)
-- `cargo run --bin orts -- serve --sat "altitude=800" --dt 5` — custom parameters
-- `cargo run --bin orts -- serve --dt 1 --output-interval 10` — fine dt with decimated output
-- `cargo test -p utsuroi` — test only the utsuroi (integrator) crate
-- `cargo test -p arika` — test only the arika crate
-- `cargo test -p tobari` — test only the tobari (Earth environment models) crate
-- `cargo test -p orts` — test the simulation library (orts crate)
-- `cargo test -p orts-cli` — run CLI E2E tests
+- Make every test state what it verifies; don't write tautological tests
+- When you find a bug, write a reproducing test first, then fix it (regression prevention)
+- Before attributing a failure to a "pre-existing issue" or "flakiness", show evidence such as a reproduction
+- To delete tests or test modules, first enumerate the targets, reasons, and coverage status for user review
+- For behavior-preserving refactors, pin the existing behavior with characterization tests, including boundary inputs; for floating-point code, also non-finite inputs (`NaN`, `±∞`)
 
-## Development Methodology
+## Working Rules
 
-- **TDD-first**: Write unit tests before integration. Every module (numerical integration, coordinate transforms, etc.) must have unit tests verifying behavior before being integrated.
-- **Reference validation**: Use GMAT and Orekit as reference implementations for E2E black-box testing.
-- **Playwright** for viewer E2E tests.
-- **CLI execution** enables simple E2E testing of the simulator independently from the viewer.
-- **Validate the design before implementing**: an issue or spec is a starting point, not a fixed prescription. For non-trivial designs or refactors, sanity-check the approach with an independent design review (the `smart-friend` skill / Codex) before writing code — the stated plan is not always the cleanest one (a proposed "shared utility" may already exist in `std`; a literal file split may be the wrong granularity).
-- **External review before merge**: get a code review (Codex / Copilot) on non-trivial PRs. Independent reviewers catch complementary issues — design/whole-program vs. line-level edge cases.
-- **Behavior-preserving refactors**: pin the existing behavior with a characterization test, and include boundary *and* non-finite inputs (`NaN`, `±∞`) — float predicate rewrites can match for finite values yet diverge at `NaN`.
+- For heavy commands (e.g. `cargo test --workspace`), save the full log to a file outside the worktree and extract what you need from it; don't truncate with `| tail` from the start
+- Don't Read large binary artifacts (gifs, images, etc.) yourself — leave judging them to human eyes. Don't commit newly generated large binaries without user approval
+- Name things after what they actually are (e.g. whether a value is ground truth or noisy, whether an implicit default exists — make it readable from the name)
+- Leave a TODO comment when deferring work
+- Define magic numbers as constants, or comment their rationale
+- Python helper scripts (under examples/ and tools/) are managed with uv
 
-## Pre-commit Checklist
+## Documentation
 
-Before committing, always run the relevant checks and confirm they pass.
+- Verify technical claims (CHANGELOG, docs, etc.) against the implementation and tests before writing them down
+- In Japanese documents, don't transliterate English technical terms into katakana (crate, not クレート)
+- Use a negation ("not A, but B") only where it records a rejected alternative or an actual failure mode; decorative contrasts read as filler
 
-### Rust
-- `cargo fmt --all` — format all crates (CI enforces `--check`)
-- `cargo clippy --workspace -- -D warnings` — lint with warnings as errors
-- `cargo test --workspace` — run all tests
-- Some crates are `no_std` and/or built for `wasm` beyond the default std build, and CI checks each applicable tier per crate. When changing a crate, run the tiers that apply to it — not just the std `--workspace` checks above.
+## Build & Test
 
-### TypeScript (viewer + uneri)
-- `pnpm lint` — lint & format check (Biome, CI enforces)
-- `pnpm lint:fix` — auto-fix lint & format issues
-- `pnpm --filter uneri build` — build uneri library
-- `pnpm --filter orts-viewer build` — build viewer (includes wasm-pack + tsc)
-- `pnpm --filter uneri test` — run uneri unit tests
-- `pnpm --filter orts-viewer test` — run viewer unit tests
-
-### E2E tests (Playwright)
-WebSocket 通信、データフロー、UI 統合など mock しにくい部分を変更した場合は E2E テストも実行する:
-- `cd uneri && pnpm test:e2e` — uneri E2E (DuckDB + charting)
-- `cd viewer && npx playwright test` — viewer E2E (requires orts serve + vite dev)
+- `plugin-sdk/examples/` is a standalone workspace (`cargo component build`, target `wasm32-wasip1`); `cargo test --workspace` does not cover it
+- Some crates have no_std / wasm checks in CI (per-feature clippy in the lint job for no_std; wasm32 via the wasm-pack jobs such as viewer-build). `.github/workflows/ci.yml` is the source of truth — when changing such a crate, run the same checks locally
 
 ## Dependencies
 
-- 新しいライブラリを追加する際は、最新の安定バージョンを調べてから指定する。古いバージョンを指定しない。
+- When adding a new library, look up the latest stable version first; don't pin an old version
 
-## Architecture Notes
+## Footguns
 
-- Systems and precision are configurable — e.g., Earth-Moon-Sun for SSO vs. full N-body for solar system simulations; detailed atmospheric drag vs. simple drag coefficients.
-- Strict separation of concerns across modules to enable parallel development.
+- `cargo test -p orts-cli` regenerates the TypeScript bindings in `viewer/src/protocol/generated/` (`TS_RS_EXPORT_DIR` in `.cargo/config.toml`), and CI enforces a clean diff — after changing protocol types, regenerate and commit
+- `.cargo/config.toml` configures the mold + clang linker; a non-empty global `RUSTFLAGS` silently disables it
+- Release process: see [RELEASING.md](RELEASING.md)
