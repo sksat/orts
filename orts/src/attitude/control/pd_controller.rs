@@ -248,6 +248,66 @@ mod tests {
         );
     }
 
+    // Frame-generalization characterization (#151)
+
+    use crate::OrbitalState;
+    use crate::attitude::control::NadirPointing;
+
+    struct TestState {
+        attitude: AttitudeState,
+        orbit: OrbitalState,
+    }
+
+    impl HasAttitude for TestState {
+        fn attitude(&self) -> &AttitudeState {
+            &self.attitude
+        }
+    }
+
+    impl HasOrbit for TestState {
+        type Frame = arika::frame::SimpleEci;
+        fn orbit(&self) -> &OrbitalState {
+            &self.orbit
+        }
+    }
+
+    fn snapshot_state() -> TestState {
+        TestState {
+            attitude: AttitudeState::new(
+                UnitQuaternion::from_axis_angle(
+                    &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                    0.7,
+                ),
+                Vector3::new(0.01, -0.02, 0.03),
+            ),
+            orbit: OrbitalState::new(
+                Vector3::new(4000.0, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+        }
+    }
+
+    /// Characterization: pinned `SimpleEci` tracking torque, so parameterizing
+    /// [`AttitudeReference`] by the inertial frame cannot change it.
+    #[test]
+    fn tracking_pd_simple_eci_torque_snapshot() {
+        let ctrl = TrackingPdController::diagonal(1.0, 2.0, NadirPointing);
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let got = ctrl
+            .eval(0.0, &snapshot_state(), Some(&epoch))
+            .torque_body
+            .into_inner();
+        let expected = Vector3::new(
+            -1.4373171017803277,
+            -0.8407481028427832,
+            -0.37237905200853855,
+        );
+        assert!(
+            (got - expected).magnitude() < 1e-30,
+            "SimpleEci tracking PD torque changed: {got:?}"
+        );
+    }
+
     #[test]
     fn inertial_pd_no_acceleration_or_mass_rate() {
         let ctrl = InertialPdController::diagonal(1.0, 1.0, UnitQuaternion::identity());

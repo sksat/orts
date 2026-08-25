@@ -113,6 +113,43 @@ mod tests {
         assert!((b_body.into_inner() - b_eci.into_inner()).magnitude() < 1e-15);
     }
 
+    // Frame-generalization characterization (#151)
+
+    fn snapshot_state() -> SpacecraftState {
+        SpacecraftState {
+            orbit: OrbitalState::new(
+                Vector3::new(4000.0, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+            attitude: AttitudeState::new(
+                nalgebra::UnitQuaternion::from_axis_angle(
+                    &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                    0.7,
+                ),
+                Vector3::new(0.01, -0.02, 0.03),
+            ),
+            mass: 50.0,
+        }
+    }
+
+    /// Characterization: pinned pre-refactor `SimpleEci` body-frame field \[T\],
+    /// so opening the sensor to a generic inertial frame cannot change it.
+    #[test]
+    fn simple_eci_measurement_snapshot() {
+        let mut mag = Magnetometer::new(Arc::new(TiltedDipole::earth()));
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let got = mag.measure(&snapshot_state(), &epoch).into_inner();
+        let expected = nalgebra::Vector3::new(
+            -4.382433684690031e-6,
+            -3.059072261218701e-5,
+            -7.100082750661239e-6,
+        );
+        assert!(
+            (got.into_inner() - expected).magnitude() < 1e-30,
+            "SimpleEci magnetometer reading changed: {got:?}"
+        );
+    }
+
     #[test]
     fn noisy_magnetometer_differs_from_ideal() {
         let field_model = Arc::new(TiltedDipole::earth());

@@ -377,6 +377,93 @@ mod tests {
         );
     }
 
+    // Frame-generalization characterization tests (#151)
+    //
+    // Pinned `SimpleEci` numbers at a fully 3D state, so opening these
+    // controllers to a generic inertial frame `F` cannot change them.
+
+    fn snapshot_epoch() -> Epoch {
+        Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0)
+    }
+
+    fn snapshot_state() -> TestState {
+        TestState {
+            attitude: AttitudeState::new(
+                nalgebra::UnitQuaternion::from_axis_angle(
+                    &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                    0.7,
+                ),
+                Vector3::new(0.01, -0.02, 0.03),
+            ),
+            orbit: OrbitalState::new(
+                Vector3::new(4000.0, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+        }
+    }
+
+    /// Characterization: pinned pre-refactor `SimpleEci` B-dot torque \[N·m\].
+    #[test]
+    fn bdot_cross_simple_eci_torque_snapshot() {
+        let ctrl = BdotCross::new(1e4, Vector3::new(1.0, 1.0, 1.0), TiltedDipole::earth());
+        let got = ctrl
+            .eval(0.0, &snapshot_state(), Some(&snapshot_epoch()))
+            .torque_body
+            .into_inner();
+        let expected = Vector3::new(
+            -1.1609801859995682e-7,
+            9.248855991956987e-8,
+            -3.268271786896945e-7,
+        );
+        assert!(
+            (got - expected).magnitude() < 1e-30,
+            "SimpleEci BdotCross torque changed: {got:?}"
+        );
+    }
+
+    /// Characterization: pinned pre-refactor `SimpleEci` magnetorquer torque \[N·m\].
+    #[test]
+    fn commanded_magnetorquer_simple_eci_torque_snapshot() {
+        let actuator =
+            CommandedMagnetorquer::new(Vector3::new(0.5, -0.2, 0.1), TiltedDipole::earth());
+        let got = actuator
+            .eval(0.0, &snapshot_state(), Some(&snapshot_epoch()))
+            .torque_body
+            .into_inner();
+        let expected = Vector3::new(
+            4.479088811350949e-6,
+            3.1117980068616165e-6,
+            -1.617184804303151e-5,
+        );
+        assert!(
+            (got - expected).magnitude() < 1e-30,
+            "SimpleEci CommandedMagnetorquer torque changed: {got:?}"
+        );
+    }
+
+    /// Characterization of the `|B| < 1e-30` guard on non-finite input: with a
+    /// NaN position the comparison is false, so NaN propagates into the torque
+    /// instead of being swallowed by the zero-load early return.
+    #[test]
+    fn bdot_cross_nan_position_propagates_nan() {
+        let ctrl = BdotCross::new(1e4, Vector3::new(1.0, 1.0, 1.0), TiltedDipole::earth());
+        let state = TestState {
+            attitude: snapshot_state().attitude,
+            orbit: OrbitalState::new(
+                Vector3::new(f64::NAN, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+        };
+        let tau = ctrl
+            .eval(0.0, &state, Some(&snapshot_epoch()))
+            .torque_body
+            .into_inner();
+        assert!(
+            tau.iter().all(|c| c.is_nan()),
+            "NaN must propagate: {tau:?}"
+        );
+    }
+
     #[test]
     fn no_epoch_returns_zero_loads() {
         // Without epoch, magnetic field models cannot compute the field,

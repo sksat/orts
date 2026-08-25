@@ -590,6 +590,96 @@ mod tests {
         assert!(diff.magnitude() < 1e-18);
     }
 
+    // Frame-generalization characterization tests (#151)
+    //
+    // These pin the `SimpleEci` numbers so that opening the model to a generic
+    // inertial frame `F` cannot change them. The state is fully 3D (position,
+    // attitude and command all off-axis) so any dropped rotation shows up.
+
+    fn snapshot_epoch() -> Epoch {
+        Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0)
+    }
+
+    fn snapshot_attitude() -> AttitudeState {
+        AttitudeState::new(
+            nalgebra::UnitQuaternion::from_axis_angle(
+                &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                0.7,
+            ),
+            Vector3::new(0.01, -0.02, 0.03),
+        )
+    }
+
+    fn snapshot_state() -> TestState {
+        TestState {
+            attitude: snapshot_attitude(),
+            orbit: OrbitalState::new(
+                Vector3::new(4000.0, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+        }
+    }
+
+    fn snapshot_assembly() -> MtqAssembly<TiltedDipole> {
+        let mut assembly = MtqAssembly::three_axis(1.0, TiltedDipole::earth());
+        assembly.command = MtqCommand::Moments(vec![0.7, -0.3, 0.2]);
+        assembly
+    }
+
+    /// Characterization: pinned pre-refactor `SimpleEci` torque \[N·m\].
+    #[test]
+    fn assembly_simple_eci_torque_snapshot() {
+        let loads = snapshot_assembly().eval(0.0, &snapshot_state(), Some(&snapshot_epoch()));
+        let expected = Vector3::new(
+            8.248169347635774e-6,
+            4.093571188524861e-6,
+            -2.2728235933937917e-5,
+        );
+        let got = loads.torque_body.into_inner();
+        // Bit-exact: the SimpleEci path must be the identical computation.
+        assert!(
+            (got - expected).magnitude() < 1e-30,
+            "SimpleEci MTQ torque changed: {got:?}"
+        );
+    }
+
+    /// Characterization of the `|B| < 1e-30` guard on non-finite input: a NaN
+    /// position makes the comparison false, so the model does *not* take the
+    /// zero-load early return and NaN propagates into the torque.
+    #[test]
+    fn assembly_nan_position_propagates_nan() {
+        let state = TestState {
+            attitude: snapshot_attitude(),
+            orbit: OrbitalState::new(
+                Vector3::new(f64::NAN, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+        };
+        let loads = snapshot_assembly().eval(0.0, &state, Some(&snapshot_epoch()));
+        assert!(
+            loads.torque_body.into_inner().iter().all(|c| c.is_nan()),
+            "NaN position must propagate (guard must not swallow it)"
+        );
+    }
+
+    /// Same for `+∞`: the geodetic conversion yields NaN, so the guard is false
+    /// and the torque is NaN rather than zero.
+    #[test]
+    fn assembly_infinite_position_propagates_nan() {
+        let state = TestState {
+            attitude: snapshot_attitude(),
+            orbit: OrbitalState::new(
+                Vector3::new(f64::INFINITY, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+        };
+        let loads = snapshot_assembly().eval(0.0, &state, Some(&snapshot_epoch()));
+        assert!(
+            loads.torque_body.into_inner().iter().all(|c| c.is_nan()),
+            "infinite position must propagate as NaN"
+        );
+    }
+
     #[test]
     #[should_panic(expected = "MtqCommand::Moments length")]
     fn assembly_moments_wrong_length_panics() {
