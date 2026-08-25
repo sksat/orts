@@ -16,9 +16,9 @@
 //! every native controller has migrated; Phase P0.5 deliberately keeps
 //! them side by side so that no existing oracle tests have to change.
 //!
-//! See DESIGN.md Phase P, D3 ("trait 構造: 既存 DiscreteController を
-//! 拡張して 1 trait に統一") for the long-term plan — P0.5 introduces
-//! `PluginController` as the forward-compatible target shape.
+//! See DESIGN.md "sync / async デュアルバックエンド" for the coexistence
+//! rationale and ROADMAP.md for the planned unification —
+//! `PluginController` is the forward-compatible target shape.
 
 use super::command::Command;
 use super::error::PluginError;

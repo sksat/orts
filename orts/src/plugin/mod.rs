@@ -23,7 +23,8 @@
 //! [`crate::control::DiscreteController`] trait. Native controllers
 //! continue to implement `DiscreteController` (unchanged, so existing
 //! oracle tests keep passing). A future phase may unify the two traits
-//! once a WASM backend is in place; see DESIGN.md Phase P, D3.
+//! once a WASM backend is in place; see DESIGN.md "sync / async
+//! デュアルバックエンド" and ROADMAP.md.
 
 pub mod actuators;
 pub mod command;

@@ -151,14 +151,13 @@ WASI and the Component Model.
   per-device sensor readings + actuator telemetry); the guest replies with
   a `Command` (per-MTQ dipole, per-wheel speed or torque, per-thruster
   throttle).
-- **Runtime:** `wasmtime` with the Pulley interpreter plus
-  `Config::consume_fuel()` for deterministic, host-independent execution.
-- **Distribution:** `.wasm` (portable) and `.cwasm` (wasmtime-specific
-  AOT-compiled).
+- **Runtime:** `wasmtime` with the Pulley interpreter for deterministic,
+  host-independent execution.
+- **Distribution:** `.wasm` (portable).
 
-Native Rust controllers share the same `DiscreteController` trait, so
-swapping a WASM guest for a native implementation requires only a config
-change.
+WASM guests are driven through the `PluginController` trait; built-in
+native controllers implement the separate `DiscreteController` trait.
+Unifying the two is planned — see [ROADMAP.md](ROADMAP.md).
 
 ## 5. Data flow (simulation → viewer)
 
@@ -203,8 +202,8 @@ sequenceDiagram
 3. **Monomorphization over dynamic dispatch on the hot path.** ODE state is
    fixed-size (6D / 7D / 13D+) so the integrator inlines tightly. Variable-N
    cases (constellations, flexible bodies) go through `GroupState<S: OdeState>`.
-4. **Deterministic plugin execution.** Pulley interpreter + fuel budgeting
-   makes guest behavior reproducible across hosts and CI environments.
+4. **Deterministic plugin execution.** The Pulley interpreter makes guest
+   behavior reproducible across hosts and CI environments.
 5. **Source abstraction at the viewer edge.** Transport (WS / CSV / RRD) is
    normalized to a single `SourceEvent` type, so adding a new source only
    means implementing one adapter.
@@ -212,6 +211,7 @@ sequenceDiagram
 ## 7. See also
 
 - [DESIGN.md](DESIGN.md) — extended design intent (Japanese)
+- [ROADMAP.md](ROADMAP.md) — planned but unimplemented work (Japanese)
 - [README.md](README.md) — installation, quick start, feature list
 - [CLAUDE.md](CLAUDE.md) — guide for Claude Code working on this repo
 - Docs site: <https://sksat.github.io/orts/>

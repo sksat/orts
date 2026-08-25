@@ -7,7 +7,7 @@
 //! GuestPanic, Marshal, ApiVersionMismatch).
 //!
 //! The shape matches the landmines identified in the Phase P0 research
-//! (see DESIGN.md "落とし穴リスト"): every failure path should be
+//! (wasmtime runtime survey): every failure path should be
 //! distinguishable so the host can decide per-case whether to halt the
 //! simulation, fall back to the last command, or switch the controller
 //! to a safemode.

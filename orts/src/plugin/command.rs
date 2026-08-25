@@ -10,7 +10,8 @@
 //! - P4: thrust throttle / impulsive delta-v
 //! - P5: composite commands for coupled attitude + thrust guest
 //!
-//! See DESIGN.md Phase P, D2 ("Command は per-device 論理指令").
+//! See DESIGN.md "プラグインアーキテクチャ" 設計方針 ("戻り値は物理量では
+//! なく論理指令").
 
 /// Per-wheel RW command.
 ///
