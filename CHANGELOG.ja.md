@@ -108,6 +108,28 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - `--config` ファイルで起動した `orts serve` は `[[command]]` タイムラインを
   含む config を明確なエラーで拒否する (コマンドタイムラインは `orts run`
   のみ)。従来は黙って破棄していた。([#58](https://github.com/sksat/orts/pull/58))
+- `orts run` が `[satellites.attitude]` を honor する。全衛星に姿勢設定がある
+  fleet は `orts serve` と同じ spacecraft dynamics (姿勢状態 + coupled gravity
+  gradient) で伝播され、CSV に四元数と機体系角速度の列が増える。従来は全衛星が
+  controller を持たない限り軌道だけを伝播し、姿勢・アクチュエータ・センサ設定を
+  警告なしに捨てていた (README のクイックスタート設定もその一つ)。モード判定
+  (orbit-only / spacecraft / controlled) は `orts run`、`ServeEngine::build`、
+  serve の WebSocket config 検証が共有する 1 箇所に集約したので、同じ config が
+  エントリポイントによって姿勢を伝播したりしなかったりすることはなくなった。
+  ([#335](https://github.com/sksat/orts/pull/335))
+- 実行モードが act できない設定は黙って捨てず報告する: `orts run` は配送先の
+  controller がない `[[command]]` タイムラインと、宣言された stream-io の
+  `streams` (run のループには pump する transport がない) を拒否する。両
+  エントリポイントは controller 設定の混在を拒否する (制御ループは fleet 全体を
+  回すか全く回さないかなので、混在させると controller が回らない)。WebSocket の
+  `start_simulation` も `orts serve --config` と同じ `[[command]]` 拒否を適用
+  する。実行中の orbit-only シミュレーションへの `controller` 付き衛星の動的
+  追加を拒否する。`sensors` / `reaction_wheels` / `magnetorquers` / `thruster`
+  が controller なしで宣言された場合は stderr と `orts run --json` の
+  `warnings` に警告を出す。([#335](https://github.com/sksat/orts/pull/335))
+- README のクイックスタート設定がパースできるようになった。
+  `[satellites.reaction_wheels]` に必須の `max_momentum` が欠けていた。
+  ([#335](https://github.com/sksat/orts/pull/335))
 
 ### `orts-plugin-sdk` (Rust, crates.io)
 

@@ -117,6 +117,28 @@ section is subdivided by package.
 - `orts serve` started with a `--config` file now rejects a `[[command]]`
   timeline with a clear error (command timelines run only under `orts run`)
   instead of silently dropping it. ([#58](https://github.com/sksat/orts/pull/58))
+- `orts run` honors `[satellites.attitude]`: a fleet with attitude on every
+  satellite is propagated with the spacecraft dynamics `orts serve` uses
+  (attitude state + coupled gravity gradient), and the CSV gains the quaternion
+  and body-frame angular-velocity columns. Previously `run` propagated the orbit
+  only unless every satellite had a controller, discarding attitude, actuator
+  and sensor config without a warning — the README quick-start config among
+  them. The mode rule (orbit-only / spacecraft / controlled) now lives in one
+  place shared by `orts run`, `ServeEngine::build` and serve's WebSocket config
+  validation, so the same config cannot get attitude dynamics under one entry
+  point and not the other. ([#335](https://github.com/sksat/orts/pull/335))
+- Config that the running mode cannot act on is reported instead of dropped:
+  `orts run` rejects a `[[command]]` timeline with no controller to deliver to
+  and rejects declared stream-io `streams` (the run loop has no transport to
+  pump them); both entry points reject a fleet that mixes controller config (the
+  control loop steps the whole fleet or none of it, so those controllers would
+  never run); a WebSocket `start_simulation` now applies the same
+  `[[command]]` rejection as `orts serve --config`; adding a satellite carrying
+  a `controller` to a running orbit-only simulation is rejected; and `sensors` /
+  `reaction_wheels` / `magnetorquers` / `thruster` declared without a controller
+  warn on stderr and in `orts run --json`'s `warnings`. ([#335](https://github.com/sksat/orts/pull/335))
+- The README quick-start config parses: `[satellites.reaction_wheels]` was
+  missing the required `max_momentum`. ([#335](https://github.com/sksat/orts/pull/335))
 
 ### `orts-plugin-sdk` (Rust, crates.io)
 
