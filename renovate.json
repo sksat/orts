@@ -72,17 +72,20 @@
       "matchPackageNames": ["notalawyer", "notalawyer-clap", "notalawyer-build"]
     },
     {
-      "description": "Auto-merge patch-level updates once required CI checks pass",
+      "description": "Auto-merge patch-level updates once required CI checks pass. These land on main unattended, so they wait twice the repo-wide cooldown before Renovate even opens them — a hijacked patch release is the classic supply-chain vector, and the extra week is the only review a merged-without-a-human update gets",
       "matchUpdateTypes": ["patch"],
-      "automerge": true
+      "automerge": true,
+      "minimumReleaseAge": "14 days"
     }
   ],
   "lockFileMaintenance": {
+    "description": "Lockfile refreshes re-resolve the whole tree, so they pull transitive updates wholesale. pnpm enforces minimumReleaseAge on the npm side even for --frozen-lockfile installs, but cargo has no release-age gate at all, so these are reviewed by a human instead of auto-merged",
     "enabled": true,
-    "automerge": true
+    "automerge": false
   },
   "vulnerabilityAlerts": {
-    "automerge": true,
+    "description": "Security fixes skip the release-age cooldown so the fix is available immediately, but they are deliberately NOT auto-merged: a compromised release dressed up as a security fix would otherwise reach main unattended and same-day. A human merges these. `automerge` is set explicitly to false because most security fixes are patch-level, and the patch rule above would otherwise still auto-merge them",
+    "automerge": false,
     "minimumReleaseAge": "0 days"
   }
 }
