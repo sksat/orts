@@ -86,7 +86,11 @@ impl Plugin<TickInput, Command> for Controller {
                     return Ok(None);
                 }
 
-                let m = -gain * omega.cross(&b);
+                // B-dot law: m = -k dB/dt, and in the body frame
+                // dB/dt ~ -omega x B, so m = +k (omega x B). The negated form
+                // commands the opposite moment and *spins the satellite up*.
+                // Matches `orts::attitude::control::BdotCross`.
+                let m = *gain * omega.cross(&b);
                 let max = *max_moment;
 
                 Ok(Some(Command {
