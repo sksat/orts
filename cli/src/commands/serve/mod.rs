@@ -21,6 +21,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::cli::SimArgs;
+use crate::commands::CmdError;
 use crate::sim::params::SimParams;
 
 use manager::SimCommand;
@@ -39,14 +40,19 @@ struct AppState {
     reserved_stdio: Option<stream_bridge::StreamKey>,
 }
 
-pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) {
+pub fn run_server(sim: &SimArgs, port: u16, stream_stdio: Option<&str>) -> Result<(), CmdError> {
     // Parse + reject malformed flags before starting the runtime so a typo
     // fails fast instead of surfacing as a dead endpoint later.
-    let stdio_key = stream_stdio.map(|s| {
-        parse_stream_stdio(s).unwrap_or_else(|e| panic!("Error: --stream-stdio {s}: {e}"))
-    });
-    let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    rt.block_on(async_server(sim, port, stdio_key));
+    let stdio_key = match stream_stdio {
+        Some(s) => Some(
+            parse_stream_stdio(s)
+                .map_err(|e| CmdError::usage(format!("--stream-stdio {s}: {e}")))?,
+        ),
+        None => None,
+    };
+    let rt = tokio::runtime::Runtime::new()
+        .map_err(|e| CmdError::failure(format!("creating the tokio runtime: {e}")))?;
+    rt.block_on(async_server(sim, port, stdio_key))
 }
 
 /// Parse a `--stream-stdio` value of the form `sat/stream` (both halves
@@ -104,11 +110,15 @@ async fn stream_ws_handler(
         .into_response()
 }
 
-async fn async_server(sim: &SimArgs, port: u16, stdio_key: Option<stream_bridge::StreamKey>) {
+async fn async_server(
+    sim: &SimArgs,
+    port: u16,
+    stdio_key: Option<stream_bridge::StreamKey>,
+) -> Result<(), CmdError> {
     let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(&addr)
         .await
-        .unwrap_or_else(|e| panic!("failed to bind to {addr}: {e}"));
+        .map_err(|e| CmdError::failure(format!("binding to {addr}: {e}")))?;
 
     let actual_port = listener.local_addr().unwrap().port();
     eprintln!("Server listening on http://localhost:{actual_port}");
@@ -121,10 +131,12 @@ async fn async_server(sim: &SimArgs, port: u16, stdio_key: Option<stream_bridge:
 
     // Determine initial config: if CLI args specify simulation, auto-start.
     let initial_config = if has_explicit_sim_args(sim) {
-        sim.config.as_ref().map(|config_path| {
-            crate::config::SimConfig::load(std::path::Path::new(config_path))
-                .unwrap_or_else(|e| panic!("Error: {e}"))
-        })
+        match sim.config.as_ref() {
+            Some(config_path) => Some(crate::config::SimConfig::load(std::path::Path::new(
+                config_path,
+            ))?),
+            None => None,
+        }
     } else {
         None
     };
@@ -132,8 +144,7 @@ async fn async_server(sim: &SimArgs, port: u16, stdio_key: Option<stream_bridge:
     // `orts serve` does not drive config `[[command]]` timelines (run-only);
     // reject loudly instead of silently dropping scheduled uplinks.
     if let Some(cfg) = &initial_config {
-        cfg.ensure_serve_supported()
-            .unwrap_or_else(|e| panic!("Error: {e}"));
+        cfg.ensure_serve_supported().map_err(CmdError::usage)?;
     }
 
     // With an explicit config, a `--stream-stdio` typo would otherwise be a
@@ -146,9 +157,9 @@ async fn async_server(sim: &SimArgs, port: u16, stdio_key: Option<stream_bridge:
             spec.id == *sat && spec.streams.iter().any(|n| n == stream)
         });
         if !declared {
-            panic!(
-                "Error: --stream-stdio {sat}/{stream} is not declared in the config (streams = [...])"
-            );
+            return Err(CmdError::usage(format!(
+                "--stream-stdio {sat}/{stream} is not declared in the config (streams = [...])"
+            )));
         }
     }
 
@@ -167,7 +178,7 @@ async fn async_server(sim: &SimArgs, port: u16, stdio_key: Option<stream_bridge:
         // later delegate to simulation_manager (after a terminate +
         // restart) honors them too.
         // Same reason as in `run`: this path skips `SimConfig::validate`.
-        crate::commands::run::validate_sim_args(sim);
+        crate::commands::run::validate_sim_args(sim)?;
         let params = Arc::new(SimParams::from_sim_args(sim, true));
         tokio::spawn(manager::simulation_manager_with_params(
             params,
@@ -231,10 +242,10 @@ async fn async_server(sim: &SimArgs, port: u16, stdio_key: Option<stream_bridge:
                     eprintln!("stdio plug closed; shutting down");
                 })
                 .await
-                .expect("server error");
         }
-        None => axum::serve(listener, app).await.expect("server error"),
+        None => axum::serve(listener, app).await,
     }
+    .map_err(|e| CmdError::failure(format!("server error: {e}")))
 }
 
 #[cfg(test)]

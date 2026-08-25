@@ -56,6 +56,11 @@ impl StormerVerlet {
     }
 
     /// Integrate from `t0` to `t_end` with fixed step size `dt`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the arguments cannot produce a terminating integration; see
+    /// [`try_integrate`](Self::try_integrate) for the fallible form.
     pub fn integrate<const DIM: usize, S, F>(
         &self,
         system: &S,
@@ -63,30 +68,51 @@ impl StormerVerlet {
         t0: f64,
         t_end: f64,
         dt: f64,
-        mut callback: F,
+        callback: F,
     ) -> State<DIM, 2>
     where
         S: DynamicalSystem<State = State<DIM, 2>>,
         F: FnMut(f64, &State<DIM, 2>),
     {
-        if let Err(e) = validate_step_size(dt).and_then(|()| validate_time_span(t0, t_end)) {
-            panic!("utsuroi: integrate() cannot run: {e}");
+        match self.try_integrate(system, initial, t0, t_end, dt, callback) {
+            Ok(state) => state,
+            Err(e) => panic!("utsuroi: integrate() cannot run: {e}"),
         }
+    }
+
+    /// Fallible variant of [`integrate`](Self::integrate).
+    ///
+    /// Mirrors [`Integrator::try_integrate`](crate::Integrator::try_integrate)
+    /// so that "use `try_integrate` to avoid the panic" holds for every
+    /// integrator in the crate, not just the trait-based ones.
+    pub fn try_integrate<const DIM: usize, S, F>(
+        &self,
+        system: &S,
+        initial: State<DIM, 2>,
+        t0: f64,
+        t_end: f64,
+        dt: f64,
+        mut callback: F,
+    ) -> Result<State<DIM, 2>, IntegrationError>
+    where
+        S: DynamicalSystem<State = State<DIM, 2>>,
+        F: FnMut(f64, &State<DIM, 2>),
+    {
+        validate_step_size(dt)?;
+        validate_time_span(t0, t_end)?;
 
         let mut state = initial;
         let mut t = t0;
         while t < t_end {
             let h = dt.min(t_end - t);
-            assert!(
-                t + h != t,
-                "utsuroi: integrate() cannot run: {}",
-                IntegrationError::TimeStagnated { t, dt: h }
-            );
+            if t + h == t {
+                return Err(IntegrationError::TimeStagnated { t, dt: h });
+            }
             state = self.step(system, t, &state, h);
             t += h;
             callback(t, &state);
         }
-        state
+        Ok(state)
     }
 
     /// Integrate with event detection and NaN/Inf checking.
@@ -608,5 +634,61 @@ mod tests {
                  x0={x0}, v0={v0}, dt={dt}, first={first_half:.2e}, second={second_half:.2e}"
             );
         }
+    }
+
+    // `try_integrate` mirrors the trait-based solvers, so the same guards apply
+    // to the inherent (`State<DIM, 2>`-only) API.
+
+    #[test]
+    fn verlet_try_integrate_rejects_non_advancing_step() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        for dt in [0.0, -0.1, f64::NAN] {
+            let err = StormerVerlet
+                .try_integrate(&system, initial.clone(), 0.0, 1.0, dt, |_, _| {})
+                .unwrap_err();
+            assert!(
+                matches!(err, IntegrationError::InvalidStepSize { .. }),
+                "dt = {dt} gave {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn verlet_try_integrate_rejects_backward_span() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let err = StormerVerlet
+            .try_integrate(&system, initial, 1.0, 0.0, 0.1, |_, _| {})
+            .unwrap_err();
+        assert!(
+            matches!(err, IntegrationError::InvalidTimeSpan { .. }),
+            "{err:?}"
+        );
+    }
+
+    /// At `t = 2^53` the f64 spacing exceeds 1, so `t + 0.5 == t`.
+    #[test]
+    fn verlet_try_integrate_detects_time_stagnation() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let t0 = 9007199254740992.0_f64;
+        let err = StormerVerlet
+            .try_integrate(&system, initial, t0, t0 + 2.0, 0.5, |_, _| {})
+            .unwrap_err();
+        assert!(matches!(err, IntegrationError::TimeStagnated { t, .. } if t == t0));
+    }
+
+    /// Valid input must go through both APIs identically — `integrate` is only
+    /// a panicking wrapper over `try_integrate`.
+    #[test]
+    fn verlet_integrate_matches_try_integrate_for_valid_input() {
+        let system = HarmonicOscillator;
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let a = StormerVerlet
+            .try_integrate(&system, initial.clone(), 0.0, 1.0, 0.01, |_, _| {})
+            .expect("valid input");
+        let b = StormerVerlet.integrate(&system, initial, 0.0, 1.0, 0.01, |_, _| {});
+        assert_eq!(a, b);
     }
 }
