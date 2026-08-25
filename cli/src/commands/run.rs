@@ -3,7 +3,7 @@ use std::ops::ControlFlow;
 use arika::body::KnownBody;
 use arika::frame::{SimpleEci, Vec3};
 use orts::OrbitalState;
-use orts::group::{IndependentGroup, IntegratorConfig};
+use orts::group::{HasPosition, IndependentGroup, IntegratorConfig};
 use orts::orbital::kepler::KeplerianElements;
 use orts::record::archetypes::OrbitalState as RecordOrbitalState;
 use orts::record::components::{
@@ -18,7 +18,12 @@ use orts::visibility::{StationContact, VisibilityMonitor};
 use crate::cli::{IntegratorChoice, OutputFormat, SimArgs};
 use crate::commands::CmdError;
 use crate::satellite::OrbitSpec;
+use crate::sim::mode::{
+    SimMode, ensure_commands_deliverable, ensure_streams_supported, select_sim_mode,
+    unhonored_config_warnings,
+};
 use crate::sim::params::SimParams;
+use utsuroi::DynamicalSystem;
 
 /// Apply the config-file validation rules to the direct-CLI argument path.
 ///
@@ -76,22 +81,28 @@ pub fn run_simulation_cmd(
     params.plugin_backend_threshold = sim.plugin_backend_threshold;
     params.plugin_backend_async_mode = sim.plugin_backend_async_mode;
 
-    // 全衛星が controller 付きなら制御ループへディスパッチ。
-    let has_controller = !params.satellites.is_empty()
-        && params
-            .satellites
-            .iter()
-            .all(|s| s.controller_config.is_some());
-    let rec = if has_controller {
-        run_controlled_simulation(&params, sim)?
-    } else {
-        run_simulation(&params)?
+    // どのダイナミクスで回すかは serve と共有の規則で決める。`run` だけが
+    // orbit-only に落ちて姿勢・アクチュエータ設定を黙って捨てることがないように。
+    let mode = select_sim_mode(&params.satellites).map_err(CmdError::usage)?;
+    // 時刻指定コマンドと stream-io ストリームは制御ループがなければ届かない。
+    ensure_commands_deliverable(mode, params.commands.len()).map_err(CmdError::usage)?;
+    ensure_streams_supported(mode, &params.satellites).map_err(CmdError::usage)?;
+    // 選択したモードで効かない設定は、無視する前に知らせる。
+    let warnings = unhonored_config_warnings(&params.satellites, mode);
+    for w in &warnings {
+        eprintln!("Warning: {w}");
+    }
+
+    let rec = match mode {
+        SimMode::Controlled => run_controlled_simulation(&params, sim)?,
+        SimMode::Spacecraft => run_spacecraft_simulation(&params)?,
+        SimMode::OrbitOnly => run_simulation(&params)?,
     };
 
     let artifact = write_simulation_output(&rec, &params, &sink, format)?;
 
     if json {
-        let summary = build_run_summary(&params, &rec, artifact);
+        let summary = build_run_summary(&params, &rec, artifact, warnings);
         use std::io::Write;
         let mut stdout = std::io::stdout().lock();
         serde_json::to_writer_pretty(&mut stdout, &summary)
@@ -269,6 +280,7 @@ fn build_run_summary(
     params: &SimParams,
     rec: &Recording,
     artifact: Option<Artifact>,
+    warnings: Vec<String>,
 ) -> RunSummary {
     let satellites = params
         .satellites
@@ -307,7 +319,7 @@ fn build_run_summary(
         },
         satellites,
         artifacts: artifact.into_iter().collect(),
-        warnings: Vec::new(),
+        warnings,
     }
 }
 
@@ -446,19 +458,9 @@ fn report_contact_windows(params: &SimParams, monitors: Vec<VisibilityMonitor<Si
     }
 }
 
-/// Run the simulation and return a Recording.
-pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
-    use crate::sim::core::sat_params;
-    use orts::setup::{build_orbital_system, default_third_bodies};
-
-    let mut rec = Recording::new();
-    let body_path = EntityPath::parse(&format!("/world/{}", params.body.properties().name));
-
-    rec.log_static(&body_path, &GravitationalParameter(params.mu));
-    rec.log_static(&body_path, &BodyRadius(params.body.properties().radius));
-
-    // Build integrator config
-    let config = match params.integrator {
+/// Integrator selection for the `run` propagation loop.
+fn integrator_config(params: &SimParams) -> IntegratorConfig {
+    match params.integrator {
         IntegratorChoice::Rk4 => IntegratorConfig::Rk4 { dt: params.dt },
         IntegratorChoice::Dp45 => IntegratorConfig::Dp45 {
             dt: params.dt,
@@ -468,13 +470,20 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
             dt: params.dt,
             tolerances: params.tolerances.clone(),
         },
-    };
+    }
+}
 
-    // Build event checker (collision + atmospheric entry)
+/// Terminate a satellite on surface impact or atmospheric entry.
+///
+/// Generic over the state so the orbit-only and spacecraft paths share one
+/// termination rule: both only need the position.
+fn body_event_checker<S: HasPosition>(
+    params: &SimParams,
+) -> impl Fn(f64, &S) -> ControlFlow<String> + Send + 'static {
     let props = params.body.properties();
     let body_radius = props.radius;
     let atmosphere_altitude = props.atmosphere_altitude;
-    let event_checker = move |_t: f64, state: &OrbitalState| -> ControlFlow<String> {
+    move |_t: f64, state: &S| {
         let r = state.position().magnitude();
         if r < body_radius {
             ControlFlow::Break(format!("collision at {:.1} km altitude", r - body_radius))
@@ -490,13 +499,16 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
         } else {
             ControlFlow::Continue(())
         }
-    };
+    }
+}
 
-    // Build group with all satellites
-    let mut group = IndependentGroup::new(config).with_event_checker(event_checker);
+/// Run the orbit-only simulation and return a Recording.
+pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
+    use crate::sim::core::sat_params;
+    use orts::setup::{build_orbital_system, default_third_bodies};
 
-    // Track entity paths per satellite for recording
-    let sat_paths: Vec<EntityPath> = params.satellites.iter().map(|s| s.entity_path()).collect();
+    let mut group = IndependentGroup::new(integrator_config(params))
+        .with_event_checker(body_event_checker::<OrbitalState>(params));
 
     let third_bodies = default_third_bodies(&params.body);
     for sat in &params.satellites {
@@ -515,6 +527,101 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
         group = group.add_satellite_until(sat.id.as_str(), initial, sat.period, system);
     }
 
+    propagate_and_record(params, group, |rec, entity, tp, state| {
+        let os = RecordOrbitalState::new(*state.position(), *state.velocity());
+        rec.log_orbital_state(entity, tp, &os);
+    })
+}
+
+/// Run the orbit + attitude simulation (`[satellites.attitude]` without a
+/// plugin controller) and return a Recording.
+///
+/// Builds the same dynamics `orts serve` builds in spacecraft mode
+/// (`SpacecraftDynamics` plus the coupled gravity-gradient torque), so the
+/// same config is propagated identically by both entry points. The recording
+/// carries the attitude quaternion and body-frame angular velocity in
+/// addition to the orbital state.
+pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdError> {
+    use crate::sim::core::sat_params;
+    use orts::attitude::CoupledGravityGradient;
+    use orts::setup::{build_spacecraft_dynamics, default_third_bodies};
+    use orts::spacecraft::SpacecraftState;
+
+    let mut group =
+        IndependentGroup::new(integrator_config(params)).with_event_checker(body_event_checker::<
+            orts::effector::AugmentedState<SpacecraftState>,
+        >(params));
+
+    let third_bodies = default_third_bodies(&params.body);
+    for sat in &params.satellites {
+        // Reject a singular inertia tensor / non-positive mass before
+        // `build_spacecraft_dynamics` panics on the inverse.
+        crate::sim::mode::validate_satellite_spec(sat).map_err(CmdError::usage)?;
+        let att = sat
+            .attitude_config
+            .as_ref()
+            .expect("spacecraft mode requires attitude config on every satellite");
+        let inertia = att.inertia_matrix();
+        let mut dynamics = build_spacecraft_dynamics(
+            &params.body,
+            params.mu,
+            params.epoch,
+            &sat_params(sat),
+            &third_bodies,
+            inertia,
+            params.build_atmosphere_model(),
+        );
+        dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
+
+        let orbit = sat
+            .initial_state(params.mu, params.epoch)
+            .map_err(|e| CmdError::failure(format!("satellite '{}': {e}", sat.id)))?;
+        let plant = SpacecraftState {
+            orbit,
+            attitude: orts::attitude::AttitudeState {
+                quaternion: nalgebra::Vector4::from_row_slice(&att.initial_quaternion),
+                angular_velocity: nalgebra::Vector3::from_row_slice(&att.initial_angular_velocity),
+            },
+            mass: att.mass,
+        };
+        let initial = dynamics.initial_augmented_state(plant);
+        group = group.add_satellite_until(sat.id.as_str(), initial, sat.period, dynamics);
+    }
+
+    propagate_and_record(params, group, |rec, entity, tp, state| {
+        let sc = &state.plant;
+        let os = RecordOrbitalState::new(*sc.orbit.position(), *sc.orbit.velocity());
+        let q = Quaternion4D(sc.attitude.quaternion);
+        let w = AngularVelocity3D(sc.attitude.angular_velocity);
+        rec.log_orbital_state_with_attitude(entity, tp, &os, Some(&q), Some(&w));
+    })
+}
+
+/// Propagate an already-populated group in `output_interval` chunks and
+/// record each satellite's state through `log_state`.
+///
+/// Shared by the orbit-only and spacecraft paths: everything except the
+/// dynamics and what a sample contains is identical, so termination
+/// reporting, ground-station visibility and the recording metadata have one
+/// implementation instead of one per mode.
+fn propagate_and_record<D>(
+    params: &SimParams,
+    mut group: IndependentGroup<D>,
+    log_state: impl Fn(&mut Recording, &EntityPath, &TimePoint, &D::State),
+) -> Result<Recording, CmdError>
+where
+    D: DynamicalSystem,
+    D::State: HasPosition,
+{
+    let mut rec = Recording::new();
+    let body_path = EntityPath::parse(&format!("/world/{}", params.body.properties().name));
+
+    rec.log_static(&body_path, &GravitationalParameter(params.mu));
+    rec.log_static(&body_path, &BodyRadius(params.body.properties().radius));
+
+    // Track entity paths per satellite for recording
+    let sat_paths: Vec<EntityPath> = params.satellites.iter().map(|s| s.entity_path()).collect();
+
     // Ground-station visibility monitors, fed from accepted integrator
     // steps via the propagation observer (independent of output_interval).
     let mut visibility = build_visibility_monitors(params);
@@ -531,8 +638,7 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
     let mut last_output_t: Vec<f64> = vec![0.0; params.satellites.len()];
     for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
         let tp = TimePoint::new().with_sim_time(0.0).with_step(0);
-        let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
-        rec.log_orbital_state(&sat_paths[i], &tp, &os);
+        log_state(&mut rec, &sat_paths[i], &tp, &entry.state);
         steps[i] = 1;
     }
     if let Some(monitors) = visibility.as_mut() {
@@ -541,7 +647,7 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
             &mut vis_last_t,
             group
                 .satellites_with_dynamics()
-                .map(|(e, _)| (e.t, *e.state.position())),
+                .map(|(e, _)| (e.t, e.state.position())),
         );
     }
 
@@ -569,7 +675,7 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
                         return;
                     };
                     if ts > vis_last_t[i] {
-                        monitors[i].update(ts, &Vec3::from_raw(*state.position()));
+                        monitors[i].update(ts, &Vec3::from_raw(state.position()));
                         vis_last_t[i] = ts;
                     }
                 })
@@ -584,8 +690,7 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
         for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
             if !entry.terminated && entry.t >= t - 1e-9 {
                 let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
-                let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
-                rec.log_orbital_state(&sat_paths[i], &tp, &os);
+                log_state(&mut rec, &sat_paths[i], &tp, &entry.state);
                 steps[i] += 1;
                 last_output_t[i] = entry.t;
             }
@@ -605,8 +710,7 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
                 && let Some(entry) = group.satellite(&term.satellite_id)
             {
                 let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
-                let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
-                rec.log_orbital_state(&sat_paths[i], &tp, &os);
+                log_state(&mut rec, &sat_paths[i], &tp, &entry.state);
                 steps[i] += 1;
             }
         }
@@ -617,8 +721,7 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
     for (i, (entry, _)) in group.satellites_with_dynamics().enumerate() {
         if !entry.terminated && (entry.t - last_output_t[i]) > 1e-9 {
             let tp = TimePoint::new().with_sim_time(entry.t).with_step(steps[i]);
-            let os = RecordOrbitalState::new(*entry.state.position(), *entry.state.velocity());
-            rec.log_orbital_state(&sat_paths[i], &tp, &os);
+            log_state(&mut rec, &sat_paths[i], &tp, &entry.state);
         }
     }
 
@@ -626,7 +729,15 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
         report_contact_windows(params, monitors);
     }
 
-    // Use first satellite for metadata (backward compatibility)
+    rec.metadata = sim_metadata(params);
+
+    Ok(rec)
+}
+
+/// Recording metadata describing the run's central body, epoch and the first
+/// satellite's orbit (kept for backward compatibility with single-satellite
+/// consumers).
+fn sim_metadata(params: &SimParams) -> orts::record::recording::SimMetadata {
     let first_sat = params.satellites.first();
     let orbit_desc = first_sat.map(|s| match &s.orbit {
         OrbitSpec::Circular { altitude, r0, .. } => {
@@ -644,7 +755,7 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
             )
         }
     });
-    rec.metadata = orts::record::recording::SimMetadata {
+    orts::record::recording::SimMetadata {
         epoch_jd: params.epoch.map(|e| e.jd()),
         epoch_iso: params.epoch.map(|e| e.to_datetime().to_string()),
         mu: Some(params.mu),
@@ -653,9 +764,7 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
         altitude: first_sat.map(|s| s.altitude(&params.body)),
         period: first_sat.map(|s| s.period),
         orbit_description: orbit_desc,
-    };
-
-    Ok(rec)
+    }
 }
 
 /// Print a Recording as CSV to stdout.
@@ -1120,33 +1229,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
         report_contact_windows(params, monitors);
     }
 
-    let first_sat = params.satellites.first();
-    let orbit_desc = first_sat.map(|s| match &s.orbit {
-        OrbitSpec::Circular { altitude, r0, .. } => {
-            format!(
-                "Initial orbit: circular at {} km altitude (r = {} km)",
-                altitude, r0
-            )
-        }
-        OrbitSpec::Omm { omm } => {
-            format!(
-                "Initial orbit: from TLE/OMM (a = {:.1} km, e = {:.6}, i = {:.2}°)",
-                omm.semi_major_axis(params.mu),
-                omm.fields().eccentricity,
-                omm.fields().inclination.to_degrees()
-            )
-        }
-    });
-    rec.metadata = orts::record::recording::SimMetadata {
-        epoch_jd: params.epoch.map(|e| e.jd()),
-        epoch_iso: params.epoch.map(|e| e.to_datetime().to_string()),
-        mu: Some(params.mu),
-        body_radius: Some(params.body.properties().radius),
-        body_name: Some(params.body.properties().name.to_string()),
-        altitude: first_sat.map(|s| s.altitude(&params.body)),
-        period: first_sat.map(|s| s.period),
-        orbit_description: orbit_desc,
-    };
+    rec.metadata = sim_metadata(params);
 
     Ok(rec)
 }

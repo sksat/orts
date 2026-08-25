@@ -37,6 +37,10 @@ use crate::sim::core::{
     AttitudePayload, AttitudeSource, HistoryState, accel_breakdown, make_history_state, sat_params,
     spacecraft_accel_breakdown,
 };
+use crate::sim::mode::{
+    SimMode, ensure_streams_supported, select_sim_mode, unhonored_config_warnings,
+    validate_satellite_spec,
+};
 use crate::sim::params::SimParams;
 use orts::setup::{build_orbital_system, build_spacecraft_dynamics, default_third_bodies};
 
@@ -392,30 +396,16 @@ impl ServeEngine {
         let body_radius = params.body.properties().radius;
         let atmosphere_altitude = params.body.properties().atmosphere_altitude;
 
-        // Determine mode: use SpacecraftDynamics if all satellites have attitude config.
-        // Empty satellite list → orbit-only (to support dynamic add_satellite).
-        let any_attitude = params
-            .satellites
-            .iter()
-            .any(|s| s.attitude_config.is_some());
-        let all_attitude = !params.satellites.is_empty()
-            && params
-                .satellites
-                .iter()
-                .all(|s| s.attitude_config.is_some());
-        if any_attitude && !all_attitude {
-            return Err(
-                "Mixed attitude config: some satellites have attitude, some don't. \
-                 Specify attitude for all satellites or remove it from all."
-                    .to_string(),
-            );
+        // Mode selection is shared with `orts run` so the same config cannot
+        // get attitude dynamics under one entry point and not the other.
+        let mode = select_sim_mode(&params.satellites)?;
+        // No logger is installed in the CLI, so warnings go to stderr
+        // directly rather than through `log`.
+        for w in unhonored_config_warnings(&params.satellites, mode) {
+            eprintln!("Warning: {w}");
         }
-        let use_spacecraft = all_attitude;
-        let has_controller = !params.satellites.is_empty()
-            && params
-                .satellites
-                .iter()
-                .all(|s| s.controller_config.is_some());
+        let use_spacecraft = mode == SimMode::Spacecraft;
+        let has_controller = mode == SimMode::Controlled;
 
         let mut metas: Vec<SatMeta> = Vec::new();
         let third_bodies = default_third_bodies(&params.body);
@@ -622,14 +612,8 @@ impl ServeEngine {
             .collect();
         // Streams are pumped through the controller; in orbit-only /
         // spacecraft mode the endpoints would be black holes (accepted but
-        // never drained). Reject loudly instead.
-        if !stream_keys.is_empty() && !matches!(group, SimGroup::Controlled(_)) {
-            return Err(
-                "stream-io streams are declared but no satellite has a controller; \
-                 streams require a plugin-controlled simulation"
-                    .to_string(),
-            );
-        }
+        // never drained). Rejected by the same rule `orts run` applies.
+        ensure_streams_supported(mode, &params.satellites)?;
         // A duplicate (sat, stream) pair would pump the same controller
         // stream twice per tick and alias one endpoint; reject it. Both
         // parts also become URL path segments (`/stream/{sat}/{stream}`),
@@ -1247,30 +1231,6 @@ fn build_info_message(params: &SimParams) -> WsMessage {
     }
 }
 
-/// Validate a single satellite's attitude configuration so that
-/// `build_spacecraft_dynamics` cannot panic on a singular inertia
-/// tensor or a non-positive mass. Used from both the startup config
-/// validator and the runtime `add_satellite` path.
-pub(super) fn validate_satellite_spec(spec: &SatelliteSpec) -> Result<(), String> {
-    let Some(att) = &spec.attitude_config else {
-        return Ok(());
-    };
-    let inertia = att.inertia_matrix();
-    if inertia.determinant().abs() < 1e-30 {
-        return Err(format!(
-            "Satellite '{}' has singular inertia tensor (not invertible)",
-            spec.id
-        ));
-    }
-    if att.mass <= 0.0 {
-        return Err(format!(
-            "Satellite '{}' has non-positive mass: {}",
-            spec.id, att.mass
-        ));
-    }
-    Ok(())
-}
-
 /// Whether `s` cannot be used as one path segment of a stream endpoint URL
 /// (`/stream/{sat}/{stream}`): empty or containing a path separator.
 fn invalid_path_segment(s: &str) -> bool {
@@ -1455,6 +1415,32 @@ orbit = { type = "circular", altitude = 600 }
         .err()
         .unwrap();
         assert!(err.contains("Mixed attitude config"), "got: {err}");
+    }
+
+    /// The group the engine builds must be the mode `select_sim_mode` names —
+    /// the same function `orts run` dispatches on. Without this, `serve` can
+    /// drift back to its own inline condition and the two entry points can
+    /// silently disagree about whether a config has attitude dynamics.
+    #[test]
+    fn serve_group_matches_shared_mode_selection() {
+        const ATTITUDE: &str = r#"
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 20, 30], mass = 50 }
+"#;
+        for toml in [ORBIT_ONLY, ATTITUDE] {
+            let config: crate::config::SimConfig = toml::from_str(toml).expect("valid test toml");
+            let params = SimParams::from_config(&config);
+            let mode = select_sim_mode(&params.satellites).expect("valid fleet");
+            let init = engine_from_toml(toml).expect("engine builds");
+            let group_mode = match init.engine.group {
+                SimGroup::OrbitOnly(_) => SimMode::OrbitOnly,
+                SimGroup::Spacecraft(_) => SimMode::Spacecraft,
+                SimGroup::Controlled(_) => SimMode::Controlled,
+            };
+            assert_eq!(group_mode, mode, "config:{toml}");
+        }
     }
 
     #[test]

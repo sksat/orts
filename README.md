@@ -81,6 +81,10 @@ max_momentum = 5.0
 max_torque = 0.5
 ```
 
+Sensors and actuators are driven by a plugin controller (see below); without
+one, `orts run` propagates orbit and attitude and reports that those blocks are
+inert.
+
 ### WASM Plugin
 
 Write satellite attitude controllers in any language that compiles to WebAssembly.

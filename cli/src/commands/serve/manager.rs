@@ -12,13 +12,14 @@ use std::time::Duration;
 
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use super::engine::{EngineInit, ServeEngine, StreamIo, validate_satellite_spec};
+use super::engine::{EngineInit, ServeEngine, StreamIo};
 use super::history::HistoryBuffer;
 use super::protocol::WsMessage;
 use super::stream_bridge::{OutboundPush, StreamBridge, StreamEndpoint, StreamKey};
 use crate::cli::{PluginBackendChoice, SimArgs};
 use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::{SatelliteInfo, SatelliteSpec};
+use crate::sim::mode::validate_satellite_spec;
 use crate::sim::params::SimParams;
 use orts::setup::default_third_bodies;
 
@@ -228,15 +229,10 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     // WebSocket `StartSimulation` returns an error to the client instead of
     // reaching the panic in `SimParams::from_config`.
     crate::sim::params::validate_omm_body(body, &specs)?;
-    let any_att = specs.iter().any(|s| s.attitude_config.is_some());
-    let all_att = !specs.is_empty() && specs.iter().all(|s| s.attitude_config.is_some());
-    if any_att && !all_att {
-        return Err(
-            "Mixed attitude config: some satellites have attitude, some don't. \
-             Specify attitude for all satellites or remove it from all."
-                .to_string(),
-        );
-    }
+    // Reject fleets that no single mode can honor (mixed attitude / mixed
+    // controller) with the same rule `ServeEngine::build` and `orts run` use,
+    // so a WebSocket `StartSimulation` fails here instead of at engine build.
+    crate::sim::mode::select_sim_mode(&specs)?;
     // Validate inertia tensors are invertible
     for spec in &specs {
         validate_satellite_spec(spec)?;
