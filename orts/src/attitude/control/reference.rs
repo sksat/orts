@@ -32,13 +32,17 @@ pub struct InertialPointing {
     pub target_q: UnitQuaternion<f64>,
 }
 
-// The held orientation is expressed in whichever inertial frame the state is
-// propagated in, so this is valid for every `F`.
-impl<F: frame::Eci> AttitudeReference<F> for InertialPointing {
+// Deliberately `SimpleEci`-only, not blanket over every `F`. `target_q` is a
+// bare quaternion, so it carries no record of the frame it was expressed in:
+// with a blanket impl the same `InertialPointing` value handed to a `Gcrs`
+// system would denote a different physical attitude (the two frames differ by
+// precession/nutation, ~0.1° at the pole by 2024) with nothing to catch it.
+// Widen this once the target can be typed as `Rotation<Body, F>`.
+impl AttitudeReference<frame::SimpleEci> for InertialPointing {
     fn target(
         &self,
         _t: f64,
-        _orbit: &OrbitalState<F>,
+        _orbit: &OrbitalState<frame::SimpleEci>,
         _epoch: Option<&Epoch>,
     ) -> (UnitQuaternion<f64>, Vector3<f64>) {
         (self.target_q, Vector3::zeros())

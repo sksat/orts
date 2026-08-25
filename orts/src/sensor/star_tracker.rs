@@ -56,9 +56,14 @@ impl StarTracker {
     /// Measure the attitude quaternion (body→inertial) for a state propagated in
     /// an arbitrary inertial frame `F`.
     ///
-    /// The quaternion data is frame-independent — it is the body→`F` rotation
-    /// for whichever `F` the state is propagated in — so the parameter only
-    /// selects which state type the sensor reads.
+    /// The reading is the body→`F` rotation, and its components depend on `F`:
+    /// the same physical attitude has different quaternion components in
+    /// `SimpleEci` and in `Gcrs`. [`AttitudeBodyToInertial`] does not record
+    /// which frame it came from, so a caller must interpret the value in the
+    /// frame the state was propagated in — nothing here can catch a `Gcrs`
+    /// reading being consumed as `SimpleEci`. Closing that hole needs a
+    /// frame-typed attitude output (`Rotation<Body, F>`), which also reaches the
+    /// plugin WIT payload; it is tracked separately.
     pub fn measure_in_frame<F: arika::frame::Eci>(
         &mut self,
         state: &SpacecraftState<F>,

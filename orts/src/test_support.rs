@@ -6,8 +6,11 @@ use arika::earth::eop::{NutationCorrections, PolarMotion, Ut1Offset};
 /// EOP provider with every correction zero: the IAU 2006 **model** chain only
 /// (no observed dX/dY, no dUT1, no polar motion).
 ///
-/// Keeps `Gcrs` tests reproducible without shipping an EOP table while staying
-/// sub-milliarcsecond accurate — the same provider the `oracle_gcrf` suite uses.
+/// A deterministic model-only fixture, not an accuracy claim: zeroing dUT1
+/// alone displaces ERA by up to ~0.4 arcsecond, so these values do not track
+/// observed Earth orientation. The point is that `Gcrs` tests are reproducible
+/// without shipping an EOP table — the same provider the `oracle_gcrf` suite
+/// uses.
 pub(crate) struct ZeroEop;
 
 impl Ut1Offset for ZeroEop {
