@@ -338,6 +338,35 @@ mod tests {
             0.0
         }
     }
+
+    /// EOP provider with every correction non-zero, so a test can tell an
+    /// orientation that actually forwards `eop()` from one that quietly
+    /// substitutes zeros. Values are the right order of magnitude for observed
+    /// EOP: dUT1 a few tenths of a second, polar motion and the CIP offsets a
+    /// fraction of an arcsecond.
+    struct NonZeroEop;
+
+    impl Ut1Offset for NonZeroEop {
+        fn dut1(&self, _: f64) -> f64 {
+            -0.32
+        }
+    }
+    impl PolarMotion for NonZeroEop {
+        fn x_pole(&self, _: f64) -> f64 {
+            0.161_7_f64.to_radians() / 3600.0
+        }
+        fn y_pole(&self, _: f64) -> f64 {
+            0.436_2_f64.to_radians() / 3600.0
+        }
+    }
+    impl NutationCorrections for NonZeroEop {
+        fn dx(&self, _: f64) -> f64 {
+            0.000_2_f64.to_radians() / 3600.0
+        }
+        fn dy(&self, _: f64) -> f64 {
+            -0.000_3_f64.to_radians() / 3600.0
+        }
+    }
     impl LengthOfDay for ZeroEop {
         fn lod(&self, _: f64) -> f64 {
             0.0
@@ -657,6 +686,53 @@ mod tests {
             [geo.latitude, geo.longitude, geo.altitude],
             [0.3757884614713237, -1.0182885501575514, 498.58726984852274],
             "Gcrs to_geodetic",
+        );
+    }
+
+    /// The `ZeroEop` snapshots above cannot tell a transform that forwards
+    /// `orientation.eop()` from one that silently substitutes zeros — with an
+    /// all-zero provider both give the same numbers. Pin the forwarding itself:
+    /// the same epoch and position through a non-zero provider must differ.
+    #[test]
+    fn gcrs_forwards_the_eop_it_is_given() {
+        let utc = snapshot_epoch();
+        let pos = snapshot_pos();
+        let zero = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &pos,
+            &EarthOrientation::new(utc, &GcrsEopStorage::new(ZeroEop)),
+        );
+        let observed = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &pos,
+            &EarthOrientation::new(utc, &GcrsEopStorage::new(NonZeroEop)),
+        );
+
+        // dUT1 of -0.32 s rotates ERA by ~1.4e-6 rad, which moves the
+        // sub-satellite longitude by about the same amount; polar motion tilts
+        // latitude by ~2e-6 rad. Anything that dropped the provider would land
+        // exactly on the ZeroEop numbers.
+        assert!(
+            (observed.longitude - zero.longitude).abs() > 1e-7,
+            "longitude must respond to dUT1: zero={} observed={}",
+            zero.longitude,
+            observed.longitude
+        );
+        // Latitude is deliberately not asserted here: how much polar motion moves
+        // the geodetic latitude of one particular point depends on that point's
+        // longitude, and at this snapshot it happens to be ~1e-11 rad. The
+        // rotation below is the frame-level check that does not depend on where
+        // the probe sits.
+
+        // The rotation factories must use the provider too, not just to_geodetic.
+        let r_zero = <frame::Gcrs as EarthFixedTransform>::fixed_to_inertial(
+            &EarthOrientation::new(utc, &GcrsEopStorage::new(ZeroEop)),
+        );
+        let r_observed = <frame::Gcrs as EarthFixedTransform>::fixed_to_inertial(
+            &EarthOrientation::new(utc, &GcrsEopStorage::new(NonZeroEop)),
+        );
+        let probe = frame::Vec3::<frame::Itrs>::new(R_EARTH, 0.0, 0.0);
+        assert!(
+            (r_observed.transform(&probe).inner() - r_zero.transform(&probe).inner()).norm() > 1e-3,
+            "fixed_to_inertial must respond to the EOP it is given"
         );
     }
 

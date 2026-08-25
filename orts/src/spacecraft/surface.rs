@@ -2,6 +2,7 @@ use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
 use crate::perturbations::OMEGA_EARTH;
 use arika::body::KnownBody;
 use arika::earth::R as R_EARTH;
+use arika::earth::geodetic::Geodetic;
 use arika::earth::{EarthFixedTransform, EarthOrientation};
 use arika::epoch::Epoch;
 use arika::frame;
@@ -208,15 +209,17 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
 
 impl<F: EarthFixedTransform> PanelDrag<F> {
     /// Check if the position is inside the central body.
-    fn is_inside(&self, position: &Vector3<f64>) -> bool {
-        match self.body {
-            Some(KnownBody::Earth) => {
-                let p2 = position.x * position.x + position.y * position.y;
-                let z2 = position.z * position.z;
-                p2 / (arika::earth::ellipsoid::WGS84_A * arika::earth::ellipsoid::WGS84_A)
-                    + z2 / (arika::earth::ellipsoid::WGS84_B * arika::earth::ellipsoid::WGS84_B)
-                    < 1.0
-            }
+    /// Is the state below the surface (drag is meaningless there)?
+    ///
+    /// For Earth this asks the frame for the geodetic height rather than
+    /// applying the WGS-84 semi-axes to the frame's own axes: the ellipsoid is
+    /// axisymmetric about Earth's *polar* axis, which `SimpleEci`'s `+Z` is by
+    /// definition but `Gcrs`'s is not (they differ by precession/nutation), so
+    /// the raw-axis test misplaces the boundary by tens of metres there. Other
+    /// bodies keep the spherical test.
+    fn is_below_surface(&self, geodetic: Option<&Geodetic>, position: &Vector3<f64>) -> bool {
+        match (self.body, geodetic) {
+            (Some(KnownBody::Earth), Some(geodetic)) => geodetic.altitude < 0.0,
             _ => position.magnitude() < self.body_radius,
         }
     }
@@ -249,11 +252,6 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
         mass: f64,
         epoch: Option<&Epoch<arika::epoch::Utc>>,
     ) -> ExternalLoads<F> {
-        // Inside body → zero
-        if self.is_inside(orbit.position()) {
-            return ExternalLoads::zeros();
-        }
-
         // TODO: OrbitalSystem::epoch_0 を required にすれば dummy は不要
         let pos_vec = orbit.position_vec();
         let dummy_epoch = arika::epoch::Epoch::from_jd(2451545.0);
@@ -261,8 +259,14 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
         // `EarthFixedTransform` supplies the ECI→ECEF conversion for the frame:
         // the ERA-only rotation for `SimpleEci` (identical to the legacy
         // `Epoch::gmst`, which is the same ERA formula) and the full IAU 2006
-        // chain for `Gcrs`.
+        // chain for `Gcrs`. Computed before the surface check so that check can
+        // use the geodetic height instead of the frame's raw axes.
         let geodetic = F::to_geodetic(&pos_vec, &EarthOrientation::new(*utc, &self.eop));
+
+        // Below the surface → zero
+        if self.is_below_surface(Some(&geodetic), orbit.position()) {
+            return ExternalLoads::zeros();
+        }
         let rho = self.atmosphere.density(&AtmosphereInput { geodetic, utc });
         if rho == 0.0 {
             return ExternalLoads::zeros();
