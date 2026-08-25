@@ -143,7 +143,81 @@ export async function createTable(conn: AsyncDuckDBConnection, schema: TableSche
 }
 
 /**
- * Insert an array of points into the table in batches of 1000.
+ * Run `body` inside a DuckDB transaction, committing on success and rolling
+ * back on failure. The rejection is re-thrown after the rollback so callers
+ * can retry the whole unit of work: because nothing was committed, a retry
+ * cannot duplicate the rows a partially-applied batch loop would have left
+ * behind.
+ *
+ * DuckDB has no nested transactions, so callers must not overlap two
+ * `withTransaction` calls on the same connection.
+ */
+export async function withTransaction<T>(
+  conn: AsyncDuckDBConnection,
+  body: () => Promise<T>,
+): Promise<T> {
+  await conn.query("BEGIN TRANSACTION");
+  try {
+    const result = await body();
+    await conn.query("COMMIT");
+    return result;
+  } catch (e) {
+    try {
+      await conn.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.warn("store: ROLLBACK failed:", rollbackError);
+    }
+    throw e;
+  }
+}
+
+/**
+ * Insert pre-converted row tuples in batches of 1000, atomically:
+ * either every row lands or none does.
+ *
+ * Opens its own transaction, so it must not run inside another
+ * `withTransaction` on the same connection, and two calls on one connection
+ * must not overlap — DuckDB has no nested transactions.
+ */
+export async function insertRows(
+  conn: AsyncDuckDBConnection,
+  tableName: string,
+  rows: RowTuple[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  await withTransaction(conn, async () => {
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const sql = buildInsertSQLFromRows(tableName, rows.slice(i, i + BATCH_SIZE));
+      if (sql) await conn.query(sql);
+    }
+  });
+}
+
+/**
+ * Replace the whole table content with `rows`, atomically: the delete and all
+ * insert batches share one transaction, so a failure part-way through leaves
+ * the previous content intact instead of an emptied or half-filled table.
+ *
+ * Same transaction rule as `insertRows`: no nesting, no overlapping calls on
+ * one connection.
+ */
+export async function replaceRows(
+  conn: AsyncDuckDBConnection,
+  tableName: string,
+  rows: RowTuple[],
+): Promise<void> {
+  await withTransaction(conn, async () => {
+    await conn.query(`DELETE FROM ${tableName}`);
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const sql = buildInsertSQLFromRows(tableName, rows.slice(i, i + BATCH_SIZE));
+      if (sql) await conn.query(sql);
+    }
+  });
+}
+
+/**
+ * Insert an array of points into the table in batches of 1000, atomically
+ * (see `insertRows` for the transaction rule).
  */
 export async function insertPoints<T extends TimePoint>(
   conn: AsyncDuckDBConnection,
@@ -151,11 +225,27 @@ export async function insertPoints<T extends TimePoint>(
   points: T[],
 ): Promise<void> {
   if (points.length === 0) return;
-  for (let i = 0; i < points.length; i += BATCH_SIZE) {
-    const batch = points.slice(i, i + BATCH_SIZE);
-    const sql = buildInsertSQL(schema, batch);
-    if (sql) await conn.query(sql);
-  }
+  await insertRows(
+    conn,
+    schema.tableName,
+    points.map((p) => schema.toRow(p)),
+  );
+}
+
+/**
+ * Replace the whole table content with `points`, atomically
+ * (see `replaceRows`, including the transaction rule).
+ */
+export async function replacePoints<T extends TimePoint>(
+  conn: AsyncDuckDBConnection,
+  schema: TableSchema<T>,
+  points: T[],
+): Promise<void> {
+  await replaceRows(
+    conn,
+    schema.tableName,
+    points.map((p) => schema.toRow(p)),
+  );
 }
 
 /**

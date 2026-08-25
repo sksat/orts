@@ -206,6 +206,37 @@ describe("IngestBuffer", () => {
     expect(buf.latestT).toBe(100);
   });
 
+  it("latestT is recomputed from the rebuild data, moving down when it ends earlier", () => {
+    // A rebuild is a full replacement (e.g. restarting the simulation on the
+    // same connection), so latestT must describe the new dataset. Keeping the
+    // previous maximum would anchor the chart window past the end of the data.
+    const buf = new IngestBuffer<TestPoint>();
+    buf.push(makePoint(1000));
+    expect(buf.latestT).toBe(1000);
+
+    buf.markRebuild([makePoint(0), makePoint(100)]);
+    expect(buf.latestT).toBe(100);
+  });
+
+  it("latestT resets to -Infinity for an empty rebuild", () => {
+    const buf = new IngestBuffer<TestPoint>();
+    buf.push(makePoint(1000));
+    buf.markRebuild([]);
+    expect(buf.latestT).toBe(-Infinity);
+  });
+
+  it("latestT after markRebuild depends only on the replacement data", () => {
+    const withHistory = new IngestBuffer<TestPoint>();
+    withHistory.push(makePoint(10));
+    withHistory.push(makePoint(20));
+    withHistory.markRebuild([makePoint(3), makePoint(7)]);
+
+    const fresh = new IngestBuffer<TestPoint>();
+    fresh.markRebuild([makePoint(3), makePoint(7)]);
+
+    expect(withHistory.latestT).toBe(fresh.latestT);
+  });
+
   it("latestT from rebuild persists after consumeRebuild", () => {
     const buf = new IngestBuffer<TestPoint>();
     buf.markRebuild([makePoint(500)]);

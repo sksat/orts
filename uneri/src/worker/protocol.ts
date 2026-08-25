@@ -25,6 +25,19 @@ export interface WorkerTableSchema {
   derived: DerivedColumn[];
 }
 
+/** Do the two schemas store the same columns, in the same order, with the same types? */
+export function sameColumns(a: WorkerTableSchema, b: WorkerTableSchema): boolean {
+  if (a.tableName !== b.tableName) return false;
+  if (a.columns.length !== b.columns.length) return false;
+  return a.columns.every((c, i) => c.name === b.columns[i].name && c.type === b.columns[i].type);
+}
+
+/** Do the two schemas derive the same chart columns from the same expressions? */
+export function sameDerived(a: WorkerTableSchema, b: WorkerTableSchema): boolean {
+  if (a.derived.length !== b.derived.length) return false;
+  return a.derived.every((d, i) => d.name === b.derived[i].name && d.sql === b.derived[i].sql);
+}
+
 // Main thread → Worker messages
 
 export type MainToWorkerMessage =
@@ -39,6 +52,20 @@ export type MainToWorkerMessage =
     }
   | { type: "ingest"; rows: RowTuple[]; latestT: number }
   | { type: "rebuild"; rows: RowTuple[]; latestT: number }
+  | {
+      /**
+       * Replace the schema the Worker computes derived columns with.
+       *
+       * Row tuples carry no column names, so the main thread must send this
+       * before any row produced by the new `toRow`. When only the derived
+       * expressions change the stored rows are kept and the next query uses
+       * the new expressions; when the column list changes the table is
+       * recreated and its content dropped (the Worker cannot re-derive rows
+       * it no longer has).
+       */
+      type: "update-schema";
+      schema: WorkerTableSchema;
+    }
   | {
       type: "configure";
       timeRange: TimeRange;
@@ -72,6 +99,11 @@ export type MultiMainToWorkerMessage =
   | { type: "multi-ingest"; satelliteId: string; rows: RowTuple[]; latestT: number }
   | { type: "multi-rebuild"; satelliteId: string; rows: RowTuple[]; latestT: number }
   | { type: "multi-configure"; timeRange: TimeRange; maxPoints: number }
+  | {
+      /** Replace the base schema for every satellite table (see `update-schema`). */
+      type: "multi-update-schema";
+      baseSchema: WorkerTableSchema;
+    }
   | {
       type: "multi-update-configs";
       satelliteConfigs: WorkerSatelliteConfig[];

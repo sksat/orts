@@ -83,6 +83,16 @@ export class MultiChartDataWorkerClient {
     this.send({ type: "multi-configure", timeRange, maxPoints });
   }
 
+  /**
+   * Replace the base schema the Worker derives chart columns with.
+   *
+   * Must be sent before the first row produced by the new `toRow`, because
+   * row tuples carry no column names.
+   */
+  updateSchema(baseSchema: WorkerTableSchema): void {
+    this.send({ type: "multi-update-schema", baseSchema });
+  }
+
   updateConfigs(satelliteConfigs: WorkerSatelliteConfig[], metricNames: string[]): void {
     this.send({ type: "multi-update-configs", satelliteConfigs, metricNames });
   }

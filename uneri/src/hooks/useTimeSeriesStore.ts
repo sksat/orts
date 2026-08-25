@@ -9,6 +9,7 @@ import {
   insertPoints,
   queryDerived,
   queryDerivedIncremental,
+  replacePoints,
 } from "../db/store.js";
 import type { ChartDataMap, TableSchema, TimePoint } from "../types.js";
 import { mergeChartData, trimChartDataLeft } from "../utils/mergeChartData.js";
@@ -92,6 +93,9 @@ export function useTimeSeriesStore<T extends TimePoint>(
      *  immediately deleting newly inserted detail data. */
     const COMPACT_COOLDOWN_AFTER_REBUILD = 5;
     let compactCooldown = 0;
+    /** Give up on a failing rebuild after this many retries. */
+    const MAX_REBUILD_RETRIES = 3;
+    let rebuildRetries = 0;
 
     // Cold/hot state
     let coldSnapshot: ChartDataMap | null = null;
@@ -123,16 +127,36 @@ export function useTimeSeriesStore<T extends TimePoint>(
         const rebuildData = ingestBufferRef.current.consumeRebuild();
         if (rebuildData !== null) {
           try {
-            await clearTable(conn, schemaRef.current);
-            await insertPoints(conn, schemaRef.current, rebuildData);
+            // One transaction: a failure part-way through leaves the previous
+            // content in place, so the re-queued retry cannot duplicate rows.
+            await replacePoints(conn, schemaRef.current, rebuildData);
             hasDataRef.current = rebuildData.length > 0;
             if (!hasDataRef.current) setData(null); // clear chart for empty rebuild
             compactCooldown = COMPACT_COOLDOWN_AFTER_REBUILD;
             coldRefreshNeeded = true;
             hotBuffer = null;
+            rebuildRetries = 0;
           } catch (e) {
-            console.warn("useTimeSeriesStore: rebuild failed, re-queuing:", e);
-            ingestBufferRef.current.markRebuild(rebuildData);
+            // Bounded, like the Worker path: re-queuing forever would retry a
+            // permanently failing rebuild every tick, and each markRebuild
+            // discards the points that streamed in since the last one.
+            if (rebuildRetries < MAX_REBUILD_RETRIES) {
+              rebuildRetries++;
+              console.warn("useTimeSeriesStore: rebuild failed, re-queuing:", e);
+              ingestBufferRef.current.markRebuild(rebuildData);
+            } else {
+              rebuildRetries = 0;
+              console.warn(
+                "useTimeSeriesStore: dropping rebuild of",
+                rebuildData.length,
+                "points after",
+                MAX_REBUILD_RETRIES,
+                "retries:",
+                e,
+              );
+              hasDataRef.current = false;
+              setData(null);
+            }
           }
         } else {
           // 1. Normal drain buffer → DuckDB insert
