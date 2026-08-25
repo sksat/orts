@@ -6,8 +6,8 @@
 """Plot altitude history for each scenario from orbital_lifetime CSV.
 
 Usage:
-    # Generate CSV first:
-    cargo run --example orbital_lifetime -p orts --features fetch-weather
+    # Generate CSV first (`rerun` is what writes the .rrd):
+    cargo run --example orbital_lifetime -p orts --features rerun,fetch-weather
     cargo run --bin orts -- convert --format csv \
         orts/examples/orbital_lifetime/orbital_lifetime.rrd \
         --output orts/examples/orbital_lifetime/orbital_lifetime.csv
