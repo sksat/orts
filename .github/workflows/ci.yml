@@ -150,13 +150,19 @@ jobs:
           # `note[advisory-ignored]` is one per accepted exception; the RUSTSEC id
           # sits on the deny.toml line the diagnostic points at.
           accepted=$(grep -c '^note\[advisory-ignored\]' advisories.txt || true)
-          errors=$(grep -cE '^error\[' advisories.txt || true)
+          # Count advisory categories only. A non-zero exit with none of these
+          # means cargo-deny itself failed (advisory-db fetch, bad config) and
+          # checked nothing — reporting that as "0 advisory errors" would read
+          # like a clean security result.
+          live=$(grep -cE '^error\[(vulnerability|unmaintained|unsound|notice|yanked)\]' advisories.txt || true)
 
           {
             if [ "$status" -eq 0 ]; then
               echo "### cargo-deny: advisories ok"
+            elif [ "$live" -gt 0 ]; then
+              echo "### cargo-deny: $live advisory finding(s)"
             else
-              echo "### cargo-deny: $errors advisory error(s)"
+              echo "### cargo-deny: check did not complete (exit $status, no advisory reported)"
             fi
             echo
             echo "Accepted exceptions (see \`deny.toml\` for why each one is there): $accepted"
