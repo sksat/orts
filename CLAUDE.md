@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 orts is a numerical computation and optimization platform for spacecraft simulation — orbital and attitude dynamics.
 
 - Design doc (why): [DESIGN.md](DESIGN.md) / architecture map (what): [ARCHITECTURE.md](ARCHITECTURE.md)
-- Crate / package inventory and roles: see the Project Structure tables in [README.md](README.md)
+- crate / package inventory and roles: see the Project Structure tables in [README.md](README.md)
 
 ## Development Policy
 
@@ -40,7 +40,7 @@ orts is a numerical computation and optimization platform for spacecraft simulat
 
 - Verify technical claims (CHANGELOG, docs, etc.) against the implementation and tests before writing them down
 - In Japanese documents, keep technical terms in English (crate, workspace, commit) — no katakana transliteration
-- Crate and package names stay lowercase even at the start of a sentence (orts, arika — never Orts)
+- Technical terms and crate / package names stay lowercase even at the start of a sentence (crate, orts, arika — never Crate or Orts)
 - Use a negation ("not A, but B") only where it records a rejected alternative or an actual failure mode; decorative contrasts read as filler
 
 ## Languages
