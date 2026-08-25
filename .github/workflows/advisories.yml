@@ -1,0 +1,124 @@
+# Scheduled advisory watch.
+#
+# The cargo-deny job in ci.yml runs on pushes and PRs, which catches a change
+# that *introduces* a vulnerable dependency. It cannot catch the other half: a
+# RustSec advisory published against a dependency we already ship, where the
+# lockfile never changes and no CI run is triggered. That needs a clock.
+#
+# Deliberately not wired into the release pipeline — a known advisory should be
+# visible, not a release blocker. This workflow keeps a single tracking issue in
+# sync instead, and goes red in the Actions list while something is live.
+name: Advisories
+
+on:
+  schedule:
+    # Mondays, 03:00 UTC.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: advisories
+  cancel-in-progress: false
+
+jobs:
+  advisories:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: cargo-deny@0.20.2
+
+      # Resolves one of three states so a broken run is never mistaken for a
+      # clean one. This step does not fail: the tracking issue has to be synced
+      # first, and the job is failed at the end instead.
+      #
+      #   live  — cargo-deny reported at least one advisory
+      #   clean — cargo-deny ran and reported none
+      #   error — cargo-deny exited non-zero without reporting a single advisory,
+      #           i.e. the check never actually ran (advisory-db fetch, lockfile,
+      #           config...). Treated as unknown, because calling that clean
+      #           would close the tracking issue on a run that checked nothing.
+      #
+      # `-L info` also lists the advisories deny.toml ignores, which are silent
+      # at the default log level.
+      - name: Check advisories
+        id: report
+        run: |
+          set +e
+          cargo deny -L info check advisories > advisories.txt 2>&1
+          deny_status=$?
+          set -e
+          live=$(grep -cE '^error\[(vulnerability|unmaintained|unsound|notice|yanked)\]' advisories.txt || true)
+
+          if [ "$live" -gt 0 ]; then
+            state=live
+          elif [ "$deny_status" -ne 0 ]; then
+            state=error
+          else
+            state=clean
+          fi
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          echo "cargo-deny exit $deny_status, $live live advisories, state $state"
+
+          {
+            echo "### cargo-deny advisories — $state"
+            echo
+            if [ "$state" = "error" ]; then
+              echo "cargo-deny exited $deny_status without reporting an advisory, so the state is **unknown** for this run. The tracking issue was left untouched."
+              echo
+            fi
+            echo '```'
+            cat advisories.txt
+            echo '```'
+          } | tee report.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Skipped when the state is unknown — a run that checked nothing must not
+      # create, edit or close the tracking issue.
+      - name: Sync tracking issue
+        if: steps.report.outputs.state != 'error'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: Dependency advisories
+          LIVE: ${{ steps.report.outputs.state == 'live' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          number=$(gh issue list --state open --limit 100 --json number,title --jq '.[] | select(.title == env.TITLE) | .number' | head -1)
+
+          {
+            cat report.md
+            printf '\n---\nUpdated by the [advisories workflow](%s).\n' "$RUN_URL"
+            printf 'Exceptions live in `deny.toml`; each one records what would let us drop it.\n'
+          } > issue.md
+
+          if [ "$LIVE" = "true" ]; then
+            if [ -n "$number" ]; then
+              gh issue edit "$number" --body-file issue.md
+            else
+              gh issue create --title "$TITLE" --body-file issue.md
+            fi
+          elif [ -n "$number" ]; then
+            gh issue comment "$number" --body-file issue.md
+            gh issue close "$number" --comment "No live advisories left; closing. The scheduled run opens a fresh issue if one appears."
+          fi
+
+      - name: Fail unless the advisory state is clean
+        if: steps.report.outputs.state != 'clean'
+        run: |
+          echo "advisory state: ${{ steps.report.outputs.state }} - see the job summary." >&2
+          exit 1

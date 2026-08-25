@@ -101,6 +101,66 @@ jobs:
       - name: Lint
         run: pnpm exec biome lint .
 
+  # Supply-chain gate for the Rust side. Renovate's `minimumReleaseAge` cooldown
+  # keeps a freshly published version out of the lockfile; this job is the
+  # complementary check on what is already in it.
+  #
+  #   advisories — RustSec vulnerabilities / unmaintained crates
+  #   bans       — wildcard version requirements (duplicate majors are warn-only)
+  #   sources    — every crate must come from crates.io
+  #
+  # Licenses are deliberately not checked here: cli/about.toml already drives the
+  # NOTICE embedded in the released binary, and one source of truth beats two.
+  # Policy and documented exceptions live in deny.toml.
+  #
+  # Only the root workspace is covered; the nested plugin-sdk/examples workspace
+  # has its own lockfile and is not checked yet.
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@c93ccc03e00cd0e08e494f5fd058a6c55a6a1907 # v2.82.8
+        with:
+          tool: cargo-deny@0.20.2
+
+      # One advisory evaluation, used for both the gate and the summary — the
+      # advisory-database fetch and the license matching are the expensive part,
+      # so they must not run twice. `-L info` is what makes cargo-deny mention
+      # the advisories deny.toml ignores: at the default log level they are
+      # invisible, so the exceptions we knowingly carry would vanish from view
+      # the moment they were written down. The gate is cargo-deny's exit status.
+      - name: cargo-deny (advisories)
+        run: |
+          set +e
+          cargo deny -L info check advisories 2>&1 | tee advisories.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          {
+            echo '### cargo-deny advisories'
+            echo
+            echo '```'
+            cat advisories.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      # Cheap by comparison: no advisory database, no license matching. Runs
+      # even when the advisory check failed, so one PR shows both results.
+      - name: cargo-deny (bans, sources)
+        if: always()
+        run: cargo deny check bans sources
+
   rust-build:
     runs-on: ubuntu-latest
     steps:
