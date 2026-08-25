@@ -47,14 +47,70 @@ pub struct ParsedRrd {
     pub rows: Vec<RrdRow>,
 }
 
+/// Join key identifying one logical row of a scalar column.
+///
+/// Every scalar field lives on its own entity path in an RRD (`<base>/x`,
+/// `<base>/y`, …), so a state row has to be reassembled from several columns.
+/// The key is the recording's own time index — never the position of a value
+/// inside its column, which coincides with the time index only as long as every
+/// column happens to carry a value at every step.
+///
+/// The trailing counter distinguishes several values logged at the *same* time
+/// index, so repeats are still separate rows instead of overwriting each other,
+/// and the n-th repeat of one field joins the n-th repeat of the others.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum RowKey {
+    /// `sim_time` timeline value \[ns\].
+    SimTime(i64, u32),
+    /// `step` sequence number, for recordings without a `sim_time` timeline.
+    Step(i64, u32),
+    /// Neither timeline is present: fall back to the column-local index. Rows
+    /// keyed this way carry no time information and all report `t = 0`.
+    Index(usize),
+}
+
+impl RowKey {
+    /// Simulation time of this row \[s\], or 0 when the recording carries none.
+    fn t_secs(self) -> f64 {
+        match self {
+            RowKey::SimTime(ns, _) => ns as f64 / 1e9,
+            RowKey::Step(..) | RowKey::Index(_) => 0.0,
+        }
+    }
+}
+
+/// One decoded scalar field: its value at each time index of the recording.
+type Column = BTreeMap<RowKey, f64>;
+
+/// How many values `column` already holds at one time index. `key` builds the
+/// key for the n-th repeat at that time, so the count is the next free slot.
+fn repeats(column: &Column, key: impl Fn(u32) -> RowKey) -> u32 {
+    column.range(key(0)..=key(u32::MAX)).count() as u32
+}
+
+/// Time index of every row in one chunk.
+enum ChunkKeys {
+    SimTime(Vec<i64>),
+    Step(Vec<i64>),
+    /// No timeline: keys are assigned per column from its current length.
+    Index,
+}
+
 /// Decode an RRD stream into orbital data.
 ///
 /// Accepts any `impl Read` — works with both `File` and `Cursor<&[u8]>`.
+///
+/// Columns are joined on the recording's time index, so a component that is
+/// logged at only some of the time steps (or not at all) never shifts the
+/// remaining components onto the wrong row. A row is emitted only when the
+/// whole position triple — and, when the recording has velocity columns, the
+/// whole velocity triple — is present at that exact time; incomplete rows are
+/// dropped rather than padded with zeros.
 pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Error>> {
     let reader = std::io::BufReader::new(reader);
 
-    // Collect f64 scalars: entity_path -> Vec<(time_ns, f64)>
-    let mut scalars: BTreeMap<String, Vec<(i64, f64)>> = BTreeMap::new();
+    // Collect f64 scalars: entity_path -> (time index -> value)
+    let mut scalars: BTreeMap<String, Column> = BTreeMap::new();
     let mut meta_scalars: BTreeMap<String, f64> = BTreeMap::new();
     let mut meta_texts: BTreeMap<String, String> = BTreeMap::new();
 
@@ -98,30 +154,52 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
             continue;
         }
 
-        let sim_time_col = chunk
-            .timelines()
-            .iter()
-            .find(|(name, _)| name.as_str() == "sim_time");
-        let times: Vec<i64> = if let Some((_, col)) = sim_time_col {
-            col.times_raw().to_vec()
+        let timeline = |wanted: &str| {
+            chunk
+                .timelines()
+                .iter()
+                .find(|(name, _)| name.as_str() == wanted)
+                .map(|(_, col)| col.times_raw().to_vec())
+        };
+        let keys = if let Some(times) = timeline("sim_time") {
+            ChunkKeys::SimTime(times)
+        } else if let Some(steps) = timeline("step") {
+            ChunkKeys::Step(steps)
         } else {
-            vec![0; n]
+            ChunkKeys::Index
         };
 
         for comp_id in chunk.components_identifiers() {
             let comp_name = comp_id.as_str();
             if comp_name.contains("Scalar") || comp_name.contains("scalars") {
-                for (row_idx, &t) in times.iter().enumerate() {
+                let column = scalars.entry(entity_path.clone()).or_default();
+                for row_idx in 0..n {
                     let batch =
                         chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx);
-                    if let Some(Ok(scalar_vec)) = batch {
-                        for s in scalar_vec {
-                            scalars
-                                .entry(entity_path.clone())
-                                .or_default()
-                                .push((t, s.0.0));
-                        }
-                    }
+                    // A scalar column holds one value per row; if a batch ever
+                    // carries several, the first is the value of this row.
+                    let Some(Ok(scalar_vec)) = batch else {
+                        continue;
+                    };
+                    let Some(value) = scalar_vec.first() else {
+                        continue;
+                    };
+                    let key = match &keys {
+                        ChunkKeys::SimTime(times) => match times.get(row_idx) {
+                            Some(&t) => {
+                                RowKey::SimTime(t, repeats(column, |n| RowKey::SimTime(t, n)))
+                            }
+                            None => continue,
+                        },
+                        ChunkKeys::Step(steps) => match steps.get(row_idx) {
+                            Some(&step) => {
+                                RowKey::Step(step, repeats(column, |n| RowKey::Step(step, n)))
+                            }
+                            None => continue,
+                        },
+                        ChunkKeys::Index => RowKey::Index(column.len()),
+                    };
+                    column.insert(key, value.0.0);
                 }
             }
         }
@@ -151,48 +229,55 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
 
     let mut rows: Vec<RrdRow> = Vec::new();
     for base in &base_paths {
-        let x_data = scalars.get(&format!("{base}/x"));
-        let y_data = scalars.get(&format!("{base}/y"));
-        let z_data = scalars.get(&format!("{base}/z"));
-        let vx_data = scalars.get(&format!("{base}/vx"));
-        let vy_data = scalars.get(&format!("{base}/vy"));
-        let vz_data = scalars.get(&format!("{base}/vz"));
+        let column = |field: &str| scalars.get(&format!("{base}/{field}"));
+        // Value of one field at one time index, or `None` when the recording
+        // has no such column or no value there.
+        let at = |col: Option<&Column>, key: RowKey| col?.get(&key).copied();
 
-        let Some(x_data) = x_data else { continue };
+        // A row is a position, so the whole triple has to be there.
+        let Some(x_col) = column("x") else { continue };
+        let pos_cols = (Some(x_col), column("y"), column("z"));
+        let vel_cols = (column("vx"), column("vy"), column("vz"));
+        let quat_cols = (column("qw"), column("qx"), column("qy"), column("qz"));
+        let omega_cols = (column("wx"), column("wy"), column("wz"));
 
-        let qw_data = scalars.get(&format!("{base}/qw"));
-        let qx_data = scalars.get(&format!("{base}/qx"));
-        let qy_data = scalars.get(&format!("{base}/qy"));
-        let qz_data = scalars.get(&format!("{base}/qz"));
-        let wx_data = scalars.get(&format!("{base}/wx"));
-        let wy_data = scalars.get(&format!("{base}/wy"));
-        let wz_data = scalars.get(&format!("{base}/wz"));
+        // A recording with no velocity column at all is position-only; one that
+        // has velocity columns must supply all three at a time for the row to be
+        // a state vector.
+        let has_velocity = vel_cols.0.is_some() || vel_cols.1.is_some() || vel_cols.2.is_some();
 
-        for (i, (t_ns, x)) in x_data.iter().enumerate() {
-            let t_sec = *t_ns as f64 / 1e9;
+        for &key in x_col.keys() {
+            let triple = |cols: (Option<&Column>, Option<&Column>, Option<&Column>)| {
+                Some([at(cols.0, key)?, at(cols.1, key)?, at(cols.2, key)?])
+            };
 
-            let quaternion = qw_data.and_then(|qw| {
-                let qw = qw.get(i)?.1;
-                let qx = qx_data?.get(i)?.1;
-                let qy = qy_data?.get(i)?.1;
-                let qz = qz_data?.get(i)?.1;
-                Some([qw, qx, qy, qz])
-            });
-            let angular_velocity = wx_data.and_then(|wx| {
-                let wx = wx.get(i)?.1;
-                let wy = wy_data?.get(i)?.1;
-                let wz = wz_data?.get(i)?.1;
-                Some([wx, wy, wz])
-            });
+            let Some([x, y, z]) = triple(pos_cols) else {
+                continue;
+            };
+            let velocity = triple(vel_cols);
+            if has_velocity && velocity.is_none() {
+                continue;
+            }
+            let [vx, vy, vz] = velocity.unwrap_or([0.0; 3]);
+
+            let quaternion = (|| {
+                Some([
+                    at(quat_cols.0, key)?,
+                    at(quat_cols.1, key)?,
+                    at(quat_cols.2, key)?,
+                    at(quat_cols.3, key)?,
+                ])
+            })();
+            let angular_velocity = triple(omega_cols);
 
             rows.push(RrdRow {
-                t: t_sec,
-                x: *x,
-                y: y_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
-                z: z_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
-                vx: vx_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
-                vy: vy_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
-                vz: vz_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
+                t: key.t_secs(),
+                x,
+                y,
+                z,
+                vx,
+                vy,
+                vz,
                 entity_path: Some(base.clone()),
                 quaternion,
                 angular_velocity,
@@ -276,5 +361,178 @@ mod tests {
             "body_radius should be positive"
         );
         assert!(m.epoch_jd.is_some(), "epoch_jd should be set");
+    }
+
+    const ENTITY: &str = "/world/sat/ragged";
+
+    /// Write an .rrd whose scalar columns carry exactly the given samples.
+    ///
+    /// `samples` is `(sim_time [s], [(field, value)])` — a field absent from a
+    /// sample is simply not logged at that time, which is how a ragged
+    /// recording arises in practice (a component logged conditionally).
+    fn write_rrd(name: &str, samples: &[(f64, Vec<(&str, f64)>)]) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("rrd_wasm_{}_{}.rrd", name, std::process::id()));
+        let rec = rerun::RecordingStreamBuilder::new("rrd-wasm-test")
+            .save(&path)
+            .expect("recording stream");
+        for (t, fields) in samples {
+            rec.set_duration_secs("sim_time", *t);
+            for (field, value) in fields {
+                rec.log(format!("{ENTITY}/{field}"), &rerun::Scalars::new([*value]))
+                    .expect("log scalar");
+            }
+        }
+        rec.flush_blocking().expect("flush");
+        drop(rec);
+        path
+    }
+
+    fn decode_path(path: &std::path::Path) -> ParsedRrd {
+        let bytes = std::fs::read(path).expect("written rrd");
+        let _ = std::fs::remove_file(path);
+        decode_rrd(std::io::Cursor::new(&bytes)).expect("rrd should decode")
+    }
+
+    fn state(x: f64) -> Vec<(&'static str, f64)> {
+        vec![
+            ("x", x),
+            ("y", x + 1.0),
+            ("z", x + 2.0),
+            ("vx", x + 3.0),
+            ("vy", x + 4.0),
+            ("vz", x + 5.0),
+        ]
+    }
+
+    /// Dense, aligned columns: every logged value must come back on the row of
+    /// the time it was logged at. All six components differ from each other and
+    /// from step to step, so any reshuffling of rows or columns shows up.
+    #[test]
+    fn dense_columns_keep_every_value_on_its_own_time() {
+        let path = write_rrd(
+            "dense",
+            &[
+                (0.0, state(100.0)),
+                (10.0, state(200.0)),
+                (20.0, state(300.0)),
+            ],
+        );
+        let data = decode_path(&path);
+
+        assert_eq!(data.rows.len(), 3, "expected one row per time step");
+        for (row, x) in data.rows.iter().zip([100.0, 200.0, 300.0]) {
+            assert_eq!(
+                (row.t, row.x, row.y, row.z, row.vx, row.vy, row.vz),
+                (
+                    (x - 100.0) / 10.0,
+                    x,
+                    x + 1.0,
+                    x + 2.0,
+                    x + 3.0,
+                    x + 4.0,
+                    x + 5.0
+                ),
+                "row {row:?} does not match the state logged at its time"
+            );
+        }
+    }
+
+    /// Two states logged at the same time index are two rows, not one: the
+    /// repeat must not overwrite the earlier value, and the n-th repeat of each
+    /// component must stay with the n-th repeat of the others.
+    #[test]
+    fn repeated_time_index_keeps_both_rows() {
+        let path = write_rrd(
+            "repeat",
+            &[
+                (0.0, state(100.0)),
+                (0.0, state(200.0)),
+                (10.0, state(300.0)),
+            ],
+        );
+        let data = decode_path(&path);
+
+        assert_eq!(data.rows.len(), 3, "got {:?}", data.rows);
+        assert_eq!(
+            data.rows
+                .iter()
+                .map(|r| (r.t, r.x, r.y))
+                .collect::<Vec<_>>(),
+            vec![
+                (0.0, 100.0, 101.0),
+                (0.0, 200.0, 201.0),
+                (10.0, 300.0, 301.0)
+            ]
+        );
+    }
+
+    /// A component missing at one time step must not slide the later values of
+    /// that column onto the earlier rows.
+    #[test]
+    fn sparse_position_column_is_joined_by_time() {
+        let mut first = state(100.0);
+        first.retain(|(field, _)| *field != "y");
+        let path = write_rrd("sparse_pos", &[(0.0, first), (10.0, state(200.0))]);
+        let data = decode_path(&path);
+
+        // t=0 has no y at all, so it is not a position — the only complete row
+        // is t=10, and it must carry *its own* y (201), not t=0's row index.
+        assert_eq!(
+            data.rows.len(),
+            1,
+            "incomplete position must be dropped, got {:?}",
+            data.rows
+        );
+        assert_eq!((data.rows[0].t, data.rows[0].y), (10.0, 201.0));
+    }
+
+    /// Velocity logged for only part of a run must not be reported as zero
+    /// velocity on the remaining rows.
+    #[test]
+    fn row_missing_a_velocity_component_is_dropped() {
+        let mut second = state(200.0);
+        second.retain(|(field, _)| *field != "vz");
+        let path = write_rrd("sparse_vel", &[(0.0, state(100.0)), (10.0, second)]);
+        let data = decode_path(&path);
+
+        assert_eq!(
+            data.rows.len(),
+            1,
+            "incomplete velocity must be dropped, got {:?}",
+            data.rows
+        );
+        assert_eq!((data.rows[0].t, data.rows[0].vz), (0.0, 105.0));
+    }
+
+    /// Attitude logged at only some steps must attach to those steps.
+    #[test]
+    fn attitude_attaches_to_the_time_it_was_logged_at() {
+        let mut attitude_step = state(200.0);
+        attitude_step.extend([
+            ("qw", 1.0),
+            ("qx", 0.2),
+            ("qy", 0.3),
+            ("qz", 0.4),
+            ("wx", 0.01),
+            ("wy", 0.02),
+            ("wz", 0.03),
+        ]);
+        let path = write_rrd(
+            "sparse_att",
+            &[
+                (0.0, state(100.0)),
+                (10.0, attitude_step),
+                (20.0, state(300.0)),
+            ],
+        );
+        let data = decode_path(&path);
+
+        assert_eq!(data.rows.len(), 3);
+        assert_eq!(data.rows[0].quaternion, None, "t=0 logged no attitude");
+        assert_eq!(data.rows[1].quaternion, Some([1.0, 0.2, 0.3, 0.4]));
+        assert_eq!(data.rows[1].angular_velocity, Some([0.01, 0.02, 0.03]));
+        assert_eq!(data.rows[2].quaternion, None, "t=20 logged no attitude");
+        assert_eq!(data.rows[2].angular_velocity, None);
     }
 }
