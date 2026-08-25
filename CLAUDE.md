@@ -36,12 +36,6 @@ orts is a numerical computation and optimization platform for spacecraft simulat
 - Define magic numbers as constants, or comment their rationale
 - Python helper scripts (under examples/ and tools/) are managed with uv
 
-## Footguns
-
-- `cargo test -p orts-cli` regenerates the TypeScript bindings in `viewer/src/protocol/generated/` (`TS_RS_EXPORT_DIR` in `.cargo/config.toml`), and CI enforces a clean diff — after changing protocol types, regenerate and commit
-- `.cargo/config.toml` configures the mold + clang linker; a non-empty global `RUSTFLAGS` silently disables it
-- Release process: see [RELEASING.md](RELEASING.md)
-
 ## Documentation
 
 - Verify technical claims (CHANGELOG, docs, etc.) against the implementation and tests before writing them down
@@ -56,3 +50,9 @@ orts is a numerical computation and optimization platform for spacecraft simulat
 ## Dependencies
 
 - When adding a new library, look up the latest stable version first; don't pin an old version
+
+## Footguns
+
+- `cargo test -p orts-cli` regenerates the TypeScript bindings in `viewer/src/protocol/generated/` (`TS_RS_EXPORT_DIR` in `.cargo/config.toml`), and CI enforces a clean diff — after changing protocol types, regenerate and commit
+- `.cargo/config.toml` configures the mold + clang linker; a non-empty global `RUSTFLAGS` silently disables it
+- Release process: see [RELEASING.md](RELEASING.md)
