@@ -449,4 +449,133 @@ mod tests {
         assert!((r2.inner() - r.inner()).norm() < 1e-9);
         assert!((v2.inner() - v.inner()).norm() < 1e-12);
     }
+
+    // Characterization snapshots
+    //
+    // The tests above pin *properties* (magnitude preserved, roundtrip closes, ω
+    // direction) with loose tolerances, which a changed rotation chain could
+    // still satisfy. These pin the actual numbers the four
+    // `EarthFixedTransform` methods return, at one off-axis state and one
+    // non-round epoch, so a change in how the Earth-orientation inputs
+    // (UTC + EOP) reach them cannot pass unnoticed.
+    //
+    // `close` compares relatively at 1e-12: far tighter than any plausible
+    // change to the rotation chain (a mis-threaded epoch or a dropped EOP moves
+    // these by 1e-3 or more) while staying above the last-ULP differences
+    // between platform libm implementations of the sin/cos/atan2 underneath.
+
+    /// Off-axis epoch (non-integer second, so ERA is not a round number).
+    fn snapshot_epoch() -> Epoch<Utc> {
+        Epoch::from_gregorian(2024, 3, 20, 12, 34, 56.789)
+    }
+
+    /// Fully 3D position [km] — no zero component, so a dropped rotation shows.
+    fn snapshot_pos<F>() -> Vec3<F> {
+        Vec3::new(4000.0, -5000.0, 2500.0)
+    }
+
+    /// Fully 3D velocity [km/s].
+    fn snapshot_vel<F>() -> Vec3<F> {
+        Vec3::new(1.0, 2.0, 7.0)
+    }
+
+    /// Relative comparison at 1e-12 (see the module note above); exact for 0.
+    fn close(got: f64, want: f64) -> bool {
+        (got - want).abs() <= 1e-12 * want.abs().max(1.0)
+    }
+
+    #[track_caller]
+    fn assert_close3(got: [f64; 3], want: [f64; 3], what: &str) {
+        assert!(
+            close(got[0], want[0]) && close(got[1], want[1]) && close(got[2], want[2]),
+            "{what} changed: got {got:?}, want {want:?}"
+        );
+    }
+
+    #[test]
+    fn simple_eci_to_geodetic_snapshot() {
+        let geo = <frame::SimpleEci as EarthFixedTransform>::to_geodetic(
+            &snapshot_pos(),
+            &snapshot_epoch(),
+            &(),
+        );
+        assert_close3(
+            [geo.latitude, geo.longitude, geo.altitude],
+            [0.3743480895355276, -1.017562528402866, 498.5663922419981],
+            "SimpleEci to_geodetic",
+        );
+    }
+
+    #[test]
+    fn simple_eci_fixed_to_inertial_snapshot() {
+        let v = Vec3::<frame::SimpleEcef>::new(1.0, 2.0, 3.0);
+        let got =
+            <frame::SimpleEci as EarthFixedTransform>::fixed_to_inertial(&snapshot_epoch(), &())
+                .transform(&v)
+                .into_inner();
+        assert_close3(
+            [got.x, got.y, got.z],
+            [0.7502103324902986, 2.10646254583954, 3.0],
+            "SimpleEci fixed_to_inertial",
+        );
+    }
+
+    #[test]
+    fn simple_eci_state_transform_snapshot() {
+        let utc = snapshot_epoch();
+        let (r, v) = (snapshot_pos(), snapshot_vel());
+        let (r_f, v_f) =
+            <frame::SimpleEci as EarthFixedTransform>::inertial_to_fixed_transform(&utc, &())
+                .transform_state(&r, &v);
+        assert_close3(
+            [r_f.inner().x, r_f.inner().y, r_f.inner().z],
+            [3364.46645847656, -5447.968928856532, 2500.0],
+            "SimpleEci inertial_to_fixed position",
+        );
+        assert_close3(
+            [v_f.inner().x, v_f.inner().y, v_f.inner().z],
+            [0.8377716286892459, 1.6187049999272265, 7.0],
+            "SimpleEci inertial_to_fixed velocity",
+        );
+        // The inverse factory must undo it at the same epoch.
+        let (r_b, v_b) =
+            <frame::SimpleEci as EarthFixedTransform>::fixed_to_inertial_transform(&utc, &())
+                .transform_state(&r_f, &v_f);
+        assert!((r_b.inner() - r.inner()).norm() < 1e-9);
+        assert!((v_b.inner() - v.inner()).norm() < 1e-12);
+    }
+
+    #[test]
+    fn gcrs_to_geodetic_snapshot() {
+        let geo = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &snapshot_pos(),
+            &snapshot_epoch(),
+            &GcrsEopStorage::new(ZeroEop),
+        );
+        assert_close3(
+            [geo.latitude, geo.longitude, geo.altitude],
+            [0.3757884614713237, -1.0182885501575514, 498.58726984852274],
+            "Gcrs to_geodetic",
+        );
+    }
+
+    #[test]
+    fn gcrs_state_transform_snapshot() {
+        let utc = snapshot_epoch();
+        let eop = GcrsEopStorage::new(ZeroEop);
+        let (r, v) = (snapshot_pos(), snapshot_vel());
+        let (r_f, v_f) =
+            <frame::Gcrs as EarthFixedTransform>::inertial_to_fixed_transform(&utc, &eop)
+                .transform_state(&r, &v);
+        assert_close3(
+            [r_f.inner().x, r_f.inner().y, r_f.inner().z],
+            [3358.6255230092333, -5447.3533661597785, 2509.178331721101],
+            "Gcrs inertial_to_fixed position",
+        );
+        assert_close3(
+            [v_f.inner().x, v_f.inner().y, v_f.inner().z],
+            [0.8214899007878738, 1.6208520413080323, 7.002402600668856],
+            "Gcrs inertial_to_fixed velocity",
+        );
+    }
 }
