@@ -178,7 +178,9 @@ fn run_license_notice() {
 /// `manifest` + feature selection (which its public `gather()` can't express).
 /// `cli/about.toml` is loaded explicitly so the accepted-license list and
 /// `ignore-build-dependencies` / `ignore-dev-dependencies` match the native
-/// pass. No remote *license-file* fetching happens — the config has no
+/// pass. Under `ORTS_REQUIRE_LICENSE_NOTICE=1` an unresolvable license text is
+/// an error rather than a warning, so the release pipeline cannot ship a notice
+/// that silently omits a crate. No remote *license-file* fetching happens — the config has no
 /// `clarify.git` entries, so the gatherer is given no HTTP client. (Crate
 /// resolution still uses Cargo's normal index access.) See
 /// arkedge/notalawyer#32 for folding this back into notalawyer-build.
@@ -239,13 +241,21 @@ fn gather_wasm_notice(
         .map(|(name, spanned)| (name, spanned.value))
         .collect();
 
+    // In the release pipeline a crate whose license text cannot be resolved must
+    // fail the build, not quietly drop out of the notice: with `fail_on_missing`
+    // the "no `license` and no license files" case becomes an Error-severity
+    // diagnostic, which `generate` below refuses to render. Outside the release
+    // pipeline it stays a warning so a normal `cargo build` is not held hostage
+    // to a dependency's packaging. This mirrors how the caller treats our Err.
+    let fail_on_missing = std::env::var_os("ORTS_REQUIRE_LICENSE_NOTICE").is_some();
+
     let mut files = cargo_about::licenses::resolution::Files::new();
     let resolved = cargo_about::licenses::resolution::resolve(
         &summary,
         &cfg.accepted,
         &krate_cfg,
         &mut files,
-        false, // fail_on_missing
+        fail_on_missing,
     );
 
     use codespan_reporting::term;
