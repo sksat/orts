@@ -10,10 +10,10 @@ orts is a numerical computation and optimization platform for spacecraft simulat
 
 ## Development Policy
 
-- For architecture-level changes, update DESIGN.md first, then implement; keep ARCHITECTURE.md (en/ja) in sync when the structure changes
 - Before starting implementation, get a smart-friend review of the plan
 - TDD-first: verify behavior with unit tests before integrating. For numerical-dynamics changes, validate against reference implementations such as Orekit (fixture generators live in tools/)
 - Keep responsibilities strictly separated across crates and modules — that separation is what enables parallel development and independent testing
+- For architecture-level changes, update DESIGN.md first, then implement; keep ARCHITECTURE.md (en/ja) in sync when the structure changes
 - Before committing, run `cargo fmt` / `cargo clippy --workspace -- -D warnings` / the relevant tests / `pnpm lint`
 - Changes touching logic, APIs, or design get an external review via the code-review skill before commit (typo fixes and mechanical replacements may skip it); after addressing findings, re-review until it passes
 - After pushing, checking the CI result is part of the task
