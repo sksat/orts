@@ -433,6 +433,11 @@ export class ChartDataCore {
       if (this.pendingRebuild != null) return; // still failing — retry next tick
     }
 
+    // A replacement is queued behind this tick: flushing now would insert the
+    // newer rows into the table it is about to delete. They stay queued and go
+    // in on the next tick, after the replacement.
+    if (this.queuedRebuild != null) return;
+
     const tableSchema = this.toTableSchema(this.schema);
 
     // 1. Flush ingest queue (atomically: a failed flush inserts nothing, so

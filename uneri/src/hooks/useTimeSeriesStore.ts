@@ -154,7 +154,17 @@ export function useTimeSeriesStore<T extends TimePoint>(
                 "retries:",
                 e,
               );
+              // The rolled-back transaction left the replaced dataset in the
+              // table. Keeping it would splice it with the rows that keep
+              // streaming in, so empty it.
+              try {
+                await clearTable(conn, schemaRef.current);
+              } catch (clearError) {
+                console.warn("useTimeSeriesStore: failed to empty the table:", clearError);
+              }
               hasDataRef.current = false;
+              coldRefreshNeeded = true;
+              hotBuffer = null;
               setData(null);
             }
           }

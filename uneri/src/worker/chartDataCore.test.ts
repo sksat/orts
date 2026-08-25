@@ -178,6 +178,33 @@ describe("ChartDataCore rebuild", () => {
     expect(conn.tValuesOf("orbit")).toEqual([10, 11, 12]);
   });
 
+  it("keeps rows that arrive after a rebuild queued behind a running tick", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "ingest", rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+
+    // A first replacement is committing; a tick is queued behind it.
+    conn.stallOn((sql) => sql.startsWith("INSERT"));
+    core.handle({ type: "rebuild", rows: rows(10, 11), latestT: 11 });
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+    const tick = core.tickOnce();
+
+    // A newer replacement lands behind that tick, then streaming resumes.
+    core.handle({ type: "rebuild", rows: rows(20, 21), latestT: 21 });
+    core.handle({ type: "ingest", rows: rows(22), latestT: 22 });
+
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await tick;
+    await core.whenIdle();
+    await core.tickOnce();
+
+    // t=22 arrived after the last replacement, so it must survive it.
+    expect(conn.tValuesOf("orbit")).toEqual([20, 21, 22]);
+  });
+
   it("does not query the table while a rebuild transaction is open", async () => {
     const { core, conn } = setup();
     await init(core);

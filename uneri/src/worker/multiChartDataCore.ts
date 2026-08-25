@@ -389,7 +389,9 @@ export class MultiChartDataCore {
     //    inserts nothing and a retry cannot duplicate rows).
     for (const [satId, queue] of [...this.ingestQueues]) {
       if (queue.length === 0) continue;
-      if (this.pendingRebuilds.has(satId)) continue; // rebuild first
+      // A replacement (retrying or queued behind this tick) must land first:
+      // flushing now would insert these rows into the table it deletes.
+      if (this.pendingRebuilds.has(satId) || this.queuedRebuilds.has(satId)) continue;
       this.ingestQueues.set(satId, []);
       const epoch = this.datasetEpochs.get(satId) ?? 0;
       try {

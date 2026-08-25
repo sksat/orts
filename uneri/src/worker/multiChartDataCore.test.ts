@@ -126,6 +126,30 @@ describe("MultiChartDataCore", () => {
     expect(conn.tValuesOf(TABLE)).toEqual([10, 11, 12]);
   });
 
+  it("keeps rows that arrive after a rebuild queued behind a running tick", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+
+    conn.stallOn((sql) => sql.startsWith("INSERT"));
+    core.handle({ type: "multi-rebuild", satelliteId: SAT_ID, rows: rows(10, 11), latestT: 11 });
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+    const tick = core.tickOnce();
+
+    core.handle({ type: "multi-rebuild", satelliteId: SAT_ID, rows: rows(20, 21), latestT: 21 });
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(22), latestT: 22 });
+
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await tick;
+    await core.whenIdle();
+    await core.tickOnce();
+
+    expect(conn.tValuesOf(TABLE)).toEqual([20, 21, 22]);
+  });
+
   it("leaves the table untouched when the rebuild fails, and retries it", async () => {
     const { core, conn } = setup();
     await init(core);
