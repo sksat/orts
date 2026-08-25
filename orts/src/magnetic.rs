@@ -40,8 +40,10 @@ pub fn field_inertial<F: EarthFixedTransform>(
 
 /// SimpleEci convenience wrapper for [`field_inertial`].
 ///
-/// Retained for callers that are `Frame = SimpleEci` constrained
-/// (bdot controllers, magnetometer sensor, plugin WASM host).
+/// Retained for callers whose interface is itself typed in the simple ECI frame
+/// — the plugin WASM host's `magnetic-field-eci` import, whose WIT signature
+/// takes a bare ECI position. Frame-generic code (models, controllers, sensors)
+/// calls [`field_inertial`] with its own frame instead.
 pub fn field_eci(
     model: &dyn MagneticFieldModel,
     position_eci: &Vec3<arika::frame::SimpleEci>,

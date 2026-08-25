@@ -39,8 +39,22 @@ impl Gyroscope {
         self
     }
 
-    /// Measure the angular velocity in the body frame.
-    pub fn measure(&mut self, state: &SpacecraftState, _epoch: &Epoch) -> AngularVelocityBody {
+    /// Measure the angular velocity in the body frame, for a `SimpleEci` state.
+    pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> AngularVelocityBody {
+        self.measure_in_frame::<arika::frame::SimpleEci>(state, epoch)
+    }
+
+    /// Measure the angular velocity in the body frame for a state propagated in
+    /// an arbitrary inertial frame `F`.
+    ///
+    /// The measurement itself is frame-independent (body-frame angular
+    /// velocity); the parameter only lets the sensor read a state propagated in
+    /// any inertial frame.
+    pub fn measure_in_frame<F: arika::frame::Eci>(
+        &mut self,
+        state: &SpacecraftState<F>,
+        _epoch: &Epoch,
+    ) -> AngularVelocityBody {
         let mut omega = state.attitude.angular_velocity;
         for n in &mut self.noise {
             omega = n.apply(omega);

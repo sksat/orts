@@ -1,6 +1,7 @@
 //! Discrete-time controller trait for simulation with zero-order hold.
 
 use arika::epoch::Epoch;
+use arika::frame;
 
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
@@ -9,7 +10,12 @@ use crate::attitude::AttitudeState;
 ///
 /// Controllers have internal state (`&mut self`) and produce commands
 /// that are held constant between sample times (zero-order hold).
-pub trait DiscreteController: Send {
+///
+/// The type parameter `F` is the inertial frame of the observed orbital state
+/// (default `SimpleEci`), mirroring [`Model<S, F>`](crate::model::Model): a
+/// controller that reads an environment model in the inertial frame (e.g. the
+/// geomagnetic field) implements this once per frame it supports.
+pub trait DiscreteController<F: frame::Eci = frame::SimpleEci>: Send {
     /// Command output type.
     type Command: Clone + Send;
 
@@ -26,7 +32,7 @@ pub trait DiscreteController: Send {
         &mut self,
         t: f64,
         attitude: &AttitudeState,
-        orbit: &OrbitalState,
+        orbit: &OrbitalState<F>,
         epoch: Option<&Epoch>,
     ) -> Self::Command;
 }

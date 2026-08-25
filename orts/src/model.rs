@@ -33,9 +33,12 @@ pub trait HasAttitude {
 pub trait HasOrbit {
     /// Inertial frame of the orbital state.
     ///
-    /// Currently all propagation uses `SimpleEci`. When the propagator
-    /// supports `Gcrs`, this associated type will drive frame-generic
-    /// force model dispatch.
+    /// This is what drives frame-generic model dispatch: a model is written as
+    /// `impl<F: Cap, S: HasOrbit<Frame = F>> Model<S, F>`, bounded on the
+    /// minimal capability `Cap` it needs from the frame (e.g.
+    /// `EarthRotationPole`, `EarthFixedTransform`, `EphemerisFrameBridge`), so a
+    /// frame that cannot supply it is a compile error rather than a silent
+    /// mislabel.
     ///
     /// TODO: `Eci` bound は地心慣性系に限定している。月周回や深宇宙では
     /// より general な `Frame` bound が必要になる (別 milestone)。

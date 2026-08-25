@@ -31,7 +31,10 @@ pub mod noise;
 mod star_tracker;
 mod sun_sensor;
 
+use arika::earth::EarthFixedTransform;
+use arika::earth::transform::EphemerisFrameBridge;
 use arika::epoch::Epoch;
+use arika::frame;
 
 use crate::SpacecraftState;
 use crate::plugin::tick_input::Sensors;
@@ -70,30 +73,45 @@ impl SensorBundle {
         }
     }
 
-    /// Evaluate all configured sensors at the given state and epoch.
+    /// Evaluate all configured sensors at the given `SimpleEci` state and epoch.
     ///
     /// `&mut self` because noise models mutate their internal RNG.
     pub fn evaluate(&mut self, state: &SpacecraftState, epoch: &Epoch) -> Sensors {
+        self.evaluate_in_frame::<frame::SimpleEci>(state, epoch, &())
+    }
+
+    /// Evaluate all configured sensors for a state propagated in an arbitrary
+    /// inertial frame `F`.
+    ///
+    /// `F` must supply both capabilities the sensors need: the Earth-fixed
+    /// transform (magnetometer, with `eop` for the frames that require an EOP
+    /// provider) and the GCRS ephemeris bridge (sun sensor).
+    pub fn evaluate_in_frame<F: EarthFixedTransform + EphemerisFrameBridge>(
+        &mut self,
+        state: &SpacecraftState<F>,
+        epoch: &Epoch,
+        eop: &F::EopStorage,
+    ) -> Sensors {
         Sensors {
             magnetometers: self
                 .magnetometers
                 .iter_mut()
-                .map(|m| m.measure(state, epoch))
+                .map(|m| m.measure_in_frame::<F>(state, epoch, eop))
                 .collect(),
             gyroscopes: self
                 .gyroscopes
                 .iter_mut()
-                .map(|g| g.measure(state, epoch))
+                .map(|g| g.measure_in_frame::<F>(state, epoch))
                 .collect(),
             star_trackers: self
                 .star_trackers
                 .iter_mut()
-                .map(|s| s.measure(state, epoch))
+                .map(|s| s.measure_in_frame::<F>(state, epoch))
                 .collect(),
             sun_sensors: self
                 .sun_sensors
                 .iter_mut()
-                .map(|s| s.measure(state, epoch))
+                .map(|s| s.measure_in_frame::<F>(state, epoch))
                 .collect(),
         }
     }
