@@ -29,7 +29,7 @@ orts is a numerical computation and optimization platform primarily for orbital 
 ## Development Workflow
 
 - アーキテクチャレベルの変更は DESIGN.md を先に更新してから実装する
-- 設計判断を伴う実装(新しい module 構成、trait / public API の設計、設計の選択肢が複数あるとき)は、着手前に smart-friend skill で独立レビューにかけ、レビューが通るまで設計を見直す
+- 設計判断を伴う実装(新しい module 構成、trait / public API の設計、設計の選択肢が複数あるとき)は、着手前に smart-friend で独立レビューにかけ、レビューが通るまで設計を見直す
 - TDD-first: 統合の前にユニットテストで挙動を検証する。GMAT / Orekit を参照実装とした E2E 検証(fixture 生成は tools/)
 - commit 前に `cargo fmt` / `cargo clippy --workspace -- -D warnings` / 関連テスト / `pnpm lint` を通す
 - ロジック・API・設計に触れる変更は commit 前に code-review skill で外部レビューを受ける(typo 修正や機械的な置換だけの commit は省略してよい)。指摘対応後は re-review し、通ってから commit する
