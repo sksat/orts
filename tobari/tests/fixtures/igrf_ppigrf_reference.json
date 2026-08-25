@@ -1,0 +1,518 @@
+{
+  "source": "ppigrf (IAGA Working Group V-MOD)",
+  "ppigrf_version": "2.0.0",
+  "generator": "tools/generate_igrf_fixtures.py",
+  "components": "geodetic east / north / up, nT",
+  "points": [
+    {
+      "label": "equator_prime_meridian",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": -1926.5485828654787,
+      "b_north_nt": 27456.621762760216,
+      "b_up_nt": 15997.35290436313
+    },
+    {
+      "label": "equator_east",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 90.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": -1184.7640316391537,
+      "b_north_nt": 40610.865838765814,
+      "b_up_nt": 12788.43312857699
+    },
+    {
+      "label": "equator_dateline",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 180.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": 5859.133152503347,
+      "b_north_nt": 33430.91073863393,
+      "b_up_nt": 3073.7747921576024
+    },
+    {
+      "label": "equator_west",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": -90.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": 1152.691654206577,
+      "b_north_nt": 27611.02032460841,
+      "b_up_nt": -9865.388809460586
+    },
+    {
+      "label": "leo_equator",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 0.0,
+      "height_km": 500.0,
+      "b_east_nt": -1686.2346791520238,
+      "b_north_nt": 21550.7507685104,
+      "b_up_nt": 10816.759092913275
+    },
+    {
+      "label": "leo_mid_north_east",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 135.0,
+      "latitude_deg": 45.0,
+      "height_km": 500.0,
+      "b_east_nt": -3164.935489733726,
+      "b_north_nt": 20060.867901042,
+      "b_up_nt": -36444.73259479309
+    },
+    {
+      "label": "leo_mid_north_west",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": -45.0,
+      "latitude_deg": 45.0,
+      "height_km": 500.0,
+      "b_east_nt": -4159.978213072486,
+      "b_north_nt": 17027.41800816926,
+      "b_up_nt": -34178.48437245115
+    },
+    {
+      "label": "leo_mid_south_east",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 70.0,
+      "latitude_deg": -35.0,
+      "height_km": 500.0,
+      "b_east_nt": -7971.465950748502,
+      "b_north_nt": 13068.763774823274,
+      "b_up_nt": 34580.98491413915
+    },
+    {
+      "label": "leo_mid_south_west",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": -70.0,
+      "latitude_deg": -35.0,
+      "height_km": 500.0,
+      "b_east_nt": 137.98782104189036,
+      "b_north_nt": 15725.525558160725,
+      "b_up_nt": 12233.922942468389
+    },
+    {
+      "label": "leo_high_north",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 10.0,
+      "latitude_deg": 80.0,
+      "height_km": 500.0,
+      "b_east_nt": 491.05089356319024,
+      "b_north_nt": 5123.1592575588475,
+      "b_up_nt": -44899.59158860766
+    },
+    {
+      "label": "leo_high_south",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 10.0,
+      "latitude_deg": -80.0,
+      "height_km": 500.0,
+      "b_east_nt": -7935.2902686698735,
+      "b_north_nt": 11664.38074694921,
+      "b_up_nt": 34906.87878370519
+    },
+    {
+      "label": "near_north_pole",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 89.5,
+      "height_km": 500.0,
+      "b_east_nt": 50.19541931100969,
+      "b_north_nt": 1280.9592732227113,
+      "b_up_nt": -46242.99287075548
+    },
+    {
+      "label": "near_south_pole",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": -89.5,
+      "height_km": 500.0,
+      "b_east_nt": -6910.2755662205245,
+      "b_north_nt": 10347.492472390042,
+      "b_up_nt": 40973.273517553265
+    },
+    {
+      "label": "very_near_north_pole",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": 89.99,
+      "height_km": 500.0,
+      "b_east_nt": 725.475576196503,
+      "b_north_nt": 782.0993328997914,
+      "b_up_nt": -46294.87691447581
+    },
+    {
+      "label": "very_near_south_pole",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": -89.99,
+      "height_km": 500.0,
+      "b_east_nt": -11849.875567953253,
+      "b_north_nt": 3324.680298121365,
+      "b_up_nt": 41286.764422283835
+    },
+    {
+      "label": "sso_altitude_mid",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 25.0,
+      "latitude_deg": 60.0,
+      "height_km": 800.0,
+      "b_east_nt": 1348.3760555754498,
+      "b_north_nt": 10923.693494533429,
+      "b_up_nt": -35854.35895090054
+    },
+    {
+      "label": "geo_equator",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 0.0,
+      "height_km": 35786.0,
+      "b_east_nt": -14.83711932707009,
+      "b_north_nt": 98.5991437305207,
+      "b_up_nt": -4.901007910101831
+    },
+    {
+      "label": "equator_prime_meridian",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": -2085.8443906146176,
+      "b_north_nt": 27497.915689654386,
+      "b_up_nt": 16002.94622761203
+    },
+    {
+      "label": "equator_east",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 90.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": -1269.4311295919367,
+      "b_north_nt": 40522.709865918645,
+      "b_up_nt": 12939.96762214911
+    },
+    {
+      "label": "equator_dateline",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 180.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": 5796.5627109795705,
+      "b_north_nt": 33467.65114674097,
+      "b_up_nt": 3067.661350505184
+    },
+    {
+      "label": "equator_west",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": -90.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": 1308.8896080161946,
+      "b_north_nt": 27778.602714845507,
+      "b_up_nt": -9940.491425644901
+    },
+    {
+      "label": "leo_equator",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 0.0,
+      "height_km": 500.0,
+      "b_east_nt": -1807.6908400237471,
+      "b_north_nt": 21581.415431208145,
+      "b_up_nt": 10822.446096317195
+    },
+    {
+      "label": "leo_mid_north_east",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 135.0,
+      "latitude_deg": 45.0,
+      "height_km": 500.0,
+      "b_east_nt": -3118.2823587403864,
+      "b_north_nt": 20061.359151306875,
+      "b_up_nt": -36388.792130134636
+    },
+    {
+      "label": "leo_mid_north_west",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": -45.0,
+      "latitude_deg": 45.0,
+      "height_km": 500.0,
+      "b_east_nt": -4268.71897061269,
+      "b_north_nt": 16917.595323173216,
+      "b_up_nt": -34315.562122735995
+    },
+    {
+      "label": "leo_mid_south_east",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 70.0,
+      "latitude_deg": -35.0,
+      "height_km": 500.0,
+      "b_east_nt": -8005.879643151177,
+      "b_north_nt": 13058.983740827765,
+      "b_up_nt": 34420.18570576406
+    },
+    {
+      "label": "leo_mid_south_west",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": -70.0,
+      "latitude_deg": -35.0,
+      "height_km": 500.0,
+      "b_east_nt": 238.00058147637492,
+      "b_north_nt": 15860.138659531778,
+      "b_up_nt": 12223.981910435434
+    },
+    {
+      "label": "leo_high_north",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 10.0,
+      "latitude_deg": 80.0,
+      "height_km": 500.0,
+      "b_east_nt": 384.89463912559495,
+      "b_north_nt": 5159.7543263002535,
+      "b_up_nt": -44834.8075759021
+    },
+    {
+      "label": "leo_high_south",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 10.0,
+      "latitude_deg": -80.0,
+      "height_km": 500.0,
+      "b_east_nt": -7875.869577952806,
+      "b_north_nt": 11705.908104120554,
+      "b_up_nt": 35002.834390644224
+    },
+    {
+      "label": "near_north_pole",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 89.5,
+      "height_km": 500.0,
+      "b_east_nt": -68.78923840805209,
+      "b_north_nt": 1309.2873461869,
+      "b_up_nt": -46202.789648869504
+    },
+    {
+      "label": "near_south_pole",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": -89.5,
+      "height_km": 500.0,
+      "b_east_nt": -6837.715691770114,
+      "b_north_nt": 10381.084446667539,
+      "b_up_nt": 41092.34185869057
+    },
+    {
+      "label": "very_near_north_pole",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": 89.99,
+      "height_km": 500.0,
+      "b_east_nt": 652.4220349501459,
+      "b_north_nt": 880.654924655242,
+      "b_up_nt": -46255.74249089405
+    },
+    {
+      "label": "very_near_south_pole",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": -89.99,
+      "height_km": 500.0,
+      "b_east_nt": -11815.204984829921,
+      "b_north_nt": 3397.178167018832,
+      "b_up_nt": 41406.65305533577
+    },
+    {
+      "label": "sso_altitude_mid",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 25.0,
+      "latitude_deg": 60.0,
+      "height_km": 800.0,
+      "b_east_nt": 1278.6803298615505,
+      "b_north_nt": 10947.250475743896,
+      "b_up_nt": -35763.86685460071
+    },
+    {
+      "label": "geo_equator",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 0.0,
+      "height_km": 35786.0,
+      "b_east_nt": -15.061310495907405,
+      "b_north_nt": 98.67861317179067,
+      "b_up_nt": -5.038869446640461
+    },
+    {
+      "label": "equator_prime_meridian",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": -1789.723419627845,
+      "b_north_nt": 27401.590541360565,
+      "b_up_nt": 15976.250207167092
+    },
+    {
+      "label": "equator_east",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 90.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": -1085.0840032167005,
+      "b_north_nt": 40657.418870252426,
+      "b_up_nt": 12709.505691722572
+    },
+    {
+      "label": "equator_dateline",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 180.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": 5869.3661075265945,
+      "b_north_nt": 33394.471927099185,
+      "b_up_nt": 3066.4208762003773
+    },
+    {
+      "label": "equator_west",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": -90.0,
+      "latitude_deg": 0.0,
+      "height_km": 0.0,
+      "b_east_nt": 1015.3860746526802,
+      "b_north_nt": 27459.760981528438,
+      "b_up_nt": -9823.478666446788
+    },
+    {
+      "label": "leo_equator",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 0.0,
+      "height_km": 500.0,
+      "b_east_nt": -1583.769631937199,
+      "b_north_nt": 21512.348111895823,
+      "b_up_nt": 10799.501123338334
+    },
+    {
+      "label": "leo_mid_north_east",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 135.0,
+      "latitude_deg": 45.0,
+      "height_km": 500.0,
+      "b_east_nt": -3196.1040054756695,
+      "b_north_nt": 20050.936852606603,
+      "b_up_nt": -36513.44861897017
+    },
+    {
+      "label": "leo_mid_north_west",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": -45.0,
+      "latitude_deg": 45.0,
+      "height_km": 500.0,
+      "b_east_nt": -4059.2293389013935,
+      "b_north_nt": 17123.981623219654,
+      "b_up_nt": -34048.37830078777
+    },
+    {
+      "label": "leo_mid_south_east",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 70.0,
+      "latitude_deg": -35.0,
+      "height_km": 500.0,
+      "b_east_nt": -7933.617500535816,
+      "b_north_nt": 13064.539098803747,
+      "b_up_nt": 34720.00707770881
+    },
+    {
+      "label": "leo_mid_south_west",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": -70.0,
+      "latitude_deg": -35.0,
+      "height_km": 500.0,
+      "b_east_nt": 53.37451574653551,
+      "b_north_nt": 15604.688943584837,
+      "b_up_nt": 12242.198099906082
+    },
+    {
+      "label": "leo_high_north",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 10.0,
+      "latitude_deg": 80.0,
+      "height_km": 500.0,
+      "b_east_nt": 589.5394517059367,
+      "b_north_nt": 5093.028416984415,
+      "b_up_nt": -44952.96181071043
+    },
+    {
+      "label": "leo_high_south",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 10.0,
+      "latitude_deg": -80.0,
+      "height_km": 500.0,
+      "b_east_nt": -7986.709373613448,
+      "b_north_nt": 11623.148086062332,
+      "b_up_nt": 34819.1083273368
+    },
+    {
+      "label": "near_north_pole",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 89.5,
+      "height_km": 500.0,
+      "b_east_nt": 160.2753207967811,
+      "b_north_nt": 1261.8125798516999,
+      "b_up_nt": -46275.6376066014
+    },
+    {
+      "label": "near_south_pole",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": -89.5,
+      "height_km": 500.0,
+      "b_east_nt": -6973.0219042180015,
+      "b_north_nt": 10312.861941713558,
+      "b_up_nt": 40861.10191420539
+    },
+    {
+      "label": "very_near_north_pole",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": 89.99,
+      "height_km": 500.0,
+      "b_east_nt": 797.6266304901126,
+      "b_north_nt": 696.4699330246494,
+      "b_up_nt": -46326.72547463612
+    },
+    {
+      "label": "very_near_south_pole",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": -89.99,
+      "height_km": 500.0,
+      "b_east_nt": -11876.268252207166,
+      "b_north_nt": 3257.795281256021,
+      "b_up_nt": 41173.70412596254
+    },
+    {
+      "label": "sso_altitude_mid",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 25.0,
+      "latitude_deg": 60.0,
+      "height_km": 800.0,
+      "b_east_nt": 1408.7960813065388,
+      "b_north_nt": 10906.59813976615,
+      "b_up_nt": -35932.34678841799
+    },
+    {
+      "label": "geo_equator",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 0.0,
+      "latitude_deg": 0.0,
+      "height_km": 35786.0,
+      "b_east_nt": -14.64231892227689,
+      "b_north_nt": 98.50977494848792,
+      "b_up_nt": -4.756334638228828
+    }
+  ]
+}
