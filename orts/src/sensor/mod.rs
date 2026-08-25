@@ -86,6 +86,14 @@ impl SensorBundle {
     /// `F` must supply both capabilities the sensors need: the Earth-fixed
     /// transform (magnetometer, with `eop` for the frames that require an EOP
     /// provider) and the GCRS ephemeris bridge (sun sensor).
+    ///
+    /// Both bounds apply whatever the bundle actually holds, because the bound
+    /// is on the method rather than on the sensors present at runtime. A frame
+    /// that implements only [`EphemerisFrameBridge`] — `Cirs`, for instance —
+    /// therefore cannot go through this method even for a bundle without
+    /// magnetometers; evaluate those sensors with their own
+    /// `measure_in_frame` instead. Split this into per-capability entry points
+    /// if a caller needs the bundle in such a frame.
     pub fn evaluate_in_frame<F: EarthFixedTransform + EphemerisFrameBridge>(
         &mut self,
         state: &SpacecraftState<F>,
