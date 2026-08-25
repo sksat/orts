@@ -308,6 +308,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - Rust toolchain → 1.96.0。
 - Rust: `wasmtime` / `wasmtime-wasi` 44 (security)、`rerun` 0.33、
   `tokio-tungstenite` 0.29、`nalgebra` 0.35、`tokio` 1.52、`axum` 0.8.9。
+- `notalawyer` 0.3 — 埋め込む third-party ライセンス NOTICE を、`cargo about`
+  バイナリでなく cargo-about **ライブラリ**(`orts-cli` の build-dependency)で
+  生成するようにした。CI でのバイナリ install と cross ビルドイメージへの
+  埋め込みが不要になった。
 - npm: `vite` 8、`@vitejs/plugin-react` 6、React monorepo、`ws` 8.21
   (security)、`mermaid` 11.15 (security)。
 

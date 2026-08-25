@@ -329,6 +329,10 @@ section is subdivided by package.
 - Rust toolchain → 1.96.0.
 - Rust: `wasmtime` / `wasmtime-wasi` 44 (security), `rerun` 0.33,
   `tokio-tungstenite` 0.29, `nalgebra` 0.35, `tokio` 1.52, `axum` 0.8.9.
+- `notalawyer` 0.3 — the embedded third-party license NOTICE is generated
+  through the cargo-about *library* (an `orts-cli` build-dependency) instead
+  of the `cargo about` binary, so no binary is installed in CI or baked into
+  the cross build image.
 - npm: `vite` 8, `@vitejs/plugin-react` 6, the React monorepo, `ws` 8.21
   (security), `mermaid` 11.15 (security).
 
