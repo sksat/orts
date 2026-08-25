@@ -562,6 +562,77 @@ mod tests {
         }
     }
 
+    // Frame-generalization characterization (#151)
+    //
+    // Pinned `SimpleEci` numbers at a fully 3D state (off-axis position,
+    // velocity and attitude) so that opening `PanelDrag` to a generic inertial
+    // frame `F` cannot change them. In particular the geodetic conversion moves
+    // from the legacy `Epoch::gmst` to `EarthFixedTransform::to_geodetic`, which
+    // is the same ERA formula, and the co-rotation axis moves from a literal
+    // `+Z` to `EarthRotationPole::earth_pole` (`+Z` for `SimpleEci`).
+
+    fn snapshot_state() -> SpacecraftState {
+        SpacecraftState {
+            orbit: OrbitalState::new(
+                Vector3::new(4000.0, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+            attitude: AttitudeState::new(
+                nalgebra::UnitQuaternion::from_axis_angle(
+                    &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                    0.7,
+                ),
+                Vector3::new(0.01, -0.02, 0.03),
+            ),
+            mass: 50.0,
+        }
+    }
+
+    fn snapshot_epoch() -> Epoch {
+        Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0)
+    }
+
+    /// Characterization: pinned `SimpleEci` panel-drag loads for a cube.
+    #[test]
+    fn panels_simple_eci_loads_snapshot() {
+        let drag = PanelDrag::for_earth(SpacecraftShape::cube(0.5, 2.2, 1.5));
+        let loads = drag.eval(0.0, &snapshot_state(), Some(&snapshot_epoch()));
+        let expected_a = Vector3::new(
+            -1.112965959433058e-10,
+            -2.992310652421664e-10,
+            -1.2261304328438772e-9,
+        );
+        let expected_tau = Vector3::new(8.470329472543003e-22, 0.0, 4.235164736271502e-22);
+        let a = loads.acceleration_inertial.into_inner();
+        let tau = loads.torque_body.into_inner();
+        assert!(
+            (a - expected_a).magnitude() < 1e-30,
+            "SimpleEci panel drag acceleration changed: {a:?}"
+        );
+        assert!(
+            (tau - expected_tau).magnitude() < 1e-30,
+            "SimpleEci panel drag torque changed: {tau:?}"
+        );
+    }
+
+    /// Characterization: pinned `SimpleEci` panel-drag loads for the
+    /// attitude-independent sphere branch.
+    #[test]
+    fn sphere_simple_eci_loads_snapshot() {
+        let drag = PanelDrag::for_earth(SpacecraftShape::sphere(1.0, 2.2, 1.5));
+        let loads = drag.eval(0.0, &snapshot_state(), Some(&snapshot_epoch()));
+        let expected_a = Vector3::new(
+            -6.98845822315769e-11,
+            -1.8789108335182917e-10,
+            -7.699032691383112e-10,
+        );
+        let a = loads.acceleration_inertial.into_inner();
+        assert!(
+            (a - expected_a).magnitude() < 1e-30,
+            "SimpleEci sphere drag acceleration changed: {a:?}"
+        );
+    }
+
     // Sphere branch
 
     #[test]

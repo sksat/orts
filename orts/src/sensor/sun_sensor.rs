@@ -199,6 +199,49 @@ mod tests {
         );
     }
 
+    // Frame-generalization characterization (#151)
+
+    fn snapshot_state() -> SpacecraftState {
+        SpacecraftState {
+            orbit: OrbitalState::new(
+                Vector3::new(4000.0, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+            attitude: AttitudeState::new(
+                nalgebra::UnitQuaternion::from_axis_angle(
+                    &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                    0.7,
+                ),
+                Vector3::new(0.01, -0.02, 0.03),
+            ),
+            mass: 50.0,
+        }
+    }
+
+    /// Characterization: pinned pre-refactor `SimpleEci` body-frame Sun
+    /// direction, so rotating the (GCRS) Sun ephemeris into a generic frame `F`
+    /// — identity for `SimpleEci` — cannot change it.
+    #[test]
+    fn simple_eci_direction_snapshot() {
+        let mut sensor = SunSensor::for_earth();
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let output = sensor.measure(&snapshot_state(), &epoch);
+        let SunSensorOutput::Fine {
+            direction,
+            illumination,
+        } = output
+        else {
+            panic!("expected Fine output");
+        };
+        let got = direction.expect("sunlit").into_inner().into_inner();
+        let expected = Vector3::new(0.7903661281325338, -0.551312799346672, -0.2671620870882);
+        assert!(
+            (got - expected).magnitude() < 1e-30,
+            "SimpleEci sun direction changed: {got:?}"
+        );
+        assert_eq!(illumination, 1.0);
+    }
+
     #[test]
     fn eclipse_sensor_returns_none_direction_in_shadow() {
         // Place satellite behind Earth where it should be in eclipse
