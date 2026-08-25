@@ -21,7 +21,7 @@ on:
         default: "2"
       linkers:
         description: "Space-separated subset of: bfd lld mold wild"
-        default: "bfd lld mold wild"
+        default: "mold wild"
       cargo_args:
         description: "cargo test args for the workload"
         default: "--locked --workspace --no-run"
@@ -115,13 +115,13 @@ jobs:
         env:
           RUSTFLAGS: -Clinker=/tmp/ldwrap.sh
           LDWRAP_CHOICE: bfd
-        run: cargo test ${{ inputs.cargo_args }}
+        run: cargo test ${{ inputs.cargo_args || '--locked --workspace --no-run' }}
 
       - name: Benchmark
         env:
-          REPS: ${{ inputs.reps }}
-          LINKERS: ${{ inputs.linkers }}
-          CARGO_ARGS: ${{ inputs.cargo_args }}
+          REPS: ${{ inputs.reps || '2' }}
+          LINKERS: ${{ inputs.linkers || 'mold wild' }}
+          CARGO_ARGS: ${{ inputs.cargo_args || '--locked --workspace --no-run' }}
         run: |
           python3 - <<'PY' | tee /tmp/result.txt
           import os, shlex, subprocess, time
