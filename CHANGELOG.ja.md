@@ -30,6 +30,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- **破壊的変更:** `record::rerun_export` (`.rrd` の export/import) が新しい opt-in
+  feature `rerun` を必要とするようになった。
+  `orts = { version = "…", features = ["rerun"] }` で有効化する。
+  `orts` は default feature を持たないので、他の機能への影響はない。
+  `.rrd` を書き出さないビルドでは、`orts` の依存グラフ 355 crates のうち 323 crates が
+  不要になる。`cargo test -p orts` の依存解決は 382 crates から 94 crates になり、
+  lib test 651 本のうち 643 本と `orts/tests/` の統合テスト 23 本は `rerun` を必要としない。
+  ([#314](https://github.com/sksat/orts/pull/314))
 - `StateEffector` を frame-generic 化 — `StateEffector<S, F: frame::Eci =
   SimpleEci>` で `ExternalLoads<F>` を返す (`Model<S, F>` と同様)。effector は
   host の慣性 frame で荷重を生成するようになった。既定の `F` により既存の

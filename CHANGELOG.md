@@ -33,6 +33,14 @@ section is subdivided by package.
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- **Breaking:** `record::rerun_export` (`.rrd` export/import) now requires the
+  new opt-in `rerun` feature. Enable it with
+  `orts = { version = "…", features = ["rerun"] }`. `orts` has no default
+  features, so nothing else in the crate is affected. This drops 323 of the 355
+  crates in `orts`'s dependency graph for builds that do not write `.rrd`:
+  `cargo test -p orts` resolves 94 crates instead of 382, and 643 of the 651 lib
+  tests plus all 23 integration tests under `orts/tests/` need no part of it.
+  ([#314](https://github.com/sksat/orts/pull/314))
 - `StateEffector` is now frame-generic — `StateEffector<S, F: frame::Eci =
   SimpleEci>` returning `ExternalLoads<F>`, like `Model<S, F>` — so effectors
   produce loads already in the host inertial frame. The defaulted `F` keeps
