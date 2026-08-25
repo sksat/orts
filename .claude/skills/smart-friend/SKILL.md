@@ -14,12 +14,12 @@ Claude 単独では得られない「別の視点」を提供することが目�
 ## 使い方
 
 ```bash
-codex exec --sandbox read-only -m gpt-5.5 "<prompt>"
+codex exec --sandbox read-only "<prompt>"
 ```
 
 プロンプトが長い場合や `$` やバッククォートを含む場合は、heredoc で stdin から渡す:
 ```bash
-cat <<'EOF' | codex exec --sandbox read-only -m gpt-5.5 -
+cat <<'EOF' | codex exec --sandbox read-only -
 <prompt>
 EOF
 ```
@@ -65,4 +65,4 @@ Codex のレビュー結果を受けて、状況に応じた対応を取る:
 
 - 必ず `--sandbox read-only` を付けてファイル変更を防ぐ
 - codex の実行には時間がかかることがある。Bash の timeout は 300000 (5分) を設定する
-- ユーザーが別のモデルを指定した場合はそれに従う
+- モデルは環境デフォルト (`~/.codex/config.toml` の `model`) を使う

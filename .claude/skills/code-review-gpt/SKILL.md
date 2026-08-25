@@ -1,12 +1,12 @@
 ---
-name: code-review
+name: code-review-gpt
 description: |
-  Run an external AI code review to get independent feedback on code changes.
+  Run an external AI code review (Codex) to get independent feedback on code changes.
   Use this skill when the user asks for a code review, says "コードレビューして", "レビュー", "変更を見て",
   "code review", or wants external feedback on their recent commits or uncommitted changes.
 ---
 
-# code-review: External AI Code Reviewer
+# code-review-gpt: External AI Code Reviewer
 
 Codex CLI (`codex review`) を使って、コード変更に対する独立したレビューを得る。
 diff の取得は codex が自動で行う。
@@ -15,18 +15,18 @@ diff の取得は codex が自動で行う。
 
 ```bash
 # 未コミットの変更をレビュー
-codex review -c model=gpt-5.5 --uncommitted
+codex review --uncommitted
 
 # 特定ブランチとの差分をレビュー
-codex review -c model=gpt-5.5 --base main
+codex review --base main
 
 # 特定コミットをレビュー
-codex review -c model=gpt-5.5 --commit <SHA>
+codex review --commit <SHA>
 ```
 
 カスタムプロンプトで追加のレビュー指示を渡すこともできる（対象指定なしの自由プロンプトモード）:
 ```bash
-codex review -c model=gpt-5.5 "TDD-first の方針に沿っているかも確認してください"
+codex review "TDD-first の方針に沿っているかも確認してください"
 ```
 
 **制約: `[PROMPT]` と対象指定オプション (`--uncommitted`/`--base`/`--commit`) は排他。同時に使うとエラーになる。**
@@ -50,6 +50,5 @@ Codex の回答を鵜呑みにせず、自分の視点も持った上で建設�
 
 ## 注意事項
 
-- モデル指定は `-m` ではなく `-c model=gpt-5.5` を使う（`codex review` の制約）
+- モデルは環境デフォルト (`~/.codex/config.toml` の `model`) を使う。明示指定する場合は `-c model=<model>` (`codex review` に `-m` は無い)
 - codex の実行には時間がかかることがある。Bash の timeout は 300000 (5分) を設定する
-- ユーザーが別のモデルを指定した場合はそれに従う
