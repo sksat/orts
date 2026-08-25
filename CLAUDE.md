@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 orts is a numerical computation and optimization platform for spacecraft simulation — orbital and attitude dynamics.
 
-- Design doc (why): [DESIGN.md](DESIGN.md) / architecture map (what): [ARCHITECTURE.md](ARCHITECTURE.md)
+- Design doc (why): [DESIGN.md](DESIGN.md)
+- Architecture map (what): [ARCHITECTURE.md](ARCHITECTURE.md)
 - crate / package inventory and roles: see the Project Structure tables in [README.md](README.md)
 
 ## Development Policy
