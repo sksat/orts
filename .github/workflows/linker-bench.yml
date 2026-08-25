@@ -1,0 +1,170 @@
+name: linker-bench
+
+# Manual-only. Compares linkers on a real GHA runner (4 vCPU / 16 GB), because
+# the local numbers were taken on 16 cores and mold's advantage comes from
+# parallelism — the ranking is not guaranteed to survive on smaller hardware.
+#
+# Measures PURE link time: a wrapper sits in -Clinker and times only the
+# linker-driver call, so rustc codegen is excluded. The linker choice arrives
+# via an env var rather than RUSTFLAGS, which keeps every rustc fingerprint
+# identical across configs — switching linkers therefore triggers no rebuild
+# and each linker sees a byte-identical argv.
+on:
+  workflow_dispatch:
+    inputs:
+      reps:
+        description: "Timed repetitions per linker (min is reported)"
+        default: "2"
+      linkers:
+        description: "Space-separated subset of: bfd lld mold wild"
+        default: "bfd lld mold wild"
+      cargo_args:
+        description: "cargo test args for the workload"
+        default: "--locked --workspace --no-run"
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
+      - name: Show runner size
+        run: |
+          echo "nproc: $(nproc)"
+          free -g | head -2
+          df -h / | tail -1
+
+      - name: Install linkers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mold lld clang
+          mold --version
+          ld.lld --version | head -1
+          clang --version | head -1
+
+      # Prebuilt tarball; `cargo install wild-linker` would add minutes.
+      - name: Install wild
+        env:
+          WILD_VERSION: 0.10.0
+        run: |
+          url="https://github.com/davidlattimore/wild/releases/download/${WILD_VERSION}/wild-linker-${WILD_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL -o /tmp/wild.tar.gz "$url"
+          mkdir -p /tmp/wild && tar -xzf /tmp/wild.tar.gz -C /tmp/wild
+          bin="$(find /tmp/wild -type f -name wild -perm -u+x | head -1)"
+          test -n "$bin" || { echo "wild binary not found in tarball"; find /tmp/wild; exit 1; }
+          sudo install -m 0755 "$bin" /usr/local/bin/wild
+          wild --version
+
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      # Piggyback on rust-build's cache so the warm-up is not a cold build.
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust-native
+          save-if: false
+
+      - name: Write linker wrapper
+        run: |
+          cat > /tmp/ldwrap.sh <<'WRAP'
+          #!/usr/bin/env bash
+          set -u
+          extra=()
+          case "${LDWRAP_CHOICE:-bfd}" in
+            bfd)  extra=() ;;
+            lld)  extra=(-fuse-ld=lld) ;;
+            mold) extra=(-fuse-ld=mold) ;;
+            wild) extra=(--ld-path=wild) ;;
+            *) echo "ldwrap: unknown LDWRAP_CHOICE=$LDWRAP_CHOICE" >&2; exit 2 ;;
+          esac
+          out=""; prev=""
+          for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+          t0=$(date +%s%N)
+          clang "$@" "${extra[@]}"
+          rc=$?
+          t1=$(date +%s%N)
+          [ -n "${LDWRAP_LOG:-}" ] && printf '%s %s %s\n' \
+            "$(( (t1 - t0) / 1000000 ))" "${LDWRAP_CHOICE:-bfd}" "$out" >> "$LDWRAP_LOG"
+          exit $rc
+          WRAP
+          chmod +x /tmp/ldwrap.sh
+
+      - name: Warm up (untimed)
+        env:
+          RUSTFLAGS: -Clinker=/tmp/ldwrap.sh
+          LDWRAP_CHOICE: bfd
+        run: cargo test ${{ inputs.cargo_args }}
+
+      - name: Benchmark
+        env:
+          REPS: ${{ inputs.reps }}
+          LINKERS: ${{ inputs.linkers }}
+          CARGO_ARGS: ${{ inputs.cargo_args }}
+        run: |
+          python3 - <<'PY' | tee /tmp/result.txt
+          import os, shlex, subprocess, time
+          reps = int(os.environ["REPS"])
+          linkers = os.environ["LINKERS"].split()
+          args = shlex.split(os.environ["CARGO_ARGS"])
+          log = "/tmp/ldwrap.log"
+          results = {}
+          for choice in linkers:
+              env = {**os.environ, "RUSTFLAGS": "-Clinker=/tmp/ldwrap.sh",
+                     "LDWRAP_CHOICE": choice, "LDWRAP_LOG": log}
+              samples = []
+              for _ in range(reps):
+                  open(log, "w").close()
+                  os.utime("orts/src/lib.rs", None)
+                  r = subprocess.run(["cargo", "test"] + args, env=env,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                  if r.returncode != 0:
+                      print(f"{choice}: cargo failed")
+                      print(r.stderr.decode(errors="replace")[-1500:])
+                      samples = []
+                      break
+                  ms = [int(l.split()[0]) for l in open(log) if l.strip()]
+                  if ms:
+                      samples.append((sum(ms), len(ms)))
+              results[choice] = min(samples) if samples else None
+
+          base = results.get("mold")
+          print(f"\nnproc={os.cpu_count()}  reps={reps}  cargo test {' '.join(args)}\n")
+          print(f"{'linker':8s} {'total':>10s} {'links':>6s} {'ms/link':>9s}  vs mold")
+          for choice in linkers:
+              v = results.get(choice)
+              if not v:
+                  print(f"{choice:8s} {'FAILED':>10s}")
+                  continue
+              total, n = v
+              rel = f"{total / base[0]:.2f}x" if base else "-"
+              print(f"{choice:8s} {total:9d}ms {n:6d} {total / n:8.0f}  {rel:>6s}")
+          PY
+
+      - name: Publish to step summary
+        if: always()
+        run: |
+          {
+            echo '### linker-bench'
+            echo
+            echo '```'
+            cat /tmp/result.txt || echo "(no result)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
