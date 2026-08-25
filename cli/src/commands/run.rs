@@ -19,6 +19,26 @@ use crate::cli::{IntegratorChoice, OutputFormat, SimArgs};
 use crate::satellite::OrbitSpec;
 use crate::sim::params::SimParams;
 
+/// Apply the config-file validation rules to the direct-CLI argument path.
+///
+/// `SimParams::from_sim_args` builds the same `SimParams` as
+/// `SimParams::from_config` but skips `SimConfig::validate`, so without this
+/// `--dt 0` hangs, `--dt nan` panics in step-size control, and
+/// `--dt 10 --output-interval 1` panics inside `clamp`.
+pub(crate) fn validate_sim_args(sim: &SimArgs) {
+    let checks = crate::config::validate_time_params(
+        sim.dt,
+        sim.output_interval,
+        sim.stream_interval,
+        sim.duration,
+    )
+    .and_then(|()| crate::config::validate_tolerances(sim.integrator, sim.atol, sim.rtol));
+    if let Err(e) = checks {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
+}
+
 pub fn run_simulation_cmd(sim: &SimArgs, output: Option<&str>, format: OutputFormat, json: bool) {
     let mut params = if let Some(config_path) = &sim.config {
         let config = crate::config::SimConfig::load(std::path::Path::new(config_path))
@@ -28,6 +48,10 @@ pub fn run_simulation_cmd(sim: &SimArgs, output: Option<&str>, format: OutputFor
             });
         SimParams::from_config(&config)
     } else if sim.has_orbit_args() {
+        // The direct-CLI path bypasses `SimConfig::validate`, so apply the
+        // same time/tolerance checks here rather than letting a bad `--dt`
+        // hang the propagation loop or panic inside step-size control.
+        validate_sim_args(sim);
         SimParams::from_sim_args(sim, false)
     } else {
         // Auto-detect orts.toml in the current directory
@@ -994,6 +1018,12 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
         .iter()
         .map(|sat| sat.controller.sample_period())
         .fold(f64::INFINITY, f64::min);
+    // `fold` also yields `INFINITY` for an empty fleet, which the loop below
+    // cannot step with either.
+    if let Err(e) = crate::config::validate_sample_period(dt_ctrl) {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
     let dt_ode = params.dt.min(dt_ctrl);
 
     let mut t = 0.0;

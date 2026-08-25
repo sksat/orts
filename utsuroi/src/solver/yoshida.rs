@@ -9,6 +9,7 @@
 
 use core::ops::ControlFlow;
 
+use crate::error::{validate_step_size, validate_time_span};
 use crate::{DynamicalSystem, IntegrationError, IntegrationOutcome, OdeState, State};
 
 use super::verlet::StormerVerlet;
@@ -118,10 +119,20 @@ macro_rules! impl_yoshida {
                 S: DynamicalSystem<State = State<DIM, 2>>,
                 F: FnMut(f64, &State<DIM, 2>),
             {
+                if let Err(e) = validate_step_size(dt).and_then(|()| validate_time_span(t0, t_end))
+                {
+                    panic!("utsuroi: integrate() cannot run: {e}");
+                }
+
                 let mut state = initial;
                 let mut t = t0;
                 while t < t_end {
                     let h = dt.min(t_end - t);
+                    assert!(
+                        t + h != t,
+                        "utsuroi: integrate() cannot run: {}",
+                        IntegrationError::TimeStagnated { t, dt: h }
+                    );
                     state = self.step(system, t, &state, h);
                     t += h;
                     callback(t, &state);
@@ -145,10 +156,21 @@ macro_rules! impl_yoshida {
                 F: FnMut(f64, &State<DIM, 2>),
                 E: Fn(f64, &State<DIM, 2>) -> ControlFlow<B>,
             {
+                if let Err(e) = validate_step_size(dt).and_then(|()| validate_time_span(t0, t_end))
+                {
+                    return IntegrationOutcome::Error(e);
+                }
+
                 let mut state = initial;
                 let mut t = t0;
                 while t < t_end {
                     let h = dt.min(t_end - t);
+                    if t + h == t {
+                        return IntegrationOutcome::Error(IntegrationError::TimeStagnated {
+                            t,
+                            dt: h,
+                        });
+                    }
                     state = self.step(system, t, &state, h);
                     t += h;
                     if !state.is_finite() {

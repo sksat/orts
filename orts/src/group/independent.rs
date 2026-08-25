@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 
 use utsuroi::{
     AdvanceOutcome, AdvanceOutcome853, Dop853, DormandPrince, DynamicalSystem, IntegrationError,
-    Integrator, OdeState, Rk4, Tolerances,
+    Integrator, OdeState, Rk4, Tolerances, validate_step_size,
 };
 
 use super::HasPosition;
@@ -14,6 +14,24 @@ pub enum IntegratorConfig {
     Rk4 { dt: f64 },
     Dp45 { dt: f64, tolerances: Tolerances },
     Dop853 { dt: f64, tolerances: Tolerances },
+}
+
+impl IntegratorConfig {
+    /// Reject a configuration that cannot make progress.
+    ///
+    /// The variants carry public fields, so this cannot be enforced at
+    /// construction; group propagation calls it before stepping instead. The
+    /// adaptive steppers repeat these checks internally — this is what stops
+    /// the fixed-step RK4 loop, which has no such guard of its own.
+    pub fn validate(&self) -> Result<(), IntegrationError> {
+        match self {
+            Self::Rk4 { dt } => validate_step_size(*dt),
+            Self::Dp45 { dt, tolerances } | Self::Dop853 { dt, tolerances } => {
+                validate_step_size(*dt)?;
+                tolerances.validate()
+            }
+        }
+    }
 }
 
 /// Entry tracking an individual satellite's state and status.
@@ -256,6 +274,11 @@ where
         t_target: f64,
         mut observer: impl FnMut(&SatId, f64, &D::State),
     ) -> Result<PropGroupOutcome, IntegrationError> {
+        // Reject a step size that cannot advance time before touching any
+        // satellite: the fixed-step RK4 branch below would otherwise spin on
+        // `h = 0` (or walk backwards for `dt < 0`) forever.
+        self.integrator.validate()?;
+
         let mut terminations = Vec::new();
         let integrator = self.integrator.clone();
         let event_checker = &self.event_checker;
@@ -312,10 +335,10 @@ where
                         }
                         Err(e) => {
                             entry.terminated = true;
-                            let t = match &e {
-                                IntegrationError::NonFiniteState { t } => *t,
-                                IntegrationError::StepSizeTooSmall { t, .. } => *t,
-                            };
+                            // Pre-flight rejections (bad dt/tolerances) carry
+                            // no time of their own; attribute them to where
+                            // the stepper was asked to start.
+                            let t = e.time().unwrap_or(entry.t);
                             terminations.push(SatelliteTermination {
                                 satellite_id: entry.id.clone(),
                                 t,
@@ -360,10 +383,10 @@ where
                         }
                         Err(e) => {
                             entry.terminated = true;
-                            let t = match &e {
-                                IntegrationError::NonFiniteState { t } => *t,
-                                IntegrationError::StepSizeTooSmall { t, .. } => *t,
-                            };
+                            // Pre-flight rejections (bad dt/tolerances) carry
+                            // no time of their own; attribute them to where
+                            // the stepper was asked to start.
+                            let t = e.time().unwrap_or(entry.t);
                             terminations.push(SatelliteTermination {
                                 satellite_id: entry.id.clone(),
                                 t,
@@ -380,6 +403,15 @@ where
                     let mut terminated = false;
                     while current_t < effective_target - 1e-12 {
                         let h = dt.min(effective_target - current_t);
+                        // `h > 0` after the validate() above, but for large
+                        // `|current_t|` it can still be below the f64 spacing
+                        // there.
+                        if current_t + h == current_t {
+                            return Err(IntegrationError::TimeStagnated {
+                                t: current_t,
+                                dt: h,
+                            });
+                        }
                         current_state = Rk4.step(dynamics, current_t, &current_state, h);
                         current_t += h;
 
@@ -880,6 +912,48 @@ mod tests {
         let entry = group.satellites().next().unwrap();
         assert!((entry.t - 100.0).abs() < 1e-9);
         assert!(!entry.terminated);
+    }
+
+    /// The fixed-step RK4 branch has no internal step-size guard (unlike the
+    /// adaptive steppers), so `dt <= 0` used to spin on `h = 0` forever.
+    #[test]
+    fn rk4_rejects_non_advancing_step() {
+        for dt in [0.0, -1.0, f64::NAN] {
+            let mut group: IndependentGroup<TwoBodySystem> = IndependentGroup::rk4(dt)
+                .add_satellite("iss", iss_state(), TwoBodySystem { mu: MU_EARTH });
+            let err = group
+                .propagate_to(10.0)
+                .expect_err(&format!("dt = {dt} should be rejected"));
+            assert!(
+                matches!(err, IntegrationError::InvalidStepSize { .. }),
+                "dt = {dt} gave {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn integrator_config_validate_accepts_usable_settings() {
+        assert!(IntegratorConfig::Rk4 { dt: 10.0 }.validate().is_ok());
+        assert!(
+            IntegratorConfig::Dp45 {
+                dt: 10.0,
+                tolerances: Tolerances::default(),
+            }
+            .validate()
+            .is_ok()
+        );
+        // Unusable tolerances are rejected alongside the step size.
+        assert!(
+            IntegratorConfig::Dp45 {
+                dt: 10.0,
+                tolerances: Tolerances {
+                    atol: 0.0,
+                    rtol: 0.0,
+                },
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]

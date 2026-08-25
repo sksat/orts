@@ -4,6 +4,7 @@ use core::ops::ControlFlow;
 
 use coeff::*;
 
+use crate::error::{validate_step_size, validate_time_span};
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 use crate::{
@@ -220,8 +221,20 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
         F: FnMut(f64, &S::State),
         E: Fn(f64, &S::State) -> ControlFlow<B>,
     {
+        self.tol.validate()?;
+        validate_step_size(self.dt)?;
+        // Without this, a NaN or backward `t_target` makes `while self.t <
+        // t_target` false on the first test and the stepper reports Reached
+        // while sitting at its old time.
+        validate_time_span(self.t, t_target)?;
+
         while self.t < t_target {
             let h = self.dt.min(t_target - self.t);
+            // `h > 0` holds, but for large `|self.t|` it can still be below
+            // the spacing of representable f64 values around `self.t`.
+            if self.t + h == self.t {
+                return Err(IntegrationError::TimeStagnated { t: self.t, dt: h });
+            }
 
             let (y8, error, k13) = dop853_step_impl(self.system, self.t, &self.state, h, &self.k1);
 
@@ -231,6 +244,15 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
             }
 
             let err = self.state.error_norm(&y8, &error, &self.tol);
+            // A NaN norm compares false against both the accept threshold and
+            // the `dt_min` floor below, so without this guard the same step is
+            // retried forever. `+Inf` is deliberately *not* rejected: it
+            // shrinks the step (`Inf.powf(-ORDER_EXP) == 0` clamps to
+            // `MIN_FACTOR`) and so either recovers or terminates via
+            // `StepSizeTooSmall`.
+            if err.is_nan() {
+                return Err(IntegrationError::IndeterminateErrorNorm { t: self.t });
+            }
 
             if err <= 1.0 {
                 // Accept step
@@ -1003,5 +1025,86 @@ mod tests {
             rk4_err > 1e-2,
             "RK4 error {rk4_err:.2e} should be noticeable after 1000 periods with dt=0.3"
         );
+    }
+
+    // Guards against non-terminating adaptive loops (mirrors the DP45 set:
+    // `advance_to` is structurally identical in both steppers).
+
+    fn advance853(
+        initial: State<3, 2>,
+        dt: f64,
+        tol: Tolerances,
+        t_target: f64,
+    ) -> Result<(), IntegrationError> {
+        let system = HarmonicOscillator;
+        let mut stepper = Dop853.stepper(&system, initial, 0.0, dt, tol);
+        stepper
+            .advance_to::<_, _, ()>(t_target, |_, _| {}, |_, _| ControlFlow::Continue(()))
+            .map(|_| ())
+    }
+
+    fn nonzero_state() -> State<3, 2> {
+        State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0])
+    }
+
+    #[test]
+    fn advance_to_rejects_both_zero_tolerances() {
+        let err = advance853(
+            nonzero_state(),
+            0.1,
+            Tolerances {
+                atol: 0.0,
+                rtol: 0.0,
+            },
+            1.0,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            IntegrationError::InvalidTolerances {
+                atol: 0.0,
+                rtol: 0.0
+            }
+        );
+    }
+
+    #[test]
+    fn advance_to_rejects_non_positive_step() {
+        for dt in [0.0, -0.1, f64::NAN] {
+            let err = advance853(nonzero_state(), dt, Tolerances::default(), 1.0).unwrap_err();
+            assert!(
+                matches!(err, IntegrationError::InvalidStepSize { .. }),
+                "dt = {dt} gave {err:?}"
+            );
+        }
+    }
+
+    /// `atol == 0` with an all-zero state gives `0 / 0` in the error norm.
+    #[test]
+    fn advance_to_rejects_non_finite_error_norm() {
+        let zero = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let tol = Tolerances {
+            atol: 0.0,
+            rtol: 1e-8,
+        };
+        let err = advance853(zero, 0.1, tol, 1.0).unwrap_err();
+        assert_eq!(err, IntegrationError::IndeterminateErrorNorm { t: 0.0 });
+    }
+
+    #[test]
+    fn advance_to_detects_time_stagnation() {
+        let system = HarmonicOscillator;
+        let t0 = 9007199254740992.0_f64; // 2^53
+        let mut stepper = Dop853.stepper(&system, nonzero_state(), t0, 0.5, Tolerances::default());
+        let err = stepper
+            .advance_to::<_, _, ()>(t0 + 2.0, |_, _| {}, |_, _| ControlFlow::Continue(()))
+            .map(|_| ())
+            .unwrap_err();
+        assert!(matches!(err, IntegrationError::TimeStagnated { t, .. } if t == t0));
+    }
+
+    #[test]
+    fn advance_to_still_succeeds_for_valid_input() {
+        assert!(advance853(nonzero_state(), 0.1, Tolerances::default(), 1.0).is_ok());
     }
 }

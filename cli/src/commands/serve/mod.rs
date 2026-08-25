@@ -166,6 +166,8 @@ async fn async_server(sim: &SimArgs, port: u16, stdio_key: Option<stream_bridge:
         // threshold, but we still pass the overrides so that any
         // later delegate to simulation_manager (after a terminate +
         // restart) honors them too.
+        // Same reason as in `run`: this path skips `SimConfig::validate`.
+        crate::commands::run::validate_sim_args(sim);
         let params = Arc::new(SimParams::from_sim_args(sim, true));
         tokio::spawn(manager::simulation_manager_with_params(
             params,
