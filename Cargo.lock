@@ -1423,15 +1423,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ecolor"
-version = "0.34.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a05fbfa222ffb51989d5ccf33e5f7aebfcf96c5023413856b0c3618a7f79896e"
-dependencies = [
- "emath",
-]
-
-[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3854,7 +3845,6 @@ dependencies = [
  "arrow",
  "bytemuck",
  "document-features",
- "ecolor",
  "emath",
  "half",
  "indexmap",
