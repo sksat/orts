@@ -39,7 +39,7 @@ section is subdivided by package.
   `+Z`, so it is numerically identical to the classic frame-Z formula; for
   `Gcrs` it is the IAU 2006 CIP, so J2 is evaluated about Earth's true pole
   (~0.1° off the GCRS Z axis by 2024). `setup::build_orbital_system` /
-  `build_spacecraft_dynamics` compose `PointMass` + `ZonalGravity`, which is
+  `setup::build_spacecraft_dynamics` compose `PointMass` + `ZonalGravity`, which is
   behaviour-preserving for the `SimpleEci` systems they build, and in the
   drag-free J2 + third-body ISS cross-validation the `Gcrs` final-position error
   against Orekit drops by more than an order of magnitude. ([#194](https://github.com/sksat/orts/pull/194), [#204](https://github.com/sksat/orts/pull/204))

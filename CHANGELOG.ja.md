@@ -34,7 +34,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   (`ZonalGravity::new(mu, r_body, j2, j3, j4)`)。`SimpleEci` では極が `+Z` なので
   従来の frame-Z 式と数値的に同一、`Gcrs` では IAU 2006 CIP なので J2 が地球の
   真の極まわりで評価される (2024 epoch で GCRS Z 軸から ~0.1°)。
-  `setup::build_orbital_system` / `build_spacecraft_dynamics` は
+  `setup::build_orbital_system` / `setup::build_spacecraft_dynamics` は
   `PointMass` + `ZonalGravity` を合成する (これらが構築する `SimpleEci` 系では
   振る舞い保存)。drag なしの J2 + 第三体 ISS クロスバリデーションでは、Orekit に
   対する `Gcrs` の最終位置誤差が 1 桁以上改善する。([#194](https://github.com/sksat/orts/pull/194), [#204](https://github.com/sksat/orts/pull/204))
