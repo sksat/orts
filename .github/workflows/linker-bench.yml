@@ -10,6 +10,10 @@ name: linker-bench
 # identical across configs — switching linkers therefore triggers no rebuild
 # and each linker sees a byte-identical argv.
 on:
+  # workflow_dispatch only works once the file is on the default branch, so
+  # while this lives on a topic branch it is driven by pushes to that branch.
+  push:
+    branches: [bench-linker-ci]
   workflow_dispatch:
     inputs:
       reps:
