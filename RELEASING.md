@@ -140,10 +140,11 @@ gh release edit v0.1.0 --draft=false
 
 - **Version mismatch**: tag 名と `Cargo.toml` version が不一致 →
   release job 冒頭の verify step で早期 fail。version bump 忘れ。
-- **cargo-about が無い**: `cli/build.rs` が panic (`ORTS_REQUIRE_LICENSE_NOTICE=1`
-  のため)。musl(ホストビルド)は `taiki-e/install-action`、gnu(cross)は
-  [Cross.toml](Cross.toml) の `pre-build` で install される。gnu で失敗する場合は
-  pre-build の cargo-about ダウンロード URL/バージョンを確認。
+- **ライセンス NOTICE 生成失敗**: `cli/build.rs` が panic
+  (`ORTS_REQUIRE_LICENSE_NOTICE=1` のため)。NOTICE は cargo-about の
+  **ライブラリ**(orts-cli の build-dependency)で生成するので、`cargo about`
+  バイナリの install は不要。失敗する場合は accepted ライセンス未登録など
+  `cli/about.toml` 側を確認（新規ライセンスは意識的に追加判断する）。
 - **gnu (cross) で `-fuse-ld=mold` / `linker clang not found`**: CI step の
   `RUSTFLAGS` 上書きがコンテナに伝わっていない (`.cargo/config.toml` の
   clang+mold が効いてしまっている)。Cross.toml の `build.env.passthrough` に
