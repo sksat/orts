@@ -55,7 +55,14 @@ futures-util = "0.3"
 # drags in re_query, re_chunk_store, re_video, image, re_analytics...
 # Same approach rrd-wasm already takes.
 re_sdk = "0.33"
-re_sdk_types = "0.33"
+# `default-features = false` drops re_sdk_types' default `ecolor` feature (and
+# with it ecolor + emath). It is the only one of these five with a non-empty
+# default, and `re_sdk` itself depends on it this way, so this matches what the
+# umbrella resolved to. orts uses only Scalars / Points3D / TextDocument /
+# Scalar / Text, none of which need a colour type.
+re_sdk_types = { version = "0.33", default-features = false }
+# `decoder` is orts' own requirement (DecoderApp); `encoder` comes from re_sdk
+# anyway but is named here because save_as_rrd depends on it directly.
 re_log_encoding = { version = "0.33", features = ["encoder", "decoder"] }
 re_chunk = "0.33"
 re_log_types = "0.33"
