@@ -43,7 +43,12 @@ impl Tolerances {
 }
 
 /// Reason the integration was stopped by the integrator itself.
+///
+/// `#[non_exhaustive]`: adding a variant here previously broke every downstream
+/// exhaustive `match`. Consumers should use a wildcard arm, or
+/// [`IntegrationError::time()`] when all they need is the failure time.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum IntegrationError {
     /// A NaN or Inf was detected in the state after a step.
     NonFiniteState { t: f64 },

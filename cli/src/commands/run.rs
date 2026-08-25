@@ -1014,6 +1014,16 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Recording {
     }
 
     // 全衛星の sample_period の最小値をグローバル tick に使う。
+    //
+    // Validate per satellite *before* folding: `f64::min` returns the other
+    // argument when one side is NaN, so a NaN period would be silently
+    // discarded by the fold and never rejected.
+    for (i, sat) in satellites.iter().enumerate() {
+        if let Err(e) = crate::config::validate_sample_period(sat.controller.sample_period()) {
+            eprintln!("Error: satellites[{i}]: {e}");
+            std::process::exit(1);
+        }
+    }
     let dt_ctrl = satellites
         .iter()
         .map(|sat| sat.controller.sample_period())

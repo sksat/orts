@@ -1718,6 +1718,30 @@ altitude = -100.0
         }
     }
 
+    /// Why the controlled-run loops validate each satellite's period rather
+    /// than only the folded minimum: `f64::min` returns the *other* argument
+    /// when one side is NaN, so a NaN period vanishes in the fold.
+    #[test]
+    fn fold_min_hides_a_nan_sample_period() {
+        let periods = [f64::NAN, 0.1];
+        let folded = periods.iter().copied().fold(f64::INFINITY, f64::min);
+        assert_eq!(
+            folded, 0.1,
+            "f64::min drops the NaN instead of propagating it"
+        );
+        assert!(
+            validate_sample_period(folded).is_ok(),
+            "so validating only the fold result accepts a fleet containing a NaN period"
+        );
+        assert!(
+            periods
+                .iter()
+                .copied()
+                .any(|p| validate_sample_period(p).is_err()),
+            "validating per satellite catches it"
+        );
+    }
+
     #[test]
     fn tolerance_validator_skips_rk4() {
         // RK4 never reads the tolerances, so unused zeros must stay valid.
