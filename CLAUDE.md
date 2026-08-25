@@ -6,14 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 orts is a numerical computation and optimization platform for spacecraft simulation — orbital and attitude dynamics.
 
-- Design doc: [DESIGN.md](DESIGN.md) (Japanese) / top-level structure: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Design doc (why): [DESIGN.md](DESIGN.md) / architecture map (what): [ARCHITECTURE.md](ARCHITECTURE.md)
 - Crate / package inventory and roles: see the Project Structure tables in [README.md](README.md)
 
 ## Development Policy
 
 - For architecture-level changes, update DESIGN.md first, then implement
 - Before starting implementation, get a smart-friend review of the plan
-- TDD-first: verify behavior with unit tests before integrating. Validate E2E against GMAT / Orekit as reference implementations (fixture generators live in tools/)
+- TDD-first: verify behavior with unit tests before integrating. Validate E2E against GMAT / Orekit as reference implementations (fixture generators live in tools/), using canonical problems (SSO, constellations, Lagrange points, swing-bys) as test cases
+- Keep responsibilities strictly separated across crates and modules — that separation is what enables parallel development and independent testing
 - Before committing, run `cargo fmt` / `cargo clippy --workspace -- -D warnings` / the relevant tests / `pnpm lint`
 - Changes touching logic, APIs, or design get an external review via the code-review skill before commit (typo fixes and mechanical replacements may skip it); after addressing findings, re-review until it passes
 - After pushing, checking the CI result is part of the task
@@ -39,6 +40,8 @@ orts is a numerical computation and optimization platform for spacecraft simulat
 
 - Verify technical claims (CHANGELOG, docs, etc.) against the implementation and tests before writing them down
 - In Japanese documents, keep technical terms in English (crate, workspace, commit) — no katakana transliteration
+- Crate and package names stay lowercase even at the start of a sentence (orts, arika — never Orts)
+- Use a negation ("not A, but B") only where it records a rejected alternative or an actual failure mode; decorative contrasts read as filler
 
 ## Languages
 
