@@ -24,14 +24,14 @@ stateDiagram-v2
     direction LR
     [*] --> FirstBurn
     FirstBurn --> Coast: sma ≥ (r₁+r₂)/2
-    Coast --> SecondBurn: coast_elapsed ≥ T_transfer/2
+    Coast --> SecondBurn: r·v が上昇 → 非上昇 (apogee)
     SecondBurn --> Trim: sma ≥ r_target
     Trim --> Trim: sma < r_target − deadband<br/>→ throttle = 1
     note right of FirstBurn
         prograde 連続噴射で<br/>transfer ellipse まで上昇
     end note
     note right of Coast
-        throttle = 0<br/>半周期タイマで apogee 検出
+        throttle = 0<br/>r·v の符号反転で apogee 検出
     end note
     note right of SecondBurn
         apogee で再び prograde<br/>SMA を target まで上げて円化
@@ -43,9 +43,11 @@ stateDiagram-v2
 
 - **FirstBurn**: prograde 連続噴射で SMA を transfer ellipse の値
   `(r_initial + r_target)/2` まで上げる。
-- **Coast**: throttle=0。transfer ellipse 上を慣性飛行。半周期タイマで
-  apogee 到達を判定（finite-burn 損失で `r` がぴったり届かない場合でも
-  ロバスト、実機の maneuver 計画でも一般的）。
+- **Coast**: throttle=0。transfer ellipse 上を慣性飛行。apogee は径方向速度
+  `r·v` が正（上昇）から非正に変わる点として検出する（finite-burn 損失で `r` が
+  ぴったり届かない場合でも apogee そのものを捉える）。時間ベースにすると
+  transfer 半周期は perigee 起点なので、FirstBurn 終了時刻から測った分だけ
+  遅れる。1 transfer 周期を超えても検出できない場合だけ watchdog として遷移。
 - **SecondBurn**: target SMA まで prograde 噴射で円化。
 - **Trim (TCM)**: drag や初期 burn 誤差で SMA が deadband 分下がったら
   補正 burn。instantaneous の `r` で判定すると楕円軌道 perigee で毎周期
@@ -63,7 +65,7 @@ stateDiagram-v2
 `τ = -Kp·θ - Kd·ω` を RW トルクとして発行。結果として body-Y の推力
 ベクトルは常に prograde を向き、低推力・長時間 burn や apogee での
 SecondBurn でも姿勢整合が取れる（この姿勢トラッキングがないと
-半周期後の SecondBurn は retrograde になって軌道が崩壊する）。
+半周後の SecondBurn は retrograde になって軌道が崩壊する）。
 
 ## ビルド
 
@@ -95,7 +97,7 @@ uv run plot.py   # → transfer_burn_with_tcm.png
   反対側で SecondBurn が発火して目標円軌道に載っている様子が読める。
 - **右上 (Altitude)**: 500 → 2000 km の単調上昇。burn 区間 (赤シェード) で
   FirstBurn (t ≈ 0 – 37 s) が一瞬ジャンプ、Coast 中に transfer ellipse の
-  apogee へ向けて滑らかに上昇、t ≈ 3350 s の SecondBurn で circularize。
+  apogee へ向けて滑らかに上昇、t ≈ 3315 s（transfer 半周期 = apogee）の SecondBurn で circularize。
   各 burn の Δalt 値が注釈付き。
 - **右下 (Orbital speed)**: burn 区間 (赤シェード) と **Δv 注釈** 付き。
   FirstBurn で 7.613 → 7.98 km/s に加速、Coast 中は vis-viva により altitude
@@ -152,8 +154,8 @@ direction_body = [0.0, 1.0, 0.0]  # +Y body
   できず plugin は FirstBurn 開始時に Err を返す。
 - FirstBurn の Δv は sample_period 粒度で決まるため、精密な軌道制御には
   sample_period を小さくするか、finite-burn 計画と closed-loop 合流を
-  組むとよい（今回の demo は時間ベース半周期タイマで apogee を外さない
-  ロバスト設計）。
+  組むとよい（apogee 判定自体は状態量 `r·v` から取るので、burn が長引いても
+  点火位置は apogee に留まる）。
 
 ## 関連テスト
 

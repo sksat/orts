@@ -79,7 +79,7 @@ stateDiagram-v2
     [*] --> FirstBurn : raise_delay_s = 0
     Parked --> FirstBurn : t ≥ raise_delay_s
     FirstBurn --> Coast : SMA ≥ transfer_SMA
-    Coast --> SecondBurn : elapsed ≥ T_transfer / 2
+    Coast --> SecondBurn : r·v が上昇 → 非上昇 (apogee)
     SecondBurn --> Trim : SMA ≥ target_r
     Trim --> Trim : SMA ≥ target_r − deadband
     Trim --> Trim : SMA < target_r − deadband<br>(throttle = 1, TCM)
