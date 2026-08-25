@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["ppigrf"]
+# dependencies = ["ppigrf==2.0.0"]
 # ///
 """Generate IGRF reference fixtures using ppigrf, IAGA-VMOD's own implementation.
 
@@ -29,11 +29,22 @@ Known difference sources:
     generation could land in one before the other, which would show up as a
     uniform offset across every point.
 
+Not covered here: the exact geographic poles. ppigrf divides by `sin(theta)`
+with no limit branch, so it returns NaN there (and an asymmetric finite value at
+the south pole), which makes it unusable as a reference at those points.
+`tobari` does implement the closed-form limit
+`lim P^1_n(cos theta)/sin theta = sqrt(n(n+1)/2)`, and that branch is pinned by
+`b_phi_pole_branch_is_continuous` in `tobari/src/magnetic/igrf/mod.rs`, which
+checks the limit branch against the ordinary path just off-axis. The fixture
+therefore stops at high colatitude, where both implementations use the ordinary
+path.
+
 Output: tobari/tests/fixtures/igrf_ppigrf_reference.json
 Run:   uv run tools/generate_igrf_fixtures.py
 """
 
 import datetime as dt
+import importlib.metadata
 import json
 import pathlib
 
@@ -45,7 +56,8 @@ import ppigrf
 #     so only dP/dtheta carries the sub-diagonal coefficient;
 #   - mid-latitudes in all four longitude quadrants, where the intermediate
 #     orders (0 < m < n) and the eastward component both matter most;
-#   - close to both poles, where B_phi takes its limit branch;
+#   - high colatitudes, where `P^m_n / sin(theta)` is largest on the ordinary
+#     B_phi path;
 #   - several altitudes, so the (a/r)^(n+2) weighting shifts between degrees.
 POINTS = [
     # (label, longitude_deg, geodetic_latitude_deg, height_km)
@@ -60,8 +72,13 @@ POINTS = [
     ("leo_mid_south_west", -70.0, -35.0, 500.0),
     ("leo_high_north", 10.0, 80.0, 500.0),
     ("leo_high_south", 10.0, -80.0, 500.0),
+    # High colatitude, where P^m_n / sin(theta) is large and the ordinary
+    # (non-limit) B_phi path is most sensitive. See the note below on why the
+    # exact poles are absent.
     ("near_north_pole", 0.0, 89.5, 500.0),
     ("near_south_pole", 0.0, -89.5, 500.0),
+    ("very_near_north_pole", 40.0, 89.99, 500.0),
+    ("very_near_south_pole", 40.0, -89.99, 500.0),
     ("sso_altitude_mid", 25.0, 60.0, 800.0),
     ("geo_equator", 0.0, 0.0, 35786.0),
 ]
@@ -96,6 +113,9 @@ def main() -> None:
 
     out = {
         "source": "ppigrf (IAGA Working Group V-MOD)",
+        # Recorded so a regenerated fixture that disagrees with the committed
+        # one can be traced to a reference change rather than to our code.
+        "ppigrf_version": importlib.metadata.version("ppigrf"),
         "generator": "tools/generate_igrf_fixtures.py",
         "components": "geodetic east / north / up, nT",
         "points": records,

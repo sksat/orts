@@ -1,5 +1,6 @@
 {
   "source": "ppigrf (IAGA Working Group V-MOD)",
+  "ppigrf_version": "2.0.0",
   "generator": "tools/generate_igrf_fixtures.py",
   "components": "geodetic east / north / up, nT",
   "points": [
@@ -132,6 +133,26 @@
       "b_east_nt": -6910.2755662205245,
       "b_north_nt": 10347.492472390042,
       "b_up_nt": 40973.273517553265
+    },
+    {
+      "label": "very_near_north_pole",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": 89.99,
+      "height_km": 500.0,
+      "b_east_nt": 725.475576196503,
+      "b_north_nt": 782.0993328997914,
+      "b_up_nt": -46294.87691447581
+    },
+    {
+      "label": "very_near_south_pole",
+      "epoch": "2025-01-01T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": -89.99,
+      "height_km": 500.0,
+      "b_east_nt": -11849.875567953253,
+      "b_north_nt": 3324.680298121365,
+      "b_up_nt": 41286.764422283835
     },
     {
       "label": "sso_altitude_mid",
@@ -284,6 +305,26 @@
       "b_up_nt": 41092.34185869057
     },
     {
+      "label": "very_near_north_pole",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": 89.99,
+      "height_km": 500.0,
+      "b_east_nt": 652.4220349501459,
+      "b_north_nt": 880.654924655242,
+      "b_up_nt": -46255.74249089405
+    },
+    {
+      "label": "very_near_south_pole",
+      "epoch": "2022-07-01T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": -89.99,
+      "height_km": 500.0,
+      "b_east_nt": -11815.204984829921,
+      "b_north_nt": 3397.178167018832,
+      "b_up_nt": 41406.65305533577
+    },
+    {
       "label": "sso_altitude_mid",
       "epoch": "2022-07-01T00:00:00Z",
       "longitude_deg": 25.0,
@@ -432,6 +473,26 @@
       "b_east_nt": -6973.0219042180015,
       "b_north_nt": 10312.861941713558,
       "b_up_nt": 40861.10191420539
+    },
+    {
+      "label": "very_near_north_pole",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": 89.99,
+      "height_km": 500.0,
+      "b_east_nt": 797.6266304901126,
+      "b_north_nt": 696.4699330246494,
+      "b_up_nt": -46326.72547463612
+    },
+    {
+      "label": "very_near_south_pole",
+      "epoch": "2027-04-15T00:00:00Z",
+      "longitude_deg": 40.0,
+      "latitude_deg": -89.99,
+      "height_km": 500.0,
+      "b_east_nt": -11876.268252207166,
+      "b_north_nt": 3257.795281256021,
+      "b_up_nt": 41173.70412596254
     },
     {
       "label": "sso_altitude_mid",
