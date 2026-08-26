@@ -137,7 +137,11 @@ section is subdivided by package.
   a `controller` to a running orbit-only simulation is rejected; and `sensors` /
   `reaction_wheels` / `magnetorquers` / `thruster` declared without a controller
   warn on stderr and in `orts run --json`'s `warnings`. ([#335](https://github.com/sksat/orts/pull/335))
-- The README quick-start config parses: `[satellites.reaction_wheels]` was
+- A `[satellites.controller]` with no `config` table starts the guest on its own
+  defaults. The omitted table reached the guest as the string `"null"`, which
+  failed its `init`. ([#335](https://github.com/sksat/orts/pull/335))
+- The README quick-start config parses and runs as shown: it drives the wheels
+  with the `pd-rw-control` example plugin, and `[satellites.reaction_wheels]` was
   missing the required `max_momentum`. ([#335](https://github.com/sksat/orts/pull/335))
 
 ### `orts-plugin-sdk` (Rust, crates.io)

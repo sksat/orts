@@ -7,7 +7,12 @@
 
 use std::process::Command;
 
+/// Honor `ORTS_BIN` so the plugin-backend CI job, which downloads a prebuilt
+/// binary instead of building one, can run these tests too.
 fn orts() -> Command {
+    if let Ok(path) = std::env::var("ORTS_BIN") {
+        return Command::new(path);
+    }
     Command::new(env!("CARGO_BIN_EXE_orts"))
 }
 
@@ -57,12 +62,13 @@ fn data_lines(stdout: &str) -> Vec<&str> {
         .collect()
 }
 
-/// The README quick-start config: `[satellites.attitude]` + `sensors` +
-/// `[satellites.reaction_wheels]`, no controller. It must parse, run, and
-/// output the propagated attitude — before this it silently produced an
-/// orbit-only CSV.
+/// `[satellites.attitude]` + `sensors` + `[satellites.reaction_wheels]` with no
+/// controller must parse, run, and output the propagated attitude — before this
+/// it silently produced an orbit-only CSV. The README's quick start adds a
+/// controller on top of this shape; `readme_quickstart_config_runs_controlled`
+/// covers that config as it ships.
 #[test]
-fn readme_quickstart_config_outputs_attitude() {
+fn attitude_without_controller_outputs_attitude() {
     let config = r#"
 body = "earth"
 dt = 0.01
@@ -408,4 +414,142 @@ attitude = { inertia_diag = [10, 10, 10], mass = 500 }
         "got: {warnings:?}"
     );
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Extract the README quick-start TOML block, with the controller's cwd-relative
+/// `path` rewritten to an absolute one so the test does not depend on its cwd.
+///
+/// Reading the README rather than restating it is deliberate: the quick-start
+/// config shipped un-runnable for a long time (a required `max_momentum` was
+/// missing), which a copy in this file would not have caught.
+fn readme_quickstart_toml(wasm: &std::path::Path) -> String {
+    let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../README.md"))
+        .expect("README.md is readable");
+    let after = readme
+        .split_once("Example config (`orts.toml`)")
+        .expect("README has the quick-start config section")
+        .1;
+    let block = after
+        .split("```toml")
+        .nth(1)
+        .expect("a toml code block follows")
+        .split("```")
+        .next()
+        .expect("the toml block is closed");
+    let mut rewritten = 0;
+    let toml = block
+        .lines()
+        .map(|l| {
+            let key = l.split('=').next().unwrap_or_default().trim();
+            if key == "path" {
+                rewritten += 1;
+                format!("path = {:?}", wasm.to_str().unwrap())
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Without this the relative path in the README would resolve by accident
+    // when the tests happen to run from the repository root, and the rewrite
+    // silently covering nothing would look like a pass.
+    assert_eq!(
+        rewritten, 1,
+        "expected exactly one `path` to rewrite in the quick-start config: {toml}"
+    );
+    toml
+}
+
+/// Resolve the pd-rw-control guest WASM the README points at, or `None` if it
+/// has not been built.
+fn pd_rw_guest_wasm() -> Option<std::path::PathBuf> {
+    let path = std::path::PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../plugin-sdk/examples/target/wasm32-wasip1/release/",
+        "orts_example_plugin_pd_rw_control.wasm"
+    ));
+    if path.exists() {
+        return Some(path);
+    }
+    eprintln!(
+        "WASM not found: {}\n\
+         Build: cargo +1.91.0 component build --release \
+         --manifest-path plugin-sdk/examples/pd-rw-control/Cargo.toml\n\
+         Skipping the README quick-start e2e test.",
+        path.display()
+    );
+    None
+}
+
+/// A `[satellites.controller]` with no `config` table starts the guest on its
+/// own defaults. The omitted table arrives as JSON `null`, whose `to_string()`
+/// is `"null"` — which the guest cannot parse as its config struct however many
+/// `#[serde(default)]`s it carries.
+#[test]
+fn controller_without_config_table_uses_guest_defaults() {
+    let Some(wasm) = pd_rw_guest_wasm() else {
+        return;
+    };
+    let config = format!(
+        r#"
+body = "earth"
+dt = 0.1
+duration = 10.0
+
+[[satellites]]
+id = "sat-1"
+sensors = ["gyroscope", "star_tracker"]
+orbit = {{ type = "circular", altitude = 400 }}
+attitude = {{ inertia_diag = [10, 10, 10], mass = 500 }}
+reaction_wheels = {{ type = "three_axis", inertia = 0.01, max_momentum = 1.0, max_torque = 0.5 }}
+
+[satellites.controller]
+type = "wasm"
+path = {:?}
+"#,
+        wasm.to_str().unwrap()
+    );
+    let out = run_config("ctrl-no-config", &config);
+    assert!(
+        out.status.success(),
+        "run failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The README quick-start config, as it ships, runs in controlled mode: the
+/// wheels are commanded, so nothing is reported as un-honored.
+#[test]
+fn readme_quickstart_config_runs_controlled() {
+    let Some(wasm) = pd_rw_guest_wasm() else {
+        return;
+    };
+    let config = readme_quickstart_toml(&wasm);
+    assert!(
+        config.contains("[satellites.controller]"),
+        "the README quick start no longer declares a controller: {config}"
+    );
+
+    let out = run_config("readme-quickstart", &config);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "run failed: {stderr}");
+    assert!(
+        !stderr.contains("declared without `[satellites.controller]`"),
+        "the shipped config warns about un-honored keys: {stderr}"
+    );
+
+    // The wheel-command and wheel-momentum columns only exist when the control
+    // loop runs, so they are what distinguishes controlled from spacecraft mode
+    // — the attitude columns alone appear in both.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let header = header_line(&stdout);
+    for col in [
+        "qw", "qx", "qy", "qz", "wx", "wy", "wz", "rw_tx", "rw_ty", "rw_tz", "rw_hx", "rw_hy",
+        "rw_hz",
+    ] {
+        assert!(
+            header.split(',').any(|c| c == col),
+            "column '{col}' missing from header: {header}"
+        );
+    }
 }

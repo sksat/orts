@@ -602,6 +602,9 @@ jobs:
           cargo test --locked -p orts-cli --test serve_stream_bridge_e2e
           cargo test --locked -p orts-cli --test serve_kble_e2e
           cargo test --locked -p orts-cli --test serve_kble_stdio_e2e
+          # The README quick-start and controller-config tests need the guest
+          # WASM; under `rust-test`, which does not build it, they soft-skip.
+          cargo test --locked -p orts-cli --test run_mode_e2e
 
   # Build CLI with embedded viewer SPA in release profile.
   # Runs on main push (smoke test) AND tag push (release job consumes
