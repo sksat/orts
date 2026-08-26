@@ -110,6 +110,40 @@ describe("ChartDataCore schema updates", () => {
     expect(chartRowCounts(posted)).toEqual([2, 0]);
   });
 
+  it("keeps the window at rows that arrive while the table is recreated", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "configure", timeRange: 50, maxPoints: 2000 });
+
+    conn.stallOn((sql) => sql.startsWith("CREATE OR REPLACE TABLE"));
+    core.handle({
+      type: "update-schema",
+      schema: {
+        tableName: "orbit",
+        columns: [
+          { name: "t", type: "DOUBLE" },
+          { name: "r", type: "DOUBLE" },
+          { name: "extra", type: "DOUBLE" },
+        ],
+        derived: [{ name: "altitude", sql: "r - 1737.4" }],
+      },
+    });
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    // Rows built with the new schema arrive while the table is recreated.
+    core.handle({ type: "ingest", rows: [[100, 7100, 0]], latestT: 100 });
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await core.whenIdle();
+    const from = conn.queries.length;
+    await core.tickOnce();
+
+    const queried = conn.queries.slice(from).filter((q) => q.includes("t >= "));
+    expect(queried.length).toBeGreaterThan(0);
+    expect(queried.every((q) => q.includes("t >= 50"))).toBe(true);
+  });
+
   it("uses the new schema on the next tick even if a query was in flight", async () => {
     const { core, conn } = setup();
     await init(core);
@@ -223,6 +257,8 @@ describe("ChartDataCore rebuild", () => {
     await tick;
     await core.whenIdle();
 
+    // The same tick queries, and with the new expressions.
+    expect(conn.queries.some((q) => q.includes("r - 1737.4"))).toBe(true);
     expect(conn.queries.some((q) => q.includes("r - 6378.137"))).toBe(false);
   });
 
@@ -372,6 +408,42 @@ describe("ChartDataCore rebuild", () => {
     // arriving, so it is dropped and reported.
     expect(conn.tValuesOf("orbit")).toEqual([]);
     expect(posted.some((m) => m.type === "error")).toBe(true);
+  });
+
+  it("does not append to a table whose abandoned dataset could not be emptied", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "ingest", rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+    expect(conn.tValuesOf("orbit")).toEqual([0, 1]);
+
+    // The replacement never commits, and the deletes that empty the table
+    // after giving up fail twice as well.
+    let deletes = 0;
+    conn.failOn((sql) => {
+      if (sql.includes("(10,7010)")) return true;
+      if (sql.startsWith("DELETE")) {
+        deletes++;
+        return deletes >= 5; // 4 rebuild attempts, then the abandoning ones
+      }
+      return false;
+    });
+    core.handle({ type: "rebuild", rows: rows(10, 11), latestT: 11 });
+    await core.whenIdle();
+    for (let i = 0; i < 3; i++) await core.tickOnce();
+
+    // Emptying failed, so the old dataset is still in the table.
+    expect(conn.tValuesOf("orbit")).toEqual([0, 1]);
+
+    // Newer rows must not be appended to it while that is the case.
+    core.handle({ type: "ingest", rows: rows(50), latestT: 50 });
+    await core.tickOnce();
+    expect(conn.tValuesOf("orbit")).toEqual([0, 1]);
+
+    // Once the delete succeeds, streaming resumes into the emptied table.
+    conn.failOn(null);
+    await core.tickOnce();
+    expect(conn.tValuesOf("orbit")).toEqual([50]);
   });
 
   it("broadcasts an empty dataset after an empty rebuild", async () => {

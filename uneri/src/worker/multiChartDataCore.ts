@@ -100,6 +100,8 @@ export class MultiChartDataCore {
    * a failed flush must drop them instead of re-queuing them on top.
    */
   private readonly datasetEpochs = new Map<string, number>();
+  /** Satellites whose abandoned dataset could not be emptied yet. */
+  private readonly emptyingFailed = new Set<string>();
   /**
    * Bumped whenever a running query stops describing what should be broadcast:
    * base-schema change, window or series-configuration change, or a dataset
@@ -313,8 +315,9 @@ export class MultiChartDataCore {
           await createTable(this.conn, this.toTableSchema(makeSatelliteTableName(satId)));
           // A rebuild still in flight when the schema changed may have
           // re-added this satellite in between; its table is empty now.
+          // latestTs is left alone: rows that arrived while the table was
+          // being recreated have already moved it.
           this.hasData.delete(satId);
-          this.latestTs.delete(satId);
         } catch (e) {
           console.warn(`multiChartDataWorker: schema change failed for ${satId}:`, e);
         }
@@ -398,13 +401,21 @@ export class MultiChartDataCore {
       await this.runRebuild(satId, rebuild);
     }
 
+    // 0b. Empty tables whose abandoned dataset is still there, before
+    //     anything is inserted on top of it.
+    for (const satId of [...this.emptyingFailed]) {
+      await this.abandonDataset(satId);
+    }
+
     // 1. Flush per-satellite ingest queues (atomically, so a failed flush
     //    inserts nothing and a retry cannot duplicate rows).
     for (const [satId, queue] of [...this.ingestQueues]) {
       if (queue.length === 0) continue;
       // A replacement (retrying or queued behind this tick) must land first:
-      // flushing now would insert these rows into the table it deletes.
+      // flushing now would insert these rows into the table it deletes. The
+      // same holds while an abandoned dataset is still in the table.
       if (this.pendingRebuilds.has(satId) || this.queuedRebuilds.has(satId)) continue;
+      if (this.emptyingFailed.has(satId)) continue;
       this.ingestQueues.set(satId, []);
       const epoch = this.datasetEpochs.get(satId) ?? 0;
       try {
@@ -439,6 +450,11 @@ export class MultiChartDataCore {
     // 2. Query cycle (every queryEveryN ticks)
     this.tickCount++;
     if (this.hasData.size === 0 || this.tickCount % this.queryEveryN !== 0) return;
+
+    // A replacement is queued or retrying: the tables it will delete still
+    // hold the old dataset, so querying now would broadcast it under the new
+    // generation. The next tick queries once the replacement has landed.
+    if (this.queuedRebuilds.size > 0 || this.pendingRebuilds.size > 0) return;
 
     // The flush awaited DuckDB, so read the generation after it: a schema,
     // window or dataset change may have arrived in between.
@@ -547,11 +563,18 @@ export class MultiChartDataCore {
       try {
         await replaceRows(this.conn, makeSatelliteTableName(satId), []);
       } catch (e) {
-        console.warn(`multiChartDataWorker: failed to empty the table for ${satId}:`, e);
+        // The old dataset is still in the table. Reporting it as empty would
+        // let the next flush append to it, which is the splice this avoids:
+        // keep it and retry the emptying on the next tick.
+        console.warn(`multiChartDataWorker: failed to empty ${satId}, retrying:`, e);
+        this.emptyingFailed.add(satId);
+        return;
       }
     }
+    this.emptyingFailed.delete(satId);
     this.hasData.delete(satId);
-    this.latestTs.delete(satId);
+    // latestTs is left alone: an ingest that arrived while the table was being
+    // emptied has already moved it to where the next rows are.
     if (this.hasData.size === 0) this.broadcastEmptyIfNeeded();
   }
 

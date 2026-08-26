@@ -123,6 +123,11 @@ export class FakeDuckDBConn {
 
   private apply(sql: string): FakeResult {
     if (sql.startsWith("BEGIN")) {
+      // DuckDB has no nested transactions, and neither does this double: two
+      // overlapping writers on one connection must show up as an error.
+      if (this.snapshot != null) {
+        throw new Error("FakeDuckDBConn: cannot start a transaction within a transaction");
+      }
       this.snapshot = new Map(
         [...this.tables].map(([name, rows]) => [name, rows.map((row) => [...row])]),
       );

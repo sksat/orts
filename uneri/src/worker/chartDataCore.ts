@@ -97,6 +97,9 @@ export class ChartDataCore {
   /** True when coldRefreshEveryN was not explicitly set by the caller. */
   private useAdaptiveAllMode = true;
 
+  /** Set when a dataset had to be abandoned but the table could not be emptied. */
+  private emptyingFailed = false;
+
   /** Rows buffered between ticks. */
   private ingestQueue: RowTuple[] = [];
   private ingestRetryCount = 0;
@@ -344,10 +347,10 @@ export class ChartDataCore {
           return;
         }
         // A rebuild that was still in flight when the schema changed may have
-        // finished in between and re-set these; the table is empty now.
+        // finished in between and re-set this; the table is empty now.
+        // latestT/earliestT stay as they are: rows that arrived while the
+        // table was being recreated have already moved them.
         this.hasData = false;
-        this.latestT = -Infinity;
-        this.earliestT = Infinity;
         this.coldSnapshot = null;
         this.coldTMax = -Infinity;
         this.hotBuffer = null;
@@ -433,6 +436,13 @@ export class ChartDataCore {
       this.pendingRebuild = null;
       await this.runRebuild(retry);
       if (this.pendingRebuild != null) return; // still failing — retry next tick
+    }
+
+    // The table still holds a dataset that had to be abandoned: empty it
+    // before anything is inserted on top of it.
+    if (this.emptyingFailed) {
+      await this.abandonDataset();
+      if (this.emptyingFailed) return;
     }
 
     // A replacement is queued behind this tick: flushing now would insert the
@@ -568,12 +578,18 @@ export class ChartDataCore {
       try {
         await replaceRows(this.conn, this.schema.tableName, []);
       } catch (e) {
-        console.warn("chartDataWorker: failed to empty the table:", e);
+        // The old dataset is still in the table. Reporting it as empty would
+        // let the next flush append to it, which is the splice this avoids:
+        // keep it and retry the emptying on the next tick.
+        console.warn("chartDataWorker: failed to empty the table, retrying:", e);
+        this.emptyingFailed = true;
+        return;
       }
     }
+    this.emptyingFailed = false;
     this.hasData = false;
-    this.latestT = -Infinity;
-    this.earliestT = Infinity;
+    // latestT/earliestT are left alone: an ingest that arrived while the table
+    // was being emptied has already moved them to where the next rows are.
     this.coldSnapshot = null;
     this.coldTMax = -Infinity;
     this.hotBuffer = null;

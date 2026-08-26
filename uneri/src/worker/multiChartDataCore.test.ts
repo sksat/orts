@@ -174,6 +174,34 @@ describe("MultiChartDataCore", () => {
     expect(queried.every((q) => q.includes("t >= 50"))).toBe(true);
   });
 
+  it("does not broadcast the old dataset while a replacement is queued", async () => {
+    const { core, conn, posted } = setup();
+    await init(core);
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+    expect(broadcastMetricCounts(posted)).toEqual([1]);
+
+    // A replacement arrives while this tick's flush is in flight.
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(2), latestT: 2 });
+    conn.stallOn((sql) => sql.startsWith("INSERT"));
+    const tick = core.tickOnce();
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    core.handle({ type: "multi-rebuild", satelliteId: SAT_ID, rows: rows(30, 31), latestT: 31 });
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await tick;
+
+    // The tables still hold the dataset the replacement will delete.
+    expect(broadcastMetricCounts(posted)).toEqual([1]);
+
+    await core.whenIdle();
+    await core.tickOnce();
+    expect(broadcastMetricCounts(posted)).toEqual([1, 1]);
+    expect(conn.tValuesOf(TABLE)).toEqual([30, 31]);
+  });
+
   it("does not broadcast a payload for a window that changed mid-query", async () => {
     const { core, conn, posted } = setup();
     await init(core);
@@ -215,6 +243,37 @@ describe("MultiChartDataCore", () => {
     conn.failOn(null);
     await core.tickOnce();
     expect(conn.tValuesOf(TABLE)).toEqual([10, 11]);
+  });
+
+  it("does not append to a table whose abandoned dataset could not be emptied", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+    expect(conn.tValuesOf(TABLE)).toEqual([0, 1]);
+
+    let deletes = 0;
+    conn.failOn((sql) => {
+      if (sql.includes("(10,7010)")) return true;
+      if (sql.startsWith("DELETE")) {
+        deletes++;
+        return deletes >= 5; // 4 rebuild attempts, then the abandoning ones
+      }
+      return false;
+    });
+    core.handle({ type: "multi-rebuild", satelliteId: SAT_ID, rows: rows(10, 11), latestT: 11 });
+    await core.whenIdle();
+    for (let i = 0; i < 3; i++) await core.tickOnce();
+
+    expect(conn.tValuesOf(TABLE)).toEqual([0, 1]);
+
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(50), latestT: 50 });
+    await core.tickOnce();
+    expect(conn.tValuesOf(TABLE)).toEqual([0, 1]);
+
+    conn.failOn(null);
+    await core.tickOnce();
+    expect(conn.tValuesOf(TABLE)).toEqual([50]);
   });
 
   it("broadcasts an empty payload once every satellite is empty", async () => {

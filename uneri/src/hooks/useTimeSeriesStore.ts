@@ -96,6 +96,12 @@ export function useTimeSeriesStore<T extends TimePoint>(
     /** Give up on a failing rebuild after this many retries. */
     const MAX_REBUILD_RETRIES = 3;
     let rebuildRetries = 0;
+    /**
+     * A rebuild whose insert failed, kept here rather than pushed back into
+     * the IngestBuffer: `markRebuild` would discard the points that streamed
+     * in since, and would overwrite a newer replacement.
+     */
+    let pendingRebuild: T[] | null = null;
 
     // Cold/hot state
     let coldSnapshot: ChartDataMap | null = null;
@@ -123,9 +129,16 @@ export function useTimeSeriesStore<T extends TimePoint>(
       const tick = async () => {
         if (cancelled) return;
 
-        // 0. Check for rebuild signal
-        const rebuildData = ingestBufferRef.current.consumeRebuild();
+        // 0. Check for rebuild signal. A newer replacement supersedes one
+        //    that is waiting for a retry.
+        const freshRebuild = ingestBufferRef.current.consumeRebuild();
+        if (freshRebuild !== null) {
+          pendingRebuild = null;
+          rebuildRetries = 0;
+        }
+        const rebuildData = freshRebuild ?? pendingRebuild;
         if (rebuildData !== null) {
+          pendingRebuild = null;
           try {
             // One transaction: a failure part-way through leaves the previous
             // content in place, so the re-queued retry cannot duplicate rows.
@@ -142,8 +155,8 @@ export function useTimeSeriesStore<T extends TimePoint>(
             // discards the points that streamed in since the last one.
             if (rebuildRetries < MAX_REBUILD_RETRIES) {
               rebuildRetries++;
-              console.warn("useTimeSeriesStore: rebuild failed, re-queuing:", e);
-              ingestBufferRef.current.markRebuild(rebuildData);
+              console.warn("useTimeSeriesStore: rebuild failed, retrying:", e);
+              pendingRebuild = rebuildData;
             } else {
               rebuildRetries = 0;
               console.warn(
