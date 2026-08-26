@@ -10,8 +10,9 @@ name: linker-bench
 # Measures PURE link time: a wrapper sits in -Clinker and times only the
 # linker-driver call, so rustc codegen is excluded. The linker choice arrives
 # via an env var rather than RUSTFLAGS, which keeps every rustc fingerprint
-# identical across configs — switching linkers therefore triggers no rebuild
-# and each linker sees a byte-identical argv.
+# identical across configs, so switching linkers triggers no rebuild and the
+# argv rustc hands the wrapper is the same every time. The wrapper then appends
+# one selector flag (-fuse-ld=mold, --ld-path=wild, ...) before calling clang.
 on:
   workflow_dispatch:
     inputs:
@@ -115,7 +116,7 @@ jobs:
           CARGO_ARGS: ${{ inputs.cargo_args || '--locked --workspace --no-run' }}
         run: |
           python3 - <<'PY' | tee /tmp/result.txt
-          import os, shlex, subprocess, time
+          import os, shlex, subprocess
           reps = int(os.environ["REPS"])
           linkers = os.environ["LINKERS"].split()
           args = shlex.split(os.environ["CARGO_ARGS"])
