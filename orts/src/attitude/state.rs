@@ -1,14 +1,23 @@
 use arika::frame::{self, Rotation};
 use nalgebra::{UnitQuaternion, Vector3, Vector4};
-use utsuroi::{OdeState, Tolerances};
+use utsuroi::{OdeState, Projection, Tolerances};
 
 use crate::model::HasAttitude;
+
+/// Tolerance on `|q| - 1` below which [`OdeState::project`] leaves the
+/// quaternion alone.
+///
+/// A few ulp of norm drift changes no orientation — `orientation()`
+/// normalizes on read — so correcting it would only cost the adaptive solvers
+/// their FSAL derivative for nothing.
+const QUATERNION_NORM_TOLERANCE: f64 = 8.0 * f64::EPSILON;
 
 /// Attitude state: unit quaternion (orientation) + angular velocity in body frame.
 ///
 /// The quaternion is stored as `[w, x, y, z]` (Hamilton scalar-first convention).
 /// During integration, the quaternion may deviate slightly from unit norm;
-/// [`OdeState::project`] renormalizes it after each step.
+/// [`OdeState::project`] renormalizes it after each accepted step once the
+/// drift exceeds a few ulp.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttitudeState {
     /// Orientation quaternion `[w, x, y, z]` (body-to-inertial rotation).
@@ -163,10 +172,19 @@ impl OdeState for AttitudeState {
         (sum_sq / n as f64).sqrt()
     }
 
-    fn project(&mut self, _t: f64) {
+    /// Renormalize the quaternion when it has drifted off the unit sphere.
+    ///
+    /// The tolerance keeps the FSAL cache of the adaptive solvers alive: a
+    /// correction of a few ulp buys no accuracy (`orientation()` normalizes on
+    /// read anyway) but reporting it as a change costs one extra derivative
+    /// evaluation per step.
+    fn project(&mut self, _t: f64) -> Projection {
         let norm = self.quaternion.magnitude();
-        if norm > 0.0 {
+        if norm > 0.0 && (norm - 1.0).abs() > QUATERNION_NORM_TOLERANCE {
             self.quaternion /= norm;
+            Projection::Changed
+        } else {
+            Projection::Unchanged
         }
     }
 }
@@ -234,7 +252,7 @@ mod tests {
             quaternion: Vector4::new(2.0, 0.0, 0.0, 0.0),
             angular_velocity: Vector3::new(1.0, 2.0, 3.0),
         };
-        state.project(0.0);
+        assert_eq!(state.project(0.0), Projection::Changed);
         let norm = state.quaternion.magnitude();
         assert!((norm - 1.0).abs() < 1e-15);
         // Angular velocity should be unchanged
@@ -244,8 +262,34 @@ mod tests {
     #[test]
     fn ode_state_project_preserves_unit() {
         let mut state = AttitudeState::identity();
-        state.project(0.0);
+        assert_eq!(state.project(0.0), Projection::Unchanged);
         assert!((state.quaternion.magnitude() - 1.0).abs() < 1e-15);
+    }
+
+    /// Drift of a few ulp is left alone: `orientation()` normalizes on read,
+    /// so correcting it buys nothing and would cost the adaptive solvers their
+    /// FSAL derivative.
+    #[test]
+    fn ode_state_project_ignores_ulp_scale_drift() {
+        let drift = 1.0 + 2.0 * f64::EPSILON;
+        let mut state = AttitudeState {
+            quaternion: Vector4::new(drift, 0.0, 0.0, 0.0),
+            angular_velocity: Vector3::zeros(),
+        };
+        assert_eq!(state.project(0.0), Projection::Unchanged);
+        assert_eq!(state.quaternion[0], drift);
+    }
+
+    /// Drift large enough to matter is corrected, and reported as a change so
+    /// the solvers drop the derivative taken at the unprojected state.
+    #[test]
+    fn ode_state_project_reports_correction() {
+        let mut state = AttitudeState {
+            quaternion: Vector4::new(1.0 + 1e-9, 0.0, 0.0, 0.0),
+            angular_velocity: Vector3::zeros(),
+        };
+        assert_eq!(state.project(0.0), Projection::Changed);
+        assert!((state.quaternion.magnitude() - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]

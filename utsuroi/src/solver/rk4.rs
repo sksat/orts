@@ -27,7 +27,9 @@ impl Integrator for Rk4 {
         // y + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
         let k_sum = k1.axpy(2.0, &k2).axpy(2.0, &k3).axpy(1.0, &k4);
         let mut result = state.axpy(dt / 6.0, &k_sum);
-        result.project(t + dt);
+        // RK4 keeps no stage derivative across steps, so it can ignore whether
+        // the projection changed the state.
+        let _ = result.project(t + dt);
         result
     }
 }

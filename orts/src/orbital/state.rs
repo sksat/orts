@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use arika::frame::{Eci, SimpleEci, Vec3};
 use nalgebra::Vector3;
-use utsuroi::{OdeState, State, Tolerances};
+use utsuroi::{OdeState, Projection, State, Tolerances};
 
 use crate::model::HasOrbit;
 
@@ -168,7 +168,7 @@ impl<F: Eci> OdeState for OrbitalState<F> {
         self.0.error_norm(&y_next.0, &error.0, tol)
     }
 
-    fn project(&mut self, t: f64) {
-        self.0.project(t);
+    fn project(&mut self, t: f64) -> Projection {
+        self.0.project(t)
     }
 }

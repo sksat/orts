@@ -167,9 +167,23 @@ pub trait OdeState: Clone + Sized {
     fn scale(&self, factor: f64) -> Self;
     fn is_finite(&self) -> bool;
     fn error_norm(&self, y_next: &Self, error: &Self, tol: &Tolerances) -> f64;
-    fn project(&mut self, _t: f64) {}  // 四元数正規化等 (default no-op)
+    fn project(&mut self, _t: f64) -> Projection { Projection::Unchanged }  // 四元数正規化・境界 clamp 等
 }
 ```
+
+`project` は各積分器が「採用したステップの結果を publish する直前」に一度だけ呼ぶ
+(reject した候補や中間 stage には呼ばない)。callback と event_check は projection 後の
+状態を受け取る。戻り値 `Projection::{Unchanged, Changed}` は「実際に状態を書き換えたか」を
+表し、FSAL (First Same As Last) を持つ適応解法がキャッシュした終端微分を再利用できるかの
+判定に使う。複合 state は子の結果の OR を返す。
+
+accept/reject の判定は projection 前の生の候補で行う。誤差ベクトルは生の候補に対応する量で、
+projection 後の状態と混ぜると数値的に非一貫になる。
+
+Yoshida (高次シンプレクティック) は汎用 projection を適用しない。一般の正規化・clamp は
+シンプレクティック写像ではなく、substep 間に挟むと合成の構造が壊れるため、projection を
+持たない Verlet kernel を合成する。Störmer-Verlet 単体は契約を揃えるため full step の末尾で
+呼ぶ (受け付ける状態型 `State<DIM, 2>` では default の no-op)。
 
 **DynamicalSystem trait**: Associated type で状態型を指定。
 

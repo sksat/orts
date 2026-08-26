@@ -49,6 +49,16 @@ const Y8_WEIGHTS: [f64; 15] = [
 ];
 
 /// Compose a sequence of Störmer-Verlet substeps with given weights.
+///
+/// The substeps use the unprojected Verlet kernel: the composition is what
+/// makes the method high-order symplectic, and a generic
+/// [`OdeState::project`](crate::OdeState::project) (normalization, clamping)
+/// is not a symplectic map, so interleaving one between substeps would
+/// destroy that structure. No projection is applied at the end of the
+/// composed step either, for the same reason. These integrators only accept
+/// `State<DIM, 2>`, whose `project` is the default no-op, so nothing is lost
+/// today; a state type with a real projection needs a projection-aware
+/// splitting scheme rather than a post-hoc fix-up.
 fn yoshida_step<const DIM: usize, S>(
     weights: &[f64],
     system: &S,
@@ -63,7 +73,7 @@ where
     let mut t_current = t;
     for &w in weights {
         let sub_dt = w * dt;
-        current = StormerVerlet.step(system, t_current, &current, sub_dt);
+        current = StormerVerlet.step_unprojected(system, t_current, &current, sub_dt);
         t_current += sub_dt;
     }
     current
