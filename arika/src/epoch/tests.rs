@@ -409,6 +409,35 @@ fn iso8601_rejects_out_of_range_and_non_finite_seconds() {
 }
 
 #[test]
+fn iso8601_rejects_dates_before_the_gregorian_reform() {
+    // `from_gregorian` is proleptic Gregorian, while the JD → calendar
+    // direction switches to the Julian calendar before 1582-10-15. Accepting an
+    // earlier date would break the round-trip the parser now promises:
+    // "1500-03-01" used to parse and come back as 1500-02-20.
+    for s in [
+        "1500-03-01T00:00:00Z",
+        "1582-10-04T00:00:00Z",
+        "1582-10-14T23:59:59Z",
+        "0001-01-01T00:00:00Z",
+        "1500-100T00:00:00Z", // ordinal form, same domain
+    ] {
+        assert!(
+            Epoch::<Utc>::from_iso8601(s).is_none(),
+            "{s} predates the Gregorian reform and must be rejected"
+        );
+    }
+    // The reform date itself is the first accepted instant, and it round-trips.
+    for s in ["1582-10-15T00:00:00Z", "1583-001T00:00:00Z"] {
+        let e = Epoch::<Utc>::from_iso8601(s).unwrap_or_else(|| panic!("{s} must parse"));
+        assert_eq!(
+            Epoch::<Utc>::from_iso8601(&e.to_datetime().to_string()).map(|b| b.jd()),
+            Some(e.jd()),
+            "{s} did not round-trip"
+        );
+    }
+}
+
+#[test]
 fn datetime_display_round_trips_across_calendar_boundaries() {
     // Rendering rounds to whole seconds, so the last half second of a day
     // rounds *up*: the carry has to reach the calendar, not stop at hour 24.
