@@ -130,10 +130,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - `config` テーブルのない `[satellites.controller]` が、guest 自身の既定値で
   起動するようになった。省略時は文字列 `"null"` が guest に渡り、`init` が
   失敗していた。([#335](https://github.com/sksat/orts/pull/335))
-- README のクイックスタート設定が、書かれたとおりパースでき動くようになった。
-  `pd-rw-control` example plugin で RW を駆動する構成にし、
-  `[satellites.reaction_wheels]` に必須の `max_momentum` が欠けていたのを補った。
-  ([#335](https://github.com/sksat/orts/pull/335))
+- README のクイックスタート設定が、書かれたとおり動くようになった。
+  `pd-rw-control` example plugin で RW を駆動する構成にした。従来は `sensors` と
+  `[satellites.reaction_wheels]` を controller なしで宣言しており、
+  それらを command するものが無かった。([#335](https://github.com/sksat/orts/pull/335))
 
 ### `orts-plugin-sdk` (Rust, crates.io)
 

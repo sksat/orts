@@ -140,9 +140,10 @@ section is subdivided by package.
 - A `[satellites.controller]` with no `config` table starts the guest on its own
   defaults. The omitted table reached the guest as the string `"null"`, which
   failed its `init`. ([#335](https://github.com/sksat/orts/pull/335))
-- The README quick-start config parses and runs as shown: it drives the wheels
-  with the `pd-rw-control` example plugin, and `[satellites.reaction_wheels]` was
-  missing the required `max_momentum`. ([#335](https://github.com/sksat/orts/pull/335))
+- The README quick-start config runs as shown, driving the wheels with the
+  `pd-rw-control` example plugin. It declared `sensors` and
+  `[satellites.reaction_wheels]` with no controller, so nothing commanded
+  them. ([#335](https://github.com/sksat/orts/pull/335))
 
 ### `orts-plugin-sdk` (Rust, crates.io)
 

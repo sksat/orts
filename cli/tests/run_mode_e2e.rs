@@ -420,8 +420,8 @@ attitude = { inertia_diag = [10, 10, 10], mass = 500 }
 /// `path` rewritten to an absolute one so the test does not depend on its cwd.
 ///
 /// Reading the README rather than restating it is deliberate: the quick-start
-/// config shipped un-runnable for a long time (a required `max_momentum` was
-/// missing), which a copy in this file would not have caught.
+/// config has shipped un-runnable before, once for a missing required field,
+/// which a copy in this file would not have caught.
 fn readme_quickstart_toml(wasm: &std::path::Path) -> String {
     let readme = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../README.md"))
         .expect("README.md is readable");
