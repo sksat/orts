@@ -206,8 +206,16 @@ export function useTimeSeriesStore<T extends TimePoint>(
               // The rolled-back transaction left the replaced dataset in the
               // table. Keeping it would splice it with the rows that keep
               // streaming in, so empty it — retried on the next tick if the
-              // delete fails too.
-              await emptyTable();
+              // delete fails too. Until then nothing may be read from it.
+              if (!(await emptyTable())) {
+                if (!cancelled) {
+                  queryTimerRef.current = window.setTimeout(
+                    tick,
+                    tickInterval,
+                  ) as unknown as number;
+                }
+                return;
+              }
             }
           }
         } else {

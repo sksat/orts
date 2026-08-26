@@ -189,6 +189,56 @@ describe("ChartDataCore schema updates", () => {
     ).toBe(true);
   });
 
+  it("still recreates the table when the column change lands during another repair", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "ingest", rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+
+    // Drive the engine into abandoning the dataset, and stall the delete that
+    // empties the table (the 5th: one per rebuild attempt, then this one).
+    let deletes = 0;
+    conn.failOn((sql) => sql.includes("(10,7010)"));
+    conn.stallOn((sql) => sql.startsWith("DELETE") && ++deletes === 5);
+    core.handle({ type: "rebuild", rows: rows(10, 11), latestT: 11 });
+    await core.whenIdle();
+    for (let i = 0; i < 2; i++) await core.tickOnce();
+    const third = core.tickOnce();
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    // A column change arrives while that delete is in flight.
+    const from = conn.queries.length;
+    core.handle({
+      type: "update-schema",
+      schema: {
+        tableName: "orbit",
+        columns: [
+          { name: "t", type: "DOUBLE" },
+          { name: "r", type: "DOUBLE" },
+          { name: "extra", type: "DOUBLE" },
+        ],
+        derived: [{ name: "altitude", sql: "r - 1737.4" }],
+      },
+    });
+    conn.failOn(null);
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await third;
+    await core.whenIdle();
+
+    // The recreation must not be lost by the delete that finished after it
+    // was requested.
+    expect(conn.queries.slice(from).some((q) => q.startsWith("CREATE OR REPLACE TABLE"))).toBe(
+      true,
+    );
+
+    // And rows built with the new columns land in the recreated table.
+    core.handle({ type: "ingest", rows: [[200, 7200, 0]], latestT: 200 });
+    await core.tickOnce();
+    expect(conn.tValuesOf("orbit")).toEqual([200]);
+  });
+
   it("uses the new schema on the next tick even if a query was in flight", async () => {
     const { core, conn } = setup();
     await init(core);

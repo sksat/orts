@@ -107,6 +107,14 @@ export class MultiChartDataCore {
    */
   private readonly tableRepairs = new Map<string, "recreate" | "empty">();
   /**
+   * Generation of each repair request. A repair that awaited DuckDB clears the
+   * request only if it is still the one it started on — otherwise a request
+   * made while it ran would be dropped, leaving the table on an intermediate
+   * schema with nothing left to fix it.
+   */
+  private readonly tableRepairSeqs = new Map<string, number>();
+  private tableRepairSeq = 0;
+  /**
    * Bumped whenever a running query stops describing what should be broadcast:
    * base-schema change, window or series-configuration change, or a dataset
    * replacement. A query that started before the bump must not post its
@@ -313,7 +321,7 @@ export class MultiChartDataCore {
     this.broadcastEmptyIfNeeded();
 
     for (const satId of this.createdTables) {
-      this.tableRepairs.set(satId, "recreate");
+      this.requestRepair(satId, "recreate");
     }
     void this.enqueue(() => this.repairTables());
   }
@@ -375,7 +383,10 @@ export class MultiChartDataCore {
     // A successful replacement leaves nothing of the abandoned dataset behind,
     // so a pending "empty this table" request is satisfied. A pending
     // "recreate" is not: the columns are still the old ones.
-    if (this.tableRepairs.get(satId) === "empty") this.tableRepairs.delete(satId);
+    if (this.tableRepairs.get(satId) === "empty") {
+      this.tableRepairs.delete(satId);
+      this.tableRepairSeqs.delete(satId);
+    }
     if (rebuild.rows.length > 0) {
       this.hasData.add(satId);
     } else {
@@ -563,7 +574,7 @@ export class MultiChartDataCore {
     // Reporting the dataset as gone while its rows are still in the table
     // would let the next flush append to it. `repairTables` keeps the request
     // set until the delete succeeds.
-    this.tableRepairs.set(satId, "empty");
+    this.requestRepair(satId, "empty");
     await this.repairTables();
   }
 
@@ -573,9 +584,15 @@ export class MultiChartDataCore {
    * request that fails stays set, so the next tick tries again before any row
    * is inserted or read.
    */
+  private requestRepair(satId: string, repair: "recreate" | "empty"): void {
+    this.tableRepairs.set(satId, repair);
+    this.tableRepairSeqs.set(satId, ++this.tableRepairSeq);
+  }
+
   private async repairTables(): Promise<void> {
     if (!this.conn || !this.baseSchema) return;
     for (const [satId, repair] of [...this.tableRepairs]) {
+      const seq = this.tableRepairSeqs.get(satId);
       const tableName = makeSatelliteTableName(satId);
       try {
         if (repair === "recreate") {
@@ -587,7 +604,9 @@ export class MultiChartDataCore {
         console.warn(`multiChartDataWorker: failed to ${repair} ${satId}, retrying:`, e);
         continue;
       }
+      if (this.tableRepairSeqs.get(satId) !== seq) continue; // newer request
       this.tableRepairs.delete(satId);
+      this.tableRepairSeqs.delete(satId);
       // A rebuild still in flight may have re-added this satellite in between;
       // its table is empty now. latestTs is left alone: rows that arrived while
       // the table was being repaired have already moved it.
@@ -624,8 +643,15 @@ export class MultiChartDataCore {
   private async ensureTable(satelliteId: string): Promise<void> {
     if (this.createdTables.has(satelliteId)) return;
     if (!this.conn) return;
-    await createTable(this.conn, this.toTableSchema(makeSatelliteTableName(satelliteId)));
+    // Registered before the await, so a schema change that arrives while the
+    // CREATE runs queues a repair for this table too instead of missing it.
     this.createdTables.add(satelliteId);
+    try {
+      await createTable(this.conn, this.toTableSchema(makeSatelliteTableName(satelliteId)));
+    } catch (e) {
+      this.createdTables.delete(satelliteId);
+      throw e;
+    }
   }
 
   private toTableSchema(tableName: string): TableSchema {

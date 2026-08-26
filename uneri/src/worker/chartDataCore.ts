@@ -108,6 +108,13 @@ export class ChartDataCore {
 
   /** Table the schema change renamed away from, dropped by the repair. */
   private previousTableName: string | null = null;
+  /**
+   * Bumped on every repair request. A repair that awaited DuckDB clears the
+   * request only if it is still the one it started on — otherwise a request
+   * made while it ran (a second column change) would be dropped, leaving the
+   * table on an intermediate schema with nothing left to fix it.
+   */
+  private tableRepairSeq = 0;
 
   /** Rows buffered between ticks. */
   private ingestQueue: RowTuple[] = [];
@@ -345,6 +352,7 @@ export class ChartDataCore {
 
     if (columnsChanged) {
       this.tableRepair = "recreate";
+      this.tableRepairSeq++;
       this.previousTableName = prev.tableName;
       void this.enqueue(() => this.repairTable());
     }
@@ -358,6 +366,7 @@ export class ChartDataCore {
    */
   private async repairTable(): Promise<void> {
     const repair = this.tableRepair;
+    const seq = this.tableRepairSeq;
     if (repair == null || !this.conn || !this.schema) return;
     try {
       if (repair === "recreate") {
@@ -372,6 +381,7 @@ export class ChartDataCore {
       console.warn(`chartDataWorker: failed to ${repair} the table, retrying:`, e);
       return;
     }
+    if (this.tableRepairSeq !== seq) return; // a newer request took over
     this.tableRepair = null;
     this.previousTableName = null;
     // A rebuild that was still in flight may have finished in between and
@@ -628,6 +638,7 @@ export class ChartDataCore {
     // would let the next flush append to it, which is the splice this avoids.
     // `repairTable` keeps the request set until the delete succeeds.
     this.tableRepair = "empty";
+    this.tableRepairSeq++;
     await this.repairTable();
   }
 

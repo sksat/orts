@@ -93,6 +93,54 @@ describe("MultiChartDataCore", () => {
     expect(conn.tValuesOf(TABLE)).toEqual([0, 1]);
   });
 
+  it("repairs a table whose creation was in flight when the columns changed", async () => {
+    const conn = new FakeDuckDBConn();
+    const posted: MultiWorkerToMainMessage[] = [];
+    const core = new MultiChartDataCore({
+      post: (msg) => {
+        posted.push(msg);
+      },
+      initDb: async () => ({
+        connect: async () => conn as unknown as AsyncDuckDBConnection,
+      }),
+    });
+
+    // The table creation of `multi-init` is still running when the columns change.
+    conn.stallOn((sql) => sql.startsWith("CREATE OR REPLACE TABLE"));
+    core.handle({
+      type: "multi-init",
+      baseSchema: EARTH_SCHEMA,
+      satelliteConfigs: [{ id: SAT_ID, label: "A", color: "#fff" }],
+      metricNames: ["altitude"],
+      tickInterval: 1_000_000,
+      queryEveryN: 1,
+    });
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    core.handle({
+      type: "multi-update-schema",
+      baseSchema: {
+        tableName: "orbit",
+        columns: [
+          { name: "t", type: "DOUBLE" },
+          { name: "r", type: "DOUBLE" },
+          { name: "extra", type: "DOUBLE" },
+        ],
+        derived: [{ name: "altitude", sql: "r - 1737.4" }],
+      },
+    });
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await core.whenIdle();
+
+    // The table created with the old columns has to be recreated, not skipped
+    // because it was not registered yet when the change arrived.
+    expect(
+      conn.queries.filter((q) => q.startsWith(`CREATE OR REPLACE TABLE ${TABLE}`)),
+    ).toHaveLength(2);
+  });
+
   it("keeps rows that arrive while a rebuild is in flight", async () => {
     const { core, conn } = setup();
     await init(core);
@@ -311,6 +359,59 @@ describe("MultiChartDataCore", () => {
     expect(conn.tValuesOf(TABLE)).toEqual([70, 71]);
     for (let i = 0; i < 3; i++) await core.tickOnce();
     expect(conn.tValuesOf(TABLE)).toEqual([70, 71]);
+  });
+
+  it("still recreates the table when the column change lands during another repair", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+
+    // Drive the engine into abandoning the dataset, and stall the delete that
+    // empties the table (the 5th: one per rebuild attempt, then this one).
+    let deletes = 0;
+    conn.failOn((sql) => sql.includes("(10,7010)"));
+    conn.stallOn((sql) => sql.startsWith("DELETE") && ++deletes === 5);
+    core.handle({ type: "multi-rebuild", satelliteId: SAT_ID, rows: rows(10, 11), latestT: 11 });
+    await core.whenIdle();
+    for (let i = 0; i < 2; i++) await core.tickOnce();
+    const third = core.tickOnce();
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    // A column change arrives while that delete is in flight.
+    const from = conn.queries.length;
+    core.handle({
+      type: "multi-update-schema",
+      baseSchema: {
+        tableName: "orbit",
+        columns: [
+          { name: "t", type: "DOUBLE" },
+          { name: "r", type: "DOUBLE" },
+          { name: "extra", type: "DOUBLE" },
+        ],
+        derived: [{ name: "altitude", sql: "r - 1737.4" }],
+      },
+    });
+    conn.failOn(null);
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await third;
+    await core.whenIdle();
+
+    expect(
+      conn.queries.slice(from).some((q) => q.startsWith(`CREATE OR REPLACE TABLE ${TABLE}`)),
+    ).toBe(true);
+
+    // And rows built with the new columns land in the recreated table.
+    core.handle({
+      type: "multi-ingest",
+      satelliteId: SAT_ID,
+      rows: [[200, 7200, 0]],
+      latestT: 200,
+    });
+    await core.tickOnce();
+    expect(conn.tValuesOf(TABLE)).toEqual([200]);
   });
 
   it("broadcasts an empty payload once every satellite is empty", async () => {
