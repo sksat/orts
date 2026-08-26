@@ -34,9 +34,16 @@ runs:
         echo "${WILD_SHA256}  /tmp/${tarball}" | sha256sum -c -
         mkdir -p /tmp/wild-extract
         tar -xzf "/tmp/${tarball}" -C /tmp/wild-extract
-        sudo install -m 0755 \
-          "/tmp/wild-extract/wild-linker-${WILD_VERSION}-x86_64-unknown-linux-gnu/wild" \
-          /usr/local/bin/wild
+        # Locate the binary rather than assuming the archive's internal layout,
+        # so a repackaging upstream does not break this. The checksum above is
+        # what pins the contents.
+        bin="$(find /tmp/wild-extract -type f -name wild -perm -u+x | head -1)"
+        if [ -z "$bin" ]; then
+          echo "no executable named 'wild' in ${tarball}:" >&2
+          find /tmp/wild-extract >&2
+          exit 1
+        fi
+        sudo install -m 0755 "$bin" /usr/local/bin/wild
         rm -rf "/tmp/${tarball}" /tmp/wild-extract
         wild --version
 
