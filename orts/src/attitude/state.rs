@@ -178,9 +178,15 @@ impl OdeState for AttitudeState {
     /// correction of a few ulp buys no accuracy (`orientation()` normalizes on
     /// read anyway) but reporting it as a change costs one extra derivative
     /// evaluation per step.
+    ///
+    /// A zero norm is left alone: it carries no orientation to rescale, and
+    /// snapping to identity would invent one and hide the failure instead. A
+    /// non-finite norm is left alone for the opposite reason — dividing by it
+    /// would turn an infinite quaternion into a plausible-looking zero one and
+    /// defeat the integrators' finiteness checks.
     fn project(&mut self, _t: f64) -> Projection {
         let norm = self.quaternion.magnitude();
-        if norm > 0.0 && (norm - 1.0).abs() > QUATERNION_NORM_TOLERANCE {
+        if norm.is_finite() && norm > 0.0 && (norm - 1.0).abs() > QUATERNION_NORM_TOLERANCE {
             self.quaternion /= norm;
             Projection::Changed
         } else {
@@ -290,6 +296,34 @@ mod tests {
         };
         assert_eq!(state.project(0.0), Projection::Changed);
         assert!((state.quaternion.magnitude() - 1.0).abs() < f64::EPSILON);
+    }
+
+    /// A degenerate quaternion is passed through untouched. Rescaling a zero
+    /// norm is impossible, and rescaling an infinite one would produce a
+    /// finite-looking zero quaternion that the integrators' `is_finite`
+    /// checks would then wave through.
+    #[test]
+    fn ode_state_project_leaves_degenerate_quaternions_alone() {
+        for q in [
+            Vector4::zeros(),
+            Vector4::new(f64::INFINITY, 0.0, 0.0, 0.0),
+            Vector4::new(f64::NAN, 0.0, 0.0, 0.0),
+        ] {
+            let mut state = AttitudeState {
+                quaternion: q,
+                angular_velocity: Vector3::zeros(),
+            };
+            assert_eq!(state.project(0.0), Projection::Unchanged);
+            assert!(
+                state
+                    .quaternion
+                    .iter()
+                    .zip(q.iter())
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "degenerate quaternion {q:?} must be passed through, got {:?}",
+                state.quaternion
+            );
+        }
     }
 
     #[test]
