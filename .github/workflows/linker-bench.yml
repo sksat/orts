@@ -30,6 +30,12 @@ on:
           Source file touched before each run to force a relink. Must be a file
           the chosen workload actually rebuilds.
         default: "orts/src/lib.rs"
+      threads:
+        description: >-
+          Linker thread count (--thread-count). Empty lets each linker decide,
+          which for wild means asking cargo's jobserver — pin it to compare the
+          linkers on equal terms.
+        default: ""
 
 jobs:
   bench:
@@ -96,6 +102,9 @@ jobs:
             wild) extra=(--ld-path=wild) ;;
             *) echo "ldwrap: unknown LDWRAP_CHOICE=$LDWRAP_CHOICE" >&2; exit 2 ;;
           esac
+          if [ -n "${LDWRAP_THREADS:-}" ]; then
+            extra+=("-Wl,--thread-count=${LDWRAP_THREADS}")
+          fi
           out=""; prev=""
           for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
           t0=$(date +%s%N)
@@ -120,6 +129,7 @@ jobs:
           LINKERS: ${{ inputs.linkers || 'mold wild' }}
           CARGO_ARGS: ${{ inputs.cargo_args || '--locked --workspace --no-run' }}
           TOUCH: ${{ inputs.touch || 'orts/src/lib.rs' }}
+          THREADS: ${{ inputs.threads }}
         run: |
           python3 - <<'PY' | tee /tmp/result.txt
           import os, shlex, subprocess
@@ -127,11 +137,14 @@ jobs:
           linkers = os.environ["LINKERS"].split()
           args = shlex.split(os.environ["CARGO_ARGS"])
           touch = os.environ["TOUCH"]
+          threads = os.environ.get("THREADS", "")
           log = "/tmp/ldwrap.log"
           results = {}
           for choice in linkers:
               env = {**os.environ, "RUSTFLAGS": "-Clinker=/tmp/ldwrap.sh",
                      "LDWRAP_CHOICE": choice, "LDWRAP_LOG": log}
+              if threads:
+                  env["LDWRAP_THREADS"] = threads
               samples = []
               for _ in range(reps):
                   open(log, "w").close()
@@ -156,7 +169,8 @@ jobs:
               base_name = next((c for c in linkers if results.get(c)), None)
           base = results.get(base_name) if base_name else None
 
-          print(f"\nnproc={os.cpu_count()}  reps={reps}  touch={touch}")
+          print(f"\nnproc={os.cpu_count()}  reps={reps}  touch={touch}"
+                f"  threads={threads or 'linker default'}")
           print(f"cargo test {' '.join(args)}\n")
           header_rel = f"vs {base_name}" if base_name else "vs -"
           print(f"{'linker':8s} {'total':>10s} {'links':>6s} {'ms/link':>9s}  {header_rel}")
