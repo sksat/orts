@@ -57,6 +57,26 @@ async function init(core: MultiChartDataCore, baseSchema = EARTH_SCHEMA) {
   await core.whenIdle();
 }
 
+const SAT_B = "sat-b";
+const TABLE_B = makeSatelliteTableName(SAT_B);
+
+/** Initialize with two satellites, so per-satellite interleaving is visible. */
+async function initTwo(core: MultiChartDataCore) {
+  core.handle({
+    type: "multi-init",
+    baseSchema: EARTH_SCHEMA,
+    satelliteConfigs: [
+      { id: SAT_ID, label: "A", color: "#fff" },
+      { id: SAT_B, label: "B", color: "#000" },
+    ],
+    metricNames: ["altitude"],
+    tickInterval: 1_000_000,
+    queryEveryN: 1,
+  });
+  core.handle({ type: "multi-configure", timeRange: null, maxPoints: 2000 });
+  await core.whenIdle();
+}
+
 /** Series counts of every broadcast, in order. */
 function broadcastMetricCounts(posted: MultiWorkerToMainMessage[]): number[] {
   return posted
@@ -248,6 +268,57 @@ describe("MultiChartDataCore", () => {
     await core.tickOnce();
     expect(broadcastMetricCounts(posted)).toEqual([1, 1]);
     expect(conn.tValuesOf(TABLE)).toEqual([30, 31]);
+  });
+
+  it("keeps rows for one satellite that arrive while another's insert is in flight", async () => {
+    const { core, conn } = setup();
+    await initTwo(core);
+
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(0, 1), latestT: 1 });
+    core.handle({ type: "multi-ingest", satelliteId: SAT_B, rows: rows(0, 1), latestT: 1 });
+
+    conn.stallOn((sql) => sql.startsWith(`INSERT INTO ${TABLE}`));
+    const tick = core.tickOnce();
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    // B keeps streaming while A's insert holds the tick.
+    core.handle({ type: "multi-ingest", satelliteId: SAT_B, rows: rows(2), latestT: 2 });
+
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await tick;
+
+    expect(conn.tValuesOf(TABLE)).toEqual([0, 1]);
+    expect(conn.tValuesOf(TABLE_B)).toEqual([0, 1, 2]);
+  });
+
+  it("anchors the window on the satellites that have data", async () => {
+    const { core, conn } = setup();
+    await initTwo(core);
+    core.handle({ type: "multi-configure", timeRange: 50, maxPoints: 2000 });
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(0, 10), latestT: 10 });
+    await core.tickOnce();
+
+    // B announces a dataset at t=1000 whose replacement never commits, so it
+    // ends up abandoned and holds no data at all.
+    conn.failOn((sql) => sql.includes("(1000,8000)"));
+    core.handle({
+      type: "multi-rebuild",
+      satelliteId: SAT_B,
+      rows: rows(1000, 1001),
+      latestT: 1001,
+    });
+    await core.whenIdle();
+    for (let i = 0; i < 4; i++) await core.tickOnce();
+    conn.failOn(null);
+
+    const from = conn.queries.length;
+    await core.tickOnce();
+    const windowed = conn.queries.slice(from).filter((q) => q.includes("t >= "));
+    expect(windowed.length).toBeGreaterThan(0);
+    // The 50 s window follows A (latest t=10), not the dataset B never got.
+    expect(windowed.every((q) => q.includes("t >= -40"))).toBe(true);
   });
 
   it("does not broadcast a payload for a window that changed mid-query", async () => {

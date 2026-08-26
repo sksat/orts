@@ -404,7 +404,11 @@ export class MultiChartDataCore {
     if (!this.conn || !this.baseSchema || this.disposed) return;
 
     // 0. Retry rebuilds that failed earlier, before inserting newer rows.
-    for (const [satId, rebuild] of [...this.pendingRebuilds]) {
+    //    Only the ids are snapshotted: awaiting one satellite's retry lets
+    //    messages for the others land, so their entries are read live.
+    for (const satId of [...this.pendingRebuilds.keys()]) {
+      const rebuild = this.pendingRebuilds.get(satId);
+      if (rebuild == null) continue; // superseded while an earlier retry ran
       this.pendingRebuilds.delete(satId);
       await this.runRebuild(satId, rebuild);
     }
@@ -416,7 +420,10 @@ export class MultiChartDataCore {
 
     // 1. Flush per-satellite ingest queues (atomically, so a failed flush
     //    inserts nothing and a retry cannot duplicate rows).
-    for (const [satId, queue] of [...this.ingestQueues]) {
+    for (const satId of [...this.ingestQueues.keys()]) {
+      // Read live: awaiting one satellite's insert lets `multi-ingest` for the
+      // others replace their queues, and a snapshot would drop those rows.
+      const queue = this.ingestQueues.get(satId) ?? [];
       if (queue.length === 0) continue;
       // A replacement (retrying or queued behind this tick) must land first:
       // flushing now would insert these rows into the table it deletes. The
@@ -591,7 +598,11 @@ export class MultiChartDataCore {
 
   private async repairTables(): Promise<void> {
     if (!this.conn || !this.baseSchema) return;
-    for (const [satId, repair] of [...this.tableRepairs]) {
+    for (const satId of [...this.tableRepairs.keys()]) {
+      // Read the kind and its generation together, and live: an earlier
+      // table's repair awaited DuckDB, during which this one may have changed.
+      const repair = this.tableRepairs.get(satId);
+      if (repair == null) continue;
       const seq = this.tableRepairSeqs.get(satId);
       const tableName = makeSatelliteTableName(satId);
       try {
@@ -665,12 +676,18 @@ export class MultiChartDataCore {
     };
   }
 
-  /** Compute unified tMin from all satellite latestTs. */
+  /**
+   * Compute unified tMin from the latestT of the satellites that have data.
+   * A satellite whose dataset was abandoned keeps its latestT (rows that
+   * arrive next belong to it), but it must not anchor the window past the
+   * data the others still show.
+   */
   private computeUnifiedTMin(): number | undefined {
     if (this.timeRange == null) return undefined;
     let max = -Infinity;
-    for (const t of this.latestTs.values()) {
-      if (t > max) max = t;
+    for (const satId of this.hasData) {
+      const t = this.latestTs.get(satId);
+      if (t != null && t > max) max = t;
     }
     if (!Number.isFinite(max)) return undefined;
     return max - this.timeRange;
