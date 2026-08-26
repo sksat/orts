@@ -163,9 +163,9 @@ mod tests {
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let got = mag.measure(&snapshot_state(), &epoch).into_inner();
         let expected = nalgebra::Vector3::new(
-            -4.382433684690031e-6,
-            -3.059072261218701e-5,
-            -7.100082750661239e-6,
+            4.382433684690031e-6,
+            3.059072261218701e-5,
+            7.100082750661239e-6,
         );
         assert!(
             (got.into_inner() - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),

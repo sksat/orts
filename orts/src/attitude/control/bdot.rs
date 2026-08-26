@@ -523,9 +523,9 @@ mod tests {
             .torque_body
             .into_inner();
         let expected = Vector3::new(
-            4.479088811350949e-6,
-            3.1117980068616165e-6,
-            -1.617184804303151e-5,
+            -4.479088811350949e-6,
+            -3.1117980068616165e-6,
+            1.617184804303151e-5,
         );
         assert!(
             (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),

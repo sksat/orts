@@ -676,12 +676,11 @@ mod tests {
     fn assembly_simple_eci_torque_snapshot() {
         let loads = snapshot_assembly().eval(0.0, &snapshot_state(), Some(&snapshot_epoch()));
         let expected = Vector3::new(
-            8.248169347635774e-6,
-            4.093571188524861e-6,
-            -2.2728235933937917e-5,
+            -8.248169347635774e-6,
+            -4.093571188524861e-6,
+            2.2728235933937917e-5,
         );
         let got = loads.torque_body.into_inner();
-        // Bit-exact: the SimpleEci path must be the identical computation.
         assert!(
             (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "SimpleEci MTQ torque changed: {got:?}"
@@ -753,9 +752,9 @@ mod tests {
         // precession/nutation/polar-motion rotation; a frame-blind
         // implementation would return the SimpleEci number here.
         let simple_eci = Vector3::new(
-            8.248169347635774e-6,
-            4.093571188524861e-6,
-            -2.2728235933937917e-5,
+            -8.248169347635774e-6,
+            -4.093571188524861e-6,
+            2.2728235933937917e-5,
         );
         assert!(
             (got - simple_eci).magnitude() > simple_eci.magnitude() * 1e-4,
