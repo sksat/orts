@@ -147,8 +147,15 @@ impl SatelliteSpec {
     }
 
     pub fn entity_path(&self) -> EntityPath {
-        EntityPath::parse(&format!("/world/sat/{}", self.id))
+        entity_path_for_id(&self.id)
     }
+}
+
+/// The recording entity a satellite id names. Shared with config validation,
+/// which checks id uniqueness before any [`SatelliteSpec`] exists (resolving
+/// one can require a network fetch).
+pub fn entity_path_for_id(id: &str) -> EntityPath {
+    EntityPath::parse(&format!("/world/sat/{id}"))
 }
 
 /// Reject a fleet whose ids are not unique.
@@ -162,16 +169,35 @@ impl SatelliteSpec {
 /// `SimConfig::validate` catches this for config files, where it can name the
 /// offending `[[satellites]]` index; this covers the fleets built outside a
 /// config file (repeated `--sat id=…`), where the specs only exist as a list.
+/// Compared on the resolved [`EntityPath`], not on the id text: `EntityPath`
+/// drops empty segments, so `a` and `/a` (or `a/b` and `a//b`) are two id
+/// strings naming one entity.
 pub fn ensure_unique_ids(specs: &[SatelliteSpec]) -> Result<(), String> {
-    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (i, spec) in specs.iter().enumerate() {
-        if let Some(first) = seen.insert(&spec.id, i) {
+        validate_id(&spec.id).map_err(|e| format!("satellite #{i}: {e}"))?;
+        if let Some(first) = seen.insert(spec.entity_path().to_string(), i) {
             return Err(format!(
                 "duplicate satellite id '{}': satellites #{first} and #{i} would share \
                  one recording entity and one command target; ids must be unique",
                 spec.id
             ));
         }
+    }
+    Ok(())
+}
+
+/// Reject an id that cannot name an entity of its own.
+///
+/// The id is appended to `/world/sat/`, and [`EntityPath::parse`] drops empty
+/// segments, so an id that is empty or only separators/whitespace resolves to
+/// the `/world/sat` root shared by every satellite.
+pub fn validate_id(id: &str) -> Result<(), String> {
+    if id.split('/').all(|segment| segment.is_empty()) {
+        return Err(format!(
+            "satellite id '{id}' contributes no path segment, so the recording entity \
+             collapses to the '/world/sat' root shared by the whole fleet"
+        ));
     }
     Ok(())
 }
