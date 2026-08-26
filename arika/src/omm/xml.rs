@@ -4,9 +4,10 @@
 //! It is *not* a general XML parser: it extracts the text of named leaf
 //! elements (`<KEYWORD ...>value</KEYWORD>`) by exact name, skipping any
 //! attributes (e.g. `units="deg"`), and assumes well-formed OMM with no
-//! namespace prefixes or markup inside leaf values. XML entity references are
-//! **not decoded**: an escaped `OBJECT_NAME` like `A &amp; B` is returned
-//! verbatim (`A &amp; B`), not unescaped.
+//! namespace prefixes or markup inside leaf values. Comments and processing
+//! instructions are skipped, so text inside them is never read as a value. XML
+//! entity references are **not decoded**: an escaped `OBJECT_NAME` like
+//! `A &amp; B` is returned verbatim (`A &amp; B`), not unescaped.
 
 use alloc::string::{String, ToString};
 use core::f64::consts::PI;
@@ -107,12 +108,32 @@ fn required<'a>(xml: &'a str, name: &'static str) -> Result<&'a str, XmlParseErr
 ///
 /// Matches `name` exactly: the character after the name must be `>` or
 /// whitespace, so a query for `MEAN_MOTION` never matches `MEAN_MOTION_DOT`.
-/// Attributes are skipped; the value is read up to the next `<`.
+/// Attributes are skipped; the value is read up to the next `<`. Comments
+/// (`<!-- … -->`) and processing instructions (`<? … ?>`) are stepped over
+/// rather than searched, so markup quoted inside them is not a value.
 fn element_text<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
     let mut from = 0;
     while let Some(lt) = xml[from..].find('<') {
         let tag = from + lt + 1; // byte index just after '<'
-        if let Some(rest) = xml[tag..].strip_prefix(name) {
+        let markup = &xml[tag..];
+        // A comment or a processing instruction declares nothing, but its text
+        // can contain what looks like an element. Skipping them wholesale is
+        // what keeps a commented-out `<TIME_SYSTEM>UTC</TIME_SYSTEM>` from being
+        // read as the document's time system while the real one below it says
+        // TAI — the metadata check would then pass on a document it must reject.
+        if let Some(after) = markup.strip_prefix("!--") {
+            from = after
+                .find("-->")
+                .map_or(xml.len(), |end| tag + "!--".len() + end + "-->".len());
+            continue;
+        }
+        if let Some(after) = markup.strip_prefix('?') {
+            from = after
+                .find("?>")
+                .map_or(xml.len(), |end| tag + '?'.len_utf8() + end + "?>".len());
+            continue;
+        }
+        if let Some(rest) = markup.strip_prefix(name) {
             match rest.chars().next() {
                 Some(c) if c == '>' || c.is_whitespace() => {
                     let gt = rest.find('>')?;
@@ -211,6 +232,45 @@ mod tests {
             parse(xml),
             Err(XmlParseError::MissingElement("MEAN_MOTION"))
         );
+    }
+
+    #[test]
+    fn commented_out_markup_is_not_a_value() {
+        // The reader scans for named tags, so text inside a comment used to be
+        // indistinguishable from a real element: a document that quotes the
+        // conforming value in a comment and then declares TAI must still be
+        // rejected, and a commented-out element must not stand in for a missing
+        // one. Processing instructions get the same treatment.
+        let hidden = ISS_OMM_XML.replace(
+            "<TIME_SYSTEM>UTC</TIME_SYSTEM>",
+            "<!-- <TIME_SYSTEM>UTC</TIME_SYSTEM> --><TIME_SYSTEM>TAI</TIME_SYSTEM>",
+        );
+        match parse(&hidden) {
+            Err(XmlParseError::Unsupported(e)) => {
+                assert_eq!((e.key, e.value.as_str()), ("TIME_SYSTEM", "TAI"))
+            }
+            other => panic!("a comment must not hide TIME_SYSTEM = TAI, got {other:?}"),
+        }
+        // A commented-out required element is absent, not present.
+        let commented = ISS_OMM_XML.replace(
+            "<MEAN_MOTION>15.49561654</MEAN_MOTION>",
+            "<!-- <MEAN_MOTION>15.49561654</MEAN_MOTION> -->",
+        );
+        assert_eq!(
+            parse(&commented),
+            Err(XmlParseError::MissingElement("MEAN_MOTION"))
+        );
+        // A value quoted inside a processing instruction is not a value either.
+        let pi = ISS_OMM_XML.replace(
+            "<INCLINATION units=\"deg\">51.6400</INCLINATION>",
+            "<?dump <INCLINATION>0.0</INCLINATION> ?><INCLINATION units=\"deg\">51.6400</INCLINATION>",
+        );
+        let omm = parse(&pi).unwrap().elements.to_fields();
+        assert!((omm.inclination.to_degrees() - 51.64).abs() < 1e-9);
+        // An unterminated comment swallows the rest of the document rather than
+        // reading through it.
+        let unterminated = ISS_OMM_XML.replace("<EPOCH>", "<!-- <EPOCH>");
+        assert!(parse(&unterminated).is_err());
     }
 
     #[test]

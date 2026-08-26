@@ -19,8 +19,10 @@
 //! `MEAN_ELEMENT_THEORY` — and reject a document declaring anything but
 //! `EARTH` / `TEME` / `UTC` / `SGP4` ([`UnsupportedMetadata`]). The record they
 //! decode into hard-codes exactly those four assumptions, so honouring the
-//! keywords is not optional; an absent keyword takes the CCSDS default, which
-//! is the accepted value.
+//! keywords is not optional. CCSDS lists all four as mandatory, but CelesTrak's
+//! GP JSON and CSV flavours omit them; an absent keyword is therefore read as
+//! the supported value rather than rejected, so those feeds keep parsing. What
+//! the checks stop is a document that *states* something else.
 
 pub mod json;
 pub mod kvn;
@@ -76,8 +78,9 @@ impl std::error::Error for UnsupportedMetadata {}
 /// Check one `KEYWORD = VALUE` pair against [`METADATA`], case-insensitively.
 ///
 /// Keywords outside the table are not constrained and pass. An absent keyword
-/// is never checked at all: the CelesTrak GP flavours omit these, and their
-/// CCSDS defaults are the supported values.
+/// is never checked at all: CCSDS lists these four as mandatory, but the
+/// CelesTrak GP flavours omit them, and for those feeds the omitted value is
+/// always the supported one.
 pub(crate) fn check_metadata(key: &str, value: &str) -> Result<(), UnsupportedMetadata> {
     let Some(&(key, supported)) = METADATA.iter().find(|(k, _)| *k == key) else {
         return Ok(());
