@@ -229,6 +229,25 @@ section is subdivided by package.
   `--tle-line2`; and `--tle-line1` / `--tle-line2` must be given together. ([#87](https://github.com/sksat/orts/pull/87))
 - TLE epoch day-of-year is validated against the (leap-aware) year length, so a
   malformed field is rejected rather than rolling into another year. ([#87](https://github.com/sksat/orts/pull/87))
+- Config files, `orts config validate` and the WebSocket `start_simulation`
+  payload reject input the simulation cannot honor, instead of resolving it to
+  something else: an unknown `[integrator] type` or `atmosphere` (previously
+  dp45 / the exponential model), an unknown key anywhere in the config tree
+  (previously dropped, so `duraton = 100` ran for one orbital period), two
+  satellites whose resolved ids collide (previously one recording entity, one
+  CSV section and one `[[command]]` target for both), and an attitude block no
+  rigid body could have — an inertia tensor that is not positive definite or
+  violates `I1 + I2 >= I3` on its principal moments, `mass <= 0`, or an
+  `initial_quaternion` that cannot be normalized. The `integrator` /
+  `atmosphere` spellings a config accepts are now exactly the ones the
+  equivalent CLI flag accepts. A singular inertia tensor previously panicked in
+  `SpacecraftDynamics::new`; under `orts serve --config` that happened inside
+  the spawned manager task, leaving the server listening with no simulation and
+  no error to the client. ([#351](https://github.com/sksat/orts/pull/351))
+- `orts serve`'s built-in default fleet (started with no orbit arguments) gives
+  the SSO satellite a realizable inertia tensor, `[83.3, 208.3, 208.3]` kg·m²
+  (500 kg, 2x1x1 m box). The previous `[100, 200, 50]` violates the triangle
+  inequality on principal moments, so no mass distribution has it. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
 - `orts` now writes its diagnostics to stderr. With no `log` backend installed

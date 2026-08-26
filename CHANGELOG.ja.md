@@ -202,6 +202,23 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   は併用不可。`--tle-line1` / `--tle-line2` は両方指定が必須。([#87](https://github.com/sksat/orts/pull/87))
 - TLE epoch の day-of-year を (閏考慮の) 年日数で検証。不正値はそのまま別の
   年に繰り上がらず拒否される。([#87](https://github.com/sksat/orts/pull/87))
+- config ファイル、`orts config validate`、WebSocket の `start_simulation`
+  payload は、シミュレーションが honor できない入力を別の何かに解決せず拒否する:
+  未知の `[integrator] type` / `atmosphere` (従来は dp45 / exponential
+  モデル)、config tree のどこかにある未知キー (従来は drop されるので
+  `duraton = 100` が 1 周期走った)、解決後の id が衝突する 2 機
+  (従来は recording entity・CSV section・`[[command]]` の宛先を共有)、
+  剛体が持てない attitude ブロック (正定値でない、または主慣性モーメントで
+  `I1 + I2 >= I3` を破る慣性テンソル、`mass <= 0`、正規化できない
+  `initial_quaternion`)。config が受理する `integrator` / `atmosphere` の綴りは、
+  対応する CLI フラグが受理する集合と厳密に一致する。特異な慣性テンソルは従来
+  `SpacecraftDynamics::new` で panic し、`orts serve --config` では spawn された
+  manager task の中で起きるため、server は listen したままシミュレーションも
+  client への error も無い状態になっていた。([#351](https://github.com/sksat/orts/pull/351))
+- orbit 引数なしで起動した `orts serve` の既定 fleet は、SSO 衛星に実現可能な
+  慣性テンソル `[83.3, 208.3, 208.3]` kg·m² (500 kg, 2x1x1 m box) を与える。
+  従来の `[100, 200, 50]` は主慣性モーメントの三角不等式を破っており、
+  どの質量分布もこの値を持たない。([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
 - `orts` が診断ログを stderr に出力するようになった。logger を初期化していな

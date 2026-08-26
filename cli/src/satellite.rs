@@ -189,9 +189,10 @@ pub fn ensure_unique_ids(specs: &[SatelliteSpec]) -> Result<(), String> {
 
 /// Reject an id that cannot name an entity of its own.
 ///
-/// The id is appended to `/world/sat/`, and [`EntityPath::parse`] drops empty
-/// segments, so an id that is empty or only separators/whitespace resolves to
-/// the `/world/sat` root shared by every satellite.
+/// The id is appended to `/world/sat/`, and [`EntityPath::parse`] keeps every
+/// segment that is not empty — nothing else, no trimming — so an id built only
+/// out of separators resolves to the `/world/sat` root that the whole fleet
+/// shares. The condition here mirrors that filter.
 pub fn validate_id(id: &str) -> Result<(), String> {
     if id.split('/').all(|segment| segment.is_empty()) {
         return Err(format!(
