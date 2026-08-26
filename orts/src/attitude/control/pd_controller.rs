@@ -312,6 +312,139 @@ mod tests {
         );
     }
 
+    // Characterization for the frame-typed attitude target (#332)
+
+    use crate::attitude::control::InertialPointing;
+
+    /// A target orientation with all four components distinct and non-zero.
+    fn nontrivial_target() -> UnitQuaternion<f64> {
+        UnitQuaternion::from_axis_angle(
+            &nalgebra::Unit::new_normalize(Vector3::new(-0.2, 0.7, 0.4)),
+            1.1,
+        )
+    }
+
+    fn state_with(q: UnitQuaternion<f64>, omega: Vector3<f64>) -> TestState {
+        TestState {
+            attitude: AttitudeState::new(q, omega),
+            orbit: OrbitalState::new(
+                Vector3::new(4000.0, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+        }
+    }
+
+    /// Characterization: pinned `SimpleEci` tracking torque against an
+    /// `InertialPointing` reference, so typing the target by its inertial frame
+    /// cannot change it.
+    #[test]
+    fn tracking_pd_inertial_pointing_torque_snapshot() {
+        let ctrl = TrackingPdController::diagonal(
+            1.0,
+            2.0,
+            InertialPointing {
+                target_q: nontrivial_target(),
+            },
+        );
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let state = state_with(
+            UnitQuaternion::from_axis_angle(
+                &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                0.7,
+            ),
+            Vector3::new(0.01, -0.02, 0.03),
+        );
+        let got = ctrl
+            .eval(0.0, &state, Some(&epoch))
+            .torque_body
+            .into_inner();
+        let expected = Vector3::new(-0.10232165152129191, 1.2848812683428932, -0.107551192649679);
+        assert!(
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude(),
+            "InertialPointing tracking PD torque changed: {got:?}"
+        );
+    }
+
+    /// Characterization of the hemisphere-selection predicate (`q_err.w < 0`)
+    /// on the tracking path: the current attitude is nearly the negation of the
+    /// target, so the branch fires and the torque must follow the short path.
+    #[test]
+    fn tracking_pd_hemisphere_selection_snapshot() {
+        let target_q = nontrivial_target();
+        // 1.1 rad + 1.9π about the same axis: same axis, opposite hemisphere.
+        let current = UnitQuaternion::from_axis_angle(
+            &nalgebra::Unit::new_normalize(Vector3::new(-0.2, 0.7, 0.4)),
+            1.1 + PI * 1.9,
+        );
+        let state = state_with(current, Vector3::new(0.01, -0.02, 0.03));
+
+        // The branch under test: q_err.w is genuinely negative here.
+        let q_err = target_q.inverse() * state.attitude.orientation();
+        assert!(
+            q_err.w < -0.5,
+            "fixture must exercise the hemisphere flip, got q_err.w = {}",
+            q_err.w
+        );
+
+        let ctrl = TrackingPdController::diagonal(1.0, 2.0, InertialPointing { target_q });
+        let got = ctrl.eval(0.0, &state, None).torque_body.into_inner();
+        let expected = Vector3::new(
+            -0.09532998610353678,
+            0.30365495136237847,
+            0.09065997220707345,
+        );
+        assert!(
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude(),
+            "hemisphere-selected tracking PD torque changed: {got:?}"
+        );
+        // Short path: without the flip the proportional term would point the
+        // other way (θ_err ≈ 2·q_err_vec with q_err.w < 0).
+        let unflipped_theta = 2.0 * Vector3::new(q_err.i, q_err.j, q_err.k);
+        assert!(
+            got.dot(&unflipped_theta) > 0.0,
+            "expected the flipped (short-path) sign, got {got:?}"
+        );
+    }
+
+    /// Characterization: a non-finite attitude reaches the hemisphere predicate
+    /// (`NaN < 0.0` is `false`, so no flip) and yields a non-finite torque
+    /// instead of panicking. Pins `NaN` and `±∞` for both references.
+    #[test]
+    fn tracking_pd_non_finite_attitude_yields_non_finite_torque() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let state = TestState {
+                attitude: AttitudeState {
+                    quaternion: Vector4::new(bad, 0.0, 0.0, 1.0),
+                    angular_velocity: Vector3::new(0.01, 0.0, 0.0),
+                },
+                orbit: OrbitalState::new(
+                    Vector3::new(4000.0, -5000.0, 2500.0),
+                    Vector3::new(1.0, 2.0, 7.0),
+                ),
+            };
+
+            let inertial = TrackingPdController::diagonal(
+                1.0,
+                2.0,
+                InertialPointing {
+                    target_q: nontrivial_target(),
+                },
+            );
+            let tau = inertial.eval(0.0, &state, None).torque_body.into_inner();
+            assert!(
+                tau.iter().all(|c| c.is_nan()),
+                "expected an all-NaN torque for {bad}, got {tau:?}"
+            );
+
+            let nadir = TrackingPdController::diagonal(1.0, 2.0, NadirPointing);
+            let tau = nadir.eval(0.0, &state, None).torque_body.into_inner();
+            assert!(
+                tau.iter().all(|c| c.is_nan()),
+                "expected an all-NaN nadir torque for {bad}, got {tau:?}"
+            );
+        }
+    }
+
     #[test]
     fn inertial_pd_no_acceleration_or_mass_rate() {
         let ctrl = InertialPdController::diagonal(1.0, 1.0, UnitQuaternion::identity());

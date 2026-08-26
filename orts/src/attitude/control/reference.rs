@@ -103,6 +103,120 @@ mod tests {
     use super::*;
     use std::f64::consts::PI;
 
+    /// A target orientation with all four components distinct and non-zero, so
+    /// a component-wise snapshot cannot pass by symmetry.
+    fn nontrivial_target() -> UnitQuaternion<f64> {
+        UnitQuaternion::from_axis_angle(
+            &nalgebra::Unit::new_normalize(Vector3::new(-0.2, 0.7, 0.4)),
+            1.1,
+        )
+    }
+
+    fn snapshot_orbit() -> OrbitalState {
+        OrbitalState::new(
+            Vector3::new(4000.0, -5000.0, 2500.0),
+            Vector3::new(1.0, 2.0, 7.0),
+        )
+    }
+
+    /// Characterization: the `InertialPointing` target is handed back
+    /// component-for-component (no renormalization, no frame rotation), and the
+    /// target rate is exactly zero. Pins the values so that typing the target
+    /// by its inertial frame cannot change them.
+    #[test]
+    fn inertial_pointing_target_components_snapshot() {
+        let q = nontrivial_target();
+        let ref_point = InertialPointing { target_q: q };
+        let (q_out, omega_out) = ref_point.target(0.0, &snapshot_orbit(), None);
+
+        // (w, x, y, z), Hamilton scalar-first.
+        let expected = nalgebra::Vector4::new(
+            0.8525245220595057,
+            -0.12584829590370833,
+            0.44046903566297907,
+            0.25169659180741666,
+        );
+        let got = nalgebra::Vector4::new(q_out.w, q_out.i, q_out.j, q_out.k);
+        assert!(
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude(),
+            "InertialPointing target changed: {got:?}"
+        );
+        // A rate of exactly zero is the definition of an inertial hold, not a
+        // near-zero numerical outcome, so assert it exactly.
+        assert_eq!(omega_out, Vector3::zeros());
+    }
+
+    /// Characterization: `NadirPointing` in `SimpleEci`, pinned component-wise
+    /// on an eccentric, out-of-plane state (so every component is non-zero).
+    #[test]
+    fn nadir_pointing_target_components_snapshot() {
+        let (q_out, omega_out) = NadirPointing.target(0.0, &snapshot_orbit(), None);
+        let got = nalgebra::Vector4::new(q_out.w, q_out.i, q_out.j, q_out.k);
+
+        // Sign of a quaternion is a gauge freedom; compare through the
+        // rotation it denotes by pinning the LVLH axes instead.
+        let m = q_out.to_rotation_matrix();
+        let r = snapshot_orbit();
+        let z_body = m * Vector3::new(0.0, 0.0, 1.0);
+        let expected_z = -r.position().normalize();
+        assert!(
+            (z_body - expected_z).magnitude() <= 1e-12 * expected_z.magnitude(),
+            "nadir axis changed: {z_body:?}"
+        );
+        let h = r.position().cross(r.velocity());
+        let y_body = m * Vector3::new(0.0, 1.0, 0.0);
+        let expected_y = -h.normalize();
+        assert!(
+            (y_body - expected_y).magnitude() <= 1e-12 * expected_y.magnitude(),
+            "orbit-normal axis changed: {y_body:?}"
+        );
+        // The rate is the instantaneous |h|/r², non-zero for this state.
+        let n = h.magnitude() / r.position().magnitude_squared();
+        assert!(
+            n > 1e-4,
+            "fixture must produce a non-zero rate, got {n:.3e}"
+        );
+        let expected_omega = Vector3::new(0.0, -n, 0.0);
+        assert!(
+            (omega_out - expected_omega).magnitude() <= 1e-12 * expected_omega.magnitude(),
+            "nadir rate changed: {omega_out:?}"
+        );
+        assert!(got.iter().all(|c| c.is_finite()));
+    }
+
+    /// Characterization: a non-finite attitude target is passed through rather
+    /// than sanitized or panicked on. Pins the behavior of the (predicate-free)
+    /// reference path for `NaN` / `±∞` inputs.
+    #[test]
+    fn non_finite_states_do_not_panic() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            // Inertial hold: a non-finite target normalizes to NaN.
+            let q = UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(bad, 0.0, 0.0, 1.0));
+            let (q_out, omega_out) =
+                InertialPointing { target_q: q }.target(0.0, &snapshot_orbit(), None);
+            assert!(q_out.w.is_nan(), "expected NaN scalar part for {bad}");
+            assert_eq!(omega_out, Vector3::zeros());
+
+            // Nadir pointing: a non-finite state propagates to a NaN target.
+            let orbit = OrbitalState::new(
+                Vector3::new(bad, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            );
+            let (q_nadir, omega_nadir) = NadirPointing.target(0.0, &orbit, None);
+            assert!(
+                !q_nadir.w.is_finite()
+                    || !q_nadir.i.is_finite()
+                    || !q_nadir.j.is_finite()
+                    || !q_nadir.k.is_finite(),
+                "expected a non-finite nadir target for {bad}, got {q_nadir:?}"
+            );
+            assert!(
+                omega_nadir[1].is_nan(),
+                "expected NaN rate for {bad}, got {omega_nadir:?}"
+            );
+        }
+    }
+
     #[test]
     fn inertial_pointing_returns_fixed_target() {
         let axis = nalgebra::Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0));

@@ -353,6 +353,51 @@ pub mod sync {
             assert_eq!(wit_obs.sensors.star_trackers[0].w, 1.0);
         }
 
+        /// Characterization: the v0 WIT attitude payload carries the four
+        /// quaternion components in `(w, x, y, z)` order. Pinned with four
+        /// distinct non-zero components, which the identity quaternion of
+        /// `observation_roundtrip_preserves_values` cannot discriminate.
+        #[test]
+        fn star_tracker_wit_payload_component_order() {
+            use crate::plugin::tick_input::AttitudeBodyToInertial;
+            let spacecraft = make_spacecraft();
+            let q = nalgebra::UnitQuaternion::from_axis_angle(
+                &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                0.7,
+            );
+            let sensors = Sensors {
+                star_trackers: vec![AttitudeBodyToInertial::new(Vector4::new(
+                    q.w, q.i, q.j, q.k,
+                ))],
+                ..Sensors::empty()
+            };
+            let actuators = ActuatorTelemetry::default();
+            let obs = TickInput {
+                t: 0.0,
+                epoch: None,
+                sensors: &sensors,
+                actuators: &actuators,
+                spacecraft: &spacecraft,
+            };
+            let wit_obs = tick_input_to_wit(&obs);
+            let got = &wit_obs.sensors.star_trackers[0];
+            // The boundary is a pure copy, so the order is pinned exactly.
+            assert_eq!([got.w, got.x, got.y, got.z], [q.w, q.i, q.j, q.k]);
+            // Pinned literals so a re-ordering of `q`'s own components would
+            // still be caught (relative: the fixture goes through libm trig).
+            let expected = Vector4::new(
+                0.9393727128473789,
+                0.10391372781674944,
+                -0.17318954636124906,
+                0.27710327417799857,
+            );
+            let actual = Vector4::new(got.w, got.x, got.y, got.z);
+            assert!(
+                (actual - expected).magnitude() <= 1e-12 * expected.magnitude(),
+                "v0 WIT attitude payload changed: {actual:?}"
+            );
+        }
+
         #[test]
         fn observation_empty_sensors() {
             let spacecraft = make_spacecraft();
