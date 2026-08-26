@@ -62,15 +62,20 @@ use datetime::to_datetime_from_jd;
 // Gregorian calendar helpers, shared with the TLE parser's epoch-day check.
 pub(crate) use datetime::{days_in_month, is_leap_year};
 
-/// Julian Date of the Gregorian calendar reform, 1582-10-15 00:00 (JD 2299160.5).
+/// The Gregorian calendar reform date, 1582-10-15, as `(year, month, day)`.
 ///
-/// The first instant the two calendar directions agree on: `from_gregorian`
-/// applies the Gregorian century correction to every year (proleptic), while the
-/// JD → calendar conversion in [`datetime`] follows the convention of switching
-/// to the Julian calendar before the reform. Earlier timestamps would therefore
-/// come back from [`Epoch::to_datetime`] as a different date, so `from_iso8601`
-/// refuses them.
-const GREGORIAN_REFORM_JD: f64 = 2_299_160.5;
+/// The first date the two calendar directions agree on: `from_gregorian` applies
+/// the Gregorian century correction to every year (proleptic), while the JD →
+/// calendar conversion in [`datetime`] follows the convention of switching to
+/// the Julian calendar before the reform (JD < 2299160.5). Earlier dates would
+/// therefore come back from [`Epoch::to_datetime`] as a different date, so
+/// [`Epoch::from_iso8601`] refuses them.
+const GREGORIAN_REFORM: (i32, u32, u32) = (1582, 10, 15);
+
+/// Day of year of [`GREGORIAN_REFORM`], counted the way the ordinal date form is:
+/// proleptic Gregorian from January 1 of the same year
+/// (31 + 28 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 15).
+const GREGORIAN_REFORM_DOY: u32 = 288;
 
 /// Julian Date of J2000.0 epoch (JD 2451545.0).
 ///
@@ -331,11 +336,12 @@ impl Epoch<Utc> {
     /// real instant: a day that does not exist in that month (`2023-02-30`), an
     /// out-of-range time field, and a seconds field that is negative or
     /// non-finite are all rejected rather than rolled over into an adjacent
-    /// day. Dates before the Gregorian calendar reform (`1582-10-15`) are
-    /// rejected too, because the JD → calendar direction reads them on the
-    /// Julian calendar and they would not come back as the same date. Every
-    /// accepted input therefore round-trips through
-    /// [`to_datetime`](Epoch::to_datetime) with the same calendar fields.
+    /// day. The year must be written as four digits, and dates before the
+    /// Gregorian calendar reform (`1582-10-15`) are rejected too, because the
+    /// JD → calendar direction reads them on the Julian calendar and they would
+    /// not come back as the same date. Every accepted input therefore
+    /// round-trips through [`to_datetime`](Epoch::to_datetime) with the same
+    /// calendar fields.
     pub fn from_iso8601(s: &str) -> Option<Self> {
         let s = s.trim();
         let s = s.strip_suffix('Z').unwrap_or(s);
@@ -356,6 +362,14 @@ impl Epoch<Utc> {
         }
 
         let (year_s, rest) = date.split_once('-')?;
+        // `YYYY`: exactly four ASCII digits, as ISO 8601 and CCSDS write it.
+        // Without the width check the parser accepts a year whose JD spacing
+        // exceeds a second — "1000000000-12-31T23:59:59Z" came back from
+        // `to_datetime` as 1000000001-01-01 — and one whose `year + 4716`
+        // overflows inside `from_gregorian` ("2147483647-03-01").
+        if year_s.len() != 4 || !year_s.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
         let year: i32 = year_s.parse().ok()?;
         match rest.split_once('-') {
             // Calendar date: YYYY-MM-DD.
@@ -369,7 +383,15 @@ impl Epoch<Utc> {
                 if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
                     return None;
                 }
-                Self::from_gregorian(year, month, day, hour, min, sec).at_or_after_reform()
+                // Only from the reform onward do the calendar → JD and JD →
+                // calendar directions describe the same date. Comparing the
+                // fields (not the resulting JD) is what keeps
+                // "1582-10-14T23:59:59.99999" — which rounds *up* to the reform
+                // instant in a single f64 — out.
+                if (year, month, day) < GREGORIAN_REFORM {
+                    return None;
+                }
+                Some(Self::from_gregorian(year, month, day, hour, min, sec))
             }
             // Ordinal date: YYYY-DDD (zero-padded 3-digit day of year). The
             // 3-digit requirement disambiguates from a truncated calendar date
@@ -384,9 +406,15 @@ impl Epoch<Utc> {
                 if !(1..=max_doy).contains(&doy) {
                     return None;
                 }
+                // Same reform cut-off as the calendar form, in this form's units.
+                if year < GREGORIAN_REFORM.0
+                    || (year == GREGORIAN_REFORM.0 && doy < GREGORIAN_REFORM_DOY)
+                {
+                    return None;
+                }
                 let day_of_year =
                     doy as f64 + (hour as f64 * 3600.0 + min as f64 * 60.0 + sec) / 86400.0;
-                Self::from_year_day_of_year(year, day_of_year).at_or_after_reform()
+                Some(Self::from_year_day_of_year(year, day_of_year))
             }
         }
     }
@@ -399,15 +427,6 @@ impl Epoch<Utc> {
             .expect("system clock before Unix epoch")
             .as_secs_f64();
         Self::from_jd(UNIX_EPOCH_JD + unix_secs / 86400.0)
-    }
-
-    /// `Some(self)` if this epoch is on or after the Gregorian calendar reform.
-    ///
-    /// The guard `from_iso8601` applies to both date forms: only from
-    /// [`GREGORIAN_REFORM_JD`] onward do the calendar → JD and JD → calendar
-    /// directions describe the same date.
-    fn at_or_after_reform(self) -> Option<Self> {
-        (self.jd() >= GREGORIAN_REFORM_JD).then_some(self)
     }
 
     /// Create a UTC epoch from a 4-digit year and a fractional day of year

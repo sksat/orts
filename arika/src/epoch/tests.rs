@@ -420,6 +420,11 @@ fn iso8601_rejects_dates_before_the_gregorian_reform() {
         "1582-10-14T23:59:59Z",
         "0001-01-01T00:00:00Z",
         "1500-100T00:00:00Z", // ordinal form, same domain
+        // The cut-off is on the calendar fields, not on the JD: this instant
+        // rounds up to the reform's JD in a single f64, so a JD comparison
+        // would accept it and then report it back as 1582-10-15.
+        "1582-10-14T23:59:59.99999Z",
+        "1582-287T23:59:59.99999Z",
     ] {
         assert!(
             Epoch::<Utc>::from_iso8601(s).is_none(),
@@ -431,6 +436,39 @@ fn iso8601_rejects_dates_before_the_gregorian_reform() {
         let e = Epoch::<Utc>::from_iso8601(s).unwrap_or_else(|| panic!("{s} must parse"));
         assert_eq!(
             Epoch::<Utc>::from_iso8601(&e.to_datetime().to_string()).map(|b| b.jd()),
+            Some(e.jd()),
+            "{s} did not round-trip"
+        );
+    }
+}
+
+#[test]
+fn iso8601_requires_a_four_digit_year() {
+    // ISO 8601 / CCSDS write the year as `YYYY`. An unbounded year is not just
+    // exotic input: at 1e9 the JD spacing exceeds a second (so the calendar
+    // fields no longer survive the round-trip this parser promises), and
+    // i32::MAX overflows `year + 4716` inside `from_gregorian`.
+    for s in [
+        "1000000000-12-31T23:59:59Z",
+        "2147483647-03-01T00:00:00Z",
+        "24-01-01T00:00:00Z",
+        "+2024-01-01T00:00:00Z",
+        "-2024-01-01T00:00:00Z",
+        "202-01-01T00:00:00Z",
+        "20244-01-01T00:00:00Z",
+        "1000000000-001T00:00:00Z",
+    ] {
+        assert!(
+            Epoch::<Utc>::from_iso8601(s).is_none(),
+            "{s} must be rejected: the year field is not four digits"
+        );
+    }
+    // The widest accepted years still round-trip.
+    for s in ["1582-10-15T00:00:00Z", "9999-12-31T23:59:59Z"] {
+        let e = Epoch::<Utc>::from_iso8601(s).unwrap_or_else(|| panic!("{s} must parse"));
+        let dt = e.to_datetime();
+        assert_eq!(
+            Epoch::<Utc>::from_iso8601(&dt.to_string()).map(|b| b.jd()),
             Some(e.jd()),
             "{s} did not round-trip"
         );
