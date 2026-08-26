@@ -2,10 +2,25 @@
 //!
 //! Low-precision (~1 arcminute) analytic model from Meeus "Astronomical
 //! Algorithms" Chapter 25 / Chapter 28. Returns positions in [`crate::frame::Gcrs`]
-//! (the analytical "geocentric inertial") rather than [`crate::frame::SimpleEci`] —
-//! Meeus ephemerides apply no precession/nutation/frame-bias, so numerically
-//! the two frames agree, but the returned type documents that this is not a
-//! propagator state vector.
+//! (the analytical "geocentric inertial") rather than [`crate::frame::SimpleEci`],
+//! documenting that this is not a propagator state vector.
+//!
+//! # Frame
+//!
+//! The series itself is referred to the **mean equinox and equator of date**:
+//! the mean longitude `L₀ = 280.46646 + 36000.76983·T` advances at the tropical
+//! rate (360.0076983°/Julian year) and the obliquity used to rotate ecliptic →
+//! equatorial is the mean obliquity of date. The returned vectors are therefore
+//! rotated back to J2000 with the IAU 1976 precession
+//! ([`crate::earth::fk5`]) before being typed `Vec3<Gcrs>`; nutation and the
+//! J2000→GCRS frame bias are neglected (≤ 17″ and ~20 mas respectively, both
+//! far below the model's own ~1′ accuracy).
+//!
+//! Skipping that rotation is a secular direction error equal to the accumulated
+//! precession — 0.335° in 2024, growing ~1.4°/century — and it does not cancel
+//! against a propagator state, so it is not a frame-labelling technicality.
+//! [`equation_of_time`] deliberately stays in of-date coordinates: it is a
+//! difference of two of-date longitudes.
 //!
 //! # Time scale
 //!
@@ -19,6 +34,7 @@ use nalgebra::Vector3;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
+use crate::earth::fk5;
 use crate::epoch::{Epoch, Tdb};
 use crate::frame::{self, Vec3};
 use crate::planets;
@@ -64,21 +80,34 @@ fn solar_elements(epoch: &Epoch<Tdb>) -> SolarElements {
     }
 }
 
+/// Sun direction (unit vector) referred to the mean equator and equinox of
+/// date — the frame the Meeus series is actually expressed in.
+///
+/// Kept separate from [`sun_direction_eci`] so the precession rotation to J2000
+/// is a single visible step, and so tests can measure the size of that step.
+pub(crate) fn sun_direction_mean_of_date(epoch: &Epoch<Tdb>) -> Vector3<f64> {
+    let el = solar_elements(epoch);
+
+    let x = el.lambda_rad.cos();
+    let y = el.epsilon_rad.cos() * el.lambda_rad.sin();
+    let z = el.epsilon_rad.sin() * el.lambda_rad.sin();
+
+    Vector3::new(x, y, z).normalize()
+}
+
 /// Approximate sun direction (unit vector) in ECI (J2000) frame.
 ///
 /// Uses a low-precision analytical model based on mean orbital elements.
 /// Accuracy is ~1 arcminute, sufficient for visualization purposes.
 ///
+/// The Meeus series is referred to the mean equinox of date, so the result is
+/// rotated back to J2000 by the IAU 1976 precession (see the module docs).
+///
 /// Reference: Meeus, "Astronomical Algorithms", Chapter 25.
 pub fn sun_direction_eci(epoch: &Epoch<Tdb>) -> Vec3<frame::Gcrs> {
-    let el = solar_elements(epoch);
-
-    // Sun direction in ECI (equatorial coordinates)
-    let x = el.lambda_rad.cos();
-    let y = el.epsilon_rad.cos() * el.lambda_rad.sin();
-    let z = el.epsilon_rad.sin() * el.lambda_rad.sin();
-
-    Vec3::from_raw(Vector3::new(x, y, z).normalize())
+    let of_date = sun_direction_mean_of_date(epoch);
+    let p = fk5::mean_of_date_to_j2000_matrix(epoch.centuries_since_j2000());
+    Vec3::from_raw(p * of_date)
 }
 
 /// Equation of Time [hours].
@@ -165,7 +194,13 @@ pub fn sun_direction_from_body(body: &str, epoch: &Epoch<Tdb>) -> Vec3<frame::Gc
         "earth" | "moon" => sun_direction_eci(epoch),
         _ => {
             if let Some(body_pos_ecl) = planets::heliocentric_position_ecliptic(body, epoch) {
-                // Sun is at origin in heliocentric frame, so direction to sun = -body_pos
+                // The Standish/Meeus planetary elements are referred to the
+                // J2000 mean ecliptic (their mean longitudes advance at the
+                // sidereal rate), so this branch needs no precession rotation —
+                // unlike the geocentric Meeus Sun above. The remaining
+                // inconsistency is the obliquity of date used for the ecliptic →
+                // equatorial rotation (11″ in 2024, well inside the ~1′ model
+                // accuracy).
                 let sun_dir_ecl = -body_pos_ecl;
                 let epsilon = planets::obliquity(epoch);
                 Vec3::from_raw(planets::ecliptic_to_equatorial(&sun_dir_ecl, epsilon).normalize())
@@ -180,6 +215,74 @@ pub fn sun_direction_from_body(body: &str, epoch: &Epoch<Tdb>) -> Vec3<frame::Gc
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// IAU general precession in longitude [arcsec per Julian century].
+    /// Independent of arika's own precession code (which uses the IAU 1976
+    /// 5029.0966″/century; the two differ by ~0.3″/century).
+    const GENERAL_PRECESSION_ARCSEC_PER_CENTURY: f64 = 5028.796195;
+
+    // Frame tests: the Meeus series is of-date, the returned vector is J2000
+
+    #[test]
+    fn sun_direction_agrees_with_the_planetary_model_in_j2000() {
+        // Cross-model consistency, no external ephemeris required. The
+        // Standish/Meeus planetary elements (`planets`) are referred to the
+        // J2000 mean ecliptic — their mean longitudes advance at the sidereal
+        // rate — so -r_earth is an independent J2000 geocentric Sun direction.
+        // The Meeus geocentric series is of-date, so before the precession
+        // rotation the two disagreed by the whole accumulated precession
+        // (0.335° in 2024, 0.70° in 2050); they now agree to well within the
+        // ~1 arcminute accuracy both models claim.
+        for (y, m, d) in [
+            (2000, 1, 1),
+            (2024, 3, 20),
+            (2024, 9, 22),
+            (2050, 1, 1),
+            (2075, 7, 4),
+        ] {
+            let epoch = Epoch::from_gregorian(y, m, d, 12, 0, 0.0).to_tdb();
+            let sun = sun_direction_eci(&epoch).into_inner();
+            let earth = planets::heliocentric_position_ecliptic("earth", &epoch)
+                .expect("earth is a known body");
+            let geocentric_sun =
+                planets::ecliptic_to_equatorial(&(-earth), planets::obliquity(&epoch)).normalize();
+            let sep = sun
+                .dot(&geocentric_sun)
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees();
+            assert!(
+                sep < 0.05,
+                "{y}-{m:02}-{d:02}: Meeus Sun and the planetary model disagree by {sep:.4}° \
+                 (precession left unremoved would give ~{:.2}°)",
+                GENERAL_PRECESSION_ARCSEC_PER_CENTURY * epoch.centuries_since_j2000() / 3600.0
+            );
+        }
+    }
+
+    #[test]
+    fn sun_of_date_to_j2000_step_is_the_accumulated_precession() {
+        // The rotation applied on the way out must be precession-sized, not
+        // zero (the old behaviour) and not something else. The expected value
+        // comes from the IAU general-precession rate, not from arika's own
+        // precession code.
+        // 2024 → 0.335°, 2050 → 0.698°, 1975 → 0.349° (before J2000, the same
+        // rotation the other way).
+        for y in [2024, 2050, 1975] {
+            let epoch = Epoch::from_gregorian(y, 7, 1, 0, 0, 0.0).to_tdb();
+            let t = epoch.centuries_since_j2000();
+            let of_date = sun_direction_mean_of_date(&epoch);
+            let j2000 = sun_direction_eci(&epoch).into_inner();
+            let sep = of_date.dot(&j2000).clamp(-1.0, 1.0).acos().to_degrees();
+            // The Sun sits on the ecliptic (β ≈ 0), so the separation is the
+            // full precession in longitude.
+            let expected = (GENERAL_PRECESSION_ARCSEC_PER_CENTURY * t / 3600.0).abs();
+            assert!(
+                (sep - expected).abs() < 0.002,
+                "{y}: of-date → J2000 step {sep:.4}°, expected {expected:.4}°"
+            );
+        }
+    }
 
     // Equation of Time tests
 

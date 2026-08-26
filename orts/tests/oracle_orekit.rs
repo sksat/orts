@@ -6,7 +6,7 @@
 //! **Tier structure**:
 //! - Tier 1: Gravity-only (J2, J2+J3+J4) — should agree to cm-level
 //! - Tier 2: Gravity + third-body (Sun, Moon) — ephemeris difference dominates
-//! - Tier 3: Gravity + SRP — Sun direction error ~0.35°
+//! - Tier 3: Gravity + SRP — Sun direction error ~1' (Meeus model accuracy)
 //! - Tier 4: Gravity + HP drag — geodetic altitude differences
 //! - Tier 5: Full force model (HP) — all differences combined
 //! - Tier 6: Gravity + NRLMSISE-00 drag — LST approximation dominates
@@ -15,8 +15,11 @@
 //!
 //! Known difference sources:
 //! - **J2 coefficient**: Orekit EGM96 C̄₂₀ → J2 differs by ~3e-9 (negligible)
-//! - **Sun position**: Meeus analytical vs DE405 (~0.35°)
-//! - **Moon position**: Simplified analytical vs DE405 (~10')
+//! - **Sun position**: Meeus analytical vs DE405 (~1'). This used to read
+//!   ~0.35°, which was the accumulated J2000→of-date precession the Meeus
+//!   series was returning unrotated, mis-attributed to model accuracy; the
+//!   ephemeris now rotates to J2000 and only the model error remains
+//! - **Moon position**: Meeus Ch.47 analytical vs DE405 (~10' / ~1% distance)
 //! - **LST**: Orekit precise solar time vs our UT+lon/15 (~±16 min → 1-5% density)
 
 use arika::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH, R as R_EARTH};
@@ -420,7 +423,7 @@ fn orekit_j2_equatorial_5orbits() {
 }
 
 // Tier 2: Gravity + Third-body
-// Sun: Meeus vs DE405 (~0.35°), Moon: full Meeus Ch.47 vs DE405 (~1% distance).
+// Sun: Meeus vs DE405 (~1'), Moon: full Meeus Ch.47 vs DE405 (~1% distance).
 // These tolerances include BOTH integration error AND ephemeris difference.
 // The ephemeris difference dominates for long-duration/high-altitude scenarios.
 //
@@ -447,7 +450,7 @@ fn orekit_j2_sun_moon_geo_3days() {
 }
 
 // Tier 3: Gravity + SRP
-// Sun direction error ~0.35° affects SRP vector; shadow timing may differ slightly.
+// Sun direction error ~1' affects SRP vector; shadow timing may differ slightly.
 // Expected: ~1-2 m over 10 SSO orbits.
 
 #[test]
@@ -457,7 +460,7 @@ fn orekit_j2_srp_sso_10orbits() {
 
 // Tier 4: Gravity + HP Drag
 // With geodetic altitude (WGS-84), remaining differences are:
-// - J2 constant (~3e-9), Meeus Sun direction for HP bulge (~0.35°)
+// - J2 constant (~3e-9), Meeus Sun direction for HP bulge (~1')
 // - Minor geodetic algorithm differences (Bowring vs Orekit's WGS-84)
 
 #[test]

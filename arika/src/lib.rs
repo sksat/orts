@@ -44,8 +44,10 @@ pub type SimpleEcef = frame::Vec3<frame::SimpleEcef>;
 /// Geocentric Celestial Reference System frame vector.
 ///
 /// Type alias for `frame::Vec3<frame::Gcrs>`. Current usage: return type of
-/// the Meeus analytic ephemerides (Sun / Moon / planets). In a later phase
-/// the IAU 2006 precession/nutation chain will make this a strict GCRS.
+/// the Meeus analytic ephemerides (Sun / Moon / planets), which rotate their
+/// of-date series back to J2000 with the IAU 1976 precession but leave nutation
+/// and the J2000→GCRS frame bias out. In a later phase the IAU 2006
+/// precession/nutation chain will make this a strict GCRS.
 pub type Gcrs = frame::Vec3<frame::Gcrs>;
 
 /// Local orbital frame vector (Radial / Along-track / Cross-track).

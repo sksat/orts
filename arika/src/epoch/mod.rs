@@ -56,6 +56,11 @@ pub use jd2::{JdRepr, TwoPartJd};
 pub use precision::{Coarse, Precise, Precision};
 pub use scale::{Gps, Tai, Tdb, TimeScale, Tt, Utc};
 
+// Consumed by the EOP table's dUT1 interpolation (`alloc`-gated) and by
+// `convert.rs` via the private `leap` module path.
+#[cfg(feature = "alloc")]
+pub(crate) use leap::tai_minus_utc_at_mjd;
+
 use convert::TaiLens;
 use convert::era_formula;
 use datetime::to_datetime_from_jd;

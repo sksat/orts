@@ -228,7 +228,12 @@ fn load_eop_table() -> arika::earth::eop::EopTable {
 }
 
 fn build_gcrs_system_real_eop(scenario: &Scenario) -> OrbitalSystem<frame::Gcrs> {
-    build_gcrs_system_with_eop(scenario, GcrsEopStorage::new(load_eop_table()))
+    // `into_clamped` names the out-of-range policy: the fixture covers only
+    // 2024-03-01..16, and the scenarios propagate past its end.
+    build_gcrs_system_with_eop(
+        scenario,
+        GcrsEopStorage::new(load_eop_table().into_clamped()),
+    )
 }
 
 /// Propagate the Gcrs path and return the final position [km].

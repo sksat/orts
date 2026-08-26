@@ -10,6 +10,11 @@
 //!
 //! Timing tolerances are generous (minutes) due to Meeus ephemeris
 //! precision (~1 arcminute).
+//!
+//! These tests compare the Sun and Moon vectors *against each other*, so a
+//! rotation common to both cancels exactly: they cannot detect a frame error in
+//! the ephemerides. The frame of each vector is pinned by the unit tests in
+//! `arika::sun::ephemeris` / `arika::moon::ephemeris` instead.
 
 use arika::eclipse::{self, SUN_RADIUS_KM, ShadowModel};
 use arika::epoch::Epoch;

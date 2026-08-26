@@ -178,7 +178,17 @@ ECI 位置ベクトルから WGS-84 測地高度を直接計算するユーテ�
 ### 天体暦の精度レベル
 
 Meeus "Astronomical Algorithms" に基づく低精度解析解を採用。
-太陽位置で ~0.35°（vs DE405）、月位置で ~1% 距離誤差がある。
+方向で ~1 arcmin（太陽）/ ~10 arcsec（月の黄経）、月距離で ~1% の誤差がある。
+
+Meeus の級数は **mean equinox of date** で表現されている（平均黄経の係数が
+tropical rate、黄道傾斜角も of-date）ため、`Vec3<Gcrs>` として返す前に IAU 1976
+precession で J2000 に戻す（`arika::earth::fk5`）。この回転を省くと J2000 からの
+累積 precession ぶん（2024 年で 0.335°、100 年で ~1.4°）方向がずれ、月ベクトルで
+~2,250 km、太陽ベクトルで ~875,000 km に相当する。nutation（≤ 17″）と
+J2000→GCRS frame bias（~20 mas）は級数自身の精度より十分小さいので無視する。
+
+`arika::planets` の Standish 惑星要素は J2000 mean ecliptic 基準（平均黄経の係数が
+sidereal rate）なので precession 回転は不要。
 
 高精度暦（JPL DE430 等）への拡張は将来の選択肢。現状の軌道力学シミュレーションでは十分な精度。
 

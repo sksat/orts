@@ -16,7 +16,7 @@
 //! - [`SimpleEcef`] — [`SimpleEci`] からの ERA-only Z 回転先。近似的 Earth-fixed
 //! - [`Gcrs`] — Geocentric Celestial Reference System。IAU 2006 CIO chain の
 //!   celestial side。Meeus ephemeris の返り型でもあり、その値は低精度 analytic
-//!   model 由来なので strict な GCRS とは限らない
+//!   model 由来なので strict な GCRS とは限らない (nutation / frame bias 未適用)
 //! - [`Cirs`] — Celestial Intermediate Reference System (CIO chain の中間)
 //! - [`Tirs`] — Terrestrial Intermediate Reference System (polar motion 未適用)
 //! - [`Itrs`] — International Terrestrial Reference System (polar motion 適用済み)。
@@ -191,7 +191,10 @@ impl Ecef for SimpleEcef {}
 /// Geocentric Celestial Reference System. IAU 2006 CIO chain の celestial side。
 ///
 /// Meeus ephemeris (低精度 analytic model) の返り型としても使うため、その値は
-/// 厳密な GCRS とは限らない。GCRS → ITRS の高精度変換は
+/// 厳密な GCRS とは限らない。Meeus 側は of-date の級数を IAU 1976 precession で
+/// J2000 に戻してから返すので precession は入っているが、nutation (≤ 17″)、
+/// J2000→GCRS frame bias (~20 mas)、および model 自身の精度 (~1′) ぶんの残差がある。
+/// GCRS → ITRS の高精度変換は
 /// [`Rotation::<Gcrs, Itrs>::iau2006_full`] を参照。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gcrs;

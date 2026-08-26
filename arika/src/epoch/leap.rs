@@ -61,7 +61,7 @@ pub(super) const LEAP_SECONDS: &[(f64, f64)] = &[
 /// arika redesign. Callers requiring bit-accurate pre-1972 ephemerides
 /// should use [`Epoch::<Tdb>::from_jd_tdb`](super::Epoch::from_jd_tdb) directly
 /// with an externally computed TDB Julian Date.
-pub(super) fn tai_minus_utc_at_mjd(utc_mjd: f64) -> f64 {
+pub(crate) fn tai_minus_utc_at_mjd(utc_mjd: f64) -> f64 {
     let mut offset = 10.0;
     for &(mjd_start, val) in LEAP_SECONDS {
         if utc_mjd >= mjd_start {
