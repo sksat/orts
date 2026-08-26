@@ -102,6 +102,12 @@ export function useTimeSeriesStore<T extends TimePoint>(
      * in since, and would overwrite a newer replacement.
      */
     let pendingRebuild: T[] | null = null;
+    /**
+     * Set when a dataset had to be abandoned but the table could not be
+     * emptied. Its rows are still there, so nothing may be inserted or read
+     * until the delete succeeds.
+     */
+    let emptyingFailed = false;
 
     // Cold/hot state
     let coldSnapshot: ChartDataMap | null = null;
@@ -126,8 +132,37 @@ export function useTimeSeriesStore<T extends TimePoint>(
 
       if (cancelled) return;
 
+      /** Empty the table after a dataset was abandoned. True once it is gone. */
+      const emptyTable = async (): Promise<boolean> => {
+        try {
+          await clearTable(conn, schemaRef.current);
+        } catch (e) {
+          console.warn("useTimeSeriesStore: failed to empty the table, retrying:", e);
+          emptyingFailed = true;
+          return false;
+        }
+        emptyingFailed = false;
+        hasDataRef.current = false;
+        coldRefreshNeeded = true;
+        hotBuffer = null;
+        setData(null);
+        return true;
+      };
+
       const tick = async () => {
         if (cancelled) return;
+
+        // The table still holds a dataset that had to be abandoned: remove it
+        // before anything is inserted on top of it or read from it.
+        if (emptyingFailed) {
+          const emptied = await emptyTable();
+          if (!emptied || cancelled) {
+            if (!cancelled) {
+              queryTimerRef.current = window.setTimeout(tick, tickInterval) as unknown as number;
+            }
+            return;
+          }
+        }
 
         // 0. Check for rebuild signal. A newer replacement supersedes one
         //    that is waiting for a retry.
@@ -149,6 +184,7 @@ export function useTimeSeriesStore<T extends TimePoint>(
             coldRefreshNeeded = true;
             hotBuffer = null;
             rebuildRetries = 0;
+            emptyingFailed = false;
           } catch (e) {
             // Bounded, like the Worker path: re-queuing forever would retry a
             // permanently failing rebuild every tick, and each markRebuild
@@ -169,16 +205,9 @@ export function useTimeSeriesStore<T extends TimePoint>(
               );
               // The rolled-back transaction left the replaced dataset in the
               // table. Keeping it would splice it with the rows that keep
-              // streaming in, so empty it.
-              try {
-                await clearTable(conn, schemaRef.current);
-              } catch (clearError) {
-                console.warn("useTimeSeriesStore: failed to empty the table:", clearError);
-              }
-              hasDataRef.current = false;
-              coldRefreshNeeded = true;
-              hotBuffer = null;
-              setData(null);
+              // streaming in, so empty it — retried on the next tick if the
+              // delete fails too.
+              await emptyTable();
             }
           }
         } else {

@@ -97,8 +97,17 @@ export class ChartDataCore {
   /** True when coldRefreshEveryN was not explicitly set by the caller. */
   private useAdaptiveAllMode = true;
 
-  /** Set when a dataset had to be abandoned but the table could not be emptied. */
-  private emptyingFailed = false;
+  /**
+   * Work the table needs before rows may be inserted into it or read from it:
+   * `"recreate"` after a column change, `"empty"` after a dataset had to be
+   * abandoned. While it is set the tick neither flushes nor queries, so no row
+   * lands in — and no payload is built from — a table that does not match the
+   * current schema and dataset.
+   */
+  private tableRepair: "recreate" | "empty" | null = null;
+
+  /** Table the schema change renamed away from, dropped by the repair. */
+  private previousTableName: string | null = null;
 
   /** Rows buffered between ticks. */
   private ingestQueue: RowTuple[] = [];
@@ -335,27 +344,46 @@ export class ChartDataCore {
     if (!this.hasData) this.sendEmptyChartData();
 
     if (columnsChanged) {
-      void this.enqueue(async () => {
-        if (!this.conn) return;
-        try {
-          if (prev.tableName !== next.tableName) {
-            await this.conn.query(`DROP TABLE IF EXISTS ${prev.tableName}`);
-          }
-          await createTable(this.conn, this.toTableSchema(next));
-        } catch (e) {
-          console.warn("chartDataWorker: schema change failed to recreate table:", e);
-          return;
-        }
-        // A rebuild that was still in flight when the schema changed may have
-        // finished in between and re-set this; the table is empty now.
-        // latestT/earliestT stay as they are: rows that arrived while the
-        // table was being recreated have already moved them.
-        this.hasData = false;
-        this.coldSnapshot = null;
-        this.coldTMax = -Infinity;
-        this.hotBuffer = null;
-      });
+      this.tableRepair = "recreate";
+      this.previousTableName = prev.tableName;
+      void this.enqueue(() => this.repairTable());
     }
+  }
+
+  /**
+   * Bring the table into the state the current schema and dataset expect:
+   * recreate it after a column change, or empty it after a dataset had to be
+   * abandoned. Left set on failure so the next tick tries again before any row
+   * is inserted or read.
+   */
+  private async repairTable(): Promise<void> {
+    const repair = this.tableRepair;
+    if (repair == null || !this.conn || !this.schema) return;
+    try {
+      if (repair === "recreate") {
+        if (this.previousTableName != null && this.previousTableName !== this.schema.tableName) {
+          await this.conn.query(`DROP TABLE IF EXISTS ${this.previousTableName}`);
+        }
+        await createTable(this.conn, this.toTableSchema(this.schema));
+      } else {
+        await replaceRows(this.conn, this.schema.tableName, []);
+      }
+    } catch (e) {
+      console.warn(`chartDataWorker: failed to ${repair} the table, retrying:`, e);
+      return;
+    }
+    this.tableRepair = null;
+    this.previousTableName = null;
+    // A rebuild that was still in flight may have finished in between and
+    // re-set this; the table is empty now. latestT/earliestT stay as they are:
+    // rows that arrived while the table was being repaired have already moved
+    // them to where the next rows are.
+    this.hasData = false;
+    this.coldSnapshot = null;
+    this.coldTMax = -Infinity;
+    this.hotBuffer = null;
+    this.queryEpoch++;
+    this.sendEmptyChartData();
   }
 
   /** Apply the newest queued rebuild, if this command is the one that claims it. */
@@ -415,6 +443,10 @@ export class ChartDataCore {
 
     this.pendingRebuild = null;
     this.rebuildRetryCount = 0;
+    // A successful replacement leaves nothing of the abandoned dataset behind,
+    // so a pending "empty this table" request is satisfied. A pending
+    // "recreate" is not: the columns are still the old ones.
+    if (this.tableRepair === "empty") this.tableRepair = null;
     this.hasData = rebuild.rows.length > 0;
     this.compactCooldown = COMPACT_COOLDOWN_AFTER_REBUILD;
     this.coldRefreshNeeded = true;
@@ -438,11 +470,12 @@ export class ChartDataCore {
       if (this.pendingRebuild != null) return; // still failing — retry next tick
     }
 
-    // The table still holds a dataset that had to be abandoned: empty it
-    // before anything is inserted on top of it.
-    if (this.emptyingFailed) {
-      await this.abandonDataset();
-      if (this.emptyingFailed) return;
+    // The table is not in the state the current schema and dataset expect
+    // (a column change to apply, or an abandoned dataset to remove): fix it
+    // before anything is inserted into it or read from it.
+    if (this.tableRepair != null) {
+      await this.repairTable();
+      if (this.tableRepair != null) return;
     }
 
     // A replacement is queued behind this tick: flushing now would insert the
@@ -458,7 +491,9 @@ export class ChartDataCore {
       this.ingestQueue = [];
       try {
         await insertRows(this.conn, this.schema.tableName, rows);
-        this.hasData = true;
+        // Only claim the table holds data if it is still the same table: a
+        // column change accepted during the insert makes these rows stale.
+        if (epoch === this.datasetEpoch) this.hasData = true;
         this.ingestRetryCount = 0;
       } catch (e) {
         console.warn("chartDataWorker: insert failed:", e);
@@ -558,7 +593,22 @@ export class ChartDataCore {
       }
     }
 
-    // 3. Merge + trim → send
+    // 3. Merge + trim → send. Compaction and the queries above awaited DuckDB,
+    //    so re-check: a replacement or a schema change accepted in between
+    //    makes this snapshot describe a table that no longer exists.
+    if (
+      this.queryEpoch !== epoch ||
+      this.queuedRebuild != null ||
+      this.pendingRebuild != null ||
+      this.tableRepair != null
+    ) {
+      this.coldSnapshot = null;
+      this.coldTMax = -Infinity;
+      this.hotBuffer = null;
+      this.coldRefreshNeeded = true;
+      return;
+    }
+
     if (this.coldSnapshot != null) {
       let merged = mergeChartData(this.coldSnapshot, this.hotBuffer, derivedNames);
       if (this.timeRange != null) {
@@ -574,27 +624,11 @@ export class ChartDataCore {
    * the rows that keep arriving.
    */
   private async abandonDataset(): Promise<void> {
-    if (this.conn && this.schema) {
-      try {
-        await replaceRows(this.conn, this.schema.tableName, []);
-      } catch (e) {
-        // The old dataset is still in the table. Reporting it as empty would
-        // let the next flush append to it, which is the splice this avoids:
-        // keep it and retry the emptying on the next tick.
-        console.warn("chartDataWorker: failed to empty the table, retrying:", e);
-        this.emptyingFailed = true;
-        return;
-      }
-    }
-    this.emptyingFailed = false;
-    this.hasData = false;
-    // latestT/earliestT are left alone: an ingest that arrived while the table
-    // was being emptied has already moved them to where the next rows are.
-    this.coldSnapshot = null;
-    this.coldTMax = -Infinity;
-    this.hotBuffer = null;
-    this.queryEpoch++;
-    this.sendEmptyChartData();
+    // Reporting the dataset as gone while its rows are still in the table
+    // would let the next flush append to it, which is the splice this avoids.
+    // `repairTable` keeps the request set until the delete succeeds.
+    this.tableRepair = "empty";
+    await this.repairTable();
   }
 
   private async handleDebugQuery(id: number): Promise<void> {

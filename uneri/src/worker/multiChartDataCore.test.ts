@@ -276,6 +276,43 @@ describe("MultiChartDataCore", () => {
     expect(conn.tValuesOf(TABLE)).toEqual([50]);
   });
 
+  it("neither queries nor re-empties a table around a failed abandoning delete", async () => {
+    const { core, conn, posted } = setup();
+    await init(core);
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+    const sent = broadcastMetricCounts(posted).length;
+
+    // Give up on a replacement, and fail the delete that empties the table.
+    let deletes = 0;
+    conn.failOn((sql) => {
+      if (sql.includes("(10,7010)")) return true;
+      if (sql.startsWith("DELETE")) {
+        deletes++;
+        return deletes >= 5;
+      }
+      return false;
+    });
+    core.handle({ type: "multi-rebuild", satelliteId: SAT_ID, rows: rows(10, 11), latestT: 11 });
+    await core.whenIdle();
+    for (let i = 0; i < 3; i++) await core.tickOnce();
+    expect(conn.tValuesOf(TABLE)).toEqual([0, 1]);
+
+    // The table holds a dataset that is on its way out: it must not be
+    // queried and broadcast in the meantime.
+    await core.tickOnce();
+    expect(broadcastMetricCounts(posted)).toHaveLength(sent);
+
+    // A new replacement then succeeds: it already removed everything the
+    // failed emptying was after, so it must not be deleted afterwards.
+    conn.failOn(null);
+    core.handle({ type: "multi-rebuild", satelliteId: SAT_ID, rows: rows(70, 71), latestT: 71 });
+    await core.whenIdle();
+    expect(conn.tValuesOf(TABLE)).toEqual([70, 71]);
+    for (let i = 0; i < 3; i++) await core.tickOnce();
+    expect(conn.tValuesOf(TABLE)).toEqual([70, 71]);
+  });
+
   it("broadcasts an empty payload once every satellite is empty", async () => {
     const { core, conn, posted } = setup();
     await init(core);

@@ -37,8 +37,8 @@ function setup() {
   return { conn, posted, core };
 }
 
-async function init(core: ChartDataCore, schema = EARTH_SCHEMA) {
-  core.handle({ type: "init", schema, tickInterval: 1_000_000 });
+async function init(core: ChartDataCore, schema = EARTH_SCHEMA, coldRefreshEveryN?: number) {
+  core.handle({ type: "init", schema, tickInterval: 1_000_000, coldRefreshEveryN });
   core.handle({ type: "configure", timeRange: null, maxPoints: 2000 });
   await core.whenIdle();
 }
@@ -142,6 +142,51 @@ describe("ChartDataCore schema updates", () => {
     const queried = conn.queries.slice(from).filter((q) => q.includes("t >= "));
     expect(queried.length).toBeGreaterThan(0);
     expect(queried.every((q) => q.includes("t >= 50"))).toBe(true);
+  });
+
+  it("recreates the table before querying it when the columns change mid-flush", async () => {
+    const { core, conn, posted } = setup();
+    await init(core);
+    core.handle({ type: "ingest", rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+    const from = conn.queries.length;
+    const sentBefore = chartRowCounts(posted).length;
+
+    // A column change arrives while this tick's insert is in flight.
+    core.handle({ type: "ingest", rows: rows(2), latestT: 2 });
+    conn.stallOn((sql) => sql.startsWith("INSERT"));
+    const tick = core.tickOnce();
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    core.handle({
+      type: "update-schema",
+      schema: {
+        tableName: "orbit",
+        columns: [
+          { name: "t", type: "DOUBLE" },
+          { name: "r", type: "DOUBLE" },
+          { name: "extra", type: "DOUBLE" },
+        ],
+        derived: [{ name: "altitude", sql: "r - 1737.4" }],
+      },
+    });
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await tick;
+
+    // The rows still in the table were built with the old columns, so this
+    // tick must not query them - and must not broadcast them as new-schema
+    // values. The recreation happens first.
+    const after = conn.queries.slice(from);
+    const createAt = after.findIndex((q) => q.startsWith("CREATE OR REPLACE TABLE"));
+    const selectAt = after.findIndex((q) => q.startsWith("SELECT") || q.startsWith("WITH"));
+    expect(selectAt === -1 || (createAt !== -1 && createAt < selectAt)).toBe(true);
+    expect(
+      chartRowCounts(posted)
+        .slice(sentBefore)
+        .every((n) => n === 0),
+    ).toBe(true);
   });
 
   it("uses the new schema on the next tick even if a query was in flight", async () => {
@@ -444,6 +489,64 @@ describe("ChartDataCore rebuild", () => {
     conn.failOn(null);
     await core.tickOnce();
     expect(conn.tValuesOf("orbit")).toEqual([50]);
+  });
+
+  it("keeps a later successful rebuild instead of emptying it", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "ingest", rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+
+    // Give up on a replacement, and fail the delete that empties the table.
+    let deletes = 0;
+    conn.failOn((sql) => {
+      if (sql.includes("(10,7010)")) return true;
+      if (sql.startsWith("DELETE")) {
+        deletes++;
+        return deletes >= 5;
+      }
+      return false;
+    });
+    core.handle({ type: "rebuild", rows: rows(10, 11), latestT: 11 });
+    await core.whenIdle();
+    for (let i = 0; i < 3; i++) await core.tickOnce();
+    expect(conn.tValuesOf("orbit")).toEqual([0, 1]);
+
+    // A new replacement then succeeds: it already removed everything the
+    // failed emptying was after, so it must not be deleted afterwards.
+    conn.failOn(null);
+    core.handle({ type: "rebuild", rows: rows(70, 71), latestT: 71 });
+    await core.whenIdle();
+    expect(conn.tValuesOf("orbit")).toEqual([70, 71]);
+
+    for (let i = 0; i < 3; i++) await core.tickOnce();
+    expect(conn.tValuesOf("orbit")).toEqual([70, 71]);
+  });
+
+  it("does not broadcast a snapshot taken before a rebuild that arrived during compaction", async () => {
+    const { core, conn, posted } = setup();
+    await init(core, EARTH_SCHEMA, 1); // cold refresh on every tick
+    core.handle({ type: "ingest", rows: rows(0, 1), latestT: 1 });
+
+    // The compaction check runs on every 5th cold query and starts with a
+    // COUNT(*), which is where this tick is stalled.
+    for (let i = 0; i < 4; i++) await core.tickOnce();
+    const sent = chartRowCounts(posted).length;
+    expect(sent).toBeGreaterThan(0);
+
+    conn.stallOn((sql) => sql.startsWith("SELECT COUNT(*)"));
+    const tick = core.tickOnce();
+    await flush();
+    expect(conn.stalledCount).toBe(1);
+
+    // A full replacement is accepted while the compaction check is in flight.
+    core.handle({ type: "rebuild", rows: rows(40, 41), latestT: 41 });
+    conn.stallOn(null);
+    conn.releaseStalled();
+    await tick;
+
+    // The snapshot describes the table the replacement is about to delete.
+    expect(chartRowCounts(posted)).toHaveLength(sent);
   });
 
   it("broadcasts an empty dataset after an empty rebuild", async () => {
