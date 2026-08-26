@@ -11,7 +11,9 @@ import {
   buildIncrementalQuery,
   buildInsertSQL,
   buildInsertSQLFromRows,
+  insertPoints,
   insertRows,
+  replacePoints,
   replaceRows,
   withTransaction,
 } from "./store.js";
@@ -447,6 +449,44 @@ describe("insertRows", () => {
     const ts = conn.tValuesOf("test_data");
     expect(ts).toHaveLength(1500);
     expect(new Set(ts).size).toBe(1500);
+  });
+});
+
+describe("insertPoints / replacePoints", () => {
+  const pts = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ t: i, value: 1, extra: 2 }) as TestPoint);
+
+  it("splits into batches of 1000 inside a single transaction", async () => {
+    const conn = new FakeDuckDBConn();
+    await conn.query("CREATE OR REPLACE TABLE test_data (t DOUBLE)");
+    await insertPoints(conn as unknown as AsyncDuckDBConnection, testSchema, pts(1500));
+
+    expect(conn.queries.filter((q) => q.startsWith("INSERT"))).toHaveLength(2);
+    expect(conn.queries.filter((q) => q === "BEGIN TRANSACTION")).toHaveLength(1);
+    expect(conn.tValuesOf("test_data")).toHaveLength(1500);
+  });
+
+  it("commits nothing when a later batch fails", async () => {
+    const conn = new FakeDuckDBConn();
+    await conn.query("CREATE OR REPLACE TABLE test_data (t DOUBLE)");
+    conn.failOnNthInsert(2);
+
+    await expect(
+      insertPoints(conn as unknown as AsyncDuckDBConnection, testSchema, pts(1500)),
+    ).rejects.toThrow();
+    expect(conn.tValuesOf("test_data")).toEqual([]);
+  });
+
+  it("replacePoints keeps the previous content when an insert fails", async () => {
+    const conn = new FakeDuckDBConn();
+    await conn.query("CREATE OR REPLACE TABLE test_data (t DOUBLE)");
+    await insertPoints(conn as unknown as AsyncDuckDBConnection, testSchema, pts(1));
+    conn.failOnNthInsert(1);
+
+    await expect(
+      replacePoints(conn as unknown as AsyncDuckDBConnection, testSchema, pts(3)),
+    ).rejects.toThrow();
+    expect(conn.tValuesOf("test_data")).toEqual([0]);
   });
 });
 

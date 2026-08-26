@@ -216,6 +216,22 @@ export async function replaceRows(
 }
 
 /**
+ * Insert the batches of `points` one statement at a time. Each batch is
+ * converted as it is sent, so a large history never holds a second full-size
+ * array of row tuples alongside the points.
+ */
+async function insertPointBatches<T extends TimePoint>(
+  conn: AsyncDuckDBConnection,
+  schema: TableSchema<T>,
+  points: T[],
+): Promise<void> {
+  for (let i = 0; i < points.length; i += BATCH_SIZE) {
+    const sql = buildInsertSQL(schema, points.slice(i, i + BATCH_SIZE));
+    if (sql) await conn.query(sql);
+  }
+}
+
+/**
  * Insert an array of points into the table in batches of 1000, atomically
  * (see `insertRows` for the transaction rule).
  */
@@ -225,11 +241,7 @@ export async function insertPoints<T extends TimePoint>(
   points: T[],
 ): Promise<void> {
   if (points.length === 0) return;
-  await insertRows(
-    conn,
-    schema.tableName,
-    points.map((p) => schema.toRow(p)),
-  );
+  await withTransaction(conn, () => insertPointBatches(conn, schema, points));
 }
 
 /**
@@ -241,11 +253,10 @@ export async function replacePoints<T extends TimePoint>(
   schema: TableSchema<T>,
   points: T[],
 ): Promise<void> {
-  await replaceRows(
-    conn,
-    schema.tableName,
-    points.map((p) => schema.toRow(p)),
-  );
+  await withTransaction(conn, async () => {
+    await conn.query(`DELETE FROM ${schema.tableName}`);
+    await insertPointBatches(conn, schema, points);
+  });
 }
 
 /**
