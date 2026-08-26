@@ -25,9 +25,12 @@ export interface WorkerTableSchema {
   derived: DerivedColumn[];
 }
 
-/** Do the two schemas store the same columns, in the same order, with the same types? */
+/**
+ * Do the two schemas store the same columns, in the same order, with the same
+ * types? The table name is not part of this: the multi-satellite Worker
+ * overrides it per satellite, so a name change there means nothing.
+ */
 export function sameColumns(a: WorkerTableSchema, b: WorkerTableSchema): boolean {
-  if (a.tableName !== b.tableName) return false;
   if (a.columns.length !== b.columns.length) return false;
   return a.columns.every((c, i) => c.name === b.columns[i].name && c.type === b.columns[i].type);
 }

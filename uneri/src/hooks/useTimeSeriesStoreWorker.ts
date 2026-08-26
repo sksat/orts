@@ -96,7 +96,7 @@ export function drainToWorker<T extends TimePoint>(
   if (current.schema !== sent.schema) {
     const next = toWorkerSchema(current.schema);
     const prev = toWorkerSchema(sent.schema);
-    if (!sameColumns(prev, next) || !sameDerived(prev, next)) {
+    if (prev.tableName !== next.tableName || !sameColumns(prev, next) || !sameDerived(prev, next)) {
       client.updateSchema(next);
     }
     sent.schema = current.schema;

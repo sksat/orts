@@ -239,6 +239,26 @@ describe("ChartDataCore schema updates", () => {
     expect(conn.tValuesOf("orbit")).toEqual([200]);
   });
 
+  it("moves to the new table and drops the old one when the name changes", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "ingest", rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+
+    core.handle({
+      type: "update-schema",
+      schema: { ...EARTH_SCHEMA, tableName: "orbit_v2" },
+    });
+    await core.whenIdle();
+
+    expect(conn.queries).toContain("DROP TABLE IF EXISTS orbit");
+    expect(conn.queries.some((q) => q.startsWith("CREATE OR REPLACE TABLE orbit_v2"))).toBe(true);
+
+    core.handle({ type: "ingest", rows: rows(2), latestT: 2 });
+    await core.tickOnce();
+    expect(conn.tValuesOf("orbit_v2")).toEqual([2]);
+  });
+
   it("uses the new schema on the next tick even if a query was in flight", async () => {
     const { core, conn } = setup();
     await init(core);

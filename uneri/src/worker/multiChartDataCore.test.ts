@@ -161,6 +161,27 @@ describe("MultiChartDataCore", () => {
     ).toHaveLength(2);
   });
 
+  it("keeps the data when only the base schema's table name changes", async () => {
+    const { core, conn } = setup();
+    await init(core);
+    core.handle({ type: "multi-ingest", satelliteId: SAT_ID, rows: rows(0, 1), latestT: 1 });
+    await core.tickOnce();
+    const from = conn.queries.length;
+
+    // Each satellite gets its own table name, so the base schema's own name is
+    // never used for storage: changing it must not recreate anything.
+    core.handle({
+      type: "multi-update-schema",
+      baseSchema: { ...EARTH_SCHEMA, tableName: "renamed" },
+    });
+    await core.whenIdle();
+
+    expect(conn.queries.slice(from).some((q) => q.startsWith("CREATE OR REPLACE TABLE"))).toBe(
+      false,
+    );
+    expect(conn.tValuesOf(TABLE)).toEqual([0, 1]);
+  });
+
   it("keeps rows that arrive while a rebuild is in flight", async () => {
     const { core, conn } = setup();
     await init(core);

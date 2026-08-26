@@ -323,7 +323,8 @@ export class ChartDataCore {
     const prev = this.schema;
     this.schema = next;
     if (prev == null) return;
-    const columnsChanged = !sameColumns(prev, next);
+    // A rename needs a new table as much as a column change does.
+    const columnsChanged = !sameColumns(prev, next) || prev.tableName !== next.tableName;
     if (!columnsChanged && sameDerived(prev, next)) return;
 
     this.queryEpoch++;
