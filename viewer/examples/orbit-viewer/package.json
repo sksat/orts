@@ -23,7 +23,7 @@
     "@playwright/test": "^1.58.2",
     "@types/react": "^19.2.13",
     "@types/react-dom": "^19.2.3",
-    "@types/three": "^0.184.0",
+    "@types/three": "^0.185.0",
     "@vitejs/plugin-react": "^6.0.0",
     "typescript": "^6.0.0",
     "vite": "^8.0.8"
