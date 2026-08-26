@@ -106,7 +106,7 @@ mod tests {
     /// Available in any frame: the point of the frame tag is that the caller
     /// must name a frame to *interpret* these numbers, not that it cannot read
     /// them.
-    fn components<F>(a: &AttitudeBodyToInertial<F>) -> Vector4<f64> {
+    fn components<F: arika::frame::Eci>(a: &AttitudeBodyToInertial<F>) -> Vector4<f64> {
         let q = a.inner().inner();
         Vector4::new(q.w, q.i, q.j, q.k)
     }

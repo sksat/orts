@@ -157,43 +157,43 @@ mod tests {
         assert_eq!(omega_out, Vector3::zeros());
     }
 
-    /// Characterization: `NadirPointing` in `SimpleEci`, pinned component-wise
-    /// on an eccentric, out-of-plane state (so every component is non-zero).
+    /// Characterization: the `NadirPointing` target in `SimpleEci`, pinned
+    /// against literals computed outside the implementation (no re-derivation
+    /// of `|h|/r²` or of the LVLH triad from the state, which would just mirror
+    /// the code). The fixture is eccentric and out-of-plane, so every axis
+    /// component is non-zero.
     #[test]
-    fn nadir_pointing_target_components_snapshot() {
+    fn nadir_pointing_target_axes_and_rate_snapshot() {
         let (q_out, omega_out) = NadirPointing.target(0.0, &snapshot_orbit(), None);
-        let q_out = q_out.into_inner();
-        let got = nalgebra::Vector4::new(q_out.w, q_out.i, q_out.j, q_out.k);
+        let m = q_out.into_inner().to_rotation_matrix();
 
-        // Sign of a quaternion is a gauge freedom; compare through the
-        // rotation it denotes by pinning the LVLH axes instead.
-        let m = q_out.to_rotation_matrix();
-        let r = snapshot_orbit();
-        let z_body = m * Vector3::new(0.0, 0.0, 1.0);
-        let expected_z = -r.position().normalize();
-        assert!(
-            (z_body - expected_z).magnitude() <= 1e-12 * expected_z.magnitude(),
-            "nadir axis changed: {z_body:?}"
-        );
-        let h = r.position().cross(r.velocity());
-        let y_body = m * Vector3::new(0.0, 1.0, 0.0);
-        let expected_y = -h.normalize();
-        assert!(
-            (y_body - expected_y).magnitude() <= 1e-12 * expected_y.magnitude(),
-            "orbit-normal axis changed: {y_body:?}"
-        );
-        // The rate is the instantaneous |h|/r², non-zero for this state.
-        let n = h.magnitude() / r.position().magnitude_squared();
-        assert!(
-            n > 1e-4,
-            "fixture must produce a non-zero rate, got {n:.3e}"
-        );
-        let expected_omega = Vector3::new(0.0, -n, 0.0);
+        // Sign of a quaternion is a gauge freedom, so pin the rotation it
+        // denotes: the three body axes in `SimpleEci`.
+        let expected_axes = [
+            Vector3::new(
+                0.003697164137472425,
+                0.44957515911664725,
+                0.8932348556133385,
+            ),
+            Vector3::new(0.8132416567988889, 0.5184415562092917, -0.2643035384596389),
+            Vector3::new(-0.5819143739626463, 0.727392967453308, -0.363696483726654),
+        ];
+        for (i, expected) in expected_axes.iter().enumerate() {
+            let mut body = Vector3::zeros();
+            body[i] = 1.0;
+            let got = m * body;
+            assert!(
+                (got - expected).magnitude() <= 1e-12 * expected.magnitude(),
+                "LVLH axis {i} changed: {got:?}"
+            );
+        }
+
+        // Rate: [0, -n, 0] with n = |h|/r² — pinned as a literal.
+        let expected_omega = Vector3::new(0.0, -0.0010409708350321229, 0.0);
         assert!(
             (omega_out - expected_omega).magnitude() <= 1e-12 * expected_omega.magnitude(),
             "nadir rate changed: {omega_out:?}"
         );
-        assert!(got.iter().all(|c| c.is_finite()));
     }
 
     /// Characterization: a non-finite attitude target is passed through rather

@@ -129,13 +129,8 @@ macro_rules! impl_convert {
                         // Frame-checked crossing: the v0 payload is defined as
                         // body→simple-ECI, and this named operation exists only
                         // for a `SimpleEci`-tagged reading.
-                        let q = a.to_wit_v0_simple_eci_quat();
-                        wit::AttitudeBodyToInertial {
-                            w: q[0],
-                            x: q[1],
-                            y: q[2],
-                            z: q[3],
-                        }
+                        let (w, x, y, z) = a.to_wit_v0_simple_eci_quat();
+                        wit::AttitudeBodyToInertial { w, x, y, z }
                     })
                     .collect(),
                 sun_sensors: s

@@ -8,8 +8,7 @@
 use core::fmt;
 
 use arika::epoch::Epoch;
-use arika::frame::{Body, Rotation, SimpleEci, Vec3};
-use nalgebra::Vector4;
+use arika::frame::{Body, Eci, Rotation, SimpleEci, Vec3};
 
 use crate::SpacecraftState;
 
@@ -62,9 +61,9 @@ impl AngularVelocityBody {
 /// `Vector4` cannot say what it means. `F` defaults to
 /// [`SimpleEci`](arika::frame::SimpleEci), the frame the plugin path
 /// propagates in.
-pub struct AttitudeBodyToInertial<F = SimpleEci>(Rotation<Body, F>);
+pub struct AttitudeBodyToInertial<F: Eci = SimpleEci>(Rotation<Body, F>);
 
-impl<F> AttitudeBodyToInertial<F> {
+impl<F: Eci> AttitudeBodyToInertial<F> {
     /// Wrap a body→`F` rotation as an attitude reading in `F`.
     pub fn new(rotation: Rotation<Body, F>) -> Self {
         Self(rotation)
@@ -80,40 +79,41 @@ impl<F> AttitudeBodyToInertial<F> {
 }
 
 impl AttitudeBodyToInertial<SimpleEci> {
-    /// Drop the frame tag for the **v0 plugin WIT boundary**: the four
-    /// components `(w, x, y, z)` of the body→simple-ECI quaternion, Hamilton
-    /// convention, scalar-first.
+    /// Drop the frame tag for the **v0 plugin WIT boundary**: the components
+    /// `(w, x, y, z)` of the body→simple-ECI quaternion, Hamilton convention.
     ///
-    /// The v0 `attitude-body-to-inertial` record in
-    /// [`wit/v0/orts.wit`](https://github.com/sksat/orts/blob/main/orts/wit/v0/orts.wit)
+    /// The v0 `attitude-body-to-inertial` record in `orts/wit/v0/orts.wit`
     /// carries four bare floats whose frame is *defined* by the contract to be
-    /// simple-ECI. Guests therefore cannot be handed a reading from any other
-    /// frame, and this — the only sanctioned way across that boundary — exists
+    /// simple-ECI. This is the named crossing for that boundary, and it exists
     /// only for `SimpleEci`: shipping a `Gcrs` attitude to a guest is a compile
-    /// error, not silent nonsense. Widening the contract means a new WIT
+    /// error rather than silent nonsense. Widening the contract means a new WIT
     /// version that names the frame in the payload.
-    pub fn to_wit_v0_simple_eci_quat(&self) -> Vector4<f64> {
+    ///
+    /// `inner()` still hands out the rotation in any frame — the guarantee is
+    /// that the *boundary* operation names its frame, not that the components
+    /// are unreachable.
+    pub fn to_wit_v0_simple_eci_quat(&self) -> (f64, f64, f64, f64) {
         let q = self.0.inner();
-        Vector4::new(q.w, q.i, q.j, q.k)
+        (q.w, q.i, q.j, q.k)
     }
 }
 
 // Manual impls to avoid requiring `F: Debug/Clone/Copy/PartialEq`
 // (the frame is a phantom tag, never a value).
-impl<F> fmt::Debug for AttitudeBodyToInertial<F> {
+impl<F: Eci> fmt::Debug for AttitudeBodyToInertial<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("AttitudeBodyToInertial")
             .field(&self.0)
             .finish()
     }
 }
-impl<F> Clone for AttitudeBodyToInertial<F> {
+impl<F: Eci> Clone for AttitudeBodyToInertial<F> {
     fn clone(&self) -> Self {
         *self
     }
 }
-impl<F> Copy for AttitudeBodyToInertial<F> {}
-impl<F> PartialEq for AttitudeBodyToInertial<F> {
+impl<F: Eci> Copy for AttitudeBodyToInertial<F> {}
+impl<F: Eci> PartialEq for AttitudeBodyToInertial<F> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
@@ -128,12 +128,15 @@ impl<F> PartialEq for AttitudeBodyToInertial<F> {
 /// does not change during a simulation run.
 ///
 /// `F` is the inertial frame the state was propagated in, carried by the
-/// frame-dependent readings ([`AttitudeBodyToInertial`]); the body-frame ones
-/// are frame-independent. It defaults to
+/// attitude readings ([`AttitudeBodyToInertial`]), whose components depend on
+/// it. The body-frame readings are unaffected to the precision that matters —
+/// the gyro's ω is the rate relative to `F`, but two inertial frames differ
+/// only by their relative rotation rate (~8e-12 rad/s for
+/// `SimpleEci` ↔ `Gcrs`). `F` defaults to
 /// [`SimpleEci`](arika::frame::SimpleEci), which is what [`TickInput`] accepts:
 /// a bundle evaluated in another frame cannot be handed to a plugin, because
 /// the v0 plugin contract is defined in simple-ECI.
-pub struct Sensors<F = SimpleEci> {
+pub struct Sensors<F: Eci = SimpleEci> {
     /// Magnetometer readings. Pre-evaluated once per tick.
     pub magnetometers: Vec<MagneticFieldBody>,
 
@@ -147,7 +150,7 @@ pub struct Sensors<F = SimpleEci> {
     pub sun_sensors: Vec<SunSensorOutput>,
 }
 
-impl<F> Sensors<F> {
+impl<F: Eci> Sensors<F> {
     /// Construct an empty set of readings (no sensors configured).
     pub fn empty() -> Self {
         Self::default()
@@ -155,7 +158,7 @@ impl<F> Sensors<F> {
 }
 
 // Manual impls to avoid requiring `F: Debug/Clone/Default`.
-impl<F> fmt::Debug for Sensors<F> {
+impl<F: Eci> fmt::Debug for Sensors<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Sensors")
             .field("magnetometers", &self.magnetometers)
@@ -165,7 +168,7 @@ impl<F> fmt::Debug for Sensors<F> {
             .finish()
     }
 }
-impl<F> Clone for Sensors<F> {
+impl<F: Eci> Clone for Sensors<F> {
     fn clone(&self) -> Self {
         Self {
             magnetometers: self.magnetometers.clone(),
@@ -175,7 +178,7 @@ impl<F> Clone for Sensors<F> {
         }
     }
 }
-impl<F> Default for Sensors<F> {
+impl<F: Eci> Default for Sensors<F> {
     fn default() -> Self {
         Self {
             magnetometers: Vec::new(),

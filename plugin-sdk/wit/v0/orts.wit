@@ -55,6 +55,9 @@ interface types {
     }
 
     /// ECI 座標系での位置 \[km\]。
+    ///
+    /// v0 の ECI は simple-ECI (歳差・章動・極運動を無視した近似 ECI)。
+    /// この interface の ECI 表記は全てこのフレームを指す。
     record position-eci-km {
         x: f64, y: f64, z: f64,
     }
@@ -72,6 +75,8 @@ interface types {
 
     /// 剛体姿勢: 姿勢クォータニオン (body→inertial) と
     /// 機体座標系での角速度 \[rad/s\]。
+    ///
+    /// inertial は attitude-body-to-inertial と同じく simple-ECI 固定。
     record attitude-state {
         orientation: quat,
         angular-velocity: vec3,
@@ -120,7 +125,7 @@ interface types {
 
     /// 姿勢クォータニオン body→inertial (Hamilton scalar-first)。
     ///
-    /// inertial は simple-ECI (position-eci-km と同じ近似 ECI)。
+    /// inertial は simple-ECI (position-eci-km と同じ、v0 の ECI)。
     /// クォータニオンの成分は基準フレームに依存するので、v0 はこの
     /// フレームを contract として固定している (host 側は型で強制: 他の inertial
     /// frame の姿勢を guest に渡すのは compile error)。他フレームを扱うなら

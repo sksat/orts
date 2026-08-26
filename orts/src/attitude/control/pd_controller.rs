@@ -111,9 +111,11 @@ impl<F: arika::frame::Eci, S: HasAttitude + HasOrbit<Frame = F>, R: AttitudeRefe
     fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         let att = state.attitude();
         let (q_target, omega_target) = self.reference.target(t, state.orbit(), epoch);
-        // The target's frame tag has done its job: it had to match the state's
-        // integration frame `F` for this call to type-check. Everything below
-        // is body-frame error algebra, so the tag is dropped here.
+        // The target's frame tag has done its job: it had to match the frame
+        // of the state's *orbit* (`HasOrbit<Frame = F>`) for this call to
+        // type-check. `q_current` below is still an untyped `AttitudeState`
+        // quaternion, so that is as far as the check reaches today. Everything
+        // below is body-frame error algebra, so the tag is dropped here.
         let q_target = q_target.into_inner();
 
         let q_current = att.orientation();

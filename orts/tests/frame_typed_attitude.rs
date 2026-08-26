@@ -52,10 +52,50 @@ fn component_angle(a: &UnitQuaternion<f64>, b: &UnitQuaternion<f64>) -> f64 {
     (a.inverse() * b).angle()
 }
 
+/// The four components `(w, x, y, z)` of a reading.
+fn components<F: arika::frame::Eci>(a: &AttitudeBodyToInertial<F>) -> nalgebra::Vector4<f64> {
+    let q = a.inner().inner();
+    nalgebra::Vector4::new(q.w, q.i, q.j, q.k)
+}
+
 #[test]
 fn the_same_attitude_has_different_components_in_gcrs_and_simple_eci() {
     let gcrs = AttitudeBodyToInertial::new(body_to_gcrs());
     let simple = AttitudeBodyToInertial::new(body_to_simple_eci());
+
+    // The components themselves, pinned: these are what a consumer reads, and
+    // they differ in every element. (The *angle* below is invariant under the
+    // body attitude — it is a property of the two frames — so pin the
+    // components too, which do depend on the spacecraft's orientation.)
+    let expected_gcrs = nalgebra::Vector4::new(
+        0.9403243276970059,
+        0.10374803626483178,
+        -0.1723626627136923,
+        0.2744405513305407,
+    );
+    let expected_simple = nalgebra::Vector4::new(
+        0.9401196045021765,
+        0.10344438721235631,
+        -0.17347028723054797,
+        0.27455864115536865,
+    );
+    assert!(
+        (components(&gcrs) - expected_gcrs).magnitude() <= 1e-12 * expected_gcrs.magnitude(),
+        "body→GCRS components changed: {:?}",
+        components(&gcrs)
+    );
+    assert!(
+        (components(&simple) - expected_simple).magnitude() <= 1e-12 * expected_simple.magnitude(),
+        "body→simple-ECI components changed: {:?}",
+        components(&simple)
+    );
+    for i in 0..4 {
+        let d = (components(&gcrs)[i] - components(&simple)[i]).abs();
+        assert!(
+            d > 1e-6,
+            "component {i} must differ between the frames, differs by {d:.3e}"
+        );
+    }
 
     let angle = component_angle(gcrs.inner().inner(), simple.inner().inner());
     let arcsec = angle.to_degrees() * 3600.0;

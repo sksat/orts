@@ -52,10 +52,15 @@ impl AttitudeState {
 
     /// Typed rotation: body frame → inertial frame `F`.
     ///
-    /// The quaternion data is frame-independent — only the phantom type
-    /// tag changes. This allows models to produce `ExternalLoads<F>` in
-    /// any propagation frame without `AttitudeState` needing a type
-    /// parameter.
+    /// This **asserts** a frame, it does not convert one: the stored
+    /// quaternion is copied and only the phantom tag changes. That lets models
+    /// produce `ExternalLoads<F>` in any propagation frame without
+    /// `AttitudeState` needing a type parameter — but the caller is
+    /// responsible for `F` being the frame the state is actually propagated
+    /// in. Quaternion components are frame-dependent (`SimpleEci` and `Gcrs`
+    /// differ by ~484 arcsec at 2024), so naming the wrong `F` here silently
+    /// re-interprets the attitude. Typing `AttitudeState` itself would remove
+    /// the obligation.
     pub fn rotation_to_inertial<F: frame::Eci>(&self) -> Rotation<frame::Body, F> {
         Rotation::from_raw(self.orientation())
     }
