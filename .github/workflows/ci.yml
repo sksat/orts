@@ -24,8 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install wild linker
-        uses: ./.github/actions/install-wild
+      - name: Set up wild linker
+        uses: ./.github/actions/setup-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -214,8 +214,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install wild linker
-        uses: ./.github/actions/install-wild
+      - name: Set up wild linker
+        uses: ./.github/actions/setup-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -263,8 +263,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install wild linker
-        uses: ./.github/actions/install-wild
+      - name: Set up wild linker
+        uses: ./.github/actions/setup-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -315,8 +315,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install wild linker
-        uses: ./.github/actions/install-wild
+      - name: Set up wild linker
+        uses: ./.github/actions/setup-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -358,8 +358,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install wild linker
-        uses: ./.github/actions/install-wild
+      - name: Set up wild linker
+        uses: ./.github/actions/setup-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -403,8 +403,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install wild linker
-        uses: ./.github/actions/install-wild
+      - name: Set up wild linker
+        uses: ./.github/actions/setup-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -454,8 +454,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install wild linker
-        uses: ./.github/actions/install-wild
+      - name: Set up wild linker
+        uses: ./.github/actions/setup-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -539,8 +539,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install wild linker
-        uses: ./.github/actions/install-wild
+      - name: Set up wild linker
+        uses: ./.github/actions/setup-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -881,9 +881,9 @@ jobs:
         if: steps.changes.outputs.docs == 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Install wild linker
+      - name: Set up wild linker
         if: steps.changes.outputs.docs == 'true'
-        uses: ./.github/actions/install-wild
+        uses: ./.github/actions/setup-wild
 
       - name: Parse rust-toolchain.toml
         if: steps.changes.outputs.docs == 'true'

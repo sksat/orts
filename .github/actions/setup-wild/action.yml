@@ -1,4 +1,4 @@
-name: Install wild linker
+name: Set up wild linker
 description: >-
   Install the wild linker from its prebuilt release tarball, checksum-verified.
   `.cargo/config.toml` names wild as the linker for x86_64-unknown-linux-gnu,
