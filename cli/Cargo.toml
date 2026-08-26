@@ -87,8 +87,6 @@ tempfile = "3"
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }{ archive-suffix }"
 pkg-fmt = "tgz"
 bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"
-
-# Windows ships a zip rather than a tarball. The layout inside matches the
-# tarballs, so `bin-dir` above still applies.
-[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
-pkg-fmt = "zip"
+# No per-target exception: every target ships a tarball, Windows included. The
+# release also carries a Windows zip, for people downloading by hand, but
+# binstall has no reason to prefer it — the two hold the same layout.

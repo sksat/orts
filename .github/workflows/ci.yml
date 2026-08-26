@@ -1682,29 +1682,36 @@ jobs:
               cp "$f" "${STAGE_DIR}/examples/plugins/${short}.wasm"
             done
 
-            # Windows gets a zip, which is what its users expect and what
-            # cargo-binstall is told to look for; everything else gets a tarball.
-            if [ "$EXE" = ".exe" ]; then
-              ARCHIVE="${STAGE_DIR}.zip"
-              # Wraps STAGE_DIR, same layout as the tarballs, so binstall's
-              # bin-dir template works unchanged. -X drops extra file
-              # attributes so the archive is reproducible.
-              zip -qrX "${ARCHIVE}" "${STAGE_DIR}"
-            else
-              ARCHIVE="${STAGE_DIR}.tar.gz"
-              tar --sort=name \
-                  --owner=0 --group=0 --numeric-owner \
-                  --mtime='UTC 2020-01-01' \
-                  -czf "${ARCHIVE}" "${STAGE_DIR}"
-            fi
+            # Every target gets a tarball, including Windows: that is the
+            # shape the default binstall metadata asks for, so an install
+            # resolves even when the zip override is not in play. Windows 10
+            # and later ship bsdtar, so it is usable by hand there too.
+            ARCHIVE="${STAGE_DIR}.tar.gz"
+            tar --sort=name \
+                --owner=0 --group=0 --numeric-owner \
+                --mtime='UTC 2020-01-01' \
+                -czf "${ARCHIVE}" "${STAGE_DIR}"
             sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
             cat "${ARCHIVE}.sha256"
+            ALL_FILES="${ALL_FILES}${ARCHIVE}\n${ARCHIVE}.sha256\n"
+
+            # Windows additionally gets a zip, the format its users expect from
+            # a manual download, and the one binstall prefers via the override.
+            # Wraps STAGE_DIR like the tarball, so one `bin-dir` template covers
+            # both. -X drops extra file attributes so the archive is
+            # reproducible.
+            if [ "$EXE" = ".exe" ]; then
+              ZIP="${STAGE_DIR}.zip"
+              zip -qrX "${ZIP}" "${STAGE_DIR}"
+              sha256sum "${ZIP}" > "${ZIP}.sha256"
+              cat "${ZIP}.sha256"
+              ALL_FILES="${ALL_FILES}${ZIP}\n${ZIP}.sha256\n"
+            fi
 
             # Standalone binary
             BINARY="orts-${TARGET}${EXE}"
             cp "${STAGE_DIR}/orts${EXE}" "${BINARY}"
-
-            ALL_FILES="${ALL_FILES}${ARCHIVE}\n${ARCHIVE}.sha256\n${BINARY}\n"
+            ALL_FILES="${ALL_FILES}${BINARY}\n"
           done
 
           echo -e "$ALL_FILES" | grep -v '^$' > /tmp/release-files.txt
