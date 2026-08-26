@@ -475,6 +475,17 @@ impl AttitudeConfig {
     /// orbit. An inertia scaled so far from the orbit that the gravity gradient
     /// alone overflows therefore passes here and stops at the first step with
     /// [`utsuroi::IntegrationError::NonFiniteState`].
+    /// Equality `I1 + I2 == I3` is accepted: that is the flat-plate (lamina)
+    /// limit, physically attainable and numerically well-posed. The relative
+    /// slack keeps a config that states the lamina case exactly from being
+    /// rejected by the eigenvalue solver's last bits.
+    ///
+    /// The WebSocket `add_satellite` path validates a built `SatelliteSpec`
+    /// instead, against a determinant threshold, so it neither rejects
+    /// everything this does nor accepts everything this accepts (a uniformly
+    /// tiny tensor has a determinant below the threshold while being perfectly
+    /// invertible). That check should delegate here so the two surfaces cannot
+    /// disagree about what a spacecraft is.
     pub fn validate(&self) -> Result<(), String> {
         // Non-finite first: every comparison below is false for `NaN`, so a
         // `NaN` mass would pass `mass <= 0.0` and a `NaN` determinant would
@@ -494,6 +505,32 @@ impl AttitudeConfig {
                 return Err(format!("non-finite `{name}` component: {bad}"));
             }
         }
+        if !self.mass.is_finite() || self.mass <= 0.0 {
+            return Err(format!(
+                "attitude.mass must be positive and finite (got {})",
+                self.mass
+            ));
+        }
+        // `AttitudeState::orientation()` normalizes whatever it is given, so a
+        // quaternion it cannot normalize becomes a NaN or non-unit attitude
+        // rather than an error. The condition is on the squared norm, because
+        // that is what the normalization divides by: zero (components small
+        // enough that the squares underflow) divides by zero, and infinity
+        // (components large enough that the squares overflow) drives every
+        // component to zero. The floor is the smallest normal rather than `> 0`
+        // because a subnormal squared norm has lost mantissa bits before the
+        // square root is taken: `[1e-160, 0, 0, 0]` normalizes to a norm of
+        // 1.0000056, not 1. `accepted_quaternions_are_exactly_the_normalizable_ones`
+        // pins the bound against that call.
+        let quat_norm_sq: f64 = self.initial_quaternion.iter().map(|q| q * q).sum();
+        if !quat_norm_sq.is_finite() || quat_norm_sq < f64::MIN_POSITIVE {
+            return Err(format!(
+                "attitude.initial_quaternion must have a usable norm (got {:?}): it is a \
+                 rotation (w, x, y, z), and the default (1, 0, 0, 0) is the identity",
+                self.initial_quaternion
+            ));
+        }
+
         // Ask the question the way the dynamics do: `SpacecraftDynamics::new`
         // takes `try_inverse().expect(…)`, so the test is whether that inverse
         // exists and is usable. A magnitude threshold on the determinant cannot
@@ -3012,7 +3049,7 @@ altitude = 800
         let err = attitude([0.0, 0.0, 0.0], [0.0; 3], 100.0)
             .validate()
             .expect_err("a zero inertia tensor must be rejected");
-        assert!(err.contains("positive definite"), "msg: {err}");
+        assert!(err.contains("inertia tensor"), "msg: {err}");
 
         // Singular through the off-diagonals only: [[1,1,0],[1,1,0],[0,0,1]]
         // has principal moments (0, 1, 2), which `inertia_diag` alone does not
@@ -3020,7 +3057,7 @@ altitude = 800
         let err = attitude([1.0, 1.0, 1.0], [1.0, 0.0, 0.0], 100.0)
             .validate()
             .expect_err("an off-diagonal singular tensor must be rejected");
-        assert!(err.contains("positive definite"), "msg: {err}");
+        assert!(err.contains("inertia tensor"), "msg: {err}");
     }
 
     /// An indefinite tensor is invertible — a determinant test passes it — but
@@ -3087,7 +3124,10 @@ altitude = 800
             let err = attitude([10.0, 10.0, 10.0], [0.0; 3], mass)
                 .validate()
                 .expect_err("non-positive mass must be rejected");
-            assert!(err.contains("attitude.mass"), "msg for {mass}: {err}");
+            assert!(
+                err.contains("mass") || err.contains("`mass`"),
+                "msg for {mass}: {err}"
+            );
         }
     }
 
@@ -3107,6 +3147,100 @@ altitude = 800
             .validate()
             .expect_err("a non-finite quaternion must be rejected");
         assert!(err.contains("initial_quaternion"), "msg: {err}");
+    }
+
+    /// Finite but absurd magnitudes must come back as an error, not as a
+    /// panic from the eigenvalue solver or a NaN slipping through.
+    #[test]
+    fn attitude_validate_rejects_unusable_magnitudes() {
+        let huge = attitude([f64::MAX, f64::MAX, f64::MAX], [f64::MAX, 0.0, 0.0], 100.0);
+        let err = huge
+            .validate()
+            .expect_err("an overflowing tensor must be rejected");
+        // The inverse check reaches it first: cofactors of `f64::MAX` overflow,
+        // so `I · I⁻¹` is nowhere near the identity. Either guard is a correct
+        // rejection; what matters is that it is an error and not a panic from
+        // the eigenvalue solver.
+        assert!(err.contains("inertia tensor"), "got: {err}");
+
+        // Finite principal moments whose determinant still overflows:
+        // `try_inverse` returns `Some` for a non-zero (infinite) determinant,
+        // so the inverse comes back unusable rather than absent.
+        let overflowing_det = attitude([1e308, 1e308, 1e308], [0.0; 3], 100.0);
+        let moments = overflowing_det.inertia_matrix().symmetric_eigenvalues();
+        assert!(
+            moments.iter().all(|m| m.is_finite()),
+            "fixture must pass the diagonalization guard: {moments:?}"
+        );
+        let err = overflowing_det
+            .validate()
+            .expect_err("an inverse full of non-finite entries must be rejected");
+        assert!(err.contains("cannot be inverted"), "msg: {err}");
+
+        // A quaternion whose squared norm overflows: normalization divides
+        // every component by infinity.
+        let mut huge_quat = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+        huge_quat.initial_quaternion = [1e200, 1e200, 0.0, 0.0];
+        let err = huge_quat
+            .validate()
+            .expect_err("a quaternion whose squared norm overflows must be rejected");
+        assert!(err.contains("initial_quaternion"), "msg: {err}");
+
+        // Components small enough that the squared norm underflows to zero:
+        // `orientation()` would divide by it.
+        let mut denormal = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+        denormal.initial_quaternion = [1e-200, 0.0, 0.0, 0.0];
+        let err = denormal
+            .validate()
+            .expect_err("a quaternion whose squared norm underflows must be rejected");
+        assert!(err.contains("initial_quaternion"), "msg: {err}");
+    }
+
+    /// The quaternion bound must be exactly what the dynamics break on: `run`
+    /// and `serve` copy `initial_quaternion` into `AttitudeState` verbatim, and
+    /// every consumer reads it through `orientation()`, which normalizes it. So
+    /// the config check is correct when it accepts a quaternion exactly when
+    /// that normalization yields a finite unit quaternion. Cross-checked
+    /// against the real call rather than against a threshold, because the
+    /// interesting boundary is not where the arithmetic fails outright:
+    /// `[1e-160, 0, 0, 0]` looks harmless and does produce a finite result,
+    /// but its squared norm is subnormal, so the result has a norm of
+    /// 1.0000056 — which is why the check floors the squared norm at the
+    /// smallest normal instead of at zero.
+    #[test]
+    fn accepted_quaternions_are_exactly_the_normalizable_ones() {
+        for q in [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.5, 0.5],
+            // Not unit norm, but normalization handles it — the config is
+            // allowed to state a rotation without pre-normalizing it.
+            [2.0, 0.0, 0.0, 0.0],
+            // Squared norm is subnormal, its square root is not.
+            [1e-160, 0.0, 0.0, 0.0],
+            // Squared norm underflows to zero.
+            [1e-200, 0.0, 0.0, 0.0],
+            // Squared norm overflows to infinity.
+            [1e200, 1e200, 0.0, 0.0],
+            [1e300, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ] {
+            let mut att = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+            att.initial_quaternion = q;
+            // The construction `cli::sim::controlled` and `serve::engine` do.
+            let state = orts::attitude::AttitudeState {
+                quaternion: nalgebra::Vector4::from_row_slice(&q),
+                angular_velocity: nalgebra::Vector3::zeros(),
+            };
+            let orientation = state.orientation();
+            let usable = orientation.coords.iter().all(|c| c.is_finite())
+                && (orientation.coords.norm() - 1.0).abs() < 1e-12;
+            assert_eq!(
+                att.validate().is_ok(),
+                usable,
+                "validate() and orientation() disagree on {q:?}: normalized to {:?}",
+                orientation.coords
+            );
+        }
     }
 
     #[test]
@@ -3157,7 +3291,8 @@ mass = 100.0
         std::fs::write(&path, toml).unwrap();
         let err = SimConfig::load(&path).expect_err("a singular inertia tensor must be rejected");
         assert!(err.contains("satellites[0]"), "msg: {err}");
-        assert!(err.contains("positive definite"), "msg: {err}");
+        assert!(err.contains("attitude:"), "msg: {err}");
+        assert!(err.contains("inertia tensor"), "msg: {err}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -3196,5 +3331,14 @@ mass = 100.0
         let nested_typo = add.replace("\"mass\": 500.0", "\"mass\": 500.0, \"masss\": 1.0");
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&nested_typo)
             .expect_err("a misspelled key inside `attitude` must be rejected");
+        // The gap that leaves: at the flattened level there is no unknown-field
+        // check to apply, so `ballistic_coef` (one `f` short of
+        // `ballistic_coeff`) is dropped and the satellite is added without
+        // drag. Closing it means hand-writing `Deserialize` for the message,
+        // i.e. a protocol change. Asserted rather than left unsaid, so the day
+        // it closes this test reports it instead of passing silently.
+        let flat_typo = add.replace("\"name\": \"Dyn\",", "\"ballistic_coef\": 100.0,");
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&flat_typo)
+            .expect("known gap: `flatten` drops unknown keys at the message level");
     }
 }
