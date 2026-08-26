@@ -275,6 +275,10 @@ section is subdivided by package.
   replacing the hand-written wire types and adding the `satellite_added` variant. ([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- Multi-satellite charts follow a changed schema: the hook told the chart Worker
+  its schema only at startup, so after a central-body change the rows were built
+  under the new schema while the Worker read them under the old one, leaving the
+  previous body radius and `mu` in the derived SQL. ([#341](https://github.com/sksat/orts/pull/341))
 - Default WebSocket URL on static deploys falls back to `ws://localhost:9001/ws`
   instead of deriving an unreachable host from `window.location`. ([#143](https://github.com/sksat/orts/pull/143))
 - High-resolution body textures restored in static deployment (server-only fetch,

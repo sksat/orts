@@ -257,6 +257,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   wire 型を置き換え、`satellite_added` variant を追加。([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- multi-satellite チャートが schema 変更に追従するようになった。hook は起動時にしか
+  chart Worker へ schema を伝えていなかったので、中心天体を変えた後は新しい schema で
+  行を作る一方 Worker は古い schema で読み、derived SQL に前の天体半径と `mu` が
+  残っていた。([#341](https://github.com/sksat/orts/pull/341))
 - static deploy での既定 WebSocket URL を、`window.location` から到達不能な
   host を導出するのでなく `ws://localhost:9001/ws` にフォールバック。([#143](https://github.com/sksat/orts/pull/143))
 - static deployment で高解像度天体テクスチャを復元 (サーバからのみ取得、
