@@ -8,7 +8,8 @@
 use futures_util::StreamExt;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 /// Ports derived from the pid, offset per test to avoid collisions. The
@@ -18,100 +19,132 @@ fn test_port(offset: u16) -> u16 {
     24000 + (std::process::id() % 500) as u16 * 4 + offset
 }
 
-/// Spawn `orts serve` with stderr captured into a shared buffer, plus a
-/// channel that fires on the last line of the startup banner and the handle
-/// of the reader thread (join it before reading the buffer to be sure stderr
-/// was drained to EOF).
-fn spawn(
-    args: &[&str],
-) -> (
-    Child,
-    Arc<Mutex<Vec<String>>>,
-    mpsc::Receiver<()>,
-    std::thread::JoinHandle<()>,
-) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_orts"))
-        .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
-        .arg("serve")
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn orts serve");
-
-    let stderr = child.stderr.take().expect("failed to capture stderr");
-    let collected = Arc::new(Mutex::new(Vec::<String>::new()));
-    let (tx, rx) = mpsc::channel::<()>();
-    let sink = Arc::clone(&collected);
-    let reader = std::thread::spawn(move || {
-        let mut signalled = false;
-        for line in BufReader::new(stderr).lines() {
-            let Ok(line) = line else { break };
-            eprintln!("[server stderr] {line}");
-            sink.lock().unwrap().push(line.clone());
-            // Last line of the startup banner, printed whether or not a
-            // simulation is started.
-            if !signalled && line.contains("WebSocket endpoint") {
-                let _ = tx.send(());
-                signalled = true;
-            }
-        }
-        if !signalled {
-            let _ = tx.send(());
-        }
-    });
-    (child, collected, rx, reader)
+/// A spawned `orts serve` with its stderr streamed into a shared buffer.
+struct Server {
+    child: Child,
+    lines: Arc<Mutex<Vec<String>>>,
+    reader: JoinHandle<()>,
 }
 
-/// Spawn, wait for the startup banner, and return the child plus everything
-/// stderr printed by then.
-fn spawn_and_wait_for_startup(args: &[&str]) -> (Child, Vec<String>) {
-    let (child, collected, rx, _reader) = spawn(args);
-    rx.recv_timeout(Duration::from_secs(15))
-        .expect("server produced no startup banner within 15 seconds");
-    // The manager task prints its idle notice just after the banner; give it
-    // a moment so its absence means "started a simulation", not "too early".
-    std::thread::sleep(Duration::from_millis(1500));
-    let lines = collected.lock().unwrap().clone();
-    (child, lines)
-}
+impl Server {
+    fn spawn(args: &[&str]) -> Self {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_orts"))
+            .env("ORTS_DISABLE_TEXTURE_DOWNLOAD", "1")
+            .arg("serve")
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("failed to spawn orts serve");
 
-/// Run `orts serve` expecting it to refuse the args and exit, and return
-/// (exit code, stderr).
-///
-/// Waits with a deadline instead of `Command::output()`: a `serve` that does
-/// *not* refuse keeps serving forever, and that regression must fail the test
-/// rather than hang the suite.
-fn run_expecting_exit(args: &[&str]) -> (Option<i32>, String) {
-    let (mut child, collected, _rx, reader) = spawn(args);
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let status = loop {
-        match child.try_wait().expect("failed to poll orts serve") {
-            Some(status) => break Some(status),
-            None if Instant::now() >= deadline => {
-                child.kill().ok();
-                child.wait().ok();
-                break None;
+        let stderr = child.stderr.take().expect("failed to capture stderr");
+        let lines = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = Arc::clone(&lines);
+        let reader = std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines() {
+                let Ok(line) = line else { break };
+                eprintln!("[server stderr] {line}");
+                sink.lock().unwrap().push(line);
             }
-            None => std::thread::sleep(Duration::from_millis(50)),
+        });
+        Server {
+            child,
+            lines,
+            reader,
         }
-    };
-    // The child has exited (or been killed), so its end of the pipe is
-    // closed: the reader thread reaches EOF and returns. Joining it before
-    // reading the buffer is what makes the message assertions deterministic.
-    reader.join().expect("stderr reader thread panicked");
-    let stderr = collected.lock().unwrap().join("\n");
-    let status = status.unwrap_or_else(|| {
-        panic!("orts serve did not exit within 20s; it accepted the args:\n{stderr}")
-    });
-    (status.code(), stderr)
+    }
+
+    /// Wait until a collected stderr line contains `needle`.
+    ///
+    /// Every wait in this file is on a specific line rather than on a fixed
+    /// sleep, so no assertion depends on how fast the reader thread happens
+    /// to be scheduled.
+    fn wait_for(&self, needle: &str, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self
+                .lines
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.contains(needle))
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    /// Wait for the last line of the startup banner, which is printed whether
+    /// or not a simulation is started.
+    fn wait_for_startup(&self) {
+        assert!(
+            self.wait_for("WebSocket endpoint", Duration::from_secs(15)),
+            "server produced no startup banner within 15 seconds:\n{}",
+            self.stderr()
+        );
+    }
+
+    fn stderr(&self) -> String {
+        self.lines.lock().unwrap().join("\n")
+    }
+
+    /// Stop the server and drain its stderr to EOF.
+    fn shutdown(self) -> String {
+        let Server {
+            mut child,
+            lines,
+            reader,
+        } = self;
+        child.kill().ok();
+        child.wait().ok();
+        reader.join().expect("stderr reader thread panicked");
+        lines.lock().unwrap().join("\n")
+    }
+
+    /// Wait for the process to exit on its own and drain stderr to EOF.
+    ///
+    /// Waits with a deadline instead of `Command::output()`: a `serve` that
+    /// does *not* refuse its args keeps serving forever, and that regression
+    /// must fail the test rather than hang the suite.
+    fn wait_for_exit(self, timeout: Duration) -> (Option<i32>, String) {
+        let Server {
+            mut child,
+            lines,
+            reader,
+        } = self;
+        let deadline = Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait().expect("failed to poll orts serve") {
+                Some(status) => break Some(status),
+                None if Instant::now() >= deadline => break None,
+                None => std::thread::sleep(Duration::from_millis(25)),
+            }
+        };
+        if status.is_none() {
+            child.kill().ok();
+            child.wait().ok();
+        }
+        // The child is gone, so its end of the pipe is closed: the reader
+        // thread reaches EOF and returns. Joining before reading the buffer is
+        // what makes the message assertions deterministic.
+        reader.join().expect("stderr reader thread panicked");
+        let stderr = lines.lock().unwrap().join("\n");
+        let status = status.unwrap_or_else(|| {
+            panic!("orts serve did not exit within {timeout:?}; it accepted the args:\n{stderr}")
+        });
+        (status.code(), stderr)
+    }
 }
 
 /// Sim args with nothing to apply them to are a usage error (exit 2), and the
 /// message names every arg that could not be honored.
 #[test]
 fn serve_rejects_sim_args_with_no_simulation_to_apply_them_to() {
-    let (code, stderr) = run_expecting_exit(&[
+    let server = Server::spawn(&[
         "--dt",
         "1",
         "--output-interval",
@@ -119,6 +152,7 @@ fn serve_rejects_sim_args_with_no_simulation_to_apply_them_to() {
         "--port",
         &test_port(0).to_string(),
     ]);
+    let (code, stderr) = server.wait_for_exit(Duration::from_secs(20));
 
     assert_eq!(code, Some(2), "expected a usage error\nstderr: {stderr}");
     assert!(
@@ -135,8 +169,8 @@ fn serve_rejects_sim_args_with_no_simulation_to_apply_them_to() {
 /// is refused too rather than reaching the sim.
 #[test]
 fn serve_rejects_a_body_it_cannot_apply() {
-    let (code, stderr) =
-        run_expecting_exit(&["--body", "mars", "--port", &test_port(1).to_string()]);
+    let server = Server::spawn(&["--body", "mars", "--port", &test_port(1).to_string()]);
+    let (code, stderr) = server.wait_for_exit(Duration::from_secs(20));
 
     assert_eq!(code, Some(2), "expected a usage error\nstderr: {stderr}");
     assert!(
@@ -149,19 +183,16 @@ fn serve_rejects_a_body_it_cannot_apply() {
 /// documented no-argument invocation into an error.
 #[test]
 fn bare_serve_still_comes_up_idle() {
-    let (mut child, lines) = spawn_and_wait_for_startup(&["--port", &test_port(2).to_string()]);
-    child.kill().ok();
-    child.wait().ok();
+    let server = Server::spawn(&["--port", &test_port(2).to_string()]);
+    server.wait_for_startup();
+    let went_idle = server.wait_for(
+        "idle, waiting for start_simulation",
+        Duration::from_secs(15),
+    );
+    let stderr = server.shutdown();
 
-    let joined = lines.join("\n");
-    assert!(
-        joined.contains("Server listening on"),
-        "server did not start:\n{joined}"
-    );
-    assert!(
-        joined.contains("idle, waiting for start_simulation"),
-        "server should be idle:\n{joined}"
-    );
+    assert!(stderr.contains("Server listening on"), "{stderr}");
+    assert!(went_idle, "server should have gone idle:\n{stderr}");
 }
 
 /// With an orbit the args reach the simulation, so the server must accept
@@ -174,7 +205,7 @@ fn bare_serve_still_comes_up_idle() {
 #[tokio::test]
 async fn serve_with_an_orbit_honors_the_sim_args() {
     let port = test_port(3);
-    let (mut child, lines) = spawn_and_wait_for_startup(&[
+    let server = Server::spawn(&[
         "--sat",
         "altitude=400,id=argtest",
         "--dt",
@@ -184,15 +215,7 @@ async fn serve_with_an_orbit_honors_the_sim_args() {
         "--port",
         &port.to_string(),
     ]);
-    let joined = lines.join("\n");
-    assert!(
-        joined.contains("Server listening on"),
-        "server did not start:\n{joined}"
-    );
-    assert!(
-        !joined.contains("idle, waiting for start_simulation"),
-        "an explicit orbit must auto-start the simulation:\n{joined}"
-    );
+    server.wait_for_startup();
 
     let info = tokio::time::timeout(Duration::from_secs(20), async {
         let url = format!("ws://localhost:{port}/ws");
@@ -209,10 +232,9 @@ async fn serve_with_an_orbit_honors_the_sim_args() {
             .expect("info is not JSON")
     })
     .await;
-    child.kill().ok();
-    child.wait().ok();
+    let stderr = server.shutdown();
 
-    let info = info.expect("timed out waiting for the info message");
+    let info = info.unwrap_or_else(|_| panic!("timed out waiting for the info message:\n{stderr}"));
     assert_eq!(info["type"], "info");
     assert_eq!(info["dt"], 1.0, "--dt was not applied: {info}");
     assert_eq!(
@@ -222,5 +244,9 @@ async fn serve_with_an_orbit_honors_the_sim_args() {
     assert_eq!(
         info["satellites"][0]["id"], "/world/sat/argtest",
         "--sat was not applied: {info}"
+    );
+    assert!(
+        !stderr.contains("idle, waiting for start_simulation"),
+        "an explicit orbit must auto-start the simulation:\n{stderr}"
     );
 }
