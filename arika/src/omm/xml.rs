@@ -121,18 +121,24 @@ pub fn parse(xml: &str) -> Result<ParsedElementSet, XmlParseError> {
 fn reject_unsupported_markup(xml: &str) -> Result<(), XmlParseError> {
     let mut from = 0;
     while let Some(at) = xml[from..].find("<!") {
-        let decl = &xml[from + at + "<!".len()..];
-        if !decl.starts_with("--") {
-            let what = if decl.starts_with("[CDATA[") {
-                "CDATA section"
-            } else if decl.starts_with("DOCTYPE") {
-                "DOCTYPE declaration"
-            } else {
-                "markup declaration"
-            };
-            return Err(XmlParseError::UnsupportedMarkup(what));
+        let decl_at = from + at + "<!".len();
+        let decl = &xml[decl_at..];
+        // Step over a comment's contents exactly as `element_text` does, so a
+        // comment that merely quotes a declaration is not mistaken for one.
+        if let Some(after) = decl.strip_prefix("--") {
+            from = after
+                .find("-->")
+                .map_or(xml.len(), |end| decl_at + "--".len() + end + "-->".len());
+            continue;
         }
-        from += at + "<!".len();
+        let what = if decl.starts_with("[CDATA[") {
+            "CDATA section"
+        } else if decl.starts_with("DOCTYPE") {
+            "DOCTYPE declaration"
+        } else {
+            "markup declaration"
+        };
+        return Err(XmlParseError::UnsupportedMarkup(what));
     }
     Ok(())
 }
@@ -334,8 +340,17 @@ mod tests {
             parse(&cdata),
             Err(XmlParseError::UnsupportedMarkup("CDATA section"))
         );
-        // A comment is the one `<!` form that is safe to step over.
+        // A comment is the one `<!` form that is safe to step over — including
+        // one whose text quotes a declaration, which is not one.
         assert!(parse(&ISS_OMM_XML.replace("<header>", "<!-- note --><header>")).is_ok());
+        assert!(
+            parse(&ISS_OMM_XML.replace(
+                "<header>",
+                "<!-- an example: <!DOCTYPE omm> and <![CDATA[x]]> --><header>",
+            ))
+            .is_ok(),
+            "a declaration quoted inside a comment is text, not a declaration"
+        );
     }
 
     #[test]
