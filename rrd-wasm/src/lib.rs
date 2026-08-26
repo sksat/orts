@@ -55,15 +55,24 @@ pub struct ParsedRrd {
 /// inside its column, which coincides with the time index only as long as every
 /// column happens to carry a value at every step.
 ///
+/// Every timeline the recording carries takes part in the key: `orts` writes
+/// both `sim_time` and `step`, and two steps can share a `sim_time`, so keying
+/// on time alone would join values from different steps.
+///
 /// The trailing counter distinguishes several values logged at the *same* time
 /// index, so repeats are still separate rows instead of overwriting each other,
 /// and the n-th repeat of one field joins the n-th repeat of the others.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum RowKey {
-    /// `sim_time` timeline value \[ns\].
-    SimTime(i64, u32),
-    /// `step` sequence number, for recordings without a `sim_time` timeline.
-    Step(i64, u32),
+    /// A recording time index: `sim_time` \[ns\] and the `step` sequence number,
+    /// each present only when the recording has that timeline. Ordered by time
+    /// first, so rows without a `sim_time` all report `t = 0` but stay in step
+    /// order.
+    Timed {
+        time_ns: Option<i64>,
+        step: Option<i64>,
+        repeat: u32,
+    },
     /// Neither timeline is present: fall back to the column-local index. Rows
     /// keyed this way carry no time information and all report `t = 0`.
     Index(usize),
@@ -73,8 +82,10 @@ impl RowKey {
     /// Simulation time of this row \[s\], or 0 when the recording carries none.
     fn t_secs(self) -> f64 {
         match self {
-            RowKey::SimTime(ns, _) => ns as f64 / 1e9,
-            RowKey::Step(..) | RowKey::Index(_) => 0.0,
+            RowKey::Timed {
+                time_ns: Some(ns), ..
+            } => ns as f64 / 1e9,
+            RowKey::Timed { time_ns: None, .. } | RowKey::Index(_) => 0.0,
         }
     }
 }
@@ -88,12 +99,39 @@ fn repeats(column: &Column, key: impl Fn(u32) -> RowKey) -> u32 {
     column.range(key(0)..=key(u32::MAX)).count() as u32
 }
 
-/// Time index of every row in one chunk.
-enum ChunkKeys {
-    SimTime(Vec<i64>),
-    Step(Vec<i64>),
-    /// No timeline: keys are assigned per column from its current length.
-    Index,
+/// Time index of every row in one chunk, per timeline the chunk carries. With
+/// neither timeline, keys are assigned per column from its current length.
+struct ChunkKeys {
+    sim_time: Option<Vec<i64>>,
+    step: Option<Vec<i64>>,
+}
+
+/// Where one chunk row sits on the recording's timelines.
+enum RowIndex {
+    /// The chunk's timelines place the row at this time index.
+    Timed {
+        time_ns: Option<i64>,
+        step: Option<i64>,
+    },
+    /// The chunk carries no timeline; keys come from the column-local position.
+    Untimed,
+    /// A timeline the chunk does carry has no value for this row — skip it.
+    Missing,
+}
+
+impl ChunkKeys {
+    fn row(&self, row_idx: usize) -> RowIndex {
+        // A timeline the chunk carries must have a value for this row.
+        let index = |times: &Option<Vec<i64>>| match times {
+            Some(times) => times.get(row_idx).copied().map(Some).ok_or(()),
+            None => Ok(None),
+        };
+        match (index(&self.sim_time), index(&self.step)) {
+            (Ok(None), Ok(None)) => RowIndex::Untimed,
+            (Ok(time_ns), Ok(step)) => RowIndex::Timed { time_ns, step },
+            _ => RowIndex::Missing,
+        }
+    }
 }
 
 /// Decode an RRD stream into orbital data.
@@ -161,12 +199,9 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
                 .find(|(name, _)| name.as_str() == wanted)
                 .map(|(_, col)| col.times_raw().to_vec())
         };
-        let keys = if let Some(times) = timeline("sim_time") {
-            ChunkKeys::SimTime(times)
-        } else if let Some(steps) = timeline("step") {
-            ChunkKeys::Step(steps)
-        } else {
-            ChunkKeys::Index
+        let keys = ChunkKeys {
+            sim_time: timeline("sim_time"),
+            step: timeline("step"),
         };
 
         for comp_id in chunk.components_identifiers() {
@@ -176,30 +211,28 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
                 for row_idx in 0..n {
                     let batch =
                         chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx);
-                    // A scalar column holds one value per row; if a batch ever
-                    // carries several, the first is the value of this row.
                     let Some(Ok(scalar_vec)) = batch else {
                         continue;
                     };
-                    let Some(value) = scalar_vec.first() else {
-                        continue;
-                    };
-                    let key = match &keys {
-                        ChunkKeys::SimTime(times) => match times.get(row_idx) {
-                            Some(&t) => {
-                                RowKey::SimTime(t, repeats(column, |n| RowKey::SimTime(t, n)))
-                            }
-                            None => continue,
-                        },
-                        ChunkKeys::Step(steps) => match steps.get(row_idx) {
-                            Some(&step) => {
-                                RowKey::Step(step, repeats(column, |n| RowKey::Step(step, n)))
-                            }
-                            None => continue,
-                        },
-                        ChunkKeys::Index => RowKey::Index(column.len()),
-                    };
-                    column.insert(key, value.0.0);
+                    // A batch usually holds one value per row, but `Scalars`
+                    // takes a slice: several values at one time index become
+                    // consecutive repeats rather than being dropped.
+                    for value in scalar_vec.iter() {
+                        let key = match keys.row(row_idx) {
+                            RowIndex::Timed { time_ns, step } => RowKey::Timed {
+                                time_ns,
+                                step,
+                                repeat: repeats(column, |repeat| RowKey::Timed {
+                                    time_ns,
+                                    step,
+                                    repeat,
+                                }),
+                            },
+                            RowIndex::Untimed => RowKey::Index(column.len()),
+                            RowIndex::Missing => break,
+                        };
+                        column.insert(key, value.0.0);
+                    }
                 }
             }
         }
@@ -365,12 +398,17 @@ mod tests {
 
     const ENTITY: &str = "/world/sat/ragged";
 
-    /// Write an .rrd whose scalar columns carry exactly the given samples.
-    ///
-    /// `samples` is `(sim_time [s], [(field, value)])` — a field absent from a
-    /// sample is simply not logged at that time, which is how a ragged
+    /// One logged sample: `(sim_time [s], [(field, value)])`. A field absent
+    /// from a sample is simply not logged at that time, which is how a ragged
     /// recording arises in practice (a component logged conditionally).
-    fn write_rrd(name: &str, samples: &[(f64, Vec<(&str, f64)>)]) -> std::path::PathBuf {
+    type Sample<'a> = (f64, Vec<(&'a str, f64)>);
+    /// A sample tagged with its `step` sequence number.
+    type SteppedSample<'a> = (f64, i64, Vec<(&'a str, f64)>);
+    /// A sample whose fields each carry several values in one logged row.
+    type BatchSample<'a> = (f64, Vec<(&'a str, Vec<f64>)>);
+
+    /// Write an .rrd whose scalar columns carry exactly the given samples.
+    fn write_rrd(name: &str, samples: &[Sample]) -> std::path::PathBuf {
         let path =
             std::env::temp_dir().join(format!("rrd_wasm_{}_{}.rrd", name, std::process::id()));
         let rec = re_sdk::RecordingStreamBuilder::new("rrd-wasm-test")
@@ -384,6 +422,53 @@ mod tests {
                     &re_sdk_types::archetypes::Scalars::new([*value]),
                 )
                 .expect("log scalar");
+            }
+        }
+        rec.flush_blocking().expect("flush");
+        drop(rec);
+        path
+    }
+
+    /// Write an .rrd carrying both timelines, so one `sim_time` can span
+    /// several `step`s the way it can in an `orts` recording.
+    fn write_rrd_with_steps(name: &str, samples: &[SteppedSample]) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("rrd_wasm_{}_{}.rrd", name, std::process::id()));
+        let rec = re_sdk::RecordingStreamBuilder::new("rrd-wasm-test")
+            .save(&path)
+            .expect("recording stream");
+        for (t, step, fields) in samples {
+            rec.set_duration_secs("sim_time", *t);
+            rec.set_time_sequence("step", *step);
+            for (field, value) in fields {
+                rec.log(
+                    format!("{ENTITY}/{field}"),
+                    &re_sdk_types::archetypes::Scalars::new([*value]),
+                )
+                .expect("log scalar");
+            }
+        }
+        rec.flush_blocking().expect("flush");
+        drop(rec);
+        path
+    }
+
+    /// Write an .rrd whose `Scalars` batches carry several values per logged
+    /// row — one row of the recording, many values of the column.
+    fn write_rrd_batched(name: &str, samples: &[BatchSample]) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("rrd_wasm_{}_{}.rrd", name, std::process::id()));
+        let rec = re_sdk::RecordingStreamBuilder::new("rrd-wasm-test")
+            .save(&path)
+            .expect("recording stream");
+        for (t, fields) in samples {
+            rec.set_duration_secs("sim_time", *t);
+            for (field, values) in fields {
+                rec.log(
+                    format!("{ENTITY}/{field}"),
+                    &re_sdk_types::archetypes::Scalars::new(values.clone()),
+                )
+                .expect("log scalars");
             }
         }
         rec.flush_blocking().expect("flush");
@@ -406,6 +491,16 @@ mod tests {
             ("vy", x + 4.0),
             ("vz", x + 5.0),
         ]
+    }
+
+    /// The states of `xs`, each component collected into one batch per field.
+    fn state_batch(xs: &[f64]) -> Vec<(&'static str, Vec<f64>)> {
+        let fields = ["x", "y", "z", "vx", "vy", "vz"];
+        fields
+            .iter()
+            .enumerate()
+            .map(|(k, field)| (*field, xs.iter().map(|x| x + k as f64).collect()))
+            .collect()
     }
 
     /// Dense, aligned columns: every logged value must come back on the row of
@@ -467,6 +562,53 @@ mod tests {
                 (0.0, 200.0, 201.0),
                 (10.0, 300.0, 301.0)
             ]
+        );
+    }
+
+    /// `sim_time` alone is not a row identity: an `orts` recording carries a
+    /// `step` timeline as well, and several steps can share one `sim_time`.
+    /// Keying on time alone pairs the n-th value of each column, so a component
+    /// missing at one of those steps drags the next step's value onto the row.
+    #[test]
+    fn steps_sharing_a_sim_time_stay_separate_rows() {
+        let mut middle = state(200.0);
+        middle.retain(|(field, _)| *field != "y");
+        let path = write_rrd_with_steps(
+            "same_time_steps",
+            &[
+                (0.0, 10, state(100.0)),
+                (0.0, 11, middle),
+                (0.0, 12, state(300.0)),
+            ],
+        );
+        let data = decode_path(&path);
+
+        // step 11 has no y, so it is not a position row. Steps 10 and 12 keep
+        // their own values instead of borrowing step 12's y for step 11.
+        assert_eq!(data.rows.len(), 2, "got {:?}", data.rows);
+        assert_eq!(
+            data.rows
+                .iter()
+                .map(|r| (r.x, r.y, r.vz))
+                .collect::<Vec<_>>(),
+            vec![(100.0, 101.0, 105.0), (300.0, 301.0, 305.0)]
+        );
+    }
+
+    /// A `Scalars` batch can hold several values at one time index. All of them
+    /// are values of the recording, not just the first.
+    #[test]
+    fn every_value_of_a_scalar_batch_is_decoded() {
+        let path = write_rrd_batched("batched", &[(0.0, state_batch(&[100.0, 200.0]))]);
+        let data = decode_path(&path);
+
+        assert_eq!(data.rows.len(), 2, "got {:?}", data.rows);
+        assert_eq!(
+            data.rows
+                .iter()
+                .map(|r| (r.x, r.y, r.vz))
+                .collect::<Vec<_>>(),
+            vec![(100.0, 101.0, 105.0), (200.0, 201.0, 205.0)]
         );
     }
 
