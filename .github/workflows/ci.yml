@@ -1682,10 +1682,9 @@ jobs:
               cp "$f" "${STAGE_DIR}/examples/plugins/${short}.wasm"
             done
 
-            # Every target gets a tarball, including Windows: that is the
-            # shape the default binstall metadata asks for, so an install
-            # resolves even when the zip override is not in play. Windows 10
-            # and later ship bsdtar, so it is usable by hand there too.
+            # Every target gets a tarball, including Windows. That is what
+            # keeps the cargo-binstall metadata free of per-target exceptions:
+            # one `pkg-fmt = "tgz"` covers the whole matrix.
             ARCHIVE="${STAGE_DIR}.tar.gz"
             tar --sort=name \
                 --owner=0 --group=0 --numeric-owner \
@@ -1695,11 +1694,12 @@ jobs:
             cat "${ARCHIVE}.sha256"
             ALL_FILES="${ALL_FILES}${ARCHIVE}\n${ARCHIVE}.sha256\n"
 
-            # Windows additionally gets a zip, the format its users expect from
-            # a manual download, and the one binstall prefers via the override.
-            # Wraps STAGE_DIR like the tarball, so one `bin-dir` template covers
-            # both. -X drops extra file attributes so the archive is
-            # reproducible.
+            # Windows additionally gets a zip: Explorer cannot expand a
+            # .tar.gz from its context menu, and Windows' own bsdtar means the
+            # tarball is only convenient from a shell. binstall is not pointed
+            # at it. Wraps STAGE_DIR like the tarball, so one `bin-dir`
+            # template resolves in both. -X drops extra file attributes so the
+            # archive is reproducible.
             if [ "$EXE" = ".exe" ]; then
               ZIP="${STAGE_DIR}.zip"
               zip -qrX "${ZIP}" "${STAGE_DIR}"
