@@ -107,7 +107,18 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     self.postMessage({ type: "result", id, result: null });
     return;
   }
-  const result = func(...args);
+  let result: unknown;
+  try {
+    result = func(...args);
+  } catch (err) {
+    // The grid entry points reject out-of-range dimensions, which wasm-bindgen
+    // surfaces as a thrown string. Report it the same way an unknown function
+    // is reported rather than letting it escape as an uncaught worker error,
+    // which would leave the caller's promise unsettled.
+    console.error(`${fn} failed:`, err);
+    self.postMessage({ type: "result", id, result: null });
+    return;
+  }
   // Transfer typed arrays for zero-copy
   const transfer: Transferable[] = [];
   if (result instanceof Float32Array || result instanceof Float64Array) {

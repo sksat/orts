@@ -76,6 +76,37 @@ fn make_mag_input(
     }
 }
 
+/// Largest number of grid points any batch entry point will compute.
+///
+/// A 4096 x 4096 map or a 128 x 180 x 360 volume fits comfortably. Past this
+/// the result buffer alone is tens of megabytes and the evaluation is minutes
+/// of work, so the call is rejected instead of hanging the caller's tab.
+const MAX_GRID_POINTS: usize = 1 << 24;
+
+/// Validate grid dimensions and return the number of points they describe.
+///
+/// Widens each dimension to `usize` before multiplying and uses `checked_mul`:
+/// multiplying in `u32` first overflows for large grids, which traps in a debug
+/// wasm build and, in release, wraps to a small `Vec::with_capacity` while the
+/// loops still run the full untruncated count. Zero dimensions are rejected
+/// too — they describe no points, but the volume entry points would still
+/// return their appended `[min, max]` pair as if they had.
+fn grid_points(dims: &[(&str, u32)]) -> Result<usize, String> {
+    let mut total: usize = 1;
+    for &(name, n) in dims {
+        if n == 0 {
+            return Err(format!("{name} must be at least 1"));
+        }
+        total = total
+            .checked_mul(n as usize)
+            .filter(|t| *t <= MAX_GRID_POINTS)
+            .ok_or_else(|| {
+                format!("grid exceeds the {MAX_GRID_POINTS} point limit ({name} = {n})")
+            })?;
+    }
+    Ok(total)
+}
+
 // Atmospheric density — single point
 
 /// Exponential atmosphere density [kg/m³] at the given altitude.
@@ -199,6 +230,8 @@ pub fn atmosphere_altitude_profile(
 /// `model`: `"exponential"`, `"harris-priester"`, or `"nrlmsise00"`.
 /// Returns flat row-major `[rho_0, rho_1, ...]` (length = n_lat × n_lon).
 /// Latitude ranges from -90 to +90, longitude from -180 to +180.
+///
+/// Throws if either dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
 #[wasm_bindgen]
 pub fn atmosphere_latlon_map(
     model: &str,
@@ -208,7 +241,7 @@ pub fn atmosphere_latlon_map(
     n_lon: u32,
     f107: f64,
     ap: f64,
-) -> Vec<f64> {
+) -> Result<Vec<f64>, String> {
     let epoch = Epoch::from_jd(epoch_jd);
     let hp = HarrisPriester::new();
     let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
@@ -216,7 +249,7 @@ pub fn atmosphere_latlon_map(
     let (doy, ut_sec) = tobari::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
     let sw = ConstantWeather::new(f107, ap).get(&epoch);
 
-    let n = (n_lat * n_lon) as usize;
+    let n = grid_points(&[("n_lat", n_lat), ("n_lon", n_lon)])?;
     let mut out = Vec::with_capacity(n);
 
     for i_lat in 0..n_lat {
@@ -257,7 +290,7 @@ pub fn atmosphere_latlon_map(
             out.push(rho);
         }
     }
-    out
+    Ok(out)
 }
 
 // Magnetic field — single point
@@ -294,6 +327,8 @@ pub fn dipole_field_at(lat_deg: f64, lon_deg: f64, altitude_km: f64, epoch_jd: f
 /// `component`: `"total"`, `"inclination"`, `"declination"`, `"north"`, `"east"`, `"down"`.
 /// Returns flat row-major values (length = n_lat × n_lon).
 /// Values in nT for field components, degrees for angles.
+///
+/// Throws if either dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
 #[wasm_bindgen]
 pub fn magnetic_field_latlon_map(
     model: &str,
@@ -302,12 +337,12 @@ pub fn magnetic_field_latlon_map(
     epoch_jd: f64,
     n_lat: u32,
     n_lon: u32,
-) -> Vec<f64> {
+) -> Result<Vec<f64>, String> {
     let epoch = Epoch::from_jd(epoch_jd);
     let igrf = Igrf::earth();
     let dipole = TiltedDipole::earth();
 
-    let n = (n_lat * n_lon) as usize;
+    let n = grid_points(&[("n_lat", n_lat), ("n_lon", n_lon)])?;
     let mut out = Vec::with_capacity(n);
 
     for i_lat in 0..n_lat {
@@ -336,7 +371,7 @@ pub fn magnetic_field_latlon_map(
             out.push(val);
         }
     }
-    out
+    Ok(out)
 }
 
 /// Compute 3D magnetic field volume as Float32.
@@ -344,6 +379,8 @@ pub fn magnetic_field_latlon_map(
 /// Layout: alt-major `index = iAlt * nLat * nLon + iLat * nLon + iLon`
 /// Returns values (length = n_alt × n_lat × n_lon + 2, with [min, max] appended).
 /// Values in nT for field components, degrees for angles.
+///
+/// Throws if any dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn magnetic_field_volume(
@@ -355,12 +392,12 @@ pub fn magnetic_field_volume(
     epoch_jd: f64,
     n_lat: u32,
     n_lon: u32,
-) -> Vec<f32> {
+) -> Result<Vec<f32>, String> {
     let epoch = Epoch::from_jd(epoch_jd);
     let igrf = Igrf::earth();
     let dipole = TiltedDipole::earth();
 
-    let total = (n_alt * n_lat * n_lon) as usize;
+    let total = grid_points(&[("n_alt", n_alt), ("n_lat", n_lat), ("n_lon", n_lon)])?;
     let mut out = Vec::with_capacity(total + 2);
     let mut min_val = f32::INFINITY;
     let mut max_val = f32::NEG_INFINITY;
@@ -412,7 +449,7 @@ pub fn magnetic_field_volume(
 
     out.push(min_val);
     out.push(max_val);
-    out
+    Ok(out)
 }
 
 // Volume data (3D: lat × lon × alt)
@@ -422,6 +459,8 @@ pub fn magnetic_field_volume(
 /// Layout: alt-major `index = iAlt * nLat * nLon + iLat * nLon + iLon`
 /// Returns `[rho_0, rho_1, ...]` (length = n_alt × n_lat × n_lon).
 /// Also returns `[min, max]` appended at the end (total length = n_alt*n_lat*n_lon + 2).
+///
+/// Throws if any dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn atmosphere_volume(
@@ -434,7 +473,7 @@ pub fn atmosphere_volume(
     n_lon: u32,
     f107: f64,
     ap: f64,
-) -> Vec<f32> {
+) -> Result<Vec<f32>, String> {
     let epoch = Epoch::from_jd(epoch_jd);
     let hp = HarrisPriester::new();
     let msis = Nrlmsise00::new(Box::new(ConstantWeather::new(f107, ap)));
@@ -442,7 +481,7 @@ pub fn atmosphere_volume(
     let (doy, ut_sec) = tobari::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
     let sw = ConstantWeather::new(f107, ap).get(&epoch);
 
-    let total = (n_alt * n_lat * n_lon) as usize;
+    let total = grid_points(&[("n_alt", n_alt), ("n_lat", n_lat), ("n_lon", n_lon)])?;
     let mut out = Vec::with_capacity(total + 2);
     let mut min_val = f32::INFINITY;
     let mut max_val = f32::NEG_INFINITY;
@@ -502,7 +541,7 @@ pub fn atmosphere_volume(
     }
     out.push(min_val);
     out.push(max_val);
-    out
+    Ok(out)
 }
 
 // Magnetic field lines
@@ -700,6 +739,8 @@ pub fn space_weather_series() -> Vec<f64> {
 /// Like `atmosphere_latlon_map` but uses the loaded CSSI/GFZ data
 /// instead of constant F10.7/Ap values.
 /// Falls back to solar moderate conditions if no data is loaded.
+///
+/// Throws if either dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
 #[wasm_bindgen]
 pub fn atmosphere_latlon_map_sw(
     model: &str,
@@ -707,7 +748,7 @@ pub fn atmosphere_latlon_map_sw(
     epoch_jd: f64,
     n_lat: u32,
     n_lon: u32,
-) -> Vec<f64> {
+) -> Result<Vec<f64>, String> {
     let epoch = Epoch::from_jd(epoch_jd);
     // Get space weather if available; non-MSIS models don't need it
     let sw = SPACE_WEATHER
@@ -719,7 +760,7 @@ pub fn atmosphere_latlon_map_sw(
 
     let (doy, ut_sec) = tobari::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
 
-    let n = (n_lat * n_lon) as usize;
+    let n = grid_points(&[("n_lat", n_lat), ("n_lon", n_lon)])?;
     let mut out = Vec::with_capacity(n);
 
     for i_lat in 0..n_lat {
@@ -760,11 +801,13 @@ pub fn atmosphere_latlon_map_sw(
             out.push(rho);
         }
     }
-    out
+    Ok(out)
 }
 
 /// Compute 3D atmosphere volume using loaded space weather data.
 /// Falls back to solar moderate conditions if no data is loaded.
+///
+/// Throws if any dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn atmosphere_volume_sw(
@@ -775,7 +818,7 @@ pub fn atmosphere_volume_sw(
     epoch_jd: f64,
     n_lat: u32,
     n_lon: u32,
-) -> Vec<f32> {
+) -> Result<Vec<f32>, String> {
     let epoch = Epoch::from_jd(epoch_jd);
     let sw = SPACE_WEATHER
         .get()
@@ -786,7 +829,7 @@ pub fn atmosphere_volume_sw(
 
     let (doy, ut_sec) = tobari::nrlmsise00::geo::epoch_to_day_of_year_and_ut(&epoch);
 
-    let total = (n_alt * n_lat * n_lon) as usize;
+    let total = grid_points(&[("n_alt", n_alt), ("n_lat", n_lat), ("n_lon", n_lon)])?;
     let mut out = Vec::with_capacity(total + 2);
     let mut min_val = f32::INFINITY;
     let mut max_val = f32::NEG_INFINITY;
@@ -846,7 +889,7 @@ pub fn atmosphere_volume_sw(
     }
     out.push(min_val);
     out.push(max_val);
-    out
+    Ok(out)
 }
 
 // Magnetic field lines
@@ -880,4 +923,128 @@ fn field_at_eci(
     Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(gmst)
         .transform(&b_ecef_vec)
         .into_inner()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 2024-03-20T12:00:00Z
+    const EPOCH_JD: f64 = 2460390.0;
+
+    #[test]
+    fn grid_points_widens_before_multiplying() {
+        // 65536 * 65536 = 2^32, which wraps to 0 in u32 arithmetic.
+        assert!(grid_points(&[("n_lat", 65536), ("n_lon", 65536)]).is_err());
+        // 2^32 - 1 also wraps to a small value in u32 when a third dimension is
+        // folded in.
+        assert!(grid_points(&[("n_alt", 4), ("n_lat", 65536), ("n_lon", 65536)]).is_err());
+        // A grid one point over the ceiling is rejected; the ceiling itself is not.
+        assert!(grid_points(&[("n", MAX_GRID_POINTS as u32)]).is_ok());
+        assert!(grid_points(&[("n", MAX_GRID_POINTS as u32), ("m", 2)]).is_err());
+    }
+
+    #[test]
+    fn grid_points_rejects_zero_dimensions() {
+        for dims in [
+            vec![("n_lat", 0u32), ("n_lon", 8)],
+            vec![("n_lat", 8u32), ("n_lon", 0)],
+            vec![("n_alt", 0u32), ("n_lat", 4), ("n_lon", 8)],
+        ] {
+            let err = grid_points(&dims).expect_err("zero dimension must be rejected");
+            assert!(err.contains("at least 1"), "unexpected message: {err}");
+        }
+    }
+
+    #[test]
+    fn grid_points_counts_small_grids() {
+        assert_eq!(grid_points(&[("n_lat", 4), ("n_lon", 8)]).unwrap(), 32);
+        assert_eq!(
+            grid_points(&[("n_alt", 3), ("n_lat", 4), ("n_lon", 8)]).unwrap(),
+            96
+        );
+    }
+
+    #[test]
+    fn latlon_maps_return_one_value_per_point() {
+        let atmo = atmosphere_latlon_map("nrlmsise00", 400.0, EPOCH_JD, 4, 8, 150.0, 15.0).unwrap();
+        assert_eq!(atmo.len(), 32);
+        assert!(atmo.iter().all(|v| v.is_finite() && *v > 0.0));
+
+        let mag = magnetic_field_latlon_map("igrf", "total", 400.0, EPOCH_JD, 4, 8).unwrap();
+        assert_eq!(mag.len(), 32);
+        assert!(mag.iter().all(|v| v.is_finite() && *v > 0.0));
+    }
+
+    #[test]
+    fn volumes_return_one_value_per_point_plus_min_max() {
+        let atmo =
+            atmosphere_volume("nrlmsise00", 200.0, 600.0, 3, EPOCH_JD, 4, 8, 150.0, 15.0).unwrap();
+        assert_eq!(atmo.len(), 3 * 4 * 8 + 2);
+        let (values, bounds) = atmo.split_at(3 * 4 * 8);
+        assert_eq!(
+            bounds[0],
+            values.iter().copied().fold(f32::INFINITY, f32::min)
+        );
+        assert_eq!(
+            bounds[1],
+            values.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+        );
+
+        let mag = magnetic_field_volume("igrf", "total", 200.0, 600.0, 3, EPOCH_JD, 4, 8).unwrap();
+        assert_eq!(mag.len(), 3 * 4 * 8 + 2);
+        assert!(mag.iter().all(|v| v.is_finite()));
+    }
+
+    /// Every batch entry point rejects a zero dimension.
+    ///
+    /// A zero dimension used to produce a two-element `[+Inf, -Inf]` result from
+    /// the volume functions — a value the documented layout says cannot occur.
+    #[test]
+    fn batch_entry_points_reject_zero_dimensions() {
+        assert!(atmosphere_latlon_map("nrlmsise00", 400.0, EPOCH_JD, 0, 8, 150.0, 15.0).is_err());
+        assert!(atmosphere_latlon_map("nrlmsise00", 400.0, EPOCH_JD, 8, 0, 150.0, 15.0).is_err());
+        assert!(magnetic_field_latlon_map("igrf", "total", 400.0, EPOCH_JD, 0, 8).is_err());
+        assert!(
+            atmosphere_volume("nrlmsise00", 200.0, 600.0, 0, EPOCH_JD, 4, 8, 150.0, 15.0).is_err()
+        );
+        assert!(magnetic_field_volume("igrf", "total", 200.0, 600.0, 0, EPOCH_JD, 4, 8).is_err());
+        assert!(atmosphere_latlon_map_sw("nrlmsise00", 400.0, EPOCH_JD, 0, 8).is_err());
+        assert!(atmosphere_volume_sw("nrlmsise00", 200.0, 600.0, 0, EPOCH_JD, 4, 8).is_err());
+    }
+
+    /// Every batch entry point rejects a grid whose point count overflows `u32`.
+    ///
+    /// These calls used to wrap the capacity computation and then run the full
+    /// untruncated loop count — 2^32 model evaluations.
+    #[test]
+    fn batch_entry_points_reject_overflowing_grids() {
+        assert!(
+            atmosphere_latlon_map("nrlmsise00", 400.0, EPOCH_JD, 65536, 65536, 150.0, 15.0)
+                .is_err()
+        );
+        assert!(magnetic_field_latlon_map("igrf", "total", 400.0, EPOCH_JD, 65536, 65536).is_err());
+        assert!(
+            atmosphere_volume(
+                "nrlmsise00",
+                200.0,
+                600.0,
+                4,
+                EPOCH_JD,
+                65536,
+                65536,
+                150.0,
+                15.0
+            )
+            .is_err()
+        );
+        assert!(
+            magnetic_field_volume("igrf", "total", 200.0, 600.0, 4, EPOCH_JD, 65536, 65536)
+                .is_err()
+        );
+        assert!(atmosphere_latlon_map_sw("nrlmsise00", 400.0, EPOCH_JD, 65536, 65536).is_err());
+        assert!(
+            atmosphere_volume_sw("nrlmsise00", 200.0, 600.0, 4, EPOCH_JD, 65536, 65536).is_err()
+        );
+    }
 }

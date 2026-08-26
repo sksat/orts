@@ -927,11 +927,11 @@ pub fn compute(input: &Nrlmsise00Input, ap_mode: ApMode) -> ([f64; 9], f64, f64)
     tn2[0] = g.tn1_bottom;
     tgn2[0] = g.tgn1_bottom;
     for k in 0..3 {
-        // pma[2] (the bottom node) is additionally gated on sw[21] in the
-        // reference; every switch is on here, so the expression is the same.
+        // The bottom node is gated on sw[21] as well as sw[19] in the reference.
+        let gate = if k == 2 { sw[19] * sw[21] } else { sw[19] };
         tn2[k + 1] = MID_ATMO_COEFFICIENTS[k][0] * MID_ATMO_AVERAGES[k]
             / (1.0
-                - sw[19]
+                - gate
                     * geographic_variation_lower(
                         &MID_ATMO_COEFFICIENTS[k],
                         input,
@@ -1003,7 +1003,11 @@ pub fn compute(input: &Nrlmsise00Input, ap_mode: ApMode) -> ([f64; 9], f64, f64)
     };
 
     let xmm = DENSITY_BOUNDARY[2][4];
+    // Diffusive N2 at the top of the ZN2 spline. `gts7` always computes the
+    // mixed density there too, since 72.5 km is far below the N2 turbopause
+    // limit, so `dm28` is a valid divisor.
     let dz28 = g.d[2];
+    debug_assert!(g.dm28 > 0.0);
     let mut d = [0.0f64; 9];
 
     // N2: hydrostatic continuation of the mixed density, corrected back
@@ -1019,7 +1023,7 @@ pub fn compute(input: &Nrlmsise00Input, ap_mode: ApMode) -> ([f64; 9], f64, f64)
         tgn: &tgn3,
     };
     let (_, n2_mixed) = densm(alt, g.dm28, xmm, &meso, &strato, gsurf, re);
-    d[2] = n2_mixed * (1.0 + (g.d[2] / g.dm28 - 1.0) * dmc);
+    d[2] = n2_mixed * (1.0 + (dz28 / g.dm28 - 1.0) * dmc);
 
     // He, O2, Ar follow N2 with their fixed ground mixing ratios.
     for i in [0usize, 3, 4] {

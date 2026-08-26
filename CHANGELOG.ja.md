@@ -189,11 +189,59 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 ### `tobari` (Rust, crates.io)
 
+#### Added
+- NRLMSISE-00 の 72.5 km 未満: 中間圏・成層圏・対流圏の温度 spline と
+  完全混合への線形遷移を実装。従来は 72.5 km 未満を黙って 72.5 km の
+  profile で返しており(海面で 1.9e4 倍薄い)、これで地表〜約 1000 km を
+  カバーする。新規 fixture 792 点に対する pymsis との最大密度誤差 0.0003%。
+  72.5 km 未満は完全混合種(N₂, O₂, Ar, He)と総質量密度のみを返し、
+  O・H・N・anomalous O は参照実装同様 0。
+  ([#PR](https://github.com/sksat/orts/pull/PR))
+- `nrlmsise00::ApMode` と `Nrlmsise00::with_ap_mode` で地磁気入力を選択:
+  `Daily`(参照実装の既定、`ap_daily`)または `ThreeHourly`(`ap_array`、
+  日内の磁気嵐を解像)。3 時間側の定式化は従来到達不能で、`ap_array` は
+  死んだ入力だった。([#PR](https://github.com/sksat/orts/pull/PR))
+
+#### Fixed
+- NRLMSISE-00 の季節項が 2π/365.25 の角速度を使っており、係数セット自身の
+  fitted 値 DR = 1.72142e-2 = 2π/365 と異なっていた(doy 365 で季節位相が
+  0.25 日ずれる)。1152 点の熱圏 grid に対する pymsis との平均密度誤差が
+  0.0886% → 0.0155%、最大温度誤差が 0.0354% → 0.0005% に改善。
+  ([#PR](https://github.com/sksat/orts/pull/PR))
+- `HarrisPriester` が public な `u32` の指数を `powi(n as i32)` に渡しており、
+  `n >= 2^31` で負に wrap していた(`n = 2^31` は anti-bulge で `+Inf`、
+  `n = u32::MAX` は `rho_min` の約 1280 倍)。任意の `u32` で密度が
+  `[rho_min, rho_max]` に収まるようにした。
+  ([#PR](https://github.com/sksat/orts/pull/PR))
+- `CssiSpaceWeather` が 3 時間 Ap 履歴と前日 F10.7 を record 配列の位置で
+  引いていたため、欠測日があると両者が時間方向にずれていた(1 日の gap で
+  「3 時間前」が 27 時間前になる)。どちらも暦日で引くようにし、データが
+  カバーしない日は問い合わせ日の日平均を fallback とした。このリポジトリの
+  CSSI test fixture 自体に gap が 3 箇所ある。
+  ([#PR](https://github.com/sksat/orts/pull/PR))
+
 #### Changed
+- `CssiData::truncate_after` が `Result<CssiData, CssiParseError>` を返すように
+  変更。データ全体より前で切ると空の `CssiData` ができ、`CssiSpaceWeather::new`
+  がそれを受理して以降のクエリが必ず panic していた。`CssiData` の構築は
+  すべて `from_records` を通り、空を拒否し重複日を畳む。
+  ([#PR](https://github.com/sksat/orts/pull/PR))
 - CSSI 宇宙天気ダウンロードの feature `fetch` を `fetch-cssi` にリネーム。
   `fetch-<source>` 規約(`fetch-igrf`、arika の `fetch-horizons`)に揃えた。
   `fetch` は全 `fetch-*` 源を束ねる傘 feature として存続するため、
   `features = ["fetch"]` は引き続きビルド可能(加えて `fetch-igrf` も有効化)。([#150](https://github.com/sksat/orts/pull/150))
+
+### `tobari-wasm` (Rust)
+
+#### Fixed
+- `atmosphere_latlon_map`、`atmosphere_latlon_map_sw`、`atmosphere_volume`、
+  `atmosphere_volume_sw`、`magnetic_field_latlon_map`、`magnetic_field_volume`
+  が grid 次元を `usize` に widen する前に `u32` で乗算していたため、
+  大きな grid では buffer 容量が wrap する一方でループは全点を回っていた
+  (debug wasm build では trap、release ではタブのハングや OOM)。widen を
+  先に行い、0 次元(volume 系では `[+Inf, -Inf]` だけが返っていた)と
+  2^24 点超の grid を拒否して throw する。
+  ([#PR](https://github.com/sksat/orts/pull/PR))
 
 ### `viewer`
 

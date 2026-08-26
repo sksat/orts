@@ -204,12 +204,65 @@ section is subdivided by package.
 
 ### `tobari` (Rust, crates.io)
 
+#### Added
+- NRLMSISE-00 below 72.5 km: the mesosphere, stratosphere and troposphere
+  temperature splines and the linear transition to full mixing, so the model
+  covers the surface to ~1000 km instead of silently reporting the 72.5 km
+  profile for everything below it (sea level was 1.9e4x too thin). Max density
+  error against pymsis over 792 new fixture points: 0.0003%. Below 72.5 km only
+  the fully mixed species (N₂, O₂, Ar, He) and total mass density are reported;
+  O, H, N and anomalous O are zero, as in the reference implementation.
+  ([#PR](https://github.com/sksat/orts/pull/PR))
+- `nrlmsise00::ApMode` and `Nrlmsise00::with_ap_mode` select which geomagnetic
+  input drives the model: `Daily` (the reference default, `ap_daily`) or
+  `ThreeHourly` (`ap_array`, resolving sub-daily storms). The 3-hourly
+  formulation was previously unreachable, so `ap_array` was dead input.
+  ([#PR](https://github.com/sksat/orts/pull/PR))
+
+#### Fixed
+- NRLMSISE-00 seasonal terms used a 2π/365.25 angular rate instead of the
+  coefficient set's own fitted DR = 1.72142e-2 = 2π/365, shifting the seasonal
+  phase by a quarter day at doy 365. Mean density error against pymsis over the
+  1152-point thermosphere grid drops from 0.0886% to 0.0155%, and max
+  temperature error from 0.0354% to 0.0005%.
+  ([#PR](https://github.com/sksat/orts/pull/PR))
+- `HarrisPriester` applied its public `u32` exponent through `powi(n as i32)`,
+  which wraps negative for `n >= 2^31`: `n = 2^31` returned `+Inf` at the
+  anti-bulge and `n = u32::MAX` about 1280x `rho_min`. The density now stays
+  within `[rho_min, rho_max]` for every `u32`.
+  ([#PR](https://github.com/sksat/orts/pull/PR))
+- `CssiSpaceWeather` resolved the 3-hour Ap history and the previous day's F10.7
+  by position in the record array, so a missing day shifted both in time — "3
+  hours ago" became 27 hours ago across a one-day gap. Both are now looked up by
+  calendar date, with the queried day's daily average as the fallback for a day
+  the dataset does not cover. This repository's own CSSI test fixture has three
+  such gaps. ([#PR](https://github.com/sksat/orts/pull/PR))
+
 #### Changed
+- `CssiData::truncate_after` returns `Result<CssiData, CssiParseError>`: a cutoff
+  before the whole dataset used to yield an empty `CssiData` that
+  `CssiSpaceWeather::new` accepted and every subsequent query panicked on. All
+  `CssiData` construction now goes through `from_records`, which rejects an empty
+  input and collapses duplicate days.
+  ([#PR](https://github.com/sksat/orts/pull/PR))
 - Renamed the CSSI space-weather download feature `fetch` to `fetch-cssi`,
   matching the `fetch-<source>` convention (`fetch-igrf`, and `arika`'s
   `fetch-horizons`). `fetch` is retained as an umbrella feature that enables
   every `fetch-*` source, so `features = ["fetch"]` keeps building (and now
   also pulls in `fetch-igrf`). ([#150](https://github.com/sksat/orts/pull/150))
+
+### `tobari-wasm` (Rust)
+
+#### Fixed
+- `atmosphere_latlon_map`, `atmosphere_latlon_map_sw`, `atmosphere_volume`,
+  `atmosphere_volume_sw`, `magnetic_field_latlon_map` and
+  `magnetic_field_volume` multiplied their grid dimensions in `u32` before
+  widening to `usize`, so a large grid wrapped the buffer capacity while the
+  loops still ran the full count (a trap in a debug wasm build, a hung tab or
+  OOM in release). They now widen first, reject dimensions of 0 — which used to
+  return a bare `[+Inf, -Inf]` from the volume entry points — and reject grids
+  above 2^24 points, throwing instead of returning.
+  ([#PR](https://github.com/sksat/orts/pull/PR))
 
 ### `viewer`
 
