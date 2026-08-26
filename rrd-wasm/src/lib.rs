@@ -373,14 +373,17 @@ mod tests {
     fn write_rrd(name: &str, samples: &[(f64, Vec<(&str, f64)>)]) -> std::path::PathBuf {
         let path =
             std::env::temp_dir().join(format!("rrd_wasm_{}_{}.rrd", name, std::process::id()));
-        let rec = rerun::RecordingStreamBuilder::new("rrd-wasm-test")
+        let rec = re_sdk::RecordingStreamBuilder::new("rrd-wasm-test")
             .save(&path)
             .expect("recording stream");
         for (t, fields) in samples {
             rec.set_duration_secs("sim_time", *t);
             for (field, value) in fields {
-                rec.log(format!("{ENTITY}/{field}"), &rerun::Scalars::new([*value]))
-                    .expect("log scalar");
+                rec.log(
+                    format!("{ENTITY}/{field}"),
+                    &re_sdk_types::archetypes::Scalars::new([*value]),
+                )
+                .expect("log scalar");
             }
         }
         rec.flush_blocking().expect("flush");

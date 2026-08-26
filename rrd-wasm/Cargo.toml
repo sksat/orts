@@ -35,10 +35,11 @@ wasm-bindgen = { version = "0.2", optional = true }
 wasm = ["wasm-bindgen", "serde-wasm-bindgen"]
 
 # Note: dev-dependencies do NOT affect wasm-pack builds (only used for `cargo test`)
-# The rerun SDK writes the .rrd files the decoder tests read back, including the
+# `re_sdk` writes the .rrd files the decoder tests read back, including the
 # ragged recordings (a component logged at only some time steps) that no
-# committed fixture can express. `orts` is deliberately not used here: the
-# decoder must stay testable against the RRD format itself, not against one
-# producer's conventions.
+# committed fixture can express. It is the same writer `orts` uses, and it
+# brings `re_log_encoding`'s `encoder` feature that `save()` needs. `orts`
+# itself is deliberately not a dev-dependency here: the decoder must stay
+# testable against the RRD format, not against one producer's conventions.
 [dev-dependencies]
-rerun.workspace = true
+re_sdk = "0.33"
