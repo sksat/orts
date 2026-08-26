@@ -670,6 +670,101 @@ mod tests {
         );
     }
 
+    /// The sphere branch never touches the body frame, so it cannot cover the
+    /// two rotations this change made frame-generic
+    /// (`rotation_from_inertial::<F>` on the way in,
+    /// `rotation_to_inertial::<F>` on the way out). Exercise the panel branch in
+    /// `Gcrs` at a non-identity attitude and reconstruct both outputs: the
+    /// inertial acceleration, which round-trips through the body frame, and the
+    /// body torque, which stays there.
+    #[test]
+    fn gcrs_panels_rotate_through_the_body_frame() {
+        use crate::test_support::zero_eop;
+        use arika::earth::EarthRotationPole;
+        use arika::frame::Vec3;
+
+        let epoch = snapshot_epoch();
+        let simple = snapshot_state();
+        let pos = *simple.orbit.position();
+        let vel = *simple.orbit.velocity();
+        let attitude = simple.attitude.clone();
+        let state = SpacecraftState::<frame::Gcrs> {
+            orbit: OrbitalState::<frame::Gcrs>::new_in_frame(pos, vel),
+            attitude: attitude.clone(),
+            mass: simple.mass,
+        };
+
+        let (half_size, cd) = (0.5, 2.2);
+        let drag = PanelDrag::<frame::Gcrs>::for_earth_in_frame(
+            SpacecraftShape::cube(half_size, cd, 1.5),
+            zero_eop(),
+        );
+        let loads = drag.eval(0.0, &state, Some(&epoch));
+        let got_a = loads.acceleration_inertial.into_inner();
+        let got_tau = loads.torque_body.into_inner();
+
+        // Reconstruct: CIP co-rotation, Gcrs geodetic density, then the same
+        // panel sum done in the body frame.
+        let pole = <frame::Gcrs as EarthRotationPole>::earth_pole(&epoch).into_inner();
+        let v_rel = vel - (pole * OMEGA_EARTH).cross(&pos);
+        let geodetic = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &Vec3::from_raw(pos),
+            &EarthOrientation::new(epoch, &zero_eop()),
+        );
+        let rho = Exponential.density(&AtmosphereInput {
+            geodetic,
+            utc: &epoch,
+        });
+        assert!(rho > 0.0, "expected non-zero density");
+
+        let v_body_m = attitude
+            .rotation_from_inertial::<frame::Gcrs>()
+            .transform(&Vec3::<frame::Gcrs>::from_raw(v_rel))
+            .into_inner()
+            * 1000.0;
+        let v_mag = v_body_m.magnitude();
+        let v_hat = v_body_m / v_mag;
+        let face_area = (2.0 * half_size) * (2.0 * half_size);
+        let mut force_body = Vector3::zeros();
+        let mut torque_body = Vector3::zeros();
+        for (normal, cp) in [
+            (Vector3::x(), Vector3::new(half_size, 0.0, 0.0)),
+            (-Vector3::x(), Vector3::new(-half_size, 0.0, 0.0)),
+            (Vector3::y(), Vector3::new(0.0, half_size, 0.0)),
+            (-Vector3::y(), Vector3::new(0.0, -half_size, 0.0)),
+            (Vector3::z(), Vector3::new(0.0, 0.0, half_size)),
+            (-Vector3::z(), Vector3::new(0.0, 0.0, -half_size)),
+        ] {
+            let cos_theta = normal.dot(&(-v_hat)).max(0.0);
+            if cos_theta <= 0.0 {
+                continue;
+            }
+            let force = -0.5 * rho * cd * (face_area * cos_theta) * v_mag * v_mag * v_hat;
+            force_body += force;
+            torque_body += cp.cross(&force);
+        }
+        let expected_a = attitude
+            .rotation_to_inertial::<frame::Gcrs>()
+            .transform(&Vec3::from_raw(force_body / simple.mass))
+            .into_inner()
+            / 1000.0;
+
+        assert!(
+            (got_a - expected_a).magnitude() <= 1e-12 * expected_a.magnitude().max(1.0),
+            "Gcrs panel acceleration must round-trip through the body frame: \
+             {got_a:?} vs {expected_a:?}"
+        );
+        assert!(
+            (got_tau - torque_body).magnitude() <= 1e-12 * torque_body.magnitude().max(1.0),
+            "Gcrs panel torque must be the body-frame sum: {got_tau:?} vs {torque_body:?}"
+        );
+        assert!(
+            torque_body.magnitude() > 0.0,
+            "the cube at this attitude must produce a non-zero torque, \
+             otherwise the assertion above proves nothing"
+        );
+    }
+
     /// **Discriminating test (#151)**: in `Gcrs` both frame-dependent steps
     /// change — the geodetic lookup uses the full IAU 2006 chain and the
     /// atmosphere co-rotates about the true CIP instead of `+Z`. Pin that the
