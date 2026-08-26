@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use clap::ValueEnum;
+use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
 
 use crate::cli::{AtmosphereChoice, IntegratorChoice};
@@ -11,12 +13,54 @@ use orts::plugin::{Message, NamedValue, NodeId, Payload, Value};
 use orts::setup::DisturbanceTorques;
 use orts::spacecraft::{PanelOptics, SpacecraftShape, SurfacePanel};
 
+/// Resolve a config string through the [`ValueEnum`] impl the matching CLI
+/// flag uses, so `--atmosphere x` and `atmosphere = "x"` accept exactly the
+/// same set by construction: there is one list of spellings, clap's.
+///
+/// The config transport keeps these fields as `String` (the TypeScript clients
+/// of `start_simulation` send strings), so this is where the string becomes a
+/// model choice — and where an unknown spelling has to be rejected rather than
+/// silently resolved to some default model.
+fn parse_choice<T: ValueEnum>(field: &str, value: &str) -> Result<T, String> {
+    <T as ValueEnum>::from_str(value, false).map_err(|_| {
+        let allowed = T::value_variants()
+            .iter()
+            .filter_map(|v| v.to_possible_value())
+            .map(|p| p.get_name().to_string())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!("unknown {field} '{value}' (expected one of: {allowed})")
+    })
+}
+
+/// Reject an unknown `[integrator] type` at deserialization time, so every
+/// entry point (file, `orts config validate`, the `start_simulation`
+/// WebSocket payload) fails on a typo instead of running a different method.
+fn de_integrator_kind<'de, D: Deserializer<'de>>(de: D) -> Result<String, D::Error> {
+    let s = String::deserialize(de)?;
+    parse_choice::<IntegratorChoice>("integrator.type", &s).map_err(serde::de::Error::custom)?;
+    Ok(s)
+}
+
+/// Reject an unknown `atmosphere` at deserialization time. A typo used to fall
+/// back to the exponential model, i.e. quietly integrate different physics.
+fn de_atmosphere<'de, D: Deserializer<'de>>(de: D) -> Result<String, D::Error> {
+    let s = String::deserialize(de)?;
+    parse_choice::<AtmosphereChoice>("atmosphere", &s).map_err(serde::de::Error::custom)?;
+    Ok(s)
+}
+
 /// JSON/TOML/YAML simulation configuration.
 ///
 /// Also the payload of the `start_simulation` WebSocket message, so the
 /// whole tree derives [`TS`]. Fields the server defaults when absent are
 /// `#[ts(optional)]` so TypeScript clients may omit them too.
+// `deny_unknown_fields` here and on the rest of the config tree: a dropped key
+// is indistinguishable from a key that was never written, so `duraton = 100`
+// used to run with the default duration and report success. Kept out of the
+// doc comment because doc comments are copied into the generated TypeScript.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SimConfig {
     #[serde(default = "default_body")]
@@ -34,7 +78,7 @@ pub struct SimConfig {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub integrator: IntegratorConfig,
-    #[serde(default = "default_atmosphere")]
+    #[serde(default = "default_atmosphere", deserialize_with = "de_atmosphere")]
     #[ts(as = "Option<_>", optional)]
     pub atmosphere: String,
     #[serde(default = "default_f107")]
@@ -65,6 +109,7 @@ pub struct SimConfig {
 
 /// Ground station definition for visibility / contact window detection.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct GroundStationConfig {
     pub name: String,
@@ -107,6 +152,7 @@ impl GroundStationConfig {
 /// コントローラ(FSW)へ `kind` + `args`(key-value payload) を配送する。
 /// host が配送 tick を確定するので決定論的。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CommandConfig {
     /// 配送するシミュレーション時刻 \[s\]。
@@ -202,9 +248,14 @@ fn default_ap() -> f64 {
 
 /// Integrator configuration within a config file.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct IntegratorConfig {
-    #[serde(rename = "type", default = "default_integrator")]
+    #[serde(
+        rename = "type",
+        default = "default_integrator",
+        deserialize_with = "de_integrator_kind"
+    )]
     #[ts(as = "Option<_>", optional)]
     pub kind: String,
     #[serde(default = "default_atol")]
@@ -237,6 +288,7 @@ impl Default for IntegratorConfig {
 
 /// Attitude dynamics configuration for a satellite.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct AttitudeConfig {
     /// Diagonal inertia tensor [Ixx, Iyy, Izz] kg·m².
@@ -511,13 +563,45 @@ impl AttitudeConfig {
         if self.mass <= 0.0 {
             return Err(format!("non-positive mass: {}", self.mass));
         }
+        // Numeric usability is not physical possibility. State the two
+        // constraints every real inertia tensor satisfies in terms of its
+        // principal moments `I1 <= I2 <= I3` — the eigenvalues, which equal
+        // `inertia_diag` only when `inertia_off_diag` is zero, so read them off
+        // the tensor rather than the diagonal.
+        let mut moments: Vec<f64> = inertia.symmetric_eigenvalues().iter().copied().collect();
+        moments.sort_by(|a, b| a.partial_cmp(b).expect("eigenvalues of a finite tensor"));
+        let (i1, i2, i3) = (moments[0], moments[1], moments[2]);
+        // A non-positive principal moment means zero or negative mass off that
+        // axis. `I1 == 0` is the singular case the inverse above already
+        // refuses; a negative one can invert cleanly and still describe nothing.
+        if i1 <= 0.0 {
+            return Err(format!(
+                "inertia tensor is not positive definite: smallest principal moment is \
+                 {i1} (diag {:?}, off-diag {:?})",
+                self.inertia_diag, self.inertia_off_diag
+            ));
+        }
+        // No mass distribution can violate `I1 + I2 >= I3`, so a tensor that
+        // does integrates attitude motion belonging to no spacecraft. Equality
+        // is the flat-plate (lamina) limit — attainable and well-posed — and the
+        // relative slack keeps a config that states it exactly from being
+        // rejected by the eigenvalue solver's last bits.
+        const TRIANGLE_SLACK: f64 = 1e-9;
+        if i1 + i2 < i3 * (1.0 - TRIANGLE_SLACK) {
+            return Err(format!(
+                "inertia tensor violates the triangle inequality: principal moments \
+                 [{i1}, {i2}, {i3}] have I1 + I2 < I3, which no mass distribution can \
+                 produce (diag {:?}, off-diag {:?})",
+                self.inertia_diag, self.inertia_off_diag
+            ));
+        }
         Ok(())
     }
 }
 
 /// コントローラ設定。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 #[ts(export)]
 pub enum ControllerConfig {
     /// WASM Component ゲストプラグイン。
@@ -545,7 +629,7 @@ pub enum SensorChoice {
 
 /// リアクションホイール設定。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 #[ts(export)]
 pub enum ReactionWheelConfig {
     /// 直交 3 軸配置。
@@ -566,7 +650,7 @@ pub enum ReactionWheelConfig {
 
 /// MTQ (磁気トルカ) 設定。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 #[ts(export)]
 pub enum MtqConfig {
     /// 直交 3 軸配置。
@@ -579,6 +663,7 @@ pub enum MtqConfig {
 
 /// 推進器一機分の静的パラメータ。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ThrusterSpecConfig {
     /// 最大推力 [N]。
@@ -598,6 +683,7 @@ pub struct ThrusterSpecConfig {
 /// `thrusters` に各推進器の静的パラメータを並べ、`dry_mass` で
 /// 推進剤枯渇時の停止閾値 (spacecraft total mass [kg]) を指定する。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ThrusterConfig {
     /// 推進器一覧（空リストは reject）。
@@ -611,6 +697,7 @@ pub struct ThrusterConfig {
 
 /// Per-satellite configuration.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SatelliteConfig {
     #[ts(optional)]
@@ -665,7 +752,7 @@ pub struct SatelliteConfig {
 
 /// Orbit specification in config files.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 #[ts(export)]
 pub enum OrbitConfig {
     /// Circular orbit at given altitude.
@@ -721,22 +808,35 @@ impl SimConfig {
         Ok(config)
     }
 
-    /// Parse the integrator choice from the config string.
+    /// The integrator selected by `[integrator] type`.
+    ///
+    /// # Panics
+    /// If the string is not one of the [`IntegratorChoice`] spellings. Both
+    /// `Deserialize` and [`validate`](Self::validate) reject those, so this is
+    /// only reachable for a hand-built `SimConfig`; the previous fallback to
+    /// `dp45` meant a typo integrated with a different method and exited 0.
     pub fn integrator_choice(&self) -> IntegratorChoice {
-        match self.integrator.kind.as_str() {
-            "rk4" => IntegratorChoice::Rk4,
-            "dop853" => IntegratorChoice::Dop853,
-            _ => IntegratorChoice::Dp45,
-        }
+        self.try_integrator_choice()
+            .unwrap_or_else(|e| panic!("{e}"))
     }
 
-    /// Parse the atmosphere choice from the config string.
+    /// The atmosphere model selected by `atmosphere`.
+    ///
+    /// # Panics
+    /// As [`integrator_choice`](Self::integrator_choice), for the same reason:
+    /// falling back to the exponential model would silently substitute the
+    /// physics the user asked for.
     pub fn atmosphere_choice(&self) -> AtmosphereChoice {
-        match self.atmosphere.as_str() {
-            "harris-priester" => AtmosphereChoice::HarrisPriester,
-            "nrlmsise00" => AtmosphereChoice::Nrlmsise00,
-            _ => AtmosphereChoice::Exponential,
-        }
+        self.try_atmosphere_choice()
+            .unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    fn try_integrator_choice(&self) -> Result<IntegratorChoice, String> {
+        parse_choice("integrator.type", &self.integrator.kind)
+    }
+
+    fn try_atmosphere_choice(&self) -> Result<AtmosphereChoice, String> {
+        parse_choice("atmosphere", &self.atmosphere)
     }
 
     /// Parse the central body from the config string.
@@ -746,9 +846,20 @@ impl SimConfig {
 }
 
 impl SatelliteConfig {
+    /// The id this satellite is known by downstream: the recording entity
+    /// path, the CSV section, the `[[command]]` target and the WebSocket
+    /// messages. An omitted `id` becomes `sat-{index}`.
+    ///
+    /// Single source of the default so validation and
+    /// [`to_satellite_spec`](Self::to_satellite_spec) cannot disagree about
+    /// which ids a fleet actually resolves to.
+    pub fn resolved_id(&self, index: usize) -> String {
+        self.id.clone().unwrap_or_else(|| format!("sat-{index}"))
+    }
+
     /// Convert a SatelliteConfig to a SatelliteSpec.
     pub fn to_satellite_spec(&self, index: usize, body: KnownBody, mu: f64) -> SatelliteSpec {
-        let id = self.id.clone().unwrap_or_else(|| format!("sat-{index}"));
+        let id = self.resolved_id(index);
 
         let (orbit, period, derived_name) = match &self.orbit {
             OrbitConfig::Circular {
@@ -1070,17 +1181,18 @@ impl SimConfig {
     /// not resolve `norad` orbits — that requires a network fetch and is left
     /// to run time.
     pub fn validate(&self) -> Result<(), String> {
+        // Resolve the model choices first: a deserialized config cannot carry
+        // an unknown spelling, but a hand-built one can, and every later step
+        // (tolerances, drag) depends on which model was actually selected.
+        let integrator = self.try_integrator_choice()?;
+        self.try_atmosphere_choice()?;
         validate_time_params(
             self.dt,
             self.output_interval,
             self.stream_interval,
             self.duration,
         )?;
-        validate_tolerances(
-            self.integrator_choice(),
-            self.integrator.atol,
-            self.integrator.rtol,
-        )?;
+        validate_tolerances(integrator, self.integrator.atol, self.integrator.rtol)?;
         if crate::satellite::try_parse_body(&self.body).is_none() {
             return Err(format!(
                 "unknown body '{}' (expected one of: sun, mercury, venus, earth, \
@@ -1097,6 +1209,31 @@ impl SimConfig {
         }
         let body = crate::satellite::try_parse_body(&self.body)
             .expect("body was validated as parseable above");
+        // Resolved ids must be unique: they are the recording entity path, the
+        // CSV section header and the `[[command]]` target, and every consumer
+        // resolves an id by first match or by `HashMap` insert. Duplicates
+        // therefore merge two satellites' rows under one path and route all
+        // commands to whichever one won the map — silently. Note the collision
+        // an explicit `id` can have with the `sat-{index}` default of an
+        // id-less entry, which is why this compares resolved ids.
+        let mut seen: HashMap<String, usize> = HashMap::with_capacity(self.satellites.len());
+        for (i, sat) in self.satellites.iter().enumerate() {
+            let id = sat.resolved_id(i);
+            if let Some(first) = seen.insert(id.clone(), i) {
+                return Err(format!(
+                    "satellites[{i}]: duplicate satellite id '{id}' (already used by \
+                     satellites[{first}]); ids must be unique{}",
+                    if sat.id.is_none() {
+                        format!(
+                            " — this entry has no `id`, so it defaults to '{id}'; \
+                             give it an explicit id"
+                        )
+                    } else {
+                        String::new()
+                    }
+                ));
+            }
+        }
         for (i, sat) in self.satellites.iter().enumerate() {
             sat.validate()
                 .map_err(|e| format!("satellites[{i}]: {e}"))?;
@@ -2624,5 +2761,440 @@ direction_body = [0.0, 0.0, 0.0]
         let err = SimConfig::load(&path).unwrap_err();
         assert!(err.contains("direction_body"), "msg: {err}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The name clap shows for a `ValueEnum` variant — the exact spelling a
+    /// `--integrator` / `--atmosphere` flag accepts.
+    fn choice_name<T: ValueEnum>(v: &T) -> String {
+        v.to_possible_value()
+            .expect("no choice variant is skipped")
+            .get_name()
+            .to_string()
+    }
+
+    /// A config file must accept exactly the spellings the equivalent CLI flag
+    /// accepts, and resolve each to the same model. The reverse inclusion holds
+    /// by construction (both sides go through the one `ValueEnum` impl); this
+    /// pins it, so adding a variant to only one side fails here.
+    #[test]
+    fn config_accepts_exactly_the_cli_choice_sets() {
+        for variant in IntegratorChoice::value_variants() {
+            let name = choice_name(variant);
+            let config = config_with(&format!("[integrator]\ntype = \"{name}\""));
+            assert_eq!(
+                choice_name(&config.integrator_choice()),
+                name,
+                "config resolved integrator '{name}' to a different method"
+            );
+            config.validate().unwrap_or_else(|e| {
+                panic!("integrator '{name}' is a CLI value but config rejects it: {e}")
+            });
+        }
+        for variant in AtmosphereChoice::value_variants() {
+            let name = choice_name(variant);
+            let config = config_with(&format!("atmosphere = \"{name}\""));
+            assert_eq!(
+                choice_name(&config.atmosphere_choice()),
+                name,
+                "config resolved atmosphere '{name}' to a different model"
+            );
+            config.validate().unwrap_or_else(|e| {
+                panic!("atmosphere '{name}' is a CLI value but config rejects it: {e}")
+            });
+        }
+    }
+
+    /// `--integrator dop835` is rejected by clap; the config spelling used to
+    /// fall back to dp45 and exit 0, integrating with a different method than
+    /// the one written down.
+    #[test]
+    fn unknown_integrator_type_is_rejected() {
+        let err = toml::from_str::<SimConfig>("[integrator]\ntype = \"dop835\"\n")
+            .expect_err("an unknown integrator must not deserialize")
+            .to_string();
+        assert!(err.contains("dop835"), "error should name the typo: {err}");
+        assert!(
+            err.contains("dop853"),
+            "error should list the legal spellings: {err}"
+        );
+    }
+
+    /// The same for `atmosphere`, where the old fallback to the exponential
+    /// model substituted the drag physics silently — nothing in the run
+    /// summary echoes the atmosphere model.
+    #[test]
+    fn unknown_atmosphere_is_rejected() {
+        for typo in ["nrlmsise0", "harris_priester", "NRLMSISE00", ""] {
+            let err = toml::from_str::<SimConfig>(&format!("atmosphere = \"{typo}\"\n"))
+                .expect_err("an unknown atmosphere must not deserialize")
+                .to_string();
+            assert!(
+                err.contains("harris-priester"),
+                "error should list the legal spellings: {err}"
+            );
+        }
+    }
+
+    /// A hand-built config (no deserialization) is caught by `validate`
+    /// instead, so `run`/`serve` cannot reach the model resolution with an
+    /// unknown spelling.
+    #[test]
+    fn validate_rejects_an_unknown_model_on_a_hand_built_config() {
+        let mut config = config_with("");
+        config.atmosphere = "nrlmsise0".into();
+        let err = config.validate().expect_err("unknown atmosphere");
+        assert!(err.contains("nrlmsise0"), "msg: {err}");
+
+        let mut config = config_with("");
+        config.integrator.kind = "dop835".into();
+        let err = config.validate().expect_err("unknown integrator");
+        assert!(err.contains("dop835"), "msg: {err}");
+    }
+
+    /// The resolution itself has no fallback arm any more: a model that was
+    /// never validated aborts loudly rather than quietly becoming another one.
+    #[test]
+    #[should_panic(expected = "unknown atmosphere 'nrlmsise0'")]
+    fn atmosphere_choice_has_no_silent_fallback() {
+        let mut config = config_with("");
+        config.atmosphere = "nrlmsise0".into();
+        let _ = config.atmosphere_choice();
+    }
+
+    /// An unknown key used to be dropped, which is indistinguishable from a key
+    /// the user never wrote: `duraton = 100` ran for one orbital period and
+    /// reported success.
+    #[test]
+    fn unknown_keys_are_rejected() {
+        let cases = [
+            ("top level", "duraton = 100.0\n"),
+            (
+                "satellite",
+                "[[satellites]]\naltitide = 400\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n",
+            ),
+            (
+                "orbit",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\ninclinaton = 51.6\n",
+            ),
+            ("integrator", "[integrator]\natoll = 1.0e-9\n"),
+            (
+                "attitude",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+                 \n[satellites.attitude]\ninertia_diag = [10, 10, 10]\nmass = 100\nmas = 50\n",
+            ),
+            (
+                "ground station",
+                "[[ground_station]]\nname = \"gs\"\nlatitude_deg = 35.0\nlongitude_deg = 139.0\nelevation_deg = 5.0\n",
+            ),
+            (
+                "command",
+                "[[command]]\nt = 1.0\nsat = \"a\"\nkind = \"x\"\nargs = {}\nkid = \"y\"\n",
+            ),
+        ];
+        for (label, toml) in cases {
+            let err = toml::from_str::<SimConfig>(toml)
+                .map(|c| format!("{c:?}"))
+                .expect_err(&format!(
+                    "{label}: an unknown key must be rejected, not dropped"
+                ))
+                .to_string();
+            assert!(
+                err.contains("unknown field"),
+                "{label}: expected an unknown-field error, got {err}"
+            );
+        }
+    }
+
+    /// Two satellites resolving to one id share the recording entity path and
+    /// the CSV section, and `[[command]]` reaches only whichever one won the
+    /// id → index map. Reject the fleet instead.
+    #[test]
+    fn validate_rejects_duplicate_satellite_ids() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[satellites]]
+id = "a"
+[satellites.orbit]
+type = "circular"
+altitude = 800
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        let err = config
+            .validate()
+            .expect_err("a duplicate satellite id must be rejected");
+        assert!(err.contains("duplicate satellite id 'a'"), "msg: {err}");
+        assert!(
+            err.contains("satellites[1]") && err.contains("satellites[0]"),
+            "error should name both entries: {err}"
+        );
+    }
+
+    /// The collision an explicit id can have with the `sat-{index}` default of
+    /// an id-less entry: neither id is written twice, so it is invisible in the
+    /// config file.
+    #[test]
+    fn validate_rejects_an_id_colliding_with_the_auto_default() {
+        let toml = r#"
+[[satellites]]
+id = "sat-1"
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 800
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        let err = config
+            .validate()
+            .expect_err("an id colliding with the auto default must be rejected");
+        assert!(err.contains("duplicate satellite id 'sat-1'"), "msg: {err}");
+        assert!(
+            err.contains("no `id`"),
+            "error should point at the defaulted entry: {err}"
+        );
+    }
+
+    /// The ordinary multi-satellite fleet stays valid, including the all-auto
+    /// case (`sat-0`, `sat-1`, …).
+    #[test]
+    fn validate_accepts_distinct_satellite_ids() {
+        let toml = r#"
+[[satellites]]
+id = "iss"
+[satellites.orbit]
+type = "circular"
+altitude = 400
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 800
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        config.validate().expect("distinct ids must be accepted");
+        let ids: Vec<String> = config
+            .satellites
+            .iter()
+            .enumerate()
+            .map(|(i, s)| s.resolved_id(i))
+            .collect();
+        assert_eq!(ids, ["iss", "sat-1", "sat-2"]);
+    }
+
+    fn attitude(inertia_diag: [f64; 3], inertia_off_diag: [f64; 3], mass: f64) -> AttitudeConfig {
+        AttitudeConfig {
+            inertia_diag,
+            inertia_off_diag,
+            mass,
+            initial_quaternion: default_identity_quat(),
+            initial_angular_velocity: [0.0; 3],
+        }
+    }
+
+    /// `SpacecraftDynamics::new` inverts the inertia tensor with
+    /// `try_inverse().expect(...)`, so a singular tensor used to abort the
+    /// process (exit 101) instead of being reported as bad input.
+    #[test]
+    fn attitude_validate_rejects_singular_inertia() {
+        let err = attitude([0.0, 0.0, 0.0], [0.0; 3], 100.0)
+            .validate()
+            .expect_err("a zero inertia tensor must be rejected");
+        assert!(err.contains("positive definite"), "msg: {err}");
+
+        // Singular through the off-diagonals only: [[1,1,0],[1,1,0],[0,0,1]]
+        // has principal moments (0, 1, 2), which `inertia_diag` alone does not
+        // show.
+        let err = attitude([1.0, 1.0, 1.0], [1.0, 0.0, 0.0], 100.0)
+            .validate()
+            .expect_err("an off-diagonal singular tensor must be rejected");
+        assert!(err.contains("positive definite"), "msg: {err}");
+    }
+
+    /// An indefinite tensor is invertible — a determinant test passes it — but
+    /// a negative principal moment is negative mass off that axis.
+    #[test]
+    fn attitude_validate_rejects_indefinite_inertia() {
+        let indefinite = attitude([1.0, 1.0, 1.0], [2.0, 0.0, 0.0], 100.0);
+        assert!(
+            indefinite.inertia_matrix().try_inverse().is_some(),
+            "this tensor is invertible: only the eigenvalues expose it"
+        );
+        let err = indefinite
+            .validate()
+            .expect_err("an indefinite tensor must be rejected");
+        assert!(err.contains("positive definite"), "msg: {err}");
+    }
+
+    /// `I1 + I2 >= I3` holds for every mass distribution, so a config that
+    /// breaks it describes no spacecraft. Checked on the principal moments,
+    /// not on `inertia_diag`: here the diagonal alone satisfies the inequality
+    /// while the tensor's eigenvalues (1, 1, 5) do not.
+    #[test]
+    fn attitude_validate_rejects_triangle_inequality_violation() {
+        let err = attitude([1.0, 1.0, 5.0], [0.0; 3], 100.0)
+            .validate()
+            .expect_err("I1 + I2 < I3 must be rejected");
+        assert!(err.contains("triangle inequality"), "msg: {err}");
+
+        let off_diag = attitude([3.0, 3.0, 1.0], [2.0, 0.0, 0.0], 100.0);
+        let mut moments: Vec<f64> = off_diag
+            .inertia_matrix()
+            .symmetric_eigenvalues()
+            .iter()
+            .copied()
+            .collect();
+        moments.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            (moments[2] - 5.0).abs() < 1e-9 && moments[0] + moments[1] < moments[2],
+            "test fixture should violate the inequality only through the off-diagonals: {moments:?}"
+        );
+        let err = off_diag
+            .validate()
+            .expect_err("an off-diagonal triangle violation must be rejected");
+        assert!(err.contains("triangle inequality"), "msg: {err}");
+    }
+
+    /// Equality is the flat-plate (lamina) limit: physically attainable, and
+    /// the tensor is still invertible, so it stays accepted.
+    #[test]
+    fn attitude_validate_accepts_the_lamina_boundary() {
+        attitude([1.0, 2.0, 3.0], [0.0; 3], 100.0)
+            .validate()
+            .expect("I1 + I2 == I3 is a flat plate, not an impossible body");
+        // Scale-invariant: the slack is relative, so a large plate is accepted
+        // too.
+        attitude([1e8, 2e8, 3e8], [0.0; 3], 100.0)
+            .validate()
+            .expect("the triangle slack must be relative, not absolute");
+    }
+
+    #[test]
+    fn attitude_validate_rejects_non_positive_mass() {
+        for mass in [0.0, -1.0, f64::NAN] {
+            let err = attitude([10.0, 10.0, 10.0], [0.0; 3], mass)
+                .validate()
+                .expect_err("non-positive mass must be rejected");
+            assert!(err.contains("attitude.mass"), "msg for {mass}: {err}");
+        }
+    }
+
+    /// A zero quaternion normalizes to NaN in `AttitudeState::orientation()`,
+    /// so the attitude is NaN from the first step with no error anywhere.
+    #[test]
+    fn attitude_validate_rejects_a_zero_or_non_finite_quaternion() {
+        let mut att = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+        att.initial_quaternion = [0.0; 4];
+        let err = att
+            .validate()
+            .expect_err("a zero quaternion must be rejected");
+        assert!(err.contains("initial_quaternion"), "msg: {err}");
+
+        att.initial_quaternion = [1.0, f64::NAN, 0.0, 0.0];
+        let err = att
+            .validate()
+            .expect_err("a non-finite quaternion must be rejected");
+        assert!(err.contains("initial_quaternion"), "msg: {err}");
+    }
+
+    #[test]
+    fn attitude_validate_rejects_non_finite_inertia() {
+        let mut att = attitude([10.0, 10.0, f64::INFINITY], [0.0; 3], 100.0);
+        let err = att.validate().expect_err("infinite inertia");
+        assert!(err.contains("inertia_diag"), "msg: {err}");
+
+        att = attitude([10.0, 10.0, 10.0], [f64::NAN, 0.0, 0.0], 100.0);
+        let err = att.validate().expect_err("NaN off-diagonal");
+        assert!(err.contains("inertia_off_diag"), "msg: {err}");
+    }
+
+    /// The realistic tensors the repo ships in examples and presets stay valid.
+    #[test]
+    fn attitude_validate_accepts_realistic_tensors() {
+        for diag in [
+            [10.0, 10.0, 10.0],
+            [100.0, 100.0, 50.0],
+            // ISS, approximately [kg·m²]
+            [128_913_000.0, 107_321_000.0, 201_433_000.0],
+        ] {
+            attitude(diag, [0.0; 3], 420_000.0)
+                .validate()
+                .unwrap_or_else(|e| panic!("{diag:?} should be valid: {e}"));
+        }
+    }
+
+    /// End to end through the loader: the error names the satellite and the
+    /// field, where `orts run` used to reach the panic in
+    /// `SpacecraftDynamics::new`.
+    #[test]
+    fn config_load_rejects_singular_inertia() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[satellites.attitude]
+inertia_diag = [0.0, 0.0, 0.0]
+mass = 100.0
+"#;
+        let dir = std::env::temp_dir().join(format!("orts_config_att_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("singular.toml");
+        std::fs::write(&path, toml).unwrap();
+        let err = SimConfig::load(&path).expect_err("a singular inertia tensor must be rejected");
+        assert!(err.contains("satellites[0]"), "msg: {err}");
+        assert!(err.contains("positive definite"), "msg: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The WebSocket surface: `start_simulation` nests the whole
+    /// `SimConfig`, so a misspelled key is rejected there like in a file;
+    /// `add_satellite` flattens a `SatelliteConfig` next to the message tag,
+    /// and serde disables the unknown-field check under `flatten` — the message
+    /// must keep parsing, and that path keeps dropping unknown keys until the
+    /// protocol stops flattening.
+    #[test]
+    fn websocket_messages_agree_with_the_strict_config_tree() {
+        let start = r#"{
+            "type": "start_simulation",
+            "config": {
+                "dt": 10.0,
+                "satellites": [{ "orbit": { "type": "circular", "altitude": 500.0 } }]
+            }
+        }"#;
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(start)
+            .expect("start_simulation must parse");
+        let typo = start.replace("\"dt\"", "\"dtt\"");
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&typo)
+            .expect_err("a misspelled key in start_simulation must be rejected");
+
+        let add = r#"{
+            "type": "add_satellite",
+            "id": "dynamic-sat",
+            "name": "Dyn",
+            "orbit": { "type": "circular", "altitude": 500.0 },
+            "attitude": { "inertia_diag": [10.0, 10.0, 10.0], "mass": 500.0 }
+        }"#;
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(add)
+            .expect("add_satellite must still parse");
+        // Nested structs under the flattened one are still checked: only the
+        // flattened level loses it.
+        let nested_typo = add.replace("\"mass\": 500.0", "\"mass\": 500.0, \"masss\": 1.0");
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&nested_typo)
+            .expect_err("a misspelled key inside `attitude` must be rejected");
     }
 }

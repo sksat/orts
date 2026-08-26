@@ -151,6 +151,31 @@ impl SatelliteSpec {
     }
 }
 
+/// Reject a fleet whose ids are not unique.
+///
+/// The id is the fleet's addressing scheme: [`SatelliteSpec::entity_path`]
+/// derives the recording entity from it, the CSV writer sections by it, and
+/// the command / lookup paths resolve it through a first match or a `HashMap`
+/// insert. Two satellites sharing an id therefore write into one entity and
+/// only one of them can be addressed — with no error anywhere.
+///
+/// `SimConfig::validate` catches this for config files, where it can name the
+/// offending `[[satellites]]` index; this covers the fleets built outside a
+/// config file (repeated `--sat id=…`), where the specs only exist as a list.
+pub fn ensure_unique_ids(specs: &[SatelliteSpec]) -> Result<(), String> {
+    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (i, spec) in specs.iter().enumerate() {
+        if let Some(first) = seen.insert(&spec.id, i) {
+            return Err(format!(
+                "duplicate satellite id '{}': satellites #{first} and #{i} would share \
+                 one recording entity and one command target; ids must be unique",
+                spec.id
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Satellite info sent in the WebSocket info message.
 #[derive(Serialize, Clone, Debug, ts_rs::TS)]
 #[ts(export)]
@@ -469,5 +494,31 @@ mod tests {
         let spec = parse_sat_spec("altitude=400,id=my-sat", KnownBody::Earth);
         let path = spec.entity_path();
         assert_eq!(path.to_string(), "/world/sat/my-sat");
+    }
+
+    /// Two `--sat` flags with the same id resolve to one entity path, so the
+    /// fleet has to be rejected as a whole — no single flag is wrong.
+    #[test]
+    fn ensure_unique_ids_rejects_a_repeated_id() {
+        let specs = [
+            parse_sat_spec("altitude=400,id=a", KnownBody::Earth),
+            parse_sat_spec("altitude=800,id=a", KnownBody::Earth),
+        ];
+        assert_eq!(
+            specs[0].entity_path().to_string(),
+            specs[1].entity_path().to_string(),
+            "the collision this guards is the shared entity path"
+        );
+        let err = ensure_unique_ids(&specs).expect_err("a repeated id must be rejected");
+        assert!(err.contains("duplicate satellite id 'a'"), "msg: {err}");
+    }
+
+    #[test]
+    fn ensure_unique_ids_accepts_distinct_ids() {
+        let specs = [
+            parse_sat_spec("altitude=400,id=a", KnownBody::Earth),
+            parse_sat_spec("altitude=800,id=b", KnownBody::Earth),
+        ];
+        ensure_unique_ids(&specs).expect("distinct ids must be accepted");
     }
 }

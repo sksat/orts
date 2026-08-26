@@ -464,7 +464,12 @@ impl SimParams {
             disturbances: Default::default(),
             panels: None,
             attitude_config: Some(crate::config::AttitudeConfig {
-                inertia_diag: [100.0, 200.0, 50.0],
+                // 500 kg, 2 x 1 x 1 m box: I = m/12 * (b^2 + c^2) per axis.
+                // The previous [100, 200, 50] broke the triangle inequality
+                // (100 + 50 < 200), i.e. no mass distribution has it — and
+                // `AttitudeConfig::validate` now rejects the same numbers in a
+                // config file, so the shipped default has to be realizable.
+                inertia_diag: [83.3, 208.3, 208.3],
                 inertia_off_diag: [0.0, 0.0, 0.0],
                 mass: 500.0,
                 initial_quaternion: [1.0, 0.0, 0.0, 0.0],

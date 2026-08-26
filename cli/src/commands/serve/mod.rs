@@ -180,6 +180,7 @@ async fn async_server(
         // Same reason as in `run`: this path skips `SimConfig::validate`.
         crate::commands::run::validate_sim_args(sim)?;
         let params = Arc::new(SimParams::from_sim_args(sim, true));
+        crate::satellite::ensure_unique_ids(&params.satellites)?;
         tokio::spawn(manager::simulation_manager_with_params(
             params,
             plugin_overrides,

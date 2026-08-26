@@ -859,3 +859,160 @@ fn test_cli_json_and_data_stdout_conflict() {
         "error should mention the stdout conflict, got: {stderr}"
     );
 }
+
+/// Two satellites resolving to the same id used to run: both wrote rows under
+/// one recording entity path / CSV section, so the fleet silently became one
+/// mislabeled satellite. The second entry here has no `id`, so it defaults to
+/// `sat-1` and collides with the first entry's explicit id — the collision is
+/// invisible in the file.
+#[test]
+fn test_cli_config_rejects_duplicate_satellite_ids() {
+    let dir = std::env::temp_dir().join(format!("orts-e2e-dup-id-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("dup.toml");
+    std::fs::write(
+        &config_path,
+        "dt = 10.0\nduration = 60.0\n\n\
+         [[satellites]]\nid = \"sat-1\"\n[satellites.orbit]\ntype = \"circular\"\naltitude = 400\n\n\
+         [[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 800\n",
+    )
+    .unwrap();
+
+    let output = run_cli_with_config(config_path.to_str().unwrap());
+    assert!(
+        !output.status.success(),
+        "duplicate satellite ids must fail the run, stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("duplicate satellite id 'sat-1'"),
+        "error should name the colliding id, got: {stderr}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// An inertia tensor that cannot be inverted reached
+/// `SpacecraftDynamics::new`, which aborts the process (`expect`) once the
+/// attitude config is honored. It is an input error, so it must be reported as
+/// one, with the satellite named.
+#[test]
+fn test_cli_config_rejects_singular_inertia() {
+    let dir = std::env::temp_dir().join(format!("orts-e2e-inertia-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("singular.toml");
+    std::fs::write(
+        &config_path,
+        "dt = 10.0\nduration = 60.0\n\n\
+         [[satellites]]\nid = \"sat-a\"\n[satellites.orbit]\ntype = \"circular\"\naltitude = 400\n\n\
+         [satellites.attitude]\ninertia_diag = [0.0, 0.0, 0.0]\nmass = 100.0\n",
+    )
+    .unwrap();
+
+    let output = run_cli_with_config(config_path.to_str().unwrap());
+    assert!(
+        !output.status.success(),
+        "a singular inertia tensor must fail the run"
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "bad input is a reported failure (`CmdError::failure`), not a panic (101): stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("satellites[0]") && stderr.contains("positive definite"),
+        "error should name the entry and the constraint, got: {stderr}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `--atmosphere nrlmsise0` is rejected by clap; the same typo in a config
+/// file used to run the exponential model instead, with nothing in the output
+/// naming the model that was actually integrated.
+#[test]
+fn test_cli_config_rejects_unknown_atmosphere() {
+    let dir = std::env::temp_dir().join(format!("orts-e2e-atmo-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("atmo.toml");
+    std::fs::write(
+        &config_path,
+        "dt = 10.0\nduration = 60.0\natmosphere = \"nrlmsise0\"\n\n\
+         [[satellites]]\nid = \"a\"\nballistic_coeff = 0.01\n\
+         [satellites.orbit]\ntype = \"circular\"\naltitude = 300\n",
+    )
+    .unwrap();
+
+    let output = run_cli_with_config(config_path.to_str().unwrap());
+    assert!(
+        !output.status.success(),
+        "an unknown atmosphere model must fail the run"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nrlmsise0") && stderr.contains("nrlmsise00"),
+        "error should name the typo and the legal spelling, got: {stderr}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A misspelled key was dropped, which is indistinguishable from a key that
+/// was never written: `duraton = 60` ran for one full orbital period.
+#[test]
+fn test_cli_config_rejects_unknown_key() {
+    let dir = std::env::temp_dir().join(format!("orts-e2e-unknown-key-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("typo.toml");
+    std::fs::write(
+        &config_path,
+        "dt = 10.0\nduraton = 60.0\n\n\
+         [[satellites]]\nid = \"a\"\n[satellites.orbit]\ntype = \"circular\"\naltitude = 400\n",
+    )
+    .unwrap();
+
+    let output = run_cli_with_config(config_path.to_str().unwrap());
+    assert!(
+        !output.status.success(),
+        "an unknown config key must fail the run"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("duraton"),
+        "error should name the unknown key, got: {stderr}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The same collision from the CLI side: `--sat id=a` twice built a two-entry
+/// fleet whose entries shared one entity path and one command target.
+#[test]
+fn test_cli_repeated_sat_id_is_rejected() {
+    let binary = env!("CARGO_BIN_EXE_orts");
+    let output = Command::new(binary)
+        .args([
+            "run",
+            "--sat",
+            "altitude=400,id=a",
+            "--sat",
+            "altitude=800,id=a",
+            "--duration",
+            "60",
+            "--output",
+            "-",
+            "--format",
+            "csv",
+        ])
+        .output()
+        .expect("failed to execute orts");
+    assert!(
+        !output.status.success(),
+        "a repeated --sat id must fail the run, stdout={}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("duplicate satellite id 'a'"),
+        "error should name the repeated id, got: {stderr}"
+    );
+}

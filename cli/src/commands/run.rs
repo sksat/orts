@@ -70,6 +70,8 @@ pub fn run_simulation_cmd(
             ));
         }
     };
+    // Holds for every path above: the `--sat` fleet has no per-entry validation.
+    crate::satellite::ensure_unique_ids(&params.satellites)?;
     // Resolve and validate the stdout/output contract before running the
     // (potentially long) simulation, so usage errors fail fast.
     let sink = resolve_data_sink(output, format);
