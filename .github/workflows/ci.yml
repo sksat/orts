@@ -4,8 +4,10 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  # No base-branch filter: a stacked PR targets the branch below it in the
+  # stack rather than main, and a `branches: [main]` filter would leave every
+  # one of them with no checks at all.
   pull_request:
-    branches: [main]
   # Run the same checks on merge-queue groups so required checks are
   # validated against (main + queued PRs) before landing. The 14 PR
   # jobs have no event guard, so they run here too; the main/tag-only
