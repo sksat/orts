@@ -51,9 +51,10 @@ pub struct ParsedRrd {
 ///
 /// Every scalar field lives on its own entity path in an RRD (`<base>/x`,
 /// `<base>/y`, …), so a state row has to be reassembled from several columns.
-/// The key is the recording's own time index — never the position of a value
-/// inside its column, which coincides with the time index only as long as every
-/// column happens to carry a value at every step.
+/// The key is the recording's own time index, not the position of a value
+/// inside its column — the two coincide only as long as every column happens to
+/// carry a value at every step. A chunk with no timeline at all has no time
+/// index to key on, and only there does the column-local position stand in.
 ///
 /// Every timeline the recording carries takes part in the key: `orts` writes
 /// both `sim_time` and `step`, and two steps can share a `sim_time`, so keying
