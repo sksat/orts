@@ -38,8 +38,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Install mold linker
-        run: sudo apt-get update && sudo apt-get install -y mold
+      - name: Set up wild linker
+        uses: ./.github/actions/setup-wild
 
       - name: Cache viewer textures (4k/8k)
         id: texture-cache

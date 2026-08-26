@@ -1,0 +1,196 @@
+name: linker-bench
+
+# Manual-only. Compares linkers on a real GHA runner (4 vCPU / 16 GB).
+#
+# The ranking depends on core count: mold's advantage comes from parallelism,
+# so it wins on a many-core workstation and loses on a 4-vCPU runner. That is
+# why `.cargo/config.toml` names wild. Re-run this when the runner size, the
+# linker versions, or the shape of the link graph changes.
+#
+# Measures PURE link time: a wrapper sits in -Clinker and times only the
+# linker-driver call, so rustc codegen is excluded. The linker choice arrives
+# via an env var rather than RUSTFLAGS, which keeps every rustc fingerprint
+# identical across configs, so switching linkers triggers no rebuild and the
+# argv rustc hands the wrapper is the same every time. The wrapper then appends
+# one selector flag (-fuse-ld=mold, --ld-path=wild, ...) before calling clang.
+on:
+  workflow_dispatch:
+    inputs:
+      reps:
+        description: "Timed repetitions per linker (min is reported)"
+        default: "2"
+      linkers:
+        description: "Space-separated subset of: bfd lld mold wild"
+        default: "mold wild"
+      cargo_args:
+        description: "cargo test args for the workload"
+        default: "--locked --workspace --no-run"
+      touch:
+        description: >-
+          Source file touched before each run to force a relink. Must be a file
+          the chosen workload actually rebuilds.
+        default: "orts/src/lib.rs"
+      threads:
+        description: >-
+          Linker thread count (--thread-count). Empty lets each linker decide,
+          which for wild means asking cargo's jobserver — pin it to compare the
+          linkers on equal terms.
+        default: ""
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
+      - name: Show runner size
+        run: |
+          echo "nproc: $(nproc)"
+          free -g | head -2
+          df -h / | tail -1
+
+      # mold and lld are the comparison baselines, so this workflow keeps
+      # installing them even though `.cargo/config.toml` no longer uses mold.
+      - name: Install comparison linkers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mold lld clang
+          mold --version
+          ld.lld --version | head -1
+          clang --version | head -1
+
+      - name: Set up wild linker
+        uses: ./.github/actions/setup-wild
+
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      # Piggyback on rust-build's cache so the warm-up is not a cold build.
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust-native
+          save-if: false
+
+      - name: Write linker wrapper
+        run: |
+          cat > /tmp/ldwrap.sh <<'WRAP'
+          #!/usr/bin/env bash
+          set -u
+          extra=()
+          case "${LDWRAP_CHOICE:-bfd}" in
+            bfd)  extra=() ;;
+            lld)  extra=(-fuse-ld=lld) ;;
+            mold) extra=(-fuse-ld=mold) ;;
+            wild) extra=(--ld-path=wild) ;;
+            *) echo "ldwrap: unknown LDWRAP_CHOICE=$LDWRAP_CHOICE" >&2; exit 2 ;;
+          esac
+          if [ -n "${LDWRAP_THREADS:-}" ]; then
+            extra+=("-Wl,--thread-count=${LDWRAP_THREADS}")
+          fi
+          out=""; prev=""
+          for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+          t0=$(date +%s%N)
+          clang "$@" "${extra[@]}"
+          rc=$?
+          t1=$(date +%s%N)
+          [ -n "${LDWRAP_LOG:-}" ] && printf '%s %s %s\n' \
+            "$(( (t1 - t0) / 1000000 ))" "${LDWRAP_CHOICE:-bfd}" "$out" >> "$LDWRAP_LOG"
+          exit $rc
+          WRAP
+          chmod +x /tmp/ldwrap.sh
+
+      - name: Warm up (untimed)
+        env:
+          RUSTFLAGS: -Clinker=/tmp/ldwrap.sh
+          LDWRAP_CHOICE: bfd
+        run: cargo test ${{ inputs.cargo_args || '--locked --workspace --no-run' }}
+
+      - name: Benchmark
+        env:
+          REPS: ${{ inputs.reps || '2' }}
+          LINKERS: ${{ inputs.linkers || 'mold wild' }}
+          CARGO_ARGS: ${{ inputs.cargo_args || '--locked --workspace --no-run' }}
+          TOUCH: ${{ inputs.touch || 'orts/src/lib.rs' }}
+          THREADS: ${{ inputs.threads }}
+        run: |
+          python3 - <<'PY' | tee /tmp/result.txt
+          import os, shlex, subprocess
+          reps = int(os.environ["REPS"])
+          linkers = os.environ["LINKERS"].split()
+          args = shlex.split(os.environ["CARGO_ARGS"])
+          touch = os.environ["TOUCH"]
+          threads = os.environ.get("THREADS", "")
+          log = "/tmp/ldwrap.log"
+          results = {}
+          for choice in linkers:
+              env = {**os.environ, "RUSTFLAGS": "-Clinker=/tmp/ldwrap.sh",
+                     "LDWRAP_CHOICE": choice, "LDWRAP_LOG": log}
+              if threads:
+                  env["LDWRAP_THREADS"] = threads
+              samples = []
+              for _ in range(reps):
+                  open(log, "w").close()
+                  os.utime(touch, None)
+                  r = subprocess.run(["cargo", "test"] + args, env=env,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                  if r.returncode != 0:
+                      print(f"{choice}: cargo failed")
+                      print(r.stderr.decode(errors="replace")[-1500:])
+                      samples = []
+                      break
+                  ms = [int(l.split()[0]) for l in open(log) if l.strip()]
+                  if ms:
+                      samples.append((sum(ms), len(ms)))
+              results[choice] = min(samples) if samples else None
+
+          # Ratios are against mold when it was measured, otherwise against the
+          # first linker that produced a result, so the column stays meaningful
+          # for any subset of linkers.
+          base_name = next((c for c in ("mold",) if results.get(c)), None)
+          if base_name is None:
+              base_name = next((c for c in linkers if results.get(c)), None)
+          base = results.get(base_name) if base_name else None
+
+          print(f"\nnproc={os.cpu_count()}  reps={reps}  touch={touch}"
+                f"  threads={threads or 'linker default'}")
+          print(f"cargo test {' '.join(args)}\n")
+          header_rel = f"vs {base_name}" if base_name else "vs -"
+          print(f"{'linker':8s} {'total':>10s} {'links':>6s} {'ms/link':>9s}  {header_rel}")
+          for choice in linkers:
+              v = results.get(choice)
+              if not v:
+                  print(f"{choice:8s} {'FAILED':>10s}")
+                  continue
+              total, n = v
+              rel = f"{total / base[0]:.2f}x" if base else "-"
+              print(f"{choice:8s} {total:9d}ms {n:6d} {total / n:8.0f}  {rel:>6s}")
+          PY
+
+      - name: Publish to step summary
+        if: always()
+        run: |
+          {
+            echo '### linker-bench'
+            echo
+            echo '```'
+            cat /tmp/result.txt || echo "(no result)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
