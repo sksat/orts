@@ -1853,6 +1853,7 @@ mod tests {
     /// deliberately outside the contract, see [`F64`].)
     #[test]
     fn f64_json_round_trip() {
+        // Bit-for-bit, including the sign of zero and the infinities.
         for value in [
             0.0,
             -0.0,
@@ -1865,7 +1866,6 @@ mod tests {
             0.03 + 20.0 * 1e-6,
             f64::INFINITY,
             f64::NEG_INFINITY,
-            f64::NAN,
         ] {
             let json = serde_json::to_string(&F64(value)).unwrap();
             let back: F64 = serde_json::from_str(&json).unwrap();
@@ -1874,6 +1874,15 @@ mod tests {
                 value.to_bits(),
                 "{value} did not round-trip through {json}"
             );
+        }
+        // NaN comes back as a NaN. Asserting the bit pattern would claim more
+        // than the format carries: `Display` writes every NaN as "NaN", so
+        // the sign and payload do not survive (and are not wanted — what a
+        // reader needs is "this row diverged").
+        for value in [f64::NAN, -f64::NAN] {
+            let json = serde_json::to_string(&F64(value)).unwrap();
+            let back: F64 = serde_json::from_str(&json).unwrap();
+            assert!(back.0.is_nan(), "NaN did not survive as {json}");
         }
     }
 }
