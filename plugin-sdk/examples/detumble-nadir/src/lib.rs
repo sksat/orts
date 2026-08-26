@@ -73,7 +73,7 @@ impl Plugin<TickInput, Command> for Controller {
             } => {
                 let omega = match input.sensors.gyroscopes.first() {
                     Some(g) => Vector3::new(g.x, g.y, g.z),
-                    None => return Ok(None),
+                    None => return Ok(Some(stop_detumble())),
                 };
 
                 if omega.norm() < *omega_threshold {
@@ -81,23 +81,18 @@ impl Plugin<TickInput, Command> for Controller {
                         kp: self.nadir_kp,
                         kd: self.nadir_kd,
                     };
-                    // MTQ は明示的にゼロを指令する。WIT の `command` 契約では
-                    // `mtq: None` は「コマンドなし = 前回値を ZOH 保持」であり、
-                    // detumble 最後の磁気モーメントが nadir フェーズ中ずっと
-                    // 通電し続けてしまう。
-                    return Ok(Some(Command {
-                        mtq: Some(MtqCommand::Moments(vec![0.0; 3])),
-                        rw: None,
-                        thruster: None,
-                    }));
+                    // MTQ は明示的にゼロを指令する。`mtq: None` は「コマンド
+                    // なし = 前回値を ZOH 保持」なので、detumble 最後の磁気
+                    // モーメントが nadir フェーズ中ずっと通電し続けてしまう。
+                    return Ok(Some(stop_detumble()));
                 }
 
                 let b = match input.sensors.magnetometers.first() {
                     Some(m) => Vector3::new(m.x, m.y, m.z),
-                    None => return Ok(None),
+                    None => return Ok(Some(stop_detumble())),
                 };
                 if b.norm_squared() < 1e-60 {
-                    return Ok(None);
+                    return Ok(Some(stop_detumble()));
                 }
 
                 // B-dot law: m = -k dB/dt, and in the body frame
@@ -121,11 +116,11 @@ impl Plugin<TickInput, Command> for Controller {
             Mode::Nadir { kp, kd } => {
                 let att = match input.sensors.star_trackers.first() {
                     Some(a) => a,
-                    None => return Ok(None),
+                    None => return Ok(Some(stop_nadir())),
                 };
                 let omega = match input.sensors.gyroscopes.first() {
                     Some(g) => Vector3::new(g.x, g.y, g.z),
-                    None => return Ok(None),
+                    None => return Ok(Some(stop_nadir())),
                 };
 
                 // star tracker は body→inertial 姿勢を返す。nadir 指向の
@@ -135,8 +130,9 @@ impl Plugin<TickInput, Command> for Controller {
                 ));
 
                 let Some((q_target, omega_target)) = lvlh_target(&input.spacecraft.orbit) else {
-                    // 半径 0 または r ∥ v（純径方向軌道）では LVLH が定義できない。
-                    return Ok(None);
+                    // 半径 0 または r ∥ v（純径方向軌道）では LVLH が定義でき
+                    // ない。目標が無いままトルク指令を残すと wheel が飽和する。
+                    return Ok(Some(stop_nadir()));
                 };
 
                 // 左不変誤差 q_err = q_target⁻¹ q_measured（body frame の誤差）。
@@ -166,6 +162,32 @@ impl Plugin<TickInput, Command> for Controller {
 
     fn current_mode(&self) -> Option<&str> {
         Some((&self.mode).into())
+    }
+}
+
+/// Detumble が駆動するアクチュエータ（MTQ）を止める指令。
+///
+/// WIT の `command` 契約では、指令を省く（`mtq: None`）のは「前回値を ZOH
+/// 保持」であってゼロではない。センサが欠けて B-dot を組めないときに指令を
+/// 返さないと、直前の磁気モーメントが通電し続ける。制御できない間は切る。
+fn stop_detumble() -> Command {
+    Command {
+        mtq: Some(MtqCommand::Moments(vec![0.0; 3])),
+        rw: None,
+        thruster: None,
+    }
+}
+
+/// Nadir が駆動するアクチュエータ（RW）を止める指令。
+///
+/// こちらは ZOH 保持の害がさらに大きい: トルク指令が残り続けると wheel は
+/// 飽和へ向かって加速し続ける。姿勢・角速度・軌道のいずれかが使えない間は
+/// トルク 0 を指令し、wheel を現在の角運動量で惰走させる。
+fn stop_nadir() -> Command {
+    Command {
+        rw: Some(RwCommand::Torques(vec![0.0; 3])),
+        mtq: None,
+        thruster: None,
     }
 }
 
@@ -425,9 +447,11 @@ mod tests {
         }
     }
 
-    /// r ∥ v（純径方向）では LVLH が定義できないので指令を出さない。
+    /// r ∥ v（純径方向）では LVLH が定義できない。目標が無いので PD は組めない
+    /// が、指令を省くと直前の RW トルクが ZOH で残り wheel が飽和へ向かうので、
+    /// トルク 0 を明示的に指令する。
     #[test]
-    fn nadir_declines_a_degenerate_orbit() {
+    fn nadir_stops_the_wheels_on_a_degenerate_orbit() {
         let r = Vector3::new(R_CIRC, 0.0, 0.0);
         let v = Vector3::new(1.0, 0.0, 0.0);
         assert!(
@@ -447,8 +471,43 @@ mod tests {
                 UnitQuaternion::identity(),
                 Vector3::zeros(),
             ))
-            .expect("no error");
-        assert!(cmd.is_none(), "expected no command, got {cmd:?}");
+            .expect("no error")
+            .expect("a degenerate orbit must still stop the wheels");
+        let torques = rw_torques(&cmd);
+        assert!(
+            torques.iter().all(|t| *t == 0.0),
+            "expected zero wheel torque, got {torques:?}"
+        );
+    }
+
+    /// センサが欠けて B-dot を組めない tick でも、指令を省かずゼロを出す。
+    /// 省くと直前の磁気モーメントが ZOH で通電し続ける。
+    #[test]
+    fn detumble_without_a_magnetometer_zeroes_the_mtq() {
+        let (r, v) = circular_orbit();
+        let mut ctrl = Controller::init("").expect("default config");
+
+        // |omega| = 0.1 rad/s は遷移閾値 (1e-2) より大きいので detumble のまま。
+        let mut input = tick_input(
+            r,
+            v,
+            UnitQuaternion::identity(),
+            Vector3::new(0.1, 0.0, 0.0),
+        );
+        input.sensors.magnetometers.clear();
+
+        let cmd = ctrl
+            .update(&input)
+            .expect("no error")
+            .expect("a missing magnetometer must still stop the MTQ");
+        assert_eq!(ctrl.current_mode(), Some("detumble"));
+        match cmd.mtq {
+            Some(MtqCommand::Moments(ref m)) => assert!(
+                m.iter().all(|v| *v == 0.0),
+                "expected zero magnetic moment, got {m:?}"
+            ),
+            other => panic!("expected an explicit zero MTQ command, got {other:?}"),
+        }
     }
 
     /// detumble → nadir の遷移 tick で MTQ を明示的に 0 にする。

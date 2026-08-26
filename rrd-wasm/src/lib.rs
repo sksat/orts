@@ -108,6 +108,7 @@ struct ChunkKeys {
 }
 
 /// Where one chunk row sits on the recording's timelines.
+#[derive(Clone, Copy)]
 enum RowIndex {
     /// The chunk's timelines place the row at this time index.
     Timed {
@@ -221,22 +222,36 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
                     let Some(Ok(scalar_vec)) = batch else {
                         continue;
                     };
+                    let timed = match keys.row(row_idx) {
+                        RowIndex::Timed { time_ns, step } => Some((time_ns, step)),
+                        RowIndex::Untimed => None,
+                        RowIndex::Missing => continue,
+                    };
                     // A batch usually holds one value per row, but `Scalars`
                     // takes a slice: several values at one time index become
-                    // consecutive repeats rather than being dropped.
+                    // consecutive repeats rather than being dropped. The repeat
+                    // counter is scanned once for the row and advanced locally,
+                    // so a wide batch costs one scan of the column, not one per
+                    // value.
+                    let mut next_repeat = timed.map_or(0, |(time_ns, step)| {
+                        repeats(column, |repeat| RowKey::Timed {
+                            time_ns,
+                            step,
+                            repeat,
+                        })
+                    });
                     for value in scalar_vec.iter() {
-                        let key = match keys.row(row_idx) {
-                            RowIndex::Timed { time_ns, step } => RowKey::Timed {
-                                time_ns,
-                                step,
-                                repeat: repeats(column, |repeat| RowKey::Timed {
+                        let key = match timed {
+                            Some((time_ns, step)) => {
+                                let key = RowKey::Timed {
                                     time_ns,
                                     step,
-                                    repeat,
-                                }),
-                            },
-                            RowIndex::Untimed => RowKey::Index(column.len()),
-                            RowIndex::Missing => break,
+                                    repeat: next_repeat,
+                                };
+                                next_repeat += 1;
+                                key
+                            }
+                            None => RowKey::Index(column.len()),
                         };
                         column.insert(key, value.0.0);
                     }
