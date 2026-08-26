@@ -1,20 +1,27 @@
 name: Set up wild linker
 description: >-
   Install the wild linker from its prebuilt release tarball, checksum-verified.
-  `.cargo/config.toml` names wild as the linker for x86_64-unknown-linux-gnu,
-  so every job that compiles for the host needs it on PATH.
+  `.cargo/config.toml` names wild as the linker for the Linux gnu triples, so
+  every job that compiles for such a host needs it on PATH. Picks the tarball
+  matching the runner's architecture (x86_64 or aarch64).
 
 inputs:
   version:
     description: wild release to install
     required: false
     default: "0.10.0"
-  sha256:
+  sha256_x86_64:
     description: >-
       Checksum of wild-linker-<version>-x86_64-unknown-linux-gnu.tar.gz.
       Must be updated together with `version`.
     required: false
     default: "641265506a7c06cfb03181b8916ab663ec8407855db6d4db7f8450667d105283"
+  sha256_aarch64:
+    description: >-
+      Checksum of wild-linker-<version>-aarch64-unknown-linux-gnu.tar.gz.
+      Must be updated together with `version`.
+    required: false
+    default: "e9d670e41f76481a68984f816e25bd2f124664db3ac935053e1a6fc41d2894c2"
 
 runs:
   using: composite
@@ -25,13 +32,19 @@ runs:
       shell: bash
       env:
         WILD_VERSION: ${{ inputs.version }}
-        WILD_SHA256: ${{ inputs.sha256 }}
+        WILD_SHA256_X86_64: ${{ inputs.sha256_x86_64 }}
+        WILD_SHA256_AARCH64: ${{ inputs.sha256_aarch64 }}
       run: |
         set -euo pipefail
-        tarball="wild-linker-${WILD_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+        case "$(uname -m)" in
+          x86_64)          triple=x86_64-unknown-linux-gnu;  sha="${WILD_SHA256_X86_64}" ;;
+          aarch64|arm64)   triple=aarch64-unknown-linux-gnu; sha="${WILD_SHA256_AARCH64}" ;;
+          *) echo "no wild tarball for $(uname -m)" >&2; exit 1 ;;
+        esac
+        tarball="wild-linker-${WILD_VERSION}-${triple}.tar.gz"
         url="https://github.com/davidlattimore/wild/releases/download/${WILD_VERSION}/${tarball}"
         curl -fsSL -o "/tmp/${tarball}" "$url"
-        echo "${WILD_SHA256}  /tmp/${tarball}" | sha256sum -c -
+        echo "${sha}  /tmp/${tarball}" | sha256sum -c -
         mkdir -p /tmp/wild-extract
         tar -xzf "/tmp/${tarball}" -C /tmp/wild-extract
         # Locate the binary rather than assuming the archive's internal layout,
@@ -48,7 +61,7 @@ runs:
         wild --version
 
     # `.cargo/config.toml` drives the linker through `-Clinker=clang`, so clang
-    # has to be present too. ubuntu-latest ships it, but the `free-disk-space`
+    # has to be present too. ubuntu runners ship it, but the `free-disk-space`
     # step in several jobs is configured with `large-packages: false` precisely
     # to keep it — assert rather than assume.
     - name: Check clang is available

@@ -29,3 +29,8 @@ TS_RS_EXPORT_DIR = { value = "viewer/src/protocol/generated", relative = true }
 # Reproduce with `.github/workflows/linker-bench.yml`.
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-Clinker=clang", "-Clink-arg=--ld-path=wild"]
+
+# Same linker for arm64 hosts. `setup-wild` picks the tarball matching the
+# runner's architecture, so both triples get wild in CI.
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-Clinker=clang", "-Clink-arg=--ld-path=wild"]
