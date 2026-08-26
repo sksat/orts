@@ -414,79 +414,70 @@ mod tests {
     /// A sample whose fields each carry several values in one logged row.
     type BatchSample<'a> = (f64, Vec<(&'a str, Vec<f64>)>);
 
-    /// Write an .rrd whose scalar columns carry exactly the given samples.
-    fn write_rrd(name: &str, samples: &[Sample]) -> std::path::PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("rrd_wasm_{}_{}.rrd", name, std::process::id()));
+    /// Write an .rrd with `write`, then decode it back. The recording lives in
+    /// a directory of its own that is removed when the call returns, so no two
+    /// calls — including tests running in parallel — can meet on one path.
+    fn decode_written(write: impl FnOnce(&re_sdk::RecordingStream)) -> ParsedRrd {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("test.rrd");
         let rec = re_sdk::RecordingStreamBuilder::new("rrd-wasm-test")
             .save(&path)
             .expect("recording stream");
-        for (t, fields) in samples {
-            rec.set_duration_secs("sim_time", *t);
-            for (field, value) in fields {
-                rec.log(
-                    format!("{ENTITY}/{field}"),
-                    &re_sdk_types::archetypes::Scalars::new([*value]),
-                )
-                .expect("log scalar");
-            }
-        }
+        write(&rec);
         rec.flush_blocking().expect("flush");
         drop(rec);
-        path
-    }
-
-    /// Write an .rrd carrying both timelines, so one `sim_time` can span
-    /// several `step`s the way it can in an `orts` recording.
-    fn write_rrd_with_steps(name: &str, samples: &[SteppedSample]) -> std::path::PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("rrd_wasm_{}_{}.rrd", name, std::process::id()));
-        let rec = re_sdk::RecordingStreamBuilder::new("rrd-wasm-test")
-            .save(&path)
-            .expect("recording stream");
-        for (t, step, fields) in samples {
-            rec.set_duration_secs("sim_time", *t);
-            rec.set_time_sequence("step", *step);
-            for (field, value) in fields {
-                rec.log(
-                    format!("{ENTITY}/{field}"),
-                    &re_sdk_types::archetypes::Scalars::new([*value]),
-                )
-                .expect("log scalar");
-            }
-        }
-        rec.flush_blocking().expect("flush");
-        drop(rec);
-        path
-    }
-
-    /// Write an .rrd whose `Scalars` batches carry several values per logged
-    /// row — one row of the recording, many values of the column.
-    fn write_rrd_batched(name: &str, samples: &[BatchSample]) -> std::path::PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("rrd_wasm_{}_{}.rrd", name, std::process::id()));
-        let rec = re_sdk::RecordingStreamBuilder::new("rrd-wasm-test")
-            .save(&path)
-            .expect("recording stream");
-        for (t, fields) in samples {
-            rec.set_duration_secs("sim_time", *t);
-            for (field, values) in fields {
-                rec.log(
-                    format!("{ENTITY}/{field}"),
-                    &re_sdk_types::archetypes::Scalars::new(values.clone()),
-                )
-                .expect("log scalars");
-            }
-        }
-        rec.flush_blocking().expect("flush");
-        drop(rec);
-        path
-    }
-
-    fn decode_path(path: &std::path::Path) -> ParsedRrd {
-        let bytes = std::fs::read(path).expect("written rrd");
-        let _ = std::fs::remove_file(path);
+        let bytes = std::fs::read(&path).expect("written rrd");
         decode_rrd(std::io::Cursor::new(&bytes)).expect("rrd should decode")
+    }
+
+    /// Log one scalar per field at the stream's current time.
+    fn log_scalars(rec: &re_sdk::RecordingStream, fields: &[(&str, f64)]) {
+        for (field, value) in fields {
+            rec.log(
+                format!("{ENTITY}/{field}"),
+                &re_sdk_types::archetypes::Scalars::new([*value]),
+            )
+            .expect("log scalar");
+        }
+    }
+
+    /// Decode an .rrd whose scalar columns carry exactly the given samples.
+    fn decode_samples(samples: &[Sample]) -> ParsedRrd {
+        decode_written(|rec| {
+            for (t, fields) in samples {
+                rec.set_duration_secs("sim_time", *t);
+                log_scalars(rec, fields);
+            }
+        })
+    }
+
+    /// Decode an .rrd carrying both timelines, so one `sim_time` can span
+    /// several `step`s the way it can in an `orts` recording.
+    fn decode_stepped_samples(samples: &[SteppedSample]) -> ParsedRrd {
+        decode_written(|rec| {
+            for (t, step, fields) in samples {
+                rec.set_duration_secs("sim_time", *t);
+                rec.set_time_sequence("step", *step);
+                log_scalars(rec, fields);
+            }
+        })
+    }
+
+    /// Decode an .rrd whose `Scalars` batches carry several values per logged
+    /// row — one row of the recording, many values of the column.
+    fn decode_batched_samples(samples: &[BatchSample]) -> ParsedRrd {
+        decode_written(|rec| {
+            for (t, fields) in samples {
+                rec.set_duration_secs("sim_time", *t);
+                for (field, values) in fields {
+                    rec.log(
+                        format!("{ENTITY}/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new(values.clone()),
+                    )
+                    .expect("log scalars");
+                }
+            }
+        })
     }
 
     fn state(x: f64) -> Vec<(&'static str, f64)> {
@@ -515,15 +506,11 @@ mod tests {
     /// from step to step, so any reshuffling of rows or columns shows up.
     #[test]
     fn dense_columns_keep_every_value_on_its_own_time() {
-        let path = write_rrd(
-            "dense",
-            &[
-                (0.0, state(100.0)),
-                (10.0, state(200.0)),
-                (20.0, state(300.0)),
-            ],
-        );
-        let data = decode_path(&path);
+        let data = decode_samples(&[
+            (0.0, state(100.0)),
+            (10.0, state(200.0)),
+            (20.0, state(300.0)),
+        ]);
 
         assert_eq!(data.rows.len(), 3, "expected one row per time step");
         for (row, x) in data.rows.iter().zip([100.0, 200.0, 300.0]) {
@@ -548,15 +535,11 @@ mod tests {
     /// component must stay with the n-th repeat of the others.
     #[test]
     fn repeated_time_index_keeps_both_rows() {
-        let path = write_rrd(
-            "repeat",
-            &[
-                (0.0, state(100.0)),
-                (0.0, state(200.0)),
-                (10.0, state(300.0)),
-            ],
-        );
-        let data = decode_path(&path);
+        let data = decode_samples(&[
+            (0.0, state(100.0)),
+            (0.0, state(200.0)),
+            (10.0, state(300.0)),
+        ]);
 
         assert_eq!(data.rows.len(), 3, "got {:?}", data.rows);
         assert_eq!(
@@ -580,15 +563,11 @@ mod tests {
     fn steps_sharing_a_sim_time_stay_separate_rows() {
         let mut middle = state(200.0);
         middle.retain(|(field, _)| *field != "y");
-        let path = write_rrd_with_steps(
-            "same_time_steps",
-            &[
-                (0.0, 10, state(100.0)),
-                (0.0, 11, middle),
-                (0.0, 12, state(300.0)),
-            ],
-        );
-        let data = decode_path(&path);
+        let data = decode_stepped_samples(&[
+            (0.0, 10, state(100.0)),
+            (0.0, 11, middle),
+            (0.0, 12, state(300.0)),
+        ]);
 
         // step 11 has no y, so it is not a position row. Steps 10 and 12 keep
         // their own values instead of borrowing step 12's y for step 11.
@@ -606,8 +585,7 @@ mod tests {
     /// are values of the recording, not just the first.
     #[test]
     fn every_value_of_a_scalar_batch_is_decoded() {
-        let path = write_rrd_batched("batched", &[(0.0, state_batch(&[100.0, 200.0]))]);
-        let data = decode_path(&path);
+        let data = decode_batched_samples(&[(0.0, state_batch(&[100.0, 200.0]))]);
 
         assert_eq!(data.rows.len(), 2, "got {:?}", data.rows);
         assert_eq!(
@@ -625,8 +603,7 @@ mod tests {
     fn sparse_position_column_is_joined_by_time() {
         let mut first = state(100.0);
         first.retain(|(field, _)| *field != "y");
-        let path = write_rrd("sparse_pos", &[(0.0, first), (10.0, state(200.0))]);
-        let data = decode_path(&path);
+        let data = decode_samples(&[(0.0, first), (10.0, state(200.0))]);
 
         // t=0 has no y at all, so it is not a position — the only complete row
         // is t=10, and it must carry *its own* y (201), not t=0's row index.
@@ -645,8 +622,7 @@ mod tests {
     fn row_missing_a_velocity_component_is_dropped() {
         let mut second = state(200.0);
         second.retain(|(field, _)| *field != "vz");
-        let path = write_rrd("sparse_vel", &[(0.0, state(100.0)), (10.0, second)]);
-        let data = decode_path(&path);
+        let data = decode_samples(&[(0.0, state(100.0)), (10.0, second)]);
 
         assert_eq!(
             data.rows.len(),
@@ -670,15 +646,11 @@ mod tests {
             ("wy", 0.02),
             ("wz", 0.03),
         ]);
-        let path = write_rrd(
-            "sparse_att",
-            &[
-                (0.0, state(100.0)),
-                (10.0, attitude_step),
-                (20.0, state(300.0)),
-            ],
-        );
-        let data = decode_path(&path);
+        let data = decode_samples(&[
+            (0.0, state(100.0)),
+            (10.0, attitude_step),
+            (20.0, state(300.0)),
+        ]);
 
         assert_eq!(data.rows.len(), 3);
         assert_eq!(data.rows[0].quaternion, None, "t=0 logged no attitude");

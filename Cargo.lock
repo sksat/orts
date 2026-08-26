@@ -4060,6 +4060,7 @@ dependencies = [
  "re_sdk_types",
  "serde",
  "serde-wasm-bindgen",
+ "tempfile",
  "wasm-bindgen",
 ]
 

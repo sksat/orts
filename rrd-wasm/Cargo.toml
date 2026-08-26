@@ -43,3 +43,5 @@ wasm = ["wasm-bindgen", "serde-wasm-bindgen"]
 # testable against the RRD format, not against one producer's conventions.
 [dev-dependencies]
 re_sdk = "0.33"
+# A directory of its own per written .rrd, removed when the test returns.
+tempfile = "3"
