@@ -1,11 +1,16 @@
 import { Suspense } from "react";
-import { transformToLvlh } from "../coordTransform.js";
+import {
+  displayPosition,
+  displayQuaternion,
+  type Quat,
+  resolveDisplayFrame,
+} from "../displayFrame.js";
 import type { OrbitPoint } from "../orbit.js";
 import { isLegacyEcef, type ReferenceFrame } from "../referenceFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
 import type { LvlhAxes } from "../sceneFrame.js";
-import { body_quat_to_rsw, eci_to_ecef } from "../wasm/arikaInit.js";
+import { earth_rotation_angle } from "../wasm/arikaInit.js";
 import { BodyAxes } from "./BodyAxes.js";
 import { PrimitiveMarker } from "./PrimitiveMarker.js";
 import { SatelliteModel } from "./SatelliteModel.js";
@@ -81,67 +86,31 @@ export function Satellite({
   hideSphereFallback = false,
   markerShape,
 }: SatelliteProps) {
-  let scenePos: [number, number, number];
+  // One display frame drives both the position and the attitude, so they can
+  // never end up in different bases (the LVLH axis order and the ECEF rotation
+  // used to be derived independently, and disagreed).
+  const era =
+    isLegacyEcef(referenceFrame) && epochJd != null
+      ? earth_rotation_angle(epochJd, position.t)
+      : null;
+  const frame = resolveDisplayFrame(referenceFrame, { era, originPosition, lvlhAxes });
 
-  if (isLegacyEcef(referenceFrame) && epochJd != null) {
-    // WASM fast path for ECEF
-    const ecef = eci_to_ecef(position.x, position.y, position.z, epochJd, position.t);
-    scenePos = [ecef[0] / scaleRadius, ecef[1] / scaleRadius, ecef[2] / scaleRadius];
-  } else if (originPosition != null && lvlhAxes != null) {
-    // LVLH body-frame transform (f64 precision)
-    scenePos = transformToLvlh(
-      position.x,
-      position.y,
-      position.z,
-      originPosition,
-      lvlhAxes,
-      scaleRadius,
-    );
-  } else if (originPosition != null) {
-    // Simple offset subtraction fallback
-    scenePos = [
-      (position.x - originPosition[0]) / scaleRadius,
-      (position.y - originPosition[1]) / scaleRadius,
-      (position.z - originPosition[2]) / scaleRadius,
-    ];
-  } else {
-    scenePos = [position.x / scaleRadius, position.y / scaleRadius, position.z / scaleRadius];
-  }
+  const scenePos = displayPosition(frame, position.x, position.y, position.z, scaleRadius);
 
-  // Extract attitude quaternion (body-to-ECI) and transform to display frame
-  const rawQuaternion: [number, number, number, number] | undefined =
+  // Attitude quaternion as delivered: body-to-inertial, Hamilton [w, x, y, z].
+  const rawQuaternion: Quat | undefined =
     position.qw != null
       ? [position.qw, position.qx ?? 0, position.qy ?? 0, position.qz ?? 0]
       : undefined;
 
-  let displayQuaternion: [number, number, number, number] | undefined;
-  if (rawQuaternion && lvlhAxes != null) {
-    // Local-orbital view: transform body-to-ECI → body-to-RSW via arika WASM.
-    // (The historical viewer label "lvlhAxes" refers to the local orbital
-    // frame; the arika API now uses standard RSW convention.)
-    displayQuaternion = body_quat_to_rsw(
-      position.x,
-      position.y,
-      position.z,
-      position.vx,
-      position.vy,
-      position.vz,
-      rawQuaternion[0],
-      rawQuaternion[1],
-      rawQuaternion[2],
-      rawQuaternion[3],
-    );
-  } else {
-    // ECI view: use body-to-ECI as-is
-    displayQuaternion = rawQuaternion;
-  }
+  const displayQuat = displayQuaternion(frame, rawQuaternion);
 
   const modelConfig = satId ? getSatelliteModelConfig(satId, satName) : null;
 
-  const bodyAxes = displayQuaternion ? (
+  const bodyAxes = displayQuat ? (
     <BodyAxes
       position={scenePos}
-      quaternion={displayQuaternion}
+      quaternion={displayQuat}
       axisLength={modelConfig ? modelConfig.scale * 5 : DEFAULT_SPHERE_RADIUS * 6}
       debugId={satId}
     />
@@ -151,7 +120,7 @@ export function Satellite({
     return (
       <>
         <Suspense fallback={<SphereMarker position={scenePos} color={color} />}>
-          <SatelliteModel position={scenePos} config={modelConfig} quaternion={displayQuaternion} />
+          <SatelliteModel position={scenePos} config={modelConfig} quaternion={displayQuat} />
         </Suspense>
         {bodyAxes}
       </>
@@ -165,13 +134,13 @@ export function Satellite({
   // at every orientation — sphere otherwise).
   const shape = resolveMarkerShape({
     override: markerShape,
-    hasAttitude: displayQuaternion != null,
+    hasAttitude: displayQuat != null,
   });
   const fallbackMarker =
     shape === "sphere" ? (
       <SphereMarker position={scenePos} color={color} />
     ) : (
-      <PrimitiveMarker position={scenePos} quaternion={displayQuaternion} />
+      <PrimitiveMarker position={scenePos} quaternion={displayQuat} />
     );
   return (
     <>

@@ -88,6 +88,11 @@
           "target": "@components/orbit-viewer/debug/satWorldQuat.ts"
         },
         {
+          "path": "src/displayFrame.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/displayFrame.ts"
+        },
+        {
           "path": "src/displayScale.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/displayScale.ts"
