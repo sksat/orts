@@ -1536,8 +1536,18 @@ jobs:
             ALL_FILES="${ALL_FILES}${ARCHIVE}\n${ARCHIVE}.sha256\n${BINARY}\n"
           done
 
-          echo -e "$ALL_FILES" > /tmp/release-files.txt
+          echo -e "$ALL_FILES" | grep -v '^$' > /tmp/release-files.txt
           cat /tmp/release-files.txt
+
+          # Hand the list to the release step rather than repeating the targets
+          # there. A hardcoded list silently drops any target added later:
+          # fail_on_unmatched_files only catches a listed file that is missing,
+          # never a produced file that was never listed.
+          {
+            echo "files<<ASSETS_EOF"
+            cat /tmp/release-files.txt
+            echo "ASSETS_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build release body
         run: |
@@ -1563,11 +1573,6 @@ jobs:
           fail_on_unmatched_files: true
           body_path: /tmp/release-body.md
           files: |
-            orts-cli-${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz
-            orts-cli-${{ steps.version.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz.sha256
-            orts-x86_64-unknown-linux-gnu
-            orts-cli-${{ steps.version.outputs.version }}-x86_64-unknown-linux-musl.tar.gz
-            orts-cli-${{ steps.version.outputs.version }}-x86_64-unknown-linux-musl.tar.gz.sha256
-            orts-x86_64-unknown-linux-musl
+            ${{ steps.assets.outputs.files }}
             README.md
             LICENSE
