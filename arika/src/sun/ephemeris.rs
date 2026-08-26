@@ -283,6 +283,35 @@ mod tests {
     }
 
     #[test]
+    fn planet_branch_rotates_the_ecliptic_with_the_j2000_obliquity() {
+        // `sun_direction_from_body`'s planet branch takes the Standish
+        // heliocentric elements — J2000 mean ecliptic and equinox — into
+        // equatorial coordinates. Rotating that result back about the x-axis by
+        // the J2000 obliquity must land exactly on -r_body in the ecliptic
+        // frame. It does not if the forward rotation used the obliquity of
+        // date: the mismatch is 11 arcsec in 2024 and 35 arcsec by 2075, which
+        // no other test on this branch (unit norm, variation over six months)
+        // can see.
+        for (body, y) in [("mars", 2024), ("mars", 2075), ("jupiter", 2100)] {
+            let epoch = Epoch::from_gregorian(y, 5, 10, 0, 0, 0.0).to_tdb();
+            let dir_eq = sun_direction_from_body(body, &epoch).into_inner();
+            // The inverse rotation is the same x-rotation with the sign flipped.
+            let dir_ecl = planets::ecliptic_to_equatorial(&dir_eq, -j2000_obliquity());
+
+            let expected = (-planets::heliocentric_position_ecliptic(body, &epoch)
+                .expect("known body"))
+            .normalize();
+            let sep_arcsec = dir_ecl.dot(&expected).clamp(-1.0, 1.0).acos().to_degrees() * 3600.0;
+            let of_date_error_arcsec = (0.0130042 * epoch.centuries_since_j2000()).abs() * 3600.0;
+            assert!(
+                sep_arcsec < 1e-3,
+                "{body} {y}: ecliptic round trip off by {sep_arcsec:.3} arcsec \
+                 (an obliquity of date would give ~{of_date_error_arcsec:.1})"
+            );
+        }
+    }
+
+    #[test]
     fn sun_of_date_to_j2000_step_is_the_accumulated_precession() {
         // The rotation applied on the way out must be precession-sized, not
         // zero (the old behaviour) and not something else. The expected value
