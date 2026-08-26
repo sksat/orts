@@ -621,8 +621,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Only the musl arm compiles on the host. The gnu arm runs cargo inside
-      # the `cross` container, which overrides RUSTFLAGS and links with cc.
+      # Only the musl target compiles on the host. The gnu target runs cargo
+      # inside the `cross` container, which overrides RUSTFLAGS and links with
+      # cc. Both matrix entries are x86_64.
       - name: Set up wild linker
         if: matrix.target == 'x86_64-unknown-linux-musl'
         uses: ./.github/actions/setup-wild
