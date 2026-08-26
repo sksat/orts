@@ -2,7 +2,10 @@ use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
 use crate::perturbations::OMEGA_EARTH;
 use arika::body::KnownBody;
 use arika::earth::R as R_EARTH;
+use arika::earth::geodetic::Geodetic;
+use arika::earth::{EarthFixedTransform, EarthOrientation};
 use arika::epoch::Epoch;
+use arika::frame;
 use nalgebra::Vector3;
 use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 
@@ -157,25 +160,43 @@ impl SpacecraftShape {
 /// Implements [`LoadModel`] to produce both translational acceleration and
 /// aerodynamic torque from per-panel drag forces.  For the [`SpacecraftShape::Sphere`]
 /// variant, behaves identically to the scalar `AtmosphericDrag`.
-pub struct PanelDrag {
+///
+/// The frame parameter `F` selects — exactly as for
+/// [`AtmosphericDrag`](crate::perturbations::AtmosphericDrag) — how positions
+/// are converted to geodetic coordinates for the density lookup and which spin
+/// axis the atmosphere co-rotates about: `SimpleEci` uses the ERA-only ECEF
+/// rotation and a `+Z` spin axis, `Gcrs` the full IAU 2006 CIO chain and the
+/// true CIP spin axis.
+pub struct PanelDrag<F: EarthFixedTransform = frame::SimpleEci> {
     shape: SpacecraftShape,
     atmosphere: Box<dyn AtmosphereModel>,
     body: Option<KnownBody>,
     body_radius: f64,
     omega_body: f64,
+    /// EOP storage for the frame adapter. `()` for `SimpleEci`.
+    eop: F::EopStorage,
 }
 
-impl PanelDrag {
-    /// Create a panel drag model for Earth orbit.
+impl PanelDrag<frame::SimpleEci> {
+    /// Create a panel drag model for Earth orbit in the default `SimpleEci` frame.
     ///
     /// Uses piecewise exponential atmosphere and WGS-84 geodetic altitude by default.
     pub fn for_earth(shape: SpacecraftShape) -> Self {
+        Self::for_earth_in_frame(shape, ())
+    }
+}
+
+impl<F: EarthFixedTransform> PanelDrag<F> {
+    /// Create a panel drag model for Earth orbit in an arbitrary inertial frame
+    /// `F`, with that frame's EOP storage (`()` for `SimpleEci`).
+    pub fn for_earth_in_frame(shape: SpacecraftShape, eop: F::EopStorage) -> Self {
         Self {
             shape,
             atmosphere: Box::new(Exponential),
             body: Some(KnownBody::Earth),
             body_radius: R_EARTH,
             omega_body: OMEGA_EARTH,
+            eop,
         }
     }
 
@@ -186,59 +207,73 @@ impl PanelDrag {
     }
 }
 
-impl PanelDrag {
+impl<F: EarthFixedTransform> PanelDrag<F> {
     /// Check if the position is inside the central body.
-    fn is_inside(&self, position: &Vector3<f64>) -> bool {
-        match self.body {
-            Some(KnownBody::Earth) => {
-                let p2 = position.x * position.x + position.y * position.y;
-                let z2 = position.z * position.z;
-                p2 / (arika::earth::ellipsoid::WGS84_A * arika::earth::ellipsoid::WGS84_A)
-                    + z2 / (arika::earth::ellipsoid::WGS84_B * arika::earth::ellipsoid::WGS84_B)
-                    < 1.0
-            }
+    /// Is the state below the surface (drag is meaningless there)?
+    ///
+    /// For Earth this asks the frame for the geodetic height rather than
+    /// applying the WGS-84 semi-axes to the frame's own axes: the ellipsoid is
+    /// axisymmetric about Earth's *polar* axis, which `SimpleEci`'s `+Z` is by
+    /// definition but `Gcrs`'s is not (they differ by precession/nutation), so
+    /// the raw-axis test misplaces the boundary by tens of metres there. Other
+    /// bodies keep the spherical test.
+    fn is_below_surface(&self, geodetic: Option<&Geodetic>, position: &Vector3<f64>) -> bool {
+        match (self.body, geodetic) {
+            (Some(KnownBody::Earth), Some(geodetic)) => geodetic.altitude < 0.0,
             _ => position.magnitude() < self.body_radius,
         }
     }
 
     /// Compute relative velocity accounting for atmosphere co-rotation [km/s].
-    fn relative_velocity_from_orbit(&self, orbit: &crate::OrbitalState) -> Vector3<f64> {
-        let omega = Vector3::new(0.0, 0.0, self.omega_body);
+    ///
+    /// Ω is along the central body's spin axis: for Earth the axis
+    /// [`EarthRotationPole`](arika::earth::EarthRotationPole) expresses in the
+    /// integration frame `F` (`+Z` for
+    /// `SimpleEci`, the true CIP for `Gcrs`), otherwise the frame Z axis with
+    /// that body's rate — the same treatment as
+    /// [`AtmosphericDrag`](crate::perturbations::AtmosphericDrag).
+    fn relative_velocity_from_orbit(
+        &self,
+        orbit: &crate::OrbitalState<F>,
+        utc: &Epoch<arika::epoch::Utc>,
+    ) -> Vector3<f64> {
+        let omega = match self.body {
+            Some(KnownBody::Earth) => F::earth_pole(utc).into_inner() * self.omega_body,
+            _ => Vector3::new(0.0, 0.0, self.omega_body),
+        };
         *orbit.velocity() - omega.cross(orbit.position())
     }
 
     /// Compute loads from full state (using capability trait methods).
     pub(crate) fn loads_from_state(
         &self,
-        orbit: &crate::OrbitalState,
+        orbit: &crate::OrbitalState<F>,
         attitude: &crate::attitude::AttitudeState,
         mass: f64,
         epoch: Option<&Epoch<arika::epoch::Utc>>,
-    ) -> ExternalLoads {
-        // Inside body → zero
-        if self.is_inside(orbit.position()) {
-            return ExternalLoads::zeros();
-        }
-
+    ) -> ExternalLoads<F> {
         // TODO: OrbitalSystem::epoch_0 を required にすれば dummy は不要
-        let pos_eci = orbit.position_eci();
+        let pos_vec = orbit.position_vec();
         let dummy_epoch = arika::epoch::Epoch::from_jd(2451545.0);
         let utc = epoch.unwrap_or(&dummy_epoch);
-        let geodetic = {
-            let gmst = utc.gmst();
-            let rot = arika::frame::Rotation::<
-                arika::frame::SimpleEci,
-                arika::frame::SimpleEcef,
-            >::from_era(gmst);
-            rot.transform(&pos_eci).to_geodetic()
-        };
+        // `EarthFixedTransform` supplies the ECI→ECEF conversion for the frame:
+        // the ERA-only rotation for `SimpleEci` (identical to the legacy
+        // `Epoch::gmst`, which is the same ERA formula) and the full IAU 2006
+        // chain for `Gcrs`. Computed before the surface check so that check can
+        // use the geodetic height instead of the frame's raw axes.
+        let geodetic = F::to_geodetic(&pos_vec, &EarthOrientation::new(*utc, &self.eop));
+
+        // Below the surface → zero
+        if self.is_below_surface(Some(&geodetic), orbit.position()) {
+            return ExternalLoads::zeros();
+        }
         let rho = self.atmosphere.density(&AtmosphereInput { geodetic, utc });
         if rho == 0.0 {
             return ExternalLoads::zeros();
         }
 
         // Relative velocity (inertial frame, km/s)
-        let v_rel = self.relative_velocity_from_orbit(orbit);
+        let v_rel = self.relative_velocity_from_orbit(orbit, utc);
         let v_rel_mag_km = v_rel.magnitude();
         if v_rel_mag_km < 1e-10 {
             return ExternalLoads::zeros();
@@ -260,8 +295,8 @@ impl PanelDrag {
             SpacecraftShape::Panels(panels) => {
                 // Transform flow direction to body frame
                 let v_body = attitude
-                    .rotation_to_body()
-                    .transform(&arika::frame::Vec3::from_raw(v_rel))
+                    .rotation_from_inertial::<F>()
+                    .transform(&arika::frame::Vec3::<F>::from_raw(v_rel))
                     .into_inner(); // km/s in body frame
                 let v_body_m = v_body * 1000.0; // m/s
                 let v_body_mag_m = v_body_m.magnitude();
@@ -289,7 +324,7 @@ impl PanelDrag {
 
                 // a_body [m/s²] → a_inertial [km/s²]
                 let a_body = arika::frame::Vec3::from_raw(total_force_body / mass);
-                let a_inertial = attitude.rotation_to_eci().transform(&a_body) / 1000.0;
+                let a_inertial = attitude.rotation_to_inertial::<F>().transform(&a_body) / 1000.0;
 
                 ExternalLoads {
                     acceleration_inertial: a_inertial,
@@ -301,16 +336,18 @@ impl PanelDrag {
     }
 }
 
-// PanelDrag remains SimpleEci-constrained because loads_from_state uses
-// ERA-based geodetic conversion internally (same as AtmosphericDrag before
-// EarthFixedTransform). To support Gcrs, PanelDrag needs EarthFixedTransform<F>
-// with EOP storage, like AtmosphericDrag<F>.
-impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci> + HasMass> Model<S> for PanelDrag {
+// Frame-generic panel drag: the geodetic lookup goes through
+// `EarthFixedTransform` and the co-rotation about `EarthRotationPole`, so the
+// model is valid in any inertial frame that provides them (a frame without the
+// impl is a compile error). See #151.
+impl<F: EarthFixedTransform, S: HasAttitude + HasOrbit<Frame = F> + HasMass> Model<S, F>
+    for PanelDrag<F>
+{
     fn name(&self) -> &str {
         "panel_drag"
     }
 
-    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+    fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         self.loads_from_state(state.orbit(), state.attitude(), state.mass(), epoch)
     }
 }
@@ -560,6 +597,272 @@ mod tests {
             attitude: AttitudeState::identity(),
             mass: 500.0,
         }
+    }
+
+    // Frame-generalization characterization (#151)
+    //
+    // Pinned `SimpleEci` numbers at a fully 3D state (off-axis position,
+    // velocity and attitude) so that opening `PanelDrag` to a generic inertial
+    // frame `F` cannot change them. In particular the geodetic conversion moves
+    // from the legacy `Epoch::gmst` to `EarthFixedTransform::to_geodetic`, which
+    // is the same ERA formula, and the co-rotation axis moves from a literal
+    // `+Z` to `EarthRotationPole::earth_pole` (`+Z` for `SimpleEci`).
+
+    fn snapshot_state() -> SpacecraftState {
+        SpacecraftState {
+            orbit: OrbitalState::new(
+                Vector3::new(4000.0, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+            attitude: AttitudeState::new(
+                nalgebra::UnitQuaternion::from_axis_angle(
+                    &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                    0.7,
+                ),
+                Vector3::new(0.01, -0.02, 0.03),
+            ),
+            mass: 50.0,
+        }
+    }
+
+    fn snapshot_epoch() -> Epoch {
+        Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0)
+    }
+
+    /// Characterization: pinned `SimpleEci` panel-drag loads for a cube.
+    #[test]
+    fn panels_simple_eci_loads_snapshot() {
+        let drag = PanelDrag::for_earth(SpacecraftShape::cube(0.5, 2.2, 1.5));
+        let loads = drag.eval(0.0, &snapshot_state(), Some(&snapshot_epoch()));
+        let expected_a = Vector3::new(
+            -1.112965959433058e-10,
+            -2.992310652421664e-10,
+            -1.2261304328438772e-9,
+        );
+        let a = loads.acceleration_inertial.into_inner();
+        let tau = loads.torque_body.into_inner();
+        assert!(
+            (a - expected_a).magnitude() <= 1e-12 * expected_a.magnitude().max(1.0),
+            "SimpleEci panel drag acceleration changed: {a:?}"
+        );
+        // A symmetric cube's opposite faces cancel, so the torque is zero up to
+        // rounding (~1e-21 here). Assert that invariant rather than pinning the
+        // residue: a snapshot of 1e-21 with an absolute floor would pass for
+        // zero and for a value nine orders too large alike. The torque path
+        // itself is covered by `asymmetric_panels_torque_*` below.
+        assert!(
+            tau.magnitude() < 1e-18 * a.magnitude().max(1.0),
+            "a symmetric cube must produce no net torque, got {tau:?}"
+        );
+    }
+
+    /// Characterization: pinned `SimpleEci` panel-drag loads for the
+    /// attitude-independent sphere branch.
+    #[test]
+    fn sphere_simple_eci_loads_snapshot() {
+        let drag = PanelDrag::for_earth(SpacecraftShape::sphere(1.0, 2.2, 1.5));
+        let loads = drag.eval(0.0, &snapshot_state(), Some(&snapshot_epoch()));
+        let expected_a = Vector3::new(
+            -6.98845822315769e-11,
+            -1.8789108335182917e-10,
+            -7.699032691383112e-10,
+        );
+        let a = loads.acceleration_inertial.into_inner();
+        assert!(
+            (a - expected_a).magnitude() <= 1e-12 * expected_a.magnitude().max(1.0),
+            "SimpleEci sphere drag acceleration changed: {a:?}"
+        );
+    }
+
+    /// An asymmetric panel fixture: one panel whose centre of pressure is offset
+    /// perpendicular to its own normal, so `cp × F` cannot cancel and the body
+    /// torque is materially non-zero. A symmetric cube is useless for this — its
+    /// faces cancel to ~1e-21, and any tolerance loose enough to admit that
+    /// would also admit zero.
+    fn asymmetric_panels() -> SpacecraftShape {
+        // All four of ±x, ±y, so whichever way the flow points in the body frame
+        // at least one panel faces it; the offsets are perpendicular to each
+        // normal and deliberately unequal between opposite faces, so `cp × F`
+        // does not cancel the way a symmetric cube's does.
+        SpacecraftShape::Panels(vec![
+            SurfacePanel {
+                area: 2.0,
+                normal: Vector3::x(),
+                cd: 2.2,
+                cr: 1.5,
+                cp_offset: Vector3::new(0.0, 1.5, 0.0),
+            },
+            SurfacePanel {
+                area: 2.0,
+                normal: -Vector3::x(),
+                cd: 2.2,
+                cr: 1.5,
+                cp_offset: Vector3::new(0.0, 0.4, 0.0),
+            },
+            SurfacePanel {
+                area: 0.5,
+                normal: Vector3::y(),
+                cd: 2.2,
+                cr: 1.5,
+                cp_offset: Vector3::new(0.0, 0.0, -0.8),
+            },
+            SurfacePanel {
+                area: 0.5,
+                normal: -Vector3::y(),
+                cd: 2.2,
+                cr: 1.5,
+                cp_offset: Vector3::new(0.9, 0.0, 0.0),
+            },
+        ])
+    }
+
+    /// The sphere branch never touches the body frame, so it cannot cover the
+    /// two rotations this change made frame-generic
+    /// (`rotation_from_inertial::<F>` on the way in,
+    /// `rotation_to_inertial::<F>` on the way out). Exercise the panel branch in
+    /// `Gcrs` at a non-identity attitude with an asymmetric fixture, and
+    /// reconstruct both outputs: the inertial acceleration, which round-trips
+    /// through the body frame, and the body torque, which stays there.
+    #[test]
+    fn gcrs_asymmetric_panels_torque_and_acceleration() {
+        use crate::test_support::zero_eop;
+        use arika::earth::EarthRotationPole;
+        use arika::frame::Vec3;
+
+        let epoch = snapshot_epoch();
+        let simple = snapshot_state();
+        let pos = *simple.orbit.position();
+        let vel = *simple.orbit.velocity();
+        let attitude = simple.attitude.clone();
+        let state = SpacecraftState::<frame::Gcrs> {
+            orbit: OrbitalState::<frame::Gcrs>::new_in_frame(pos, vel),
+            attitude: attitude.clone(),
+            mass: simple.mass,
+        };
+
+        let drag = PanelDrag::<frame::Gcrs>::for_earth_in_frame(asymmetric_panels(), zero_eop());
+        let loads = drag.eval(0.0, &state, Some(&epoch));
+        let got_a = loads.acceleration_inertial.into_inner();
+        let got_tau = loads.torque_body.into_inner();
+
+        // Reconstruct: CIP co-rotation, Gcrs geodetic density, then the same
+        // panel sum done in the body frame.
+        let pole = <frame::Gcrs as EarthRotationPole>::earth_pole(&epoch).into_inner();
+        let v_rel = vel - (pole * OMEGA_EARTH).cross(&pos);
+        let geodetic = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &Vec3::from_raw(pos),
+            &EarthOrientation::new(epoch, &zero_eop()),
+        );
+        let rho = Exponential.density(&AtmosphereInput {
+            geodetic,
+            utc: &epoch,
+        });
+        assert!(rho > 0.0, "expected non-zero density");
+
+        let v_body_m = attitude
+            .rotation_from_inertial::<frame::Gcrs>()
+            .transform(&Vec3::<frame::Gcrs>::from_raw(v_rel))
+            .into_inner()
+            * 1000.0;
+        let v_mag = v_body_m.magnitude();
+        let v_hat = v_body_m / v_mag;
+        let mut force_body = Vector3::zeros();
+        let mut torque_body = Vector3::zeros();
+        for panel in match &asymmetric_panels() {
+            SpacecraftShape::Panels(panels) => panels.clone(),
+            _ => unreachable!("asymmetric_panels is a Panels shape"),
+        } {
+            let cos_theta = panel.normal.dot(&(-v_hat)).max(0.0);
+            if cos_theta <= 0.0 {
+                continue;
+            }
+            let force = -0.5 * rho * panel.cd * (panel.area * cos_theta) * v_mag * v_mag * v_hat;
+            force_body += force;
+            torque_body += panel.cp_offset.cross(&force);
+        }
+        let expected_a = attitude
+            .rotation_to_inertial::<frame::Gcrs>()
+            .transform(&Vec3::from_raw(force_body / simple.mass))
+            .into_inner()
+            / 1000.0;
+
+        // The fixture must actually produce a torque, or the comparison below
+        // would hold vacuously.
+        assert!(
+            torque_body.magnitude() > 1e-9,
+            "the asymmetric fixture must produce a materially non-zero torque, got {torque_body:?}"
+        );
+        assert!(
+            (got_a - expected_a).magnitude() <= 1e-12 * expected_a.magnitude(),
+            "Gcrs panel acceleration must round-trip through the body frame: \
+             {got_a:?} vs {expected_a:?}"
+        );
+        // Tolerance scaled to the torque itself, not to 1.0.
+        assert!(
+            (got_tau - torque_body).magnitude() <= 1e-12 * torque_body.magnitude(),
+            "Gcrs panel torque must be the body-frame sum: {got_tau:?} vs {torque_body:?}"
+        );
+    }
+
+    /// **Discriminating test (#151)**: in `Gcrs` both frame-dependent steps
+    /// change — the geodetic lookup uses the full IAU 2006 chain and the
+    /// atmosphere co-rotates about the true CIP instead of `+Z`. Pin that the
+    /// acceleration matches a reconstruction using those, and differs from the
+    /// `SimpleEci` result at the same raw state.
+    #[test]
+    fn gcrs_panel_drag_uses_the_iau2006_chain_and_cip() {
+        use crate::test_support::zero_eop;
+        use arika::earth::EarthRotationPole;
+        use arika::frame::Vec3;
+
+        let epoch = snapshot_epoch();
+        let simple = snapshot_state();
+        let pos = *simple.orbit.position();
+        let vel = *simple.orbit.velocity();
+        let state = SpacecraftState::<frame::Gcrs> {
+            orbit: OrbitalState::<frame::Gcrs>::new_in_frame(pos, vel),
+            attitude: simple.attitude.clone(),
+            mass: simple.mass,
+        };
+
+        let drag = PanelDrag::<frame::Gcrs>::for_earth_in_frame(
+            SpacecraftShape::sphere(1.0, 2.2, 1.5),
+            zero_eop(),
+        );
+        let got = drag
+            .eval(0.0, &state, Some(&epoch))
+            .acceleration_inertial
+            .into_inner();
+
+        // Reconstruct: CIP co-rotation + Gcrs geodetic density.
+        let pole = <frame::Gcrs as EarthRotationPole>::earth_pole(&epoch).into_inner();
+        let v_rel = vel - (pole * OMEGA_EARTH).cross(&pos);
+        let geodetic = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &Vec3::from_raw(pos),
+            &EarthOrientation::new(epoch, &zero_eop()),
+        );
+        let rho = Exponential.density(&AtmosphereInput {
+            geodetic,
+            utc: &epoch,
+        });
+        assert!(rho > 0.0, "expected non-zero density");
+        let v_rel_m = v_rel * 1000.0;
+        let expected =
+            (-0.5 * rho * 2.2 * 1.0 / simple.mass * v_rel_m.magnitude() * v_rel_m) / 1000.0;
+        assert!(
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
+            "Gcrs panel drag must use the CIP + Gcrs geodetic: {got:?} vs {expected:?}"
+        );
+
+        let simple_eci = Vector3::new(
+            -6.98845822315769e-11,
+            -1.8789108335182917e-10,
+            -7.699032691383112e-10,
+        );
+        assert!(
+            (got - simple_eci).magnitude() > simple_eci.magnitude() * 1e-6,
+            "Gcrs panel drag should differ from the SimpleEci result"
+        );
     }
 
     // Sphere branch
@@ -1151,6 +1454,7 @@ mod tests {
             body: None,
             body_radius: 100.0, // well inside any test orbit
             omega_body: 0.0,    // no co-rotation
+            eop: (),
         }
     }
 

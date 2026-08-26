@@ -48,8 +48,27 @@ impl StarTracker {
         self.with_pointing_noise(Vector3::new(sigma, sigma, sigma), seed)
     }
 
-    /// Measure the attitude quaternion (body→inertial).
-    pub fn measure(&mut self, state: &SpacecraftState, _epoch: &Epoch) -> AttitudeBodyToInertial {
+    /// Measure the attitude quaternion (body→inertial), for a `SimpleEci` state.
+    pub fn measure(&mut self, state: &SpacecraftState, epoch: &Epoch) -> AttitudeBodyToInertial {
+        self.measure_in_frame::<arika::frame::SimpleEci>(state, epoch)
+    }
+
+    /// Measure the attitude quaternion (body→inertial) for a state propagated in
+    /// an arbitrary inertial frame `F`.
+    ///
+    /// The reading is the body→`F` rotation, and its components depend on `F`:
+    /// the same physical attitude has different quaternion components in
+    /// `SimpleEci` and in `Gcrs`. [`AttitudeBodyToInertial`] does not record
+    /// which frame it came from, so a caller must interpret the value in the
+    /// frame the state was propagated in — nothing here can catch a `Gcrs`
+    /// reading being consumed as `SimpleEci`. Closing that hole needs a
+    /// frame-typed attitude output (`Rotation<Body, F>`), which also reaches the
+    /// plugin WIT payload; it is tracked separately.
+    pub fn measure_in_frame<F: arika::frame::Eci>(
+        &mut self,
+        state: &SpacecraftState<F>,
+        _epoch: &Epoch,
+    ) -> AttitudeBodyToInertial {
         let q_true = UnitQuaternion::from_quaternion(state.attitude.orientation().into_inner());
 
         let q_measured = match &mut self.sigma {

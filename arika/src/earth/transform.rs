@@ -136,11 +136,82 @@ impl EphemerisFrameBridge for frame::Cirs {
 
 // EarthFixedTransform
 
+/// Everything an [`EarthFixedTransform`] needs to orient frame `F` relative to
+/// Earth: the instant, plus that frame's Earth Orientation Parameters.
+///
+/// No ECI↔ECEF transform needs one without the other, so they travel as one
+/// named argument. The EOP side is a borrow (only the `Copy` [`Epoch`] is
+/// owned), which makes this a cheap per-call view over storage that lives
+/// elsewhere — typically a long-lived field of a force model, which evaluates
+/// at a new instant on every step from `&self`.
+///
+/// Because `F::EopStorage` is an associated type, one frame cannot be oriented
+/// with another frame's EOP data — that is a compile error rather than a silent
+/// wrong-frame result. For a frame that needs no EOP data at all,
+/// [`simple`](Self::simple) says so by name.
+///
+/// # Examples
+///
+/// ```
+/// # use arika::earth::{EarthFixedTransform, EarthOrientation};
+/// # use arika::epoch::Epoch;
+/// # use arika::frame::{SimpleEci, Vec3};
+/// let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+/// // `SimpleEci` needs no EOP data, and does not mention it:
+/// let orientation = EarthOrientation::<SimpleEci>::simple(utc);
+/// let pos = Vec3::<SimpleEci>::new(6778.0, 0.0, 0.0);
+/// let geodetic = SimpleEci::to_geodetic(&pos, &orientation);
+/// # assert!(geodetic.altitude > 0.0);
+/// ```
+pub struct EarthOrientation<'a, F: EarthFixedTransform> {
+    utc: Epoch<Utc>,
+    eop: &'a F::EopStorage,
+}
+
+impl<'a, F: EarthFixedTransform> EarthOrientation<'a, F> {
+    /// Orient `F` at `utc` using `eop`.
+    ///
+    /// For a frame that needs no EOP data, prefer
+    /// [`simple`](Self::simple) — it says so by name.
+    pub fn new(utc: Epoch<Utc>, eop: &'a F::EopStorage) -> Self {
+        Self { utc, eop }
+    }
+
+    /// The instant the frame is oriented at.
+    ///
+    /// By reference, even though [`Epoch`] is `Copy`, because every consumer
+    /// ([`EarthRotationPole::earth_pole`], the IAU 2006 constructors) takes
+    /// `&Epoch<Utc>`.
+    pub fn utc(&self) -> &Epoch<Utc> {
+        &self.utc
+    }
+
+    /// The frame's Earth Orientation Parameters.
+    pub fn eop(&self) -> &'a F::EopStorage {
+        self.eop
+    }
+}
+
+impl<F: EarthFixedTransform<EopStorage = ()>> EarthOrientation<'static, F> {
+    /// Orient a frame that needs no EOP data (the simple, approximate path)
+    /// at `utc`.
+    ///
+    /// Constrained to `EopStorage = ()`, so it does not exist for a frame whose
+    /// transform genuinely needs Earth Orientation Parameters — that frame has
+    /// to go through [`new`](Self::new) with real data.
+    pub fn simple(utc: Epoch<Utc>) -> Self {
+        Self { utc, eop: &() }
+    }
+}
+
 /// ECI frame with a transform to its paired Earth-fixed (ECEF) frame.
 ///
 /// The type-level dispatch point for code that needs geodetic coordinates
 /// (atmosphere, magnetic field) or an ECEF↔ECI rotation (atmosphere wind
 /// velocity, magnetic field vector transformation).
+///
+/// Every method takes the Earth orientation as one [`EarthOrientation`]
+/// argument — the instant plus this frame's EOP data.
 ///
 /// # Implementations
 ///
@@ -157,13 +228,13 @@ pub trait EarthFixedTransform: EarthRotationPole {
     type EopStorage: Send + Sync + 'static;
 
     /// Convert an ECI position to geodetic coordinates.
-    fn to_geodetic(pos: &Vec3<Self>, utc: &Epoch<Utc>, eop: &Self::EopStorage) -> Geodetic;
+    fn to_geodetic(pos: &Vec3<Self>, orientation: &EarthOrientation<'_, Self>) -> Geodetic;
 
     /// Rotation from the paired ECEF frame to this ECI frame.
     ///
     /// Used to transform ECEF-frame vectors (e.g., magnetic field,
     /// atmosphere co-rotation velocity) back into the propagation frame.
-    fn fixed_to_inertial(utc: &Epoch<Utc>, eop: &Self::EopStorage) -> Rotation<Self::Fixed, Self>;
+    fn fixed_to_inertial(orientation: &EarthOrientation<'_, Self>) -> Rotation<Self::Fixed, Self>;
 
     /// ECI → ECEF state transform: the orientation plus Earth's spin angular
     /// velocity, so it transforms velocities (and full position+velocity
@@ -176,21 +247,19 @@ pub trait EarthFixedTransform: EarthRotationPole {
     /// precession/nutation/polar-motion rates Q̇/Ẇ, ~sub-µrad/s, are omitted),
     /// and it uses the nominal rate with no LOD correction.
     fn inertial_to_fixed_transform(
-        utc: &Epoch<Utc>,
-        eop: &Self::EopStorage,
+        orientation: &EarthOrientation<'_, Self>,
     ) -> FrameTransform<Self, Self::Fixed> {
         // ω of ECEF relative to ECI, expressed in ECI: Earth's spin vector.
-        let omega = Self::earth_pole(utc) * crate::earth::OMEGA;
-        let rotation = Self::fixed_to_inertial(utc, eop).inverse();
+        let omega = Self::earth_pole(orientation.utc()) * crate::earth::OMEGA;
+        let rotation = Self::fixed_to_inertial(orientation).inverse();
         FrameTransform::new(rotation, omega)
     }
 
     /// ECEF → ECI state transform (inverse of [`inertial_to_fixed_transform`](Self::inertial_to_fixed_transform)).
     fn fixed_to_inertial_transform(
-        utc: &Epoch<Utc>,
-        eop: &Self::EopStorage,
+        orientation: &EarthOrientation<'_, Self>,
     ) -> FrameTransform<Self::Fixed, Self> {
-        Self::inertial_to_fixed_transform(utc, eop).inverse()
+        Self::inertial_to_fixed_transform(orientation).inverse()
     }
 }
 
@@ -198,17 +267,19 @@ impl EarthFixedTransform for frame::SimpleEci {
     type Fixed = frame::SimpleEcef;
     type EopStorage = ();
 
-    fn to_geodetic(pos: &Vec3<frame::SimpleEci>, utc: &Epoch<Utc>, _eop: &()) -> Geodetic {
-        let era = utc.to_ut1_naive().era();
+    fn to_geodetic(
+        pos: &Vec3<frame::SimpleEci>,
+        orientation: &EarthOrientation<'_, Self>,
+    ) -> Geodetic {
+        let era = orientation.utc().to_ut1_naive().era();
         let rot = Rotation::<frame::SimpleEci, frame::SimpleEcef>::from_era(era);
         rot.transform(pos).to_geodetic()
     }
 
     fn fixed_to_inertial(
-        utc: &Epoch<Utc>,
-        _eop: &(),
+        orientation: &EarthOrientation<'_, Self>,
     ) -> Rotation<frame::SimpleEcef, frame::SimpleEci> {
-        let era = utc.to_ut1_naive().era();
+        let era = orientation.utc().to_ut1_naive().era();
         Rotation::<frame::SimpleEcef, frame::SimpleEci>::from_era(era)
     }
 }
@@ -218,16 +289,22 @@ impl EarthFixedTransform for frame::Gcrs {
     type Fixed = frame::Itrs;
     type EopStorage = GcrsEopStorage;
 
-    fn to_geodetic(pos: &Vec3<frame::Gcrs>, utc: &Epoch<Utc>, eop: &GcrsEopStorage) -> Geodetic {
-        let rot = Rotation::<frame::Gcrs, frame::Itrs>::iau2006_full_from_utc(utc, eop);
+    fn to_geodetic(pos: &Vec3<frame::Gcrs>, orientation: &EarthOrientation<'_, Self>) -> Geodetic {
+        let rot = Rotation::<frame::Gcrs, frame::Itrs>::iau2006_full_from_utc(
+            orientation.utc(),
+            orientation.eop(),
+        );
         rot.transform(pos).to_geodetic()
     }
 
     fn fixed_to_inertial(
-        utc: &Epoch<Utc>,
-        eop: &GcrsEopStorage,
+        orientation: &EarthOrientation<'_, Self>,
     ) -> Rotation<frame::Itrs, frame::Gcrs> {
-        Rotation::<frame::Gcrs, frame::Itrs>::iau2006_full_from_utc(utc, eop).inverse()
+        Rotation::<frame::Gcrs, frame::Itrs>::iau2006_full_from_utc(
+            orientation.utc(),
+            orientation.eop(),
+        )
+        .inverse()
     }
 }
 
@@ -261,6 +338,35 @@ mod tests {
             0.0
         }
     }
+
+    /// EOP provider with every correction non-zero, so a test can tell an
+    /// orientation that actually forwards `eop()` from one that quietly
+    /// substitutes zeros. Values are the right order of magnitude for observed
+    /// EOP: dUT1 a few tenths of a second, polar motion and the CIP offsets a
+    /// fraction of an arcsecond.
+    struct NonZeroEop;
+
+    impl Ut1Offset for NonZeroEop {
+        fn dut1(&self, _: f64) -> f64 {
+            -0.32
+        }
+    }
+    impl PolarMotion for NonZeroEop {
+        fn x_pole(&self, _: f64) -> f64 {
+            0.161_7_f64.to_radians() / 3600.0
+        }
+        fn y_pole(&self, _: f64) -> f64 {
+            0.436_2_f64.to_radians() / 3600.0
+        }
+    }
+    impl NutationCorrections for NonZeroEop {
+        fn dx(&self, _: f64) -> f64 {
+            0.000_2_f64.to_radians() / 3600.0
+        }
+        fn dy(&self, _: f64) -> f64 {
+            -0.000_3_f64.to_radians() / 3600.0
+        }
+    }
     impl LengthOfDay for ZeroEop {
         fn lod(&self, _: f64) -> f64 {
             0.0
@@ -272,7 +378,10 @@ mod tests {
         let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let alt_km = 400.0;
         let pos = Vec3::<frame::SimpleEci>::new(R_EARTH + alt_km, 0.0, 0.0);
-        let geo = <frame::SimpleEci as EarthFixedTransform>::to_geodetic(&pos, &utc, &());
+        let geo = <frame::SimpleEci as EarthFixedTransform>::to_geodetic(
+            &pos,
+            &EarthOrientation::simple(utc),
+        );
         // Altitude should be close to 400 km (not exact due to ERA rotation
         // and WGS84 ellipsoidal correction)
         assert!(
@@ -288,7 +397,10 @@ mod tests {
         let alt_km = 400.0;
         let pos = Vec3::<frame::Gcrs>::new(R_EARTH + alt_km, 0.0, 0.0);
         let eop = GcrsEopStorage::new(ZeroEop);
-        let geo = <frame::Gcrs as EarthFixedTransform>::to_geodetic(&pos, &utc, &eop);
+        let geo = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &pos,
+            &EarthOrientation::new(utc, &eop),
+        );
         assert!(
             (geo.altitude - alt_km).abs() < 1.0,
             "expected ~{alt_km} km, got {}",
@@ -300,7 +412,9 @@ mod tests {
     fn simple_eci_fixed_to_inertial_roundtrip() {
         let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let v_ecef = Vec3::<frame::SimpleEcef>::new(1.0, 2.0, 3.0);
-        let rot = <frame::SimpleEci as EarthFixedTransform>::fixed_to_inertial(&utc, &());
+        let rot = <frame::SimpleEci as EarthFixedTransform>::fixed_to_inertial(
+            &EarthOrientation::simple(utc),
+        );
         let v_eci = rot.transform(&v_ecef);
         // Magnitude should be preserved
         assert!(
@@ -314,7 +428,9 @@ mod tests {
         let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let v_itrs = Vec3::<frame::Itrs>::new(1.0, 2.0, 3.0);
         let eop = GcrsEopStorage::new(ZeroEop);
-        let rot = <frame::Gcrs as EarthFixedTransform>::fixed_to_inertial(&utc, &eop);
+        let rot = <frame::Gcrs as EarthFixedTransform>::fixed_to_inertial(&EarthOrientation::new(
+            utc, &eop,
+        ));
         let v_gcrs = rot.transform(&v_itrs);
         assert!(
             (v_gcrs.magnitude() - v_itrs.magnitude()).abs() < 1e-14,
@@ -331,12 +447,17 @@ mod tests {
         let alt_km = 400.0;
 
         let pos_simple = Vec3::<frame::SimpleEci>::new(R_EARTH + alt_km, 0.0, 0.0);
-        let geo_simple =
-            <frame::SimpleEci as EarthFixedTransform>::to_geodetic(&pos_simple, &utc, &());
+        let geo_simple = <frame::SimpleEci as EarthFixedTransform>::to_geodetic(
+            &pos_simple,
+            &EarthOrientation::simple(utc),
+        );
 
         let pos_gcrs = Vec3::<frame::Gcrs>::new(R_EARTH + alt_km, 0.0, 0.0);
         let eop = GcrsEopStorage::new(ZeroEop);
-        let geo_gcrs = <frame::Gcrs as EarthFixedTransform>::to_geodetic(&pos_gcrs, &utc, &eop);
+        let geo_gcrs = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &pos_gcrs,
+            &EarthOrientation::new(utc, &eop),
+        );
 
         // Altitudes should agree within a few km (different rotation chains)
         assert!(
@@ -404,7 +525,9 @@ mod tests {
         // must be static in ECEF, regardless of ERA — validates the factory's
         // ω = OMEGA·(+Z) wiring.
         let utc = Epoch::from_gregorian(2024, 3, 20, 7, 30, 0.0);
-        let ft = <frame::SimpleEci as EarthFixedTransform>::inertial_to_fixed_transform(&utc, &());
+        let ft = <frame::SimpleEci as EarthFixedTransform>::inertial_to_fixed_transform(
+            &EarthOrientation::simple(utc),
+        );
         let r_km = 6378.137;
         let r = Vec3::<frame::SimpleEci>::new(r_km, 0.0, 0.0);
         let v = Vec3::<frame::SimpleEci>::new(0.0, crate::earth::OMEGA * r_km, 0.0);
@@ -420,7 +543,9 @@ mod tests {
     fn gcrs_transform_omega_is_omega_times_cip() {
         let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let eop = GcrsEopStorage::new(ZeroEop);
-        let ft = <frame::Gcrs as EarthFixedTransform>::inertial_to_fixed_transform(&utc, &eop);
+        let ft = <frame::Gcrs as EarthFixedTransform>::inertial_to_fixed_transform(
+            &EarthOrientation::new(utc, &eop),
+        );
         // ω of ITRS relative to GCRS, in GCRS, is OMEGA along the CIP.
         let expected =
             <frame::Gcrs as EarthRotationPole>::earth_pole(&utc).into_inner() * crate::earth::OMEGA;
@@ -436,7 +561,9 @@ mod tests {
     fn gcrs_state_transform_roundtrip() {
         let utc = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let eop = GcrsEopStorage::new(ZeroEop);
-        let ft = <frame::Gcrs as EarthFixedTransform>::inertial_to_fixed_transform(&utc, &eop);
+        let ft = <frame::Gcrs as EarthFixedTransform>::inertial_to_fixed_transform(
+            &EarthOrientation::new(utc, &eop),
+        );
         let r = Vec3::<frame::Gcrs>::new(6778.0, 1200.0, -3400.0);
         let v = Vec3::<frame::Gcrs>::new(-1.2, 7.0, 2.5);
         let (r_e, v_e) = ft.transform_state(&r, &v);
@@ -444,9 +571,189 @@ mod tests {
         assert!((r_back.inner() - r.inner()).norm() < 1e-9);
         assert!((v_back.inner() - v.inner()).norm() < 1e-12);
         // fixed_to_inertial_transform is the inverse of inertial_to_fixed_transform.
-        let ft_inv = <frame::Gcrs as EarthFixedTransform>::fixed_to_inertial_transform(&utc, &eop);
+        let ft_inv = <frame::Gcrs as EarthFixedTransform>::fixed_to_inertial_transform(
+            &EarthOrientation::new(utc, &eop),
+        );
         let (r2, v2) = ft_inv.transform_state(&r_e, &v_e);
         assert!((r2.inner() - r.inner()).norm() < 1e-9);
         assert!((v2.inner() - v.inner()).norm() < 1e-12);
+    }
+
+    // Characterization snapshots
+    //
+    // The tests above pin *properties* (magnitude preserved, roundtrip closes, ω
+    // direction) with loose tolerances, which a changed rotation chain could
+    // still satisfy. These pin the actual numbers the four
+    // `EarthFixedTransform` methods return, at one off-axis state and one
+    // non-round epoch, so a change in how the Earth-orientation inputs
+    // (UTC + EOP) reach them cannot pass unnoticed.
+    //
+    // `close` compares relatively at 1e-12: far tighter than any plausible
+    // change to the rotation chain (a mis-threaded epoch or a dropped EOP moves
+    // these by 1e-3 or more) while staying above the last-ULP differences
+    // between platform libm implementations of the sin/cos/atan2 underneath.
+
+    /// Off-axis epoch (non-integer second, so ERA is not a round number).
+    fn snapshot_epoch() -> Epoch<Utc> {
+        Epoch::from_gregorian(2024, 3, 20, 12, 34, 56.789)
+    }
+
+    /// Fully 3D position [km] — no zero component, so a dropped rotation shows.
+    fn snapshot_pos<F>() -> Vec3<F> {
+        Vec3::new(4000.0, -5000.0, 2500.0)
+    }
+
+    /// Fully 3D velocity [km/s].
+    fn snapshot_vel<F>() -> Vec3<F> {
+        Vec3::new(1.0, 2.0, 7.0)
+    }
+
+    /// Relative comparison at 1e-12 (see the module note above); exact for 0.
+    fn close(got: f64, want: f64) -> bool {
+        (got - want).abs() <= 1e-12 * want.abs().max(1.0)
+    }
+
+    #[track_caller]
+    fn assert_close3(got: [f64; 3], want: [f64; 3], what: &str) {
+        assert!(
+            close(got[0], want[0]) && close(got[1], want[1]) && close(got[2], want[2]),
+            "{what} changed: got {got:?}, want {want:?}"
+        );
+    }
+
+    #[test]
+    fn simple_eci_to_geodetic_snapshot() {
+        let geo = <frame::SimpleEci as EarthFixedTransform>::to_geodetic(
+            &snapshot_pos(),
+            &EarthOrientation::simple(snapshot_epoch()),
+        );
+        assert_close3(
+            [geo.latitude, geo.longitude, geo.altitude],
+            [0.3743480895355276, -1.017562528402866, 498.5663922419981],
+            "SimpleEci to_geodetic",
+        );
+    }
+
+    #[test]
+    fn simple_eci_fixed_to_inertial_snapshot() {
+        let v = Vec3::<frame::SimpleEcef>::new(1.0, 2.0, 3.0);
+        let got = <frame::SimpleEci as EarthFixedTransform>::fixed_to_inertial(
+            &EarthOrientation::simple(snapshot_epoch()),
+        )
+        .transform(&v)
+        .into_inner();
+        assert_close3(
+            [got.x, got.y, got.z],
+            [0.7502103324902986, 2.10646254583954, 3.0],
+            "SimpleEci fixed_to_inertial",
+        );
+    }
+
+    #[test]
+    fn simple_eci_state_transform_snapshot() {
+        let utc = snapshot_epoch();
+        let (r, v) = (snapshot_pos(), snapshot_vel());
+        let (r_f, v_f) = <frame::SimpleEci as EarthFixedTransform>::inertial_to_fixed_transform(
+            &EarthOrientation::simple(utc),
+        )
+        .transform_state(&r, &v);
+        assert_close3(
+            [r_f.inner().x, r_f.inner().y, r_f.inner().z],
+            [3364.46645847656, -5447.968928856532, 2500.0],
+            "SimpleEci inertial_to_fixed position",
+        );
+        assert_close3(
+            [v_f.inner().x, v_f.inner().y, v_f.inner().z],
+            [0.8377716286892459, 1.6187049999272265, 7.0],
+            "SimpleEci inertial_to_fixed velocity",
+        );
+        // The inverse factory must undo it at the same epoch.
+        let (r_b, v_b) = <frame::SimpleEci as EarthFixedTransform>::fixed_to_inertial_transform(
+            &EarthOrientation::simple(utc),
+        )
+        .transform_state(&r_f, &v_f);
+        assert!((r_b.inner() - r.inner()).norm() < 1e-9);
+        assert!((v_b.inner() - v.inner()).norm() < 1e-12);
+    }
+
+    #[test]
+    fn gcrs_to_geodetic_snapshot() {
+        let geo = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &snapshot_pos(),
+            &EarthOrientation::new(snapshot_epoch(), &GcrsEopStorage::new(ZeroEop)),
+        );
+        assert_close3(
+            [geo.latitude, geo.longitude, geo.altitude],
+            [0.3757884614713237, -1.0182885501575514, 498.58726984852274],
+            "Gcrs to_geodetic",
+        );
+    }
+
+    /// The `ZeroEop` snapshots above cannot tell a transform that forwards
+    /// `orientation.eop()` from one that silently substitutes zeros — with an
+    /// all-zero provider both give the same numbers. Pin the forwarding itself:
+    /// the same epoch and position through a non-zero provider must differ.
+    #[test]
+    fn gcrs_forwards_the_eop_it_is_given() {
+        let utc = snapshot_epoch();
+        let pos = snapshot_pos();
+        let zero = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &pos,
+            &EarthOrientation::new(utc, &GcrsEopStorage::new(ZeroEop)),
+        );
+        let observed = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
+            &pos,
+            &EarthOrientation::new(utc, &GcrsEopStorage::new(NonZeroEop)),
+        );
+
+        // dUT1 of -0.32 s rotates ERA by ~1.4e-6 rad, which moves the
+        // sub-satellite longitude by about the same amount; polar motion tilts
+        // latitude by ~2e-6 rad. Anything that dropped the provider would land
+        // exactly on the ZeroEop numbers.
+        assert!(
+            (observed.longitude - zero.longitude).abs() > 1e-7,
+            "longitude must respond to dUT1: zero={} observed={}",
+            zero.longitude,
+            observed.longitude
+        );
+        // Latitude is deliberately not asserted here: how much polar motion moves
+        // the geodetic latitude of one particular point depends on that point's
+        // longitude, and at this snapshot it happens to be ~1e-11 rad. The
+        // rotation below is the frame-level check that does not depend on where
+        // the probe sits.
+
+        // The rotation factories must use the provider too, not just to_geodetic.
+        let r_zero = <frame::Gcrs as EarthFixedTransform>::fixed_to_inertial(
+            &EarthOrientation::new(utc, &GcrsEopStorage::new(ZeroEop)),
+        );
+        let r_observed = <frame::Gcrs as EarthFixedTransform>::fixed_to_inertial(
+            &EarthOrientation::new(utc, &GcrsEopStorage::new(NonZeroEop)),
+        );
+        let probe = frame::Vec3::<frame::Itrs>::new(R_EARTH, 0.0, 0.0);
+        assert!(
+            (r_observed.transform(&probe).inner() - r_zero.transform(&probe).inner()).norm() > 1e-3,
+            "fixed_to_inertial must respond to the EOP it is given"
+        );
+    }
+
+    #[test]
+    fn gcrs_state_transform_snapshot() {
+        let utc = snapshot_epoch();
+        let eop = GcrsEopStorage::new(ZeroEop);
+        let (r, v) = (snapshot_pos(), snapshot_vel());
+        let (r_f, v_f) = <frame::Gcrs as EarthFixedTransform>::inertial_to_fixed_transform(
+            &EarthOrientation::new(utc, &eop),
+        )
+        .transform_state(&r, &v);
+        assert_close3(
+            [r_f.inner().x, r_f.inner().y, r_f.inner().z],
+            [3358.6255230092333, -5447.3533661597785, 2509.178331721101],
+            "Gcrs inertial_to_fixed position",
+        );
+        assert_close3(
+            [v_f.inner().x, v_f.inner().y, v_f.inner().z],
+            [0.8214899007878738, 1.6208520413080323, 7.002402600668856],
+            "Gcrs inertial_to_fixed velocity",
+        );
     }
 }

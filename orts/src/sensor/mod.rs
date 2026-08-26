@@ -31,7 +31,10 @@ pub mod noise;
 mod star_tracker;
 mod sun_sensor;
 
+use arika::earth::transform::EphemerisFrameBridge;
+use arika::earth::{EarthFixedTransform, EarthOrientation};
 use arika::epoch::Epoch;
+use arika::frame;
 
 use crate::SpacecraftState;
 use crate::plugin::tick_input::Sensors;
@@ -70,30 +73,55 @@ impl SensorBundle {
         }
     }
 
-    /// Evaluate all configured sensors at the given state and epoch.
+    /// Evaluate all configured sensors at the given `SimpleEci` state and epoch.
     ///
     /// `&mut self` because noise models mutate their internal RNG.
     pub fn evaluate(&mut self, state: &SpacecraftState, epoch: &Epoch) -> Sensors {
+        self.evaluate_in_frame::<frame::SimpleEci>(state, &EarthOrientation::simple(*epoch))
+    }
+
+    /// Evaluate all configured sensors for a state propagated in an arbitrary
+    /// inertial frame `F`.
+    ///
+    /// `F` must supply both capabilities the sensors need: the Earth-fixed
+    /// transform (magnetometer — `orientation` carries the EOP data for the
+    /// frames that require an EOP provider) and the GCRS ephemeris bridge
+    /// (sun sensor).
+    ///
+    /// Both bounds apply whatever the bundle actually holds, because the bound
+    /// is on the method rather than on the sensors present at runtime. A frame
+    /// that implements only [`EphemerisFrameBridge`] — `Cirs`, for instance —
+    /// therefore cannot go through this method even for a bundle without
+    /// magnetometers; evaluate those sensors with their own
+    /// `measure_in_frame` instead. Split this into per-capability entry points
+    /// if a caller needs the bundle in such a frame.
+    pub fn evaluate_in_frame<F: EarthFixedTransform + EphemerisFrameBridge>(
+        &mut self,
+        state: &SpacecraftState<F>,
+        orientation: &EarthOrientation<'_, F>,
+    ) -> Sensors {
+        // The non-magnetometer sensors need only the instant.
+        let epoch = orientation.utc();
         Sensors {
             magnetometers: self
                 .magnetometers
                 .iter_mut()
-                .map(|m| m.measure(state, epoch))
+                .map(|m| m.measure_in_frame::<F>(state, orientation))
                 .collect(),
             gyroscopes: self
                 .gyroscopes
                 .iter_mut()
-                .map(|g| g.measure(state, epoch))
+                .map(|g| g.measure_in_frame::<F>(state, epoch))
                 .collect(),
             star_trackers: self
                 .star_trackers
                 .iter_mut()
-                .map(|s| s.measure(state, epoch))
+                .map(|s| s.measure_in_frame::<F>(state, epoch))
                 .collect(),
             sun_sensors: self
                 .sun_sensors
                 .iter_mut()
-                .map(|s| s.measure(state, epoch))
+                .map(|s| s.measure_in_frame::<F>(state, epoch))
                 .collect(),
         }
     }

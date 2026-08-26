@@ -10,7 +10,7 @@ use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 use crate::model::ExternalLoads;
 use crate::model::{HasOrbit, Model};
 use crate::orbital::OrbitalState;
-use arika::earth::EarthFixedTransform;
+use arika::earth::{EarthFixedTransform, EarthOrientation};
 
 /// Default ballistic coefficient for LEO satellites \[m²/kg\].
 ///
@@ -138,7 +138,7 @@ impl<F: EarthFixedTransform> AtmosphericDrag<F> {
         let geodetic = match self.body {
             Some(KnownBody::Earth) => {
                 let pos_vec = Vec3::<F>::from_raw(*pos);
-                F::to_geodetic(&pos_vec, utc, &self.eop)
+                F::to_geodetic(&pos_vec, &EarthOrientation::new(*utc, &self.eop))
             }
             _ => {
                 let r_mag = pos.magnitude();
@@ -382,6 +382,97 @@ mod tests {
         );
     }
 
+    // Characterization snapshots
+    //
+    // The tests above are all inequality/direction checks: they would survive a
+    // changed epoch or a dropped EOP argument. These pin the actual
+    // acceleration of the geodetic-lookup path in both frames.
+    //
+    // The 1e-12 relative tolerance is far tighter than any plausible change to
+    // the ECI→ECEF chain (a mis-threaded epoch moves these by ~1e-2 relative)
+    // while staying above last-ULP differences between platform libm
+    // implementations of the trigonometry underneath.
+
+    fn snapshot_epoch() -> Epoch {
+        Epoch::from_gregorian(2024, 3, 20, 12, 34, 56.789)
+    }
+
+    /// Fully 3D LEO state — no zero component, so a dropped rotation shows.
+    fn snapshot_state() -> OrbitalState {
+        let r = R_EARTH + 400.0;
+        let pos = vector![0.5_f64, 0.3, 0.8].normalize() * r;
+        let v = (MU_EARTH / r).sqrt();
+        OrbitalState::new(pos, vector![-v * 0.6, v * 0.5, v * 0.2])
+    }
+
+    #[track_caller]
+    fn assert_close(got: Vector3<f64>, want: Vector3<f64>, what: &str) {
+        assert!(
+            (got - want).magnitude() <= 1e-12 * want.magnitude(),
+            "{what} changed: got {got:?}, want {want:?}"
+        );
+    }
+
+    #[test]
+    fn simple_eci_drag_acceleration_snapshot() {
+        let drag = AtmosphericDrag::for_earth(Some(0.005));
+        assert_close(
+            drag.acceleration(&snapshot_state(), Some(&snapshot_epoch())),
+            vector![
+                3.8628351064926684e-10,
+                -3.1107100564692614e-10,
+                -1.3309393817407415e-10
+            ],
+            "SimpleEci drag acceleration",
+        );
+    }
+
+    /// Characterization of the non-finite input path. Neither guard on the way
+    /// to the density lookup traps non-finite input on its own:
+    ///
+    /// - the "inside the body" ellipsoid test is `< 1.0`, false for both `NaN`
+    ///   and `±∞`, so neither is short-circuited there;
+    /// - the resulting geodetic altitude is `NaN` / `±∞`, for which
+    ///   [`Exponential`] returns zero density, and the `rho == 0.0` guard then
+    ///   returns exactly zero.
+    ///
+    /// So a non-finite position yields a zero acceleration rather than
+    /// propagating `NaN`. The second half of that is a property of
+    /// [`Exponential`] (the default model here), not of the drag code — a
+    /// different atmosphere could return `NaN` and let it through.
+    #[test]
+    fn non_finite_position_returns_zero_via_density_guard() {
+        let drag = AtmosphericDrag::for_earth(Some(0.005));
+        for x in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let state = OrbitalState::new(vector![x, -5000.0, 2500.0], vector![1.0, 2.0, 7.0]);
+            let a = drag.acceleration(&state, Some(&snapshot_epoch()));
+            assert_eq!(
+                a,
+                Vector3::zeros(),
+                "non-finite position ({x}) should hit the zero-density guard, got {a:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn gcrs_drag_acceleration_snapshot() {
+        let drag = AtmosphericDrag::<frame::Gcrs>::for_earth_in_frame(
+            Some(0.005),
+            crate::test_support::zero_eop(),
+        );
+        let s = snapshot_state();
+        let state = OrbitalState::<frame::Gcrs>::new_in_frame(*s.position(), *s.velocity());
+        assert_close(
+            drag.acceleration(&state, Some(&snapshot_epoch())),
+            vector![
+                3.860448550404581e-10,
+                -3.1095898931087664e-10,
+                -1.329816156620057e-10
+            ],
+            "Gcrs drag acceleration",
+        );
+    }
+
     #[test]
     fn gcrs_co_rotation_uses_true_cip_spin_axis() {
         // The atmosphere co-rotates about Earth's spin axis. For `Gcrs` that axis
@@ -444,8 +535,7 @@ mod tests {
         let v_rel = vel - omega.cross(&pos);
         let geod = <frame::Gcrs as EarthFixedTransform>::to_geodetic(
             &Vec3::from_raw(pos),
-            &utc,
-            &GcrsEopStorage::new(ZeroEop),
+            &EarthOrientation::new(utc, &GcrsEopStorage::new(ZeroEop)),
         );
         let rho = Exponential.density(&AtmosphereInput {
             geodetic: geod,

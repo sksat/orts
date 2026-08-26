@@ -1,20 +1,28 @@
 use crate::OrbitalState;
 use arika::epoch::Epoch;
+use arika::frame;
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 
 /// A target attitude reference that provides desired orientation and angular velocity.
 ///
 /// Implementations define different pointing strategies (inertial hold, nadir pointing, etc.).
-pub trait AttitudeReference: Send + Sync {
+///
+/// The type parameter `F` is the inertial frame of the observed orbital state
+/// (default `SimpleEci`). A reference whose geometry is defined by the state
+/// vectors alone (inertial hold, nadir pointing) implements it for every `F`;
+/// one that needs an external direction (a Sun-pointing or ground-target
+/// reference) would implement it only for the frames it can express that
+/// direction in.
+pub trait AttitudeReference<F: frame::Eci = frame::SimpleEci>: Send + Sync {
     /// Compute the target orientation and angular velocity at time `t`.
     ///
     /// Returns `(q_target, omega_target)` where:
-    /// - `q_target` is the desired body-to-inertial quaternion
+    /// - `q_target` is the desired body-to-`F` quaternion
     /// - `omega_target` is the desired angular velocity in the target body frame [rad/s]
     fn target(
         &self,
         t: f64,
-        orbit: &OrbitalState,
+        orbit: &OrbitalState<F>,
         epoch: Option<&Epoch>,
     ) -> (UnitQuaternion<f64>, Vector3<f64>);
 }
@@ -24,11 +32,17 @@ pub struct InertialPointing {
     pub target_q: UnitQuaternion<f64>,
 }
 
-impl AttitudeReference for InertialPointing {
+// Deliberately `SimpleEci`-only, not blanket over every `F`. `target_q` is a
+// bare quaternion, so it carries no record of the frame it was expressed in:
+// with a blanket impl the same `InertialPointing` value handed to a `Gcrs`
+// system would denote a different physical attitude (the two frames differ by
+// precession/nutation, ~0.1° at the pole by 2024) with nothing to catch it.
+// Widen this once the target can be typed as `Rotation<Body, F>`.
+impl AttitudeReference<frame::SimpleEci> for InertialPointing {
     fn target(
         &self,
         _t: f64,
-        _orbit: &OrbitalState,
+        _orbit: &OrbitalState<frame::SimpleEci>,
         _epoch: Option<&Epoch>,
     ) -> (UnitQuaternion<f64>, Vector3<f64>) {
         (self.target_q, Vector3::zeros())
@@ -46,11 +60,13 @@ impl AttitudeReference for InertialPointing {
 /// `n = |r × v| / r²` is the instantaneous angular rate.
 pub struct NadirPointing;
 
-impl AttitudeReference for NadirPointing {
+// The LVLH triad is built from the position and velocity of the state itself,
+// so the reference is valid in whichever inertial frame `F` they are given in.
+impl<F: frame::Eci> AttitudeReference<F> for NadirPointing {
     fn target(
         &self,
         _t: f64,
-        orbit: &OrbitalState,
+        orbit: &OrbitalState<F>,
         _epoch: Option<&Epoch>,
     ) -> (UnitQuaternion<f64>, Vector3<f64>) {
         let r = *orbit.position();

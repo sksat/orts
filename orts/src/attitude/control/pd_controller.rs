@@ -72,13 +72,17 @@ impl<S: HasAttitude> Model<S> for InertialPdController {
 /// - ω_error = ω_body - q_err⁻¹ · ω_target
 ///
 /// where q_err = q_target⁻¹ * q_current maps current body to target body frame.
-pub struct TrackingPdController<R: AttitudeReference> {
+///
+/// The reference is generic over the inertial frame: the controller is a
+/// `Model<S, F>` for every frame `F` its reference supports (see
+/// [`AttitudeReference`]), so no frame bound is imposed on the struct itself.
+pub struct TrackingPdController<R> {
     kp: Matrix3<f64>,
     kd: Matrix3<f64>,
     reference: R,
 }
 
-impl<R: AttitudeReference> TrackingPdController<R> {
+impl<R> TrackingPdController<R> {
     /// Create a new tracking PD controller with gain matrices and reference.
     pub fn new(kp: Matrix3<f64>, kd: Matrix3<f64>, reference: R) -> Self {
         Self { kp, kd, reference }
@@ -94,17 +98,17 @@ impl<R: AttitudeReference> TrackingPdController<R> {
     }
 }
 
-// TODO: SimpleEci constraint comes from AttitudeReference::target taking
-// &OrbitalState (SimpleEci). To make frame-generic, AttitudeReference
-// needs to accept &OrbitalState<F>.
-impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci>, R: AttitudeReference + 'static>
-    Model<S> for TrackingPdController<R>
+// Frame-generic: the reference is asked for its target in the state's own
+// inertial frame `F` (see #151). The torque itself is body-frame, so the
+// returned `ExternalLoads<F>` carries a zero acceleration in that same frame.
+impl<F: arika::frame::Eci, S: HasAttitude + HasOrbit<Frame = F>, R: AttitudeReference<F> + 'static>
+    Model<S, F> for TrackingPdController<R>
 {
     fn name(&self) -> &str {
         "pd_tracking"
     }
 
-    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         let att = state.attitude();
         let (q_target, omega_target) = self.reference.target(t, state.orbit(), epoch);
 
@@ -245,6 +249,66 @@ mod tests {
         assert!(
             loads.torque_body.z().abs() < short_angle * 2.0,
             "Torque magnitude too large for short path"
+        );
+    }
+
+    // Frame-generalization characterization (#151)
+
+    use crate::OrbitalState;
+    use crate::attitude::control::NadirPointing;
+
+    struct TestState {
+        attitude: AttitudeState,
+        orbit: OrbitalState,
+    }
+
+    impl HasAttitude for TestState {
+        fn attitude(&self) -> &AttitudeState {
+            &self.attitude
+        }
+    }
+
+    impl HasOrbit for TestState {
+        type Frame = arika::frame::SimpleEci;
+        fn orbit(&self) -> &OrbitalState {
+            &self.orbit
+        }
+    }
+
+    fn snapshot_state() -> TestState {
+        TestState {
+            attitude: AttitudeState::new(
+                UnitQuaternion::from_axis_angle(
+                    &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                    0.7,
+                ),
+                Vector3::new(0.01, -0.02, 0.03),
+            ),
+            orbit: OrbitalState::new(
+                Vector3::new(4000.0, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            ),
+        }
+    }
+
+    /// Characterization: pinned `SimpleEci` tracking torque, so parameterizing
+    /// [`AttitudeReference`] by the inertial frame cannot change it.
+    #[test]
+    fn tracking_pd_simple_eci_torque_snapshot() {
+        let ctrl = TrackingPdController::diagonal(1.0, 2.0, NadirPointing);
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let got = ctrl
+            .eval(0.0, &snapshot_state(), Some(&epoch))
+            .torque_body
+            .into_inner();
+        let expected = Vector3::new(
+            -1.4373171017803277,
+            -0.8407481028427832,
+            -0.37237905200853855,
+        );
+        assert!(
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
+            "SimpleEci tracking PD torque changed: {got:?}"
         );
     }
 
