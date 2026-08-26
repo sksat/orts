@@ -24,8 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
+      - name: Install wild linker
+        uses: ./.github/actions/install-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -200,7 +200,7 @@ jobs:
       # reclaim ~17 GB by removing runtimes we don't need (Android,
       # .NET, Haskell, Docker). Large-packages is intentionally off
       # because it would also remove LLVM/clang, which our
-      # `.cargo/config.toml` uses as the linker driver for mold.
+      # `.cargo/config.toml` uses as the linker driver for wild.
       # Tool-cache is kept so setup-rust / setup-node stay hot, and
       # swap is kept because the linker occasionally peaks memory.
       - name: Free disk space
@@ -214,8 +214,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
+      - name: Install wild linker
+        uses: ./.github/actions/install-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -263,8 +263,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
+      - name: Install wild linker
+        uses: ./.github/actions/install-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -315,8 +315,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
+      - name: Install wild linker
+        uses: ./.github/actions/install-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -358,8 +358,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
+      - name: Install wild linker
+        uses: ./.github/actions/install-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -403,8 +403,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
+      - name: Install wild linker
+        uses: ./.github/actions/install-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -454,8 +454,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
+      - name: Install wild linker
+        uses: ./.github/actions/install-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -539,8 +539,8 @@ jobs:
           docker-images: true
           swap-storage: false
 
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
+      - name: Install wild linker
+        uses: ./.github/actions/install-wild
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
@@ -633,7 +633,7 @@ jobs:
           swap-storage: false
 
       # gnu is built via `cross` so its glibc floor is pinned and
-      # host-independent (see Cross.toml); no host mold/clang needed. musl
+      # host-independent (see Cross.toml); no host wild/clang needed. musl
       # stays a native static build.
       - name: Install cross (gnu target)
         if: matrix.target == 'x86_64-unknown-linux-gnu'
@@ -678,7 +678,7 @@ jobs:
         if: matrix.target == 'x86_64-unknown-linux-gnu'
         env:
           ORTS_REQUIRE_LICENSE_NOTICE: "1"
-          # .cargo/config.toml's clang+mold rustflags line can't run in the
+          # .cargo/config.toml's clang+wild rustflags line can't run in the
           # container; a non-empty RUSTFLAGS replaces it, falling back to
           # cc/gcc. Must be non-empty (empty is ignored); target-cpu=x86-64 is
           # the default baseline no-op. Forwarded via Cross.toml passthrough.
@@ -881,9 +881,9 @@ jobs:
         if: steps.changes.outputs.docs == 'true'
         run: pnpm install --frozen-lockfile
 
-      - name: Install mold linker
+      - name: Install wild linker
         if: steps.changes.outputs.docs == 'true'
-        run: sudo apt-get update && sudo apt-get install -y mold
+        uses: ./.github/actions/install-wild
 
       - name: Parse rust-toolchain.toml
         if: steps.changes.outputs.docs == 'true'
