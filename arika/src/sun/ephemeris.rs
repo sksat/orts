@@ -80,6 +80,16 @@ fn solar_elements(epoch: &Epoch<Tdb>) -> SolarElements {
     }
 }
 
+/// Mean obliquity of the ecliptic at J2000 [rad].
+///
+/// The fixed obliquity that rotates a J2000 *ecliptic* vector — such as the
+/// Standish planetary elements' output — into J2000 equatorial coordinates.
+/// Evaluating [`planets::obliquity`] at J2000 keeps the polynomial's leading
+/// coefficient as the single source of truth.
+fn j2000_obliquity() -> f64 {
+    planets::obliquity(&Epoch::<Tdb>::from_jd_tdb(crate::epoch::J2000_JD))
+}
+
 /// Sun direction (unit vector) referred to the mean equator and equinox of
 /// date — the frame the Meeus series is actually expressed in.
 ///
@@ -194,16 +204,17 @@ pub fn sun_direction_from_body(body: &str, epoch: &Epoch<Tdb>) -> Vec3<frame::Gc
         "earth" | "moon" => sun_direction_eci(epoch),
         _ => {
             if let Some(body_pos_ecl) = planets::heliocentric_position_ecliptic(body, epoch) {
-                // The Standish/Meeus planetary elements are referred to the
-                // J2000 mean ecliptic (their mean longitudes advance at the
+                // The Standish planetary elements are referred to the J2000 mean
+                // ecliptic and equinox (their mean longitudes advance at the
                 // sidereal rate), so this branch needs no precession rotation —
-                // unlike the geocentric Meeus Sun above. The remaining
-                // inconsistency is the obliquity of date used for the ecliptic →
-                // equatorial rotation (11″ in 2024, well inside the ~1′ model
-                // accuracy).
+                // unlike the geocentric Meeus Sun above — and the ecliptic →
+                // equatorial rotation takes the *J2000* obliquity, not the
+                // obliquity of date (which would leave 11″ of frame error in
+                // 2024, 35″ in 2075).
                 let sun_dir_ecl = -body_pos_ecl;
-                let epsilon = planets::obliquity(epoch);
-                Vec3::from_raw(planets::ecliptic_to_equatorial(&sun_dir_ecl, epsilon).normalize())
+                Vec3::from_raw(
+                    planets::ecliptic_to_equatorial(&sun_dir_ecl, j2000_obliquity()).normalize(),
+                )
             } else {
                 // Unknown body: fallback to +X (vernal equinox direction)
                 Vec3::new(1.0, 0.0, 0.0)
@@ -234,25 +245,36 @@ mod tests {
         // (0.335° in 2024, 0.70° in 2050); they now agree to well within the
         // ~1 arcminute accuracy both models claim.
         for (y, m, d) in [
+            (1950, 6, 1),
             (2000, 1, 1),
             (2024, 3, 20),
             (2024, 9, 22),
             (2050, 1, 1),
             (2075, 7, 4),
+            (2100, 1, 1),
         ] {
             let epoch = Epoch::from_gregorian(y, m, d, 12, 0, 0.0).to_tdb();
             let sun = sun_direction_eci(&epoch).into_inner();
             let earth = planets::heliocentric_position_ecliptic("earth", &epoch)
                 .expect("earth is a known body");
+            // The J2000 obliquity, matching the frame the Standish elements
+            // are referred to — an obliquity of date here would tilt the
+            // expectation by the same amount the implementation used to.
             let geocentric_sun =
-                planets::ecliptic_to_equatorial(&(-earth), planets::obliquity(&epoch)).normalize();
+                planets::ecliptic_to_equatorial(&(-earth), j2000_obliquity()).normalize();
             let sep = sun
                 .dot(&geocentric_sun)
                 .clamp(-1.0, 1.0)
                 .acos()
                 .to_degrees();
+            // The residual is flat at 4.5-8.0" across 1950-2100 (the two
+            // models' own accuracy). The bound is set just above that so it
+            // also catches a frame error that grows with |T| — either the
+            // missing precession (0.335° in 2024, 1.4° by 2100) or an
+            // obliquity-of-date rotation applied to the J2000 planetary
+            // elements (11″ in 2024, 35″ by 2075).
             assert!(
-                sep < 0.05,
+                sep < 0.005,
                 "{y}-{m:02}-{d:02}: Meeus Sun and the planetary model disagree by {sep:.4}° \
                  (precession left unremoved would give ~{:.2}°)",
                 GENERAL_PRECESSION_ARCSEC_PER_CENTURY * epoch.centuries_since_j2000() / 3600.0
