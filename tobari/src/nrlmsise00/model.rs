@@ -7,20 +7,33 @@
 //!
 //! All coefficient indices are 0-based (matching Rust arrays).
 
-use super::Nrlmsise00Input;
 use super::coefficients::*;
+use super::{ApMode, Nrlmsise00Input};
 use core::f64::consts::PI;
 
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
 const DEG_TO_RAD: f64 = PI / 180.0;
-const DAY_ANGLE_RATE: f64 = 2.0 * PI / 365.25;
+const DAY_ANGLE_RATE: f64 = 1.72142e-2;
 const HOURS_TO_RAD: f64 = PI / 12.0; // hours to radians
 const GAS_CONSTANT: f64 = 831.4; // gas constant [J/(kmol·K)] adjusted for km
 
 /// Reference altitudes for lower thermosphere spline [km].
 const SPLINE_ALTITUDES: [f64; 5] = [120.0, 110.0, 100.0, 90.0, 72.5];
+
+/// Reference altitudes for the mesosphere / upper stratosphere spline [km]
+/// (reference `zn2`). Its top node is the bottom node of [`SPLINE_ALTITUDES`].
+const ZN2: [f64; 4] = [72.5, 55.0, 45.0, 32.5];
+
+/// Reference altitudes for the stratosphere / troposphere spline [km]
+/// (reference `zn3`). Its top node is the bottom node of [`ZN2`].
+const ZN3: [f64; 5] = [32.5, 20.0, 15.0, 10.0, 0.0];
+
+/// Altitude below which the atmosphere is treated as fully mixed [km]
+/// (reference `zmix`). Between `ZMIX` and `ZN2[0]` the thermospheric
+/// (diffusive) composition is blended linearly into the mixed composition.
+const ZMIX: f64 = 62.5;
 
 /// Thermal diffusion coefficients (alpha) per species.
 /// He, O, N2, O2, Ar, (unused), H, N
@@ -107,22 +120,38 @@ fn ap_sum_factor(ex: f64) -> f64 {
     1.0 + (1.0 - ex.powi(19)) / (1.0 - ex) * ex.sqrt()
 }
 
-/// Geomagnetic activity function using 3-hour Ap history.
+/// Geomagnetic activity function using the 3-hour Ap history (reference `sg0`).
+///
+/// `ap_array[0]` is the *daily* Ap and is deliberately not read: the weighted
+/// sum starts at `ap_array[1]` (the current 3-hour value) and walks backward in
+/// time with weight `ex^k`, where the last two entries — which are themselves
+/// 21-hour averages — share the `(1 - ex^8)/(1 - ex)` factor that accumulates
+/// the eight 3-hour slots each of them stands for.
 fn ap_geomagnetic_index(ex: f64, ap_array: &[f64; 7], p: &[f64]) -> f64 {
-    // 7 elements: current + 6 historical 3-hour Ap indices (NRLMSISE-00 spec).
-    let mut g0_vals = [0.0; 7];
-    for (i, &a) in ap_array.iter().enumerate() {
-        g0_vals[i] = ap_saturation(a, p[24], p[25]);
-    }
+    let g0 = |a: f64| ap_saturation(a, p[24], p[25]);
 
-    let sum = g0_vals[0]
-        + g0_vals[1] * ex
-        + g0_vals[2] * ex * ex
-        + g0_vals[3] * ex.powi(3)
-        + g0_vals[4] * ex.powi(4)
-        + (g0_vals[5] * ex.powi(12) + g0_vals[6] * ex.powi(25)) * (1.0 - ex.powi(8)) / (1.0 - ex);
+    let sum = g0(ap_array[1])
+        + (g0(ap_array[2]) * ex
+            + g0(ap_array[3]) * ex * ex
+            + g0(ap_array[4]) * ex.powi(3)
+            + (g0(ap_array[5]) * ex.powi(4) + g0(ap_array[6]) * ex.powi(12)) * (1.0 - ex.powi(8))
+                / (1.0 - ex));
 
     sum / ap_sum_factor(ex)
+}
+
+/// 3-hourly Ap activity factor for one coefficient array (reference `apt[0]`).
+///
+/// Returns `None` when the array carries no 3-hourly coefficients (`p[51] == 0`),
+/// in which case the reference leaves the magnetic-activity terms at zero.
+fn ap_3hour_factor(input: &Nrlmsise00Input, p: &[f64]) -> Option<f64> {
+    if p[51] == 0.0 {
+        return None;
+    }
+    // Decay rate per 3 hours, widened toward the poles by p[138].
+    let lat_factor = 1.0 + p[138] * (45.0 - input.latitude_deg.abs());
+    let ex = (-10800.0 * p[51].abs() / lat_factor).exp().min(0.99999);
+    Some(ap_geomagnetic_index(ex, &input.ap_array, p))
 }
 
 // 150-term geographic/temporal variation
@@ -196,15 +225,24 @@ fn geographic_variation(
             + (p[8] * plg[2][2] + p[42] * plg[2][4] + t82) * s2tloc);
 
     // t[8]: Magnetic activity (Ap)
+    let apt0 = if sw[9] == -1.0 {
+        ap_3hour_factor(input, p)
+    } else {
+        None
+    };
     if sw[9] == -1.0 {
         // 3-hour Ap mode
-        let ap = &input.ap_array;
-        if p[51] != 0.0 {
-            let exp1 = (-10800.0 * p[51].abs()).exp();
-            let exp1 = if exp1 > 0.99999 { 0.99999 } else { exp1 };
-            let sg = ap_geomagnetic_index(exp1, ap, p);
-            t[8] = (p[50] * plg[0][2] + p[96] * plg[0][4]) * sg
-                + (p[53] * plg[1][3] + p[98] * plg[1][5]) * sg * ctloc;
+        if let Some(apt0) = apt0 {
+            t[8] = apt0
+                * (p[50]
+                    + p[96] * plg[0][2]
+                    + p[54] * plg[0][4]
+                    + (p[125] * plg[0][1] + p[126] * plg[0][3] + p[127] * plg[0][5])
+                        * cd14
+                        * sw[5].abs()
+                    + (p[128] * plg[1][1] + p[129] * plg[1][3] + p[130] * plg[1][5])
+                        * sw[7].abs()
+                        * (HOURS_TO_RAD * (tloc - p[131])).cos());
         }
     } else {
         // Daily Ap mode with saturation
@@ -267,8 +305,25 @@ fn geographic_variation(
             * (1.0 + p[137] * dfa * sw[1].abs());
     }
 
-    // t[12]: Mixed UT/longitude/Ap (daily Ap mode)
-    if sw[13].abs() > 0.0 {
+    // t[12]: Mixed UT/longitude/Ap
+    if sw[13].abs() > 0.0 && sw[9] == -1.0 {
+        let sr = 7.2722e-5;
+        if let Some(apt0) = apt0 {
+            // Longitude/Ap coupling
+            t[12] = apt0 * sw[11].abs() * (1.0 + p[132] * plg[0][1])
+                * ((p[52] * plg[1][2] + p[98] * plg[1][4] + p[67] * plg[1][6])
+                    * (DEG_TO_RAD * (input.longitude_deg - p[97])).cos())
+                // Seasonal longitude/Ap coupling
+                + apt0 * sw[11].abs() * sw[5].abs()
+                    * (p[133] * plg[1][1] + p[134] * plg[1][3] + p[135] * plg[1][5])
+                    * cd14
+                    * (DEG_TO_RAD * (input.longitude_deg - p[136])).cos()
+                // Pure UT/Ap coupling
+                + apt0 * sw[12].abs()
+                    * (p[55] * plg[0][1] + p[56] * plg[0][3] + p[57] * plg[0][5])
+                    * (sr * (input.ut_seconds - p[58])).cos();
+        }
+    } else if sw[13].abs() > 0.0 {
         let sr = 7.2722e-5;
         let apdf_local = {
             let apd = input.ap_daily - 4.0;
@@ -314,6 +369,7 @@ fn geographic_variation_lower(
     sw: &[f64; 24],
     plg: &[[f64; 9]; 9],
     apdf: f64,
+    apt0: f64,
 ) -> f64 {
     let mut t = [0.0f64; 14];
     let doy = input.day_of_year as f64;
@@ -372,8 +428,12 @@ fn geographic_variation_lower(
             + (p[8] * plg[2][2] + p[42] * plg[2][4] + t82) * s2tloc;
     }
 
-    // t[8]: Magnetic activity (uses apdf computed by geographic_variation)
-    if sw[9].abs() > 0.0 {
+    // t[8]: Magnetic activity. `apdf` / `apt0` are the leftovers of the last
+    // `geographic_variation` call in the reference (see `ap_daily_factor` and
+    // `gts7`); this function does not have 3-hourly coefficients of its own.
+    if sw[9] == -1.0 {
+        t[8] = p[50] * apt0 + p[96] * plg[0][2] * apt0 * sw[2].abs();
+    } else if sw[9].abs() > 0.0 {
         t[8] = apdf * (p[32] + p[45] * plg[0][2] * sw[2].abs());
     }
 
@@ -621,6 +681,107 @@ fn density_temperature_profile(
     (t, density)
 }
 
+/// One lower-atmosphere temperature spline.
+struct TempSpline<'a> {
+    /// Node altitudes, descending \[km\].
+    zn: &'a [f64],
+    /// Temperature at each node \[K\].
+    tn: &'a [f64],
+    /// Temperature gradient at the top and at the bottom node.
+    tgn: &'a [f64; 2],
+}
+
+/// Integrate one hydrostatic segment of the lower-atmosphere temperature spline.
+///
+/// The barometric integration is carried out in the normalized geopotential coordinate
+/// `x = zeta(z, zn[0]) / zeta(zn[last], zn[0])`, which runs from 0 at the top
+/// node to 1 at the bottom node.
+///
+/// Returns (temperature at `z` [K], `d0` scaled by the density ratio across the
+/// segment). With `xm == 0.0` only the temperature is meaningful.
+fn spline_segment(
+    z: f64,
+    d0: f64,
+    xm: f64,
+    spline: &TempSpline<'_>,
+    gsurf: f64,
+    re: f64,
+) -> (f64, f64) {
+    // Both lower-atmosphere splines have at most 5 nodes.
+    const MAX_NODES: usize = 8;
+    let TempSpline { zn, tn, tgn } = *spline;
+    let n = zn.len();
+    debug_assert!(n <= MAX_NODES);
+    debug_assert_eq!(n, tn.len());
+
+    let z1 = zn[0];
+    let z2 = zn[n - 1];
+    let t1 = tn[0];
+    let t2 = tn[n - 1];
+    let zgdif = geopotential_height(z2, z1, re);
+
+    let mut xs = [0.0f64; MAX_NODES];
+    let mut ys = [0.0f64; MAX_NODES];
+    let mut y2 = [0.0f64; MAX_NODES];
+    for k in 0..n {
+        xs[k] = geopotential_height(zn[k], z1, re) / zgdif;
+        ys[k] = 1.0 / tn[k];
+    }
+
+    let yd1 = -tgn[0] / (t1 * t1) * zgdif;
+    let yd2 = -tgn[1] / (t2 * t2) * zgdif * ((re + z2) / (re + z1)).powi(2);
+    cubic_spline_setup(&xs, &ys, n, yd1, yd2, &mut y2);
+
+    let x = geopotential_height(z, z1, re) / zgdif;
+    let t = 1.0 / cubic_spline_interpolate(&xs, &ys, &y2, n, x);
+
+    if xm == 0.0 {
+        return (t, d0);
+    }
+
+    let glb = gsurf / (1.0 + z1 / re).powi(2);
+    let gamm = xm * glb * zgdif / GAS_CONSTANT;
+    let yi = cubic_spline_integrate(&xs, &ys, &y2, n, x);
+    let mut expl = gamm * yi;
+    if expl > 50.0 {
+        expl = 50.0;
+    }
+    (t, d0 * (t1 / t) * (-expl).exp())
+}
+
+/// Temperature and density below the thermosphere (reference `densm`).
+///
+/// Integrates hydrostatically downward from `ZN2[0]` (72.5 km) through the
+/// mesosphere/upper-stratosphere spline and, below `ZN3[0]` (32.5 km), through
+/// the stratosphere/troposphere spline. `d0` is the mixed density at `ZN2[0]`.
+///
+/// Returns (temperature [K], density in the same units as `d0`). With
+/// `xm == 0.0` the returned density is `d0` unchanged and only the
+/// temperature is meaningful.
+fn densm(
+    alt: f64,
+    d0: f64,
+    xm: f64,
+    meso: &TempSpline<'_>,
+    strato: &TempSpline<'_>,
+    gsurf: f64,
+    re: f64,
+) -> (f64, f64) {
+    debug_assert!(alt <= ZN2[0]);
+
+    // Mesosphere / upper stratosphere: clamp to the bottom node so that the
+    // spline is only evaluated inside its own range.
+    let (mut t, mut density) = spline_segment(alt.max(ZN2[3]), d0, xm, meso, gsurf, re);
+
+    if alt > ZN3[0] {
+        return (t, density);
+    }
+
+    // Stratosphere / troposphere.
+    (t, density) = spline_segment(alt, density, xm, strato, gsurf, re);
+    (t, density)
+}
+
 /// Smooth logistic transition between diffusive and mixed densities.
 fn mixing_transition(dd: f64, dm: f64, zhm: f64, xmm: f64, xm: f64) -> f64 {
     let a = zhm / (xmm - xm);
@@ -680,21 +841,214 @@ fn composition_correction_dual(alt: f64, r: f64, h1: f64, zh: f64, h2: f64) -> f
     (r / (1.0 + 0.5 * (ex1 + ex2))).exp()
 }
 
-// Main computation (GTS7/GTD7D equivalent)
+// Main computation
 
-/// Full NRLMSISE-00 computation.
+/// Variation switches, all on. Index 9 selects the geomagnetic-activity
+/// formulation: `1.0` for daily Ap, `-1.0` for the 3-hourly Ap history
+/// (reference `flags->sw[9]`).
+fn switches(ap_mode: ApMode) -> [f64; 24] {
+    let mut sw = [1.0f64; 24];
+    if ap_mode == ApMode::ThreeHourly {
+        sw[9] = -1.0;
+    }
+    sw
+}
+
+/// Daily-Ap saturation factor (reference `apdf`).
+///
+/// In the reference this is a file-level variable that `globe7` recomputes on
+/// every call from the coefficient array it was handed, and `glob7s` then reads
+/// whatever the last `globe7` call left behind. The saturation parameters
+/// `p[43]`/`p[44]` are equal in every coefficient array that can be the last
+/// one before a `glob7s` call, so a single value computed from
+/// `TEMP_COEFFICIENTS` reproduces the reference exactly.
+fn ap_daily_factor(ap_daily: f64) -> f64 {
+    let apd = ap_daily - 4.0;
+    let p44 = TEMP_COEFFICIENTS[43].abs().max(1.0e-5);
+    let p45 = TEMP_COEFFICIENTS[44];
+    apd + (p45 - 1.0) * (apd + ((-p44 * apd).exp() - 1.0) / p44)
+}
+
+/// Thermosphere / mesosphere result (reference `gts7`).
+struct Gts7 {
+    /// Species number densities \[cm⁻³\]; index 5 is total mass \[g/cm³\].
+    d: [f64; 9],
+    /// Exospheric temperature \[K\].
+    tinf: f64,
+    /// Temperature at the evaluation altitude \[K\].
+    temp_alt: f64,
+    /// Fully mixed N₂ density at the evaluation altitude \[cm⁻³\]
+    /// (reference `dm28`). Only meaningful at or below
+    /// `MIXING_ALT_LIMITS[2]`.
+    dm28: f64,
+    /// Bottom node of the lower-thermosphere temperature spline, TN1(5) \[K\]
+    /// (reference `meso_tn1[4]`) — also the top node of the `ZN2` spline.
+    tn1_bottom: f64,
+    /// Temperature gradient at `tn1_bottom` (reference `meso_tgn1[1]`).
+    tgn1_bottom: f64,
+}
+
+/// Full NRLMSISE-00 computation (reference `gtd7`).
 ///
 /// Returns (densities\[9\], temperature_exo, temperature_alt).
 /// Densities in cm⁻³: \[He, O, N2, O2, Ar, total_mass, H, N, anomO\].
-pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
-    let sw = [1.0f64; 24]; // all switches on
+///
+/// At and above `ZN2[0]` (72.5 km) this is the thermosphere/mesosphere
+/// computation. Below it, the thermosphere result at 72.5 km is continued
+/// downward through the mesosphere and stratosphere temperature splines and
+/// blended into a fully mixed composition, as the reference does. O, H, N and
+/// anomalous O are not modelled below 72.5 km and are reported as zero.
+pub fn compute(input: &Nrlmsise00Input, ap_mode: ApMode) -> ([f64; 9], f64, f64) {
+    let alt = input.altitude_km;
+
+    if alt >= ZN2[0] {
+        let g = gts7(input, alt, ap_mode);
+        return (g.d, g.tinf, g.temp_alt);
+    }
+
+    // Thermosphere solution evaluated at the top of the ZN2 spline.
+    let g = gts7(input, ZN2[0], ap_mode);
+
+    let sw = switches(ap_mode);
+    let plg = compute_legendre((input.latitude_deg * DEG_TO_RAD).sin());
+    let (gsurf, re) = surface_gravity_and_radius(input.latitude_deg);
+    let apdf = ap_daily_factor(input.ap_daily);
+    // The last `geographic_variation` call inside `gts7` is the one for
+    // anomalous O, whose coefficient array has no 3-hourly term (`p[51] == 0`);
+    // the reference's carried-over `apt[0]` therefore comes from the N array.
+    let apt0 = match ap_mode {
+        ApMode::Daily => 0.0,
+        ApMode::ThreeHourly => ap_3hour_factor(input, &DENSITY_COEFFICIENTS[7]).unwrap_or(0.0),
+    };
+
+    // Mesosphere / upper stratosphere temperature nodes and end gradients.
+    let mut tn2 = [0.0f64; 4];
+    let mut tgn2 = [0.0f64; 2];
+    tn2[0] = g.tn1_bottom;
+    tgn2[0] = g.tgn1_bottom;
+    for k in 0..3 {
+        // pma[2] (the bottom node) is additionally gated on sw[21] in the
+        // reference; every switch is on here, so the expression is the same.
+        tn2[k + 1] = MID_ATMO_COEFFICIENTS[k][0] * MID_ATMO_AVERAGES[k]
+            / (1.0
+                - sw[19]
+                    * geographic_variation_lower(
+                        &MID_ATMO_COEFFICIENTS[k],
+                        input,
+                        &sw,
+                        &plg,
+                        apdf,
+                        apt0,
+                    ));
+    }
+    tgn2[1] = MID_ATMO_AVERAGES[8]
+        * MID_ATMO_COEFFICIENTS[9][0]
+        * (1.0
+            + sw[19]
+                * sw[21]
+                * geographic_variation_lower(
+                    &MID_ATMO_COEFFICIENTS[9],
+                    input,
+                    &sw,
+                    &plg,
+                    apdf,
+                    apt0,
+                ))
+        * tn2[3]
+        * tn2[3]
+        / (MID_ATMO_COEFFICIENTS[2][0] * MID_ATMO_AVERAGES[2]).powi(2);
+
+    // Stratosphere / troposphere temperature nodes and end gradients.
+    let mut tn3 = [0.0f64; 5];
+    let mut tgn3 = [0.0f64; 2];
+    tn3[0] = tn2[3];
+    if alt < ZN3[0] {
+        tgn3[0] = tgn2[1];
+        for k in 0..4 {
+            tn3[k + 1] = MID_ATMO_COEFFICIENTS[k + 3][0] * MID_ATMO_AVERAGES[k + 3]
+                / (1.0
+                    - sw[21]
+                        * geographic_variation_lower(
+                            &MID_ATMO_COEFFICIENTS[k + 3],
+                            input,
+                            &sw,
+                            &plg,
+                            apdf,
+                            apt0,
+                        ));
+        }
+        tgn3[1] = MID_ATMO_COEFFICIENTS[7][0]
+            * MID_ATMO_AVERAGES[7]
+            * (1.0
+                + sw[21]
+                    * geographic_variation_lower(
+                        &MID_ATMO_COEFFICIENTS[7],
+                        input,
+                        &sw,
+                        &plg,
+                        apdf,
+                        apt0,
+                    ))
+            * tn3[4]
+            * tn3[4]
+            / (MID_ATMO_COEFFICIENTS[6][0] * MID_ATMO_AVERAGES[6]).powi(2);
+    }
+
+    // Linear transition from the diffusive composition at ZN2[0] to full
+    // mixing at ZMIX.
+    let dmc = if alt > ZMIX {
+        1.0 - (ZN2[0] - alt) / (ZN2[0] - ZMIX)
+    } else {
+        0.0
+    };
+
+    let xmm = DENSITY_BOUNDARY[2][4];
+    let dz28 = g.d[2];
+    let mut d = [0.0f64; 9];
+
+    // N2: hydrostatic continuation of the mixed density, corrected back
+    // toward the diffusive value over the transition band.
+    let meso = TempSpline {
+        zn: &ZN2,
+        tn: &tn2,
+        tgn: &tgn2,
+    };
+    let strato = TempSpline {
+        zn: &ZN3,
+        tn: &tn3,
+        tgn: &tgn3,
+    };
+    let (_, n2_mixed) = densm(alt, g.dm28, xmm, &meso, &strato, gsurf, re);
+    d[2] = n2_mixed * (1.0 + (g.d[2] / g.dm28 - 1.0) * dmc);
+
+    // He, O2, Ar follow N2 with their fixed ground mixing ratios.
+    for i in [0usize, 3, 4] {
+        let ratio = DENSITY_BOUNDARY[i][1];
+        let dmr = g.d[i] / (dz28 * ratio) - 1.0;
+        d[i] = d[2] * ratio * (1.0 + dmr * dmc);
+    }
+
+    // O, H, N and anomalous O are not modelled below ZN2[0]; the reference
+    // leaves them at zero and omits anomalous O from the mass sum.
+    d[5] = ATOMIC_MASS_UNIT
+        * (4.0 * d[0] + 16.0 * d[1] + 28.0 * d[2] + 32.0 * d[3] + 40.0 * d[4] + d[6] + 14.0 * d[7]);
+
+    let (temp_alt, _) = densm(alt, 1.0, 0.0, &meso, &strato, gsurf, re);
+
+    (d, g.tinf, temp_alt)
+}
+
+/// Thermosphere / mesosphere computation (reference `gts7`).
+///
+/// `alt` is the evaluation altitude, which the caller clamps to `ZN2[0]` when
+/// continuing into the lower atmosphere.
+fn gts7(input: &Nrlmsise00Input, alt: f64, ap_mode: ApMode) -> Gts7 {
+    let sw = switches(ap_mode);
 
     let sin_lat = (input.latitude_deg * DEG_TO_RAD).sin();
     let plg = compute_legendre(sin_lat);
 
     let (gsurf, re) = surface_gravity_and_radius(input.latitude_deg);
-
-    let alt = input.altitude_km;
 
     // Joining altitude (ZA)
     // ZA is where the Bates-Walker profile joins the spline profile.
@@ -730,16 +1084,16 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
     };
     let s = g0 / (tinf - tlb);
 
-    // Ap saturation (apdf)
-    // geographic_variation computes this as a side-effect in the C code (static variable).
-    // The saturation parameters p[43], p[44] are identical across all coefficient
-    // arrays, so we compute it once here. geographic_variation_lower reuses this value for its
-    // magnetic activity term.
-    let apdf = {
-        let apd = input.ap_daily - 4.0;
-        let p44 = TEMP_COEFFICIENTS[43].abs().max(1.0e-5);
-        let p45 = TEMP_COEFFICIENTS[44];
-        apd + (p45 - 1.0) * (apd + ((-p44 * apd).exp() - 1.0) / p44)
+    // Ap saturation, reused by geographic_variation_lower for its magnetic
+    // activity term (see ap_daily_factor).
+    let apdf = ap_daily_factor(input.ap_daily);
+    // The reference evaluates the exospheric-temperature and gradient
+    // variations only above their respective altitudes, so the last
+    // `geographic_variation` call before the TN1 nodes is always the one for
+    // the lower-boundary temperature — coefficient array index 3.
+    let apt0 = match ap_mode {
+        ApMode::Daily => 0.0,
+        ApMode::ThreeHourly => ap_3hour_factor(input, &DENSITY_COEFFICIENTS[3]).unwrap_or(0.0),
     };
 
     // Lower thermosphere temperature profile (TN1 nodes)
@@ -760,6 +1114,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0]
             / (1.0
@@ -770,6 +1125,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0]
             / (1.0
@@ -780,6 +1136,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]
             / (1.0
@@ -791,6 +1148,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tgn1[1] = TEMP_BOUNDARY[8]
             * MID_ATMO_COEFFICIENTS[8][0]
@@ -803,6 +1161,7 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ))
             * tn1[4]
             * tn1[4]
@@ -950,16 +1309,20 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
     }
 
     // N2
+    let mut dm28 = 0.0;
     {
         let (_, dd) = density_temperature_profile(
             alt, db28, tinf, tlb, 28.0, ALPHA[2], zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
         );
         d[2] = dd;
         if alt <= MIXING_ALT_LIMITS[2] {
-            // Turbopause mixing only (no composition correction for N2)
+            // Turbopause mixing only (no composition correction for N2).
+            // The mixed density is also the starting point for the lower
+            // atmosphere continuation below 72.5 km.
             let (_, dm28_alt) = density_temperature_profile(
                 alt, b28, tinf, tlb, xmm, 0.0, zlb, s, &zn1, &tn1, &tgn1, gsurf, re,
             );
+            dm28 = dm28_alt;
             d[2] = mixing_transition(d[2], dm28_alt, zhm28, xmm, 28.0);
         }
     }
@@ -1167,7 +1530,14 @@ pub fn compute(input: &Nrlmsise00Input) -> ([f64; 9], f64, f64) {
             + 14.0 * d[7]   // N
             + 16.0 * d[8]); // anomalous O
 
-    (d, tinf, temp_alt)
+    Gts7 {
+        d,
+        tinf,
+        temp_alt,
+        dm28,
+        tn1_bottom: tn1[4],
+        tgn1_bottom: tgn1[1],
+    }
 }
 
 #[cfg(test)]
@@ -1190,10 +1560,75 @@ mod tests {
         }
     }
 
+    /// The seasonal angular rate closes a 365-day cycle, not a tropical year.
+    ///
+    /// NRLMSISE-00's fitted coefficients use DR = 1.72142e-2 rad/day = 2π/365;
+    /// the day-of-year argument is a 365-day cycle by construction. Substituting
+    /// 2π/365.25 shifts the seasonal phase by a quarter day at doy 365 and
+    /// perturbs every seasonal and seasonally modulated term.
+    #[test]
+    fn seasonal_rate_closes_a_365_day_cycle() {
+        let closure = DAY_ANGLE_RATE * 365.0;
+        assert!(
+            (closure - 2.0 * PI).abs() < 1e-5,
+            "DAY_ANGLE_RATE * 365 = {closure:.9}, expected 2*PI = {:.9}",
+            2.0 * PI
+        );
+    }
+
+    /// The 3-hourly weighting is ordered from most to least recent.
+    ///
+    /// `ap_array[0]` holds the daily Ap and must not enter the sum; the
+    /// remaining entries must carry strictly decreasing weight with age, which
+    /// pins both the index offset and the exponent ladder of the reference
+    /// `sg0`.
+    #[test]
+    fn ap_history_weights_decrease_with_age() {
+        let p = &DENSITY_COEFFICIENTS[3];
+        let ex = 0.8;
+        let quiet = [4.0f64; 7];
+
+        // Perturbing ap_array[0] must not change the result at all.
+        let mut daily_only = quiet;
+        daily_only[0] = 400.0;
+        assert_eq!(
+            ap_geomagnetic_index(ex, &daily_only, p),
+            ap_geomagnetic_index(ex, &quiet, p),
+            "the daily Ap slot must not enter the 3-hourly sum"
+        );
+
+        let base = ap_geomagnetic_index(ex, &quiet, p);
+        let weight = |slot: usize| {
+            let mut aps = quiet;
+            aps[slot] = 40.0;
+            ap_geomagnetic_index(ex, &aps, p) - base
+        };
+
+        // Slots 1-4 are single 3-hour values, most recent first.
+        let mut previous = f64::INFINITY;
+        for slot in 1..=4 {
+            let w = weight(slot);
+            assert!(w > 0.0, "slot {slot} must raise the index");
+            assert!(
+                w < previous,
+                "slot {slot} weight {w:.6} must be below slot {} weight {previous:.6}",
+                slot - 1
+            );
+            previous = w;
+        }
+
+        // Slots 5 and 6 are each an average over eight 3-hour slots, so they
+        // carry the accumulated (1 - ex^8)/(1 - ex) factor and are not
+        // comparable with the single-slot weights — only with each other.
+        let (w5, w6) = (weight(5), weight(6));
+        assert!(w5 > w6, "slot 5 weight {w5:.6} must exceed slot 6 {w6:.6}");
+        assert!(w6 > 0.0, "slot 6 must raise the index");
+    }
+
     #[test]
     fn debug_compute_400km() {
         let input = test_input();
-        let (d, tinf, temp) = compute(&input);
+        let (d, tinf, temp) = compute(&input, ApMode::Daily);
         eprintln!("tinf={tinf:.1} temp={temp:.1}");
         eprintln!("rho={:.4e} kg/m3", d[5] * 1000.0);
         eprintln!(
@@ -1228,6 +1663,8 @@ mod tests {
             let p45 = TEMP_COEFFICIENTS[44];
             apd + (p45 - 1.0) * (apd + ((-p44 * apd).exp() - 1.0) / p44)
         };
+        // Daily-Ap mode: the 3-hourly factor is unused.
+        let apt0 = 0.0;
 
         eprintln!("tinf={tinf:.1} tlb={tlb:.1} g0={g0:.3} s={s:.6}");
 
@@ -1242,6 +1679,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0]
             / (1.0
@@ -1252,6 +1690,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0]
             / (1.0
@@ -1262,6 +1701,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]
             / (1.0
@@ -1273,6 +1713,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         eprintln!("tn1: {:?}", tn1);
 
@@ -1289,6 +1730,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ))
             * tn1[4]
             * tn1[4]
@@ -1348,6 +1790,8 @@ mod tests {
             let p45 = TEMP_COEFFICIENTS[44];
             apd + (p45 - 1.0) * (apd + ((-p44 * apd).exp() - 1.0) / p44)
         };
+        // Daily-Ap mode: the 3-hourly factor is unused.
+        let apt0 = 0.0;
 
         // Temperature nodes
         let mut tn1 = [0.0f64; 5];
@@ -1362,6 +1806,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0]
             / (1.0
@@ -1372,6 +1817,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0]
             / (1.0
@@ -1382,6 +1828,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]
             / (1.0
@@ -1393,6 +1840,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tgn1[0] = g0_val;
         tgn1[1] = TEMP_BOUNDARY[8]
@@ -1406,6 +1854,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ))
             * tn1[4]
             * tn1[4]
@@ -1464,7 +1913,7 @@ mod tests {
         }
 
         // Full compute for comparison
-        let (d, _, _) = compute(&input);
+        let (d, _, _) = compute(&input, ApMode::Daily);
         eprintln!("\nFull compute at 400km:");
         eprintln!(
             "  He={:.4e} O={:.4e} N2={:.4e} O2={:.4e} Ar={:.4e} H={:.4e} N={:.4e}",
@@ -1508,6 +1957,8 @@ mod tests {
             let p45 = TEMP_COEFFICIENTS[44];
             apd + (p45 - 1.0) * (apd + ((-p44 * apd).exp() - 1.0) / p44)
         };
+        // Daily-Ap mode: the 3-hourly factor is unused.
+        let apt0 = 0.0;
 
         let mut tn1 = [0.0f64; 5];
         let mut tgn1 = [0.0f64; 2];
@@ -1521,6 +1972,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[2] = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0]
             / (1.0
@@ -1531,6 +1983,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[3] = TEMP_BOUNDARY[7] * TEMP_NODE_COEFFICIENTS[2][0]
             / (1.0
@@ -1541,6 +1994,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tn1[4] = TEMP_BOUNDARY[4] * TEMP_NODE_COEFFICIENTS[3][0]
             / (1.0
@@ -1552,6 +2006,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ));
         tgn1[0] = g0_val;
         tgn1[1] = TEMP_BOUNDARY[8]
@@ -1565,6 +2020,7 @@ mod tests {
                         &sw,
                         &plg,
                         apdf,
+                        apt0,
                     ))
             * tn1[4]
             * tn1[4]
@@ -1674,13 +2130,27 @@ mod tests {
                 let p45 = TEMP_COEFFICIENTS[44];
                 apd + (p45 - 1.0) * (apd + ((-p44 * apd).exp() - 1.0) / p44)
             };
+            // Daily-Ap mode: the 3-hourly factor is unused.
+            let apt0 = 0.0;
 
-            let g7s_ptl1 =
-                geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[1], &input, &sw, &plg, apdf);
+            let g7s_ptl1 = geographic_variation_lower(
+                &TEMP_NODE_COEFFICIENTS[1],
+                &input,
+                &sw,
+                &plg,
+                apdf,
+                apt0,
+            );
             let tn1_2 = TEMP_BOUNDARY[2] * TEMP_NODE_COEFFICIENTS[1][0] / (1.0 - sw[18] * g7s_ptl1);
 
-            let g7s_ptl0 =
-                geographic_variation_lower(&TEMP_NODE_COEFFICIENTS[0], &input, &sw, &plg, apdf);
+            let g7s_ptl0 = geographic_variation_lower(
+                &TEMP_NODE_COEFFICIENTS[0],
+                &input,
+                &sw,
+                &plg,
+                apdf,
+                apt0,
+            );
             let tn1_1 = TEMP_BOUNDARY[6] * TEMP_NODE_COEFFICIENTS[0][0] / (1.0 - sw[18] * g7s_ptl0);
 
             let g7_pt = geographic_variation(&TEMP_COEFFICIENTS, &input, &sw, &plg);
@@ -1728,7 +2198,7 @@ mod tests {
         {
             let mut inp = base.clone();
             inp.altitude_km = alt;
-            let (d, _, temp) = compute(&inp);
+            let (d, _, temp) = compute(&inp, ApMode::Daily);
             let he_err = (d[0] - c_he[i]) / c_he[i] * 100.0;
             let h_err = (d[6] - c_h[i]) / c_h[i] * 100.0;
             eprintln!(
@@ -1760,7 +2230,7 @@ mod tests {
         {
             let mut inp = base2.clone();
             inp.altitude_km = alt;
-            let (d, _, temp) = compute(&inp);
+            let (d, _, temp) = compute(&inp, ApMode::Daily);
             let he_err = (d[0] - c_he2[i]) / c_he2[i] * 100.0;
             eprintln!(
                 "  {alt:7.1}km: He={:.6e} ({he_err:+.2}%)  T={temp:.2}",

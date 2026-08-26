@@ -450,7 +450,10 @@ impl AtmosphereModel for HarrisPriester {
         // cos(ψ/2) = sqrt((1 + cos ψ) / 2)
         let cos_half_psi = ((1.0 + cos_psi) / 2.0).sqrt();
 
-        rho_min + (rho_max - rho_min) * cos_half_psi.powi(self.n as i32)
+        // `powf`, not `powi`: `n` is a public `u32` field, and `n as i32` wraps
+        // negative for n >= 2^31, which inverts the factor (u32::MAX -> 1/cos(ψ/2),
+        // i.e. an unbounded density, and 2^31 -> +Inf at the anti-bulge).
+        rho_min + (rho_max - rho_min) * cos_half_psi.powf(self.n as f64)
     }
 }
 
@@ -504,6 +507,79 @@ mod tests {
         AtmosphereInput {
             geodetic,
             utc: epoch,
+        }
+    }
+
+    /// The density stays inside the table bracket for every `u32` exponent.
+    ///
+    /// `cos(ψ/2)` is in `[0, 1]`, so `cos(ψ/2)^n` is too for any non-negative
+    /// real `n`, which brackets the density between `rho_min` and `rho_max`
+    /// everywhere. `n` is a public field, so the bound has to hold at the use
+    /// site: routing it through `powi(n as i32)` wraps negative for `n >= 2^31`
+    /// and inverts the factor, returning `+Inf` at 2^31 and ~1280x `rho_min` at
+    /// `u32::MAX`.
+    #[test]
+    fn density_stays_within_the_table_bracket_for_any_exponent() {
+        let epoch = dummy_epoch();
+        let exponents = [
+            0u32,
+            1,
+            2,
+            6,
+            1_000_000,
+            i32::MAX as u32,
+            1u32 << 31,
+            u32::MAX,
+        ];
+
+        for n in exponents {
+            let hp = hp_fixed_sun().with_exponent(n);
+            for lat_deg in [-80.0, -30.0, 0.0, 45.0, 89.0] {
+                for lon_deg in [-180.0, -148.0, -60.0, 0.0, 77.0, 179.0] {
+                    for altitude in [100.0, 400.0, 900.0] {
+                        let geodetic = Geodetic {
+                            latitude: (lat_deg as f64).to_radians(),
+                            longitude: (lon_deg as f64).to_radians(),
+                            altitude,
+                        };
+                        let rho = hp.density(&make_input(geodetic, &epoch));
+                        let (rho_min, rho_max) = hp.interpolate_table(altitude);
+                        assert!(
+                            rho.is_finite(),
+                            "n={n} lat={lat_deg} lon={lon_deg} alt={altitude}: rho={rho}"
+                        );
+                        assert!(
+                            rho >= rho_min * (1.0 - 1e-12) && rho <= rho_max * (1.0 + 1e-12),
+                            "n={n} lat={lat_deg} lon={lon_deg} alt={altitude}: \
+                             rho={rho:.6e} outside [{rho_min:.6e}, {rho_max:.6e}]"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Exponents at and beyond `i32::MAX` collapse to the anti-bulge minimum
+    /// rather than overflowing.
+    #[test]
+    fn huge_exponent_collapses_to_the_density_minimum() {
+        let epoch = dummy_epoch();
+        // Away from the apex, so cos(ψ/2) < 1 and any large power vanishes.
+        let geodetic = Geodetic {
+            latitude: 0.0,
+            longitude: (-148.0f64).to_radians(),
+            altitude: 400.0,
+        };
+        let (rho_min, _) = hp_fixed_sun().interpolate_table(400.0);
+
+        for n in [1u32 << 31, u32::MAX] {
+            let rho = hp_fixed_sun()
+                .with_exponent(n)
+                .density(&make_input(geodetic, &epoch));
+            assert!(
+                (rho - rho_min).abs() / rho_min < 1e-9,
+                "n={n}: rho={rho:.6e}, expected rho_min={rho_min:.6e}"
+            );
         }
     }
 

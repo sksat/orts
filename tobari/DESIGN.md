@@ -23,6 +23,11 @@
 
 NRLMSISE-00 は F10.7 太陽電波フラックスと Ap 地磁気指数を必要とする。
 
+Ap の与え方は 2 通りあり、`ApMode` で選ぶ。`Daily` は日平均 Ap 1 個、`ThreeHourly` は
+3 時間値の履歴 7 要素。参照実装の switch 9 に対応し、それぞれ別の fitted coefficient
+を使うため 2 つのモデル変種の選択であって精度の段階ではない。既定は参照実装と同じ `Daily`。
+
+
 - `SpaceWeatherProvider` trait: 時刻に応じた宇宙天気データを提供する抽象
 - `ConstantWeather`: テスト・簡易計算用の定数値プロバイダ
 - `CssiSpaceWeather`: CelesTrak CSSI フォーマット（SW-Last5Years.txt）のパーサ
@@ -35,7 +40,8 @@ NRLMSISE-00 は F10.7 太陽電波フラックスと Ap 地磁気指数を必要
 
 - pymsis（C リファレンス実装の Python バインディング）による密度 oracle テスト
 - Orekit による Harris-Priester / NRLMSISE-00 のクロスバリデーション
-- 密度精度: NRLMSISE-00 で max 0.61%, mean 0.09%（vs pymsis）
+- 密度精度: NRLMSISE-00 で max 0.58%, mean 0.016%（100–1000 km, vs pymsis）
+- 72.5 km 未満（中間圏・成層圏・対流圏）は max 0.0003%、3 時間 Ap モードは max 0.087%
 
 ## データ帰属
 

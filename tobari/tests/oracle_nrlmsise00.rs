@@ -7,7 +7,7 @@
 //! against the official implementation — not a third-party reimplementation.
 
 use serde::Deserialize;
-use tobari::nrlmsise00::Nrlmsise00Input;
+use tobari::nrlmsise00::{ApMode, Nrlmsise00Input};
 use tobari::{ConstantWeather, Nrlmsise00};
 
 // Fixture structures
@@ -21,8 +21,30 @@ struct FixtureData {
     points: Vec<DensityPoint>,
     #[allow(dead_code)]
     exospheric_temperature_points: Vec<ExoTempPoint>,
+    /// Points below the 72.5 km spline floor, daily-Ap mode.
+    lower_atmosphere_points: Vec<DensityPoint>,
+    /// Points generated with the reference's 3-hourly Ap switch enabled.
+    ap_history_points: Vec<ApHistoryPoint>,
     #[allow(dead_code)]
     summary: serde_json::Value,
+}
+
+/// A point generated with the 3-hourly Ap formulation (reference switch 9 = -1).
+///
+/// `ap_array[0]` is the same in every point, so reproducing these values
+/// requires reading the history in `ap_array[1..]`.
+#[derive(Deserialize)]
+struct ApHistoryPoint {
+    epoch_name: String,
+    ap_history_name: String,
+    ap_array: [f64; 7],
+    f107: f64,
+    f107a: f64,
+    latitude_deg: f64,
+    longitude_deg: f64,
+    altitude_km: f64,
+    mass_density_kg_m3: Option<f64>,
+    temperature_k: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -535,5 +557,362 @@ fn diurnal_density_variation() {
     assert!(
         rho_noon > rho_midnight,
         "Noon density must exceed midnight: noon={rho_noon:.4e} <= midnight={rho_midnight:.4e}"
+    );
+}
+
+// Lower atmosphere (below the 72.5 km spline floor)
+
+/// Total mass density and temperature from the surface to just under 72.5 km.
+///
+/// Below 72.5 km the model leaves the thermosphere formulation and integrates
+/// the mesosphere/stratosphere/troposphere temperature splines. Clamping to the
+/// 72.5 km profile instead makes the whole band a flat shelf — 6.3e-5 kg/m³ and
+/// 212 K at sea level against the oracle's 1.18 kg/m³ and 300 K, so this test
+/// fails by four orders of magnitude if the lower-atmosphere path is skipped.
+#[test]
+fn lower_atmosphere_density_and_temperature() {
+    let fixture = load_fixture();
+    let model = Nrlmsise00::new(Box::new(ConstantWeather::new(150.0, 15.0)));
+
+    assert!(
+        !fixture.lower_atmosphere_points.is_empty(),
+        "fixture has no lower-atmosphere points"
+    );
+
+    let mut max_rho_err = 0.0f64;
+    let mut max_temp_err = 0.0f64;
+    let mut failures = Vec::new();
+
+    for p in &fixture.lower_atmosphere_points {
+        assert!(
+            p.altitude_km < 72.5,
+            "lower-atmosphere section must stay below the spline floor: {}",
+            p.altitude_km
+        );
+
+        let (doy, ut_seconds) = epoch_params(&p.epoch_name);
+        let input = make_input(p, doy, ut_seconds);
+        let output = model.calculate(&input);
+
+        let expected_rho = p.mass_density_kg_m3.expect("mass density in fixture");
+        let rho_err = rel_error(output.total_mass_density, expected_rho);
+        max_rho_err = max_rho_err.max(rho_err);
+
+        let expected_t = p.temperature_k.expect("temperature in fixture");
+        let temp_err = rel_error(output.temp_alt, expected_t);
+        max_temp_err = max_temp_err.max(temp_err);
+
+        if rho_err > 0.01 || temp_err > 0.01 {
+            failures.push(format!(
+                "  alt={:.1}km lat={:.0} lon={:.0} {}/{}: rho_err={:.3}% temp_err={:.3}% \
+                 (rho got={:.4e} want={:.4e}, T got={:.2} want={:.2})",
+                p.altitude_km,
+                p.latitude_deg,
+                p.longitude_deg,
+                p.epoch_name,
+                p.activity,
+                rho_err * 100.0,
+                temp_err * 100.0,
+                output.total_mass_density,
+                expected_rho,
+                output.temp_alt,
+                expected_t,
+            ));
+        }
+    }
+
+    println!(
+        "Lower atmosphere: {} points, max rho error={:.4}%, max temp error={:.4}%",
+        fixture.lower_atmosphere_points.len(),
+        max_rho_err * 100.0,
+        max_temp_err * 100.0
+    );
+
+    if !failures.is_empty() {
+        for f in failures.iter().take(20) {
+            println!("{f}");
+        }
+        panic!(
+            "{}/{} lower-atmosphere points exceeded 1% tolerance",
+            failures.len(),
+            fixture.lower_atmosphere_points.len()
+        );
+    }
+}
+
+/// Mixed-species number densities below 72.5 km, and the absence of the
+/// diffusive-only species there.
+///
+/// The reference reports only the fully mixed species (N₂, O₂, Ar, He) below
+/// 72.5 km and leaves O, H, N and anomalous O at zero; the fixture stores those
+/// as `null`.
+#[test]
+fn lower_atmosphere_species() {
+    let fixture = load_fixture();
+    let model = Nrlmsise00::new(Box::new(ConstantWeather::new(150.0, 15.0)));
+
+    let cm3_to_m3 = 1e6;
+    let mut failures = Vec::new();
+
+    for p in &fixture.lower_atmosphere_points {
+        let (doy, ut_seconds) = epoch_params(&p.epoch_name);
+        let input = make_input(p, doy, ut_seconds);
+        let out = model.calculate(&input);
+
+        for (name, computed, expected) in [
+            ("N2", out.density_n2 * cm3_to_m3, p.n2_m3),
+            ("O2", out.density_o2 * cm3_to_m3, p.o2_m3),
+            ("Ar", out.density_ar * cm3_to_m3, p.ar_m3),
+            ("He", out.density_he * cm3_to_m3, p.he_m3),
+        ] {
+            let expected = expected.expect("mixed species present below 72.5 km");
+            let err = rel_error(computed, expected);
+            if err > 0.02 {
+                failures.push(format!(
+                    "  {name} alt={:.1}km lat={:.0}: err={:.3}% (got={computed:.4e}, want={expected:.4e})",
+                    p.altitude_km,
+                    p.latitude_deg,
+                    err * 100.0
+                ));
+            }
+        }
+
+        // O, H, N and anomalous O are not modelled below 72.5 km.
+        assert_eq!(p.o_m3, None, "oracle reports O below 72.5 km");
+        assert_eq!(p.h_m3, None, "oracle reports H below 72.5 km");
+        assert_eq!(p.n_m3, None, "oracle reports N below 72.5 km");
+        for (name, v) in [
+            ("O", out.density_o),
+            ("H", out.density_h),
+            ("N", out.density_n),
+            ("anomalous O", out.density_anomalous_o),
+        ] {
+            assert_eq!(v, 0.0, "{name} must be zero below 72.5 km, got {v:.4e}");
+        }
+    }
+
+    if !failures.is_empty() {
+        for f in failures.iter().take(20) {
+            println!("{f}");
+        }
+        panic!(
+            "{} lower-atmosphere species points exceeded 2% tolerance",
+            failures.len()
+        );
+    }
+}
+
+/// Hydrostatic scale height through the troposphere and stratosphere.
+///
+/// Needs no oracle: for an atmosphere in hydrostatic equilibrium with a
+/// ~200-300 K temperature profile, `-d(ln ρ)/dh` must be near 1/7 km⁻¹. A model
+/// that returns a constant density over this band gives ~0 instead.
+#[test]
+fn hydrostatic_scale_height_below_the_thermosphere() {
+    let model = Nrlmsise00::new(Box::new(ConstantWeather::solar_moderate()));
+
+    let rho = |alt: f64| {
+        model
+            .calculate(&Nrlmsise00Input {
+                day_of_year: 80,
+                ut_seconds: 43200.0,
+                altitude_km: alt,
+                latitude_deg: 0.0,
+                longitude_deg: 0.0,
+                local_solar_time_hours: 12.0,
+                f107_daily: 150.0,
+                f107_avg: 150.0,
+                ap_daily: 15.0,
+                ap_array: [15.0; 7],
+            })
+            .total_mass_density
+    };
+
+    let mut alt = 0.0;
+    while alt < 70.0 {
+        let (lo, hi) = (rho(alt), rho(alt + 2.0));
+        assert!(lo > hi, "density must fall with altitude at {alt} km");
+        let inv_scale_height = (lo / hi).ln() / 2.0;
+        assert!(
+            (0.08..0.30).contains(&inv_scale_height),
+            "-d(ln rho)/dh = {inv_scale_height:.4} km^-1 over {alt}-{} km \
+             is outside the hydrostatic range 0.08-0.30",
+            alt + 2.0
+        );
+        alt += 2.0;
+    }
+}
+
+/// Cross-check against the crate's own US Standard Atmosphere table.
+///
+/// The two models are independent implementations of the same mean atmosphere,
+/// so below the thermosphere they must agree to within a factor of two. This
+/// mirrors the fallback that `HarrisPriester` uses below its own table floor.
+#[test]
+fn agrees_with_exponential_model_below_the_thermosphere() {
+    let model = Nrlmsise00::new(Box::new(ConstantWeather::solar_moderate()));
+
+    for alt in [0.0, 10.0, 20.0, 30.0, 50.0, 70.0, 72.5, 90.0] {
+        let msis = model
+            .calculate(&Nrlmsise00Input {
+                day_of_year: 80,
+                ut_seconds: 43200.0,
+                altitude_km: alt,
+                latitude_deg: 0.0,
+                longitude_deg: 0.0,
+                local_solar_time_hours: 12.0,
+                f107_daily: 150.0,
+                f107_avg: 150.0,
+                ap_daily: 15.0,
+                ap_array: [15.0; 7],
+            })
+            .total_mass_density;
+        let us76 = tobari::exponential::density(alt);
+        let ratio = msis / us76;
+        assert!(
+            (0.5..2.0).contains(&ratio),
+            "NRLMSISE-00 / US76 = {ratio:.4e} at {alt} km (msis={msis:.4e}, us76={us76:.4e})"
+        );
+    }
+}
+
+// 3-hourly Ap mode
+
+/// Density and temperature in the 3-hourly Ap formulation.
+///
+/// The oracle points hold the daily Ap fixed at 4.0 and vary only the history,
+/// so a model that reads `ap_daily` here — or ignores the history — cannot
+/// reproduce them.
+#[test]
+fn ap_history_mode_matches_oracle() {
+    let fixture = load_fixture();
+    let model = Nrlmsise00::new(Box::new(ConstantWeather::new(150.0, 15.0)))
+        .with_ap_mode(ApMode::ThreeHourly);
+
+    assert!(
+        !fixture.ap_history_points.is_empty(),
+        "fixture has no 3-hourly Ap points"
+    );
+
+    let mut max_rho_err = 0.0f64;
+    let mut max_temp_err = 0.0f64;
+    let mut failures = Vec::new();
+
+    for p in &fixture.ap_history_points {
+        assert_eq!(
+            p.ap_array[0], 4.0,
+            "daily Ap must be held fixed across the 3-hourly section"
+        );
+
+        let (doy, ut_seconds) = epoch_params(&p.epoch_name);
+        let lst = ((ut_seconds / 3600.0 + p.longitude_deg / 15.0) % 24.0 + 24.0) % 24.0;
+        let input = Nrlmsise00Input {
+            day_of_year: doy,
+            ut_seconds,
+            altitude_km: p.altitude_km,
+            latitude_deg: p.latitude_deg,
+            longitude_deg: p.longitude_deg,
+            local_solar_time_hours: lst,
+            f107_daily: p.f107,
+            f107_avg: p.f107a,
+            // Deliberately absurd: this mode must not read it.
+            ap_daily: 0.0,
+            ap_array: p.ap_array,
+        };
+        let out = model.calculate(&input);
+
+        let expected_rho = p.mass_density_kg_m3.expect("mass density in fixture");
+        let rho_err = rel_error(out.total_mass_density, expected_rho);
+        max_rho_err = max_rho_err.max(rho_err);
+
+        let expected_t = p.temperature_k.expect("temperature in fixture");
+        let temp_err = rel_error(out.temp_alt, expected_t);
+        max_temp_err = max_temp_err.max(temp_err);
+
+        if rho_err > 0.01 || temp_err > 0.01 {
+            failures.push(format!(
+                "  alt={:.1}km lat={:.0} {}/{}: rho_err={:.3}% temp_err={:.3}% \
+                 (rho got={:.4e} want={:.4e})",
+                p.altitude_km,
+                p.latitude_deg,
+                p.epoch_name,
+                p.ap_history_name,
+                rho_err * 100.0,
+                temp_err * 100.0,
+                out.total_mass_density,
+                expected_rho,
+            ));
+        }
+    }
+
+    println!(
+        "3-hourly Ap: {} points, max rho error={:.4}%, max temp error={:.4}%",
+        fixture.ap_history_points.len(),
+        max_rho_err * 100.0,
+        max_temp_err * 100.0
+    );
+
+    if !failures.is_empty() {
+        for f in failures.iter().take(20) {
+            println!("{f}");
+        }
+        panic!(
+            "{}/{} 3-hourly Ap points exceeded 1% tolerance",
+            failures.len(),
+            fixture.ap_history_points.len()
+        );
+    }
+}
+
+/// Each mode reads exactly the geomagnetic input it documents.
+///
+/// Needs no oracle. In `ThreeHourly` the history must move the density and
+/// `ap_daily` must not; in `Daily` it is the other way round.
+#[test]
+fn each_ap_mode_reads_only_its_own_input() {
+    let make = |ap_daily: f64, ap_array: [f64; 7]| Nrlmsise00Input {
+        day_of_year: 80,
+        ut_seconds: 43200.0,
+        altitude_km: 400.0,
+        latitude_deg: 0.0,
+        longitude_deg: 0.0,
+        local_solar_time_hours: 12.0,
+        f107_daily: 150.0,
+        f107_avg: 150.0,
+        ap_daily,
+        ap_array,
+    };
+    let quiet = [4.0; 7];
+    let storm = [4.0, 400.0, 400.0, 400.0, 400.0, 400.0, 400.0];
+
+    let three_hourly = Nrlmsise00::new(Box::new(ConstantWeather::new(150.0, 15.0)))
+        .with_ap_mode(ApMode::ThreeHourly);
+    let rho_quiet = three_hourly.calculate(&make(4.0, quiet)).total_mass_density;
+    let rho_storm = three_hourly.calculate(&make(4.0, storm)).total_mass_density;
+    let change = (rho_storm - rho_quiet) / rho_quiet;
+    assert!(
+        change > 0.05,
+        "3-hourly mode must respond to the Ap history: quiet={rho_quiet:.4e}, \
+         storm={rho_storm:.4e} ({:.2}%)",
+        change * 100.0
+    );
+    assert_eq!(
+        three_hourly
+            .calculate(&make(400.0, quiet))
+            .total_mass_density,
+        rho_quiet,
+        "3-hourly mode must not read ap_daily"
+    );
+
+    let daily = Nrlmsise00::new(Box::new(ConstantWeather::new(150.0, 15.0)));
+    let daily_quiet = daily.calculate(&make(4.0, quiet)).total_mass_density;
+    assert_eq!(
+        daily.calculate(&make(4.0, storm)).total_mass_density,
+        daily_quiet,
+        "daily mode must not read the Ap history"
+    );
+    assert!(
+        daily.calculate(&make(400.0, quiet)).total_mass_density > daily_quiet * 1.05,
+        "daily mode must respond to ap_daily"
     );
 }

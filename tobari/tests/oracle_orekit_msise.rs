@@ -159,7 +159,7 @@ fn orekit_msise_density_all_points() {
     println!("  points > 5% error: {n_exceed_5pct}");
     println!("  worst: {worst_point}");
 
-    // Measured: max 0.32%, mean 0.05% (after EoT correction)
+    // Measured: max 0.31%, mean 0.023% (after EoT correction)
     assert!(
         max_rel_err < 0.005,
         "max relative error {:.4}% exceeds 0.5% threshold\n  worst: {worst_point}",
@@ -212,7 +212,7 @@ fn orekit_msise_density_equatorial_tight() {
     );
 
     // Equatorial should be tighter (no latitude conversion issue)
-    // Measured: max 0.11% (after EoT correction)
+    // Measured: max 0.07% (after EoT correction)
     assert!(
         max_rel_err < 0.002,
         "equatorial max error {:.4}% exceeds 0.2%",
@@ -315,7 +315,7 @@ fn orekit_msise_cssi_density_all_points() {
     println!("  worst: {worst_point}");
 
     // CSSI has additional parser/interpolation differences on top of LST residual.
-    // Measured: max 2.85%, mean 0.54% (after EoT correction)
+    // Measured: max 2.84%, mean 0.51% (after EoT correction)
     assert!(
         max_rel_err < 0.035,
         "max relative error {:.4}% exceeds 3.5% threshold\n  worst: {worst_point}",
