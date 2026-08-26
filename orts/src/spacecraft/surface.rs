@@ -639,16 +639,20 @@ mod tests {
             -2.992310652421664e-10,
             -1.2261304328438772e-9,
         );
-        let expected_tau = Vector3::new(8.470329472543003e-22, 0.0, 4.235164736271502e-22);
         let a = loads.acceleration_inertial.into_inner();
         let tau = loads.torque_body.into_inner();
         assert!(
             (a - expected_a).magnitude() <= 1e-12 * expected_a.magnitude().max(1.0),
             "SimpleEci panel drag acceleration changed: {a:?}"
         );
+        // A symmetric cube's opposite faces cancel, so the torque is zero up to
+        // rounding (~1e-21 here). Assert that invariant rather than pinning the
+        // residue: a snapshot of 1e-21 with an absolute floor would pass for
+        // zero and for a value nine orders too large alike. The torque path
+        // itself is covered by `asymmetric_panels_torque_*` below.
         assert!(
-            (tau - expected_tau).magnitude() <= 1e-12 * expected_tau.magnitude().max(1.0),
-            "SimpleEci panel drag torque changed: {tau:?}"
+            tau.magnitude() < 1e-18 * a.magnitude().max(1.0),
+            "a symmetric cube must produce no net torque, got {tau:?}"
         );
     }
 
@@ -670,15 +674,57 @@ mod tests {
         );
     }
 
+    /// An asymmetric panel fixture: one panel whose centre of pressure is offset
+    /// perpendicular to its own normal, so `cp × F` cannot cancel and the body
+    /// torque is materially non-zero. A symmetric cube is useless for this — its
+    /// faces cancel to ~1e-21, and any tolerance loose enough to admit that
+    /// would also admit zero.
+    fn asymmetric_panels() -> SpacecraftShape {
+        // All four of ±x, ±y, so whichever way the flow points in the body frame
+        // at least one panel faces it; the offsets are perpendicular to each
+        // normal and deliberately unequal between opposite faces, so `cp × F`
+        // does not cancel the way a symmetric cube's does.
+        SpacecraftShape::Panels(vec![
+            SurfacePanel {
+                area: 2.0,
+                normal: Vector3::x(),
+                cd: 2.2,
+                cr: 1.5,
+                cp_offset: Vector3::new(0.0, 1.5, 0.0),
+            },
+            SurfacePanel {
+                area: 2.0,
+                normal: -Vector3::x(),
+                cd: 2.2,
+                cr: 1.5,
+                cp_offset: Vector3::new(0.0, 0.4, 0.0),
+            },
+            SurfacePanel {
+                area: 0.5,
+                normal: Vector3::y(),
+                cd: 2.2,
+                cr: 1.5,
+                cp_offset: Vector3::new(0.0, 0.0, -0.8),
+            },
+            SurfacePanel {
+                area: 0.5,
+                normal: -Vector3::y(),
+                cd: 2.2,
+                cr: 1.5,
+                cp_offset: Vector3::new(0.9, 0.0, 0.0),
+            },
+        ])
+    }
+
     /// The sphere branch never touches the body frame, so it cannot cover the
     /// two rotations this change made frame-generic
     /// (`rotation_from_inertial::<F>` on the way in,
     /// `rotation_to_inertial::<F>` on the way out). Exercise the panel branch in
-    /// `Gcrs` at a non-identity attitude and reconstruct both outputs: the
-    /// inertial acceleration, which round-trips through the body frame, and the
-    /// body torque, which stays there.
+    /// `Gcrs` at a non-identity attitude with an asymmetric fixture, and
+    /// reconstruct both outputs: the inertial acceleration, which round-trips
+    /// through the body frame, and the body torque, which stays there.
     #[test]
-    fn gcrs_panels_rotate_through_the_body_frame() {
+    fn gcrs_asymmetric_panels_torque_and_acceleration() {
         use crate::test_support::zero_eop;
         use arika::earth::EarthRotationPole;
         use arika::frame::Vec3;
@@ -694,11 +740,7 @@ mod tests {
             mass: simple.mass,
         };
 
-        let (half_size, cd) = (0.5, 2.2);
-        let drag = PanelDrag::<frame::Gcrs>::for_earth_in_frame(
-            SpacecraftShape::cube(half_size, cd, 1.5),
-            zero_eop(),
-        );
+        let drag = PanelDrag::<frame::Gcrs>::for_earth_in_frame(asymmetric_panels(), zero_eop());
         let loads = drag.eval(0.0, &state, Some(&epoch));
         let got_a = loads.acceleration_inertial.into_inner();
         let got_tau = loads.torque_body.into_inner();
@@ -724,24 +766,19 @@ mod tests {
             * 1000.0;
         let v_mag = v_body_m.magnitude();
         let v_hat = v_body_m / v_mag;
-        let face_area = (2.0 * half_size) * (2.0 * half_size);
         let mut force_body = Vector3::zeros();
         let mut torque_body = Vector3::zeros();
-        for (normal, cp) in [
-            (Vector3::x(), Vector3::new(half_size, 0.0, 0.0)),
-            (-Vector3::x(), Vector3::new(-half_size, 0.0, 0.0)),
-            (Vector3::y(), Vector3::new(0.0, half_size, 0.0)),
-            (-Vector3::y(), Vector3::new(0.0, -half_size, 0.0)),
-            (Vector3::z(), Vector3::new(0.0, 0.0, half_size)),
-            (-Vector3::z(), Vector3::new(0.0, 0.0, -half_size)),
-        ] {
-            let cos_theta = normal.dot(&(-v_hat)).max(0.0);
+        for panel in match &asymmetric_panels() {
+            SpacecraftShape::Panels(panels) => panels.clone(),
+            _ => unreachable!("asymmetric_panels is a Panels shape"),
+        } {
+            let cos_theta = panel.normal.dot(&(-v_hat)).max(0.0);
             if cos_theta <= 0.0 {
                 continue;
             }
-            let force = -0.5 * rho * cd * (face_area * cos_theta) * v_mag * v_mag * v_hat;
+            let force = -0.5 * rho * panel.cd * (panel.area * cos_theta) * v_mag * v_mag * v_hat;
             force_body += force;
-            torque_body += cp.cross(&force);
+            torque_body += panel.cp_offset.cross(&force);
         }
         let expected_a = attitude
             .rotation_to_inertial::<frame::Gcrs>()
@@ -749,19 +786,21 @@ mod tests {
             .into_inner()
             / 1000.0;
 
+        // The fixture must actually produce a torque, or the comparison below
+        // would hold vacuously.
         assert!(
-            (got_a - expected_a).magnitude() <= 1e-12 * expected_a.magnitude().max(1.0),
+            torque_body.magnitude() > 1e-9,
+            "the asymmetric fixture must produce a materially non-zero torque, got {torque_body:?}"
+        );
+        assert!(
+            (got_a - expected_a).magnitude() <= 1e-12 * expected_a.magnitude(),
             "Gcrs panel acceleration must round-trip through the body frame: \
              {got_a:?} vs {expected_a:?}"
         );
+        // Tolerance scaled to the torque itself, not to 1.0.
         assert!(
-            (got_tau - torque_body).magnitude() <= 1e-12 * torque_body.magnitude().max(1.0),
+            (got_tau - torque_body).magnitude() <= 1e-12 * torque_body.magnitude(),
             "Gcrs panel torque must be the body-frame sum: {got_tau:?} vs {torque_body:?}"
-        );
-        assert!(
-            torque_body.magnitude() > 0.0,
-            "the cube at this attitude must produce a non-zero torque, \
-             otherwise the assertion above proves nothing"
         );
     }
 
