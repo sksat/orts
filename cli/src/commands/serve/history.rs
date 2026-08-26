@@ -79,13 +79,14 @@ impl EntityOverview {
     }
 }
 
-/// Bounded buffer that accumulates history states and periodically flushes to .rrd segments.
+/// Bounded buffer that accumulates history states and periodically spills the
+/// oldest half to a segment file on disk.
 pub struct HistoryBuffer {
     /// Recent states kept in memory.
     pub states: VecDeque<HistoryState>,
     /// Maximum number of states to keep in memory before flushing.
     pub capacity: usize,
-    /// Directory for .rrd segment files.
+    /// Directory for spilled segment files.
     pub data_dir: PathBuf,
     /// Number of segment files written so far.
     pub segment_count: u32,
@@ -107,7 +108,7 @@ pub struct HistoryBuffer {
     // Maintained in O(1) amortized per `push()` call, read in
     // O(num_entities * OVERVIEW_MAX_POINTS_PER_ENTITY) with no disk I/O.
     // This lets re-connects to long-running simulations return the history
-    // overview instantly, without re-reading every .rrd segment from disk
+    // overview instantly, without re-reading every spilled segment from disk
     // on the manager task. Per-entity bookkeeping ensures every satellite
     // gets fair coverage regardless of push order or count.
     overview_per_entity: HashMap<EntityPath, EntityOverview>,
@@ -129,7 +130,7 @@ impl HistoryBuffer {
         }
     }
 
-    /// Push a state into the buffer. Flushes to .rrd if capacity is exceeded,
+    /// Push a state into the buffer. Spills to disk if capacity is exceeded,
     /// and incrementally updates the per-entity overview buffers.
     ///
     /// Clone cost: non-sampling pushes perform one `state.clone()` into
@@ -320,7 +321,7 @@ impl HistoryBuffer {
     /// - **Fast path (no disk I/O)**: if `t_min` is newer than the oldest
     ///   point currently in the in-memory tail (`self.states`), every state
     ///   in the requested window must already be in memory. Filter the
-    ///   tail and skip reading any `.rrd` segments.
+    ///   tail and skip reading any spilled segments.
     /// - **Slow path (full load)**: otherwise, the window reaches into
     ///   flushed segments on disk; fall back to `load_all()` + filter.
     ///
