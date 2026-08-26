@@ -36,9 +36,9 @@ section is subdivided by package.
 - **Breaking:** `record::rerun_export` (`.rrd` export/import) now requires the
   new opt-in `rerun` feature. Enable it with
   `orts = { version = "…", features = ["rerun"] }`. `orts` has no default
-  features, so nothing else in the crate is affected. This drops 323 of the 355
+  features, so nothing else in the crate is affected. This drops 230 of the 271
   crates in `orts`'s dependency graph for builds that do not write `.rrd`:
-  `cargo test -p orts` resolves 94 crates instead of 382, and 643 of the 651 lib
+  `cargo test -p orts` resolves 94 crates instead of 303, and 645 of the 653 lib
   tests plus all 23 integration tests under `orts/tests/` need no part of it.
   ([#314](https://github.com/sksat/orts/pull/314))
 - `StateEffector` is now frame-generic — `StateEffector<S, F: frame::Eci =

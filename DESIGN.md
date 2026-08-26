@@ -342,11 +342,11 @@ ECS データモデルとデータ記録を担当:
 - Rerun (.rrd) エクスポート（opt-in feature `rerun`）
 - Recorder trait（CLI/WS からの記録インターフェース）
 
-`rerun` を opt-in にしているのは、`orts` の依存グラフ 355 crates のうち 323 crates が
-`rerun` 経由でしか到達しないためである。
+`rerun` を opt-in にしているのは、`orts` の依存グラフ 271 crates のうち 230 crates が
+rerun の subcrate 経由でしか到達しないためである。
 接触点は `record::rerun_export` だけで、`record` の他の module と simulation core は
 `rerun` を参照しない。
-lib test 651 本のうち `rerun` を必要とするのは `rerun_export` の 8 本であり、
+lib test 653 本のうち `rerun` を必要とするのは `rerun_export` の 8 本であり、
 `orts/tests/` の統合テストは全て `rerun` 非依存である。
 `orts` は他の feature (`plugin-wasm`, `fetch-*`) も含めて default feature を持たないので、
 `rerun` もそれに揃える。
