@@ -444,9 +444,15 @@ export class ChartDataCore {
         this.pendingRebuild = null;
         this.rebuildRetryCount = 0;
         await this.abandonDataset();
+        // The emptying is a request, and it can fail too: report what the
+        // table actually holds now.
+        const state =
+          this.tableRepair == null
+            ? "table emptied"
+            : "table still holds the previous dataset, retrying";
         this.deps.post({
           type: "error",
-          message: `rebuild of ${rebuild.rows.length} rows failed ${MAX_REBUILD_RETRIES + 1} times; table emptied`,
+          message: `rebuild of ${rebuild.rows.length} rows failed ${MAX_REBUILD_RETRIES + 1} times; ${state}`,
         });
       }
       return;

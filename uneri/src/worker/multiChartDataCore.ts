@@ -370,9 +370,14 @@ export class MultiChartDataCore {
         this.pendingRebuilds.delete(satId);
         this.rebuildRetryCounts.delete(satId);
         await this.abandonDataset(satId);
+        // The emptying is a request, and it can fail too: report what the
+        // table actually holds now.
+        const state = this.tableRepairs.has(satId)
+          ? "table still holds the previous dataset, retrying"
+          : "table emptied";
         this.deps.post({
           type: "error",
-          message: `rebuild of ${rebuild.rows.length} rows for ${satId} failed ${MAX_REBUILD_RETRIES + 1} times; table emptied`,
+          message: `rebuild of ${rebuild.rows.length} rows for ${satId} failed ${MAX_REBUILD_RETRIES + 1} times; ${state}`,
         });
       }
       return;
