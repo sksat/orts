@@ -959,10 +959,17 @@ pub fn compute(input: &Nrlmsise00Input, ap_mode: ApMode) -> ([f64; 9], f64, f64)
         / (MID_ATMO_COEFFICIENTS[2][0] * MID_ATMO_AVERAGES[2]).powi(2);
 
     // Stratosphere / troposphere temperature nodes and end gradients.
+    //
+    // The bound is `<=`, matching where `densm` enters the ZN3 segment. The
+    // reference populates these only for `alt < zn3[0]` and gets away with it
+    // because its nodes are file-level statics holding a previous call's
+    // values, and at exactly `zn3[0]` both the ZN3 interpolation weight and its
+    // integral vanish. Leaving them at zero here instead feeds `1.0 / 0.0` into
+    // the spline and returns NaN at exactly 32.5 km.
     let mut tn3 = [0.0f64; 5];
     let mut tgn3 = [0.0f64; 2];
     tn3[0] = tn2[3];
-    if alt < ZN3[0] {
+    if alt <= ZN3[0] {
         tgn3[0] = tgn2[1];
         for k in 0..4 {
             tn3[k + 1] = MID_ATMO_COEFFICIENTS[k + 3][0] * MID_ATMO_AVERAGES[k + 3]

@@ -546,16 +546,25 @@ pub fn atmosphere_volume(
 
 // Magnetic field lines
 
+/// Largest number of field-line points `magnetic_field_lines` will produce.
+///
+/// Each point costs three `f32` in the result and four field evaluations to
+/// reach, so this is already well past what a renderer can use.
+const MAX_FIELD_LINE_POINTS: usize = 1 << 20;
+
 /// Integrate magnetic field lines from seed points using RK4.
 ///
 /// `seed_lats`, `seed_lons`: geodetic seed points (degrees).
 /// `seed_alt_km`: starting altitude for all seeds.
 /// `model`: `"igrf"` or `"dipole"`.
-/// `max_steps`: max integration steps per line.
-/// `step_km`: step size in km.
+/// `max_steps`: max integration steps per line, in each direction.
+/// `step_km`: step size in km; must be finite and positive.
 ///
 /// Returns flat `[n_lines, n_pts_0, x0,y0,z0, x1,y1,z1, ..., n_pts_1, ...]`
 /// where coordinates are in Earth radii (6371 km).
+///
+/// Throws if `step_km` is not finite and positive, or if
+/// `n_seeds * (2 * max_steps + 1)` exceeds `MAX_FIELD_LINE_POINTS`.
 #[wasm_bindgen]
 pub fn magnetic_field_lines(
     seed_lats: &[f64],
@@ -565,13 +574,84 @@ pub fn magnetic_field_lines(
     model: &str,
     max_steps: u32,
     step_km: f64,
-) -> Vec<f32> {
+) -> Result<Vec<f32>, String> {
+    // A zero step never moves the position, so no termination condition can
+    // fire and the walk runs the full `max_steps` — up to 2^32 iterations per
+    // seed, each with four field evaluations.
+    if !step_km.is_finite() || step_km <= 0.0 {
+        return Err(format!(
+            "step_km must be finite and positive, got {step_km}"
+        ));
+    }
+
+    let n_seeds = seed_lats.len().min(seed_lons.len());
+    let per_seed = (max_steps as usize)
+        .checked_mul(2)
+        .and_then(|n| n.checked_add(1))
+        .ok_or_else(|| format!("max_steps = {max_steps} is too large"))?;
+    per_seed
+        .checked_mul(n_seeds)
+        .filter(|total| *total <= MAX_FIELD_LINE_POINTS)
+        .ok_or_else(|| {
+            format!(
+                "{n_seeds} seeds x {max_steps} steps exceeds the \
+                 {MAX_FIELD_LINE_POINTS} field-line point limit"
+            )
+        })?;
+
     let epoch = Epoch::from_jd(epoch_jd);
     let igrf = Igrf::earth();
     let dipole = TiltedDipole::earth();
     let earth_r = 6371.0;
 
-    let n_seeds = seed_lats.len().min(seed_lons.len());
+    // Walk one leg of a field line away from `start`. RK4 on the unit field
+    // direction, stopping at the surface, at 5000 km, or where the field
+    // vanishes.
+    let walk = |start: Vector3<f64>, direction: f64| -> Vec<Vector3<f64>> {
+        let mut leg: Vec<Vector3<f64>> = Vec::new();
+        let mut pos = start;
+        let ds = step_km * direction;
+
+        for _ in 0..max_steps {
+            let b1 = field_at_eci(&pos, &epoch, model, &igrf, &dipole);
+            if b1.magnitude() < 1e-15 {
+                break;
+            }
+            let b1n = b1.normalize();
+
+            let p2 = pos + b1n * (ds * 0.5);
+            let b2 = field_at_eci(&p2, &epoch, model, &igrf, &dipole);
+            if b2.magnitude() < 1e-15 {
+                break;
+            }
+            let b2n = b2.normalize();
+
+            let p3 = pos + b2n * (ds * 0.5);
+            let b3 = field_at_eci(&p3, &epoch, model, &igrf, &dipole);
+            if b3.magnitude() < 1e-15 {
+                break;
+            }
+            let b3n = b3.normalize();
+
+            let p4 = pos + b3n * ds;
+            let b4 = field_at_eci(&p4, &epoch, model, &igrf, &dipole);
+            if b4.magnitude() < 1e-15 {
+                break;
+            }
+            let b4n = b4.normalize();
+
+            pos += (b1n + 2.0 * b2n + 2.0 * b3n + b4n) * (ds / 6.0);
+
+            let r = pos.magnitude();
+            if r < earth_r || r > earth_r + 5000.0 {
+                break;
+            }
+
+            leg.push(pos);
+        }
+        leg
+    };
+
     let mut out: Vec<f32> = Vec::new();
     out.push(n_seeds as f32);
 
@@ -587,64 +667,14 @@ pub fn magnetic_field_lines(
             .transform(&ecef)
             .into_inner();
 
-        // Integrate both forward and backward
-        let mut points: Vec<Vector3<f64>> = Vec::new();
+        // The line reads continuously from the far end of the backward leg,
+        // through the seed, to the far end of the forward leg. Reversing the
+        // backward leg once beats inserting each of its points at the front.
+        let mut points = walk(start_eci, -1.0);
+        points.reverse();
+        points.push(start_eci);
+        points.extend(walk(start_eci, 1.0));
 
-        for direction in [-1.0_f64, 1.0] {
-            let mut pos = start_eci;
-            let ds = step_km * direction;
-
-            let start_idx = points.len();
-            if direction > 0.0 {
-                points.push(pos);
-            }
-
-            for _ in 0..max_steps {
-                // RK4 step
-                let b1 = field_at_eci(&pos, &epoch, model, &igrf, &dipole);
-                if b1.magnitude() < 1e-15 {
-                    break;
-                }
-                let b1n = b1.normalize();
-
-                let p2 = pos + b1n * (ds * 0.5);
-                let b2 = field_at_eci(&p2, &epoch, model, &igrf, &dipole);
-                if b2.magnitude() < 1e-15 {
-                    break;
-                }
-                let b2n = b2.normalize();
-
-                let p3 = pos + b2n * (ds * 0.5);
-                let b3 = field_at_eci(&p3, &epoch, model, &igrf, &dipole);
-                if b3.magnitude() < 1e-15 {
-                    break;
-                }
-                let b3n = b3.normalize();
-
-                let p4 = pos + b3n * ds;
-                let b4 = field_at_eci(&p4, &epoch, model, &igrf, &dipole);
-                if b4.magnitude() < 1e-15 {
-                    break;
-                }
-                let b4n = b4.normalize();
-
-                pos += (b1n + 2.0 * b2n + 2.0 * b3n + b4n) * (ds / 6.0);
-
-                // Stop if below surface or too far
-                let r = pos.magnitude();
-                if r < earth_r || r > earth_r + 5000.0 {
-                    break;
-                }
-
-                if direction > 0.0 {
-                    points.push(pos);
-                } else {
-                    points.insert(start_idx, pos);
-                }
-            }
-        }
-
-        // Write points for this line
         out.push(points.len() as f32);
         for p in &points {
             out.push((p.x / earth_r) as f32);
@@ -653,7 +683,7 @@ pub fn magnetic_field_lines(
         }
     }
 
-    out
+    Ok(out)
 }
 
 // Space weather (CSSI / GFZ)
@@ -1046,5 +1076,55 @@ mod tests {
         assert!(
             atmosphere_volume_sw("nrlmsise00", 200.0, 600.0, 4, EPOCH_JD, 65536, 65536).is_err()
         );
+    }
+
+    /// Field-line integration rejects a step size that cannot terminate.
+    ///
+    /// With `step_km = 0` the position never moves, so neither the surface nor
+    /// the 5000 km bound nor the vanishing-field check can fire: the walk runs
+    /// the full `max_steps` in each direction, four field evaluations each.
+    #[test]
+    fn field_lines_reject_a_non_advancing_step() {
+        let seeds = [40.0f64];
+        let lons = [10.0f64];
+        for step_km in [0.0, -50.0, f64::NAN, f64::INFINITY] {
+            assert!(
+                magnetic_field_lines(&seeds, &lons, 400.0, EPOCH_JD, "dipole", 10, step_km)
+                    .is_err(),
+                "step_km = {step_km} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn field_lines_reject_an_unbounded_step_count() {
+        let seeds = [40.0f64];
+        let lons = [10.0f64];
+        assert!(
+            magnetic_field_lines(&seeds, &lons, 400.0, EPOCH_JD, "dipole", u32::MAX, 50.0).is_err()
+        );
+        // Many seeds with a modest step count also add up.
+        let many: Vec<f64> = vec![0.0; 4096];
+        assert!(
+            magnetic_field_lines(&many, &many, 400.0, EPOCH_JD, "dipole", 1_000_000, 50.0).is_err()
+        );
+    }
+
+    /// The header counts match the payload, and the seed point is included once.
+    #[test]
+    fn field_lines_report_their_own_layout() {
+        let seeds = [40.0f64, -20.0];
+        let lons = [10.0f64, 150.0];
+        let out = magnetic_field_lines(&seeds, &lons, 400.0, EPOCH_JD, "dipole", 20, 50.0).unwrap();
+
+        assert_eq!(out[0], 2.0, "line count");
+        let mut offset = 1usize;
+        for _ in 0..2 {
+            let n_points = out[offset] as usize;
+            assert!(n_points >= 1, "a line must contain at least its seed");
+            offset += 1 + 3 * n_points;
+        }
+        assert_eq!(offset, out.len(), "payload length must match the counts");
+        assert!(out.iter().all(|v| v.is_finite()));
     }
 }

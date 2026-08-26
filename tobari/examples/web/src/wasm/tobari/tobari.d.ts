@@ -101,11 +101,14 @@ export function magnetic_field_latlon_map(model: string, component: string, alti
  * `seed_lats`, `seed_lons`: geodetic seed points (degrees).
  * `seed_alt_km`: starting altitude for all seeds.
  * `model`: `"igrf"` or `"dipole"`.
- * `max_steps`: max integration steps per line.
- * `step_km`: step size in km.
+ * `max_steps`: max integration steps per line, in each direction.
+ * `step_km`: step size in km; must be finite and positive.
  *
  * Returns flat `[n_lines, n_pts_0, x0,y0,z0, x1,y1,z1, ..., n_pts_1, ...]`
  * where coordinates are in Earth radii (6371 km).
+ *
+ * Throws if `step_km` is not finite and positive, or if
+ * `n_seeds * (2 * max_steps + 1)` exceeds `MAX_FIELD_LINE_POINTS`.
  */
 export function magnetic_field_lines(seed_lats: Float64Array, seed_lons: Float64Array, seed_alt_km: number, epoch_jd: number, model: string, max_steps: number, step_km: number): Float32Array;
 
@@ -165,7 +168,7 @@ export interface InitOutput {
     readonly igrf_field_at: (a: number, b: number, c: number, d: number) => [number, number];
     readonly load_space_weather: (a: number, b: number) => number;
     readonly magnetic_field_latlon_map: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly magnetic_field_lines: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
+    readonly magnetic_field_lines: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly magnetic_field_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly space_weather_date_range: () => [number, number];
     readonly space_weather_lookup: (a: number) => [number, number];

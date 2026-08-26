@@ -212,6 +212,9 @@ section is subdivided by package.
   error against pymsis over 792 new fixture points: 0.0003%. Below 72.5 km only
   the fully mixed species (N₂, O₂, Ar, He) and total mass density are reported;
   O, H, N and anomalous O are zero, as in the reference implementation.
+  At exactly 32.5 km — the altitude where the stratosphere spline meets the
+  troposphere spline — the nodes of the lower spline are populated even though
+  its contribution vanishes there, so the result is a value rather than NaN.
   ([#PR](https://github.com/sksat/orts/pull/PR))
 - `nrlmsise00::ApMode` and `Nrlmsise00::with_ap_mode` select which geomagnetic
   input drives the model: `Daily` (the reference default, `ap_daily`) or
@@ -262,6 +265,13 @@ section is subdivided by package.
   OOM in release). They now widen first, reject dimensions of 0 — which used to
   return a bare `[+Inf, -Inf]` from the volume entry points — and reject grids
   above 2^24 points, throwing instead of returning.
+  ([#PR](https://github.com/sksat/orts/pull/PR))
+- `magnetic_field_lines` ran its full `max_steps` in each direction whenever
+  `step_km` was 0 — the position never advances, so no termination condition can
+  fire — and inserted every backward point at the front of the buffer, making
+  one line quadratic in its own length. It now rejects a `step_km` that is not
+  finite and positive, rejects a seed count times step count above 2^20 points,
+  and builds each line in linear time.
   ([#PR](https://github.com/sksat/orts/pull/PR))
 
 ### `viewer`

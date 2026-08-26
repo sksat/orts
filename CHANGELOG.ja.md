@@ -196,6 +196,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   カバーする。新規 fixture 792 点に対する pymsis との最大密度誤差 0.0003%。
   72.5 km 未満は完全混合種(N₂, O₂, Ar, He)と総質量密度のみを返し、
   O・H・N・anomalous O は参照実装同様 0。
+  成層圏 spline と対流圏 spline が接する 32.5 km ちょうどでは、下側 spline の
+  寄与が消える高度であっても節点を構築するようにしたので、NaN ではなく値が返る。
   ([#PR](https://github.com/sksat/orts/pull/PR))
 - `nrlmsise00::ApMode` と `Nrlmsise00::with_ap_mode` で地磁気入力を選択:
   `Daily`(参照実装の既定、`ap_daily`)または `ThreeHourly`(`ap_array`、
@@ -242,6 +244,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   先に行い、0 次元(volume 系では `[+Inf, -Inf]` だけが返っていた)と
   2^24 点超の grid を拒否して throw する。
   ([#PR](https://github.com/sksat/orts/pull/PR))
+- `magnetic_field_lines` は `step_km` が 0 のとき位置が進まず停止条件も踏まないため
+  `max_steps` 回を前後方向とも回りきっていた。また後方の点を毎回 buffer 先頭に
+  insert しており 1 本の線がその長さについて O(n²) だった。`step_km` が有限かつ
+  正であることを要求し、seed 数 × step 数が 2^20 点を超える要求を拒否し、
+  線の構築を線形時間にした。([#PR](https://github.com/sksat/orts/pull/PR))
 
 ### `viewer`
 

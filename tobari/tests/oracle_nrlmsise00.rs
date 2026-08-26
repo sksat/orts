@@ -128,7 +128,14 @@ fn epoch_params(epoch_name: &str) -> (u32, f64) {
 }
 
 /// Relative error between two values. Returns f64::MAX if expected is zero.
+///
+/// A non-finite `computed` also yields `f64::MAX`: the difference would be NaN,
+/// and every `NaN > tolerance` comparison is false, so a NaN result would slip
+/// through every tolerance check in this file unnoticed.
 fn rel_error(computed: f64, expected: f64) -> f64 {
+    if !computed.is_finite() {
+        return f64::MAX;
+    }
     if expected == 0.0 {
         if computed == 0.0 { 0.0 } else { f64::MAX }
     } else {
@@ -773,6 +780,74 @@ fn agrees_with_exponential_model_below_the_thermosphere() {
             (0.5..2.0).contains(&ratio),
             "NRLMSISE-00 / US76 = {ratio:.4e} at {alt} km (msis={msis:.4e}, us76={us76:.4e})"
         );
+    }
+}
+
+/// Every output is finite at and around every temperature-spline node.
+///
+/// Needs no oracle. The lower atmosphere is built from two splines whose node
+/// altitudes (72.5, 55, 45, 32.5, 20, 15, 10, 0 km) are exactly the altitudes
+/// where an interpolation weight or a segment integral collapses to zero, so
+/// they are where an unpopulated node or a degenerate interval shows up. A NaN
+/// here is invisible to a relative-error tolerance, since every comparison
+/// against NaN is false.
+#[test]
+fn output_is_finite_at_every_spline_node() {
+    let model = Nrlmsise00::new(Box::new(ConstantWeather::solar_moderate()));
+
+    let mut altitudes: Vec<f64> = Vec::new();
+    for node in [72.5, 62.5, 55.0, 45.0, 32.5, 20.0, 15.0, 10.0, 0.0] {
+        for delta in [-1e-3, -1e-9, 0.0, 1e-9, 1e-3] {
+            altitudes.push(node + delta);
+        }
+    }
+    // Plus a coarse sweep so nothing between the nodes is missed.
+    let mut alt = 0.0;
+    while alt <= 120.0 {
+        altitudes.push(alt);
+        alt += 0.25;
+    }
+
+    for alt in altitudes {
+        for latitude_deg in [-85.0, -45.0, 0.0, 45.0, 85.0] {
+            for day_of_year in [1u32, 80, 173, 356] {
+                let out = model.calculate(&Nrlmsise00Input {
+                    day_of_year,
+                    ut_seconds: 43200.0,
+                    altitude_km: alt,
+                    latitude_deg,
+                    longitude_deg: 30.0,
+                    local_solar_time_hours: 14.0,
+                    f107_daily: 150.0,
+                    f107_avg: 150.0,
+                    ap_daily: 15.0,
+                    ap_array: [15.0; 7],
+                });
+                for (name, v) in [
+                    ("total_mass_density", out.total_mass_density),
+                    ("temp_alt", out.temp_alt),
+                    ("temp_exo", out.temp_exo),
+                    ("n2", out.density_n2),
+                    ("o2", out.density_o2),
+                    ("ar", out.density_ar),
+                    ("he", out.density_he),
+                    ("o", out.density_o),
+                    ("h", out.density_h),
+                    ("n", out.density_n),
+                    ("anomalous_o", out.density_anomalous_o),
+                ] {
+                    assert!(
+                        v.is_finite(),
+                        "{name} = {v} at alt={alt} lat={latitude_deg} doy={day_of_year}"
+                    );
+                }
+                assert!(
+                    out.total_mass_density > 0.0,
+                    "density {} at alt={alt} lat={latitude_deg} doy={day_of_year}",
+                    out.total_mass_density
+                );
+            }
+        }
     }
 }
 
