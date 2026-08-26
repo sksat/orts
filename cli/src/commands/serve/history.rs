@@ -466,8 +466,11 @@ impl SegmentRecord {
 /// And its default number parser does not guarantee that the `f64` read back
 /// is the one that was written (that needs the `float_roundtrip` feature):
 /// `0.03 + 2e-5` comes back one ulp away. Both disappear when the value
-/// travels as text, because Rust's `f64` `Display`/`FromStr` pair round-trips
-/// every value bit for bit, non-finite included.
+/// travels as text: Rust's `f64` `Display`/`FromStr` pair round-trips every
+/// finite value bit for bit, and carries `NaN` and `±inf` across as
+/// themselves. (A `NaN`'s sign and payload are not preserved — `Display`
+/// folds every `NaN` to `"NaN"` — which is what a spilled history needs:
+/// "this row diverged", not which bit pattern the FPU produced.)
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct F64(f64);
 
@@ -1844,6 +1847,9 @@ mod tests {
         cleanup_dir(&dir);
     }
 
+    /// Every value that a spilled float must survive as: finite values bit
+    /// for bit, non-finite values as themselves. (`NaN` payload and sign are
+    /// deliberately outside the contract, see [`F64`].)
     #[test]
     fn f64_json_round_trip() {
         for value in [
