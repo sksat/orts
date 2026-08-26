@@ -111,6 +111,10 @@ impl<F: arika::frame::Eci, S: HasAttitude + HasOrbit<Frame = F>, R: AttitudeRefe
     fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         let att = state.attitude();
         let (q_target, omega_target) = self.reference.target(t, state.orbit(), epoch);
+        // The target's frame tag has done its job: it had to match the state's
+        // integration frame `F` for this call to type-check. Everything below
+        // is body-frame error algebra, so the tag is dropped here.
+        let q_target = q_target.into_inner();
 
         let q_current = att.orientation();
 
@@ -315,6 +319,7 @@ mod tests {
     // Characterization for the frame-typed attitude target (#332)
 
     use crate::attitude::control::InertialPointing;
+    use arika::frame::{Body, Rotation};
 
     /// A target orientation with all four components distinct and non-zero.
     fn nontrivial_target() -> UnitQuaternion<f64> {
@@ -343,7 +348,7 @@ mod tests {
             1.0,
             2.0,
             InertialPointing {
-                target_q: nontrivial_target(),
+                target_q: Rotation::<Body, arika::frame::SimpleEci>::from_raw(nontrivial_target()),
             },
         );
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
@@ -386,7 +391,13 @@ mod tests {
             q_err.w
         );
 
-        let ctrl = TrackingPdController::diagonal(1.0, 2.0, InertialPointing { target_q });
+        let ctrl = TrackingPdController::diagonal(
+            1.0,
+            2.0,
+            InertialPointing {
+                target_q: Rotation::<Body, arika::frame::SimpleEci>::from_raw(target_q),
+            },
+        );
         let got = ctrl.eval(0.0, &state, None).torque_body.into_inner();
         let expected = Vector3::new(
             -0.09532998610353678,
@@ -427,7 +438,9 @@ mod tests {
                 1.0,
                 2.0,
                 InertialPointing {
-                    target_q: nontrivial_target(),
+                    target_q: Rotation::<Body, arika::frame::SimpleEci>::from_raw(
+                        nontrivial_target(),
+                    ),
                 },
             );
             let tau = inertial.eval(0.0, &state, None).torque_body.into_inner();

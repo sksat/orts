@@ -119,6 +119,12 @@ interface types {
     }
 
     /// 姿勢クォータニオン body→inertial (Hamilton scalar-first)。
+    ///
+    /// inertial は simple-ECI (position-eci-km と同じ近似 ECI)。
+    /// クォータニオンの成分は基準フレームに依存するので、v0 はこの
+    /// フレームを contract として固定している (host 側は型で強制: 他の inertial
+    /// frame の姿勢を guest に渡すのは compile error)。他フレームを扱うなら
+    /// payload に frame を明記する新しい WIT version が必要。
     record attitude-body-to-inertial {
         w: f64, x: f64, y: f64, z: f64,
     }

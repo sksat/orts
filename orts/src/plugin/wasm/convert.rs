@@ -126,7 +126,10 @@ macro_rules! impl_convert {
                     .star_trackers
                     .iter()
                     .map(|a| {
-                        let q = a.into_inner();
+                        // Frame-checked crossing: the v0 payload is defined as
+                        // body→simple-ECI, and this named operation exists only
+                        // for a `SimpleEci`-tagged reading.
+                        let q = a.to_wit_v0_simple_eci_quat();
                         wit::AttitudeBodyToInertial {
                             w: q[0],
                             x: q[1],
@@ -317,14 +320,14 @@ pub mod sync {
             use crate::plugin::tick_input::{
                 AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody,
             };
-            use arika::frame::{Body, Vec3};
+            use arika::frame::{Body, Rotation, Vec3};
             let sensors = Sensors {
                 magnetometers: vec![MagneticFieldBody::new(Vec3::<Body>::new(1e-5, 2e-5, -3e-5))],
                 gyroscopes: vec![AngularVelocityBody::new(Vec3::<Body>::new(
                     0.1, 0.05, -0.03,
                 ))],
-                star_trackers: vec![AttitudeBodyToInertial::new(Vector4::new(
-                    1.0, 0.0, 0.0, 0.0,
+                star_trackers: vec![AttitudeBodyToInertial::new(Rotation::from_raw(
+                    nalgebra::UnitQuaternion::identity(),
                 ))],
                 sun_sensors: vec![],
             };
@@ -366,9 +369,9 @@ pub mod sync {
                 0.7,
             );
             let sensors = Sensors {
-                star_trackers: vec![AttitudeBodyToInertial::new(Vector4::new(
-                    q.w, q.i, q.j, q.k,
-                ))],
+                star_trackers: vec![AttitudeBodyToInertial::new(
+                    arika::frame::Rotation::from_raw(q),
+                )],
                 ..Sensors::empty()
             };
             let actuators = ActuatorTelemetry::default();

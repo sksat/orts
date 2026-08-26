@@ -1,0 +1,7 @@
+error[E0599]: no method named `to_wit_v0_simple_eci_quat` found for struct `AttitudeBodyToInertial<arika::frame::Gcrs>` in the current scope
+  --> tests/trybuild/gcrs_attitude_at_wit_v0_boundary.rs:16:22
+   |
+16 |     let _q = reading.to_wit_v0_simple_eci_quat();
+   |                      ^^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `AttitudeBodyToInertial<arika::frame::Gcrs>`
+   |
+   = note: the method was found for `AttitudeBodyToInertial`

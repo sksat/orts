@@ -1,0 +1,15 @@
+error[E0277]: the trait bound `InertialPointing<arika::frame::Gcrs>: AttitudeReference` is not satisfied
+  --> tests/trybuild/gcrs_inertial_pointing_in_simple_eci.rs:22:52
+   |
+22 |     let _ = AttitudeReference::<SimpleEci>::target(&reference, 0.0, &orbit, None);
+   |             -------------------------------------- ^^^^^^^^^^ the trait `AttitudeReference` is not implemented for `InertialPointing<arika::frame::Gcrs>`
+   |             |
+   |             required by a bound introduced by this call
+   |
+help: the trait `AttitudeReference<arika::frame::SimpleEci>` is not implemented for `InertialPointing<arika::frame::Gcrs>`
+      but trait `AttitudeReference<arika::frame::Gcrs>` is implemented for it
+  --> src/attitude/control/reference.rs
+   |
+   | impl<F: frame::Eci> AttitudeReference<F> for InertialPointing<F> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `arika::frame::Gcrs`, found `arika::frame::SimpleEci`

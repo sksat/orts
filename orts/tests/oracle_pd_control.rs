@@ -238,6 +238,7 @@ fn decoupled_nadir_tracking_bounded_error() {
     // Get initial LVLH target
     let orbit0 = orts::OrbitalState::new(Vector3::new(r, 0.0, 0.0), Vector3::new(0.0, v_circ, 0.0));
     let (q_target_0, omega_target_0) = NadirPointing.target(0.0, &orbit0, None);
+    let q_target_0 = q_target_0.into_inner();
 
     // Start with 5° perturbation from nadir
     let perturb_axis = nalgebra::Unit::new_normalize(Vector3::new(1.0, 1.0, 1.0));
@@ -263,6 +264,7 @@ fn decoupled_nadir_tracking_bounded_error() {
             )
         };
         let (q_target_t, _) = NadirPointing.target(t, &orbit_t, None);
+        let q_target_t = q_target_t.into_inner();
         let q_err = state.orientation() * q_target_t.inverse();
         let error_deg = q_err.angle().to_degrees();
         max_error_deg = max_error_deg.max(error_deg);
@@ -325,7 +327,9 @@ fn tracking_pd_with_inertial_pointing_converges() {
     let kp = 1.0;
     let kd = 2.0;
 
-    let ref_point = InertialPointing { target_q };
+    let ref_point = InertialPointing {
+        target_q: arika::frame::Rotation::from_raw(target_q),
+    };
     let ctrl = TrackingPdController::diagonal(kp, kd, ref_point);
 
     let mu = 398600.4418;

@@ -469,8 +469,26 @@ impl<F> core::ops::SubAssign for Vec3<F> {
 ///
 /// Hamilton クォータニオンベース。`transform` でベクトルの
 /// フレーム変換を型安全に行う。
-#[derive(Clone, Copy, PartialEq)]
-pub struct Rotation<From, To>(UnitQuaternion<f64>, PhantomData<(From, To)>);
+///
+/// phantom は `fn() -> (From, To)` — frame tag は値として保持されないので、
+/// `Clone` / `Copy` / `PartialEq` / `Send` / `Sync` は tag に依存せず成立する。
+/// これにより frame-generic な struct が `Rotation<A, F>` をフィールドに持つ際、
+/// `F: Copy + Send + Sync` を全ての impl に伝播させる必要がなくなる
+/// (variance は tuple 版と同じく共変)。
+pub struct Rotation<From, To>(UnitQuaternion<f64>, PhantomData<fn() -> (From, To)>);
+
+// tag に依存しない手書き impl (derive は `From: Copy` 等の bound を付けてしまう)。
+impl<From, To> Clone for Rotation<From, To> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<From, To> Copy for Rotation<From, To> {}
+impl<From, To> PartialEq for Rotation<From, To> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
 
 impl<From, To> Rotation<From, To> {
     /// 生の `UnitQuaternion` から構築。

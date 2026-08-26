@@ -5,7 +5,8 @@
 //! rotation perturbation to model pointing error.
 
 use arika::epoch::Epoch;
-use nalgebra::{UnitQuaternion, Vector3, Vector4};
+use arika::frame::{Body, Rotation};
+use nalgebra::{UnitQuaternion, Vector3};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use rand_distr::Normal;
@@ -58,17 +59,19 @@ impl StarTracker {
     ///
     /// The reading is the body→`F` rotation, and its components depend on `F`:
     /// the same physical attitude has different quaternion components in
-    /// `SimpleEci` and in `Gcrs`. [`AttitudeBodyToInertial`] does not record
-    /// which frame it came from, so a caller must interpret the value in the
-    /// frame the state was propagated in — nothing here can catch a `Gcrs`
-    /// reading being consumed as `SimpleEci`. Closing that hole needs a
-    /// frame-typed attitude output (`Rotation<Body, F>`), which also reaches the
-    /// plugin WIT payload; it is tracked separately.
+    /// `SimpleEci` and in `Gcrs`. The returned
+    /// [`AttitudeBodyToInertial<F>`](AttitudeBodyToInertial) carries that frame
+    /// in its type, so a `Gcrs` reading cannot be consumed as `SimpleEci`.
+    ///
+    /// The *components* are the same either way — [`crate::attitude::AttitudeState`]
+    /// stores an untyped quaternion, and this re-tags it with the frame the
+    /// state was propagated in. That is exactly why the tag has to travel with
+    /// the value: the numbers alone do not say which frame they belong to.
     pub fn measure_in_frame<F: arika::frame::Eci>(
         &mut self,
         state: &SpacecraftState<F>,
         _epoch: &Epoch,
-    ) -> AttitudeBodyToInertial {
+    ) -> AttitudeBodyToInertial<F> {
         let q_true = UnitQuaternion::from_quaternion(state.attitude.orientation().into_inner());
 
         let q_measured = match &mut self.sigma {
@@ -82,8 +85,7 @@ impl StarTracker {
             None => q_true,
         };
 
-        let q = q_measured.into_inner();
-        AttitudeBodyToInertial::new(Vector4::new(q.w, q.i, q.j, q.k))
+        AttitudeBodyToInertial::new(Rotation::<Body, F>::from_raw(q_measured))
     }
 }
 
@@ -98,6 +100,16 @@ mod tests {
     use super::*;
     use crate::attitude::AttitudeState;
     use crate::orbital::OrbitalState;
+    use nalgebra::Vector4;
+
+    /// The four components `(w, x, y, z)` of a reading, for value assertions.
+    /// Available in any frame: the point of the frame tag is that the caller
+    /// must name a frame to *interpret* these numbers, not that it cannot read
+    /// them.
+    fn components<F>(a: &AttitudeBodyToInertial<F>) -> Vector4<f64> {
+        let q = a.inner().inner();
+        Vector4::new(q.w, q.i, q.j, q.k)
+    }
 
     fn make_state() -> SpacecraftState {
         SpacecraftState {
@@ -116,7 +128,7 @@ mod tests {
         let state = make_state();
         let epoch = Epoch::j2000();
         let q = stt.measure(&state, &epoch);
-        assert_eq!(q.into_inner(), state.attitude.quaternion);
+        assert_eq!(components(&q), state.attitude.quaternion);
     }
 
     #[test]
@@ -126,9 +138,9 @@ mod tests {
         let state = make_state();
         let epoch = Epoch::j2000();
         let q = stt.measure(&state, &epoch);
-        assert_ne!(q.into_inner(), state.attitude.quaternion);
+        assert_ne!(components(&q), state.attitude.quaternion);
         // Should still be close to unit quaternion.
-        let q = q.into_inner();
+        let q = components(&q);
         let norm = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
         assert!((norm - 1.0).abs() < 1e-10);
     }
@@ -176,7 +188,7 @@ mod tests {
     fn ideal_measurement_components_snapshot() {
         let mut stt = StarTracker::new();
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
-        let got = stt.measure(&nontrivial_state(), &epoch).into_inner();
+        let got = components(&stt.measure(&nontrivial_state(), &epoch));
         assert_close(
             got,
             Vector4::new(
@@ -198,7 +210,7 @@ mod tests {
 
         let mut isotropic = StarTracker::new().with_pointing_noise_isotropic(5e-5, 42);
         assert_close(
-            isotropic.measure(&nontrivial_state(), &epoch).into_inner(),
+            components(&isotropic.measure(&nontrivial_state(), &epoch)),
             Vector4::new(
                 0.9393712890258086,
                 0.10391330045435347,
@@ -211,9 +223,7 @@ mod tests {
         let mut anisotropic =
             StarTracker::new().with_pointing_noise(Vector3::new(1e-5, 5e-5, 2e-4), 7);
         assert_close(
-            anisotropic
-                .measure(&nontrivial_state(), &epoch)
-                .into_inner(),
+            components(&anisotropic.measure(&nontrivial_state(), &epoch)),
             Vector4::new(
                 0.939390464493437,
                 0.10392513965336554,
@@ -233,9 +243,9 @@ mod tests {
         let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
         let state = nontrivial_state();
 
-        let simple = StarTracker::new()
-            .measure_in_frame::<arika::frame::SimpleEci>(&state, &epoch)
-            .into_inner();
+        let simple = components(
+            &StarTracker::new().measure_in_frame::<arika::frame::SimpleEci>(&state, &epoch),
+        );
         let gcrs_state = SpacecraftState::<arika::frame::Gcrs> {
             orbit: OrbitalState::<arika::frame::Gcrs>::new_in_frame(
                 Vector3::new(4000.0, -5000.0, 2500.0),
@@ -244,9 +254,9 @@ mod tests {
             attitude: state.attitude.clone(),
             mass: state.mass,
         };
-        let gcrs = StarTracker::new()
-            .measure_in_frame::<arika::frame::Gcrs>(&gcrs_state, &epoch)
-            .into_inner();
+        let gcrs = components(
+            &StarTracker::new().measure_in_frame::<arika::frame::Gcrs>(&gcrs_state, &epoch),
+        );
         assert_eq!(simple, gcrs);
     }
 
@@ -267,15 +277,16 @@ mod tests {
                 },
                 mass: 50.0,
             };
-            let ideal = StarTracker::new().measure(&state, &epoch).into_inner();
+            let ideal = components(&StarTracker::new().measure(&state, &epoch));
             assert!(
                 ideal.iter().all(|c| c.is_nan()),
                 "expected an all-NaN ideal reading for {bad}, got {ideal:?}"
             );
-            let noisy = StarTracker::new()
-                .with_pointing_noise_isotropic(5e-5, 42)
-                .measure(&state, &epoch)
-                .into_inner();
+            let noisy = components(
+                &StarTracker::new()
+                    .with_pointing_noise_isotropic(5e-5, 42)
+                    .measure(&state, &epoch),
+            );
             assert!(
                 noisy.iter().all(|c| c.is_nan()),
                 "expected an all-NaN noisy reading for {bad}, got {noisy:?}"
@@ -292,7 +303,7 @@ mod tests {
         let n_samples = 1000;
         let mut max_angle = 0.0_f64;
         for _ in 0..n_samples {
-            let q_meas = stt.measure(&state, &epoch).into_inner();
+            let q_meas = components(&stt.measure(&state, &epoch));
             let q_true = &state.attitude.quaternion;
             // Angular distance: 2 * arccos(|q_true · q_meas|)
             let dot = (q_true[0] * q_meas[0]

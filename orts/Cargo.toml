@@ -70,6 +70,7 @@ required-features = ["plugin-wasm"]
 
 [dev-dependencies]
 proptest = "1.10.0"
+trybuild = "1.0.116"
 serde_json.workspace = true
 criterion = { version = "0.8", features = ["html_reports"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }

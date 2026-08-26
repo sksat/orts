@@ -1,0 +1,8 @@
+error[E0308]: mismatched types
+  --> tests/trybuild/gcrs_sensors_into_tick_input.rs:27:18
+   |
+27 |         sensors: &sensors,
+   |                  ^^^^^^^^ expected `&Sensors`, found `&Sensors<Gcrs>`
+   |
+   = note: expected reference `&Sensors<arika::frame::SimpleEci>`
+              found reference `&Sensors<arika::frame::Gcrs>`

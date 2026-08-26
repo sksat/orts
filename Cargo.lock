@@ -2880,6 +2880,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tobari",
  "tokio",
+ "trybuild",
  "utsuroi",
  "wasmtime",
  "wasmtime-wasi",

@@ -95,11 +95,15 @@ impl SensorBundle {
     /// magnetometers; evaluate those sensors with their own
     /// `measure_in_frame` instead. Split this into per-capability entry points
     /// if a caller needs the bundle in such a frame.
+    ///
+    /// The returned [`Sensors<F>`](Sensors) carries `F`, so a bundle evaluated
+    /// in one inertial frame cannot be consumed as another — nor handed to a
+    /// plugin, whose v0 contract is simple-ECI.
     pub fn evaluate_in_frame<F: EarthFixedTransform + EphemerisFrameBridge>(
         &mut self,
         state: &SpacecraftState<F>,
         orientation: &EarthOrientation<'_, F>,
-    ) -> Sensors {
+    ) -> Sensors<F> {
         // The non-magnetometer sensors need only the instant.
         let epoch = orientation.utc();
         Sensors {
