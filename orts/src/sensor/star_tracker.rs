@@ -277,10 +277,16 @@ mod tests {
                 },
                 mass: 50.0,
             };
+            // The claim is that the non-finite input propagates rather than
+            // being swallowed into a plausible-looking attitude. Which
+            // components come out NaN and which ±inf depends on how
+            // `UnitQuaternion::from_quaternion` normalizes, so pinning
+            // all-NaN would be a claim about nalgebra's internals, not about
+            // this sensor.
             let ideal = components(&StarTracker::new().measure(&state, &epoch));
             assert!(
-                ideal.iter().all(|c| c.is_nan()),
-                "expected an all-NaN ideal reading for {bad}, got {ideal:?}"
+                ideal.iter().any(|c| !c.is_finite()),
+                "expected a non-finite ideal reading for {bad}, got {ideal:?}"
             );
             let noisy = components(
                 &StarTracker::new()
@@ -288,8 +294,8 @@ mod tests {
                     .measure(&state, &epoch),
             );
             assert!(
-                noisy.iter().all(|c| c.is_nan()),
-                "expected an all-NaN noisy reading for {bad}, got {noisy:?}"
+                noisy.iter().any(|c| !c.is_finite()),
+                "expected a non-finite noisy reading for {bad}, got {noisy:?}"
             );
         }
     }
