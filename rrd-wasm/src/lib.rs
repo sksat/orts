@@ -145,6 +145,12 @@ impl ChunkKeys {
 /// whole position triple — and, when the recording has velocity columns, the
 /// whole velocity triple — is present at that exact time; incomplete rows are
 /// dropped rather than padded with zeros.
+///
+/// That guarantee needs a time index to join on, which every recording orts
+/// writes carries (`sim_time`, `step`, or both). A chunk with neither timeline
+/// has no join key available, so its values are keyed by position within their
+/// own column — the arrangement this join replaced, and one a sparse column
+/// still shifts. Such a recording does not come from orts.
 pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Error>> {
     let reader = std::io::BufReader::new(reader);
 
