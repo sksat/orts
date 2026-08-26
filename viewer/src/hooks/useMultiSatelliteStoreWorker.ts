@@ -16,7 +16,12 @@ import type {
   MultiChartDataResult,
   MultiChartDataWorkerClient,
 } from "@sksat/uneri/multiWorkerClient";
-import type { WorkerSatelliteConfig, WorkerTableSchema } from "@sksat/uneri/workerProtocol";
+import {
+  sameColumns,
+  sameDerived,
+  type WorkerSatelliteConfig,
+  type WorkerTableSchema,
+} from "@sksat/uneri/workerProtocol";
 import { useEffect, useRef, useState } from "react";
 import type { MultiChartDataMap, SatelliteConfig } from "./buildMultiChartData.js";
 
@@ -61,6 +66,38 @@ function toWorkerConfigs(configs: SatelliteConfig[]): WorkerSatelliteConfig[] {
   return configs.map((c) => ({ id: c.id, label: c.label, color: c.color }));
 }
 
+/** The subset of `MultiChartDataWorkerClient` the schema step needs. */
+export interface BaseSchemaSyncTarget {
+  updateSchema(baseSchema: WorkerTableSchema): void;
+}
+
+/**
+ * Tell the Worker about a changed base schema, and return the schema it now
+ * holds.
+ *
+ * Called before any rows are built from `current`: a row tuple carries no
+ * column names, so rows produced under a new schema would be read under the
+ * old one — the derived SQL keeps the previous body radius and `mu`.
+ *
+ * Compares by content rather than identity so a caller that rebuilds an equal
+ * schema object every render does not send a message every drain. The table
+ * name is not compared: the Worker names a table per satellite, so the base
+ * schema's own name is not what it uses.
+ */
+export function forwardBaseSchema<T extends TimePoint>(
+  client: BaseSchemaSyncTarget,
+  current: TableSchema<T>,
+  sent: TableSchema<T>,
+): TableSchema<T> {
+  if (current === sent) return sent;
+  const next = toWorkerSchema(current);
+  const prev = toWorkerSchema(sent);
+  if (!sameColumns(prev, next) || !sameDerived(prev, next)) {
+    client.updateSchema(next);
+  }
+  return current;
+}
+
 /** Convert Worker result to viewer MultiChartDataMap. */
 function toMultiChartDataMap(result: MultiChartDataResult): MultiChartDataMap {
   const map: MultiChartDataMap = {};
@@ -101,6 +138,8 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
 
   const baseSchemaRef = useRef(baseSchema);
   baseSchemaRef.current = baseSchema;
+  // What the Worker was last told, so a change can be detected and forwarded.
+  const sentSchemaRef = useRef(baseSchema);
   const configsRef = useRef(satelliteConfigs);
   configsRef.current = satelliteConfigs;
   const buffersRef = useRef(ingestBuffers);
@@ -168,11 +207,18 @@ export function useMultiSatelliteStoreWorker<T extends TimePoint>(
         metricNamesRef.current,
         { duckDB: duckDBRef.current },
       );
+      sentSchemaRef.current = baseSchemaRef.current;
 
       client.configure(timeRangeRef.current, maxPointsRef.current);
 
       const drain = () => {
         if (cancelled) return;
+
+        sentSchemaRef.current = forwardBaseSchema(
+          client,
+          baseSchemaRef.current,
+          sentSchemaRef.current,
+        );
 
         // Drain each satellite's IngestBuffer
         for (const [satId, buf] of buffersRef.current.entries()) {
