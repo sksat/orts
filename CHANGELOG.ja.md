@@ -302,7 +302,25 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 ### `tobari` (Rust, crates.io)
 
+#### Added
+- NRLMSISE-00 の 72.5 km 未満: 中間圏・成層圏・対流圏の温度 spline と完全混合への
+  線形遷移を実装し、地表から ~1000 km までをカバーするようになった。従来はそれ未満の
+  すべての高度に 72.5 km の profile を黙って返していた (海面で 1.9e4 倍薄い)。
+  新規 fixture 792 点での pymsis に対する最大密度誤差 0.0003%。72.5 km 未満は
+  参照実装と同じく完全混合種 (N₂, O₂, Ar, He) と総質量密度のみを返し、
+  O・H・N・anomalous O は 0。成層圏 spline と対流圏 spline が接する 32.5 km では、
+  下側 spline の寄与が消えても node を埋めるので、NaN でなく値が返る。
+  ([#361](https://github.com/sksat/orts/pull/361))
+- `nrlmsise00::ApMode` と `Nrlmsise00::with_ap_mode` で、モデルを駆動する地磁気入力を
+  選べるようになった: `Daily` (参照の既定、`ap_daily`) と `ThreeHourly`
+  (`ap_array`、sub-daily な storm を解像)。3 時間の定式化は従来到達不能で、
+  `ap_array` は死んだ入力だった。([#361](https://github.com/sksat/orts/pull/361))
+
 #### Fixed
+- NRLMSISE-00 の季節項が 2π/365.25 の角速度を使っていた。係数セット自身の fitted 値は
+  DR = 1.72142e-2 = 2π/365 で、doy 365 で季節位相が 0.25 日ずれる。1152 点の熱圏 grid で
+  pymsis に対する平均密度誤差が 0.0886% → 0.0155%、最大温度誤差が 0.0354% → 0.0005%。
+  ([#361](https://github.com/sksat/orts/pull/361))
 - `HarrisPriester` が public な `u32` の指数を `powi(n as i32)` に渡していた。
   `n >= 2^31` で負に wrap し、`n = 2^31` は anti-bulge で `+Inf`、
   `n = u32::MAX` は `rho_min` の約 1280 倍を返していた。あらゆる `u32` に対して

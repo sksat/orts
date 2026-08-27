@@ -20,6 +20,12 @@ Output indices (pymsis.Variable):
   9: NO             [m⁻³]  (only in MSIS 2.x; 0.0 for NRLMSISE-00)
  10: TEMPERATURE    [K]
 
+Sections written:
+  points                    thermosphere grid (>= 100 km), daily-Ap mode
+  exospheric_temperature_points
+  lower_atmosphere_points   0-72.4 km, daily-Ap mode
+  ap_history_points         3-hourly Ap mode (switch 9 = -1), daily Ap held fixed
+
 Run:  uv run tools/generate_nrlmsise00_fixtures.py
 """
 
@@ -191,12 +197,110 @@ def generate_fixtures():
 
     fixture["exospheric_temperature_points"] = exo_points
 
+    # ── Lower atmosphere (below the 72.5 km spline floor) ──
+    # Below 72.5 km NRLMSISE-00 leaves the thermosphere formulation and
+    # integrates the mesosphere/stratosphere/troposphere temperature splines
+    # instead. The sampled altitudes straddle every node of those splines
+    # (72.5, 62.5 mixing floor, 55, 45, 32.5, 20, 15, 10, 0 km).
+    print("Generating lower-atmosphere reference points...")
+    low_altitudes = [0.0, 5.0, 10.0, 15.0, 20.0, 32.5, 45.0, 55.0, 62.5, 70.0, 72.4]
+    low_points = []
+    for epoch_str, epoch_name in epochs:
+        date = np.datetime64(epoch_str[:-1])
+        for activity in activity_levels:
+            ap_array = [[activity["ap"]] * 7]
+            for lat in latitudes:
+                for lon in (0.0, 180.0):
+                    for alt in low_altitudes:
+                        raw = pymsis.calculate(
+                            date,
+                            lon,
+                            lat,
+                            alt,
+                            f107s=activity["f107"],
+                            f107as=activity["f107a"],
+                            aps=ap_array,
+                            version=0,
+                        ).flatten()
+                        point = {
+                            "epoch_utc": epoch_str,
+                            "epoch_name": epoch_name,
+                            "activity": activity["name"],
+                            "f107": activity["f107"],
+                            "f107a": activity["f107a"],
+                            "ap": activity["ap"],
+                            "latitude_deg": lat,
+                            "longitude_deg": lon,
+                            "altitude_km": alt,
+                        }
+                        for idx, name in zip(var_indices, all_var_names):
+                            v = float(raw[idx])
+                            point[name] = None if np.isnan(v) else v
+                        low_points.append(point)
+    fixture["lower_atmosphere_points"] = low_points
+    print(f"  {len(low_points)} lower-atmosphere points")
+
+    # ── 3-hourly Ap history mode ──
+    # Reference switch 9 = -1 selects the 3-hourly Ap formulation, which reads
+    # aps[1..6] and ignores the daily Ap in aps[0]. Every array below keeps
+    # aps[0] fixed at 4.0 so that a fixture point can only be reproduced by a
+    # model that actually reads the history.
+    print("Generating 3-hourly Ap reference points...")
+    ap_options = pymsis.msis.create_options(geomagnetic_activity=-1)
+    ap_histories = [
+        ("quiet", [4.0] * 7),
+        ("storm_onset", [4.0, 400.0, 400.0, 400.0, 400.0, 400.0, 400.0]),
+        ("decaying", [4.0, 200.0, 100.0, 50.0, 20.0, 10.0, 5.0]),
+        ("rising", [4.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0]),
+        ("recent_spike", [4.0, 180.0, 12.0, 7.0, 4.0, 4.0, 4.0]),
+    ]
+    ap_altitudes = [0.0, 40.0, 80.0, 100.0, 200.0, 400.0, 700.0]
+    ap_points = []
+    for epoch_str, epoch_name in epochs[:2]:
+        date = np.datetime64(epoch_str[:-1])
+        for hist_name, hist in ap_histories:
+            for lat in (0.0, 60.0, -70.0):
+                for alt in ap_altitudes:
+                    raw = pymsis.calculate(
+                        date,
+                        30.0,
+                        lat,
+                        alt,
+                        f107s=150.0,
+                        f107as=150.0,
+                        aps=[hist],
+                        version=0,
+                        options=ap_options,
+                    ).flatten()
+                    point = {
+                        "epoch_utc": epoch_str,
+                        "epoch_name": epoch_name,
+                        "ap_history_name": hist_name,
+                        "ap_array": hist,
+                        "f107": 150.0,
+                        "f107a": 150.0,
+                        "latitude_deg": lat,
+                        "longitude_deg": 30.0,
+                        "altitude_km": alt,
+                    }
+                    for idx, name in zip(var_indices, all_var_names):
+                        v = float(raw[idx])
+                        point[name] = None if np.isnan(v) else v
+                    ap_points.append(point)
+    fixture["ap_history_points"] = ap_points
+    print(f"  {len(ap_points)} 3-hourly Ap points")
+
     # ── Summary statistics ──
     densities = [p["mass_density_kg_m3"] for p in fixture["points"]]
     temps = [p["temperature_k"] for p in fixture["points"]]
     fixture["summary"] = {
         "total_points": len(fixture["points"]),
         "exo_temp_points": len(exo_points),
+        "lower_atmosphere_points": len(low_points),
+        "lower_atmosphere_altitudes_km": low_altitudes,
+        "ap_history_points": len(ap_points),
+        "ap_history_altitudes_km": ap_altitudes,
+        "ap_history_names": [n for n, _ in ap_histories],
         "density_range_kg_m3": [min(densities), max(densities)],
         "temperature_range_k": [min(temps), max(temps)],
         "altitudes_km": altitudes,

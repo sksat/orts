@@ -333,7 +333,31 @@ section is subdivided by package.
 
 ### `tobari` (Rust, crates.io)
 
+#### Added
+- NRLMSISE-00 below 72.5 km: the mesosphere, stratosphere and troposphere
+  temperature splines and the linear transition to full mixing, so the model
+  covers the surface to ~1000 km instead of silently reporting the 72.5 km
+  profile for everything below it (sea level was 1.9e4x too thin). Max density
+  error against pymsis over 792 new fixture points: 0.0003%. Below 72.5 km only
+  the fully mixed species (N₂, O₂, Ar, He) and total mass density are reported;
+  O, H, N and anomalous O are zero, as in the reference implementation.
+  At exactly 32.5 km — the altitude where the stratosphere spline meets the
+  troposphere spline — the nodes of the lower spline are populated even though
+  its contribution vanishes there, so the result is a value rather than NaN.
+  ([#361](https://github.com/sksat/orts/pull/361))
+- `nrlmsise00::ApMode` and `Nrlmsise00::with_ap_mode` select which geomagnetic
+  input drives the model: `Daily` (the reference default, `ap_daily`) or
+  `ThreeHourly` (`ap_array`, resolving sub-daily storms). The 3-hourly
+  formulation was previously unreachable, so `ap_array` was dead input.
+  ([#361](https://github.com/sksat/orts/pull/361))
+
 #### Fixed
+- NRLMSISE-00 seasonal terms used a 2π/365.25 angular rate instead of the
+  coefficient set's own fitted DR = 1.72142e-2 = 2π/365, shifting the seasonal
+  phase by a quarter day at doy 365. Mean density error against pymsis over the
+  1152-point thermosphere grid drops from 0.0886% to 0.0155%, and max
+  temperature error from 0.0354% to 0.0005%.
+  ([#361](https://github.com/sksat/orts/pull/361))
 - `HarrisPriester` applied its public `u32` exponent through `powi(n as i32)`,
   which wraps negative for `n >= 2^31`: `n = 2^31` returned `+Inf` at the
   anti-bulge and `n = u32::MAX` about 1280x `rho_min`. The density now stays
