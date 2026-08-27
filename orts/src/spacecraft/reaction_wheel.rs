@@ -554,9 +554,9 @@ mod tests {
         AttitudeState::identity()
     }
 
-    // `RwAssembly` is now `StateEffector<S>` for every frame `F`, so a bare
-    // `rw.derivatives(..)` is ambiguous in `F`. These single-frame tests pin
-    // `F = SimpleEci` via the return type.
+    // Calls `derivatives` at `t = 0` with no epoch, which is what every test
+    // below wants. `S` comes from the `state` argument, so the loads frame is
+    // `AttitudeState`'s: simple-ECI.
     fn rw_derivatives(
         rw: &RwAssembly,
         state: &AttitudeState,
