@@ -15,18 +15,27 @@ cargo build --workspace
 
 ## Running the Simulator
 
-Run a simulation and output CSV:
+`orts run` propagates an orbit and records the result. It needs an orbit to
+propagate — `--sat altitude=400` is the shortest way to say so:
 
 ```bash
-cargo run --bin orts
+cargo run --bin orts -- run --sat altitude=400
+```
+
+That writes `output.rrd` and, with no `--duration`, covers one orbital period.
+For CSV on stdout instead:
+
+```bash
+cargo run --bin orts -- run --sat altitude=400 --format csv
 ```
 
 ## Starting the Viewer
 
-Start the WebSocket server with the embedded viewer:
+`orts serve` streams the simulation over WebSocket and serves the embedded
+viewer:
 
 ```bash
-cargo run --bin orts -- --serve
+cargo run --bin orts -- serve --sat altitude=400
 ```
 
 Then open `http://localhost:9001` in your browser.
@@ -35,11 +44,23 @@ Then open `http://localhost:9001` in your browser.
 
 ```bash
 # Higher altitude orbit with larger time step
-cargo run --bin orts -- --serve --altitude 800 --dt 5
+cargo run --bin orts -- serve --sat altitude=800 --dt 5
 
 # Fine time step with decimated output
-cargo run --bin orts -- --serve --dt 1 --output-interval 10
+cargo run --bin orts -- serve --sat altitude=400 --dt 1 --output-interval 10
 ```
+
+`--sat` is a shorthand for simple cases. For generated or multi-satellite
+setups, describe the mission in a config file:
+
+```bash
+cargo run --bin orts -- config example > mission.toml
+cargo run --bin orts -- config validate mission.toml
+cargo run --bin orts -- serve --config mission.toml
+```
+
+`orts --help` lists every subcommand (`run`, `serve`, `replay`, `convert`,
+`config`), and `orts <subcommand> --help` lists its options.
 
 ## Project Structure
 
