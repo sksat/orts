@@ -61,6 +61,7 @@ pub trait HasMass {
 /// Parameterized by the inertial frame `F` (default `SimpleEci`).
 /// - acceleration: inertial frame [km/s²] (for translational EOM)
 /// - torque: body frame [N·m] (for rotational EOM)
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExternalLoads<F: frame::Eci = frame::SimpleEci> {
     /// Translational acceleration in inertial frame [km/s²].
     pub acceleration_inertial: Vec3<F>,
@@ -68,33 +69,6 @@ pub struct ExternalLoads<F: frame::Eci = frame::SimpleEci> {
     pub torque_body: Vec3<Body>,
     /// Mass rate [kg/s] (negative for depletion, e.g. propellant consumption).
     pub mass_rate: f64,
-}
-
-// Manual impls to avoid F bounds from derive.
-impl<F: frame::Eci> std::fmt::Debug for ExternalLoads<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExternalLoads")
-            .field("acceleration_inertial", &self.acceleration_inertial)
-            .field("torque_body", &self.torque_body)
-            .field("mass_rate", &self.mass_rate)
-            .finish()
-    }
-}
-impl<F: frame::Eci> Clone for ExternalLoads<F> {
-    fn clone(&self) -> Self {
-        Self {
-            acceleration_inertial: Vec3::from_raw(*self.acceleration_inertial.inner()),
-            torque_body: Vec3::from_raw(*self.torque_body.inner()),
-            mass_rate: self.mass_rate,
-        }
-    }
-}
-impl<F: frame::Eci> PartialEq for ExternalLoads<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.acceleration_inertial.inner() == other.acceleration_inertial.inner()
-            && self.torque_body.inner() == other.torque_body.inner()
-            && self.mass_rate == other.mass_rate
-    }
 }
 
 impl<F: frame::Eci> ExternalLoads<F> {

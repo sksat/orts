@@ -1,4 +1,3 @@
-use std::fmt;
 use std::marker::PhantomData;
 
 use arika::frame::{Eci, SimpleEci, Vec3};
@@ -11,24 +10,8 @@ use crate::model::HasOrbit;
 ///
 /// Parameterized by frame `F` (default `SimpleEci`). The internal
 /// representation is a raw `State<3, 2>` — the frame is phantom.
+#[derive(Debug, Clone, PartialEq)]
 pub struct OrbitalState<F: Eci = SimpleEci>(pub State<3, 2>, PhantomData<F>);
-
-// Manual impls to avoid requiring F: Debug/Clone/PartialEq.
-impl<F: Eci> fmt::Debug for OrbitalState<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("OrbitalState").field(&self.0).finish()
-    }
-}
-impl<F: Eci> Clone for OrbitalState<F> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone(), PhantomData)
-    }
-}
-impl<F: Eci> PartialEq for OrbitalState<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
 
 impl<F: Eci> OrbitalState<F> {
     /// Wrap an existing `State<3, 2>` in the given frame.

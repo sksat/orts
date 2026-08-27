@@ -1,5 +1,3 @@
-use std::fmt;
-
 use arika::frame::{Eci, SimpleEci};
 use nalgebra::{Vector3, Vector4};
 use utsuroi::{OdeState, Tolerances};
@@ -13,35 +11,11 @@ use crate::orbital::OrbitalState;
 /// Parameterized by the inertial frame `F` (default `SimpleEci`).
 /// Used as the ODE state vector for coupled orbit-attitude propagation.
 /// Mass is included for thrust modeling (mass depletion).
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpacecraftState<F: Eci = SimpleEci> {
     pub orbit: OrbitalState<F>,
     pub attitude: AttitudeState,
     pub mass: f64,
-}
-
-// Manual impls to avoid requiring F: Debug/Clone/PartialEq.
-impl<F: Eci> fmt::Debug for SpacecraftState<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SpacecraftState")
-            .field("orbit", &self.orbit)
-            .field("attitude", &self.attitude)
-            .field("mass", &self.mass)
-            .finish()
-    }
-}
-impl<F: Eci> Clone for SpacecraftState<F> {
-    fn clone(&self) -> Self {
-        Self {
-            orbit: self.orbit.clone(),
-            attitude: self.attitude.clone(),
-            mass: self.mass,
-        }
-    }
-}
-impl<F: Eci> PartialEq for SpacecraftState<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.orbit == other.orbit && self.attitude == other.attitude && self.mass == other.mass
-    }
 }
 
 impl<F: Eci> SpacecraftState<F> {

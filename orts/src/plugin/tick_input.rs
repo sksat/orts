@@ -5,8 +5,6 @@
 //! readings, and (optionally) the true spacecraft state for
 //! debugging.
 
-use core::fmt;
-
 use arika::epoch::Epoch;
 use arika::frame::{Body, Eci, Rotation, SimpleEci, Vec3};
 
@@ -61,6 +59,7 @@ impl AngularVelocityBody {
 /// `Vector4` cannot say what it means. `F` defaults to
 /// [`SimpleEci`](arika::frame::SimpleEci), the frame the plugin path
 /// propagates in.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AttitudeBodyToInertial<F: Eci = SimpleEci>(Rotation<Body, F>);
 
 impl<F: Eci> AttitudeBodyToInertial<F> {
@@ -98,27 +97,6 @@ impl AttitudeBodyToInertial<SimpleEci> {
     }
 }
 
-// Manual impls to avoid requiring `F: Debug/Clone/Copy/PartialEq`
-// (the frame is a phantom tag, never a value).
-impl<F: Eci> fmt::Debug for AttitudeBodyToInertial<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("AttitudeBodyToInertial")
-            .field(&self.0)
-            .finish()
-    }
-}
-impl<F: Eci> Clone for AttitudeBodyToInertial<F> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<F: Eci> Copy for AttitudeBodyToInertial<F> {}
-impl<F: Eci> PartialEq for AttitudeBodyToInertial<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
 // sensor readings
 
 /// Sensor readings evaluated at the current tick instant.
@@ -136,6 +114,7 @@ impl<F: Eci> PartialEq for AttitudeBodyToInertial<F> {
 /// [`SimpleEci`](arika::frame::SimpleEci), which is what [`TickInput`] accepts:
 /// a bundle evaluated in another frame cannot be handed to a plugin, because
 /// the v0 plugin contract is defined in simple-ECI.
+#[derive(Debug, Clone)]
 pub struct Sensors<F: Eci = SimpleEci> {
     /// Magnetometer readings. Pre-evaluated once per tick.
     pub magnetometers: Vec<MagneticFieldBody>,
@@ -152,34 +131,13 @@ pub struct Sensors<F: Eci = SimpleEci> {
 
 impl<F: Eci> Sensors<F> {
     /// Construct an empty set of readings (no sensors configured).
+    ///
+    /// The only constructor: there is no `Default` impl. `derive(Default)` would
+    /// demand `F: Default`, and a frame marker has no default — "the default
+    /// frame" is exactly the implicit choice this frame tagging exists to
+    /// prevent — while a hand-written one would just be a second name for
+    /// `empty()`.
     pub fn empty() -> Self {
-        Self::default()
-    }
-}
-
-// Manual impls to avoid requiring `F: Debug/Clone/Default`.
-impl<F: Eci> fmt::Debug for Sensors<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Sensors")
-            .field("magnetometers", &self.magnetometers)
-            .field("gyroscopes", &self.gyroscopes)
-            .field("star_trackers", &self.star_trackers)
-            .field("sun_sensors", &self.sun_sensors)
-            .finish()
-    }
-}
-impl<F: Eci> Clone for Sensors<F> {
-    fn clone(&self) -> Self {
-        Self {
-            magnetometers: self.magnetometers.clone(),
-            gyroscopes: self.gyroscopes.clone(),
-            star_trackers: self.star_trackers.clone(),
-            sun_sensors: self.sun_sensors.clone(),
-        }
-    }
-}
-impl<F: Eci> Default for Sensors<F> {
-    fn default() -> Self {
         Self {
             magnetometers: Vec::new(),
             gyroscopes: Vec::new(),

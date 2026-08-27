@@ -42,11 +42,6 @@ pub struct SpacecraftDynamics<G: GravityField, F: Eci = SimpleEci> {
     _frame: PhantomData<F>,
 }
 
-// Manual Send + Sync: all fields are Send + Sync, PhantomData<F> is fine
-// because F is a ZST frame marker.
-unsafe impl<G: GravityField, F: Eci> Send for SpacecraftDynamics<G, F> {}
-unsafe impl<G: GravityField, F: Eci> Sync for SpacecraftDynamics<G, F> {}
-
 impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// Create with gravitational parameter, gravity model, and inertia tensor.
     ///

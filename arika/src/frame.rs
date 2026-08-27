@@ -131,9 +131,16 @@ mod sealed {
 /// Top-level frame trait. Implemented by every concrete frame marker.
 ///
 /// Provides `NAME` and `DESCRIPTOR` for runtime identification. Sealed: new
-/// frames can only be added inside arika. No `Copy` / `'static` bound —
-/// marker structs derive them themselves.
-pub trait Frame: sealed::Sealed {
+/// frames can only be added inside arika.
+///
+/// Every frame is a ZST marker, so the trait requires the auto/derivable traits
+/// that fact implies. Stating them once here is what lets the frame-tagged
+/// types ([`Vec3`], [`Rotation`]) and everything generic over a frame simply
+/// derive `Clone` / `Copy` / `PartialEq` and pick up `Send` / `Sync`, instead of
+/// each working around the phantom parameter on its own.
+pub trait Frame:
+    sealed::Sealed + core::fmt::Debug + Copy + PartialEq + Eq + Send + Sync + 'static
+{
     const NAME: &'static str;
     const DESCRIPTOR: FrameDescriptor;
 }
@@ -470,25 +477,12 @@ impl<F> core::ops::SubAssign for Vec3<F> {
 /// Hamilton クォータニオンベース。`transform` でベクトルの
 /// フレーム変換を型安全に行う。
 ///
-/// phantom は `fn() -> (From, To)` — frame tag は値として保持されないので、
-/// `Clone` / `Copy` / `PartialEq` / `Send` / `Sync` は tag に依存せず成立する。
-/// これにより frame-generic な struct が `Rotation<A, F>` をフィールドに持つ際、
-/// `F: Copy + Send + Sync` を全ての impl に伝播させる必要がなくなる
-/// (variance は tuple 版と同じく共変)。
-pub struct Rotation<From, To>(UnitQuaternion<f64>, PhantomData<fn() -> (From, To)>);
-
-// tag に依存しない手書き impl (derive は `From: Copy` 等の bound を付けてしまう)。
-impl<From, To> Clone for Rotation<From, To> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<From, To> Copy for Rotation<From, To> {}
-impl<From, To> PartialEq for Rotation<From, To> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
+/// `PhantomData<(From, To)>` はゼロサイズなのでメモリレイアウトは
+/// `UnitQuaternion<f64>` と同一。derive が要求する `From: Copy` 等の bound は
+/// [`Frame`] が保証するので、`Rotation<A, F>` をフィールドに持つ frame-generic
+/// な struct 側でも derive がそのまま通る。
+#[derive(Clone, Copy, PartialEq)]
+pub struct Rotation<From, To>(UnitQuaternion<f64>, PhantomData<(From, To)>);
 
 impl<From, To> Rotation<From, To> {
     /// 生の `UnitQuaternion` から構築。
@@ -662,17 +656,9 @@ impl Rotation<SimpleEcef, SimpleEci> {
     }
 }
 
-impl<From, To> core::fmt::Debug for Rotation<From, To> {
+impl<From: Frame, To: Frame> core::fmt::Debug for Rotation<From, To> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let from = core::any::type_name::<From>()
-            .rsplit("::")
-            .next()
-            .unwrap_or("?");
-        let to = core::any::type_name::<To>()
-            .rsplit("::")
-            .next()
-            .unwrap_or("?");
-        write!(f, "Rotation<{from}, {to}>({:?})", self.0)
+        write!(f, "Rotation<{}, {}>({:?})", From::NAME, To::NAME, self.0)
     }
 }
 
