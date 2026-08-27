@@ -517,6 +517,112 @@ path = {:?}
     );
 }
 
+/// A large unnormalized quaternion runs to completion, with a finite attitude
+/// throughout.
+///
+/// Integrated raw, it grows until its sum of squares overflows; the post-step
+/// projection then divides by infinity and publishes all zeros, which
+/// `is_finite` accepts — so the run reports success while every attitude row
+/// from that point on is meaningless.
+#[test]
+fn a_large_unnormalized_quaternion_still_integrates() {
+    let config = r#"
+body = "earth"
+dt = 0.1
+duration = 30.0
+
+[[satellites]]
+id = "sat-1"
+orbit = { type = "circular", altitude = 400 }
+attitude = { inertia_diag = [1, 1, 1], mass = 500, initial_quaternion = [1e150, 0, 0, 0], initial_angular_velocity = [1e4, 0, 0] }
+"#;
+    let out = run_config("huge-quat", config);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "run failed: {stderr}");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let header = header_line(&stdout);
+    let cols: Vec<&str> = header.trim_start_matches("# ").split(',').collect();
+    // Looked up by name one at a time: the quaternion columns are not
+    // necessarily adjacent, so slicing four wide from `qw` reads whatever
+    // happens to follow it.
+    let quat: Vec<usize> = ["qw", "qx", "qy", "qz"]
+        .iter()
+        .map(|name| {
+            cols.iter()
+                .position(|c| c == name)
+                .unwrap_or_else(|| panic!("column '{name}' missing: {header}"))
+        })
+        .collect();
+
+    let mut rows = 0;
+    for line in data_lines(&stdout) {
+        let fields: Vec<&str> = line.split(',').collect();
+        let norm_sq: f64 = quat
+            .iter()
+            .map(|i| {
+                let f = fields[*i];
+                let v: f64 = f.parse().unwrap_or_else(|e| panic!("{f:?}: {e}"));
+                assert!(v.is_finite(), "non-finite quaternion component in: {line}");
+                v * v
+            })
+            .sum();
+        // The failure mode this pins is the all-zero quaternion: integrated
+        // raw, the components grow until their sum of squares overflows and the
+        // post-step projection divides each by infinity. How closely the norm
+        // tracks 1 is a separate question — the adaptive solvers do not project
+        // between steps — so this asks only that the attitude still names one.
+        // `is_finite` on the sum too: each component can be finite while their
+        // squares overflow, and `inf > 0.5` would wave that through.
+        assert!(
+            norm_sq.is_finite() && norm_sq > 0.5,
+            "quaternion no longer names an attitude (norm² = {norm_sq}) in: {line}"
+        );
+        rows += 1;
+    }
+    assert!(
+        rows > 10,
+        "expected the whole span to be recorded, got {rows}"
+    );
+}
+
+/// An attitude config that cannot be integrated is rejected before the run
+/// starts, in controlled mode too.
+///
+/// The controlled path builds its satellites inside
+/// `build_controlled_satellite` rather than through the spacecraft path, so a
+/// check placed in the latter left this entry point uncovered.
+///
+/// The controller path is never loaded — the config is refused first — so this
+/// names a `.wasm` that does not exist rather than requiring the guest to be
+/// built. That keeps the test running everywhere: were the check removed, the
+/// run would fail on the missing plugin instead, with a different message and
+/// exit code, and the assertions below would still catch it.
+#[test]
+fn controlled_run_rejects_unintegrable_attitude() {
+    let config = r#"
+body = "earth"
+dt = 0.1
+duration = 10.0
+
+[[satellites]]
+id = "sat-1"
+orbit = { type = "circular", altitude = 400 }
+attitude = { inertia_diag = [nan, 10, 10], mass = 500 }
+
+[satellites.controller]
+type = "wasm"
+path = "definitely-not-a-plugin.wasm"
+"#;
+    let out = run_config("ctrl-nan-inertia", config);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "run should have failed: {stderr}");
+    assert!(
+        stderr.contains("attitude") && stderr.contains("inertia_diag"),
+        "got: {stderr}"
+    );
+}
+
 /// The README quick-start config, as it ships, runs in controlled mode: the
 /// wheels are commanded, so nothing is reported as un-honored.
 #[test]

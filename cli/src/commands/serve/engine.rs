@@ -399,6 +399,12 @@ impl ServeEngine {
         // Mode selection is shared with `orts run` so the same config cannot
         // get attitude dynamics under one entry point and not the other.
         let mode = select_sim_mode(&params.satellites)?;
+        // The same check the runtime `add_satellite` path applies, so a config
+        // that starts the server is held to it too: `serve --config` reaches
+        // here without passing through `validate_sim_config`.
+        for spec in &params.satellites {
+            validate_satellite_spec(spec)?;
+        }
         // No logger is installed in the CLI, so warnings go to stderr
         // directly rather than through `log`.
         for w in unhonored_config_warnings(&params.satellites, mode) {
@@ -501,7 +507,7 @@ impl ServeEngine {
                 let plant = SpacecraftState {
                     orbit,
                     attitude: orts::attitude::AttitudeState {
-                        quaternion: nalgebra::Vector4::from_row_slice(&att.initial_quaternion),
+                        quaternion: att.normalized_initial_quaternion(),
                         angular_velocity: nalgebra::Vector3::from_row_slice(
                             &att.initial_angular_velocity,
                         ),
@@ -1476,6 +1482,25 @@ attitude = { inertia_diag = [10, 20, 30], mass = 50 }
             };
             assert_eq!(group_mode, mode, "config:{toml}");
         }
+    }
+
+    /// `serve --config` reaches `build` without passing through
+    /// `validate_sim_config`, so the attitude check has to live here too — the
+    /// runtime `add_satellite` path already applied it, which left a config
+    /// that starts the server held to a weaker standard than one added later.
+    #[test]
+    fn unintegrable_attitude_is_rejected_at_construction() {
+        let err = engine_from_toml(
+            r#"
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [nan, 20, 30], mass = 50 }
+"#,
+        )
+        .err()
+        .expect("a non-finite inertia component should be rejected");
+        assert!(err.contains("non-finite"), "got: {err}");
     }
 
     #[test]

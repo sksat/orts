@@ -173,7 +173,7 @@ pub fn build_controlled_satellite(
     let plant = SpacecraftState {
         orbit,
         attitude: orts::attitude::AttitudeState {
-            quaternion: nalgebra::Vector4::from_row_slice(&att.initial_quaternion),
+            quaternion: att.normalized_initial_quaternion(),
             angular_velocity: nalgebra::Vector3::from_row_slice(&att.initial_angular_velocity),
         },
         mass: att.mass,

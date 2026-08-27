@@ -94,6 +94,14 @@ pub fn run_simulation_cmd(
         eprintln!("Warning: {w}");
     }
 
+    // Before the dispatch, so every mode gets the same check: an attitude
+    // config that cannot be integrated is rejected here rather than failing
+    // partway through the run (or in the controlled path, inside
+    // `build_controlled_satellite`).
+    for sat in &params.satellites {
+        crate::sim::mode::validate_satellite_spec(sat).map_err(CmdError::usage)?;
+    }
+
     let rec = match mode {
         SimMode::Controlled => run_controlled_simulation(&params, sim)?,
         SimMode::Spacecraft => run_spacecraft_simulation(&params)?,
@@ -555,9 +563,9 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
 
     let third_bodies = default_third_bodies(&params.body);
     for sat in &params.satellites {
-        // Reject a singular inertia tensor / non-positive mass before
-        // `build_spacecraft_dynamics` panics on the inverse.
-        crate::sim::mode::validate_satellite_spec(sat).map_err(CmdError::usage)?;
+        // `run_simulation_cmd` validated every satellite before dispatching
+        // here, so `build_spacecraft_dynamics` cannot be reached with an
+        // inertia tensor it would fail to invert.
         let att = sat
             .attitude_config
             .as_ref()
@@ -580,7 +588,7 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
         let plant = SpacecraftState {
             orbit,
             attitude: orts::attitude::AttitudeState {
-                quaternion: nalgebra::Vector4::from_row_slice(&att.initial_quaternion),
+                quaternion: att.normalized_initial_quaternion(),
                 angular_velocity: nalgebra::Vector3::from_row_slice(&att.initial_angular_velocity),
             },
             mass: att.mass,

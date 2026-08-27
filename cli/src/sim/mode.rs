@@ -177,27 +177,18 @@ pub fn ensure_streams_unused(satellites: &[SatelliteSpec]) -> Result<(), String>
     )
 }
 
-/// 単一衛星の姿勢設定を検証し、`build_spacecraft_dynamics` が特異な慣性テンソルや
-/// 非正の質量で panic しないようにする。起動時の config 検証と、
-/// serve の実行時 `add_satellite` の両経路から使う。
+/// 単一衛星の姿勢設定を検証し、`build_spacecraft_dynamics` が伝播できない姿勢で
+/// panic しないようにする。
+///
+/// 検査そのものは [`crate::config::AttitudeConfig::validate`] にあり、config を
+/// 読む経路（`orts config validate` を含む）と、spec しか持たない serve の実行時
+/// `add_satellite` 経路が同じ規則を通るようにしている。
 pub fn validate_satellite_spec(spec: &SatelliteSpec) -> Result<(), String> {
     let Some(att) = &spec.attitude_config else {
         return Ok(());
     };
-    let inertia = att.inertia_matrix();
-    if inertia.determinant().abs() < 1e-30 {
-        return Err(format!(
-            "Satellite '{}' has singular inertia tensor (not invertible)",
-            spec.id
-        ));
-    }
-    if att.mass <= 0.0 {
-        return Err(format!(
-            "Satellite '{}' has non-positive mass: {}",
-            spec.id, att.mass
-        ));
-    }
-    Ok(())
+    att.validate()
+        .map_err(|e| format!("Satellite '{}' has {e}", spec.id))
 }
 
 #[cfg(test)]
@@ -228,6 +219,169 @@ orbit = { type = "circular", altitude = 400 }
     #[test]
     fn empty_fleet_is_orbit_only() {
         assert_eq!(select_sim_mode(&[]), Ok(SimMode::OrbitOnly));
+    }
+
+    /// One attitude config with `attitude` filled in from `fields`.
+    fn attitude_spec(fields: &str) -> SatelliteSpec {
+        let toml = format!(
+            r#"
+body = "earth"
+[[satellites]]
+id = "a"
+orbit = {{ type = "circular", altitude = 400 }}
+[satellites.attitude]
+{fields}
+"#
+        );
+        specs(&toml).pop().expect("one satellite")
+    }
+
+    /// Every comparison against `NaN` is false, so a config carrying one slips
+    /// past a validator written only as range checks and fails partway through
+    /// the run instead.
+    #[test]
+    fn non_finite_attitude_fields_are_rejected() {
+        for (field, fields) in [
+            ("inertia_diag", "inertia_diag = [nan, 10, 10]\nmass = 500"),
+            (
+                "inertia_off_diag",
+                "inertia_diag = [10, 10, 10]\nmass = 500\ninertia_off_diag = [inf, 0, 0]",
+            ),
+            ("mass", "inertia_diag = [10, 10, 10]\nmass = nan"),
+            (
+                "initial_quaternion",
+                "inertia_diag = [10, 10, 10]\nmass = 500\ninitial_quaternion = [1, 0, -inf, 0]",
+            ),
+            (
+                "initial_angular_velocity",
+                "inertia_diag = [10, 10, 10]\nmass = 500\ninitial_angular_velocity = [0, nan, 0]",
+            ),
+        ] {
+            let err = validate_satellite_spec(&attitude_spec(fields))
+                .expect_err(&format!("{field} should be rejected"));
+            assert!(
+                err.contains(field) && err.contains("non-finite"),
+                "{field}: got {err}"
+            );
+        }
+    }
+
+    /// Downstream normalization divides by the sum of squares, so a quaternion
+    /// is unusable whenever that sum is not positive and finite — which
+    /// includes components that are themselves finite and non-zero.
+    #[test]
+    fn quaternions_that_cannot_be_normalized_are_rejected() {
+        for quat in [
+            "[0, 0, 0, 0]",
+            // Squares to zero.
+            "[1e-200, 0, 0, 0]",
+            "[5e-324, 0, 0, 0]",
+            // Squares to infinity.
+            "[1e200, 0, 0, 0]",
+        ] {
+            let fields =
+                format!("inertia_diag = [10, 10, 10]\nmass = 500\ninitial_quaternion = {quat}");
+            let err = validate_satellite_spec(&attitude_spec(&fields))
+                .expect_err(&format!("{quat} should be rejected"));
+            assert!(err.contains("initial_quaternion"), "{quat}: got {err}");
+        }
+    }
+
+    /// An unnormalized quaternion is still the attitude it points at: it is
+    /// normalized on use and renormalized after every step.
+    #[test]
+    fn an_unnormalized_quaternion_is_accepted() {
+        for quat in [
+            "[1e-16, 0, 0, 0]",
+            "[0.5, 0.5, 0.5, 0.5]",
+            "[3, 0, 0, 4]",
+            "[1e150, 0, 0, 0]",
+        ] {
+            let fields =
+                format!("inertia_diag = [10, 10, 10]\nmass = 500\ninitial_quaternion = {quat}");
+            validate_satellite_spec(&attitude_spec(&fields))
+                .unwrap_or_else(|e| panic!("{quat} should be accepted: {e}"));
+        }
+    }
+
+    /// The test is whether the inverse the dynamics take exists and is finite,
+    /// which a threshold on the determinant cannot decide: the determinant
+    /// carries the cube of the units, so a small one does not mean the tensor is
+    /// ill-conditioned and a large one does not mean the inverse is usable.
+    #[test]
+    fn inertia_is_judged_by_the_inverse_the_dynamics_take() {
+        for (label, fields) in [
+            ("all zero", "inertia_diag = [0, 0, 0]\nmass = 500"),
+            (
+                "products overflow to inf - inf",
+                "inertia_diag = [1e200, 1e200, 1e200]\nmass = 500\n\
+                 inertia_off_diag = [1e200, 1e200, 1e200]",
+            ),
+            (
+                "inverse has an infinite component",
+                "inertia_diag = [5e-324, 1e154, 1e154]\nmass = 500",
+            ),
+            // Condition number 1, but cofactors and determinant both overflow,
+            // so the inverse comes back as a finite matrix of zeros.
+            (
+                "inverse is silently all zeros",
+                "inertia_diag = [1e154, 1e154, 1e154]\nmass = 500",
+            ),
+        ] {
+            let err = validate_satellite_spec(&attitude_spec(fields))
+                .expect_err(&format!("{label} should be rejected"));
+            assert!(err.contains("inertia tensor"), "{label}: got {err}");
+        }
+
+        // Perfectly conditioned, determinant 1e-33: a magnitude threshold on the
+        // determinant would have rejected this.
+        validate_satellite_spec(&attitude_spec(
+            "inertia_diag = [1e-11, 1e-11, 1e-11]\nmass = 500",
+        ))
+        .expect("a well-conditioned tensor is accepted whatever its determinant");
+    }
+
+    /// An invertible tensor is not yet an integrable state: the torque-free
+    /// Euler term can overflow from the inertia and the rate alone.
+    #[test]
+    fn an_initial_state_that_starts_at_infinite_acceleration_is_rejected() {
+        let err = validate_satellite_spec(&attitude_spec(
+            "inertia_diag = [1e-308, 1, 2]\nmass = 500\ninitial_angular_velocity = [1, 2, 2]",
+        ))
+        .expect_err("an infinite initial angular acceleration should be rejected");
+        assert!(err.contains("angular acceleration"), "got {err}");
+
+        // The same inertia at rest has nothing to diverge.
+        validate_satellite_spec(&attitude_spec("inertia_diag = [1e-308, 1, 2]\nmass = 500"))
+            .expect("a resting spacecraft integrates whatever its inertia");
+    }
+
+    /// The simulation starts from the unit quaternion the config denotes, not
+    /// from its scale.
+    ///
+    /// Integrating the raw one lets a large quaternion grow until its sum of
+    /// squares overflows; the post-step projection then divides by infinity and
+    /// yields all zeros, which passes `is_finite` — so nothing stops the run —
+    /// and normalizes to `NaN` the moment a sensor reads it.
+    #[test]
+    fn the_initial_quaternion_is_normalized_before_it_is_integrated() {
+        let spec = attitude_spec(
+            "inertia_diag = [1, 1, 1]\nmass = 500\n\
+             initial_quaternion = [1e150, 0, 0, 0]\ninitial_angular_velocity = [1e4, 0, 0]",
+        );
+        let att = spec.attitude_config.as_ref().expect("attitude config");
+        let q = att.normalized_initial_quaternion();
+        assert!(
+            (q.norm() - 1.0).abs() < 1e-12,
+            "expected a unit quaternion, got {q:?}"
+        );
+        assert!((q[0] - 1.0).abs() < 1e-12, "expected identity, got {q:?}");
+    }
+
+    #[test]
+    fn a_finite_attitude_config_is_accepted() {
+        validate_satellite_spec(&attitude_spec("inertia_diag = [10, 10, 10]\nmass = 500"))
+            .expect("a well-formed attitude config is accepted");
     }
 
     #[test]

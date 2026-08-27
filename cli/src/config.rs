@@ -270,6 +270,134 @@ impl AttitudeConfig {
             ixz, iyz, izz,
         )
     }
+
+    /// The configured initial quaternion, normalized.
+    ///
+    /// The config accepts any non-zero quaternion, but the simulation should
+    /// start from the unit quaternion it denotes rather than from its scale.
+    /// Integrating the raw one lets a large quaternion grow until its sum of
+    /// squares overflows, and the post-step projection then divides every
+    /// component by infinity and hands back all zeros — a state that passes
+    /// `is_finite`, so nothing stops the run, and that normalizes to `NaN` when
+    /// a sensor reads it.
+    ///
+    /// Assumes [`validate`](Self::validate) has passed: the norm is positive
+    /// and finite there. Falls back to identity rather than producing `NaN` if
+    /// it has not.
+    pub fn normalized_initial_quaternion(&self) -> nalgebra::Vector4<f64> {
+        let q = nalgebra::Vector4::from_row_slice(&self.initial_quaternion);
+        let norm = q.norm();
+        if norm > 0.0 && norm.is_finite() {
+            q / norm
+        } else {
+            nalgebra::Vector4::new(1.0, 0.0, 0.0, 0.0)
+        }
+    }
+
+    /// Reject the attitude configs that this config alone shows the dynamics
+    /// cannot be built from or started.
+    ///
+    /// Lives on the config type so every entry point that loads a config gets
+    /// it — `orts config validate` included, which would otherwise report a
+    /// config as valid that `run` and `serve` then refuse.
+    ///
+    /// The scope is what the config alone determines: that the inertia tensor
+    /// inverts to something usable, and that the *torque-free* derivative at
+    /// `t = 0` is finite. It is not the derivative the simulation actually
+    /// starts from — that includes the gravity-gradient torque, which needs the
+    /// orbit. An inertia scaled so far from the orbit that the gravity gradient
+    /// alone overflows therefore passes here and stops at the first step with
+    /// [`utsuroi::IntegrationError::NonFiniteState`].
+    pub fn validate(&self) -> Result<(), String> {
+        // Non-finite first: every comparison below is false for `NaN`, so a
+        // `NaN` mass would pass `mass <= 0.0` and a `NaN` determinant would
+        // pass the singularity check. The state then integrates to `NaN` and
+        // the run fails partway through instead of at the config.
+        for (name, values) in [
+            ("inertia_diag", &self.inertia_diag[..]),
+            ("inertia_off_diag", &self.inertia_off_diag[..]),
+            ("mass", std::slice::from_ref(&self.mass)),
+            ("initial_quaternion", &self.initial_quaternion[..]),
+            (
+                "initial_angular_velocity",
+                &self.initial_angular_velocity[..],
+            ),
+        ] {
+            if let Some(bad) = values.iter().find(|v| !v.is_finite()) {
+                return Err(format!("non-finite `{name}` component: {bad}"));
+            }
+        }
+        // Ask the question the way the dynamics do: `SpacecraftDynamics::new`
+        // takes `try_inverse().expect(…)`, so the test is whether that inverse
+        // exists and is usable. A magnitude threshold on the determinant cannot
+        // answer it — the determinant carries the cube of the units, so
+        // `[1e-11; 3]` is perfectly conditioned yet its determinant is 1e-33,
+        // while `[5e-324, 1e154, 1e154]` has a determinant near 5e-16 and an
+        // inverse whose first component is infinite.
+        //
+        // Checking the product rather than the inverse's components catches the
+        // quieter failure too: nalgebra's 3x3 inverse divides cofactors by the
+        // determinant, so `[1e154; 3]` — condition number 1 — overflows both to
+        // give `Some(zero matrix)`. Every component is finite, and a spacecraft
+        // built on it would answer every torque with zero angular acceleration.
+        // `I · I⁻¹` is dimensionless, so one tolerance holds at every scale.
+        let inertia = self.inertia_matrix();
+        let inverse = inertia.try_inverse().filter(|inv| {
+            let residual = inertia * inv - nalgebra::Matrix3::identity();
+            residual.iter().all(|v| v.abs() < 1e-6)
+        });
+        let Some(inverse) = inverse else {
+            return Err(format!(
+                "inertia tensor cannot be inverted: {:?} with off-diagonal {:?}",
+                self.inertia_diag, self.inertia_off_diag
+            ));
+        };
+        // The quaternion need not be normalized — `AttitudeState::orientation`
+        // normalizes on use and `OdeState::project` renormalizes after every
+        // step — but it has to be something those can normalize. Both divide by
+        // the sum of squares, so the test is that sum, not the components: an
+        // all-zero quaternion names no attitude, `[1e-200, 0, 0, 0]` squares to
+        // zero, and `[1e200, 0, 0, 0]` squares to infinity. Each leaves the
+        // orientation undefined even though the components themselves are
+        // finite and non-zero.
+        let quat_norm_sq: f64 = self.initial_quaternion.iter().map(|q| q * q).sum();
+        if !(quat_norm_sq > 0.0 && quat_norm_sq.is_finite()) {
+            return Err(format!(
+                "`initial_quaternion` cannot be normalized \
+                 (its components square to {quat_norm_sq}); it names no attitude"
+            ));
+        }
+        // A usable inverse is not yet an integrable state: the torque-free Euler
+        // term `I⁻¹ (−ω × Iω)` can overflow on its own. `[1e-308, 1, 2]` with
+        // `ω = [1, 2, 2]` inverts cleanly and still starts at an infinite
+        // angular acceleration.
+        let omega = nalgebra::Vector3::from_row_slice(&self.initial_angular_velocity);
+        let alpha = inverse * -omega.cross(&(inertia * omega));
+        if !alpha.iter().all(|v| v.is_finite()) {
+            return Err(format!(
+                "the initial angular acceleration is not finite ({:?}): the inertia tensor \
+                 {:?} and `initial_angular_velocity` {:?} are too far apart in scale to \
+                 integrate",
+                alpha.as_slice(),
+                self.inertia_diag,
+                self.initial_angular_velocity
+            ));
+        }
+        // The other half of the derivative, `q̇ = ½ q ⊗ (0, ω)`, needs no check
+        // of its own. Each component is a three-term inner product `q · ½ω`, so
+        // for the unit quaternion the state is built from
+        // (`normalized_initial_quaternion`) Cauchy-Schwarz bounds it by
+        // `½ ‖q‖ √3 max|ω| = ½ √3 f64::MAX ≈ 1.56e308`, inside the range for any
+        // finite `ω` — and `ω` is finite by the check above.
+        //
+        // The bound holds of the partial sums too only because `q_dot` halves
+        // `ω` before forming the products. Halving the sum afterwards instead
+        // lets it overflow at twice the answer's magnitude.
+        if self.mass <= 0.0 {
+            return Err(format!("non-positive mass: {}", self.mass));
+        }
+        Ok(())
+    }
 }
 
 /// コントローラ設定。
@@ -609,6 +737,9 @@ impl SatelliteConfig {
     pub fn validate(&self) -> Result<(), String> {
         if let Some(thruster) = &self.thruster {
             thruster.validate().map_err(|e| format!("thruster: {e}"))?;
+        }
+        if let Some(attitude) = &self.attitude {
+            attitude.validate().map_err(|e| format!("attitude: {e}"))?;
         }
         // A non-finite orbit number propagates into the derived orbital
         // period. `run` then loops on `while !group.all_finished()` with a NaN
