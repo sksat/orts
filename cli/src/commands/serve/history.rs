@@ -1056,12 +1056,13 @@ mod tests {
         // size ends with 18 segments on disk and exactly `capacity` states in
         // memory, i.e. 10% of the input.
         //
-        // A fixed capacity fails this test on unchanged code. At capacity 2000
-        // the in-memory share runs 60% / 20% / 10% across these three sizes, so
-        // the work migrates from the cheap in-memory tail to the far more
-        // expensive per-segment rerun decode and the cost per state climbs for
-        // reasons that have nothing to do with complexity. Holding the mix
-        // still leaves rows-per-segment as the only thing varying.
+        // A fixed capacity fails this test on unchanged code. Measured at
+        // capacity 2000, the in-memory share runs 60% / 40% / 20% across these
+        // three sizes (1 / 3 / 8 segments), so the work migrates from the cheap
+        // in-memory tail to the far more expensive per-segment rerun decode and
+        // the cost per state climbs for reasons that have nothing to do with
+        // complexity. Holding the mix still leaves rows-per-segment as the only
+        // thing varying.
         let sizes = [2_500usize, 5_000, 10_000];
 
         let samples: Vec<(usize, u128)> = sizes
