@@ -71,10 +71,10 @@ SecondBurn でも姿勢整合が取れる（この姿勢トラッキングがな
 
 ```sh
 cd plugin-sdk/examples
-cargo build -p orts-example-plugin-transfer-burn-with-tcm --target wasm32-wasip2 --release
+cargo +1.91.0 component build -p orts-example-plugin-transfer-burn-with-tcm --release
 ```
 
-出力: `target/wasm32-wasip2/release/orts_example_plugin_transfer_burn_with_tcm.wasm`
+出力: `target/wasm32-wasip1/release/orts_example_plugin_transfer_burn_with_tcm.wasm`
 
 ## シミュレーション実行
 

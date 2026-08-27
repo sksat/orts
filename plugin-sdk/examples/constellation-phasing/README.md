@@ -95,8 +95,8 @@ stateDiagram-v2
 
 ```bash
 cd plugin-sdk/examples/constellation-phasing
-cargo build --target wasm32-wasip2 --release
-# -> ../target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm
+cargo +1.91.0 component build --release
+# -> ../target/wasm32-wasip1/release/orts_example_plugin_constellation_phasing.wasm
 ```
 
 以下のコマンド例は `orts` CLI が PATH に入っている前提。

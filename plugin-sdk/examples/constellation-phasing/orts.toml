@@ -45,7 +45,7 @@ initial_angular_velocity = [0.0, 0.0, 0.0]
 
 [satellites.controller]
 type = "wasm"
-path = "../target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm"
+path = "../target/wasm32-wasip1/release/orts_example_plugin_constellation_phasing.wasm"
 
 [satellites.controller.config]
 target_altitude_km = 550.0
@@ -90,7 +90,7 @@ initial_angular_velocity = [0.0, 0.0, 0.0]
 
 [satellites.controller]
 type = "wasm"
-path = "../target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm"
+path = "../target/wasm32-wasip1/release/orts_example_plugin_constellation_phasing.wasm"
 
 [satellites.controller.config]
 target_altitude_km = 550.0
@@ -135,7 +135,7 @@ initial_angular_velocity = [0.0, 0.0, 0.0]
 
 [satellites.controller]
 type = "wasm"
-path = "../target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm"
+path = "../target/wasm32-wasip1/release/orts_example_plugin_constellation_phasing.wasm"
 
 [satellites.controller.config]
 target_altitude_km = 550.0
@@ -180,7 +180,7 @@ initial_angular_velocity = [0.0, 0.0, 0.0]
 
 [satellites.controller]
 type = "wasm"
-path = "../target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm"
+path = "../target/wasm32-wasip1/release/orts_example_plugin_constellation_phasing.wasm"
 
 [satellites.controller.config]
 target_altitude_km = 550.0
