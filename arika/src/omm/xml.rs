@@ -4,9 +4,11 @@
 //! It is *not* a general XML parser: it extracts the text of named leaf
 //! elements (`<KEYWORD ...>value</KEYWORD>`) by exact name, skipping any
 //! attributes (e.g. `units="deg"`), and assumes well-formed OMM with no
-//! namespace prefixes or markup inside leaf values. XML entity references are
-//! **not decoded**: an escaped `OBJECT_NAME` like `A &amp; B` is returned
-//! verbatim (`A &amp; B`), not unescaped.
+//! namespace prefixes or markup inside leaf values. Comments and processing
+//! instructions are skipped, so text inside them is never read as a value, and
+//! a document carrying a DOCTYPE or a CDATA section is rejected rather than read
+//! past. XML entity references are **not decoded**: an escaped `OBJECT_NAME`
+//! like `A &amp; B` is returned verbatim (`A &amp; B`), not unescaped.
 
 use alloc::string::{String, ToString};
 use core::f64::consts::PI;
@@ -18,6 +20,7 @@ use core::str::FromStr;
 use crate::math::F64Ext;
 
 use crate::elements::{ElementsError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields};
+use crate::omm::{UnsupportedMetadata, check_all_metadata};
 
 /// Error type for OMM XML parsing.
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +32,14 @@ pub enum XmlParseError {
     /// `EPOCH` was not a parseable ISO-8601 UTC timestamp (calendar or
     /// ordinal / day-of-year form).
     InvalidEpoch(String),
+    /// A metadata element declares something this crate cannot read (non-Earth
+    /// center, non-TEME frame, non-UTC time system, non-SGP4 theory).
+    Unsupported(UnsupportedMetadata),
+    /// The document uses a markup declaration this reader does not interpret:
+    /// a DOCTYPE (whose internal subset can define entities) or a CDATA
+    /// section. Both can carry text that looks like an element, so a reader
+    /// that scans for tag names must not read past them.
+    UnsupportedMarkup(&'static str),
     /// The parsed values are not a valid element set (e.g. non-positive mean
     /// motion or out-of-range eccentricity).
     InvalidElements(ElementsError),
@@ -42,6 +53,10 @@ impl fmt::Display for XmlParseError {
                 write!(f, "invalid value for {key}: '{value}'")
             }
             XmlParseError::InvalidEpoch(s) => write!(f, "invalid OMM EPOCH: '{s}'"),
+            XmlParseError::Unsupported(e) => write!(f, "{e}"),
+            XmlParseError::UnsupportedMarkup(what) => {
+                write!(f, "unsupported XML markup in OMM document: {what}")
+            }
             XmlParseError::InvalidElements(e) => write!(f, "invalid OMM element set: {e}"),
         }
     }
@@ -54,6 +69,11 @@ impl std::error::Error for XmlParseError {}
 pub fn parse(xml: &str) -> Result<ParsedElementSet, XmlParseError> {
     // BOM-tolerant even when called directly (not via the unified entrypoint).
     let xml = crate::elements::strip_bom(xml);
+    reject_unsupported_markup(xml)?;
+    // The metadata elements declare how the mean elements must be interpreted;
+    // reject anything this crate does not actually honor (see
+    // `crate::omm::METADATA`).
+    check_all_metadata(|key| element_text(xml, key)).map_err(XmlParseError::Unsupported)?;
     let epoch_raw = required(xml, "EPOCH")?;
     let epoch = crate::elements::parse_epoch(epoch_raw)
         .ok_or_else(|| XmlParseError::InvalidEpoch(epoch_raw.to_string()))?;
@@ -90,6 +110,39 @@ pub fn parse(xml: &str) -> Result<ParsedElementSet, XmlParseError> {
     })
 }
 
+/// Refuse markup declarations whose *contents* this reader cannot skip safely.
+///
+/// `element_text` scans for tag names, so any construct that may quote markup as
+/// text — a DOCTYPE internal subset defining an entity whose value contains an
+/// element, or a CDATA section — could otherwise supply a value the document
+/// never declares, defeating the metadata check. Comments carry the same risk
+/// and are stepped over instead; everything else opening with `<!` is refused
+/// rather than guessed at. No real OMM uses either construct.
+fn reject_unsupported_markup(xml: &str) -> Result<(), XmlParseError> {
+    let mut from = 0;
+    while let Some(at) = xml[from..].find("<!") {
+        let decl_at = from + at + "<!".len();
+        let decl = &xml[decl_at..];
+        // Step over a comment's contents exactly as `element_text` does, so a
+        // comment that merely quotes a declaration is not mistaken for one.
+        if let Some(after) = decl.strip_prefix("--") {
+            from = after
+                .find("-->")
+                .map_or(xml.len(), |end| decl_at + "--".len() + end + "-->".len());
+            continue;
+        }
+        let what = if decl.starts_with("[CDATA[") {
+            "CDATA section"
+        } else if decl.starts_with("DOCTYPE") {
+            "DOCTYPE declaration"
+        } else {
+            "markup declaration"
+        };
+        return Err(XmlParseError::UnsupportedMarkup(what));
+    }
+    Ok(())
+}
+
 fn required<'a>(xml: &'a str, name: &'static str) -> Result<&'a str, XmlParseError> {
     element_text(xml, name).ok_or(XmlParseError::MissingElement(name))
 }
@@ -98,12 +151,32 @@ fn required<'a>(xml: &'a str, name: &'static str) -> Result<&'a str, XmlParseErr
 ///
 /// Matches `name` exactly: the character after the name must be `>` or
 /// whitespace, so a query for `MEAN_MOTION` never matches `MEAN_MOTION_DOT`.
-/// Attributes are skipped; the value is read up to the next `<`.
+/// Attributes are skipped; the value is read up to the next `<`. Comments
+/// (`<!-- … -->`) and processing instructions (`<? … ?>`) are stepped over
+/// rather than searched, so markup quoted inside them is not a value.
 fn element_text<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
     let mut from = 0;
     while let Some(lt) = xml[from..].find('<') {
         let tag = from + lt + 1; // byte index just after '<'
-        if let Some(rest) = xml[tag..].strip_prefix(name) {
+        let markup = &xml[tag..];
+        // A comment or a processing instruction declares nothing, but its text
+        // can contain what looks like an element. Skipping them wholesale is
+        // what keeps a commented-out `<TIME_SYSTEM>UTC</TIME_SYSTEM>` from being
+        // read as the document's time system while the real one below it says
+        // TAI — the metadata check would then pass on a document it must reject.
+        if let Some(after) = markup.strip_prefix("!--") {
+            from = after
+                .find("-->")
+                .map_or(xml.len(), |end| tag + "!--".len() + end + "-->".len());
+            continue;
+        }
+        if let Some(after) = markup.strip_prefix('?') {
+            from = after
+                .find("?>")
+                .map_or(xml.len(), |end| tag + '?'.len_utf8() + end + "?>".len());
+            continue;
+        }
+        if let Some(rest) = markup.strip_prefix(name) {
             match rest.chars().next() {
                 Some(c) if c == '>' || c.is_whitespace() => {
                     let gt = rest.find('>')?;
@@ -202,6 +275,116 @@ mod tests {
             parse(xml),
             Err(XmlParseError::MissingElement("MEAN_MOTION"))
         );
+    }
+
+    #[test]
+    fn commented_out_markup_is_not_a_value() {
+        // The reader scans for named tags, so text inside a comment used to be
+        // indistinguishable from a real element: a document that quotes the
+        // conforming value in a comment and then declares TAI must still be
+        // rejected, and a commented-out element must not stand in for a missing
+        // one. Processing instructions get the same treatment.
+        let hidden = ISS_OMM_XML.replace(
+            "<TIME_SYSTEM>UTC</TIME_SYSTEM>",
+            "<!-- <TIME_SYSTEM>UTC</TIME_SYSTEM> --><TIME_SYSTEM>TAI</TIME_SYSTEM>",
+        );
+        match parse(&hidden) {
+            Err(XmlParseError::Unsupported(e)) => {
+                assert_eq!((e.key, e.value.as_str()), ("TIME_SYSTEM", "TAI"))
+            }
+            other => panic!("a comment must not hide TIME_SYSTEM = TAI, got {other:?}"),
+        }
+        // A commented-out required element is absent, not present.
+        let commented = ISS_OMM_XML.replace(
+            "<MEAN_MOTION>15.49561654</MEAN_MOTION>",
+            "<!-- <MEAN_MOTION>15.49561654</MEAN_MOTION> -->",
+        );
+        assert_eq!(
+            parse(&commented),
+            Err(XmlParseError::MissingElement("MEAN_MOTION"))
+        );
+        // A value quoted inside a processing instruction is not a value either.
+        let pi = ISS_OMM_XML.replace(
+            "<INCLINATION units=\"deg\">51.6400</INCLINATION>",
+            "<?dump <INCLINATION>0.0</INCLINATION> ?><INCLINATION units=\"deg\">51.6400</INCLINATION>",
+        );
+        let omm = parse(&pi).unwrap().elements.to_fields();
+        assert!((omm.inclination.to_degrees() - 51.64).abs() < 1e-9);
+        // An unterminated comment swallows the rest of the document rather than
+        // reading through it.
+        let unterminated = ISS_OMM_XML.replace("<EPOCH>", "<!-- <EPOCH>");
+        assert!(parse(&unterminated).is_err());
+    }
+
+    #[test]
+    fn declarations_that_can_quote_markup_are_refused() {
+        // A DOCTYPE internal subset can define an entity whose *value* contains
+        // an element, and a CDATA section can quote one verbatim. Either would
+        // be found by the tag scan before the document's real declaration, so a
+        // document that says TIME_SYSTEM = TAI while hiding a UTC lookalike
+        // would pass the metadata check. Neither construct appears in real OMM,
+        // so both are refused instead of interpreted.
+        let doctype = ISS_OMM_XML.replace(
+            "<omm id=",
+            "<!DOCTYPE omm [<!ENTITY decoy \"<TIME_SYSTEM>UTC</TIME_SYSTEM>\">]><omm id=",
+        );
+        assert_eq!(
+            parse(&doctype),
+            Err(XmlParseError::UnsupportedMarkup("DOCTYPE declaration"))
+        );
+        let cdata = ISS_OMM_XML.replace(
+            "<OBJECT_NAME>ISS (ZARYA)</OBJECT_NAME>",
+            "<OBJECT_NAME><![CDATA[<TIME_SYSTEM>UTC</TIME_SYSTEM>]]></OBJECT_NAME>",
+        );
+        assert_eq!(
+            parse(&cdata),
+            Err(XmlParseError::UnsupportedMarkup("CDATA section"))
+        );
+        // A comment is the one `<!` form that is safe to step over — including
+        // one whose text quotes a declaration, which is not one.
+        assert!(parse(&ISS_OMM_XML.replace("<header>", "<!-- note --><header>")).is_ok());
+        assert!(
+            parse(&ISS_OMM_XML.replace(
+                "<header>",
+                "<!-- an example: <!DOCTYPE omm> and <![CDATA[x]]> --><header>",
+            ))
+            .is_ok(),
+            "a declaration quoted inside a comment is text, not a declaration"
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_metadata() {
+        // Same table as the KVN parser: one metadata element mutated at a time.
+        for (from, to, key) in [
+            (
+                "<CENTER_NAME>EARTH</CENTER_NAME>",
+                "<CENTER_NAME>MARS</CENTER_NAME>",
+                "CENTER_NAME",
+            ),
+            (
+                "<REF_FRAME>TEME</REF_FRAME>",
+                "<REF_FRAME>GCRF</REF_FRAME>",
+                "REF_FRAME",
+            ),
+            (
+                "<TIME_SYSTEM>UTC</TIME_SYSTEM>",
+                "<TIME_SYSTEM>TAI</TIME_SYSTEM>",
+                "TIME_SYSTEM",
+            ),
+            (
+                "<MEAN_ELEMENT_THEORY>SGP4</MEAN_ELEMENT_THEORY>",
+                "<MEAN_ELEMENT_THEORY>DSST</MEAN_ELEMENT_THEORY>",
+                "MEAN_ELEMENT_THEORY",
+            ),
+        ] {
+            let xml = ISS_OMM_XML.replace(from, to);
+            assert_ne!(xml, ISS_OMM_XML, "fixture no longer contains '{from}'");
+            match parse(&xml) {
+                Err(XmlParseError::Unsupported(e)) => assert_eq!(e.key, key),
+                other => panic!("'{to}' must be rejected, got {other:?}"),
+            }
+        }
     }
 
     #[test]

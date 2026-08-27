@@ -349,6 +349,192 @@ fn iso8601_invalid_format() {
     assert!(Epoch::from_iso8601("2024-01-32T00:00:00Z").is_none()); // day 32
 }
 
+#[test]
+fn iso8601_accepts_exactly_the_real_calendar_days() {
+    // Sweep every (month, day) of a leap and a common year. An accepted input
+    // must denote the day it names: `to_datetime` reports back the same
+    // year/month/day/hour/minute. A date that does not exist (Feb 30, Apr 31,
+    // Feb 29 of a common year) must be rejected outright rather than rolled
+    // over into the following month.
+    for year in [2023, 2024, 1900, 2000] {
+        for month in 1..=12u32 {
+            for day in 1..=32u32 {
+                let s = format!("{year:04}-{month:02}-{day:02}T13:45:30Z");
+                let parsed = Epoch::<Utc>::from_iso8601(&s);
+                let exists = day <= super::datetime::days_in_month(year, month);
+                assert_eq!(
+                    parsed.is_some(),
+                    exists,
+                    "{s}: accepted={} but the day {}exist",
+                    parsed.is_some(),
+                    if exists { "does " } else { "does not " }
+                );
+                if let Some(e) = parsed {
+                    let dt = e.to_datetime();
+                    assert_eq!(
+                        (dt.year, dt.month, dt.day, dt.hour, dt.min),
+                        (year, month, day, 13, 45),
+                        "{s} round-tripped to a different calendar date"
+                    );
+                    assert!(e.jd().is_finite(), "{s} produced a non-finite JD");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn iso8601_rejects_out_of_range_and_non_finite_seconds() {
+    // A negative seconds field silently rolled back into the previous day, and
+    // NaN / -inf produced an epoch whose JD is NaN — poisoning everything
+    // downstream instead of failing at the input boundary.
+    for s in [
+        "2024-01-01T00:00:-1Z",
+        "2024-01-01T00:00:-0.5Z",
+        "2024-01-01T00:00:NaNZ",
+        "2024-01-01T00:00:-infZ",
+        "2024-01-01T00:00:infZ",
+        "2024-01-01T00:00:60Z",
+        "2024-001T00:00:NaNZ",
+        "2024-001T00:00:-1Z",
+    ] {
+        assert!(
+            Epoch::<Utc>::from_iso8601(s).is_none(),
+            "{s} must be rejected"
+        );
+    }
+    // The boundary values on either side of the rejected range still parse.
+    assert!(Epoch::<Utc>::from_iso8601("2024-01-01T00:00:00Z").is_some());
+    assert!(Epoch::<Utc>::from_iso8601("2024-01-01T00:00:59.999Z").is_some());
+}
+
+#[test]
+fn iso8601_rejects_dates_before_the_gregorian_reform() {
+    // `from_gregorian` is proleptic Gregorian, while the JD → calendar
+    // direction switches to the Julian calendar before 1582-10-15. Accepting an
+    // earlier date would break the round-trip the parser now promises:
+    // "1500-03-01" used to parse and come back as 1500-02-20.
+    for s in [
+        "1500-03-01T00:00:00Z",
+        "1582-10-04T00:00:00Z",
+        "1582-10-14T23:59:59Z",
+        "0001-01-01T00:00:00Z",
+        "1500-100T00:00:00Z", // ordinal form, same domain
+        // The cut-off is on the calendar fields, not on the JD: this instant
+        // rounds up to the reform's JD in a single f64, so a JD comparison
+        // would accept it and then report it back as 1582-10-15.
+        "1582-10-14T23:59:59.99999Z",
+        "1582-287T23:59:59.99999Z",
+    ] {
+        assert!(
+            Epoch::<Utc>::from_iso8601(s).is_none(),
+            "{s} predates the Gregorian reform and must be rejected"
+        );
+    }
+    // The reform date itself is the first accepted instant, and it round-trips.
+    for s in ["1582-10-15T00:00:00Z", "1583-001T00:00:00Z"] {
+        let e = Epoch::<Utc>::from_iso8601(s).unwrap_or_else(|| panic!("{s} must parse"));
+        assert_eq!(
+            Epoch::<Utc>::from_iso8601(&e.to_datetime().to_string()).map(|b| b.jd()),
+            Some(e.jd()),
+            "{s} did not round-trip"
+        );
+    }
+}
+
+#[test]
+fn iso8601_requires_a_four_digit_year() {
+    // ISO 8601 / CCSDS write the year as `YYYY`. An unbounded year is not just
+    // exotic input: at 1e9 the JD spacing exceeds a second (so the calendar
+    // fields no longer survive the round-trip this parser promises), and
+    // i32::MAX overflows `year + 4716` inside `from_gregorian`.
+    for s in [
+        "1000000000-12-31T23:59:59Z",
+        "2147483647-03-01T00:00:00Z",
+        "24-01-01T00:00:00Z",
+        "+2024-01-01T00:00:00Z",
+        "-2024-01-01T00:00:00Z",
+        "202-01-01T00:00:00Z",
+        "20244-01-01T00:00:00Z",
+        "1000000000-001T00:00:00Z",
+    ] {
+        assert!(
+            Epoch::<Utc>::from_iso8601(s).is_none(),
+            "{s} must be rejected: the year field is not four digits"
+        );
+    }
+    // The widest accepted years still round-trip.
+    for s in ["1582-10-15T00:00:00Z", "9999-12-31T23:59:59Z"] {
+        let e = Epoch::<Utc>::from_iso8601(s).unwrap_or_else(|| panic!("{s} must parse"));
+        let dt = e.to_datetime();
+        assert_eq!(
+            Epoch::<Utc>::from_iso8601(&dt.to_string()).map(|b| b.jd()),
+            Some(e.jd()),
+            "{s} did not round-trip"
+        );
+    }
+}
+
+#[test]
+fn datetime_display_round_trips_across_calendar_boundaries() {
+    // Rendering rounds to whole seconds, so the last half second of a day
+    // rounds *up*: the carry has to reach the calendar, not stop at hour 24.
+    // Sweep day / month / year / leap-day boundaries at 0.1 s steps and require
+    // that every rendered string is one arika itself can read back.
+    for base in [
+        "2024-12-31T23:59:59Z", // year end
+        "2024-02-28T23:59:59Z", // day before a leap day
+        "2024-02-29T23:59:59Z", // leap day → March
+        "2023-02-28T23:59:59Z", // common-year February → March
+        "2024-06-15T23:59:59Z", // mid-month
+        "2024-06-30T23:59:59Z", // month end
+        "2024-06-15T12:00:00Z", // control: mid-day
+    ] {
+        let epoch = Epoch::<Utc>::from_iso8601(base).unwrap();
+        for k in 0..20 {
+            let e = epoch.add_si_seconds(k as f64 * 0.1);
+            let rendered = e.to_datetime().to_string();
+            assert!(
+                !rendered.contains("T24:"),
+                "{base} + {k}×0.1 s rendered as {rendered}: hour 24 is the next day"
+            );
+            let back = Epoch::<Utc>::from_iso8601(&rendered)
+                .unwrap_or_else(|| panic!("{base} + {k}×0.1 s rendered as unreadable {rendered}"));
+            let err = (back.jd() - e.jd()).abs() * 86400.0;
+            assert!(
+                err <= 1.0,
+                "{base} + {k}×0.1 s rendered as {rendered}, which is {err} s away"
+            );
+        }
+    }
+}
+
+#[test]
+fn datetime_display_carries_into_the_calendar() {
+    // Direct statement of the carry chain the sweep above exercises.
+    assert_eq!(
+        DateTime::new(2024, 12, 31, 23, 59, 59.9999999).to_string(),
+        "2025-01-01T00:00:00Z"
+    );
+    assert_eq!(
+        DateTime::new(2024, 2, 28, 23, 59, 59.6).to_string(),
+        "2024-02-29T00:00:00Z" // 2024 is a leap year
+    );
+    assert_eq!(
+        DateTime::new(2023, 2, 28, 23, 59, 59.6).to_string(),
+        "2023-03-01T00:00:00Z"
+    );
+    assert_eq!(
+        DateTime::new(2024, 6, 30, 23, 59, 59.6).to_string(),
+        "2024-07-01T00:00:00Z"
+    );
+    // Without a carry the fields are written straight out.
+    assert_eq!(
+        DateTime::new(2024, 6, 15, 23, 59, 59.4).to_string(),
+        "2024-06-15T23:59:59Z"
+    );
+}
+
 // ERA / legacy GMST
 
 #[test]

@@ -15,6 +15,7 @@ use core::str::FromStr;
 use crate::math::F64Ext;
 
 use crate::elements::{ElementsError, ParsedElementSet, Sgp4Elements, Sgp4ElementsFields};
+use crate::omm::{UnsupportedMetadata, check_metadata};
 
 /// Error type for OMM KVN parsing.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +27,9 @@ pub enum KvnParseError {
     /// `EPOCH` was not a parseable ISO-8601 UTC timestamp (calendar or
     /// ordinal / day-of-year form).
     InvalidEpoch(String),
+    /// A metadata keyword declares something this crate cannot read (non-Earth
+    /// center, non-TEME frame, non-UTC time system, non-SGP4 theory).
+    Unsupported(UnsupportedMetadata),
     /// The parsed values are not a valid element set (e.g. non-positive mean
     /// motion or out-of-range eccentricity).
     InvalidElements(ElementsError),
@@ -39,6 +43,7 @@ impl fmt::Display for KvnParseError {
                 write!(f, "invalid value for {key}: '{value}'")
             }
             KvnParseError::InvalidEpoch(s) => write!(f, "invalid OMM EPOCH: '{s}'"),
+            KvnParseError::Unsupported(e) => write!(f, "{e}"),
             KvnParseError::InvalidElements(e) => write!(f, "invalid OMM element set: {e}"),
         }
     }
@@ -77,6 +82,10 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
         // like `OBJECT_NAME = SAT [TEST]` would be truncated at '['. Units are
         // stripped per numeric field inside `parse_num`.
         let value = value.trim();
+        // The metadata keywords declare how the elements must be interpreted;
+        // reject anything this crate does not actually honor before reading a
+        // single element (see `crate::omm::METADATA`).
+        check_metadata(key, value).map_err(KvnParseError::Unsupported)?;
         // Pass the matched string literal (not the borrowed `key`) so the
         // error type can hold a `&'static str` keyword.
         match key {
@@ -93,7 +102,7 @@ pub fn parse(kvn: &str) -> Result<ParsedElementSet, KvnParseError> {
             }
             "MEAN_ANOMALY" => mean_anomaly = Some(parse_num::<f64>("MEAN_ANOMALY", value)?),
             "BSTAR" => bstar = parse_num::<f64>("BSTAR", value)?,
-            _ => {} // version / center / ref_frame / GM / element_set_no / …
+            _ => {} // version / GM / element_set_no / checked metadata / …
         }
     }
 
@@ -243,6 +252,44 @@ MEAN_ANOMALY = 0.0
 NORAD_CAT_ID = 1";
         let set = parse(kvn).unwrap();
         assert_eq!(set.object_name.as_deref(), Some("SAT [TEST]"));
+    }
+
+    #[test]
+    fn rejects_unsupported_metadata() {
+        // Table-driven: mutate one metadata value at a time. Each of these
+        // declares an element set this crate cannot read — a TAI epoch read as
+        // UTC lands 37 s (≈ 285 km along-track at LEO) from where it belongs,
+        // and a DSST / SGP4-XP set is not SGP4 mean elements at all.
+        for (from, to, key) in [
+            ("CENTER_NAME = EARTH", "CENTER_NAME = MARS", "CENTER_NAME"),
+            ("REF_FRAME = TEME", "REF_FRAME = GCRF", "REF_FRAME"),
+            ("TIME_SYSTEM = UTC", "TIME_SYSTEM = TAI", "TIME_SYSTEM"),
+            (
+                "MEAN_ELEMENT_THEORY = SGP4",
+                "MEAN_ELEMENT_THEORY = DSST",
+                "MEAN_ELEMENT_THEORY",
+            ),
+            (
+                "MEAN_ELEMENT_THEORY = SGP4",
+                "MEAN_ELEMENT_THEORY = SGP4-XP",
+                "MEAN_ELEMENT_THEORY",
+            ),
+        ] {
+            let kvn = ISS_OMM_KVN.replace(from, to);
+            assert_ne!(kvn, ISS_OMM_KVN, "fixture no longer contains '{from}'");
+            match parse(&kvn) {
+                Err(KvnParseError::Unsupported(e)) => assert_eq!(e.key, key),
+                other => panic!("'{to}' must be rejected, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn metadata_values_are_case_insensitive() {
+        let kvn = ISS_OMM_KVN
+            .replace("CENTER_NAME = EARTH", "CENTER_NAME = Earth")
+            .replace("TIME_SYSTEM = UTC", "TIME_SYSTEM = utc");
+        assert_eq!(parse(&kvn).unwrap().elements.fields().norad_cat_id, 25544);
     }
 
     #[test]
