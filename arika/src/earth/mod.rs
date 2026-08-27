@@ -27,6 +27,7 @@ pub mod eop;
 pub mod fk5;
 pub mod geodetic;
 pub mod iau2006;
+pub mod mean_equinox;
 pub mod rotation;
 pub mod teme;
 pub mod topocentric;

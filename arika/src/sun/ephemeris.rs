@@ -34,9 +34,8 @@ use nalgebra::Vector3;
 #[allow(unused_imports)]
 use crate::math::F64Ext;
 
-use crate::earth::fk5;
 use crate::epoch::{Epoch, Tdb};
-use crate::frame::{self, Vec3};
+use crate::frame::{self, Rotation, Vec3};
 use crate::planets;
 use crate::sun::AU_KM;
 
@@ -90,19 +89,23 @@ fn j2000_obliquity() -> f64 {
     planets::obliquity(&Epoch::<Tdb>::from_jd_tdb(crate::epoch::J2000_JD))
 }
 
-/// Sun direction (unit vector) referred to the mean equator and equinox of
-/// date — the frame the Meeus series is actually expressed in.
+/// Sun direction (unit vector) referred to the mean equator and equinox of date
+/// — the frame the Meeus series is actually expressed in.
 ///
 /// Kept separate from [`sun_direction_eci`] so the precession rotation to J2000
 /// is a single visible step, and so tests can measure the size of that step.
-pub(crate) fn sun_direction_mean_of_date(epoch: &Epoch<Tdb>) -> Vector3<f64> {
+/// A caller that needs this frame — a right ascension that has to share GMST's
+/// equinox, as in a local hour angle `GMST + λ − α` — rotates the public
+/// J2000 direction with
+/// [`Rotation::<Gcrs, MeanEquinoxOfDate>::iau1976_precession`](crate::earth::mean_equinox).
+pub(crate) fn sun_direction_mean_of_date(epoch: &Epoch<Tdb>) -> Vec3<frame::MeanEquinoxOfDate> {
     let el = solar_elements(epoch);
 
     let x = el.lambda_rad.cos();
     let y = el.epsilon_rad.cos() * el.lambda_rad.sin();
     let z = el.epsilon_rad.sin() * el.lambda_rad.sin();
 
-    Vector3::new(x, y, z).normalize()
+    Vec3::from_raw(Vector3::new(x, y, z).normalize())
 }
 
 /// Approximate sun direction (unit vector) in ECI (J2000) frame.
@@ -115,9 +118,8 @@ pub(crate) fn sun_direction_mean_of_date(epoch: &Epoch<Tdb>) -> Vector3<f64> {
 ///
 /// Reference: Meeus, "Astronomical Algorithms", Chapter 25.
 pub fn sun_direction_eci(epoch: &Epoch<Tdb>) -> Vec3<frame::Gcrs> {
-    let of_date = sun_direction_mean_of_date(epoch);
-    let p = fk5::mean_of_date_to_j2000_matrix(epoch.centuries_since_j2000());
-    Vec3::from_raw(p * of_date)
+    Rotation::<frame::MeanEquinoxOfDate, frame::Gcrs>::iau1976_precession(&epoch.to_tt())
+        .transform(&sun_direction_mean_of_date(epoch))
 }
 
 /// Equation of Time [hours].
@@ -322,7 +324,7 @@ mod tests {
         for y in [2024, 2050, 1975] {
             let epoch = Epoch::from_gregorian(y, 7, 1, 0, 0, 0.0).to_tdb();
             let t = epoch.centuries_since_j2000();
-            let of_date = sun_direction_mean_of_date(&epoch);
+            let of_date = sun_direction_mean_of_date(&epoch).into_inner();
             let j2000 = sun_direction_eci(&epoch).into_inner();
             let sep = of_date.dot(&j2000).clamp(-1.0, 1.0).acos().to_degrees();
             // The Sun sits on the ecliptic (β ≈ 0), so the separation is the

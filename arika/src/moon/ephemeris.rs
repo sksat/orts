@@ -39,8 +39,10 @@ use crate::frame::{self, Vec3};
 /// see [`MeeusMoonEphemeris`].)
 pub fn moon_position_eci(epoch: &Epoch<Tdb>) -> Vec3<frame::Gcrs> {
     let of_date = moon_position_mean_of_date(epoch);
-    let p = crate::earth::fk5::mean_of_date_to_j2000_matrix(epoch.centuries_since_j2000());
-    Vec3::from_raw(p * of_date)
+    crate::frame::Rotation::<frame::MeanEquinoxOfDate, frame::Gcrs>::iau1976_precession(
+        &epoch.to_tt(),
+    )
+    .transform(&of_date)
 }
 
 /// Moon position [km] referred to the mean equator and equinox of date — the
@@ -48,7 +50,7 @@ pub fn moon_position_eci(epoch: &Epoch<Tdb>) -> Vec3<frame::Gcrs> {
 ///
 /// Kept separate from [`moon_position_eci`] so the precession rotation to J2000
 /// is a single visible step, and so tests can measure the size of that step.
-pub(crate) fn moon_position_mean_of_date(epoch: &Epoch<Tdb>) -> nalgebra::Vector3<f64> {
+pub(crate) fn moon_position_mean_of_date(epoch: &Epoch<Tdb>) -> Vec3<frame::MeanEquinoxOfDate> {
     let t = epoch.centuries_since_j2000();
     let t2 = t * t;
     let t3 = t2 * t;
@@ -266,7 +268,7 @@ pub(crate) fn moon_position_mean_of_date(epoch: &Epoch<Tdb>) -> nalgebra::Vector
     let y = distance_km * (cos_eps * cos_beta * sin_lam - sin_eps * sin_beta);
     let z = distance_km * (sin_eps * cos_beta * sin_lam + cos_eps * sin_beta);
 
-    nalgebra::Vector3::new(x, y, z)
+    Vec3::new(x, y, z)
 }
 
 /// Moon ephemeris source abstraction.
@@ -467,7 +469,7 @@ mod tests {
             let epoch = Epoch::from_gregorian(y, m, d, 6, 0, 0.0).to_tdb();
             let t = epoch.centuries_since_j2000();
 
-            let of_date = moon_position_mean_of_date(&epoch);
+            let of_date = moon_position_mean_of_date(&epoch).into_inner();
             let j2000 = moon_position_eci(&epoch).into_inner();
 
             // Distance is frame-independent.
