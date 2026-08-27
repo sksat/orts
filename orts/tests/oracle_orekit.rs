@@ -464,12 +464,12 @@ fn orekit_j2_srp_sso_10orbits() {
 // With geodetic altitude (WGS-84), remaining differences are:
 // - J2 constant (~3e-9)
 // - Sun direction for the HP bulge (~1' of Meeus model error). The bulge's local
-//   hour angle is `ERA + λ − α_sun`, so it needs the solar right ascension in the
-//   frame the Earth rotation angle refers to — which is what `arika::sun` returns
-//   now that it rotates the of-date Meeus series to J2000. Before that it was
-//   0.34° (2024) of bulge phase, and these four scenarios measured 2.7 / 3.6 /
-//   13.4 / 191 m; see the 30-day case below for why the longest one moved the
-//   other way
+//   hour angle is `ERA + λ − α_sun`, so α_sun has to be CIO-based. The J2000
+//   direction `arika::sun` returns now that it rotates the of-date Meeus series
+//   back is close to that — the dominant precession-in-right-ascension term
+//   cancels against `GMST − ERA` — while the of-date direction it used to return
+//   sat 0.31° away in bulge phase. These four scenarios measured 2.7 / 3.6 /
+//   13.4 / 191 m then; see the 30-day case below
 // - Minor geodetic algorithm differences (Bowring vs Orekit's WGS-84)
 
 #[test]
@@ -492,14 +492,15 @@ fn orekit_j2_hp_iss_7days() {
 
 #[test]
 fn orekit_j2_hp_iss_30days() {
-    // Re-locked from 230 m when the HP bulge's hour angle became
-    // frame-consistent (see the tier notes above). The three shorter HP
-    // scenarios improved by 20-40% (2.7 → 1.7 m, 3.6 → 2.2 m, 13.4 → 10.7 m);
-    // this one grew from 191 m to 336 m, because at 30 days the residual is an
-    // along-track drift fed by the *remaining* differences against Orekit's HP
-    // (density-table interpolation, lag-angle convention, geodetic altitude),
-    // and the 0.34° phase error had been partially cancelling it. 336 m is 5e-5
-    // of the orbit radius after 30 days of ISS drag.
+    // Re-locked from 230 m when the HP bulge's hour angle became frame-consistent
+    // (see the tier notes above). The three shorter HP scenarios improved by
+    // 20-40% (2.7 → 1.7 m, 3.6 → 2.2 m, 13.4 → 10.7 m); this one grew from 191 m
+    // to 336 m. Over 30 days the residual is a secular along-track drift, so it
+    // integrates the remaining differences against Orekit's HP rather than
+    // tracking the bulge phase directly, and the observed net cancellation the
+    // old phase error provided is gone. Which of those remaining differences
+    // dominates is not resolved by these four measurements. 336 m is 5e-5 of the
+    // orbit radius after 30 days of ISS drag.
     run_scenario("j2_hp_iss_30days", 0.400); // 400 m (measured: 336 m, baseline lock)
 }
 

@@ -513,25 +513,25 @@ mod tests {
     ///
     /// At the equator `cos ψ = cos δ · cos h`, so with no lag the density
     /// maximum over longitude sits exactly at hour angle `h = 0` — the subsolar
-    /// meridian. Reached independently, that meridian is where apparent solar
-    /// time is 12 h: `λ = 15° · (12 h − UT − EoT)`. The two paths share no code:
-    /// one goes through the Earth rotation angle and the solar right ascension,
-    /// the other through UT and the equation of time.
+    /// meridian. Reached the other way, that meridian is where apparent solar
+    /// time is 12 h: `λ = 15° · (12 h − UT − EoT)`. Both routes read the same
+    /// solar series, but only this one keeps out of the frame question — it never
+    /// forms a right ascension, so it cannot inherit the error under test.
     ///
-    /// This is what pins the *frame* of the solar right ascension. `Epoch::gmst`
-    /// is the Earth rotation angle (CIO-based, not the equinox of date), so
-    /// `ra_sat = gmst + λ` pairs with a J2000/GCRS solar right ascension. Feeding
-    /// it a mean-equinox-of-date direction instead — which is what the Meeus
-    /// series produces before it is rotated to J2000 — shifts the apex by the
-    /// accumulated precession, 0.34° in 2024 and 0.70° in 2050.
+    /// What that pins is the *frame* of the solar right ascension the model
+    /// reads. `Epoch::gmst` is the Earth rotation angle (a legacy name), so
+    /// `ra_sat = gmst + λ` is CIO-based, and feeding it the mean-equinox-of-date
+    /// direction the Meeus series produces before it is rotated to J2000 misses
+    /// by the precession in right ascension: 0.25-0.31° over 1980-2075. The
+    /// J2000/GCRS direction is not the exact partner (that would be a CIRS right
+    /// ascension), but the dominant precession term cancels between `GMST − ERA`
+    /// and `α_MOD − α_GCRS`, leaving only the declination-dependent part.
     ///
-    /// The dates sit within a day of an equinox on purpose. Precession moves a
-    /// body's right ascension by `m + n·sin α·tan δ`, so away from `δ = 0` the
-    /// equinox-based and CIO-based hour angles differ by a declination-dependent
-    /// term (up to 0.06° in 2024, 0.12° by 2050) that neither this test nor the
-    /// model is about. At `δ ≈ 0` that term vanishes and the residual is a flat
-    /// 0.0064° from 1980 to 2075 — the models' own accuracy — so the bound below
-    /// stays an order of magnitude under the error it has to catch.
+    /// That is why the dates sit within a day of an equinox: the leftover term is
+    /// `n·sin α·tan δ` (up to 0.06° in 2024, 0.12° by 2050) and vanishes at
+    /// `δ ≈ 0`, where the two routes agree to a flat 0.0064° from 1980 to 2075.
+    /// The bound below therefore stays an order of magnitude under the error it
+    /// has to catch.
     #[test]
     fn bulge_apex_sits_at_apparent_solar_noon() {
         let hp = HarrisPriester::new().with_lag_angle(0.0);

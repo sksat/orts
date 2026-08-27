@@ -292,10 +292,18 @@ impl Eci for Teme {}
 /// This is the frame the classical analytic series are actually referred to:
 /// their mean longitudes advance at the *tropical* rate and their
 /// ecliptic → equatorial rotation uses the mean obliquity of date. It is also
-/// the equinox that GMST is measured from ([`crate::earth::fk5::gmst1982`],
-/// reached via [`Epoch::<Utc>::gmst`](crate::epoch::Epoch::gmst)), so a local
-/// hour angle built as `GMST + λ − α` is only self-consistent when `α` is a
-/// right ascension *in this frame*.
+/// the equinox GMST is measured from ([`crate::earth::fk5::gmst1982`]), so a
+/// local hour angle built as `GMST + λ − α` needs `α` to be a right ascension
+/// *in this frame*.
+///
+/// The CIO-based counterpart is `ERA + λ − α`, which
+/// [`Epoch::<Utc>::gmst`](crate::epoch::Epoch::gmst) (a legacy name for the
+/// Earth rotation angle) feeds; there `α` belongs in [`Cirs`]. A [`Gcrs`] right
+/// ascension is not the exact partner either, but it is far closer than one in
+/// this frame: the dominant precession-in-right-ascension term (m ≈ 4612″ per
+/// century) is common to `GMST − ERA` and to `α_MOD − α_GCRS` and cancels,
+/// leaving the declination-dependent `n·sin α·tan δ` part (≤ 0.06° in 2024)
+/// instead of the whole 0.31°.
 ///
 /// Differs from [`Gcrs`] by the accumulated precession — 0.335° in 2024, growing
 /// ~1.4°/century — and from the true equator of date by nutation (≤ 17″).
