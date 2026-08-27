@@ -540,4 +540,80 @@ mod tests {
             other => panic!("expected an explicit zero MTQ command, got {other:?}"),
         }
     }
+    /// 傾斜円軌道上の状態を時刻 `t` で返す（`R_CIRC` 半径、軌道面は X 軸周りに
+    /// `inc_rad` 傾ける）。
+    fn inclined_circular_orbit(inc_rad: f64, t: f64) -> (Vector3<f64>, Vector3<f64>) {
+        let n = (MU / R_CIRC.powi(3)).sqrt();
+        let u = Vector3::new(1.0, 0.0, 0.0);
+        let w = Vector3::new(0.0, inc_rad.cos(), inc_rad.sin());
+        let (s, c) = (n * t).sin_cos();
+        (R_CIRC * (c * u + s * w), R_CIRC * n * (-s * u + c * w))
+    }
+
+    /// 剛体 + 理想 wheel の閉ループで、body +Z が nadir に乗り、そのまま
+    /// **回り続ける**ことを確認する。
+    ///
+    /// 慣性固定則は「収束後は静止」なので、姿勢誤差の瞬間値ではなく軌道弧に
+    /// わたる追従で区別できる。収束後の body 角速度は軌道角速度に一致する
+    /// はずで、ゼロに落ちるならそれは慣性固定。
+    #[test]
+    fn nadir_tracks_the_rotating_lvlh_frame_over_an_orbit_arc() {
+        // 等方慣性なのでジャイロ項 ω × (Iω) が消え、プラントは I dω/dt = τ。
+        const INERTIA_KGM2: f64 = 10.0;
+        const INC_RAD: f64 = 0.5;
+        const DT: f64 = 0.1;
+        const SAMPLE_PERIOD: f64 = 0.5;
+        const DURATION: f64 = 1500.0; // 軌道弧 ~95°
+        // これ以降は追従が確立していること。
+        const SETTLED_AFTER: f64 = 400.0;
+
+        let mut ctrl = nadir_controller();
+        let mut q = UnitQuaternion::identity();
+        let mut omega = Vector3::zeros();
+        let mut torque = Vector3::zeros();
+        let mut next_tick = 0.0;
+        let mut worst_settled_cos = f64::INFINITY;
+
+        let mut t = 0.0;
+        while t < DURATION {
+            let (r, v) = inclined_circular_orbit(INC_RAD, t);
+
+            if t + 1e-9 >= next_tick {
+                let cmd = ctrl
+                    .update(&tick_input(r, v, q, omega))
+                    .expect("no error")
+                    .expect("nadir mode always commands the wheels");
+                // wheel torque の反作用が body トルク（`RwAssemblyCore::
+                // reaction_torque` と同じ符号）。
+                let wheel = rw_torques(&cmd);
+                torque = -Vector3::new(wheel[0], wheel[1], wheel[2]);
+                next_tick += SAMPLE_PERIOD;
+            }
+
+            if t >= SETTLED_AFTER {
+                let z_body = q * Vector3::z();
+                worst_settled_cos = worst_settled_cos.min(z_body.dot(&(-r.normalize())));
+            }
+
+            omega += torque / INERTIA_KGM2 * DT;
+            q *= UnitQuaternion::from_scaled_axis(omega * DT);
+            t += DT;
+        }
+
+        assert!(
+            worst_settled_cos > 0.999,
+            "body +Z must stay on nadir over the whole arc; worst cos = \
+             {worst_settled_cos:.6} ({:.2}° off)",
+            worst_settled_cos.clamp(-1.0, 1.0).acos().to_degrees()
+        );
+
+        let orbital_rate = (MU / R_CIRC.powi(3)).sqrt();
+        let rate_error = (omega.norm() - orbital_rate).abs() / orbital_rate;
+        assert!(
+            rate_error < 0.05,
+            "converged body rate {:.4e} rad/s must match the orbital rate \
+             {orbital_rate:.4e} rad/s (an inertial hold converges to zero)",
+            omega.norm()
+        );
+    }
 }
