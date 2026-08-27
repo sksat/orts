@@ -1052,14 +1052,16 @@ mod tests {
     #[test]
     fn load_all_cost_per_state_stays_flat() {
         // The capacity scales with the input, which keeps two things fixed that
-        // would otherwise move with it: the number of segments on disk
-        // (~2n/capacity) and the fraction still in memory (~capacity/2n). A
-        // fixed capacity fails this test on unchanged code — at 2500 states
-        // most of the data is still in the cheap in-memory tail, while at
-        // 10_000 most has gone through the far more expensive per-segment rerun
-        // decode, so the cost per state climbs for reasons that have nothing to
-        // do with complexity. Holding the mix still leaves rows-per-segment as
-        // the only thing varying.
+        // would otherwise move with it. Measured against this fixture: every
+        // size ends with 18 segments on disk and exactly `capacity` states in
+        // memory, i.e. 10% of the input.
+        //
+        // A fixed capacity fails this test on unchanged code. At capacity 2000
+        // the in-memory share runs 60% / 20% / 10% across these three sizes, so
+        // the work migrates from the cheap in-memory tail to the far more
+        // expensive per-segment rerun decode and the cost per state climbs for
+        // reasons that have nothing to do with complexity. Holding the mix
+        // still leaves rows-per-segment as the only thing varying.
         let sizes = [2_500usize, 5_000, 10_000];
 
         let samples: Vec<(usize, u128)> = sizes
