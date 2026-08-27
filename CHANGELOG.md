@@ -31,12 +31,56 @@ section is subdivided by package.
   backends): msg-io `deliver` / `take_outbound`, and stream-io `stream_deliver`
   / `stream_take` / `stream_close` for raw byte streams. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
+- `perturbations::ZonalGravity<F: EarthRotationPole = SimpleEci>` — zonal
+  harmonics (J2 plus optional J3 / J4) as a pole-aware perturbation `Model`
+  instead of a `GravityField`, evaluated about the central body's rotation pole
+  rather than assuming the frame's Z axis is the pole
+  (`ZonalGravity::new(mu, r_body, j2, j3, j4)`). For `SimpleEci` the pole is
+  `+Z`, so it is numerically identical to the classic frame-Z formula; for
+  `Gcrs` it is the IAU 2006 CIP, so J2 is evaluated about Earth's true pole
+  (~0.1° off the GCRS Z axis by 2024). `setup::build_orbital_system` /
+  `setup::build_spacecraft_dynamics` compose `PointMass` + `ZonalGravity`, which is
+  behaviour-preserving for the `SimpleEci` systems they build, and in the
+  drag-free J2 + third-body ISS cross-validation the `Gcrs` final-position error
+  against Orekit drops by more than an order of magnitude. ([#194](https://github.com/sksat/orts/pull/194), [#204](https://github.com/sksat/orts/pull/204))
+- `PanelSrp` is frame-generic: its `Model` impl is bounded on
+  `F: EphemerisFrameBridge` instead of being pinned to `SimpleEci`, so
+  attitude-dependent panel SRP can be used in any frame that defines a
+  GCRS → `F` ephemeris rotation. Bit-identical for the GCRS-aligned
+  `SimpleEci` / `Gcrs`. ([#238](https://github.com/sksat/orts/pull/238))
 
 #### Changed
 - `StateEffector` is now frame-generic — `StateEffector<S, F: frame::Eci =
   SimpleEci>` returning `ExternalLoads<F>`, like `Model<S, F>` — so effectors
   produce loads already in the host inertial frame. The defaulted `F` keeps
   existing `StateEffector<S>` impls compiling unchanged. ([#148](https://github.com/sksat/orts/pull/148))
+- `ThirdBodyGravity` and `SolarRadiationPressure` are frame-correct instead of
+  blanket-implemented over every `Eci` frame: their `Model` impls are bounded on
+  `arika::earth::transform::EphemerisFrameBridge` and rotate the analytic (GCRS)
+  Sun / Moon ephemeris into the integration frame before differencing it with the
+  satellite state. Numbers are unchanged for `SimpleEci` / `Gcrs` (identity
+  rotation), `Cirs` now applies the precession / nutation rotation, and a frame
+  with no `EphemerisFrameBridge` impl (e.g. `Teme`) is a compile error rather
+  than a silent wrong-frame mix. ([#193](https://github.com/sksat/orts/pull/193), [#237](https://github.com/sksat/orts/pull/237), [#191](https://github.com/sksat/orts/issues/191))
+- Atmospheric drag takes the co-rotation velocity `Ω × r` about the central
+  body's true spin axis rather than the frame's `+Z`: for Earth the axis comes
+  from `EarthRotationPole::earth_pole` in the integration frame — `+Z` for
+  `SimpleEci` (bit-identical to the old `[0, 0, ω] × r`) and the IAU 2006 CIP
+  for `Gcrs`, removing the ~0.1–0.3° misalignment a `+Z` assumption incurred
+  there. LOD variation in `|Ω|` is still omitted, and for a non-Earth central
+  body the frame Z axis is kept with that body's `omega_body` — that body's real
+  spin-axis orientation is not modelled, a documented limitation. ([#209](https://github.com/sksat/orts/pull/209), [#210](https://github.com/sksat/orts/issues/210))
+- **BREAKING**: `perturbations::BodyPositionFn` — and therefore
+  `ThirdBodyGravity::custom` — takes `&Epoch<Tdb>` instead of `&Epoch`
+  (`Epoch<Utc>`), because a celestial-body ephemeris is a dynamical-time
+  quantity; the force-model call boundary converts with `.to_tdb()`. Custom
+  ephemeris closures must be re-typed. ([#222](https://github.com/sksat/orts/pull/222))
+- **BREAKING**: the frame-capability bound on `magnetic::field_inertial`,
+  `visibility::VisibilityMonitor` and `perturbations::AtmosphericDrag` is now
+  `arika::earth::EarthFixedTransform`, previously
+  `orts::environment::EarthFrameBridge`. The associated items are unchanged
+  (`Fixed`, `EopStorage`, `to_geodetic`, `fixed_to_inertial`), so downstream code
+  only needs the new import path. ([#213](https://github.com/sksat/orts/pull/213))
 
 #### Fixed
 - Removed an unsound frame re-tag in `SpacecraftDynamics`: effector loads tagged
@@ -44,11 +88,32 @@ section is subdivided by package.
   conversion, silently mislabeling coordinates for any `F != SimpleEci`. Latent
   (the only shipped effector is torque-only) but wrong for a translational
   effector. ([#148](https://github.com/sksat/orts/pull/148), [#103](https://github.com/sksat/orts/issues/103))
+- The absolute epoch handed to force models is `epoch_0 + t` on the uniform SI
+  timeline (`Epoch::add_si_seconds`) in `OrbitalSystem`, `SpacecraftDynamics`,
+  `AttitudeSystem`, `DecoupledAttitudeSystem`, `AugmentedAttitudeSystem` and
+  `VisibilityMonitor::update`. The previous leap-naive `add_seconds` advanced `t`
+  on the UTC calendar, so any step spanning a leap second advanced physical time
+  by one extra second — evaluating ephemerides, Earth rotation and contact-window
+  geometry at the wrong instant. ([#215](https://github.com/sksat/orts/pull/215))
 
 #### Removed
 - **BREAKING**: the `orts::tle` module is removed; TLE parsing moved to
   `arika::tle` (decoding into the shared `arika::elements::Sgp4Elements`).
   Downstream code using `orts::tle` must migrate to `arika`. ([#87](https://github.com/sksat/orts/pull/87))
+- **BREAKING**: the `orts::environment` module is removed. Its contents moved to
+  `arika` and were renamed: `EarthFrameBridge` →
+  `arika::earth::EarthFixedTransform`, `EarthPoleBridge` →
+  `arika::earth::EarthRotationPole`, and `PositionEop` / `GcrsEopStorage` →
+  `arika::earth::eop::{PositionEop, GcrsEopStorage}` (also re-exported from
+  `arika::earth`). No compatibility re-export is kept in `orts`. Note that
+  `arika`'s `PositionEop` no longer requires `Send + Sync` — thread-safety is
+  carried by the boxed `GcrsEopStorage` instead. ([#213](https://github.com/sksat/orts/pull/213))
+- **BREAKING**: `orbital::gravity::ZonalHarmonics` is removed; `GravityField` is
+  now only the genuinely frame-invariant `PointMass`. Oblateness is a
+  perturbation `Model` — replace
+  `OrbitalSystem::new(mu, Box::new(ZonalHarmonics { r_body, j2, j3, j4 }))` with
+  `OrbitalSystem::new(mu, Box::new(PointMass)).with_model(ZonalGravity::new(mu, r_body, j2, j3, j4))`
+  (note that `mu` is now passed to the perturbation explicitly). ([#204](https://github.com/sksat/orts/pull/204))
 
 ### `orts-cli` (Rust, crates.io, binary)
 
@@ -109,6 +174,49 @@ section is subdivided by package.
   `--tle-line2`; and `--tle-line1` / `--tle-line2` must be given together. ([#87](https://github.com/sksat/orts/pull/87))
 - TLE epoch day-of-year is validated against the (leap-aware) year length, so a
   malformed field is rejected rather than rolling into another year. ([#87](https://github.com/sksat/orts/pull/87))
+- **BREAKING**: config-key aliases are collapsed to one canonical spelling per
+  key. `[[command]]`, `[[ground_station]]`, `[satellites.magnetorquers]` and
+  `[satellites.thruster]` are the only accepted forms; the former
+  `[[commands]]`, `[[ground_stations]]`, `[satellites.mtq]` and
+  `[satellites.thrusters]` are gone — and `mtq` / `thrusters` were the canonical
+  spellings in released 0.2.0 configs. Unknown keys are ignored rather than
+  rejected, so a config still using an old spelling loses that section
+  *silently*; rename the keys. ([#200](https://github.com/sksat/orts/pull/200))
+- **BREAKING**: a TLE / OMM orbit's initial state is seeded by real SGP4
+  propagation instead of being read as osculating Keplerian elements. The element
+  set is propagated with `arika`'s SGP4 to the evaluation epoch and the resulting
+  TEME state is rotated into the integration frame
+  (`FrameTransform<Teme, SimpleEci>`). The old two-body conversion was wrong by
+  tens of km at epoch, so trajectories from `--tle` / `--omm` / `--norad-id` /
+  `[satellites.orbit] type = "tle"|"norad"` change. Relatedly, when `--epoch` (or
+  config `epoch`) is omitted and the first satellite has a TLE / OMM orbit, the
+  simulation epoch now defaults to *that element set's epoch* (tsince = 0)
+  instead of "now"; with several element sets only the first is at tsince = 0 and
+  the rest are extrapolated from the shared epoch. Circular orbits are
+  unaffected. ([#241](https://github.com/sksat/orts/pull/241))
+- **BREAKING**: a TLE / OMM orbit combined with a non-Earth central body is
+  rejected up front (SGP4 / TEME is Earth-centered, WGS72) on all three paths:
+  `orts run` / `orts serve` startup, the WebSocket `StartSimulation` config
+  (an error to the client instead of a panic), and a dynamic `add_satellite`.
+  Previously an Earth-relative SGP4 state was integrated under the other body's
+  μ, radius and perturbation set. ([#241](https://github.com/sksat/orts/pull/241))
+- `orts serve`'s per-model acceleration breakdown (the `accelerations` map in the
+  WebSocket `State` message) carries a `zonal_gravity` entry, and `gravity` is
+  the point-mass term only — oblateness moved from the gravity field into a
+  separate perturbation model. The total acceleration is unchanged. ([#194](https://github.com/sksat/orts/pull/194))
+- A satellite added to a running `orts serve` session has its initial state
+  evaluated at `epoch + current_t`, so a TLE / OMM is propagated to the moment it
+  enters the simulation rather than to `t = 0`; a malformed element set is
+  reported as an error instead of crashing the server. ([#241](https://github.com/sksat/orts/pull/241))
+- Config validation is stricter and runs before the simulation starts, on every
+  path that loads a config (`orts run`, `orts serve --config`, and
+  `orts config validate`): an unknown `body`, a malformed `epoch` and a malformed
+  inline `[satellites.orbit] type = "tle"` are clean errors instead of a later
+  panic. ([#216](https://github.com/sksat/orts/pull/216))
+- `orts run` rejects contradictory stdout requests before running the (possibly
+  long) simulation, and exits with status 2 for these usage errors — including
+  `--format rrd` to stdout, which previously exited 1 after the whole simulation
+  had already run. ([#214](https://github.com/sksat/orts/pull/214))
 
 #### Fixed
 - `orts run --format csv --output <path>` now writes the CSV to `<path>`.
@@ -117,6 +225,9 @@ section is subdivided by package.
 - `orts serve` started with a `--config` file now rejects a `[[command]]`
   timeline with a clear error (command timelines run only under `orts run`)
   instead of silently dropping it. ([#58](https://github.com/sksat/orts/pull/58))
+- Simulation time is advanced on the uniform SI timeline
+  (`Epoch::add_si_seconds`), so a run spanning a leap second no longer shifts the
+  epoch handed to force models, sensors and plugin ticks by an extra second. ([#215](https://github.com/sksat/orts/pull/215))
 
 ### `orts-plugin-sdk` (Rust, crates.io)
 
@@ -145,7 +256,7 @@ section is subdivided by package.
 ### `arika` (Rust, crates.io)
 
 #### Added
-- Element-set parsing ([#87](https://github.com/sksat/orts/pull/87)). A shared
+- Element-set parsing ([#87](https://github.com/sksat/orts/pull/87), [#230](https://github.com/sksat/orts/pull/230), [#245](https://github.com/sksat/orts/pull/245)). A shared
   no-alloc `elements::Sgp4Elements` — a *validated* mean-element set (catalog
   number, UTC epoch, six SGP4 mean elements, B\* drag; angles in radians, mean
   motion in rad/s). Built with `Sgp4Elements::try_new` /
@@ -164,9 +275,10 @@ section is subdivided by package.
     unified, BOM-tolerant entry point that auto-detects and dispatches
     TLE / OMM-JSON / OMM-KVN / OMM-XML.
 - SGP4 / SDP4 propagation behind the optional `sgp4` feature
-  (`sgp4::Sgp4Propagator`): builds from an `Sgp4Elements`, reuses the
-  epoch `Constants`, and propagates to a `(Vec3<Teme>, Vec3<Teme>)` state in km /
-  km·s. Wraps the `sgp4` crate in AFSPC compatibility mode (WGS72). The
+  (`sgp4::Sgp4Propagator`): `from_elements` reuses the epoch `Constants`
+  across calls, and `propagate_minutes_since_epoch` / `propagate(Epoch<Utc>)`
+  return a `(Vec3<Teme>, Vec3<Teme>)` state in km / km·s or an `Sgp4Error`
+  (`Initialization` / `Diverged`, which also covers non-finite request times). Wraps the `sgp4` crate in AFSPC compatibility mode (WGS72). The
   dependency is pulled with only `libm`, so propagation works in `no_std`
   builds without `alloc`. Validated against the Vallado verification vectors for
   near-earth (SGP4) and deep-space (SDP4) satellites. ([#235](https://github.com/sksat/orts/pull/235))
@@ -189,11 +301,100 @@ section is subdivided by package.
 - `earth::topocentric` — ground-site look angles: `TopocentricSite<F: Ecef>`
   (from a WGS-84 `Geodetic`, precomputing the local ENU basis) and `LookAngles`
   (azimuth / elevation / slant range), via `look_angles(target)`. ([#112](https://github.com/sksat/orts/pull/112))
+- GPS Time as a first-class scale: the `epoch::Gps` marker with `Epoch<Gps>`
+  (`from_jd_gps`) and its conversion edges (`Epoch::<Utc>::to_gps`,
+  `Epoch::<Tai>::to_gps`, `Epoch::<Gps>::to_tai` / `to_utc`) — a fixed
+  TAI − 19 s with no leap seconds. GNSS week / seconds-of-week are types rather
+  than bare integers: `GpsWeek` (the continuous count, no 1024-week rollover)
+  with `GpsWeek::from_broadcast(raw10, reference)` to resolve a 10-bit
+  navigation-message week, the range-checked `SecondsOfWeek`,
+  `Epoch::<Gps>::from_week_seconds` / `to_week_seconds`, and `GPS_EPOCH_JD`. ([#192](https://github.com/sksat/orts/pull/192))
+- `epoch::FixedOffsetFromTai` — the capability trait for scales whose offset
+  from TAI is a fixed number of SI seconds (`Tai` 0, `Tt` +32.184, `Gps` −19),
+  with `SECONDS_AFTER_TAI` as the single source of truth for the matching
+  conversion edge. UTC (leap-second piecewise), TDB (periodic series) and UT1
+  (EOP-dependent) deliberately do not implement it, so "the offset from TAI is
+  constant" is a type-level fact instead of a convention. ([#192](https://github.com/sksat/orts/pull/192))
+- `Epoch::duration_since(&earlier)` — the exact SI-second interval measured on
+  the shared TAI timeline, correct across leap seconds and across scales
+  (`earlier` may carry a different scale). ([#205](https://github.com/sksat/orts/pull/205))
+- `epoch::TwoPartJd` and the sealed `epoch::JdRepr` — a Julian Date carried as
+  `hi + lo` (SOFA-style two-part date), keeping the full mantissa available for
+  the sub-day fraction; `Epoch::jd_parts()` hands the pair to two-part consumers
+  without the single-`f64` collapse. ([#205](https://github.com/sksat/orts/pull/205), [#208](https://github.com/sksat/orts/pull/208))
+- Precision tier in the type: `Epoch<S, P: Precision>` with the sealed tiers
+  `Precise` (default; two-part JD, 16 bytes, sub-nanosecond) and `Coarse`
+  (single `f64`, 8 bytes, tens of microseconds — for wasm / `no_std` targets
+  where RAM and cycles are scarce), converted with `Epoch::to_precision::<Q>()`
+  and reported by `precision_name()`. The tier is monomorphized, mixing tiers
+  needs an explicit conversion, and `Epoch` / `Epoch<S>` still mean
+  `Epoch<Utc, Precise>`. ([#208](https://github.com/sksat/orts/pull/208))
+- `earth::transform` — the per-frame Earth-orientation capability traits, moved
+  in from `orts::environment` and renamed: `EarthRotationPole` (`earth_pole`,
+  the minimal capability zonal gravity and atmospheric co-rotation need) and
+  `EarthFixedTransform` (the paired `Fixed: Ecef` frame plus `to_geodetic`,
+  `fixed_to_inertial` and the state-transform factories). Both are implemented
+  for `SimpleEci` (ERA-only Z rotation, pole `+Z`) and `Gcrs` (IAU 2006 CIO
+  chain, pole = model CIP). The supporting `earth::eop::PositionEop` bound and
+  the owned, type-erased `earth::eop::GcrsEopStorage` moved with them. ([#213](https://github.com/sksat/orts/pull/213))
+- `frame::FrameTransform<From, To>` — `Rotation`'s kinematic companion, carrying
+  the orientation plus the angular velocity of `To` relative to `From`, so it
+  transforms velocities and full states through the transport theorem
+  (`transform_position`, `transform_velocity`, `transform_state`, `inverse`,
+  `angular_velocity_in_from`). Earth ECI↔ECEF instances come from
+  `EarthFixedTransform::inertial_to_fixed_transform` /
+  `fixed_to_inertial_transform`, whose ω is `OMEGA · earth_pole` — Earth spin
+  transport only, with the IAU 2006 precession / nutation / polar-motion rates
+  and the LOD correction omitted. ([#219](https://github.com/sksat/orts/pull/219))
+- `earth::transform::EphemerisFrameBridge` — the `GCRS → F` rotation that lets
+  third-body / SRP force models express an analytic (Meeus) ephemeris in their
+  integration frame instead of consuming a raw vector that is only valid for
+  GCRS-aligned frames. Identity for `Gcrs` and `SimpleEci`, and the EOP-free
+  IAU 2006 model rotation for `Cirs` (`Rotation::<Gcrs, Cirs>::iau2006_model`);
+  a frame without the impl cannot be used with those forces, so a new
+  of-date frame has to state its `GCRS → F` rotation. ([#237](https://github.com/sksat/orts/pull/237))
 
 #### Changed
 - `Epoch::from_iso8601` also accepts the ordinal / day-of-year form
   (`YYYY-DDDTHH:MM:SS`, used by CCSDS OMM), and the trailing `Z` is now optional.
   A strict relaxation — previously-accepted inputs still parse. ([#87](https://github.com/sksat/orts/pull/87))
+- **BREAKING**: `Epoch<S>` stores a canonical TAI instant internally instead of
+  the scale's own Julian Date. Scale conversions (`to_tai`, `to_tt`, `to_tdb`,
+  `to_gps`, …) are non-destructive re-tags of one instant, and the leap-second
+  table, the fixed TAI offsets and the TDB periodic term are applied only at
+  construction and read-out, keeping full precision in between.
+  `from_jd_*(x).jd() == x` still round-trips and `TimeScale` stays sealed, but
+  `Epoch` is no longer a transparent JD wrapper — `jd()` is a per-scale read-out
+  rather than the stored field, and identical instants built through different
+  paths now compare equal. ([#205](https://github.com/sksat/orts/pull/205))
+- **BREAKING**: the analytic ephemerides take `&Epoch<Tdb>` instead of
+  `&Epoch<Utc>` and no longer convert internally — `sun::sun_direction_eci`,
+  `sun_position_eci`, `sun_distance_km`, `equation_of_time`,
+  `sun_direction_from_body`, `sun_distance_from_body`, `moon::moon_position_eci`,
+  `planets::obliquity` and `planets::heliocentric_position_ecliptic`. The
+  dynamical time these Meeus models are defined against is now stated in the
+  type, and a caller that converts at the boundary with `.to_tdb()` gets
+  numerically identical results. The UTC-indexed `MoonEphemeris` trait
+  deliberately keeps `&Epoch<Utc>`. ([#222](https://github.com/sksat/orts/pull/222))
+
+#### Fixed
+- `Epoch::<Utc>::add_si_seconds` is an exact SI add on the uniform TAI
+  timeline. The previous UTC-iterating implementation drifted by up to a second
+  when the result landed inside an inserted leap second; a regression test pins
+  that `add_si_seconds(dt)` followed by `duration_since` recovers `dt` across
+  the 2017-01-01 leap. ([#205](https://github.com/sksat/orts/pull/205))
+
+#### Removed
+- **BREAKING**: the `epoch::Ut1` scale marker is gone. UT1 is realized by
+  Earth's rotation — a measured EOP quantity, not a data-free offset from TAI —
+  so it cannot share the canonical TAI timeline `Epoch<S>` now stores. It lives
+  in its own `epoch::Ut1Epoch` (`from_jd_ut1`, `jd`, `era`), reachable through
+  `Epoch::<Utc>::to_ut1(eop)` / `to_ut1_naive()`. Signatures that took
+  `&Epoch<Ut1>` now take `&Ut1Epoch`:
+  `Rotation::<SimpleEci, SimpleEcef>::from_ut1`,
+  `Rotation::<SimpleEcef, SimpleEci>::from_ut1`,
+  `Rotation::<Cirs, Tirs>::from_era` and
+  `Rotation::<Gcrs, Itrs>::iau2006_full`. ([#205](https://github.com/sksat/orts/pull/205))
 
 ### `utsuroi` (Rust, crates.io)
 
@@ -210,6 +411,19 @@ section is subdivided by package.
   `fetch-horizons`). `fetch` is retained as an umbrella feature that enables
   every `fetch-*` source, so `features = ["fetch"]` keeps building (and now
   also pulls in `fetch-igrf`). ([#150](https://github.com/sksat/orts/pull/150))
+- **BREAKING**: `HarrisPriester::with_sun_direction_fn` takes
+  `fn(&Epoch<Tdb>) -> Vec3<Gcrs>` instead of `fn(&Epoch) -> Vec3<Gcrs>`
+  (i.e. `Epoch<Utc>`), following `arika`'s analytic ephemerides which now require
+  a TDB epoch. The model keeps its UTC input and converts with `.to_tdb()` at the
+  call boundary; callers overriding the Sun-direction hook must retype their
+  function. ([#222](https://github.com/sksat/orts/pull/222))
+
+#### Fixed
+- Solar-ephemeris quantities are evaluated on the correct time scale: the
+  Harris-Priester density-bulge apex converts its UTC epoch to TDB before asking
+  for the Sun direction, and `nrlmsise00::geo::local_solar_time` does the same
+  for the Equation of Time. Previously a UTC epoch was passed straight into a
+  TDB-argument ephemeris (~69 s of scale error). ([#222](https://github.com/sksat/orts/pull/222))
 
 ### `viewer`
 
@@ -273,6 +487,12 @@ section is subdivided by package.
   pay no init cost (fixed Sun direction, no body rotation). ([#89](https://github.com/sksat/orts/pull/89))
 - WS protocol types are now the `ts-rs`-generated bindings (see `orts-cli`),
   replacing the hand-written wire types and adding the `satellite_added` variant. ([#95](https://github.com/sksat/orts/pull/95))
+- **BREAKING**: the `ts-rs` wire bindings track the canonicalised config keys —
+  `SatelliteConfig.mtq` → `magnetorquers` (both in the `start_simulation`
+  `SimConfig` payload and the flattened `add_satellite` message),
+  `SimConfig.commands` → `command`, and `SimConfig.ground_stations` →
+  `ground_station`. Old keys are ignored rather than rejected, so a WS client
+  still sending `mtq` loses its magnetorquer configuration without an error. ([#200](https://github.com/sksat/orts/pull/200))
 
 #### Fixed
 - Default WebSocket URL on static deploys falls back to `ws://localhost:9001/ws`
@@ -324,17 +544,40 @@ section is subdivided by package.
   corpus; `llms-small.txt` is a condensed overview that excludes the
   autogenerated rustdoc/typedoc API reference. ([#225](https://github.com/sksat/orts/pull/225))
 
+#### Changed
+- The documentation site runs on Astro 7 with Starlight 0.40 (and
+  `@astrojs/react` 6). Sidebar `autogenerate` groups moved to Starlight 0.40's
+  nested schema, which the upgrade otherwise rejected; the autogenerated rustdoc
+  / typedoc API sections stay collapsed as before. ([#126](https://github.com/sksat/orts/pull/126), [#180](https://github.com/sksat/orts/pull/180), [#250](https://github.com/sksat/orts/pull/250))
+- The docs site is gated in CI: the full Astro / Starlight build runs on
+  documentation-affecting PRs (previously only on push to main, so a build
+  regression surfaced after merge), and the site's `.astro` / `.ts` sources are
+  type-checked with `astro check`, which `astro build` never did. ([#180](https://github.com/sksat/orts/pull/180), [#233](https://github.com/sksat/orts/pull/233))
+
 ### Dependencies
 
-- Rust toolchain → 1.96.0.
+- Rust toolchain → 1.96.1.
+- New Rust dependency: `sgp4` 2.4, behind `arika`'s optional `sgp4` feature
+  (pulled with only `libm`, so the `no_std` / no-`alloc` tiers still build) and
+  enabled by `orts-cli`.
 - Rust: `wasmtime` / `wasmtime-wasi` 44 (security), `rerun` 0.33,
-  `tokio-tungstenite` 0.29, `nalgebra` 0.35, `tokio` 1.52, `axum` 0.8.9.
+  `tokio-tungstenite` 0.29, `nalgebra` 0.35, `tokio` 1.52, `axum` 0.8.9,
+  `kble-socket` 0.5 (with the `kble` CLI 0.5 in the E2E job), `rand` 0.10 /
+  `rand_distr` 0.6, `wit-bindgen` 0.58 (`orts-plugin-sdk` binding generation),
+  `clap` 4.6, `thiserror` 2.0, `toml` 1.1.
 - `notalawyer` 0.3 — the embedded third-party license NOTICE is generated
   through the cargo-about *library* (an `orts-cli` build-dependency) instead
   of the `cargo about` binary, so no binary is installed in CI or baked into
   the cross build image.
 - npm: `vite` 8, `@vitejs/plugin-react` 6, the React monorepo, `ws` 8.21
-  (security), `mermaid` 11.15 (security).
+  (security), `mermaid` 11.16 (security), Astro 7 with `@astrojs/starlight` 0.40
+  and `@astrojs/react` 6 (Astro 7.1.0 was a security release), TypeScript 6,
+  Biome 2.5, `vite-plugin-dts` 5, `three` 0.184, and the new `starlight-llms-txt`
+  0.10 behind the docs `llms.txt` generation.
+- Tooling: pnpm 11 — the workspace declares `allowBuilds` explicitly (pnpm 11
+  refuses to install otherwise) and the `minimumReleaseAge` supply-chain floor is
+  enforced on `--frozen-lockfile` installs — plus Node.js 24 and wasi-sdk 33 for
+  the `nos3-adcs` example build.
 
 ## [0.2.0](https://github.com/sksat/orts/releases/tag/v0.2.0) - 2026-04-20
 
