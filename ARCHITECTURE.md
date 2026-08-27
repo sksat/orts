@@ -122,10 +122,16 @@ Key points:
 - `HasFrame::Frame` is the inertial frame the state is propagated in, declared
   once and shared by `HasOrbit` and `HasAttitude` as their supertrait. A model
   returns `ExternalLoads<S::Frame>`: the frame it reports loads in *is* the
-  frame it read the state in, so the two cannot disagree. A model that needs a
-  capability of the frame binds its own to the state's —
-  `impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S> for
-  AtmosphericDrag<F>` — which is the one place an equality bound says something.
+  frame it read the state in, so the two cannot disagree. A model carrying a
+  frame of its own binds it to the state's with an equality bound, which is
+  where such a bound says something: because it needs a capability of the frame
+  (`impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S> for
+  AtmosphericDrag<F>`), or because it holds frame-typed data
+  (`ConstantThrust<F>` stores its Δv as a `Vec3<F>`). A requirement that is a
+  property of the frame's *axes* is written per frame instead: `ConstantThrust`
+  holds its direction fixed for a whole burn, which the of-date `Cirs` and
+  `Teme` cannot honour, so it implements `Model` for `SimpleEci` and `Gcrs`
+  rather than for every `F: Eci`.
 - Systems come in three flavors — `OrbitalSystem`, `AttitudeSystem`,
   `SpacecraftDynamics` — each a `DynamicalSystem` that bundles a state with
   `Vec<Box<dyn Model<S>>>`.

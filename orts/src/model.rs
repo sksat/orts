@@ -159,10 +159,22 @@ impl<F: frame::Eci> AddAssign for ExternalLoads<F> {
 /// - `impl<S: HasFrame + HasOrbit> Model<S>` — orbit-only (e.g., constant thrust)
 /// - `impl<S: HasFrame + HasAttitude + HasOrbit + HasMass> Model<S>` — full state (e.g., thruster)
 ///
-/// A model that needs a *capability* of the frame binds its own `F` to the
-/// state's: `impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit>
-/// Model<S> for AtmosphericDrag<F>`. That is the only place an equality bound
-/// is needed, and there it says something — the model and the state agree.
+/// A model that carries a frame of its own binds it to the state's with an
+/// equality bound, which is where such a bound says something: the model and the
+/// state agree. That happens for two reasons.
+///
+/// - The model needs a *capability* of the frame:
+///   `impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S>
+///   for AtmosphericDrag<F>` resolves geodetic altitude through `F`'s
+///   Earth-rotation chain.
+/// - The model holds *frame-typed data*: `ConstantThrust<F>` stores its Δv as a
+///   `Vec3<F>`, so the burn can only be flown in the frame it was specified in.
+///
+/// A model whose frame requirement is a property of the frame's axes rather than
+/// a capability is written per frame instead. `ConstantThrust` holds its
+/// direction fixed for the whole burn, which `Cirs` and `Teme` cannot honour
+/// (their axes are of-date), so it implements `Model` for `SimpleEci` and `Gcrs`
+/// rather than for every `F: Eci`.
 ///
 /// `eval` must be a pure function with no side effects.
 /// All models are evaluated against the same immutable state snapshot;

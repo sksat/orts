@@ -1,0 +1,22 @@
+error[E0277]: the trait bound `ConstantThrust<arika::frame::Cirs>: Model<SpacecraftState<arika::frame::Cirs>>` is not satisfied
+  --> tests/trybuild/constant_thrust_in_of_date_frame.rs:30:22
+   |
+30 |     install_for_cirs(burn);
+   |     ---------------- ^^^^ the trait `Model<SpacecraftState<arika::frame::Cirs>>` is not implemented for `ConstantThrust<arika::frame::Cirs>`
+   |     |
+   |     required by a bound introduced by this call
+   |
+help: the following other types implement trait `Model<S>`
+  --> src/perturbations/constant_thrust.rs
+   |
+   | / impl<S: HasFrame<Frame = frame::SimpleEci> + HasOrbit> Model<S>
+   | |     for ConstantThrust<frame::SimpleEci>
+   | |________________________________________^ `ConstantThrust`
+...
+   |   impl<S: HasFrame<Frame = frame::Gcrs> + HasOrbit> Model<S> for ConstantThrust<frame::Gcrs> {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ConstantThrust<arika::frame::Gcrs>`
+note: required by a bound in `install_for_cirs`
+  --> tests/trybuild/constant_thrust_in_of_date_frame.rs:18:24
+   |
+18 | fn install_for_cirs<M: Model<SpacecraftState<Cirs>>>(_m: M) {}
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `install_for_cirs`

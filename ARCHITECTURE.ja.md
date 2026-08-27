@@ -120,10 +120,15 @@ classDiagram
 - `HasFrame::Frame` は state を伝播する慣性系で、`HasOrbit` と `HasAttitude`
   はこれを supertrait として共有する。model の返り値は
   `ExternalLoads<S::Frame>` — loads を返す frame は state を読んだ frame
-  そのものなので、両者が食い違うことがない。frame の capability を要する model
-  は自身の frame を state のそれに束縛する
+  そのものなので、両者が食い違うことがない。自身の frame を持つ model は
+  それを state のそれに equality bound で束縛する。この bound が意味を持つのは
+  2 通り — frame の capability を要する場合
   (`impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S>
-  for AtmosphericDrag<F>`)。equality bound が意味を持つのはこの一箇所だけ。
+  for AtmosphericDrag<F>`) と、frame-typed data を保持する場合
+  (`ConstantThrust<F>` は Δv を `Vec3<F>` で持つ)。frame の**軸**の性質を要求
+  する場合は frame ごとに実装する: `ConstantThrust` は燃焼中ずっと方向を固定
+  するが、of-date な `Cirs` / `Teme` はこれを満たせないので、`F: Eci` 全体では
+  なく `SimpleEci` と `Gcrs` に対して `Model` を実装する。
 - System は 3 種類 — `OrbitalSystem` / `AttitudeSystem` /
   `SpacecraftDynamics` — いずれも state と `Vec<Box<dyn Model<S>>>` を
   束ねる `DynamicalSystem`。

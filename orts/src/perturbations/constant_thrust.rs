@@ -122,12 +122,9 @@ impl<F: Eci> ConstantThrust<F> {
     }
 }
 
-impl<F: Eci, S: HasFrame<Frame = F> + HasOrbit> Model<S> for ConstantThrust<F> {
-    fn name(&self) -> &str {
-        self.name
-    }
-
-    fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
+impl<F: Eci> ConstantThrust<F> {
+    /// Shared body of [`Model::eval`] for the frames this model supports.
+    fn loads(&self, epoch: Option<&Epoch>) -> ExternalLoads<F> {
         // The stored acceleration is already a `Vec3<F>` and `F` is the state's
         // frame, so it goes into the loads without a re-tag.
         let acceleration_inertial = match epoch {
@@ -142,6 +139,40 @@ impl<F: Eci, S: HasFrame<Frame = F> + HasOrbit> Model<S> for ConstantThrust<F> {
             torque_body: Vec3::zeros(),
             mass_rate: 0.0,
         }
+    }
+}
+
+// Implemented per frame rather than over `F: Eci`, because holding a direction
+// fixed for the whole burn is a claim about the frame's *axes*, and the `Eci`
+// category does not make it: `Cirs` axes are the celestial intermediate pole and
+// origin **of date**, and `Teme`'s are the true equator of date, so components
+// held constant in either drift inertially over the burn. `SimpleEci` ignores
+// precession and nutation by construction and `Gcrs` is the GCRF realization, so
+// both have axes fixed to the precision this model works at. arika states the
+// same rule for its frame categories: write concrete types where the precision
+// matters, and keep `<F: Eci>` for precision-agnostic math.
+//
+// A capability trait in arika (`Eci` frames whose axes are inertially fixed)
+// would let this be one impl again; see the follow-up noted in the PR.
+impl<S: HasFrame<Frame = frame::SimpleEci> + HasOrbit> Model<S>
+    for ConstantThrust<frame::SimpleEci>
+{
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
+        self.loads(epoch)
+    }
+}
+
+impl<S: HasFrame<Frame = frame::Gcrs> + HasOrbit> Model<S> for ConstantThrust<frame::Gcrs> {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
+        self.loads(epoch)
     }
 }
 

@@ -27,4 +27,7 @@ fn a_non_simple_eci_attitude_cannot_be_used_where_simple_eci_is_required() {
 
     // A burn Delta-v given in one inertial frame cannot be flown in another.
     t.compile_fail("tests/trybuild/simple_eci_burn_in_gcrs_system.rs");
+
+    // A burn direction can only be held fixed in a frame whose axes are.
+    t.compile_fail("tests/trybuild/constant_thrust_in_of_date_frame.rs");
 }
