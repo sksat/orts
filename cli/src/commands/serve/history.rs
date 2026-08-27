@@ -536,6 +536,13 @@ mod tests {
 
     #[test]
     fn overview_cost_is_constant_regardless_of_disk_segments() {
+        // TODO: this and `overview_multi_entity_cost_is_bounded` still assert an
+        // absolute millisecond budget, which on CI runners measures machine
+        // load as much as the code (see the note on
+        // `assert_cost_per_unit_flat`). The claim here — cost independent of
+        // segment count — is naturally a scaling check: measure at 10 and 40
+        // segments and require the cost not to climb.
+        //
         // Regression gate. With the old `load_all()` based implementation
         // this test fails because the cost scales with the number of
         // flushed segments (disk I/O + decode + sort). The incremental
@@ -932,65 +939,145 @@ mod tests {
         assert_eq!(ds.len(), 5);
     }
 
-    #[test]
-    fn downsample_performance() {
-        let states: Vec<HistoryState> = (0..100_000).map(|i| make_state(i as f64)).collect();
-        let start = std::time::Instant::now();
-        let ds = HistoryBuffer::downsample(&states, 1000);
-        let elapsed = start.elapsed();
+    /// Fastest of `reps` measurements, in microseconds.
+    ///
+    /// `measure` does its own setup and returns only the timed part, so growing
+    /// input sizes do not charge their construction to the measurement.
+    ///
+    /// The minimum, not the mean or the median: scheduling noise on a shared
+    /// runner only ever adds time, so the fastest sample is the closest
+    /// available estimate of the cost itself.
+    fn fastest_us(reps: u32, mut measure: impl FnMut() -> u128) -> u128 {
+        (0..reps).map(|_| measure()).min().expect("reps > 0")
+    }
 
-        assert_eq!(ds.len(), 1000);
+    /// Assert the cost per unit of input does not climb as the input grows —
+    /// that is, the work stays about linear.
+    ///
+    /// This says nothing about absolute speed, deliberately. The same flush
+    /// measured 364-400ms on a Linux runner, 642-717ms on a Windows one, and
+    /// 705-1610ms once the rest of the test suite was running alongside it;
+    /// Windows also moved 2x between runs of the same image. A millisecond
+    /// budget across that spread reports how busy the machine was. A ratio
+    /// between sizes measured back to back on one machine does not: both halves
+    /// absorb the same noise.
+    ///
+    /// The blind spot is a constant-factor regression — ten times slower per
+    /// unit, still linear, still passes. Catching that needs a stable machine
+    /// and a history to compare against rather than a single CI run.
+    fn assert_cost_per_unit_flat(label: &str, samples: &[(usize, u128)]) {
+        // Quadratic growth over a 4x size range shows up as ~4x here; n log n
+        // over the same range is ~1.3x. 2.0 sits between them.
+        const BAR: f64 = 2.0;
+
+        let per_unit: Vec<f64> = samples
+            .iter()
+            .map(|(n, us)| *us as f64 / *n as f64)
+            .collect();
+        let first = per_unit[0];
+        let last = per_unit[per_unit.len() - 1];
+
+        let detail: Vec<String> = samples
+            .iter()
+            .zip(&per_unit)
+            .map(|((n, us), c)| format!("n={n}: {us}us ({c:.3}us/unit)"))
+            .collect();
+
         assert!(
-            elapsed.as_millis() < 10,
-            "downsample took {}ms, expected <10ms",
-            elapsed.as_millis()
+            last / first <= BAR,
+            "{label}: cost per unit grew {:.2}x from the smallest to the largest \
+             input (bar {BAR:.1}x), which is the signature of super-linear work. \
+             Samples — {}",
+            last / first,
+            detail.join(", ")
         );
     }
 
     #[test]
-    fn flush_performance() {
-        let dir = temp_data_dir("flush-perf");
-        let mut buf = HistoryBuffer::new(10_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+    fn downsample_cost_per_state_stays_flat() {
+        // Sizes span 4x so quadratic work is unmistakable, and start high
+        // enough that the smallest sample is well clear of timer granularity.
+        let sizes = [100_000usize, 200_000, 400_000];
 
-        for i in 0..5000 {
-            buf.states.push_back(make_state(i as f64));
-        }
+        let samples: Vec<(usize, u128)> = sizes
+            .iter()
+            .map(|&n| {
+                let states: Vec<HistoryState> = (0..n).map(|i| make_state(i as f64)).collect();
+                let us = fastest_us(3, || {
+                    let start = std::time::Instant::now();
+                    let ds = HistoryBuffer::downsample(&states, 1000);
+                    let elapsed = start.elapsed();
+                    assert_eq!(ds.len(), 1000, "downsample must hit its target size");
+                    elapsed.as_micros()
+                });
+                (n, us)
+            })
+            .collect();
 
-        let start = std::time::Instant::now();
-        buf.flush();
-        let elapsed = start.elapsed();
-
-        assert!(
-            elapsed.as_millis() < 2000,
-            "flush took {}ms, expected <2000ms",
-            elapsed.as_millis()
-        );
-        assert_eq!(buf.segment_count, 1);
-
-        cleanup_dir(&dir);
+        assert_cost_per_unit_flat("downsample", &samples);
     }
 
     #[test]
-    fn load_all_performance() {
-        let dir = temp_data_dir("load-perf");
-        let mut buf = HistoryBuffer::new(2000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+    fn flush_cost_per_row_stays_flat() {
+        // `flush` drains half the buffer, so twice the target is pushed. Sizes
+        // stay modest because each flush encodes and writes a real .rrd.
+        let sizes = [625usize, 1250, 2500];
 
-        for i in 0..10_000 {
-            buf.push(make_state(i as f64));
-        }
+        let samples: Vec<(usize, u128)> = sizes
+            .iter()
+            .map(|&rows| {
+                let us = fastest_us(2, || {
+                    let dir = temp_data_dir(&format!("flush-scale-{rows}"));
+                    let mut buf =
+                        HistoryBuffer::new(10_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+                    for i in 0..(rows * 2) {
+                        buf.states.push_back(make_state(i as f64));
+                    }
 
-        let start = std::time::Instant::now();
-        let all = buf.load_all();
-        let elapsed = start.elapsed();
+                    let start = std::time::Instant::now();
+                    buf.flush();
+                    let elapsed = start.elapsed();
 
-        assert_eq!(all.len(), 10_000);
-        assert!(
-            elapsed.as_millis() < 2000,
-            "load_all took {}ms, expected <2000ms",
-            elapsed.as_millis()
-        );
+                    assert_eq!(buf.segment_count, 1, "one flush must write one segment");
+                    cleanup_dir(&dir);
+                    elapsed.as_micros()
+                });
+                (rows, us)
+            })
+            .collect();
 
-        cleanup_dir(&dir);
+        assert_cost_per_unit_flat("flush", &samples);
+    }
+
+    #[test]
+    fn load_all_cost_per_state_stays_flat() {
+        // Buffer cap 2000 with 4x that pushed, so every size reads several
+        // segments back off disk rather than answering from memory.
+        let sizes = [2_500usize, 5_000, 10_000];
+
+        let samples: Vec<(usize, u128)> = sizes
+            .iter()
+            .map(|&n| {
+                let us = fastest_us(2, || {
+                    let dir = temp_data_dir(&format!("load-scale-{n}"));
+                    let mut buf = HistoryBuffer::new(2000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+                    for i in 0..n {
+                        buf.push(make_state(i as f64));
+                    }
+
+                    let start = std::time::Instant::now();
+                    let all = buf.load_all();
+                    let elapsed = start.elapsed();
+
+                    assert_eq!(all.len(), n, "load_all must return every pushed state");
+                    cleanup_dir(&dir);
+                    elapsed.as_micros()
+                });
+                (n, us)
+            })
+            .collect();
+
+        assert_cost_per_unit_flat("load_all", &samples);
     }
 
     #[test]
