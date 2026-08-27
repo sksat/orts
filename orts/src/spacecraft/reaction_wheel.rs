@@ -533,7 +533,8 @@ impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
         // Gyroscopic coupling: −ω × H_rw
         let gyro = self.core.gyroscopic_torque(omega, momentum);
 
-        // Body-frame torque only; zero inertial acceleration in any frame `F`.
+        // Body-frame torque only; the inertial acceleration is zero whatever
+        // frame the state is propagated in.
         ExternalLoads::<S::Frame>::torque(reaction + gyro)
     }
 }

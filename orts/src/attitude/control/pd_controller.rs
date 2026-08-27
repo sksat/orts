@@ -74,7 +74,7 @@ impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude> Model<S> for In
 /// where q_err = q_target⁻¹ * q_current maps current body to target body frame.
 ///
 /// The reference is generic over the inertial frame: the controller is a
-/// `Model<S>` for every frame `F` its reference supports (see
+/// `Model<S>` for every state whose frame its reference supports (see
 /// [`AttitudeReference`]), so no frame bound is imposed on the struct itself.
 pub struct TrackingPdController<R> {
     kp: Matrix3<f64>,

@@ -890,8 +890,9 @@ mod tests {
     #[test]
     fn torque_only_effector_works_on_gcrs() {
         // A torque-only effector (RW) registers and integrates on a
-        // non-SimpleEci system: the types now permit it because RW is
-        // `StateEffector<S>` for every `F`, and torque is frame-independent.
+        // non-SimpleEci system: RW is `StateEffector<S>` for any state, and its
+        // loads are body-frame torque with zero inertial acceleration, so the
+        // state's frame never enters.
         use crate::spacecraft::ReactionWheelAssembly;
         let rw = ReactionWheelAssembly::three_axis(0.01, 1.0, 0.5);
         let mut dyn_sc: SpacecraftDynamics<PointMass, Gcrs> =
