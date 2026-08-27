@@ -9,6 +9,7 @@ import {
   insertPoints,
   queryDerived,
   queryDerivedIncremental,
+  replacePoints,
 } from "../db/store.js";
 import type { ChartDataMap, TableSchema, TimePoint } from "../types.js";
 import { mergeChartData, trimChartDataLeft } from "../utils/mergeChartData.js";
@@ -92,6 +93,21 @@ export function useTimeSeriesStore<T extends TimePoint>(
      *  immediately deleting newly inserted detail data. */
     const COMPACT_COOLDOWN_AFTER_REBUILD = 5;
     let compactCooldown = 0;
+    /** Give up on a failing rebuild after this many retries. */
+    const MAX_REBUILD_RETRIES = 3;
+    let rebuildRetries = 0;
+    /**
+     * A rebuild whose insert failed, kept here rather than pushed back into
+     * the IngestBuffer: `markRebuild` would discard the points that streamed
+     * in since, and would overwrite a newer replacement.
+     */
+    let pendingRebuild: T[] | null = null;
+    /**
+     * Set when a dataset had to be abandoned but the table could not be
+     * emptied. Its rows are still there, so nothing may be inserted or read
+     * until the delete succeeds.
+     */
+    let emptyingFailed = false;
 
     // Cold/hot state
     let coldSnapshot: ChartDataMap | null = null;
@@ -116,23 +132,91 @@ export function useTimeSeriesStore<T extends TimePoint>(
 
       if (cancelled) return;
 
+      /** Empty the table after a dataset was abandoned. True once it is gone. */
+      const emptyTable = async (): Promise<boolean> => {
+        try {
+          await clearTable(conn, schemaRef.current);
+        } catch (e) {
+          console.warn("useTimeSeriesStore: failed to empty the table, retrying:", e);
+          emptyingFailed = true;
+          return false;
+        }
+        emptyingFailed = false;
+        hasDataRef.current = false;
+        coldRefreshNeeded = true;
+        hotBuffer = null;
+        setData(null);
+        return true;
+      };
+
       const tick = async () => {
         if (cancelled) return;
 
-        // 0. Check for rebuild signal
-        const rebuildData = ingestBufferRef.current.consumeRebuild();
+        // The table still holds a dataset that had to be abandoned: remove it
+        // before anything is inserted on top of it or read from it.
+        if (emptyingFailed) {
+          const emptied = await emptyTable();
+          if (!emptied || cancelled) {
+            if (!cancelled) {
+              queryTimerRef.current = window.setTimeout(tick, tickInterval) as unknown as number;
+            }
+            return;
+          }
+        }
+
+        // 0. Check for rebuild signal. A newer replacement supersedes one
+        //    that is waiting for a retry.
+        const freshRebuild = ingestBufferRef.current.consumeRebuild();
+        if (freshRebuild !== null) {
+          pendingRebuild = null;
+          rebuildRetries = 0;
+        }
+        const rebuildData = freshRebuild ?? pendingRebuild;
         if (rebuildData !== null) {
+          pendingRebuild = null;
           try {
-            await clearTable(conn, schemaRef.current);
-            await insertPoints(conn, schemaRef.current, rebuildData);
+            // One transaction: a failure part-way through leaves the previous
+            // content in place, so the re-queued retry cannot duplicate rows.
+            await replacePoints(conn, schemaRef.current, rebuildData);
             hasDataRef.current = rebuildData.length > 0;
             if (!hasDataRef.current) setData(null); // clear chart for empty rebuild
             compactCooldown = COMPACT_COOLDOWN_AFTER_REBUILD;
             coldRefreshNeeded = true;
             hotBuffer = null;
+            rebuildRetries = 0;
+            emptyingFailed = false;
           } catch (e) {
-            console.warn("useTimeSeriesStore: rebuild failed, re-queuing:", e);
-            ingestBufferRef.current.markRebuild(rebuildData);
+            // Bounded, like the Worker path: re-queuing forever would retry a
+            // permanently failing rebuild every tick, and each markRebuild
+            // discards the points that streamed in since the last one.
+            if (rebuildRetries < MAX_REBUILD_RETRIES) {
+              rebuildRetries++;
+              console.warn("useTimeSeriesStore: rebuild failed, retrying:", e);
+              pendingRebuild = rebuildData;
+            } else {
+              rebuildRetries = 0;
+              console.warn(
+                "useTimeSeriesStore: dropping rebuild of",
+                rebuildData.length,
+                "points after",
+                MAX_REBUILD_RETRIES,
+                "retries:",
+                e,
+              );
+              // The rolled-back transaction left the replaced dataset in the
+              // table. Keeping it would splice it with the rows that keep
+              // streaming in, so empty it — retried on the next tick if the
+              // delete fails too. Until then nothing may be read from it.
+              if (!(await emptyTable())) {
+                if (!cancelled) {
+                  queryTimerRef.current = window.setTimeout(
+                    tick,
+                    tickInterval,
+                  ) as unknown as number;
+                }
+                return;
+              }
+            }
           }
         } else {
           // 1. Normal drain buffer → DuckDB insert

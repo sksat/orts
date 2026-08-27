@@ -64,6 +64,16 @@ export class ChartDataWorkerClient {
     this.send({ type: "rebuild", rows, latestT });
   }
 
+  /**
+   * Replace the schema the Worker derives chart columns with.
+   *
+   * Must be sent before the first row produced by the new `toRow`, because
+   * row tuples carry no column names.
+   */
+  updateSchema(schema: WorkerTableSchema): void {
+    this.send({ type: "update-schema", schema });
+  }
+
   /** Update time range and max points configuration. */
   configure(timeRange: TimeRange, maxPoints: number): void {
     this.send({ type: "configure", timeRange, maxPoints });

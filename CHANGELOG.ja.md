@@ -257,6 +257,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   wire 型を置き換え、`satellite_added` variant を追加。([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- multi-satellite チャートが schema 変更に追従するようになった。hook は起動時にしか
+  chart Worker へ schema を伝えていなかったので、中心天体を変えた後は新しい schema で
+  行を作る一方 Worker は古い schema で読み、derived SQL に前の天体半径と `mu` が
+  残っていた。([#341](https://github.com/sksat/orts/pull/341))
 - static deploy での既定 WebSocket URL を、`window.location` から到達不能な
   host を導出するのでなく `ws://localhost:9001/ws` にフォールバック。([#143](https://github.com/sksat/orts/pull/143))
 - static deployment で高解像度天体テクスチャを復元 (サーバからのみ取得、
@@ -276,6 +280,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `uneri` (npm: `@sksat/uneri`)
 
 #### Added
+- Worker message `update-schema` / `multi-update-schema` と
+  `ChartDataWorkerClient.updateSchema()` / `MultiChartDataWorkerClient.updateSchema()`
+  を追加。init 後の schema 変更が Worker に届く。([#341](https://github.com/sksat/orts/pull/341))
+- store に `withTransaction`、`insertRows`、`replaceRows`、`replacePoints` を追加。
+  全部入るか何も入らないかのどちらかになる書き込み。([#341](https://github.com/sksat/orts/pull/341))
 - `initDuckDB` が DuckDB-wasm の worker / wasm を、jsDelivr CDN でなく
   呼び出し側が注入する self-host bundle URL からロード可能に。新しい
   `DuckDBInitOptions` (`bundles?`、`fallbackToJsDelivr?`) と `DuckDBBundleUrls`
@@ -286,11 +295,33 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   された reject promise を破棄して次回呼び出しでリトライする。([#76](https://github.com/sksat/orts/pull/76), [#70](https://github.com/sksat/orts/issues/70))
 
 #### Changed
+- `insertPoints` が atomic になった。1,000 行ごとの batch の途中で失敗した場合、
+  成功済みの batch も残らない。自前でトランザクションを開くため、同一 connection
+  で並行呼び出しすると後続がエラーになる (DuckDB にネストしたトランザクションが
+  無い)。呼び出しは逐次にする。([#341](https://github.com/sksat/orts/pull/341))
 - 引数なしの `initDuckDB()` の既定動作は不変 — 引き続き jsDelivr CDN から
   bundle を取得するため既存 consumer はそのまま動く。self-host は
   `options.bundles` で opt-in。([#171](https://github.com/sksat/orts/pull/171))
 
 #### Fixed
+- chart data Worker が init 時の schema で derived 列を計算し続けるため、後から
+  中心天体が変わっても反映されなかった (地球→月で `altitude` が 4,640.737 km
+  ずれる)。drain 処理が、変更後の schema をその schema で作った行より先に送る。([#341](https://github.com/sksat/orts/pull/341))
+- rebuild と insert が「DELETE + INSERT を N 回」で、途中失敗すると空または
+  中途半端なテーブルが残り、再送でコミット済みの行が重複していた。1
+  トランザクションにまとめて単位ごと再試行し (上限は単機版と同じ 3 回)、
+  上限に達した rebuild はテーブルを空にして error を post する (古い dataset を
+  残すと後続の行と混ざる)。([#341](https://github.com/sksat/orts/pull/341))
+- `onmessage` が `async` のため rebuild と tick が互いに割り込み、rebuild 完了時の
+  queue クリアで実行中に届いた行を捨てていた。全 command を 1 本の直列キューで
+  処理し、新しい rebuild は古いものを supersede し、schema・表示窓・dataset の
+  変化より前に始まったクエリの結果はキャッシュしない。([#341](https://github.com/sksat/orts/pull/341))
+- 0 行の rebuild 後も前のチャートが残り続けた。空のデータを 1 回 broadcast する。([#341](https://github.com/sksat/orts/pull/341))
+- `IngestBuffer.markRebuild` が、置換データの方が早く終わる場合に `latestT` を
+  下げず、表示窓が実データより先に張られていた。([#341](https://github.com/sksat/orts/pull/341))
+- multi-satellite Worker が per-satellite 状態の snapshot を反復していたため、
+  ある衛星の INSERT 待ち中に別の衛星へ届いた行が消えていた。表示窓の基準も、
+  行を持たない衛星を含んでいた。([#341](https://github.com/sksat/orts/pull/341))
 - init 時の worker 404 / "invalid URL": bundle URL を `initDuckDB` 内で worker
   origin に対して絶対化する。DuckDB が worker を `blob:` URL から生成するため、
   root-relative パスでは解決できないことへの対処。([#171](https://github.com/sksat/orts/pull/171))

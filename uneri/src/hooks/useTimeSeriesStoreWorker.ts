@@ -12,7 +12,12 @@ import type { DuckDBInitOptions } from "../db/duckdb.js";
 import type { IngestBuffer } from "../db/IngestBuffer.js";
 import type { ChartDataMap, TableSchema, TimePoint } from "../types.js";
 import { ChartDataWorkerClient } from "../worker/chartDataWorkerClient.js";
-import type { WorkerTableSchema } from "../worker/protocol.js";
+import {
+  type RowTuple,
+  sameColumns,
+  sameDerived,
+  type WorkerTableSchema,
+} from "../worker/protocol.js";
 import {
   DISPLAY_MAX_POINTS,
   type TimeRange,
@@ -46,12 +51,78 @@ export interface UseTimeSeriesStoreWorkerOptions<T extends TimePoint> {
 }
 
 /** Extract the serializable portion of a TableSchema (excluding toRow). */
-function toWorkerSchema(schema: TableSchema): WorkerTableSchema {
+export function toWorkerSchema(schema: TableSchema): WorkerTableSchema {
   return {
     tableName: schema.tableName,
     columns: schema.columns,
     derived: schema.derived,
   };
+}
+
+/** The subset of `ChartDataWorkerClient` the drain step needs. */
+export interface WorkerSyncTarget {
+  updateSchema(schema: WorkerTableSchema): void;
+  ingest(rows: RowTuple[], latestT: number): void;
+  rebuild(rows: RowTuple[], latestT: number): void;
+  configure(timeRange: TimeRange, maxPoints: number): void;
+}
+
+/** What the Worker was last told, so changes can be detected and forwarded. */
+export interface WorkerSyncState<T extends TimePoint> {
+  schema: TableSchema<T>;
+  timeRange: TimeRange;
+  maxPoints: number;
+}
+
+/**
+ * One drain step: forward a schema change, then the buffered points (as a
+ * rebuild or an incremental ingest), then configuration changes.
+ *
+ * The schema goes first because row tuples carry no column names — the Worker
+ * must know the current schema before it sees rows produced by it. `sent` is
+ * updated in place with what was forwarded.
+ */
+export function drainToWorker<T extends TimePoint>(
+  client: WorkerSyncTarget,
+  buffer: IngestBuffer<T>,
+  current: WorkerSyncState<T>,
+  sent: WorkerSyncState<T>,
+): void {
+  // Schema changes must reach the Worker: it bakes mu/bodyRadius-style
+  // constants into its derived SQL, so a stale schema silently returns
+  // values derived from the previous central body. The content is compared,
+  // not just the identity, so a caller that rebuilds an equal schema object
+  // every render does not send a message every drain.
+  if (current.schema !== sent.schema) {
+    const next = toWorkerSchema(current.schema);
+    const prev = toWorkerSchema(sent.schema);
+    if (prev.tableName !== next.tableName || !sameColumns(prev, next) || !sameDerived(prev, next)) {
+      client.updateSchema(next);
+    }
+    sent.schema = current.schema;
+  }
+
+  const rebuildData = buffer.consumeRebuild();
+  if (rebuildData !== null) {
+    client.rebuild(
+      rebuildData.map((p) => current.schema.toRow(p)),
+      buffer.latestT,
+    );
+  } else {
+    const points = buffer.drain();
+    if (points.length > 0) {
+      client.ingest(
+        points.map((p) => current.schema.toRow(p)),
+        buffer.latestT,
+      );
+    }
+  }
+
+  if (current.timeRange !== sent.timeRange || current.maxPoints !== sent.maxPoints) {
+    client.configure(current.timeRange, current.maxPoints);
+    sent.timeRange = current.timeRange;
+    sent.maxPoints = current.maxPoints;
+  }
 }
 
 export function useTimeSeriesStoreWorker<T extends TimePoint>(
@@ -89,9 +160,8 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
   // "capture-once" values) does not apply here because this is a
   // lifecycle gate, not a drain-time read.
 
-  // Track previous config to detect changes
-  const prevTimeRange = useRef(timeRange);
-  const prevMaxPoints = useRef(maxPoints);
+  // Track what the Worker was last told, to detect changes
+  const sentRef = useRef<WorkerSyncState<T>>({ schema, timeRange, maxPoints });
 
   const clientRef = useRef<ChartDataWorkerClient | null>(null);
 
@@ -121,6 +191,11 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
 
     // Send initial configuration
     client.configure(timeRangeRef.current, maxPointsRef.current);
+    sentRef.current = {
+      schema: schemaRef.current,
+      timeRange: timeRangeRef.current,
+      maxPoints: maxPointsRef.current,
+    };
 
     // Lightweight drain loop: pull from IngestBuffer → toRow() → send to Worker
     let cancelled = false;
@@ -129,34 +204,16 @@ export function useTimeSeriesStoreWorker<T extends TimePoint>(
     const drain = () => {
       if (cancelled) return;
 
-      const buffer = ingestBufferRef.current;
-
-      // Check for rebuild signal
-      const rebuildData = buffer.consumeRebuild();
-      if (rebuildData !== null) {
-        const rows = rebuildData.map((p) => schemaRef.current.toRow(p));
-        client.rebuild(rows, buffer.latestT);
-      } else {
-        // Normal drain
-        const points = buffer.drain();
-        if (points.length > 0) {
-          const rows = points.map((p) => schemaRef.current.toRow(p));
-          client.ingest(rows, buffer.latestT);
-        }
-      }
-
-      // Check for config changes (timeRange, maxPoints)
-      // Note: schema changes are not detected here. In practice, schema only
-      // changes when mu/bodyRadius change (server reconnect), which remounts
-      // the component tree and re-runs this effect.
-      if (
-        timeRangeRef.current !== prevTimeRange.current ||
-        maxPointsRef.current !== prevMaxPoints.current
-      ) {
-        client.configure(timeRangeRef.current, maxPointsRef.current);
-        prevTimeRange.current = timeRangeRef.current;
-        prevMaxPoints.current = maxPointsRef.current;
-      }
+      drainToWorker(
+        client,
+        ingestBufferRef.current,
+        {
+          schema: schemaRef.current,
+          timeRange: timeRangeRef.current,
+          maxPoints: maxPointsRef.current,
+        },
+        sentRef.current,
+      );
 
       drainTimer = window.setTimeout(drain, drainInterval) as unknown as number;
     };

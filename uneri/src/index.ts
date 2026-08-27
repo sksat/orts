@@ -28,8 +28,12 @@ export {
   compactTable,
   createTable,
   insertPoints,
+  insertRows,
   queryDerived,
   queryDerivedIncremental,
+  replacePoints,
+  replaceRows,
+  withTransaction,
 } from "./db/store.js";
 export type { UseDuckDBReturn } from "./hooks/useDuckDB.js";
 // Hooks

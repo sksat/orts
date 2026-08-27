@@ -75,10 +75,17 @@ export class IngestBuffer<T extends TimePoint = TimePoint> {
    * Clears any stale pending points to prevent duplicates (fullData is
    * the complete replacement dataset). Points pushed after this call
    * are treated as genuinely new and will be included by consumeRebuild().
+   *
+   * `latestT` is recomputed from `fullData` alone, so it moves down when the
+   * replacement dataset ends earlier than the one it replaces (restarting a
+   * simulation on a live connection). Keeping the old maximum would leave the
+   * chart window anchored past the end of the data and query an empty range.
+   * An empty replacement resets it to -Infinity.
    */
   markRebuild(fullData: T[]): void {
     this._rebuildData = fullData;
     this.pending = [];
+    this._latestT = -Infinity;
     for (const p of fullData) {
       if (p.t > this._latestT) {
         this._latestT = p.t;

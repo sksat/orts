@@ -275,6 +275,10 @@ section is subdivided by package.
   replacing the hand-written wire types and adding the `satellite_added` variant. ([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- Multi-satellite charts follow a changed schema: the hook told the chart Worker
+  its schema only at startup, so after a central-body change the rows were built
+  under the new schema while the Worker read them under the old one, leaving the
+  previous body radius and `mu` in the derived SQL. ([#341](https://github.com/sksat/orts/pull/341))
 - Default WebSocket URL on static deploys falls back to `ws://localhost:9001/ws`
   instead of deriving an unreachable host from `window.location`. ([#143](https://github.com/sksat/orts/pull/143))
 - High-resolution body textures restored in static deployment (server-only fetch,
@@ -295,6 +299,11 @@ section is subdivided by package.
 ### `uneri` (npm: `@sksat/uneri`)
 
 #### Added
+- `update-schema` / `multi-update-schema` Worker messages and
+  `ChartDataWorkerClient.updateSchema()` / `MultiChartDataWorkerClient.updateSchema()`,
+  so a schema change reaches the Worker after it was initialized. ([#341](https://github.com/sksat/orts/pull/341))
+- `withTransaction`, `insertRows`, `replaceRows` and `replacePoints` in the store:
+  atomic writes that either land completely or not at all. ([#341](https://github.com/sksat/orts/pull/341))
 - `initDuckDB` can load the DuckDB-wasm worker / wasm from caller-injected,
   self-hosted bundle URLs instead of the jsDelivr CDN. New `DuckDBInitOptions`
   (`bundles?`, `fallbackToJsDelivr?`) and `DuckDBBundleUrls` types, plus a pure
@@ -305,11 +314,38 @@ section is subdivided by package.
   rejected promise after terminal failure so a later call retries. ([#76](https://github.com/sksat/orts/pull/76), [#70](https://github.com/sksat/orts/issues/70))
 
 #### Changed
+- `insertPoints` is atomic: a failure in one of the 1,000-row batches leaves no
+  rows behind instead of keeping the batches that succeeded. It opens its own
+  transaction, so two concurrent calls on one connection now fail (DuckDB has
+  no nested transactions); calls must be sequential. ([#341](https://github.com/sksat/orts/pull/341))
 - Calling `initDuckDB()` with no options is unchanged — it still sources bundles
   from the jsDelivr CDN — so existing consumers keep working; self-hosting is
   opt-in via `options.bundles`. ([#171](https://github.com/sksat/orts/pull/171))
 
 #### Fixed
+- The chart data Worker computed derived columns with the schema it was
+  initialized with, so a later central-body change was ignored: switching from
+  Earth to the Moon left `altitude` off by 4,640.737 km. The drain step now
+  forwards a changed schema before any row produced with it. ([#341](https://github.com/sksat/orts/pull/341))
+- Rebuilds and inserts ran as a bare delete plus N inserts, so a failure
+  part-way through left an emptied or half-filled table and the retry
+  duplicated rows already committed. They now share one transaction, are
+  retried as a unit (bounded, matching the single-satellite Worker), and a
+  rebuild that exhausts its retries empties the table and reports an error
+  instead of leaving the old dataset to be spliced with newer rows. ([#341](https://github.com/sksat/orts/pull/341))
+- `onmessage` was `async`, so a rebuild interleaved with the tick loop and
+  cleared the ingest queue on completion, discarding rows that had arrived
+  while it ran. Every command now runs on one serial queue, a newer rebuild
+  supersedes an older one, and a query that started before a schema, window or
+  dataset change no longer caches its stale answer. ([#341](https://github.com/sksat/orts/pull/341))
+- An empty rebuild left the previous chart on screen indefinitely; the empty
+  dataset is now broadcast once. ([#341](https://github.com/sksat/orts/pull/341))
+- `IngestBuffer.markRebuild` did not lower `latestT` when the replacement
+  dataset ends earlier, which anchored the chart window past the end of the
+  data. ([#341](https://github.com/sksat/orts/pull/341))
+- The multi-satellite Worker iterated snapshots of its per-satellite state, so
+  rows that arrived for one satellite while another's insert was in flight were
+  dropped; and its time window spanned satellites holding no rows. ([#341](https://github.com/sksat/orts/pull/341))
 - Worker 404 / "invalid URL" on init: bundle URLs are absolutized against the
   worker origin inside `initDuckDB`, because DuckDB instantiates its worker from a
   `blob:` URL against which a root-relative path cannot resolve. ([#171](https://github.com/sksat/orts/pull/171))
