@@ -3,7 +3,7 @@ use nalgebra::{Vector3, Vector4};
 use utsuroi::{OdeState, Tolerances};
 
 use crate::attitude::AttitudeState;
-use crate::model::{HasAttitude, HasMass, HasOrbit};
+use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit};
 use crate::orbital::OrbitalState;
 
 /// Combined spacecraft state: orbital (6D) + attitude (7D) + mass (1D).
@@ -52,9 +52,11 @@ impl SpacecraftState<SimpleEci> {
     }
 }
 
-impl<F: Eci> HasOrbit for SpacecraftState<F> {
+impl<F: Eci> HasFrame for SpacecraftState<F> {
     type Frame = F;
+}
 
+impl<F: Eci> HasOrbit for SpacecraftState<F> {
     fn orbit(&self) -> &OrbitalState<F> {
         &self.orbit
     }
@@ -75,9 +77,11 @@ impl<F: Eci> HasMass for SpacecraftState<F> {
 // Delegate capability traits for AugmentedState<SpacecraftState<F>>.
 use crate::effector::AugmentedState;
 
-impl<F: Eci> HasOrbit for AugmentedState<SpacecraftState<F>> {
+impl<F: Eci> HasFrame for AugmentedState<SpacecraftState<F>> {
     type Frame = F;
+}
 
+impl<F: Eci> HasOrbit for AugmentedState<SpacecraftState<F>> {
     fn orbit(&self) -> &OrbitalState<F> {
         &self.plant.orbit
     }

@@ -25,7 +25,7 @@ fn rotational_energy(state: &AttitudeState, inertia: &Matrix3<f64>) -> f64 {
 fn angular_momentum_inertial(state: &AttitudeState, inertia: &Matrix3<f64>) -> Vector3<f64> {
     let l_body = inertia * state.angular_velocity;
     state
-        .rotation_to_eci()
+        .rotation_tagged_as::<arika::frame::SimpleEci>()
         .transform(&arika::frame::Vec3::from_raw(l_body))
         .into_inner()
 }

@@ -16,7 +16,7 @@ use std::ops::{Add, AddAssign};
 use arika::epoch::Epoch;
 #[cfg(test)]
 use arika::frame::SimpleEci;
-use arika::frame::{self, Body, Vec3};
+use arika::frame::{self, Body, Rotation, Vec3};
 use nalgebra::Vector3;
 
 use crate::OrbitalState;
@@ -24,26 +24,52 @@ use crate::attitude::AttitudeState;
 
 // Capability traits
 
+/// The inertial frame a state is propagated in.
+///
+/// Both the orbit and the attitude of a given state are expressed against this
+/// one frame, so it is declared once here rather than separately on
+/// [`HasOrbit`] and [`HasAttitude`] — a state cannot claim its orbit is in
+/// `Gcrs` while its attitude is in `SimpleEci`.
+///
+/// This is what drives frame-generic model dispatch: a model is written as
+/// `impl<F: Cap, S: HasFrame<Frame = F> + HasOrbit> Model<S, F>`, bounded on the
+/// minimal capability `Cap` it needs from the frame (e.g.
+/// `EarthRotationPole`, `EarthFixedTransform`, `EphemerisFrameBridge`), so a
+/// frame that cannot supply it is a compile error rather than a silent mislabel.
+/// The frame the state is read in and the frame the model emits loads in are the
+/// same type parameter, which is what keeps a model from reading a quaternion in
+/// one frame and reporting the result in another (`SimpleEci` and `Gcrs` differ
+/// by ~484 arcsec at 2024).
+///
+/// TODO: `Eci` bound は地心慣性系に限定している。月周回や深宇宙では
+/// より general な `Frame` bound が必要になる (別 milestone)。
+pub trait HasFrame {
+    /// Inertial frame of this state.
+    type Frame: arika::frame::Eci;
+}
+
 /// State type that provides attitude information (quaternion + angular velocity).
-pub trait HasAttitude {
+pub trait HasAttitude: HasFrame {
     fn attitude(&self) -> &AttitudeState;
+
+    /// Rotation body → [`HasFrame::Frame`].
+    ///
+    /// Prefer this over [`AttitudeState::rotation_tagged_as`]: the frame comes
+    /// from the state's own type rather than from a caller-supplied parameter.
+    fn attitude_to_inertial(&self) -> Rotation<Body, Self::Frame> {
+        self.attitude().rotation_tagged_as()
+    }
+
+    /// Rotation [`HasFrame::Frame`] → body.
+    fn attitude_from_inertial(&self) -> Rotation<Self::Frame, Body> {
+        self.attitude()
+            .rotation_tagged_as::<Self::Frame>()
+            .inverse()
+    }
 }
 
 /// State type that provides orbital information (position + velocity).
-pub trait HasOrbit {
-    /// Inertial frame of the orbital state.
-    ///
-    /// This is what drives frame-generic model dispatch: a model is written as
-    /// `impl<F: Cap, S: HasOrbit<Frame = F>> Model<S, F>`, bounded on the
-    /// minimal capability `Cap` it needs from the frame (e.g.
-    /// `EarthRotationPole`, `EarthFixedTransform`, `EphemerisFrameBridge`), so a
-    /// frame that cannot supply it is a compile error rather than a silent
-    /// mislabel.
-    ///
-    /// TODO: `Eci` bound は地心慣性系に限定している。月周回や深宇宙では
-    /// より general な `Frame` bound が必要になる (別 milestone)。
-    type Frame: arika::frame::Eci;
-
+pub trait HasOrbit: HasFrame {
     fn orbit(&self) -> &OrbitalState<Self::Frame>;
 }
 

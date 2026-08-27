@@ -113,7 +113,8 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotCross<F> {
         let b_body = obs
             .spacecraft
             .attitude
-            .rotation_to_body()
+            .rotation_tagged_as::<arika::frame::SimpleEci>()
+            .inverse()
             .transform(&arika::frame::Vec3::from_raw(b_eci))
             .into_inner();
         // Read the rate-gyro measurement directly from the observation.

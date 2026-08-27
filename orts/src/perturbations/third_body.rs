@@ -6,7 +6,7 @@ use arika::frame::{self, Vec3};
 use nalgebra::Vector3;
 
 use crate::model::ExternalLoads;
-use crate::model::{HasOrbit, Model};
+use crate::model::{HasFrame, HasOrbit, Model};
 
 /// Type alias for a body-position function: `Epoch<Tdb> -> ECI position [km]`.
 ///
@@ -152,7 +152,7 @@ impl ThirdBodyGravity {
 // exactly); `Cirs` applies the precession/nutation rotation. A frame with no
 // `EphemerisFrameBridge` impl (e.g. `Teme`) is rejected at compile time rather
 // than silently mistreated. See #191.
-impl<F: EphemerisFrameBridge, S: HasOrbit<Frame = F>> Model<S, F> for ThirdBodyGravity {
+impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasOrbit> Model<S, F> for ThirdBodyGravity {
     fn name(&self) -> &str {
         self.name
     }

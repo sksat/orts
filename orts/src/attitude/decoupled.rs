@@ -5,7 +5,7 @@ use utsuroi::DynamicalSystem;
 use crate::OrbitalState;
 use crate::attitude::AttitudeState;
 use crate::model::ExternalLoads;
-use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
+use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit, Model};
 
 /// Combined state providing attitude, orbit, and mass for decoupled models.
 ///
@@ -23,9 +23,11 @@ impl HasAttitude for DecoupledContext {
     }
 }
 
-impl HasOrbit for DecoupledContext {
+impl HasFrame for DecoupledContext {
     type Frame = arika::frame::SimpleEci;
+}
 
+impl HasOrbit for DecoupledContext {
     fn orbit(&self) -> &OrbitalState<arika::frame::SimpleEci> {
         &self.orbit
     }

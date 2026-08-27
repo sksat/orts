@@ -7,7 +7,7 @@ use arika::earth::R as R_EARTH;
 use arika::earth::transform::EphemerisFrameBridge;
 
 use crate::model::ExternalLoads;
-use crate::model::{HasOrbit, Model};
+use crate::model::{HasFrame, HasOrbit, Model};
 
 /// Solar radiation pressure at 1 AU (N/m²).
 /// P/c = 1361 W/m² / 299792458 m/s ≈ 4.5396e-6 N/m²
@@ -156,7 +156,9 @@ impl SolarRadiationPressure {
 // Identity for GCRS-aligned `SimpleEci` / `Gcrs` (historical behavior preserved
 // exactly); `Cirs` applies the precession/nutation rotation. A frame without an
 // `EphemerisFrameBridge` impl (e.g. `Teme`) is rejected at compile time. See #191.
-impl<F: EphemerisFrameBridge, S: HasOrbit<Frame = F>> Model<S, F> for SolarRadiationPressure {
+impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasOrbit> Model<S, F>
+    for SolarRadiationPressure
+{
     fn name(&self) -> &str {
         "srp"
     }

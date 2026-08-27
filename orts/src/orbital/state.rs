@@ -4,7 +4,7 @@ use arika::frame::{Eci, SimpleEci, Vec3};
 use nalgebra::Vector3;
 use utsuroi::{OdeState, State, Tolerances};
 
-use crate::model::HasOrbit;
+use crate::model::{HasFrame, HasOrbit};
 
 /// Orbital state: position and velocity in an inertial frame.
 ///
@@ -122,9 +122,11 @@ mod tests {
     }
 }
 
-impl<F: Eci> HasOrbit for OrbitalState<F> {
+impl<F: Eci> HasFrame for OrbitalState<F> {
     type Frame = F;
+}
 
+impl<F: Eci> HasOrbit for OrbitalState<F> {
     fn orbit(&self) -> &OrbitalState<F> {
         self
     }

@@ -18,7 +18,7 @@ use arika::epoch::Epoch;
 use arika::frame::{Body, Gcrs, Rotation, SimpleEci, Teme};
 use nalgebra::{UnitQuaternion, Vector3};
 use orts::attitude::{AttitudeState, InertialPointing, TrackingPdController};
-use orts::model::{HasAttitude, HasOrbit, Model};
+use orts::model::{HasAttitude, HasFrame, HasOrbit, Model};
 use orts::orbital::OrbitalState;
 use orts::plugin::tick_input::AttitudeBodyToInertial;
 
@@ -126,8 +126,11 @@ impl<F: arika::frame::Eci> HasAttitude for TestState<F> {
     }
 }
 
-impl<F: arika::frame::Eci> HasOrbit for TestState<F> {
+impl<F: arika::frame::Eci> HasFrame for TestState<F> {
     type Frame = F;
+}
+
+impl<F: arika::frame::Eci> HasOrbit for TestState<F> {
     fn orbit(&self) -> &OrbitalState<F> {
         &self.orbit
     }

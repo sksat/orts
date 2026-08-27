@@ -7,7 +7,7 @@ use crate::perturbations::SOLAR_RADIATION_PRESSURE;
 use arika::earth::R as R_EARTH;
 use arika::earth::transform::EphemerisFrameBridge;
 
-use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
+use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit, Model};
 
 use super::{ExternalLoads, SpacecraftShape};
 
@@ -83,7 +83,7 @@ impl PanelSrp {
     pub(crate) fn loads_from_state<F: EphemerisFrameBridge>(
         &self,
         orbit: &crate::OrbitalState<F>,
-        attitude: &crate::attitude::AttitudeState,
+        body_to_inertial: arika::frame::Rotation<arika::frame::Body, F>,
         mass: f64,
         epoch: Option<&Epoch>,
     ) -> ExternalLoads<F> {
@@ -134,8 +134,8 @@ impl PanelSrp {
             }
             SpacecraftShape::Panels(panels) => {
                 // Transform Sun direction to body frame
-                let s_body = attitude
-                    .rotation_from_inertial::<F>()
+                let s_body = body_to_inertial
+                    .inverse()
                     .transform(&arika::frame::Vec3::<F>::from_raw(s_hat))
                     .into_inner();
 
@@ -159,7 +159,7 @@ impl PanelSrp {
 
                 // a_body [m/s²] → a_inertial [km/s²]
                 let a_body = arika::frame::Vec3::from_raw(total_force_body / mass);
-                let a_inertial = attitude.rotation_to_inertial::<F>().transform(&a_body) / 1000.0;
+                let a_inertial = body_to_inertial.transform(&a_body) / 1000.0;
 
                 ExternalLoads {
                     acceleration_inertial: a_inertial,
@@ -177,7 +177,7 @@ impl PanelSrp {
 // the body frame — so panel SRP is valid for any such frame (identity for
 // GCRS-aligned `SimpleEci`/`Gcrs`). A frame without an `EphemerisFrameBridge`
 // impl (e.g. `Teme`) is rejected at compile time. See #191.
-impl<F: EphemerisFrameBridge, S: HasAttitude + HasOrbit<Frame = F> + HasMass> Model<S, F>
+impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasAttitude + HasOrbit + HasMass> Model<S, F>
     for PanelSrp
 {
     fn name(&self) -> &str {
@@ -185,7 +185,12 @@ impl<F: EphemerisFrameBridge, S: HasAttitude + HasOrbit<Frame = F> + HasMass> Mo
     }
 
     fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
-        self.loads_from_state(state.orbit(), state.attitude(), state.mass(), epoch)
+        self.loads_from_state(
+            state.orbit(),
+            state.attitude_to_inertial(),
+            state.mass(),
+            epoch,
+        )
     }
 }
 
@@ -557,7 +562,7 @@ mod tests {
         let att = AttitudeState::identity();
 
         let a_cirs = *srp
-            .loads_from_state(&orbit, &att, 1000.0, Some(&epoch))
+            .loads_from_state(&orbit, att.rotation_tagged_as(), 1000.0, Some(&epoch))
             .acceleration_inertial
             .inner();
 
@@ -599,11 +604,11 @@ mod tests {
         let cirs = OrbitalState::<Cirs>::new_in_frame(sat, vector![0.0, 7.5, 0.0]);
         let simple = OrbitalState::new(sat, vector![0.0, 7.5, 0.0]); // SimpleEci
         let a_cirs = *srp
-            .loads_from_state(&cirs, &att, 1000.0, Some(&epoch))
+            .loads_from_state(&cirs, att.rotation_tagged_as(), 1000.0, Some(&epoch))
             .acceleration_inertial
             .inner();
         let a_simple = *srp
-            .loads_from_state(&simple, &att, 1000.0, Some(&epoch))
+            .loads_from_state(&simple, att.rotation_tagged_as(), 1000.0, Some(&epoch))
             .acceleration_inertial
             .inner();
 

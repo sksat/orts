@@ -15,7 +15,7 @@ use nalgebra::Vector3;
 use tobari::magnetic::MagneticFieldModel;
 
 use crate::magnetic;
-use crate::model::{ExternalLoads, HasAttitude, HasOrbit, Model};
+use crate::model::{ExternalLoads, HasAttitude, HasFrame, HasOrbit, Model};
 
 /// A single magnetic torquer with physical limits.
 #[derive(Debug, Clone)]
@@ -265,8 +265,11 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform> MtqAssembly<F, Fr> {
 // `SimpleEci`, the IAU 2006 chain for `Gcrs`), and rotated to the body frame
 // with the matching `Fr → Body` rotation. A frame without an
 // `EarthFixedTransform` impl is rejected at compile time. See #151.
-impl<F: MagneticFieldModel, Fr: EarthFixedTransform, S: HasAttitude + HasOrbit<Frame = Fr>>
-    Model<S, Fr> for MtqAssembly<F, Fr>
+impl<
+    F: MagneticFieldModel,
+    Fr: EarthFixedTransform,
+    S: HasFrame<Frame = Fr> + HasAttitude + HasOrbit,
+> Model<S, Fr> for MtqAssembly<F, Fr>
 {
     fn name(&self) -> &str {
         "mtq_assembly"
@@ -285,8 +288,7 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform, S: HasAttitude + HasOrbit<F
             return ExternalLoads::zeros();
         }
         let b_body = state
-            .attitude()
-            .rotation_from_inertial::<Fr>()
+            .attitude_from_inertial()
             .transform(&b_inertial)
             .into_inner();
         let moments = self.resolved_moments();
@@ -319,8 +321,11 @@ mod tests {
         }
     }
 
-    impl HasOrbit for TestState {
+    impl HasFrame for TestState {
         type Frame = frame::SimpleEci;
+    }
+
+    impl HasOrbit for TestState {
         fn orbit(&self) -> &OrbitalState<frame::SimpleEci> {
             &self.orbit
         }
@@ -577,8 +582,7 @@ mod tests {
         )
         .into_inner();
         let b_body = state
-            .attitude
-            .rotation_to_body()
+            .attitude_from_inertial()
             .transform(&FrameVec3::<frame::SimpleEci>::from_raw(b_eci))
             .into_inner();
         let expected = assembly.core.torque(&[0.5, 0.0, 0.0], &b_body);
@@ -707,8 +711,11 @@ mod tests {
                 &self.attitude
             }
         }
-        impl HasOrbit for GcrsState {
+        impl HasFrame for GcrsState {
             type Frame = frame::Gcrs;
+        }
+
+        impl HasOrbit for GcrsState {
             fn orbit(&self) -> &OrbitalState<frame::Gcrs> {
                 &self.orbit
             }
@@ -738,8 +745,7 @@ mod tests {
             &EarthOrientation::new(epoch, &zero_eop()),
         );
         let b_body = state
-            .attitude
-            .rotation_from_inertial::<frame::Gcrs>()
+            .attitude_from_inertial()
             .transform(&b_gcrs)
             .into_inner();
         let expected = assembly.core.torque(&[0.7, -0.3, 0.2], &b_body);

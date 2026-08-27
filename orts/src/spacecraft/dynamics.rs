@@ -815,7 +815,7 @@ mod tests {
     // `rotation_to_inertial::<F>`). This makes the old SimpleEci→`F`
     // mislabel unrepresentable.
 
-    use crate::model::HasAttitude;
+    use crate::model::{HasAttitude, HasFrame};
     use arika::frame::{Body, Gcrs, Vec3 as FrameVec3};
 
     /// Translational mock: contributes a constant acceleration already
@@ -850,7 +850,7 @@ mod tests {
         accel_body: Vector3<f64>,
     }
 
-    impl<S: HasAttitude, F: Eci> StateEffector<S, F> for BodyThrustEffector {
+    impl<S: HasFrame<Frame = F> + HasAttitude, F: Eci> StateEffector<S, F> for BodyThrustEffector {
         fn name(&self) -> &str {
             "body_thrust"
         }
@@ -866,10 +866,7 @@ mod tests {
             _epoch: Option<&Epoch>,
         ) -> ExternalLoads<F> {
             let a_body = FrameVec3::<Body>::from_raw(self.accel_body);
-            let a_inertial = state
-                .attitude()
-                .rotation_to_inertial::<F>()
-                .transform(&a_body);
+            let a_inertial = state.attitude_to_inertial().transform(&a_body);
             ExternalLoads {
                 acceleration_inertial: a_inertial,
                 torque_body: FrameVec3::zeros(),

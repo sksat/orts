@@ -9,7 +9,7 @@ use crate::attitude::AttitudeState;
 use crate::control::DiscreteController;
 use crate::magnetic;
 use crate::model::ExternalLoads;
-use crate::model::{HasAttitude, HasOrbit, Model};
+use crate::model::{HasAttitude, HasFrame, HasOrbit, Model};
 use crate::spacecraft::MtqAssemblyCore;
 
 /// B-dot detumbling controller using cross-product dB/dt estimation.
@@ -95,8 +95,11 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform> BdotCross<F, Fr> {
 // via `magnetic::field_inertial` and rotated to the body frame with the matching
 // `Fr → Body` rotation. A frame without an `EarthFixedTransform` impl is
 // rejected at compile time. See #151.
-impl<F: MagneticFieldModel, Fr: EarthFixedTransform, S: HasAttitude + HasOrbit<Frame = Fr>>
-    Model<S, Fr> for BdotCross<F, Fr>
+impl<
+    F: MagneticFieldModel,
+    Fr: EarthFixedTransform,
+    S: HasFrame<Frame = Fr> + HasAttitude + HasOrbit,
+> Model<S, Fr> for BdotCross<F, Fr>
 {
     fn name(&self) -> &str {
         "bdot"
@@ -122,7 +125,8 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform, S: HasAttitude + HasOrbit<F
 
         // 2. Transform to body frame
         let b_body = att
-            .rotation_from_inertial::<Fr>()
+            .rotation_tagged_as::<Fr>()
+            .inverse()
             .transform(&b_inertial)
             .into_inner();
 
@@ -182,8 +186,11 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform> CommandedMagnetorquer<F, Fr
 }
 
 // Frame-generic, as `BdotCross` above.
-impl<F: MagneticFieldModel, Fr: EarthFixedTransform, S: HasAttitude + HasOrbit<Frame = Fr>>
-    Model<S, Fr> for CommandedMagnetorquer<F, Fr>
+impl<
+    F: MagneticFieldModel,
+    Fr: EarthFixedTransform,
+    S: HasFrame<Frame = Fr> + HasAttitude + HasOrbit,
+> Model<S, Fr> for CommandedMagnetorquer<F, Fr>
 {
     fn name(&self) -> &str {
         "magnetorquer"
@@ -202,8 +209,7 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform, S: HasAttitude + HasOrbit<F
             return ExternalLoads::zeros();
         }
         let b_body = state
-            .attitude()
-            .rotation_from_inertial::<Fr>()
+            .attitude_from_inertial()
             .transform(&b_inertial)
             .into_inner();
         ExternalLoads::torque(self.commanded_moment.cross(&b_body))
@@ -326,7 +332,8 @@ impl<F: MagneticFieldModel, Fr: EarthFixedTransform> DiscreteController<Fr>
             return Vector3::zeros();
         }
         let b_body = attitude
-            .rotation_from_inertial::<Fr>()
+            .rotation_tagged_as::<Fr>()
+            .inverse()
             .transform(&b_inertial)
             .into_inner();
 
@@ -376,9 +383,11 @@ mod tests {
         }
     }
 
-    impl HasOrbit for TestState {
+    impl HasFrame for TestState {
         type Frame = arika::frame::SimpleEci;
+    }
 
+    impl HasOrbit for TestState {
         fn orbit(&self) -> &OrbitalState<arika::frame::SimpleEci> {
             &self.orbit
         }
@@ -550,8 +559,11 @@ mod tests {
                 &self.attitude
             }
         }
-        impl HasOrbit for GcrsState {
+        impl HasFrame for GcrsState {
             type Frame = frame::Gcrs;
+        }
+
+        impl HasOrbit for GcrsState {
             fn orbit(&self) -> &OrbitalState<frame::Gcrs> {
                 &self.orbit
             }
@@ -585,8 +597,7 @@ mod tests {
             &EarthOrientation::new(epoch, &zero_eop()),
         );
         let b_body = state
-            .attitude
-            .rotation_from_inertial::<frame::Gcrs>()
+            .attitude_from_inertial()
             .transform(&b_gcrs)
             .into_inner();
         let desired = gain * state.attitude.angular_velocity.cross(&b_body);

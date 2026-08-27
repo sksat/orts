@@ -2,7 +2,7 @@ use arika::epoch::Epoch;
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 
 use crate::model::ExternalLoads;
-use crate::model::{HasAttitude, HasOrbit, Model};
+use crate::model::{HasAttitude, HasFrame, HasOrbit, Model};
 
 use super::reference::AttitudeReference;
 
@@ -38,7 +38,7 @@ impl InertialPdController {
     }
 }
 
-impl<S: HasAttitude> Model<S> for InertialPdController {
+impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude> Model<S> for InertialPdController {
     fn name(&self) -> &str {
         "pd_inertial"
     }
@@ -101,8 +101,11 @@ impl<R> TrackingPdController<R> {
 // Frame-generic: the reference is asked for its target in the state's own
 // inertial frame `F` (see #151). The torque itself is body-frame, so the
 // returned `ExternalLoads<F>` carries a zero acceleration in that same frame.
-impl<F: arika::frame::Eci, S: HasAttitude + HasOrbit<Frame = F>, R: AttitudeReference<F> + 'static>
-    Model<S, F> for TrackingPdController<R>
+impl<
+    F: arika::frame::Eci,
+    S: HasFrame<Frame = F> + HasAttitude + HasOrbit,
+    R: AttitudeReference<F> + 'static,
+> Model<S, F> for TrackingPdController<R>
 {
     fn name(&self) -> &str {
         "pd_tracking"
@@ -112,7 +115,7 @@ impl<F: arika::frame::Eci, S: HasAttitude + HasOrbit<Frame = F>, R: AttitudeRefe
         let att = state.attitude();
         let (q_target, omega_target) = self.reference.target(t, state.orbit(), epoch);
         // The target's frame tag has done its job: it had to match the frame
-        // of the state's *orbit* (`HasOrbit<Frame = F>`) for this call to
+        // of the state's *orbit* (`HasFrame<Frame = F> + HasOrbit`) for this call to
         // type-check. `q_current` below is still an untyped `AttitudeState`
         // quaternion, so that is as far as the check reaches today. Everything
         // below is body-frame error algebra, so the tag is dropped here.
@@ -274,8 +277,11 @@ mod tests {
         }
     }
 
-    impl HasOrbit for TestState {
+    impl HasFrame for TestState {
         type Frame = arika::frame::SimpleEci;
+    }
+
+    impl HasOrbit for TestState {
         fn orbit(&self) -> &OrbitalState {
             &self.orbit
         }
