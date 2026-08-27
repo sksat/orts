@@ -34,6 +34,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   SimpleEci>` で `ExternalLoads<F>` を返す (`Model<S, F>` と同様)。effector は
   host の慣性 frame で荷重を生成するようになった。既定の `F` により既存の
   `StateEffector<S>` 実装はそのままコンパイル可能。([#148](https://github.com/sksat/orts/pull/148))
+- `arika` の暦フレーム修正に伴い、太陽・月に依存する結果 (SRP、第三体重力、日陰幾何、
+  sun sensor、Harris-Priester の密度 bulge) が動く。暦が mean equinox of date ではなく
+  J2000 の方向を返すようになったためで、2024 年で 0.335°。Orekit との一致はその分改善し、
+  GEO 3 日の third-body oracle は 218 m → 0.33 m、短い Harris-Priester oracle 3 件は
+  20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
 - `SpacecraftDynamics` の不正な frame 再タグを除去。`ExternalLoads<SimpleEci>`
@@ -175,11 +180,59 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - `earth::topocentric` — 地上局の look angle: `TopocentricSite<F: Ecef>`
   (WGS-84 `Geodetic` から構築し局所 ENU 基底を事前計算) と `LookAngles`
   (方位 / 仰角 / slant range)。`look_angles(target)` で算出。([#112](https://github.com/sksat/orts/pull/112))
+- `frame::MeanEquinoxOfDate` marker — 日付の平均赤道・平均春分点 (MOD)、`Eci`
+  category。古典的な解析級数が基準にし、GMST が測られる equinox。
+  `earth::mean_equinox` が `Gcrs` との間の IAU 1976 precession を持つ
+  (`Rotation<MeanEquinoxOfDate, Gcrs>::iau1976_precession` と逆向き)。局所時角
+  `GMST + λ − α` を組む利用者が、赤経を GMST と同じ equinox のフレームに置ける。
+  ([#359](https://github.com/sksat/orts/pull/359))
+- `EopTable::clamped()` / `EopTable::into_clamped()` → `ClampedEop`。範囲外の
+  照会に最近端点の値を返す EOP provider。dUT1 は連続量 `UT1 − TAI` 経由で保持する
+  ので、テーブル終端より後のうるう秒は UT1 に段差を作らず dUT1 を 1 s 動かす。
+  ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Changed
 - `Epoch::from_iso8601` が ordinal / day-of-year 形式
   (`YYYY-DDDTHH:MM:SS`、CCSDS OMM で使用) も受理し、末尾の `Z` が任意になった。
   厳密な緩和で、従来受理した入力は引き続きパース可能。([#87](https://github.com/sksat/orts/pull/87))
+- **BREAKING**: `EopTable` は EOP capability trait
+  (`Ut1Offset` / `PolarMotion` / `NutationCorrections` / `LengthOfDay`) を実装しない。
+  これらの trait は infallible で、有限の MJD 区間しか覆わないテーブルは範囲外で
+  正しい infallible な答を持たない (従来は `.expect()` で、通常の範囲外 epoch が
+  `Epoch::to_ut1` や IAU 2006 full chain の内側からプロセスを abort させていた)。
+  `table.clamped()` (借用) / `table.into_clamped()` (所有) で範囲外 policy を
+  名指しするか、`*_checked` accessor で `EopLookupError::OutOfRange` を受ける。
+  ([#359](https://github.com/sksat/orts/pull/359))
+- `KeplerianElements::from_state_vector` の退化幾何の規約を型の doc に明記した
+  (円軌道 / 赤道軌道 / 円赤道軌道で `raan` / `argument_of_periapsis` /
+  `true_anomaly` が何を保持するかの表)。面内角は軌道法線まわりに測る `atan2`
+  ベースのヘルパ 1 本で計算し、従来の `acos` + 象限判定が ν = 0 / i = 0 付近で
+  落としていた mantissa の半分を回復した。非退化な軌道の値は変わらない。([#359](https://github.com/sksat/orts/pull/359))
+
+#### Fixed
+- `KeplerianElements::from_state_vector` が離心率のある赤道軌道の近地点方向を
+  失っていた。RAAN と argument of periapsis の両方を 0 にしつつ真近点角を離心率
+  ベクトルから測っていたため、赤道面内の近地点経度がどの要素にも保存されなかった。
+  a = 10,000 km, e = 0.2, i = 0, ϖ = π/2 が 90° 回転して戻り、往復の位置誤差が
+  11,313.7 km。赤道軌道では true longitude of periapsis ϖ = Ω + ω を保存する
+  (逆行では符号反転。`to_state_vector` の i = π と整合)。([#359](https://github.com/sksat/orts/pull/359))
+- Meeus の太陽・月暦が mean equinox of date のベクトルを `Vec3<Gcrs>` として
+  返していた。平均黄経の係数が tropical rate で、黄道 → 赤道の回転も of-date の
+  平均黄道傾斜角を使うため、J2000 からの累積歳差がそのまま乗っていた: 2024 年で
+  0.335°、~1.4°/century で増加し、月ベクトルで約 2,250 km の横方向誤差 — 級数
+  自身の ~1′ 精度より 1 桁大きい。IAU 1976 precession で J2000 に戻す (nutation
+  ≤ 17″ と J2000→GCRS frame bias ~20 mas は入れない)。太陽・月に依存する結果
+  (SRP、第三体重力、日陰、sun sensor) はこの角度ぶん動く。従来「Meeus model の
+  精度 0.35°」と記録されていた量は、この回転ぶんだった。([#359](https://github.com/sksat/orts/pull/359))
+- `sun::sun_direction_from_body` の惑星分岐が、Standish の惑星要素 (J2000 mean
+  ecliptic 基準) を **of-date の** 黄道傾斜角で赤道座標に回していた (2024 年で
+  11″、2075 年で 35″ の frame error)。固定の J2000 傾斜角を使う。([#359](https://github.com/sksat/orts/pull/359))
+- `EopTable::dut1_checked` がうるう秒を跨いで dUT1 を直接補間し、1 s の跳びの
+  半分を前日に塗り広げていた。2017-01-01 を挟む IERS の 2 行 (−0.5928 s /
+  +0.4068 s) で中点が ≈ −0.593 s ではなく −0.093 s になり、UT1 で 0.5 s
+  (ERA で 3.7e-5 rad、赤道で約 230 m) の誤差。連続量
+  `UT1 − TAI = dUT1 − (TAI − UTC)` を補間し、照会時点の `TAI − UTC` を足し戻す。
+  ([#359](https://github.com/sksat/orts/pull/359))
 
 ### `utsuroi` (Rust, crates.io)
 
