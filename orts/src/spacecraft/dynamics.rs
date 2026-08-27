@@ -812,8 +812,9 @@ mod tests {
     // no coordinate re-tag. Torque-only effectors work on any `F`; a
     // translational effector produces its inertial acceleration in `F`
     // itself (e.g. by rotating a body-frame thrust via
-    // `rotation_to_inertial::<F>`). This makes the old SimpleEci→`F`
-    // mislabel unrepresentable.
+    // `attitude_to_inertial()`, whose `F` comes from the state's
+    // `HasFrame::Frame`). This makes the old SimpleEci→`F` mislabel
+    // unrepresentable.
 
     use crate::model::{HasAttitude, HasFrame};
     use arika::frame::{Body, Gcrs, Vec3 as FrameVec3};
@@ -938,7 +939,7 @@ mod tests {
     #[test]
     fn body_thrust_effector_rotates_into_gcrs() {
         // Regression guard for #103: a body-frame thrust is rotated into the
-        // host frame `F = Gcrs` via rotation_to_inertial::<F>, not re-tagged.
+        // host frame `F = Gcrs` via `attitude_to_inertial()`, not re-tagged.
         // 90° about +Z: body +X thrust → inertial +Y acceleration.
         let half = std::f64::consts::FRAC_PI_2 / 2.0;
         let attitude = AttitudeState {

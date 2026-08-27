@@ -722,9 +722,9 @@ mod tests {
     }
 
     /// The sphere branch never touches the body frame, so it cannot cover the
-    /// two rotations this change made frame-generic
-    /// (`rotation_from_inertial::<F>` on the way in,
-    /// `rotation_to_inertial::<F>` on the way out). Exercise the panel branch in
+    /// two rotations this change made frame-generic (the `body_to_inertial`
+    /// rotation the model is handed: inverted on the way in, applied as-is on
+    /// the way out). Exercise the panel branch in
     /// `Gcrs` at a non-identity attitude with an asymmetric fixture, and
     /// reconstruct both outputs: the inertial acceleration, which round-trips
     /// through the body frame, and the body torque, which stays there.
