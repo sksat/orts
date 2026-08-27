@@ -922,8 +922,10 @@ fn test_cli_config_rejects_singular_inertia() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("satellites[0]") && stderr.contains("positive definite"),
-        "error should name the entry and the constraint, got: {stderr}"
+        stderr.contains("satellites[0]")
+            && stderr.contains("attitude:")
+            && stderr.contains("inertia tensor"),
+        "error should name the entry, the block and the constraint, got: {stderr}"
     );
     std::fs::remove_dir_all(&dir).ok();
 }

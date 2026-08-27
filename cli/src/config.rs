@@ -505,33 +505,28 @@ impl AttitudeConfig {
                 return Err(format!("non-finite `{name}` component: {bad}"));
             }
         }
-        if !self.mass.is_finite() || self.mass <= 0.0 {
-            return Err(format!(
-                "attitude.mass must be positive and finite (got {})",
-                self.mass
-            ));
+        if self.mass <= 0.0 {
+            return Err(format!("non-positive mass: {}", self.mass));
         }
-        // `AttitudeState::orientation()` normalizes whatever it is given, so a
-        // quaternion it cannot normalize becomes a NaN or non-unit attitude
-        // rather than an error. The condition is on the squared norm, because
-        // that is what the normalization divides by: zero (components small
-        // enough that the squares underflow) divides by zero, and infinity
-        // (components large enough that the squares overflow) drives every
-        // component to zero. The floor is the smallest normal rather than `> 0`
-        // because a subnormal squared norm has lost mantissa bits before the
-        // square root is taken: `[1e-160, 0, 0, 0]` normalizes to a norm of
-        // 1.0000056, not 1. `accepted_quaternions_are_exactly_the_normalizable_ones`
-        // pins the bound against that call.
+        // The quaternion need not be normalized — `AttitudeState::orientation`
+        // normalizes on use and `OdeState::project` renormalizes after every
+        // step — but it has to be something those can normalize. Both divide by
+        // the sum of squares, so the test is that sum rather than the
+        // components: `[1e200, 0, 0, 0]` squares to infinity and drives every
+        // component to zero.
+        //
+        // The floor is the smallest normal rather than `> 0.0` because a
+        // subnormal sum has already lost mantissa bits before the square root:
+        // `[1e-160, 0, 0, 0]` has a squared norm of 1e-320 and normalizes to
+        // 1.0000056, not 1.
         let quat_norm_sq: f64 = self.initial_quaternion.iter().map(|q| q * q).sum();
         if !quat_norm_sq.is_finite() || quat_norm_sq < f64::MIN_POSITIVE {
             return Err(format!(
-                "attitude.initial_quaternion must have a usable norm (got {:?}): it is a \
-                 rotation (w, x, y, z), and the default (1, 0, 0, 0) is the identity",
-                self.initial_quaternion
+                "`initial_quaternion` cannot be normalized (its components square to \
+                 {quat_norm_sq}); it names no attitude"
             ));
         }
-
-        // Ask the question the way the dynamics do: `SpacecraftDynamics::new`
+        // Ask the inertia question the way the dynamics do: `SpacecraftDynamics::new`
         // takes `try_inverse().expect(…)`, so the test is whether that inverse
         // exists and is usable. A magnitude threshold on the determinant cannot
         // answer it — the determinant carries the cube of the units, so
@@ -543,7 +538,7 @@ impl AttitudeConfig {
         // quieter failure too: nalgebra's 3x3 inverse divides cofactors by the
         // determinant, so `[1e154; 3]` — condition number 1 — overflows both to
         // give `Some(zero matrix)`. Every component is finite, and a spacecraft
-        // built on it would answer every torque with zero angular acceleration.
+        // built on it would answer every torque with no angular acceleration.
         // `I · I⁻¹` is dimensionless, so one tolerance holds at every scale.
         let inertia = self.inertia_matrix();
         let inverse = inertia.try_inverse().filter(|inv| {
@@ -556,25 +551,47 @@ impl AttitudeConfig {
                 self.inertia_diag, self.inertia_off_diag
             ));
         };
-        // The quaternion need not be normalized — `AttitudeState::orientation`
-        // normalizes on use and `OdeState::project` renormalizes after every
-        // step — but it has to be something those can normalize. Both divide by
-        // the sum of squares, so the test is that sum, not the components: an
-        // all-zero quaternion names no attitude, `[1e-200, 0, 0, 0]` squares to
-        // zero, and `[1e200, 0, 0, 0]` squares to infinity. Each leaves the
-        // orientation undefined even though the components themselves are
-        // finite and non-zero.
-        let quat_norm_sq: f64 = self.initial_quaternion.iter().map(|q| q * q).sum();
-        if !(quat_norm_sq > 0.0 && quat_norm_sq.is_finite()) {
+        // Numeric usability is not physical possibility, and these come before
+        // the derivative below: a tensor no mass distribution can produce should
+        // be reported as such rather than as whatever its derivative happens to
+        // do. State both constraints in terms of the principal moments
+        // `I1 <= I2 <= I3` — the eigenvalues, which equal `inertia_diag` only
+        // when `inertia_off_diag` is zero, so read them off the tensor.
+        let mut moments: Vec<f64> = inertia.symmetric_eigenvalues().iter().copied().collect();
+        moments.sort_by(|a, b| a.partial_cmp(b).expect("eigenvalues of a finite tensor"));
+        let (i1, i2, i3) = (moments[0], moments[1], moments[2]);
+        // A non-positive principal moment means zero or negative mass off that
+        // axis. `I1 == 0` is the singular case the inverse already refuses; a
+        // negative one can invert cleanly and still describe nothing.
+        if i1 <= 0.0 {
             return Err(format!(
-                "`initial_quaternion` cannot be normalized \
-                 (its components square to {quat_norm_sq}); it names no attitude"
+                "inertia tensor is not positive definite: smallest principal moment is \
+                 {i1} (diag {:?}, off-diag {:?})",
+                self.inertia_diag, self.inertia_off_diag
             ));
         }
-        // A usable inverse is not yet an integrable state: the torque-free Euler
-        // term `I⁻¹ (−ω × Iω)` can overflow on its own. `[1e-308, 1, 2]` with
-        // `ω = [1, 2, 2]` inverts cleanly and still starts at an infinite
-        // angular acceleration.
+        // No mass distribution can violate `I1 + I2 >= I3`, so a tensor that
+        // does integrates attitude motion belonging to no spacecraft. Equality
+        // is the flat-plate (lamina) limit — attainable and well-posed — and the
+        // relative slack keeps a config that states it exactly from being
+        // rejected by the eigenvalue solver's last bits.
+        const TRIANGLE_SLACK: f64 = 1e-9;
+        if i1 + i2 < i3 * (1.0 - TRIANGLE_SLACK) {
+            return Err(format!(
+                "inertia tensor violates the triangle inequality: principal moments \
+                 [{i1}, {i2}, {i3}] have I1 + I2 < I3, which no mass distribution can \
+                 produce (diag {:?}, off-diag {:?})",
+                self.inertia_diag, self.inertia_off_diag
+            ));
+        }
+        // A usable, physically possible tensor is still not an integrable state:
+        // the torque-free Euler term `I⁻¹ (−ω × Iω)` can overflow on the rate
+        // alone. `diag(1, 1, 2)` with `ω = 1e200` squares out of range in the
+        // cross product.
+        //
+        // The tensor cannot do it by itself once the inequality holds: in
+        // principal axes `α1 = ((I2 − I3)/I1) ω2 ω3`, and `|I2 − I3| <= I1`
+        // there, so the gain never exceeds 1.
         let omega = nalgebra::Vector3::from_row_slice(&self.initial_angular_velocity);
         let alpha = inverse * -omega.cross(&(inertia * omega));
         if !alpha.iter().all(|v| v.is_finite()) {
@@ -597,41 +614,6 @@ impl AttitudeConfig {
         // The bound holds of the partial sums too only because `q_dot` halves
         // `ω` before forming the products. Halving the sum afterwards instead
         // lets it overflow at twice the answer's magnitude.
-        if self.mass <= 0.0 {
-            return Err(format!("non-positive mass: {}", self.mass));
-        }
-        // Numeric usability is not physical possibility. State the two
-        // constraints every real inertia tensor satisfies in terms of its
-        // principal moments `I1 <= I2 <= I3` — the eigenvalues, which equal
-        // `inertia_diag` only when `inertia_off_diag` is zero, so read them off
-        // the tensor rather than the diagonal.
-        let mut moments: Vec<f64> = inertia.symmetric_eigenvalues().iter().copied().collect();
-        moments.sort_by(|a, b| a.partial_cmp(b).expect("eigenvalues of a finite tensor"));
-        let (i1, i2, i3) = (moments[0], moments[1], moments[2]);
-        // A non-positive principal moment means zero or negative mass off that
-        // axis. `I1 == 0` is the singular case the inverse above already
-        // refuses; a negative one can invert cleanly and still describe nothing.
-        if i1 <= 0.0 {
-            return Err(format!(
-                "inertia tensor is not positive definite: smallest principal moment is \
-                 {i1} (diag {:?}, off-diag {:?})",
-                self.inertia_diag, self.inertia_off_diag
-            ));
-        }
-        // No mass distribution can violate `I1 + I2 >= I3`, so a tensor that
-        // does integrates attitude motion belonging to no spacecraft. Equality
-        // is the flat-plate (lamina) limit — attainable and well-posed — and the
-        // relative slack keeps a config that states it exactly from being
-        // rejected by the eigenvalue solver's last bits.
-        const TRIANGLE_SLACK: f64 = 1e-9;
-        if i1 + i2 < i3 * (1.0 - TRIANGLE_SLACK) {
-            return Err(format!(
-                "inertia tensor violates the triangle inequality: principal moments \
-                 [{i1}, {i2}, {i3}] have I1 + I2 < I3, which no mass distribution can \
-                 produce (diag {:?}, off-diag {:?})",
-                self.inertia_diag, self.inertia_off_diag
-            ));
-        }
         Ok(())
     }
 }
