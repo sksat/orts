@@ -55,7 +55,16 @@ orts replay output.rrd
 orts convert output.rrd --format csv
 ```
 
-Example config (`orts.toml`):
+Example config (`orts.toml`). It points at a controller plugin, so build one
+first. The plugin sources ship in this repository, so this part needs a
+checkout — from its root:
+
+```bash
+cargo install cargo-component
+rustup target add wasm32-wasip1
+cargo component build --release \
+  --manifest-path plugin-sdk/examples/pd-rw-control/Cargo.toml
+```
 
 ```toml
 body = "earth"
@@ -79,32 +88,34 @@ type = "three_axis"
 inertia = 0.01
 max_momentum = 5.0
 max_torque = 0.5
+
+# PD attitude control: hold the identity quaternion using the wheels.
+[satellites.controller]
+type = "wasm"
+path = "plugin-sdk/examples/target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
 ```
+
+`path` is resolved against the working directory, so run `orts` from the
+repository root too, or make it absolute.
+
+The controller is what reads the sensors and commands the wheels. Drop it and
+`orts run` propagates orbit and attitude, and warns that the `sensors` and
+`reaction_wheels` blocks have no effect.
 
 ### WASM Plugin
 
 Write satellite attitude controllers in any language that compiles to WebAssembly.
 Plugins receive sensor readings (magnetometer, gyroscope, star tracker, etc.) each tick and return actuator commands (reaction wheels, magnetorquers) — the simulator handles all dynamics and environment models.
 
-```bash
-# Install cargo-component
-cargo install cargo-component
-
-# Build an example plugin
-cd plugin-sdk/examples/pd-rw-control
-cargo component build --release
-```
-
-Add a plugin controller to your config:
+The quick start above builds and wires up `pd-rw-control`. Its gains and the
+attitude it holds come from `[satellites.controller.config]`, which every field
+defaults so it can be omitted:
 
 ```toml
-[satellites.controller]
-type = "wasm"
-path = "target/wasm32-wasip1/release/orts_example_plugin_pd_rw_control.wasm"
-
 [satellites.controller.config]
 kp = 1.0
 kd = 2.0
+target_q = [1.0, 0.0, 0.0, 0.0]
 sample_period = 0.1
 ```
 

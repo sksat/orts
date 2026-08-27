@@ -220,3 +220,49 @@ fn test_config_validate_rejects_bad_epoch() {
     );
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// An attitude config the simulation would refuse must not validate as OK.
+///
+/// `config validate` reports on `SimConfig::load`, so a check applied only at
+/// the run and serve entry points would leave this command calling a config
+/// valid that both of them then reject.
+#[test]
+fn test_config_validate_rejects_unintegrable_attitude() {
+    for (tag, attitude) in [
+        ("nan-inertia", "inertia_diag = [nan, 10, 10]\nmass = 500"),
+        (
+            "huge-inertia",
+            "inertia_diag = [1e200, 1e200, 1e200]\nmass = 500\n\
+             inertia_off_diag = [1e200, 1e200, 1e200]",
+        ),
+        ("zero-mass", "inertia_diag = [10, 10, 10]\nmass = 0"),
+        (
+            "zero-quat",
+            "inertia_diag = [10, 10, 10]\nmass = 500\ninitial_quaternion = [0, 0, 0, 0]",
+        ),
+    ] {
+        let dir = unique_dir(tag);
+        let path = dir.join("bad.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "body = \"earth\"\ndt = 1.0\n\n[[satellites]]\nid = \"a\"\n\
+                 orbit = {{ type = \"circular\", altitude = 500 }}\n\n\
+                 [satellites.attitude]\n{attitude}\n"
+            ),
+        )
+        .unwrap();
+
+        let out = orts()
+            .args(["config", "validate", path.to_str().unwrap(), "--json"])
+            .output()
+            .expect("validate --json");
+        assert_eq!(out.status.code(), Some(2), "{tag}: expected exit code 2");
+        let v: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&out.stdout))
+            .expect("validate --json should print JSON even on error");
+        assert_eq!(v["status"], "error", "{tag}");
+        let msg = v["error"].as_str().unwrap_or_default();
+        assert!(msg.contains("attitude"), "{tag}: got {msg}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

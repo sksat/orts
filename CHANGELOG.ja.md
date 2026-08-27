@@ -118,6 +118,49 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - `--config` ファイルで起動した `orts serve` は `[[command]]` タイムラインを
   含む config を明確なエラーで拒否する (コマンドタイムラインは `orts run`
   のみ)。従来は黙って破棄していた。([#58](https://github.com/sksat/orts/pull/58))
+- `orts run` が `[satellites.attitude]` を honor する。全衛星に姿勢設定がある
+  fleet は `orts serve` と同じ spacecraft dynamics (姿勢状態 + coupled gravity
+  gradient) で伝播され、CSV に四元数と機体系角速度の列が増える。従来は全衛星が
+  controller を持たない限り軌道だけを伝播し、姿勢・アクチュエータ・センサ設定を
+  警告なしに捨てていた (README のクイックスタート設定もその一つ)。モード判定
+  (orbit-only / spacecraft / controlled) は `orts run`、`ServeEngine::build`、
+  serve の WebSocket config 検証が共有する 1 箇所に集約したので、同じ config が
+  エントリポイントによって姿勢を伝播したりしなかったりすることはなくなった。
+  ([#335](https://github.com/sksat/orts/pull/335))
+- 実行モードが act できない設定は黙って捨てず報告する: `orts run` は配送先の
+  controller がない `[[command]]` タイムラインと、宣言された stream-io の
+  `streams` (run のループには pump する transport がない) を拒否する。両
+  エントリポイントは controller 設定の混在を拒否する (制御ループは fleet 全体を
+  回すか全く回さないかなので、混在させると controller が回らない)。WebSocket の
+  `start_simulation` も `orts serve --config` と同じ `[[command]]` 拒否を適用
+  する。実行中の orbit-only シミュレーションへの `controller` 付き衛星の動的
+  追加を拒否する。`sensors` / `reaction_wheels` / `magnetorquers` / `thruster`
+  が controller なしで宣言された場合は stderr と `orts run --json` の
+  `warnings` に警告を出す。([#335](https://github.com/sksat/orts/pull/335))
+- config 単体から「ダイナミクスを構築できない・開始できない」と分かる姿勢設定を、
+  config を読むすべての経路で拒否するようになった。`orts config validate` も含む (従来は valid と報告した
+  設定を `run` と `serve` が拒否していた)。検査は `AttitudeConfig` に置き、
+  範囲チェックだけでは通ってしまうものを塞いだ: `NaN` はあらゆる比較が false に
+  なるので `NaN` の質量が `mass <= 0.0` をすり抜けていた。慣性テンソルは
+  「ダイナミクスが取る逆行列が存在し `I·I⁻¹ ≈ E` を満たすか」で判定する。
+  行列式の大きさによる閾値ではこれを判定できず、条件数 1 の `[1e-11; 3]` を拒否し、
+  逆行列が有限のゼロ行列になって(あらゆるトルクに角加速度ゼロで応える)
+  `[1e154; 3]` を受理していた。torque-free な t=0 の角加速度が有限で
+  あることを要求する。軌道を必要とするもの (シミュレーションが実際に
+  始める微分に含まれる gravity-gradient torque) は判定の範囲外で、そちらは最初の
+  ステップで run を止める。`orts run` はモード分岐の前にこの検査を適用する (controlled 経路は
+  別の場所で衛星を構築するため検査を通っていなかった)。([#335](https://github.com/sksat/orts/pull/335))
+- 単位四元数でない `initial_quaternion` を、積分の前に正規化するようになった。
+  したがって t=0 の出力に出るのも正規化後の値になる。config は元から非ゼロの
+  四元数を受理していたが、生の値を積分すると大きな四元数がノルムが overflow する
+  まで成長していた。([#335](https://github.com/sksat/orts/pull/335))
+- `config` テーブルのない `[satellites.controller]` が、guest 自身の既定値で
+  起動するようになった。省略時は文字列 `"null"` が guest に渡り、`init` が
+  失敗していた。([#335](https://github.com/sksat/orts/pull/335))
+- README のクイックスタート設定が、書かれたとおり動くようになった。
+  `pd-rw-control` example plugin で RW を駆動する構成にした。従来は `sensors` と
+  `[satellites.reaction_wheels]` を controller なしで宣言しており、
+  それらを command するものが無かった。([#335](https://github.com/sksat/orts/pull/335))
 
 ### `orts-plugin-sdk` (Rust, crates.io)
 
@@ -196,6 +239,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 #### Added
 - `IntegrationError` が `core::error::Error` を実装 (手書き、`thiserror` 不使用、
   `no_std` でも動作)。`?` 連鎖や `Box<dyn Error>` に乗るようになった。([#147](https://github.com/sksat/orts/pull/147))
+
+#### Fixed
+- `Integrator::try_integrate` が、結果が非有限になった最初のステップで
+  `IntegrationError::NonFiniteState` を返して停止するようになった
+  (`integrate_with_events` が既に行っていた検査)。従来は `NaN` 状態のまま
+  span 全体を回して `Ok` を返していたため、`orts serve` の制御ループが
+  その状態からセンサを読み、plugin controller に渡し、成功を報告していた。([#335](https://github.com/sksat/orts/pull/335))
 
 ### `tobari` (Rust, crates.io)
 

@@ -12,13 +12,14 @@ use std::time::Duration;
 
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use super::engine::{EngineInit, ServeEngine, StreamIo, validate_satellite_spec};
+use super::engine::{EngineInit, ServeEngine, StreamIo};
 use super::history::HistoryBuffer;
 use super::protocol::WsMessage;
 use super::stream_bridge::{OutboundPush, StreamBridge, StreamEndpoint, StreamKey};
 use crate::cli::{PluginBackendChoice, SimArgs};
 use crate::config::{SatelliteConfig, SimConfig};
 use crate::satellite::{SatelliteInfo, SatelliteSpec};
+use crate::sim::mode::validate_satellite_spec;
 use crate::sim::params::SimParams;
 use orts::setup::default_third_bodies;
 
@@ -215,6 +216,10 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     // `StartSimulation` cannot smuggle in thruster config that panics later
     // in `ThrusterSpec::new()`.
     config.validate()?;
+    // The serve loop does not drain a `[[command]]` timeline, so a config that
+    // `orts serve --config` rejects must not slip in through a WebSocket
+    // `start_simulation` and have its uplinks dropped instead.
+    config.ensure_serve_supported()?;
 
     let body = crate::satellite::parse_body(&config.body);
     let mu = body.properties().mu;
@@ -228,15 +233,10 @@ fn validate_sim_config(config: &SimConfig) -> Result<(), String> {
     // WebSocket `StartSimulation` returns an error to the client instead of
     // reaching the panic in `SimParams::from_config`.
     crate::sim::params::validate_omm_body(body, &specs)?;
-    let any_att = specs.iter().any(|s| s.attitude_config.is_some());
-    let all_att = !specs.is_empty() && specs.iter().all(|s| s.attitude_config.is_some());
-    if any_att && !all_att {
-        return Err(
-            "Mixed attitude config: some satellites have attitude, some don't. \
-             Specify attitude for all satellites or remove it from all."
-                .to_string(),
-        );
-    }
+    // Reject fleets that no single mode can honor (mixed attitude / mixed
+    // controller) with the same rule `ServeEngine::build` and `orts run` use,
+    // so a WebSocket `StartSimulation` fails here instead of at engine build.
+    crate::sim::mode::select_sim_mode(&specs)?;
     // Validate inertia tensors are invertible
     for spec in &specs {
         validate_satellite_spec(spec)?;
@@ -626,6 +626,57 @@ async fn run_simulation_loop(
 mod tests {
     use super::*;
     use arika::body::KnownBody;
+
+    /// A WebSocket `start_simulation` goes through the same config gate as
+    /// `orts serve --config`: the serve loop never drains a `[[command]]`
+    /// timeline, so accepting one here would drop every scheduled uplink.
+    #[test]
+    fn ws_start_rejects_a_command_timeline() {
+        let config: SimConfig = toml::from_str(
+            r#"
+body = "earth"
+dt = 1.0
+
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+
+[[command]]
+t = 10.0
+sat = "sat-a"
+kind = "orts.cmd.set-mode.v1"
+"#,
+        )
+        .expect("valid test toml");
+        let err = validate_sim_config(&config).unwrap_err();
+        assert!(err.contains("`[[command]]`"), "got: {err}");
+    }
+
+    /// A fleet where only some satellites have a controller cannot be honored
+    /// by any mode, and is rejected here rather than at engine build.
+    #[test]
+    fn ws_start_rejects_mixed_controller_config() {
+        let config: SimConfig = toml::from_str(
+            r#"
+body = "earth"
+dt = 1.0
+
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 10, 10], mass = 50 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+attitude = { inertia_diag = [10, 10, 10], mass = 50 }
+"#,
+        )
+        .expect("valid test toml");
+        let err = validate_sim_config(&config).unwrap_err();
+        assert!(err.contains("Mixed controller config"), "got: {err}");
+    }
 
     #[test]
     fn body_names_for_earth_includes_sun_and_moon() {

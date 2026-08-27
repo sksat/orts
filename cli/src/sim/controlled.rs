@@ -173,7 +173,7 @@ pub fn build_controlled_satellite(
     let plant = SpacecraftState {
         orbit,
         attitude: orts::attitude::AttitudeState {
-            quaternion: nalgebra::Vector4::from_row_slice(&att.initial_quaternion),
+            quaternion: att.normalized_initial_quaternion(),
             angular_velocity: nalgebra::Vector3::from_row_slice(&att.initial_angular_velocity),
         },
         mass: att.mass,
@@ -360,7 +360,16 @@ fn build_controller(
     match config {
         #[cfg(feature = "plugin-wasm")]
         ControllerConfig::Wasm { path, config } => {
-            let config_str = config.to_string();
+            // An omitted `[satellites.controller.config]` deserializes to
+            // `Value::Null`, whose `to_string()` is `"null"` — not something a
+            // guest can parse as its config struct. `Plugin::init` takes the
+            // empty string to mean "use the defaults", which is what an absent
+            // config block asks for.
+            let config_str = if config.is_null() {
+                String::new()
+            } else {
+                config.to_string()
+            };
             let wasm_path = std::path::Path::new(path);
             match ctx.plugin_backend {
                 ResolvedPluginBackend::Sync => {

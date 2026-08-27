@@ -130,6 +130,53 @@ section is subdivided by package.
 - `orts serve` started with a `--config` file now rejects a `[[command]]`
   timeline with a clear error (command timelines run only under `orts run`)
   instead of silently dropping it. ([#58](https://github.com/sksat/orts/pull/58))
+- `orts run` honors `[satellites.attitude]`: a fleet with attitude on every
+  satellite is propagated with the spacecraft dynamics `orts serve` uses
+  (attitude state + coupled gravity gradient), and the CSV gains the quaternion
+  and body-frame angular-velocity columns. Previously `run` propagated the orbit
+  only unless every satellite had a controller, discarding attitude, actuator
+  and sensor config without a warning — the README quick-start config among
+  them. The mode rule (orbit-only / spacecraft / controlled) now lives in one
+  place shared by `orts run`, `ServeEngine::build` and serve's WebSocket config
+  validation, so the same config cannot get attitude dynamics under one entry
+  point and not the other. ([#335](https://github.com/sksat/orts/pull/335))
+- Config that the running mode cannot act on is reported instead of dropped:
+  `orts run` rejects a `[[command]]` timeline with no controller to deliver to
+  and rejects declared stream-io `streams` (the run loop has no transport to
+  pump them); both entry points reject a fleet that mixes controller config (the
+  control loop steps the whole fleet or none of it, so those controllers would
+  never run); a WebSocket `start_simulation` now applies the same
+  `[[command]]` rejection as `orts serve --config`; adding a satellite carrying
+  a `controller` to a running orbit-only simulation is rejected; and `sensors` /
+  `reaction_wheels` / `magnetorquers` / `thruster` declared without a controller
+  warn on stderr and in `orts run --json`'s `warnings`. ([#335](https://github.com/sksat/orts/pull/335))
+- The attitude configs a config alone shows the dynamics cannot be built from or
+  started are rejected wherever a config is read — `orts config validate` included, which reported one
+  as valid that `run` and `serve` then refused. The checks live on
+  `AttitudeConfig` and cover what range checks alone let through: a `NaN` passes
+  every comparison, so a `NaN` mass slipped past `mass <= 0.0`; the inertia
+  tensor is judged by whether the inverse the dynamics take exists and satisfies
+  `I·I⁻¹ ≈ E`, which a magnitude threshold on the determinant cannot decide (it
+  rejected a perfectly conditioned `[1e-11; 3]` and accepted `[1e154; 3]`, whose
+  inverse comes back as a finite matrix of zeros that answers every torque with
+  no angular acceleration); and the torque-free angular acceleration at `t = 0`
+  has to be finite. What needs the orbit — the gravity-gradient torque
+  in the derivative the simulation actually starts from — is out of its reach and
+  stops the run at the first step instead. `orts run` also applies the check
+  before dispatching to any mode — the
+  controlled path built its satellites elsewhere and skipped
+  it. ([#335](https://github.com/sksat/orts/pull/335))
+- An `initial_quaternion` that is not a unit quaternion is normalized before it
+  is integrated, so it is also the normalized one that appears in the `t = 0`
+  output. The config has always accepted any non-zero quaternion; integrating
+  the raw one let a large one grow until its norm overflowed. ([#335](https://github.com/sksat/orts/pull/335))
+- A `[satellites.controller]` with no `config` table starts the guest on its own
+  defaults. The omitted table reached the guest as the string `"null"`, which
+  failed its `init`. ([#335](https://github.com/sksat/orts/pull/335))
+- The README quick-start config runs as shown, driving the wheels with the
+  `pd-rw-control` example plugin. It declared `sensors` and
+  `[satellites.reaction_wheels]` with no controller, so nothing commanded
+  them. ([#335](https://github.com/sksat/orts/pull/335))
 
 ### `orts-plugin-sdk` (Rust, crates.io)
 
@@ -214,6 +261,14 @@ section is subdivided by package.
 - `IntegrationError` now implements `core::error::Error` (by hand, no
   `thiserror`, works under `no_std`), so it participates in `?` chains and
   `Box<dyn Error>`. ([#147](https://github.com/sksat/orts/pull/147))
+
+#### Fixed
+- `Integrator::try_integrate` stops with `IntegrationError::NonFiniteState` at
+  the first step whose result is not finite, the check
+  `integrate_with_events` already made. It ran the whole span on a `NaN` state
+  and returned `Ok`, so `orts serve`'s controlled loop read sensors off that
+  state, handed it to a plugin controller, and reported
+  success. ([#335](https://github.com/sksat/orts/pull/335))
 
 ### `tobari` (Rust, crates.io)
 
