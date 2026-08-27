@@ -39,6 +39,19 @@ section is subdivided by package.
   existing `StateEffector<S>` impls compiling unchanged. ([#148](https://github.com/sksat/orts/pull/148))
 
 #### Fixed
+- `AttitudeState::q_dot` halves the angular velocity before forming the
+  products rather than the sum afterwards, so it no longer overflows where its
+  result is finite: `q = [0, 1/√2, 1/√2, 0]` with `ω = [1.4e308, 1.4e308, 0]`
+  has a `q̇.w` near -9.9e307, but the intermediate sum reached -1.98e308 and the
+  later halving could not bring the infinity back. ([#343](https://github.com/sksat/orts/pull/343))
+- `AttitudeState::is_finite` requires a positive, finite quaternion norm, not
+  just finite components. Components around 1e157 are each finite while their
+  squares sum to infinity, and such a quaternion names no orientation —
+  `orientation()` divides by that norm. `project` leaves it alone rather than
+  collapsing it to a plausible-looking zero, so the integrators' finiteness
+  check is what has to reject it; until it did, a step that produced one was
+  reported as success and its state reached sensors and a plugin
+  controller. ([#343](https://github.com/sksat/orts/pull/343))
 - Removed an unsound frame re-tag in `SpacecraftDynamics`: effector loads tagged
   `ExternalLoads<SimpleEci>` were relabeled as the host frame `F` without
   conversion, silently mislabeling coordinates for any `F != SimpleEci`. Latent

@@ -89,17 +89,24 @@ impl AttitudeState {
             self.quaternion[2],
             self.quaternion[3],
         );
+        // Halve ω before multiplying rather than the sum afterwards. Each term
+        // is then bounded by `|q_i| · ½|ω|`, so a unit quaternion keeps the sum
+        // within `½ √3 f64::MAX` by Cauchy-Schwarz. Scaling last lets the sum
+        // overflow at a rate the result is nowhere near: with
+        // `q = [0, 1/√2, 1/√2, 0]` and `ω = [1.4e308, 1.4e308, 0]` the true
+        // `q̇.w` is about -9.9e307, while `-x·wx - y·wy` reaches -1.98e308 and
+        // becomes `-inf` that the later `0.5` cannot bring back.
         let (wx, wy, wz) = (
-            self.angular_velocity[0],
-            self.angular_velocity[1],
-            self.angular_velocity[2],
+            0.5 * self.angular_velocity[0],
+            0.5 * self.angular_velocity[1],
+            0.5 * self.angular_velocity[2],
         );
         // dq/dt = 0.5 * q ⊗ (0, ω)
         Vector4::new(
-            0.5 * (-x * wx - y * wy - z * wz),
-            0.5 * (w * wx + y * wz - z * wy),
-            0.5 * (w * wy + z * wx - x * wz),
-            0.5 * (w * wz + x * wy - y * wx),
+            -x * wx - y * wy - z * wz,
+            w * wx + y * wz - z * wy,
+            w * wy + z * wx - x * wz,
+            w * wz + x * wy - y * wx,
         )
     }
 
@@ -145,8 +152,20 @@ impl OdeState for AttitudeState {
         }
     }
 
+    /// Finite components are not enough for the quaternion: its norm has to be
+    /// usable too.
+    ///
+    /// Components around 1e157 are each finite while their squares sum to
+    /// infinity, and such a quaternion names no orientation — `orientation()`
+    /// divides by that norm. `project` deliberately leaves it alone rather than
+    /// turning it into a plausible-looking zero, which makes this the check that
+    /// has to catch it. Reported here, the integrators stop at the step that
+    /// produced it instead of handing it to sensors and a controller first.
     fn is_finite(&self) -> bool {
-        self.quaternion.iter().all(|v| v.is_finite())
+        let norm_sq = self.quaternion.norm_squared();
+        norm_sq.is_finite()
+            && norm_sq > 0.0
+            && self.quaternion.iter().all(|v| v.is_finite())
             && self.angular_velocity.iter().all(|v| v.is_finite())
     }
 
@@ -199,6 +218,58 @@ impl OdeState for AttitudeState {
 mod tests {
     use super::*;
     use std::f64::consts::PI;
+
+    /// Scaling ω before the products, not the sum after them: with these
+    /// values the mathematical result is comfortably finite while the
+    /// intermediate sum is not, so multiplying by 0.5 last returned `-inf`.
+    #[test]
+    fn q_dot_does_not_overflow_where_its_result_is_finite() {
+        let state = AttitudeState {
+            quaternion: Vector4::new(0.0, 1.0 / 2.0_f64.sqrt(), 1.0 / 2.0_f64.sqrt(), 0.0),
+            angular_velocity: Vector3::new(1.4e308, 1.4e308, 0.0),
+        };
+        let q_dot = state.q_dot();
+        assert!(
+            q_dot.iter().all(|v| v.is_finite()),
+            "q_dot overflowed: {q_dot:?}"
+        );
+        // -(x·wx + y·wy)/2 with x = y = 1/√2 and wx = wy = 1.4e308.
+        let expected = -1.4e308 / 2.0_f64.sqrt();
+        assert!(
+            (q_dot[0] - expected).abs() < expected.abs() * 1e-12,
+            "expected about {expected}, got {}",
+            q_dot[0]
+        );
+    }
+
+    /// A quaternion whose components are finite but whose norm is not names no
+    /// orientation, and `project` leaves it alone rather than collapsing it to
+    /// zero — so this is the check that has to reject it.
+    #[test]
+    fn a_quaternion_whose_norm_overflows_is_not_finite() {
+        let state = AttitudeState {
+            quaternion: Vector4::new(1e157, 1e157, 0.0, 0.0),
+            angular_velocity: Vector3::zeros(),
+        };
+        assert!(
+            state.quaternion.iter().all(|v| v.is_finite()),
+            "the components are meant to be finite"
+        );
+        assert!(
+            !state.quaternion.norm_squared().is_finite(),
+            "the sum of squares is meant to overflow"
+        );
+        assert!(!state.is_finite(), "should be reported as non-finite");
+    }
+
+    #[test]
+    fn an_all_zero_quaternion_is_not_finite() {
+        let state = AttitudeState {
+            quaternion: Vector4::zeros(),
+            angular_velocity: Vector3::zeros(),
+        };
+        assert!(!state.is_finite(), "a zero quaternion names no orientation");
+    }
 
     #[test]
     fn ode_state_zero_like() {
