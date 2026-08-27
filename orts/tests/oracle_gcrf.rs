@@ -228,8 +228,10 @@ fn load_eop_table() -> arika::earth::eop::EopTable {
 }
 
 fn build_gcrs_system_real_eop(scenario: &Scenario) -> OrbitalSystem<frame::Gcrs> {
-    // `into_clamped` names the out-of-range policy: the fixture covers only
-    // 2024-03-01..16, and the scenarios propagate past its end.
+    // The EOP capability traits are infallible, so a finite-range table only
+    // implements them through an adapter that names its out-of-range policy.
+    // The fixture spans MJD 60370..60430 (2024-03-01..04-30) and the longest
+    // scenario here is 30 days from 2024-03-01, so the clamp never engages.
     build_gcrs_system_with_eop(
         scenario,
         GcrsEopStorage::new(load_eop_table().into_clamped()),

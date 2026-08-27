@@ -142,8 +142,8 @@ fn table_dut1_interpolated_midpoint() {
     // continuous; dUT1 itself is not. The expectation used to be the average of
     // the two rows' dUT1 — the implementation's own formula, which is why it
     // could not detect that the formula was wrong. It happens to agree here
-    // because this fixture (2024-03) sits entirely inside one leap-second
-    // regime, where TAI - UTC is the constant 37 s and cancels; the
+    // because this fixture (2024-03-01..04-30) sits entirely inside one
+    // leap-second regime, where TAI - UTC is the constant 37 s and cancels; the
     // leap-crossing case is pinned by `table_dut1_interpolates_ut1_minus_tai_*`.
     const TAI_MINUS_UTC_2024: f64 = 37.0;
     let ut1_tai_0 = e0.dut1 - TAI_MINUS_UTC_2024;
