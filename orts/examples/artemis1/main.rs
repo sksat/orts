@@ -257,6 +257,7 @@ use std::sync::Arc;
 
 #[cfg(feature = "fetch-horizons")]
 use arika::epoch::Epoch;
+#[cfg(feature = "fetch-horizons")]
 use arika::frame::Vec3;
 #[cfg(feature = "fetch-horizons")]
 use arika::horizons::HorizonsTable;

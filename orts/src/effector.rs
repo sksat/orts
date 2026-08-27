@@ -22,13 +22,14 @@ use crate::model::{ExternalLoads, HasFrame};
 /// The `derivatives` method writes aux_rates into a caller-owned buffer
 /// to avoid allocation in the ODE hot path.
 ///
-/// The second type parameter `F` selects the inertial frame of the returned
-/// [`ExternalLoads`] (default `SimpleEci`), mirroring [`Model<S>`]. An
-/// effector contributes its loads directly in the host's frame, so the host
-/// never re-tags coordinates: torque-only effectors (reaction wheels) are
-/// `impl<S, F: Eci> StateEffector<S>` because body-frame torque is
-/// frame-independent, while a translational effector must produce its
-/// inertial acceleration in `F` explicitly (see issue #103).
+/// The loads come back in the frame the state is propagated in
+/// ([`HasFrame::Frame`]), mirroring [`Model<S>`]: an effector contributes
+/// directly in that frame, so the host never re-tags coordinates. A torque-only
+/// effector such as a reaction wheel writes `impl<S: HasFrame + HasAttitude>
+/// StateEffector<S>` and leaves the acceleration zero, since body-frame torque
+/// names no inertial frame. A translational effector must produce its inertial
+/// acceleration in `S::Frame` — by rotating a body-frame vector through the
+/// state's own attitude, not by tagging raw numbers (see issue #103).
 ///
 /// [`Model<S>`]: crate::model::Model
 pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
