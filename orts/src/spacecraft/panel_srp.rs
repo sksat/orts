@@ -177,7 +177,7 @@ impl PanelSrp {
 // the body frame — so panel SRP is valid for any such frame (identity for
 // GCRS-aligned `SimpleEci`/`Gcrs`). A frame without an `EphemerisFrameBridge`
 // impl (e.g. `Teme`) is rejected at compile time. See #191.
-impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasAttitude + HasOrbit + HasMass> Model<S, F>
+impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasAttitude + HasOrbit + HasMass> Model<S>
     for PanelSrp
 {
     fn name(&self) -> &str {

@@ -32,7 +32,7 @@ use crate::attitude::AttitudeState;
 /// `Gcrs` while its attitude is in `SimpleEci`.
 ///
 /// This is what drives frame-generic model dispatch: a model is written as
-/// `impl<F: Cap, S: HasFrame<Frame = F> + HasOrbit> Model<S, F>`, bounded on the
+/// `impl<F: Cap, S: HasFrame<Frame = F> + HasOrbit> Model<S>`, bounded on the
 /// minimal capability `Cap` it needs from the frame (e.g.
 /// `EarthRotationPole`, `EarthFixedTransform`, `EphemerisFrameBridge`), so a
 /// frame that cannot supply it is a compile error rather than a silent mislabel.
@@ -149,20 +149,25 @@ impl<F: frame::Eci> AddAssign for ExternalLoads<F> {
 
 /// A physical model that evaluates external loads on a spacecraft.
 ///
-/// The second type parameter `F` selects the inertial frame of the
-/// returned [`ExternalLoads`]. The default is `SimpleEci`, so existing
-/// code that writes `Model<OrbitalState>` is equivalent to
-/// `Model<OrbitalState, SimpleEci>`.
+/// The loads come back in the frame the state is propagated in
+/// ([`HasFrame::Frame`]) — there is no separate frame parameter to disagree
+/// with it, so a model cannot read a state in one frame and report the result
+/// in another.
 ///
 /// Models declare their state requirements via generic bounds:
-/// - `impl<S: HasAttitude> Model<S>` — attitude-only (e.g., PD controller)
-/// - `impl<S: HasOrbit> Model<S>` — orbit-only (e.g., atmospheric drag)
-/// - `impl<S: HasAttitude + HasOrbit + HasMass> Model<S>` — full state (e.g., thruster)
+/// - `impl<S: HasFrame + HasAttitude> Model<S>` — attitude-only (e.g., PD controller)
+/// - `impl<S: HasFrame + HasOrbit> Model<S>` — orbit-only (e.g., constant thrust)
+/// - `impl<S: HasFrame + HasAttitude + HasOrbit + HasMass> Model<S>` — full state (e.g., thruster)
+///
+/// A model that needs a *capability* of the frame binds its own `F` to the
+/// state's: `impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit>
+/// Model<S> for AtmosphericDrag<F>`. That is the only place an equality bound
+/// is needed, and there it says something — the model and the state agree.
 ///
 /// `eval` must be a pure function with no side effects.
 /// All models are evaluated against the same immutable state snapshot;
 /// evaluation order must not affect results.
-pub trait Model<S, F: frame::Eci = frame::SimpleEci>: Send + Sync {
+pub trait Model<S: HasFrame>: Send + Sync {
     /// Human-readable name for this model (e.g., "drag", "gravity_gradient").
     fn name(&self) -> &str;
 
@@ -170,17 +175,17 @@ pub trait Model<S, F: frame::Eci = frame::SimpleEci>: Send + Sync {
     ///
     /// `epoch` is the absolute time corresponding to integration time `t`.
     /// It is `None` when no initial epoch was provided.
-    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F>;
+    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame>;
 }
 
-// Blanket impl so Box<dyn Model<S, F>> also satisfies Model<S, F>.
+// Blanket impl so Box<dyn Model<S>> also satisfies Model<S>.
 // This allows with_model() to accept both concrete types and boxed trait objects.
-impl<S, F: frame::Eci> Model<S, F> for Box<dyn Model<S, F>> {
+impl<S: HasFrame> Model<S> for Box<dyn Model<S>> {
     fn name(&self) -> &str {
         (**self).name()
     }
 
-    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
+    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
         (**self).eval(t, state, epoch)
     }
 }

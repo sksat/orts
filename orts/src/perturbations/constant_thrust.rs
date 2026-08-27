@@ -2,7 +2,7 @@ use arika::epoch::Epoch;
 use nalgebra::Vector3;
 
 use crate::model::ExternalLoads;
-use crate::model::{HasOrbit, Model};
+use crate::model::{HasFrame, HasOrbit, Model};
 
 /// Constant-thrust force model active over a fixed epoch interval.
 ///
@@ -118,12 +118,12 @@ impl ConstantThrust {
     }
 }
 
-impl<S: HasOrbit> Model<S> for ConstantThrust {
+impl<S: HasFrame + HasOrbit> Model<S> for ConstantThrust {
     fn name(&self) -> &str {
         self.name
     }
 
-    fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads {
+    fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
         // No epoch → no way to know whether the burn is active → zero.
         // This matches the convention used by ThirdBodyGravity for
         // consistency across force models.

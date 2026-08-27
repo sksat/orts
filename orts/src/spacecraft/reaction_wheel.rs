@@ -15,12 +15,11 @@
 //! integrates wheel angular momentum.
 
 use arika::epoch::Epoch;
-use arika::frame::Eci;
 use nalgebra::Vector3;
 
 use super::ExternalLoads;
 use crate::effector::StateEffector;
-use crate::model::HasAttitude;
+use crate::model::{HasAttitude, HasFrame};
 
 /// A single reaction wheel with physical limits.
 #[derive(Debug, Clone)]
@@ -433,10 +432,10 @@ impl RwAssembly {
 }
 
 // Reaction wheels are frame-agnostic: their entire contribution is body-frame
-// reaction + gyroscopic torque, which is independent of the host inertial
-// frame `F`. The inertial acceleration is identically zero, so `RwAssembly`
-// implements `StateEffector<S, F>` for every `F: Eci`.
-impl<S: HasAttitude + Send + Sync, F: Eci> StateEffector<S, F> for RwAssembly {
+// reaction + gyroscopic torque, and the inertial acceleration is identically
+// zero. The loads come back in whatever frame the state is propagated in, so
+// `RwAssembly` works in any of them without naming one.
+impl<S: HasFrame + HasAttitude + Send + Sync> StateEffector<S> for RwAssembly {
     fn name(&self) -> &str {
         "reaction_wheels"
     }
@@ -468,7 +467,7 @@ impl<S: HasAttitude + Send + Sync, F: Eci> StateEffector<S, F> for RwAssembly {
         aux: &[f64],
         aux_rates: &mut [f64],
         _epoch: Option<&Epoch>,
-    ) -> ExternalLoads<F> {
+    ) -> ExternalLoads<S::Frame> {
         let n = self.core.num_wheels();
         let omega = &state.attitude().angular_velocity;
         let momentum = self.core.momentum_slice(aux);
@@ -535,7 +534,7 @@ impl<S: HasAttitude + Send + Sync, F: Eci> StateEffector<S, F> for RwAssembly {
         let gyro = self.core.gyroscopic_torque(omega, momentum);
 
         // Body-frame torque only; zero inertial acceleration in any frame `F`.
-        ExternalLoads::<F>::torque(reaction + gyro)
+        ExternalLoads::<S::Frame>::torque(reaction + gyro)
     }
 }
 
@@ -555,7 +554,7 @@ mod tests {
         AttitudeState::identity()
     }
 
-    // `RwAssembly` is now `StateEffector<S, F>` for every frame `F`, so a bare
+    // `RwAssembly` is now `StateEffector<S>` for every frame `F`, so a bare
     // `rw.derivatives(..)` is ambiguous in `F`. These single-frame tests pin
     // `F = SimpleEci` via the return type.
     fn rw_derivatives(

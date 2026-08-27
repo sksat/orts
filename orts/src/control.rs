@@ -12,7 +12,7 @@ use crate::attitude::AttitudeState;
 /// that are held constant between sample times (zero-order hold).
 ///
 /// The type parameter `F` is the inertial frame of the observed orbital state
-/// (default `SimpleEci`), mirroring [`Model<S, F>`](crate::model::Model): a
+/// (default `SimpleEci`), mirroring [`Model<S>`](crate::model::Model): a
 /// controller that reads an environment model in the inertial frame (e.g. the
 /// geomagnetic field) implements this once per frame it supports.
 pub trait DiscreteController<F: frame::Eci = frame::SimpleEci>: Send {

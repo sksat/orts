@@ -340,7 +340,7 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
 // `EarthFixedTransform` and the co-rotation about `EarthRotationPole`, so the
 // model is valid in any inertial frame that provides them (a frame without the
 // impl is a compile error). See #151.
-impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasAttitude + HasOrbit + HasMass> Model<S, F>
+impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasAttitude + HasOrbit + HasMass> Model<S>
     for PanelDrag<F>
 {
     fn name(&self) -> &str {

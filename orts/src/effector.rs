@@ -7,10 +7,9 @@
 //! plant state.
 
 use arika::epoch::Epoch;
-use arika::frame::{self, SimpleEci};
 use utsuroi::{OdeState, Projection, Tolerances};
 
-use crate::model::ExternalLoads;
+use crate::model::{ExternalLoads, HasFrame};
 
 // StateEffector trait
 
@@ -24,15 +23,15 @@ use crate::model::ExternalLoads;
 /// to avoid allocation in the ODE hot path.
 ///
 /// The second type parameter `F` selects the inertial frame of the returned
-/// [`ExternalLoads`] (default `SimpleEci`), mirroring [`Model<S, F>`]. An
+/// [`ExternalLoads`] (default `SimpleEci`), mirroring [`Model<S>`]. An
 /// effector contributes its loads directly in the host's frame, so the host
 /// never re-tags coordinates: torque-only effectors (reaction wheels) are
-/// `impl<S, F: Eci> StateEffector<S, F>` because body-frame torque is
+/// `impl<S, F: Eci> StateEffector<S>` because body-frame torque is
 /// frame-independent, while a translational effector must produce its
 /// inertial acceleration in `F` explicitly (see issue #103).
 ///
-/// [`Model<S, F>`]: crate::model::Model
-pub trait StateEffector<S, F: frame::Eci = SimpleEci>: Send + Sync + std::any::Any {
+/// [`Model<S>`]: crate::model::Model
+pub trait StateEffector<S: HasFrame>: Send + Sync + std::any::Any {
     /// Human-readable name for this effector (e.g., "reaction_wheels").
     fn name(&self) -> &str;
 
@@ -43,8 +42,9 @@ pub trait StateEffector<S, F: frame::Eci = SimpleEci>: Send + Sync + std::any::A
     ///
     /// `aux` is the current auxiliary state slice (length = `state_dim()`).
     /// `aux_rates` is the output buffer for derivatives (length = `state_dim()`).
-    /// Returns the [`ExternalLoads<F>`] contribution to the plant dynamics,
-    /// already expressed in the host's inertial frame `F`.
+    /// Returns the [`ExternalLoads`] contribution to the plant dynamics,
+    /// already expressed in the frame the state is propagated in
+    /// ([`HasFrame::Frame`]).
     fn derivatives(
         &self,
         t: f64,
@@ -52,7 +52,7 @@ pub trait StateEffector<S, F: frame::Eci = SimpleEci>: Send + Sync + std::any::A
         aux: &[f64],
         aux_rates: &mut [f64],
         epoch: Option<&Epoch>,
-    ) -> ExternalLoads<F>;
+    ) -> ExternalLoads<S::Frame>;
 
     /// Per-element (min, max) bounds for auxiliary state projection.
     ///

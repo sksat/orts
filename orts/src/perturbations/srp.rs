@@ -156,7 +156,7 @@ impl SolarRadiationPressure {
 // Identity for GCRS-aligned `SimpleEci` / `Gcrs` (historical behavior preserved
 // exactly); `Cirs` applies the precession/nutation rotation. A frame without an
 // `EphemerisFrameBridge` impl (e.g. `Teme`) is rejected at compile time. See #191.
-impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasOrbit> Model<S, F>
+impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasOrbit> Model<S>
     for SolarRadiationPressure
 {
     fn name(&self) -> &str {

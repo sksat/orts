@@ -152,7 +152,7 @@ impl ThirdBodyGravity {
 // exactly); `Cirs` applies the precession/nutation rotation. A frame with no
 // `EphemerisFrameBridge` impl (e.g. `Teme`) is rejected at compile time rather
 // than silently mistreated. See #191.
-impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasOrbit> Model<S, F> for ThirdBodyGravity {
+impl<F: EphemerisFrameBridge, S: HasFrame<Frame = F> + HasOrbit> Model<S> for ThirdBodyGravity {
     fn name(&self) -> &str {
         self.name
     }
