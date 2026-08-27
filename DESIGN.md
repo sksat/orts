@@ -210,27 +210,37 @@ RK4、Dormand-Prince は OdeState の trait メソッドのみを使い、具体
 state 型が持つ情報を表す trait:
 
 ```rust
-pub trait HasAttitude { fn attitude(&self) -> &AttitudeState; }
-pub trait HasOrbit   { fn orbit(&self) -> &OrbitalState; }
+pub trait HasFrame   { type Frame: Eci; }           // state を伝播する慣性系
+pub trait HasAttitude: HasFrame { fn attitude(&self) -> &AttitudeState; }
+pub trait HasOrbit:   HasFrame { fn orbit(&self) -> &OrbitalState<Self::Frame>; }
 pub trait HasMass    { fn mass(&self) -> f64; }  // 並進質量のみ。慣性テンソルは system 側
 ```
 
-| State 型 | HasOrbit | HasAttitude | HasMass |
-|---|---|---|---|
-| `OrbitalState` | ○ | - | - |
-| `AttitudeState` | - | ○ | - |
-| `SpacecraftState` | ○ | ○ | ○ |
+frame は `HasFrame` に一度だけ宣言し、`HasOrbit` と `HasAttitude` が supertrait
+として共有する。これにより「orbit は `Gcrs`、attitude は `SimpleEci`」という
+食い違った宣言が書けない。quaternion の成分は基準 frame に依存し `SimpleEci` と
+`Gcrs` は 2024 epoch で 484 秒角ずれるので、この一致は数値の意味そのものを守る。
+
+| State 型 | HasFrame | HasOrbit | HasAttitude | HasMass |
+|---|---|---|---|---|
+| `OrbitalState` | ○ | ○ | - | - |
+| `AttitudeState` | ○ (`SimpleEci`) | - | ○ | - |
+| `SpacecraftState` | ○ | ○ | ○ | ○ |
 
 `SpacecraftState` は全 capability を実装するため、部分的な state 向けに書かれたモデルが自動的に `SpacecraftDynamics` でも動く。
 
 #### 統一 Model trait
 
 ```rust
-pub trait Model<S>: Send + Sync {
+pub trait Model<S: HasFrame>: Send + Sync {
     fn name(&self) -> &str;
-    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads;
+    fn eval(&self, t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame>;
 }
 ```
+
+loads の frame は state の `HasFrame::Frame` から来るので、model 側に独立した
+frame パラメータは無い。「state を読んだ frame と loads を返す frame が異なる」
+という組み合わせは型として書けない。
 
 モデルの capability bound と使用可能な system の対応:
 

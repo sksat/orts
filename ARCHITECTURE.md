@@ -44,7 +44,7 @@ flowchart TB
 | Foundation | [`utsuroi`](utsuroi/) | Generic ODE solvers (RK4, DOP853, Dormand-Prince, Störmer-Verlet, Yoshida). Exposes `OdeState`, `DynamicalSystem`. |
 | Foundation | [`arika`](arika/) | Typed coordinate frames (ECI / ECEF / IAU), time scales (UTC / TT / TDB / TAI), Meeus analytic ephemerides, JPL Horizons fetcher, WGS-84, EOP. |
 | Environment | [`tobari`](tobari/) | Atmosphere models (Exponential, Harris-Priester, NRLMSISE-00), geomagnetic field (IGRF-14, tilted-dipole), space-weather providers (CSSI, GFZ). |
-| Simulation | [`orts`](orts/) | `OrbitalState` / `AttitudeState` / `SpacecraftState`, unified `Model<S, F>` trait, `OrbitalSystem` / `AttitudeSystem` / `SpacecraftDynamics`, sensors, plugin host, Rerun `.rrd` output. |
+| Simulation | [`orts`](orts/) | `OrbitalState` / `AttitudeState` / `SpacecraftState`, unified `Model<S>` trait, `OrbitalSystem` / `AttitudeSystem` / `SpacecraftDynamics`, sensors, plugin host, Rerun `.rrd` output. |
 | Application | [`orts-cli`](cli/) | `orts run` / `orts serve` / `orts replay` / `orts convert`. Embeds the viewer and exposes a WebSocket stream on port 9001. |
 | Extension | [`orts-plugin-sdk`](plugin-sdk/) | Rust SDK for writing WASM plugin guest controllers (callback-style or main-loop style). |
 | Bridge | [`rrd-wasm`](rrd-wasm/) | Rerun RRD decoder compiled to WebAssembly for in-browser replay. |
@@ -71,29 +71,40 @@ classDiagram
     +derivatives(t, y, dy)
   }
 
+  class HasFrame {
+    <<capability>>
+    +type Frame : Eci
+  }
   class HasOrbit {
     <<capability>>
-    +orbit() OrbitalState
+    +orbit() OrbitalState~Frame~
   }
   class HasAttitude {
     <<capability>>
     +attitude() AttitudeState
+    +attitude_to_inertial() Rotation~Body, Frame~
   }
   class HasMass {
     <<capability>>
     +mass() f64
   }
 
-  class Model~S, F~ {
+  class Model~S~ {
     <<trait>>
     +name() str
-    +eval(t, state, epoch) ExternalLoads~F~
+    +eval(t, state, epoch) ExternalLoads~S::Frame~
   }
 
   OdeState <|.. OrbitalState
   OdeState <|.. AttitudeState
   OdeState <|.. SpacecraftState
 
+  HasFrame <|-- HasOrbit
+  HasFrame <|-- HasAttitude
+
+  HasFrame <|.. OrbitalState
+  HasFrame <|.. AttitudeState
+  HasFrame <|.. SpacecraftState
   HasOrbit <|.. OrbitalState
   HasOrbit <|.. SpacecraftState
   HasAttitude <|.. AttitudeState
@@ -103,17 +114,21 @@ classDiagram
 
 Key points:
 
-- A `Model<S, F>` declares the state capabilities it needs via trait bounds
-  on `S` (e.g. `impl<S: HasOrbit> Model<S>` for atmospheric drag,
-  `impl<S: HasAttitude + HasOrbit> Model<S>` for gravity-gradient torque).
-  The same implementation plugs into any system whose state satisfies those
-  bounds.
-- The `F: Eci` parameter selects the inertial frame of the returned
-  `ExternalLoads<F>`, defaulting to `SimpleEci` so existing call sites need
-  not be changed.
+- A `Model<S>` declares the state capabilities it needs via trait bounds
+  on `S` (e.g. `impl<S: HasFrame + HasOrbit> Model<S>` for atmospheric drag,
+  `impl<S: HasFrame + HasAttitude + HasOrbit> Model<S>` for gravity-gradient
+  torque). The same implementation plugs into any system whose state satisfies
+  those bounds.
+- `HasFrame::Frame` is the inertial frame the state is propagated in, declared
+  once and shared by `HasOrbit` and `HasAttitude` as their supertrait. A model
+  returns `ExternalLoads<S::Frame>`: the frame it reports loads in *is* the
+  frame it read the state in, so the two cannot disagree. A model that needs a
+  capability of the frame binds its own to the state's —
+  `impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S> for
+  AtmosphericDrag<F>` — which is the one place an equality bound says something.
 - Systems come in three flavors — `OrbitalSystem`, `AttitudeSystem`,
   `SpacecraftDynamics` — each a `DynamicalSystem` that bundles a state with
-  `Vec<Box<dyn Model<S, F>>>`.
+  `Vec<Box<dyn Model<S>>>`.
 
 ## 4. Plugin system
 

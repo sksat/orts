@@ -252,13 +252,16 @@ impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G
 
         // Evaluate state effectors.
         //
-        // INVARIANT: a `StateEffector<S>` returns `ExternalLoads<F>` —
-        // already expressed in this system's inertial frame `F` — so loads
-        // accumulate directly with no coordinate re-tag. Torque-only
-        // effectors (reaction wheels) are `impl<.., F: Eci>` because
-        // body-frame torque is frame-independent; a translational effector
-        // must produce its inertial acceleration in `F` itself. This is what
-        // makes the SimpleEci→`F` mislabel from issue #103 unrepresentable.
+        // INVARIANT: a `StateEffector<S>` returns `ExternalLoads<S::Frame>` —
+        // already expressed in the frame this system propagates in — so loads
+        // accumulate directly with no coordinate re-tag. Torque-only effectors
+        // (reaction wheels) write `impl<S: HasFrame + HasAttitude>
+        // StateEffector<S>` and leave the acceleration zero, since body-frame
+        // torque names no inertial frame; a translational effector must rotate
+        // its body-frame vector through the state's own attitude. The loads
+        // frame is not a separate parameter that could disagree with the
+        // state's, which is what makes the SimpleEci mislabel from issue #103
+        // unrepresentable.
         let mut aux_rates = vec![0.0; self.registry.total_dim()];
         for (i, eff) in self.effectors.iter().enumerate() {
             let entry = &self.registry.entries()[i];

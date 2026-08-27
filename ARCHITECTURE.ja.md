@@ -44,7 +44,7 @@ flowchart TB
 | Foundation | [`utsuroi`](utsuroi/) | 汎用 ODE ソルバ (RK4, DOP853, Dormand-Prince, Störmer-Verlet, Yoshida)。`OdeState`, `DynamicalSystem` trait を提供。 |
 | Foundation | [`arika`](arika/) | 型安全な座標系 (ECI / ECEF / IAU)、時刻系 (UTC / TT / TDB / TAI)、Meeus 解析天体暦、JPL Horizons 取得、WGS-84、EOP。 |
 | Environment | [`tobari`](tobari/) | 大気モデル (Exponential, Harris-Priester, NRLMSISE-00)、地磁気場 (IGRF-14, 傾斜双極子)、宇宙天気プロバイダ (CSSI, GFZ)。 |
-| Simulation | [`orts`](orts/) | `OrbitalState` / `AttitudeState` / `SpacecraftState`、統一 `Model<S, F>` trait、`OrbitalSystem` / `AttitudeSystem` / `SpacecraftDynamics`、センサモデル、プラグインホスト、Rerun `.rrd` 出力。 |
+| Simulation | [`orts`](orts/) | `OrbitalState` / `AttitudeState` / `SpacecraftState`、統一 `Model<S>` trait、`OrbitalSystem` / `AttitudeSystem` / `SpacecraftDynamics`、センサモデル、プラグインホスト、Rerun `.rrd` 出力。 |
 | Application | [`orts-cli`](cli/) | `orts run` / `orts serve` / `orts replay` / `orts convert`。viewer を埋め込み、port 9001 で WebSocket ストリームを公開。 |
 | Extension | [`orts-plugin-sdk`](plugin-sdk/) | WASM plugin guest 制御則を書くための Rust SDK (callback 形式 / main-loop 形式)。 |
 | Bridge | [`rrd-wasm`](rrd-wasm/) | Rerun RRD デコーダを WebAssembly にコンパイルしたもの。ブラウザ内 replay 用。 |
@@ -70,29 +70,40 @@ classDiagram
     +derivatives(t, y, dy)
   }
 
+  class HasFrame {
+    <<capability>>
+    +type Frame : Eci
+  }
   class HasOrbit {
     <<capability>>
-    +orbit() OrbitalState
+    +orbit() OrbitalState~Frame~
   }
   class HasAttitude {
     <<capability>>
     +attitude() AttitudeState
+    +attitude_to_inertial() Rotation~Body, Frame~
   }
   class HasMass {
     <<capability>>
     +mass() f64
   }
 
-  class Model~S, F~ {
+  class Model~S~ {
     <<trait>>
     +name() str
-    +eval(t, state, epoch) ExternalLoads~F~
+    +eval(t, state, epoch) ExternalLoads~S::Frame~
   }
 
   OdeState <|.. OrbitalState
   OdeState <|.. AttitudeState
   OdeState <|.. SpacecraftState
 
+  HasFrame <|-- HasOrbit
+  HasFrame <|-- HasAttitude
+
+  HasFrame <|.. OrbitalState
+  HasFrame <|.. AttitudeState
+  HasFrame <|.. SpacecraftState
   HasOrbit <|.. OrbitalState
   HasOrbit <|.. SpacecraftState
   HasAttitude <|.. AttitudeState
@@ -102,14 +113,19 @@ classDiagram
 
 要点:
 
-- `Model<S, F>` は必要とする state の capability を `S` の trait bound として
-  宣言する (例: 大気抵抗は `impl<S: HasOrbit> Model<S>`、重力傾斜トルクは
-  `impl<S: HasAttitude + HasOrbit> Model<S>`)。同じ実装を、bound を満たす
-  あらゆる System にそのまま差し込める。
-- `F: Eci` パラメータは返り値 `ExternalLoads<F>` の慣性系を選択し、
-  デフォルトは `SimpleEci`。既存コードの `Model<OrbitalState>` はそのまま動く。
+- `Model<S>` は必要とする state の capability を `S` の trait bound として
+  宣言する (例: 大気抵抗は `impl<S: HasFrame + HasOrbit> Model<S>`、重力傾斜
+  トルクは `impl<S: HasFrame + HasAttitude + HasOrbit> Model<S>`)。同じ実装を、
+  bound を満たすあらゆる System にそのまま差し込める。
+- `HasFrame::Frame` は state を伝播する慣性系で、`HasOrbit` と `HasAttitude`
+  はこれを supertrait として共有する。model の返り値は
+  `ExternalLoads<S::Frame>` — loads を返す frame は state を読んだ frame
+  そのものなので、両者が食い違うことがない。frame の capability を要する model
+  は自身の frame を state のそれに束縛する
+  (`impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S>
+  for AtmosphericDrag<F>`)。equality bound が意味を持つのはこの一箇所だけ。
 - System は 3 種類 — `OrbitalSystem` / `AttitudeSystem` /
-  `SpacecraftDynamics` — いずれも state と `Vec<Box<dyn Model<S, F>>>` を
+  `SpacecraftDynamics` — いずれも state と `Vec<Box<dyn Model<S>>>` を
   束ねる `DynamicalSystem`。
 
 ## 4. プラグインシステム
