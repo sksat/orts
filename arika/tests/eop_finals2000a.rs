@@ -369,6 +369,39 @@ fn out_of_range_epoch_reaches_the_caller_as_an_error_not_a_panic() {
 }
 
 #[test]
+fn a_nan_mjd_is_an_error_not_a_successful_nan() {
+    // A NaN MJD compares false against both ends of the range, so a range check
+    // written as `mjd < start || mjd > end` lets it through and interpolates it
+    // into `Ok(NaN)`: a lookup that reports success while handing back a value
+    // that poisons every rotation it reaches.
+    let table = EopTable::from_finals2000a(SAMPLE).unwrap();
+
+    for lookup in [
+        EopTable::dut1_checked,
+        EopTable::xp_checked,
+        EopTable::yp_checked,
+        EopTable::dx_checked,
+        EopTable::dy_checked,
+        EopTable::lod_checked,
+    ] {
+        match lookup(&table, f64::NAN) {
+            Err(arika::earth::eop::EopLookupError::OutOfRange { mjd, .. }) => assert!(mjd.is_nan()),
+            other => panic!("expected OutOfRange for a NaN MJD, got {other:?}"),
+        }
+    }
+    assert!(table.dut1_checked(f64::INFINITY).is_err());
+    assert!(table.dut1_checked(f64::NEG_INFINITY).is_err());
+
+    // The clamping adapter has no endpoint to hold for NaN, so it yields NaN —
+    // never an endpoint value that would look like a real answer.
+    let clamped = table.clamped();
+    assert!(Ut1Offset::dut1(&clamped, f64::NAN).is_nan());
+    assert!(PolarMotion::x_pole(&clamped, f64::NAN).is_nan());
+    assert!(NutationCorrections::dx(&clamped, f64::NAN).is_nan());
+    assert!(LengthOfDay::lod(&clamped, f64::NAN).is_nan());
+}
+
+#[test]
 fn to_ut1_and_the_full_chain_accept_an_out_of_range_epoch_via_the_policy() {
     use arika::epoch::{Epoch, Utc};
     use arika::frame::{self, Rotation, Vec3};

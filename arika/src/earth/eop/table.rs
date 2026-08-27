@@ -111,7 +111,12 @@ impl EopTable {
         let first = self.entries.first().unwrap();
         let last = self.entries.last().unwrap();
 
-        if utc_mjd < first.mjd || utc_mjd > last.mjd {
+        // Written as a negated in-range test so that a NaN query is an error
+        // too: `NaN < start` and `NaN > end` are both false, so the direct form
+        // would let NaN through and interpolate it into an `Ok(NaN)` — a
+        // lookup that reports success while carrying a value that poisons every
+        // rotation it reaches.
+        if !(utc_mjd >= first.mjd && utc_mjd <= last.mjd) {
             return Err(EopLookupError::OutOfRange {
                 mjd: utc_mjd,
                 start: first.mjd,
@@ -172,8 +177,8 @@ impl<T: core::borrow::Borrow<EopTable>> ClampedEop<T> {
     ///
     /// Written out rather than using `f64::clamp`, which asserts `min <= max`
     /// (an unsorted table would turn a lookup into a panic) and to leave NaN
-    /// alone: NaN cannot be clamped into range, so the checked lookup below
-    /// reports it as out of range and the adapter yields NaN instead of a
+    /// alone: NaN has no nearest endpoint, so it stays NaN, the checked lookup
+    /// rejects it as out of range, and the adapter yields NaN rather than a
     /// plausible-looking number.
     fn clamp_mjd(&self, utc_mjd: f64) -> f64 {
         let (start, end) = self.table().mjd_range();
