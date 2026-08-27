@@ -41,6 +41,9 @@ category trait は structural operation (magnitude / dot / cross / 非依存 mat
 - `Cirs` (Celestial Intermediate Reference System) — IAU 2006 CIO chain 中間
 - `Tirs` (Terrestrial Intermediate Reference System) — polar motion 未適用の Earth-fixed
 - `Itrs` (International Terrestrial Reference System) — polar motion 適用済み、Geodetic 変換はこの frame に紐づく
+- `MeanEquinoxOfDate` — 日付の平均赤道・平均春分点 (MOD)。古典的な解析級数 (Meeus の太陽・月) が
+  表現されている frame であり、GMST が基準にする equinox でもある。`Gcrs` との差は累積歳差
+  (2024 年で 0.335°)。`earth::mean_equinox` が IAU 1976 precession で両方向を繋ぐ
 
 `Rotation<SimpleEci, Gcrs>` / `Rotation<SimpleEcef, Itrs>` のような「簡易 path から高精度 path への
 upgrade 変換」は提供しない。silent な degradation 経路を作らないため。
