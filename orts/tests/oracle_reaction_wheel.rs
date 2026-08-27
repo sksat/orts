@@ -37,7 +37,7 @@ fn total_angular_momentum(
     // Transform total body-frame angular momentum to inertial frame
     state
         .plant
-        .rotation_to_eci()
+        .rotation_tagged_as::<arika::frame::SimpleEci>()
         .transform(&arika::frame::Vec3::from_raw(l_body_sc + l_body_rw))
         .into_inner()
 }

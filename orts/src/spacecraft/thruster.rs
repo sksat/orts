@@ -1,7 +1,7 @@
 use arika::epoch::Epoch;
 use nalgebra::Vector3;
 
-use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
+use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit, Model};
 
 use super::{ExternalLoads, SpacecraftState};
 
@@ -155,7 +155,7 @@ impl ThrusterSpec {
         // Acceleration: body → inertial [km/s²]
         // F [N] / mass [kg] = [m/s²], / 1000 = [km/s²]
         let a_body = arika::frame::Vec3::from_raw(f_body_n / state.mass / 1000.0);
-        let a_inertial = state.attitude.rotation_to_eci().transform(&a_body);
+        let a_inertial = state.attitude_to_inertial().transform(&a_body);
 
         // Mass flow rate [kg/s]
         let mass_rate = -(self.thrust_n * throttle) / (self.isp_s * G0);
@@ -236,7 +236,9 @@ impl Thruster {
     }
 }
 
-impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci> + HasMass> Model<S> for Thruster {
+impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude + HasOrbit + HasMass> Model<S>
+    for Thruster
+{
     fn name(&self) -> &str {
         "thruster"
     }
@@ -334,7 +336,7 @@ impl ThrusterAssembly {
     }
 }
 
-impl<S: HasAttitude + HasOrbit<Frame = arika::frame::SimpleEci> + HasMass> Model<S>
+impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude + HasOrbit + HasMass> Model<S>
     for ThrusterAssembly
 {
     fn name(&self) -> &str {

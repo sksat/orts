@@ -1,4 +1,4 @@
-use crate::model::{HasAttitude, HasMass, HasOrbit, Model};
+use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit, Model};
 use crate::perturbations::OMEGA_EARTH;
 use arika::body::KnownBody;
 use arika::earth::R as R_EARTH;
@@ -248,7 +248,7 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
     pub(crate) fn loads_from_state(
         &self,
         orbit: &crate::OrbitalState<F>,
-        attitude: &crate::attitude::AttitudeState,
+        body_to_inertial: arika::frame::Rotation<arika::frame::Body, F>,
         mass: f64,
         epoch: Option<&Epoch<arika::epoch::Utc>>,
     ) -> ExternalLoads<F> {
@@ -294,8 +294,8 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
             }
             SpacecraftShape::Panels(panels) => {
                 // Transform flow direction to body frame
-                let v_body = attitude
-                    .rotation_from_inertial::<F>()
+                let v_body = body_to_inertial
+                    .inverse()
                     .transform(&arika::frame::Vec3::<F>::from_raw(v_rel))
                     .into_inner(); // km/s in body frame
                 let v_body_m = v_body * 1000.0; // m/s
@@ -324,7 +324,7 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
 
                 // a_body [m/s²] → a_inertial [km/s²]
                 let a_body = arika::frame::Vec3::from_raw(total_force_body / mass);
-                let a_inertial = attitude.rotation_to_inertial::<F>().transform(&a_body) / 1000.0;
+                let a_inertial = body_to_inertial.transform(&a_body) / 1000.0;
 
                 ExternalLoads {
                     acceleration_inertial: a_inertial,
@@ -340,7 +340,7 @@ impl<F: EarthFixedTransform> PanelDrag<F> {
 // `EarthFixedTransform` and the co-rotation about `EarthRotationPole`, so the
 // model is valid in any inertial frame that provides them (a frame without the
 // impl is a compile error). See #151.
-impl<F: EarthFixedTransform, S: HasAttitude + HasOrbit<Frame = F> + HasMass> Model<S, F>
+impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasAttitude + HasOrbit + HasMass> Model<S, F>
     for PanelDrag<F>
 {
     fn name(&self) -> &str {
@@ -348,7 +348,12 @@ impl<F: EarthFixedTransform, S: HasAttitude + HasOrbit<Frame = F> + HasMass> Mod
     }
 
     fn eval(&self, _t: f64, state: &S, epoch: Option<&Epoch>) -> ExternalLoads<F> {
-        self.loads_from_state(state.orbit(), state.attitude(), state.mass(), epoch)
+        self.loads_from_state(
+            state.orbit(),
+            state.attitude_to_inertial(),
+            state.mass(),
+            epoch,
+        )
     }
 }
 
@@ -717,9 +722,9 @@ mod tests {
     }
 
     /// The sphere branch never touches the body frame, so it cannot cover the
-    /// two rotations this change made frame-generic
-    /// (`rotation_from_inertial::<F>` on the way in,
-    /// `rotation_to_inertial::<F>` on the way out). Exercise the panel branch in
+    /// two rotations this change made frame-generic (the `body_to_inertial`
+    /// rotation the model is handed: inverted on the way in, applied as-is on
+    /// the way out). Exercise the panel branch in
     /// `Gcrs` at a non-identity attitude with an asymmetric fixture, and
     /// reconstruct both outputs: the inertial acceleration, which round-trips
     /// through the body frame, and the body torque, which stays there.
@@ -760,7 +765,8 @@ mod tests {
         assert!(rho > 0.0, "expected non-zero density");
 
         let v_body_m = attitude
-            .rotation_from_inertial::<frame::Gcrs>()
+            .rotation_tagged_as::<frame::Gcrs>()
+            .inverse()
             .transform(&Vec3::<frame::Gcrs>::from_raw(v_rel))
             .into_inner()
             * 1000.0;
@@ -781,7 +787,7 @@ mod tests {
             torque_body += panel.cp_offset.cross(&force);
         }
         let expected_a = attitude
-            .rotation_to_inertial::<frame::Gcrs>()
+            .rotation_tagged_as::<frame::Gcrs>()
             .transform(&Vec3::from_raw(force_body / simple.mass))
             .into_inner()
             / 1000.0;

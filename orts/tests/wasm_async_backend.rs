@@ -51,8 +51,7 @@ fn dummy_spacecraft() -> SpacecraftState {
 }
 
 fn dummy_sensors() -> Sensors {
-    use arika::frame::{Body, Vec3};
-    use nalgebra::Vector4;
+    use arika::frame::{Body, Rotation, Vec3};
     use orts::plugin::tick_input::{
         AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody,
     };
@@ -61,8 +60,8 @@ fn dummy_sensors() -> Sensors {
         gyroscopes: vec![AngularVelocityBody::new(Vec3::<Body>::new(
             0.1, 0.05, -0.03,
         ))],
-        star_trackers: vec![AttitudeBodyToInertial::new(Vector4::new(
-            1.0, 0.0, 0.0, 0.0,
+        star_trackers: vec![AttitudeBodyToInertial::new(Rotation::from_raw(
+            nalgebra::UnitQuaternion::identity(),
         ))],
         sun_sensors: vec![],
     }

@@ -95,11 +95,15 @@ impl SensorBundle {
     /// magnetometers; evaluate those sensors with their own
     /// `measure_in_frame` instead. Split this into per-capability entry points
     /// if a caller needs the bundle in such a frame.
+    ///
+    /// The returned [`Sensors<F>`](Sensors) carries `F`, so a bundle evaluated
+    /// in one inertial frame cannot be consumed as another — nor handed to a
+    /// plugin, whose v0 contract is simple-ECI.
     pub fn evaluate_in_frame<F: EarthFixedTransform + EphemerisFrameBridge>(
         &mut self,
         state: &SpacecraftState<F>,
         orientation: &EarthOrientation<'_, F>,
-    ) -> Sensors {
+    ) -> Sensors<F> {
         // The non-magnetometer sensors need only the instant.
         let epoch = orientation.utc();
         Sensors {
@@ -178,6 +182,44 @@ mod tests {
         assert_eq!(readings.magnetometers.len(), 1);
         assert_eq!(readings.gyroscopes.len(), 1);
         assert!(readings.star_trackers.is_empty());
+    }
+
+    /// The bundle's frame parameter is the one the state was propagated in:
+    /// `evaluate_in_frame::<Gcrs>` yields `Sensors<Gcrs>` (the annotation is
+    /// the assertion), whose star-tracker readings are `Gcrs`-tagged. The
+    /// components are the state quaternion's either way — which is why the tag
+    /// has to travel with them.
+    #[test]
+    fn evaluate_in_frame_tags_the_readings_with_that_frame() {
+        use crate::test_support::zero_eop;
+
+        let epoch = Epoch::from_gregorian(2024, 3, 20, 12, 0, 0.0);
+        let simple = make_state();
+        let state = SpacecraftState::<frame::Gcrs> {
+            orbit: OrbitalState::<frame::Gcrs>::new_in_frame(
+                *simple.orbit.position(),
+                *simple.orbit.velocity(),
+            ),
+            attitude: simple.attitude.clone(),
+            mass: simple.mass,
+        };
+
+        let mut bundle = SensorBundle {
+            magnetometers: Vec::new(),
+            gyroscopes: Vec::new(),
+            star_trackers: vec![StarTracker::new()],
+            sun_sensors: Vec::new(),
+        };
+        let readings: Sensors<frame::Gcrs> = bundle
+            .evaluate_in_frame::<frame::Gcrs>(&state, &EarthOrientation::new(epoch, &zero_eop()));
+
+        assert_eq!(readings.star_trackers.len(), 1);
+        let q = readings.star_trackers[0].inner().inner();
+        assert_eq!(
+            Vector4::new(q.w, q.i, q.j, q.k),
+            state.attitude.quaternion,
+            "the reading is the state quaternion, re-tagged as Gcrs"
+        );
     }
 
     #[test]

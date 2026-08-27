@@ -6,8 +6,7 @@
 //! debugging.
 
 use arika::epoch::Epoch;
-use arika::frame::{Body, Vec3};
-use nalgebra::Vector4;
+use arika::frame::{Body, Eci, Rotation, SimpleEci, Vec3};
 
 use crate::SpacecraftState;
 
@@ -51,21 +50,50 @@ impl AngularVelocityBody {
     }
 }
 
-/// Attitude quaternion representing the rotation from the body frame
-/// to the inertial (ECI) frame. Hamilton convention, scalar-first
-/// `[w, x, y, z]`.
+/// Attitude: the rotation from the body frame to the inertial frame `F`.
+///
+/// The frame is part of the type. A quaternion's components depend on the
+/// frame it is expressed against — the same physical attitude has different
+/// components in `SimpleEci` and in `Gcrs` (the two differ by
+/// precession/nutation, ~0.1° at the pole by 2024) — so an untagged
+/// `Vector4` cannot say what it means. `F` defaults to
+/// [`SimpleEci`](arika::frame::SimpleEci), the frame the plugin path
+/// propagates in.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AttitudeBodyToInertial(Vector4<f64>);
+pub struct AttitudeBodyToInertial<F: Eci = SimpleEci>(Rotation<Body, F>);
 
-impl AttitudeBodyToInertial {
-    pub fn new(v: Vector4<f64>) -> Self {
-        Self(v)
+impl<F: Eci> AttitudeBodyToInertial<F> {
+    /// Wrap a body→`F` rotation as an attitude reading in `F`.
+    pub fn new(rotation: Rotation<Body, F>) -> Self {
+        Self(rotation)
     }
-    pub fn inner(&self) -> &Vector4<f64> {
+    /// Borrow the inner rotation.
+    pub fn inner(&self) -> &Rotation<Body, F> {
         &self.0
     }
-    pub fn into_inner(self) -> Vector4<f64> {
+    /// Consume and return the inner rotation.
+    pub fn into_inner(self) -> Rotation<Body, F> {
         self.0
+    }
+}
+
+impl AttitudeBodyToInertial<SimpleEci> {
+    /// Drop the frame tag for the **v0 plugin WIT boundary**: the components
+    /// `(w, x, y, z)` of the body→simple-ECI quaternion, Hamilton convention.
+    ///
+    /// The v0 `attitude-body-to-inertial` record in `orts/wit/v0/orts.wit`
+    /// carries four bare floats whose frame is *defined* by the contract to be
+    /// simple-ECI. This is the named crossing for that boundary, and it exists
+    /// only for `SimpleEci`: shipping a `Gcrs` attitude to a guest is a compile
+    /// error rather than silent nonsense. Widening the contract means a new WIT
+    /// version that names the frame in the payload.
+    ///
+    /// `inner()` still hands out the rotation in any frame — the guarantee is
+    /// that the *boundary* operation names its frame, not that the components
+    /// are unreachable.
+    pub fn to_wit_v0_simple_eci_quat(&self) -> (f64, f64, f64, f64) {
+        let q = self.0.inner();
+        (q.w, q.i, q.j, q.k)
     }
 }
 
@@ -76,25 +104,46 @@ impl AttitudeBodyToInertial {
 /// Each field is a `Vec` — empty means no sensor of that type is
 /// configured. Index order is stable (config definition order) and
 /// does not change during a simulation run.
-#[derive(Debug, Clone, Default)]
-pub struct Sensors {
+///
+/// `F` is the inertial frame the state was propagated in, carried by the
+/// attitude readings ([`AttitudeBodyToInertial`]), whose components depend on
+/// it. The body-frame readings are unaffected to the precision that matters —
+/// the gyro's ω is the rate relative to `F`, but two inertial frames differ
+/// only by their relative rotation rate (~8e-12 rad/s for
+/// `SimpleEci` ↔ `Gcrs`). `F` defaults to
+/// [`SimpleEci`](arika::frame::SimpleEci), which is what [`TickInput`] accepts:
+/// a bundle evaluated in another frame cannot be handed to a plugin, because
+/// the v0 plugin contract is defined in simple-ECI.
+#[derive(Debug, Clone)]
+pub struct Sensors<F: Eci = SimpleEci> {
     /// Magnetometer readings. Pre-evaluated once per tick.
     pub magnetometers: Vec<MagneticFieldBody>,
 
     /// Gyroscope readings.
     pub gyroscopes: Vec<AngularVelocityBody>,
 
-    /// Star tracker readings.
-    pub star_trackers: Vec<AttitudeBodyToInertial>,
+    /// Star tracker readings, expressed against `F`.
+    pub star_trackers: Vec<AttitudeBodyToInertial<F>>,
 
     /// Sun sensor outputs.
     pub sun_sensors: Vec<SunSensorOutput>,
 }
 
-impl Sensors {
+impl<F: Eci> Sensors<F> {
     /// Construct an empty set of readings (no sensors configured).
+    ///
+    /// The only constructor: there is no `Default` impl. `derive(Default)` would
+    /// demand `F: Default`, and a frame marker has no default — "the default
+    /// frame" is exactly the implicit choice this frame tagging exists to
+    /// prevent — while a hand-written one would just be a second name for
+    /// `empty()`.
     pub fn empty() -> Self {
-        Self::default()
+        Self {
+            magnetometers: Vec::new(),
+            gyroscopes: Vec::new(),
+            star_trackers: Vec::new(),
+            sun_sensors: Vec::new(),
+        }
     }
 }
 
@@ -181,6 +230,10 @@ pub struct TickInput<'a> {
     pub epoch: Option<&'a Epoch>,
     /// Sensor readings evaluated at this tick. May contain noise;
     /// use `spacecraft` for ground-truth.
+    ///
+    /// Simple-ECI, like `spacecraft`: that is what the v0 plugin contract
+    /// defines, so a bundle evaluated in another inertial frame does not fit
+    /// here (see [`Sensors`]).
     pub sensors: &'a Sensors,
     /// Actuator telemetry (e.g. RW momentum/speed) at this tick.
     pub actuators: &'a ActuatorTelemetry,

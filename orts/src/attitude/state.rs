@@ -2,7 +2,7 @@ use arika::frame::{self, Rotation};
 use nalgebra::{UnitQuaternion, Vector3, Vector4};
 use utsuroi::{OdeState, Tolerances};
 
-use crate::model::HasAttitude;
+use crate::model::{HasAttitude, HasFrame};
 
 /// Attitude state: unit quaternion (orientation) + angular velocity in body frame.
 ///
@@ -45,29 +45,21 @@ impl AttitudeState {
         UnitQuaternion::from_quaternion(q)
     }
 
-    /// Typed rotation: body frame → ECI (inertial).
-    pub fn rotation_to_eci(&self) -> Rotation<frame::Body, frame::SimpleEci> {
-        self.rotation_to_inertial()
-    }
-
-    /// Typed rotation: body frame → inertial frame `F`.
+    /// Rotation body → `F`, **tagging** the stored quaternion as being expressed
+    /// against `F` rather than converting it.
     ///
-    /// The quaternion data is frame-independent — only the phantom type
-    /// tag changes. This allows models to produce `ExternalLoads<F>` in
-    /// any propagation frame without `AttitudeState` needing a type
-    /// parameter.
-    pub fn rotation_to_inertial<F: frame::Eci>(&self) -> Rotation<frame::Body, F> {
+    /// The primitive behind [`HasAttitude::attitude_to_inertial`], and the only
+    /// way to name a frame by hand. Prefer the trait method: it reads `F` from
+    /// the state's own type, so it cannot disagree with the frame the state is
+    /// propagated in. Reach for this one only where no such state exists — the
+    /// attitude-only propagation path, and tests that build an `AttitudeState`
+    /// directly.
+    ///
+    /// Quaternion components are frame-dependent (`SimpleEci` and `Gcrs` differ
+    /// by ~484 arcsec at 2024), so naming the wrong `F` silently re-interprets
+    /// the attitude.
+    pub fn rotation_tagged_as<F: frame::Eci>(&self) -> Rotation<frame::Body, F> {
         Rotation::from_raw(self.orientation())
-    }
-
-    /// Typed rotation: ECI (inertial) → body frame.
-    pub fn rotation_to_body(&self) -> Rotation<frame::SimpleEci, frame::Body> {
-        self.rotation_from_inertial()
-    }
-
-    /// Typed rotation: inertial frame `F` → body frame.
-    pub fn rotation_from_inertial<F: frame::Eci>(&self) -> Rotation<F, frame::Body> {
-        self.rotation_to_inertial::<F>().inverse()
     }
 
     /// Quaternion kinematic equation: dq/dt = 0.5 * q ⊗ (0, ω).
@@ -106,6 +98,13 @@ impl AttitudeState {
             angular_velocity: angular_acceleration,
         }
     }
+}
+
+// The attitude-only propagation path has no orbit and therefore no other frame
+// in play, so simple-ECI is the frame by construction. Stating it here is the one
+// place this path names a frame, instead of every caller doing so.
+impl HasFrame for AttitudeState {
+    type Frame = frame::SimpleEci;
 }
 
 impl HasAttitude for AttitudeState {

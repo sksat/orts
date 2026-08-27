@@ -14,6 +14,7 @@ use tobari::magnetic::MagneticFieldModel;
 use super::noise::NoiseModel;
 use crate::SpacecraftState;
 use crate::magnetic;
+use crate::model::HasAttitude;
 use crate::plugin::tick_input::MagneticFieldBody;
 
 /// Three-axis magnetometer.
@@ -79,10 +80,7 @@ impl Magnetometer {
             &state.orbit.position_vec(),
             orientation,
         );
-        let b_body_typed = state
-            .attitude
-            .rotation_from_inertial::<F>()
-            .transform(&b_inertial);
+        let b_body_typed = state.attitude_from_inertial().transform(&b_inertial);
         let mut b_body = b_body_typed.into_inner();
         for n in &mut self.noise {
             b_body = n.apply(b_body);
@@ -202,8 +200,7 @@ mod tests {
             &EarthOrientation::new(epoch, &zero_eop()),
         );
         let expected = state
-            .attitude
-            .rotation_from_inertial::<frame::Gcrs>()
+            .attitude_from_inertial()
             .transform(&b_gcrs)
             .into_inner();
         assert!(

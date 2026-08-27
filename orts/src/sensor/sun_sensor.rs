@@ -12,6 +12,7 @@ use arika::sun::sun_position_eci;
 
 use super::noise::NoiseModel;
 use crate::SpacecraftState;
+use crate::model::HasAttitude;
 use crate::plugin::tick_input::{SunDirectionBody, SunSensorOutput};
 
 /// Sun sensor that measures the sun direction in the body frame.
@@ -132,10 +133,7 @@ impl SunSensor {
 
         // Rotate to body frame
         let dir_eci_typed = Vec3::<F>::from_raw(dir_eci);
-        let dir_body = state
-            .attitude
-            .rotation_from_inertial::<F>()
-            .transform(&dir_eci_typed);
+        let dir_body = state.attitude_from_inertial().transform(&dir_eci_typed);
         let mut d = dir_body.into_inner();
 
         for n in &mut self.noise {
@@ -294,8 +292,7 @@ mod tests {
         let sun_cirs = Rotation::<Gcrs, Cirs>::iau2006_model(&epoch.to_tt()).transform(&sun_gcrs);
         let dir_cirs = (sun_cirs.into_inner() - pos).normalize();
         let expected = state
-            .attitude
-            .rotation_from_inertial::<Cirs>()
+            .attitude_from_inertial()
             .transform(&Vec3::<Cirs>::from_raw(dir_cirs))
             .into_inner();
         assert!(

@@ -126,13 +126,11 @@ macro_rules! impl_convert {
                     .star_trackers
                     .iter()
                     .map(|a| {
-                        let q = a.into_inner();
-                        wit::AttitudeBodyToInertial {
-                            w: q[0],
-                            x: q[1],
-                            y: q[2],
-                            z: q[3],
-                        }
+                        // Frame-checked crossing: the v0 payload is defined as
+                        // body→simple-ECI, and this named operation exists only
+                        // for a `SimpleEci`-tagged reading.
+                        let (w, x, y, z) = a.to_wit_v0_simple_eci_quat();
+                        wit::AttitudeBodyToInertial { w, x, y, z }
                     })
                     .collect(),
                 sun_sensors: s
@@ -317,14 +315,14 @@ pub mod sync {
             use crate::plugin::tick_input::{
                 AngularVelocityBody, AttitudeBodyToInertial, MagneticFieldBody,
             };
-            use arika::frame::{Body, Vec3};
+            use arika::frame::{Body, Rotation, Vec3};
             let sensors = Sensors {
                 magnetometers: vec![MagneticFieldBody::new(Vec3::<Body>::new(1e-5, 2e-5, -3e-5))],
                 gyroscopes: vec![AngularVelocityBody::new(Vec3::<Body>::new(
                     0.1, 0.05, -0.03,
                 ))],
-                star_trackers: vec![AttitudeBodyToInertial::new(Vector4::new(
-                    1.0, 0.0, 0.0, 0.0,
+                star_trackers: vec![AttitudeBodyToInertial::new(Rotation::from_raw(
+                    nalgebra::UnitQuaternion::identity(),
                 ))],
                 sun_sensors: vec![],
             };
@@ -351,6 +349,51 @@ pub mod sync {
             assert_eq!(wit_obs.sensors.gyroscopes[0].x, 0.1);
             assert_eq!(wit_obs.sensors.star_trackers.len(), 1);
             assert_eq!(wit_obs.sensors.star_trackers[0].w, 1.0);
+        }
+
+        /// Characterization: the v0 WIT attitude payload carries the four
+        /// quaternion components in `(w, x, y, z)` order. Pinned with four
+        /// distinct non-zero components, which the identity quaternion of
+        /// `observation_roundtrip_preserves_values` cannot discriminate.
+        #[test]
+        fn star_tracker_wit_payload_component_order() {
+            use crate::plugin::tick_input::AttitudeBodyToInertial;
+            let spacecraft = make_spacecraft();
+            let q = nalgebra::UnitQuaternion::from_axis_angle(
+                &nalgebra::Unit::new_normalize(Vector3::new(0.3, -0.5, 0.8)),
+                0.7,
+            );
+            let sensors = Sensors {
+                star_trackers: vec![AttitudeBodyToInertial::new(
+                    arika::frame::Rotation::from_raw(q),
+                )],
+                ..Sensors::empty()
+            };
+            let actuators = ActuatorTelemetry::default();
+            let obs = TickInput {
+                t: 0.0,
+                epoch: None,
+                sensors: &sensors,
+                actuators: &actuators,
+                spacecraft: &spacecraft,
+            };
+            let wit_obs = tick_input_to_wit(&obs);
+            let got = &wit_obs.sensors.star_trackers[0];
+            // The boundary is a pure copy, so the order is pinned exactly.
+            assert_eq!([got.w, got.x, got.y, got.z], [q.w, q.i, q.j, q.k]);
+            // Pinned literals so a re-ordering of `q`'s own components would
+            // still be caught (relative: the fixture goes through libm trig).
+            let expected = Vector4::new(
+                0.9393727128473789,
+                0.10391372781674944,
+                -0.17318954636124906,
+                0.27710327417799857,
+            );
+            let actual = Vector4::new(got.w, got.x, got.y, got.z);
+            assert!(
+                (actual - expected).magnitude() <= 1e-12 * expected.magnitude(),
+                "v0 WIT attitude payload changed: {actual:?}"
+            );
         }
 
         #[test]

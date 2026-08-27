@@ -42,11 +42,6 @@ pub struct SpacecraftDynamics<G: GravityField, F: Eci = SimpleEci> {
     _frame: PhantomData<F>,
 }
 
-// Manual Send + Sync: all fields are Send + Sync, PhantomData<F> is fine
-// because F is a ZST frame marker.
-unsafe impl<G: GravityField, F: Eci> Send for SpacecraftDynamics<G, F> {}
-unsafe impl<G: GravityField, F: Eci> Sync for SpacecraftDynamics<G, F> {}
-
 impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// Create with gravitational parameter, gravity model, and inertia tensor.
     ///
@@ -817,10 +812,11 @@ mod tests {
     // no coordinate re-tag. Torque-only effectors work on any `F`; a
     // translational effector produces its inertial acceleration in `F`
     // itself (e.g. by rotating a body-frame thrust via
-    // `rotation_to_inertial::<F>`). This makes the old SimpleEci→`F`
-    // mislabel unrepresentable.
+    // `attitude_to_inertial()`, whose `F` comes from the state's
+    // `HasFrame::Frame`). This makes the old SimpleEci→`F` mislabel
+    // unrepresentable.
 
-    use crate::model::HasAttitude;
+    use crate::model::{HasAttitude, HasFrame};
     use arika::frame::{Body, Gcrs, Vec3 as FrameVec3};
 
     /// Translational mock: contributes a constant acceleration already
@@ -855,7 +851,7 @@ mod tests {
         accel_body: Vector3<f64>,
     }
 
-    impl<S: HasAttitude, F: Eci> StateEffector<S, F> for BodyThrustEffector {
+    impl<S: HasFrame<Frame = F> + HasAttitude, F: Eci> StateEffector<S, F> for BodyThrustEffector {
         fn name(&self) -> &str {
             "body_thrust"
         }
@@ -871,10 +867,7 @@ mod tests {
             _epoch: Option<&Epoch>,
         ) -> ExternalLoads<F> {
             let a_body = FrameVec3::<Body>::from_raw(self.accel_body);
-            let a_inertial = state
-                .attitude()
-                .rotation_to_inertial::<F>()
-                .transform(&a_body);
+            let a_inertial = state.attitude_to_inertial().transform(&a_body);
             ExternalLoads {
                 acceleration_inertial: a_inertial,
                 torque_body: FrameVec3::zeros(),
@@ -946,7 +939,7 @@ mod tests {
     #[test]
     fn body_thrust_effector_rotates_into_gcrs() {
         // Regression guard for #103: a body-frame thrust is rotated into the
-        // host frame `F = Gcrs` via rotation_to_inertial::<F>, not re-tagged.
+        // host frame `F = Gcrs` via `attitude_to_inertial()`, not re-tagged.
         // 90° about +Z: body +X thrust → inertial +Y acceleration.
         let half = std::f64::consts::FRAC_PI_2 / 2.0;
         let attitude = AttitudeState {

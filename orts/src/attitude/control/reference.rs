@@ -1,6 +1,6 @@
 use crate::OrbitalState;
 use arika::epoch::Epoch;
-use arika::frame;
+use arika::frame::{self, Body, Rotation};
 use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 
 /// A target attitude reference that provides desired orientation and angular velocity.
@@ -8,43 +8,51 @@ use nalgebra::{Matrix3, UnitQuaternion, Vector3};
 /// Implementations define different pointing strategies (inertial hold, nadir pointing, etc.).
 ///
 /// The type parameter `F` is the inertial frame of the observed orbital state
-/// (default `SimpleEci`). A reference whose geometry is defined by the state
-/// vectors alone (inertial hold, nadir pointing) implements it for every `F`;
-/// one that needs an external direction (a Sun-pointing or ground-target
-/// reference) would implement it only for the frames it can express that
-/// direction in.
+/// (default `SimpleEci`). A reference whose geometry is built from the state
+/// vectors alone ([`NadirPointing`]) implements it for every `F`. One that
+/// holds a direction of its own carries that direction's frame in its type and
+/// implements the trait only for that frame — [`InertialPointing<F>`](InertialPointing) holds a
+/// [`Rotation<Body, F>`](Rotation); a Sun-pointing or ground-target reference
+/// would work the same way.
 pub trait AttitudeReference<F: frame::Eci = frame::SimpleEci>: Send + Sync {
     /// Compute the target orientation and angular velocity at time `t`.
     ///
     /// Returns `(q_target, omega_target)` where:
-    /// - `q_target` is the desired body-to-`F` quaternion
-    /// - `omega_target` is the desired angular velocity in the target body frame [rad/s]
+    /// - `q_target` is the desired body→`F` rotation. The frame is part of the
+    ///   type: the same physical attitude has different quaternion components
+    ///   in different inertial frames, so an untagged quaternion could not say
+    ///   which one it meant.
+    /// - `omega_target` is the desired angular velocity in the *target* body
+    ///   frame [rad/s] — a frame of its own, distinct from the spacecraft's
+    ///   current body frame, so it is left untagged here.
     fn target(
         &self,
         t: f64,
         orbit: &OrbitalState<F>,
         epoch: Option<&Epoch>,
-    ) -> (UnitQuaternion<f64>, Vector3<f64>);
+    ) -> (Rotation<Body, F>, Vector3<f64>);
 }
 
-/// Inertial pointing: hold a fixed orientation in the inertial frame.
-pub struct InertialPointing {
-    pub target_q: UnitQuaternion<f64>,
+/// Inertial pointing: hold a fixed orientation in the inertial frame `F`.
+///
+/// The target is a [`Rotation<Body, F>`](Rotation), so the frame it was
+/// expressed in travels with it: the same `InertialPointing` value cannot be
+/// used to steer a system integrated in another inertial frame, where those
+/// quaternion components would denote a different physical attitude (the frames
+/// differ by precession/nutation, ~0.1° at the pole by 2024).
+pub struct InertialPointing<F = frame::SimpleEci> {
+    pub target_q: Rotation<Body, F>,
 }
 
-// Deliberately `SimpleEci`-only, not blanket over every `F`. `target_q` is a
-// bare quaternion, so it carries no record of the frame it was expressed in:
-// with a blanket impl the same `InertialPointing` value handed to a `Gcrs`
-// system would denote a different physical attitude (the two frames differ by
-// precession/nutation, ~0.1° at the pole by 2024) with nothing to catch it.
-// Widen this once the target can be typed as `Rotation<Body, F>`.
-impl AttitudeReference<frame::SimpleEci> for InertialPointing {
+// Frame-generic now that the target names its own frame: the impl is only
+// reachable for the `F` the target was built in.
+impl<F: frame::Eci> AttitudeReference<F> for InertialPointing<F> {
     fn target(
         &self,
         _t: f64,
-        _orbit: &OrbitalState<frame::SimpleEci>,
+        _orbit: &OrbitalState<F>,
         _epoch: Option<&Epoch>,
-    ) -> (UnitQuaternion<f64>, Vector3<f64>) {
+    ) -> (Rotation<Body, F>, Vector3<f64>) {
         (self.target_q, Vector3::zeros())
     }
 }
@@ -68,7 +76,7 @@ impl<F: frame::Eci> AttitudeReference<F> for NadirPointing {
         _t: f64,
         orbit: &OrbitalState<F>,
         _epoch: Option<&Epoch>,
-    ) -> (UnitQuaternion<f64>, Vector3<f64>) {
+    ) -> (Rotation<Body, F>, Vector3<f64>) {
         let r = *orbit.position();
         let v = *orbit.velocity();
         let r_mag = r.magnitude();
@@ -94,7 +102,7 @@ impl<F: frame::Eci> AttitudeReference<F> for NadirPointing {
         // Angular velocity of LVLH frame in LVLH body frame: [0, -n, 0]
         let omega_target = Vector3::new(0.0, -n, 0.0);
 
-        (q_target, omega_target)
+        (Rotation::<Body, F>::from_raw(q_target), omega_target)
     }
 }
 
@@ -103,16 +111,140 @@ mod tests {
     use super::*;
     use std::f64::consts::PI;
 
+    /// A target orientation with all four components distinct and non-zero, so
+    /// a component-wise snapshot cannot pass by symmetry.
+    fn nontrivial_target() -> UnitQuaternion<f64> {
+        UnitQuaternion::from_axis_angle(
+            &nalgebra::Unit::new_normalize(Vector3::new(-0.2, 0.7, 0.4)),
+            1.1,
+        )
+    }
+
+    fn snapshot_orbit() -> OrbitalState {
+        OrbitalState::new(
+            Vector3::new(4000.0, -5000.0, 2500.0),
+            Vector3::new(1.0, 2.0, 7.0),
+        )
+    }
+
+    /// Characterization: the `InertialPointing` target is handed back
+    /// component-for-component (no renormalization, no frame rotation), and the
+    /// target rate is exactly zero. Pins the values so that typing the target
+    /// by its inertial frame cannot change them.
+    #[test]
+    fn inertial_pointing_target_components_snapshot() {
+        let q = nontrivial_target();
+        let ref_point = InertialPointing {
+            target_q: Rotation::<Body, frame::SimpleEci>::from_raw(q),
+        };
+        let (q_out, omega_out) = ref_point.target(0.0, &snapshot_orbit(), None);
+        let q_out = q_out.into_inner();
+
+        // (w, x, y, z), Hamilton scalar-first.
+        let expected = nalgebra::Vector4::new(
+            0.8525245220595057,
+            -0.12584829590370833,
+            0.44046903566297907,
+            0.25169659180741666,
+        );
+        let got = nalgebra::Vector4::new(q_out.w, q_out.i, q_out.j, q_out.k);
+        assert!(
+            (got - expected).magnitude() <= 1e-12 * expected.magnitude(),
+            "InertialPointing target changed: {got:?}"
+        );
+        // A rate of exactly zero is the definition of an inertial hold, not a
+        // near-zero numerical outcome, so assert it exactly.
+        assert_eq!(omega_out, Vector3::zeros());
+    }
+
+    /// Characterization: the `NadirPointing` target in `SimpleEci`, pinned
+    /// against literals computed outside the implementation (no re-derivation
+    /// of `|h|/r²` or of the LVLH triad from the state, which would just mirror
+    /// the code). The fixture is eccentric and out-of-plane, so every axis
+    /// component is non-zero.
+    #[test]
+    fn nadir_pointing_target_axes_and_rate_snapshot() {
+        let (q_out, omega_out) = NadirPointing.target(0.0, &snapshot_orbit(), None);
+        let m = q_out.into_inner().to_rotation_matrix();
+
+        // Sign of a quaternion is a gauge freedom, so pin the rotation it
+        // denotes: the three body axes in `SimpleEci`.
+        let expected_axes = [
+            Vector3::new(
+                0.003697164137472425,
+                0.44957515911664725,
+                0.8932348556133385,
+            ),
+            Vector3::new(0.8132416567988889, 0.5184415562092917, -0.2643035384596389),
+            Vector3::new(-0.5819143739626463, 0.727392967453308, -0.363696483726654),
+        ];
+        for (i, expected) in expected_axes.iter().enumerate() {
+            let mut body = Vector3::zeros();
+            body[i] = 1.0;
+            let got = m * body;
+            assert!(
+                (got - expected).magnitude() <= 1e-12 * expected.magnitude(),
+                "LVLH axis {i} changed: {got:?}"
+            );
+        }
+
+        // Rate: [0, -n, 0] with n = |h|/r² — pinned as a literal.
+        let expected_omega = Vector3::new(0.0, -0.0010409708350321229, 0.0);
+        assert!(
+            (omega_out - expected_omega).magnitude() <= 1e-12 * expected_omega.magnitude(),
+            "nadir rate changed: {omega_out:?}"
+        );
+    }
+
+    /// Characterization: a non-finite attitude target is passed through rather
+    /// than sanitized or panicked on. Pins the behavior of the (predicate-free)
+    /// reference path for `NaN` / `±∞` inputs.
+    #[test]
+    fn non_finite_states_do_not_panic() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            // Inertial hold: a non-finite target normalizes to NaN.
+            let q = UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(bad, 0.0, 0.0, 1.0));
+            let (q_out, omega_out) = InertialPointing {
+                target_q: Rotation::<Body, frame::SimpleEci>::from_raw(q),
+            }
+            .target(0.0, &snapshot_orbit(), None);
+            let q_out = q_out.into_inner();
+            assert!(q_out.w.is_nan(), "expected NaN scalar part for {bad}");
+            assert_eq!(omega_out, Vector3::zeros());
+
+            // Nadir pointing: a non-finite state propagates to a NaN target.
+            let orbit = OrbitalState::new(
+                Vector3::new(bad, -5000.0, 2500.0),
+                Vector3::new(1.0, 2.0, 7.0),
+            );
+            let (q_nadir, omega_nadir) = NadirPointing.target(0.0, &orbit, None);
+            let q_nadir = q_nadir.into_inner();
+            assert!(
+                !q_nadir.w.is_finite()
+                    || !q_nadir.i.is_finite()
+                    || !q_nadir.j.is_finite()
+                    || !q_nadir.k.is_finite(),
+                "expected a non-finite nadir target for {bad}, got {q_nadir:?}"
+            );
+            assert!(
+                omega_nadir[1].is_nan(),
+                "expected NaN rate for {bad}, got {omega_nadir:?}"
+            );
+        }
+    }
+
     #[test]
     fn inertial_pointing_returns_fixed_target() {
         let axis = nalgebra::Unit::new_normalize(Vector3::new(0.0, 0.0, 1.0));
         let q = UnitQuaternion::from_axis_angle(&axis, PI / 4.0);
-        let ref_point = InertialPointing { target_q: q };
+        let ref_point = InertialPointing {
+            target_q: Rotation::<Body, frame::SimpleEci>::from_raw(q),
+        };
 
         let orbit = OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0));
 
         let (q_out, omega_out) = ref_point.target(0.0, &orbit, None);
-        assert!((q_out.angle() - PI / 4.0).abs() < 1e-14);
+        assert!((q_out.into_inner().angle() - PI / 4.0).abs() < 1e-14);
         assert!(omega_out.magnitude() < 1e-15);
     }
 
@@ -124,7 +256,7 @@ mod tests {
         let (q_target, _omega) = nadir.target(0.0, &orbit, None);
 
         // The body Z-axis in inertial frame should point nadir (toward -r)
-        let r_mat = q_target.to_rotation_matrix();
+        let r_mat = q_target.into_inner().to_rotation_matrix();
         let z_body_inertial = r_mat * Vector3::new(0.0, 0.0, 1.0);
 
         let r_hat = orbit.position().normalize();
@@ -181,7 +313,7 @@ mod tests {
         let (q_target, _) = nadir.target(0.0, &orbit, None);
 
         // The rotation matrix should be orthonormal
-        let r_mat = q_target.to_rotation_matrix();
+        let r_mat = q_target.into_inner().to_rotation_matrix();
         let m = r_mat.matrix();
         let identity = m.transpose() * m;
 

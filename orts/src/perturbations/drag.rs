@@ -8,7 +8,7 @@ use nalgebra::Vector3;
 use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 
 use crate::model::ExternalLoads;
-use crate::model::{HasOrbit, Model};
+use crate::model::{HasFrame, HasOrbit, Model};
 use crate::orbital::OrbitalState;
 use arika::earth::{EarthFixedTransform, EarthOrientation};
 
@@ -195,7 +195,7 @@ impl<F: EarthFixedTransform> AtmosphericDrag<F> {
     }
 }
 
-impl<F: EarthFixedTransform, S: HasOrbit<Frame = F>> Model<S, F> for AtmosphericDrag<F> {
+impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S, F> for AtmosphericDrag<F> {
     fn name(&self) -> &str {
         "drag"
     }

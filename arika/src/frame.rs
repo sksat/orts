@@ -131,9 +131,16 @@ mod sealed {
 /// Top-level frame trait. Implemented by every concrete frame marker.
 ///
 /// Provides `NAME` and `DESCRIPTOR` for runtime identification. Sealed: new
-/// frames can only be added inside arika. No `Copy` / `'static` bound —
-/// marker structs derive them themselves.
-pub trait Frame: sealed::Sealed {
+/// frames can only be added inside arika.
+///
+/// Every frame is a ZST marker, so the trait requires the auto/derivable traits
+/// that fact implies. Stating them once here is what lets the frame-tagged
+/// types ([`Vec3`], [`Rotation`]) and everything generic over a frame simply
+/// derive `Clone` / `Copy` / `PartialEq` and pick up `Send` / `Sync`, instead of
+/// each working around the phantom parameter on its own.
+pub trait Frame:
+    sealed::Sealed + core::fmt::Debug + Copy + PartialEq + Eq + Send + Sync + 'static
+{
     const NAME: &'static str;
     const DESCRIPTOR: FrameDescriptor;
 }
@@ -469,6 +476,11 @@ impl<F> core::ops::SubAssign for Vec3<F> {
 ///
 /// Hamilton クォータニオンベース。`transform` でベクトルの
 /// フレーム変換を型安全に行う。
+///
+/// `PhantomData<(From, To)>` はゼロサイズなのでメモリレイアウトは
+/// `UnitQuaternion<f64>` と同一。derive が要求する `From: Copy` 等の bound は
+/// [`Frame`] が保証するので、`Rotation<A, F>` をフィールドに持つ frame-generic
+/// な struct 側でも derive がそのまま通る。
 #[derive(Clone, Copy, PartialEq)]
 pub struct Rotation<From, To>(UnitQuaternion<f64>, PhantomData<(From, To)>);
 
@@ -644,17 +656,9 @@ impl Rotation<SimpleEcef, SimpleEci> {
     }
 }
 
-impl<From, To> core::fmt::Debug for Rotation<From, To> {
+impl<From: Frame, To: Frame> core::fmt::Debug for Rotation<From, To> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let from = core::any::type_name::<From>()
-            .rsplit("::")
-            .next()
-            .unwrap_or("?");
-        let to = core::any::type_name::<To>()
-            .rsplit("::")
-            .next()
-            .unwrap_or("?");
-        write!(f, "Rotation<{from}, {to}>({:?})", self.0)
+        write!(f, "Rotation<{}, {}>({:?})", From::NAME, To::NAME, self.0)
     }
 }
 

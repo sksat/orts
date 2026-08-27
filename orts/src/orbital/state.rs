@@ -1,34 +1,17 @@
-use std::fmt;
 use std::marker::PhantomData;
 
 use arika::frame::{Eci, SimpleEci, Vec3};
 use nalgebra::Vector3;
 use utsuroi::{OdeState, State, Tolerances};
 
-use crate::model::HasOrbit;
+use crate::model::{HasFrame, HasOrbit};
 
 /// Orbital state: position and velocity in an inertial frame.
 ///
 /// Parameterized by frame `F` (default `SimpleEci`). The internal
 /// representation is a raw `State<3, 2>` — the frame is phantom.
+#[derive(Debug, Clone, PartialEq)]
 pub struct OrbitalState<F: Eci = SimpleEci>(pub State<3, 2>, PhantomData<F>);
-
-// Manual impls to avoid requiring F: Debug/Clone/PartialEq.
-impl<F: Eci> fmt::Debug for OrbitalState<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("OrbitalState").field(&self.0).finish()
-    }
-}
-impl<F: Eci> Clone for OrbitalState<F> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone(), PhantomData)
-    }
-}
-impl<F: Eci> PartialEq for OrbitalState<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
 
 impl<F: Eci> OrbitalState<F> {
     /// Wrap an existing `State<3, 2>` in the given frame.
@@ -139,9 +122,11 @@ mod tests {
     }
 }
 
-impl<F: Eci> HasOrbit for OrbitalState<F> {
+impl<F: Eci> HasFrame for OrbitalState<F> {
     type Frame = F;
+}
 
+impl<F: Eci> HasOrbit for OrbitalState<F> {
     fn orbit(&self) -> &OrbitalState<F> {
         self
     }

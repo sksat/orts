@@ -203,7 +203,8 @@ fn commanded_magnetorquer_torque_is_m_cross_b() {
     );
     let b_body = state
         .attitude
-        .rotation_to_body()
+        .rotation_tagged_as::<arika::frame::SimpleEci>()
+        .inverse()
         .transform(&b_eci)
         .into_inner();
     let expected_torque = m_cmd.cross(&b_body);

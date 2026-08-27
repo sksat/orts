@@ -97,7 +97,8 @@ impl<F: MagneticFieldModel> PluginController for PluginBdotFiniteDiff<F> {
         let b_body = obs
             .spacecraft
             .attitude
-            .rotation_to_body()
+            .rotation_tagged_as::<arika::frame::SimpleEci>()
+            .inverse()
             .transform(&arika::frame::Vec3::from_raw(b_eci))
             .into_inner();
 

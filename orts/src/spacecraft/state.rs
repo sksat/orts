@@ -1,11 +1,9 @@
-use std::fmt;
-
 use arika::frame::{Eci, SimpleEci};
 use nalgebra::{Vector3, Vector4};
 use utsuroi::{OdeState, Tolerances};
 
 use crate::attitude::AttitudeState;
-use crate::model::{HasAttitude, HasMass, HasOrbit};
+use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit};
 use crate::orbital::OrbitalState;
 
 /// Combined spacecraft state: orbital (6D) + attitude (7D) + mass (1D).
@@ -13,35 +11,11 @@ use crate::orbital::OrbitalState;
 /// Parameterized by the inertial frame `F` (default `SimpleEci`).
 /// Used as the ODE state vector for coupled orbit-attitude propagation.
 /// Mass is included for thrust modeling (mass depletion).
+#[derive(Debug, Clone, PartialEq)]
 pub struct SpacecraftState<F: Eci = SimpleEci> {
     pub orbit: OrbitalState<F>,
     pub attitude: AttitudeState,
     pub mass: f64,
-}
-
-// Manual impls to avoid requiring F: Debug/Clone/PartialEq.
-impl<F: Eci> fmt::Debug for SpacecraftState<F> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SpacecraftState")
-            .field("orbit", &self.orbit)
-            .field("attitude", &self.attitude)
-            .field("mass", &self.mass)
-            .finish()
-    }
-}
-impl<F: Eci> Clone for SpacecraftState<F> {
-    fn clone(&self) -> Self {
-        Self {
-            orbit: self.orbit.clone(),
-            attitude: self.attitude.clone(),
-            mass: self.mass,
-        }
-    }
-}
-impl<F: Eci> PartialEq for SpacecraftState<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.orbit == other.orbit && self.attitude == other.attitude && self.mass == other.mass
-    }
 }
 
 impl<F: Eci> SpacecraftState<F> {
@@ -78,9 +52,11 @@ impl SpacecraftState<SimpleEci> {
     }
 }
 
-impl<F: Eci> HasOrbit for SpacecraftState<F> {
+impl<F: Eci> HasFrame for SpacecraftState<F> {
     type Frame = F;
+}
 
+impl<F: Eci> HasOrbit for SpacecraftState<F> {
     fn orbit(&self) -> &OrbitalState<F> {
         &self.orbit
     }
@@ -101,9 +77,11 @@ impl<F: Eci> HasMass for SpacecraftState<F> {
 // Delegate capability traits for AugmentedState<SpacecraftState<F>>.
 use crate::effector::AugmentedState;
 
-impl<F: Eci> HasOrbit for AugmentedState<SpacecraftState<F>> {
+impl<F: Eci> HasFrame for AugmentedState<SpacecraftState<F>> {
     type Frame = F;
+}
 
+impl<F: Eci> HasOrbit for AugmentedState<SpacecraftState<F>> {
     fn orbit(&self) -> &OrbitalState<F> {
         &self.plant.orbit
     }

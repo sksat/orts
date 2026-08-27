@@ -23,7 +23,7 @@ use arika::epoch::{Epoch, Utc};
 use nalgebra::Vector3;
 
 use crate::model::ExternalLoads;
-use crate::model::{HasOrbit, Model};
+use crate::model::{HasFrame, HasOrbit, Model};
 use arika::earth::EarthRotationPole;
 
 /// Zonal harmonics (J2, optional J3/J4) gravity perturbation about the
@@ -106,7 +106,7 @@ impl<F: EarthRotationPole> ZonalGravity<F> {
     }
 }
 
-impl<F: EarthRotationPole, S: HasOrbit<Frame = F>> Model<S, F> for ZonalGravity<F> {
+impl<F: EarthRotationPole, S: HasFrame<Frame = F> + HasOrbit> Model<S, F> for ZonalGravity<F> {
     fn name(&self) -> &str {
         "zonal_gravity"
     }

@@ -25,11 +25,6 @@ pub struct OrbitalSystem<F: Eci = SimpleEci> {
     _frame: PhantomData<F>,
 }
 
-// Manual Send + Sync: all fields are Send + Sync, PhantomData<F> is fine
-// because F is a ZST frame marker.
-unsafe impl<F: Eci> Send for OrbitalSystem<F> {}
-unsafe impl<F: Eci> Sync for OrbitalSystem<F> {}
-
 impl<F: Eci> OrbitalSystem<F> {
     pub fn new(mu: f64, gravity: Box<dyn GravityField>) -> Self {
         Self {

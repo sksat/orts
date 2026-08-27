@@ -3,7 +3,7 @@ use arika::frame::{self, Vec3};
 use nalgebra::{Matrix3, Vector3};
 
 use crate::model::ExternalLoads;
-use crate::model::{HasAttitude, HasOrbit, Model};
+use crate::model::{HasAttitude, HasFrame, HasOrbit, Model};
 
 use super::state::AttitudeState;
 
@@ -59,7 +59,7 @@ pub(crate) fn gravity_gradient_torque_vector(
     mu: f64,
     inertia: &Matrix3<f64>,
     r_eci: &Vector3<f64>,
-    attitude: &AttitudeState,
+    inertial_to_body: arika::frame::Rotation<frame::SimpleEci, arika::frame::Body>,
 ) -> Vector3<f64> {
     let r_mag = r_eci.magnitude();
     if r_mag < 1e-10 {
@@ -67,8 +67,7 @@ pub(crate) fn gravity_gradient_torque_vector(
     }
 
     // Transform position to body frame: r_body = R_bi * r_eci
-    let r_body = attitude
-        .rotation_to_body()
+    let r_body = inertial_to_body
         .transform(&Vec3::<frame::SimpleEci>::from_raw(*r_eci))
         .into_inner();
 
@@ -82,7 +81,12 @@ impl GravityGradientTorque {
     /// Compute gravity gradient torque in body frame (decoupled: position from closure).
     pub(crate) fn torque(&self, t: f64, state: &AttitudeState) -> Vector3<f64> {
         let r_eci = (self.position_fn)(t);
-        gravity_gradient_torque_vector(self.mu, &self.inertia, &r_eci, state)
+        gravity_gradient_torque_vector(
+            self.mu,
+            &self.inertia,
+            &r_eci,
+            state.attitude_from_inertial(),
+        )
     }
 }
 
@@ -102,7 +106,9 @@ impl CoupledGravityGradient {
     }
 }
 
-impl<S: HasAttitude + HasOrbit> Model<S> for CoupledGravityGradient {
+impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude + HasOrbit> Model<S>
+    for CoupledGravityGradient
+{
     fn name(&self) -> &str {
         "gravity_gradient"
     }
@@ -112,13 +118,15 @@ impl<S: HasAttitude + HasOrbit> Model<S> for CoupledGravityGradient {
             self.mu,
             &self.inertia,
             state.orbit().position(),
-            state.attitude(),
+            state.attitude_from_inertial(),
         );
         ExternalLoads::torque(torque)
     }
 }
 
-impl<S: HasAttitude> Model<S> for GravityGradientTorque {
+impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude> Model<S>
+    for GravityGradientTorque
+{
     fn name(&self) -> &str {
         "gravity_gradient"
     }
@@ -277,7 +285,12 @@ mod tests {
 
         // Coupled version via shared function
         let r_eci = Vector3::new(r, 0.0, 0.0);
-        let tau_coupled = gravity_gradient_torque_vector(mu, &inertia, &r_eci, &attitude);
+        let tau_coupled = gravity_gradient_torque_vector(
+            mu,
+            &inertia,
+            &r_eci,
+            attitude.rotation_tagged_as::<frame::SimpleEci>().inverse(),
+        );
 
         assert!(
             (tau_decoupled - tau_coupled).magnitude() < 1e-15,
