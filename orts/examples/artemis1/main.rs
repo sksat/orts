@@ -257,6 +257,7 @@ use std::sync::Arc;
 
 #[cfg(feature = "fetch-horizons")]
 use arika::epoch::Epoch;
+use arika::frame::Vec3;
 #[cfg(feature = "fetch-horizons")]
 use arika::horizons::HorizonsTable;
 #[cfg(feature = "fetch-horizons")]
@@ -1513,7 +1514,12 @@ fn verify_burn_continuous(
         |_, _| {},
     );
 
-    let thrust = ConstantThrust::new(burn.label, burn_start, burn_end, dv_corrected_kms);
+    let thrust = ConstantThrust::new(
+        burn.label,
+        burn_start,
+        burn_end,
+        Vec3::from_raw(dv_corrected_kms),
+    );
     let burn_system = build_artemis_system(burn_start, moon_ephem, sun_table).with_model(thrust);
     // Small integrator step inside the burn: the burn is only
     // ~80–100 s, so the default 10 s step would only give 8–10
@@ -1957,7 +1963,7 @@ fn verify_burn_chain_continuous(
         // the correct `a × duration = Δv` regardless of how many
         // internal steps it takes.
         let burn_seconds = (end.jd() - start.jd()) * 86_400.0;
-        let thrust = ConstantThrust::new(burn.label, *start, *end, *dv_kms);
+        let thrust = ConstantThrust::new(burn.label, *start, *end, Vec3::from_raw(*dv_kms));
         let burn_system = build_artemis_system(*start, moon_ephem, sun_table).with_model(thrust);
         // Use a smaller dt inside the burn (1 s) because short burns
         // (~80-100 s) only get ~8-10 steps at the chain's dt=10s, and
@@ -2298,7 +2304,8 @@ fn record_chain_trajectory(
         // Leg B: burn window with ConstantThrust installed. Small
         // integrator step (1 s) because the burn is only ~80–100 s.
         let burn_seconds = (burn_end.jd() - burn_start.jd()) * 86_400.0;
-        let thrust = ConstantThrust::new(burn.label, *burn_start, *burn_end, *dv_kms);
+        let thrust =
+            ConstantThrust::new(burn.label, *burn_start, *burn_end, Vec3::from_raw(*dv_kms));
         let burn_system =
             build_artemis_system(*burn_start, moon_ephem, sun_table).with_model(thrust);
         let burn_dt = burn_seconds.min(1.0);
