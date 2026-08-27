@@ -939,16 +939,43 @@ mod tests {
         assert_eq!(ds.len(), 5);
     }
 
-    /// Fastest of `reps` measurements, in microseconds.
+    /// Fastest measurement per size, in microseconds.
     ///
-    /// `measure` does its own setup and returns only the timed part, so growing
-    /// input sizes do not charge their construction to the measurement.
+    /// `measure` does its own setup for the size it is handed and returns only
+    /// the timed part, so growing inputs do not charge their construction to
+    /// the measurement.
     ///
-    /// The minimum, not the mean or the median: scheduling noise on a shared
-    /// runner only ever adds time, so the fastest sample is the closest
+    /// Every repetition covers every size, and the starting point rotates
+    /// between repetitions. That ordering is the point: running all
+    /// repetitions of the smallest input before starting the largest would tie
+    /// time order to input size, so a runner that slows down partway through —
+    /// load arriving, thermal throttling — would look exactly like cost
+    /// climbing with size. Taking the minimum per size cannot undo that, since
+    /// the drift covers the whole window that size was measured in. With
+    /// rotation each size is measured in each position, so drift cannot
+    /// systematically favour one of them.
+    ///
+    /// The minimum rather than the mean or the median: scheduling noise on a
+    /// shared runner only ever adds time, so the fastest sample is the closest
     /// available estimate of the cost itself.
-    fn fastest_us(reps: u32, mut measure: impl FnMut() -> u128) -> u128 {
-        (0..reps).map(|_| measure()).min().expect("reps > 0")
+    fn fastest_per_size(
+        sizes: &[usize],
+        reps: usize,
+        mut measure: impl FnMut(usize) -> u128,
+    ) -> Vec<(usize, u128)> {
+        let mut best: Vec<Option<u128>> = vec![None; sizes.len()];
+        for rep in 0..reps {
+            for offset in 0..sizes.len() {
+                let i = (offset + rep) % sizes.len();
+                let us = measure(sizes[i]);
+                best[i] = Some(best[i].map_or(us, |b: u128| b.min(us)));
+            }
+        }
+        sizes
+            .iter()
+            .copied()
+            .zip(best.into_iter().map(|b| b.expect("reps > 0")))
+            .collect()
     }
 
     /// Assert the cost per unit of input does not climb as the input grows —
@@ -999,20 +1026,21 @@ mod tests {
         // enough that the smallest sample is well clear of timer granularity.
         let sizes = [100_000usize, 200_000, 400_000];
 
-        let samples: Vec<(usize, u128)> = sizes
+        // Built once up front: this operation only reads, so the same input can
+        // be measured repeatedly, and construction stays out of the timings.
+        let inputs: Vec<Vec<HistoryState>> = sizes
             .iter()
-            .map(|&n| {
-                let states: Vec<HistoryState> = (0..n).map(|i| make_state(i as f64)).collect();
-                let us = fastest_us(3, || {
-                    let start = std::time::Instant::now();
-                    let ds = HistoryBuffer::downsample(&states, 1000);
-                    let elapsed = start.elapsed();
-                    assert_eq!(ds.len(), 1000, "downsample must hit its target size");
-                    elapsed.as_micros()
-                });
-                (n, us)
-            })
+            .map(|&n| (0..n).map(|i| make_state(i as f64)).collect())
             .collect();
+
+        let samples = fastest_per_size(&sizes, 3, |n| {
+            let states = &inputs[sizes.iter().position(|&s| s == n).expect("known size")];
+            let start = std::time::Instant::now();
+            let ds = HistoryBuffer::downsample(states, 1000);
+            let elapsed = start.elapsed();
+            assert_eq!(ds.len(), 1000, "downsample must hit its target size");
+            elapsed.as_micros()
+        });
 
         assert_cost_per_unit_flat("downsample", &samples);
     }
@@ -1023,28 +1051,21 @@ mod tests {
         // stay modest because each flush encodes and writes a real .rrd.
         let sizes = [625usize, 1250, 2500];
 
-        let samples: Vec<(usize, u128)> = sizes
-            .iter()
-            .map(|&rows| {
-                let us = fastest_us(2, || {
-                    let dir = temp_data_dir(&format!("flush-scale-{rows}"));
-                    let mut buf =
-                        HistoryBuffer::new(10_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
-                    for i in 0..(rows * 2) {
-                        buf.states.push_back(make_state(i as f64));
-                    }
+        let samples = fastest_per_size(&sizes, 2, |rows| {
+            let dir = temp_data_dir(&format!("flush-scale-{rows}"));
+            let mut buf = HistoryBuffer::new(10_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+            for i in 0..(rows * 2) {
+                buf.states.push_back(make_state(i as f64));
+            }
 
-                    let start = std::time::Instant::now();
-                    buf.flush();
-                    let elapsed = start.elapsed();
+            let start = std::time::Instant::now();
+            buf.flush();
+            let elapsed = start.elapsed();
 
-                    assert_eq!(buf.segment_count, 1, "one flush must write one segment");
-                    cleanup_dir(&dir);
-                    elapsed.as_micros()
-                });
-                (rows, us)
-            })
-            .collect();
+            assert_eq!(buf.segment_count, 1, "one flush must write one segment");
+            cleanup_dir(&dir);
+            elapsed.as_micros()
+        });
 
         assert_cost_per_unit_flat("flush", &samples);
     }
@@ -1065,28 +1086,21 @@ mod tests {
         // thing varying.
         let sizes = [2_500usize, 5_000, 10_000];
 
-        let samples: Vec<(usize, u128)> = sizes
-            .iter()
-            .map(|&n| {
-                let us = fastest_us(2, || {
-                    let dir = temp_data_dir(&format!("load-scale-{n}"));
-                    let mut buf =
-                        HistoryBuffer::new(n / 10, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
-                    for i in 0..n {
-                        buf.push(make_state(i as f64));
-                    }
+        let samples = fastest_per_size(&sizes, 2, |n| {
+            let dir = temp_data_dir(&format!("load-scale-{n}"));
+            let mut buf = HistoryBuffer::new(n / 10, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+            for i in 0..n {
+                buf.push(make_state(i as f64));
+            }
 
-                    let start = std::time::Instant::now();
-                    let all = buf.load_all();
-                    let elapsed = start.elapsed();
+            let start = std::time::Instant::now();
+            let all = buf.load_all();
+            let elapsed = start.elapsed();
 
-                    assert_eq!(all.len(), n, "load_all must return every pushed state");
-                    cleanup_dir(&dir);
-                    elapsed.as_micros()
-                });
-                (n, us)
-            })
-            .collect();
+            assert_eq!(all.len(), n, "load_all must return every pushed state");
+            cleanup_dir(&dir);
+            elapsed.as_micros()
+        });
 
         assert_cost_per_unit_flat("load_all", &samples);
     }
