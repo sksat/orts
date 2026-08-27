@@ -1051,8 +1051,15 @@ mod tests {
 
     #[test]
     fn load_all_cost_per_state_stays_flat() {
-        // Buffer cap 2000 with 4x that pushed, so every size reads several
-        // segments back off disk rather than answering from memory.
+        // The capacity scales with the input, which keeps two things fixed that
+        // would otherwise move with it: the number of segments on disk
+        // (~2n/capacity) and the fraction still in memory (~capacity/2n). A
+        // fixed capacity fails this test on unchanged code — at 2500 states
+        // most of the data is still in the cheap in-memory tail, while at
+        // 10_000 most has gone through the far more expensive per-segment rerun
+        // decode, so the cost per state climbs for reasons that have nothing to
+        // do with complexity. Holding the mix still leaves rows-per-segment as
+        // the only thing varying.
         let sizes = [2_500usize, 5_000, 10_000];
 
         let samples: Vec<(usize, u128)> = sizes
@@ -1060,7 +1067,8 @@ mod tests {
             .map(|&n| {
                 let us = fastest_us(2, || {
                     let dir = temp_data_dir(&format!("load-scale-{n}"));
-                    let mut buf = HistoryBuffer::new(2000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+                    let mut buf =
+                        HistoryBuffer::new(n / 10, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
                     for i in 0..n {
                         buf.push(make_state(i as f64));
                     }
