@@ -3,6 +3,10 @@ name: Deploy Site
 on:
   push:
     branches: [main]
+  # A deployment that stalls on GitHub's side fails the run for reasons the
+  # commit had nothing to do with. This is the way back to a published site
+  # without an empty commit.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -96,11 +100,29 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
+      # The artifact name carries the attempt number because `deploy-pages`
+      # lists the artifacts of the whole run, not of the current attempt, and
+      # picks by name. With the default `github-pages`, a re-run uploads a second
+      # artifact under the name the first attempt already used, and the deploy
+      # step stops at "Multiple artifacts named github-pages were unexpectedly
+      # found for this workflow run. Artifact count is 2." A run that failed for
+      # a reason outside this repository therefore could not be recovered by
+      # re-running it — which is how it failed: the deployment sat in
+      # `updating_pages` until this action's own 10-minute cap (not raisable, v5
+      # clamps `timeout` to 600000 ms) cancelled it.
+      #
+      # Splitting build and deploy into separate jobs would need this expression
+      # reconsidered: under "Re-run failed jobs" the build would stay on the
+      # earlier attempt while the deploy moved to the next one, and the deploy
+      # would look for a name nothing uploaded.
       - name: Upload artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
+          name: github-pages-${{ github.run_attempt }}
           path: docs/dist
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+        with:
+          artifact_name: github-pages-${{ github.run_attempt }}
