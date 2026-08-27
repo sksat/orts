@@ -24,4 +24,7 @@ fn a_non_simple_eci_attitude_cannot_be_used_where_simple_eci_is_required() {
 
     // A model carrying its own frame must be installed for a state in that frame.
     t.compile_fail("tests/trybuild/frame_capability_model_in_another_frame.rs");
+
+    // A burn Delta-v given in one inertial frame cannot be flown in another.
+    t.compile_fail("tests/trybuild/simple_eci_burn_in_gcrs_system.rs");
 }

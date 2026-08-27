@@ -1,5 +1,5 @@
 use arika::epoch::Epoch;
-use nalgebra::Vector3;
+use arika::frame::{self, Eci, Vec3};
 
 use crate::model::ExternalLoads;
 use crate::model::{HasFrame, HasOrbit, Model};
@@ -58,29 +58,33 @@ use crate::model::{HasFrame, HasOrbit, Model};
 ///   could in principle drop the burden from the caller, but the
 ///   current orts `Dop853::integrate` is fixed-step.
 #[derive(Debug, Clone, Copy)]
-pub struct ConstantThrust {
+pub struct ConstantThrust<F: Eci = frame::SimpleEci> {
     /// Human-readable name (e.g. `"DRI"`, `"thrust_burn3"`).
     pub name: &'static str,
     /// First epoch at which the thrust is active (inclusive).
     pub start: Epoch,
     /// Last epoch at which the thrust is active (inclusive).
     pub end: Epoch,
-    /// Pre-computed constant acceleration vector in ECI [km/s²].
+    /// Pre-computed constant acceleration vector [km/s²], in the inertial
+    /// frame `F` the Δv was given in.
     ///
     /// Equal to `total_dv / (end − start in seconds)`.
-    acceleration: Vector3<f64>,
+    acceleration: Vec3<F>,
 }
 
-impl ConstantThrust {
+impl<F: Eci> ConstantThrust<F> {
     /// Build a constant-thrust model from a total Δv vector and a burn
     /// window. The required acceleration is `total_dv / duration`.
     ///
     /// * `name` — diagnostic label, stored by reference (static string).
     /// * `start`, `end` — burn window epochs. `end > start` required.
-    /// * `total_dv_kms` — integrated propulsive Δv in ECI [km/s] that
-    ///   should be imparted over the window (equivalent to what an
-    ///   impulsive model would apply).
-    pub fn new(name: &'static str, start: Epoch, end: Epoch, total_dv_kms: Vector3<f64>) -> Self {
+    /// * `total_dv_kms` — integrated propulsive Δv [km/s] that should be
+    ///   imparted over the window (equivalent to what an impulsive model would
+    ///   apply). Its frame `F` is the frame the model must be propagated in:
+    ///   the direction is held fixed in `F` for the whole burn, so a Δv given
+    ///   in one inertial frame cannot be reused in another (`SimpleEci` and
+    ///   `Gcrs` differ by ~484 arcsec at 2024).
+    pub fn new(name: &'static str, start: Epoch, end: Epoch, total_dv_kms: Vec3<F>) -> Self {
         let duration_s = (end.jd() - start.jd()) * 86_400.0;
         assert!(
             duration_s > 0.0,
@@ -97,7 +101,7 @@ impl ConstantThrust {
     /// Returns the pre-computed constant acceleration vector [km/s²].
     /// Exposed for tests / diagnostics; the integrator consumes it via
     /// [`Model::eval`].
-    pub fn acceleration_kms2(&self) -> Vector3<f64> {
+    pub fn acceleration_kms2(&self) -> Vec3<F> {
         self.acceleration
     }
 
@@ -108,7 +112,7 @@ impl ConstantThrust {
 
     /// Returns the total Δv that this thrust model integrates to over
     /// `[start, end]` (= acceleration × duration).
-    pub fn total_dv_kms(&self) -> Vector3<f64> {
+    pub fn total_dv_kms(&self) -> Vec3<F> {
         self.acceleration * self.duration_seconds()
     }
 
@@ -118,22 +122,25 @@ impl ConstantThrust {
     }
 }
 
-impl<S: HasFrame + HasOrbit> Model<S> for ConstantThrust {
+impl<F: Eci, S: HasFrame<Frame = F> + HasOrbit> Model<S> for ConstantThrust<F> {
     fn name(&self) -> &str {
         self.name
     }
 
     fn eval(&self, _t: f64, _state: &S, epoch: Option<&Epoch>) -> ExternalLoads<S::Frame> {
-        // No epoch → no way to know whether the burn is active → zero.
-        // This matches the convention used by ThirdBodyGravity for
-        // consistency across force models.
-        let Some(epoch) = epoch else {
-            return ExternalLoads::acceleration(Vector3::zeros());
+        // The stored acceleration is already a `Vec3<F>` and `F` is the state's
+        // frame, so it goes into the loads without a re-tag.
+        let acceleration_inertial = match epoch {
+            // No epoch → no way to know whether the burn is active → zero.
+            // This matches the convention used by ThirdBodyGravity for
+            // consistency across force models.
+            Some(epoch) if self.is_active(epoch) => self.acceleration,
+            _ => Vec3::zeros(),
         };
-        if self.is_active(epoch) {
-            ExternalLoads::acceleration(self.acceleration)
-        } else {
-            ExternalLoads::acceleration(Vector3::zeros())
+        ExternalLoads {
+            acceleration_inertial,
+            torque_body: Vec3::zeros(),
+            mass_rate: 0.0,
         }
     }
 }
@@ -150,7 +157,7 @@ const _: fn() = || {
 mod tests {
     use super::*;
     use crate::OrbitalState;
-    use nalgebra::vector;
+    use nalgebra::{Vector3, vector};
 
     fn test_state() -> OrbitalState {
         OrbitalState::new(vector![7000.0, 0.0, 0.0], vector![0.0, 7.5, 0.0])
@@ -170,18 +177,19 @@ mod tests {
         // modern epochs (~J2000), f64 JD ULP is ~5e-10 days ≈ 50 µs, so
         // the recovered duration and hence the acceleration have a
         // relative error ~5e-7 for a 100-s interval.
-        let thrust = ConstantThrust::new("test", start, end, vector![0.05, 0.0, 0.0]);
+        let thrust =
+            ConstantThrust::<frame::SimpleEci>::new("test", start, end, Vec3::new(0.05, 0.0, 0.0));
         let a = thrust.acceleration_kms2();
-        assert!((a.x - 5e-4).abs() < 1e-8);
-        assert_eq!(a.y, 0.0);
-        assert_eq!(a.z, 0.0);
+        assert!((a.x() - 5e-4).abs() < 1e-8);
+        assert_eq!(a.y(), 0.0);
+        assert_eq!(a.z(), 0.0);
     }
 
     #[test]
     fn total_dv_round_trip_matches_constructor_input() {
         let start = epoch_seconds_from_j2000(0.0);
         let end = epoch_seconds_from_j2000(120.0);
-        let total = vector![0.1, -0.02, 0.05];
+        let total = Vec3::<frame::SimpleEci>::new(0.1, -0.02, 0.05);
         let thrust = ConstantThrust::new("rt", start, end, total);
         let recovered = thrust.total_dv_kms();
         assert!((recovered - total).magnitude() < 1e-12);
@@ -192,14 +200,16 @@ mod tests {
     fn new_panics_on_reversed_interval() {
         let start = epoch_seconds_from_j2000(100.0);
         let end = epoch_seconds_from_j2000(0.0);
-        let _ = ConstantThrust::new("bad", start, end, vector![0.1, 0.0, 0.0]);
+        let _ =
+            ConstantThrust::<frame::SimpleEci>::new("bad", start, end, Vec3::new(0.1, 0.0, 0.0));
     }
 
     #[test]
     fn eval_is_zero_before_start() {
         let start = epoch_seconds_from_j2000(100.0);
         let end = epoch_seconds_from_j2000(200.0);
-        let thrust = ConstantThrust::new("bf", start, end, vector![0.05, 0.0, 0.0]);
+        let thrust =
+            ConstantThrust::<frame::SimpleEci>::new("bf", start, end, Vec3::new(0.05, 0.0, 0.0));
         let probe = epoch_seconds_from_j2000(50.0);
         let loads = thrust.eval(0.0, &test_state(), Some(&probe));
         assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
@@ -209,7 +219,8 @@ mod tests {
     fn eval_is_zero_after_end() {
         let start = epoch_seconds_from_j2000(100.0);
         let end = epoch_seconds_from_j2000(200.0);
-        let thrust = ConstantThrust::new("af", start, end, vector![0.05, 0.0, 0.0]);
+        let thrust =
+            ConstantThrust::<frame::SimpleEci>::new("af", start, end, Vec3::new(0.05, 0.0, 0.0));
         let probe = epoch_seconds_from_j2000(300.0);
         let loads = thrust.eval(0.0, &test_state(), Some(&probe));
         assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
@@ -220,7 +231,8 @@ mod tests {
         let start = epoch_seconds_from_j2000(100.0);
         let end = epoch_seconds_from_j2000(200.0);
         // 10 m/s over 100 s → 0.1 m/s² = 1e-4 km/s²
-        let thrust = ConstantThrust::new("mid", start, end, vector![0.01, 0.0, 0.0]);
+        let thrust =
+            ConstantThrust::<frame::SimpleEci>::new("mid", start, end, Vec3::new(0.01, 0.0, 0.0));
         let expected = vector![1e-4, 0.0, 0.0];
         for probe_sec in [100.0, 120.0, 150.0, 180.0, 200.0] {
             let probe = epoch_seconds_from_j2000(probe_sec);
@@ -241,7 +253,7 @@ mod tests {
             "noep",
             epoch_seconds_from_j2000(0.0),
             epoch_seconds_from_j2000(100.0),
-            vector![0.05, 0.0, 0.0],
+            Vec3::<frame::SimpleEci>::new(0.05, 0.0, 0.0),
         );
         let loads = thrust.eval(0.0, &test_state(), None);
         assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
@@ -252,7 +264,8 @@ mod tests {
         // Inclusive on both ends: start and end epochs return thrust, not zero.
         let start = epoch_seconds_from_j2000(100.0);
         let end = epoch_seconds_from_j2000(200.0);
-        let thrust = ConstantThrust::new("bd", start, end, vector![0.01, 0.0, 0.0]);
+        let thrust =
+            ConstantThrust::<frame::SimpleEci>::new("bd", start, end, Vec3::new(0.01, 0.0, 0.0));
         let expected = vector![1e-4, 0.0, 0.0];
 
         let loads_start = thrust.eval(0.0, &test_state(), Some(&start));
@@ -267,7 +280,7 @@ mod tests {
             "cc",
             epoch_seconds_from_j2000(0.0),
             epoch_seconds_from_j2000(50.0),
-            vector![0.02, 0.0, 0.0],
+            Vec3::<frame::SimpleEci>::new(0.02, 0.0, 0.0),
         );
         let t2 = t1;
         let t3 = t1.clone();
