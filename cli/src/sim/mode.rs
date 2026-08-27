@@ -345,14 +345,21 @@ orbit = {{ type = "circular", altitude = 400 }}
     /// Euler term can overflow from the inertia and the rate alone.
     #[test]
     fn an_initial_state_that_starts_at_infinite_acceleration_is_rejected() {
+        // The rate, not the inertia, is what carries it out of range here. A
+        // tensor lopsided enough to overflow `I⁻¹` on its own — `[1e-308, 1, 2]`
+        // — is refused earlier for violating the triangle inequality, and the
+        // inequality is also what keeps the lopsided case from reaching this
+        // term: a tiny `I1` forces `I2 ≈ I3`, which shrinks the first component
+        // of `ω × Iω` by as much as `I⁻¹` magnifies it.
         let err = validate_satellite_spec(&attitude_spec(
-            "inertia_diag = [1e-308, 1, 2]\nmass = 500\ninitial_angular_velocity = [1, 2, 2]",
+            "inertia_diag = [1, 1, 2]\nmass = 500\n\
+             initial_angular_velocity = [1e200, 1e200, 1e200]",
         ))
         .expect_err("an infinite initial angular acceleration should be rejected");
         assert!(err.contains("angular acceleration"), "got {err}");
 
         // The same inertia at rest has nothing to diverge.
-        validate_satellite_spec(&attitude_spec("inertia_diag = [1e-308, 1, 2]\nmass = 500"))
+        validate_satellite_spec(&attitude_spec("inertia_diag = [1, 1, 2]\nmass = 500"))
             .expect("a resting spacecraft integrates whatever its inertia");
     }
 
