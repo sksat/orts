@@ -124,9 +124,8 @@ impl<
         }
 
         // 2. Transform to body frame
-        let b_body = att
-            .rotation_tagged_as::<Fr>()
-            .inverse()
+        let b_body = state
+            .attitude_from_inertial()
             .transform(&b_inertial)
             .into_inner();
 

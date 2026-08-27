@@ -236,13 +236,8 @@ impl Thruster {
     }
 }
 
-impl<
-    S: HasFrame<Frame = arika::frame::SimpleEci>
-        + HasAttitude
-        + HasFrame<Frame = arika::frame::SimpleEci>
-        + HasOrbit
-        + HasMass,
-> Model<S> for Thruster
+impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude + HasOrbit + HasMass> Model<S>
+    for Thruster
 {
     fn name(&self) -> &str {
         "thruster"
@@ -341,13 +336,8 @@ impl ThrusterAssembly {
     }
 }
 
-impl<
-    S: HasFrame<Frame = arika::frame::SimpleEci>
-        + HasAttitude
-        + HasFrame<Frame = arika::frame::SimpleEci>
-        + HasOrbit
-        + HasMass,
-> Model<S> for ThrusterAssembly
+impl<S: HasFrame<Frame = arika::frame::SimpleEci> + HasAttitude + HasOrbit + HasMass> Model<S>
+    for ThrusterAssembly
 {
     fn name(&self) -> &str {
         "thruster_assembly"
