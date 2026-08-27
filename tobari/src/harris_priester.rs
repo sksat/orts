@@ -507,6 +507,98 @@ mod tests {
         }
     }
 
+    /// The bulge apex must land on apparent solar noon, cross-checked against the
+    /// equation of time rather than against the same solar direction the model
+    /// reads.
+    ///
+    /// At the equator `cos ψ = cos δ · cos h`, so with no lag the density
+    /// maximum over longitude sits exactly at hour angle `h = 0` — the subsolar
+    /// meridian. Reached independently, that meridian is where apparent solar
+    /// time is 12 h: `λ = 15° · (12 h − UT − EoT)`. The two paths share no code:
+    /// one goes through the Earth rotation angle and the solar right ascension,
+    /// the other through UT and the equation of time.
+    ///
+    /// This is what pins the *frame* of the solar right ascension. `Epoch::gmst`
+    /// is the Earth rotation angle (CIO-based, not the equinox of date), so
+    /// `ra_sat = gmst + λ` pairs with a J2000/GCRS solar right ascension. Feeding
+    /// it a mean-equinox-of-date direction instead — which is what the Meeus
+    /// series produces before it is rotated to J2000 — shifts the apex by the
+    /// accumulated precession, 0.34° in 2024 and 0.70° in 2050.
+    ///
+    /// The dates sit within a day of an equinox on purpose. Precession moves a
+    /// body's right ascension by `m + n·sin α·tan δ`, so away from `δ = 0` the
+    /// equinox-based and CIO-based hour angles differ by a declination-dependent
+    /// term (up to 0.06° in 2024, 0.12° by 2050) that neither this test nor the
+    /// model is about. At `δ ≈ 0` that term vanishes and the residual is a flat
+    /// 0.0064° from 1980 to 2075 — the models' own accuracy — so the bound below
+    /// stays an order of magnitude under the error it has to catch.
+    #[test]
+    fn bulge_apex_sits_at_apparent_solar_noon() {
+        let hp = HarrisPriester::new().with_lag_angle(0.0);
+
+        for (y, m, d, hh) in [
+            (1980, 3, 20, 6),
+            (2024, 3, 20, 12),
+            (2024, 9, 22, 3),
+            (2050, 3, 20, 18),
+            (2075, 9, 22, 21),
+        ] {
+            let epoch = Epoch::from_gregorian(y, m, d, hh, 0, 0.0);
+
+            // Longitude of the density maximum at the equator: a coarse scan
+            // followed by refinement passes around the winner.
+            let density_at = |lon_deg: f64| {
+                hp.density(&make_input(
+                    Geodetic {
+                        latitude: 0.0,
+                        longitude: lon_deg.to_radians(),
+                        altitude: 400.0,
+                    },
+                    &epoch,
+                ))
+            };
+            let mut best = -180.0;
+            let mut best_rho = f64::NEG_INFINITY;
+            let mut step = 0.5;
+            let mut lo = -180.0;
+            let mut hi = 180.0;
+            for _ in 0..4 {
+                let n = ((hi - lo) / step).round() as i32;
+                for k in 0..=n {
+                    let lon = lo + step * k as f64;
+                    let rho = density_at(lon);
+                    if rho > best_rho {
+                        best_rho = rho;
+                        best = lon;
+                    }
+                }
+                lo = best - step;
+                hi = best + step;
+                step /= 20.0;
+            }
+
+            // Apparent solar noon from UT and the equation of time.
+            let eot_hours = arika::sun::equation_of_time(&epoch.to_tdb());
+            let noon_lon_deg = {
+                let raw = 15.0 * (12.0 - hh as f64 - eot_hours);
+                (raw + 180.0).rem_euclid(360.0) - 180.0
+            };
+            let diff = {
+                let raw = best - noon_lon_deg;
+                (raw + 180.0).rem_euclid(360.0) - 180.0
+            };
+            // The two paths agree to ~0.01°: the residual is the ~1' Meeus
+            // accuracy plus the equation-of-origins/frame-bias terms neither
+            // path models. The bound sits an order of magnitude below the
+            // precession-sized error it has to catch.
+            assert!(
+                diff.abs() < 0.03,
+                "{y}-{m:02}-{d:02} {hh}h: bulge apex at longitude {best:.3}deg, \
+                 apparent solar noon at {noon_lon_deg:.3}deg (off by {diff:.3}deg)"
+            );
+        }
+    }
+
     #[test]
     fn density_at_table_boundary_apex() {
         // At the bulge apex (same direction as sun+lag), should get rho_max
