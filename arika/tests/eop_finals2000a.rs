@@ -203,15 +203,16 @@ fn table_dut1_interpolates_ut1_minus_tai_across_a_leap_second() {
 
 #[test]
 fn clamped_dut1_extrapolates_ut1_minus_tai_past_a_leap_second() {
-    // The clamp holds the *continuous* quantity. A table that stops on
-    // 2016-12-30 (dUT1 = -0.5928 s, TAI-UTC = 36 s) answers a 2017-01-02 query
-    // (TAI-UTC = 37 s) with -0.5928 - 36 + 37 = +0.4072 s, which is the real
-    // post-leap dUT1 to within its daily drift (IERS: +0.4068 s). Holding dUT1
-    // itself constant would answer -0.5928 s and put a second-sized step into
-    // UT1 exactly where nothing corrects it.
+    // The clamp holds the *continuous* quantity. A table whose last row is
+    // 2016-12-31 (MJD 57753, dUT1 = -0.5928 s, TAI-UTC = 36 s) answers a
+    // 2017-01-02 query (TAI-UTC = 37 s) with -0.5928 - 36 + 37 = +0.4072 s. The
+    // IERS row one day earlier, just after the leap second, reads +0.4068 s, so
+    // the extrapolation lands within the daily drift. Holding dUT1 itself
+    // constant would answer -0.5928 s and put a second-sized step into UT1
+    // exactly where nothing corrects it.
     let table = EopTable::new(vec![
-        entry_dut1(57751.0, -0.5905),
-        entry_dut1(57752.0, -0.5928),
+        entry_dut1(57752.0, -0.5905),
+        entry_dut1(57753.0, -0.5928),
     ])
     .unwrap();
     let clamped = table.clamped();
@@ -223,18 +224,18 @@ fn clamped_dut1_extrapolates_ut1_minus_tai_past_a_leap_second() {
     );
 
     // Inside the table the adapter still agrees with the checked lookup.
-    let inside = Ut1Offset::dut1(&clamped, 57751.5);
-    assert!((inside - table.dut1_checked(57751.5).unwrap()).abs() < 1e-15);
+    let inside = Ut1Offset::dut1(&clamped, 57752.5);
+    assert!((inside - table.dut1_checked(57752.5).unwrap()).abs() < 1e-15);
 
     // UT1 - TAI has no step across the clamp boundary or the leap second.
     let ut1_tai = |mjd: f64| {
         let tai_utc = if mjd >= 57754.0 { 37.0 } else { 36.0 };
         Ut1Offset::dut1(&clamped, mjd) - tai_utc
     };
-    let mut prev = ut1_tai(57751.0);
+    let mut prev = ut1_tai(57752.0);
     let mut k = 1;
-    while k <= 500 {
-        let mjd = 57751.0 + 0.01 * k as f64;
+    while k <= 400 {
+        let mjd = 57752.0 + 0.01 * k as f64;
         let v = ut1_tai(mjd);
         assert!(
             (v - prev).abs() < 1e-3,
