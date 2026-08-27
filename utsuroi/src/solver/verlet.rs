@@ -59,7 +59,8 @@ impl StormerVerlet {
     ///
     /// # Panics
     ///
-    /// Panics if the arguments cannot produce a terminating integration; see
+    /// Panics if the arguments cannot produce a terminating integration, and if
+    /// a step produces a non-finite state; see
     /// [`try_integrate`](Self::try_integrate) for the fallible form.
     pub fn integrate<const DIM: usize, S, F>(
         &self,
@@ -84,7 +85,8 @@ impl StormerVerlet {
     ///
     /// Mirrors [`Integrator::try_integrate`](crate::Integrator::try_integrate)
     /// so that "use `try_integrate` to avoid the panic" holds for every
-    /// integrator in the crate, not just the trait-based ones.
+    /// integrator in the crate, not just the trait-based ones — including
+    /// stopping at the first step whose result is not finite.
     pub fn try_integrate<const DIM: usize, S, F>(
         &self,
         system: &S,
@@ -110,6 +112,9 @@ impl StormerVerlet {
             }
             state = self.step(system, t, &state, h);
             t += h;
+            if !state.is_finite() {
+                return Err(IntegrationError::NonFiniteState { t });
+            }
             callback(t, &state);
         }
         Ok(state)
@@ -167,6 +172,24 @@ mod tests {
     use crate::{IntegrationError, IntegrationOutcome, State};
 
     use super::*;
+
+    /// The inherent `try_integrate` has to stop where the trait's does, or
+    /// "use `try_integrate` to avoid the panic" buys a silent `Ok` on a state
+    /// that is no longer a trajectory.
+    #[test]
+    fn try_integrate_stops_at_a_non_finite_state() {
+        let system = ConstantAcceleration {
+            acceleration: vector![f64::INFINITY, 0.0, 0.0],
+        };
+        let initial = State::<3, 2>::new(vector![0.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let err = StormerVerlet
+            .try_integrate(&system, initial, 0.0, 1.0, 0.1, |_, _| {})
+            .expect_err("a non-finite state should stop the integration");
+        assert!(
+            matches!(err, IntegrationError::NonFiniteState { t } if t < 1.0),
+            "should stop before the end of the span, got {err:?}"
+        );
+    }
 
     // Basic correctness
 

@@ -127,6 +127,23 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   追加を拒否する。`sensors` / `reaction_wheels` / `magnetorquers` / `thruster`
   が controller なしで宣言された場合は stderr と `orts run --json` の
   `warnings` に警告を出す。([#335](https://github.com/sksat/orts/pull/335))
+- config 単体から「ダイナミクスを構築できない・開始できない」と分かる姿勢設定を、
+  config を読むすべての経路で拒否するようになった。`orts config validate` も含む (従来は valid と報告した
+  設定を `run` と `serve` が拒否していた)。検査は `AttitudeConfig` に置き、
+  範囲チェックだけでは通ってしまうものを塞いだ: `NaN` はあらゆる比較が false に
+  なるので `NaN` の質量が `mass <= 0.0` をすり抜けていた。慣性テンソルは
+  「ダイナミクスが取る逆行列が存在し `I·I⁻¹ ≈ E` を満たすか」で判定する。
+  行列式の大きさによる閾値ではこれを判定できず、条件数 1 の `[1e-11; 3]` を拒否し、
+  逆行列が有限のゼロ行列になって(あらゆるトルクに角加速度ゼロで応える)
+  `[1e154; 3]` を受理していた。torque-free な t=0 の角加速度が有限で
+  あることを要求する。軌道を必要とするもの (シミュレーションが実際に
+  始める微分に含まれる gravity-gradient torque) は判定の範囲外で、そちらは最初の
+  ステップで run を止める。`orts run` はモード分岐の前にこの検査を適用する (controlled 経路は
+  別の場所で衛星を構築するため検査を通っていなかった)。([#335](https://github.com/sksat/orts/pull/335))
+- 単位四元数でない `initial_quaternion` を、積分の前に正規化するようになった。
+  したがって t=0 の出力に出るのも正規化後の値になる。config は元から非ゼロの
+  四元数を受理していたが、生の値を積分すると大きな四元数がノルムが overflow する
+  まで成長していた。([#335](https://github.com/sksat/orts/pull/335))
 - `config` テーブルのない `[satellites.controller]` が、guest 自身の既定値で
   起動するようになった。省略時は文字列 `"null"` が guest に渡り、`init` が
   失敗していた。([#335](https://github.com/sksat/orts/pull/335))
@@ -212,6 +229,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 #### Added
 - `IntegrationError` が `core::error::Error` を実装 (手書き、`thiserror` 不使用、
   `no_std` でも動作)。`?` 連鎖や `Box<dyn Error>` に乗るようになった。([#147](https://github.com/sksat/orts/pull/147))
+
+#### Fixed
+- `Integrator::try_integrate` が、結果が非有限になった最初のステップで
+  `IntegrationError::NonFiniteState` を返して停止するようになった
+  (`integrate_with_events` が既に行っていた検査)。従来は `NaN` 状態のまま
+  span 全体を回して `Ok` を返していたため、`orts serve` の制御ループが
+  その状態からセンサを読み、plugin controller に渡し、成功を報告していた。([#335](https://github.com/sksat/orts/pull/335))
 
 ### `tobari` (Rust, crates.io)
 

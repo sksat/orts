@@ -24,9 +24,10 @@ pub trait Integrator {
     ///
     /// Panics if the arguments cannot produce a terminating integration —
     /// `dt <= 0`, a non-finite `dt`, `t_end < t0`, or a `dt` so small relative
-    /// to `t` that `t + dt` rounds back to `t`. Use
-    /// [`try_integrate`](Integrator::try_integrate) to handle those cases
-    /// without panicking. Previously these inputs spun forever instead.
+    /// to `t` that `t + dt` rounds back to `t` — and if a step produces a
+    /// non-finite state. Use [`try_integrate`](Integrator::try_integrate) to
+    /// handle those cases without panicking. Previously the invalid arguments
+    /// spun forever and the non-finite state ran to the end of the span.
     fn integrate<S, F>(
         &self,
         system: &S,
@@ -49,7 +50,10 @@ pub trait Integrator {
     /// Fallible variant of [`integrate`](Integrator::integrate).
     ///
     /// Returns `Err` instead of panicking when the step size or time span
-    /// cannot produce a terminating integration.
+    /// cannot produce a terminating integration, and stops with
+    /// [`IntegrationError::NonFiniteState`] at the first step whose result is
+    /// not finite — the state after that step is not a trajectory, and every
+    /// step taken from it is wasted.
     fn try_integrate<S, F>(
         &self,
         system: &S,
@@ -78,6 +82,15 @@ pub trait Integrator {
             }
             state = self.step(system, t, &state, h);
             t += h;
+
+            // The same check `integrate_with_events` makes. Without it the
+            // controlled path — the one caller that uses `try_integrate` — read
+            // sensors off a `NaN` state and fed it to a controller, and the run
+            // reported success.
+            if !state.is_finite() {
+                return Err(IntegrationError::NonFiniteState { t });
+            }
+
             callback(t, &state);
         }
 
@@ -207,6 +220,40 @@ mod tests {
             .try_integrate(&system(), initial(), 1.0, 1.0, 0.1, |_, _| {})
             .expect("empty span should be a no-op, not an error");
         assert_eq!(state.y()[0], 0.0);
+    }
+
+    /// `try_integrate` stops where `integrate_with_events` does. It used to run
+    /// the whole span on a non-finite state and return `Ok`, so the controlled
+    /// simulation — its one caller — read sensors off `NaN` and reported success.
+    #[test]
+    fn try_integrate_stops_at_a_non_finite_state() {
+        struct Exploding;
+        impl DynamicalSystem for Exploding {
+            type State = State<3, 2>;
+            fn derivatives(&self, t: f64, state: &Self::State) -> Self::State {
+                let accel = if t > 0.3 {
+                    vector![f64::INFINITY, 0.0, 0.0]
+                } else {
+                    vector![0.0, 0.0, 0.0]
+                };
+                State::<3, 2>::from_derivative(*state.dy(), accel)
+            }
+        }
+
+        let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
+        let err = Rk4
+            .try_integrate(&Exploding, initial, 0.0, 10.0, 0.1, |_, _| {})
+            .expect_err("a non-finite state should stop the integration");
+        match err {
+            IntegrationError::NonFiniteState { t } => {
+                assert!(t > 0.3, "should stop after the blow-up, got t={t}");
+                assert!(
+                    t < 10.0,
+                    "should stop before the end of the span, got t={t}"
+                );
+            }
+            other => panic!("expected NonFiniteState, got {other:?}"),
+        }
     }
 
     /// At `t = 2^53` the f64 spacing exceeds 1, so `t + 0.5 == t`: `dt` is
