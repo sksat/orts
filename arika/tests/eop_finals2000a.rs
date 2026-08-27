@@ -163,8 +163,16 @@ fn table_dut1_interpolated_midpoint() {
 /// A positive leap second is inserted as dUT1 approaches −0.9 s and lifts it by
 /// a full second, so the daily rows differ by ~1.0 s.
 fn leap_crossing_table() -> EopTable {
-    use arika::earth::eop::EopEntry;
-    let entry = |mjd: f64, dut1: f64| EopEntry {
+    EopTable::new(vec![
+        entry_dut1(57753.0, -0.5928),
+        entry_dut1(57754.0, 0.4068),
+    ])
+    .unwrap()
+}
+
+/// A row carrying only dUT1; the other parameters are not under test here.
+fn entry_dut1(mjd: f64, dut1: f64) -> arika::earth::eop::EopEntry {
+    arika::earth::eop::EopEntry {
         mjd,
         xp: 0.0,
         yp: 0.0,
@@ -172,8 +180,7 @@ fn leap_crossing_table() -> EopTable {
         lod: None,
         dx: None,
         dy: None,
-    };
-    EopTable::new(vec![entry(57753.0, -0.5928), entry(57754.0, 0.4068)]).unwrap()
+    }
 }
 
 #[test]
@@ -192,6 +199,51 @@ fn table_dut1_interpolates_ut1_minus_tai_across_a_leap_second() {
     // Endpoints are still reproduced exactly.
     assert!((table.dut1_checked(57753.0).unwrap() - (-0.5928)).abs() < 1e-12);
     assert!((table.dut1_checked(57754.0).unwrap() - 0.4068).abs() < 1e-12);
+}
+
+#[test]
+fn clamped_dut1_extrapolates_ut1_minus_tai_past_a_leap_second() {
+    // The clamp holds the *continuous* quantity. A table that stops on
+    // 2016-12-30 (dUT1 = -0.5928 s, TAI-UTC = 36 s) answers a 2017-01-02 query
+    // (TAI-UTC = 37 s) with -0.5928 - 36 + 37 = +0.4072 s, which is the real
+    // post-leap dUT1 to within its daily drift (IERS: +0.4068 s). Holding dUT1
+    // itself constant would answer -0.5928 s and put a second-sized step into
+    // UT1 exactly where nothing corrects it.
+    let table = EopTable::new(vec![
+        entry_dut1(57751.0, -0.5905),
+        entry_dut1(57752.0, -0.5928),
+    ])
+    .unwrap();
+    let clamped = table.clamped();
+
+    let after_leap = Ut1Offset::dut1(&clamped, 57755.0);
+    assert!(
+        (after_leap - 0.4072).abs() < 1e-9,
+        "clamped dUT1 after the leap second should be +0.4072 s, got {after_leap}"
+    );
+
+    // Inside the table the adapter still agrees with the checked lookup.
+    let inside = Ut1Offset::dut1(&clamped, 57751.5);
+    assert!((inside - table.dut1_checked(57751.5).unwrap()).abs() < 1e-15);
+
+    // UT1 - TAI has no step across the clamp boundary or the leap second.
+    let ut1_tai = |mjd: f64| {
+        let tai_utc = if mjd >= 57754.0 { 37.0 } else { 36.0 };
+        Ut1Offset::dut1(&clamped, mjd) - tai_utc
+    };
+    let mut prev = ut1_tai(57751.0);
+    let mut k = 1;
+    while k <= 500 {
+        let mjd = 57751.0 + 0.01 * k as f64;
+        let v = ut1_tai(mjd);
+        assert!(
+            (v - prev).abs() < 1e-3,
+            "UT1-TAI jumped by {} s at MJD {mjd}",
+            (v - prev).abs()
+        );
+        prev = v;
+        k += 1;
+    }
 }
 
 #[test]

@@ -154,8 +154,10 @@ use super::{LengthOfDay, NutationCorrections, PolarMotion, Ut1Offset};
 /// "hold the endpoint value" policy, obtained from
 /// [`EopTable::clamped`] / [`EopTable::into_clamped`].
 ///
-/// Clamping means dUT1, polar motion and dX/dY are held constant beyond the
-/// table — acceptable for a short overshoot past the end of a prediction file,
+/// Clamping means polar motion, dX/dY and LOD are held constant beyond the
+/// table, and `UT1 - TAI` — the continuous part of dUT1 — is held constant while
+/// dUT1 itself still follows the leap seconds (see the `Ut1Offset` impl below).
+/// Acceptable for a short overshoot past the end of a prediction file,
 /// increasingly wrong the further out the query goes. Use the `*_checked`
 /// accessors when an out-of-range query must be an error instead.
 pub struct ClampedEop<T>(T);
@@ -202,10 +204,22 @@ impl EopTable {
 }
 
 impl<T: core::borrow::Borrow<EopTable>> Ut1Offset for ClampedEop<T> {
+    /// dUT1 held at the nearest endpoint — through `UT1 - TAI`, not through
+    /// dUT1 itself.
+    ///
+    /// dUT1 steps by a second at every leap second, so holding *it* constant
+    /// would put that step into UT1 instead, in the one region where nothing
+    /// corrects it. Holding the continuous `UT1 - TAI` and adding the query
+    /// instant's own `TAI - UTC` keeps UT1 continuous and reproduces the real
+    /// post-leap dUT1 to within its drift: a table ending 2016-12-30 at
+    /// dUT1 = -0.5928 s answers +0.4072 s for 2017-01-02, where IERS has
+    /// +0.4068 s.
     fn dut1(&self, utc_mjd: f64) -> f64 {
-        self.table()
-            .dut1_checked(self.clamp_mjd(utc_mjd))
-            .unwrap_or(f64::NAN)
+        let edge = self.clamp_mjd(utc_mjd);
+        match self.table().dut1_checked(edge) {
+            Ok(dut1_edge) => dut1_edge - tai_minus_utc_at_mjd(edge) + tai_minus_utc_at_mjd(utc_mjd),
+            Err(_) => f64::NAN,
+        }
     }
 }
 
