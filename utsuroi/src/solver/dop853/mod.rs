@@ -18,19 +18,23 @@ use crate::{
 /// used for error estimation. Based on Hairer, Norsett & Wanner (1993).
 pub struct Dop853;
 
-/// Internal 12-stage DOP853 computation.
+/// Internal DOP853 candidate computation: stages 2..12 (11 evaluations).
 ///
-/// Returns `(y8, error, k13)` where:
+/// Returns `(y8, error)` where:
 /// - `y8`: 8th-order solution
 /// - `error`: composite error estimate (combined 5th + 3rd order)
-/// - `k13`: derivative at y8 (reusable as k1 of next step via FSAL)
-fn dop853_step_impl<S: DynamicalSystem>(
+///
+/// The 13th stage `k13 = f(t + dt, y8)` is *not* computed here. It plays no
+/// part in the error estimate, so a rejected candidate never needs it, and an
+/// accepted one needs it evaluated at the projected state rather than at the
+/// raw candidate.
+fn dop853_candidate<S: DynamicalSystem>(
     system: &S,
     t: f64,
     state: &S::State,
     dt: f64,
     k1: &S::State,
-) -> (S::State, S::State, S::State) {
+) -> (S::State, S::State) {
     // Stage 2
     let s2 = state.axpy(dt * A21, k1);
     let k2 = system.derivatives(t + C2 * dt, &s2);
@@ -131,9 +135,6 @@ fn dop853_step_impl<S: DynamicalSystem>(
         .axpy(dt * B11, &k11)
         .axpy(dt * B12, &k12);
 
-    // Stage 13 (FSAL: evaluated at y8)
-    let k13 = system.derivatives(t + dt, &y8);
-
     // Error estimation: combine 5th-order and 3rd-order errors
     // 5th-order error: dt * (er1*k1 + er6*k6 + ... + er12*k12)
     let err5 = k1
@@ -174,13 +175,34 @@ fn dop853_step_impl<S: DynamicalSystem>(
     let _ = err3; // Will be used for combined norm later if needed
     let error = err5;
 
+    (y8, error)
+}
+
+/// [`dop853_candidate`] plus the FSAL stage `k13 = f(t + dt, y8)`, evaluated
+/// at the raw candidate.
+///
+/// The adaptive stepper does not use this: it evaluates the next first stage
+/// at the *projected* state instead. This backs [`Dop853::step_full`], whose
+/// published contract includes `k13`.
+fn dop853_step_with_fsal<S: DynamicalSystem>(
+    system: &S,
+    t: f64,
+    state: &S::State,
+    dt: f64,
+    k1: &S::State,
+) -> (S::State, S::State, S::State) {
+    let (y8, error) = dop853_candidate(system, t, state, dt, k1);
+    let k13 = system.derivatives(t + dt, &y8);
     (y8, error, k13)
 }
 
 impl Integrator for Dop853 {
     fn step<S: DynamicalSystem>(&self, system: &S, t: f64, state: &S::State, dt: f64) -> S::State {
         let k1 = system.derivatives(t, state);
-        let (y8, _, _) = dop853_step_impl(system, t, state, dt, &k1);
+        let (mut y8, _) = dop853_candidate(system, t, state, dt, &k1);
+        // Fixed-step use keeps no derivative across steps, so the FSAL cache
+        // cannot go stale here.
+        let _ = y8.project(t + dt);
         y8
     }
 }
@@ -203,7 +225,12 @@ pub struct AdaptiveStepper853<'a, S: DynamicalSystem> {
     state: S::State,
     t: f64,
     dt: f64,
-    k1: S::State,
+    /// Cached first-stage derivative. `None` means "not known at the current
+    /// state": the next step evaluates it. DOP853's FSAL stage
+    /// `k13 = f(t + h, y_next)` is exactly that evaluation, so accepting a
+    /// step simply leaves this `None` and the next step performs it — at the
+    /// projected state, and only if there is a next step.
+    k1: Option<S::State>,
     tol: Tolerances,
     /// Minimum step size below which integration fails.
     pub dt_min: f64,
@@ -236,13 +263,20 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
                 return Err(IntegrationError::TimeStagnated { t: self.t, dt: h });
             }
 
-            let (y8, error, k13) = dop853_step_impl(self.system, self.t, &self.state, h, &self.k1);
+            let k1 = match self.k1.take() {
+                Some(k1) => k1,
+                None => self.system.derivatives(self.t, &self.state),
+            };
+            let (y8, error) = dop853_candidate(self.system, self.t, &self.state, h, &k1);
 
             // NaN/Inf check
             if !y8.is_finite() {
                 return Err(IntegrationError::NonFiniteState { t: self.t + h });
             }
 
+            // Accept/reject is decided on the raw candidate: the error vector
+            // belongs to it, and comparing it against a projected state would
+            // mix two different solutions.
             let err = self.state.error_norm(&y8, &error, &self.tol);
             // A NaN norm compares false against both the accept threshold and
             // the `dt_min` floor below, so without this guard the same step is
@@ -256,9 +290,20 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
 
             if err <= 1.0 {
                 // Accept step
-                self.state = y8;
-                self.t += h;
-                self.k1 = k13; // FSAL
+                let t_next = self.t + h;
+                let mut y = y8;
+                // FSAL stage 13 is `f(t_next, y)`, which is exactly what the
+                // next step's first stage evaluates: the cache stays empty and
+                // the next step does it, at the projected state. Whether the
+                // projection changed anything is therefore irrelevant here.
+                let _ = y.project(t_next);
+                // A projection can also produce non-finite values (a division
+                // by a zero norm, say); the raw check above cannot see that.
+                if !y.is_finite() {
+                    return Err(IntegrationError::NonFiniteState { t: t_next });
+                }
+                self.state = y;
+                self.t = t_next;
 
                 callback(self.t, &self.state);
 
@@ -277,6 +322,9 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper853<'a, S> {
                 // Reject step, shrink
                 let factor = (SAFETY * err.powf(-ORDER_EXP)).clamp(MIN_FACTOR, 1.0);
                 self.dt = h * factor;
+                // The state did not move, so the first-stage derivative is
+                // still the one for the retry.
+                self.k1 = Some(k1);
 
                 if self.dt < self.dt_min {
                     return Err(IntegrationError::StepSizeTooSmall {
@@ -321,14 +369,15 @@ impl Dop853 {
         dt: f64,
         tol: Tolerances,
     ) -> AdaptiveStepper853<'a, S> {
-        let k1 = system.derivatives(t0, &initial);
         let dt_min = 1e-12 * (dt * 100.0).abs().max(1.0);
         AdaptiveStepper853 {
             system,
             state: initial,
             t: t0,
             dt,
-            k1,
+            // Evaluated by the first step rather than here, so a stepper that
+            // never advances costs nothing.
+            k1: None,
             tol,
             dt_min,
         }
@@ -337,9 +386,22 @@ impl Dop853 {
     /// Perform a single DOP853 step with full output.
     ///
     /// Returns `(y8, error, k13)` where:
-    /// - `y8`: 8th-order solution (to propagate)
-    /// - `error`: error estimate
-    /// - `k13`: derivative at y8 (reusable as k1 of next step via FSAL)
+    /// - `y8`: the raw 8th-order candidate, **not projected**
+    /// - `error`: error estimate, belonging to that raw candidate
+    /// - `k13`: 13th-stage derivative, `f(t + dt, y8)`
+    ///
+    /// This is the low-level building block for a caller running its own
+    /// step-size control, so it stops short of the projection: `error` pairs
+    /// with the raw candidate, and mixing it with a projected state is
+    /// inconsistent. A caller that accepts the step owes the state its
+    /// [`OdeState::project`] call, and may reuse `k13` as the next first stage
+    /// only while that projection reports [`Projection::Unchanged`]
+    /// (`Projection::Changed` means `k13` was evaluated at a state that no
+    /// longer exists). [`Integrator::step`] and [`AdaptiveStepper853`] do this
+    /// for you — the stepper re-evaluates the first stage at the projected
+    /// state instead of carrying `k13` over.
+    ///
+    /// [`Projection::Unchanged`]: crate::Projection::Unchanged
     pub fn step_full<S: DynamicalSystem>(
         &self,
         system: &S,
@@ -348,7 +410,7 @@ impl Dop853 {
         dt: f64,
     ) -> (S::State, S::State, S::State) {
         let k1 = system.derivatives(t, state);
-        dop853_step_impl(system, t, state, dt, &k1)
+        dop853_step_with_fsal(system, t, state, dt, &k1)
     }
 
     /// Integrate adaptively with event detection and NaN/Inf checking.
@@ -948,12 +1010,15 @@ mod tests {
     }
 
     /// At tight tolerances, DOP853 requires fewer total function evaluations
-    /// than DP45. DOP853 uses 13 stages/step (12 new with FSAL) vs DP45's
-    /// 7 (6 new with FSAL), but its larger stable step size more than
-    /// compensates.
+    /// than DP45: it spends more per trial (11 stages against DP45's 6, both
+    /// with FSAL) but its larger stable step size more than compensates.
+    ///
+    /// The evaluations are counted at the source. The accepted-step callback
+    /// cannot stand in for them: it never fires for a rejected trial, and a
+    /// per-step stage count double-counts the derivative that FSAL reuses.
     #[test]
     fn tight_tolerance_dop853_fewer_evaluations() {
-        let system = HarmonicOscillator;
+        let system = crate::projection::Counting::new(&HarmonicOscillator);
         let initial = State::<3, 2>::new(vector![1.0, 0.0, 0.0], vector![0.0, 0.0, 0.0]);
         let t_end = 10.0 * 2.0 * std::f64::consts::PI; // 10 periods
         let tol = Tolerances {
@@ -961,7 +1026,6 @@ mod tests {
             rtol: 1e-13,
         };
 
-        // Count steps → function evaluations
         let mut dop853_steps = 0u64;
         let _: IntegrationOutcome<State<3, 2>, ()> = Dop853.integrate_adaptive_with_events(
             &system,
@@ -975,8 +1039,9 @@ mod tests {
             },
             |_t, _state| ControlFlow::Continue(()),
         );
-        let dop853_evals = dop853_steps * 13; // 13 stages per step
+        let dop853_evals = system.count();
 
+        let system = crate::projection::Counting::new(&HarmonicOscillator);
         let mut dp45_steps = 0u64;
         let _: IntegrationOutcome<State<3, 2>, ()> = crate::DormandPrince
             .integrate_adaptive_with_events(
@@ -991,11 +1056,28 @@ mod tests {
                 },
                 |_t, _state| ControlFlow::Continue(()),
             );
-        let dp45_evals = dp45_steps * 7; // 7 stages per step
+        let dp45_evals = system.count();
+
+        // Pin the stage structure: DOP853 spends 11 evaluations per trial plus
+        // one first-stage evaluation per accepted step; DP45 spends 6 per
+        // trial plus a single one at the very start (FSAL covers the rest).
+        assert_eq!(
+            (dop853_evals - dop853_steps) % 11,
+            0,
+            "DOP853 evaluations {dop853_evals} do not decompose into 11 per trial \
+             plus one per accepted step ({dop853_steps} steps)"
+        );
+        assert_eq!(
+            (dp45_evals - 1) % 6,
+            0,
+            "DP45 evaluations {dp45_evals} do not decompose into 6 per trial \
+             plus the initial one"
+        );
 
         assert!(
             dop853_evals < dp45_evals,
-            "DOP853 evals {dop853_evals} (={dop853_steps}×13) should be < DP45 evals {dp45_evals} (={dp45_steps}×7)"
+            "DOP853 evals {dop853_evals} ({dop853_steps} accepted steps) should be < \
+             DP45 evals {dp45_evals} ({dp45_steps} accepted steps)"
         );
     }
 

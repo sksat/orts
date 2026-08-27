@@ -36,6 +36,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `StateEffector<S>` 実装はそのままコンパイル可能。([#148](https://github.com/sksat/orts/pull/148))
 
 #### Fixed
+- `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
+  ようになった。結果が有限な入力で overflow しなくなる: `q = [0, 1/√2, 1/√2, 0]`、
+  `ω = [1.4e308, 1.4e308, 0]` の `q̇.w` は約 -9.9e307 だが、途中の和が -1.98e308 に
+  達し、後から 0.5 を掛けても無限は戻らなかった。([#343](https://github.com/sksat/orts/pull/343))
+- `AttitudeState::is_finite` が、成分の有限性だけでなく四元数ノルムが正かつ有限で
+  あることを要求するようになった。成分が 1e157 程度なら各々有限でも二乗和は無限に
+  なり、その四元数は姿勢を指さない (`orientation()` はそのノルムで割る)。`project` は
+  それをもっともらしいゼロに潰さず放置するので、拒否するのは integrator の有限性
+  検査しかない。従来はそれを生んだステップが成功として報告され、その状態が
+  センサと plugin controller に渡っていた。([#343](https://github.com/sksat/orts/pull/343))
 - `SpacecraftDynamics` の不正な frame 再タグを除去。`ExternalLoads<SimpleEci>`
   とタグ付けされた effector 荷重を変換なしで host frame `F` に貼り替えており、
   `F != SimpleEci` (例: `Gcrs`) で座標を黙って誤ラベルしていた。出荷済み

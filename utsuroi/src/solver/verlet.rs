@@ -32,6 +32,34 @@ impl StormerVerlet {
     where
         S: DynamicalSystem<State = State<DIM, 2>>,
     {
+        let mut result = self.step_unprojected(system, t, state, dt);
+        // A generic projection (normalization, clamping) is not a symplectic
+        // map, so applying one breaks the very property this integrator
+        // exists for. It is applied here anyway for contract parity with the
+        // Runge-Kutta methods, and it is harmless in practice because
+        // `State<DIM, 2>` — the only state type this integrator accepts —
+        // uses the default no-op `project`. Compositions of Verlet substeps
+        // (see the Yoshida methods) use `step_unprojected` so that no
+        // projection can be interleaved between substeps.
+        let _ = result.project(t + dt);
+        result
+    }
+
+    /// One Störmer-Verlet step without the post-step projection.
+    ///
+    /// This is the symplectic kernel: it is exactly the kick-drift-kick map
+    /// and nothing else, so it can be composed (see the Yoshida methods)
+    /// without a non-symplectic projection sneaking in between substeps.
+    pub(crate) fn step_unprojected<const DIM: usize, S>(
+        &self,
+        system: &S,
+        t: f64,
+        state: &State<DIM, 2>,
+        dt: f64,
+    ) -> State<DIM, 2>
+    where
+        S: DynamicalSystem<State = State<DIM, 2>>,
+    {
         // Evaluate acceleration at current state
         let deriv = system.derivatives(t, state);
         let a_n = *deriv.dy();
@@ -50,9 +78,7 @@ impl StormerVerlet {
         // Second half-kick
         let v_next: SVector<f64, DIM> = v_half + (dt / 2.0) * a_next;
 
-        let mut result = State::<DIM, 2>::new(q_next, v_next);
-        result.project(t + dt);
-        result
+        State::<DIM, 2>::new(q_next, v_next)
     }
 
     /// Integrate from `t0` to `t_end` with fixed step size `dt`.

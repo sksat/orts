@@ -9,6 +9,8 @@ mod state;
 #[cfg(test)]
 mod comparison;
 #[cfg(test)]
+mod projection;
+#[cfg(test)]
 pub(crate) mod test_systems;
 
 pub use error::{IntegrationError, IntegrationOutcome, Tolerances, validate_step_size};
@@ -18,7 +20,7 @@ pub use solver::dp45::{AdaptiveStepper, AdvanceOutcome, DormandPrince};
 pub use solver::rk4::Rk4;
 pub use solver::verlet::StormerVerlet;
 pub use solver::yoshida::{Yoshida4, Yoshida6, Yoshida8};
-pub use state::{DynamicalSystem, OdeState, State};
+pub use state::{DynamicalSystem, OdeState, Projection, State};
 
 #[cfg(test)]
 mod tests {
@@ -197,7 +199,7 @@ mod tests {
     fn ode_state_project_is_noop() {
         let mut state = State::<3, 2>::new(vector![1.0, 2.0, 3.0], vector![4.0, 5.0, 6.0]);
         let original = state.clone();
-        state.project(0.0);
+        assert_eq!(state.project(0.0), crate::Projection::Unchanged);
         assert_eq!(state, original);
     }
 }

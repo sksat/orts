@@ -327,13 +327,58 @@ fn dp45_attitude_integration() {
     let l_err = (l_final - l0).magnitude() / l0.magnitude();
     assert!(l_err < 1e-9, "DP45 angular momentum error: {l_err:.2e}");
 
-    // Quaternion should be close to unit (project() renormalizes each step,
-    // but adaptive stepping may accumulate small drift)
+    // The solver projects every state it publishes, so the norm error left
+    // over is at most the projection tolerance (a few ulp) — not the drift
+    // accumulated over the whole integration. The previous 1e-8 bound was
+    // loose enough to pass while no projection happened at all.
     let q_norm = final_state.quaternion.magnitude();
     assert!(
-        (q_norm - 1.0).abs() < 1e-8,
+        (q_norm - 1.0).abs() < 1e-14,
         "Quaternion not normalized: {q_norm}"
     );
+}
+
+/// The same check at the tolerances the CLI actually uses. They are 100x
+/// looser than the ones above, so unprojected norm drift is 100x larger —
+/// which is exactly the case a bound calibrated on tight tolerances misses.
+#[test]
+fn dp45_attitude_quaternion_stays_unit_at_default_tolerance() {
+    let inertia = diagonal_inertia(10.0, 20.0, 30.0);
+    let system = AttitudeSystem::new(inertia);
+
+    let initial = AttitudeState {
+        quaternion: Vector4::new(1.0, 0.0, 0.0, 0.0),
+        angular_velocity: Vector3::new(0.5, 0.3, 0.1),
+    };
+
+    // cli/src/config.rs defaults.
+    let tol = Tolerances {
+        atol: 1e-10,
+        rtol: 1e-8,
+    };
+
+    let mut worst = 0.0_f64;
+    let outcome: IntegrationOutcome<AttitudeState, ()> = DormandPrince
+        .integrate_adaptive_with_events(
+            &system,
+            initial,
+            0.0,
+            3600.0,
+            0.1,
+            &tol,
+            |_, state| worst = worst.max((state.quaternion.magnitude() - 1.0).abs()),
+            |_, _| ControlFlow::Continue(()),
+        );
+    let final_state = match outcome {
+        IntegrationOutcome::Completed(s) => s,
+        other => panic!("DP45 failed: {other:?}"),
+    };
+
+    assert!(
+        worst < 1e-14,
+        "worst published quaternion norm error over an hour: {worst:.2e}"
+    );
+    assert!((final_state.quaternion.magnitude() - 1.0).abs() < 1e-14);
 }
 
 #[test]

@@ -1,4 +1,4 @@
-use utsuroi::{OdeState, Tolerances};
+use utsuroi::{OdeState, Projection, Tolerances};
 
 /// Composite ODE state for N satellites.
 ///
@@ -72,10 +72,12 @@ impl<S: OdeState> OdeState for GroupState<S> {
             .fold(0.0_f64, f64::max)
     }
 
-    fn project(&mut self, t: f64) {
+    fn project(&mut self, t: f64) -> Projection {
+        let mut projection = Projection::Unchanged;
         for s in &mut self.states {
-            s.project(t);
+            projection = projection.or(s.project(t));
         }
+        projection
     }
 }
 
@@ -220,9 +222,22 @@ mod tests {
             mass: 500.0,
         };
         let mut group = GroupState::new(vec![sc]);
-        group.project(0.0);
+        // A change in any member is reported for the whole group.
+        assert_eq!(group.project(0.0), Projection::Changed);
         let q_norm = group.states[0].attitude.quaternion.magnitude();
         assert!((q_norm - 1.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn project_reports_unchanged_when_no_element_changes() {
+        let mut group = two_orbit_group();
+        assert_eq!(group.project(0.0), Projection::Unchanged);
+    }
+
+    #[test]
+    fn project_of_empty_group_is_unchanged() {
+        let mut empty: GroupState<OrbitalState> = GroupState::new(vec![]);
+        assert_eq!(empty.project(0.0), Projection::Unchanged);
     }
 
     #[test]

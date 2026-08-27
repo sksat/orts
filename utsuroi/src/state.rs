@@ -29,8 +29,57 @@ pub trait OdeState: Clone + Sized {
     ///   err = sqrt(1/N * sum((delta_i / sc_i)^2))
     fn error_norm(&self, y_next: &Self, error: &Self, tol: &Tolerances) -> f64;
 
-    /// Post-step projection (e.g., quaternion normalization). Default no-op.
-    fn project(&mut self, _t: f64) {}
+    /// Post-step projection (e.g., quaternion normalization, bound clamping).
+    ///
+    /// Integrators call this once per accepted step, on the state that is
+    /// about to be published (so callbacks and event checks see the projected
+    /// state). It is never called on rejected candidates or on intermediate
+    /// stages. The one exception is the low-level `step_full` of the adaptive
+    /// solvers, which hands back the raw candidate and its error estimate for
+    /// a caller running its own step-size control; projecting an accepted
+    /// candidate is then that caller's job.
+    ///
+    /// The return value tells the integrator whether the state was actually
+    /// modified. Adaptive methods with the FSAL property reuse the last stage
+    /// derivative as the first stage of the next step; that derivative was
+    /// evaluated at the *unprojected* candidate, so it is only valid when the
+    /// projection left the state alone. Returning
+    /// [`Projection::Unchanged`] after modifying the state therefore feeds the
+    /// next step a derivative taken at a different point.
+    ///
+    /// The default implementation is a no-op and returns
+    /// [`Projection::Unchanged`].
+    fn project(&mut self, _t: f64) -> Projection {
+        Projection::Unchanged
+    }
+}
+
+/// Whether [`OdeState::project`] modified the state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use = "adaptive integrators must invalidate their FSAL cache when the projection changed the state"]
+pub enum Projection {
+    /// The state was left exactly as it was; a cached derivative taken at the
+    /// unprojected state is still valid.
+    Unchanged,
+    /// The state was modified; any derivative cached at the unprojected state
+    /// must be discarded.
+    Changed,
+}
+
+impl Projection {
+    /// Combine the results of projecting the parts of a composite state:
+    /// `Changed` if either part changed.
+    pub fn or(self, other: Projection) -> Projection {
+        match (self, other) {
+            (Projection::Unchanged, Projection::Unchanged) => Projection::Unchanged,
+            _ => Projection::Changed,
+        }
+    }
+
+    /// Whether the projection modified the state.
+    pub fn changed(self) -> bool {
+        self == Projection::Changed
+    }
 }
 
 /// N-th order ODE state: `ORDER` vectors of `DIM` components each.

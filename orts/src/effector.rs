@@ -8,7 +8,7 @@
 
 use arika::epoch::Epoch;
 use arika::frame::{self, SimpleEci};
-use utsuroi::{OdeState, Tolerances};
+use utsuroi::{OdeState, Projection, Tolerances};
 
 use crate::model::ExternalLoads;
 
@@ -147,12 +147,17 @@ impl<S: OdeState> OdeState for AugmentedState<S> {
         plant_norm.max(aux_norm)
     }
 
-    fn project(&mut self, t: f64) {
-        self.plant.project(t);
+    fn project(&mut self, t: f64) -> Projection {
+        let mut projection = self.plant.project(t);
         // Clamp auxiliary state to bounds (e.g., reaction wheel momentum limits)
         for (i, &(lo, hi)) in self.aux_bounds.iter().enumerate() {
-            self.aux[i] = self.aux[i].clamp(lo, hi);
+            let clamped = self.aux[i].clamp(lo, hi);
+            if clamped != self.aux[i] {
+                self.aux[i] = clamped;
+                projection = projection.or(Projection::Changed);
+            }
         }
+        projection
     }
 }
 
@@ -325,7 +330,7 @@ mod tests {
             aux: vec![5.0, 10.0],
             aux_bounds: vec![],
         };
-        s.project(0.0);
+        assert_eq!(s.project(0.0), Projection::Changed);
         let norm = s.plant.quaternion.magnitude();
         assert!((norm - 1.0).abs() < 1e-15);
         // Aux should be unchanged (no bounds set)
@@ -339,10 +344,21 @@ mod tests {
             aux: vec![15.0, -5.0, 3.0],
             aux_bounds: vec![(-10.0, 10.0), (-2.0, 2.0), (0.0, 100.0)],
         };
-        s.project(0.0);
+        assert_eq!(s.project(0.0), Projection::Changed);
         assert!((s.aux[0] - 10.0).abs() < 1e-15); // clamped from 15 to 10
         assert!((s.aux[1] - (-2.0)).abs() < 1e-15); // clamped from -5 to -2
         assert!((s.aux[2] - 3.0).abs() < 1e-15); // within bounds, unchanged
+    }
+
+    #[test]
+    fn project_reports_unchanged_when_aux_within_bounds() {
+        let mut s = AugmentedState {
+            plant: AttitudeState::identity(),
+            aux: vec![3.0, -1.0],
+            aux_bounds: vec![(-10.0, 10.0), (-2.0, 2.0)],
+        };
+        assert_eq!(s.project(0.0), Projection::Unchanged);
+        assert_eq!(s.aux, vec![3.0, -1.0]);
     }
 
     #[test]

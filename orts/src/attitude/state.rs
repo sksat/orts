@@ -1,14 +1,23 @@
 use arika::frame::{self, Rotation};
 use nalgebra::{UnitQuaternion, Vector3, Vector4};
-use utsuroi::{OdeState, Tolerances};
+use utsuroi::{OdeState, Projection, Tolerances};
 
 use crate::model::{HasAttitude, HasFrame};
+
+/// Tolerance on `|q| - 1` below which [`OdeState::project`] leaves the
+/// quaternion alone.
+///
+/// A few ulp of norm drift changes no orientation — `orientation()`
+/// normalizes on read — so correcting it would only cost the adaptive solvers
+/// their FSAL derivative for nothing.
+const QUATERNION_NORM_TOLERANCE: f64 = 8.0 * f64::EPSILON;
 
 /// Attitude state: unit quaternion (orientation) + angular velocity in body frame.
 ///
 /// The quaternion is stored as `[w, x, y, z]` (Hamilton scalar-first convention).
 /// During integration, the quaternion may deviate slightly from unit norm;
-/// [`OdeState::project`] renormalizes it after each step.
+/// [`OdeState::project`] renormalizes it after each accepted step once the
+/// drift exceeds a few ulp.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttitudeState {
     /// Orientation quaternion `[w, x, y, z]` (body-to-inertial rotation).
@@ -72,17 +81,24 @@ impl AttitudeState {
             self.quaternion[2],
             self.quaternion[3],
         );
+        // Halve ω before multiplying rather than the sum afterwards. Each term
+        // is then bounded by `|q_i| · ½|ω|`, so a unit quaternion keeps the sum
+        // within `½ √3 f64::MAX` by Cauchy-Schwarz. Scaling last lets the sum
+        // overflow at a rate the result is nowhere near: with
+        // `q = [0, 1/√2, 1/√2, 0]` and `ω = [1.4e308, 1.4e308, 0]` the true
+        // `q̇.w` is about -9.9e307, while `-x·wx - y·wy` reaches -1.98e308 and
+        // becomes `-inf` that the later `0.5` cannot bring back.
         let (wx, wy, wz) = (
-            self.angular_velocity[0],
-            self.angular_velocity[1],
-            self.angular_velocity[2],
+            0.5 * self.angular_velocity[0],
+            0.5 * self.angular_velocity[1],
+            0.5 * self.angular_velocity[2],
         );
         // dq/dt = 0.5 * q ⊗ (0, ω)
         Vector4::new(
-            0.5 * (-x * wx - y * wy - z * wz),
-            0.5 * (w * wx + y * wz - z * wy),
-            0.5 * (w * wy + z * wx - x * wz),
-            0.5 * (w * wz + x * wy - y * wx),
+            -x * wx - y * wy - z * wz,
+            w * wx + y * wz - z * wy,
+            w * wy + z * wx - x * wz,
+            w * wz + x * wy - y * wx,
         )
     }
 
@@ -135,8 +151,20 @@ impl OdeState for AttitudeState {
         }
     }
 
+    /// Finite components are not enough for the quaternion: its norm has to be
+    /// usable too.
+    ///
+    /// Components around 1e157 are each finite while their squares sum to
+    /// infinity, and such a quaternion names no orientation — `orientation()`
+    /// divides by that norm. `project` deliberately leaves it alone rather than
+    /// turning it into a plausible-looking zero, which makes this the check that
+    /// has to catch it. Reported here, the integrators stop at the step that
+    /// produced it instead of handing it to sensors and a controller first.
     fn is_finite(&self) -> bool {
-        self.quaternion.iter().all(|v| v.is_finite())
+        let norm_sq = self.quaternion.norm_squared();
+        norm_sq.is_finite()
+            && norm_sq > 0.0
+            && self.quaternion.iter().all(|v| v.is_finite())
             && self.angular_velocity.iter().all(|v| v.is_finite())
     }
 
@@ -162,10 +190,25 @@ impl OdeState for AttitudeState {
         (sum_sq / n as f64).sqrt()
     }
 
-    fn project(&mut self, _t: f64) {
+    /// Renormalize the quaternion when it has drifted off the unit sphere.
+    ///
+    /// The tolerance keeps the FSAL cache of the adaptive solvers alive: a
+    /// correction of a few ulp buys no accuracy (`orientation()` normalizes on
+    /// read anyway) but reporting it as a change costs one extra derivative
+    /// evaluation per step.
+    ///
+    /// A zero norm is left alone: it carries no orientation to rescale, and
+    /// snapping to identity would invent one and hide the failure instead. A
+    /// non-finite norm is left alone for the opposite reason — dividing by it
+    /// would turn an infinite quaternion into a plausible-looking zero one and
+    /// defeat the integrators' finiteness checks.
+    fn project(&mut self, _t: f64) -> Projection {
         let norm = self.quaternion.magnitude();
-        if norm > 0.0 {
+        if norm.is_finite() && norm > 0.0 && (norm - 1.0).abs() > QUATERNION_NORM_TOLERANCE {
             self.quaternion /= norm;
+            Projection::Changed
+        } else {
+            Projection::Unchanged
         }
     }
 }
@@ -174,6 +217,58 @@ impl OdeState for AttitudeState {
 mod tests {
     use super::*;
     use std::f64::consts::PI;
+
+    /// Scaling ω before the products, not the sum after them: with these
+    /// values the mathematical result is comfortably finite while the
+    /// intermediate sum is not, so multiplying by 0.5 last returned `-inf`.
+    #[test]
+    fn q_dot_does_not_overflow_where_its_result_is_finite() {
+        let state = AttitudeState {
+            quaternion: Vector4::new(0.0, 1.0 / 2.0_f64.sqrt(), 1.0 / 2.0_f64.sqrt(), 0.0),
+            angular_velocity: Vector3::new(1.4e308, 1.4e308, 0.0),
+        };
+        let q_dot = state.q_dot();
+        assert!(
+            q_dot.iter().all(|v| v.is_finite()),
+            "q_dot overflowed: {q_dot:?}"
+        );
+        // -(x·wx + y·wy)/2 with x = y = 1/√2 and wx = wy = 1.4e308.
+        let expected = -1.4e308 / 2.0_f64.sqrt();
+        assert!(
+            (q_dot[0] - expected).abs() < expected.abs() * 1e-12,
+            "expected about {expected}, got {}",
+            q_dot[0]
+        );
+    }
+
+    /// A quaternion whose components are finite but whose norm is not names no
+    /// orientation, and `project` leaves it alone rather than collapsing it to
+    /// zero — so this is the check that has to reject it.
+    #[test]
+    fn a_quaternion_whose_norm_overflows_is_not_finite() {
+        let state = AttitudeState {
+            quaternion: Vector4::new(1e157, 1e157, 0.0, 0.0),
+            angular_velocity: Vector3::zeros(),
+        };
+        assert!(
+            state.quaternion.iter().all(|v| v.is_finite()),
+            "the components are meant to be finite"
+        );
+        assert!(
+            !state.quaternion.norm_squared().is_finite(),
+            "the sum of squares is meant to overflow"
+        );
+        assert!(!state.is_finite(), "should be reported as non-finite");
+    }
+
+    #[test]
+    fn an_all_zero_quaternion_is_not_finite() {
+        let state = AttitudeState {
+            quaternion: Vector4::zeros(),
+            angular_velocity: Vector3::zeros(),
+        };
+        assert!(!state.is_finite(), "a zero quaternion names no orientation");
+    }
 
     #[test]
     fn ode_state_zero_like() {
@@ -233,7 +328,7 @@ mod tests {
             quaternion: Vector4::new(2.0, 0.0, 0.0, 0.0),
             angular_velocity: Vector3::new(1.0, 2.0, 3.0),
         };
-        state.project(0.0);
+        assert_eq!(state.project(0.0), Projection::Changed);
         let norm = state.quaternion.magnitude();
         assert!((norm - 1.0).abs() < 1e-15);
         // Angular velocity should be unchanged
@@ -243,8 +338,62 @@ mod tests {
     #[test]
     fn ode_state_project_preserves_unit() {
         let mut state = AttitudeState::identity();
-        state.project(0.0);
+        assert_eq!(state.project(0.0), Projection::Unchanged);
         assert!((state.quaternion.magnitude() - 1.0).abs() < 1e-15);
+    }
+
+    /// Drift of a few ulp is left alone: `orientation()` normalizes on read,
+    /// so correcting it buys nothing and would cost the adaptive solvers their
+    /// FSAL derivative.
+    #[test]
+    fn ode_state_project_ignores_ulp_scale_drift() {
+        let drift = 1.0 + 2.0 * f64::EPSILON;
+        let mut state = AttitudeState {
+            quaternion: Vector4::new(drift, 0.0, 0.0, 0.0),
+            angular_velocity: Vector3::zeros(),
+        };
+        assert_eq!(state.project(0.0), Projection::Unchanged);
+        assert_eq!(state.quaternion[0], drift);
+    }
+
+    /// Drift large enough to matter is corrected, and reported as a change so
+    /// the solvers drop the derivative taken at the unprojected state.
+    #[test]
+    fn ode_state_project_reports_correction() {
+        let mut state = AttitudeState {
+            quaternion: Vector4::new(1.0 + 1e-9, 0.0, 0.0, 0.0),
+            angular_velocity: Vector3::zeros(),
+        };
+        assert_eq!(state.project(0.0), Projection::Changed);
+        assert!((state.quaternion.magnitude() - 1.0).abs() < f64::EPSILON);
+    }
+
+    /// A degenerate quaternion is passed through untouched. Rescaling a zero
+    /// norm is impossible, and rescaling an infinite one would produce a
+    /// finite-looking zero quaternion that the integrators' `is_finite`
+    /// checks would then wave through.
+    #[test]
+    fn ode_state_project_leaves_degenerate_quaternions_alone() {
+        for q in [
+            Vector4::zeros(),
+            Vector4::new(f64::INFINITY, 0.0, 0.0, 0.0),
+            Vector4::new(f64::NAN, 0.0, 0.0, 0.0),
+        ] {
+            let mut state = AttitudeState {
+                quaternion: q,
+                angular_velocity: Vector3::zeros(),
+            };
+            assert_eq!(state.project(0.0), Projection::Unchanged);
+            assert!(
+                state
+                    .quaternion
+                    .iter()
+                    .zip(q.iter())
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "degenerate quaternion {q:?} must be passed through, got {:?}",
+                state.quaternion
+            );
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use arika::frame::{Eci, SimpleEci};
 use nalgebra::{Vector3, Vector4};
-use utsuroi::{OdeState, Tolerances};
+use utsuroi::{OdeState, Projection, Tolerances};
 
 use crate::attitude::AttitudeState;
 use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit};
@@ -140,8 +140,8 @@ impl<F: Eci> OdeState for SpacecraftState<F> {
         orbit_norm.max(attitude_norm).max(mass_norm)
     }
 
-    fn project(&mut self, t: f64) {
-        self.attitude.project(t);
+    fn project(&mut self, t: f64) -> Projection {
+        self.attitude.project(t)
     }
 }
 
@@ -335,7 +335,7 @@ mod tests {
         let orbit_before = state.orbit.clone();
         let mass_before = state.mass;
 
-        state.project(0.0);
+        assert_eq!(state.project(0.0), Projection::Changed);
 
         assert!((state.attitude.quaternion.magnitude() - 1.0).abs() < 1e-15);
         assert_eq!(state.orbit, orbit_before);

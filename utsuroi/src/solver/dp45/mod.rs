@@ -91,7 +91,10 @@ fn dp_step_impl<S: DynamicalSystem>(
 impl Integrator for DormandPrince {
     fn step<S: DynamicalSystem>(&self, system: &S, t: f64, state: &S::State, dt: f64) -> S::State {
         let k1 = system.derivatives(t, state);
-        let (y5, _, _) = dp_step_impl(system, t, state, dt, &k1);
+        let (mut y5, _, _) = dp_step_impl(system, t, state, dt, &k1);
+        // Fixed-step use keeps no derivative across steps, so the FSAL cache
+        // cannot go stale here.
+        let _ = y5.project(t + dt);
         y5
     }
 }
@@ -115,7 +118,11 @@ pub struct AdaptiveStepper<'a, S: DynamicalSystem> {
     state: S::State,
     t: f64,
     dt: f64,
-    k1: S::State,
+    /// Cached first-stage derivative (FSAL). `None` means "not known at the
+    /// current state": the next step evaluates it. It is cleared whenever a
+    /// projection changes the accepted state, so the stale derivative taken at
+    /// the unprojected candidate is never reused.
+    k1: Option<S::State>,
     tol: Tolerances,
     /// Minimum step size below which integration fails. Can be overridden
     /// after construction to match the total integration interval.
@@ -153,13 +160,20 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
                 return Err(IntegrationError::TimeStagnated { t: self.t, dt: h });
             }
 
-            let (y5, error, k7) = dp_step_impl(self.system, self.t, &self.state, h, &self.k1);
+            let k1 = match self.k1.take() {
+                Some(k1) => k1,
+                None => self.system.derivatives(self.t, &self.state),
+            };
+            let (y5, error, k7) = dp_step_impl(self.system, self.t, &self.state, h, &k1);
 
             // NaN/Inf check
             if !y5.is_finite() {
                 return Err(IntegrationError::NonFiniteState { t: self.t + h });
             }
 
+            // Accept/reject is decided on the raw candidate: the error vector
+            // belongs to it, and comparing it against a projected state would
+            // mix two different solutions.
             let err = self.state.error_norm(&y5, &error, &self.tol);
             // A NaN norm compares false against both the accept threshold and
             // the `dt_min` floor below, so without this guard the same step is
@@ -173,9 +187,21 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
 
             if err <= 1.0 {
                 // Accept step
-                self.state = y5;
-                self.t += h;
-                self.k1 = k7; // FSAL
+                let t_next = self.t + h;
+                let mut y = y5;
+                let projection = y.project(t_next);
+                // A projection can also produce non-finite values (a division
+                // by a zero norm, say); the raw check above cannot see that.
+                if !y.is_finite() {
+                    return Err(IntegrationError::NonFiniteState { t: t_next });
+                }
+                self.state = y;
+                self.t = t_next;
+                // FSAL: k7 = f(t+h, y5) is the next first stage only while the
+                // projection left y5 alone. Otherwise drop it and let the next
+                // step evaluate f at the projected state (one extra evaluation
+                // per changed step, none when nothing changed).
+                self.k1 = if projection.changed() { None } else { Some(k7) };
 
                 callback(self.t, &self.state);
 
@@ -194,6 +220,9 @@ impl<'a, S: DynamicalSystem> AdaptiveStepper<'a, S> {
                 // Reject step, shrink
                 let factor = (DP_SAFETY * err.powf(-0.2)).clamp(DP_MIN_FACTOR, 1.0);
                 self.dt = h * factor;
+                // The state did not move, so the first-stage derivative is
+                // still the one for the retry.
+                self.k1 = Some(k1);
 
                 if self.dt < self.dt_min {
                     return Err(IntegrationError::StepSizeTooSmall {
@@ -238,14 +267,15 @@ impl DormandPrince {
         dt: f64,
         tol: Tolerances,
     ) -> AdaptiveStepper<'a, S> {
-        let k1 = system.derivatives(t0, &initial);
         let dt_min = 1e-12 * (dt * 100.0).abs().max(1.0);
         AdaptiveStepper {
             system,
             state: initial,
             t: t0,
             dt,
-            k1,
+            // Evaluated by the first step rather than here, so a stepper that
+            // never advances costs nothing.
+            k1: None,
             tol,
             dt_min,
         }
@@ -254,9 +284,21 @@ impl DormandPrince {
     /// Perform a single Dormand-Prince step with full output.
     ///
     /// Returns `(y5, error, k7)` where:
-    /// - `y5`: 5th-order solution (to propagate)
-    /// - `error`: embedded error estimate
-    /// - `k7`: 7th-stage derivative (reusable as k1 of next step via FSAL)
+    /// - `y5`: the raw 5th-order candidate, **not projected**
+    /// - `error`: embedded error estimate, belonging to that raw candidate
+    /// - `k7`: 7th-stage derivative, `f(t + dt, y5)`
+    ///
+    /// This is the low-level building block for a caller running its own
+    /// step-size control, so it stops short of the projection: `error` pairs
+    /// with the raw candidate, and mixing it with a projected state is
+    /// inconsistent. A caller that accepts the step owes the state its
+    /// [`OdeState::project`] call, and may reuse `k7` as the next first stage
+    /// only while that projection reports [`Projection::Unchanged`]
+    /// (`Projection::Changed` means `k7` was evaluated at a state that no
+    /// longer exists). [`Integrator::step`] and [`AdaptiveStepper`] do this
+    /// for you.
+    ///
+    /// [`Projection::Unchanged`]: crate::Projection::Unchanged
     pub fn step_full<S: DynamicalSystem>(
         &self,
         system: &S,
