@@ -333,12 +333,51 @@ section is subdivided by package.
 
 ### `tobari` (Rust, crates.io)
 
+#### Fixed
+- `HarrisPriester` applied its public `u32` exponent through `powi(n as i32)`,
+  which wraps negative for `n >= 2^31`: `n = 2^31` returned `+Inf` at the
+  anti-bulge and `n = u32::MAX` about 1280x `rho_min`. The density now stays
+  within `[rho_min, rho_max]` for every `u32`.
+  ([#360](https://github.com/sksat/orts/pull/360))
+- `CssiSpaceWeather` resolved the 3-hour Ap history and the previous day's F10.7
+  by position in the record array, so a missing day shifted both in time — "3
+  hours ago" became 27 hours ago across a one-day gap. Both are now looked up by
+  calendar date, with the queried day's daily average as the fallback for a day
+  the dataset does not cover. This repository's own CSSI test fixture has three
+  such gaps. ([#360](https://github.com/sksat/orts/pull/360))
+
 #### Changed
+- `CssiData::truncate_after` returns `Result<CssiData, CssiParseError>`: a cutoff
+  before the whole dataset used to yield an empty `CssiData` that
+  `CssiSpaceWeather::new` accepted and every subsequent query panicked on. All
+  `CssiData` construction now goes through `from_records`, which rejects an empty
+  input and collapses duplicate days.
+  ([#360](https://github.com/sksat/orts/pull/360))
 - Renamed the CSSI space-weather download feature `fetch` to `fetch-cssi`,
   matching the `fetch-<source>` convention (`fetch-igrf`, and `arika`'s
   `fetch-horizons`). `fetch` is retained as an umbrella feature that enables
   every `fetch-*` source, so `features = ["fetch"]` keeps building (and now
   also pulls in `fetch-igrf`). ([#150](https://github.com/sksat/orts/pull/150))
+
+### `tobari-wasm` (Rust)
+
+#### Fixed
+- `atmosphere_latlon_map`, `atmosphere_latlon_map_sw`, `atmosphere_volume`,
+  `atmosphere_volume_sw`, `magnetic_field_latlon_map` and
+  `magnetic_field_volume` multiplied their grid dimensions in `u32` before
+  widening, so a large grid wrapped the allocation while the loop still walked
+  every point. A zero dimension returned only the two-element volume header
+  instead of the documented `n_alt × n_lat × n_lon + 2`. Every grid entry point
+  now computes its total in `usize`, rejects a zero dimension, and throws a JS
+  exception past `MAX_GRID_POINTS` (2^24) rather than attempting the allocation.
+  ([#360](https://github.com/sksat/orts/pull/360))
+- `magnetic_field_lines` accepted a `step_km` of zero or a non-finite one, which
+  left the trace running its full `max_steps` — up to 2^32 iterations per seed —
+  and it had no bound on `n_seeds x max_steps`. It now rejects such a `step_km`,
+  caps the total against `MAX_FIELD_LINE_POINTS`, and appends the reversed
+  backward leg once instead of inserting each of its points at the front, which
+  was quadratic in the leg's length.
+  ([#360](https://github.com/sksat/orts/pull/360))
 
 ### `viewer`
 

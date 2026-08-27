@@ -402,7 +402,9 @@ fn main() {
         let make_cutoff_atmo = || -> Box<dyn tobari::AtmosphereModel> {
             let cssi_full = tobari::CssiSpaceWeather::fetch_default().unwrap();
             let cssi_data = cssi_full.into_data();
-            let cutoff_data = cssi_data.truncate_after(&epoch);
+            let cutoff_data = cssi_data
+                .truncate_after(&epoch)
+                .unwrap_or_else(|e| panic!("no CSSI data at or before the deployment epoch: {e}"));
             if let Some((_, last)) = cutoff_data.date_range() {
                 eprintln!(
                     "  CSSI data cutoff: last record = {} ({} records)",

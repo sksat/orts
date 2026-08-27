@@ -302,11 +302,44 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 ### `tobari` (Rust, crates.io)
 
+#### Fixed
+- `HarrisPriester` が public な `u32` の指数を `powi(n as i32)` に渡していた。
+  `n >= 2^31` で負に wrap し、`n = 2^31` は anti-bulge で `+Inf`、
+  `n = u32::MAX` は `rho_min` の約 1280 倍を返していた。あらゆる `u32` に対して
+  密度が `[rho_min, rho_max]` に収まるようになった。
+  ([#360](https://github.com/sksat/orts/pull/360))
+- `CssiSpaceWeather` が 3 時間 Ap 履歴と前日 F10.7 を record 配列の位置で解決していた。
+  欠測日があると両方が時間方向にずれ、1 日の gap をまたぐと「3 時間前」が 27 時間前を
+  指していた。どちらも暦日で引くようにし、データセットが覆わない日は問い合わせた日の
+  日平均を fallback にした。このリポジトリの CSSI test fixture 自体に該当する gap が
+  3 箇所ある。([#360](https://github.com/sksat/orts/pull/360))
+
 #### Changed
+- `CssiData::truncate_after` が `Result<CssiData, CssiParseError>` を返すようになった。
+  データセット全体より前で切ると空の `CssiData` ができ、`CssiSpaceWeather::new` が
+  それを受理して以降のすべてのクエリが panic していた。`CssiData` の構築はすべて
+  `from_records` を通るようになり、空を拒否し重複日を畳む。
+  ([#360](https://github.com/sksat/orts/pull/360))
 - CSSI 宇宙天気ダウンロードの feature `fetch` を `fetch-cssi` にリネーム。
   `fetch-<source>` 規約(`fetch-igrf`、arika の `fetch-horizons`)に揃えた。
   `fetch` は全 `fetch-*` 源を束ねる傘 feature として存続するため、
   `features = ["fetch"]` は引き続きビルド可能(加えて `fetch-igrf` も有効化)。([#150](https://github.com/sksat/orts/pull/150))
+
+### `tobari-wasm` (Rust)
+
+#### Fixed
+- `atmosphere_latlon_map`、`atmosphere_latlon_map_sw`、`atmosphere_volume`、
+  `atmosphere_volume_sw`、`magnetic_field_latlon_map`、`magnetic_field_volume` が
+  grid の次元を `u32` で乗算してから widen していた。大きな grid では確保が wrap する
+  一方でループは全点を回る。0 次元では volume header の 2 要素だけを返し、
+  doc が約束する `n_alt × n_lat × n_lon + 2` を満たさなかった。各 grid entry point は
+  総数を `usize` で計算し、0 次元を拒否し、`MAX_GRID_POINTS` (2^24) を超えたら確保を
+  試みずに JS 例外を投げるようになった。([#360](https://github.com/sksat/orts/pull/360))
+- `magnetic_field_lines` が 0 や非有限の `step_km` を受理しており、その場合 trace が
+  `max_steps` を使い切るまで走っていた (seed あたり最大 2^32 反復)。`n_seeds x max_steps`
+  にも上限が無かった。そうした `step_km` を拒否し、総数を `MAX_FIELD_LINE_POINTS` で
+  抑え、backward leg は各点を先頭に挿入する (leg 長に対して 2 乗) のでなく反転して
+  一度に append するようにした。([#360](https://github.com/sksat/orts/pull/360))
 
 ### `viewer`
 

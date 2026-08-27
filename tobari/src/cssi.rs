@@ -78,20 +78,34 @@ impl fmt::Display for CssiParseError {
 
 impl std::error::Error for CssiParseError {}
 
-/// Parsed CSSI space weather data, sorted by date.
+/// Parsed CSSI space weather data.
+///
+/// Non-empty, at most one record per calendar day, ascending by date. Days may
+/// be missing: a hand-trimmed file (like this repository's own test fixture)
+/// covers a few disjoint intervals, so [`CssiSpaceWeather`] resolves the 3-hour
+/// Ap history and the previous day's F10.7 by calendar date rather than by array
+/// position. Every constructor, including [`CssiData::truncate_after`], goes
+/// through [`CssiData::from_records`].
 #[derive(Debug, Clone)]
 pub struct CssiData {
-    /// Daily records sorted by JD (ascending).
+    /// Daily records, ascending by JD, at most one per calendar day.
     records: Vec<CssiDailyRecord>,
 }
 
 impl CssiData {
-    /// Create from records, sorting by date. Used by the GFZ parser.
+    /// Create from records, sorting by date and enforcing the type's invariants.
+    ///
+    /// Records with the same date are collapsed, keeping the first in input
+    /// order (so a caller that pushes observed data before predicted data keeps
+    /// the observed values). Returns [`CssiParseError::NoData`] for an empty
+    /// input, which would otherwise make every query on the resulting provider
+    /// panic.
     pub(crate) fn from_records(mut records: Vec<CssiDailyRecord>) -> Result<Self, CssiParseError> {
         if records.is_empty() {
             return Err(CssiParseError::NoData);
         }
         records.sort_by(|a, b| a.jd_midnight.partial_cmp(&b.jd_midnight).unwrap());
+        records.dedup_by(|a, b| a.jd_midnight == b.jd_midnight);
         Ok(Self { records })
     }
 
@@ -147,24 +161,15 @@ impl CssiData {
                         records.push(record);
                     }
                 }
-                Err(_) => {
-                    // Skip unparseable lines in predicted sections
-                    if is_observed_section {
-                        // In observed section, this is unexpected but we still skip
-                        // to be robust against format variations
-                    }
-                    continue;
-                }
+                // Skip unparseable lines; format variations show up in the
+                // predicted sections. A day dropped from the middle of the
+                // series leaves a gap, which the provider resolves by calendar
+                // date rather than by array position.
+                Err(_) => continue,
             }
         }
 
-        if records.is_empty() {
-            return Err(CssiParseError::NoData);
-        }
-
-        records.sort_by(|a, b| a.jd_midnight.partial_cmp(&b.jd_midnight).unwrap());
-
-        Ok(Self { records })
+        Self::from_records(records)
     }
 
     /// Parse a single CSSI data line.
@@ -267,15 +272,19 @@ impl CssiData {
     /// Useful for simulating "what data was available at time T" by discarding
     /// future observations. When used with [`CssiSpaceWeather`] in `Clamp` mode,
     /// queries after the cutoff will repeat the last available day's values.
-    pub fn truncate_after(&self, epoch: &Epoch) -> Self {
+    ///
+    /// Returns [`CssiParseError::NoData`] when the cutoff precedes the whole
+    /// dataset: an empty dataset would make every subsequent query panic, so it
+    /// is not representable as a [`CssiData`].
+    pub fn truncate_after(&self, epoch: &Epoch) -> Result<Self, CssiParseError> {
         let jd_cutoff = epoch.jd();
-        let records: Vec<CssiDailyRecord> = self
-            .records
-            .iter()
-            .filter(|r| r.jd_midnight <= jd_cutoff)
-            .cloned()
-            .collect();
-        CssiData { records }
+        Self::from_records(
+            self.records
+                .iter()
+                .filter(|r| r.jd_midnight <= jd_cutoff)
+                .cloned()
+                .collect(),
+        )
     }
 }
 
@@ -334,25 +343,43 @@ impl CssiSpaceWeather {
     }
 }
 
-/// Get a 3-hourly ap value at a given number of slots before the reference position.
+/// Index of the record for the day whose midnight is `jd_midnight`, if present.
 ///
-/// Each day has 8 slots (3 hours each). This function navigates backward
-/// across day boundaries in the sorted record array.
+/// Matches within half a day so a target derived by whole-day arithmetic cannot
+/// miss its record over a rounding difference; records are at least one day
+/// apart, so at most one can match.
+fn find_day(records: &[CssiDailyRecord], jd_midnight: f64) -> Option<usize> {
+    let i = records.partition_point(|r| r.jd_midnight < jd_midnight - 0.5);
+    records
+        .get(i)
+        .filter(|r| (r.jd_midnight - jd_midnight).abs() < 0.5)
+        .map(|_| i)
+}
+
+/// Get a 3-hourly ap value `slots_back` slots (3 hours each) before the given
+/// day and slot.
+///
+/// The target slot is resolved by calendar date, not by position in the record
+/// array: the array is one record per day but days can be missing (a
+/// hand-trimmed file covers disjoint intervals), and walking positions would
+/// then report a value from the wrong day — "3 hours ago" resolving to 27 hours
+/// ago across a one-day gap. A day the dataset does not cover falls back to
+/// `fallback_ap`.
 fn ap_at_offset(
     records: &[CssiDailyRecord],
-    day_idx: usize,
+    day: &CssiDailyRecord,
     current_slot: usize,
     slots_back: usize,
+    fallback_ap: f64,
 ) -> f64 {
-    let total_current = day_idx * 8 + current_slot;
-    if slots_back > total_current {
-        // Not enough history; use daily Ap of first available day
-        return records[0].ap_daily;
+    let target = current_slot as i64 - slots_back as i64;
+    let days_back = target.div_euclid(8);
+    let target_slot = target.rem_euclid(8) as usize;
+    let target_jd = day.jd_midnight + days_back as f64;
+    match find_day(records, target_jd) {
+        Some(idx) => records[idx].ap_3h[target_slot],
+        None => fallback_ap,
     }
-    let total_target = total_current - slots_back;
-    let target_day = total_target / 8;
-    let target_slot = total_target % 8;
-    records[target_day].ap_3h[target_slot]
 }
 
 impl SpaceWeatherProvider for CssiSpaceWeather {
@@ -397,30 +424,27 @@ impl SpaceWeatherProvider for CssiSpaceWeather {
         let ut_hours = (jd - day.jd_midnight) * 24.0;
         let current_slot = (ut_hours / 3.0).floor().clamp(0.0, 7.0) as usize;
 
-        // Build NRLMSISE-00 7-element ap history array
+        // Build NRLMSISE-00 7-element ap history array. Slots on days the
+        // dataset does not cover fall back to this day's daily average.
+        let at = |slots_back| ap_at_offset(records, day, current_slot, slots_back, day.ap_daily);
         let ap_array = [
             day.ap_daily,
-            ap_at_offset(records, idx, current_slot, 0), // current 3-hr
-            ap_at_offset(records, idx, current_slot, 1), // 3 hr ago
-            ap_at_offset(records, idx, current_slot, 2), // 6 hr ago
-            ap_at_offset(records, idx, current_slot, 3), // 9 hr ago
+            at(0), // current 3-hr
+            at(1), // 3 hr ago
+            at(2), // 6 hr ago
+            at(3), // 9 hr ago
             // Average of 12-33 hours before (8 slots: 4..=11)
-            (4..=11)
-                .map(|s| ap_at_offset(records, idx, current_slot, s))
-                .sum::<f64>()
-                / 8.0,
+            (4..=11).map(at).sum::<f64>() / 8.0,
             // Average of 36-57 hours before (8 slots: 12..=19)
-            (12..=19)
-                .map(|s| ap_at_offset(records, idx, current_slot, s))
-                .sum::<f64>()
-                / 8.0,
+            (12..=19).map(at).sum::<f64>() / 8.0,
         ];
 
-        // F10.7: NRLMSISE-00 uses previous day's observed value
-        let f107_daily = if idx > 0 {
-            records[idx - 1].f107_obs
-        } else {
-            day.f107_obs
+        // F10.7: NRLMSISE-00 uses the previous day's observed value. Resolved by
+        // calendar date for the same reason as the Ap history; if the previous
+        // day is missing, this day's own value is the closest available.
+        let f107_daily = match find_day(records, day.jd_midnight - 1.0) {
+            Some(prev) => records[prev].f107_obs,
+            None => day.f107_obs,
         };
 
         // 81-day centered average; fall back to daily if unavailable
@@ -531,6 +555,140 @@ BEGIN OBSERVED
 2024 01 03 2567  3  0  3  3  3  3  3  7  7  30   0   2   2   2   2   2   3   3   2 0.0 0  47 157.0 0 155.6 155.4 161.3 161.0 161.0
 END OBSERVED
 ";
+
+    /// Build a record with distinctive values so a lookup that lands on the
+    /// wrong day is identifiable from the value alone.
+    fn synthetic_day(day: u32, ap_3h: [f64; 8], ap_daily: f64, f107: f64) -> CssiDailyRecord {
+        CssiDailyRecord {
+            jd_midnight: Epoch::from_gregorian(2024, 1, day, 0, 0, 0.0).jd(),
+            year: 2024,
+            month: 1,
+            day,
+            ap_3h,
+            ap_daily,
+            f107_obs: f107,
+            f107_obs_ctr81: 200.0,
+        }
+    }
+
+    fn day_1() -> CssiDailyRecord {
+        synthetic_day(1, [111.0; 8], 111.0, 111.0)
+    }
+
+    fn day_2() -> CssiDailyRecord {
+        synthetic_day(
+            2,
+            [20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0],
+            22.0,
+            222.0,
+        )
+    }
+
+    fn day_3() -> CssiDailyRecord {
+        synthetic_day(
+            3,
+            [30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0],
+            33.0,
+            333.0,
+        )
+    }
+
+    #[test]
+    fn truncate_after_rejects_an_empty_result() {
+        let data = CssiData::parse(CSSI_FRAGMENT).unwrap();
+        let cutoff = Epoch::from_gregorian(2023, 12, 31, 12, 0, 0.0);
+        // An empty CssiData would make the first provider query panic
+        // (`records.len() - 1` and `records.last().unwrap()`), so it must not be
+        // constructible.
+        assert!(matches!(
+            data.truncate_after(&cutoff),
+            Err(CssiParseError::NoData)
+        ));
+    }
+
+    #[test]
+    fn truncate_after_keeps_days_up_to_the_cutoff() {
+        let data = CssiData::parse(CSSI_FRAGMENT).unwrap();
+        let cutoff = Epoch::from_gregorian(2024, 1, 2, 12, 0, 0.0);
+        let truncated = data.truncate_after(&cutoff).unwrap();
+
+        assert_eq!(truncated.len(), 2);
+        let (_, last) = truncated.date_range().unwrap();
+        assert!(last.jd() <= cutoff.jd());
+        assert_eq!(last.to_datetime().day, 2);
+    }
+
+    /// The Ap history is aligned by calendar date, not by array position.
+    ///
+    /// The datasets differ only in whether 2024-01-02 is present. Slots that
+    /// resolve to 2024-01-03 must be unaffected, and slots that resolve to the
+    /// missing day must fall back rather than silently returning 2024-01-01's
+    /// values — which are 48 hours away, not 24.
+    #[test]
+    fn ap_history_is_aligned_by_date_across_a_gap() {
+        let contiguous =
+            CssiSpaceWeather::new(CssiData::from_records(vec![day_1(), day_2(), day_3()]).unwrap());
+        let gapped = CssiSpaceWeather::new(CssiData::from_records(vec![day_1(), day_3()]).unwrap());
+
+        // 22:00 UT is slot 7, so slots 0-7 back stay inside 2024-01-03 and
+        // slots 8-15 back fall on 2024-01-02.
+        let epoch = Epoch::from_gregorian(2024, 1, 3, 22, 0, 0.0);
+        let c = contiguous.get(&epoch);
+        let g = gapped.get(&epoch);
+
+        // Current and the three preceding 3-hour slots are all on 2024-01-03.
+        assert_eq!(c.ap_3hour_history[1..=4], [37.0, 36.0, 35.0, 34.0]);
+        assert_eq!(g.ap_3hour_history[1..=4], c.ap_3hour_history[1..=4]);
+        assert_eq!(c.ap_daily, 33.0);
+        assert_eq!(g.ap_daily, 33.0);
+
+        // 12-33 hours back spans the second half of 2024-01-03 and the missing
+        // day. With the day present those are its own 3-hour values; without it
+        // they fall back to 2024-01-03's daily average.
+        let expected_c = (33.0 + 32.0 + 31.0 + 30.0 + 27.0 + 26.0 + 25.0 + 24.0) / 8.0;
+        let expected_g = (33.0 + 32.0 + 31.0 + 30.0 + 33.0 + 33.0 + 33.0 + 33.0) / 8.0;
+        assert_eq!(c.ap_3hour_history[5], expected_c);
+        assert_eq!(g.ap_3hour_history[5], expected_g);
+
+        // 2024-01-01's values are 48 hours away and must not appear in either.
+        for (i, v) in g.ap_3hour_history.iter().enumerate().take(6) {
+            assert_ne!(*v, 111.0, "slot {i} reached 2024-01-01 across the gap");
+        }
+    }
+
+    /// The previous day's F10.7 is looked up by calendar date.
+    ///
+    /// With 2024-01-02 missing, the array-position lookup would return
+    /// 2024-01-01's value — two days back, not one.
+    #[test]
+    fn previous_day_f107_is_aligned_by_date_across_a_gap() {
+        let contiguous =
+            CssiSpaceWeather::new(CssiData::from_records(vec![day_1(), day_2(), day_3()]).unwrap());
+        let gapped = CssiSpaceWeather::new(CssiData::from_records(vec![day_1(), day_3()]).unwrap());
+
+        let epoch = Epoch::from_gregorian(2024, 1, 3, 12, 0, 0.0);
+        assert_eq!(contiguous.get(&epoch).f107_daily, 222.0);
+
+        let g = gapped.get(&epoch).f107_daily;
+        assert_ne!(g, 111.0, "previous-day F10.7 skipped back two days");
+        assert_eq!(g, 333.0, "expected this day's own value as the fallback");
+    }
+
+    #[test]
+    fn from_records_collapses_duplicate_days() {
+        let data = CssiData::from_records(vec![day_2(), day_1(), day_2()]).unwrap();
+        assert_eq!(data.len(), 2);
+        assert_eq!(data.records()[0].day, 1);
+        assert_eq!(data.records()[1].day, 2);
+    }
+
+    #[test]
+    fn from_records_rejects_empty() {
+        assert!(matches!(
+            CssiData::from_records(Vec::new()),
+            Err(CssiParseError::NoData)
+        ));
+    }
 
     #[test]
     fn parse_cssi_fragment() {
