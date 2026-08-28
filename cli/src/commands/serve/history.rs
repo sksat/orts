@@ -536,51 +536,58 @@ mod tests {
 
     #[test]
     fn overview_cost_is_constant_regardless_of_disk_segments() {
-        // TODO: this and `overview_multi_entity_cost_is_bounded` still assert an
-        // absolute millisecond budget, which on CI runners measures machine
-        // load as much as the code (see the note on
-        // `assert_cost_per_unit_flat`). The claim here — cost independent of
-        // segment count — is naturally a scaling check: measure at 10 and 40
-        // segments and require the cost not to climb.
-        //
-        // Regression gate. With the old `load_all()` based implementation
-        // this test fails because the cost scales with the number of
-        // flushed segments (disk I/O + decode + sort). The incremental
-        // overview buffer must answer from memory in ~O(OVERVIEW_MAX_POINTS_PER_ENTITY)
-        // time regardless of how many segments exist.
-        let dir = temp_data_dir("overview-perf");
-        let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
-        for i in 0..20_000 {
-            buf.push(make_state(i as f64));
-        }
-        assert!(
-            buf.segment_count >= 10,
-            "precondition: enough flushes to make load_all expensive"
-        );
+        // Regression gate. With the old `load_all()` based implementation the
+        // cost scaled with the number of flushed segments (disk I/O + decode +
+        // sort). The incremental overview buffer must answer from memory in
+        // ~O(OVERVIEW_MAX_POINTS_PER_ENTITY) time however many segments exist,
+        // so pushing 4x as much must not cost more — which is what makes this a
+        // raw-time check rather than a millisecond budget.
+        let pushes = [5_000usize, 10_000, 20_000];
 
-        let start = std::time::Instant::now();
-        let ov = buf.overview();
-        let elapsed = start.elapsed();
+        assert_scaling_stable("overview vs segments", 3, || {
+            let samples = fastest_per_size(&pushes, pushes.len(), |n| {
+                let dir = temp_data_dir(&format!("overview-perf-{n}"));
+                let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+                for i in 0..n {
+                    buf.push(make_state(i as f64));
+                }
+                assert!(
+                    buf.segment_count >= 5,
+                    "precondition: enough flushes to make load_all expensive, got {}",
+                    buf.segment_count
+                );
 
-        assert!(ov.len() <= OVERVIEW_MAX_POINTS_PER_ENTITY);
-        assert!(
-            elapsed.as_millis() < 20,
-            "overview() took {}ms with {} flushed segments; expected < 20ms \
-             (must not touch disk, must not call load_all)",
-            elapsed.as_millis(),
-            buf.segment_count
-        );
-        cleanup_dir(&dir);
+                let start = std::time::Instant::now();
+                let ov = buf.overview();
+                let elapsed = start.elapsed();
+
+                assert!(
+                    ov.len() <= OVERVIEW_MAX_POINTS_PER_ENTITY,
+                    "overview must stay bounded, got {}",
+                    ov.len()
+                );
+                cleanup_dir(&dir);
+                elapsed.as_micros()
+            });
+            // Same bar and reasoning as the downsample check: the samples are
+            // small, so timer granularity and cache effects weigh more than they
+            // do on the millisecond-scale ones.
+            check_raw_time_flat(&samples, 3.0)
+        });
     }
 
     #[test]
     fn overview_multi_entity_cost_is_bounded() {
-        // The per-entity overview design flattens every entity buffer into
-        // a Vec and sorts by `t` on each read. For realistic constellation
-        // sizes (10+ sats) the sort cost must stay comfortably under the
-        // perf gate — this test guards against accidental O(N^2) or
+        // The per-entity overview design flattens every entity buffer into a Vec
+        // and sorts by `t` on each read, so its cost should grow about linearly
+        // with the number of entities. This guards against accidental O(N^2) or
         // disk-touching regressions if `OVERVIEW_MAX_POINTS_PER_ENTITY` is
         // bumped, or if `overview()` grows auxiliary computation.
+        //
+        // Behaviour is checked at every entity count below; the cost check is a
+        // ratio across counts rather than a millisecond ceiling, because a
+        // ceiling here failed once in five runs under deliberate CPU load with
+        // nothing wrong.
         let dir = temp_data_dir("overview-multi-perf");
         // Small capacity keeps `flush()` I/O bounded during setup; the
         // per-entity overview fills up regardless of flush cadence.
@@ -624,16 +631,43 @@ mod tests {
             assert!(s.t >= prev, "overview must be sorted by t");
             prev = s.t;
         }
-        // Perf gate: flatten + sort of ~10k points in a Vec is expected
-        // to run in a few ms. 50ms is a loose CI-safe ceiling that still
-        // catches order-of-magnitude regressions.
-        assert!(
-            elapsed.as_millis() < 50,
-            "multi-entity overview() took {}ms for {} sats, expected < 50ms",
-            elapsed.as_millis(),
-            sats.len()
-        );
         cleanup_dir(&dir);
+
+        // Cost per entity must not climb as entities are added. Measured with
+        // the same push count per satellite at each width, so only the entity
+        // count varies.
+        let widths = [5usize, 10, 20];
+        assert_scaling_stable("overview vs entities", 3, || {
+            let samples = fastest_per_size(&widths, widths.len(), |w| {
+                let dir = temp_data_dir(&format!("overview-width-{w}"));
+                let pushes = w * 2_000;
+                // Capacity above the push count so nothing flushes: this check is
+                // about `overview()` scaling with entities, and writing hundreds
+                // of .rrd segments during setup made it a 60-second test. The
+                // sibling test above covers the disk-touching claim with real
+                // segments.
+                let mut buf =
+                    HistoryBuffer::new(pushes + 1, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+                let names: Vec<String> = (0..w).map(|i| format!("sat-{i}")).collect();
+                for i in 0..pushes {
+                    buf.push(make_state_for(&names[i % w], i as f64));
+                }
+                assert_eq!(buf.segment_count, 0, "setup must not flush");
+
+                let start = std::time::Instant::now();
+                let ov = buf.overview();
+                let elapsed = start.elapsed();
+
+                assert!(
+                    ov.len() <= w * OVERVIEW_MAX_POINTS_PER_ENTITY,
+                    "overview size must be bounded, got {} for {w} entities",
+                    ov.len()
+                );
+                cleanup_dir(&dir);
+                elapsed.as_micros()
+            });
+            check_cost_per_unit_flat(&samples)
+        });
     }
 
     // query_range in-memory fast path
@@ -946,7 +980,8 @@ mod tests {
     /// the measurement.
     ///
     /// Every repetition covers every size, and the starting point rotates
-    /// between repetitions. That ordering is the point: running all
+    /// between repetitions, so `reps` should equal `sizes.len()` for each size
+    /// to occupy each position exactly once. That ordering is the point: running all
     /// repetitions of the smallest input before starting the largest would tie
     /// time order to input size, so a runner that slows down partway through —
     /// load arriving, thermal throttling — would look exactly like cost
@@ -978,6 +1013,13 @@ mod tests {
             .collect()
     }
 
+    /// Ratio between the worst and best sample allowed by the two assertions
+    /// below.
+    ///
+    /// Quadratic growth over a 4x size range shows up as ~4x in cost per unit;
+    /// n log n over the same range is ~1.3x. 2.0 sits between them.
+    const SCALING_BAR: f64 = 2.0;
+
     /// Assert the cost per unit of input does not climb as the input grows —
     /// that is, the work stays about linear.
     ///
@@ -992,39 +1034,120 @@ mod tests {
     /// The blind spot is a constant-factor regression — ten times slower per
     /// unit, still linear, still passes. Catching that needs a stable machine
     /// and a history to compare against rather than a single CI run.
-    fn assert_cost_per_unit_flat(label: &str, samples: &[(usize, u128)]) {
-        // Quadratic growth over a 4x size range shows up as ~4x here; n log n
-        // over the same range is ~1.3x. 2.0 sits between them.
-        const BAR: f64 = 2.0;
-
+    fn check_cost_per_unit_flat(samples: &[(usize, u128)]) -> Result<(), String> {
         let per_unit: Vec<f64> = samples
             .iter()
             .map(|(n, us)| *us as f64 / *n as f64)
             .collect();
-        let first = per_unit[0];
-        let last = per_unit[per_unit.len() - 1];
 
         let detail: Vec<String> = samples
             .iter()
             .zip(&per_unit)
-            .map(|((n, us), c)| format!("n={n}: {us}us ({c:.3}us/unit)"))
+            .map(|((n, us), c)| format!("n={n}: {us}us ({c:.4}us/unit)"))
             .collect();
 
-        assert!(
-            last / first <= BAR,
-            "{label}: cost per unit grew {:.2}x from the smallest to the largest \
-             input (bar {BAR:.1}x), which is the signature of super-linear work. \
-             Samples — {}",
-            last / first,
-            detail.join(", ")
+        // Only a *rise* against an earlier, smaller size is a problem, and each
+        // size is checked so a spike in the middle cannot hide between its
+        // neighbours.
+        //
+        // The direction matters. A per-unit cost that falls as the input grows
+        // is what amortising a fixed cost looks like, and `load_all` does
+        // exactly that: it pays per-segment decode for a segment count this
+        // fixture holds constant, so the smallest input carries the largest
+        // share of it. Measured under deliberate CPU load, that legitimately
+        // produced 215.6 / 139.0 / 71.0 us per state — a 3.04x spread with
+        // nothing wrong. Comparing the extremes regardless of direction failed
+        // it; comparing only upward movement passes it and still catches 1, 5, 1.
+        let mut best_so_far = f64::INFINITY;
+        for (i, &cost) in per_unit.iter().enumerate() {
+            if cost / best_so_far > SCALING_BAR {
+                return Err(format!(
+                    "cost per unit rose {:.2}x at n={} against the cheapest smaller \
+                     input (bar {SCALING_BAR:.1}x). Samples — {}",
+                    cost / best_so_far,
+                    samples[i].0,
+                    detail.join(", ")
+                ));
+            }
+            best_so_far = best_so_far.min(cost);
+        }
+        Ok(())
+    }
+
+    /// Run `attempt` until it reports no violation, failing only if every
+    /// attempt does.
+    ///
+    /// This is what separates the two things a timing gate can see. Work that
+    /// became super-linear trips the bar every time; a runner that stalled for a
+    /// moment trips it once. Rotation and a per-size minimum reduce the second
+    /// without removing it — measured under 16-way saturation, one size came out
+    /// at 340us/unit while its neighbours sat at 140 and 119, which is noise
+    /// wearing the shape of a regression.
+    ///
+    /// Each attempt is reported as it happens, so a genuine regression leaves
+    /// the full trail in the log rather than only its last measurement.
+    fn assert_scaling_stable(
+        label: &str,
+        attempts: u32,
+        mut attempt: impl FnMut() -> Result<(), String>,
+    ) {
+        let mut last = String::new();
+        for i in 1..=attempts {
+            match attempt() {
+                Ok(()) => return,
+                Err(msg) => {
+                    eprintln!("{label}: attempt {i}/{attempts} tripped the bar — {msg}");
+                    last = msg;
+                }
+            }
+        }
+        panic!(
+            "{label}: all {attempts} attempts tripped the bar, so this is the shape of \
+             the work rather than a busy machine. Last — {last}"
         );
     }
 
+    /// Assert the raw time does not grow with the input — for work whose cost is
+    /// set by something other than the input length.
+    ///
+    /// `downsample_states` is the case that needs this: it performs
+    /// `max_points - 2` stride-indexed clones, so a larger input changes the
+    /// index arithmetic and nothing else. Measured at a fixed `max_points` of
+    /// 1000, it takes 164 / 167 / 165 / 180us for 100k / 200k / 400k / 800k
+    /// states — 1.10x across an 8x size range.
+    ///
+    /// Normalising that by input length would make the check vacuous, and worse
+    /// than vacuous: an accidental full-input scan would turn raw time linear,
+    /// which flattens cost-per-state and looks like success. Holding raw time
+    /// flat catches it, since such a regression grows with the size range.
+    fn check_raw_time_flat(samples: &[(usize, u128)], bar: f64) -> Result<(), String> {
+        let times: Vec<f64> = samples.iter().map(|(_, us)| *us as f64).collect();
+        let best = times.iter().copied().fold(f64::INFINITY, f64::min);
+        let worst = times.iter().copied().fold(0.0_f64, f64::max);
+
+        let detail: Vec<String> = samples
+            .iter()
+            .map(|(n, us)| format!("n={n}: {us}us"))
+            .collect();
+
+        if worst / best > bar {
+            return Err(format!(
+                "raw time spread {:.2}x across sizes (bar {bar:.1}x) for work whose \
+                 cost should not depend on input length. Samples — {}",
+                worst / best,
+                detail.join(", ")
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
-    fn downsample_cost_per_state_stays_flat() {
-        // Sizes span 4x so quadratic work is unmistakable, and start high
-        // enough that the smallest sample is well clear of timer granularity.
-        let sizes = [100_000usize, 200_000, 400_000];
+    fn downsample_cost_stays_independent_of_input_size() {
+        // Sizes span 8x. A 4x range leaves too little margin: an injected
+        // full-input scan measured 3.06x against a 3.0x bar, because the
+        // constant part of the work dilutes the ratio. Over 8x the same fault
+        // lands far clear of the bar while the clean measurement stays at 1.10x.
+        let sizes = [100_000usize, 200_000, 400_000, 800_000];
 
         // Built once up front: this operation only reads, so the same input can
         // be measured repeatedly, and construction stays out of the timings.
@@ -1033,16 +1156,21 @@ mod tests {
             .map(|&n| (0..n).map(|i| make_state(i as f64)).collect())
             .collect();
 
-        let samples = fastest_per_size(&sizes, 3, |n| {
-            let states = &inputs[sizes.iter().position(|&s| s == n).expect("known size")];
-            let start = std::time::Instant::now();
-            let ds = HistoryBuffer::downsample(states, 1000);
-            let elapsed = start.elapsed();
-            assert_eq!(ds.len(), 1000, "downsample must hit its target size");
-            elapsed.as_micros()
+        // Looser than SCALING_BAR: these samples are a few hundred microseconds,
+        // where timer granularity and cache effects weigh more. 1.10x was
+        // measured across an 8x range, and an injected full-input scan came out
+        // at 5.88x, so 3.0x sits clear of both.
+        assert_scaling_stable("downsample", 3, || {
+            let samples = fastest_per_size(&sizes, sizes.len(), |n| {
+                let states = &inputs[sizes.iter().position(|&s| s == n).expect("known size")];
+                let start = std::time::Instant::now();
+                let ds = HistoryBuffer::downsample(states, 1000);
+                let elapsed = start.elapsed();
+                assert_eq!(ds.len(), 1000, "downsample must hit its target size");
+                elapsed.as_micros()
+            });
+            check_raw_time_flat(&samples, 3.0)
         });
-
-        assert_cost_per_unit_flat("downsample", &samples);
     }
 
     #[test]
@@ -1051,23 +1179,24 @@ mod tests {
         // stay modest because each flush encodes and writes a real .rrd.
         let sizes = [625usize, 1250, 2500];
 
-        let samples = fastest_per_size(&sizes, 2, |rows| {
-            let dir = temp_data_dir(&format!("flush-scale-{rows}"));
-            let mut buf = HistoryBuffer::new(10_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
-            for i in 0..(rows * 2) {
-                buf.states.push_back(make_state(i as f64));
-            }
+        assert_scaling_stable("flush", 3, || {
+            let samples = fastest_per_size(&sizes, sizes.len(), |rows| {
+                let dir = temp_data_dir(&format!("flush-scale-{rows}"));
+                let mut buf = HistoryBuffer::new(10_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+                for i in 0..(rows * 2) {
+                    buf.states.push_back(make_state(i as f64));
+                }
 
-            let start = std::time::Instant::now();
-            buf.flush();
-            let elapsed = start.elapsed();
+                let start = std::time::Instant::now();
+                buf.flush();
+                let elapsed = start.elapsed();
 
-            assert_eq!(buf.segment_count, 1, "one flush must write one segment");
-            cleanup_dir(&dir);
-            elapsed.as_micros()
+                assert_eq!(buf.segment_count, 1, "one flush must write one segment");
+                cleanup_dir(&dir);
+                elapsed.as_micros()
+            });
+            check_cost_per_unit_flat(&samples)
         });
-
-        assert_cost_per_unit_flat("flush", &samples);
     }
 
     #[test]
@@ -1086,23 +1215,24 @@ mod tests {
         // thing varying.
         let sizes = [2_500usize, 5_000, 10_000];
 
-        let samples = fastest_per_size(&sizes, 2, |n| {
-            let dir = temp_data_dir(&format!("load-scale-{n}"));
-            let mut buf = HistoryBuffer::new(n / 10, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
-            for i in 0..n {
-                buf.push(make_state(i as f64));
-            }
+        assert_scaling_stable("load_all", 3, || {
+            let samples = fastest_per_size(&sizes, sizes.len(), |n| {
+                let dir = temp_data_dir(&format!("load-scale-{n}"));
+                let mut buf = HistoryBuffer::new(n / 10, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
+                for i in 0..n {
+                    buf.push(make_state(i as f64));
+                }
 
-            let start = std::time::Instant::now();
-            let all = buf.load_all();
-            let elapsed = start.elapsed();
+                let start = std::time::Instant::now();
+                let all = buf.load_all();
+                let elapsed = start.elapsed();
 
-            assert_eq!(all.len(), n, "load_all must return every pushed state");
-            cleanup_dir(&dir);
-            elapsed.as_micros()
+                assert_eq!(all.len(), n, "load_all must return every pushed state");
+                cleanup_dir(&dir);
+                elapsed.as_micros()
+            });
+            check_cost_per_unit_flat(&samples)
         });
-
-        assert_cost_per_unit_flat("load_all", &samples);
     }
 
     #[test]
