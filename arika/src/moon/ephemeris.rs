@@ -18,6 +18,18 @@ use crate::frame::{self, Vec3};
 ///
 /// Accuracy: ~10" in ecliptic longitude, ~1% in distance (~4,000 km).
 ///
+/// # Frame
+///
+/// The Meeus series is referred to the **mean equinox and equator of date** (its
+/// mean longitude `L' = 218.3164477 + 481267.88123421·T` advances at the
+/// tropical rate, and the ecliptic → equatorial rotation uses the mean obliquity
+/// of date), so the result is rotated back to J2000 with the IAU 1976 precession
+/// ([`crate::earth::fk5`]) before being typed `Vec3<Gcrs>`. Skipping that
+/// rotation would be a secular 0.335° direction error in 2024 — ~2,250 km
+/// transverse on the Moon vector, well above the model's own ~10″ longitude
+/// accuracy. Nutation (≤ 17″) and the J2000→GCRS frame bias (~20 mas) are
+/// neglected.
+///
 /// # Time scale
 ///
 /// Meeus ephemerides take a dynamical time argument (TDB), so this signature
@@ -26,6 +38,19 @@ use crate::frame::{self, Vec3};
 /// UTC-indexed Horizons table, deliberately keeps a `&Epoch<Utc>` interface;
 /// see [`MeeusMoonEphemeris`].)
 pub fn moon_position_eci(epoch: &Epoch<Tdb>) -> Vec3<frame::Gcrs> {
+    let of_date = moon_position_mean_of_date(epoch);
+    crate::frame::Rotation::<frame::MeanEquinoxOfDate, frame::Gcrs>::iau1976_precession(
+        &epoch.to_tt(),
+    )
+    .transform(&of_date)
+}
+
+/// Moon position [km] referred to the mean equator and equinox of date — the
+/// frame the Meeus series is actually expressed in.
+///
+/// Kept separate from [`moon_position_eci`] so the precession rotation to J2000
+/// is a single visible step, and so tests can measure the size of that step.
+pub(crate) fn moon_position_mean_of_date(epoch: &Epoch<Tdb>) -> Vec3<frame::MeanEquinoxOfDate> {
     let t = epoch.centuries_since_j2000();
     let t2 = t * t;
     let t3 = t2 * t;
@@ -425,6 +450,57 @@ impl MoonEphemeris for HorizonsMoonEphemeris {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// IAU general precession in longitude [arcsec per Julian century].
+    /// Independent of arika's own precession code (which uses the IAU 1976
+    /// 5029.0966″/century; the two differ by ~0.3″/century).
+    const GENERAL_PRECESSION_ARCSEC_PER_CENTURY: f64 = 5028.796195;
+
+    #[test]
+    fn moon_of_date_to_j2000_step_is_the_accumulated_precession() {
+        // The series is of-date; the returned vector must be J2000. Precession
+        // is a rotation about the ecliptic pole, so it moves a body at ecliptic
+        // latitude β by ψ·cos β — and the Moon's β stays within ±5.3°. The
+        // expected magnitude comes from the IAU general-precession rate, not
+        // from arika's own precession code, so this pins both that the rotation
+        // happens at all (it used to be omitted entirely: 0.335° = ~2,250 km
+        // transverse in 2024) and that it is the right size.
+        for (y, m, d) in [(2024, 1, 15), (2024, 7, 1), (2050, 3, 20), (1980, 11, 5)] {
+            let epoch = Epoch::from_gregorian(y, m, d, 6, 0, 0.0).to_tdb();
+            let t = epoch.centuries_since_j2000();
+
+            let of_date = moon_position_mean_of_date(&epoch).into_inner();
+            let j2000 = moon_position_eci(&epoch).into_inner();
+
+            // Distance is frame-independent.
+            assert!(
+                (of_date.norm() - j2000.norm()).abs() < 1e-6,
+                "the rotation must not change |r|"
+            );
+
+            // Ecliptic latitude of the of-date vector, using the of-date
+            // obliquity the series itself used.
+            let epsilon = (23.439291 - 0.0130042 * t).to_radians();
+            let (ce, se) = (epsilon.cos(), epsilon.sin());
+            let z_ecl = -se * of_date.y + ce * of_date.z;
+            let beta = (z_ecl / of_date.norm()).asin();
+            assert!(
+                beta.abs() < 6.0_f64.to_radians(),
+                "the Moon's ecliptic latitude should be within ±5.3°, got {}°",
+                beta.to_degrees()
+            );
+
+            let sep = (of_date.normalize().dot(&j2000.normalize()))
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees();
+            let expected = (GENERAL_PRECESSION_ARCSEC_PER_CENTURY * t / 3600.0).abs() * beta.cos();
+            assert!(
+                (sep - expected).abs() < 0.002,
+                "{y}-{m:02}-{d:02}: of-date → J2000 step {sep:.4}°, expected {expected:.4}°"
+            );
+        }
+    }
 
     #[test]
     fn moon_distance_range() {

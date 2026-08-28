@@ -77,7 +77,34 @@ pub fn true_to_mean_anomaly(true_anomaly: f64, eccentricity: f64) -> f64 {
     eccentric_to_mean_anomaly(e_anom, eccentricity)
 }
 
+/// Normalize an angle to `[0, 2π)`.
+fn normalize_angle(x: f64) -> f64 {
+    let w = x % (2.0 * PI);
+    if w < 0.0 { w + 2.0 * PI } else { w }
+}
+
 /// Classical Keplerian orbital elements.
+///
+/// # Degenerate geometries
+///
+/// Two of the six angles are undefined when the orbit is circular and/or
+/// equatorial. [`KeplerianElements::from_state_vector`] resolves this with the
+/// classical singular conventions (Vallado, *Fundamentals of Astrodynamics and
+/// Applications*, §2.4), which fold the undefined angle into the next
+/// well-defined one so that the state is still fully recoverable by
+/// [`KeplerianElements::to_state_vector`]:
+///
+/// | geometry | `raan` | `argument_of_periapsis` | `true_anomaly` |
+/// |---|---|---|---|
+/// | general | Ω | ω | ν |
+/// | circular inclined (`e ≈ 0`) | Ω | 0 | argument of latitude `u = ω + ν` |
+/// | eccentric equatorial (`i ≈ 0` or `π`) | 0 | true longitude of periapsis `ϖ = Ω + ω` | ν |
+/// | circular equatorial | 0 | 0 | true longitude `λ = Ω + ω + ν` |
+///
+/// For the *retrograde* equatorial cases (`i ≈ π`) the stored angle is the
+/// negated in-plane longitude, because `to_state_vector` maps `i = π, Ω = 0`
+/// onto a clockwise sweep of the x-y plane. That keeps the round trip exact for
+/// both `i ≈ 0` and `i ≈ π`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct KeplerianElements {
     /// Semi-major axis [km]
@@ -96,6 +123,9 @@ pub struct KeplerianElements {
 
 impl KeplerianElements {
     /// Convert a Cartesian state vector (position, velocity) to Keplerian elements.
+    ///
+    /// Degenerate geometries (circular and/or equatorial) follow the singular
+    /// conventions documented on [`KeplerianElements`].
     ///
     /// # Arguments
     /// * `pos` - Position vector [km]
@@ -122,54 +152,53 @@ impl KeplerianElements {
         let energy = v * v / 2.0 - mu / r;
         let a = -mu / (2.0 * energy);
 
-        // Inclination: cos(i) = h_z / |h|
-        let i = (h[2] / h_mag).acos();
+        // Inclination: tan(i) = |k x h| / h_z. `atan2` rather than
+        // `acos(h_z/|h|)`, which loses half the mantissa near i = 0 and i = π.
+        let i = f64::atan2(n_mag, h[2]);
+
+        // An equatorial orbit has no node line, so Ω is undefined and the
+        // in-plane angles are referred to the x-axis instead of the node.
+        let equatorial = n_mag <= 1e-15;
+        let reference = if equatorial {
+            Vector3::new(1.0, 0.0, 0.0)
+        } else {
+            n
+        };
+
+        // Signed angle from `from` to `to` in the orbit plane, measured about
+        // the orbit normal and normalized to [0, 2π). Measuring about the
+        // normal is what makes the retrograde-equatorial case come out
+        // clockwise in the x-y plane, matching `to_state_vector` at i = π.
+        let h_hat = h / h_mag;
+        let plane_angle = |from: &Vector3<f64>, to: &Vector3<f64>| {
+            normalize_angle(f64::atan2(from.cross(to).dot(&h_hat), from.dot(to)))
+        };
 
         // Right ascension of ascending node
-        let raan = if n_mag > 1e-15 {
-            let omega = (n[0] / n_mag).acos();
-            if n[1] >= 0.0 { omega } else { 2.0 * PI - omega }
-        } else {
+        let raan = if equatorial {
             0.0
+        } else {
+            normalize_angle(f64::atan2(n[1], n[0]))
         };
 
-        // Argument of periapsis
-        let omega = if n_mag > 1e-15 && e > 1e-15 {
-            let cos_omega = n.dot(&e_vec) / (n_mag * e);
-            let w = cos_omega.clamp(-1.0, 1.0).acos();
-            if e_vec[2] >= 0.0 { w } else { 2.0 * PI - w }
-        } else {
+        // Argument of periapsis. Circular: undefined, folded into the true
+        // anomaly. Equatorial: this is the true longitude of periapsis
+        // ϖ = Ω + ω, since raan is 0 — the true anomaly is measured from the
+        // eccentricity vector, so storing 0 here would lose the periapsis
+        // direction entirely and rotate the orbit by ϖ on the way back.
+        let omega = if e <= 1e-15 {
             0.0
+        } else {
+            plane_angle(&reference, &e_vec)
         };
 
-        // True anomaly
+        // True anomaly, from periapsis when it is defined and from the
+        // reference direction (argument of latitude / true longitude) when the
+        // orbit is circular.
         let nu = if e > 1e-15 {
-            let cos_nu = e_vec.dot(pos) / (e * r);
-            let nu_val = cos_nu.clamp(-1.0, 1.0).acos();
-            if pos.dot(vel) >= 0.0 {
-                nu_val
-            } else {
-                2.0 * PI - nu_val
-            }
+            plane_angle(&e_vec, pos)
         } else {
-            // Circular orbit: measure from ascending node or x-axis
-            if n_mag > 1e-15 {
-                let cos_nu = n.dot(pos) / (n_mag * r);
-                let nu_val = cos_nu.clamp(-1.0, 1.0).acos();
-                if pos[2] >= 0.0 {
-                    nu_val
-                } else {
-                    2.0 * PI - nu_val
-                }
-            } else {
-                // Circular equatorial: measure from x-axis
-                let nu_val = (pos[0] / r).clamp(-1.0, 1.0).acos();
-                if pos[1] >= 0.0 {
-                    nu_val
-                } else {
-                    2.0 * PI - nu_val
-                }
-            }
+            plane_angle(&reference, pos)
         };
 
         KeplerianElements {
@@ -320,6 +349,133 @@ mod tests {
         let vel_err = (vel - vel2).magnitude();
         assert!(pos_err < 1e-6, "position roundtrip error: {pos_err} km");
         assert!(vel_err < 1e-9, "velocity roundtrip error: {vel_err} km/s");
+    }
+
+    /// Build an exactly planar state: `z = v_z = 0`, so `k × h` vanishes bit-exactly
+    /// and `from_state_vector` is forced down the equatorial singular branch.
+    ///
+    /// `periapsis_lon` is the azimuth of the periapsis direction in the x-y plane
+    /// and `sense` is +1 for prograde (counterclockwise) or -1 for retrograde.
+    fn planar_state(
+        a: f64,
+        e: f64,
+        periapsis_lon: f64,
+        nu: f64,
+        sense: f64,
+        mu: f64,
+    ) -> (Vector3<f64>, Vector3<f64>) {
+        let p = a * (1.0 - e * e);
+        let r = p / (1.0 + e * nu.cos());
+        let theta = periapsis_lon + sense * nu;
+        let (st, ct) = (theta.sin(), theta.cos());
+        let r_hat = Vector3::new(ct, st, 0.0);
+        let t_hat = Vector3::new(-st, ct, 0.0);
+        let vf = (mu / p).sqrt();
+        let v_radial = vf * e * nu.sin();
+        let v_transverse = vf * (1.0 + e * nu.cos());
+        (r * r_hat, v_radial * r_hat + sense * v_transverse * t_hat)
+    }
+
+    #[test]
+    fn eccentric_equatorial_keeps_the_periapsis_longitude() {
+        // Regression: the equatorial branch used to zero BOTH raan and the
+        // argument of periapsis while still measuring the true anomaly from the
+        // eccentricity vector, so the periapsis longitude was stored nowhere.
+        // a=10000 km, e=0.2, ϖ=π/2, ν=0 came back rotated by 90°, an 8000·√2 =
+        // 11313.7 km round-trip error.
+        for &sense in &[1.0_f64, -1.0] {
+            for &periapsis_lon in &[0.0, 0.5, PI / 2.0, 2.0, 4.0, 6.0] {
+                for &e in &[0.01, 0.1, 0.2, 0.4] {
+                    for &nu in &[0.0, 1.0, 3.0, 5.0] {
+                        let (pos, vel) =
+                            planar_state(10000.0, e, periapsis_lon, nu, sense, MU_EARTH);
+                        let el = KeplerianElements::from_state_vector(&pos, &vel, MU_EARTH);
+
+                        // The singular branch really is the one under test.
+                        assert_eq!(
+                            el.raan, 0.0,
+                            "equatorial orbits carry raan = 0 by convention"
+                        );
+                        let expected_i = if sense > 0.0 { 0.0 } else { PI };
+                        assert!(
+                            (el.inclination - expected_i).abs() < 1e-12,
+                            "i: expected {expected_i}, got {}",
+                            el.inclination
+                        );
+                        // The stored angle is the (sense-signed) true longitude
+                        // of periapsis, so the direction survives.
+                        let expected_argp = normalize_angle(sense * periapsis_lon);
+                        let d_argp =
+                            normalize_angle(el.argument_of_periapsis - expected_argp + PI) - PI;
+                        assert!(
+                            d_argp.abs() < 1e-9,
+                            "ϖ: expected {expected_argp}, got {} (sense={sense}, e={e}, ν={nu})",
+                            el.argument_of_periapsis
+                        );
+
+                        let (pos2, vel2) = el.to_state_vector(MU_EARTH);
+                        let pos_err = (pos - pos2).magnitude();
+                        let vel_err = (vel - vel2).magnitude();
+                        assert!(
+                            pos_err < 1e-6,
+                            "position roundtrip {pos_err} km (sense={sense}, ϖ={periapsis_lon}, e={e}, ν={nu})"
+                        );
+                        assert!(
+                            vel_err < 1e-9,
+                            "velocity roundtrip {vel_err} km/s (sense={sense}, ϖ={periapsis_lon}, e={e}, ν={nu})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn circular_equatorial_true_longitude_follows_the_sense_of_motion() {
+        // The circular equatorial branch measured the true longitude as the raw
+        // x-axis azimuth, which runs backwards for retrograde motion.
+        for &sense in &[1.0_f64, -1.0] {
+            for &nu in &[0.0, 1.0, 3.0, 5.0] {
+                let (pos, vel) = planar_state(10000.0, 0.0, 0.0, nu, sense, MU_EARTH);
+                let el = KeplerianElements::from_state_vector(&pos, &vel, MU_EARTH);
+                assert!(el.eccentricity < 1e-15);
+                let d = normalize_angle(el.true_anomaly - nu + PI) - PI;
+                assert!(
+                    d.abs() < 1e-9,
+                    "λ: expected {nu}, got {} (sense={sense})",
+                    el.true_anomaly
+                );
+                let (pos2, vel2) = el.to_state_vector(MU_EARTH);
+                assert!((pos - pos2).magnitude() < 1e-6, "sense={sense}, ν={nu}");
+                assert!((vel - vel2).magnitude() < 1e-9, "sense={sense}, ν={nu}");
+            }
+        }
+    }
+
+    #[test]
+    fn equatorial_singularity_is_continuous_in_the_periapsis_longitude() {
+        // Ω and ω are individually undefined at i = 0, but Ω + ω (the true
+        // longitude of periapsis) is not — so the value recovered just off the
+        // singularity must match the value recovered exactly on it.
+        let periapsis_lon = 2.0;
+        let nu = 1.0;
+        let (pos0, vel0) = planar_state(10000.0, 0.2, periapsis_lon, nu, 1.0, MU_EARTH);
+        let el0 = KeplerianElements::from_state_vector(&pos0, &vel0, MU_EARTH);
+
+        // Same orbit tilted by 1e-9 rad about the periapsis direction, which
+        // leaves the periapsis longitude unchanged.
+        let tilt = 1e-9_f64;
+        let axis = Vector3::new(periapsis_lon.cos(), periapsis_lon.sin(), 0.0);
+        let rot = nalgebra::Rotation3::from_axis_angle(&nalgebra::Unit::new_normalize(axis), tilt);
+        let el1 = KeplerianElements::from_state_vector(&(rot * pos0), &(rot * vel0), MU_EARTH);
+
+        let lon0 = normalize_angle(el0.raan + el0.argument_of_periapsis);
+        let lon1 = normalize_angle(el1.raan + el1.argument_of_periapsis);
+        let d = normalize_angle(lon0 - lon1 + PI) - PI;
+        assert!(
+            d.abs() < 1e-6,
+            "Ω+ω discontinuous across i=0: {lon0} (i=0) vs {lon1} (i={tilt})"
+        );
     }
 
     #[test]

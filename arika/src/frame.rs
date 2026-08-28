@@ -16,13 +16,16 @@
 //! - [`SimpleEcef`] — [`SimpleEci`] からの ERA-only Z 回転先。近似的 Earth-fixed
 //! - [`Gcrs`] — Geocentric Celestial Reference System。IAU 2006 CIO chain の
 //!   celestial side。Meeus ephemeris の返り型でもあり、その値は低精度 analytic
-//!   model 由来なので strict な GCRS とは限らない
+//!   model 由来なので strict な GCRS とは限らない (nutation / frame bias 未適用)
 //! - [`Cirs`] — Celestial Intermediate Reference System (CIO chain の中間)
 //! - [`Tirs`] — Terrestrial Intermediate Reference System (polar motion 未適用)
 //! - [`Itrs`] — International Terrestrial Reference System (polar motion 適用済み)。
 //!   geodetic 変換はこの frame に紐づく
 //! - [`Teme`] — True Equator, Mean Equinox。SGP4 / TLE / OMM の平均要素フレーム
 //!   (↔ Gcrs/SimpleEci 回転は IAU-76/FK5 換算で実装済み: [`crate::earth::teme`])
+//! - [`MeanEquinoxOfDate`] — 日付の平均赤道・平均春分点 (MOD)。古典的な解析級数と
+//!   GMST が基準にする equinox。↔ Gcrs 回転は
+//!   [`crate::earth::mean_equinox`]
 //! - [`Rsw`] — Radial / Along-track / Cross-track 軌道ローカル系。
 //!   軸順は標準 RSW 規約 [R̂, Ŝ, Ŵ] (R̂=normalize(r), Ŵ=normalize(r×v), Ŝ=Ŵ×R̂)
 //! - [`Body`] — 宇宙機機体座標系
@@ -30,7 +33,7 @@
 //! # Category trait
 //!
 //! - [`Eci`] — structural category for earth-centered inertial frames.
-//!   実装者: `SimpleEci`, `Gcrs`, `Cirs`, `Teme`
+//!   実装者: `SimpleEci`, `Gcrs`, `Cirs`, `Teme`, `MeanEquinoxOfDate`
 //! - [`Ecef`] — structural category for earth-fixed frames.
 //!   実装者: `SimpleEcef`, `Tirs`, `Itrs`
 //! - [`LocalOrbital`] — structural category for local orbital frames.
@@ -88,6 +91,7 @@ pub enum FrameDescriptor {
     Tirs,
     Itrs,
     Teme,
+    MeanEquinoxOfDate,
     Rsw,
     Body,
 }
@@ -102,6 +106,7 @@ impl FrameDescriptor {
             FrameDescriptor::Tirs => "Tirs",
             FrameDescriptor::Itrs => "Itrs",
             FrameDescriptor::Teme => "Teme",
+            FrameDescriptor::MeanEquinoxOfDate => "MeanEquinoxOfDate",
             FrameDescriptor::Rsw => "Rsw",
             FrameDescriptor::Body => "Body",
         }
@@ -112,7 +117,8 @@ impl FrameDescriptor {
             FrameDescriptor::SimpleEci
             | FrameDescriptor::Gcrs
             | FrameDescriptor::Cirs
-            | FrameDescriptor::Teme => FrameCategory::Eci,
+            | FrameDescriptor::Teme
+            | FrameDescriptor::MeanEquinoxOfDate => FrameCategory::Eci,
             FrameDescriptor::SimpleEcef | FrameDescriptor::Tirs | FrameDescriptor::Itrs => {
                 FrameCategory::Ecef
             }
@@ -198,7 +204,10 @@ impl Ecef for SimpleEcef {}
 /// Geocentric Celestial Reference System. IAU 2006 CIO chain の celestial side。
 ///
 /// Meeus ephemeris (低精度 analytic model) の返り型としても使うため、その値は
-/// 厳密な GCRS とは限らない。GCRS → ITRS の高精度変換は
+/// 厳密な GCRS とは限らない。Meeus 側は of-date の級数を IAU 1976 precession で
+/// J2000 に戻してから返すので precession は入っているが、nutation (≤ 17″)、
+/// J2000→GCRS frame bias (~20 mas)、および model 自身の精度 (~1′) ぶんの残差がある。
+/// GCRS → ITRS の高精度変換は
 /// [`Rotation::<Gcrs, Itrs>::iau2006_full`] を参照。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Gcrs;
@@ -283,6 +292,38 @@ impl Frame for Teme {
     const DESCRIPTOR: FrameDescriptor = FrameDescriptor::Teme;
 }
 impl Eci for Teme {}
+
+/// Mean equator and equinox of date (MOD) — the equinox-based quasi-inertial
+/// frame that drifts with precession. Belongs to the [`Eci`] category.
+///
+/// This is the frame the classical analytic series are actually referred to:
+/// their mean longitudes advance at the *tropical* rate and their
+/// ecliptic → equatorial rotation uses the mean obliquity of date. It is also
+/// the equinox GMST is measured from ([`crate::earth::fk5::gmst1982`]), so a
+/// local hour angle built as `GMST + λ − α` needs `α` to be a right ascension
+/// *in this frame*.
+///
+/// The CIO-based counterpart is `ERA + λ − α`, which
+/// [`Epoch::<Utc>::gmst`](crate::epoch::Epoch::gmst) (a legacy name for the
+/// Earth rotation angle) feeds; there `α` belongs in [`Cirs`]. A [`Gcrs`] right
+/// ascension is not the exact partner either, but it is far closer than one in
+/// this frame: the dominant precession-in-right-ascension term (m ≈ 4612″ per
+/// century) is common to `GMST − ERA` and to `α_MOD − α_GCRS` and cancels,
+/// leaving the declination-dependent `n·sin α·tan δ` part (≤ 0.06° in 2024)
+/// instead of the whole 0.31°.
+///
+/// Differs from [`Gcrs`] by the accumulated precession — 0.335° in 2024, growing
+/// ~1.4°/century — and from the true equator of date by nutation (≤ 17″).
+/// [`crate::earth::mean_equinox`] carries the IAU 1976 rotations to and from
+/// [`Gcrs`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MeanEquinoxOfDate;
+impl sealed::Sealed for MeanEquinoxOfDate {}
+impl Frame for MeanEquinoxOfDate {
+    const NAME: &'static str = "MeanEquinoxOfDate";
+    const DESCRIPTOR: FrameDescriptor = FrameDescriptor::MeanEquinoxOfDate;
+}
+impl Eci for MeanEquinoxOfDate {}
 
 /// Local orbital frame: Radial / Along-track / Cross-track.
 ///

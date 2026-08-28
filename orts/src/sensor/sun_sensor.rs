@@ -238,9 +238,16 @@ mod tests {
         }
     }
 
-    /// Characterization: pinned pre-refactor `SimpleEci` body-frame Sun
-    /// direction, so rotating the (GCRS) Sun ephemeris into a generic frame `F`
-    /// — identity for `SimpleEci` — cannot change it.
+    /// Characterization: pinned `SimpleEci` body-frame Sun direction, so
+    /// rotating the (GCRS) Sun ephemeris into a generic frame `F` — identity for
+    /// `SimpleEci` — cannot change it.
+    ///
+    /// Re-baselined when `arika::sun` started rotating the Meeus series from the
+    /// mean equinox of date back to J2000: the direction moved by 0.3383°, which
+    /// is the J2000→2024 accumulated precession the ephemeris used to leave in.
+    /// The frame generalization this test guards is unaffected — `SimpleEci` is
+    /// still the identity bridge — so the snapshot value is the only thing that
+    /// moved.
     #[test]
     fn simple_eci_direction_snapshot() {
         let mut sensor = SunSensor::for_earth();
@@ -254,7 +261,11 @@ mod tests {
             panic!("expected Fine output");
         };
         let got = direction.expect("sunlit").into_inner().into_inner();
-        let expected = Vector3::new(0.7903661281325338, -0.551312799346672, -0.2671620870882);
+        let expected = Vector3::new(
+            0.7868574856732309,
+            -0.5560253910118033,
+            -0.26775186608158713,
+        );
         assert!(
             (got - expected).magnitude() <= 1e-12 * expected.magnitude().max(1.0),
             "SimpleEci sun direction changed: {got:?}"

@@ -14,8 +14,8 @@ help: the following other types implement trait `Ut1Offset`
    |
   ::: src/earth/eop/table.rs
    |
-   | impl Ut1Offset for EopTable {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `EopTable`
+   | impl<T: core::borrow::Borrow<EopTable>> Ut1Offset for ClampedEop<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ClampedEop<T>`
 note: required by a bound in `cio_chain::<impl Rotation<arika::frame::Gcrs, arika::frame::Itrs>>::iau2006_full_from_utc`
   --> src/earth/iau2006/cio_chain.rs
    |
@@ -41,8 +41,8 @@ help: the following other types implement trait `NutationCorrections`
    |
   ::: src/earth/eop/table.rs
    |
-   | impl NutationCorrections for EopTable {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `EopTable`
+   | impl<T: core::borrow::Borrow<EopTable>> NutationCorrections for ClampedEop<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ClampedEop<T>`
 note: required by a bound in `cio_chain::<impl Rotation<arika::frame::Gcrs, arika::frame::Itrs>>::iau2006_full_from_utc`
   --> src/earth/iau2006/cio_chain.rs
    |
@@ -68,8 +68,8 @@ help: the following other types implement trait `PolarMotion`
    |
   ::: src/earth/eop/table.rs
    |
-   | impl PolarMotion for EopTable {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `EopTable`
+   | impl<T: core::borrow::Borrow<EopTable>> PolarMotion for ClampedEop<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ClampedEop<T>`
 note: required by a bound in `cio_chain::<impl Rotation<arika::frame::Gcrs, arika::frame::Itrs>>::iau2006_full_from_utc`
   --> src/earth/iau2006/cio_chain.rs
    |

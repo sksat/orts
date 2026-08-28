@@ -6,7 +6,7 @@
 //! **Tier structure**:
 //! - Tier 1: Gravity-only (J2, J2+J3+J4) — should agree to cm-level
 //! - Tier 2: Gravity + third-body (Sun, Moon) — ephemeris difference dominates
-//! - Tier 3: Gravity + SRP — Sun direction error ~0.35°
+//! - Tier 3: Gravity + SRP — Sun direction error ~1' (Meeus model accuracy)
 //! - Tier 4: Gravity + HP drag — geodetic altitude differences
 //! - Tier 5: Full force model (HP) — all differences combined
 //! - Tier 6: Gravity + NRLMSISE-00 drag — LST approximation dominates
@@ -15,8 +15,11 @@
 //!
 //! Known difference sources:
 //! - **J2 coefficient**: Orekit EGM96 C̄₂₀ → J2 differs by ~3e-9 (negligible)
-//! - **Sun position**: Meeus analytical vs DE405 (~0.35°)
-//! - **Moon position**: Simplified analytical vs DE405 (~10')
+//! - **Sun position**: Meeus analytical vs DE405 (~1'). This used to read
+//!   ~0.35°, which was the accumulated J2000→of-date precession the Meeus
+//!   series was returning unrotated, mis-attributed to model accuracy; the
+//!   ephemeris now rotates to J2000 and only the model error remains
+//! - **Moon position**: Meeus Ch.47 analytical vs DE405 (~10' / ~1% distance)
 //! - **LST**: Orekit precise solar time vs our UT+lon/15 (~±16 min → 1-5% density)
 
 use arika::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH, R as R_EARTH};
@@ -420,7 +423,7 @@ fn orekit_j2_equatorial_5orbits() {
 }
 
 // Tier 2: Gravity + Third-body
-// Sun: Meeus vs DE405 (~0.35°), Moon: full Meeus Ch.47 vs DE405 (~1% distance).
+// Sun: Meeus vs DE405 (~1'), Moon: full Meeus Ch.47 vs DE405 (~1% distance).
 // These tolerances include BOTH integration error AND ephemeris difference.
 // The ephemeris difference dominates for long-duration/high-altitude scenarios.
 //
@@ -429,25 +432,27 @@ fn orekit_j2_equatorial_5orbits() {
 // (Tier 2a), then testing ephemeris accuracy independently (Tier 2c).
 // See: https://github.com/... (tracking issue)
 //
-// Expected: sub-meter (LEO) to ~250 m (GEO, 3 days).
+// Expected: sub-meter, GEO 3 days included.
 
 #[test]
 fn orekit_j2_sun_moon_sso_10orbits() {
-    run_scenario("j2_sun_moon_sso_10orbits", 0.002); // 2 m (measured: 0.4 m)
+    run_scenario("j2_sun_moon_sso_10orbits", 0.002); // 2 m (measured: 0.55 m)
 }
 
 #[test]
 fn orekit_j2_sun_moon_geo_3days() {
-    // Tolerance widened from 150m to 250m after upgrading Moon ephemeris from
-    // simplified 5-term to full 60-term Meeus (arika::moon). The new model is
-    // more accurate (~1% distance vs ~5%), but the error pattern vs Orekit's
-    // DE405 changed, increasing the trajectory divergence at this epoch.
-    // This does NOT indicate a regression — the integration is correct.
-    run_scenario("j2_sun_moon_geo_3days", 0.250); // 250 m (measured: 218 m)
+    // This scenario is the sharpest in-tree measurement of the Sun/Moon
+    // ephemeris frame: at GEO over 3 days the third-body acceleration dominates
+    // and a direction error shows up directly. It measured 218 m while
+    // `arika::sun` / `arika::moon` returned mean-equinox-of-date vectors typed
+    // GCRS; rotating them back to J2000 with the IAU 1976 precession brought it
+    // to 0.33 m against Orekit's DE405. The tolerance is set just above that, so
+    // dropping the rotation again fails here by 600x rather than passing.
+    run_scenario("j2_sun_moon_geo_3days", 0.001); // 1 m (measured: 0.33 m)
 }
 
 // Tier 3: Gravity + SRP
-// Sun direction error ~0.35° affects SRP vector; shadow timing may differ slightly.
+// Sun direction error ~1' affects SRP vector; shadow timing may differ slightly.
 // Expected: ~1-2 m over 10 SSO orbits.
 
 #[test]
@@ -457,17 +462,24 @@ fn orekit_j2_srp_sso_10orbits() {
 
 // Tier 4: Gravity + HP Drag
 // With geodetic altitude (WGS-84), remaining differences are:
-// - J2 constant (~3e-9), Meeus Sun direction for HP bulge (~0.35°)
+// - J2 constant (~3e-9)
+// - Sun direction for the HP bulge (~1' of Meeus model error). The bulge's local
+//   hour angle is `ERA + λ − α_sun`, so α_sun has to be CIO-based. The J2000
+//   direction `arika::sun` returns now that it rotates the of-date Meeus series
+//   back is close to that — the dominant precession-in-right-ascension term
+//   cancels against `GMST − ERA` — while the of-date direction it used to return
+//   sat 0.31° away in bulge phase. These four scenarios measured 2.7 / 3.6 /
+//   13.4 / 191 m then; see the 30-day case below
 // - Minor geodetic algorithm differences (Bowring vs Orekit's WGS-84)
 
 #[test]
 fn orekit_j2_hp_iss_equatorial_5orbits() {
-    run_scenario("j2_hp_iss_equatorial_5orbits", 0.004); // 4 m (measured: 2.7 m, baseline lock)
+    run_scenario("j2_hp_iss_equatorial_5orbits", 0.004); // 4 m (measured: 1.7 m, baseline lock)
 }
 
 #[test]
 fn orekit_j2_hp_iss_10orbits() {
-    run_scenario("j2_hp_iss_10orbits", 0.005); // 5 m (measured: 3.6 m, baseline lock)
+    run_scenario("j2_hp_iss_10orbits", 0.005); // 5 m (measured: 2.2 m, baseline lock)
 }
 
 // Long-duration HP drag: validates error growth over ISS decay timescales.
@@ -475,12 +487,21 @@ fn orekit_j2_hp_iss_10orbits() {
 
 #[test]
 fn orekit_j2_hp_iss_7days() {
-    run_scenario("j2_hp_iss_7days", 0.017); // 17 m (measured: 13.4 m, baseline lock)
+    run_scenario("j2_hp_iss_7days", 0.017); // 17 m (measured: 10.7 m, baseline lock)
 }
 
 #[test]
 fn orekit_j2_hp_iss_30days() {
-    run_scenario("j2_hp_iss_30days", 0.230); // 230 m (measured: 191 m, baseline lock)
+    // Re-locked from 230 m when the HP bulge's hour angle became frame-consistent
+    // (see the tier notes above). The three shorter HP scenarios improved by
+    // 20-40% (2.7 → 1.7 m, 3.6 → 2.2 m, 13.4 → 10.7 m); this one grew from 191 m
+    // to 336 m. Over 30 days the residual is a secular along-track drift, so it
+    // integrates the remaining differences against Orekit's HP rather than
+    // tracking the bulge phase directly, and the observed net cancellation the
+    // old phase error provided is gone. Which of those remaining differences
+    // dominates is not resolved by these four measurements. 336 m is 5e-5 of the
+    // orbit radius after 30 days of ISS drag.
+    run_scenario("j2_hp_iss_30days", 0.400); // 400 m (measured: 336 m, baseline lock)
 }
 
 // Tier 5: Full force model
@@ -488,7 +509,7 @@ fn orekit_j2_hp_iss_30days() {
 
 #[test]
 fn orekit_full_iss_10orbits() {
-    run_scenario("full_iss_10orbits", 0.006); // 6 m (measured: 4.5 m, baseline lock)
+    run_scenario("full_iss_10orbits", 0.006); // 6 m (measured: 2.1 m, baseline lock)
 }
 
 #[test]
@@ -539,7 +560,7 @@ fn orekit_j2_msise_iss_moderate_30days() {
 
 #[test]
 fn orekit_full_msise_iss_moderate_10orbits() {
-    run_scenario("full_msise_iss_moderate_10orbits", 0.016); // 16 m (measured: 12.8 m, baseline lock)
+    run_scenario("full_msise_iss_moderate_10orbits", 0.016); // 16 m (measured: 11.9 m, baseline lock)
 }
 
 #[test]
@@ -566,5 +587,5 @@ fn orekit_j2_msise_cssi_iss_7days() {
 
 #[test]
 fn orekit_full_msise_cssi_iss_10orbits() {
-    run_scenario("full_msise_cssi_iss_10orbits", 0.016); // 16 m (measured: 13.2 m, baseline lock)
+    run_scenario("full_msise_cssi_iss_10orbits", 0.016); // 16 m (measured: 12.3 m, baseline lock)
 }

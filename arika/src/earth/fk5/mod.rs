@@ -141,6 +141,17 @@ pub(crate) fn precession_matrix(t: f64) -> Matrix3<f64> {
     rot_z(-z) * rot_y(theta) * rot_z(-zeta)
 }
 
+/// Mean equator/equinox of date → J2000 rotation matrix `r_J2000 = Pᵀ · r_MOD`,
+/// the inverse of [`precession_matrix`].
+///
+/// Analytic ephemerides whose angles are referred to the mean equinox of date —
+/// Meeus' Sun and Moon series, whose mean longitudes advance at the *tropical*
+/// rate — need this to land in J2000/GCRS. Nutation is not undone (≤ 17″,
+/// an order of magnitude below those series' own accuracy).
+pub(crate) fn mean_of_date_to_j2000_matrix(t: f64) -> Matrix3<f64> {
+    precession_matrix(t).transpose()
+}
+
 /// IAU 1980 nutation matrix `r_TOD = N · r_MOD` (ERFA `numat`):
 /// `R1(−ε̄−Δε) · R3(−Δψ) · R1(ε̄)`.
 pub(crate) fn nutation_matrix(t: f64) -> Matrix3<f64> {

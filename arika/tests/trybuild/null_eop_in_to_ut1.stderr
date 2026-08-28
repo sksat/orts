@@ -14,8 +14,8 @@ help: the following other types implement trait `Ut1Offset`
    |
   ::: src/earth/eop/table.rs
    |
-   | impl Ut1Offset for EopTable {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^ `EopTable`
+   | impl<T: core::borrow::Borrow<EopTable>> Ut1Offset for ClampedEop<T> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `ClampedEop<T>`
 note: required by a bound in `epoch::convert::<impl arika::epoch::Epoch<Utc, P>>::to_ut1`
   --> src/epoch/convert.rs
    |

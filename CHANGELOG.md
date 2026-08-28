@@ -37,6 +37,12 @@ section is subdivided by package.
   SimpleEci>` returning `ExternalLoads<F>`, like `Model<S, F>` — so effectors
   produce loads already in the host inertial frame. The defaulted `F` keeps
   existing `StateEffector<S>` impls compiling unchanged. ([#148](https://github.com/sksat/orts/pull/148))
+- Sun- and Moon-dependent results move with `arika`'s ephemeris frame fix (SRP,
+  third-body, eclipse geometry, sun sensors, and the Harris-Priester density
+  bulge): the ephemerides return J2000 directions now instead of
+  mean-equinox-of-date ones, a 0.335° change in 2024. Agreement with Orekit
+  improves accordingly — the GEO 3-day third-body oracle goes from 218 m to
+  0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
 - `AttitudeState::q_dot` halves the angular velocity before forming the
@@ -249,11 +255,66 @@ section is subdivided by package.
 - `earth::topocentric` — ground-site look angles: `TopocentricSite<F: Ecef>`
   (from a WGS-84 `Geodetic`, precomputing the local ENU basis) and `LookAngles`
   (azimuth / elevation / slant range), via `look_angles(target)`. ([#112](https://github.com/sksat/orts/pull/112))
+- `frame::MeanEquinoxOfDate` marker — the mean equator and equinox of date (MOD),
+  in the `Eci` category: the frame the classical analytic series are referred to
+  and the equinox GMST is measured from. `earth::mean_equinox` carries the IAU
+  1976 precession between it and `Gcrs`
+  (`Rotation<MeanEquinoxOfDate, Gcrs>::iau1976_precession` and the reverse), so a
+  consumer building a local hour angle `GMST + λ − α` can put its right ascension
+  in the frame GMST belongs to. ([#359](https://github.com/sksat/orts/pull/359))
+- `EopTable::clamped()` / `EopTable::into_clamped()` → `ClampedEop`, an EOP
+  provider that answers out-of-range queries with its nearest endpoint. dUT1 is
+  held through the continuous `UT1 − TAI`, so a leap second past the end of the
+  table moves dUT1 by a second instead of stepping UT1. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Changed
 - `Epoch::from_iso8601` also accepts the ordinal / day-of-year form
   (`YYYY-DDDTHH:MM:SS`, used by CCSDS OMM), and the trailing `Z` is now optional.
   A strict relaxation — previously-accepted inputs still parse. ([#87](https://github.com/sksat/orts/pull/87))
+- **BREAKING**: `EopTable` no longer implements the EOP capability traits
+  (`Ut1Offset`, `PolarMotion`, `NutationCorrections`, `LengthOfDay`). Those traits
+  are infallible, and a table covering a finite MJD span has no correct infallible
+  answer outside it — it used to `.expect()`, turning an ordinary out-of-range
+  epoch into a process abort from inside `Epoch::to_ut1` and the IAU 2006 full
+  chain. Pass `table.clamped()` (borrowing) or `table.into_clamped()` (owning) to
+  name the out-of-range policy, or use the `*_checked` accessors to get
+  `EopLookupError::OutOfRange`. ([#359](https://github.com/sksat/orts/pull/359))
+- `KeplerianElements::from_state_vector` now states its degenerate-geometry
+  conventions on the type (a table of what `raan` /
+  `argument_of_periapsis` / `true_anomaly` hold for circular, equatorial and
+  circular-equatorial orbits), and computes every in-plane angle with one
+  `atan2`-based helper measured about the orbit normal — recovering the half
+  mantissa the previous `acos` + quadrant tests lost near ν = 0 and i = 0.
+  Non-degenerate orbits are unchanged. ([#359](https://github.com/sksat/orts/pull/359))
+
+#### Fixed
+- `KeplerianElements::from_state_vector` lost the periapsis direction of an
+  eccentric equatorial orbit: it zeroed both the RAAN and the argument of
+  periapsis while still measuring the true anomaly from the eccentricity vector,
+  so the in-plane periapsis longitude was stored nowhere. a = 10,000 km, e = 0.2,
+  i = 0, ϖ = π/2 came back rotated 90°, an 11,313.7 km round-trip position error.
+  The equatorial branch now stores the true longitude of periapsis ϖ = Ω + ω
+  (negated for retrograde, matching `to_state_vector` at i = π). ([#359](https://github.com/sksat/orts/pull/359))
+- The Meeus Sun and Moon ephemerides returned mean-equinox-of-date vectors typed
+  `Vec3<Gcrs>`. Their mean longitudes advance at the tropical rate and their
+  ecliptic → equatorial rotation uses the mean obliquity of date, so the result
+  carried the whole precession accumulated since J2000: 0.335° in 2024, growing
+  ~1.4°/century — ~2,250 km transverse on the Moon vector, an order of magnitude
+  above the series' own ~1′ accuracy. They now rotate back to J2000 with the IAU
+  1976 precession (nutation, ≤ 17″, and the J2000→GCRS frame bias, ~20 mas, stay
+  out). This moves Sun/Moon-dependent results — SRP, third-body, eclipse, sun
+  sensors — by that angle. The 0.35° figure previously documented as Meeus model
+  accuracy was this rotation, not model error. ([#359](https://github.com/sksat/orts/pull/359))
+- `sun::sun_direction_from_body`'s planet branch rotated the Standish
+  heliocentric elements — referred to the J2000 mean ecliptic — into equatorial
+  coordinates with the obliquity *of date*, leaving 11″ of frame error in 2024 and
+  35″ by 2075. It now uses the fixed J2000 obliquity. ([#359](https://github.com/sksat/orts/pull/359))
+- `EopTable::dut1_checked` interpolated dUT1 straight through a leap second,
+  smearing half of the 1 s step over the preceding day: the IERS rows bracketing
+  2017-01-01 (−0.5928 s / +0.4068 s) gave −0.093 s at the midpoint instead of
+  ≈ −0.593 s, a 0.5 s UT1 error — 3.7e-5 rad of ERA, ~230 m at the equator. It now
+  interpolates the continuous `UT1 − TAI = dUT1 − (TAI − UTC)` and adds the query
+  instant's own `TAI − UTC` back. ([#359](https://github.com/sksat/orts/pull/359))
 
 ### `utsuroi` (Rust, crates.io)
 

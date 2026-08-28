@@ -24,12 +24,26 @@
 //! のは provider-free な API (例: `Epoch<Utc>::to_ut1_naive`、`Epoch<Tai>::to_tt`) のみ
 //! で、EOP trait bound を要求する全ての API では compile error を誘発する。
 //!
+//! # 有限区間の provider と out-of-range policy
+//!
+//! 上記 4 trait は infallible (`-> f64`) である。これは高精度 API を trait bound で
+//! gate するための設計だが、その代償として **有限区間しか持たないデータ源は
+//! これらの trait を直接実装できない** ことになる。[`EopTable`] は finals2000A の
+//! 覆う MJD 区間しか答えを持たないので、trait を実装せず、fallible な
+//! `*_checked` accessor と、policy を明示した adapter
+//! ([`EopTable::clamped`]) だけを提供する。範囲外 epoch は
+//! `EopLookupError::OutOfRange` として型に現れ、runtime panic にはならない。
+//!
 //! # Leap second は別体系
 //!
 //! Leap second table は arika 内の compiled-in データ
 //! ([`crate::epoch`] の `LEAP_SECONDS`) であり、EOP provider 経由では取得しない。
 //! 更新 cadence (leap second = 6 ヶ月ごとの IERS Bulletin C、EOP = ほぼ毎日の
 //! IERS Bulletin A/B) も意味論も異なるため、完全に別扱い。
+//!
+//! ただし dUT1 の **補間** は leap second table を必要とする: dUT1 は leap second を
+//! 跨ぐと 1 s 跳ぶ不連続量で、連続量は `UT1 − TAI = dUT1 − (TAI − UTC)` の方である。
+//! [`EopTable::dut1_checked`] はこの連続量を補間する。
 
 // EOP parameter traits
 
@@ -199,7 +213,7 @@ pub use error::{EopLookupError, EopParseError};
 #[cfg(feature = "alloc")]
 pub use finals2000a::Finals2000A;
 #[cfg(feature = "alloc")]
-pub use table::EopTable;
+pub use table::{ClampedEop, EopTable};
 
 #[cfg(test)]
 mod tests {
