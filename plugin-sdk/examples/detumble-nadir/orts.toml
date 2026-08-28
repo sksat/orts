@@ -1,0 +1,59 @@
+body = "earth"
+dt = 0.1
+output_interval = 10.0
+duration = 8000.0
+epoch = "2024-01-01T00:00:00Z"
+
+# Detumble → nadir pointing のモード遷移デモ。
+#
+# - Detumble: B-dot 則で MTQ を駆動し、|ω| < omega_threshold まで落とす
+#   (初期 |ω| = 0.015 rad/s から ~4,100 s)。
+# - Nadir: LVLH 目標姿勢を軌道状態から作り、RW で追従する。MTQ には
+#   明示的にゼロを指令する (WIT の `none` は「前回値を ZOH 保持」なので、
+#   detumble 最後の磁気モーメントが残らないようにする)。
+#
+# 収束後は body-Z が nadir を向き、body は LVLH と一緒に軌道角速度
+# n = √(μ/a³) ≈ 1.1e-3 rad/s で回り続ける。
+#
+# 実行:
+#   cd plugin-sdk/examples && cargo +1.91.0 component build --release
+#   cd detumble-nadir && orts run --config orts.toml --format csv --output out.csv
+
+[[satellites]]
+id = "detumble-nadir-demo"
+sensors = ["magnetometer", "gyroscope", "star_tracker"]
+
+[satellites.orbit]
+type = "circular"
+altitude = 500
+inclination = 51.6
+
+[satellites.attitude]
+inertia_diag = [1, 1, 1]
+mass = 50
+initial_quaternion = [1, 0, 0, 0]
+initial_angular_velocity = [0.0087, 0.0087, -0.0087]
+
+[satellites.controller]
+type = "wasm"
+path = "../target/wasm32-wasip1/release/orts_example_plugin_detumble_nadir.wasm"
+
+[satellites.controller.config]
+sample_period = 1.0
+detumble_gain = 1e5
+max_moment = 10.0
+omega_threshold = 0.01
+# inertia_diag = 1 kg·m² に対する PD ゲイン: ω_n = √(kp/I) = 0.05 rad/s、
+# ζ = kd / (2√(kp·I)) = 1.0 (臨界減衰)。要求トルクは max_torque 以下に収まる。
+nadir_kp = 0.0025
+nadir_kd = 0.1
+
+[satellites.magnetorquers]
+type = "three_axis"
+max_moment = 10.0
+
+[satellites.reaction_wheels]
+type = "three_axis"
+inertia = 0.05
+max_momentum = 10.0
+max_torque = 0.1

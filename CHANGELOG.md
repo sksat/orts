@@ -270,6 +270,33 @@ section is subdivided by package.
   guests using `orts_plugin!` are unaffected; hand-written `impl Guest` guests
   must regenerate bindings and link the two new host imports. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
+#### Fixed
+- `detumble-nadir`'s Nadir mode points at nadir. It read the star tracker's
+  body→inertial attitude as the error quaternion, so its target was the inertial
+  identity attitude with zero rate — it never read `input.spacecraft.orbit`, and
+  computed neither the LVLH target nor the orbital rate (~1.1e-3 rad/s in LEO).
+  Given a spacecraft already holding nadir it commanded 1.0 N·m of wheel torque
+  while `current_mode()` reported "nadir". ([#367](https://github.com/sksat/orts/pull/367))
+- A tick that cannot build a command now zeroes the actuator its mode drives.
+  The WIT `command` contract reads `None` as "no command — hold the previous
+  value", not zero, so the last detumble magnetic moment stayed energised through
+  the whole nadir phase, and a missing sensor reading left a wheel torque command
+  in place, accelerating the wheel toward saturation.
+  ([#367](https://github.com/sksat/orts/pull/367))
+- `transfer-burn-with-tcm` and `constellation-phasing` circularize at apogee. The
+  transfer ellipse's half period runs from *perigee*, but both examples started
+  that timer when the finite first burn *ended*, so they lit up as far past
+  apogee as the burn's arc. At the bundled 5000 N / 500 kg the miss is 1.66°; the
+  lower the thrust, the wider the arc and the larger the miss, without bound.
+  Apogee is now detected from the sign change of the radial velocity `r·v`, with
+  the timer kept as a watchdog. ([#367](https://github.com/sksat/orts/pull/367))
+- The bundled configs, bench scripts and READMEs of both examples pointed at
+  `target/wasm32-wasip2/`, where nothing is built: the host loads a component,
+  and `cargo component build` writes those under `wasm32-wasip1`. Following the
+  documented steps could not find the plugin. `detumble-nadir` had no config at
+  all and had never been run end to end; it has one now.
+  ([#367](https://github.com/sksat/orts/pull/367))
+
 ### `arika` (Rust, crates.io)
 
 #### Added

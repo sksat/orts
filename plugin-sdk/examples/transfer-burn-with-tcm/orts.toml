@@ -36,7 +36,7 @@ initial_angular_velocity = [0.0, 0.0, 0.0]
 
 [satellites.controller]
 type = "wasm"
-path = "../target/wasm32-wasip2/release/orts_example_plugin_transfer_burn_with_tcm.wasm"
+path = "../target/wasm32-wasip1/release/orts_example_plugin_transfer_burn_with_tcm.wasm"
 
 [satellites.controller.config]
 target_altitude_km = 2000.0

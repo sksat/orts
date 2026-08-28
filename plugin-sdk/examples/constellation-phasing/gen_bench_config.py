@@ -25,7 +25,7 @@ OUTPUT_INTERVAL = 100.0  # sparse to limit CSV-size scaling with N
 _SCRIPT_DIR = Path(__file__).resolve().parent
 WASM_PATH = str(
     _SCRIPT_DIR.parent
-    / "target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm"
+    / "target/wasm32-wasip1/release/orts_example_plugin_constellation_phasing.wasm"
 )
 
 

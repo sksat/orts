@@ -79,7 +79,7 @@ stateDiagram-v2
     [*] --> FirstBurn : raise_delay_s = 0
     Parked --> FirstBurn : t ≥ raise_delay_s
     FirstBurn --> Coast : SMA ≥ transfer_SMA
-    Coast --> SecondBurn : elapsed ≥ T_transfer / 2
+    Coast --> SecondBurn : r·v が上昇 → 非上昇 (apogee)
     SecondBurn --> Trim : SMA ≥ target_r
     Trim --> Trim : SMA ≥ target_r − deadband
     Trim --> Trim : SMA < target_r − deadband<br>(throttle = 1, TCM)
@@ -95,8 +95,8 @@ stateDiagram-v2
 
 ```bash
 cd plugin-sdk/examples/constellation-phasing
-cargo build --target wasm32-wasip2 --release
-# -> ../target/wasm32-wasip2/release/orts_example_plugin_constellation_phasing.wasm
+cargo +1.91.0 component build --release
+# -> ../target/wasm32-wasip1/release/orts_example_plugin_constellation_phasing.wasm
 ```
 
 以下のコマンド例は `orts` CLI が PATH に入っている前提。
