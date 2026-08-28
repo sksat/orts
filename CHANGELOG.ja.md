@@ -496,6 +496,18 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   origin に対して絶対化する。DuckDB が worker を `blob:` URL から生成するため、
   root-relative パスでは解決できないことへの対処。([#171](https://github.com/sksat/orts/pull/171))
 
+### `rrd-wasm` (Rust, crates.io)
+
+#### Fixed
+- scalar 列を、列内の値の位置ではなく recording 自身の時刻 index で結合するように
+  なった。scalar の各成分は独立した entity path (`<base>/x`, `<base>/y`, …) に載り、
+  両者が一致するのは全列が全 step で値を持つ間だけで、一部の step にしか出てこない
+  成分は後の値が前の行にずれ込んでいた。`y` が t=10 にだけ logging されている場合、
+  t=0 の行にその値が載り、t=10 の行は `y = 0.0` になる。行を出すのは position 3 成分
+  (recording が velocity 列を持つ場合は velocity 3 成分も) がその時刻に揃ったときで、
+  揃わない行はゼロ埋めせず落とす。`orts` が書く recording は影響を受けない (writer が
+  全列を毎 step logging するため)。([#366](https://github.com/sksat/orts/pull/366))
+
 ### Docs
 
 #### Added

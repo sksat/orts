@@ -551,6 +551,20 @@ section is subdivided by package.
   worker origin inside `initDuckDB`, because DuckDB instantiates its worker from a
   `blob:` URL against which a root-relative path cannot resolve. ([#171](https://github.com/sksat/orts/pull/171))
 
+### `rrd-wasm` (Rust, crates.io)
+
+#### Fixed
+- Scalar columns are joined on the recording's own time index rather than on a
+  value's position within its column. Every scalar field lives on its own entity
+  path (`<base>/x`, `<base>/y`, …), and the two agree only while every column
+  carries a value at every step: a component logged at only some of them shifted
+  its later values onto earlier rows. With `y` logged at t=10 alone, the t=0 row
+  carried that value and the t=10 row read `y = 0.0`. A row is emitted only when
+  the whole position triple — and the velocity triple, where the recording has
+  one — is present at that time; an incomplete row is dropped rather than padded
+  with zeros. Recordings `orts` writes are unaffected: its writer logs every
+  column at every step. ([#366](https://github.com/sksat/orts/pull/366))
+
 ### Docs
 
 #### Added

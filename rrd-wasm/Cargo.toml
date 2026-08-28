@@ -35,6 +35,13 @@ wasm-bindgen = { version = "0.2", optional = true }
 wasm = ["wasm-bindgen", "serde-wasm-bindgen"]
 
 # Note: dev-dependencies do NOT affect wasm-pack builds (only used for `cargo test`)
-# orts is needed for generating test fixtures via the recording API
-# [dev-dependencies]
-# orts = { path = "../orts" }
+# `re_sdk` writes the .rrd files the decoder tests read back, including the
+# ragged recordings (a component logged at only some time steps) that no
+# committed fixture can express. It is the same writer `orts` uses, and it
+# brings `re_log_encoding`'s `encoder` feature that `save()` needs. `orts`
+# itself is deliberately not a dev-dependency here: the decoder must stay
+# testable against the RRD format, not against one producer's conventions.
+[dev-dependencies]
+re_sdk = "0.33"
+# A directory of its own per written .rrd, removed when the test returns.
+tempfile = "3"
