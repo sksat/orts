@@ -570,11 +570,18 @@ impl AttitudeConfig {
                 self.inertia_diag, self.inertia_off_diag
             ));
         }
-        // No mass distribution can violate `I1 + I2 >= I3`, so a tensor that
-        // does integrates attitude motion belonging to no spacecraft. Equality
-        // is the flat-plate (lamina) limit — attainable and well-posed — and the
-        // relative slack keeps a config that states it exactly from being
-        // rejected by the eigenvalue solver's last bits.
+        // No mass distribution can violate `I1 + I2 >= I3`: in principal axes
+        // `∫z² dm = (I1 + I2 − I3)/2`, so a tensor that violates it needs
+        // negative mass. Equality is the flat-plate (lamina) limit, attainable
+        // and well-posed, and a config on the physical side of the boundary is
+        // accepted however close it sits.
+        //
+        // The slack is relative because the moments carry kg·m² and an absolute
+        // tolerance would mean different things at different scales. `1e-9` is
+        // far looser than the eigenvalue solver needs — a few hundred
+        // `f64::EPSILON` would cover its rounding — and is set for hand-entered
+        // and rounded engineering figures, which can land just outside the
+        // boundary they were meant to state.
         const TRIANGLE_SLACK: f64 = 1e-9;
         if i1 + i2 < i3 * (1.0 - TRIANGLE_SLACK) {
             return Err(format!(
