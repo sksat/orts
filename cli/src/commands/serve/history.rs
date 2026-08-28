@@ -605,9 +605,7 @@ mod tests {
             buf.push(make_state_for(sat, i as f64));
         }
 
-        let start = std::time::Instant::now();
         let ov = buf.overview();
-        let elapsed = start.elapsed();
 
         // Size bound: at most num_entities × cap points.
         assert!(
@@ -667,12 +665,15 @@ mod tests {
                 elapsed.as_micros()
             });
             // Looser than SCALING_BAR, because this cost legitimately grows a
-            // little with entity count: `overview()` flattens one sorted run per
-            // entity and merges them, so the sort carries a log(entities) factor.
-            // Measured on an idle machine across this 4x range: 173.0 / 181.1 /
-            // 251.8 us per entity, a 1.46x rise. Under 16-way CPU load the same
-            // ratio reached 2.0-2.15x, which is why 2.0 is too tight. Quadratic
-            // work would show 4x or more here and still fail.
+            // little with entity count. `overview()` concatenates every entity's
+            // buffer into one Vec and sorts that whole vector by `t`, so adding
+            // entities adds both length and interleaving.
+            //
+            // Measured rather than derived: on an idle machine across this 4x
+            // range the cost is 173.0 / 181.1 / 251.8 us per entity, a 1.46x
+            // rise, and under 16-way CPU load the same ratio reached 2.0-2.15x.
+            // A 2.0 bar sits inside that. Quadratic work would show 4x or more
+            // and still fail.
             check_cost_per_unit_flat(&samples, 3.0)
         });
     }
@@ -1151,6 +1152,130 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    // The gates above are only as good as these two functions, and the timing
+    // tests exercise whichever branch the machine happens to produce. These feed
+    // them fixed samples so a regression in the logic itself cannot pass
+    // unnoticed.
+
+    #[test]
+    fn cost_per_unit_check_rejects_a_rise_at_any_size() {
+        // Flat cost per unit: 1us per unit at every size.
+        assert!(
+            check_cost_per_unit_flat(&[(100, 100), (200, 200), (400, 400)], 2.0).is_ok(),
+            "a flat series must pass"
+        );
+
+        // A spike in the middle. This is the case an endpoint comparison misses,
+        // since the first and last samples are identical.
+        let err = check_cost_per_unit_flat(&[(100, 100), (200, 1000), (400, 400)], 2.0)
+            .expect_err("a 5x spike in the middle must fail");
+        assert!(
+            err.contains("n=200"),
+            "the message must name the size: {err}"
+        );
+
+        // A rise only at the largest size.
+        assert!(
+            check_cost_per_unit_flat(&[(100, 100), (200, 200), (400, 1600)], 2.0).is_err(),
+            "a 4x rise at the largest size must fail"
+        );
+
+        // Falling cost per unit is what amortising a fixed cost looks like, and
+        // must pass however far it falls.
+        assert!(
+            check_cost_per_unit_flat(&[(100, 1000), (200, 800), (400, 400)], 2.0).is_ok(),
+            "a decreasing series must pass"
+        );
+
+        // Right at the bar, and just past it.
+        assert!(
+            check_cost_per_unit_flat(&[(100, 100), (200, 400)], 2.0).is_ok(),
+            "exactly 2.0x must pass at a 2.0 bar"
+        );
+        assert!(
+            check_cost_per_unit_flat(&[(100, 100), (200, 420)], 2.0).is_err(),
+            "2.1x must fail at a 2.0 bar"
+        );
+    }
+
+    #[test]
+    fn raw_time_check_rejects_growth_in_either_direction() {
+        // Constant work: the input grows 8x and the time does not.
+        assert!(
+            check_raw_time_flat(&[(100, 500), (200, 510), (800, 520)], 3.0).is_ok(),
+            "flat raw time must pass"
+        );
+
+        // The O(n) regression this guards against.
+        let err = check_raw_time_flat(&[(100, 500), (200, 1000), (800, 4000)], 3.0)
+            .expect_err("8x growth must fail");
+        assert!(
+            err.contains("n=800"),
+            "the message must carry the samples: {err}"
+        );
+
+        // Unlike the per-unit check, this one is a spread: a dip is as
+        // interesting as a rise, since either means the cost tracks the input.
+        assert!(
+            check_raw_time_flat(&[(100, 4000), (200, 1000), (800, 500)], 3.0).is_err(),
+            "an 8x fall must fail too"
+        );
+    }
+
+    #[test]
+    fn scaling_retry_needs_every_attempt_to_trip() {
+        // Trips once, then passes: the machine was busy, not the code.
+        let mut calls = 0;
+        assert_scaling_stable("transient", 3, || {
+            calls += 1;
+            if calls == 1 {
+                Err("first attempt".to_string())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(calls, 2, "must stop as soon as an attempt passes");
+
+        // Passes first time: no repetition at all.
+        let mut calls = 0;
+        assert_scaling_stable("clean", 3, || {
+            calls += 1;
+            Ok(())
+        });
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "all 3 attempts tripped the bar")]
+    fn scaling_retry_fails_when_every_attempt_trips() {
+        assert_scaling_stable("persistent", 3, || Err("every time".to_string()));
+    }
+
+    #[test]
+    fn typical_per_size_rotates_and_takes_the_median() {
+        // Record the order the sizes are measured in, and hand back a value that
+        // identifies which call it was, so the median is checkable.
+        let mut order = Vec::new();
+        let mut nth = 0u128;
+        let samples = typical_per_size(&[10usize, 20, 30], 3, |n| {
+            order.push(n);
+            nth += 1;
+            // size 20's three calls return 5, 1, 3 -> median 3
+            match n {
+                20 => [5u128, 1, 3][(order.iter().filter(|&&s| s == 20).count()) - 1],
+                _ => nth,
+            }
+        });
+
+        assert_eq!(
+            order,
+            vec![10, 20, 30, 20, 30, 10, 30, 10, 20],
+            "each size must occupy each position exactly once"
+        );
+        let mid = samples.iter().find(|(n, _)| *n == 20).expect("size 20");
+        assert_eq!(mid.1, 3, "the median of 5, 1, 3 is 3");
     }
 
     #[test]
