@@ -1091,10 +1091,10 @@ mod tests {
     ///
     /// This is what separates the two things a timing gate can see. Work that
     /// became super-linear trips the bar every time; a runner that stalled for a
-    /// moment trips it once. Rotation and a per-size minimum reduce the second
-    /// without removing it — measured under 16-way saturation, one size came out
-    /// at 340us/unit while its neighbours sat at 140 and 119, which is noise
-    /// wearing the shape of a regression.
+    /// moment trips it once. Rotating the order and taking a median per size
+    /// reduce the second without removing it — measured under 16-way saturation,
+    /// one size came out at 340us/unit while its neighbours sat at 140 and 119,
+    /// which is noise wearing the shape of a regression.
     ///
     /// Each attempt is reported as it happens, so a genuine regression leaves
     /// the full trail in the log rather than only its last measurement.
