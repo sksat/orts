@@ -545,7 +545,7 @@ mod tests {
         let pushes = [5_000usize, 10_000, 20_000];
 
         assert_scaling_stable("overview vs segments", 3, || {
-            let samples = fastest_per_size(&pushes, pushes.len(), |n| {
+            let samples = typical_per_size(&pushes, pushes.len(), |n| {
                 let dir = temp_data_dir(&format!("overview-perf-{n}"));
                 let mut buf = HistoryBuffer::new(1_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
                 for i in 0..n {
@@ -638,7 +638,7 @@ mod tests {
         // count varies.
         let widths = [5usize, 10, 20];
         assert_scaling_stable("overview vs entities", 3, || {
-            let samples = fastest_per_size(&widths, widths.len(), |w| {
+            let samples = typical_per_size(&widths, widths.len(), |w| {
                 let dir = temp_data_dir(&format!("overview-width-{w}"));
                 let pushes = w * 2_000;
                 // Capacity above the push count so nothing flushes: this check is
@@ -666,7 +666,14 @@ mod tests {
                 cleanup_dir(&dir);
                 elapsed.as_micros()
             });
-            check_cost_per_unit_flat(&samples)
+            // Looser than SCALING_BAR, because this cost legitimately grows a
+            // little with entity count: `overview()` flattens one sorted run per
+            // entity and merges them, so the sort carries a log(entities) factor.
+            // Measured on an idle machine across this 4x range: 173.0 / 181.1 /
+            // 251.8 us per entity, a 1.46x rise. Under 16-way CPU load the same
+            // ratio reached 2.0-2.15x, which is why 2.0 is too tight. Quadratic
+            // work would show 4x or more here and still fail.
+            check_cost_per_unit_flat(&samples, 3.0)
         });
     }
 
@@ -973,43 +980,48 @@ mod tests {
         assert_eq!(ds.len(), 5);
     }
 
-    /// Fastest measurement per size, in microseconds.
+    /// Typical measurement per size, in microseconds.
     ///
     /// `measure` does its own setup for the size it is handed and returns only
     /// the timed part, so growing inputs do not charge their construction to
     /// the measurement.
     ///
-    /// Every repetition covers every size, and the starting point rotates
-    /// between repetitions, so `reps` should equal `sizes.len()` for each size
-    /// to occupy each position exactly once. That ordering is the point: running all
-    /// repetitions of the smallest input before starting the largest would tie
-    /// time order to input size, so a runner that slows down partway through —
-    /// load arriving, thermal throttling — would look exactly like cost
-    /// climbing with size. Taking the minimum per size cannot undo that, since
-    /// the drift covers the whole window that size was measured in. With
-    /// rotation each size is measured in each position, so drift cannot
-    /// systematically favour one of them.
+    /// Two things keep measurement order from masquerading as scale.
     ///
-    /// The minimum rather than the mean or the median: scheduling noise on a
-    /// shared runner only ever adds time, so the fastest sample is the closest
-    /// available estimate of the cost itself.
-    fn fastest_per_size(
+    /// Every repetition covers every size and the starting point rotates, so
+    /// with `reps == sizes.len()` each size occupies each position exactly once
+    /// — size 0 lands in positions 0, 2, 1 over three repetitions, and the
+    /// others likewise. Without that, running every repetition of the smallest
+    /// input before starting the largest would tie time order to input size,
+    /// and a runner that slows down partway through would look exactly like
+    /// cost climbing with size.
+    ///
+    /// The samples are then reduced by their median rather than their minimum.
+    /// The minimum looks attractive — scheduling noise only ever adds time —
+    /// but it undoes the balance the rotation just bought: under a monotonic
+    /// slowdown the fastest sample for every size is its first occurrence, and
+    /// the first repetition runs the sizes in ascending order, so the minima
+    /// come back ordered by size again. The median draws on the whole balanced
+    /// set and still discards a single spike.
+    fn typical_per_size(
         sizes: &[usize],
         reps: usize,
         mut measure: impl FnMut(usize) -> u128,
     ) -> Vec<(usize, u128)> {
-        let mut best: Vec<Option<u128>> = vec![None; sizes.len()];
+        let mut samples: Vec<Vec<u128>> = vec![Vec::with_capacity(reps); sizes.len()];
         for rep in 0..reps {
             for offset in 0..sizes.len() {
                 let i = (offset + rep) % sizes.len();
-                let us = measure(sizes[i]);
-                best[i] = Some(best[i].map_or(us, |b: u128| b.min(us)));
+                samples[i].push(measure(sizes[i]));
             }
         }
         sizes
             .iter()
             .copied()
-            .zip(best.into_iter().map(|b| b.expect("reps > 0")))
+            .zip(samples.into_iter().map(|mut s| {
+                s.sort_unstable();
+                s[s.len() / 2]
+            }))
             .collect()
     }
 
@@ -1034,7 +1046,7 @@ mod tests {
     /// The blind spot is a constant-factor regression — ten times slower per
     /// unit, still linear, still passes. Catching that needs a stable machine
     /// and a history to compare against rather than a single CI run.
-    fn check_cost_per_unit_flat(samples: &[(usize, u128)]) -> Result<(), String> {
+    fn check_cost_per_unit_flat(samples: &[(usize, u128)], bar: f64) -> Result<(), String> {
         let per_unit: Vec<f64> = samples
             .iter()
             .map(|(n, us)| *us as f64 / *n as f64)
@@ -1060,10 +1072,10 @@ mod tests {
         // it; comparing only upward movement passes it and still catches 1, 5, 1.
         let mut best_so_far = f64::INFINITY;
         for (i, &cost) in per_unit.iter().enumerate() {
-            if cost / best_so_far > SCALING_BAR {
+            if cost / best_so_far > bar {
                 return Err(format!(
                     "cost per unit rose {:.2}x at n={} against the cheapest smaller \
-                     input (bar {SCALING_BAR:.1}x). Samples — {}",
+                     input (bar {bar:.1}x). Samples — {}",
                     cost / best_so_far,
                     samples[i].0,
                     detail.join(", ")
@@ -1161,7 +1173,7 @@ mod tests {
         // measured across an 8x range, and an injected full-input scan came out
         // at 5.88x, so 3.0x sits clear of both.
         assert_scaling_stable("downsample", 3, || {
-            let samples = fastest_per_size(&sizes, sizes.len(), |n| {
+            let samples = typical_per_size(&sizes, sizes.len(), |n| {
                 let states = &inputs[sizes.iter().position(|&s| s == n).expect("known size")];
                 let start = std::time::Instant::now();
                 let ds = HistoryBuffer::downsample(states, 1000);
@@ -1180,7 +1192,7 @@ mod tests {
         let sizes = [625usize, 1250, 2500];
 
         assert_scaling_stable("flush", 3, || {
-            let samples = fastest_per_size(&sizes, sizes.len(), |rows| {
+            let samples = typical_per_size(&sizes, sizes.len(), |rows| {
                 let dir = temp_data_dir(&format!("flush-scale-{rows}"));
                 let mut buf = HistoryBuffer::new(10_000, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
                 for i in 0..(rows * 2) {
@@ -1195,7 +1207,7 @@ mod tests {
                 cleanup_dir(&dir);
                 elapsed.as_micros()
             });
-            check_cost_per_unit_flat(&samples)
+            check_cost_per_unit_flat(&samples, SCALING_BAR)
         });
     }
 
@@ -1216,7 +1228,7 @@ mod tests {
         let sizes = [2_500usize, 5_000, 10_000];
 
         assert_scaling_stable("load_all", 3, || {
-            let samples = fastest_per_size(&sizes, sizes.len(), |n| {
+            let samples = typical_per_size(&sizes, sizes.len(), |n| {
                 let dir = temp_data_dir(&format!("load-scale-{n}"));
                 let mut buf = HistoryBuffer::new(n / 10, dir.clone(), TEST_MU, TEST_BODY_RADIUS);
                 for i in 0..n {
@@ -1231,7 +1243,7 @@ mod tests {
                 cleanup_dir(&dir);
                 elapsed.as_micros()
             });
-            check_cost_per_unit_flat(&samples)
+            check_cost_per_unit_flat(&samples, SCALING_BAR)
         });
     }
 
