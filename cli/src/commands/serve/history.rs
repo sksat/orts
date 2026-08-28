@@ -672,8 +672,10 @@ mod tests {
             // Measured rather than derived: on an idle machine across this 4x
             // range the cost is 173.0 / 181.1 / 251.8 us per entity, a 1.46x
             // rise, and under 16-way CPU load the same ratio reached 2.0-2.15x.
-            // A 2.0 bar sits inside that. Quadratic work would show 4x or more
-            // and still fail.
+            // SCALING_BAR at 2.0 sits inside that, so this check takes 3.0 —
+            // 2.1x clear of the idle measurement, 1.4x clear of the loaded one,
+            // and still below the 4x or more that quadratic work would show
+            // over this range.
             check_cost_per_unit_flat(&samples, 3.0)
         });
     }
@@ -1026,8 +1028,10 @@ mod tests {
             .collect()
     }
 
-    /// Ratio between the worst and best sample allowed by the two assertions
-    /// below.
+    /// Default ratio the checks below allow between their worst and best
+    /// sample. Callers pass their own where the work has a shape this does not
+    /// fit — `overview()` across entity counts and `downsample` across input
+    /// sizes both take 3.0, each with its measurements recorded at the call.
     ///
     /// Quadratic growth over a 4x size range shows up as ~4x in cost per unit;
     /// n log n over the same range is ~1.3x. 2.0 sits between them.
@@ -1293,10 +1297,11 @@ mod tests {
             .map(|&n| (0..n).map(|i| make_state(i as f64)).collect())
             .collect();
 
-        // Looser than SCALING_BAR: these samples are a few hundred microseconds,
-        // where timer granularity and cache effects weigh more. 1.10x was
-        // measured across an 8x range, and an injected full-input scan came out
-        // at 5.88x, so 3.0x sits clear of both.
+        // Looser than SCALING_BAR at 3.0: these samples are a few hundred
+        // microseconds, where timer granularity and cache effects weigh more.
+        // Measured 1.10x across an 8x range, and an injected full-input scan
+        // came out at 5.88x — so the bar is 2.7x clear of the clean measurement
+        // and 2.0x below the fault it has to catch.
         assert_scaling_stable("downsample", 3, || {
             let samples = typical_per_size(&sizes, sizes.len(), |n| {
                 let states = &inputs[sizes.iter().position(|&s| s == n).expect("known size")];
