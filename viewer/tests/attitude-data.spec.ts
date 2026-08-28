@@ -18,7 +18,7 @@ test.beforeAll(async () => {
 
   // Write a temp config with attitude enabled
   const config = {
-    central_body: "earth",
+    body: "earth",
     dt: 1.0,
     output_interval: 10,
     satellites: [

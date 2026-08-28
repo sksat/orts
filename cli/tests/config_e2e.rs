@@ -266,3 +266,64 @@ fn test_config_validate_rejects_unintegrable_attitude() {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+/// A rejected config must not be announced as a running server.
+///
+/// `serve` binds before it loads the config, and its startup banner is what
+/// every harness waits on: `cli/tests/ws_e2e.rs` matches `Server listening
+/// on`, the Playwright specs read the port out of the `WebSocket endpoint`
+/// line. Printing the banner ahead of the rejection left the caller connecting
+/// to a socket that was already closing, so an unknown key surfaced as a
+/// connection failure instead of as its own message.
+#[test]
+fn serve_does_not_announce_a_port_for_a_rejected_config() {
+    let dir = unique_dir("serve-reject");
+    let path = dir.join("unknown-key.json");
+    // `central_body` is not a config key (the key is `body`); before
+    // `deny_unknown_fields` it was dropped and the body silently defaulted.
+    std::fs::write(
+        &path,
+        br#"{"central_body":"earth","dt":1.0,"satellites":[{"id":"a","orbit":{"type":"circular","altitude":400}}]}"#,
+    )
+    .unwrap();
+
+    // Not `output()`: were the rejection itself to regress, `serve` would run
+    // forever and the test would hang rather than report which assertion broke.
+    let mut child = orts()
+        .args(["serve", "--port", "0", "--config", path.to_str().unwrap()])
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn serve with an unknown config key");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait().expect("poll serve") {
+            Some(status) => break status,
+            None if std::time::Instant::now() >= deadline => {
+                child.kill().ok();
+                child.wait().ok();
+                std::fs::remove_dir_all(&dir).ok();
+                panic!("serve kept running for 30s on a config it should have rejected");
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    };
+
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().expect("piped stderr"), &mut stderr)
+        .expect("read serve stderr");
+
+    assert!(!status.success(), "serve accepted it: {stderr}");
+    assert!(
+        stderr.contains("central_body"),
+        "the rejection should name the key: {stderr}"
+    );
+    // Each banner line separately: the harnesses wait on different ones.
+    for line in ["Server listening", "Viewer:", "WebSocket endpoint"] {
+        assert!(
+            !stderr.contains(line),
+            "a rejected config printed the '{line}' banner line: {stderr}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

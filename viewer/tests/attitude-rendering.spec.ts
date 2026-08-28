@@ -87,7 +87,7 @@ function spawnServer(configFile: string): Promise<{ child: ChildProcess; port: n
 test.beforeAll(async () => {
   // +90° rotation about the inertial Z axis, body-to-inertial, scalar-first [w,x,y,z].
   const config = {
-    central_body: "earth",
+    body: "earth",
     dt: 1.0,
     output_interval: 10,
     satellites: [

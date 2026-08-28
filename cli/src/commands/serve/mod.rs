@@ -121,10 +121,6 @@ async fn async_server(
         .map_err(|e| CmdError::failure(format!("binding to {addr}: {e}")))?;
 
     let actual_port = listener.local_addr().unwrap().port();
-    eprintln!("Server listening on http://localhost:{actual_port}");
-    #[cfg(feature = "viewer")]
-    eprintln!("Viewer:             http://localhost:{actual_port}/");
-    eprintln!("WebSocket endpoint: ws://localhost:{actual_port}/ws");
 
     let (tx, _rx) = broadcast::channel::<String>(256);
     let (cmd_tx, cmd_rx) = mpsc::channel::<SimCommand>(16);
@@ -234,6 +230,16 @@ async fn async_server(
     let app = app.fallback(spa::spa_handler);
 
     let app = app.with_state(state);
+
+    // Announced only once every rejection above is behind us. This banner is
+    // what callers wait on to mean "the endpoint is up" — `cli/tests/ws_e2e.rs`
+    // matches the first line, the Playwright specs read the port out of the
+    // `ws://` one — so printing it before the config is loaded turned a
+    // rejected config into a connection that is refused with no explanation.
+    eprintln!("Server listening on http://localhost:{actual_port}");
+    #[cfg(feature = "viewer")]
+    eprintln!("Viewer:             http://localhost:{actual_port}/");
+    eprintln!("WebSocket endpoint: ws://localhost:{actual_port}/ws");
 
     match shutdown_rx {
         Some(rx) => {
