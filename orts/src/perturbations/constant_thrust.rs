@@ -194,6 +194,10 @@ mod tests {
         OrbitalState::new(vector![7000.0, 0.0, 0.0], vector![0.0, 7.5, 0.0])
     }
 
+    fn gcrs_test_state() -> OrbitalState<frame::Gcrs> {
+        OrbitalState::new_in_frame(vector![7000.0, 0.0, 0.0], vector![0.0, 7.5, 0.0])
+    }
+
     fn epoch_seconds_from_j2000(seconds: f64) -> Epoch {
         // Arbitrary anchor; we only care about relative offsets for these tests.
         Epoch::from_jd(2_451_545.0 + seconds / 86_400.0)
@@ -317,5 +321,44 @@ mod tests {
         let t3 = t1.clone();
         assert_eq!(t1.acceleration_kms2(), t2.acceleration_kms2());
         assert_eq!(t1.acceleration_kms2(), t3.acceleration_kms2());
+    }
+
+    /// The `Gcrs` impl is separate from `SimpleEci`'s, so it needs its own
+    /// evaluation: the compile-fail cases only prove which frames are rejected,
+    /// so without this, deleting the `Gcrs` impl would leave every test green.
+    #[test]
+    fn gcrs_burn_delivers_its_acceleration_in_gcrs() {
+        let start = epoch_seconds_from_j2000(0.0);
+        let end = epoch_seconds_from_j2000(100.0);
+        let dv = Vec3::<frame::Gcrs>::new(0.05, -0.02, 0.01);
+        let thrust = ConstantThrust::new("gcrs-burn", start, end, dv);
+
+        let inside = thrust.eval(
+            0.0,
+            &gcrs_test_state(),
+            Some(&epoch_seconds_from_j2000(50.0)),
+        );
+        let expected = dv.into_inner() / 100.0;
+        // 1e-8, matching `eval_returns_constant_acceleration_inside_window`: the
+        // 100-s duration is recovered through a JD round-trip, so it is not
+        // exactly 100.
+        assert!(
+            (inside.acceleration_inertial.into_inner() - expected).magnitude() < 1e-8,
+            "in-window acceleration should be dv/duration, got {:?}",
+            inside.acceleration_inertial.into_inner()
+        );
+        assert_eq!(inside.torque_body.into_inner(), Vector3::zeros());
+        assert_eq!(inside.mass_rate, 0.0);
+
+        let outside = thrust.eval(
+            0.0,
+            &gcrs_test_state(),
+            Some(&epoch_seconds_from_j2000(200.0)),
+        );
+        assert_eq!(
+            outside.acceleration_inertial.into_inner(),
+            Vector3::zeros(),
+            "outside the burn window the acceleration is zero"
+        );
     }
 }
