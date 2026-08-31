@@ -52,10 +52,24 @@ fn main() {
                 .unwrap_or_else(|e| panic!("failed to copy texture {name}: {e}"));
         }
     }
-    println!("cargo:rerun-if-changed=../viewer/public/textures/");
-
-    // Rerun if viewer/dist/ changes
-    println!("cargo:rerun-if-changed=../viewer/dist/");
+    // Both watched paths live outside the package, so neither exists in a
+    // crates.io install, and `../viewer/dist/` is absent in the workspace too
+    // until someone builds the viewer. A `rerun-if-changed` path that cargo
+    // cannot stat counts as changed, which re-runs this script — and so
+    // recompiles orts-cli, its bin and every integration test — on every
+    // single cargo invocation. Watch them only when they are there, and
+    // create `../viewer/dist/` inside the workspace so that watching it
+    // survives the viewer being built later.
+    if textures_src.is_dir() {
+        println!("cargo:rerun-if-changed=../viewer/public/textures/");
+    }
+    let viewer_dir = manifest_dir.join("../viewer");
+    if viewer_dir.is_dir() {
+        std::fs::create_dir_all(&source_dist).ok();
+    }
+    if source_dist.is_dir() {
+        println!("cargo:rerun-if-changed=../viewer/dist/");
+    }
 
     run_license_notice();
 }
