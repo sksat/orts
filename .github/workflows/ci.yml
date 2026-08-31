@@ -711,6 +711,43 @@ jobs:
           cargo test --locked -p orts --lib
           cargo test --locked -p orts --doc
 
+  # Windows portability gate on windows-latest (x86_64 msvc).
+  #
+  # Same scope as rust-test-arm64 and rust-test-macos: the non-orts tests plus
+  # orts' unit and doc tests. The integration suites stay Linux-only. Several of
+  # them drive the `kble` bridge over stdio, which is where the platform
+  # assumptions actually live, and they are the slowest jobs in CI besides.
+  #
+  # No wild here either: `.cargo/config.toml` scopes its linker line to the
+  # Linux gnu triples, so msvc links with link.exe.
+  rust-test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Parse rust-toolchain.toml
+        id: rust-toolchain
+        uses: ./.github/actions/parse-rust-toolchain
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: rust-windows
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Test (all except orts)
+        run: cargo test --locked --workspace --exclude orts
+
+      - name: Test (orts unit + doc)
+        run: |
+          cargo test --locked -p orts --lib
+          cargo test --locked -p orts --doc
+
   rust-dist:
     if: >-
       github.ref == 'refs/heads/main'
@@ -735,6 +772,8 @@ jobs:
             os: macos-latest
           - target: x86_64-apple-darwin
             os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -832,11 +871,20 @@ jobs:
           cargo build --locked --release -p orts-cli --target ${{ matrix.target }}
           strip -x "target/${{ matrix.target }}/release/orts"
 
+      # No strip: MSVC keeps debug info in a separate .pdb, which is not shipped.
+      - name: Build CLI with embedded viewer (windows)
+        if: endsWith(matrix.target, '-pc-windows-msvc')
+        env:
+          ORTS_REQUIRE_LICENSE_NOTICE: "1"
+        run: cargo build --locked --release -p orts-cli --target ${{ matrix.target }}
+
       - name: Upload CLI binary
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: orts-cli-release-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/orts
+          path: >-
+            target/${{ matrix.target }}/release/orts${{
+              endsWith(matrix.target, '-pc-windows-msvc') && '.exe' || '' }}
           retention-days: 1
 
   # Verify crate package contents before release. Runs on a clean
@@ -1462,6 +1510,7 @@ jobs:
       - cli-plugin-backend-e2e
       - rust-test-arm64
       - rust-test-macos
+      - rust-test-windows
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1573,6 +1622,12 @@ jobs:
           name: orts-cli-release-x86_64-apple-darwin
           path: ./bin-x86_64-darwin
 
+      - name: Download CLI binary (windows msvc)
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: orts-cli-release-x86_64-pc-windows-msvc
+          path: ./bin-windows
+
       # The release runner is x86_64, so its `strip` cannot touch the arm64
       # binary.
       - name: Install arm64 binutils
@@ -1587,7 +1642,8 @@ jobs:
 
           for TARGET in x86_64-unknown-linux-gnu x86_64-unknown-linux-musl \
                         aarch64-unknown-linux-gnu \
-                        aarch64-apple-darwin x86_64-apple-darwin; do
+                        aarch64-apple-darwin x86_64-apple-darwin \
+                        x86_64-pc-windows-msvc; do
             # Match the full triple: `*gnu` alone would catch both gnu targets.
             # The darwin binaries were stripped on the macOS runner, since this
             # job's GNU strip cannot read Mach-O — hence the `:` no-op.
@@ -1597,15 +1653,21 @@ jobs:
               aarch64-unknown-linux-gnu) BIN_DIR=bin-arm64-gnu;    STRIP=aarch64-linux-gnu-strip ;;
               aarch64-apple-darwin)      BIN_DIR=bin-arm64-darwin; STRIP=: ;;
               x86_64-apple-darwin)       BIN_DIR=bin-x86_64-darwin; STRIP=: ;;
+              x86_64-pc-windows-msvc)    BIN_DIR=bin-windows;      STRIP=: ;;
               *) echo "unhandled target: $TARGET" >&2; exit 1 ;;
+            esac
+
+            case "$TARGET" in
+              *-pc-windows-*) EXE=.exe ;;
+              *)              EXE= ;;
             esac
 
             STAGE_DIR="orts-cli-${VERSION}-${TARGET}"
             mkdir -p "${STAGE_DIR}/examples/plugins"
 
-            cp "${BIN_DIR}/orts" "${STAGE_DIR}/orts"
-            chmod +x "${STAGE_DIR}/orts"
-            "$STRIP" "${STAGE_DIR}/orts"
+            cp "${BIN_DIR}/orts${EXE}" "${STAGE_DIR}/orts${EXE}"
+            chmod +x "${STAGE_DIR}/orts${EXE}"
+            "$STRIP" "${STAGE_DIR}/orts${EXE}"
             cp README.md "${STAGE_DIR}/README.md"
             cp LICENSE "${STAGE_DIR}/LICENSE"
 
@@ -1616,7 +1678,9 @@ jobs:
               cp "$f" "${STAGE_DIR}/examples/plugins/${short}.wasm"
             done
 
-            # Create tarball
+            # Every target gets a tarball, including Windows. That is what
+            # keeps the cargo-binstall metadata free of per-target exceptions:
+            # one `pkg-fmt = "tgz"` covers the whole matrix.
             ARCHIVE="${STAGE_DIR}.tar.gz"
             tar --sort=name \
                 --owner=0 --group=0 --numeric-owner \
@@ -1624,12 +1688,25 @@ jobs:
                 -czf "${ARCHIVE}" "${STAGE_DIR}"
             sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
             cat "${ARCHIVE}.sha256"
+            ALL_FILES="${ALL_FILES}${ARCHIVE}\n${ARCHIVE}.sha256\n"
+
+            # Windows additionally gets a zip, since Explorer cannot expand a
+            # .tar.gz from its context menu. Wraps STAGE_DIR like the tarball so
+            # one `bin-dir` template resolves in both. -X drops extra file
+            # attributes, but timestamps remain, so unlike the tarballs with
+            # their fixed --mtime this is not byte-reproducible.
+            if [ "$EXE" = ".exe" ]; then
+              ZIP="${STAGE_DIR}.zip"
+              zip -qrX "${ZIP}" "${STAGE_DIR}"
+              sha256sum "${ZIP}" > "${ZIP}.sha256"
+              cat "${ZIP}.sha256"
+              ALL_FILES="${ALL_FILES}${ZIP}\n${ZIP}.sha256\n"
+            fi
 
             # Standalone binary
-            BINARY="orts-${TARGET}"
-            cp "${STAGE_DIR}/orts" "${BINARY}"
-
-            ALL_FILES="${ALL_FILES}${ARCHIVE}\n${ARCHIVE}.sha256\n${BINARY}\n"
+            BINARY="orts-${TARGET}${EXE}"
+            cp "${STAGE_DIR}/orts${EXE}" "${BINARY}"
+            ALL_FILES="${ALL_FILES}${BINARY}\n"
           done
 
           echo -e "$ALL_FILES" | grep -v '^$' > /tmp/release-files.txt

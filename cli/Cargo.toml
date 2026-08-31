@@ -87,3 +87,5 @@ tempfile = "3"
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }{ archive-suffix }"
 pkg-fmt = "tgz"
 bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"
+# Every target ships a tarball, Windows included, so no per-target override is
+# needed. The release also carries a Windows zip for manual downloads.

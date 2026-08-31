@@ -15,7 +15,9 @@
 //! Soft-skips when the kble binary (PATH / KBLE_BIN) or the guest WASM is
 //! missing (same as serve_kble_e2e).
 
-#![cfg(feature = "plugin-wasm-async")]
+// unix-gated: kble spawns orts through an `exec:` plug, which needs a
+// `#!/bin/sh` launcher marked executable.
+#![cfg(all(unix, feature = "plugin-wasm-async"))]
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};

@@ -2,7 +2,7 @@
 //!
 //! 2K textures for all bodies are compiled into the binary via `include_bytes!`.
 //! Higher resolutions are downloaded from NASA/USGS in the background on server
-//! start, converted/resized, and cached as JPEG in a tmpfs directory.
+//! start, converted/resized, and cached as JPEG under the system temp dir.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read};
@@ -181,7 +181,9 @@ pub struct TextureCache {
 
 impl TextureCache {
     pub fn new() -> Self {
-        let cache_dir = PathBuf::from("/tmp/orts/textures");
+        // Not a literal /tmp: this path has to resolve on Windows too. Nothing
+        // here depends on the location being memory-backed.
+        let cache_dir = std::env::temp_dir().join("orts").join("textures");
         let mut embedded = HashMap::new();
         for tex in EMBEDDED {
             embedded.insert(tex.filename, tex.data);
