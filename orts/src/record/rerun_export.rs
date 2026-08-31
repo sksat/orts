@@ -201,7 +201,8 @@ pub fn save_as_rrd(
                 let indexes = index.time_columns(rows.clone());
                 let points: Vec<[f32; 3]> = rows
                     .map(|i| {
-                        let row = &pos_col.data[i * scalars_per_row..];
+                        let start = i * scalars_per_row;
+                        let row = &pos_col.data[start..start + 3];
                         [row[0] as f32, row[1] as f32, row[2] as f32]
                     })
                     .collect();
@@ -3247,6 +3248,59 @@ mod tests {
             under_entity.is_empty(),
             "expected no chunks under the entity, got {under_entity:?}"
         );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Two timeline arrays that cover different logical rows cannot both index the
+    /// data, so the shorter axis is dropped rather than truncated. Logging rows 0-4
+    /// with `step` alone and rows 5-9 with both leaves `sim_time` 5 long and `step`
+    /// 10 long, and index 0 of each names a *different* row: `sim_time[0]` is row
+    /// 5's time while `step[0]` is row 0's step. Truncating `step` to the exported
+    /// range would therefore pair row 0-4 steps with row 5-9 times.
+    #[test]
+    fn a_step_axis_that_covers_other_rows_is_dropped() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/divergent");
+
+        for i in 0..10u64 {
+            let tp = if i < 5 {
+                TimePoint::new().with_step(i)
+            } else {
+                TimePoint::new()
+                    .with_sim_time(i as f64 * 100.0)
+                    .with_step(i)
+            };
+            let os = OrbitalState::new(
+                Vector3::new(i as f64, 0.0, 0.0),
+                Vector3::new(0.0, 7.5, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+        }
+
+        // The premise: the axes really do diverge in this shape.
+        let store = rec.entity(&sat).expect("entity");
+        assert_eq!(store.timelines[&TimelineName::SimTime].len(), 5);
+        assert_eq!(store.timelines[&TimelineName::Step].len(), 10);
+
+        let path = std::env::temp_dir().join("test_orts_divergent_axes.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        for chunk in decode_chunks(path_str) {
+            if !chunk
+                .entity_path()
+                .to_string()
+                .starts_with("/world/sat/divergent")
+            {
+                continue;
+            }
+            assert!(
+                chunk.timelines().keys().all(|name| name.as_str() != "step"),
+                "{} kept a step axis covering other rows",
+                chunk.entity_path()
+            );
+        }
 
         let _ = std::fs::remove_file(&path);
     }
