@@ -30,6 +30,18 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `SurfacePanel` が lumped な `cr` の代わりに `optics: PanelOptics { specular,
+  diffuse }` を持つようになった。吸収率は `1 - specular - diffuse` として導出する。
+  単一係数は face-on の SRP 力の大きさを決めるだけで、斜入射での向きが決まらない
+  ── 下の平板 SRP 修正が必要とするのはその向きである。`PanelOptics` の field は
+  private で、`new` の検証を struct literal で迂回できない: specular が 1 を超えると
+  吸収率が負になり、力の太陽方向成分が太陽側を向く。`SpacecraftShape::Sphere` は
+  `cr` を維持する。等方面では lumped 係数がモデルの定義そのもので、specular / diffuse
+  の項が依存する入射角が存在しない。`SurfacePanel::at_com` は optics を必須引数に取り、
+  `SpacecraftShape::cube` は `cr` の代わりに optics を取る。SRP 力が黙って変わるのでは
+  なくコンパイルエラーとして出るようにするため: `Cr = 1.5` は単一の `(ρ_s, ρ_d)`
+  に対応せず、力の向きがこの分解に依存するようになったので、どの既定値も face-on 以外
+  で旧振る舞いを再現しない。面が本当に不明なら `PanelOptics::absorber()` を渡す。([#377](https://github.com/sksat/orts/pull/377))
 - `StateEffector` を frame-generic 化 — `StateEffector<S, F: frame::Eci =
   SimpleEci>` で `ExternalLoads<F>` を返す (`Model<S, F>` と同様)。effector は
   host の慣性 frame で荷重を生成するようになった。既定の `F` により既存の
@@ -59,6 +71,15 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   別の瞬間。この PR が直すブラウザ側の
   decoder と同じ欠陥で、3 つは独立に
   decode するため 3 つとも抱えていた。([#366](https://github.com/sksat/orts/pull/366))
+- `PanelSrp` が平板ごとの反射力を出すようになった。per-panel の力は
+  `-P·Cr·A·cosθ·ŝ` で常に反太陽方向だった。平板では鏡面反射と拡散再放射が panel
+  normal 方向の力を作るが、その項が無く、力が
+  `F = -P·A·cosθ·[(α + ρ_d)·ŝ + 2·(ρ_s·cosθ + ρ_d/3)·n̂]` に従うのは黒体の場合だけ
+  だった。SRP トルクは大きさだけでなく向きも誤っていた: 圧力中心が ŝ–n̂ 平面の外に
+  あるとき `r × ŝ` と `r × n̂` は別方向を向くので、`Cr` をどう選んでも正しい答えには
+  ならない。太陽電池パドル相当 (ρ_s ≈ 0.2, ρ_d ≈ 0.1) では 45° 入射で欠けていた項が
+  力の ~30% を占める。model の導入時から存在し、0.2.0 も該当する。
+  ([#377](https://github.com/sksat/orts/pull/377))
 - `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
   ようになった。結果が有限な入力で overflow しなくなる: `q = [0, 1/√2, 1/√2, 0]`、
   `ω = [1.4e308, 1.4e308, 0]` の `q̇.w` は約 -9.9e307 だが、途中の和が -1.98e308 に

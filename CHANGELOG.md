@@ -33,6 +33,22 @@ section is subdivided by package.
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `SurfacePanel` carries `optics: PanelOptics { specular, diffuse }` in place of
+  a lumped `cr`, with the absorbed fraction derived as `1 - specular - diffuse`.
+  A single coefficient fixes the SRP force magnitude face-on but leaves its
+  direction undetermined at oblique incidence, which is what the flat-panel fix
+  below needs. `PanelOptics`' fields are private so `new`'s validation cannot be
+  bypassed by a struct literal: a specular above 1 makes the absorbed fraction
+  negative and points the Sun-line component of the force toward the Sun.
+  `SpacecraftShape::Sphere` keeps `cr` — for an isotropic surface a lumped
+  coefficient is the whole model, and there is no incidence angle for the
+  specular and diffuse terms to depend on. `SurfacePanel::at_com` takes the
+  optics as a required argument and `SpacecraftShape::cube` takes them in place
+  of `cr`, so the change surfaces as a compile error rather than as a silently
+  different SRP force: `Cr = 1.5` maps to no single `(ρ_s, ρ_d)` pair, and
+  since the force direction now depends on that split, no default reproduces the
+  old behaviour anywhere but face-on. Pass `PanelOptics::absorber()` when the
+  surface is genuinely unknown. ([#377](https://github.com/sksat/orts/pull/377))
 - `StateEffector` is now frame-generic — `StateEffector<S, F: frame::Eci =
   SimpleEci>` returning `ExternalLoads<F>`, like `Model<S, F>` — so effectors
   produce loads already in the host inertial frame. The defaulted `F` keeps
@@ -66,6 +82,16 @@ section is subdivided by package.
   1, and two rows of one `sim_time` at different `frame`s are two moments. Same
   defect as the browser-side decoder in this PR: the three decode independently,
   and all three carried it. ([#366](https://github.com/sksat/orts/pull/366))
+- `PanelSrp` gives each flat panel its reflection force. The per-panel force was
+  `-P·Cr·A·cosθ·ŝ`, always anti-Sun; a flat plate's specular reflection and
+  diffuse re-emission push along the panel normal, and that term was absent, so
+  the force followed `F = -P·A·cosθ·[(α + ρ_d)·ŝ + 2·(ρ_s·cosθ + ρ_d/3)·n̂]` only
+  for a black panel. The SRP torque was wrong in direction, not just magnitude:
+  where the centre of pressure lies off the ŝ–n̂ plane, `r × ŝ` and `r × n̂` point
+  different ways, so no choice of `Cr` recovers the right answer. For a solar
+  array (ρ_s ≈ 0.2, ρ_d ≈ 0.1) the missing term carries ~30% of the force at 45°
+  incidence. Present since the model was introduced, 0.2.0 included.
+  ([#377](https://github.com/sksat/orts/pull/377))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
   products rather than the sum afterwards, so it no longer overflows where its
   result is finite: `q = [0, 1/√2, 1/√2, 0]` with `ω = [1.4e308, 1.4e308, 0]`
