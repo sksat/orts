@@ -369,9 +369,16 @@ mod tests {
         }
     }
 
-    /// SRP built through the setup path carries the central body's own radius.
+    /// SRP built through the setup path carries the central body's own radius
+    /// and its own Sun direction.
+    ///
+    /// Checked through the acceleration rather than the model list, so wiring
+    /// `for_earth` back in would fail: the two differ both in direction (Mars
+    /// sees the Sun elsewhere) and in where the shadow starts (Mars is 3396 km,
+    /// Earth 6378).
     #[test]
-    fn build_orbital_system_gives_srp_the_central_body_s_shadow() {
+    fn build_orbital_system_gives_srp_the_central_body_s_geometry() {
+        use crate::orbital::OrbitalState;
         let epoch = Epoch::j2000();
         let sat = SatelliteParams {
             has_drag: false,
@@ -379,23 +386,54 @@ mod tests {
             srp_area_to_mass: Some(0.02),
             srp_cr: None,
         };
-        for body in [KnownBody::Earth, KnownBody::Mars] {
-            let third_bodies = default_third_bodies(&body).expect("supported body");
-            let system = build_orbital_system(
-                &body,
-                body.properties().mu,
-                Some(epoch),
-                &sat,
-                &third_bodies,
-                None,
-            )
-            .expect("a supported central body");
-            assert!(
-                system.model_names().contains(&"srp"),
-                "{}: srp should be present",
-                body.properties().name
-            );
-        }
+        let body = KnownBody::Mars;
+        let third_bodies = default_third_bodies(&body).expect("Mars is supported");
+        let system = build_orbital_system(
+            &body,
+            body.properties().mu,
+            Some(epoch),
+            &sat,
+            &third_bodies,
+            None,
+        )
+        .expect("Mars is supported");
+        assert!(
+            system.model_names().contains(&"srp"),
+            "srp should be present"
+        );
+
+        // Somewhere Mars cannot eclipse: on the sunward side, well outside it.
+        let sun_mars = arika::sun::sun_position_from_body(body, &epoch.to_tdb())
+            .expect("Mars")
+            .into_inner();
+        let pos = sun_mars.normalize() * 6000.0;
+        let state = OrbitalState::new(pos, nalgebra::Vector3::new(0.0, 3.0, 0.0));
+
+        let srp = SolarRadiationPressure::for_body(body, Some(0.02)).expect("Mars");
+        let expected = srp.acceleration(&pos, Some(&epoch));
+        let earth_wired =
+            SolarRadiationPressure::for_earth(Some(0.02)).acceleration(&pos, Some(&epoch));
+
+        // The breakdown reports each model's magnitude by name.
+        let srp_mag = system
+            .acceleration_breakdown(0.0, &state)
+            .into_iter()
+            .find(|(name, _)| *name == "srp")
+            .expect("srp is in the breakdown")
+            .1;
+
+        assert!(
+            (srp_mag - expected.norm()).abs() < expected.norm() * 1e-9,
+            "setup should wire the Mars-relative SRP: {srp_mag} vs {}",
+            expected.norm()
+        );
+        // The Earth-wired magnitude differs because Mars is at a different
+        // heliocentric distance, so the magnitude alone separates them.
+        assert!(
+            (srp_mag - earth_wired.norm()).abs() > expected.norm() * 0.1,
+            "the Earth-wired magnitude {} should be plainly different from {srp_mag}",
+            earth_wired.norm()
+        );
     }
 
     /// An unsupported central body fails the whole build instead of quietly

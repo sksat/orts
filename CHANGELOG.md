@@ -158,6 +158,14 @@ section is subdivided by package.
   `default_third_bodies` and the two `build_*` builders return `Result`, so a
   central body with no Sun ephemeris is reported instead of propagated with the
   Sun in the wrong place. ([#372](https://github.com/sksat/orts/pull/372))
+  Sun in the wrong place. ([#372](https://github.com/sksat/orts/pull/372))
+- The sun sensor's Sun direction comes from the central body too
+  (`SunSensor::for_body`). It read the geocentric vector, so on Mars the force
+  models were right while the attitude-control input was up to 176° off.
+  ([#372](https://github.com/sksat/orts/pull/372))
+- Sun-centred propagation keeps its SRP: the Sun is the origin there, so the
+  satellite-to-Sun vector is `-r_sat` and nothing eclipses it. Only the
+  third-body term drops out. ([#372](https://github.com/sksat/orts/pull/372))
 - Moon-centred propagation includes Earth as a third body, which dominates its
   third-body environment and was absent. Sun-centred propagation no longer adds
   the Sun as a third body to its own orbiters.

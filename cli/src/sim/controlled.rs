@@ -273,7 +273,7 @@ pub fn build_controlled_satellite(
     let controller = build_controller(ctrl_config, &spec.id, &spec.streams, ctx)?;
 
     // センサを構築。
-    let sensors = build_sensor_bundle(spec.sensor_choices.as_deref());
+    let sensors = build_sensor_bundle(spec.sensor_choices.as_deref(), params.body)?;
 
     let actuators = ActuatorBundle::new();
     let sample_period = controller.sample_period();
@@ -584,15 +584,22 @@ fn build_controller(
     }
 }
 
-fn build_sensor_bundle(choices: Option<&[SensorChoice]>) -> SensorBundle {
+/// Build the declared sensors for a satellite about `body`.
+///
+/// The sun sensor's reading is a direction to the Sun, so it depends on the
+/// central body the same way the solar force models do.
+fn build_sensor_bundle(
+    choices: Option<&[SensorChoice]>,
+    body: arika::body::KnownBody,
+) -> Result<SensorBundle, String> {
     let choices = match choices {
         Some(c) => c,
-        None => return SensorBundle::new(),
+        None => return Ok(SensorBundle::new()),
     };
 
     let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> = Arc::new(Igrf::earth());
 
-    SensorBundle {
+    Ok(SensorBundle {
         magnetometers: if choices.contains(&SensorChoice::Magnetometer) {
             vec![Magnetometer::new(Arc::clone(&field_model))]
         } else {
@@ -609,11 +616,11 @@ fn build_sensor_bundle(choices: Option<&[SensorChoice]>) -> SensorBundle {
             vec![]
         },
         sun_sensors: if choices.contains(&SensorChoice::SunSensor) {
-            vec![orts::sensor::SunSensor::new()]
+            vec![orts::sensor::SunSensor::for_body(body).map_err(|e| format!("sun sensor: {e}"))?]
         } else {
             vec![]
         },
-    }
+    })
 }
 
 #[cfg(test)]

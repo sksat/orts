@@ -700,12 +700,15 @@ attitude = { inertia_diag = [10, 10, 10], mass = 50 }
         assert_eq!(names.len(), 2);
     }
 
+    /// Moon-centred propagation has Earth as a third body, so its texture is
+    /// wanted too.
     #[test]
-    fn body_names_for_moon_includes_sun_only() {
+    fn body_names_for_moon_includes_the_sun_and_earth() {
         let names = body_names_for(&KnownBody::Moon);
         assert_eq!(names[0], "moon");
         assert!(names.contains(&"sun".to_string()));
-        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"earth".to_string()));
+        assert_eq!(names.len(), 3);
     }
 
     #[test]

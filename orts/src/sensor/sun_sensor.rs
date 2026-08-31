@@ -6,9 +6,13 @@
 
 use arika::earth::transform::EphemerisFrameBridge;
 use arika::eclipse::{self, SUN_RADIUS_KM, ShadowModel};
-use arika::epoch::Epoch;
+use std::sync::Arc;
+
+use arika::body::KnownBody;
+use arika::epoch::{Epoch, Tdb};
 use arika::frame::{self, Vec3};
-use arika::sun::sun_position_eci;
+use arika::sun::{self, SunPositionError, sun_position_eci};
+use nalgebra::Vector3;
 
 use super::noise::NoiseModel;
 use crate::SpacecraftState;
@@ -35,25 +39,63 @@ pub struct SunSensor {
     shadow_body_radius: Option<f64>,
     /// Shadow model for eclipse computation.
     shadow_model: ShadowModel,
+    /// Where the Sun is, relative to the central body [km].
+    ///
+    /// The reading is a direction to the Sun, so it depends on the central body
+    /// exactly as the force models do. Defaults to the geocentric vector, which
+    /// is only correct for Earth-centred propagation.
+    sun_position_fn: SunPositionFn,
 }
 
+/// Where the Sun is at an epoch, relative to the central body [km].
+pub type SunPositionFn = Arc<dyn Fn(&Epoch<Tdb>) -> Vec3<frame::Gcrs> + Send + Sync>;
+
 impl SunSensor {
-    /// Create an ideal sun sensor (no noise, no eclipse).
+    /// Create an ideal sun sensor (no noise, no eclipse) for Earth orbit.
+    ///
+    /// The Sun direction is geocentric. Use [`for_body`](Self::for_body) for any
+    /// other central body: from Mars in 2026 the geocentric direction is up to
+    /// 176° away from where Mars sees the Sun.
     pub fn new() -> Self {
         Self {
             noise: Vec::new(),
             shadow_body_radius: None,
             shadow_model: ShadowModel::Conical,
+            sun_position_fn: Arc::new(sun_position_eci),
         }
     }
 
     /// Create a sun sensor for Earth orbit with conical shadow model.
     pub fn for_earth() -> Self {
-        Self {
-            noise: Vec::new(),
-            shadow_body_radius: Some(arika::earth::R),
-            shadow_model: ShadowModel::Conical,
+        Self::new().with_shadow_body(arika::earth::R)
+    }
+
+    /// Create a sun sensor for orbit about `body`, with that body's shadow.
+    ///
+    /// Orbiting the Sun puts it at the origin, so the direction is `-r_sat` and
+    /// nothing eclipses it. Fails for a central body with no Sun ephemeris
+    /// (Uranus, Neptune).
+    pub fn for_body(body: KnownBody) -> Result<Self, SunPositionError> {
+        if body == KnownBody::Sun {
+            return Ok(Self {
+                noise: Vec::new(),
+                shadow_body_radius: None,
+                shadow_model: ShadowModel::Conical,
+                sun_position_fn: Arc::new(|_| Vec3::from_raw(Vector3::zeros())),
+            });
         }
+        // Probe now so an unsupported body fails here rather than inside the
+        // measurement, where the closure cannot report it.
+        sun::sun_position_from_body(body, &Epoch::j2000().to_tdb())?;
+        Ok(Self {
+            noise: Vec::new(),
+            shadow_body_radius: Some(body.properties().radius),
+            shadow_model: ShadowModel::Conical,
+            sun_position_fn: Arc::new(move |epoch: &Epoch<Tdb>| {
+                sun::sun_position_from_body(body, epoch)
+                    .expect("the same body was accepted at construction")
+            }),
+        })
     }
 
     /// Add a noise model. Multiple calls chain in order.
@@ -99,7 +141,7 @@ impl SunSensor {
         epoch: &Epoch,
     ) -> SunSensorOutput {
         // Satellite-to-Sun vector in the propagation frame `F`
-        let sun_gcrs = sun_position_eci(&epoch.to_tdb());
+        let sun_gcrs = (self.sun_position_fn)(&epoch.to_tdb());
         let sun_eci = *F::ephemeris_rotation(epoch).transform(&sun_gcrs).inner();
         let sc_pos = *state.orbit.position_vec().inner();
         let sat_to_sun = sun_eci - sc_pos;

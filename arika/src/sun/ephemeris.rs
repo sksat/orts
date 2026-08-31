@@ -265,15 +265,22 @@ impl std::error::Error for SunPositionError {}
 /// geocentric Sun direction is up to 176° away from the true one, and the
 /// distance ratio scales the third-body term by up to 3.8x.
 ///
-/// Earth and the Moon share the geocentric vector: the Moon's parallax against
-/// the Sun stays under 0.15°, which is inside this ephemeris's own ~1′ accuracy.
+/// The Moon's vector is exact rather than approximated: Moon-to-Sun is
+/// `(Earth → Sun) − (Earth → Moon)`, and both terms are already available. The
+/// `&str` helper shares Earth's vector for the Moon, which is a 0.15°
+/// approximation — nine times this ephemeris's own ~1′ accuracy, so there is no
+/// reason to keep it where the Moon position is one subtraction away.
 pub fn sun_position_from_body(
     body: KnownBody,
     epoch: &Epoch<Tdb>,
 ) -> Result<Vec3<frame::Gcrs>, SunPositionError> {
     match body {
         KnownBody::Sun => Err(SunPositionError::CentralBodyIsSun),
-        KnownBody::Earth | KnownBody::Moon => Ok(sun_position_eci(epoch)),
+        KnownBody::Earth => Ok(sun_position_eci(epoch)),
+        KnownBody::Moon => Ok(Vec3::from_raw(
+            sun_position_eci(epoch).into_inner()
+                - crate::moon::moon_position_eci(epoch).into_inner(),
+        )),
         KnownBody::Mercury
         | KnownBody::Venus
         | KnownBody::Mars
@@ -799,15 +806,30 @@ mod tests {
         }
     }
 
-    /// The Moon shares Earth's vector, as the direction helper already does:
-    /// its parallax against the Sun is inside this ephemeris's own accuracy.
+    /// From the Moon, the Sun is Earth's vector minus the Earth-to-Moon vector.
+    ///
+    /// Not Earth's vector: the difference is the lunar distance, about 0.15° of
+    /// parallax, which the `&str` helper drops.
     #[test]
-    fn sun_position_from_the_moon_uses_the_geocentric_vector() {
+    fn sun_position_from_the_moon_subtracts_the_lunar_offset() {
         let epoch = Epoch::from_gregorian(2026, 6, 15, 0, 0, 0.0).to_tdb();
         let from_body =
             sun_position_from_body(KnownBody::Moon, &epoch).expect("the Moon is supported");
-        let diff = (from_body.into_inner() - sun_position_eci(&epoch).into_inner()).magnitude();
-        assert!(diff < 1e-9, "{diff} km apart");
+
+        let expected = sun_position_eci(&epoch).into_inner()
+            - crate::moon::moon_position_eci(&epoch).into_inner();
+        assert!(
+            (from_body.into_inner() - expected).magnitude() < 1e-9,
+            "should be Earth->Sun minus Earth->Moon"
+        );
+
+        // And it is distinguishable from the geocentric vector: the offset is
+        // the Earth-Moon distance, ~384400 km.
+        let offset = (from_body.into_inner() - sun_position_eci(&epoch).into_inner()).magnitude();
+        assert!(
+            offset > 300_000.0,
+            "the lunar offset should be there, got {offset} km"
+        );
     }
 
     /// A planet's own distance to the Sun, not Earth's.

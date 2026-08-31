@@ -107,9 +107,21 @@ impl SolarRadiationPressure {
     /// a small error — from Mars in 2026 the geocentric Sun direction is up to
     /// 176° off, which leaves the acceleration pointing the wrong way.
     ///
-    /// Fails for a central body with no Sun ephemeris (Uranus, Neptune) and for
-    /// the Sun itself, which casts no shadow on its own orbiters.
+    /// Orbiting the Sun itself works: the Sun sits at the origin, so the
+    /// satellite-to-Sun vector the geometry needs is just `-r_sat`, and there is
+    /// nothing to cast a shadow.
+    ///
+    /// Fails only for a central body with no Sun ephemeris (Uranus, Neptune).
     pub fn for_body(body: KnownBody, area_to_mass: Option<f64>) -> Result<Self, SunPositionError> {
+        if body == KnownBody::Sun {
+            return Ok(Self {
+                cr: DEFAULT_CR,
+                area_to_mass: area_to_mass.unwrap_or(DEFAULT_AREA_TO_MASS),
+                shadow_body_radius: None,
+                shadow_model: ShadowModel::Cylindrical,
+                sun_position_fn: Arc::new(|_| Vec3::from_raw(Vector3::zeros())),
+            });
+        }
         // Probe now so an unsupported body fails here rather than inside the
         // integrator, where the closure cannot report it.
         sun::sun_position_from_body(body, &Epoch::j2000().to_tdb())?;
@@ -641,12 +653,37 @@ mod tests {
     /// A central body with no Sun ephemeris is refused.
     #[test]
     fn for_body_rejects_a_body_with_no_sun_ephemeris() {
-        for body in [KnownBody::Uranus, KnownBody::Neptune, KnownBody::Sun] {
+        for body in [KnownBody::Uranus, KnownBody::Neptune] {
             assert!(
                 SolarRadiationPressure::for_body(body, None).is_err(),
                 "{} should be refused",
                 body.properties().name
             );
         }
+    }
+
+    /// A Sun orbiter still feels SRP, pushed radially outward.
+    ///
+    /// The Sun is the origin there, so the geometry needs no ephemeris and no
+    /// shadow — unlike the third-body term, which has nothing to add.
+    #[test]
+    fn for_body_sun_pushes_radially_outward() {
+        let srp = SolarRadiationPressure::for_body(KnownBody::Sun, Some(0.02))
+            .expect("orbiting the Sun is supported");
+        assert_eq!(srp.shadow_body_radius, None, "the Sun casts no shadow here");
+
+        let sat = vector![1.0e8, 0.0, 0.0];
+        let a = srp.acceleration(&sat, Some(&test_epoch()));
+        let cos = a.normalize().dot(&sat.normalize());
+        assert!(
+            cos > 0.999_999,
+            "SRP on a Sun orbiter points away from the origin, cos={cos}"
+        );
+
+        // 1/d² in the heliocentric distance.
+        let far = vector![2.0e8, 0.0, 0.0];
+        let a_far = srp.acceleration(&far, Some(&test_epoch()));
+        let ratio = a.norm() / a_far.norm();
+        assert!((ratio - 4.0).abs() < 1e-9, "expected 4x, got {ratio}");
     }
 }
