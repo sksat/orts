@@ -33,18 +33,9 @@ struct EntityIndex {
 
 impl EntityIndex {
     fn from_store(store: &EntityStore) -> Self {
-        // The logical row count comes from the timelines, preferring `sim_time`.
-        let mut n_rows = store
-            .timelines
-            .get(&TimelineName::SimTime)
-            .or_else(|| store.timelines.get(&TimelineName::Step))
-            .map(|tl| tl.len())
-            .unwrap_or(0);
-
-        // A `TimeColumn` carries no "no time on this row", so an axis holding the
-        // wrong `TimeIndex` variant is dropped whole rather than written
-        // misaligned. `sim_time` needs no length check: `n_rows` is its own length
-        // whenever it exists.
+        // Read both axes before choosing a row count. A `TimeColumn` carries no "no
+        // time on this row", so an axis holding the wrong `TimeIndex` variant cannot
+        // be written at all, and the row count has to come from one that can.
         let sim_time_secs = store.timelines.get(&TimelineName::SimTime).and_then(|tl| {
             tl.iter()
                 .map(|index| match index {
@@ -54,28 +45,40 @@ impl EntityIndex {
                 .collect::<Option<Vec<_>>>()
         });
 
-        // `step` can be shorter than `n_rows` — rows logged with a `TimePoint` that
-        // omits it push nothing — and a short index cannot align with the data.
-        let steps = store
-            .timelines
-            .get(&TimelineName::Step)
-            .and_then(|tl| {
-                tl.iter()
-                    .map(|index| match index {
-                        TimeIndex::Sequence(s) => i64::try_from(*s).ok(),
-                        TimeIndex::Seconds(_) => None,
-                    })
-                    .collect::<Option<Vec<_>>>()
-            })
-            .filter(|steps| steps.len() == n_rows);
+        let mut steps = store.timelines.get(&TimelineName::Step).and_then(|tl| {
+            tl.iter()
+                .map(|index| match index {
+                    TimeIndex::Sequence(s) => i64::try_from(*s).ok(),
+                    TimeIndex::Seconds(_) => None,
+                })
+                .collect::<Option<Vec<_>>>()
+        });
+
+        // Prefer `sim_time`, as the row-oriented export did, and fall back to `step`
+        // when `sim_time` cannot be written. Deriving the count from a usable axis is
+        // also what keeps the invariant below: a non-zero `n_rows` always has at
+        // least one index column to go with it.
+        let n_rows = sim_time_secs
+            .as_ref()
+            .map(Vec::len)
+            .or_else(|| steps.as_ref().map(Vec::len))
+            .unwrap_or(0);
+
+        // Two axes can cover different logical rows: `log_temporal` pushes only to
+        // the axes a `TimePoint` names, so each is packed over its own rows and the
+        // same index can mean different rows in each. A `step` axis that does not
+        // cover exactly the exported rows is dropped rather than truncated.
+        if steps.as_ref().is_some_and(|steps| steps.len() != n_rows) {
+            steps = None;
+        }
 
         // `send_columns` reads an empty index list as *static* data, and static data
         // unconditionally shadows every temporal value at the same path in the
-        // viewer. An entity whose rows have no usable axis left is better dropped
-        // than turned static, so zero the row count and export nothing temporal.
-        if sim_time_secs.is_none() && steps.is_none() {
-            n_rows = 0;
-        }
+        // viewer. `n_rows` came from a usable axis, so this cannot fire.
+        debug_assert!(
+            n_rows == 0 || sim_time_secs.is_some() || steps.is_some(),
+            "rows to export with no index column"
+        );
 
         Self {
             sim_time_secs,
@@ -3248,6 +3251,67 @@ mod tests {
             under_entity.is_empty(),
             "expected no chunks under the entity, got {under_entity:?}"
         );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An unusable `sim_time` axis must not take a usable `step` axis down with it.
+    /// The row count is taken from whichever axis can actually be written, so these
+    /// rows are exported on `step` alone — which is what the row-oriented export did,
+    /// since its `set_duration_secs` call was skipped on the variant mismatch while
+    /// `set_time_sequence` still ran.
+    #[test]
+    fn a_usable_step_axis_carries_the_export_on_its_own() {
+        use crate::record::recording::ComponentColumn;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/steponly");
+        const N: usize = 3;
+        {
+            let store = rec.entity_mut(&sat);
+            let mut column = ComponentColumn::new(3);
+            for i in 0..N {
+                column.push(&[i as f64, 0.0, 0.0]);
+            }
+            store.columns.insert(Position3D::component_name(), column);
+            // `sim_time` holds the wrong variant, and is a different length from
+            // `step` as well, so neither its values nor its length can be used.
+            store
+                .timelines
+                .insert(TimelineName::SimTime, vec![TimeIndex::Sequence(0)]);
+            store.timelines.insert(
+                TimelineName::Step,
+                (0..N as u64).map(TimeIndex::Sequence).collect(),
+            );
+            store.num_rows = N;
+        }
+        rec.register_component_fields(Position3D::component_name(), vec!["x", "y", "z"]);
+
+        let path = std::env::temp_dir().join("test_orts_step_only.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let xs = scalars_by_path(path_str);
+        let xs = xs
+            .get("/world/sat/steponly/x")
+            .expect("the rows should have been exported on the step axis");
+        assert_eq!(xs.len(), N, "every row should reach the file");
+        for (i, x) in xs.iter().enumerate() {
+            assert!((x - i as f64).abs() < 1e-9, "x[{i}] = {x}");
+        }
+
+        // Temporal, not static — and indexed by `step` only.
+        let chunk = decode_chunks(path_str)
+            .into_iter()
+            .find(|chunk| chunk.entity_path().to_string() == "/world/sat/steponly/x")
+            .expect("chunk missing");
+        assert!(!chunk.is_static(), "the rows were written as static data");
+        let names: Vec<String> = chunk
+            .timelines()
+            .keys()
+            .map(|name| name.as_str().to_string())
+            .collect();
+        assert_eq!(names, vec!["step".to_string()]);
 
         let _ = std::fs::remove_file(&path);
     }
