@@ -14,6 +14,8 @@ export function atmosphere_altitude_profile(altitudes: Float64Array, lat_deg: nu
  * `model`: `"exponential"`, `"harris-priester"`, or `"nrlmsise00"`.
  * Returns flat row-major `[rho_0, rho_1, ...]` (length = n_lat × n_lon).
  * Latitude ranges from -90 to +90, longitude from -180 to +180.
+ *
+ * Throws if either dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
  */
 export function atmosphere_latlon_map(model: string, altitude_km: number, epoch_jd: number, n_lat: number, n_lon: number, f107: number, ap: number): Float64Array;
 
@@ -23,6 +25,8 @@ export function atmosphere_latlon_map(model: string, altitude_km: number, epoch_
  * Like `atmosphere_latlon_map` but uses the loaded CSSI/GFZ data
  * instead of constant F10.7/Ap values.
  * Falls back to solar moderate conditions if no data is loaded.
+ *
+ * Throws if either dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
  */
 export function atmosphere_latlon_map_sw(model: string, altitude_km: number, epoch_jd: number, n_lat: number, n_lon: number): Float64Array;
 
@@ -32,12 +36,16 @@ export function atmosphere_latlon_map_sw(model: string, altitude_km: number, epo
  * Layout: alt-major `index = iAlt * nLat * nLon + iLat * nLon + iLon`
  * Returns `[rho_0, rho_1, ...]` (length = n_alt × n_lat × n_lon).
  * Also returns `[min, max]` appended at the end (total length = n_alt*n_lat*n_lon + 2).
+ *
+ * Throws if any dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
  */
 export function atmosphere_volume(model: string, alt_min_km: number, alt_max_km: number, n_alt: number, epoch_jd: number, n_lat: number, n_lon: number, f107: number, ap: number): Float32Array;
 
 /**
  * Compute 3D atmosphere volume using loaded space weather data.
  * Falls back to solar moderate conditions if no data is loaded.
+ *
+ * Throws if any dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
  */
 export function atmosphere_volume_sw(model: string, alt_min_km: number, alt_max_km: number, n_alt: number, epoch_jd: number, n_lat: number, n_lon: number): Float32Array;
 
@@ -82,6 +90,8 @@ export function load_space_weather(text: string): boolean;
  * `component`: `"total"`, `"inclination"`, `"declination"`, `"north"`, `"east"`, `"down"`.
  * Returns flat row-major values (length = n_lat × n_lon).
  * Values in nT for field components, degrees for angles.
+ *
+ * Throws if either dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
  */
 export function magnetic_field_latlon_map(model: string, component: string, altitude_km: number, epoch_jd: number, n_lat: number, n_lon: number): Float64Array;
 
@@ -91,11 +101,14 @@ export function magnetic_field_latlon_map(model: string, component: string, alti
  * `seed_lats`, `seed_lons`: geodetic seed points (degrees).
  * `seed_alt_km`: starting altitude for all seeds.
  * `model`: `"igrf"` or `"dipole"`.
- * `max_steps`: max integration steps per line.
- * `step_km`: step size in km.
+ * `max_steps`: max integration steps per line, in each direction.
+ * `step_km`: step size in km; must be finite and positive.
  *
  * Returns flat `[n_lines, n_pts_0, x0,y0,z0, x1,y1,z1, ..., n_pts_1, ...]`
  * where coordinates are in Earth radii (6371 km).
+ *
+ * Throws if `step_km` is not finite and positive, or if
+ * `n_seeds * (2 * max_steps + 1)` exceeds `MAX_FIELD_LINE_POINTS`.
  */
 export function magnetic_field_lines(seed_lats: Float64Array, seed_lons: Float64Array, seed_alt_km: number, epoch_jd: number, model: string, max_steps: number, step_km: number): Float32Array;
 
@@ -105,6 +118,8 @@ export function magnetic_field_lines(seed_lats: Float64Array, seed_lons: Float64
  * Layout: alt-major `index = iAlt * nLat * nLon + iLat * nLon + iLon`
  * Returns values (length = n_alt × n_lat × n_lon + 2, with [min, max] appended).
  * Values in nT for field components, degrees for angles.
+ *
+ * Throws if any dimension is 0 or the grid exceeds `MAX_GRID_POINTS`.
  */
 export function magnetic_field_volume(model: string, component: string, alt_min_km: number, alt_max_km: number, n_alt: number, epoch_jd: number, n_lat: number, n_lon: number): Float32Array;
 
@@ -145,16 +160,16 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly atmosphere_altitude_profile: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
-    readonly atmosphere_latlon_map: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
-    readonly atmosphere_latlon_map_sw: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
-    readonly atmosphere_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
-    readonly atmosphere_volume_sw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
+    readonly atmosphere_latlon_map: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly atmosphere_latlon_map_sw: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly atmosphere_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
+    readonly atmosphere_volume_sw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly dipole_field_at: (a: number, b: number, c: number, d: number) => [number, number];
     readonly igrf_field_at: (a: number, b: number, c: number, d: number) => [number, number];
     readonly load_space_weather: (a: number, b: number) => number;
-    readonly magnetic_field_latlon_map: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number];
-    readonly magnetic_field_lines: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
-    readonly magnetic_field_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
+    readonly magnetic_field_latlon_map: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly magnetic_field_lines: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
+    readonly magnetic_field_volume: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly space_weather_date_range: () => [number, number];
     readonly space_weather_lookup: (a: number) => [number, number];
     readonly space_weather_series: () => [number, number];
@@ -165,6 +180,7 @@ export interface InitOutput {
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }
 
