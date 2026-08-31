@@ -57,6 +57,25 @@ pub struct Nrlmsise00Output {
     pub total_mass_density: f64,
 }
 
+/// Which geomagnetic-activity input drives the model.
+///
+/// NRLMSISE-00 offers two formulations of the Ap dependence, selected in the
+/// reference implementation by switch 9. They use different fitted
+/// coefficients, so this is a choice between two model variants — not a
+/// refinement of one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ApMode {
+    /// Use [`Nrlmsise00Input::ap_daily`] only. This is the reference
+    /// implementation's default and what the pymsis/Fortran driver uses unless
+    /// told otherwise.
+    #[default]
+    Daily,
+    /// Use the 3-hourly history in [`Nrlmsise00Input::ap_array`], which
+    /// resolves sub-daily geomagnetic storms. [`Nrlmsise00Input::ap_daily`] is
+    /// not read in this mode.
+    ThreeHourly,
+}
+
 /// Input parameters for a single NRLMSISE-00 evaluation.
 #[derive(Debug, Clone)]
 pub struct Nrlmsise00Input {
@@ -76,35 +95,56 @@ pub struct Nrlmsise00Input {
     pub f107_daily: f64,
     /// 81-day centered average F10.7 [SFU].
     pub f107_avg: f64,
-    /// Daily Ap index.
+    /// Daily Ap index. Read only in [`ApMode::Daily`].
     pub ap_daily: f64,
-    /// 7-element Ap array for magnetic activity variations.
+    /// 3-hour Ap history, read only in [`ApMode::ThreeHourly`]. Layout matches
+    /// [`SpaceWeather::ap_3hour_history`](crate::space_weather::SpaceWeather::ap_3hour_history);
+    /// element 0 (the daily Ap) is not used by this mode.
     pub ap_array: [f64; 7],
 }
 
 /// NRLMSISE-00 empirical atmosphere model.
 ///
-/// Computes neutral atmospheric density and composition from 0 to ~1000 km altitude
-/// as a function of location, time, solar activity (F10.7), and geomagnetic
-/// activity (Ap).
+/// Computes neutral atmospheric density and composition from the surface to
+/// ~1000 km altitude as a function of location, time, solar activity (F10.7),
+/// and geomagnetic activity (Ap). Below 72.5 km the model reports only the
+/// fully mixed species (N₂, O₂, Ar, He) and total mass density; O, H, N and
+/// anomalous O are zero there, as in the reference implementation.
 ///
 /// Generic over the space weather provider `P`. Use [`ConstantWeather`] for
 /// fixed conditions, or [`CssiSpaceWeather`] for time-varying data.
 pub struct Nrlmsise00<P: SpaceWeatherProvider> {
     weather: P,
+    ap_mode: ApMode,
 }
 
 impl<P: SpaceWeatherProvider> Nrlmsise00<P> {
     /// Create a new NRLMSISE-00 model with the given space weather provider.
+    ///
+    /// Uses [`ApMode::Daily`], the reference implementation's default.
     pub fn new(weather: P) -> Self {
-        Self { weather }
+        Self {
+            weather,
+            ap_mode: ApMode::default(),
+        }
+    }
+
+    /// Select which geomagnetic-activity input to use (builder pattern).
+    pub fn with_ap_mode(mut self, ap_mode: ApMode) -> Self {
+        self.ap_mode = ap_mode;
+        self
+    }
+
+    /// The geomagnetic-activity mode in effect.
+    pub fn ap_mode(&self) -> ApMode {
+        self.ap_mode
     }
 
     /// Compute full NRLMSISE-00 output for the given input parameters.
     ///
     /// Returns temperatures and all species number densities.
     pub fn calculate(&self, input: &Nrlmsise00Input) -> Nrlmsise00Output {
-        let (d, temp_exo, temp_alt) = model::compute(input);
+        let (d, temp_exo, temp_alt) = model::compute(input, self.ap_mode);
         // d[0..8]: He, O, N2, O2, Ar, total_mass(g/cm³), H, N, anomO
         // Total mass density: d[5] is in g/cm³, convert to kg/m³ (* 1000)
         Nrlmsise00Output {
