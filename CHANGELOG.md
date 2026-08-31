@@ -238,7 +238,7 @@ section is subdivided by package.
   writes into CSV. A state with no orbital plane (`r = 0`, or `r × v = 0`, which
   includes `v = 0`) comes back as `NaN`s rather than zeros, since zero is a real
   reading for a circular equatorial orbit's angles.
-  ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  ([#376](https://github.com/sksat/orts/pull/376))
 - Element-set parsing ([#87](https://github.com/sksat/orts/pull/87)). A shared
   no-alloc `elements::Sgp4Elements` — a *validated* mean-element set (catalog
   number, UTC epoch, six SGP4 mean elements, B\* drag; angles in radians, mean
@@ -510,7 +510,7 @@ section is subdivided by package.
   hardcoded zeros — so a recording of a 400 km orbit charted a semi-major axis
   of 0 km and an altitude of 0 km. The chart row reads those fields straight off
   the point rather than recomputing from the state vector, so the DuckDB derived
-  columns did not cover for them. ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  columns did not cover for them. ([#376](https://github.com/sksat/orts/pull/376))
 - Multi-satellite charts follow a changed schema: the hook told the chart Worker
   its schema only at startup, so after a central-body change the rows were built
   under the new schema while the Worker read them under the old one, leaving the

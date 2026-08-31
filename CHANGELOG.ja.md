@@ -217,7 +217,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   書くのと同じ `KeplerianElements::from_state_vector` で計算される。軌道面を持たない
   状態 (`r = 0` や `r × v = 0`、後者は `v = 0` を含む) は 0 ではなく `NaN` を返す。
   0 は円赤道軌道の角度として実在する値なので、値なしの印には使えない。
-  ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  ([#376](https://github.com/sksat/orts/pull/376))
 - 要素セットのパース ([#87](https://github.com/sksat/orts/pull/87))。共有の
   no-alloc な `elements::Sgp4Elements` (平均要素セット: カタログ番号、UTC epoch、
   6 個の SGP4 平均要素、B\* drag。角度は rad、平均運動は rad/s) を**検証付き型**に。
@@ -456,7 +456,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   角運動量は 0 のハードコードで届いていた。400 km 軌道の recording が半長軸 0 km、
   高度 0 km として描かれていた。チャートの行はこれらを状態ベクトルから再計算せず
   point から直読するので、DuckDB の derived 列では埋まらなかった。
-  ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  ([#376](https://github.com/sksat/orts/pull/376))
 - multi-satellite チャートが schema 変更に追従するようになった。hook は起動時にしか
   chart Worker へ schema を伝えていなかったので、中心天体を変えた後は新しい schema で
   行を作る一方 Worker は古い schema で読み、derived SQL に前の天体半径と `mu` が
