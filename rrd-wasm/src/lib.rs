@@ -327,25 +327,45 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
         let has_velocity = vel_cols.0.is_some() || vel_cols.1.is_some() || vel_cols.2.is_some();
 
         // Repeat ordinals are assigned per column, so they only identify a row
-        // while every required column has the same number of values at that
+        // while every column present has the same number of values at that
         // moment. Where the counts disagree, which value pairs with which is
         // unknowable from the file: the moment is skipped rather than joined on
         // an ordinal that means different things in different columns.
-        let required: Vec<&Column> = [Some(x_col), pos_cols.1, pos_cols.2]
-            .into_iter()
-            .chain(if has_velocity {
-                [vel_cols.0, vel_cols.1, vel_cols.2]
-            } else {
-                [None, None, None]
-            })
-            .flatten()
-            .collect();
+        //
+        // The optional columns count too. Attitude logged for only the second of
+        // two states at one moment would otherwise attach to the first.
+        let present: Vec<&Column> = [
+            Some(x_col),
+            pos_cols.1,
+            pos_cols.2,
+            vel_cols.0,
+            vel_cols.1,
+            vel_cols.2,
+            quat_cols.0,
+            quat_cols.1,
+            quat_cols.2,
+            quat_cols.3,
+            omega_cols.0,
+            omega_cols.1,
+            omega_cols.2,
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
 
         for &key in x_col.keys() {
             if let RowKey::Timed { time_ns, step, .. } = key {
                 let time = (time_ns, step);
-                let counts: Vec<usize> = required.iter().map(|c| repeats_at(c, time)).collect();
-                if counts.iter().any(|&n| n != counts[0]) {
+                // Only a moment that actually repeats can be ambiguous: with one
+                // value per column the ordinal is 0 everywhere, and a column
+                // absent at that moment is simply absent from the row.
+                let x_count = repeats_at(x_col, time);
+                if x_count > 1
+                    && present
+                        .iter()
+                        .map(|c| repeats_at(c, time))
+                        .any(|n| n != 0 && n != x_count)
+                {
                     continue;
                 }
             }
@@ -793,5 +813,48 @@ mod tests {
         ]);
         let xs: Vec<f64> = parsed.rows.iter().map(|r| r.x).collect();
         assert_eq!(xs, vec![1.0, 2.0, 3.0], "steps out of order: {xs:?}");
+    }
+
+    /// The optional columns count toward the repeat check too.
+    ///
+    /// Two complete states at one moment with attitude on the second only: the
+    /// quaternion holds repeat 0, so joining on the ordinal attached it to the
+    /// first state and left the second without one.
+    #[test]
+    fn an_optional_column_disagreeing_on_repeats_yields_no_row() {
+        let parsed = decode_written(|rec| {
+            rec.set_duration_secs("sim_time", 0.0);
+            log_scalars(rec, &[("x", 100.0), ("y", 0.0), ("z", 0.0)]);
+            log_scalars(
+                rec,
+                &[
+                    ("x", 110.0),
+                    ("y", 0.0),
+                    ("z", 0.0),
+                    ("qw", 1.0),
+                    ("qx", 0.5),
+                    ("qy", 0.0),
+                    ("qz", 0.0),
+                ],
+            );
+        });
+        assert!(
+            parsed.rows.is_empty(),
+            "the quaternion cannot be assigned to either state; got {:?}",
+            parsed.rows
+        );
+    }
+
+    /// A moment with one value per column is never ambiguous, whichever
+    /// optional columns are absent.
+    #[test]
+    fn a_single_sample_with_absent_optional_columns_still_yields_a_row() {
+        let parsed = decode_written(|rec| {
+            rec.set_duration_secs("sim_time", 0.0);
+            log_scalars(rec, &[("x", 100.0), ("y", 200.0), ("z", 300.0)]);
+        });
+        assert_eq!(parsed.rows.len(), 1, "{:?}", parsed.rows);
+        assert_eq!(parsed.rows[0].x, 100.0);
+        assert!(parsed.rows[0].quaternion.is_none());
     }
 }
