@@ -283,7 +283,11 @@ pub(super) fn push_terminated_capped(events: &mut VecDeque<String>, msg: String)
 /// Per-satellite metadata for serve mode.
 struct SatMeta {
     spec: SatelliteSpec,
-    orbit_end_t: f64,
+    /// When this satellite's orbit is next re-anchored on its initial state
+    /// [s]. `serve` streams without end, so for an unperturbed orbit-only
+    /// satellite it restarts the orbit every period rather than stopping —
+    /// this is a recurring boundary, not a horizon.
+    next_orbit_reset_t: f64,
     next_save_t: f64,
 }
 
@@ -454,7 +458,7 @@ impl ServeEngine {
                     controlled_sats.push(sat);
                     metas.push(SatMeta {
                         spec: spec.clone(),
-                        orbit_end_t: spec.period,
+                        next_orbit_reset_t: spec.period,
                         next_save_t: params.output_interval,
                     });
                 }
@@ -506,7 +510,7 @@ impl ServeEngine {
                 sc_group = sc_group.add_satellite(spec.id.as_str(), initial, dynamics);
                 metas.push(SatMeta {
                     spec: spec.clone(),
-                    orbit_end_t: spec.period,
+                    next_orbit_reset_t: spec.period,
                     next_save_t: params.output_interval,
                 });
             }
@@ -547,7 +551,7 @@ impl ServeEngine {
                 orbit_group = orbit_group.add_satellite(spec.id.as_str(), initial, system);
                 metas.push(SatMeta {
                     spec: spec.clone(),
-                    orbit_end_t: spec.period,
+                    next_orbit_reset_t: spec.period,
                     next_save_t: params.output_interval,
                 });
             }
@@ -784,7 +788,7 @@ impl ServeEngine {
                 let resets: Vec<(SatId, OrbitalState)> = (0..n)
                     .filter_map(|i| {
                         if !self.group.is_terminated(i)
-                            && self.current_t >= self.metas[i].orbit_end_t - 1e-9
+                            && self.current_t >= self.metas[i].next_orbit_reset_t - 1e-9
                         {
                             Some((
                                 self.group.sat_id(i),
@@ -812,7 +816,8 @@ impl ServeEngine {
                         .iter()
                         .position(|m| m.spec.id.as_str() == AsRef::<str>::as_ref(id))
                     {
-                        self.metas[i].orbit_end_t = self.current_t + self.metas[i].spec.period;
+                        self.metas[i].next_orbit_reset_t =
+                            self.current_t + self.metas[i].spec.period;
                     }
                 }
             }
@@ -1051,9 +1056,13 @@ impl ServeEngine {
         let t = self.current_t;
         let sat_entity_path = spec.entity_path();
 
+        let next_orbit_reset_t = self.current_t + spec.period;
         self.metas.push(SatMeta {
             spec,
-            orbit_end_t: self.current_t + self.metas.last().map_or(5554.0, |m| m.spec.period),
+            // The satellite's own period. This used to read the *previous*
+            // entry in `metas` (or a hardcoded 5554 s for the first add), so a
+            // satellite added to a fleet re-anchored on someone else's orbit.
+            next_orbit_reset_t,
             next_save_t: self.current_t + self.params.output_interval,
         });
         // Keep `sat_streams` index-aligned with `metas` (dynamic adds cannot
@@ -1179,7 +1188,7 @@ impl ServeEngine {
 
         self.metas.push(SatMeta {
             spec,
-            orbit_end_t: self.current_t + sat_info.period,
+            next_orbit_reset_t: self.current_t + sat_info.period,
             next_save_t: self.current_t + self.params.output_interval,
         });
         // Keep `sat_streams` index-aligned with `metas` (dynamic adds cannot
@@ -1429,6 +1438,43 @@ orbit = { type = "circular", altitude = 50 }
                 .broadcasts
                 .iter()
                 .any(|m| m.contains("satellite_added"))
+        );
+    }
+
+    /// A satellite added at runtime re-anchors on its own orbit.
+    ///
+    /// `serve` restarts an unperturbed orbit-only satellite at every period
+    /// boundary. The boundary for a newly added one was read from the previous
+    /// entry in `metas` — the 500 km `sat-a` here — so a satellite added to a
+    /// fleet was re-anchored on someone else's orbit.
+    #[test]
+    fn an_added_satellite_resets_on_its_own_period() {
+        let mut init = engine_from_toml(ORBIT_ONLY).expect("engine builds");
+        let existing = init.engine.metas[0].spec.period;
+
+        let cfg: SatelliteConfig = serde_json::from_str(
+            r#"{ "id": "sat-b", "orbit": { "type": "circular", "altitude": 1500 } }"#,
+        )
+        .expect("valid satellite config");
+        init.engine.add_satellite(cfg).expect("orbit-only add ok");
+
+        let added = init
+            .engine
+            .metas
+            .iter()
+            .find(|m| m.spec.id == "sat-b")
+            .expect("the added satellite is in metas");
+        assert!(
+            added.spec.period > existing + 500.0,
+            "the fixture needs two clearly different periods: {} vs {existing}",
+            added.spec.period
+        );
+        assert!(
+            (added.next_orbit_reset_t - added.spec.period).abs() < 1e-9,
+            "reset boundary {} should be the added satellite's own period {}, \
+             not the existing {existing}",
+            added.next_orbit_reset_t,
+            added.spec.period
         );
     }
 
