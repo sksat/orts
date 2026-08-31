@@ -84,6 +84,39 @@ export function geodetic_to_eci(lat_deg: number, lon_deg: number, altitude_km: n
 export function jd_to_utc_string(epoch_jd: number, t: number): string;
 
 /**
+ * Batch Keplerian elements plus the scalar orbit quantities charts plot.
+ *
+ * `states`: flat `[x,y,z,vx,vy,vz, ...]` (length = N×6; km and km/s)
+ * `mu`: gravitational parameter of the central body [km³/s²]
+ * `body_radius`: central body radius [km], for the altitude term
+ *
+ * Returns, per state, `[a, e, inc, raan, omega, nu, altitude,
+ * specific_energy, angular_momentum, velocity]` — 10 values, angles in
+ * radians. A state whose elements are undefined yields ten `NaN`s; see below.
+ *
+ * The decoder that reads a `.rrd` recovers position and velocity only, so the
+ * browser has to derive the rest. Doing it here keeps one implementation:
+ * `arika::kepler::KeplerianElements::from_state_vector` is what the CLI writes into
+ * CSV and sends over the WebSocket.
+ *
+ * # Errors
+ *
+ * Returns an error (a JS exception) unless `states.len()` is a multiple of 6,
+ * and unless `mu` and `body_radius` are finite with `mu > 0`. A ragged
+ * `states` would otherwise drop a partial state in silence.
+ *
+ * # Undefined elements
+ *
+ * Classical elements need an orbital plane, so a state with `r = 0` or
+ * `r × v = 0` (which includes `v = 0`) has none — `from_state_vector` divides
+ * by those magnitudes. Such a state, and any state with a non-finite
+ * component, yields `NaN` for all ten values rather than zeros: zero is a
+ * legitimate reading for a circular equatorial orbit's angles, so it cannot
+ * double as "no value".
+ */
+export function orbit_derived_batch(states: Float64Array, mu: number, body_radius: number): Float64Array;
+
+/**
  * Approximate sun direction (unit vector) in Gcrs frame.
  *
  * Returns `[x, y, z]` (3 floats).
@@ -115,19 +148,21 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly body_orientation: (a: number, b: number, c: number, d: number) => [number, number];
     readonly body_quat_to_rsw: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number];
-    readonly earth_rotation_angle: (a: number, b: number) => number;
     readonly eci_to_ecef: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly eci_to_ecef_batch: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly geodetic_to_ecef: (a: number, b: number, c: number) => [number, number];
     readonly geodetic_to_eci: (a: number, b: number, c: number, d: number) => [number, number];
     readonly jd_to_utc_string: (a: number, b: number) => [number, number];
+    readonly orbit_derived_batch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly sun_direction_eci: (a: number, b: number) => [number, number];
     readonly sun_direction_from_body: (a: number, b: number, c: number, d: number) => [number, number];
     readonly sun_distance_from_body: (a: number, b: number, c: number, d: number) => number;
+    readonly earth_rotation_angle: (a: number, b: number) => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
+    readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

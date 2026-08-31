@@ -91,6 +91,111 @@ pub fn earth_rotation_angle(epoch_jd: f64, t: f64) -> f64 {
     epoch.gmst()
 }
 
+/// How many values [`orbit_derived_batch`] emits per state.
+pub const ORBIT_DERIVED_STRIDE: usize = 10;
+
+/// Batch Keplerian elements plus the scalar orbit quantities charts plot.
+///
+/// `states`: flat `[x,y,z,vx,vy,vz, ...]` (length = N×6; km and km/s)
+/// `mu`: gravitational parameter of the central body [km³/s²]
+/// `body_radius`: central body radius [km], for the altitude term
+///
+/// Returns, per state, `[a, e, inc, raan, omega, nu, altitude,
+/// specific_energy, angular_momentum, velocity]` — 10 values, angles in
+/// radians. A state whose elements are undefined yields ten `NaN`s; see below.
+///
+/// The decoder that reads a `.rrd` recovers position and velocity only, so the
+/// browser has to derive the rest. Doing it here keeps one implementation:
+/// `arika::kepler::KeplerianElements::from_state_vector` is what the CLI writes into
+/// CSV and sends over the WebSocket.
+///
+/// # Errors
+///
+/// Returns an error (a JS exception) unless `states.len()` is a multiple of 6,
+/// and unless `mu` and `body_radius` are finite with `mu > 0`. A ragged
+/// `states` would otherwise drop a partial state in silence.
+///
+/// # Undefined elements
+///
+/// Classical elements need an orbital plane, so a state with `r = 0` or
+/// `r × v = 0` (which includes `v = 0`) has none — `from_state_vector` divides
+/// by those magnitudes. Such a state, and any state with a non-finite
+/// component, yields `NaN` for all ten values rather than zeros: zero is a
+/// legitimate reading for a circular equatorial orbit's angles, so it cannot
+/// double as "no value".
+#[wasm_bindgen]
+pub fn orbit_derived_batch(states: &[f64], mu: f64, body_radius: f64) -> Result<Vec<f64>, JsValue> {
+    batch_orbit_derived(states, mu, body_radius).map_err(|e| JsValue::from_str(&e))
+}
+
+/// Length-checked core of [`orbit_derived_batch`], split out because `JsValue`
+/// exists only on `wasm32` — this half is unit-testable on the host target.
+fn batch_orbit_derived(states: &[f64], mu: f64, body_radius: f64) -> Result<Vec<f64>, String> {
+    if !mu.is_finite() || mu <= 0.0 {
+        return Err(format!(
+            "orbit_derived_batch: mu must be positive and finite (got {mu})"
+        ));
+    }
+    if !body_radius.is_finite() {
+        return Err(format!(
+            "orbit_derived_batch: body_radius must be finite (got {body_radius})"
+        ));
+    }
+    if !states.len().is_multiple_of(6) {
+        return Err(format!(
+            "orbit_derived_batch: states has {} elements, expected a multiple of 6 \
+             (x, y, z, vx, vy, vz per state)",
+            states.len()
+        ));
+    }
+
+    let mut out = Vec::with_capacity(states.len() / 6 * ORBIT_DERIVED_STRIDE);
+    for s in states.chunks_exact(6) {
+        let pos = Vector3::new(s[0], s[1], s[2]);
+        let vel = Vector3::new(s[3], s[4], s[5]);
+        out.extend_from_slice(&orbit_derived_one(&pos, &vel, mu, body_radius));
+    }
+    Ok(out)
+}
+
+/// One state's ten derived values, or ten `NaN`s where the elements have no
+/// definition.
+fn orbit_derived_one(
+    pos: &Vector3<f64>,
+    vel: &Vector3<f64>,
+    mu: f64,
+    body_radius: f64,
+) -> [f64; ORBIT_DERIVED_STRIDE] {
+    const UNDEFINED: [f64; ORBIT_DERIVED_STRIDE] = [f64::NAN; ORBIT_DERIVED_STRIDE];
+
+    if !pos.iter().chain(vel.iter()).all(|v| v.is_finite()) {
+        return UNDEFINED;
+    }
+    let r = pos.magnitude();
+    let h = pos.cross(vel);
+    // The plane and the radial direction are what every angle is measured
+    // from. A `.rrd` with no velocity columns decodes as `v = 0`, so `h = 0` is
+    // reachable from a real recording rather than only in theory.
+    if r == 0.0 || h.magnitude() == 0.0 {
+        return UNDEFINED;
+    }
+
+    let el = arika::kepler::KeplerianElements::from_state_vector(pos, vel, mu);
+    let v = vel.magnitude();
+    [
+        el.semi_major_axis,
+        el.eccentricity,
+        el.inclination,
+        el.raan,
+        el.argument_of_periapsis,
+        el.true_anomaly,
+        r - body_radius,
+        v * v / 2.0 - mu / r,
+        h.magnitude(),
+        v,
+    ]
+}
+
 /// Approximate sun direction (unit vector) in Gcrs frame.
 ///
 /// Returns `[x, y, z]` (3 floats).
@@ -257,5 +362,132 @@ mod tests {
             );
             assert_eq!(&batch[i * 3..i * 3 + 3], &single[..]);
         }
+    }
+
+    // orbit_derived_batch
+
+    /// The gravitational parameter and radius of the Earth, as the CLI uses them.
+    const MU_EARTH: f64 = 398600.4418;
+    const R_EARTH: f64 = 6378.137;
+
+    /// A circular orbit 400 km up comes back with the radius as its semi-major
+    /// axis and no eccentricity.
+    #[test]
+    fn derived_values_of_a_circular_orbit() {
+        let r = R_EARTH + 400.0;
+        let v = (MU_EARTH / r).sqrt();
+        let out = batch_orbit_derived(&[r, 0.0, 0.0, 0.0, v, 0.0], MU_EARTH, R_EARTH)
+            .expect("a well-formed state");
+
+        assert_eq!(out.len(), ORBIT_DERIVED_STRIDE);
+        assert!((out[0] - r).abs() < 1e-6, "a = {}", out[0]);
+        assert!(out[1] < 1e-12, "e = {}", out[1]);
+        assert!((out[6] - 400.0).abs() < 1e-6, "altitude = {}", out[6]);
+        assert!((out[9] - v).abs() < 1e-12, "velocity = {}", out[9]);
+        // Specific energy of a circular orbit is -mu/(2a).
+        assert!(
+            (out[7] + MU_EARTH / (2.0 * r)).abs() < 1e-9,
+            "energy = {}",
+            out[7]
+        );
+        // |h| = r·v for a circular orbit.
+        assert!((out[8] - r * v).abs() < 1e-6, "|h| = {}", out[8]);
+    }
+
+    /// Each state in a batch is converted on its own, in order.
+    #[test]
+    fn batch_converts_each_state_independently() {
+        let r1 = R_EARTH + 400.0;
+        let v1 = (MU_EARTH / r1).sqrt();
+        let r2 = R_EARTH + 800.0;
+        let v2 = (MU_EARTH / r2).sqrt();
+        let out = batch_orbit_derived(
+            &[r1, 0.0, 0.0, 0.0, v1, 0.0, r2, 0.0, 0.0, 0.0, v2, 0.0],
+            MU_EARTH,
+            R_EARTH,
+        )
+        .expect("two well-formed states");
+
+        assert_eq!(out.len(), 2 * ORBIT_DERIVED_STRIDE);
+        assert!((out[0] - r1).abs() < 1e-6);
+        assert!((out[ORBIT_DERIVED_STRIDE] - r2).abs() < 1e-6);
+    }
+
+    /// The angles match the same call through arika's own API, so the WASM
+    /// facade cannot drift from what the CLI writes.
+    #[test]
+    fn derived_angles_match_the_arika_api() {
+        // A 51.6-degree inclined, slightly eccentric orbit.
+        let pos = Vector3::new(5000.0, 3000.0, 4000.0);
+        let vel = Vector3::new(-3.0, 5.5, 2.0);
+        let out = batch_orbit_derived(
+            &[pos.x, pos.y, pos.z, vel.x, vel.y, vel.z],
+            MU_EARTH,
+            R_EARTH,
+        )
+        .expect("a well-formed state");
+
+        let el = arika::kepler::KeplerianElements::from_state_vector(&pos, &vel, MU_EARTH);
+        assert_eq!(out[0], el.semi_major_axis);
+        assert_eq!(out[1], el.eccentricity);
+        assert_eq!(out[2], el.inclination);
+        assert_eq!(out[3], el.raan);
+        assert_eq!(out[4], el.argument_of_periapsis);
+        assert_eq!(out[5], el.true_anomaly);
+    }
+
+    /// A state with no orbital plane yields `NaN`, not zeros.
+    ///
+    /// Zero is a real reading for a circular equatorial orbit's angles, so it
+    /// cannot also mean "no value". A `.rrd` without velocity columns decodes
+    /// as `v = 0`, which is this case.
+    #[test]
+    fn states_without_an_orbital_plane_are_nan() {
+        let r = R_EARTH + 400.0;
+        for (label, state) in [
+            ("v = 0", [r, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            ("r = 0", [0.0, 0.0, 0.0, 0.0, 7.6, 0.0]),
+            ("r parallel to v", [r, 0.0, 0.0, 7.6, 0.0, 0.0]),
+            ("NaN component", [r, f64::NAN, 0.0, 0.0, 7.6, 0.0]),
+            ("infinite component", [r, f64::INFINITY, 0.0, 0.0, 7.6, 0.0]),
+        ] {
+            let out = batch_orbit_derived(&state, MU_EARTH, R_EARTH).expect("length is fine");
+            assert!(
+                out.iter().all(|v| v.is_nan()),
+                "{label} should be all NaN, got {out:?}"
+            );
+        }
+    }
+
+    /// A ragged `states` is refused rather than silently dropping the tail.
+    #[test]
+    fn batch_requires_six_values_per_state() {
+        let err = batch_orbit_derived(&[1.0, 2.0, 3.0, 4.0, 5.0], MU_EARTH, R_EARTH)
+            .expect_err("5 values is not a whole state");
+        assert!(err.contains("multiple of 6"), "{err}");
+    }
+
+    /// A `mu` that cannot scale an orbit is refused at the boundary.
+    #[test]
+    fn batch_requires_a_usable_mu_and_radius() {
+        let state = [7000.0, 0.0, 0.0, 0.0, 7.5, 0.0];
+        for mu in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(
+                batch_orbit_derived(&state, mu, R_EARTH).is_err(),
+                "mu = {mu} should be refused"
+            );
+        }
+        assert!(batch_orbit_derived(&state, MU_EARTH, f64::NAN).is_err());
+        // Zero radius is a legitimate request for the radial distance itself.
+        assert!(batch_orbit_derived(&state, MU_EARTH, 0.0).is_ok());
+    }
+
+    /// An empty batch is an empty result.
+    #[test]
+    fn an_empty_batch_returns_nothing() {
+        assert_eq!(
+            batch_orbit_derived(&[], MU_EARTH, R_EARTH).expect("empty is fine"),
+            Vec::<f64>::new()
+        );
     }
 }
