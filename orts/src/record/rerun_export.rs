@@ -1,10 +1,115 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
+
+use re_chunk::TimeColumn;
 
 use crate::record::component::Component;
 use crate::record::components::Position3D;
 use crate::record::entity_path::EntityPath;
-use crate::record::recording::{Recording, SimMetadata};
+use crate::record::recording::{EntityStore, Recording, SimMetadata};
 use crate::record::timeline::{TimeIndex, TimelineName};
+
+/// Rows per columnar chunk.
+///
+/// `send_columns` bypasses the batcher, so the chunk boundaries are ours to pick.
+/// The batcher's own bound on sorted data is `flush_num_bytes`, 2 MiB by default;
+/// a row here costs a scalar, a list offset, a row id and the two index values, so
+/// 8192 rows stay well inside that while keeping a long `orts run` from emitting
+/// one multi-million-row chunk that a reader has to materialize whole before it can
+/// show anything.
+const CHUNK_ROWS: usize = 8192;
+
+/// The index columns for one entity, as plain values.
+///
+/// Only `sim_time` (a duration) and `step` (a sequence) are written, which is what
+/// the export has always written; `WallClock` and `Custom` timelines have no
+/// read-back contract yet.
+struct EntityIndex {
+    sim_time_secs: Option<Vec<f64>>,
+    steps: Option<Vec<i64>>,
+    /// Logical rows this index covers.
+    n_rows: usize,
+}
+
+impl EntityIndex {
+    fn from_store(store: &EntityStore) -> Self {
+        // The logical row count comes from the timelines, preferring `sim_time`.
+        let mut n_rows = store
+            .timelines
+            .get(&TimelineName::SimTime)
+            .or_else(|| store.timelines.get(&TimelineName::Step))
+            .map(|tl| tl.len())
+            .unwrap_or(0);
+
+        // A `TimeColumn` carries no "no time on this row", so an axis holding the
+        // wrong `TimeIndex` variant is dropped whole rather than written
+        // misaligned. `sim_time` needs no length check: `n_rows` is its own length
+        // whenever it exists.
+        let sim_time_secs = store.timelines.get(&TimelineName::SimTime).and_then(|tl| {
+            tl.iter()
+                .map(|index| match index {
+                    TimeIndex::Seconds(t) => Some(*t),
+                    TimeIndex::Sequence(_) => None,
+                })
+                .collect::<Option<Vec<_>>>()
+        });
+
+        // `step` can be shorter than `n_rows` — rows logged with a `TimePoint` that
+        // omits it push nothing — and a short index cannot align with the data.
+        let steps = store
+            .timelines
+            .get(&TimelineName::Step)
+            .and_then(|tl| {
+                tl.iter()
+                    .map(|index| match index {
+                        TimeIndex::Sequence(s) => i64::try_from(*s).ok(),
+                        TimeIndex::Seconds(_) => None,
+                    })
+                    .collect::<Option<Vec<_>>>()
+            })
+            .filter(|steps| steps.len() == n_rows);
+
+        // `send_columns` reads an empty index list as *static* data, and static data
+        // unconditionally shadows every temporal value at the same path in the
+        // viewer. An entity whose rows have no usable axis left is better dropped
+        // than turned static, so zero the row count and export nothing temporal.
+        if sim_time_secs.is_none() && steps.is_none() {
+            n_rows = 0;
+        }
+
+        Self {
+            sim_time_secs,
+            steps,
+            n_rows,
+        }
+    }
+
+    /// The `TimeColumn`s covering `rows`. `send_columns` requires every index
+    /// column to be as long as the component columns it accompanies.
+    fn time_columns(&self, rows: Range<usize>) -> Vec<TimeColumn> {
+        let mut columns = Vec::with_capacity(2);
+        if let Some(secs) = &self.sim_time_secs {
+            columns.push(TimeColumn::new_duration_secs(
+                "sim_time",
+                secs[rows.clone()].iter().copied(),
+            ));
+        }
+        if let Some(steps) = &self.steps {
+            columns.push(TimeColumn::new_sequence(
+                "step",
+                steps[rows].iter().copied(),
+            ));
+        }
+        columns
+    }
+}
+
+/// Split `n` rows into consecutive ranges of at most [`CHUNK_ROWS`].
+fn chunk_ranges(n: usize) -> impl Iterator<Item = Range<usize>> {
+    (0..n)
+        .step_by(CHUNK_ROWS)
+        .map(move |start| start..(start + CHUNK_ROWS).min(n))
+}
 
 /// Save a Recording to a .rrd file using the Rerun SDK.
 ///
@@ -38,54 +143,73 @@ pub fn save_as_rrd(
             }
         }
 
-        // Log temporal data (generic: iterate all component columns)
-        let sim_times = store.timelines.get(&TimelineName::SimTime);
-        let steps = store.timelines.get(&TimelineName::Step);
+        // Log temporal data (generic: iterate all component columns). Each field is
+        // sent as whole columns, so the call count scales with the number of fields
+        // rather than with the number of rows.
+        let index = EntityIndex::from_store(store);
 
-        // Determine number of logical time rows from timelines (no stride hack needed)
-        let n_rows = sim_times.or(steps).map(|tl| tl.len()).unwrap_or(0);
+        for (comp_name, column) in &store.columns {
+            let fields = recording.lookup_component_fields(comp_name);
+            let scalars_per_row = column.scalars_per_row;
+            // `lookup_component_fields` names one synthetic field for an
+            // unregistered component, and a registered one may name fewer fields
+            // than the column is wide. Export exactly the fields that are named and
+            // that the column actually holds.
+            let n_fields = fields.len().min(scalars_per_row);
+            if n_fields == 0 {
+                continue;
+            }
+            let paths: Vec<String> = fields[..n_fields]
+                .iter()
+                .map(|field| format!("{rr_path}/{field}"))
+                .collect();
 
-        if n_rows > 0 {
-            for i in 0..n_rows {
-                // Set timeline for this row (1:1 mapping, no stride)
-                if let Some(sim_times) = sim_times
-                    && let Some(TimeIndex::Seconds(t)) = sim_times.get(i)
-                {
-                    rec.set_duration_secs("sim_time", *t);
-                }
-                if let Some(steps) = steps
-                    && let Some(TimeIndex::Sequence(s)) = steps.get(i)
-                {
-                    rec.set_time_sequence("step", *s as i64);
-                }
+            // A column with fewer rows than the entity has logical rows keeps the
+            // leading alignment it had under the row-oriented export (see #375).
+            // The `min` is also what holds the index columns to the data length.
+            let n_rows = column.num_rows().min(index.n_rows);
 
-                // Export all component columns as f64 Scalars
-                for (comp_name, column) in &store.columns {
-                    if let Some(row) = column.get_row(i) {
-                        let fields = recording.lookup_component_fields(comp_name);
-                        for (k, field) in fields.iter().enumerate() {
-                            if let Some(&val) = row.get(k) {
-                                rec.log(
-                                    format!("{rr_path}/{field}"),
-                                    &re_sdk_types::archetypes::Scalars::new([val]),
-                                )?;
-                            }
-                        }
-                    }
-                }
-
-                // Orthogonal: if Position3D exists, also log Points3D for
-                // Rerun 3D Viewer visualization. This intentionally duplicates the
-                // position data already logged as f64 Scalars above — Points3D uses
-                // f32 internally and is only consumed by the 3D spatial view.
-                if let Some(pos_col) = store.columns.get(&Position3D::component_name())
-                    && let Some(pos) = pos_col.get_row(i)
-                {
-                    rec.log(
-                        rr_path.clone(),
-                        &re_sdk_types::archetypes::Points3D::new([[pos[0], pos[1], pos[2]]]),
+            for rows in chunk_ranges(n_rows) {
+                // Built once per chunk and cloned per field: a `TimeColumn` clone is
+                // a refcount bump on the Arrow buffer, whereas rebuilding one
+                // re-scales every timestamp.
+                let indexes = index.time_columns(rows.clone());
+                for (k, path) in paths.iter().enumerate() {
+                    let values: Vec<f64> = rows
+                        .clone()
+                        .map(|i| column.data[i * scalars_per_row + k])
+                        .collect();
+                    rec.send_columns(
+                        path.as_str(),
+                        indexes.iter().cloned(),
+                        re_sdk_types::archetypes::Scalars::new(values).columns_of_unit_batches()?,
                     )?;
                 }
+            }
+        }
+
+        // Orthogonal: if Position3D exists, also log Points3D for Rerun 3D Viewer
+        // visualization. This intentionally duplicates the position data already
+        // logged as f64 Scalars above — Points3D uses f32 internally and is only
+        // consumed by the 3D spatial view.
+        if let Some(pos_col) = store.columns.get(&Position3D::component_name())
+            && pos_col.scalars_per_row >= 3
+        {
+            let scalars_per_row = pos_col.scalars_per_row;
+            let n_rows = pos_col.num_rows().min(index.n_rows);
+            for rows in chunk_ranges(n_rows) {
+                let indexes = index.time_columns(rows.clone());
+                let points: Vec<[f32; 3]> = rows
+                    .map(|i| {
+                        let row = &pos_col.data[i * scalars_per_row..];
+                        [row[0] as f32, row[1] as f32, row[2] as f32]
+                    })
+                    .collect();
+                rec.send_columns(
+                    rr_path.as_str(),
+                    indexes,
+                    re_sdk_types::archetypes::Points3D::new(points).columns_of_unit_batches()?,
+                )?;
             }
         }
     }
@@ -2711,5 +2835,479 @@ mod tests {
                 "a velocity with no values reports zero, as a position-only row does"
             );
         }
+    }
+
+    /// Decode every Arrow chunk in an .rrd file, in file order.
+    fn decode_chunks(path: &str) -> Vec<re_chunk::Chunk> {
+        use re_log_encoding::DecoderApp;
+        use re_log_types::LogMsg;
+
+        let file = std::fs::File::open(path).expect("open .rrd");
+        let reader = std::io::BufReader::new(file);
+        let mut chunks = Vec::new();
+        for msg in DecoderApp::decode_lazy(reader) {
+            if let LogMsg::ArrowMsg(_, arrow_msg) = msg.expect("decode log message") {
+                chunks.push(re_chunk::Chunk::from_arrow_msg(&arrow_msg).expect("decode chunk"));
+            }
+        }
+        chunks
+    }
+
+    /// Every field of every row carries a distinct value, so a row that shifts by
+    /// one position shows up as a value mismatch. `roundtrip_save_and_load_rrd`
+    /// writes the same state five times over and cannot see such a shift.
+    #[test]
+    fn each_value_lands_on_its_own_time() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/dense");
+
+        const N: usize = 7;
+        for i in 0..N {
+            let t = i as f64 * 10.0;
+            let b = i as f64;
+            let os = OrbitalState::new(
+                Vector3::new(7000.0 + b, 100.0 + b, 200.0 + b),
+                Vector3::new(1.0 + b, 2.0 + b, 3.0 + b),
+            );
+            let tp = TimePoint::new().with_sim_time(t).with_step(i as u64);
+            rec.log_orbital_state(&sat, &tp, &os);
+        }
+
+        let path = std::env::temp_dir().join("test_orts_dense_rows.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let rows = load_from_rrd(path_str).expect("failed to load .rrd");
+        assert_eq!(rows.len(), N, "expected {N} rows");
+
+        for (i, row) in rows.iter().enumerate() {
+            let b = i as f64;
+            // `t` gets a looser bar than the values: the timeline stores whole
+            // nanoseconds, so 1e-9 s is its quantum and a rounding difference there
+            // would read like a row misalignment. A shift of one row moves `t` by
+            // the 10 s step, far above this.
+            assert!(
+                (row.t - i as f64 * 10.0).abs() < 1e-6,
+                "t[{i}] = {}, expected {}",
+                row.t,
+                i as f64 * 10.0
+            );
+            for (name, got, want) in [
+                ("x", row.x, 7000.0 + b),
+                ("y", row.y, 100.0 + b),
+                ("z", row.z, 200.0 + b),
+                ("vx", row.vx, 1.0 + b),
+                ("vy", row.vy, 2.0 + b),
+                ("vz", row.vz, 3.0 + b),
+            ] {
+                assert!(
+                    (got - want).abs() < 1e-9,
+                    "{name}[{i}] = {got}, expected {want}"
+                );
+            }
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The columnar writer carries its index columns explicitly, so the .rrd holds
+    /// exactly the timelines the `Recording` had. `rec.log()` also injects
+    /// `log_time` and `log_tick`, which nothing in this repository reads.
+    #[test]
+    fn export_writes_only_the_recording_timelines() {
+        use std::collections::BTreeSet;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/timelines");
+
+        for i in 0..4u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0));
+            rec.log_orbital_state(&sat, &tp, &os);
+        }
+
+        let path = std::env::temp_dir().join("test_orts_timelines.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let names: BTreeSet<String> = decode_chunks(path_str)
+            .iter()
+            .flat_map(|chunk| {
+                chunk
+                    .timelines()
+                    .keys()
+                    .map(|name| name.as_str().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        assert_eq!(
+            names,
+            BTreeSet::from(["sim_time".to_string(), "step".to_string()]),
+            "unexpected timelines in the .rrd"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Scalar values per entity path, in file order — the same way every reader in
+    /// the repository collects them. Paths keep the leading slash Rerun gives them.
+    fn scalars_by_path(path: &str) -> BTreeMap<String, Vec<f64>> {
+        let mut out: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+        for chunk in decode_chunks(path) {
+            for comp_id in chunk.components_identifiers() {
+                if !comp_id.as_str().contains("Scalar") && !comp_id.as_str().contains("scalars") {
+                    continue;
+                }
+                for row_idx in 0..chunk.num_rows() {
+                    if let Some(Ok(batch)) =
+                        chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx)
+                    {
+                        out.entry(chunk.entity_path().to_string())
+                            .or_default()
+                            .extend(batch.iter().map(|s| s.0.0));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// A recording of `n` rows on one satellite, `x` counting up from zero so a
+    /// row can be identified by its value.
+    fn counted_recording(entity: &str, n: usize) -> Recording {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse(entity);
+        for i in 0..n {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i as u64);
+            let os = OrbitalState::new(
+                Vector3::new(i as f64, 0.0, 0.0),
+                Vector3::new(0.0, 7.5, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+        }
+        rec
+    }
+
+    /// `send_columns` writes whatever it is handed as a single chunk, so the row
+    /// count per chunk is this module's responsibility. Every row must appear
+    /// exactly once and no chunk may exceed the cap.
+    #[test]
+    fn chunk_rows_are_bounded() {
+        let n = CHUNK_ROWS + 1;
+        let rec = counted_recording("/world/sat/bounded", n);
+
+        let path = std::env::temp_dir().join("test_orts_chunk_bounds.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let chunks = decode_chunks(path_str);
+        let mut rows_per_path: BTreeMap<String, usize> = BTreeMap::new();
+        for chunk in &chunks {
+            assert!(
+                chunk.num_rows() <= CHUNK_ROWS,
+                "{} holds {} rows, cap is {CHUNK_ROWS}",
+                chunk.entity_path(),
+                chunk.num_rows()
+            );
+            *rows_per_path
+                .entry(chunk.entity_path().to_string())
+                .or_default() += chunk.num_rows();
+        }
+
+        for field in ["x", "y", "z", "vx", "vy", "vz"] {
+            assert_eq!(
+                rows_per_path.get(&format!("/world/sat/bounded/{field}")),
+                Some(&n),
+                "{field} row total"
+            );
+        }
+
+        // The split must not reorder or drop rows either.
+        let xs = &scalars_by_path(path_str)["/world/sat/bounded/x"];
+        assert_eq!(xs.len(), n);
+        for (i, x) in xs.iter().enumerate() {
+            assert!((x - i as f64).abs() < 1e-9, "x[{i}] = {x}");
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Every scalar row holds exactly one value. The readers count a row per
+    /// value, so a wide batch would silently change how many rows they see.
+    #[test]
+    fn scalar_rows_stay_unit_batches() {
+        let rec = counted_recording("/world/sat/unit", 5);
+
+        let path = std::env::temp_dir().join("test_orts_unit_batches.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let mut checked = 0;
+        for chunk in decode_chunks(path_str) {
+            for comp_id in chunk.components_identifiers() {
+                if !comp_id.as_str().contains("Scalar") && !comp_id.as_str().contains("scalars") {
+                    continue;
+                }
+                for row_idx in 0..chunk.num_rows() {
+                    if let Some(Ok(batch)) =
+                        chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx)
+                    {
+                        assert_eq!(
+                            batch.len(),
+                            1,
+                            "{} row {row_idx} holds {} scalars",
+                            chunk.entity_path(),
+                            batch.len()
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 0, "no scalar rows were inspected");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// No reader in the repository reconstructs the `step` timeline, so the only
+    /// way to pin it is to read the decoded chunk directly.
+    #[test]
+    fn step_timeline_survives_the_columnar_export() {
+        let n = 6;
+        let rec = counted_recording("/world/sat/steps", n);
+
+        let path = std::env::temp_dir().join("test_orts_step_timeline.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let expected: Vec<i64> = (0..n as i64).collect();
+        let mut seen = 0;
+        for chunk in decode_chunks(path_str) {
+            if chunk.entity_path().to_string() != "/world/sat/steps/x" {
+                continue;
+            }
+            let (_, steps) = chunk
+                .timelines()
+                .iter()
+                .find(|(name, _)| name.as_str() == "step")
+                .expect("step timeline missing");
+            assert_eq!(steps.times_raw(), expected.as_slice());
+            seen += 1;
+        }
+        assert_eq!(seen, 1, "expected one chunk for /world/sat/steps/x");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The `Points3D` convenience archetype must cover the same rows as the
+    /// position column it mirrors.
+    #[test]
+    fn points3d_rows_match_position_rows() {
+        let n = 9;
+        let rec = counted_recording("/world/sat/points", n);
+
+        let path = std::env::temp_dir().join("test_orts_points3d_rows.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        // Only Points3D is logged at the entity itself; the scalars live one level
+        // down, under the field names.
+        let points_rows: usize = decode_chunks(path_str)
+            .iter()
+            .filter(|chunk| chunk.entity_path().to_string() == "/world/sat/points")
+            .map(|chunk| chunk.num_rows())
+            .sum();
+        let position_rows = scalars_by_path(path_str)["/world/sat/points/x"].len();
+        assert_eq!(position_rows, n, "the fixture should have written {n} rows");
+        assert_eq!(
+            points_rows, position_rows,
+            "Points3D must cover the same rows as the position column it mirrors"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A negative `sim_time` reaches the file. The row-oriented export could not
+    /// write one: `set_duration_secs` goes through `std::time::Duration`, which is
+    /// unsigned, so it rejected the value and left the previous row's timestamp in
+    /// place. `TimeColumn::new_duration_secs` takes it.
+    #[test]
+    fn negative_sim_time_reaches_the_file() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/countdown");
+
+        let times = [-30.0, -20.0, -10.0, 0.0, 10.0];
+        for (i, &t) in times.iter().enumerate() {
+            let tp = TimePoint::new().with_sim_time(t).with_step(i as u64);
+            let os = OrbitalState::new(
+                Vector3::new(i as f64, 0.0, 0.0),
+                Vector3::new(0.0, 7.5, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+        }
+
+        let path = std::env::temp_dir().join("test_orts_negative_time.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let rows = load_from_rrd(path_str).expect("failed to load .rrd");
+        assert_eq!(rows.len(), times.len());
+        for (row, &want) in rows.iter().zip(times.iter()) {
+            assert!(
+                (row.t - want).abs() < 1e-6,
+                "t = {}, expected {want}",
+                row.t
+            );
+        }
+        // Each row keeps its own x, so the negative times are not all collapsed
+        // onto one index.
+        for (i, row) in rows.iter().enumerate() {
+            assert!((row.x - i as f64).abs() < 1e-9, "x[{i}] = {}", row.x);
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A component whose logging starts late has fewer rows than the entity has
+    /// logical rows. Every logged value must still reach the file — this pins the
+    /// count and the order, not the timestamps, which are wrong for a different
+    /// reason (see #375).
+    #[test]
+    fn sparse_column_writes_every_value() {
+        use crate::record::components::MtqCommand3D;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/sparse");
+
+        const N: u64 = 10;
+        const FIRST_MTQ_STEP: u64 = 5;
+        for i in 0..N {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = OrbitalState::new(Vector3::new(7000.0, 0.0, 0.0), Vector3::new(0.0, 7.5, 0.0));
+            rec.log_orbital_state(&sat, &tp, &os);
+            if i >= FIRST_MTQ_STEP {
+                rec.log_temporal(&sat, &tp, &MtqCommand3D(Vector3::new(i as f64, 0.0, 0.0)));
+            }
+        }
+
+        let path = std::env::temp_dir().join("test_orts_sparse_column.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let scalars = scalars_by_path(path_str);
+        let expected: Vec<f64> = (FIRST_MTQ_STEP..N).map(|i| i as f64).collect();
+        assert_eq!(
+            scalars.get("/world/sat/sparse/mtq_mx"),
+            Some(&expected),
+            "every logged mtq_mx value must reach the file, in order"
+        );
+        assert_eq!(
+            scalars["/world/sat/sparse/x"].len(),
+            N as usize,
+            "the dense column is unaffected"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// An entity whose only timeline carries the wrong `TimeIndex` variant has no
+    /// usable index left. `send_columns` reads an empty index list as *static* data,
+    /// and static data unconditionally shadows every temporal value at the same path
+    /// in the viewer, so such an entity must write nothing rather than write statics.
+    #[test]
+    fn an_entity_with_no_usable_index_writes_nothing() {
+        use crate::record::recording::ComponentColumn;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/unindexed");
+        {
+            let store = rec.entity_mut(&sat);
+            let mut column = ComponentColumn::new(3);
+            column.push(&[1.0, 2.0, 3.0]);
+            store.columns.insert(Position3D::component_name(), column);
+            // A sequence on the sim-time axis, and no step axis at all.
+            store
+                .timelines
+                .insert(TimelineName::SimTime, vec![TimeIndex::Sequence(0)]);
+            store.num_rows = 1;
+        }
+        rec.register_component_fields(Position3D::component_name(), vec!["x", "y", "z"]);
+
+        let path = std::env::temp_dir().join("test_orts_unindexed.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let under_entity: Vec<String> = decode_chunks(path_str)
+            .iter()
+            .map(|chunk| chunk.entity_path().to_string())
+            .filter(|entity| entity.starts_with("/world/sat/unindexed"))
+            .collect();
+        assert!(
+            under_entity.is_empty(),
+            "expected no chunks under the entity, got {under_entity:?}"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `rrd-wasm` (and with it the viewer's file source) reads .rrd without any
+    /// schema: it looks up leaf field names, the `sim_time` timeline, and the
+    /// `meta/sim/*` statics, and it recognises components by a substring of their
+    /// identifier. Pin that contract here rather than depending on `rrd-wasm`.
+    #[test]
+    fn rrd_wasm_read_contract_holds() {
+        let mut rec = counted_recording("/world/sat/contract", 4);
+        rec.metadata = SimMetadata {
+            mu: Some(398600.4418),
+            body_name: Some("Earth".to_string()),
+            ..Default::default()
+        };
+
+        let path = std::env::temp_dir().join("test_orts_wasm_contract.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+
+        let chunks = decode_chunks(path_str);
+
+        // Leaf field names, with a `sim_time` index on each.
+        for field in ["x", "y", "z", "vx", "vy", "vz"] {
+            let wanted = format!("/world/sat/contract/{field}");
+            let chunk = chunks
+                .iter()
+                .find(|chunk| chunk.entity_path().to_string() == wanted)
+                .unwrap_or_else(|| panic!("{wanted} missing"));
+            assert!(
+                chunk
+                    .timelines()
+                    .iter()
+                    .any(|(name, _)| name.as_str() == "sim_time"),
+                "{wanted} has no sim_time index"
+            );
+            assert!(
+                chunk
+                    .components_identifiers()
+                    .any(|id| id.as_str().contains("Scalar") || id.as_str().contains("scalars")),
+                "{wanted} carries no component the readers recognise as a scalar"
+            );
+        }
+
+        // `meta/sim/*` statics: a scalar and a text one, both timeless.
+        for (wanted, needle) in [("/meta/sim/mu", "Scalar"), ("/meta/sim/body_name", "Text")] {
+            let chunk = chunks
+                .iter()
+                .find(|chunk| chunk.entity_path().to_string() == wanted)
+                .unwrap_or_else(|| panic!("{wanted} missing"));
+            assert!(chunk.is_static(), "{wanted} is not static");
+            assert!(
+                chunk.components_identifiers().any(|id| {
+                    let id = id.as_str();
+                    id.contains(needle) || id.contains(&needle.to_lowercase())
+                }),
+                "{wanted} carries no component containing {needle:?}"
+            );
+        }
+
+        let _ = std::fs::remove_file(&path);
     }
 }
