@@ -50,12 +50,16 @@ section is subdivided by package.
   earlier rows. `load_rrd_data` serves `orts replay` and `orts serve`'s history
   read-back; `load_as_recording` serves `orts convert`, where a sparse column
   used to reach the CSV as a mix of two times (`Position3D` came back as
-  `[100.0, 201.0, 0.0]`, pairing one time's `x` with another's `y`). Every
-  moment any field records is a row there, because `EntityStore` keeps one
-  timeline for all of an entity's columns; a field absent at a moment reads as
-  zero rather than borrowing another moment's value. Same defect as the
-  browser-side decoder in this PR: the three decode independently, and all three
-  carried it. ([#366](https://github.com/sksat/orts/pull/366))
+  `[100.0, 201.0, 0.0]`, pairing one time's `x` with another's `y`). One row-key
+  set now serves all of an entity's columns, since `EntityStore` keeps one
+  timeline for them, and it follows position and velocity: a moment where either
+  is incomplete is no row at all, and a component recorded at only some of the
+  times is left out rather than zero-filled, a zero being indistinguishable
+  downstream from a measured coordinate. A static field, which has no timeline,
+  and a child entity, which has times of its own, no longer add rows to the
+  entity above them. Same defect as the browser-side decoder in this PR: the
+  three decode independently, and all three carried it.
+  ([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
   products rather than the sum afterwards, so it no longer overflows where its
   result is finite: `q = [0, 1/√2, 1/√2, 0]` with `ω = [1.4e308, 1.4e308, 0]`
