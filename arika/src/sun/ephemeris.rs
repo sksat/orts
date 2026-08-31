@@ -29,6 +29,7 @@
 //! (`utc.to_tdb()`), which keeps the TDB dependency explicit in the type
 //! rather than hidden inside each function.
 
+use crate::body::KnownBody;
 use nalgebra::Vector3;
 
 #[allow(unused_imports)]
@@ -222,6 +223,87 @@ pub fn sun_direction_from_body(body: &str, epoch: &Epoch<Tdb>) -> Vec3<frame::Gc
                 Vec3::new(1.0, 0.0, 0.0)
             }
         }
+    }
+}
+
+/// Why a central body has no Sun position to offer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SunPositionError {
+    /// The body has no ephemeris here. [`crate::planets`] carries Standish
+    /// elements for Mercury through Saturn only, so Uranus and Neptune cannot
+    /// be placed relative to the Sun.
+    UnsupportedBody(KnownBody),
+    /// The central body *is* the Sun, so there is no body-to-Sun vector — and
+    /// no solar third-body term or shadow to model either.
+    CentralBodyIsSun,
+}
+
+impl core::fmt::Display for SunPositionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::UnsupportedBody(body) => write!(
+                f,
+                "no Sun ephemeris for {}: this crate carries planetary elements \
+                 for Mercury through Saturn only",
+                body.properties().name
+            ),
+            Self::CentralBodyIsSun => {
+                write!(f, "the Sun has no position relative to itself")
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for SunPositionError {}
+
+/// Sun position vector as seen from `body`, in the J2000 equatorial frame [km].
+///
+/// The vector points from the body toward the Sun — what a third-body term and
+/// a cannonball SRP model both need. Fails rather than substituting Earth's,
+/// because a wrong central body is not a small error: from Mars in 2026 the
+/// geocentric Sun direction is up to 176° away from the true one, and the
+/// distance ratio scales the third-body term by up to 3.8x.
+///
+/// Earth and the Moon share the geocentric vector: the Moon's parallax against
+/// the Sun stays under 0.15°, which is inside this ephemeris's own ~1′ accuracy.
+pub fn sun_position_from_body(
+    body: KnownBody,
+    epoch: &Epoch<Tdb>,
+) -> Result<Vec3<frame::Gcrs>, SunPositionError> {
+    match body {
+        KnownBody::Sun => Err(SunPositionError::CentralBodyIsSun),
+        KnownBody::Earth | KnownBody::Moon => Ok(sun_position_eci(epoch)),
+        KnownBody::Mercury
+        | KnownBody::Venus
+        | KnownBody::Mars
+        | KnownBody::Jupiter
+        | KnownBody::Saturn => {
+            // The string keys the element table uses. Spelled out here rather
+            // than lowercased from `properties().name`, which needs `alloc`
+            // and this crate builds without it.
+            let name = match body {
+                KnownBody::Mercury => "mercury",
+                KnownBody::Venus => "venus",
+                KnownBody::Mars => "mars",
+                KnownBody::Jupiter => "jupiter",
+                KnownBody::Saturn => "saturn",
+                _ => unreachable!("the arm above lists exactly these bodies"),
+            };
+            let pos_ecl = planets::heliocentric_position_ecliptic(name, epoch)
+                .ok_or(SunPositionError::UnsupportedBody(body))?;
+            // Body-to-Sun is the negated heliocentric position. The Standish
+            // elements are referred to the J2000 mean ecliptic and equinox, so
+            // this needs no precession rotation and the ecliptic → equatorial
+            // rotation takes the J2000 obliquity. Same reasoning as
+            // `sun_direction_from_body`.
+            let sun_ecl = -pos_ecl;
+            Ok(Vec3::from_raw(planets::ecliptic_to_equatorial(
+                &sun_ecl,
+                j2000_obliquity(),
+            )))
+        }
+        KnownBody::Uranus | KnownBody::Neptune => Err(SunPositionError::UnsupportedBody(body)),
     }
 }
 
@@ -699,6 +781,99 @@ mod tests {
         assert!(
             diff < 1e-10,
             "Position direction should match unit direction, diff={diff:.6e}"
+        );
+    }
+
+    // sun_position_from_body tests
+
+    /// Earth keeps the geocentric vector the Earth-only path already returns.
+    #[test]
+    fn sun_position_from_earth_matches_the_geocentric_vector() {
+        for (y, m, d) in [(2000, 1, 1), (2026, 6, 15), (2075, 12, 31)] {
+            let epoch = Epoch::from_gregorian(y, m, d, 0, 0, 0.0).to_tdb();
+            let from_body =
+                sun_position_from_body(KnownBody::Earth, &epoch).expect("Earth is supported");
+            let geocentric = sun_position_eci(&epoch);
+            let diff = (from_body.into_inner() - geocentric.into_inner()).magnitude();
+            assert!(diff < 1e-9, "{y}-{m:02}-{d:02}: {diff} km apart");
+        }
+    }
+
+    /// The Moon shares Earth's vector, as the direction helper already does:
+    /// its parallax against the Sun is inside this ephemeris's own accuracy.
+    #[test]
+    fn sun_position_from_the_moon_uses_the_geocentric_vector() {
+        let epoch = Epoch::from_gregorian(2026, 6, 15, 0, 0, 0.0).to_tdb();
+        let from_body =
+            sun_position_from_body(KnownBody::Moon, &epoch).expect("the Moon is supported");
+        let diff = (from_body.into_inner() - sun_position_eci(&epoch).into_inner()).magnitude();
+        assert!(diff < 1e-9, "{diff} km apart");
+    }
+
+    /// A planet's own distance to the Sun, not Earth's.
+    ///
+    /// The bound is each planet's aphelion/perihelion range, so a vector that
+    /// had silently stayed geocentric (1 AU) fails for every one of them.
+    #[test]
+    fn sun_position_from_a_planet_uses_that_planet_s_orbit() {
+        let epoch = Epoch::from_gregorian(2026, 1, 1, 0, 0, 0.0).to_tdb();
+        // (body, perihelion AU, aphelion AU)
+        for (body, lo, hi) in [
+            (KnownBody::Mercury, 0.30, 0.48),
+            (KnownBody::Venus, 0.71, 0.74),
+            (KnownBody::Mars, 1.37, 1.68),
+            (KnownBody::Jupiter, 4.94, 5.47),
+            (KnownBody::Saturn, 9.00, 10.13),
+        ] {
+            let pos = sun_position_from_body(body, &epoch).expect("supported planet");
+            let au = pos.into_inner().magnitude() / AU_KM;
+            assert!(
+                au > lo && au < hi,
+                "{}: {au:.3} AU is outside [{lo}, {hi}]",
+                body.properties().name
+            );
+        }
+    }
+
+    /// The position agrees with the direction and distance helpers it replaces.
+    #[test]
+    fn sun_position_from_a_planet_agrees_with_the_direction_and_distance() {
+        let epoch = Epoch::from_gregorian(2026, 1, 1, 0, 0, 0.0).to_tdb();
+        let pos = sun_position_from_body(KnownBody::Mars, &epoch).expect("Mars is supported");
+        let dir = sun_direction_from_body("mars", &epoch);
+        let dist = sun_distance_from_body("mars", &epoch);
+
+        let expected = dir.into_inner() * dist;
+        let rel = (pos.into_inner() - expected).magnitude() / dist;
+        assert!(rel < 1e-12, "relative difference {rel}");
+    }
+
+    /// Uranus and Neptune have no elements here, so they are refused rather
+    /// than answered with Earth's vector — which the `&str` helper does by
+    /// falling back to `+X`.
+    #[test]
+    fn sun_position_from_an_unsupported_planet_is_an_error() {
+        let epoch = Epoch::from_gregorian(2026, 1, 1, 0, 0, 0.0).to_tdb();
+        for body in [KnownBody::Uranus, KnownBody::Neptune] {
+            assert_eq!(
+                sun_position_from_body(body, &epoch),
+                Err(SunPositionError::UnsupportedBody(body)),
+                "{} should be refused",
+                body.properties().name
+            );
+        }
+        // What the fallback did instead: a unit vector along +X.
+        let fallback = sun_direction_from_body("uranus", &epoch).into_inner();
+        assert_eq!(fallback, nalgebra::Vector3::new(1.0, 0.0, 0.0));
+    }
+
+    /// The Sun has no position relative to itself.
+    #[test]
+    fn sun_position_from_the_sun_is_an_error() {
+        let epoch = Epoch::from_gregorian(2026, 1, 1, 0, 0, 0.0).to_tdb();
+        assert_eq!(
+            sun_position_from_body(KnownBody::Sun, &epoch),
+            Err(SunPositionError::CentralBodyIsSun)
         );
     }
 }
