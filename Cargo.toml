@@ -89,8 +89,8 @@ ts-rs = { version = "12", features = ["serde-json-impl"] }
 # Engine::precompile_component) returns `anyhow::Error`.
 # See DESIGN.md Phase P for the rationale. Minor-pinned so that
 # `cargo update` picks up patch fixes (including security) automatically.
-wasmtime-wasi = { version = "~46.0.0", default-features = false }
-wasmtime = { version = "~46.0.0", default-features = false, features = [
+wasmtime-wasi = { version = "46.0", default-features = false }
+wasmtime = { version = "46.0", default-features = false, features = [
     "runtime",
     "cranelift",
     "pulley",
