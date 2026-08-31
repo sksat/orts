@@ -94,10 +94,31 @@ impl RowKey {
 /// One decoded scalar field: its value at each time index of the recording.
 type Column = BTreeMap<RowKey, f64>;
 
-/// How many values `column` already holds at one time index. `key` builds the
-/// key for the n-th repeat at that time, so the count is the next free slot.
-fn repeats(column: &Column, key: impl Fn(u32) -> RowKey) -> u32 {
-    column.range(key(0)..=key(u32::MAX)).count() as u32
+/// The non-repeat part of a [`RowKey::Timed`]: one moment on the recording's
+/// timelines.
+type TimeKey = (Option<i64>, Option<i64>);
+
+/// Next repeat ordinal to assign, per column and moment.
+///
+/// A counter rather than a scan of the column: counting the existing repeats on
+/// every value made decoding quadratic in the length of a recording, even one
+/// with no repeats at all.
+type RepeatCounters = BTreeMap<String, BTreeMap<TimeKey, u32>>;
+
+/// How many values `column` holds at `time`, over every repeat.
+fn repeats_at(column: &Column, time: TimeKey) -> usize {
+    let (time_ns, step) = time;
+    let lo = RowKey::Timed {
+        time_ns,
+        step,
+        repeat: 0,
+    };
+    let hi = RowKey::Timed {
+        time_ns,
+        step,
+        repeat: u32::MAX,
+    };
+    column.range(lo..=hi).count()
 }
 
 /// Time index of every row in one chunk, per timeline the chunk carries. With
@@ -157,6 +178,7 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
 
     // Collect f64 scalars: entity_path -> (time index -> value)
     let mut scalars: BTreeMap<String, Column> = BTreeMap::new();
+    let mut repeat_counters: RepeatCounters = BTreeMap::new();
     let mut meta_scalars: BTreeMap<String, f64> = BTreeMap::new();
     let mut meta_texts: BTreeMap<String, String> = BTreeMap::new();
 
@@ -229,17 +251,17 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
                     };
                     // A batch usually holds one value per row, but `Scalars`
                     // takes a slice: several values at one time index become
-                    // consecutive repeats rather than being dropped. The repeat
-                    // counter is scanned once for the row and advanced locally,
-                    // so a wide batch costs one scan of the column, not one per
-                    // value.
-                    let mut next_repeat = timed.map_or(0, |(time_ns, step)| {
-                        repeats(column, |repeat| RowKey::Timed {
-                            time_ns,
-                            step,
-                            repeat,
-                        })
+                    // consecutive repeats rather than being dropped. The
+                    // ordinal comes from a counter, so a long recording does
+                    // not pay a scan of the column per value.
+                    let counter = timed.map(|time| {
+                        repeat_counters
+                            .entry(entity_path.clone())
+                            .or_default()
+                            .entry(time)
+                            .or_insert(0)
                     });
+                    let mut next_repeat = counter.as_ref().map_or(0, |c| **c);
                     for value in scalar_vec.iter() {
                         let key = match timed {
                             Some((time_ns, step)) => {
@@ -254,6 +276,9 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
                             None => RowKey::Index(column.len()),
                         };
                         column.insert(key, value.0.0);
+                    }
+                    if let Some(counter) = counter {
+                        *counter = next_repeat;
                     }
                 }
             }
@@ -301,7 +326,30 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
         // a state vector.
         let has_velocity = vel_cols.0.is_some() || vel_cols.1.is_some() || vel_cols.2.is_some();
 
+        // Repeat ordinals are assigned per column, so they only identify a row
+        // while every required column has the same number of values at that
+        // moment. Where the counts disagree, which value pairs with which is
+        // unknowable from the file: the moment is skipped rather than joined on
+        // an ordinal that means different things in different columns.
+        let required: Vec<&Column> = [Some(x_col), pos_cols.1, pos_cols.2]
+            .into_iter()
+            .chain(if has_velocity {
+                [vel_cols.0, vel_cols.1, vel_cols.2]
+            } else {
+                [None, None, None]
+            })
+            .flatten()
+            .collect();
+
         for &key in x_col.keys() {
+            if let RowKey::Timed { time_ns, step, .. } = key {
+                let time = (time_ns, step);
+                let counts: Vec<usize> = required.iter().map(|c| repeats_at(c, time)).collect();
+                if counts.iter().any(|&n| n != counts[0]) {
+                    continue;
+                }
+            }
+
             let triple = |cols: (Option<&Column>, Option<&Column>, Option<&Column>)| {
                 Some([at(cols.0, key)?, at(cols.1, key)?, at(cols.2, key)?])
             };
@@ -673,5 +721,77 @@ mod tests {
         assert_eq!(data.rows[1].angular_velocity, Some([0.01, 0.02, 0.03]));
         assert_eq!(data.rows[2].quaternion, None, "t=20 logged no attitude");
         assert_eq!(data.rows[2].angular_velocity, None);
+    }
+
+    /// A moment whose columns hold different numbers of values yields no row.
+    ///
+    /// Repeat ordinals are assigned per column, so they identify a row only
+    /// while every required column has the same count at that moment. With two
+    /// samples at t=0 where the first omits `y`, `x` holds repeats 0 and 1
+    /// while `y` holds only repeat 0 — joining on the ordinal paired the first
+    /// `x` with the second sample's `y` and dropped the second row, which is
+    /// the same shift this join set out to remove, one level in.
+    #[test]
+    fn a_time_whose_columns_disagree_on_repeats_yields_no_row() {
+        let parsed = decode_written(|rec| {
+            rec.set_duration_secs("sim_time", 0.0);
+            log_scalars(rec, &[("x", 100.0), ("z", 0.0)]);
+            log_scalars(rec, &[("x", 110.0), ("y", 201.0), ("z", 0.0)]);
+        });
+        assert!(
+            parsed.rows.is_empty(),
+            "ordinals cannot pair these values; expected no rows, got {:?}",
+            parsed.rows
+        );
+    }
+
+    /// Matching repeat counts still yield one row each, in order.
+    #[test]
+    fn matching_repeats_at_one_time_yield_a_row_each() {
+        let parsed = decode_written(|rec| {
+            rec.set_duration_secs("sim_time", 0.0);
+            log_scalars(rec, &[("x", 100.0), ("y", 1.0), ("z", 0.0)]);
+            log_scalars(rec, &[("x", 110.0), ("y", 2.0), ("z", 0.0)]);
+        });
+        assert_eq!(parsed.rows.len(), 2, "{:?}", parsed.rows);
+        assert_eq!(parsed.rows[0].x, 100.0);
+        assert_eq!(parsed.rows[0].y, 1.0);
+        assert_eq!(parsed.rows[1].x, 110.0);
+        assert_eq!(parsed.rows[1].y, 2.0);
+    }
+
+    /// A recording with no timeline at all still decodes, keyed by position.
+    ///
+    /// Nothing `orts` writes lands here — every recording it produces carries
+    /// `sim_time`, `step` or both — but a file from elsewhere can, and the
+    /// fallback has to stay reachable. Rows keyed this way report `t = 0`.
+    #[test]
+    fn a_recording_with_no_timeline_falls_back_to_column_order() {
+        let parsed = decode_written(|rec| {
+            // No `set_duration_secs` and no `set_time_sequence`.
+            log_scalars(rec, &[("x", 100.0), ("y", 200.0), ("z", 300.0)]);
+            log_scalars(rec, &[("x", 110.0), ("y", 210.0), ("z", 310.0)]);
+        });
+        assert_eq!(parsed.rows.len(), 2, "{:?}", parsed.rows);
+        for row in &parsed.rows {
+            assert_eq!(row.t, 0.0, "an untimed row reports t = 0");
+        }
+        assert_eq!(parsed.rows[0].x, 100.0);
+        assert_eq!(parsed.rows[1].x, 110.0);
+    }
+
+    /// Rows sharing a `t` keep the recording's own order.
+    ///
+    /// `sort_by` is stable and the rows are built in `RowKey` order, so several
+    /// `step`s at one `sim_time` come out in step order rather than arbitrarily.
+    #[test]
+    fn rows_sharing_a_sim_time_keep_step_order() {
+        let parsed = decode_stepped_samples(&[
+            (5.0, 10, vec![("x", 1.0), ("y", 0.0), ("z", 0.0)]),
+            (5.0, 11, vec![("x", 2.0), ("y", 0.0), ("z", 0.0)]),
+            (5.0, 12, vec![("x", 3.0), ("y", 0.0), ("z", 0.0)]),
+        ]);
+        let xs: Vec<f64> = parsed.rows.iter().map(|r| r.x).collect();
+        assert_eq!(xs, vec![1.0, 2.0, 3.0], "steps out of order: {xs:?}");
     }
 }
