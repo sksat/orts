@@ -45,11 +45,15 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
-- `load_rrd_data` joins scalar columns on the recording's time index, so a
+- Both .rrd loaders join scalar columns on the recording's time index, so a
   component present at only some of the times no longer shifts its values onto
-  earlier rows — reached through `orts convert`, `orts replay` and `orts serve`'s
-  history read-back. Same defect and same fix as the browser-side decoder in
-  this PR; the two decode independently, so both carried it.
+  earlier rows. `load_rrd_data` serves `orts replay` and `orts serve`'s history
+  read-back; `load_as_recording` serves `orts convert`, where a sparse column
+  used to reach the CSV as a mix of two times (`Position3D` came back as
+  `[100.0, 201.0, 0.0]`, pairing one time's `x` with another's `y`). A component
+  is all of its fields or none of them, so an incomplete row is dropped rather
+  than reported with a zeroed axis. Same defect as the browser-side decoder in
+  this PR: the three decode independently, and all three carried it.
   ([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
   products rather than the sum afterwards, so it no longer overflows where its

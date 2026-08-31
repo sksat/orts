@@ -4,7 +4,7 @@
 //! Designed to be compiled to WASM for use in the viewer's Web Worker.
 //! Does NOT compute Keplerian elements — that is done by arika WASM.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 
 use re_chunk::Chunk;
@@ -353,21 +353,38 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
         .flatten()
         .collect();
 
+        // Counted once per moment, not once per repeat: a `Scalars` batch puts
+        // k values at one timestamp, and re-counting for each of them would
+        // make reconstruction quadratic in k.
+        let mut ambiguous: BTreeSet<TimeKey> = BTreeSet::new();
+        let mut checked: BTreeSet<TimeKey> = BTreeSet::new();
         for &key in x_col.keys() {
-            if let RowKey::Timed { time_ns, step, .. } = key {
-                let time = (time_ns, step);
-                // Only a moment that actually repeats can be ambiguous: with one
-                // value per column the ordinal is 0 everywhere, and a column
-                // absent at that moment is simply absent from the row.
-                let x_count = repeats_at(x_col, time);
-                if x_count > 1
-                    && present
-                        .iter()
-                        .map(|c| repeats_at(c, time))
-                        .any(|n| n != 0 && n != x_count)
-                {
-                    continue;
-                }
+            let RowKey::Timed { time_ns, step, .. } = key else {
+                continue;
+            };
+            let time = (time_ns, step);
+            if !checked.insert(time) {
+                continue;
+            }
+            // Only a moment that actually repeats can be ambiguous: with one
+            // value per column the ordinal is 0 everywhere, and a column absent
+            // at that moment is simply absent from the row.
+            let x_count = repeats_at(x_col, time);
+            if x_count > 1
+                && present
+                    .iter()
+                    .map(|c| repeats_at(c, time))
+                    .any(|n| n != 0 && n != x_count)
+            {
+                ambiguous.insert(time);
+            }
+        }
+
+        for &key in x_col.keys() {
+            if let RowKey::Timed { time_ns, step, .. } = key
+                && ambiguous.contains(&(time_ns, step))
+            {
+                continue;
             }
 
             let triple = |cols: (Option<&Column>, Option<&Column>, Option<&Column>)| {
