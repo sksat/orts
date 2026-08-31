@@ -72,9 +72,14 @@ impl PanelOptics {
         self.diffuse
     }
 
-    /// Absorbed fraction α = 1 − ρ_s − ρ_d.
+    /// Absorbed fraction α = 1 − (ρ_s + ρ_d).
+    ///
+    /// Never negative: [`Self::new`] has already checked that the sum is at
+    /// most 1, and subtracting that one sum keeps the guarantee. Subtracting
+    /// the two terms one after the other would not — `1.0 - 0.9 - 0.1` is
+    /// -2.8e-17, because the second subtraction rounds again.
     pub fn absorptivity(self) -> f64 {
-        1.0 - self.specular - self.diffuse
+        1.0 - (self.specular + self.diffuse)
     }
 }
 
@@ -590,6 +595,24 @@ mod tests {
         let o = PanelOptics::new(0.25, 0.15);
         assert!((o.absorptivity() - 0.6).abs() < 1e-15);
         assert!((o.absorptivity() + o.specular() + o.diffuse() - 1.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn absorptivity_is_never_negative() {
+        // Subtracting the two reflectivities one at a time rounds twice, and
+        // for 2077 of these 10001 pairs the result lands just below zero
+        // (`1.0 - 0.9 - 0.1` is -2.8e-17). Subtracting their sum inherits
+        // `new`'s check that the sum is at most 1, so it cannot.
+        for i in 0..=10_000u32 {
+            let specular = f64::from(i) / 10_000.0;
+            let diffuse = f64::from(10_000 - i) / 10_000.0;
+            let optics = PanelOptics::new(specular, diffuse);
+            assert!(
+                optics.absorptivity() >= 0.0,
+                "α should not go negative: specular={specular}, diffuse={diffuse}, α={:e}",
+                optics.absorptivity()
+            );
+        }
     }
 
     #[test]
