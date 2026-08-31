@@ -108,7 +108,8 @@ fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String
         Ok(())
     } else {
         Err(format!(
-            "controller sample period {sample_period} is below the resolution of              the sim clock at t={start_t}, so its schedule could never advance"
+            "controller sample period {sample_period} is below the sim clock's \
+             resolution at t={start_t}, so its schedule could never advance"
         ))
     }
 }
@@ -411,8 +412,12 @@ pub fn tick_controller(
             .apply(&cmd)
             .map_err(|e| format!("actuator error at t={t_next:.3}: {e}"))?;
     }
+    // Only once the whole tick has landed: `apply_held_commands` can reject a
+    // command whose length does not match the actuator, and a schedule advanced
+    // past a tick that failed would resume on the wrong phase.
+    apply_held_commands(sat)?;
     sat.ticks_done += 1;
-    apply_held_commands(sat)
+    Ok(())
 }
 
 // builder helpers
