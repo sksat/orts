@@ -568,7 +568,14 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
 
     let mut rows: Vec<RrdRow> = Vec::new();
     for base in &base_paths {
-        let column = |field: &str| scalars.get(&format!("{base}/{field}"));
+        // A column with no values in it carries the field no further than having
+        // no column at all: an empty `Scalars` batch leaves one behind, and it
+        // would otherwise make a position-only recording look velocity-bearing.
+        let column = |field: &str| {
+            scalars
+                .get(&format!("{base}/{field}"))
+                .filter(|col| !col.is_empty())
+        };
         // Value of one field at one time index, or `None` when the recording
         // has no such column or no value there.
         let at = |col: Option<&Column>, key: RowKey| col?.get(&key).copied();
@@ -923,13 +930,11 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         // whatever the rows are, so it gets no say in what they are. Its
         // remaining fields would otherwise narrow them: `x` and `z` recorded at
         // one time, with `y` absent from the file, cost a whole velocity its
-        // rows at every other time. An empty `Scalars` batch leaves a column
-        // behind with no values in it, which carries the field no further than
-        // having no column at all.
+        // rows at every other time.
         temporal.retain(|(_, fields)| {
-            fields.iter().all(|field| {
-                get_scalar_data(&scalars, base, field).is_some_and(|col| !col.is_empty())
-            })
+            fields
+                .iter()
+                .all(|field| get_scalar_data(&scalars, base, field).is_some())
         });
 
         // One row-key set for the whole entity. `EntityStore` keeps a single
@@ -1099,6 +1104,9 @@ const KNOWN_COMPONENTS: &[(&str, &[&str])] = &[
 ];
 
 /// Look up scalar data, trying both with and without leading slash.
+///
+/// A column with no values in it comes back as `None`: an empty `Scalars` batch
+/// leaves one behind, and it carries the field no further than having no column.
 fn get_scalar_data<'a>(
     scalars: &'a BTreeMap<String, Column>,
     base: &str,
@@ -1107,6 +1115,7 @@ fn get_scalar_data<'a>(
     scalars
         .get(&format!("{base}/{field}"))
         .or_else(|| scalars.get(&format!("/{base}/{field}")))
+        .filter(|col| !col.is_empty())
 }
 
 fn to_rerun_path(path: &EntityPath) -> String {
@@ -2655,5 +2664,56 @@ mod tests {
             .expect("a velocity column");
         assert_eq!(velocity.get_row(0).expect("row 0"), &[1.0, 2.0, 3.0]);
         assert_eq!(velocity.get_row(1).expect("row 1"), &[4.0, 2.0, 3.0]);
+    }
+
+    /// An empty velocity column leaves a position-only recording position-only.
+    ///
+    /// An empty `Scalars` batch leaves a column behind with no values in it,
+    /// which made the recording look velocity-bearing: every row then wanted a
+    /// whole velocity triple and none had one, so the positions that are there
+    /// were all dropped.
+    #[test]
+    fn an_empty_velocity_column_does_not_drop_the_positions() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_emptyvel_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("emptyvel.rrd");
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-empty-velocity-test")
+                .save(&path)
+                .expect("recording stream");
+            for (t, x) in [(0.0f64, 100.0f64), (10.0, 110.0)] {
+                rec.set_duration_secs("sim_time", t);
+                for (field, value) in [("x", x), ("y", 1.0), ("z", 2.0)] {
+                    rec.log(
+                        format!("/world/sat/emptyvel/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new([value]),
+                    )
+                    .expect("log");
+                }
+                rec.log(
+                    "/world/sat/emptyvel/vx",
+                    &re_sdk_types::archetypes::Scalars::new(Vec::<f64>::new()),
+                )
+                .expect("log empty vx");
+            }
+            rec.flush_blocking().expect("flush");
+        }
+
+        let data = load_rrd_data(path.to_str().unwrap()).expect("load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert_eq!(data.rows.len(), 2, "{:?}", data.rows);
+        for (row, x) in data.rows.iter().zip([100.0, 110.0]) {
+            assert_eq!((row.x, row.y, row.z), (x, 1.0, 2.0));
+            assert_eq!(
+                (row.vx, row.vy, row.vz),
+                (0.0, 0.0, 0.0),
+                "a velocity with no values reports zero, as a position-only row does"
+            );
+        }
     }
 }

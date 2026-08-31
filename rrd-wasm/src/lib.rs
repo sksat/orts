@@ -412,7 +412,14 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
 
     let mut rows: Vec<RrdRow> = Vec::new();
     for base in &base_paths {
-        let column = |field: &str| scalars.get(&format!("{base}/{field}"));
+        // A column with no values in it carries the field no further than having
+        // no column at all: an empty `Scalars` batch leaves one behind, and it
+        // would otherwise make a position-only recording look velocity-bearing.
+        let column = |field: &str| {
+            scalars
+                .get(&format!("{base}/{field}"))
+                .filter(|col| !col.is_empty())
+        };
         // Value of one field at one time index, or `None` when the recording
         // has no such column or no value there.
         let at = |col: Option<&Column>, key: RowKey| col?.get(&key).copied();
@@ -1099,5 +1106,29 @@ mod tests {
             "the `iteration` chunk cannot be placed among the rest: {:?}",
             parsed.rows
         );
+    }
+
+    /// An empty velocity column leaves a position-only recording position-only.
+    ///
+    /// An empty `Scalars` batch leaves a column behind with no values in it,
+    /// which made the recording look velocity-bearing: every row then wanted a
+    /// whole velocity triple and none had one, so the positions that are there
+    /// were all dropped.
+    #[test]
+    fn an_empty_velocity_column_does_not_drop_the_positions() {
+        let parsed = decode_written(|rec| {
+            for (t, x) in [(0.0f64, 100.0f64), (10.0, 110.0)] {
+                rec.set_duration_secs("sim_time", t);
+                log_scalars(rec, &[("x", x), ("y", 1.0), ("z", 2.0)]);
+                rec.log(
+                    format!("{ENTITY}/vx"),
+                    &re_sdk_types::archetypes::Scalars::new(Vec::<f64>::new()),
+                )
+                .expect("log empty vx");
+            }
+        });
+        assert_eq!(parsed.rows.len(), 2, "{:?}", parsed.rows);
+        assert_eq!(parsed.rows[0].x, 100.0);
+        assert_eq!(parsed.rows[1].x, 110.0);
     }
 }
