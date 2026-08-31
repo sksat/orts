@@ -14,8 +14,12 @@ use super::ExternalLoads;
 /// How a flat panel reflects sunlight, for radiation pressure.
 ///
 /// Absorption, specular reflection and diffuse reflection sum to 1, so two of
-/// them determine the third. Absorption is derived rather than stored, which
-/// keeps the three from drifting out of agreement.
+/// them determine the third. Absorption is derived rather than stored, and the
+/// two stored fractions are private, so the constraint holds for every value
+/// that exists — unlike the sibling fields of [`SurfacePanel`], which are
+/// independent scalars a struct literal can set freely. A `specular` above 1
+/// would make the absorbed fraction negative and point the Sun-line component
+/// of the force *toward* the Sun.
 ///
 /// A single lumped `Cr` cannot stand in for these: it fixes the force magnitude
 /// face-on but leaves the direction undetermined at oblique incidence, where
@@ -23,16 +27,17 @@ use super::ExternalLoads;
 /// along the Sun line.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PanelOptics {
-    /// Specular reflectivity ρ_s: the fraction reflected mirror-like.
-    pub specular: f64,
-    /// Diffuse reflectivity ρ_d: the fraction re-emitted Lambertian.
-    pub diffuse: f64,
+    specular: f64,
+    diffuse: f64,
 }
 
 impl PanelOptics {
+    /// Reflection properties from the specular and diffuse fractions; the rest
+    /// of the incident light is absorbed.
+    ///
     /// # Panics
     /// Panics unless both coefficients are finite, non-negative and sum to at
-    /// most 1; the remainder is the absorbed fraction.
+    /// most 1.
     pub fn new(specular: f64, diffuse: f64) -> Self {
         assert!(
             specular.is_finite() && diffuse.is_finite(),
@@ -57,6 +62,16 @@ impl PanelOptics {
         }
     }
 
+    /// Specular reflectivity ρ_s: the fraction reflected mirror-like.
+    pub fn specular(self) -> f64 {
+        self.specular
+    }
+
+    /// Diffuse reflectivity ρ_d: the fraction re-emitted Lambertian.
+    pub fn diffuse(self) -> f64 {
+        self.diffuse
+    }
+
     /// Absorbed fraction α = 1 − ρ_s − ρ_d.
     pub fn absorptivity(self) -> f64 {
         1.0 - self.specular - self.diffuse
@@ -73,11 +88,15 @@ impl PanelOptics {
 /// For thin surfaces like solar panels where both sides are exposed to the
 /// flow, model each side as a separate panel with opposite normals; the two
 /// sides may then carry different optical properties.
+///
+/// Both force models assume `normal` is unit length. [`Self::at_com`] and
+/// [`SpacecraftShape::cube`] guarantee that; a struct literal does not, and the
+/// SRP force is cubic in `|normal|` through its specular term.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SurfacePanel {
     /// Panel area [m²].
     pub area: f64,
-    /// Outward-pointing unit normal in the body frame.
+    /// Outward-pointing unit normal in the body frame. Must be unit length.
     pub normal: Vector3<f64>,
     /// Drag coefficient (typically 2.0–2.2 for LEO free-molecular flow).
     pub cd: f64,
@@ -130,7 +149,13 @@ pub enum SpacecraftShape {
         area: f64,
         /// Drag coefficient (typically 2.0–2.2)
         cd: f64,
-        /// Radiation pressure coefficient (1.0 absorber, 2.0 reflector)
+        /// Radiation pressure coefficient (1.0 absorber, 2.0 reflector).
+        ///
+        /// A lumped coefficient is the whole model here, not the shorthand it
+        /// would be for a flat panel: an isotropic surface presents the same
+        /// cross-section whatever the Sun direction, so there is no incidence
+        /// angle for the specular and diffuse terms of [`PanelOptics`] to
+        /// depend on.
         cr: f64,
     },
     /// Flat-panel model: attitude-dependent.
@@ -471,7 +496,7 @@ mod tests {
     fn panel_optics_absorptivity_is_the_remainder() {
         let o = PanelOptics::new(0.25, 0.15);
         assert!((o.absorptivity() - 0.6).abs() < 1e-15);
-        assert!((o.absorptivity() + o.specular + o.diffuse - 1.0).abs() < 1e-15);
+        assert!((o.absorptivity() + o.specular() + o.diffuse() - 1.0).abs() < 1e-15);
     }
 
     #[test]

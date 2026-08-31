@@ -9,14 +9,44 @@ use arika::earth::transform::EphemerisFrameBridge;
 
 use crate::model::{HasAttitude, HasFrame, HasMass, HasOrbit, Model};
 
-use super::{ExternalLoads, PanelOptics, SpacecraftShape, SurfacePanel};
+use super::{ExternalLoads, SpacecraftShape, SurfacePanel};
 
 /// Radiation-pressure force on one flat panel [N, body frame].
 ///
 /// `s_body` is the unit vector from the spacecraft toward the Sun in the body
 /// frame; `pressure` [N/m²] is the solar radiation pressure already scaled for
 /// heliocentric distance and illumination fraction. Returns zero for a panel
-/// facing away from the Sun.
+/// facing away from the Sun. `panel.normal` must be unit length.
+///
+/// Split out as a pure function so the force law can be checked against
+/// closed-form values and for rotational equivariance without the Sun
+/// ephemeris, which an inertial rotation of the state does not carry along.
+fn panel_force(panel: &SurfacePanel, s_body: &Vector3<f64>, pressure: f64) -> Vector3<f64> {
+    debug_assert!(
+        (panel.normal.magnitude() - 1.0).abs() < 1e-9,
+        "Panel normal must be unit length, got |n|={}",
+        panel.normal.magnitude()
+    );
+
+    let cos_theta = panel.normal.dot(s_body);
+    if cos_theta <= 0.0 {
+        return Vector3::zeros();
+    }
+
+    let optics = panel.optics;
+    let along_sun = optics.absorptivity() + optics.diffuse();
+    let along_normal = 2.0 * (optics.specular() * cos_theta + optics.diffuse() / 3.0);
+
+    -pressure * panel.area * cos_theta * (along_sun * s_body + along_normal * panel.normal)
+}
+
+/// Attitude-dependent solar radiation pressure model using flat surface panels.
+///
+/// Implements [`Model`] to produce both translational acceleration and
+/// SRP torque from per-panel radiation forces.  For the [`SpacecraftShape::Sphere`]
+/// variant, the `cr` and `area` are read from the shape itself.
+///
+/// Per-panel force, from the panel's [`PanelOptics`]:
 ///
 /// ```text
 /// F = -P·A·cosθ · [ (α + ρ_d)·ŝ  +  2·(ρ_s·cosθ + ρ_d/3)·n̂ ]
@@ -28,31 +58,10 @@ use super::{ExternalLoads, PanelOptics, SpacecraftShape, SurfacePanel};
 /// normal. Face-on this collapses to `Cr = 1 + ρ_s + 2ρ_d/3`, recovering the
 /// textbook 1 for a black panel, 2 for a mirror and 5/3 for a Lambertian one.
 ///
-/// Split out as a pure function so the force law can be checked against
-/// closed-form values and for rotational equivariance without the Sun
-/// ephemeris, which an inertial rotation of the state does not carry along.
-fn panel_force(panel: &SurfacePanel, s_body: &Vector3<f64>, pressure: f64) -> Vector3<f64> {
-    let cos_theta = panel.normal.dot(s_body);
-    if cos_theta <= 0.0 {
-        return Vector3::zeros();
-    }
-
-    let optics = panel.optics;
-    let along_sun = optics.absorptivity() + optics.diffuse;
-    let along_normal = 2.0 * (optics.specular * cos_theta + optics.diffuse / 3.0);
-
-    -pressure * panel.area * cos_theta * (along_sun * s_body + along_normal * panel.normal)
-}
-
-/// Attitude-dependent solar radiation pressure model using flat surface panels.
+/// The torque is `Σ r_cp × F_panel`, so a panel whose centre of pressure sits
+/// off the centre of mass produces an attitude disturbance.
 ///
-/// Implements [`Model`] to produce both translational acceleration and
-/// SRP torque from per-panel radiation forces.  For the [`SpacecraftShape::Sphere`]
-/// variant, the `cr` and `area` are read from the shape itself.
-///
-/// Per-panel force: see [`panel_force`]. The torque is `Σ r_cp × F_panel`, so a
-/// panel whose centre of pressure sits off the centre of mass produces an
-/// attitude disturbance.
+/// [`PanelOptics`]: super::PanelOptics
 pub struct PanelSrp {
     shape: SpacecraftShape,
     /// Central body radius for shadow model [km].
@@ -77,6 +86,8 @@ impl PanelSrp {
     /// For the [`SpacecraftShape::Sphere`] variant, `cr` and `area` come from
     /// the shape. For [`SpacecraftShape::Panels`], each panel carries its own
     /// area and [`PanelOptics`].
+    ///
+    /// [`PanelOptics`]: super::PanelOptics
     pub fn for_earth(shape: SpacecraftShape) -> Self {
         Self {
             shape,
@@ -222,7 +233,7 @@ mod tests {
     use crate::SpacecraftState;
     use crate::attitude::AttitudeState;
     use crate::perturbations::SolarRadiationPressure;
-    use crate::spacecraft::SurfacePanel;
+    use crate::spacecraft::{PanelOptics, SurfacePanel};
     use arika::earth::MU as MU_EARTH;
     use nalgebra::{Vector4, vector};
 
@@ -946,8 +957,8 @@ mod tests {
         let force = -pressure
             * area
             * cos
-            * ((optics.absorptivity() + optics.diffuse) * s_body
-                + 2.0 * (optics.specular * cos + optics.diffuse / 3.0) * normal);
+            * ((optics.absorptivity() + optics.diffuse()) * s_body
+                + 2.0 * (optics.specular() * cos + optics.diffuse() / 3.0) * normal);
         let expected = cp_offset.cross(&force);
 
         let err = (tau - expected).magnitude() / expected.magnitude();
@@ -1009,8 +1020,8 @@ mod tests {
         let force = -pressure
             * area
             * cos
-            * ((optics.absorptivity() + optics.diffuse) * s_body
-                + 2.0 * (optics.specular * cos + optics.diffuse / 3.0) * normal);
+            * ((optics.absorptivity() + optics.diffuse()) * s_body
+                + 2.0 * (optics.specular() * cos + optics.diffuse() / 3.0) * normal);
         let expected = cp_offset.cross(&force);
 
         let err = (tau - expected).magnitude() / expected.magnitude();
