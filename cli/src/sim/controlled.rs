@@ -66,35 +66,52 @@ pub struct ControlledSatellite {
     pub thruster_specs: Vec<ThrusterSpec>,
     /// Thruster assembly-level propellant floor [kg]。
     pub thruster_dry_mass: f64,
-    /// Sim time of this satellite's next controller tick [s].
+    /// Sim time this satellite's controller schedule is anchored at [s]: where
+    /// the satellite entered the simulation.
+    tick_base_t: f64,
+    /// Ticks this controller has already run since `tick_base_t`.
     ///
     /// The schedule belongs to the satellite because `sample_period` is fixed
-    /// per controller and a fleet may mix rates. Output samples, stream
-    /// flushes and the end of a run all cut the timeline at their own
-    /// boundaries; carrying the next tick here is what keeps those cuts from
-    /// moving the controller. Advanced by `sample_period` on each tick, never
-    /// snapped to a boundary, so a span with no tick in it leaves the phase
-    /// intact.
-    pub next_tick_t: f64,
+    /// per controller and a fleet may mix rates. Output samples, stream flushes
+    /// and the end of a run all cut the timeline at their own boundaries, and
+    /// keeping the count here is what stops those cuts from moving the
+    /// controller.
+    ///
+    /// A count rather than a running `next_tick_t += sample_period`: the sum
+    /// drifts by a few ULPs per tick, which then has to be absorbed by a
+    /// tolerance on every boundary comparison — and a tolerance wide enough to
+    /// cover the drift also fires ticks that lie just past the boundary.
+    ticks_done: u64,
 }
 
 impl ControlledSatellite {
-    /// Whether a tick is due at or before `t`.
-    ///
-    /// The tolerance absorbs the accumulated error of repeated
-    /// `next_tick_t += sample_period`, which otherwise leaves a tick a few
-    /// ULPs past a boundary that should have contained it.
+    /// Sim time of this satellite's next controller tick [s].
+    pub fn next_tick_t(&self) -> f64 {
+        self.tick_base_t + (self.ticks_done + 1) as f64 * self.controller.sample_period()
+    }
+
+    /// Whether the next tick lands at or before `t`.
     pub fn tick_due_at(&self, t: f64) -> bool {
-        self.next_tick_t <= t + TICK_EPS
+        self.next_tick_t() <= t
     }
 }
 
-/// Slack for comparing a scheduled tick against a span boundary [s].
+/// Reject a sample period too small to move the clock from `start_t`.
 ///
-/// Sim times here are sums of `dt`-sized terms, so a tick meant to land on a
-/// boundary can miss it by a few ULPs of the elapsed time. 1 ns is far below
-/// any control period the plugin contract admits and far above that drift.
-pub const TICK_EPS: f64 = 1e-9;
+/// [`crate::config::validate_sample_period`] only asks for a positive finite
+/// period, which `1e-16` satisfies — and `5.0 + 1e-16 == 5.0`, so the schedule
+/// would never leave `start_t` and every loop waiting on it would spin. The
+/// tick time is `base + n · period`, so a period that clears one ULP of the
+/// base clears every later tick too, and this one check covers the whole run.
+fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String> {
+    if start_t + sample_period > start_t {
+        Ok(())
+    } else {
+        Err(format!(
+            "controller sample period {sample_period} is below the resolution of              the sim clock at t={start_t}, so its schedule could never advance"
+        ))
+    }
+}
 
 /// Config からプラグイン制御付き衛星を構築する。
 ///
@@ -211,6 +228,8 @@ pub fn build_controlled_satellite(
 
     let actuators = ActuatorBundle::new();
     let sample_period = controller.sample_period();
+    crate::config::validate_sample_period(sample_period)?;
+    validate_tick_advances(start_t, sample_period)?;
 
     Ok(ControlledSatellite {
         dynamics,
@@ -223,11 +242,8 @@ pub fn build_controlled_satellite(
         mtq_max_moment,
         thruster_specs,
         thruster_dry_mass,
-        // The first tick sits one period in, matching the phase of
-        // the old `step_controlled`: a cycle is propagated before the controller
-        // its end. `start_t` is 0 for a fleet built up front and the current
-        // sim time for one added to a running `serve`.
-        next_tick_t: start_t + sample_period,
+        tick_base_t: start_t,
+        ticks_done: 0,
     })
 }
 
@@ -395,11 +411,11 @@ pub fn tick_controller(
             .apply(&cmd)
             .map_err(|e| format!("actuator error at t={t_next:.3}: {e}"))?;
     }
-    sat.next_tick_t += sat.controller.sample_period();
+    sat.ticks_done += 1;
     apply_held_commands(sat)
 }
 
-// builder helpersuilder helpers
+// builder helpers
 
 fn build_controller(
     config: &ControllerConfig,
@@ -583,7 +599,8 @@ mod tests {
             mtq_max_moment: 0.0,
             thruster_specs: Vec::new(),
             thruster_dry_mass: 0.0,
-            next_tick_t: start_t + period,
+            tick_base_t: start_t,
+            ticks_done: 0,
         };
         (sat, ticks)
     }
@@ -593,7 +610,7 @@ mod tests {
     fn advance(sat: &mut ControlledSatellite, from: f64, to: f64, params_dt: f64) {
         let mut t = from;
         while sat.tick_due_at(to) {
-            let tick_t = sat.next_tick_t;
+            let tick_t = sat.next_tick_t();
             propagate_controlled(sat, t, tick_t, params_dt).expect("integrates");
             tick_controller(sat, tick_t, None).expect("ticks");
             t = tick_t;
@@ -657,14 +674,76 @@ mod tests {
 
     /// A satellite added mid-run takes its first tick one period after it
     /// enters, not one period after `t = 0`.
+    ///
+    /// Pins the phase rule, not the wiring: the fixture below anchors the
+    /// schedule the same way `build_controlled_satellite` does, so a caller
+    /// passing the wrong `start_t` would still pass here. Reaching the real
+    /// builder needs a WASM plugin to construct the controller from.
     #[test]
     fn a_satellite_starting_late_phases_its_ticks_from_its_start() {
         let (sat, _) = satellite_with(0.1, 5.0);
         assert!(
-            (sat.next_tick_t - 5.1).abs() < 1e-9,
+            (sat.next_tick_t() - 5.1).abs() < 1e-9,
             "first tick at {}, expected 5.1",
-            sat.next_tick_t
+            sat.next_tick_t()
         );
+    }
+
+    /// A span that stops just short of the next tick does not run it.
+    ///
+    /// The end of a run, or a stream flush that lands a hair before a tick,
+    /// must leave that tick for the next span. Comparing with a tolerance —
+    /// which a drifting `next_tick_t += period` needs — would fire it here and
+    /// integrate past the boundary the caller asked for.
+    #[test]
+    fn a_span_ending_just_before_a_tick_does_not_run_it() {
+        let (mut sat, ticks) = satellite_with(0.1, 0.0);
+
+        advance(&mut sat, 0.0, 0.1 - 1e-10, 0.01);
+        assert!(
+            ticks.lock().unwrap().is_empty(),
+            "a tick 1e-10 s past the span's end was run: {:?}",
+            ticks.lock().unwrap()
+        );
+
+        // And it is still there for the span that does contain it.
+        advance(&mut sat, 0.1 - 1e-10, 0.15, 0.01);
+        let seen = ticks.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1, "the deferred tick should run next: {seen:?}");
+        assert!((seen[0] - 0.1).abs() < 1e-12, "at {}", seen[0]);
+    }
+
+    /// Repeated ticks do not drift off the period.
+    ///
+    /// `tick_base_t + n · period` is one multiply; summing `period` a thousand
+    /// times is not, and the accumulated error is what a boundary tolerance
+    /// would have had to cover.
+    #[test]
+    fn the_thousandth_tick_is_still_on_the_period() {
+        let (mut sat, ticks) = satellite_with(0.1, 0.0);
+        advance(&mut sat, 0.0, 100.0, 1.0);
+
+        let seen = ticks.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1000, "100 s at 10 Hz is 1000 ticks");
+        assert_eq!(
+            seen[999], 100.0,
+            "the last tick should be exactly 100.0, got {}",
+            seen[999]
+        );
+    }
+
+    /// A period the sim clock cannot resolve is refused, not spun on.
+    ///
+    /// `validate_sample_period` accepts any positive finite period, and
+    /// `5.0 + 1e-16 == 5.0`: a schedule anchored there would never advance and
+    /// every loop waiting on the next tick would run forever.
+    #[test]
+    fn a_period_below_the_clock_resolution_is_rejected() {
+        validate_tick_advances(5.0, 1e-16)
+            .expect_err("a period that cannot move the clock must be refused");
+        // The same period is fine from zero, where it is representable.
+        validate_tick_advances(0.0, 1e-16).expect("representable at t=0");
+        validate_tick_advances(5.0, 0.1).expect("an ordinary period is fine");
     }
 
     /// Two controllers at different rates each run at their own.
@@ -681,7 +760,7 @@ mod tests {
         // the run loop does.
         let mut t = 0.0;
         while t < 1.0 - 1e-12 {
-            let next_t = fast.next_tick_t.min(slow.next_tick_t).min(1.0);
+            let next_t = fast.next_tick_t().min(slow.next_tick_t()).min(1.0);
             propagate_controlled(&mut fast, t, next_t, 0.01).expect("integrates");
             if fast.tick_due_at(next_t) {
                 tick_controller(&mut fast, next_t, None).expect("ticks");

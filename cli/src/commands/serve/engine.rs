@@ -122,7 +122,7 @@ impl SimGroup {
             // per span with `dt = span`, so a span shorter than the period ran
             // the controller too often and shortened its hold.
             while sat.tick_due_at(target_t) {
-                let tick_t = sat.next_tick_t;
+                let tick_t = sat.next_tick_t();
                 crate::sim::controlled::propagate_controlled(sat, t, tick_t, params.dt)
                     .map_err(|e| format!("controlled simulation error at t={t:.3}: {e}"))?;
                 crate::sim::controlled::tick_controller(sat, tick_t, params.epoch.as_ref())

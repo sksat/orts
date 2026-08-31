@@ -1194,7 +1194,7 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
         // at that rate instead of its own.
         let next_t = satellites
             .iter()
-            .map(|sat| sat.next_tick_t)
+            .map(|sat| sat.next_tick_t())
             .fold(f64::INFINITY, f64::min)
             .min(duration);
         let dt = next_t - t;
