@@ -488,6 +488,10 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
             let comp_name = comp_id.as_str();
             if comp_name.contains("Scalar") || comp_name.contains("scalars") {
                 let column = scalars.entry(entity_path.clone()).or_default();
+                // Resolved once for the whole component, as `column` is: the
+                // entity's name is owned to key the map, and doing that per
+                // value cost one allocation per field per row of a recording.
+                let counters = repeat_counters.entry(entity_path.clone()).or_default();
                 for row_idx in 0..n {
                     let batch =
                         chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx);
@@ -513,13 +517,7 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                     // consecutive repeats rather than being dropped. The
                     // ordinal comes from a counter, so a long recording does
                     // not pay a scan of the column per value.
-                    let counter = moment.map(|moment| {
-                        repeat_counters
-                            .entry(entity_path.clone())
-                            .or_default()
-                            .entry(moment)
-                            .or_insert(0)
-                    });
+                    let counter = moment.map(|moment| counters.entry(moment).or_insert(0));
                     let mut next_repeat = counter.as_ref().map_or(0, |c| **c);
                     for value in scalar_vec.iter() {
                         let key = match moment {
@@ -781,6 +779,10 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
             let comp_name = comp_id.as_str();
             if comp_name.contains("Scalar") || comp_name.contains("scalars") {
                 let column = scalars.entry(entity_path.clone()).or_default();
+                // Resolved once for the whole component, as `column` is: the
+                // entity's name is owned to key the map, and doing that per
+                // value cost one allocation per field per row of a recording.
+                let counters = repeat_counters.entry(entity_path.clone()).or_default();
                 for row_idx in 0..n {
                     let batch =
                         chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx);
@@ -801,13 +803,7 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
                         RowIndex::Untimed => None,
                         RowIndex::Missing => continue,
                     };
-                    let counter = moment.map(|moment| {
-                        repeat_counters
-                            .entry(entity_path.clone())
-                            .or_default()
-                            .entry(moment)
-                            .or_insert(0)
-                    });
+                    let counter = moment.map(|moment| counters.entry(moment).or_insert(0));
                     let mut next_repeat = counter.as_ref().map_or(0, |c| **c);
                     for value in scalar_vec.iter() {
                         let key = match moment {
