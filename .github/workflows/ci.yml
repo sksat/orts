@@ -1698,8 +1698,10 @@ jobs:
             # .tar.gz from its context menu, and Windows' own bsdtar means the
             # tarball is only convenient from a shell. binstall is not pointed
             # at it. Wraps STAGE_DIR like the tarball, so one `bin-dir`
-            # template resolves in both. -X drops extra file attributes so the
-            # archive is reproducible.
+            # template resolves in both. -X drops extra file attributes, which
+            # is as far as this goes: unlike the tarball's fixed --mtime, the
+            # zip still records each entry's timestamp, so it is not
+            # byte-reproducible across builds.
             if [ "$EXE" = ".exe" ]; then
               ZIP="${STAGE_DIR}.zip"
               zip -qrX "${ZIP}" "${STAGE_DIR}"

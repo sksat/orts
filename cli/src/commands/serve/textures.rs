@@ -182,9 +182,12 @@ pub struct TextureCache {
 impl TextureCache {
     pub fn new() -> Self {
         // `env::temp_dir()` rather than a literal /tmp: this is the only path in
-        // the tree that assumed POSIX, and it has to resolve on Windows too.
-        // Whether the result is memory-backed is up to the system ($TMPDIR, or
-        // /tmp, which is not always tmpfs), so nothing here depends on that.
+        // the tree that assumed POSIX, and it has to resolve on Windows too,
+        // where it follows %TMP% / %TEMP% rather than $TMPDIR.
+        //
+        // Whether the result is memory-backed is up to the system — on Linux
+        // $TMPDIR or /tmp, and /tmp is not always tmpfs — so nothing here
+        // depends on that.
         let cache_dir = std::env::temp_dir().join("orts").join("textures");
         let mut embedded = HashMap::new();
         for tex in EMBEDDED {
