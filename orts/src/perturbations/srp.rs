@@ -37,6 +37,11 @@ pub const DEFAULT_AREA_TO_MASS: f64 = 0.02;
 ///
 /// where ŝ is the unit vector from the satellite toward the Sun,
 /// giving acceleration directed away from the Sun.
+///
+/// Produces no torque, and takes no attitude: an isotropic surface has its
+/// centre of pressure at the centre of mass, so the SRP torque is zero by
+/// definition. Attitude-dependent SRP, including the torque an off-centre
+/// centre of pressure produces, is [`crate::spacecraft::PanelSrp`].
 pub struct SolarRadiationPressure {
     /// Radiation pressure coefficient (1.0 = absorber, 2.0 = reflector)
     pub cr: f64,

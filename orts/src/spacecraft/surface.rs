@@ -11,15 +11,68 @@ use tobari::{AtmosphereInput, AtmosphereModel, Exponential};
 
 use super::ExternalLoads;
 
+/// How a flat panel reflects sunlight, for radiation pressure.
+///
+/// Absorption, specular reflection and diffuse reflection sum to 1, so two of
+/// them determine the third. Absorption is derived rather than stored, which
+/// keeps the three from drifting out of agreement.
+///
+/// A single lumped `Cr` cannot stand in for these: it fixes the force magnitude
+/// face-on but leaves the direction undetermined at oblique incidence, where
+/// specular and diffuse reflection push along the panel normal rather than
+/// along the Sun line.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PanelOptics {
+    /// Specular reflectivity ρ_s: the fraction reflected mirror-like.
+    pub specular: f64,
+    /// Diffuse reflectivity ρ_d: the fraction re-emitted Lambertian.
+    pub diffuse: f64,
+}
+
+impl PanelOptics {
+    /// # Panics
+    /// Panics unless both coefficients are finite, non-negative and sum to at
+    /// most 1; the remainder is the absorbed fraction.
+    pub fn new(specular: f64, diffuse: f64) -> Self {
+        assert!(
+            specular.is_finite() && diffuse.is_finite(),
+            "Panel reflectivities must be finite, got specular={specular}, diffuse={diffuse}"
+        );
+        assert!(
+            specular >= 0.0 && diffuse >= 0.0,
+            "Panel reflectivities must be non-negative, got specular={specular}, diffuse={diffuse}"
+        );
+        assert!(
+            specular + diffuse <= 1.0,
+            "Panel reflectivities must sum to at most 1, got specular={specular} + diffuse={diffuse}"
+        );
+        Self { specular, diffuse }
+    }
+
+    /// A black panel: everything absorbed, nothing reflected (Cr = 1 face-on).
+    pub fn absorber() -> Self {
+        Self {
+            specular: 0.0,
+            diffuse: 0.0,
+        }
+    }
+
+    /// Absorbed fraction α = 1 − ρ_s − ρ_d.
+    pub fn absorptivity(self) -> f64 {
+        1.0 - self.specular - self.diffuse
+    }
+}
+
 /// A flat surface panel on a spacecraft body.
 ///
 /// Represents one face of the spacecraft's outer surface for computing
-/// aerodynamic (and eventually SRP) forces.  Each panel has an outward-pointing
-/// normal in the body frame, a drag coefficient, and a centre-of-pressure
-/// offset from the centre of mass.
+/// aerodynamic and SRP forces.  Each panel has an outward-pointing normal in
+/// the body frame, a drag coefficient, optical properties, and a
+/// centre-of-pressure offset from the centre of mass.
 ///
 /// For thin surfaces like solar panels where both sides are exposed to the
-/// flow, model each side as a separate panel with opposite normals.
+/// flow, model each side as a separate panel with opposite normals; the two
+/// sides may then carry different optical properties.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SurfacePanel {
     /// Panel area [m²].
@@ -28,9 +81,8 @@ pub struct SurfacePanel {
     pub normal: Vector3<f64>,
     /// Drag coefficient (typically 2.0–2.2 for LEO free-molecular flow).
     pub cd: f64,
-    /// Radiation pressure coefficient (1.0 = absorber, 2.0 = reflector).
-    /// Used by SRP panel models; defaults to 1.5.
-    pub cr: f64,
+    /// Reflection properties, used by SRP panel models.
+    pub optics: PanelOptics,
     /// Centre-of-pressure offset from the spacecraft CoM [m, body frame].
     pub cp_offset: Vector3<f64>,
 }
@@ -39,6 +91,9 @@ impl SurfacePanel {
     /// Create a panel whose centre of pressure coincides with the CoM.
     ///
     /// The `normal` vector is normalised internally; it need not be unit length.
+    /// Optics default to [`PanelOptics::absorber`] — a lumped `Cr` has no unique
+    /// specular/diffuse split, so the default is a stated physical surface
+    /// rather than an inferred one. Set it with [`Self::with_optics`].
     ///
     /// # Panics
     /// Panics if `normal` is zero-length.
@@ -49,14 +104,14 @@ impl SurfacePanel {
             area,
             normal: n,
             cd,
-            cr: 1.5,
+            optics: PanelOptics::absorber(),
             cp_offset: Vector3::zeros(),
         }
     }
 
-    /// Override the radiation pressure coefficient (builder pattern).
-    pub fn with_cr(mut self, cr: f64) -> Self {
-        self.cr = cr;
+    /// Override the reflection properties (builder pattern).
+    pub fn with_optics(mut self, optics: PanelOptics) -> Self {
+        self.optics = optics;
         self
     }
 }
@@ -99,55 +154,55 @@ impl SpacecraftShape {
         Self::Panels(panels)
     }
 
-    /// Create a cube with the given half-size, drag coefficient, and radiation
-    /// pressure coefficient.
+    /// Create a cube with the given half-size, drag coefficient, and optical
+    /// properties, shared by all six faces.
     ///
     /// Generates 6 panels (±x, ±y, ±z), each with area `(2 * half_size)²` m²
     /// and centre of pressure at the face centre (`half_size` m from CoM along
     /// the face normal).
-    pub fn cube(half_size: f64, cd: f64, cr: f64) -> Self {
+    pub fn cube(half_size: f64, cd: f64, optics: PanelOptics) -> Self {
         let face_area = (2.0 * half_size) * (2.0 * half_size);
         let panels = vec![
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(1.0, 0.0, 0.0),
                 cd,
-                cr,
+                optics,
                 cp_offset: Vector3::new(half_size, 0.0, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(-1.0, 0.0, 0.0),
                 cd,
-                cr,
+                optics,
                 cp_offset: Vector3::new(-half_size, 0.0, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, 1.0, 0.0),
                 cd,
-                cr,
+                optics,
                 cp_offset: Vector3::new(0.0, half_size, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, -1.0, 0.0),
                 cd,
-                cr,
+                optics,
                 cp_offset: Vector3::new(0.0, -half_size, 0.0),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, 0.0, 1.0),
                 cd,
-                cr,
+                optics,
                 cp_offset: Vector3::new(0.0, 0.0, half_size),
             },
             SurfacePanel {
                 area: face_area,
                 normal: Vector3::new(0.0, 0.0, -1.0),
                 cd,
-                cr,
+                optics,
                 cp_offset: Vector3::new(0.0, 0.0, -half_size),
             },
         ];
@@ -157,7 +212,7 @@ impl SpacecraftShape {
 
 /// Attitude-dependent drag model using flat surface panels.
 ///
-/// Implements [`LoadModel`] to produce both translational acceleration and
+/// Implements [`Model`] to produce both translational acceleration and
 /// aerodynamic torque from per-panel drag forces.  For the [`SpacecraftShape::Sphere`]
 /// variant, behaves identically to the scalar `AtmosphericDrag`.
 ///
@@ -401,6 +456,42 @@ mod tests {
         assert!((p.cd - 2.1).abs() < 1e-15);
     }
 
+    #[test]
+    fn at_com_defaults_to_a_black_panel() {
+        // The default has to be a stated surface, since a lumped Cr has no
+        // unique specular/diffuse split to infer one from.
+        let p = SurfacePanel::at_com(3.5, Vector3::new(0.0, 1.0, 0.0), 2.1);
+        assert_eq!(p.optics, PanelOptics::absorber());
+        assert!((p.optics.absorptivity() - 1.0).abs() < 1e-15);
+    }
+
+    // PanelOptics
+
+    #[test]
+    fn panel_optics_absorptivity_is_the_remainder() {
+        let o = PanelOptics::new(0.25, 0.15);
+        assert!((o.absorptivity() - 0.6).abs() < 1e-15);
+        assert!((o.absorptivity() + o.specular + o.diffuse - 1.0).abs() < 1e-15);
+    }
+
+    #[test]
+    #[should_panic(expected = "non-negative")]
+    fn panel_optics_rejects_negative_reflectivity() {
+        PanelOptics::new(-0.1, 0.2);
+    }
+
+    #[test]
+    #[should_panic(expected = "sum to at most 1")]
+    fn panel_optics_rejects_sum_above_one() {
+        PanelOptics::new(0.7, 0.5);
+    }
+
+    #[test]
+    #[should_panic(expected = "finite")]
+    fn panel_optics_rejects_non_finite() {
+        PanelOptics::new(f64::NAN, 0.2);
+    }
+
     // SpacecraftShape::sphere
 
     #[test]
@@ -457,7 +548,7 @@ mod tests {
 
     #[test]
     fn cube_has_six_panels() {
-        let shape = SpacecraftShape::cube(0.5, 2.2, 1.5);
+        let shape = SpacecraftShape::cube(0.5, 2.2, PanelOptics::absorber());
         match &shape {
             SpacecraftShape::Panels(panels) => {
                 assert_eq!(panels.len(), 6, "Cube should have 6 faces");
@@ -470,7 +561,7 @@ mod tests {
     fn cube_face_area() {
         let half = 0.5;
         let expected_area = (2.0 * half) * (2.0 * half); // 1.0 m²
-        let shape = SpacecraftShape::cube(half, 2.2, 1.5);
+        let shape = SpacecraftShape::cube(half, 2.2, PanelOptics::absorber());
         if let SpacecraftShape::Panels(panels) = &shape {
             for (i, p) in panels.iter().enumerate() {
                 assert!(
@@ -484,7 +575,7 @@ mod tests {
 
     #[test]
     fn cube_normals_are_unit() {
-        let shape = SpacecraftShape::cube(1.0, 2.0, 1.5);
+        let shape = SpacecraftShape::cube(1.0, 2.0, PanelOptics::absorber());
         if let SpacecraftShape::Panels(panels) = &shape {
             for (i, p) in panels.iter().enumerate() {
                 assert!(
@@ -498,7 +589,7 @@ mod tests {
 
     #[test]
     fn cube_normals_are_axis_aligned() {
-        let shape = SpacecraftShape::cube(1.0, 2.0, 1.5);
+        let shape = SpacecraftShape::cube(1.0, 2.0, PanelOptics::absorber());
         if let SpacecraftShape::Panels(panels) = &shape {
             let normals: Vec<_> = panels.iter().map(|p| p.normal).collect();
             let expected = [
@@ -521,7 +612,7 @@ mod tests {
     #[test]
     fn cube_cp_at_face_centre() {
         let half = 0.75;
-        let shape = SpacecraftShape::cube(half, 2.0, 1.5);
+        let shape = SpacecraftShape::cube(half, 2.0, PanelOptics::absorber());
         if let SpacecraftShape::Panels(panels) = &shape {
             for (i, p) in panels.iter().enumerate() {
                 // CP should be at half_size along the normal direction
@@ -538,7 +629,7 @@ mod tests {
     #[test]
     fn cube_all_same_cd() {
         let cd = 2.2;
-        let shape = SpacecraftShape::cube(0.5, cd, 1.5);
+        let shape = SpacecraftShape::cube(0.5, cd, PanelOptics::absorber());
         if let SpacecraftShape::Panels(panels) = &shape {
             for (i, p) in panels.iter().enumerate() {
                 assert!(
@@ -552,7 +643,7 @@ mod tests {
 
     #[test]
     fn cube_opposite_normals_cancel() {
-        let shape = SpacecraftShape::cube(1.0, 2.0, 1.5);
+        let shape = SpacecraftShape::cube(1.0, 2.0, PanelOptics::absorber());
         if let SpacecraftShape::Panels(panels) = &shape {
             let normal_sum: Vector3<f64> = panels.iter().map(|p| p.normal).sum();
             assert!(
@@ -637,7 +728,7 @@ mod tests {
     /// Characterization: pinned `SimpleEci` panel-drag loads for a cube.
     #[test]
     fn panels_simple_eci_loads_snapshot() {
-        let drag = PanelDrag::for_earth(SpacecraftShape::cube(0.5, 2.2, 1.5));
+        let drag = PanelDrag::for_earth(SpacecraftShape::cube(0.5, 2.2, PanelOptics::absorber()));
         let loads = drag.eval(0.0, &snapshot_state(), Some(&snapshot_epoch()));
         let expected_a = Vector3::new(
             -1.112965959433058e-10,
@@ -694,28 +785,28 @@ mod tests {
                 area: 2.0,
                 normal: Vector3::x(),
                 cd: 2.2,
-                cr: 1.5,
+                optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 1.5, 0.0),
             },
             SurfacePanel {
                 area: 2.0,
                 normal: -Vector3::x(),
                 cd: 2.2,
-                cr: 1.5,
+                optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 0.4, 0.0),
             },
             SurfacePanel {
                 area: 0.5,
                 normal: Vector3::y(),
                 cd: 2.2,
-                cr: 1.5,
+                optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 0.0, -0.8),
             },
             SurfacePanel {
                 area: 0.5,
                 normal: -Vector3::y(),
                 cd: 2.2,
-                cr: 1.5,
+                optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.9, 0.0, 0.0),
             },
         ])
@@ -1041,7 +1132,7 @@ mod tests {
             area: 10.0,
             normal: Vector3::new(0.0, -1.0, 0.0),
             cd: 2.2,
-            cr: 1.5,
+            optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0), // 1 m offset in +x
         };
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
@@ -1065,7 +1156,7 @@ mod tests {
             area: 10.0,
             normal: Vector3::new(0.0, -1.0, 0.0),
             cd: 2.2,
-            cr: 1.5,
+            optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(offset, 0.0, 0.0),
         };
 
@@ -1149,7 +1240,7 @@ mod tests {
         // But the other 4 faces (±x, ±z) have cos(θ)=0 for exact +y flow
         // So only -y face contributes, with CP at (0, -half, 0)
         // Force is in -ŷ body: τ = (0,-h,0) × (0,F,0) = 0 (parallel!)
-        let drag = PanelDrag::for_earth(SpacecraftShape::cube(0.5, 2.2, 1.5));
+        let drag = PanelDrag::for_earth(SpacecraftShape::cube(0.5, 2.2, PanelOptics::absorber()));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert!(
             loads.torque_body.magnitude() < 1e-20,
@@ -1357,7 +1448,7 @@ mod tests {
         // At 45° about z: v̂_body = (sin45, cos45, 0) → A_proj = A * (sin45 + cos45) = A * √2
         let half = 0.5;
         let cd = 2.2;
-        let drag = PanelDrag::for_earth(SpacecraftShape::cube(half, cd, 1.5));
+        let drag = PanelDrag::for_earth(SpacecraftShape::cube(half, cd, PanelOptics::absorber()));
 
         let a0 = drag
             .eval(0.0, &iss_state(), None)
@@ -1390,7 +1481,7 @@ mod tests {
             area: 10.0,
             normal: Vector3::new(0.0, -1.0, 0.0),
             cd: 2.2,
-            cr: 1.5,
+            optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0),
         };
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
@@ -1478,7 +1569,7 @@ mod tests {
                 area: 10.0,
                 normal: Vector3::new(0.0, -1.0, 0.0),
                 cd: 2.2,
-                cr: 1.5,
+                optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
             },
             SurfacePanel::at_com(5.0, Vector3::new(1.0, 0.0, 0.0), 2.0),
@@ -1527,14 +1618,14 @@ mod tests {
                 area: 10.0,
                 normal: Vector3::new(0.0, -1.0, 0.0),
                 cd: 2.2,
-                cr: 1.5,
+                optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
             },
             SurfacePanel {
                 area: 8.0,
                 normal: Vector3::new(1.0, 0.0, 0.0),
                 cd: 2.0,
-                cr: 1.5,
+                optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(0.0, 0.0, 0.5),
             },
         ];
@@ -1653,7 +1744,7 @@ mod tests {
                 area: 10.0,
                 normal: Vector3::new(0.0, -1.0, 0.0),
                 cd: 2.2,
-                cr: 1.5,
+                optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
             },
             SurfacePanel::at_com(5.0, Vector3::new(1.0, 0.0, 0.0), 2.0),
@@ -1686,7 +1777,7 @@ mod tests {
             area: 10.0,
             normal: Vector3::new(0.0, -1.0, 0.0),
             cd: 2.2,
-            cr: 1.5,
+            optics: PanelOptics::absorber(),
             cp_offset: Vector3::new(1.0, 0.0, 0.0),
         }];
 
