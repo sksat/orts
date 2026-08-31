@@ -280,6 +280,12 @@ impl RowKey {
 /// `log_time` and `log_tick`, which rerun adds to every log call, say when a
 /// value was logged rather than when it happened: two fields of one state carry
 /// different ones and could never pair.
+///
+/// The axis is settled by the first chunk of the file to carry one, so a
+/// recording whose earlier chunks have none keys those without it and they no
+/// longer join with the later ones. Deciding it up front would mean decoding
+/// the file twice; the rows are lost rather than mixed, which is the failure
+/// this decode prefers.
 fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<ChunkKeys> {
     let timeline = |wanted: &str| {
         chunk
@@ -324,16 +330,12 @@ fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<Chun
         (Some(chosen), Some((name, col))) if name.as_str() == chosen.as_str() => {
             keys(Some(col.times_raw().to_vec()))
         }
-        // An axis that is not the recording's. A chunk that also carries
-        // `sim_time` or `step` still has a place among the rows; one that does
-        // not has nothing to place it by.
-        (Some(_), Some(_)) => {
-            if sim_time.is_some() || step.is_some() {
-                keys(None)
-            } else {
-                None
-            }
-        }
+        // An axis that is not the recording's. Keying on `sim_time` and `step`
+        // alone would drop it, and the row would then join fields that sit at
+        // no value of it at all: `x` at `sim_time = 0` beside a `y` at
+        // `sim_time = 0, iteration = 7`. The key holds one axis, so a chunk on
+        // another is left out rather than projected onto fewer dimensions.
+        (Some(_), Some(_)) => None,
         // No axis of its own: the two names above place the row, or its
         // column-local position does, which never joins with a timed key.
         (_, None) => keys(None),
@@ -917,15 +919,17 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
             }
         }
 
-        // A component the file has no column for cannot be reconstructed
+        // A component the file has no values for cannot be reconstructed
         // whatever the rows are, so it gets no say in what they are. Its
         // remaining fields would otherwise narrow them: `x` and `z` recorded at
         // one time, with `y` absent from the file, cost a whole velocity its
-        // rows at every other time.
+        // rows at every other time. An empty `Scalars` batch leaves a column
+        // behind with no values in it, which carries the field no further than
+        // having no column at all.
         temporal.retain(|(_, fields)| {
-            fields
-                .iter()
-                .all(|field| get_scalar_data(&scalars, base, field).is_some())
+            fields.iter().all(|field| {
+                get_scalar_data(&scalars, base, field).is_some_and(|col| !col.is_empty())
+            })
         });
 
         // One row-key set for the whole entity. `EntityStore` keeps a single
@@ -2528,5 +2532,128 @@ mod tests {
             &[110.0, 201.0, 201.0],
             "every axis of the row must be frame 2's"
         );
+    }
+
+    /// No row is assembled across two axes of the recording's own naming.
+    ///
+    /// Keying a chunk on `sim_time` and `step` alone drops the axis it does
+    /// carry, and the row can then join fields that sit at no value of it: `x`
+    /// and `z` at `sim_time = 0` beside a `y` at `sim_time = 0, iteration = 7`.
+    /// Which of two axes a file settles on depends on the order its chunks
+    /// arrive, so this holds the outcome rather than reproducing one ordering:
+    /// either way the position is never whole.
+    #[test]
+    fn no_row_is_assembled_across_two_named_axes() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_other_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("other.rrd");
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-other-axis-test")
+                .save(&path)
+                .expect("recording stream");
+            // The recording's axis, settled here: `frame`.
+            rec.set_duration_secs("sim_time", 0.0);
+            rec.set_time_sequence("frame", 1i64);
+            rec.log(
+                "/world/sat/other/x",
+                &re_sdk_types::archetypes::Scalars::new([100.0f64]),
+            )
+            .expect("log x");
+            rec.disable_timeline("frame");
+            rec.log(
+                "/world/sat/other/z",
+                &re_sdk_types::archetypes::Scalars::new([300.0f64]),
+            )
+            .expect("log z");
+            // `y` sits on an axis of its own.
+            rec.set_time_sequence("iteration", 7i64);
+            rec.log(
+                "/world/sat/other/y",
+                &re_sdk_types::archetypes::Scalars::new([999.0f64]),
+            )
+            .expect("log y");
+            rec.flush_blocking().expect("flush");
+        }
+
+        let loaded = load_as_recording(path.to_str().unwrap()).expect("load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let entity = EntityPath::parse("/world/sat/other");
+        let rows = loaded.entity(&entity).map_or(0, |store| store.num_rows);
+        assert_eq!(
+            rows, 0,
+            "the `iteration` chunk cannot be placed among the rest"
+        );
+    }
+
+    /// A field whose column holds no values carries it no further than none.
+    ///
+    /// An empty `Scalars` batch leaves a column behind with nothing in it. That
+    /// column counted as the file carrying the field, so an empty `y` made
+    /// position a state anchor with no moments at all, and the velocity rows
+    /// that are there went with it.
+    #[test]
+    fn a_field_with_an_empty_column_does_not_narrow_another() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_empty_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("empty.rrd");
+        let schema = r#"[
+            {"name":"orts.Position3D","fields":["x","y","z"]},
+            {"name":"orts.Velocity3D","fields":["vx","vy","vz"]}
+        ]"#;
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-empty-column-test")
+                .save(&path)
+                .expect("recording stream");
+            rec.log_static(
+                "/meta/schema/world/sat/emptied",
+                &re_sdk_types::archetypes::TextDocument::new(schema),
+            )
+            .expect("log schema");
+            for (t, x, vx) in [(0.0f64, 100.0f64, 1.0f64), (10.0, 110.0, 4.0)] {
+                rec.set_duration_secs("sim_time", t);
+                for (field, value) in [("x", x), ("z", 0.0), ("vx", vx), ("vy", 2.0), ("vz", 3.0)] {
+                    rec.log(
+                        format!("/world/sat/emptied/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new([value]),
+                    )
+                    .expect("log");
+                }
+                // `y` is logged as an empty batch: a column, no values.
+                rec.log(
+                    "/world/sat/emptied/y",
+                    &re_sdk_types::archetypes::Scalars::new(Vec::<f64>::new()),
+                )
+                .expect("log empty y");
+            }
+            rec.flush_blocking().expect("flush");
+        }
+
+        let loaded = load_as_recording(path.to_str().unwrap()).expect("load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let entity = EntityPath::parse("/world/sat/emptied");
+        let store = loaded.entity(&entity).expect("entity");
+        assert!(
+            !store.columns.keys().any(|name| name.contains("Position3D")),
+            "a position whose `y` holds no value is not reported"
+        );
+        assert_eq!(store.num_rows, 2, "the velocity keeps both of its times");
+        let velocity = store
+            .columns
+            .iter()
+            .find(|(name, _)| name.contains("Velocity3D"))
+            .map(|(_, c)| c)
+            .expect("a velocity column");
+        assert_eq!(velocity.get_row(0).expect("row 0"), &[1.0, 2.0, 3.0]);
+        assert_eq!(velocity.get_row(1).expect("row 1"), &[4.0, 2.0, 3.0]);
     }
 }

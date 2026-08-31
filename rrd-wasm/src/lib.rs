@@ -134,6 +134,12 @@ impl RowKey {
 /// `log_time` and `log_tick`, which rerun adds to every log call, say when a
 /// value was logged rather than when it happened: two fields of one state carry
 /// different ones and could never pair.
+///
+/// The axis is settled by the first chunk of the file to carry one, so a
+/// recording whose earlier chunks have none keys those without it and they no
+/// longer join with the later ones. Deciding it up front would mean decoding
+/// the file twice; the rows are lost rather than mixed, which is the failure
+/// this decode prefers.
 fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<ChunkKeys> {
     let timeline = |wanted: &str| {
         chunk
@@ -178,16 +184,12 @@ fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<Chun
         (Some(chosen), Some((name, col))) if name.as_str() == chosen.as_str() => {
             keys(Some(col.times_raw().to_vec()))
         }
-        // An axis that is not the recording's. A chunk that also carries
-        // `sim_time` or `step` still has a place among the rows; one that does
-        // not has nothing to place it by.
-        (Some(_), Some(_)) => {
-            if sim_time.is_some() || step.is_some() {
-                keys(None)
-            } else {
-                None
-            }
-        }
+        // An axis that is not the recording's. Keying on `sim_time` and `step`
+        // alone would drop it, and the row would then join fields that sit at
+        // no value of it at all: `x` at `sim_time = 0` beside a `y` at
+        // `sim_time = 0, iteration = 7`. The key holds one axis, so a chunk on
+        // another is left out rather than projected onto fewer dimensions.
+        (Some(_), Some(_)) => None,
         // No axis of its own: the two names above place the row, or its
         // column-local position does, which never joins with a timed key.
         (_, None) => keys(None),
@@ -1070,6 +1072,32 @@ mod tests {
             (row.x, row.y, row.z),
             (110.0, 201.0, 201.0),
             "every axis of the row must be frame 2's"
+        );
+    }
+
+    /// No row is assembled across two axes of the recording's own naming.
+    ///
+    /// Keying a chunk on `sim_time` and `step` alone drops the axis it does
+    /// carry, and the row can then join fields that sit at no value of it: `x`
+    /// and `z` at `sim_time = 0` beside a `y` at `sim_time = 0, iteration = 7`.
+    /// Which of two axes a file settles on depends on the order its chunks
+    /// arrive, so this holds the outcome rather than reproducing one ordering:
+    /// either way the position is never whole.
+    #[test]
+    fn no_row_is_assembled_across_two_named_axes() {
+        let parsed = decode_written(|rec| {
+            rec.set_duration_secs("sim_time", 0.0);
+            rec.set_time_sequence("frame", 1i64);
+            log_scalars(rec, &[("x", 100.0)]);
+            rec.disable_timeline("frame");
+            log_scalars(rec, &[("z", 300.0)]);
+            rec.set_time_sequence("iteration", 7i64);
+            log_scalars(rec, &[("y", 999.0)]);
+        });
+        assert!(
+            parsed.rows.is_empty(),
+            "the `iteration` chunk cannot be placed among the rest: {:?}",
+            parsed.rows
         );
     }
 }
