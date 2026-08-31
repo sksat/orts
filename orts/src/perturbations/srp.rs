@@ -35,9 +35,10 @@ pub const DEFAULT_AREA_TO_MASS: f64 = 0.02;
 ///
 /// a = -P × Cr × (A/m) × (AU/r_sun)² × ŝ
 ///
-/// where P is [`SOLAR_RADIATION_PRESSURE`] — already a pressure, so no further
-/// division by c — and ŝ is the unit vector from the satellite toward the Sun,
-/// giving acceleration directed away from the Sun.
+/// P is [`SOLAR_RADIATION_PRESSURE`], which is the solar irradiance already
+/// divided by the speed of light, so it is a pressure in N/m² and the formula
+/// applies no further `/c`. ŝ is the unit vector from the satellite toward the
+/// Sun, giving acceleration directed away from the Sun.
 ///
 /// Produces no torque, and takes no attitude: with no orientation there is no
 /// lever arm to cross the force against. That is exactly the model's premise,

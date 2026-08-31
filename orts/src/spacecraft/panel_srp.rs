@@ -16,18 +16,15 @@ use super::{ExternalLoads, SpacecraftShape, SurfacePanel};
 /// `s_body` is the unit vector from the spacecraft toward the Sun in the body
 /// frame; `pressure` [N/m²] is the solar radiation pressure already scaled for
 /// heliocentric distance and illumination fraction. Returns zero for a panel
-/// facing away from the Sun. `panel.normal` must be unit length.
+/// facing away from the Sun.
+///
+/// `panel.normal` must be unit length; every constructor of a model holding
+/// panels enforces that, so this runs without re-checking it per stage.
 ///
 /// Split out as a pure function so the force law can be checked against
 /// closed-form values and for rotational equivariance without the Sun
 /// ephemeris, which an inertial rotation of the state does not carry along.
 fn panel_force(panel: &SurfacePanel, s_body: &Vector3<f64>, pressure: f64) -> Vector3<f64> {
-    debug_assert!(
-        (panel.normal.magnitude() - 1.0).abs() < 1e-9,
-        "Panel normal must be unit length, got |n|={}",
-        panel.normal.magnitude()
-    );
-
     let cos_theta = panel.normal.dot(s_body);
     if cos_theta <= 0.0 {
         return Vector3::zeros();
@@ -73,12 +70,11 @@ pub struct PanelSrp {
 
 impl PanelSrp {
     /// Create a panel-based (attitude-dependent) SRP model from surface panels.
+    ///
+    /// # Panics
+    /// Panics unless every panel normal is unit length.
     pub fn panels(panels: Vec<super::SurfacePanel>) -> Self {
-        Self {
-            shape: SpacecraftShape::Panels(panels),
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
-        }
+        Self::new(SpacecraftShape::panels(panels))
     }
 
     /// Create an SRP model for Earth orbit with cylindrical Earth shadow.
@@ -88,7 +84,11 @@ impl PanelSrp {
     /// area and [`PanelOptics`].
     ///
     /// [`PanelOptics`]: super::PanelOptics
+    ///
+    /// # Panics
+    /// Panics unless every panel normal is unit length.
     pub fn for_earth(shape: SpacecraftShape) -> Self {
+        shape.assert_normals_are_unit();
         Self {
             shape,
             shadow_body_radius: Some(R_EARTH),
@@ -97,7 +97,11 @@ impl PanelSrp {
     }
 
     /// Create an SRP model without shadow.
+    ///
+    /// # Panics
+    /// Panics unless every panel normal is unit length.
     pub fn new(shape: SpacecraftShape) -> Self {
+        shape.assert_normals_are_unit();
         Self {
             shape,
             shadow_body_radius: None,
@@ -281,6 +285,21 @@ mod tests {
         let loads = srp.eval(0.0, &iss_state(), None);
         assert_eq!(loads.acceleration_inertial.into_inner(), Vector3::zeros());
         assert_eq!(loads.torque_body.into_inner(), Vector3::zeros());
+    }
+
+    #[test]
+    #[should_panic(expected = "normal must be unit length")]
+    fn for_earth_rejects_a_non_unit_normal() {
+        // `SpacecraftShape::Panels` is a public variant, so a shape can reach
+        // the model without passing through `SpacecraftShape::panels`.
+        let shape = SpacecraftShape::Panels(vec![SurfacePanel {
+            area: 10.0,
+            normal: Vector3::new(0.0, 2.0, 0.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+        }]);
+        PanelSrp::for_earth(shape);
     }
 
     #[test]

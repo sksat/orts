@@ -180,8 +180,40 @@ impl SpacecraftShape {
     }
 
     /// Create a panel model from an arbitrary set of panels.
+    ///
+    /// # Panics
+    /// Panics unless every panel normal is unit length — see
+    /// [`Self::assert_normals_are_unit`].
     pub fn panels(panels: Vec<SurfacePanel>) -> Self {
-        Self::Panels(panels)
+        let shape = Self::Panels(panels);
+        shape.assert_normals_are_unit();
+        shape
+    }
+
+    /// Check the unit-normal invariant the panel force models rely on.
+    ///
+    /// Both force models project onto the panel normal, and panel SRP is cubic
+    /// in its length through the specular term, so a non-unit normal inflates
+    /// the force silently. The check belongs at model construction rather than
+    /// inside the force law: a model owns its shape and cannot be mutated
+    /// afterwards, so once past here the invariant holds for the model's life —
+    /// and the force law runs at every integrator stage, where a square root
+    /// per panel would be pure overhead.
+    ///
+    /// # Panics
+    /// Panics if any panel normal is not unit length. `Sphere` never panics.
+    pub(crate) fn assert_normals_are_unit(&self) {
+        let Self::Panels(panels) = self else {
+            return;
+        };
+        for (i, panel) in panels.iter().enumerate() {
+            let len = panel.normal.magnitude();
+            assert!(
+                (len - 1.0).abs() < 1e-9,
+                "Panel {i} normal must be unit length, got |n|={len}. \
+                 `SurfacePanel::at_com` normalises; a struct literal does not."
+            );
+        }
     }
 
     /// Create a cube with the given half-size, drag coefficient, and optical
@@ -523,6 +555,35 @@ mod tests {
     }
 
     // PanelOptics
+
+    #[test]
+    #[should_panic(expected = "normal must be unit length")]
+    fn panels_rejects_a_non_unit_normal() {
+        // A struct literal skips `at_com`'s normalisation, and the SRP force is
+        // cubic in |n| through its specular term, so the shape constructor is
+        // where that has to be caught.
+        SpacecraftShape::panels(vec![SurfacePanel {
+            area: 10.0,
+            normal: Vector3::new(1.0, 0.0, 1.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+        }]);
+    }
+
+    #[test]
+    fn panels_accepts_normals_at_com_produced() {
+        let shape = SpacecraftShape::panels(vec![SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 1.0),
+            2.2,
+            PanelOptics::absorber(),
+        )]);
+        let SpacecraftShape::Panels(panels) = shape else {
+            panic!("expected a panel shape");
+        };
+        assert!((panels[0].normal.magnitude() - 1.0).abs() < 1e-15);
+    }
 
     #[test]
     fn panel_optics_absorptivity_is_the_remainder() {
