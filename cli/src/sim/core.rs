@@ -182,6 +182,7 @@ pub fn sat_params(spec: &SatelliteSpec) -> SatelliteParams {
         ballistic_coeff: spec.ballistic_coeff,
         srp_area_to_mass: spec.srp_area_to_mass,
         srp_cr: spec.srp_cr,
+        disturbances: spec.disturbances,
     }
 }
 

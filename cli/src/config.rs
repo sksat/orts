@@ -8,6 +8,7 @@ use crate::satellite::{OrbitSpec, SatelliteSpec};
 use crate::tle::fetch_tle_by_norad_id;
 use arika::body::KnownBody;
 use orts::plugin::{Message, NamedValue, NodeId, Payload, Value};
+use orts::setup::DisturbanceTorques;
 
 /// JSON/TOML/YAML simulation configuration.
 ///
@@ -257,6 +258,33 @@ pub struct AttitudeConfig {
 
 fn default_identity_quat() -> [f64; 4] {
     [1.0, 0.0, 0.0, 0.0]
+}
+
+/// Which environmental disturbance torques to model for a satellite.
+///
+/// A sibling of `[satellites.attitude]` rather than a field inside it: that
+/// table states the attitude state and the body's properties, while this one
+/// selects which environment models get solved. Requires attitude dynamics —
+/// a torque needs an orientation to act on.
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
+pub struct DisturbancesConfig {
+    /// Gravity-gradient torque from the central body (default: true).
+    #[serde(default = "default_true")]
+    #[ts(as = "Option<_>", optional)]
+    pub gravity_gradient: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl DisturbancesConfig {
+    fn to_disturbance_torques(&self) -> DisturbanceTorques {
+        DisturbanceTorques {
+            gravity_gradient: self.gravity_gradient,
+        }
+    }
 }
 
 impl AttitudeConfig {
@@ -516,6 +544,9 @@ pub struct SatelliteConfig {
     /// Attitude dynamics configuration. When present, SpacecraftDynamics is used.
     #[ts(optional)]
     pub attitude: Option<AttitudeConfig>,
+    /// Environmental disturbance torques. Requires `attitude`.
+    #[ts(optional)]
+    pub disturbances: Option<DisturbancesConfig>,
     /// プラグインコントローラ設定。
     #[ts(optional)]
     pub controller: Option<ControllerConfig>,
@@ -674,6 +705,11 @@ impl SatelliteConfig {
             srp_area_to_mass: self.srp_area_to_mass,
             srp_cr: self.srp_cr,
             attitude_config: self.attitude.clone(),
+            disturbances: self
+                .disturbances
+                .as_ref()
+                .map(DisturbancesConfig::to_disturbance_torques)
+                .unwrap_or_default(),
             shape: self.shape,
             controller_config: self.controller.clone(),
             sensor_choices: self.sensors.clone(),
@@ -740,6 +776,13 @@ impl SatelliteConfig {
         }
         if let Some(attitude) = &self.attitude {
             attitude.validate().map_err(|e| format!("attitude: {e}"))?;
+        }
+        // A disturbance torque acts on an orientation, and an orbit-only
+        // satellite has none, so the selection would be read and then dropped.
+        if self.disturbances.is_some() && self.attitude.is_none() {
+            return Err(
+                "disturbances requires attitude: a torque needs an orientation to act on".into(),
+            );
         }
         // A non-finite orbit number propagates into the derived orbital
         // period. `run` then loops on `while !group.all_finished()` with a NaN
@@ -1168,6 +1211,7 @@ mod tests {
             srp_cr: None,
             shape: None,
             attitude: None,
+            disturbances: None,
             controller: None,
             sensors: None,
             reaction_wheels: None,
@@ -1206,6 +1250,7 @@ mod tests {
             srp_cr: None,
             shape: None,
             attitude: None,
+            disturbances: None,
             controller: None,
             sensors: None,
             reaction_wheels: None,
@@ -1235,6 +1280,7 @@ mod tests {
             srp_cr: None,
             shape: None,
             attitude: None,
+            disturbances: None,
             controller: None,
             sensors: None,
             reaction_wheels: None,
@@ -1342,6 +1388,7 @@ satellites:
                 srp_cr: Some(1.5),
                 shape: None,
                 attitude: None,
+                disturbances: None,
                 controller: None,
                 sensors: None,
                 reaction_wheels: None,
@@ -2119,6 +2166,53 @@ offset_body = [0.1, 0.0, 0.0]
         };
         let err = cfg.validate().unwrap_err();
         assert!(err.contains("offset_body"), "msg: {err}");
+    }
+
+    #[test]
+    fn disturbances_without_attitude_is_rejected() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+disturbances = { gravity_gradient = true }
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(err.contains("disturbances requires attitude"), "got: {err}");
+    }
+
+    #[test]
+    fn disturbances_with_attitude_is_accepted_and_defaults_on() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 10, 10], mass = 50 }
+disturbances = {}
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("parses");
+        config.satellites[0].validate().expect("valid");
+        let d = config.satellites[0].disturbances.as_ref().expect("present");
+        assert!(
+            d.gravity_gradient,
+            "an empty disturbances table should keep the historical default on"
+        );
+    }
+
+    /// No `disturbances` table at all must reach the same selection as an empty
+    /// one, so adding the table is not what turns the torque on.
+    #[test]
+    fn omitting_disturbances_matches_the_default() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 10, 10], mass = 50 }
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("parses");
+        let spec = config.satellites[0].to_satellite_spec(0, KnownBody::Earth, 398600.4418);
+        assert_eq!(spec.disturbances, DisturbanceTorques::default());
+        assert!(spec.disturbances.gravity_gradient);
     }
 
     #[test]

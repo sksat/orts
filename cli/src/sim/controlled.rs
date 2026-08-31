@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use arika::epoch::Epoch;
-use orts::attitude::CoupledGravityGradient;
 use orts::effector::AugmentedState;
 use orts::orbital::gravity::GravityField;
 use orts::plugin::{
@@ -110,7 +109,6 @@ pub fn build_controlled_satellite(
         inertia,
         params.build_atmosphere_model(),
     );
-    dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
 
     // RW を追加。
     let has_rw = spec.rw_config.is_some();
