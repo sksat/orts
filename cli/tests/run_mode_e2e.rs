@@ -524,12 +524,20 @@ path = {:?}
 /// projection then divides by infinity and publishes all zeros, which
 /// `is_finite` accepts — so the run reports success while every attitude row
 /// from that point on is meaningless.
+///
+/// The span is short on purpose. `initial_angular_velocity` of 1e4 rad/s is
+/// what makes this expensive: the adaptive solver sizes its steps to that rate,
+/// so cost scales with the simulated span, and 30 s of it took over six minutes
+/// in CI. Two seconds gives 21 rows, twice what the row-count assertion below
+/// wants, and the failure shows up on the first row — dropping the load-time
+/// normalization (`AttitudeConfig::normalized_initial_quaternion`) fails this
+/// test in 23 ms.
 #[test]
 fn a_large_unnormalized_quaternion_still_integrates() {
     let config = r#"
 body = "earth"
 dt = 0.1
-duration = 30.0
+duration = 2.0
 
 [[satellites]]
 id = "sat-1"
