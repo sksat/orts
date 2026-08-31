@@ -23,7 +23,8 @@ Output indices (pymsis.Variable):
 Sections written:
   points                    thermosphere grid (>= 100 km), daily-Ap mode
   exospheric_temperature_points
-  lower_atmosphere_points   0-72.4 km, daily-Ap mode
+  lower_atmosphere_points   0-72.4 km, daily-Ap mode (below the split)
+  middle_atmosphere_points  72.5-100 km, daily-Ap mode (at and above the split)
   ap_history_points         3-hourly Ap mode (switch 9 = -1), daily Ap held fixed
 
 Run:  uv run tools/generate_nrlmsise00_fixtures.py
@@ -202,6 +203,7 @@ def generate_fixtures():
     # integrates the mesosphere/stratosphere/troposphere temperature splines
     # instead. The sampled altitudes straddle every node of those splines
     # (72.5, 62.5 mixing floor, 55, 45, 32.5, 20, 15, 10, 0 km).
+    #
     print("Generating lower-atmosphere reference points...")
     low_altitudes = [0.0, 5.0, 10.0, 15.0, 20.0, 32.5, 45.0, 55.0, 62.5, 70.0, 72.4]
     low_points = []
@@ -238,6 +240,55 @@ def generate_fixtures():
                             point[name] = None if np.isnan(v) else v
                         low_points.append(point)
     fixture["lower_atmosphere_points"] = low_points
+
+    # ── Middle atmosphere (at and above the 72.5 km split, below 100 km) ──
+    # The thermosphere grid starts at 100 km and the lower band stops at
+    # 72.4 km, so the split itself and the stretch above it had nothing to
+    # compare against. That stretch is where the temperature splines are
+    # anchored on a `gts7` evaluation at 72.5 km, and a wrong branch or a
+    # mis-anchored spline there still passes a finiteness check and a US76
+    # sanity band.
+    #
+    # This band is a separate section because the reference reports a different
+    # set of species: measured with pymsis 0.12.0, O, H and N come back as NaN
+    # at 72.4 km and as values from 72.5 km up.
+    print("Generating middle-atmosphere reference points...")
+    mid_altitudes = [72.5, 72.6, 75.0, 80.0, 90.0, 99.9]
+    mid_points = []
+    for epoch_str, epoch_name in epochs:
+        date = np.datetime64(epoch_str[:-1])
+        for activity in activity_levels:
+            ap_array = [[activity["ap"]] * 7]
+            for lat in latitudes:
+                for lon in (0.0, 180.0):
+                    for alt in mid_altitudes:
+                        raw = pymsis.calculate(
+                            date,
+                            lon,
+                            lat,
+                            alt,
+                            f107s=activity["f107"],
+                            f107as=activity["f107a"],
+                            aps=ap_array,
+                            version=0,
+                        ).flatten()
+                        point = {
+                            "epoch_utc": epoch_str,
+                            "epoch_name": epoch_name,
+                            "activity": activity["name"],
+                            "f107": activity["f107"],
+                            "f107a": activity["f107a"],
+                            "ap": activity["ap"],
+                            "latitude_deg": lat,
+                            "longitude_deg": lon,
+                            "altitude_km": alt,
+                        }
+                        for idx, name in zip(var_indices, all_var_names):
+                            v = float(raw[idx])
+                            point[name] = None if np.isnan(v) else v
+                        mid_points.append(point)
+    print(f"  {len(mid_points)} middle-atmosphere points")
+    fixture["middle_atmosphere_points"] = mid_points
     print(f"  {len(low_points)} lower-atmosphere points")
 
     # ── 3-hourly Ap history mode ──
@@ -297,6 +348,8 @@ def generate_fixtures():
         "total_points": len(fixture["points"]),
         "exo_temp_points": len(exo_points),
         "lower_atmosphere_points": len(low_points),
+        "middle_atmosphere_points": len(mid_points),
+        "middle_atmosphere_altitudes_km": mid_altitudes,
         "lower_atmosphere_altitudes_km": low_altitudes,
         "ap_history_points": len(ap_points),
         "ap_history_altitudes_km": ap_altitudes,

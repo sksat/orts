@@ -317,6 +317,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `ap_array` は死んだ入力だった。([#361](https://github.com/sksat/orts/pull/361))
 
 #### Fixed
+- NRLMSISE-00 の fixture が 72.5 km の分岐点を覆うようになった。下層は 72.4 km で
+  止まり熱圏 grid は 100 km から始まるため、2 つの定式化が接する高度と、その上の
+  72.5〜100 km (温度 spline を 72.5 km での `gts7` 評価に接続する帯) には突き合わせる
+  参照値が無かった。72.5〜99.9 km の pymsis 点 432 件について、密度・温度・報告される
+  7 種すべてを検証する。最大密度誤差 0.0020%、最大温度誤差 0.0005%。分岐点を 1 段
+  ずらすと species の検証が落ちる。([#361](https://github.com/sksat/orts/pull/361))
 - NRLMSISE-00 の季節項が 2π/365.25 の角速度を使っていた。係数セット自身の fitted 値は
   DR = 1.72142e-2 = 2π/365 で、doy 365 で季節位相が 0.25 日ずれる。1152 点の熱圏 grid で
   pymsis に対する平均密度誤差が 0.0886% → 0.0155%、最大温度誤差が 0.0354% → 0.0005%。

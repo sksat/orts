@@ -23,6 +23,9 @@ struct FixtureData {
     exospheric_temperature_points: Vec<ExoTempPoint>,
     /// Points below the 72.5 km spline floor, daily-Ap mode.
     lower_atmosphere_points: Vec<DensityPoint>,
+    /// Points at and above the 72.5 km split, below the thermosphere grid's
+    /// 100 km floor.
+    middle_atmosphere_points: Vec<DensityPoint>,
     /// Points generated with the reference's 3-hourly Ap switch enabled.
     ap_history_points: Vec<ApHistoryPoint>,
     #[allow(dead_code)]
@@ -990,4 +993,136 @@ fn each_ap_mode_reads_only_its_own_input() {
         daily.calculate(&make(400.0, quiet)).total_mass_density > daily_quiet * 1.05,
         "daily mode must respond to ap_daily"
     );
+}
+
+/// Density and temperature across the 72.5 km split, where the two
+/// formulations meet.
+///
+/// The lower band stops at 72.4 km and the thermosphere grid starts at 100 km,
+/// so this stretch had nothing to compare against. It is also where the
+/// temperature splines are anchored on a `gts7` evaluation at 72.5 km: a wrong
+/// branch, or a spline anchored on the wrong value, still passes a finiteness
+/// check and a US76 sanity band.
+#[test]
+fn middle_atmosphere_density_and_temperature() {
+    let fixture = load_fixture();
+    let model = Nrlmsise00::new(Box::new(ConstantWeather::new(150.0, 15.0)));
+
+    assert!(
+        !fixture.middle_atmosphere_points.is_empty(),
+        "fixture has no middle-atmosphere points"
+    );
+
+    let mut max_rho_err = 0.0f64;
+    let mut max_temp_err = 0.0f64;
+    let mut failures = Vec::new();
+    let mut saw_split = false;
+
+    for p in &fixture.middle_atmosphere_points {
+        assert!(
+            p.altitude_km >= 72.5 && p.altitude_km < 100.0,
+            "middle-atmosphere section spans [72.5, 100) km: {}",
+            p.altitude_km
+        );
+        saw_split |= (p.altitude_km - 72.5).abs() < 1e-9;
+
+        let (doy, ut_seconds) = epoch_params(&p.epoch_name);
+        let input = make_input(p, doy, ut_seconds);
+        let output = model.calculate(&input);
+
+        let expected_rho = p.mass_density_kg_m3.expect("mass density in fixture");
+        let rho_err = rel_error(output.total_mass_density, expected_rho);
+        max_rho_err = max_rho_err.max(rho_err);
+
+        let expected_t = p.temperature_k.expect("temperature in fixture");
+        let temp_err = rel_error(output.temp_alt, expected_t);
+        max_temp_err = max_temp_err.max(temp_err);
+
+        if rho_err > 0.01 || temp_err > 0.01 {
+            failures.push(format!(
+                "  alt={:.1}km lat={:.0} lon={:.0} {}/{}: rho_err={:.3}% temp_err={:.3}% \
+                 (rho got={:.4e} want={:.4e}, T got={:.2} want={:.2})",
+                p.altitude_km,
+                p.latitude_deg,
+                p.longitude_deg,
+                p.epoch_name,
+                p.activity,
+                rho_err * 100.0,
+                temp_err * 100.0,
+                output.total_mass_density,
+                expected_rho,
+                output.temp_alt,
+                expected_t,
+            ));
+        }
+    }
+
+    assert!(
+        saw_split,
+        "the split itself (72.5 km) has to be among the sampled altitudes"
+    );
+
+    println!(
+        "Middle atmosphere: {} points, max rho error={:.4}%, max temp error={:.4}%",
+        fixture.middle_atmosphere_points.len(),
+        max_rho_err * 100.0,
+        max_temp_err * 100.0
+    );
+
+    if !failures.is_empty() {
+        for f in failures.iter().take(20) {
+            println!("{f}");
+        }
+        panic!("{} middle-atmosphere points exceed 1%", failures.len());
+    }
+}
+
+/// The species the reference reports at and above the split.
+///
+/// Below 72.5 km only the fully mixed species are reported; from 72.5 km up the
+/// reference also returns O, H, N and anomalous O. Measured with pymsis 0.12.0:
+/// those four are absent at 72.4 km and present at 72.5 km. The lower-band test
+/// pins the absence, and this one pins the presence, so the split cannot be
+/// off by a step without one of them failing.
+#[test]
+fn middle_atmosphere_species() {
+    let fixture = load_fixture();
+    let model = Nrlmsise00::new(Box::new(ConstantWeather::new(150.0, 15.0)));
+
+    let cm3_to_m3 = 1e6;
+    let mut failures = Vec::new();
+
+    for p in &fixture.middle_atmosphere_points {
+        let (doy, ut_seconds) = epoch_params(&p.epoch_name);
+        let input = make_input(p, doy, ut_seconds);
+        let out = model.calculate(&input);
+
+        for (name, computed, expected) in [
+            ("N2", out.density_n2 * cm3_to_m3, p.n2_m3),
+            ("O2", out.density_o2 * cm3_to_m3, p.o2_m3),
+            ("Ar", out.density_ar * cm3_to_m3, p.ar_m3),
+            ("He", out.density_he * cm3_to_m3, p.he_m3),
+            ("O", out.density_o * cm3_to_m3, p.o_m3),
+            ("H", out.density_h * cm3_to_m3, p.h_m3),
+            ("N", out.density_n * cm3_to_m3, p.n_m3),
+        ] {
+            let expected = expected.expect("the reference reports this species above the split");
+            let err = rel_error(computed, expected);
+            if err > 0.02 {
+                failures.push(format!(
+                    "  {name} alt={:.1}km lat={:.0}: err={:.3}% (got={computed:.4e}, want={expected:.4e})",
+                    p.altitude_km,
+                    p.latitude_deg,
+                    err * 100.0
+                ));
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        for f in failures.iter().take(20) {
+            println!("{f}");
+        }
+        panic!("{} middle-atmosphere species exceed 2%", failures.len());
+    }
 }

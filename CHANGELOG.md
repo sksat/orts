@@ -352,6 +352,15 @@ section is subdivided by package.
   ([#361](https://github.com/sksat/orts/pull/361))
 
 #### Fixed
+- The NRLMSISE-00 fixture covers the 72.5 km split. The lower band stopped at
+  72.4 km and the thermosphere grid starts at 100 km, so the altitude where the
+  two formulations meet — and the 72.5-100 km stretch above it, where the
+  temperature splines are anchored on a `gts7` evaluation at 72.5 km — had no
+  reference values to compare against. 432 pymsis points from 72.5 to 99.9 km
+  are now checked for density, temperature and all seven reported species; max
+  density error 0.0020%, max temperature error 0.0005%. Shifting the split by one
+  step fails the species check.
+  ([#361](https://github.com/sksat/orts/pull/361))
 - NRLMSISE-00 seasonal terms used a 2π/365.25 angular rate instead of the
   coefficient set's own fitted DR = 1.72142e-2 = 2π/365, shifting the seasonal
   phase by a quarter day at doy 365. Mean density error against pymsis over the
