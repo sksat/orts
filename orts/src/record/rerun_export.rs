@@ -908,6 +908,17 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
             }
         }
 
+        // A component the file has no column for cannot be reconstructed
+        // whatever the rows are, so it gets no say in what they are. Its
+        // remaining fields would otherwise narrow them: `x` and `z` recorded at
+        // one time, with `y` absent from the file, cost a whole velocity its
+        // rows at every other time.
+        temporal.retain(|(_, fields)| {
+            fields
+                .iter()
+                .all(|field| get_scalar_data(&scalars, base, field).is_some())
+        });
+
         // One row-key set for the whole entity. `EntityStore` keeps a single
         // timeline shared by every component column, so a component compacted
         // onto its own surviving times would leave the columns disagreeing on
@@ -934,6 +945,8 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         };
 
         let row_keys: Vec<RowKey> = {
+            // Every field of a surviving group has a column, so nothing is
+            // dropped here.
             let columns_of = |groups: &[&(String, Vec<String>)]| -> Vec<&Column> {
                 groups
                     .iter()
@@ -2364,5 +2377,85 @@ mod tests {
             rows, 0,
             "neither the step nor the frame carries a whole position"
         );
+    }
+
+    /// A component the file cannot carry does not narrow another's rows.
+    ///
+    /// Rows follow the state components, and a component missing one of its
+    /// fields was still among them: its remaining fields narrowed the rows to
+    /// the times they happen to hold. Measured with `y` absent from the file,
+    /// `x` and `z` at t=0, and a whole velocity at t=0 and t=10: one row came
+    /// back, the t=10 velocity dropped for a position that is never reported
+    /// either way.
+    #[test]
+    fn a_component_the_file_cannot_carry_does_not_narrow_another() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_narrow_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("narrow.rrd");
+        let schema = r#"[
+            {"name":"orts.Position3D","fields":["x","y","z"]},
+            {"name":"orts.Velocity3D","fields":["vx","vy","vz"]}
+        ]"#;
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-narrow-test")
+                .save(&path)
+                .expect("recording stream");
+            rec.log_static(
+                "/meta/schema/world/sat/narrowed",
+                &re_sdk_types::archetypes::TextDocument::new(schema),
+            )
+            .expect("log schema");
+            // `y` is never logged, and `x` and `z` appear at t=0 alone.
+            rec.set_duration_secs("sim_time", 0.0);
+            for (field, value) in [
+                ("x", 100.0f64),
+                ("z", 300.0),
+                ("vx", 1.0),
+                ("vy", 2.0),
+                ("vz", 3.0),
+            ] {
+                rec.log(
+                    format!("/world/sat/narrowed/{field}"),
+                    &re_sdk_types::archetypes::Scalars::new([value]),
+                )
+                .expect("log");
+            }
+            rec.set_duration_secs("sim_time", 10.0);
+            for (field, value) in [("vx", 4.0f64), ("vy", 5.0), ("vz", 6.0)] {
+                rec.log(
+                    format!("/world/sat/narrowed/{field}"),
+                    &re_sdk_types::archetypes::Scalars::new([value]),
+                )
+                .expect("log");
+            }
+            rec.flush_blocking().expect("flush");
+        }
+
+        let loaded = load_as_recording(path.to_str().unwrap()).expect("load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let entity = EntityPath::parse("/world/sat/narrowed");
+        let store = loaded.entity(&entity).expect("entity");
+        assert!(
+            !store.columns.keys().any(|name| name.contains("Position3D")),
+            "a position without a `y` column is not reported"
+        );
+        assert_eq!(store.num_rows, 2, "the velocity keeps both of its times");
+        assert_eq!(
+            store.timelines.get(&TimelineName::SimTime),
+            Some(&vec![TimeIndex::Seconds(0.0), TimeIndex::Seconds(10.0)])
+        );
+        let velocity = store
+            .columns
+            .iter()
+            .find(|(name, _)| name.contains("Velocity3D"))
+            .map(|(_, c)| c)
+            .expect("a velocity column");
+        assert_eq!(velocity.get_row(0).expect("row 0"), &[1.0, 2.0, 3.0]);
+        assert_eq!(velocity.get_row(1).expect("row 1"), &[4.0, 5.0, 6.0]);
     }
 }
