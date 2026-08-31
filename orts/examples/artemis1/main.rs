@@ -258,7 +258,7 @@ use std::sync::Arc;
 #[cfg(feature = "fetch-horizons")]
 use arika::epoch::Epoch;
 #[cfg(feature = "fetch-horizons")]
-use arika::frame::Vec3;
+use arika::frame::{Gcrs, Vec3};
 #[cfg(feature = "fetch-horizons")]
 use arika::horizons::HorizonsTable;
 #[cfg(feature = "fetch-horizons")]
@@ -1110,7 +1110,7 @@ fn verify_coast(
     let fallbacks_before = moon_concrete.fallback_count();
 
     let system = build_artemis_system(start_epoch, moon_ephem, sun_table);
-    let initial_state = OrbitalState::new(start_pos, start_vel);
+    let initial_state = OrbitalState::<Gcrs>::new_in_frame(start_pos, start_vel);
 
     let mut min_moon_distance = f64::MAX;
     let mut max_earth_distance: f64 = 0.0;
@@ -1241,7 +1241,7 @@ fn verify_burn(
     // state: the difference is exactly what the burn contributed above and
     // beyond the gravitational drift the integrator already captures.
     let system = build_artemis_system(pre_epoch, moon_ephem, sun_table);
-    let initial_state = OrbitalState::new(pre_pos, pre_vel);
+    let initial_state = OrbitalState::<Gcrs>::new_in_frame(pre_pos, pre_vel);
     let pure_coast_state = Dop853.integrate(
         &system,
         initial_state.clone(),
@@ -1474,7 +1474,7 @@ fn verify_burn_continuous(
     let fallbacks_before = moon_concrete.fallback_count();
 
     // Method B: same pure-coast Δv extraction as verify_burn
-    let initial_state = OrbitalState::new(pre_pos, pre_vel);
+    let initial_state = OrbitalState::<Gcrs>::new_in_frame(pre_pos, pre_vel);
     let pure_coast_system = build_artemis_system(pre_epoch, moon_ephem, sun_table);
     let pure_coast_state = Dop853.integrate(
         &pure_coast_system,
@@ -1625,7 +1625,7 @@ fn compute_corrected_dv(
     let system = build_artemis_system(pre_epoch, moon_ephem, sun_table);
     let pure_coast_state = Dop853.integrate(
         &system,
-        OrbitalState::new(pre_pos, pre_vel),
+        OrbitalState::<Gcrs>::new_in_frame(pre_pos, pre_vel),
         0.0,
         window_seconds,
         DT_SECONDS,
@@ -1726,7 +1726,7 @@ fn verify_burn_chain(
 
     // Walk the chain: coast to each burn's mid, apply corrected Δv, rebuild
     // system with the new reference epoch for the next segment.
-    let mut state = OrbitalState::new(chain_pre_pos, chain_pre_vel);
+    let mut state = OrbitalState::<Gcrs>::new_in_frame(chain_pre_pos, chain_pre_vel);
     let mut current_epoch = chain_pre_epoch;
     for (burn, dv_kms) in burns.iter().zip(&corrected_dvs) {
         let mid_epoch = Epoch::from_iso8601(burn.mid_epoch_iso).expect("valid burn mid epoch");
@@ -1937,7 +1937,7 @@ fn verify_burn_chain_continuous(
     //      segment → no mid-step discontinuities)
     //   3. current_epoch = burn.end, loop to next burn
     // After the last burn, coast to chain_post_epoch.
-    let mut state = OrbitalState::new(chain_pre_pos, chain_pre_vel);
+    let mut state = OrbitalState::<Gcrs>::new_in_frame(chain_pre_pos, chain_pre_vel);
     let mut current_epoch = chain_pre_epoch;
     for ((burn, (start, end, dv_kms)), _burn_idx) in burns.iter().zip(&burn_windows).zip(0..) {
         // Leg 1: coast to burn start.
@@ -2116,7 +2116,7 @@ impl<'a> ChainRecording<'a> {
     fn maybe_log(
         &mut self,
         local_t: f64,
-        state: &OrbitalState,
+        state: &OrbitalState<Gcrs>,
         leg_start_epoch: Epoch,
         moon_ephem: &dyn MoonEphemeris,
     ) {
@@ -2139,7 +2139,7 @@ impl<'a> ChainRecording<'a> {
     fn force_log(
         &mut self,
         local_t: f64,
-        state: &OrbitalState,
+        state: &OrbitalState<Gcrs>,
         leg_start_epoch: Epoch,
         moon_ephem: &dyn MoonEphemeris,
     ) {
@@ -2273,7 +2273,7 @@ fn record_chain_trajectory(
     let (chain_pre_pos, chain_pre_vel) =
         fetch_orion_sample(&chain_pre_epoch).expect("fetch Orion at chain pre");
 
-    let mut state = OrbitalState::new(chain_pre_pos, chain_pre_vel);
+    let mut state = OrbitalState::<Gcrs>::new_in_frame(chain_pre_pos, chain_pre_vel);
     let mut current_epoch = chain_pre_epoch;
 
     // Anchor the phase start with an unconditional log so the RRD's
@@ -2373,7 +2373,7 @@ fn record_coast_phase(
 
     let (start_pos, start_vel) =
         fetch_orion_sample(&start_epoch).expect("fetch Orion at coast phase start");
-    let state = OrbitalState::new(start_pos, start_vel);
+    let state = OrbitalState::<Gcrs>::new_in_frame(start_pos, start_vel);
 
     let system = build_artemis_system(start_epoch, moon_ephem, sun_table);
 
@@ -2723,7 +2723,7 @@ fn build_artemis_system(
     epoch: Epoch,
     moon_ephem: &Arc<dyn MoonEphemeris>,
     sun_table: &Arc<HorizonsTable>,
-) -> OrbitalSystem {
+) -> OrbitalSystem<Gcrs> {
     use arika::body::KnownBody;
     use arika::earth::{J2 as J2_EARTH, J3 as J3_EARTH, J4 as J4_EARTH, MU as MU_EARTH};
     use arika::sun::MU as MU_SUN;
@@ -2757,7 +2757,7 @@ fn build_artemis_system(
     });
 
     OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
-        .with_model(ZonalGravity::new(
+        .with_model(ZonalGravity::<Gcrs>::new(
             MU_EARTH,
             props.radius,
             J2_EARTH,
