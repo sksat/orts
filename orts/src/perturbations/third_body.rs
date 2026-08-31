@@ -577,10 +577,12 @@ mod tests {
         let geo = ThirdBodyGravity::sun();
         let from_body = ThirdBodyGravity::sun_from_body(KnownBody::Earth).expect("Earth");
 
-        let a_geo = *Model::<_, frame::SimpleEci>::eval(&geo, 0.0, &state, Some(&epoch))
+        let a_geo = *geo
+            .eval(0.0, &state, Some(&epoch))
             .acceleration_inertial
             .inner();
-        let a_body = *Model::<_, frame::SimpleEci>::eval(&from_body, 0.0, &state, Some(&epoch))
+        let a_body = *from_body
+            .eval(0.0, &state, Some(&epoch))
             .acceleration_inertial
             .inner();
         assert!(
@@ -602,7 +604,8 @@ mod tests {
         let state = OrbitalState::new(sat, Vector3::new(0.0, 3.4, 0.0));
 
         let tb = ThirdBodyGravity::sun_from_body(KnownBody::Mars).expect("Mars");
-        let a = *Model::<_, frame::SimpleEci>::eval(&tb, 0.0, &state, Some(&epoch))
+        let a = *tb
+            .eval(0.0, &state, Some(&epoch))
             .acceleration_inertial
             .inner();
 
@@ -648,7 +651,8 @@ mod tests {
         assert_eq!(tb.name, "third_body_earth");
         assert_eq!(tb.mu_body, arika::earth::MU);
 
-        let a = *Model::<_, frame::SimpleEci>::eval(&tb, 0.0, &state, Some(&epoch))
+        let a = *tb
+            .eval(0.0, &state, Some(&epoch))
             .acceleration_inertial
             .inner();
         let earth_from_moon = -arika::moon::moon_position_eci(&epoch.to_tdb()).into_inner();
