@@ -140,6 +140,10 @@ enum DataSink<'a> {
 }
 
 /// `-` is the canonical stdout sentinel; `stdout` is kept as a legacy alias.
+fn is_stdout_sentinel(s: &str) -> bool {
+    s == "-" || s == "stdout"
+}
+
 /// How far to propagate one satellite [s].
 ///
 /// `duration` is the run's end time and applies to the whole fleet; with none
@@ -156,10 +160,6 @@ enum DataSink<'a> {
 /// a pre-existing difference between the modes, left as it is here.
 fn end_time_of(params: &SimParams, sat: &crate::satellite::SatelliteSpec) -> f64 {
     params.duration.unwrap_or(sat.period)
-}
-
-fn is_stdout_sentinel(s: &str) -> bool {
-    s == "-" || s == "stdout"
 }
 
 /// Decide where the simulation data goes. With no `--output`, CSV defaults to

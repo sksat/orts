@@ -33,6 +33,29 @@ section is subdivided by package.
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `SatelliteParams` carries an optional `SpacecraftShape`, and
+  `build_spacecraft_dynamics` installs `PanelSrp` and `PanelDrag` from it in
+  place of the isotropic `SolarRadiationPressure` and `AtmosphericDrag`. The
+  outer shape is one object, so panels drive both forces rather than one of
+  them. `build_orbital_system` installs neither: panel forces need an attitude.
+  `SurfacePanel` gains `with_cp_offset`, which is what turns a panel force into
+  an attitude disturbance. ([#386](https://github.com/sksat/orts/pull/386))
+- `SurfacePanel::back_face` builds the other side of a thin plate: the normal is
+  negated, the area, `cd` and centre of pressure carry over, and the optics are
+  given, since the two sides of an array differ. A panel is one face and both
+  force models drop a face pointing away from the Sun or the flow, so a plate
+  written as one panel produces nothing for half of the attitudes it sees — and
+  the torque about an off-centre pressure point goes with it. Not for a face of
+  a closed body, whose far side is already another panel. ([#395](https://github.com/sksat/orts/pull/395))
+- `orts::setup` registers disturbance torques, and `SatelliteParams` carries a
+  `DisturbanceTorques` selection to say which. `build_spacecraft_dynamics`
+  installs the gravity-gradient torque from it; `build_orbital_system` installs
+  none, since an orbit-only system has no orientation for a torque to act on and
+  discards `torque_body`. Callers no longer register environmental models
+  themselves — the CLI had been adding this torque on the same line in two entry
+  points, with nothing keeping the two in step. Actuators (RW, MTQ, thrusters)
+  stay with the caller, since they come from the spacecraft's own hardware
+  description. ([#382](https://github.com/sksat/orts/pull/382))
 - `SurfacePanel` carries `optics: PanelOptics { specular, diffuse }` in place of
   a lumped `cr`, with the absorbed fraction derived as `1 - specular - diffuse`.
   A single coefficient fixes the SRP force magnitude face-on but leaves its
@@ -121,6 +144,10 @@ section is subdivided by package.
   different ways, so no choice of `Cr` recovers the right answer. For a solar
   array (ρ_s ≈ 0.2, ρ_d ≈ 0.1) the missing term carries ~30% of the force at 45°
   incidence. Present since the model was introduced, 0.2.0 included.
+  Japanese-labeled diagrams of the law, the two force components and the torque
+  direction: [photon fates](docs/src/assets/srp-flat-panel/photon-fates.svg),
+  [force composition](docs/src/assets/srp-flat-panel/force-composition.svg),
+  [torque direction](docs/src/assets/srp-flat-panel/torque-direction.svg).
   ([#377](https://github.com/sksat/orts/pull/377))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
   products rather than the sum afterwards, so it no longer overflows where its
@@ -173,6 +200,11 @@ section is subdivided by package.
   empty `back = {}` says the same as the flag). Either way the area, `cd` and
   centre of pressure are shared, and `two_sided = false` beside `back` is
   rejected as a contradiction. Writing panels
+  `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset` and `back` ([#395](https://github.com/sksat/orts/pull/395)).
+  A panel is one face, so `back` is what gives a thin plate — a solar array —
+  its far side: the area, `cd` and centre of pressure are shared and the
+  reflectivities are its own, with an empty table (`back = {}`) copying the
+  front's. Writing panels
   makes SRP and drag attitude-dependent, and an off-centre centre of pressure
   turns them into attitude disturbances — which is what the isotropic
   `srp_area_to_mass` / `ballistic_coeff` cannot express. Panels require
@@ -237,6 +269,10 @@ section is subdivided by package.
   are discoverable without leaving the terminal. ([#217](https://github.com/sksat/orts/pull/217))
 
 #### Changed
+- `orts run`'s downlink log records moved from info/debug to debug/trace. They
+  fire per satellite per outbound message per control tick, so with a backend
+  installed, info would bury every other diagnostic on a fleet-sized run and add
+  a locked stderr write inside the integration loop. ([#390](https://github.com/sksat/orts/pull/390))
 - `--tle` is TLE-only again (2LE/3LE; `-` for stdin) and pairs with the new
   `--omm`; element-set parsing is now backed by `arika::tle` / `arika::omm`
   instead of the removed `orts::tle`. (Previously `--tle` also auto-accepted OMM.) ([#87](https://github.com/sksat/orts/pull/87))
@@ -246,6 +282,32 @@ section is subdivided by package.
   `--tle-line2`; and `--tle-line1` / `--tle-line2` must be given together. ([#87](https://github.com/sksat/orts/pull/87))
 - TLE epoch day-of-year is validated against the (leap-aware) year length, so a
   malformed field is rejected rather than rolling into another year. ([#87](https://github.com/sksat/orts/pull/87))
+- Config files, `orts config validate` and the WebSocket `start_simulation`
+  payload reject input the simulation cannot honor, instead of resolving it to
+  something else: an unknown `[integrator] type` or `atmosphere` (previously
+  dp45 / the exponential model), two
+  satellites whose ids name one recording entity (previously one entity and one
+  CSV section for both; compared on the entity, so `a` and `/a` collide as they
+  do in the recording, while the same id string twice shared its `[[command]]`
+  target as well), and an attitude block no
+  rigid body could have — an inertia tensor that is not positive definite or
+  violates `I1 + I2 >= I3` on its principal moments, `mass <= 0`, or an
+  `initial_quaternion` that cannot be normalized. The `integrator` /
+  `atmosphere` spellings a config accepts are now exactly the ones the
+  equivalent CLI flag accepts.
+
+  A key nothing reads is named rather than refused: the run goes ahead, so a
+  config written for a newer `orts` still works here, and `duraton = 100` no
+  longer runs for one orbital period in silence. `orts config validate` carries
+  the paths in its `warnings`, `run` and `serve` report them at warn level, and
+  the server names the ones in a client's `start_simulation` or `add_satellite`. A `type`-tagged
+  block — `[satellites.orbit]`, `[satellites.controller]`, the reaction wheels
+  and the magnetorquers — refuses instead: `serde_ignored` cannot see inside an
+  internally tagged enum, so there is nothing to name there, and a dropped
+  `inclinaton = 51.6` would leave the orbit equatorial. A singular inertia tensor previously panicked in
+  `SpacecraftDynamics::new`; under `orts serve --config` that happened inside
+  the spawned manager task, leaving the server listening with no simulation and
+  no error to the client. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
 - `duration` no longer replaces each satellite's orbital period. It is the
@@ -263,6 +325,41 @@ section is subdivided by package.
   period boundary, and the boundary for a newly added satellite was read from
   the *previous* entry in the fleet (or a hardcoded 5554 s when it was the
   first). ([#368](https://github.com/sksat/orts/pull/368))
+- `orts` now writes its diagnostics to stderr. With no `log` backend installed
+  every `log::` call was discarded, so a displaced stream-io stdio plug, a stream
+  socket error, a halted `serve` simulation, and every line a WASM plugin logged
+  through the WIT `host-env.log` import all went unreported. The diagnostics the
+  rerun crates emit while writing an `.rrd` now appear in the same output.
+  `RUST_LOG` selects the level — default `warn,orts=info`, ours at info and
+  dependencies at warn — and `NO_COLOR`, or a stderr that is not a terminal,
+  drops the styling; `orts --help` documents both. stdout is unchanged: the CSV,
+  the `--json` summary, or the `serve --stream-stdio` protocol and nothing else. ([#390](https://github.com/sksat/orts/pull/390))
+- `orts config validate` and `orts serve --config` refuse a `tle` or `norad`
+  orbit about any body but Earth. SGP4 is Earth's, and `SimParams::from_config`
+  reached that rule through a panic, so such a config validated clean and then
+  took down `orts run --config`. ([#351](https://github.com/sksat/orts/pull/351))
+- `orts config validate` and `orts serve --config` refuse a fleet no
+  simulation mode can run: `[satellites.attitude]` or
+  `[satellites.controller]` on some satellites but not all, or a controller on
+  every satellite with attitude on none. The engine already refused these, but
+  `orts serve` builds it inside the spawned manager, so the config validated
+  clean, the startup banner printed, and the server sat idle with the given
+  config never running. `serve` now exits with the error instead of announcing
+  a listening server. ([#351](https://github.com/sksat/orts/pull/351))
+- The WebSocket `add_satellite` refuses an id whose entity path
+  (`/world/sat/<id>`) already belongs to a satellite in the running fleet. Two
+  satellites on one path meant `[[command]]` reached only the one added last. An
+  omitted `id` takes `sat-<current fleet size>`, which collides the same
+  way. ([#351](https://github.com/sksat/orts/pull/351))
+- `orts serve` answers a message that does not deserialize into `ClientMessage`
+  with a `{"type":"error"}` frame. The error used to be discarded, leaving the
+  client waiting for a response that never came. An unknown key in a
+  `type`-tagged block is what fails. ([#351](https://github.com/sksat/orts/pull/351))
+- `orts serve` prints its `Server listening` / `WebSocket endpoint` banner only
+  after the `--config` file is accepted. Printing it first made a rejected
+  config reach a caller that waits on the banner — `cli/tests/ws_e2e.rs`, the
+  Playwright specs — as a refused connection rather than as its own error
+  message. ([#351](https://github.com/sksat/orts/pull/351))
 - `orts run --format csv --output <path>` now writes the CSV to `<path>`.
   Previously every `--format csv` run wrote to stdout regardless of `--output`,
   silently ignoring the given path. ([#214](https://github.com/sksat/orts/pull/214))

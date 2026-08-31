@@ -30,6 +30,26 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `SatelliteParams` が `SpacecraftShape` を optional で持ち、
+  `build_spacecraft_dynamics` がそれを見て等方面の `SolarRadiationPressure` /
+  `AtmosphericDrag` の代わりに `PanelSrp` / `PanelDrag` を install するように
+  した。機体の外形は一つなので、パネルは片方ではなく両方の力を担う。
+  `build_orbital_system` はどちらも install しない (パネルの力は姿勢を要求する)。
+  `SurfacePanel` に `with_cp_offset` を追加した。パネルの力を姿勢外乱にするのは
+  この offset である。([#386](https://github.com/sksat/orts/pull/386))
+- `SurfacePanel::back_face` で薄板の反対面を作れるようにした。法線を反転し、面積 /
+  `cd` / 圧力中心は引き継ぎ、光学係数は引数で受ける (パドルの両面は性質が違う)。
+  パネルは片面で、両モデルとも太陽や流れと逆を向いた面を落とすので、板を 1 枚として
+  書くとその衛星が取る姿勢の半分で力がゼロになり、重心から外れた圧力中心が作る
+  トルクも出ない。閉じた形状の面には使わない (反対側は既に別のパネルである)。([#395](https://github.com/sksat/orts/pull/395))
+- 外乱トルクの登録を `orts::setup` に集約し、どれを解くかを `SatelliteParams` の
+  `DisturbanceTorques` で選ぶようにした。`build_spacecraft_dynamics` がそれを見て
+  gravity gradient トルクを install する。`build_orbital_system` は install しない
+  (軌道のみの系にはトルクが作用する姿勢が無く、`torque_body` を捨てる)。
+  呼び出し側は環境モデルを登録しなくなった。CLI はこのトルクを 2 つの entry point
+  で同一行に書いていて、両者が食い違わない保証が無かった。actuator (RW, MTQ,
+  thruster) の登録は呼び出し側に残る。搭載する actuator は機体のハードウェア記述で
+  決まる。([#382](https://github.com/sksat/orts/pull/382))
 - `SurfacePanel` が lumped な `cr` の代わりに `optics: PanelOptics { specular,
   diffuse }` を持つようになった。吸収率は `1 - specular - diffuse` として導出する。
   単一係数は face-on の SRP 力の大きさを決めるだけで、斜入射での向きが決まらない
@@ -105,6 +125,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   あるとき `r × ŝ` と `r × n̂` は別方向を向くので、`Cr` をどう選んでも正しい答えには
   ならない。太陽電池パドル相当 (ρ_s ≈ 0.2, ρ_d ≈ 0.1) では 45° 入射で欠けていた項が
   力の ~30% を占める。model の導入時から存在し、0.2.0 も該当する。
+  図解: [光子の行き先](docs/src/assets/srp-flat-panel/photon-fates.svg)、
+  [2 成分の合成](docs/src/assets/srp-flat-panel/force-composition.svg)、
+  [トルクの向き](docs/src/assets/srp-flat-panel/torque-direction.svg)。
   ([#377](https://github.com/sksat/orts/pull/377))
 - `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
   ようになった。結果が有限な入力で overflow しなくなる: `q = [0, 1/√2, 1/√2, 0]`、
@@ -150,6 +173,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `back = {}` は `two_sided = true` と同じ)。面積 / `cd` / 圧力中心はどちらでも
   同じ板として共有する。`two_sided = false` と `back` の同時指定は矛盾なので
   reject する。パネルを書くと
+  (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `back`
+  ([#395](https://github.com/sksat/orts/pull/395)))。パネルは片面なので、薄板
+  (太陽電池パドル) の裏面を作るのが `back` である。面積 / `cd` / 圧力中心は同じ板
+  として共有し、反射率は裏面が独自に持つ。空の table (`back = {}`) なら表と同じに
+  なる。パネルを書くと
   SRP と大気抵抗が姿勢依存になり、圧力中心が重心から外れていればそれが姿勢外乱に
   なる。等方面の `srp_area_to_mass` / `ballistic_coeff` では表せない部分である。
   パネルは `attitude` を要求し、等方面のパラメータとの同時指定は reject する
@@ -206,6 +234,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   追加。よく使う・agent に関係する経路を端末内で発見できるようにした。([#217](https://github.com/sksat/orts/pull/217))
 
 #### Changed
+- `orts run` の downlink log レコードの level を info/debug から debug/trace へ
+  下げた。衛星 × outbound message × control tick ごとに出るため、logger が
+  実際に動く状態では info だと fleet 規模の実行で他の診断が読めなくなり、
+  積分ループ内で stderr のロックを取る書き込みが増える。 ([#390](https://github.com/sksat/orts/pull/390))
 - `--tle` を再び TLE 専用 (2LE/3LE、`-` で stdin) とし、新規 `--omm` と
   対にした。要素セットのパースは削除した `orts::tle` でなく
   `arika::tle` / `arika::omm` を使用 (従来は `--tle` が OMM も自動受理)。([#87](https://github.com/sksat/orts/pull/87))
@@ -215,6 +247,30 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   は併用不可。`--tle-line1` / `--tle-line2` は両方指定が必須。([#87](https://github.com/sksat/orts/pull/87))
 - TLE epoch の day-of-year を (閏考慮の) 年日数で検証。不正値はそのまま別の
   年に繰り上がらず拒否される。([#87](https://github.com/sksat/orts/pull/87))
+- config ファイル、`orts config validate`、WebSocket の `start_simulation`
+  payload は、シミュレーションが実行できない入力を別の値に読み替えず拒否する:
+  未知の `[integrator] type` / `atmosphere` (従来は dp45 / exponential
+  モデル)、id が 1 つの recording entity を指す 2 機 (id の文字列でなく entity で
+  比較するので、recording と同じく `a` と `/a` は衝突する。従来は recording
+  entity と CSV section を共有し、id 文字列まで同じなら `[[command]]` の宛先も
+  共有していた)、
+  どの剛体もとりえない attitude ブロック (正定値でない、または主慣性モーメントで
+  `I1 + I2 >= I3` を破る慣性テンソル、`mass <= 0`、正規化できない
+  `initial_quaternion`)。config が受理する `integrator` / `atmosphere` の綴りは、
+  対応する CLI フラグが受理する集合と厳密に一致する。
+
+  どのフィールドも読まないキーは、拒否せずキー名を warning として表示する。実行は
+  続くので新しい `orts` 向けに書いた config も古い `orts` で実行でき、`duraton = 100`
+  が黙って 1 周期分実行されることはなくなった。`orts config validate` は `warnings`
+  にキーのパスを出力し、`run` と `serve` は `log::warn!` で報告する。server は client の
+  `start_simulation` や `add_satellite` に含まれるものを表示する。`type` タグ付きの
+  block (`[satellites.orbit]`、`[satellites.controller]`、reaction wheel、磁気トルカ)
+  だけは拒否する。`serde_ignored` は internally tagged enum の内部を見られず報告
+  できないため、`inclinaton = 51.6` が無視されると軌道が赤道面のままになる。特異な
+  慣性テンソルは従来
+  `SpacecraftDynamics::new` で panic し、`orts serve --config` では spawn された
+  manager task の中で起きるため、server は listen したままシミュレーションも
+  client への error も無い状態になっていた。([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
 - `duration` が各衛星の軌道周期を置き換えなくなった。`duration` は run の終了時刻だが
@@ -229,6 +285,39 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   なった。`serve` は無摂動の orbit-only 衛星を周期の境界ごとに初期軌道へ戻すが、
   新規追加した衛星の境界は fleet の**直前**のエントリから読んでいた (最初の追加では
   5554 s のハードコード)。([#368](https://github.com/sksat/orts/pull/368))
+- `orts` が診断ログを stderr に出力するようになった。logger を初期化していな
+  かったため `log::` の呼び出しは全て破棄されており、stream-io stdio plug の
+  displaced、stream の socket error、`serve` 中のシミュレーション停止、
+  WASM plugin が WIT `host-env.log` 経由で出力した行が、どれも表示されなかった。
+  `.rrd` を書く際に rerun の crate が出す診断も同じ出力に含まれる。level は
+  `RUST_LOG` で選び、既定は `warn,orts=info` (orts は info、依存は warn)。
+  `NO_COLOR` 指定時と stderr が terminal でない場合は装飾を付けない。どちらも
+  `orts --help` に記載がある。stdout は従来どおりコマンドの出力 (CSV、`--json`
+  サマリ、`serve --stream-stdio` の protocol) だけ。 ([#390](https://github.com/sksat/orts/pull/390))
+- `tle` / `norad` 軌道を Earth 以外の中心天体で使う config を、
+  `orts config validate` と `orts serve --config` が拒否する。SGP4 は Earth 専用で、
+  `SimParams::from_config` はこの規則に panic 経由で到達していたため、config は valid
+  と判定された上で `orts run --config` が panic していた。([#351](https://github.com/sksat/orts/pull/351))
+- どの mode でも実行できない fleet を `orts config validate` と
+  `orts serve --config` が拒否する。`[satellites.attitude]` や
+  `[satellites.controller]` を一部の衛星にだけ書いた config と、全衛星に controller
+  があって attitude がどこにもない config。engine は元からこれらを拒否していたが、
+  `orts serve` は engine を spawn した manager task 内で構築するため、config は valid
+  と判定され banner も表示された上で、指定した config が実行されないまま server が
+  idle 状態で待機していた。`serve` は listening と表示せずエラー終了する。([#351](https://github.com/sksat/orts/pull/351))
+- WebSocket の `add_satellite` が、実行中の fleet の衛星と同じ entity path
+  (`/world/sat/<id>`) になる id を拒否する。従来は同じ path の 2 機を受理し、
+  `[[command]]` は後から追加した方にしか配送されなかった。`id` 省略時の
+  `sat-<現在の機数>` も同様に衝突する。([#351](https://github.com/sksat/orts/pull/351))
+- `orts serve` が、`ClientMessage` に deserialize できなかったメッセージに
+  `{"type":"error"}` を返す。従来は error を破棄していたため、client は応答が
+  返らないまま待ち続けた。deserialize が失敗するのは `type` タグ付き block に未知の
+  キーがある場合。([#351](https://github.com/sksat/orts/pull/351))
+- `orts serve` が `Server listening` / `WebSocket endpoint` の banner を、
+  `--config` ファイルを受理した後にだけ出すようになった。先に出していたため、
+  banner を起動完了として待つ呼び出し側 (`cli/tests/ws_e2e.rs`、Playwright の
+  spec) には、拒否された config が error message ではなく接続失敗として
+  届いていた。([#351](https://github.com/sksat/orts/pull/351))
 - `orts run --format csv --output <path>` が CSV を `<path>` に書き込むように
   なった。従来は `--format csv` の実行が `--output` に関わらず常に stdout へ
   出力し、指定パスを黙って無視していた。([#214](https://github.com/sksat/orts/pull/214))
