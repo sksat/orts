@@ -273,9 +273,9 @@ pub struct SimArgs {
     /// Async backend execution mode (`orts run` only).
     ///
     /// - `throughput` (default): multi-worker tokio runtime,
-    ///   `orts run` fans the per-satellite `step_controlled` out
+    ///   `orts run` fans the per-satellite control step out
     ///   across CPU cores via rayon. Measurably faster on any
-    ///   multi-core host. Since each satellite's `step_controlled`
+    ///   multi-core host. Since each satellite's control step
     ///   is independent (no shared mutable state between sats),
     ///   the result is byte-for-byte identical to deterministic
     ///   mode — the speedup comes for free.

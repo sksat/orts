@@ -113,16 +113,24 @@ impl SimGroup {
             return Ok(());
         };
         for sat in sats.iter_mut() {
-            let dt_ctrl = sat.controller.sample_period();
-            crate::config::validate_sample_period(dt_ctrl)?;
-            let dt_ode = params.dt.min(dt_ctrl);
+            crate::config::validate_sample_period(sat.controller.sample_period())?;
             let mut t = current_t;
-            while t < target_t - 1e-12 {
-                let dt = dt_ctrl.min(target_t - t);
-                crate::sim::controlled::step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref())
+            // Every tick due inside this span, then the rest of the span under
+            // the command the last tick left. `target_t - current_t` is the
+            // stream/output interval, which has no reason to be a multiple of
+            // the controller period: the loop used to call the controller once
+            // per span with `dt = span`, so a span shorter than the period ran
+            // the controller too often and shortened its hold.
+            while sat.tick_due_at(target_t) {
+                let tick_t = sat.next_tick_t;
+                crate::sim::controlled::propagate_controlled(sat, t, tick_t, params.dt)
                     .map_err(|e| format!("controlled simulation error at t={t:.3}: {e}"))?;
-                t += dt;
+                crate::sim::controlled::tick_controller(sat, tick_t, params.epoch.as_ref())
+                    .map_err(|e| format!("controlled simulation error at t={tick_t:.3}: {e}"))?;
+                t = tick_t;
             }
+            crate::sim::controlled::propagate_controlled(sat, t, target_t, params.dt)
+                .map_err(|e| format!("controlled simulation error at t={t:.3}: {e}"))?;
         }
         Ok(())
     }
@@ -434,7 +442,7 @@ impl ServeEngine {
         };
 
         let group = if has_controller {
-            // Plugin-controlled mode: direct integration with step_controlled.
+            // Plugin-controlled mode: direct integration under the controller.
             let mut controlled_sats = Vec::new();
             {
                 #[cfg(feature = "plugin-wasm")]
@@ -452,6 +460,7 @@ impl ServeEngine {
                     let sat = crate::sim::controlled::build_controlled_satellite(
                         spec,
                         params.epoch,
+                        0.0,
                         &mut ctx,
                     )
                     .map_err(|e| format!("controlled satellite '{}': {e}", spec.id))?;
@@ -1159,8 +1168,13 @@ impl ServeEngine {
                 wasm_cache,
                 plugin_backend,
             };
-            crate::sim::controlled::build_controlled_satellite(&spec, initial_epoch, &mut ctx)
-                .map_err(|e| format!("build controlled satellite: {e}"))?
+            crate::sim::controlled::build_controlled_satellite(
+                &spec,
+                initial_epoch,
+                self.current_t,
+                &mut ctx,
+            )
+            .map_err(|e| format!("build controlled satellite: {e}"))?
         };
 
         let initial = new_sat.state.plant.orbit.clone();

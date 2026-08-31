@@ -1040,9 +1040,7 @@ fn lookup_field_names(component_name: &str, n: usize) -> Vec<String> {
 
 /// 制御付きシミュレーション（プラグインコントローラ + RW + センサ）。
 fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Recording, CmdError> {
-    use crate::sim::controlled::{
-        ControlledBuildContext, build_controlled_satellite, step_controlled,
-    };
+    use crate::sim::controlled::{ControlledBuildContext, build_controlled_satellite};
     let _ = sim; // Plugin backend is now stored in SimParams directly.
 
     let duration = params.duration.unwrap_or_else(|| {
@@ -1102,9 +1100,10 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
             plugin_backend,
         };
         for spec in &params.satellites {
-            let sat = build_controlled_satellite(spec, params.epoch, &mut ctx).map_err(|e| {
-                CmdError::failure(format!("building controlled satellite '{}': {e}", spec.id))
-            })?;
+            let sat =
+                build_controlled_satellite(spec, params.epoch, 0.0, &mut ctx).map_err(|e| {
+                    CmdError::failure(format!("building controlled satellite '{}': {e}", spec.id))
+                })?;
             satellites.push(sat);
         }
     }
@@ -1165,7 +1164,8 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
         );
     }
 
-    // 全衛星の sample_period の最小値をグローバル tick に使う。
+    // Reject a period no control loop can advance on. The fold also catches
+    // the empty fleet, which yields `INFINITY` and cannot be stepped either.
     //
     // Validate per satellite *before* folding: `f64::min` returns the other
     // argument when one side is NaN, so a NaN period would be silently
@@ -1181,7 +1181,6 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     // `fold` also yields `INFINITY` for an empty fleet, which the loop below
     // cannot step with either.
     crate::config::validate_sample_period(dt_ctrl).map_err(CmdError::failure)?;
-    let dt_ode = params.dt.min(dt_ctrl);
 
     let mut t = 0.0;
     let mut step: u64 = 1;
@@ -1189,15 +1188,36 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
     let mut last_output_t = 0.0;
 
     while t < duration - 1e-12 {
-        let dt = dt_ctrl.min(duration - t);
+        // The next moment anything happens: the earliest controller tick due,
+        // or the end of the run. Stepping the whole fleet on one tick — the
+        // shortest `sample_period` in the fleet — ran every slower controller
+        // at that rate instead of its own.
+        let next_t = satellites
+            .iter()
+            .map(|sat| sat.next_tick_t)
+            .fold(f64::INFINITY, f64::min)
+            .min(duration);
+        let dt = next_t - t;
 
-        // 時刻指定コマンド: この制御 tick の終端 (t+dt) までに due なものを
+        // 時刻指定コマンド: この区間の終端 (next_t) までに due なものを
         // 配送する。`src` は controller(host) が確定する。
-        for sc in command_schedule.drain_due(t + dt) {
+        for sc in command_schedule.drain_due(next_t) {
             satellites[sc.sat_index]
                 .controller
                 .deliver(sc.message.clone());
         }
+
+        // Every satellite is propagated to `next_t` under the command it
+        // holds; only the ones whose tick lands there see their controller.
+        // A span shorter than a period — the run's last one, or the gap
+        // between two rates — therefore integrates without a tick.
+        let step_one = |sat: &mut crate::sim::controlled::ControlledSatellite| {
+            crate::sim::controlled::propagate_controlled(sat, t, next_t, params.dt)?;
+            if sat.tick_due_at(next_t) {
+                crate::sim::controlled::tick_controller(sat, next_t, params.epoch.as_ref())?;
+            }
+            Ok::<(), String>(())
+        };
 
         // `try_for_each` rather than `for_each` + exit: a rayon worker calling
         // `std::process::exit` tears the process down from inside the pool,
@@ -1206,11 +1226,11 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
             use rayon::prelude::*;
             satellites
                 .par_iter_mut()
-                .try_for_each(|sat| step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref()))
+                .try_for_each(step_one)
                 .map_err(|e| CmdError::failure(format!("simulation error at t={t:.3}: {e}")))?;
         } else {
             for sat in &mut satellites {
-                step_controlled(sat, t, dt, dt_ode, params.epoch.as_ref())
+                step_one(sat)
                     .map_err(|e| CmdError::failure(format!("simulation error at t={t:.3}: {e}")))?;
             }
         }
