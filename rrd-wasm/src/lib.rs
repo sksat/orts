@@ -91,6 +91,73 @@ impl RowKey {
     }
 }
 
+/// Where a chunk's rows sit, or `None` when nothing places them.
+///
+/// `sim_time` and `step` are the names `orts` writes. A recording from another
+/// tool names its own timeline, and reading that as no timeline at all would
+/// join its columns by position, the mix this decode replaces. One such name
+/// serves the whole recording, held in `axis`: two axes are separate
+/// dimensions, so a `frame` of 1 and an `iteration` of 1 are not one moment. A
+/// chunk indexed only by some other axis has no place among the rest and is
+/// left out.
+///
+/// `log_time` and `log_tick`, which rerun adds to every log call, say when a
+/// value was logged rather than when it happened: two fields of one state carry
+/// different ones and could never pair.
+fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<ChunkKeys> {
+    let timeline = |wanted: &str| {
+        chunk
+            .timelines()
+            .iter()
+            .find(|(name, _)| name.as_str() == wanted)
+            .map(|(_, col)| col.times_raw().to_vec())
+    };
+    let sim_time = timeline("sim_time");
+    let step = timeline("step");
+    if sim_time.is_some() || step.is_some() {
+        return Some(ChunkKeys { sim_time, step });
+    }
+
+    let mut named: Vec<_> = chunk
+        .timelines()
+        .iter()
+        .filter(|(name, _)| !matches!(name.as_str(), "sim_time" | "step" | "log_time" | "log_tick"))
+        .collect();
+    // The timelines arrive as a set, so choose by name to stay reproducible
+    // from run to run.
+    named.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+
+    let on = |times: Vec<i64>| {
+        Some(ChunkKeys {
+            sim_time: None,
+            step: Some(times),
+        })
+    };
+    // A chunk carrying no timeline of its own either: its keys come from the
+    // column-local position, which never joins with a timed key.
+    let untimed = || {
+        Some(ChunkKeys {
+            sim_time: None,
+            step: None,
+        })
+    };
+
+    match axis {
+        None => match named.first() {
+            Some((name, col)) => {
+                *axis = Some(name.as_str().to_string());
+                on(col.times_raw().to_vec())
+            }
+            None => untimed(),
+        },
+        Some(chosen) => match named.iter().find(|(name, _)| name.as_str() == chosen) {
+            Some((_, col)) => on(col.times_raw().to_vec()),
+            None if named.is_empty() => untimed(),
+            None => None,
+        },
+    }
+}
+
 /// One decoded scalar field: its value at each time index of the recording.
 type Column = BTreeMap<RowKey, f64>;
 
@@ -182,6 +249,10 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
     let mut meta_scalars: BTreeMap<String, f64> = BTreeMap::new();
     let mut meta_texts: BTreeMap<String, String> = BTreeMap::new();
 
+    // The one timeline of the recording's own naming, settled by the first
+    // chunk that carries neither `sim_time` nor `step` and kept for the rest.
+    let mut recording_axis: Option<String> = None;
+
     for msg in DecoderApp::decode_lazy(reader) {
         let msg = msg?;
         let LogMsg::ArrowMsg(_, arrow_msg) = msg else {
@@ -222,37 +293,9 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
             continue;
         }
 
-        let timeline = |wanted: &str| {
-            chunk
-                .timelines()
-                .iter()
-                .find(|(name, _)| name.as_str() == wanted)
-                .map(|(_, col)| col.times_raw().to_vec())
+        let Some(keys) = chunk_keys(&chunk, &mut recording_axis) else {
+            continue;
         };
-        let sim_time = timeline("sim_time");
-        let step = timeline("step").or_else(|| {
-            // A recording written by another tool names its own timeline, and
-            // that timeline is what says which values belong together; joining
-            // such a file on column position is the mix this decode exists to
-            // avoid. `log_time` and `log_tick`, which rerun adds to every log
-            // call, say when a value was logged rather than when it happened,
-            // so two fields of one state carry different ones and cannot pair.
-            if sim_time.is_some() {
-                return None;
-            }
-            let mut named: Vec<_> = chunk
-                .timelines()
-                .iter()
-                .filter(|(name, _)| {
-                    !matches!(name.as_str(), "sim_time" | "step" | "log_time" | "log_tick")
-                })
-                .collect();
-            // The timelines arrive as a set, so choose by name to stay
-            // reproducible from run to run.
-            named.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-            named.first().map(|(_, col)| col.times_raw().to_vec())
-        });
-        let keys = ChunkKeys { sim_time, step };
 
         for comp_id in chunk.components_identifiers() {
             let comp_name = comp_id.as_str();
@@ -917,5 +960,29 @@ mod tests {
             "the row is frame 2, the only frame with a whole position"
         );
         assert_eq!(parsed.rows[0].y, 201.0);
+    }
+
+    /// Two axes of the recording's own naming do not share a row.
+    ///
+    /// A `frame` of 1 and an `iteration` of 1 are separate dimensions, but the
+    /// fallback kept only the raw value, so both became the same key. Measured
+    /// with `x` and `z` on `frame` and `y` on `iteration`: one row came back as
+    /// x = 100.0 beside y = 999.0, a position assembled from two axes. One axis
+    /// serves the whole recording, so neither half is a whole position and the
+    /// recording yields no row.
+    #[test]
+    fn a_second_named_axis_does_not_join_with_the_first() {
+        let parsed = decode_written(|rec| {
+            rec.set_time_sequence("frame", 1i64);
+            log_scalars(rec, &[("x", 100.0), ("z", 300.0)]);
+            rec.disable_timeline("frame");
+            rec.set_time_sequence("iteration", 1i64);
+            log_scalars(rec, &[("y", 999.0)]);
+        });
+        assert!(
+            parsed.rows.is_empty(),
+            "no axis carries a whole position: {:?}",
+            parsed.rows
+        );
     }
 }

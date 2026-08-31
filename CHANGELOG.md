@@ -59,7 +59,9 @@ section is subdivided by package.
   and a child entity, which has times of its own, no longer add rows to the
   entity above them. A recording indexed by a timeline of its own naming joins on
   that timeline as well: `sim_time` and `step` are the names `orts` writes, and
-  treating any other as no timeline at all fell back to column position. Same
+  treating any other as no timeline at all fell back to column position. One
+  such name serves the whole recording, since two axes are separate dimensions
+  and a `frame` of 1 is not an `iteration` of 1. Same
   defect as the browser-side decoder in this PR: the three decode independently,
   and all three carried it. ([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
@@ -584,8 +586,9 @@ section is subdivided by package.
   reaches this join from `.rrd` files written elsewhere and from `orts serve`
   history segments, whose attitude is optional per state. A recording indexed by
   a timeline of its own naming joins on that timeline too, rather than falling
-  back to column position as it did for every name but `sim_time` and `step`.
-  ([#366](https://github.com/sksat/orts/pull/366))
+  back to column position as it did for every name but `sim_time` and `step`; one
+  such name serves the whole recording, so two axes whose raw values coincide do
+  not share a row. ([#366](https://github.com/sksat/orts/pull/366))
 
 ### Docs
 
