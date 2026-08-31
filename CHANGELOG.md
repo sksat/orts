@@ -314,7 +314,7 @@ section is subdivided by package.
   of 10); and `orts run` drove every satellite on the fleet's shortest period,
   so a 1.0 s controller beside a 0.1 s one ticked 10 times a second. Both loops
   now propagate to whatever boundary they need under the held command and tick
-  only the satellites due there. ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  only the satellites due there. ([#369](https://github.com/sksat/orts/pull/369))
 - `orts run --format csv --output <path>` now writes the CSV to `<path>`.
   Previously every `--format csv` run wrote to stdout regardless of `--output`,
   silently ignoring the given path. ([#214](https://github.com/sksat/orts/pull/214))

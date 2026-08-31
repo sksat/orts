@@ -278,7 +278,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   fleet の最短周期で全衛星を回すので、0.1 s の controller と並ぶ 1.0 s の controller が
   毎秒 10 回 tick していた。どちらの loop も、保持中のコマンドのまま必要な境界まで
   積分し、その時刻に due な衛星だけを tick する。
-  ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  ([#369](https://github.com/sksat/orts/pull/369))
 - `orts run --format csv --output <path>` が CSV を `<path>` に書き込むように
   なった。従来は `--format csv` の実行が `--output` に関わらず常に stdout へ
   出力し、指定パスを黙って無視していた。([#214](https://github.com/sksat/orts/pull/214))
