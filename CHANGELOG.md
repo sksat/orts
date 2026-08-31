@@ -39,7 +39,7 @@ section is subdivided by package.
   none, since an orbit-only system has no orientation for a torque to act on and
   discards `torque_body`. Callers no longer register models themselves — the CLI
   had been adding this torque on the same line in two entry points, with nothing
-  keeping the two in step. ([#379](https://github.com/sksat/orts/pull/379))
+  keeping the two in step. ([#382](https://github.com/sksat/orts/pull/382))
 - `SurfacePanel` carries `optics: PanelOptics { specular, diffuse }` in place of
   a lumped `cr`, with the absorbed fraction derived as `1 - specular - diffuse`.
   A single coefficient fixes the SRP force magnitude face-on but leaves its
@@ -146,7 +146,7 @@ section is subdivided by package.
   attitude propagation has always had. A sibling of `[satellites.attitude]`
   rather than a field inside it: that table states the attitude state and the
   body's properties, this one selects which environment models get solved.
-  Specifying it without `attitude` is rejected. ([#379](https://github.com/sksat/orts/pull/379))
+  Specifying it without `attitude` is rejected. ([#382](https://github.com/sksat/orts/pull/382))
 - Ground-station contact-window reporting in `orts run`: declare stations with
   `[[ground_station]]` (`name`, `latitude_deg`, `longitude_deg`, `altitude_km`,
   `min_elevation_deg`); detected windows print to stderr ordered by AOS, with

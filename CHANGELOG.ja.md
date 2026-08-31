@@ -35,7 +35,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   gravity gradient トルクを install する。`build_orbital_system` は install しない
   (軌道のみの系にはトルクが作用する姿勢が無く、`torque_body` を捨てる)。
   呼び出し側はモデルを登録しなくなった。CLI はこのトルクを 2 つの entry point で
-  同一行に書いていて、両者が食い違わない保証が無かった。([#379](https://github.com/sksat/orts/pull/379))
+  同一行に書いていて、両者が食い違わない保証が無かった。([#382](https://github.com/sksat/orts/pull/382))
 - `SurfacePanel` が lumped な `cr` の代わりに `optics: PanelOptics { specular,
   diffuse }` を持つようになった。吸収率は `1 - specular - diffuse` として導出する。
   単一係数は face-on の SRP 力の大きさを決めるだけで、斜入射での向きが決まらない
@@ -126,7 +126,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   した。`gravity_gradient` の既定は true で、姿勢伝播が従来から持っていた振る舞い。
   `[satellites.attitude]` の中ではなく sibling の table にしたのは、前者が姿勢の
   状態と機体特性を述べる場所であり、どの環境モデルを解くかは別の関心事だから。
-  `attitude` 不在での指定は reject する。([#379](https://github.com/sksat/orts/pull/379))
+  `attitude` 不在での指定は reject する。([#382](https://github.com/sksat/orts/pull/382))
 - `orts run` の地上局コンタクトウィンドウ出力: `[[ground_station]]`
   (`name`、`latitude_deg`、`longitude_deg`、`altitude_km`、`min_elevation_deg`)
   で局を宣言。検出したウィンドウを AOS 順に stderr へ出力 (UTC 時刻、
