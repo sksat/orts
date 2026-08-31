@@ -54,7 +54,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   なった。独自の名前の timeline で index された recording も、その timeline で結合する。
   `sim_time` と `step` は orts が書く名前で、それ以外を timeline なしとして扱うと列の
   位置で結合していた。その名前は recording 全体で 1 つ。軸が 2 つあれば別の次元なので、
-  `frame` の 1 と `iteration` の 1 は同じ瞬間ではない。この PR が直すブラウザ側の
+  `frame` の 1 は `iteration` の 1 でも `step` の 1 でもない。この PR が直すブラウザ側の
   decoder と同じ欠陥で、3 つは独立に
   decode するため 3 つとも抱えていた。([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
@@ -526,8 +526,8 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   列がこの結合に入るのは、外部で書かれた `.rrd` と、attitude が state ごとに optional な
   `orts serve` の history segment。独自の名前の timeline で index された recording も、
   列の位置に落ちるのでなくその timeline で結合する (`sim_time` と `step` 以外はすべて
-  列の位置になっていた)。その名前は recording 全体で 1 つなので、raw な値が一致する
-  2 つの軸が同じ行に載ることはない。([#366](https://github.com/sksat/orts/pull/366))
+  列の位置になっていた)。その名前は recording 全体で 1 つで、`step` とも区別する。
+  2 つの軸で値が一致しても同じ行には載らない。([#366](https://github.com/sksat/orts/pull/366))
 
 ### Docs
 

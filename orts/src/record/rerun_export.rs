@@ -220,6 +220,10 @@ enum RowKey {
         step: Option<i64>,
         repeat: u32,
     },
+    /// A recording indexed by a timeline of its own naming: the value the row
+    /// sits at on that axis. Apart from `Timed` so that a `frame` of 1 is never
+    /// the `step` 1 of a recording that carries both.
+    Axis { value: i64, repeat: u32 },
     /// Neither timeline is present: fall back to the column-local index. Rows
     /// keyed this way carry no time information and all report `t = 0`.
     Index(usize),
@@ -232,7 +236,29 @@ impl RowKey {
             RowKey::Timed {
                 time_ns: Some(ns), ..
             } => ns as f64 / 1e9,
-            RowKey::Timed { time_ns: None, .. } | RowKey::Index(_) => 0.0,
+            RowKey::Timed { time_ns: None, .. } | RowKey::Axis { .. } | RowKey::Index(_) => 0.0,
+        }
+    }
+
+    /// This key with its repeat number replaced. An `Index` key carries none
+    /// and comes back unchanged.
+    fn at_repeat(self, repeat: u32) -> RowKey {
+        match self {
+            RowKey::Timed { time_ns, step, .. } => RowKey::Timed {
+                time_ns,
+                step,
+                repeat,
+            },
+            RowKey::Axis { value, .. } => RowKey::Axis { value, repeat },
+            RowKey::Index(_) => self,
+        }
+    }
+
+    /// The moment this key sits on, or `None` for a key that carries no time.
+    fn moment(self) -> Option<Moment> {
+        match self {
+            RowKey::Index(_) => None,
+            _ => Some(self.at_repeat(0)),
         }
     }
 }
@@ -261,7 +287,11 @@ fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<Chun
     let sim_time = timeline("sim_time");
     let step = timeline("step");
     if sim_time.is_some() || step.is_some() {
-        return Some(ChunkKeys { sim_time, step });
+        return Some(ChunkKeys {
+            sim_time,
+            step,
+            axis: None,
+        });
     }
 
     let mut named: Vec<_> = chunk
@@ -276,7 +306,8 @@ fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<Chun
     let on = |times: Vec<i64>| {
         Some(ChunkKeys {
             sim_time: None,
-            step: Some(times),
+            step: None,
+            axis: Some(times),
         })
     };
     // A chunk carrying no timeline of its own either: its keys come from the
@@ -285,6 +316,7 @@ fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<Chun
         Some(ChunkKeys {
             sim_time: None,
             step: None,
+            axis: None,
         })
     };
 
@@ -309,35 +341,29 @@ type Column = BTreeMap<RowKey, f64>;
 
 /// The non-repeat part of a [`RowKey::Timed`]: one moment on the recording's
 /// timelines.
-type TimeKey = (Option<i64>, Option<i64>);
+/// One moment of a recording: a [`RowKey`] with its repeat number cleared, so
+/// that every value logged at that moment ranges within it.
+type Moment = RowKey;
 
 /// Next repeat ordinal to assign, per column and moment.
 ///
 /// A counter rather than a scan of the column: counting the existing repeats on
 /// every value made decoding quadratic in the length of a recording, even one
 /// with no repeats at all.
-type RepeatCounters = BTreeMap<String, BTreeMap<TimeKey, u32>>;
+type RepeatCounters = BTreeMap<String, BTreeMap<Moment, u32>>;
 
-/// How many values `column` holds at `time`, over every repeat.
-fn repeats_at(column: &Column, time: TimeKey) -> usize {
-    let (time_ns, step) = time;
-    let lo = RowKey::Timed {
-        time_ns,
-        step,
-        repeat: 0,
-    };
-    let hi = RowKey::Timed {
-        time_ns,
-        step,
-        repeat: u32::MAX,
-    };
-    column.range(lo..=hi).count()
+/// How many values `column` holds at `moment`, over every repeat.
+fn repeats_at(column: &Column, moment: Moment) -> usize {
+    column.range(moment..=moment.at_repeat(u32::MAX)).count()
 }
 
 /// Time index of every row in one chunk, per timeline the chunk carries.
 struct ChunkKeys {
     sim_time: Option<Vec<i64>>,
     step: Option<Vec<i64>>,
+    /// The recording's own named axis, carried only by a chunk that has
+    /// neither of the two above.
+    axis: Option<Vec<i64>>,
 }
 
 /// Where one chunk row sits on the recording's timelines.
@@ -348,6 +374,8 @@ enum RowIndex {
         time_ns: Option<i64>,
         step: Option<i64>,
     },
+    /// The row sits at this value on the recording's own named axis.
+    Axis(i64),
     /// The chunk carries no timeline; keys come from the column-local position.
     Untimed,
     /// A timeline the chunk does carry has no value for this row — skip it.
@@ -356,6 +384,12 @@ enum RowIndex {
 
 impl ChunkKeys {
     fn row(&self, row_idx: usize) -> RowIndex {
+        if let Some(axis) = &self.axis {
+            return match axis.get(row_idx) {
+                Some(&value) => RowIndex::Axis(value),
+                None => RowIndex::Missing,
+            };
+        }
         // A timeline the chunk carries must have a value for this row.
         let index = |times: &Option<Vec<i64>>| match times {
             Some(times) => times.get(row_idx).copied().map(Some).ok_or(()),
@@ -459,8 +493,13 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                     let Some(Ok(scalar_vec)) = batch else {
                         continue;
                     };
-                    let timed = match keys.row(row_idx) {
-                        RowIndex::Timed { time_ns, step } => Some((time_ns, step)),
+                    let moment = match keys.row(row_idx) {
+                        RowIndex::Timed { time_ns, step } => Some(RowKey::Timed {
+                            time_ns,
+                            step,
+                            repeat: 0,
+                        }),
+                        RowIndex::Axis(value) => Some(RowKey::Axis { value, repeat: 0 }),
                         RowIndex::Untimed => None,
                         RowIndex::Missing => continue,
                     };
@@ -469,22 +508,18 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                     // consecutive repeats rather than being dropped. The
                     // ordinal comes from a counter, so a long recording does
                     // not pay a scan of the column per value.
-                    let counter = timed.map(|time| {
+                    let counter = moment.map(|moment| {
                         repeat_counters
                             .entry(entity_path.clone())
                             .or_default()
-                            .entry(time)
+                            .entry(moment)
                             .or_insert(0)
                     });
                     let mut next_repeat = counter.as_ref().map_or(0, |c| **c);
                     for value in scalar_vec.iter() {
-                        let key = match timed {
-                            Some((time_ns, step)) => {
-                                let key = RowKey::Timed {
-                                    time_ns,
-                                    step,
-                                    repeat: next_repeat,
-                                };
+                        let key = match moment {
+                            Some(moment) => {
+                                let key = moment.at_repeat(next_repeat);
                                 next_repeat += 1;
                                 key
                             }
@@ -575,14 +610,13 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
         // Counted once per moment, not once per repeat: a `Scalars` batch puts
         // k values at one timestamp, and re-counting for each of them would
         // make reconstruction quadratic in k.
-        let mut ambiguous: BTreeSet<TimeKey> = BTreeSet::new();
-        let mut checked: BTreeSet<TimeKey> = BTreeSet::new();
+        let mut ambiguous: BTreeSet<Moment> = BTreeSet::new();
+        let mut checked: BTreeSet<Moment> = BTreeSet::new();
         for &key in x_col.keys() {
-            let RowKey::Timed { time_ns, step, .. } = key else {
+            let Some(moment) = key.moment() else {
                 continue;
             };
-            let time = (time_ns, step);
-            if !checked.insert(time) {
+            if !checked.insert(moment) {
                 continue;
             }
             // Every column that has values at this moment must have the same
@@ -593,17 +627,18 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
             // two is just as unpairable as the other way round.
             let counts: Vec<usize> = present
                 .iter()
-                .map(|c| repeats_at(c, time))
+                .map(|c| repeats_at(c, moment))
                 .filter(|&n| n != 0)
                 .collect();
             if counts.iter().any(|&n| n != counts[0]) {
-                ambiguous.insert(time);
+                ambiguous.insert(moment);
             }
         }
 
         for &key in x_col.keys() {
-            if let RowKey::Timed { time_ns, step, .. } = key
-                && ambiguous.contains(&(time_ns, step))
+            if key
+                .moment()
+                .is_some_and(|moment| ambiguous.contains(&moment))
             {
                 continue;
             }
@@ -740,27 +775,28 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
                     let Some(Ok(scalar_vec)) = batch else {
                         continue;
                     };
-                    let timed = match keys.row(row_idx) {
-                        RowIndex::Timed { time_ns, step } => Some((time_ns, step)),
+                    let moment = match keys.row(row_idx) {
+                        RowIndex::Timed { time_ns, step } => Some(RowKey::Timed {
+                            time_ns,
+                            step,
+                            repeat: 0,
+                        }),
+                        RowIndex::Axis(value) => Some(RowKey::Axis { value, repeat: 0 }),
                         RowIndex::Untimed => None,
                         RowIndex::Missing => continue,
                     };
-                    let counter = timed.map(|time| {
+                    let counter = moment.map(|moment| {
                         repeat_counters
                             .entry(entity_path.clone())
                             .or_default()
-                            .entry(time)
+                            .entry(moment)
                             .or_insert(0)
                     });
                     let mut next_repeat = counter.as_ref().map_or(0, |c| **c);
                     for value in scalar_vec.iter() {
-                        let key = match timed {
-                            Some((time_ns, step)) => {
-                                let key = RowKey::Timed {
-                                    time_ns,
-                                    step,
-                                    repeat: next_repeat,
-                                };
+                        let key = match moment {
+                            Some(moment) => {
+                                let key = moment.at_repeat(next_repeat);
                                 next_repeat += 1;
                                 key
                             }
@@ -918,26 +954,25 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
             // numbers are per field, so with two samples at one time of which
             // the first omits `y`, repeat 0 would pair the first sample's `x`
             // with the second's `y`, the cross-sample mix this join removes.
-            let mut ambiguous: BTreeSet<TimeKey> = BTreeSet::new();
-            let mut checked: BTreeSet<TimeKey> = BTreeSet::new();
+            let mut ambiguous: BTreeSet<Moment> = BTreeSet::new();
+            let mut checked: BTreeSet<Moment> = BTreeSet::new();
             for col in &all_columns {
                 for &key in col.keys() {
-                    let RowKey::Timed { time_ns, step, .. } = key else {
+                    let Some(moment) = key.moment() else {
                         continue;
                     };
-                    let time = (time_ns, step);
                     // Counting once per moment: per repeat it would be
                     // quadratic in the size of a multi-value batch.
-                    if !checked.insert(time) {
+                    if !checked.insert(moment) {
                         continue;
                     }
                     let counts: Vec<usize> = all_columns
                         .iter()
-                        .map(|c| repeats_at(c, time))
+                        .map(|c| repeats_at(c, moment))
                         .filter(|&n| n != 0)
                         .collect();
                     if counts.iter().any(|&n| n != counts[0]) {
-                        ambiguous.insert(time);
+                        ambiguous.insert(moment);
                     }
                 }
             }
@@ -950,19 +985,19 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
                     .collect(),
                 None => Vec::new(),
             };
-            keys.retain(|key| match key {
-                RowKey::Timed { time_ns, step, .. } => !ambiguous.contains(&(*time_ns, *step)),
-                RowKey::Index(_) => true,
+            keys.retain(|key| {
+                !key.moment()
+                    .is_some_and(|moment| ambiguous.contains(&moment))
             });
             keys
         };
-        // TODO: the keys also carry the step a row sits on, and only `SimTime`
-        // is filled from them, so a recording indexed by `step` alone comes back
-        // with every row at 0 s and its step timeline gone. Writing the steps
-        // under `TimelineName::Step` needs the name the recording used, which
-        // `RowKey` does not keep, and `Recording`'s CSV path reads `SimTime`
-        // only. Left as it stands on main until the step round-trip is settled
-        // with the writer.
+        // TODO: the keys also carry the step, or the named axis, a row sits on,
+        // and only `SimTime` is filled from them. So a recording indexed by
+        // `step` alone comes back with every row at 0 s and its step timeline
+        // gone, and one on an axis of its own loses that axis. `Recording`'s
+        // CSV path reads `SimTime` only, so filling the others changes what
+        // `orts convert` reports. Left as it stands on main until the step
+        // round-trip is settled with the writer.
         let entity_times: Vec<TimeIndex> = row_keys
             .iter()
             .map(|k| TimeIndex::Seconds(k.t_secs()))
@@ -2282,6 +2317,54 @@ mod tests {
         assert_eq!(
             rows, 0,
             "two states beside three attitudes cannot be paired, so neither is reported"
+        );
+    }
+
+    /// A named axis is never a step of the same value.
+    ///
+    /// The fallback put the axis value in the same slot as a real `step`, so a
+    /// `frame` of 1 and a `step` of 1 became one key. Measured with `x` and `z`
+    /// at `step = 1` and `y` at `frame = 1`: `Position3D` came back as
+    /// `[100.0, 999.0, 300.0]`, a position assembled across the two.
+    #[test]
+    fn a_named_axis_is_not_a_step_of_the_same_value() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_coll_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("collide.rrd");
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-axis-step-test")
+                .save(&path)
+                .expect("recording stream");
+            rec.set_time_sequence("step", 1i64);
+            for (field, value) in [("x", 100.0f64), ("z", 300.0)] {
+                rec.log(
+                    format!("/world/sat/coll/{field}"),
+                    &re_sdk_types::archetypes::Scalars::new([value]),
+                )
+                .expect("log");
+            }
+            rec.disable_timeline("step");
+            rec.set_time_sequence("frame", 1i64);
+            rec.log(
+                "/world/sat/coll/y",
+                &re_sdk_types::archetypes::Scalars::new([999.0f64]),
+            )
+            .expect("log");
+            rec.flush_blocking().expect("flush");
+        }
+
+        let loaded = load_as_recording(path.to_str().unwrap()).expect("load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let entity = EntityPath::parse("/world/sat/coll");
+        let rows = loaded.entity(&entity).map_or(0, |store| store.num_rows);
+        assert_eq!(
+            rows, 0,
+            "neither the step nor the frame carries a whole position"
         );
     }
 }
