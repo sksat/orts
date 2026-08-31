@@ -257,12 +257,12 @@ section is subdivided by package.
   horizon is wanted; with no `duration`, an orbit-only or spacecraft run still
   covers one orbit of each satellite, and a controlled run still takes the
   first satellite's period for the whole fleet.
-  ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  ([#368](https://github.com/sksat/orts/pull/368))
 - A satellite added to a running `orts serve` re-anchors its orbit on its own
   period. `serve` restarts an unperturbed orbit-only satellite's orbit at every
   period boundary, and the boundary for a newly added satellite was read from
   the *previous* entry in the fleet (or a hardcoded 5554 s when it was the
-  first). ([#TBD](https://github.com/sksat/orts/pull/TBD))
+  first). ([#368](https://github.com/sksat/orts/pull/368))
 - `orts run --format csv --output <path>` now writes the CSV to `<path>`.
   Previously every `--format csv` run wrote to stdout regardless of `--output`,
   silently ignoring the given path. ([#214](https://github.com/sksat/orts/pull/214))

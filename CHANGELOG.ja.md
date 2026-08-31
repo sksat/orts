@@ -224,11 +224,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   1 つの値に潰れていた。horizon が必要な箇所は `duration.unwrap_or(period)` から
   終了時刻を取る。`duration` 未指定なら、orbit-only と spacecraft の run は従来どおり
   各衛星の 1 周分を回り、controlled の run は従来どおり最初の衛星の周期を fleet 全体の
-  終了時刻にする。([#TBD](https://github.com/sksat/orts/pull/TBD))
+  終了時刻にする。([#368](https://github.com/sksat/orts/pull/368))
 - 走っている `orts serve` に追加した衛星が、自分自身の周期で軌道を再設定するように
   なった。`serve` は無摂動の orbit-only 衛星を周期の境界ごとに初期軌道へ戻すが、
   新規追加した衛星の境界は fleet の**直前**のエントリから読んでいた (最初の追加では
-  5554 s のハードコード)。([#TBD](https://github.com/sksat/orts/pull/TBD))
+  5554 s のハードコード)。([#368](https://github.com/sksat/orts/pull/368))
 - `orts run --format csv --output <path>` が CSV を `<path>` に書き込むように
   なった。従来は `--format csv` の実行が `--output` に関わらず常に stdout へ
   出力し、指定パスを黙って無視していた。([#214](https://github.com/sksat/orts/pull/214))
