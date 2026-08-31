@@ -109,7 +109,7 @@ fn default_auto_threshold() -> usize {
 /// them.
 fn element_set_epoch(satellites: &[SatelliteSpec]) -> Option<Epoch> {
     satellites.iter().find_map(|s| match &s.orbit {
-        OrbitSpec::Omm { omm, .. } => Some(omm.fields().epoch),
+        OrbitSpec::ElementSet { elements, .. } => Some(elements.fields().epoch),
         OrbitSpec::Circular { .. } => None,
     })
 }
@@ -119,13 +119,13 @@ fn element_set_epoch(satellites: &[SatelliteSpec]) -> Option<Epoch> {
 /// combination of a non-Earth central body with any TLE/OMM orbit up front, so
 /// we never integrate an Earth-relative SGP4 state under a foreign body's μ,
 /// radius and perturbation set (which would silently produce nonsense).
-pub(crate) fn validate_omm_body(
+pub(crate) fn validate_element_set_body(
     body: KnownBody,
     satellites: &[SatelliteSpec],
 ) -> Result<(), String> {
     if satellites
         .iter()
-        .any(|s| matches!(s.orbit, OrbitSpec::Omm { .. }))
+        .any(|s| matches!(s.orbit, OrbitSpec::ElementSet { .. }))
     {
         return ensure_body_carries_omm(body);
     }
@@ -265,16 +265,16 @@ impl SimParams {
                 .collect()
         } else {
             // No --sat flags: use legacy single-satellite args
-            let omm_opt = Self::parse_orbit_from_args(args);
+            let element_set_opt = Self::parse_orbit_from_args(args);
 
-            if let Some(parsed) = omm_opt {
-                let omm = parsed.elements;
-                let period = omm.period();
+            if let Some(parsed) = element_set_opt {
+                let elements = parsed.elements;
+                let period = elements.period();
                 let sat_name = parsed.object_name.clone();
                 vec![SatelliteSpec {
                     id: "default".to_string(),
                     name: sat_name,
-                    orbit: OrbitSpec::Omm { omm },
+                    orbit: OrbitSpec::ElementSet { elements },
                     period,
                     ballistic_coeff: None,
                     srp_area_to_mass: None,
@@ -328,7 +328,7 @@ impl SimParams {
             .or_else(|| element_set_epoch(&satellites))
             .or_else(|| Some(Epoch::now()));
 
-        validate_omm_body(body, &satellites).unwrap_or_else(|e| panic!("{e}"));
+        validate_element_set_body(body, &satellites).unwrap_or_else(|e| panic!("{e}"));
 
         Self {
             body,
@@ -403,7 +403,7 @@ impl SimParams {
             .or_else(|| element_set_epoch(&satellites))
             .or_else(|| Some(Epoch::now()));
 
-        validate_omm_body(body, &satellites).unwrap_or_else(|e| panic!("{e}"));
+        validate_element_set_body(body, &satellites).unwrap_or_else(|e| panic!("{e}"));
 
         Self {
             body,
@@ -521,7 +521,7 @@ impl SimParams {
         sats.push(SatelliteSpec {
             id: "iss".to_string(),
             name: sat_name,
-            orbit: OrbitSpec::Omm { omm: iss_tle },
+            orbit: OrbitSpec::ElementSet { elements: iss_tle },
             period,
             ballistic_coeff: None,
             srp_area_to_mass: None,
@@ -849,7 +849,7 @@ mod tests {
         // Should have one satellite in TLE mode
         assert_eq!(params.satellites.len(), 1);
         let sat = &params.satellites[0];
-        assert!(matches!(sat.orbit, OrbitSpec::Omm { .. }));
+        assert!(matches!(sat.orbit, OrbitSpec::ElementSet { .. }));
 
         // Altitude should be ~400 km
         let alt = sat.altitude(&params.body);
@@ -904,7 +904,7 @@ mod tests {
 
         assert_eq!(params.satellites.len(), 1);
         let sat = &params.satellites[0];
-        assert!(matches!(sat.orbit, OrbitSpec::Omm { .. }));
+        assert!(matches!(sat.orbit, OrbitSpec::ElementSet { .. }));
         let alt = sat.altitude(&params.body);
         assert!(
             (alt - 400.0).abs() < 30.0,
@@ -962,7 +962,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_omm_body_rejects_non_earth() {
+    fn validate_element_set_body_rejects_non_earth() {
         let args = SimArgs {
             body: "earth".to_string(),
             dt: 10.0,
@@ -993,12 +993,15 @@ mod tests {
             plugin_backend_async_mode: PluginAsyncModeChoice::Deterministic,
         };
         let params = SimParams::from_sim_args(&args, false);
-        assert!(matches!(params.satellites[0].orbit, OrbitSpec::Omm { .. }));
+        assert!(matches!(
+            params.satellites[0].orbit,
+            OrbitSpec::ElementSet { .. }
+        ));
 
         // The same TLE-backed satellite is valid on Earth (SGP4/TEME is
         // Earth-centered) but must be rejected about any other body.
-        assert!(validate_omm_body(KnownBody::Earth, &params.satellites).is_ok());
-        let err = validate_omm_body(KnownBody::Mars, &params.satellites)
+        assert!(validate_element_set_body(KnownBody::Earth, &params.satellites).is_ok());
+        let err = validate_element_set_body(KnownBody::Mars, &params.satellites)
             .expect_err("a TLE/OMM orbit about Mars must be rejected");
         assert!(err.contains("Earth-centered"), "unexpected error: {err}");
     }

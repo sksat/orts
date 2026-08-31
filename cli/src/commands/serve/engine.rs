@@ -1017,7 +1017,10 @@ impl ServeEngine {
             eprintln!("Warning: {w}");
         }
         // SGP4/TEME is Earth-centered; reject a TLE/OMM orbit on a non-Earth sim.
-        crate::sim::params::validate_omm_body(self.params.body, std::slice::from_ref(&spec))?;
+        crate::sim::params::validate_element_set_body(
+            self.params.body,
+            std::slice::from_ref(&spec),
+        )?;
         let third_bodies = default_third_bodies(&self.params.body);
         let system = build_orbital_system(
             &self.params.body,
@@ -1130,7 +1133,10 @@ impl ServeEngine {
         let sat_index = self.metas.len();
         let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
         // SGP4/TEME is Earth-centered; reject a TLE/OMM orbit on a non-Earth sim.
-        crate::sim::params::validate_omm_body(self.params.body, std::slice::from_ref(&spec))?;
+        crate::sim::params::validate_element_set_body(
+            self.params.body,
+            std::slice::from_ref(&spec),
+        )?;
         // Re-use the startup validation so we cannot crash
         // build_controlled_satellite → build_spacecraft_dynamics on
         // a singular inertia tensor or non-positive mass.

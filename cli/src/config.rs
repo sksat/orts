@@ -1289,14 +1289,14 @@ impl SatelliteConfig {
                 let tle = parsed.elements;
                 let period = tle.period();
                 let tle_name = parsed.object_name.clone();
-                (OrbitSpec::Omm { omm: tle }, period, tle_name)
+                (OrbitSpec::ElementSet { elements: tle }, period, tle_name)
             }
             OrbitConfig::Norad { norad_id } => {
                 let parsed = fetch_tle_by_norad_id(*norad_id);
                 let tle = parsed.elements;
                 let period = tle.period();
                 let tle_name = parsed.object_name.clone();
-                (OrbitSpec::Omm { omm: tle }, period, tle_name)
+                (OrbitSpec::ElementSet { elements: tle }, period, tle_name)
             }
         };
 
@@ -2023,7 +2023,7 @@ mod tests {
         let spec = sat_cfg.to_satellite_spec(0, body, mu);
 
         assert_eq!(spec.id, "iss");
-        assert!(matches!(spec.orbit, OrbitSpec::Omm { .. }));
+        assert!(matches!(spec.orbit, OrbitSpec::ElementSet { .. }));
         assert!(spec.period > 0.0);
     }
 

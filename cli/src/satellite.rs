@@ -24,7 +24,7 @@ pub enum OrbitSpec {
     },
     /// From a parsed element set — TLE or OMM input, both decode into the
     /// canonical [`Sgp4Elements`] record (propagated with SGP4).
-    Omm { omm: Sgp4Elements },
+    ElementSet { elements: Sgp4Elements },
 }
 
 /// Per-satellite specification.
@@ -94,7 +94,7 @@ impl SatelliteSpec {
     /// malformed element set), so a caller on a fallible boundary — a dynamic
     /// `add_satellite` over WebSocket — can reject it instead of crashing the
     /// server. SGP4/TEME is Earth-centered; callers must ensure the central
-    /// body is Earth (see `validate_omm_body`).
+    /// body is Earth (see `validate_element_set_body`).
     pub fn initial_state(
         &self,
         mu: f64,
@@ -118,9 +118,9 @@ impl SatelliteSpec {
                 let (pos, vel) = elements.to_state_vector(mu);
                 Ok(OrbitalState::new(pos, vel))
             }
-            OrbitSpec::Omm { omm, .. } => {
+            OrbitSpec::ElementSet { elements, .. } => {
                 let epoch = epoch.ok_or("a TLE/OMM orbit requires a simulation epoch")?;
-                let propagator = Sgp4Propagator::from_elements(omm)
+                let propagator = Sgp4Propagator::from_elements(elements)
                     .map_err(|e| format!("SGP4 initialization failed: {e}"))?;
                 let (r_teme, v_teme) = propagator
                     .propagate(epoch)
@@ -138,9 +138,9 @@ impl SatelliteSpec {
     pub fn altitude(&self, body: &KnownBody) -> f64 {
         match &self.orbit {
             OrbitSpec::Circular { altitude, .. } => *altitude,
-            OrbitSpec::Omm { omm } => {
-                let a = omm.semi_major_axis(body.properties().mu);
-                let perigee_r = a * (1.0 - omm.fields().eccentricity);
+            OrbitSpec::ElementSet { elements } => {
+                let a = elements.semi_major_axis(body.properties().mu);
+                let perigee_r = a * (1.0 - elements.fields().eccentricity);
                 perigee_r - body.properties().radius
             }
         }
@@ -307,18 +307,18 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
     // Determine orbit
     let (orbit, period, derived_name) = if let Some(norad) = norad_id {
         let parsed = fetch_tle_by_norad_id(norad);
-        let omm = parsed.elements;
-        let period = omm.period();
+        let elements = parsed.elements;
+        let period = elements.period();
         let obj_name = parsed.object_name.clone();
-        (OrbitSpec::Omm { omm }, period, obj_name)
+        (OrbitSpec::ElementSet { elements }, period, obj_name)
     } else if let (Some(l1), Some(l2)) = (tle_line1, tle_line2) {
         let text = format!("{l1}\n{l2}");
         let parsed = arika::tle::parse(&text)
             .unwrap_or_else(|e| panic!("Failed to parse TLE in --sat: {e}"));
-        let omm = parsed.elements;
-        let period = omm.period();
+        let elements = parsed.elements;
+        let period = elements.period();
         let obj_name = parsed.object_name.clone();
-        (OrbitSpec::Omm { omm }, period, obj_name)
+        (OrbitSpec::ElementSet { elements }, period, obj_name)
     } else {
         let alt = altitude.unwrap_or(400.0);
         let r0 = body.properties().radius + alt;
@@ -422,7 +422,7 @@ mod tests {
             KnownBody::Earth,
         );
         assert_eq!(spec.id, "iss");
-        assert!(matches!(spec.orbit, OrbitSpec::Omm { .. }));
+        assert!(matches!(spec.orbit, OrbitSpec::ElementSet { .. }));
     }
 
     #[test]
