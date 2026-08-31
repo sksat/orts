@@ -16,7 +16,7 @@ use crate::orbital::OrbitalState;
 pub struct OrbitalSystem<F: Eci = SimpleEci> {
     pub mu: f64,
     pub gravity: Box<dyn GravityField>,
-    pub models: Vec<Box<dyn Model<OrbitalState<F>, F>>>,
+    pub models: Vec<Box<dyn Model<OrbitalState<F>>>>,
     /// Initial epoch corresponding to integration time t=0.
     /// Used to compute absolute epoch for time-dependent perturbations (e.g., third-body).
     pub epoch_0: Option<Epoch>,
@@ -37,7 +37,7 @@ impl<F: Eci> OrbitalSystem<F> {
         }
     }
 
-    pub fn with_model(mut self, model: impl Model<OrbitalState<F>, F> + 'static) -> Self {
+    pub fn with_model(mut self, model: impl Model<OrbitalState<F>> + 'static) -> Self {
         self.models.push(Box::new(model));
         self
     }

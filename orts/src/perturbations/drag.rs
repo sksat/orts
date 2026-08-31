@@ -195,7 +195,7 @@ impl<F: EarthFixedTransform> AtmosphericDrag<F> {
     }
 }
 
-impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S, F> for AtmosphericDrag<F> {
+impl<F: EarthFixedTransform, S: HasFrame<Frame = F> + HasOrbit> Model<S> for AtmosphericDrag<F> {
     fn name(&self) -> &str {
         "drag"
     }

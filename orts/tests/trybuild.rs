@@ -22,6 +22,12 @@ fn a_non_simple_eci_attitude_cannot_be_used_where_simple_eci_is_required() {
     // integrated in `SimpleEci`.
     t.compile_fail("tests/trybuild/gcrs_inertial_pointing_in_simple_eci.rs");
 
-    // A model's state frame and its loads frame are one parameter, not two.
-    t.compile_fail("tests/trybuild/model_attitude_frame_differs_from_loads_frame.rs");
+    // A model carrying its own frame must be installed for a state in that frame.
+    t.compile_fail("tests/trybuild/frame_capability_model_in_another_frame.rs");
+
+    // A burn Delta-v given in one inertial frame cannot be flown in another.
+    t.compile_fail("tests/trybuild/simple_eci_burn_in_gcrs_system.rs");
+
+    // A burn direction can only be held fixed in a frame whose axes are.
+    t.compile_fail("tests/trybuild/constant_thrust_in_of_date_frame.rs");
 }

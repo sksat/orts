@@ -151,7 +151,7 @@ impl MtqAssemblyCore {
 /// Per-MTQ command. Re-exported from `crate::plugin::command::MtqCommand` for convenience.
 pub use crate::plugin::command::MtqCommand;
 
-/// MTQ assembly with magnetic field model, usable as a [`Model<S, Fr>`]
+/// MTQ assembly with magnetic field model, usable as a [`Model<S>`]
 /// in the ODE system.
 ///
 /// `Fr` is the inertial frame the assembly evaluates the geomagnetic field in:
@@ -269,7 +269,7 @@ impl<
     F: MagneticFieldModel,
     Fr: EarthFixedTransform,
     S: HasFrame<Frame = Fr> + HasAttitude + HasOrbit,
-> Model<S, Fr> for MtqAssembly<F, Fr>
+> Model<S> for MtqAssembly<F, Fr>
 {
     fn name(&self) -> &str {
         "mtq_assembly"

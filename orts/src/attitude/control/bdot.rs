@@ -99,7 +99,7 @@ impl<
     F: MagneticFieldModel,
     Fr: EarthFixedTransform,
     S: HasFrame<Frame = Fr> + HasAttitude + HasOrbit,
-> Model<S, Fr> for BdotCross<F, Fr>
+> Model<S> for BdotCross<F, Fr>
 {
     fn name(&self) -> &str {
         "bdot"
@@ -189,7 +189,7 @@ impl<
     F: MagneticFieldModel,
     Fr: EarthFixedTransform,
     S: HasFrame<Frame = Fr> + HasAttitude + HasOrbit,
-> Model<S, Fr> for CommandedMagnetorquer<F, Fr>
+> Model<S> for CommandedMagnetorquer<F, Fr>
 {
     fn name(&self) -> &str {
         "magnetorquer"

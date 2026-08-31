@@ -1,0 +1,14 @@
+error[E0271]: type mismatch resolving `<SpacecraftState<Gcrs> as HasFrame>::Frame == SimpleEci`
+  --> tests/trybuild/simple_eci_burn_in_gcrs_system.rs:27:22
+   |
+27 |     install_for_gcrs(burn);
+   |     ---------------- ^^^^ expected `SimpleEci`, found `Gcrs`
+   |     |
+   |     required by a bound introduced by this call
+   |
+   = note: required for `ConstantThrust` to implement `Model<SpacecraftState<arika::frame::Gcrs>>`
+note: required by a bound in `install_for_gcrs`
+  --> tests/trybuild/simple_eci_burn_in_gcrs_system.rs:16:24
+   |
+16 | fn install_for_gcrs<M: Model<SpacecraftState<Gcrs>>>(_m: M) {}
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `install_for_gcrs`

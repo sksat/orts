@@ -1,0 +1,12 @@
+error[E0271]: type mismatch resolving `<SpacecraftState as HasFrame>::Frame == Gcrs`
+  --> tests/trybuild/frame_capability_model_in_another_frame.rs:31:30
+   |
+31 |     install_for_simple_eci::<AtmosphericDrag<Gcrs>>();
+   |                              ^^^^^^^^^^^^^^^^^^^^^ expected `Gcrs`, found `SimpleEci`
+   |
+   = note: required for `AtmosphericDrag<arika::frame::Gcrs>` to implement `Model<SpacecraftState>`
+note: required by a bound in `install_for_simple_eci`
+  --> tests/trybuild/frame_capability_model_in_another_frame.rs:24:30
+   |
+24 | fn install_for_simple_eci<M: Model<SpacecraftState<SimpleEci>>>() {}
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `install_for_simple_eci`

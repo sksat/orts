@@ -11,10 +11,18 @@ use crate::attitude::AttitudeState;
 /// Controllers have internal state (`&mut self`) and produce commands
 /// that are held constant between sample times (zero-order hold).
 ///
-/// The type parameter `F` is the inertial frame of the observed orbital state
-/// (default `SimpleEci`), mirroring [`Model<S, F>`](crate::model::Model): a
-/// controller that reads an environment model in the inertial frame (e.g. the
-/// geomagnetic field) implements this once per frame it supports.
+/// The type parameter `F` is the frame of the observed orbital state (default
+/// `SimpleEci`). A controller that evaluates an environment model at the
+/// spacecraft's position — the geomagnetic field, say — needs that frame to
+/// resolve it, and implements this trait once per frame it supports.
+///
+/// `attitude` arrives as a bare [`AttitudeState`], so a controller that rotates
+/// an inertial quantity into the body frame names `F` itself via
+/// [`AttitudeState::rotation_tagged_as`]. Unlike [`Model`](crate::model::Model),
+/// whose loads frame comes from the state's own
+/// [`HasFrame::Frame`](crate::model::HasFrame::Frame), nothing here ties the two
+/// together; the caller passes an attitude and an orbit that belong to the same
+/// state.
 pub trait DiscreteController<F: frame::Eci = frame::SimpleEci>: Send {
     /// Command output type.
     type Command: Clone + Send;

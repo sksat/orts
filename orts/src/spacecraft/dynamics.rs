@@ -34,8 +34,8 @@ pub struct SpacecraftDynamics<G: GravityField, F: Eci = SimpleEci> {
     gravity: G,
     inertia: Matrix3<f64>,
     inertia_inv: Matrix3<f64>,
-    models: Vec<Box<dyn Model<SpacecraftState<F>, F>>>,
-    effectors: Vec<Box<dyn StateEffector<SpacecraftState<F>, F>>>,
+    models: Vec<Box<dyn Model<SpacecraftState<F>>>>,
+    effectors: Vec<Box<dyn StateEffector<SpacecraftState<F>>>>,
     registry: AuxRegistry,
     epoch_0: Option<Epoch>,
     body_radius: Option<f64>,
@@ -66,7 +66,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Add an external model (builder pattern).
-    pub fn with_model(mut self, model: impl Model<SpacecraftState<F>, F> + 'static) -> Self {
+    pub fn with_model(mut self, model: impl Model<SpacecraftState<F>> + 'static) -> Self {
         self.models.push(Box::new(model));
         self
     }
@@ -80,7 +80,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     /// dynamics never re-tag coordinates. See issue #103.
     pub fn with_effector(
         mut self,
-        effector: impl StateEffector<SpacecraftState<F>, F> + 'static,
+        effector: impl StateEffector<SpacecraftState<F>> + 'static,
     ) -> Self {
         let dim = effector.state_dim();
         self.registry.register(effector.name(), dim);
@@ -120,7 +120,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Downcast a state effector by index (immutable).
-    pub fn effector<T: StateEffector<SpacecraftState<F>, F> + 'static>(
+    pub fn effector<T: StateEffector<SpacecraftState<F>> + 'static>(
         &self,
         index: usize,
     ) -> Option<&T> {
@@ -130,7 +130,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Downcast a state effector by index (mutable).
-    pub fn effector_mut<T: StateEffector<SpacecraftState<F>, F> + 'static>(
+    pub fn effector_mut<T: StateEffector<SpacecraftState<F>> + 'static>(
         &mut self,
         index: usize,
     ) -> Option<&mut T> {
@@ -140,7 +140,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Find and downcast a state effector by name (immutable).
-    pub fn effector_by_name<T: StateEffector<SpacecraftState<F>, F> + 'static>(
+    pub fn effector_by_name<T: StateEffector<SpacecraftState<F>> + 'static>(
         &self,
         name: &str,
     ) -> Option<&T> {
@@ -153,7 +153,7 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     }
 
     /// Find and downcast a state effector by name (mutable).
-    pub fn effector_by_name_mut<T: StateEffector<SpacecraftState<F>, F> + 'static>(
+    pub fn effector_by_name_mut<T: StateEffector<SpacecraftState<F>> + 'static>(
         &mut self,
         name: &str,
     ) -> Option<&mut T> {
@@ -188,8 +188,8 @@ impl<G: GravityField, F: Eci + 'static> SpacecraftDynamics<G, F> {
     pub fn replace_model(
         &mut self,
         name: &str,
-        new_model: Box<dyn Model<SpacecraftState<F>, F>>,
-    ) -> Option<Box<dyn Model<SpacecraftState<F>, F>>> {
+        new_model: Box<dyn Model<SpacecraftState<F>>>,
+    ) -> Option<Box<dyn Model<SpacecraftState<F>>>> {
         if let Some(slot) = self.models.iter_mut().find(|m| m.name() == name) {
             Some(std::mem::replace(slot, new_model))
         } else {
@@ -252,13 +252,16 @@ impl<G: GravityField, F: Eci + 'static> DynamicalSystem for SpacecraftDynamics<G
 
         // Evaluate state effectors.
         //
-        // INVARIANT: a `StateEffector<S, F>` returns `ExternalLoads<F>` —
-        // already expressed in this system's inertial frame `F` — so loads
-        // accumulate directly with no coordinate re-tag. Torque-only
-        // effectors (reaction wheels) are `impl<.., F: Eci>` because
-        // body-frame torque is frame-independent; a translational effector
-        // must produce its inertial acceleration in `F` itself. This is what
-        // makes the SimpleEci→`F` mislabel from issue #103 unrepresentable.
+        // INVARIANT: a `StateEffector<S>` returns `ExternalLoads<S::Frame>` —
+        // already expressed in the frame this system propagates in — so loads
+        // accumulate directly with no coordinate re-tag. Torque-only effectors
+        // (reaction wheels) write `impl<S: HasFrame + HasAttitude>
+        // StateEffector<S>` and leave the acceleration zero, since body-frame
+        // torque names no inertial frame; a translational effector must rotate
+        // its body-frame vector through the state's own attitude. The loads
+        // frame is not a separate parameter that could disagree with the
+        // state's, which is what makes the SimpleEci mislabel from issue #103
+        // unrepresentable.
         let mut aux_rates = vec![0.0; self.registry.total_dim()];
         for (i, eff) in self.effectors.iter().enumerate() {
             let entry = &self.registry.entries()[i];
@@ -807,7 +810,7 @@ mod tests {
 
     // Step 8: frame-generic StateEffector (issue #103 fix)
     //
-    // A `StateEffector<S, F>` returns `ExternalLoads<F>` — already in the
+    // A `StateEffector<S>` returns `ExternalLoads<F>` — already in the
     // host inertial frame — so the dynamics accumulate effector loads with
     // no coordinate re-tag. Torque-only effectors work on any `F`; a
     // translational effector produces its inertial acceleration in `F`
@@ -820,12 +823,12 @@ mod tests {
     use arika::frame::{Body, Gcrs, Vec3 as FrameVec3};
 
     /// Translational mock: contributes a constant acceleration already
-    /// expressed in the host frame `F`.
+    /// expressed in the frame the state is propagated in.
     struct ConstAccelEffector {
         accel: Vector3<f64>,
     }
 
-    impl<S, F: Eci> StateEffector<S, F> for ConstAccelEffector {
+    impl<S: HasFrame> StateEffector<S> for ConstAccelEffector {
         fn name(&self) -> &str {
             "const_accel"
         }
@@ -839,8 +842,8 @@ mod tests {
             _aux: &[f64],
             _aux_rates: &mut [f64],
             _epoch: Option<&Epoch>,
-        ) -> ExternalLoads<F> {
-            ExternalLoads::<F>::acceleration(self.accel)
+        ) -> ExternalLoads<S::Frame> {
+            ExternalLoads::<S::Frame>::acceleration(self.accel)
         }
     }
 
@@ -851,7 +854,7 @@ mod tests {
         accel_body: Vector3<f64>,
     }
 
-    impl<S: HasFrame<Frame = F> + HasAttitude, F: Eci> StateEffector<S, F> for BodyThrustEffector {
+    impl<S: HasFrame<Frame = F> + HasAttitude, F: Eci> StateEffector<S> for BodyThrustEffector {
         fn name(&self) -> &str {
             "body_thrust"
         }
@@ -890,8 +893,9 @@ mod tests {
     #[test]
     fn torque_only_effector_works_on_gcrs() {
         // A torque-only effector (RW) registers and integrates on a
-        // non-SimpleEci system: the types now permit it because RW is
-        // `StateEffector<S, F>` for every `F`, and torque is frame-independent.
+        // non-SimpleEci system: RW is `StateEffector<S>` for any state, and its
+        // loads are body-frame torque with zero inertial acceleration, so the
+        // state's frame never enters.
         use crate::spacecraft::ReactionWheelAssembly;
         let rw = ReactionWheelAssembly::three_axis(0.01, 1.0, 0.5);
         let mut dyn_sc: SpacecraftDynamics<PointMass, Gcrs> =

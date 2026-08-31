@@ -106,7 +106,7 @@ impl<F: EarthRotationPole> ZonalGravity<F> {
     }
 }
 
-impl<F: EarthRotationPole, S: HasFrame<Frame = F> + HasOrbit> Model<S, F> for ZonalGravity<F> {
+impl<F: EarthRotationPole, S: HasFrame<Frame = F> + HasOrbit> Model<S> for ZonalGravity<F> {
     fn name(&self) -> &str {
         "zonal_gravity"
     }
