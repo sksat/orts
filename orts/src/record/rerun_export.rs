@@ -776,11 +776,51 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         // The keys come from the union of every field's own keys, so a moment
         // any field records is a row. A component absent at that moment gets
         // zeros in that row, which is what `ComponentColumn` can express.
+        //
+        // A moment whose fields disagree on how many values they recorded is
+        // left out entirely, as in the other two decoders: the repeat numbers
+        // are per field, so with two samples at one time of which the first
+        // omits `y`, repeat 0 would pair the first sample's `x` with the
+        // second's `y` — the cross-sample mix this join exists to remove.
         let row_keys: Vec<RowKey> = {
+            let present: Vec<&Column> = field_names
+                .iter()
+                .filter_map(|field| get_scalar_data(&scalars, base, field))
+                .collect();
+
+            let mut ambiguous: BTreeSet<TimeKey> = BTreeSet::new();
+            let mut checked: BTreeSet<TimeKey> = BTreeSet::new();
+            for col in &present {
+                for &key in col.keys() {
+                    let RowKey::Timed { time_ns, step, .. } = key else {
+                        continue;
+                    };
+                    let time = (time_ns, step);
+                    // Counting once per moment: per repeat it would be
+                    // quadratic in the size of a multi-value batch.
+                    if !checked.insert(time) {
+                        continue;
+                    }
+                    let counts: Vec<usize> = present
+                        .iter()
+                        .map(|c| repeats_at(c, time))
+                        .filter(|&n| n != 0)
+                        .collect();
+                    if counts.iter().any(|&n| n != counts[0]) {
+                        ambiguous.insert(time);
+                    }
+                }
+            }
+
             let mut keys: BTreeSet<RowKey> = BTreeSet::new();
-            for field in &field_names {
-                if let Some(col) = get_scalar_data(&scalars, base, field) {
-                    keys.extend(col.keys().copied());
+            for col in &present {
+                for &key in col.keys() {
+                    if let RowKey::Timed { time_ns, step, .. } = key
+                        && ambiguous.contains(&(time_ns, step))
+                    {
+                        continue;
+                    }
+                    keys.insert(key);
                 }
             }
             keys.into_iter().collect()
@@ -1764,5 +1804,55 @@ mod tests {
             .expect("a velocity column");
         assert_eq!(position.get_row(1).expect("row 1"), &[110.0, 201.0, 0.0]);
         assert_eq!(velocity.get_row(1).expect("row 1"), &[4.0, 5.0, 6.0]);
+    }
+
+    /// A moment whose fields disagree on repeat count yields no row.
+    ///
+    /// Repeat numbers are per field, so two samples at one time of which the
+    /// first omits `y` made repeat 0 the first sample's `x` beside the second's
+    /// `y`: measured as `Position3D = [100.0, 201.0, 0.0]`. That moment is left
+    /// out entirely, as in the other two decoders.
+    #[test]
+    fn load_as_recording_drops_a_time_whose_fields_disagree_on_repeats() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_lar_rep_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("repeats.rrd");
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-lar-repeat-test")
+                .save(&path)
+                .expect("recording stream");
+            rec.set_duration_secs("sim_time", 0.0);
+            for sample in [
+                // The first sample at t=0 omits `y`.
+                vec![("x", 100.0f64), ("z", 0.0)],
+                vec![("x", 110.0), ("y", 201.0), ("z", 0.0)],
+            ] {
+                for (field, value) in sample {
+                    rec.log(
+                        format!("/world/sat/loader/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new([value]),
+                    )
+                    .expect("log");
+                }
+            }
+            rec.flush_blocking().expect("flush");
+        }
+
+        let loaded = load_as_recording(path.to_str().unwrap()).expect("load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let entity = loaded.entity_paths().next().cloned().expect("one entity");
+        let store = loaded.entity(&entity).expect("entity");
+        assert_eq!(
+            store.num_rows, 0,
+            "the one moment is unpairable, so it yields no row"
+        );
+        for (name, col) in &store.columns {
+            assert_eq!(col.num_rows(), 0, "{name} must be empty too");
+        }
     }
 }

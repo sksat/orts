@@ -515,8 +515,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   成分は後の値が前の行にずれ込んでいた。`y` が t=10 にだけ logging されている場合、
   t=0 の行にその値が載り、t=10 の行は `y = 0.0` になる。行を出すのは position 3 成分
   (recording が velocity 列を持つ場合は velocity 3 成分も) がその時刻に揃ったときで、
-  揃わない行はゼロ埋めせず落とす。`orts` が書く recording は影響を受けない (writer が
-  全列を毎 step logging するため)。([#366](https://github.com/sksat/orts/pull/366))
+  揃わない行はゼロ埋めせず落とす。`orts run --format rrd` は 1 回の run のすべての
+  step で同じ component を logging するので、その出力のデコード結果は以前と同じ。疎な
+  列がこの結合に入るのは、外部で書かれた `.rrd` と、attitude が state ごとに optional な
+  `orts serve` の history segment。([#366](https://github.com/sksat/orts/pull/366))
 
 ### Docs
 

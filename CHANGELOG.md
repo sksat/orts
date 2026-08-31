@@ -573,8 +573,11 @@ section is subdivided by package.
   carried that value and the t=10 row read `y = 0.0`. A row is emitted only when
   the whole position triple — and the velocity triple, where the recording has
   one — is present at that time; an incomplete row is dropped rather than padded
-  with zeros. Recordings `orts` writes are unaffected: its writer logs every
-  column at every step. ([#366](https://github.com/sksat/orts/pull/366))
+  with zeros. `orts run --format rrd` logs the same components at every step of a
+  run, so its output decodes to the same values as before; a sparse column
+  reaches this join from `.rrd` files written elsewhere and from `orts serve`
+  history segments, whose attitude is optional per state.
+  ([#366](https://github.com/sksat/orts/pull/366))
 
 ### Docs
 
