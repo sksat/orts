@@ -734,8 +734,6 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      # Its own cache namespace: a different platform shares no artifacts with
-      # the Linux jobs.
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -1659,8 +1657,6 @@ jobs:
               *) echo "unhandled target: $TARGET" >&2; exit 1 ;;
             esac
 
-            # MSVC keeps debug info in a .pdb, so there is nothing to strip; the
-            # suffix is what actually differs.
             case "$TARGET" in
               *-pc-windows-*) EXE=.exe ;;
               *)              EXE= ;;
@@ -1694,14 +1690,11 @@ jobs:
             cat "${ARCHIVE}.sha256"
             ALL_FILES="${ALL_FILES}${ARCHIVE}\n${ARCHIVE}.sha256\n"
 
-            # Windows additionally gets a zip: Explorer cannot expand a
-            # .tar.gz from its context menu, and Windows' own bsdtar means the
-            # tarball is only convenient from a shell. binstall is not pointed
-            # at it. Wraps STAGE_DIR like the tarball, so one `bin-dir`
-            # template resolves in both. -X drops extra file attributes, which
-            # is as far as this goes: unlike the tarball's fixed --mtime, the
-            # zip still records each entry's timestamp, so it is not
-            # byte-reproducible across builds.
+            # Windows additionally gets a zip, since Explorer cannot expand a
+            # .tar.gz from its context menu. Wraps STAGE_DIR like the tarball so
+            # one `bin-dir` template resolves in both. -X drops extra file
+            # attributes, but timestamps remain, so unlike the tarballs with
+            # their fixed --mtime this is not byte-reproducible.
             if [ "$EXE" = ".exe" ]; then
               ZIP="${STAGE_DIR}.zip"
               zip -qrX "${ZIP}" "${STAGE_DIR}"
