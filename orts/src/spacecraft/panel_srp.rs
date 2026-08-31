@@ -370,12 +370,9 @@ mod tests {
         // Sphere: area=20.0, cr=1.5 → area_to_mass = 20.0/1000.0 = 0.02
         let panel_srp = PanelSrp::new(SpacecraftShape::sphere(20.0, 2.2, 1.5));
 
-        let scalar_srp = SolarRadiationPressure {
-            cr: 1.5,
-            area_to_mass: 0.02,
-            shadow_body_radius: None,
-            shadow_model: ShadowModel::Cylindrical,
-        };
+        let scalar_srp = SolarRadiationPressure::for_earth(Some(0.02))
+            .with_cr(1.5)
+            .without_shadow();
 
         let panel_loads = panel_srp.eval(0.0, &state, Some(&epoch));
         let scalar_a = scalar_srp.acceleration(state.orbit.position(), Some(&epoch));

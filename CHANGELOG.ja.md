@@ -129,6 +129,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   [2 成分の合成](docs/src/assets/srp-flat-panel/force-composition.svg)、
   [トルクの向き](docs/src/assets/srp-flat-panel/torque-direction.svg)。
   ([#377](https://github.com/sksat/orts/pull/377))
+- Sun 由来の力モデルが中心天体から幾何を取るようになった。既定の第三体 Sun と
+  cannonball SRP はどちらも、中心天体に関わらず地心 Sun ベクトルと Earth 半径を
+  使っていた。2026 年の Mars では Sun が Mars から見た方向と最大 176° ずれ、SRP は
+  ベクトルとして 242〜311% 誤り（逆向きに働く）、潮汐項は最大 3.8 倍になっていた。
+  `ThirdBodyGravity::sun_from_body` と `SolarRadiationPressure::for_body` が
+  `KnownBody` を取り、`default_third_bodies` と 2 つの `build_*` builder が
+  `Result` を返す。Sun ephemeris を持たない中心天体は、Sun を誤った位置に置いたまま
+  伝播せず報告される。([#372](https://github.com/sksat/orts/pull/372))
+- Moon 中心の伝播に第三体として Earth が入るようになった (Moon の第三体環境で
+  支配的だが欠けていた)。Sun 中心の伝播は Sun を自分の周回衛星に対する第三体として
+  足さなくなった。([#372](https://github.com/sksat/orts/pull/372))
 - `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
   ようになった。結果が有限な入力で overflow しなくなる: `q = [0, 1/√2, 1/√2, 0]`、
   `ω = [1.4e308, 1.4e308, 0]` の `q̇.w` は約 -9.9e307 だが、途中の和が -1.98e308 に
@@ -438,6 +449,12 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   状態 (`r = 0` や `r × v = 0`、後者は `v = 0` を含む) は 0 ではなく `NaN` を返す。
   0 は円赤道軌道の角度として実在する値なので、値なしの印には使えない。
   ([#376](https://github.com/sksat/orts/pull/376))
+- `arika::sun::sun_position_from_body` が `KnownBody` を取り `Result` を返すように
+  なった。既存の `sun_direction_from_body` は天体を `&str` で取り、認識できない天体に
+  +X 方向の単位ベクトル (春分点方向で、どこから見ても Sun の方向ではない) を返す。
+  この crate は Mercury〜Saturn の Standish 要素しか持たないため Uranus と Neptune が
+  その分岐に入る。新しい関数はこの 2 天体と、中心天体が Sun の場合を拒否する。
+  ([#372](https://github.com/sksat/orts/pull/372))
 - 要素セットのパース ([#87](https://github.com/sksat/orts/pull/87))。共有の
   no-alloc な `elements::Sgp4Elements` (平均要素セット: カタログ番号、UTC epoch、
   6 個の SGP4 平均要素、B\* drag。角度は rad、平均運動は rad/s) を**検証付き型**に。

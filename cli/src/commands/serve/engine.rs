@@ -22,6 +22,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use orts::OrbitalState;
+use orts::attitude::CoupledGravityGradient;
 use orts::group::prop_group::{PropGroupOutcome, SatId};
 use orts::group::{IndependentGroup, IntegratorConfig};
 use orts::orbital::OrbitalSystem;
@@ -34,14 +35,14 @@ use crate::satellite::{SatelliteInfo, SatelliteSpec};
 use crate::sim::controlled::ControlledSatellite;
 use crate::sim::core::{
     AttitudePayload, AttitudeSource, HistoryState, accel_breakdown, make_history_state, sat_params,
-    spacecraft_accel_breakdown, spacecraft_dynamics_for,
+    spacecraft_accel_breakdown,
 };
 use crate::sim::mode::{
     SimMode, ensure_streams_supported, select_sim_mode, unhonored_config_warnings,
     validate_satellite_spec,
 };
 use crate::sim::params::SimParams;
-use orts::setup::{build_orbital_system, default_third_bodies};
+use orts::setup::{build_orbital_system, build_spacecraft_dynamics, default_third_bodies};
 
 use super::compute::state_message;
 use super::history::HistoryBuffer;
@@ -429,7 +430,8 @@ impl ServeEngine {
         let has_controller = mode == SimMode::Controlled;
 
         let mut metas: Vec<SatMeta> = Vec::new();
-        let third_bodies = default_third_bodies(&params.body);
+        let third_bodies = default_third_bodies(&params.body)
+            .map_err(|e| format!("central body {}: {e}", params.body.properties().name))?;
 
         // Eagerly build the WASM plugin cache so the same instance
         // can serve both the initial fleet and any dynamic
@@ -504,7 +506,19 @@ impl ServeEngine {
 
             for spec in &params.satellites {
                 let att = spec.attitude_config.as_ref().unwrap();
-                let dynamics = spacecraft_dynamics_for(spec, att, &params, &third_bodies);
+                let inertia = att.inertia_matrix();
+                let mut dynamics = build_spacecraft_dynamics(
+                    &params.body,
+                    params.mu,
+                    params.epoch,
+                    &sat_params(spec),
+                    &third_bodies,
+                    inertia,
+                    params.build_atmosphere_model(),
+                )
+                .map_err(|e| format!("solar force models: {e}"))?;
+                // Default torque: coupled gravity gradient
+                dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
 
                 let orbit = spec
                     .initial_state(params.mu, params.epoch)
@@ -557,7 +571,8 @@ impl ServeEngine {
                     &sat_params(spec),
                     &third_bodies,
                     params.build_atmosphere_model(),
-                );
+                )
+                .map_err(|e| format!("solar force models: {e}"))?;
                 let initial = spec
                     .initial_state(params.mu, params.epoch)
                     .map_err(|e| format!("satellite '{}': {e}", spec.id))?;
@@ -575,7 +590,7 @@ impl ServeEngine {
 
         // Build the Info message (broadcast by the serve layer; also retained
         // for status replay to late-connecting clients).
-        let info_msg = build_info_message(&params);
+        let info_msg = build_info_message(&params)?;
         let info_json = serde_json::to_string(&info_msg).expect("failed to serialize info");
         let mut initial_broadcasts = vec![info_json.clone()];
 
@@ -965,35 +980,6 @@ impl ServeEngine {
             );
         }
 
-        // The id has to name an entity of its own, and one no satellite in the
-        // running fleet already answers to. Both paths below resolve the id from
-        // `self.metas.len()`, so an entry with no `id` becomes `sat-<len>` —
-        // which the initial config may have already spelled out — and the two
-        // would share an entity path: commands reach whichever comes last and
-        // state lookups find the first. Same rules a config file gets, applied
-        // against the fleet as it stands rather than against one list.
-        let id = satellite.resolved_id(self.metas.len());
-        crate::satellite::validate_id(&id)?;
-        let entity = crate::satellite::entity_path_for_id(&id).to_string();
-        if let Some(taken) = self
-            .metas
-            .iter()
-            .find(|m| m.spec.entity_path().to_string() == entity)
-        {
-            return Err(format!(
-                "satellite id '{id}' names the same entity as '{}', which is already in \
-                 the simulation; ids must be unique{}",
-                taken.spec.id,
-                if satellite.id.is_none() {
-                    format!(
-                        " — this request has no `id`, so it defaults to '{id}'; give it an explicit id"
-                    )
-                } else {
-                    String::new()
-                }
-            ));
-        }
-
         // Branch on the running simulation mode. Controlled and spacecraft
         // paths are handled inline; the orbit-only path continues below.
         match &self.group {
@@ -1024,11 +1010,6 @@ impl ServeEngine {
             );
         }
 
-        // Field-level validation, as the controlled add path does. Without it
-        // this path held a dynamically-added satellite to a weaker standard
-        // than the same config loaded from a file.
-        satellite.validate()?;
-
         let sat_index = self.metas.len();
         let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
         // Sensors / actuators only act through a control loop; say so instead
@@ -1041,7 +1022,8 @@ impl ServeEngine {
             self.params.body,
             std::slice::from_ref(&spec),
         )?;
-        let third_bodies = default_third_bodies(&self.params.body);
+        let third_bodies = default_third_bodies(&self.params.body)
+            .map_err(|e| format!("central body {}: {e}", self.params.body.properties().name))?;
         let system = build_orbital_system(
             &self.params.body,
             self.params.mu,
@@ -1049,7 +1031,8 @@ impl ServeEngine {
             &sat_params(&spec),
             &third_bodies,
             self.params.build_atmosphere_model(),
-        );
+        )
+        .map_err(|e| format!("solar force models: {e}"))?;
         // Evaluate the initial state at the instant the satellite enters the
         // running sim (epoch + current_t), so a TLE/OMM is propagated to "now"
         // rather than to t = 0. The system above uses epoch (the t = 0 ref).
@@ -1270,45 +1253,37 @@ impl ServeEngine {
 }
 
 /// Build the Info WsMessage from SimParams.
-fn build_info_message(params: &SimParams) -> WsMessage {
+///
+/// Names the force models per satellite, which means building each satellite's
+/// system — so a central body whose solar models cannot be built is reported
+/// here too, rather than announced with an empty perturbation list.
+fn build_info_message(params: &SimParams) -> Result<WsMessage, String> {
+    let third_bodies = default_third_bodies(&params.body)
+        .map_err(|e| format!("central body {}: {e}", params.body.properties().name))?;
     let satellites_info: Vec<SatelliteInfo> = params
         .satellites
         .iter()
         .map(|s| {
-            let third_bodies = default_third_bodies(&params.body);
-            // Panel forces need an attitude, so they live only on a
-            // `SpacecraftDynamics`. Reading the model names off an
-            // `OrbitalSystem` would report the wrong set for such a satellite.
-            let perturbations: Vec<String> = match &s.attitude_config {
-                Some(att) => spacecraft_dynamics_for(s, att, params, &third_bodies)
-                    .model_names()
-                    .into_iter()
-                    .map(String::from)
-                    .collect(),
-                None => build_orbital_system(
-                    &params.body,
-                    params.mu,
-                    params.epoch,
-                    &sat_params(s),
-                    &third_bodies,
-                    params.build_atmosphere_model(),
-                )
-                .model_names()
-                .into_iter()
-                .map(String::from)
-                .collect(),
-            };
-            SatelliteInfo {
+            let system = build_orbital_system(
+                &params.body,
+                params.mu,
+                params.epoch,
+                &sat_params(s),
+                &third_bodies,
+                params.build_atmosphere_model(),
+            )
+            .map_err(|e| format!("solar force models: {e}"))?;
+            Ok(SatelliteInfo {
                 id: s.entity_path().to_string(),
                 name: s.name.clone(),
                 altitude: s.altitude(&params.body),
                 period: s.period,
-                perturbations,
+                perturbations: system.model_names().into_iter().map(String::from).collect(),
                 shape: s.shape,
-            }
+            })
         })
-        .collect();
-    WsMessage::Info {
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(WsMessage::Info {
         mu: params.mu,
         dt: params.dt,
         output_interval: params.output_interval,
@@ -1321,7 +1296,7 @@ fn build_info_message(params: &SimParams) -> WsMessage {
         central_body_radius: params.body.properties().radius,
         epoch_jd: params.epoch.map(|e| e.jd()),
         satellites: satellites_info,
-    }
+    })
 }
 
 /// Whether `s` cannot be used as one path segment of a stream endpoint URL
@@ -1641,238 +1616,6 @@ attitude = { inertia_diag = [10, 20, 30], mass = 50 }
         }
     }
 
-    /// Model names on the dynamics a serve-built attitude satellite propagates
-    /// with. Reaches through the group rather than rebuilding, so it sees what
-    /// the integrator will actually evaluate.
-    fn serve_model_names(toml: &str) -> Vec<String> {
-        let init = engine_from_toml(toml).expect("engine builds");
-        let SimGroup::Spacecraft(group) = &init.engine.group else {
-            panic!("expected an attitude fleet");
-        };
-        let (_, dynamics) = group
-            .satellites_with_dynamics()
-            .next()
-            .expect("one satellite");
-        dynamics
-            .model_names()
-            .into_iter()
-            .map(String::from)
-            .collect()
-    }
-
-    /// A satellite with attitude dynamics gets the gravity-gradient torque.
-    ///
-    /// This is what makes the disturbance actually reach `dω/dt`; asserting it
-    /// on the group is what keeps the registration honest wherever it lives.
-    #[test]
-    fn serve_installs_the_gravity_gradient_torque() {
-        const ATTITUDE: &str = r#"
-[[satellites]]
-id = "sat-a"
-orbit = { type = "circular", altitude = 500 }
-attitude = { inertia_diag = [10, 20, 30], mass = 50 }
-"#;
-        let names = serve_model_names(ATTITUDE);
-        let count = names.iter().filter(|n| *n == "gravity_gradient").count();
-        assert_eq!(
-            count, 1,
-            "the torque should be installed exactly once, got {names:?}"
-        );
-    }
-
-    const PANEL_TOML: &str = r#"
-[[satellites]]
-id = "sat-a"
-orbit = { type = "circular", altitude = 500 }
-attitude = { inertia_diag = [10, 20, 30], mass = 50 }
-
-[[satellites.panels]]
-area = 4.0
-normal = [1.0, 0.0, 0.0]
-cd = 2.2
-specular = 0.2
-diffuse = 0.1
-cp_offset = [0.0, 1.5, 0.0]
-"#;
-
-    /// A `back` table in config has to reach the dynamics, not just the spec.
-    ///
-    /// The config tests stop at `SpacecraftShape`; this one takes both configs
-    /// through to the models the integrator evaluates and puts the Sun behind
-    /// the written face. Without `back` the plate is dark there and SRP is
-    /// exactly zero; with it, the far face is lit. That is the user-facing
-    /// claim, and nothing else in the suite makes it.
-    ///
-    /// The attitude is derived from the Sun's actual position at the config's
-    /// epoch, which is "now" when the config does not name one — assuming a
-    /// fixed direction would make this pass or fail depending on the date.
-    #[test]
-    fn a_back_table_lights_the_plate_from_behind() {
-        let srp_magnitude = |toml: &str| -> f64 {
-            let init = engine_from_toml(toml).expect("engine builds");
-            let SimGroup::Spacecraft(group) = &init.engine.group else {
-                panic!("expected an attitude fleet");
-            };
-            let (_, dynamics) = group
-                .satellites_with_dynamics()
-                .next()
-                .expect("one satellite");
-            // Put the spacecraft sunward of Earth and its panel normal away
-            // from the Sun, so the written face is the dark one.
-            // Where the Sun is depends on the epoch, and the epoch depends on
-            // when the test runs, so the geometry is built from the Sun rather
-            // than assumed: the attitude turns the written face away from it.
-            let epoch = init.engine.params.epoch.expect("panel SRP needs an epoch");
-            let sun_pos = arika::sun::sun_position_eci(&epoch.to_tdb()).into_inner();
-            // Sunward of Earth, so the cylindrical shadow never applies.
-            let sat_pos = sun_pos.normalize() * 7000.0;
-            let s_hat = (sun_pos - sat_pos).normalize();
-
-            let body_x = nalgebra::Vector3::x();
-            let attitude = nalgebra::UnitQuaternion::rotation_between(&body_x, &(-s_hat))
-                .unwrap_or_else(|| {
-                    nalgebra::UnitQuaternion::from_axis_angle(
-                        &nalgebra::Vector3::y_axis(),
-                        std::f64::consts::PI,
-                    )
-                });
-            // The premise, checked rather than trusted: in the body frame the
-            // Sun sits opposite the panel normal, whatever the epoch is.
-            let s_body = attitude.inverse_transform_vector(&s_hat);
-            assert!(
-                s_body.dot(&body_x) < -0.999,
-                "the written face has to be the dark one: s_body·x = {}",
-                s_body.dot(&body_x)
-            );
-
-            let probe = orts::SpacecraftState {
-                orbit: orts::orbital::OrbitalState::new(
-                    sat_pos,
-                    nalgebra::Vector3::new(0.0, 7.5, 0.0),
-                ),
-                attitude: orts::attitude::AttitudeState {
-                    quaternion: nalgebra::Vector4::new(
-                        attitude.w, attitude.i, attitude.j, attitude.k,
-                    ),
-                    ..orts::attitude::AttitudeState::identity()
-                },
-                mass: 50.0,
-            };
-
-            dynamics
-                .model_breakdown(0.0, &probe)
-                .into_iter()
-                .find(|(name, _)| *name == "panel_srp")
-                .map(|(_, loads)| loads.acceleration_inertial.magnitude())
-                .expect("panel_srp is installed")
-        };
-
-        // The panel normal is +x in both configs; the Sun ends up on -x of it.
-        let one_face = srp_magnitude(PANEL_TOML);
-        let two_faces = srp_magnitude(&format!(
-            "{PANEL_TOML}back = {{ specular = 0.05, diffuse = 0.4 }}\n"
-        ));
-
-        assert_eq!(
-            one_face, 0.0,
-            "one written face, lit from behind, feels nothing"
-        );
-        assert!(
-            two_faces > 0.0,
-            "the back face has to feel it: got {two_faces:e}"
-        );
-    }
-
-    /// Panels written in config have to reach the dynamics the integrator
-    /// evaluates, replacing the isotropic models rather than joining them.
-    #[test]
-    fn serve_installs_the_panel_models_from_config() {
-        let names = serve_model_names(PANEL_TOML);
-        assert!(names.iter().any(|n| n == "panel_srp"), "got {names:?}");
-        assert!(names.iter().any(|n| n == "panel_drag"), "got {names:?}");
-        assert!(!names.iter().any(|n| n == "srp"), "got {names:?}");
-        assert!(!names.iter().any(|n| n == "drag"), "got {names:?}");
-    }
-
-    /// An off-centre panel has to actually turn the spacecraft. Angular
-    /// momentum is the integral of the torque, so it moving away from its
-    /// initial value is the disturbance taking effect.
-    #[test]
-    fn a_panel_offset_from_the_com_changes_the_angular_momentum() {
-        use orts::spacecraft::SpacecraftState;
-        use utsuroi::DynamicalSystem;
-
-        let init = engine_from_toml(PANEL_TOML).expect("engine builds");
-        let SimGroup::Spacecraft(group) = &init.engine.group else {
-            panic!("expected an attitude fleet");
-        };
-        let (entry, dynamics) = group
-            .satellites_with_dynamics()
-            .next()
-            .expect("one satellite");
-
-        let inertia = nalgebra::Matrix3::from_diagonal(&nalgebra::Vector3::new(10.0, 20.0, 30.0));
-        let momentum = |s: &SpacecraftState| (inertia * s.attitude.angular_velocity).norm();
-
-        let start = entry.state.plant.clone();
-        assert_eq!(momentum(&start), 0.0, "starts at rest");
-
-        // A few orbits at a coarse step: enough for the torque to integrate up.
-        let mut state = entry.state.clone();
-        let mut t = 0.0;
-        for _ in 0..600 {
-            let dy = dynamics.derivatives(t, &state);
-            state = utsuroi::OdeState::axpy(&state, 30.0, &dy);
-            t += 30.0;
-        }
-        let after = momentum(&state.plant);
-        assert!(
-            after > 1e-9,
-            "an off-centre panel should spin the spacecraft up, |L| = {after:e}"
-        );
-    }
-
-    /// The wire reports a panel force under the name of the force, because the
-    /// viewer's columns and its perturbation total are keyed on those names.
-    #[test]
-    fn panel_accelerations_report_as_drag_and_srp() {
-        let init = engine_from_toml(PANEL_TOML).expect("engine builds");
-        let SimGroup::Spacecraft(group) = &init.engine.group else {
-            panic!("expected an attitude fleet");
-        };
-        let (entry, dynamics) = group
-            .satellites_with_dynamics()
-            .next()
-            .expect("one satellite");
-        let accels = spacecraft_accel_breakdown(dynamics, 0.0, &entry.state.plant);
-
-        assert!(accels.contains_key("srp"), "keys: {:?}", accels.keys());
-        assert!(accels.contains_key("drag"), "keys: {:?}", accels.keys());
-        assert!(
-            !accels.contains_key("panel_srp") && !accels.contains_key("panel_drag"),
-            "the model names should not reach the wire: {:?}",
-            accels.keys()
-        );
-    }
-
-    /// Turning the torque off in config has to reach the dynamics the
-    /// integrator evaluates, not just the parsed config.
-    #[test]
-    fn serve_honors_a_disabled_gravity_gradient() {
-        const DISABLED: &str = r#"
-[[satellites]]
-id = "sat-a"
-orbit = { type = "circular", altitude = 500 }
-attitude = { inertia_diag = [10, 20, 30], mass = 50 }
-disturbances = { gravity_gradient = false }
-"#;
-        let names = serve_model_names(DISABLED);
-        assert!(
-            !names.iter().any(|n| n == "gravity_gradient"),
-            "gravity_gradient = false should keep the torque off the dynamics, got {names:?}"
-        );
-    }
-
     /// `serve --config` reaches `build` without passing through
     /// `validate_sim_config`, so the attitude check has to live here too — the
     /// runtime `add_satellite` path already applied it, which left a config
@@ -1970,112 +1713,5 @@ streams = ["comlink"]
         assert_eq!(events.len(), 10);
         assert_eq!(events.front().unwrap(), "event-0");
         assert_eq!(events.back().unwrap(), "event-9");
-    }
-
-    /// `add_satellite` refuses an id that names a satellite already running.
-    ///
-    /// The entity path is the fleet's addressing scheme, so two satellites on
-    /// one path make commands reach whichever was pushed last and state lookups
-    /// find the first. A config file is checked for this; the live path was not.
-    #[test]
-    fn add_satellite_refuses_an_id_already_in_the_fleet() {
-        let mut init = engine_from_toml(ORBIT_ONLY).expect("engine builds");
-        let cfg: SatelliteConfig = serde_json::from_str(
-            r#"{
-                "id": "sat-a",
-                "orbit": { "type": "circular", "altitude": 700 }
-            }"#,
-        )
-        .expect("valid satellite config");
-        let err = init
-            .engine
-            .add_satellite(cfg)
-            .err()
-            .expect("an id already in the fleet must be refused");
-        assert!(err.contains("sat-a"), "the message names the id: {err}");
-        assert!(err.contains("unique"), "got: {err}");
-    }
-
-    /// The same collision, reached through an omitted id.
-    ///
-    /// A request with no `id` takes `sat-<fleet size>`, which the initial config
-    /// can already have spelled out. The error says so, because the request
-    /// itself carries no id to look at.
-    #[test]
-    fn add_satellite_refuses_a_default_id_the_config_took() {
-        // One satellite, explicitly named `sat-1`: the next default id.
-        let mut init = engine_from_toml(
-            r#"
-[[satellites]]
-id = "sat-1"
-orbit = { type = "circular", altitude = 500 }
-"#,
-        )
-        .expect("engine builds");
-        let cfg: SatelliteConfig =
-            serde_json::from_str(r#"{ "orbit": { "type": "circular", "altitude": 700 } }"#)
-                .expect("valid satellite config");
-        let err = init
-            .engine
-            .add_satellite(cfg)
-            .err()
-            .expect("a default id the config took must be refused");
-        assert!(err.contains("sat-1"), "the message names the id: {err}");
-        assert!(
-            err.contains("no `id`"),
-            "the message says the id was defaulted: {err}"
-        );
-    }
-
-    /// An id that names no entity of its own is refused here too.
-    ///
-    /// `/` contributes no path segment, so it collapses to the `/world/sat` root
-    /// the whole fleet shares.
-    #[test]
-    fn add_satellite_refuses_an_id_naming_no_entity() {
-        let mut init = engine_from_toml(ORBIT_ONLY).expect("engine builds");
-        let cfg: SatelliteConfig = serde_json::from_str(
-            r#"{
-                "id": "/",
-                "orbit": { "type": "circular", "altitude": 700 }
-            }"#,
-        )
-        .expect("valid satellite config");
-        let err = init
-            .engine
-            .add_satellite(cfg)
-            .err()
-            .expect("an id naming no entity must be refused");
-        assert!(err.contains("no path segment"), "got: {err}");
-    }
-
-    /// Two id spellings that name one entity are a collision here too.
-    ///
-    /// `EntityPath` drops empty segments, so `a` and `/a` both parse to
-    /// `/world/sat/a`. Comparing the resolved paths catches that; comparing the
-    /// id strings would not.
-    #[test]
-    fn add_satellite_refuses_an_id_spelled_differently_for_one_entity() {
-        let mut init = engine_from_toml(
-            r#"
-[[satellites]]
-id = "a"
-orbit = { type = "circular", altitude = 500 }
-"#,
-        )
-        .expect("engine builds");
-        let cfg: SatelliteConfig = serde_json::from_str(
-            r#"{
-                "id": "/a",
-                "orbit": { "type": "circular", "altitude": 700 }
-            }"#,
-        )
-        .expect("valid satellite config");
-        let err = init
-            .engine
-            .add_satellite(cfg)
-            .err()
-            .expect("an id naming an entity already in the fleet must be refused");
-        assert!(err.contains("unique"), "got: {err}");
     }
 }

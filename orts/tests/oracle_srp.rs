@@ -30,12 +30,10 @@ fn point_mass_srp_system(
     with_shadow: bool,
     epoch: Epoch,
 ) -> OrbitalSystem {
-    let srp = SolarRadiationPressure {
-        cr,
-        area_to_mass,
-        shadow_body_radius: if with_shadow { Some(R_EARTH) } else { None },
-        shadow_model: arika::eclipse::ShadowModel::Cylindrical,
-    };
+    let mut srp = SolarRadiationPressure::for_earth(Some(area_to_mass)).with_cr(cr);
+    if !with_shadow {
+        srp = srp.without_shadow();
+    }
     OrbitalSystem::new(MU_EARTH, Box::new(PointMass))
         .with_model(srp)
         .with_epoch(epoch)
@@ -314,12 +312,9 @@ fn srp_energy_work_consistency() {
 
     // Accumulate SRP work: ∫ a_srp · v dt
     use orts::model::Model;
-    let srp_model = SolarRadiationPressure {
-        cr,
-        area_to_mass,
-        shadow_body_radius: None,
-        shadow_model: arika::eclipse::ShadowModel::Cylindrical,
-    };
+    let srp_model = SolarRadiationPressure::for_earth(Some(area_to_mass))
+        .with_cr(cr)
+        .without_shadow();
 
     let mut work_accumulated = 0.0;
 

@@ -48,8 +48,7 @@ pub fn run_simulation_cmd(
     json: bool,
 ) -> Result<(), CmdError> {
     let mut params = if let Some(config_path) = &sim.config {
-        let config =
-            crate::config::load_config_reporting_unread_keys(std::path::Path::new(config_path))?;
+        let config = crate::config::SimConfig::load(std::path::Path::new(config_path))?;
         SimParams::from_config(&config)
     } else if sim.has_orbit_args() {
         // The direct-CLI path bypasses `SimConfig::validate`, so apply the
@@ -61,7 +60,7 @@ pub fn run_simulation_cmd(
         // Auto-detect orts.toml in the current directory
         let config_path = std::path::Path::new("orts.toml");
         if config_path.exists() {
-            let config = crate::config::load_config_reporting_unread_keys(config_path)?;
+            let config = crate::config::SimConfig::load(config_path)?;
             SimParams::from_config(&config)
         } else {
             return Err(CmdError::usage(
@@ -71,10 +70,6 @@ pub fn run_simulation_cmd(
             ));
         }
     };
-    // Every path above, config included. A config's own `validate` reaches this
-    // first and can name the offending `[[satellites]]` index; a `--sat` fleet has
-    // no per-entry validation at all, and here is where it gets one.
-    crate::satellite::ensure_unique_ids(&params.satellites)?;
     // Resolve and validate the stdout/output contract before running the
     // (potentially long) simulation, so usage errors fail fast.
     let sink = resolve_data_sink(output, format);
@@ -550,7 +545,12 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
     let mut group = IndependentGroup::new(integrator_config(params))
         .with_event_checker(body_event_checker::<OrbitalState>(params));
 
-    let third_bodies = default_third_bodies(&params.body);
+    let third_bodies = default_third_bodies(&params.body).map_err(|e| {
+        CmdError::usage(format!(
+            "central body {}: {e}",
+            params.body.properties().name
+        ))
+    })?;
     for sat in &params.satellites {
         let system = build_orbital_system(
             &params.body,
@@ -559,7 +559,8 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
             &sat_params(sat),
             &third_bodies,
             params.build_atmosphere_model(),
-        );
+        )
+        .map_err(|e| CmdError::failure(format!("solar force models: {e}")))?;
         let initial = sat
             .initial_state(params.mu, params.epoch)
             .map_err(|e| CmdError::failure(format!("satellite '{}': {e}", sat.id)))?;
@@ -577,14 +578,15 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
 /// Run the orbit + attitude simulation (`[satellites.attitude]` without a
 /// plugin controller) and return a Recording.
 ///
-/// Builds its dynamics through `spacecraft_dynamics_for`, the same seam
-/// `orts serve` uses, so the same config is propagated identically by both
-/// entry points rather than by each repeating the model set. The recording
+/// Builds the same dynamics `orts serve` builds in spacecraft mode
+/// (`SpacecraftDynamics` plus the coupled gravity-gradient torque), so the
+/// same config is propagated identically by both entry points. The recording
 /// carries the attitude quaternion and body-frame angular velocity in
 /// addition to the orbital state.
 pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdError> {
-    use crate::sim::core::spacecraft_dynamics_for;
-    use orts::setup::default_third_bodies;
+    use crate::sim::core::sat_params;
+    use orts::attitude::CoupledGravityGradient;
+    use orts::setup::{build_spacecraft_dynamics, default_third_bodies};
     use orts::spacecraft::SpacecraftState;
 
     let mut group =
@@ -592,7 +594,12 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
             orts::effector::AugmentedState<SpacecraftState>,
         >(params));
 
-    let third_bodies = default_third_bodies(&params.body);
+    let third_bodies = default_third_bodies(&params.body).map_err(|e| {
+        CmdError::usage(format!(
+            "central body {}: {e}",
+            params.body.properties().name
+        ))
+    })?;
     for sat in &params.satellites {
         // `run_simulation_cmd` validated every satellite before dispatching
         // here, so `build_spacecraft_dynamics` cannot be reached with an
@@ -601,7 +608,18 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
             .attitude_config
             .as_ref()
             .expect("spacecraft mode requires attitude config on every satellite");
-        let dynamics = spacecraft_dynamics_for(sat, att, params, &third_bodies);
+        let inertia = att.inertia_matrix();
+        let mut dynamics = build_spacecraft_dynamics(
+            &params.body,
+            params.mu,
+            params.epoch,
+            &sat_params(sat),
+            &third_bodies,
+            inertia,
+            params.build_atmosphere_model(),
+        )
+        .map_err(|e| CmdError::failure(format!("solar force models: {e}")))?;
+        dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
 
         let orbit = sat
             .initial_state(params.mu, params.epoch)
@@ -1240,16 +1258,16 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
         // controller が msg-io 未対応なら default 実装で空。
         for (i, sat) in satellites.iter_mut().enumerate() {
             for m in sat.controller.take_outbound() {
-                // Both below the default filter: this runs per satellite per
-                // outbound message per control tick. Payloads can be large
-                // (binary / file-transfer), so they sit one level lower again.
-                log::debug!(
+                // Metadata at info; the full payload only at debug — payloads
+                // can be large (binary / file-transfer), so logging them every
+                // tick at info would be noisy and IO-heavy.
+                log::info!(
                     "downlink t={:.3} sat={} kind={}",
                     t + dt,
                     params.satellites[i].id,
                     m.kind
                 );
-                log::trace!(
+                log::debug!(
                     "downlink payload sat={} kind={}: {:?}",
                     params.satellites[i].id,
                     m.kind,

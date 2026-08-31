@@ -149,6 +149,19 @@ section is subdivided by package.
   [force composition](docs/src/assets/srp-flat-panel/force-composition.svg),
   [torque direction](docs/src/assets/srp-flat-panel/torque-direction.svg).
   ([#377](https://github.com/sksat/orts/pull/377))
+- Solar force models take their geometry from the central body. The default
+  third-body Sun and the cannonball SRP both used the geocentric Sun vector and
+  Earth's radius whatever the central body, so from Mars in 2026 the Sun sat up
+  to 176° away from where Mars sees it — SRP pushed the wrong way, 242–311% off
+  as a vector — and the tidal term was scaled by up to 3.8x. `ThirdBodyGravity::
+  sun_from_body` and `SolarRadiationPressure::for_body` take a `KnownBody`;
+  `default_third_bodies` and the two `build_*` builders return `Result`, so a
+  central body with no Sun ephemeris is reported instead of propagated with the
+  Sun in the wrong place. ([#372](https://github.com/sksat/orts/pull/372))
+- Moon-centred propagation includes Earth as a third body, which dominates its
+  third-body environment and was absent. Sun-centred propagation no longer adds
+  the Sun as a third body to its own orbiters.
+  ([#372](https://github.com/sksat/orts/pull/372))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
   products rather than the sum afterwards, so it no longer overflows where its
   result is finite: `q = [0, 1/√2, 1/√2, 0]` with `ω = [1.4e308, 1.4e308, 0]`
@@ -487,6 +500,13 @@ section is subdivided by package.
   includes `v = 0`) comes back as `NaN`s rather than zeros, since zero is a real
   reading for a circular equatorial orbit's angles.
   ([#376](https://github.com/sksat/orts/pull/376))
+- `arika::sun::sun_position_from_body` takes a `KnownBody` and returns
+  `Result`. The existing `sun_direction_from_body` takes the body as a `&str`
+  and answers an unrecognised one with a unit vector along +X — the vernal
+  equinox, which is not where the Sun is from anywhere; Uranus and Neptune reach
+  that branch, since this crate carries Standish elements for Mercury through
+  Saturn only. The new function refuses both those bodies and the
+  Sun-as-central-body case. ([#372](https://github.com/sksat/orts/pull/372))
 - Element-set parsing ([#87](https://github.com/sksat/orts/pull/87)). A shared
   no-alloc `elements::Sgp4Elements` — a *validated* mean-element set (catalog
   number, UTC epoch, six SGP4 mean elements, B\* drag; angles in radians, mean

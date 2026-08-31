@@ -161,9 +161,13 @@ fn system_body_names(params: &SimParams) -> Vec<String> {
 }
 
 /// Return the central body name plus all third-body names for the given central body.
+///
+/// Names textures to fetch, so a central body with no Sun ephemeris contributes
+/// its own name and no third bodies. That body is rejected where the force
+/// models are built; there is nothing to report from a texture list.
 fn body_names_for(body: &arika::body::KnownBody) -> Vec<String> {
     let mut names = vec![body.properties().name.to_lowercase()];
-    for tb in &default_third_bodies(body) {
+    for tb in default_third_bodies(body).unwrap_or_default().iter() {
         // tb.name is like "third_body_sun" → extract the body name after the prefix
         if let Some(name) = tb.name.strip_prefix("third_body_") {
             names.push(name.to_string());
