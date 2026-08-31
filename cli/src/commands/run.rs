@@ -545,15 +545,14 @@ pub fn run_simulation(params: &SimParams) -> Result<Recording, CmdError> {
 /// Run the orbit + attitude simulation (`[satellites.attitude]` without a
 /// plugin controller) and return a Recording.
 ///
-/// Builds the same dynamics `orts serve` builds in spacecraft mode
-/// (`SpacecraftDynamics` plus the coupled gravity-gradient torque), so the
-/// same config is propagated identically by both entry points. The recording
+/// Builds its dynamics through `spacecraft_dynamics_for`, the same seam
+/// `orts serve` uses, so the same config is propagated identically by both
+/// entry points rather than by each repeating the model set. The recording
 /// carries the attitude quaternion and body-frame angular velocity in
 /// addition to the orbital state.
 pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdError> {
-    use crate::sim::core::sat_params;
-    use orts::attitude::CoupledGravityGradient;
-    use orts::setup::{build_spacecraft_dynamics, default_third_bodies};
+    use crate::sim::core::spacecraft_dynamics_for;
+    use orts::setup::default_third_bodies;
     use orts::spacecraft::SpacecraftState;
 
     let mut group =
@@ -570,17 +569,7 @@ pub fn run_spacecraft_simulation(params: &SimParams) -> Result<Recording, CmdErr
             .attitude_config
             .as_ref()
             .expect("spacecraft mode requires attitude config on every satellite");
-        let inertia = att.inertia_matrix();
-        let mut dynamics = build_spacecraft_dynamics(
-            &params.body,
-            params.mu,
-            params.epoch,
-            &sat_params(sat),
-            &third_bodies,
-            inertia,
-            params.build_atmosphere_model(),
-        );
-        dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
+        let dynamics = spacecraft_dynamics_for(sat, att, params, &third_bodies);
 
         let orbit = sat
             .initial_state(params.mu, params.epoch)

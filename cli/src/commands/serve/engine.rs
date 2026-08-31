@@ -34,14 +34,14 @@ use crate::satellite::{SatelliteInfo, SatelliteSpec};
 use crate::sim::controlled::ControlledSatellite;
 use crate::sim::core::{
     AttitudePayload, AttitudeSource, HistoryState, accel_breakdown, make_history_state, sat_params,
-    spacecraft_accel_breakdown,
+    spacecraft_accel_breakdown, spacecraft_dynamics_for,
 };
 use crate::sim::mode::{
     SimMode, ensure_streams_supported, select_sim_mode, unhonored_config_warnings,
     validate_satellite_spec,
 };
 use crate::sim::params::SimParams;
-use orts::setup::{build_orbital_system, build_spacecraft_dynamics, default_third_bodies};
+use orts::setup::{build_orbital_system, default_third_bodies};
 
 use super::compute::state_message;
 use super::history::HistoryBuffer;
@@ -487,16 +487,7 @@ impl ServeEngine {
 
             for spec in &params.satellites {
                 let att = spec.attitude_config.as_ref().unwrap();
-                let inertia = att.inertia_matrix();
-                let dynamics = build_spacecraft_dynamics(
-                    &params.body,
-                    params.mu,
-                    params.epoch,
-                    &sat_params(spec),
-                    &third_bodies,
-                    inertia,
-                    params.build_atmosphere_model(),
-                );
+                let dynamics = spacecraft_dynamics_for(spec, att, &params, &third_bodies);
 
                 let orbit = spec
                     .initial_state(params.mu, params.epoch)
@@ -983,6 +974,11 @@ impl ServeEngine {
                     .to_string(),
             );
         }
+
+        // Field-level validation, as the controlled add path does. Without it
+        // this path held a dynamically-added satellite to a weaker standard
+        // than the same config loaded from a file.
+        satellite.validate()?;
 
         let sat_index = self.metas.len();
         let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
@@ -1513,9 +1509,10 @@ orbit = { type = "circular", altitude = 500 }
 attitude = { inertia_diag = [10, 20, 30], mass = 50 }
 "#;
         let names = serve_model_names(ATTITUDE);
-        assert!(
-            names.iter().any(|n| n == "gravity_gradient"),
-            "attitude satellite should propagate with the gravity-gradient torque, got {names:?}"
+        let count = names.iter().filter(|n| *n == "gravity_gradient").count();
+        assert_eq!(
+            count, 1,
+            "the torque should be installed exactly once, got {names:?}"
         );
     }
 

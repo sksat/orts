@@ -258,6 +258,19 @@ mod tests {
         assert!(system.model_names().contains(&"gravity_gradient"));
     }
 
+    /// Exactly once, not merely present. A caller that added the torque itself
+    /// on top of the builder is how `orts run` came to evaluate it twice.
+    #[test]
+    fn spacecraft_dynamics_installs_gravity_gradient_exactly_once() {
+        let system = earth_dynamics(DisturbanceTorques::default());
+        let count = system
+            .model_names()
+            .iter()
+            .filter(|n| **n == "gravity_gradient")
+            .count();
+        assert_eq!(count, 1, "models: {:?}", system.model_names());
+    }
+
     #[test]
     fn spacecraft_dynamics_omits_a_disabled_gravity_gradient() {
         let system = earth_dynamics(DisturbanceTorques {
