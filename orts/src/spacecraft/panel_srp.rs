@@ -1105,6 +1105,22 @@ mod tests {
             a_mag > 1e-12 && a_mag < 1e-8,
             "GEO SRP should be ~1e-10 km/s², got {a_mag:.3e}"
         );
+
+        // The decade bound above would pass for Cr = 1 or Cr = 2 alike, so hold
+        // the result to the coefficient this panel's optics actually imply. The
+        // panel faces +X and the Sun is near +X at the equinox, so cosθ is close
+        // to 1 but not equal to it — hence the 5% band rather than an equality.
+        let cr_face_on = 1.0 + 0.2 + 2.0 * 0.1 / 3.0;
+        let sun = sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+        let r_sun = (sun - state.orbit.position()).magnitude();
+        let expected = SOLAR_RADIATION_PRESSURE * (sun::AU_KM / r_sun).powi(2) * cr_face_on * 30.0
+            / (2000.0 * 1000.0);
+        let rel_err = (a_mag - expected).abs() / expected;
+        assert!(
+            rel_err < 0.05,
+            "GEO SRP should follow Cr = {cr_face_on:.4}: expected ~{expected:.3e}, \
+             got {a_mag:.3e}, rel_err={rel_err:.3}"
+        );
     }
 
     // Tumbling (time-varying attitude)
@@ -1335,6 +1351,30 @@ mod tests {
                         );
                     }
                 }
+            }
+
+            /// A mirror's force is `-2·P·A·cos²θ·n̂` at every incidence.
+            ///
+            /// `cos_theta_scaling` above uses a black panel, whose reflection
+            /// term is identically zero, so it constrains only the `cosθ`
+            /// projected-area factor. Without this the `cos²θ` specular
+            /// dependence is pinned at a single angle.
+            #[test]
+            fn specular_force_follows_cos_squared(angle in angle_facing_sun()) {
+                let area = 4.0;
+                let panel = SurfacePanel::at_com(area, Vector3::new(1.0, 0.0, 0.0), 2.2)
+                    .with_optics(PanelOptics::new(1.0, 0.0));
+                let s_body = sun_tilted_in_xy(angle);
+
+                let f = panel_force(&panel, &s_body, TEST_PRESSURE);
+                let cos = angle.cos();
+                let expected = -2.0 * TEST_PRESSURE * area * cos * cos * panel.normal;
+
+                let err = (f - expected).magnitude() / expected.magnitude();
+                prop_assert!(
+                    err < 1e-13,
+                    "mirror at angle={angle:.4}: expected {expected:?}, got {f:?}, rel_err={err:.3e}"
+                );
             }
         }
     }
