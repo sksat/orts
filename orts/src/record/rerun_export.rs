@@ -522,16 +522,18 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
             if !checked.insert(time) {
                 continue;
             }
-            // Only a moment that actually repeats can be ambiguous: with one
-            // value per column the ordinal is 0 everywhere, and a column absent
-            // at that moment is simply absent from the row.
-            let x_count = repeats_at(x_col, time);
-            if x_count > 1
-                && present
-                    .iter()
-                    .map(|c| repeats_at(c, time))
-                    .any(|n| n != 0 && n != x_count)
-            {
+            // Every column that has values at this moment must have the same
+            // number of them. A count of zero is a column absent there, which
+            // is simply absent from the row; any other disagreement means the
+            // ordinal points at different samples in different columns. Checked
+            // whichever column repeats — `x` holding one value while `y` holds
+            // two is just as unpairable as the other way round.
+            let counts: Vec<usize> = present
+                .iter()
+                .map(|c| repeats_at(c, time))
+                .filter(|&n| n != 0)
+                .collect();
+            if counts.iter().any(|&n| n != counts[0]) {
                 ambiguous.insert(time);
             }
         }
@@ -765,6 +767,29 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
             })
             .collect();
 
+        // One row-key set for the whole entity. `EntityStore` keeps a single
+        // timeline shared by every component column, so a component that
+        // compacted onto its own surviving times would leave the columns
+        // disagreeing on what row 0 means — a position from one time beside a
+        // velocity from another.
+        //
+        // The keys come from the union of every field's own keys, so a moment
+        // any field records is a row. A component absent at that moment gets
+        // zeros in that row, which is what `ComponentColumn` can express.
+        let row_keys: Vec<RowKey> = {
+            let mut keys: BTreeSet<RowKey> = BTreeSet::new();
+            for field in &field_names {
+                if let Some(col) = get_scalar_data(&scalars, base, field) {
+                    keys.extend(col.keys().copied());
+                }
+            }
+            keys.into_iter().collect()
+        };
+        let entity_times: Vec<TimeIndex> = row_keys
+            .iter()
+            .map(|k| TimeIndex::Seconds(k.t_secs()))
+            .collect();
+
         if let Some(schema) = schema {
             // Schema-based reconstruction: group fields into components
             for entry in &schema {
@@ -810,48 +835,29 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
                         continue;
                     }
 
-                    // Rows come from the recording's time index, not from a
+                    // Rows come from the entity's shared key set, not from a
                     // field's position in its own column: a field present at
                     // only some of the times would otherwise put its values on
                     // earlier rows. Same join as `load_rrd_data`.
-                    let Some(first_data) = get_scalar_data(&scalars, base, &fields[0]) else {
-                        continue;
-                    };
-
                     let mut column = ComponentColumn::new(n_fields);
-                    let mut times: Vec<TimeIndex> = Vec::new();
-
-                    for &key in first_data.keys() {
+                    for &key in &row_keys {
                         let mut row = Vec::with_capacity(n_fields);
-                        let mut whole = true;
                         for field in &fields {
-                            match get_scalar_data(&scalars, base, field)
-                                .and_then(|col| col.get(&key).copied())
-                            {
-                                Some(v) => row.push(v),
-                                // A component is all of its fields or none of
-                                // them: a partial row would report a position
-                                // with a zeroed axis.
-                                None => {
-                                    whole = false;
-                                    break;
-                                }
-                            }
-                        }
-                        if !whole {
-                            continue;
+                            row.push(
+                                get_scalar_data(&scalars, base, field)
+                                    .and_then(|col| col.get(&key).copied())
+                                    .unwrap_or(0.0),
+                            );
                         }
                         column.push(&row);
-                        times.push(TimeIndex::Seconds(key.t_secs()));
                     }
 
-                    let n_rows = times.len();
                     let store = rec.entity_mut(&entity);
                     store
                         .timelines
                         .entry(TimelineName::SimTime)
-                        .or_insert(times);
-                    store.num_rows = n_rows;
+                        .or_insert_with(|| entity_times.clone());
+                    store.num_rows = row_keys.len();
 
                     let comp_name: Cow<'static, str> = Cow::Owned(comp_name_str.to_string());
                     store.columns.insert(comp_name.clone(), column);
@@ -879,41 +885,26 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
 
             for &(comp_name_str, comp_fields) in known {
                 if comp_fields.iter().all(|f| field_set.contains(f)) {
-                    let Some(first_data) = get_scalar_data(&scalars, base, comp_fields[0]) else {
-                        continue;
-                    };
                     let n_fields = comp_fields.len();
                     let mut column = ComponentColumn::new(n_fields);
-                    let mut times: Vec<TimeIndex> = Vec::new();
-
-                    for &key in first_data.keys() {
+                    for &key in &row_keys {
                         let mut row = Vec::with_capacity(n_fields);
-                        let mut whole = true;
                         for field in comp_fields {
-                            match get_scalar_data(&scalars, base, field)
-                                .and_then(|col| col.get(&key).copied())
-                            {
-                                Some(v) => row.push(v),
-                                None => {
-                                    whole = false;
-                                    break;
-                                }
-                            }
-                        }
-                        if !whole {
-                            continue;
+                            row.push(
+                                get_scalar_data(&scalars, base, field)
+                                    .and_then(|col| col.get(&key).copied())
+                                    .unwrap_or(0.0),
+                            );
                         }
                         column.push(&row);
-                        times.push(TimeIndex::Seconds(key.t_secs()));
                     }
-                    let n_rows = times.len();
 
                     let store = rec.entity_mut(&entity);
                     store
                         .timelines
                         .entry(TimelineName::SimTime)
-                        .or_insert(times);
-                    store.num_rows = n_rows.max(store.num_rows);
+                        .or_insert_with(|| entity_times.clone());
+                    store.num_rows = row_keys.len().max(store.num_rows);
 
                     let comp_name: Cow<'static, str> = Cow::Owned(comp_name_str.to_string());
                     store.columns.insert(comp_name.clone(), column);
@@ -1604,8 +1595,11 @@ mod tests {
     /// `Position3D` came back as `[100.0, 201.0, 0.0]`, pairing the t=0 `x` with
     /// the t=10 `y`.
     ///
-    /// A component is all of its fields or none of them, so the t=0 row is
-    /// dropped rather than reported with a zeroed axis.
+    /// Every moment any field records is a row, because `EntityStore` keeps one
+    /// timeline for all of an entity's columns: dropping a row from one
+    /// component would leave the columns disagreeing on what row 0 means. A
+    /// field absent at a moment reads as zero there, which is what
+    /// `ComponentColumn` can express.
     #[test]
     fn load_as_recording_joins_a_sparse_column_by_time() {
         let dir = std::env::temp_dir().join(format!(
@@ -1651,12 +1645,124 @@ mod tests {
             .map(|(_, col)| col)
             .expect("a position column");
 
-        assert_eq!(store.num_rows, 1, "only t=10 has a whole position");
-        let row = column.get_row(0).expect("the one row");
+        assert_eq!(store.num_rows, 2, "both t=0 and t=10 are recorded moments");
         assert_eq!(
-            row,
-            &[110.0, 201.0, 0.0],
-            "the row must be one time's values, not a mix"
+            store.timelines.get(&TimelineName::SimTime),
+            Some(&vec![TimeIndex::Seconds(0.0), TimeIndex::Seconds(10.0)]),
+            "the timeline must cover the same moments as the columns"
         );
+        // Each row is one moment's values. Before the fix, row 0 read
+        // `[100.0, 201.0, 0.0]`: the t=0 `x` beside the t=10 `y`.
+        assert_eq!(
+            column.get_row(0).expect("row 0"),
+            &[100.0, 0.0, 0.0],
+            "t=0 recorded no y, so it reads zero rather than t=10's value"
+        );
+        assert_eq!(
+            column.get_row(1).expect("row 1"),
+            &[110.0, 201.0, 0.0],
+            "t=10 recorded all three"
+        );
+    }
+
+    /// Every component column lines up with the entity's one timeline.
+    ///
+    /// `EntityStore` keeps a single timeline shared by all of an entity's
+    /// columns, so a component that compacted onto its own surviving times left
+    /// the columns disagreeing on what a row means. Measured with position
+    /// whole only at t=10 and velocity at both: the timeline came back as
+    /// `[10.0]` while `num_rows` was 2, and row 0 held the t=10 position beside
+    /// the t=0 velocity.
+    #[test]
+    fn every_component_column_matches_the_entity_timeline() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_tl_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("mixed.rrd");
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-timeline-test")
+                .save(&path)
+                .expect("recording stream");
+            for (t, fields) in [
+                // t=0: velocity whole, position missing y.
+                (
+                    0.0f64,
+                    vec![
+                        ("x", 100.0f64),
+                        ("z", 0.0),
+                        ("vx", 1.0),
+                        ("vy", 2.0),
+                        ("vz", 3.0),
+                    ],
+                ),
+                // t=10: both whole.
+                (
+                    10.0,
+                    vec![
+                        ("x", 110.0),
+                        ("y", 201.0),
+                        ("z", 0.0),
+                        ("vx", 4.0),
+                        ("vy", 5.0),
+                        ("vz", 6.0),
+                    ],
+                ),
+            ] {
+                rec.set_duration_secs("sim_time", t);
+                for (field, value) in fields {
+                    rec.log(
+                        format!("/world/sat/loader/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new([value]),
+                    )
+                    .expect("log");
+                }
+            }
+            rec.flush_blocking().expect("flush");
+        }
+
+        let loaded = load_as_recording(path.to_str().unwrap()).expect("load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let entity = loaded.entity_paths().next().cloned().expect("one entity");
+        let store = loaded.entity(&entity).expect("entity");
+
+        let times = store
+            .timelines
+            .get(&TimelineName::SimTime)
+            .expect("a sim_time timeline");
+        assert_eq!(times.len(), store.num_rows, "timeline and rows must agree");
+        assert_eq!(
+            times,
+            &vec![TimeIndex::Seconds(0.0), TimeIndex::Seconds(10.0)]
+        );
+
+        // Row 1 is t=10 in every column: position and velocity from the same
+        // moment, which is what the shared timeline promises.
+        for (name, col) in &store.columns {
+            assert_eq!(
+                col.num_rows(),
+                store.num_rows,
+                "{name} has {} rows, entity has {}",
+                col.num_rows(),
+                store.num_rows
+            );
+        }
+        let position = store
+            .columns
+            .iter()
+            .find(|(name, _)| name.contains("Position3D"))
+            .map(|(_, c)| c)
+            .expect("a position column");
+        let velocity = store
+            .columns
+            .iter()
+            .find(|(name, _)| name.contains("Velocity3D"))
+            .map(|(_, c)| c)
+            .expect("a velocity column");
+        assert_eq!(position.get_row(1).expect("row 1"), &[110.0, 201.0, 0.0]);
+        assert_eq!(velocity.get_row(1).expect("row 1"), &[4.0, 5.0, 6.0]);
     }
 }

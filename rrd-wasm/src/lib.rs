@@ -366,16 +366,18 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
             if !checked.insert(time) {
                 continue;
             }
-            // Only a moment that actually repeats can be ambiguous: with one
-            // value per column the ordinal is 0 everywhere, and a column absent
-            // at that moment is simply absent from the row.
-            let x_count = repeats_at(x_col, time);
-            if x_count > 1
-                && present
-                    .iter()
-                    .map(|c| repeats_at(c, time))
-                    .any(|n| n != 0 && n != x_count)
-            {
+            // Every column that has values at this moment must have the same
+            // number of them. A count of zero is a column absent there, which
+            // is simply absent from the row; any other disagreement means the
+            // ordinal points at different samples in different columns. Checked
+            // whichever column repeats — `x` holding one value while `y` holds
+            // two is just as unpairable as the other way round.
+            let counts: Vec<usize> = present
+                .iter()
+                .map(|c| repeats_at(c, time))
+                .filter(|&n| n != 0)
+                .collect();
+            if counts.iter().any(|&n| n != counts[0]) {
                 ambiguous.insert(time);
             }
         }

@@ -46,9 +46,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `load_rrd_data` は `orts replay` と `orts serve` の history 読み戻し、
   `load_as_recording` は `orts convert` が通る。後者では疎な列が 2 つの時刻の値の
   混合として CSV に出ていた (`Position3D` が `[100.0, 201.0, 0.0]` になり、ある時刻の
-  `x` と別の時刻の `y` が組になっていた)。component は全 field が揃うか揃わないかの
-  どちらかなので、揃わない行はゼロを入れた軸として報告せず落とす。この PR が直す
-  ブラウザ側の decoder と同じ欠陥で、3 つは独立に decode するため 3 つとも抱えていた。
+  `x` と別の時刻の `y` が組になっていた)。こちらはどれかの field が記録した時刻すべてが
+  行になる。`EntityStore` は entity の全列で 1 つの timeline を共有するため。ある時刻に
+  無い field はゼロを読み、別の時刻の値を借りることはない。この PR が直すブラウザ側の
+  decoder と同じ欠陥で、3 つは独立に decode するため 3 つとも抱えていた。
   ([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
   ようになった。結果が有限な入力で overflow しなくなる: `q = [0, 1/√2, 1/√2, 0]`、
