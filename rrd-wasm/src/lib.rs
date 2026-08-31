@@ -65,19 +65,18 @@ pub struct ParsedRrd {
 /// and the n-th repeat of one field joins the n-th repeat of the others.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum RowKey {
-    /// A recording time index: `sim_time` \[ns\] and the `step` sequence number,
-    /// each present only when the recording has that timeline. Ordered by time
-    /// first, so rows without a `sim_time` all report `t = 0` but stay in step
-    /// order.
+    /// A recording time index: `sim_time` \[ns\], the `step` sequence number,
+    /// and the value on the recording's own named axis, each present only when
+    /// the recording carries that timeline. Held in separate slots, so a
+    /// `frame` of 1 is never the `step` 1 of a recording that has both. Ordered
+    /// by time first, so rows without a `sim_time` all report `t = 0` but stay
+    /// in step order.
     Timed {
         time_ns: Option<i64>,
         step: Option<i64>,
+        axis: Option<i64>,
         repeat: u32,
     },
-    /// A recording indexed by a timeline of its own naming: the value the row
-    /// sits at on that axis. Apart from `Timed` so that a `frame` of 1 is never
-    /// the `step` 1 of a recording that carries both.
-    Axis { value: i64, repeat: u32 },
     /// Neither timeline is present: fall back to the column-local index. Rows
     /// keyed this way carry no time information and all report `t = 0`.
     Index(usize),
@@ -90,7 +89,7 @@ impl RowKey {
             RowKey::Timed {
                 time_ns: Some(ns), ..
             } => ns as f64 / 1e9,
-            RowKey::Timed { time_ns: None, .. } | RowKey::Axis { .. } | RowKey::Index(_) => 0.0,
+            RowKey::Timed { time_ns: None, .. } | RowKey::Index(_) => 0.0,
         }
     }
 
@@ -98,12 +97,17 @@ impl RowKey {
     /// and comes back unchanged.
     fn at_repeat(self, repeat: u32) -> RowKey {
         match self {
-            RowKey::Timed { time_ns, step, .. } => RowKey::Timed {
+            RowKey::Timed {
                 time_ns,
                 step,
+                axis,
+                ..
+            } => RowKey::Timed {
+                time_ns,
+                step,
+                axis,
                 repeat,
             },
-            RowKey::Axis { value, .. } => RowKey::Axis { value, repeat },
             RowKey::Index(_) => self,
         }
     }
@@ -140,13 +144,6 @@ fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<Chun
     };
     let sim_time = timeline("sim_time");
     let step = timeline("step");
-    if sim_time.is_some() || step.is_some() {
-        return Some(ChunkKeys {
-            sim_time,
-            step,
-            axis: None,
-        });
-    }
 
     let mut named: Vec<_> = chunk
         .timelines()
@@ -157,36 +154,43 @@ fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<Chun
     // from run to run.
     named.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
 
-    let on = |times: Vec<i64>| {
+    // More axes than the key can hold: nothing here says which of them makes a
+    // row, and guessing is the mis-join this decode removes.
+    if named.len() > 1 {
+        return None;
+    }
+
+    let keys = |axis: Option<Vec<i64>>| {
         Some(ChunkKeys {
-            sim_time: None,
-            step: None,
-            axis: Some(times),
-        })
-    };
-    // A chunk carrying no timeline of its own either: its keys come from the
-    // column-local position, which never joins with a timed key.
-    let untimed = || {
-        Some(ChunkKeys {
-            sim_time: None,
-            step: None,
-            axis: None,
+            sim_time: sim_time.clone(),
+            step: step.clone(),
+            axis,
         })
     };
 
-    match axis {
-        None => match named.first() {
-            Some((name, col)) => {
-                *axis = Some(name.as_str().to_string());
-                on(col.times_raw().to_vec())
+    match (&axis, named.first()) {
+        // The recording's axis, settled by the first chunk to carry one.
+        (None, Some((name, col))) => {
+            let times = col.times_raw().to_vec();
+            *axis = Some(name.as_str().to_string());
+            keys(Some(times))
+        }
+        (Some(chosen), Some((name, col))) if name.as_str() == chosen.as_str() => {
+            keys(Some(col.times_raw().to_vec()))
+        }
+        // An axis that is not the recording's. A chunk that also carries
+        // `sim_time` or `step` still has a place among the rows; one that does
+        // not has nothing to place it by.
+        (Some(_), Some(_)) => {
+            if sim_time.is_some() || step.is_some() {
+                keys(None)
+            } else {
+                None
             }
-            None => untimed(),
-        },
-        Some(chosen) => match named.iter().find(|(name, _)| name.as_str() == chosen) {
-            Some((_, col)) => on(col.times_raw().to_vec()),
-            None if named.is_empty() => untimed(),
-            None => None,
-        },
+        }
+        // No axis of its own: the two names above place the row, or its
+        // column-local position does, which never joins with a timed key.
+        (_, None) => keys(None),
     }
 }
 
@@ -226,9 +230,8 @@ enum RowIndex {
     Timed {
         time_ns: Option<i64>,
         step: Option<i64>,
+        axis: Option<i64>,
     },
-    /// The row sits at this value on the recording's own named axis.
-    Axis(i64),
     /// The chunk carries no timeline; keys come from the column-local position.
     Untimed,
     /// A timeline the chunk does carry has no value for this row — skip it.
@@ -237,20 +240,18 @@ enum RowIndex {
 
 impl ChunkKeys {
     fn row(&self, row_idx: usize) -> RowIndex {
-        if let Some(axis) = &self.axis {
-            return match axis.get(row_idx) {
-                Some(&value) => RowIndex::Axis(value),
-                None => RowIndex::Missing,
-            };
-        }
         // A timeline the chunk carries must have a value for this row.
         let index = |times: &Option<Vec<i64>>| match times {
             Some(times) => times.get(row_idx).copied().map(Some).ok_or(()),
             None => Ok(None),
         };
-        match (index(&self.sim_time), index(&self.step)) {
-            (Ok(None), Ok(None)) => RowIndex::Untimed,
-            (Ok(time_ns), Ok(step)) => RowIndex::Timed { time_ns, step },
+        match (index(&self.sim_time), index(&self.step), index(&self.axis)) {
+            (Ok(None), Ok(None), Ok(None)) => RowIndex::Untimed,
+            (Ok(time_ns), Ok(step), Ok(axis)) => RowIndex::Timed {
+                time_ns,
+                step,
+                axis,
+            },
             _ => RowIndex::Missing,
         }
     }
@@ -340,12 +341,16 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
                         continue;
                     };
                     let moment = match keys.row(row_idx) {
-                        RowIndex::Timed { time_ns, step } => Some(RowKey::Timed {
+                        RowIndex::Timed {
                             time_ns,
                             step,
+                            axis,
+                        } => Some(RowKey::Timed {
+                            time_ns,
+                            step,
+                            axis,
                             repeat: 0,
                         }),
-                        RowIndex::Axis(value) => Some(RowKey::Axis { value, repeat: 0 }),
                         RowIndex::Untimed => None,
                         RowIndex::Missing => continue,
                     };
@@ -1037,6 +1042,34 @@ mod tests {
             parsed.rows.is_empty(),
             "neither the step nor the frame carries a whole position: {:?}",
             parsed.rows
+        );
+    }
+
+    /// An axis beside `sim_time` is part of what identifies a row.
+    ///
+    /// A chunk carrying `sim_time` had its other axis dropped from the key, so
+    /// rows sharing a `sim_time` but sitting at different `frame`s became
+    /// repeats of one moment and paired by arrival order: the frame-1 `x` came
+    /// back beside the frame-2 `y`. Only frame 2 is whole, so it is the one row.
+    #[test]
+    fn an_axis_beside_sim_time_identifies_the_row() {
+        let parsed = decode_written(|rec| {
+            rec.set_duration_secs("sim_time", 0.0);
+            for (frame, x) in [(1i64, 100.0f64), (2, 110.0)] {
+                rec.set_time_sequence("frame", frame);
+                log_scalars(rec, &[("x", x)]);
+            }
+            for (frame, v) in [(2i64, 201.0f64), (3, 202.0)] {
+                rec.set_time_sequence("frame", frame);
+                log_scalars(rec, &[("y", v), ("z", v)]);
+            }
+        });
+        assert_eq!(parsed.rows.len(), 1, "{:?}", parsed.rows);
+        let row = &parsed.rows[0];
+        assert_eq!(
+            (row.x, row.y, row.z),
+            (110.0, 201.0, 201.0),
+            "every axis of the row must be frame 2's"
         );
     }
 }
