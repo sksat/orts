@@ -523,8 +523,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   (recording が velocity 列を持つ場合は velocity 3 成分も) がその時刻に揃ったときで、
   揃わない行はゼロ埋めせず落とす。`orts run --format rrd` は 1 回の run のすべての
   step で同じ component を logging するので、その出力のデコード結果は以前と同じ。疎な
-  列がこの結合に入るのは、外部で書かれた `.rrd` と、attitude が state ごとに optional な
-  `orts serve` の history segment。独自の名前の timeline で index された recording も、
+  列がこの結合に入るのは、外部で書かれた `.rrd`。`orts serve` の history segment は
+  attitude が state ごとに optional なので疎になりうるが、`save_as_rrd` が component の
+  row `i` を entity の timeline の row `i` に書くため、遅れて始まる attitude はファイルの
+  時点で既に誤った時刻にある。こちらは writer の修正が先に必要。独自の名前の timeline で index された recording も、
   列の位置に落ちるのでなくその timeline で結合する (`sim_time` と `step` 以外はすべて
   列の位置になっていた)。その名前は recording 全体で 1 つで、`step` とも区別する。
   2 つの軸で値が一致しても同じ行には載らない。([#366](https://github.com/sksat/orts/pull/366))

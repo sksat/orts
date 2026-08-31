@@ -583,8 +583,11 @@ section is subdivided by package.
   one — is present at that time; an incomplete row is dropped rather than padded
   with zeros. `orts run --format rrd` logs the same components at every step of a
   run, so its output decodes to the same values as before; a sparse column
-  reaches this join from `.rrd` files written elsewhere and from `orts serve`
-  history segments, whose attitude is optional per state. A recording indexed by
+  reaches this join from `.rrd` files written elsewhere. `orts serve` history
+  segments can hold one, their attitude being optional per state, but
+  `save_as_rrd` writes a component's row `i` at the entity's timeline row `i`,
+  so a late-starting attitude is already at the wrong time in the file: that
+  needs the writer fixed first. A recording indexed by
   a timeline of its own naming joins on that timeline too, rather than falling
   back to column position as it did for every name but `sim_time` and `step`; one
   such name serves the whole recording, and it is kept apart from `step`, so

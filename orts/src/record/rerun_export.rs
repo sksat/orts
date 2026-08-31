@@ -339,8 +339,6 @@ fn chunk_keys(chunk: &re_chunk::Chunk, axis: &mut Option<String>) -> Option<Chun
 /// One decoded scalar field: its value at each time index of the recording.
 type Column = BTreeMap<RowKey, f64>;
 
-/// The non-repeat part of a [`RowKey::Timed`]: one moment on the recording's
-/// timelines.
 /// One moment of a recording: a [`RowKey`] with its repeat number cleared, so
 /// that every value logged at that moment ranges within it.
 type Moment = RowKey;
