@@ -208,6 +208,91 @@ pub struct RrdData {
 }
 
 /// Load orbital data and metadata from an .rrd file.
+/// Where one scalar value sits on the recording's timelines.
+///
+/// Ordered by time first, so a recording whose chunks carry no `sim_time` still
+/// yields rows in `step` order.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum RowKey {
+    /// A recording time index: `sim_time` \[ns\] and the `step` sequence
+    /// number, each present only when the recording has that timeline.
+    Timed {
+        time_ns: Option<i64>,
+        step: Option<i64>,
+        repeat: u32,
+    },
+    /// Neither timeline is present: fall back to the column-local index. Rows
+    /// keyed this way carry no time information and all report `t = 0`.
+    Index(usize),
+}
+
+impl RowKey {
+    /// Simulation time of this row \[s\], or 0 when the recording carries none.
+    fn t_secs(self) -> f64 {
+        match self {
+            RowKey::Timed {
+                time_ns: Some(ns), ..
+            } => ns as f64 / 1e9,
+            RowKey::Timed { time_ns: None, .. } | RowKey::Index(_) => 0.0,
+        }
+    }
+}
+
+/// One decoded scalar field: its value at each time index of the recording.
+type Column = BTreeMap<RowKey, f64>;
+
+/// How many values `column` already holds at one time index. `key` builds the
+/// key for the n-th repeat at that time, so the count is the next free slot.
+fn repeats(column: &Column, key: impl Fn(u32) -> RowKey) -> u32 {
+    column.range(key(0)..=key(u32::MAX)).count() as u32
+}
+
+/// Time index of every row in one chunk, per timeline the chunk carries.
+struct ChunkKeys {
+    sim_time: Option<Vec<i64>>,
+    step: Option<Vec<i64>>,
+}
+
+/// Where one chunk row sits on the recording's timelines.
+#[derive(Clone, Copy)]
+enum RowIndex {
+    /// The chunk's timelines place the row at this time index.
+    Timed {
+        time_ns: Option<i64>,
+        step: Option<i64>,
+    },
+    /// The chunk carries no timeline; keys come from the column-local position.
+    Untimed,
+    /// A timeline the chunk does carry has no value for this row — skip it.
+    Missing,
+}
+
+impl ChunkKeys {
+    fn row(&self, row_idx: usize) -> RowIndex {
+        // A timeline the chunk carries must have a value for this row.
+        let index = |times: &Option<Vec<i64>>| match times {
+            Some(times) => times.get(row_idx).copied().map(Some).ok_or(()),
+            None => Ok(None),
+        };
+        match (index(&self.sim_time), index(&self.step)) {
+            (Ok(None), Ok(None)) => RowIndex::Untimed,
+            (Ok(time_ns), Ok(step)) => RowIndex::Timed { time_ns, step },
+            _ => RowIndex::Missing,
+        }
+    }
+}
+
+// Columns are joined on the recording's time index, so a component logged at
+// only some of the time steps never shifts the remaining components onto the
+// wrong row. A row is emitted only when the whole position triple — and, when
+// the recording has velocity columns, the whole velocity triple — is present at
+// that exact time; incomplete rows are dropped rather than padded with zeros.
+//
+// That guarantee needs a time index to join on, which every recording orts
+// writes carries (`sim_time`, `step`, or both). A chunk with neither timeline
+// has no join key available, so its values are keyed by position within their
+// own column — the arrangement this join replaced, and one a sparse column
+// still shifts. Such a recording does not come from orts.
 pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> {
     use re_chunk::Chunk;
     use re_log_encoding::DecoderApp;
@@ -216,8 +301,8 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
     let file = std::fs::File::open(path)?;
     let reader = std::io::BufReader::new(file);
 
-    // Collect f64 scalars: entity_path -> Vec<(time_ns, f64)>
-    let mut scalars: BTreeMap<String, Vec<(i64, f64)>> = BTreeMap::new();
+    // Collect f64 scalars: entity_path -> (time index -> value)
+    let mut scalars: BTreeMap<String, Column> = BTreeMap::new();
     // Collect metadata scalars: entity_path -> f64 (static/timeless)
     let mut meta_scalars: BTreeMap<String, f64> = BTreeMap::new();
     // Collect text metadata
@@ -266,29 +351,57 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
             continue;
         }
 
-        let sim_time_col = chunk
-            .timelines()
-            .iter()
-            .find(|(name, _)| name.as_str() == "sim_time");
-        let times: Vec<i64> = if let Some((_, col)) = sim_time_col {
-            col.times_raw().to_vec()
-        } else {
-            vec![0; n]
+        let timeline = |wanted: &str| {
+            chunk
+                .timelines()
+                .iter()
+                .find(|(name, _)| name.as_str() == wanted)
+                .map(|(_, col)| col.times_raw().to_vec())
+        };
+        let keys = ChunkKeys {
+            sim_time: timeline("sim_time"),
+            step: timeline("step"),
         };
 
         for comp_id in chunk.components_identifiers() {
             let comp_name = comp_id.as_str();
             if comp_name.contains("Scalar") || comp_name.contains("scalars") {
-                for (row_idx, &t) in times.iter().enumerate() {
+                let column = scalars.entry(entity_path.clone()).or_default();
+                for row_idx in 0..n {
                     let batch =
                         chunk.component_batch::<re_sdk_types::components::Scalar>(comp_id, row_idx);
-                    if let Some(Ok(scalar_vec)) = batch {
-                        for s in scalar_vec {
-                            scalars
-                                .entry(entity_path.clone())
-                                .or_default()
-                                .push((t, s.0.0));
-                        }
+                    let Some(Ok(scalar_vec)) = batch else {
+                        continue;
+                    };
+                    let timed = match keys.row(row_idx) {
+                        RowIndex::Timed { time_ns, step } => Some((time_ns, step)),
+                        RowIndex::Untimed => None,
+                        RowIndex::Missing => continue,
+                    };
+                    // A batch usually holds one value per row, but `Scalars`
+                    // takes a slice: several values at one time index become
+                    // consecutive repeats rather than being dropped.
+                    let mut next_repeat = timed.map_or(0, |(time_ns, step)| {
+                        repeats(column, |repeat| RowKey::Timed {
+                            time_ns,
+                            step,
+                            repeat,
+                        })
+                    });
+                    for value in scalar_vec.iter() {
+                        let key = match timed {
+                            Some((time_ns, step)) => {
+                                let key = RowKey::Timed {
+                                    time_ns,
+                                    step,
+                                    repeat: next_repeat,
+                                };
+                                next_repeat += 1;
+                                key
+                            }
+                            None => RowKey::Index(column.len()),
+                        };
+                        column.insert(key, value.0.0);
                     }
                 }
             }
@@ -323,50 +436,55 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
 
     let mut rows: Vec<RrdRow> = Vec::new();
     for base in &base_paths {
-        let x_data = scalars.get(&format!("{base}/x"));
-        let y_data = scalars.get(&format!("{base}/y"));
-        let z_data = scalars.get(&format!("{base}/z"));
-        let vx_data = scalars.get(&format!("{base}/vx"));
-        let vy_data = scalars.get(&format!("{base}/vy"));
-        let vz_data = scalars.get(&format!("{base}/vz"));
+        let column = |field: &str| scalars.get(&format!("{base}/{field}"));
+        // Value of one field at one time index, or `None` when the recording
+        // has no such column or no value there.
+        let at = |col: Option<&Column>, key: RowKey| col?.get(&key).copied();
 
-        // Use x as the reference for row count and time
-        let Some(x_data) = x_data else { continue };
+        // A row is a position, so the whole triple has to be there.
+        let Some(x_col) = column("x") else { continue };
+        let pos_cols = (Some(x_col), column("y"), column("z"));
+        let vel_cols = (column("vx"), column("vy"), column("vz"));
+        let quat_cols = (column("qw"), column("qx"), column("qy"), column("qz"));
+        let omega_cols = (column("wx"), column("wy"), column("wz"));
 
-        // Attitude components (optional)
-        let qw_data = scalars.get(&format!("{base}/qw"));
-        let qx_data = scalars.get(&format!("{base}/qx"));
-        let qy_data = scalars.get(&format!("{base}/qy"));
-        let qz_data = scalars.get(&format!("{base}/qz"));
-        let wx_data = scalars.get(&format!("{base}/wx"));
-        let wy_data = scalars.get(&format!("{base}/wy"));
-        let wz_data = scalars.get(&format!("{base}/wz"));
+        // A recording with no velocity column at all is position-only; one that
+        // has velocity columns must supply all three at a time for the row to
+        // be a state vector.
+        let has_velocity = vel_cols.0.is_some() || vel_cols.1.is_some() || vel_cols.2.is_some();
 
-        for (i, (t_ns, x)) in x_data.iter().enumerate() {
-            let t_sec = *t_ns as f64 / 1e9;
+        for &key in x_col.keys() {
+            let triple = |cols: (Option<&Column>, Option<&Column>, Option<&Column>)| {
+                Some([at(cols.0, key)?, at(cols.1, key)?, at(cols.2, key)?])
+            };
 
-            let quaternion = qw_data.and_then(|qw| {
-                let qw = qw.get(i)?.1;
-                let qx = qx_data?.get(i)?.1;
-                let qy = qy_data?.get(i)?.1;
-                let qz = qz_data?.get(i)?.1;
-                Some([qw, qx, qy, qz])
-            });
-            let angular_velocity = wx_data.and_then(|wx| {
-                let wx = wx.get(i)?.1;
-                let wy = wy_data?.get(i)?.1;
-                let wz = wz_data?.get(i)?.1;
-                Some([wx, wy, wz])
-            });
+            let Some([x, y, z]) = triple(pos_cols) else {
+                continue;
+            };
+            let velocity = triple(vel_cols);
+            if has_velocity && velocity.is_none() {
+                continue;
+            }
+            let [vx, vy, vz] = velocity.unwrap_or([0.0; 3]);
+
+            let quaternion = (|| {
+                Some([
+                    at(quat_cols.0, key)?,
+                    at(quat_cols.1, key)?,
+                    at(quat_cols.2, key)?,
+                    at(quat_cols.3, key)?,
+                ])
+            })();
+            let angular_velocity = triple(omega_cols);
 
             rows.push(RrdRow {
-                t: t_sec,
-                x: *x,
-                y: y_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
-                z: z_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
-                vx: vx_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
-                vy: vy_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
-                vz: vz_data.and_then(|v| v.get(i)).map(|v| v.1).unwrap_or(0.0),
+                t: key.t_secs(),
+                x,
+                y,
+                z,
+                vx,
+                vy,
+                vz,
                 entity_path: Some(base.clone()),
                 quaternion,
                 angular_velocity,
@@ -694,7 +812,9 @@ fn to_rerun_path(path: &EntityPath) -> String {
 mod tests {
     use super::*;
     use crate::record::archetypes::OrbitalState;
-    use crate::record::components::{BodyRadius, GravitationalParameter};
+    use crate::record::components::{
+        BodyRadius, GravitationalParameter, Position3D, Quaternion4D, Velocity3D,
+    };
     use crate::record::timeline::TimePoint;
     use nalgebra::Vector3;
 
@@ -1094,5 +1214,170 @@ mod tests {
         assert!(metadata.len() > 0);
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Write an .rrd with `write`, then load it back.
+    ///
+    /// Writes through `re_sdk` directly rather than through [`save_as_rrd`],
+    /// because that is the only way to put a sparse column in the file:
+    /// `ComponentColumn` carries no timeline row, so `save_as_rrd` writes a
+    /// component that is present at only some steps at the wrong times. What
+    /// is under test here is the loader, so the file it reads has to be right.
+    ///
+    /// The recording lives in a directory of its own, removed when the call
+    /// returns, so tests running in parallel cannot meet on one path.
+    fn load_written(write: impl FnOnce(&re_sdk::RecordingStream)) -> Vec<RrdRow> {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_rrd_load_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("test.rrd");
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-loader-test")
+                .save(&path)
+                .expect("recording stream");
+            write(&rec);
+            rec.flush_blocking().expect("flush");
+        }
+        let rows = load_from_rrd(path.to_str().unwrap()).expect("failed to load .rrd");
+        std::fs::remove_dir_all(&dir).ok();
+        rows
+    }
+
+    /// Log one scalar per named field at the stream's current time.
+    fn log_fields(rec: &re_sdk::RecordingStream, fields: &[(&str, f64)]) {
+        for (field, value) in fields {
+            rec.log(
+                format!("/world/sat/loader/{field}"),
+                &re_sdk_types::archetypes::Scalars::new([*value]),
+            )
+            .expect("log scalar");
+        }
+    }
+
+    /// A column present at only some of the times does not shift its values
+    /// onto earlier rows.
+    ///
+    /// The loader read every column at the position `x` happened to be at, so a
+    /// `y` present only at t=10 landed on the t=0 row and t=10 read `y = 0.0`.
+    /// Reached through `orts convert` and `orts replay` on a recording written
+    /// elsewhere, and through any column this repository later logs
+    /// conditionally.
+    #[test]
+    fn a_sparse_column_stays_on_its_own_time() {
+        let rows = load_written(|rec| {
+            for (t, fields) in [
+                (0.0f64, vec![("x", 100.0f64), ("z", 0.0)]),
+                (10.0, vec![("x", 110.0), ("y", 201.0), ("z", 0.0)]),
+            ] {
+                rec.set_duration_secs("sim_time", t);
+                log_fields(rec, &fields);
+            }
+        });
+
+        // The t=0 row has no `y`, so it is not a position and is dropped. The
+        // t=10 row is the one that carries 201.0.
+        assert_eq!(rows.len(), 1, "expected only the complete row: {rows:?}");
+        assert!((rows[0].t - 10.0).abs() < 1e-9, "t = {}", rows[0].t);
+        assert!((rows[0].y - 201.0).abs() < 1e-9, "y = {}", rows[0].y);
+    }
+
+    /// Distinct values per time arrive on their own rows.
+    ///
+    /// The round-trip test above writes the same state five times, so an
+    /// index-based join passes it. Every value here differs, so a shifted
+    /// column shows up as a wrong number.
+    #[test]
+    fn every_time_keeps_its_own_values() {
+        let rows = load_written(|rec| {
+            for i in 0..4u64 {
+                let t = i as f64 * 10.0;
+                rec.set_duration_secs("sim_time", t);
+                log_fields(
+                    rec,
+                    &[
+                        ("x", 1000.0 + t),
+                        ("y", 2000.0 + t),
+                        ("z", 3000.0 + t),
+                        ("vx", 1.0 + t / 100.0),
+                        ("vy", 2.0 + t / 100.0),
+                        ("vz", 3.0 + t / 100.0),
+                    ],
+                );
+            }
+        });
+
+        assert_eq!(rows.len(), 4, "expected 4 rows, got {}", rows.len());
+        for (i, row) in rows.iter().enumerate() {
+            let t = i as f64 * 10.0;
+            assert!((row.t - t).abs() < 1e-9, "row {i} at t={}", row.t);
+            assert!((row.x - (1000.0 + t)).abs() < 1e-9, "x at t={t}: {}", row.x);
+            assert!((row.y - (2000.0 + t)).abs() < 1e-9, "y at t={t}: {}", row.y);
+            assert!((row.z - (3000.0 + t)).abs() < 1e-9, "z at t={t}: {}", row.z);
+            assert!(
+                (row.vx - (1.0 + t / 100.0)).abs() < 1e-9,
+                "vx at t={t}: {}",
+                row.vx
+            );
+            assert!(
+                (row.vy - (2.0 + t / 100.0)).abs() < 1e-9,
+                "vy at t={t}: {}",
+                row.vy
+            );
+            assert!(
+                (row.vz - (3.0 + t / 100.0)).abs() < 1e-9,
+                "vz at t={t}: {}",
+                row.vz
+            );
+        }
+    }
+
+    /// Attitude present from the second time on does not attach to the first
+    /// row.
+    #[test]
+    fn attitude_logged_late_does_not_attach_to_the_first_row() {
+        let rows = load_written(|rec| {
+            for i in 0..3u64 {
+                let t = i as f64 * 10.0;
+                rec.set_duration_secs("sim_time", t);
+                let mut fields = vec![
+                    ("x", 7000.0 + t),
+                    ("y", 0.0),
+                    ("z", 0.0),
+                    ("vx", 0.0),
+                    ("vy", 7.5),
+                    ("vz", 0.0),
+                ];
+                if i > 0 {
+                    // A quaternion distinguishable per time.
+                    fields.extend([
+                        ("qw", 1.0),
+                        ("qx", 0.1 * i as f64),
+                        ("qy", 0.0),
+                        ("qz", 0.0),
+                    ]);
+                }
+                log_fields(rec, &fields);
+            }
+        });
+
+        let first = rows
+            .iter()
+            .find(|r| r.t < 5.0)
+            .expect("the t=0 row is a complete state vector");
+        assert!(
+            first.quaternion.is_none(),
+            "a later quaternion landed on the t=0 row: {:?}",
+            first.quaternion
+        );
+
+        let second = rows
+            .iter()
+            .find(|r| (r.t - 10.0).abs() < 1e-9)
+            .expect("the t=10 row is present");
+        let q = second.quaternion.expect("t=10 logged a quaternion");
+        assert!((q[1] - 0.1).abs() < 1e-9, "t=10 quaternion: {q:?}");
     }
 }

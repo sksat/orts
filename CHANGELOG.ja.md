@@ -41,6 +41,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `load_rrd_data` が scalar 列を recording 自身の時刻 index で結合するようになった。
+  一部の時刻にしか現れない component が、後の値を前の行にずらすことがなくなる。
+  `orts convert`・`orts replay`・`orts serve` の history 読み戻しがこの経路を通る。
+  この PR が直すブラウザ側の decoder と同じ欠陥・同じ修正で、両者は独立に decode する
+  ため双方が抱えていた。([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
   ようになった。結果が有限な入力で overflow しなくなる: `q = [0, 1/√2, 1/√2, 0]`、
   `ω = [1.4e308, 1.4e308, 0]` の `q̇.w` は約 -9.9e307 だが、途中の和が -1.98e308 に

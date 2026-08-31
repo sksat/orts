@@ -45,6 +45,12 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- `load_rrd_data` joins scalar columns on the recording's time index, so a
+  component present at only some of the times no longer shifts its values onto
+  earlier rows — reached through `orts convert`, `orts replay` and `orts serve`'s
+  history read-back. Same defect and same fix as the browser-side decoder in
+  this PR; the two decode independently, so both carried it.
+  ([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
   products rather than the sum afterwards, so it no longer overflows where its
   result is finite: `q = [0, 1/√2, 1/√2, 0]` with `ω = [1.4e308, 1.4e308, 0]`
