@@ -220,8 +220,8 @@ fn repeats_at(column: &Column, moment: Moment) -> usize {
 struct ChunkKeys {
     sim_time: Option<Vec<i64>>,
     step: Option<Vec<i64>>,
-    /// The recording's own named axis, carried only by a chunk that has
-    /// neither of the two above.
+    /// The recording's own named axis, which identifies a row beside the two
+    /// above rather than in place of them.
     axis: Option<Vec<i64>>,
 }
 
@@ -285,7 +285,7 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
     let mut meta_texts: BTreeMap<String, String> = BTreeMap::new();
 
     // The one timeline of the recording's own naming, settled by the first
-    // chunk that carries neither `sim_time` nor `step` and kept for the rest.
+    // chunk to carry one and kept for the rest, whatever else that chunk has.
     let mut recording_axis: Option<String> = None;
 
     for msg in DecoderApp::decode_lazy(reader) {
