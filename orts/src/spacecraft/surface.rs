@@ -110,20 +110,25 @@ impl SurfacePanel {
     /// Create a panel whose centre of pressure coincides with the CoM.
     ///
     /// The `normal` vector is normalised internally; it need not be unit length.
-    /// Optics default to [`PanelOptics::absorber`] — a lumped `Cr` has no unique
-    /// specular/diffuse split, so the default is a stated physical surface
-    /// rather than an inferred one. Set it with [`Self::with_optics`].
+    ///
+    /// `optics` is a required argument rather than a default. The lumped `Cr`
+    /// this replaced has no unique specular/diffuse split, so any default would
+    /// be an invented surface; and since the force direction now depends on the
+    /// split, no default reproduces the old behaviour at oblique incidence.
+    /// Making it explicit turns what would be a silent change in every existing
+    /// caller's SRP force into a compile error. [`PanelOptics::absorber`] is the
+    /// value to pass when the surface is genuinely unknown.
     ///
     /// # Panics
     /// Panics if `normal` is zero-length.
-    pub fn at_com(area: f64, normal: Vector3<f64>, cd: f64) -> Self {
+    pub fn at_com(area: f64, normal: Vector3<f64>, cd: f64, optics: PanelOptics) -> Self {
         let n = normal.normalize();
         assert!(n.magnitude() > 0.5, "Panel normal must be non-zero");
         Self {
             area,
             normal: n,
             cd,
-            optics: PanelOptics::absorber(),
+            optics,
             cp_offset: Vector3::zeros(),
         }
     }
@@ -446,13 +451,23 @@ mod tests {
 
     #[test]
     fn at_com_zero_cp_offset() {
-        let p = SurfacePanel::at_com(2.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let p = SurfacePanel::at_com(
+            2.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         assert_eq!(p.cp_offset, Vector3::zeros());
     }
 
     #[test]
     fn at_com_normalises_normal() {
-        let p = SurfacePanel::at_com(1.0, Vector3::new(3.0, 4.0, 0.0), 2.0);
+        let p = SurfacePanel::at_com(
+            1.0,
+            Vector3::new(3.0, 4.0, 0.0),
+            2.0,
+            PanelOptics::absorber(),
+        );
         let expected = Vector3::new(0.6, 0.8, 0.0);
         assert!(
             (p.normal - expected).magnitude() < 1e-15,
@@ -464,30 +479,47 @@ mod tests {
     #[test]
     fn at_com_already_unit() {
         let n = Vector3::new(0.0, 0.0, 1.0);
-        let p = SurfacePanel::at_com(5.0, n, 2.2);
+        let p = SurfacePanel::at_com(5.0, n, 2.2, PanelOptics::absorber());
         assert!((p.normal - n).magnitude() < 1e-15);
     }
 
     #[test]
     #[should_panic]
     fn at_com_zero_normal_panics() {
-        SurfacePanel::at_com(1.0, Vector3::zeros(), 2.0);
+        SurfacePanel::at_com(1.0, Vector3::zeros(), 2.0, PanelOptics::absorber());
     }
 
     #[test]
     fn at_com_preserves_area_and_cd() {
-        let p = SurfacePanel::at_com(3.5, Vector3::new(0.0, 1.0, 0.0), 2.1);
+        let p = SurfacePanel::at_com(
+            3.5,
+            Vector3::new(0.0, 1.0, 0.0),
+            2.1,
+            PanelOptics::absorber(),
+        );
         assert!((p.area - 3.5).abs() < 1e-15);
         assert!((p.cd - 2.1).abs() < 1e-15);
     }
 
     #[test]
-    fn at_com_defaults_to_a_black_panel() {
-        // The default has to be a stated surface, since a lumped Cr has no
-        // unique specular/diffuse split to infer one from.
-        let p = SurfacePanel::at_com(3.5, Vector3::new(0.0, 1.0, 0.0), 2.1);
-        assert_eq!(p.optics, PanelOptics::absorber());
-        assert!((p.optics.absorptivity() - 1.0).abs() < 1e-15);
+    fn at_com_carries_the_optics_it_is_given() {
+        let optics = PanelOptics::new(0.3, 0.2);
+        let p = SurfacePanel::at_com(3.5, Vector3::new(0.0, 1.0, 0.0), 2.1, optics);
+        assert_eq!(p.optics, optics);
+    }
+
+    #[test]
+    fn with_optics_replaces_the_panel_optics() {
+        // The builder is how a face of a `cube` gets its own surface.
+        let replacement = PanelOptics::new(0.6, 0.1);
+        let p = SurfacePanel::at_com(
+            3.5,
+            Vector3::new(0.0, 1.0, 0.0),
+            2.1,
+            PanelOptics::absorber(),
+        )
+        .with_optics(replacement);
+        assert_eq!(p.optics, replacement);
     }
 
     // PanelOptics
@@ -555,8 +587,18 @@ mod tests {
     #[test]
     fn panels_stores_panels() {
         let panels = vec![
-            SurfacePanel::at_com(1.0, Vector3::new(1.0, 0.0, 0.0), 2.0),
-            SurfacePanel::at_com(2.0, Vector3::new(0.0, 1.0, 0.0), 2.2),
+            SurfacePanel::at_com(
+                1.0,
+                Vector3::new(1.0, 0.0, 0.0),
+                2.0,
+                PanelOptics::absorber(),
+            ),
+            SurfacePanel::at_com(
+                2.0,
+                Vector3::new(0.0, 1.0, 0.0),
+                2.2,
+                PanelOptics::absorber(),
+            ),
         ];
         let shape = SpacecraftShape::panels(panels.clone());
         match shape {
@@ -1041,7 +1083,12 @@ mod tests {
     #[test]
     fn panels_facing_flow_nonzero_drag() {
         // Single panel facing -y (into the +y flow)
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert!(
@@ -1053,7 +1100,12 @@ mod tests {
     #[test]
     fn panels_backface_zero_drag() {
         // Single panel facing +y (away from the +y flow) — backface
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, 1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, 1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert_eq!(
@@ -1065,7 +1117,12 @@ mod tests {
 
     #[test]
     fn panels_drag_opposes_velocity() {
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let loads = drag.eval(0.0, &iss_state(), None);
         // Drag should oppose velocity (predominantly -y)
@@ -1078,7 +1135,12 @@ mod tests {
     #[test]
     fn panels_different_attitude_different_drag() {
         // This is the core coupling test: rotating the spacecraft changes the drag
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
 
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
@@ -1105,7 +1167,12 @@ mod tests {
     #[test]
     fn panels_rotated_to_backface_zero() {
         // Panel faces -y in body frame. Rotate 180° about z → panel faces +y → backface
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let mut state = iss_state();
@@ -1122,7 +1189,12 @@ mod tests {
 
     #[test]
     fn panels_above_atmosphere_zero() {
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let state = SpacecraftState {
@@ -1141,7 +1213,12 @@ mod tests {
 
     #[test]
     fn panels_at_com_zero_torque() {
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let loads = drag.eval(0.0, &iss_state(), None);
         assert_eq!(
@@ -1235,7 +1312,12 @@ mod tests {
         let cd = 2.2;
 
         // Panel facing -y (into the +y flow at identity attitude)
-        let panel = SurfacePanel::at_com(area, Vector3::new(0.0, -1.0, 0.0), cd);
+        let panel = SurfacePanel::at_com(
+            area,
+            Vector3::new(0.0, -1.0, 0.0),
+            cd,
+            PanelOptics::absorber(),
+        );
         let panel_drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
         let sphere_drag = PanelDrag::for_earth(SpacecraftShape::sphere(area, cd, 1.5));
 
@@ -1286,7 +1368,12 @@ mod tests {
     #[test]
     fn cos_theta_scaling_45_degrees() {
         // Rotate 45° about x: cos θ = cos(45°) = √2/2
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let s0 = iss_state(); // identity attitude
@@ -1308,7 +1395,12 @@ mod tests {
     #[test]
     fn cos_theta_scaling_60_degrees() {
         // Rotate 60° about x: cos θ = cos(60°) = 0.5
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let s0 = iss_state();
@@ -1329,7 +1421,12 @@ mod tests {
     #[test]
     fn cos_theta_scaling_90_degrees_zero() {
         // Rotate 90° about x: cos θ = 0 → zero drag
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let mut s90 = iss_state();
@@ -1344,7 +1441,12 @@ mod tests {
     fn force_direction_always_anti_velocity() {
         // Pure drag invariant: a_inertial ∥ -v_rel for any attitude with nonzero drag.
         // Proof: F_body ∝ -v̂_body → a_inertial = R_ib*(-K·v̂_body) = -K·v̂_inertial
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let angles = [0.0, 0.3, 0.7, 1.0, -0.5];
@@ -1390,7 +1492,12 @@ mod tests {
     #[test]
     fn energy_dissipation_always_negative() {
         // F · v_rel ≤ 0 for drag at any attitude (energy is always removed)
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         for i in 0..20 {
@@ -1415,8 +1522,18 @@ mod tests {
     fn two_sided_panel_no_dead_zone() {
         // Two panels with opposite normals (±y): at least one faces the flow at any attitude
         let panels = vec![
-            SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2),
-            SurfacePanel::at_com(10.0, Vector3::new(0.0, 1.0, 0.0), 2.2),
+            SurfacePanel::at_com(
+                10.0,
+                Vector3::new(0.0, -1.0, 0.0),
+                2.2,
+                PanelOptics::absorber(),
+            ),
+            SurfacePanel::at_com(
+                10.0,
+                Vector3::new(0.0, 1.0, 0.0),
+                2.2,
+                PanelOptics::absorber(),
+            ),
         ];
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(panels));
 
@@ -1597,7 +1714,12 @@ mod tests {
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
             },
-            SurfacePanel::at_com(5.0, Vector3::new(1.0, 0.0, 0.0), 2.0),
+            SurfacePanel::at_com(
+                5.0,
+                Vector3::new(1.0, 0.0, 0.0),
+                2.0,
+                PanelOptics::absorber(),
+            ),
         ];
         let drag = mock_drag(SpacecraftShape::panels(panels), 1e-12);
 
@@ -1709,7 +1831,12 @@ mod tests {
         //     cos θ = n_b · (-v̂_body) = (1,0,0)·(-1,0,0) = -1 → backface → ZERO
         //   → Wrong (R_ib): v_body = R_ib * (0,v,0) = (-v,0,0)
         //     cos θ = (1,0,0)·(1,0,0) = +1 → FULL drag
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = mock_drag(SpacecraftShape::panels(vec![panel]), 1e-12);
 
         let mut state = iss_state();
@@ -1731,7 +1858,12 @@ mod tests {
         //   R_ib maps body_x → inertial -y.
         //   Correct R_bi: v_body = R_bi * (0,v,0) = (-v,0,0)
         //     cos θ = (1,0,0)·(1,0,0) = +1 → full drag
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = mock_drag(SpacecraftShape::panels(vec![panel]), 1e-12);
 
         let mut state = iss_state();
@@ -1746,7 +1878,12 @@ mod tests {
 
         // Verify magnitude matches the identity case for a -y normal panel
         // (which faces the +y flow at identity). Both should give same exposure.
-        let panel_y = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel_y = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag_y = mock_drag(SpacecraftShape::panels(vec![panel_y]), 1e-12);
         let ref_loads = drag_y.eval(0.0, &iss_state(), None);
 
@@ -1772,7 +1909,12 @@ mod tests {
                 optics: PanelOptics::absorber(),
                 cp_offset: Vector3::new(1.0, 0.0, 0.0),
             },
-            SurfacePanel::at_com(5.0, Vector3::new(1.0, 0.0, 0.0), 2.0),
+            SurfacePanel::at_com(
+                5.0,
+                Vector3::new(1.0, 0.0, 0.0),
+                2.0,
+                PanelOptics::absorber(),
+            ),
         ];
         let drag = mock_drag(SpacecraftShape::panels(panels), 1e-12);
 
@@ -1830,7 +1972,12 @@ mod tests {
     fn velocity_squared_scaling() {
         // a ∝ |v|² (at constant density, same direction)
         // Use mock to eliminate altitude-dependent density changes
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = mock_drag(SpacecraftShape::panels(vec![panel]), 1e-12);
 
         let s1 = iss_state();
@@ -1859,7 +2006,12 @@ mod tests {
         let mass = 500.0; // kg
         let rho = 1e-12; // kg/m³
 
-        let panel = SurfacePanel::at_com(area, Vector3::new(0.0, -1.0, 0.0), cd);
+        let panel = SurfacePanel::at_com(
+            area,
+            Vector3::new(0.0, -1.0, 0.0),
+            cd,
+            PanelOptics::absorber(),
+        );
         let drag = mock_drag(SpacecraftShape::panels(vec![panel]), rho);
 
         let state = iss_state();
@@ -1889,7 +2041,12 @@ mod tests {
         use nalgebra::Matrix3;
         use utsuroi::{Integrator, OdeState, Rk4};
 
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));
@@ -1911,7 +2068,12 @@ mod tests {
         use nalgebra::Matrix3;
         use utsuroi::{Integrator, Rk4};
 
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));
@@ -1940,7 +2102,12 @@ mod tests {
         use utsuroi::{Integrator, Rk4};
 
         // Asymmetric panel: only one face, so drag depends on orientation
-        let panel = SurfacePanel::at_com(20.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            20.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![panel]));
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));

@@ -393,7 +393,12 @@ mod tests {
         // A black panel re-emits nothing, so the entire force is absorbed
         // photon momentum: along −ŝ, scaled by the projected area A·cosθ.
         let area = 4.0;
-        let panel = SurfacePanel::at_com(area, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            area,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let s_body = sun_tilted_in_xy(OBLIQUE_ANGLE);
 
         let f = panel_force(&panel, &s_body, TEST_PRESSURE);
@@ -412,8 +417,12 @@ mod tests {
         // force is purely along −n̂ and follows cos²θ. This is the term an
         // anti-Sun-only force law drops entirely.
         let area = 4.0;
-        let panel = SurfacePanel::at_com(area, Vector3::new(1.0, 0.0, 0.0), 2.2)
-            .with_optics(PanelOptics::new(1.0, 0.0));
+        let panel = SurfacePanel::at_com(
+            area,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(1.0, 0.0),
+        );
         let s_body = sun_tilted_in_xy(OBLIQUE_ANGLE);
 
         let f = panel_force(&panel, &s_body, TEST_PRESSURE);
@@ -433,7 +442,7 @@ mod tests {
         // contributes 1, its isotropic re-emission a further 2/3.
         let area = 4.0;
         let normal = Vector3::new(1.0, 0.0, 0.0);
-        let panel = SurfacePanel::at_com(area, normal, 2.2).with_optics(PanelOptics::new(0.0, 1.0));
+        let panel = SurfacePanel::at_com(area, normal, 2.2, PanelOptics::new(0.0, 1.0));
 
         let f = panel_force(&panel, &normal, TEST_PRESSURE);
         let expected = -(1.0 + 2.0 / 3.0) * TEST_PRESSURE * area * normal;
@@ -453,8 +462,12 @@ mod tests {
         // force of the right magnitude pointing the wrong way.
         let (specular, diffuse) = (0.2, 0.1);
         let area = 4.0;
-        let panel = SurfacePanel::at_com(area, Vector3::new(1.0, 0.0, 0.0), 2.2)
-            .with_optics(PanelOptics::new(specular, diffuse));
+        let panel = SurfacePanel::at_com(
+            area,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(specular, diffuse),
+        );
         let s_body = sun_tilted_in_xy(OBLIQUE_ANGLE);
         let normal = panel.normal;
 
@@ -492,8 +505,12 @@ mod tests {
 
     #[test]
     fn edge_on_and_backside_are_zero() {
-        let panel = SurfacePanel::at_com(4.0, Vector3::new(1.0, 0.0, 0.0), 2.2)
-            .with_optics(PanelOptics::new(0.4, 0.3));
+        let panel = SurfacePanel::at_com(
+            4.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.4, 0.3),
+        );
 
         for (label, s_body) in [
             ("edge-on", Vector3::new(0.0, 1.0, 0.0)),
@@ -510,8 +527,12 @@ mod tests {
         // force by the same amount: the law may not favour any body axis.
         use nalgebra::{Unit, UnitQuaternion};
 
-        let panel = SurfacePanel::at_com(4.0, Vector3::new(1.0, 0.0, 0.0), 2.2)
-            .with_optics(PanelOptics::new(0.2, 0.1));
+        let panel = SurfacePanel::at_com(
+            4.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.2, 0.1),
+        );
         let s_body = sun_tilted_in_xy(OBLIQUE_ANGLE);
         let f = panel_force(&panel, &s_body, TEST_PRESSURE);
 
@@ -540,7 +561,12 @@ mod tests {
         // Panel normal = +X in body frame, identity attitude → +X in inertial.
         // Default optics absorb everything, so F = -P * A * cos(θ) * ŝ with
         // cos(θ) ≈ 1 — no reflection term, hence no Cr factor.
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
         let epoch = test_epoch();
         let state = iss_state(); // at +X, identity attitude
@@ -576,7 +602,12 @@ mod tests {
     #[test]
     fn single_panel_backface_zero() {
         // Panel normal = -X (facing away from Sun), should get zero force.
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(-1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(-1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
         let epoch = test_epoch();
         let state = iss_state(); // at +X, Sun roughly at +X
@@ -595,8 +626,18 @@ mod tests {
         let epoch = test_epoch();
         let state = iss_state();
 
-        let p1 = SurfacePanel::at_com(5.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
-        let p2 = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let p1 = SurfacePanel::at_com(
+            5.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
+        let p2 = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
 
         let l1 = PanelSrp::new(SpacecraftShape::panels(vec![p1])).eval(0.0, &state, Some(&epoch));
         let l2 = PanelSrp::new(SpacecraftShape::panels(vec![p2])).eval(0.0, &state, Some(&epoch));
@@ -617,9 +658,8 @@ mod tests {
         let state = iss_state();
         let normal = sat_to_sun_unit(&epoch);
 
-        let absorber = SurfacePanel::at_com(10.0, normal, 2.2);
-        let mirror =
-            SurfacePanel::at_com(10.0, normal, 2.2).with_optics(PanelOptics::new(1.0, 0.0));
+        let absorber = SurfacePanel::at_com(10.0, normal, 2.2, PanelOptics::absorber());
+        let mirror = SurfacePanel::at_com(10.0, normal, 2.2, PanelOptics::new(1.0, 0.0));
 
         let l1 =
             PanelSrp::new(SpacecraftShape::panels(vec![absorber])).eval(0.0, &state, Some(&epoch));
@@ -641,7 +681,7 @@ mod tests {
         let epoch = test_epoch();
         let sun_dir = sun::sun_direction_eci(&epoch.to_tdb()).into_inner();
 
-        let panel = SurfacePanel::at_com(10.0, sun_dir, 2.2);
+        let panel = SurfacePanel::at_com(10.0, sun_dir, 2.2, PanelOptics::absorber());
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
 
         // Identity attitude: panel faces Sun → non-zero SRP
@@ -673,7 +713,12 @@ mod tests {
         // Earth in shadow → shadow function should zero out the force.
         // We rotate the body 180° about Z so that body +X points toward +X in inertial
         // (the Sun direction), ensuring the panel *would* receive SRP if sunlit.
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(-1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(-1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let srp = PanelSrp::for_earth(SpacecraftShape::panels(vec![panel]));
         let epoch = test_epoch();
 
@@ -699,6 +744,7 @@ mod tests {
             10.0,
             Vector3::new(-1.0, 0.0, 0.0),
             2.2,
+            PanelOptics::absorber(),
         )]));
         let loads_no_shadow = srp_no_shadow.eval(0.0, &state, Some(&epoch));
         assert!(
@@ -711,7 +757,12 @@ mod tests {
     fn no_shadow_body_always_sunlit() {
         // Place satellite behind Earth at -X with a Sun-facing panel.
         // With shadow_body_radius=None, the force should still be non-zero.
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(-1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(-1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel])); // no shadow
 
         let epoch = test_epoch();
@@ -736,6 +787,7 @@ mod tests {
                 10.0,
                 Vector3::new(-1.0, 0.0, 0.0),
                 2.2,
+                PanelOptics::absorber(),
             )]));
         let loads_shadow = srp_with_shadow.eval(0.0, &state, Some(&epoch));
         assert_eq!(
@@ -812,7 +864,12 @@ mod tests {
         // ephemeris rotation reaching the panel formula — not the attitude
         // accessors, which are covered by SimpleEci behaviour-preservation and
         // compile-time typing.
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
         let epoch = test_epoch();
         let sat = vector![7000.0, 1000.0, 500.0];
@@ -863,7 +920,12 @@ mod tests {
 
     #[test]
     fn panels_cp_at_com_zero_torque() {
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
         let epoch = test_epoch();
         let loads = srp.eval(0.0, &iss_state(), Some(&epoch));
@@ -1040,7 +1102,12 @@ mod tests {
         use crate::spacecraft::SpacecraftDynamics;
         use utsuroi::{DynamicalSystem, Integrator, Rk4};
 
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let dynamics = SpacecraftDynamics::new(MU_EARTH, PointMass, nalgebra::Matrix3::identity())
             .with_model(PanelSrp::new(SpacecraftShape::panels(vec![panel])))
             .with_epoch(test_epoch());
@@ -1062,8 +1129,18 @@ mod tests {
         use utsuroi::DynamicalSystem;
 
         let panels = vec![
-            SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2),
-            SurfacePanel::at_com(10.0, Vector3::new(0.0, -1.0, 0.0), 2.2),
+            SurfacePanel::at_com(
+                10.0,
+                Vector3::new(1.0, 0.0, 0.0),
+                2.2,
+                PanelOptics::absorber(),
+            ),
+            SurfacePanel::at_com(
+                10.0,
+                Vector3::new(0.0, -1.0, 0.0),
+                2.2,
+                PanelOptics::absorber(),
+            ),
         ];
         let shape = SpacecraftShape::panels(panels);
 
@@ -1084,8 +1161,12 @@ mod tests {
         // GEO satellite: A=30m², m=2000kg, solar-array optics (ρ_s=0.2, ρ_d=0.1)
         // → face-on Cr = 1 + ρ_s + 2ρ_d/3 ≈ 1.27
         // |a| = P_sr * Cr * A/m / 1000 ≈ 4.54e-6 * 1.27 * 0.015 / 1000 ≈ 8.6e-11 km/s²
-        let panel = SurfacePanel::at_com(30.0, Vector3::new(1.0, 0.0, 0.0), 2.2)
-            .with_optics(PanelOptics::new(0.2, 0.1));
+        let panel = SurfacePanel::at_com(
+            30.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::new(0.2, 0.1),
+        );
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
         let epoch = test_epoch();
 
@@ -1132,7 +1213,12 @@ mod tests {
         use utsuroi::{Integrator, Rk4};
 
         // Asymmetric single panel: SRP depends on orientation
-        let panel = SurfacePanel::at_com(20.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            20.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         let srp = PanelSrp::new(SpacecraftShape::panels(vec![panel]));
 
         let inertia = Matrix3::from_diagonal(&Vector3::new(100.0, 200.0, 300.0));
@@ -1209,7 +1295,12 @@ mod tests {
     #[test]
     fn panel_force_scales_inversely_with_mass() {
         let epoch = test_epoch();
-        let panel = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let panel = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
 
         let mut s1 = iss_state();
         s1.mass = 500.0;
@@ -1238,9 +1329,19 @@ mod tests {
         let state = iss_state();
 
         // Panel facing Sun (+X normal)
-        let sunlit = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+        let sunlit = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
         // Panel facing away (-X normal) — backface, should not contribute
-        let dark = SurfacePanel::at_com(10.0, Vector3::new(-1.0, 0.0, 0.0), 2.2);
+        let dark = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(-1.0, 0.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        );
 
         let l_single = PanelSrp::new(SpacecraftShape::panels(vec![sunlit.clone()])).eval(
             0.0,
@@ -1313,7 +1414,7 @@ mod tests {
                 let epoch = test_epoch();
 
                 // Face-on panel (normal = +X, Sun ≈ +X)
-                let p_face_on = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+                let p_face_on = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2, PanelOptics::absorber());
                 let l_face_on = PanelSrp::new(SpacecraftShape::panels(vec![p_face_on]))
                     .eval(0.0, &iss_state(), Some(&epoch));
 
@@ -1322,7 +1423,7 @@ mod tests {
                 state.attitude.quaternion =
                     quat_from_axis_angle(Vector3::new(0.0, 0.0, 1.0), angle);
 
-                let panel = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2);
+                let panel = SurfacePanel::at_com(10.0, Vector3::new(1.0, 0.0, 0.0), 2.2, PanelOptics::absorber());
                 let l_tilted = PanelSrp::new(SpacecraftShape::panels(vec![panel]))
                     .eval(0.0, &state, Some(&epoch));
 
@@ -1362,8 +1463,7 @@ mod tests {
             #[test]
             fn specular_force_follows_cos_squared(angle in angle_facing_sun()) {
                 let area = 4.0;
-                let panel = SurfacePanel::at_com(area, Vector3::new(1.0, 0.0, 0.0), 2.2)
-                    .with_optics(PanelOptics::new(1.0, 0.0));
+                let panel = SurfacePanel::at_com(area, Vector3::new(1.0, 0.0, 0.0), 2.2, PanelOptics::new(1.0, 0.0));
                 let s_body = sun_tilted_in_xy(angle);
 
                 let f = panel_force(&panel, &s_body, TEST_PRESSURE);
