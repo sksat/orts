@@ -229,10 +229,30 @@ pub fn decode_rrd(reader: impl Read) -> Result<ParsedRrd, Box<dyn std::error::Er
                 .find(|(name, _)| name.as_str() == wanted)
                 .map(|(_, col)| col.times_raw().to_vec())
         };
-        let keys = ChunkKeys {
-            sim_time: timeline("sim_time"),
-            step: timeline("step"),
-        };
+        let sim_time = timeline("sim_time");
+        let step = timeline("step").or_else(|| {
+            // A recording written by another tool names its own timeline, and
+            // that timeline is what says which values belong together; joining
+            // such a file on column position is the mix this decode exists to
+            // avoid. `log_time` and `log_tick`, which rerun adds to every log
+            // call, say when a value was logged rather than when it happened,
+            // so two fields of one state carry different ones and cannot pair.
+            if sim_time.is_some() {
+                return None;
+            }
+            let mut named: Vec<_> = chunk
+                .timelines()
+                .iter()
+                .filter(|(name, _)| {
+                    !matches!(name.as_str(), "sim_time" | "step" | "log_time" | "log_tick")
+                })
+                .collect();
+            // The timelines arrive as a set, so choose by name to stay
+            // reproducible from run to run.
+            named.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+            named.first().map(|(_, col)| col.times_raw().to_vec())
+        });
+        let keys = ChunkKeys { sim_time, step };
 
         for comp_id in chunk.components_identifiers() {
             let comp_name = comp_id.as_str();
@@ -875,5 +895,27 @@ mod tests {
         assert_eq!(parsed.rows.len(), 1, "{:?}", parsed.rows);
         assert_eq!(parsed.rows[0].x, 100.0);
         assert!(parsed.rows[0].quaternion.is_none());
+    }
+
+    /// A recording indexed by a timeline of its own naming still joins on it.
+    ///
+    /// `sim_time` and `step` are the names `orts` writes; another tool names its
+    /// own, and treating that as no timeline at all fell back to column
+    /// position. Measured with `y` logged at frame 2 alone: the one row came
+    /// back as x = 101.0, the frame-1 `x` beside the frame-2 `y`.
+    #[test]
+    fn a_recording_on_its_own_named_timeline_joins_on_it() {
+        let parsed = decode_written(|rec| {
+            rec.set_time_sequence("frame", 1i64);
+            log_scalars(rec, &[("x", 101.0), ("z", 0.0)]);
+            rec.set_time_sequence("frame", 2i64);
+            log_scalars(rec, &[("x", 102.0), ("y", 201.0), ("z", 0.0)]);
+        });
+        assert_eq!(parsed.rows.len(), 1, "{:?}", parsed.rows);
+        assert_eq!(
+            parsed.rows[0].x, 102.0,
+            "the row is frame 2, the only frame with a whole position"
+        );
+        assert_eq!(parsed.rows[0].y, 201.0);
     }
 }

@@ -381,10 +381,30 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
                 .find(|(name, _)| name.as_str() == wanted)
                 .map(|(_, col)| col.times_raw().to_vec())
         };
-        let keys = ChunkKeys {
-            sim_time: timeline("sim_time"),
-            step: timeline("step"),
-        };
+        let sim_time = timeline("sim_time");
+        let step = timeline("step").or_else(|| {
+            // A recording written by another tool names its own timeline, and
+            // that timeline is what says which values belong together; joining
+            // such a file on column position is the mix this decode exists to
+            // avoid. `log_time` and `log_tick`, which rerun adds to every log
+            // call, say when a value was logged rather than when it happened,
+            // so two fields of one state carry different ones and cannot pair.
+            if sim_time.is_some() {
+                return None;
+            }
+            let mut named: Vec<_> = chunk
+                .timelines()
+                .iter()
+                .filter(|(name, _)| {
+                    !matches!(name.as_str(), "sim_time" | "step" | "log_time" | "log_tick")
+                })
+                .collect();
+            // The timelines arrive as a set, so choose by name to stay
+            // reproducible from run to run.
+            named.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+            named.first().map(|(_, col)| col.times_raw().to_vec())
+        });
+        let keys = ChunkKeys { sim_time, step };
 
         for comp_id in chunk.components_identifiers() {
             let comp_name = comp_id.as_str();
@@ -666,10 +686,30 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
                 .find(|(name, _)| name.as_str() == wanted)
                 .map(|(_, col)| col.times_raw().to_vec())
         };
-        let keys = ChunkKeys {
-            sim_time: timeline("sim_time"),
-            step: timeline("step"),
-        };
+        let sim_time = timeline("sim_time");
+        let step = timeline("step").or_else(|| {
+            // A recording written by another tool names its own timeline, and
+            // that timeline is what says which values belong together; joining
+            // such a file on column position is the mix this decode exists to
+            // avoid. `log_time` and `log_tick`, which rerun adds to every log
+            // call, say when a value was logged rather than when it happened,
+            // so two fields of one state carry different ones and cannot pair.
+            if sim_time.is_some() {
+                return None;
+            }
+            let mut named: Vec<_> = chunk
+                .timelines()
+                .iter()
+                .filter(|(name, _)| {
+                    !matches!(name.as_str(), "sim_time" | "step" | "log_time" | "log_tick")
+                })
+                .collect();
+            // The timelines arrive as a set, so choose by name to stay
+            // reproducible from run to run.
+            named.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+            named.first().map(|(_, col)| col.times_raw().to_vec())
+        });
+        let keys = ChunkKeys { sim_time, step };
 
         for comp_id in chunk.components_identifiers() {
             let comp_name = comp_id.as_str();
@@ -890,6 +930,13 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
             });
             keys
         };
+        // TODO: the keys also carry the step a row sits on, and only `SimTime`
+        // is filled from them, so a recording indexed by `step` alone comes back
+        // with every row at 0 s and its step timeline gone. Writing the steps
+        // under `TimelineName::Step` needs the name the recording used, which
+        // `RowKey` does not keep, and `Recording`'s CSV path reads `SimTime`
+        // only. Left as it stands on main until the step round-trip is settled
+        // with the writer.
         let entity_times: Vec<TimeIndex> = row_keys
             .iter()
             .map(|k| TimeIndex::Seconds(k.t_secs()))
@@ -1978,6 +2025,60 @@ mod tests {
                 .keys()
                 .any(|name| name.contains("Quaternion4D")),
             "an attitude present at only one of the two times is not reported"
+        );
+    }
+
+    /// A recording indexed by a timeline of its own naming still joins on time.
+    ///
+    /// `sim_time` and `step` are the names `orts` writes; another tool names its
+    /// own, and treating that as no timeline at all fell back to column
+    /// position. Measured with `y` recorded at frame 2 alone: `Position3D` came
+    /// back as `[100.0, 201.0, 0.0]`, the frame-1 `x` beside the frame-2 `y`.
+    #[test]
+    fn a_recording_on_its_own_named_timeline_joins_on_it() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_ctl_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("named.rrd");
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-named-timeline-test")
+                .save(&path)
+                .expect("recording stream");
+            for (frame, fields) in [
+                (1i64, vec![("x", 100.0f64), ("z", 0.0)]),
+                (2, vec![("x", 110.0), ("y", 201.0), ("z", 0.0)]),
+            ] {
+                rec.set_time_sequence("frame", frame);
+                for (field, value) in fields {
+                    rec.log(
+                        format!("/world/sat/named/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new([value]),
+                    )
+                    .expect("log");
+                }
+            }
+            rec.flush_blocking().expect("flush");
+        }
+
+        let loaded = load_as_recording(path.to_str().unwrap()).expect("load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let entity = EntityPath::parse("/world/sat/named");
+        let store = loaded.entity(&entity).expect("entity");
+        let position = store
+            .columns
+            .iter()
+            .find(|(name, _)| name.contains("Position3D"))
+            .map(|(_, c)| c)
+            .expect("a position column");
+        assert_eq!(store.num_rows, 1, "only frame 2 has a whole position");
+        assert_eq!(
+            position.get_row(0).expect("the one row"),
+            &[110.0, 201.0, 0.0],
+            "the row must be one frame's values, not a mix"
         );
     }
 }

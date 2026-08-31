@@ -57,9 +57,11 @@ section is subdivided by package.
   times is left out rather than zero-filled, a zero being indistinguishable
   downstream from a measured coordinate. A static field, which has no timeline,
   and a child entity, which has times of its own, no longer add rows to the
-  entity above them. Same defect as the browser-side decoder in this PR: the
-  three decode independently, and all three carried it.
-  ([#366](https://github.com/sksat/orts/pull/366))
+  entity above them. A recording indexed by a timeline of its own naming joins on
+  that timeline as well: `sim_time` and `step` are the names `orts` writes, and
+  treating any other as no timeline at all fell back to column position. Same
+  defect as the browser-side decoder in this PR: the three decode independently,
+  and all three carried it. ([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
   products rather than the sum afterwards, so it no longer overflows where its
   result is finite: `q = [0, 1/√2, 1/√2, 0]` with `ω = [1.4e308, 1.4e308, 0]`
@@ -580,7 +582,9 @@ section is subdivided by package.
   with zeros. `orts run --format rrd` logs the same components at every step of a
   run, so its output decodes to the same values as before; a sparse column
   reaches this join from `.rrd` files written elsewhere and from `orts serve`
-  history segments, whose attitude is optional per state.
+  history segments, whose attitude is optional per state. A recording indexed by
+  a timeline of its own naming joins on that timeline too, rather than falling
+  back to column position as it did for every name but `sim_time` and `step`.
   ([#366](https://github.com/sksat/orts/pull/366))
 
 ### Docs

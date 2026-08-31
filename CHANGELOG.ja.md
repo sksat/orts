@@ -51,8 +51,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   合わせる。どちらかが揃わない時刻は行にしない。一部の時刻にしか記録されていない
   component はゼロ埋めせず落とす。ゼロは下流で実測値と区別できないため。timeline を
   持たない static field と、独自の時刻を持つ子 entity は、上位 entity の行を増やさなく
-  なった。この PR が直すブラウザ側の decoder と同じ欠陥で、3 つは独立に decode するため
-  3 つとも抱えていた。([#366](https://github.com/sksat/orts/pull/366))
+  なった。独自の名前の timeline で index された recording も、その timeline で結合する。
+  `sim_time` と `step` は orts が書く名前で、それ以外を timeline なしとして扱うと列の
+  位置で結合していた。この PR が直すブラウザ側の decoder と同じ欠陥で、3 つは独立に
+  decode するため 3 つとも抱えていた。([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
   ようになった。結果が有限な入力で overflow しなくなる: `q = [0, 1/√2, 1/√2, 0]`、
   `ω = [1.4e308, 1.4e308, 0]` の `q̇.w` は約 -9.9e307 だが、途中の和が -1.98e308 に
@@ -520,7 +522,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   揃わない行はゼロ埋めせず落とす。`orts run --format rrd` は 1 回の run のすべての
   step で同じ component を logging するので、その出力のデコード結果は以前と同じ。疎な
   列がこの結合に入るのは、外部で書かれた `.rrd` と、attitude が state ごとに optional な
-  `orts serve` の history segment。([#366](https://github.com/sksat/orts/pull/366))
+  `orts serve` の history segment。独自の名前の timeline で index された recording も、
+  列の位置に落ちるのでなくその timeline で結合する (`sim_time` と `step` 以外はすべて
+  列の位置になっていた)。([#366](https://github.com/sksat/orts/pull/366))
 
 ### Docs
 
