@@ -87,7 +87,7 @@ ts-rs = { version = "12", features = ["serde-json-impl"] }
 # turning off `cranelift`/`wat`/`anyhow` via cargo feature unification.
 # `anyhow` is required because wasmtime's public API (e.g. Module::new,
 # Engine::precompile_component) returns `anyhow::Error`.
-# See DESIGN.md Phase P for the rationale. `~46.0` is `>=46.0.0, <46.1.0`, so
+# See DESIGN.md "WASM backend" for the rationale. `~46.0` is `>=46.0.0, <46.1.0`, so
 # `cargo update` picks up patch fixes (including security) automatically while a
 # new minor needs a deliberate bump. The tilde matters: a bare `46.0` — or even
 # `46.0.0` — is caret, `<47.0.0`, and would take 46.1 on its own.

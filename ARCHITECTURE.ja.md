@@ -148,12 +148,13 @@ classDiagram
 - **Tick ごとの契約:** host が `TickInput` (真値 state + デバイスごとの
   sensor 読み値 + actuator テレメトリ) を渡し、guest が `Command` (MTQ 毎の
   磁気モーメント、RW 毎の回転速度 or トルク、スラスタ毎のスロットル) を返す。
-- **ランタイム:** `wasmtime` の Pulley interpreter + `Config::consume_fuel()`
-  でホスト非依存な決定論的実行を保証。
-- **配布:** `.wasm` (可搬) と `.cwasm` (wasmtime 固有の事前コンパイル済)。
+- **ランタイム:** `wasmtime` の Pulley interpreter でホスト非依存な決定論的
+  実行を保証。
+- **配布:** `.wasm` (可搬)。
 
-Native Rust 制御則も同じ `DiscreteController` trait を実装するので、WASM
-guest と native 実装の差し替えは設定ファイルの変更だけで済む。
+WASM guest は `PluginController` trait で駆動される。native 制御則は別の
+`DiscreteController` trait を実装しており、両者の統一は計画段階
+([ROADMAP.md](ROADMAP.md) 参照)。
 
 ## 5. データフロー (シミュレーション → viewer)
 
@@ -195,10 +196,11 @@ sequenceDiagram
 2. **型安全な座標系。** `Vec3<F: Frame>` により ECI / ECEF / Body を別型に
    することで、frame の取り違えを silent bug ではなくコンパイルエラーにする。
 3. **ホットパスはモノモーフィゼーション重視。** ODE state は固定次元
-   (6D / 7D / 13D+) なので integrator はタイトにインライン化される。可変 N
-   (コンステレーション、柔軟構造) は `GroupState<S: OdeState>` で扱う。
-4. **決定論的 plugin 実行。** Pulley interpreter + fuel budget により、
-   ホストや CI 環境に依らず guest の挙動が再現可能。
+   (6D / 7D / 14D。補助状態は `AugmentedState` で拡張) なので integrator は
+   タイトにインライン化される。可変 N (コンステレーション、柔軟構造) は
+   `GroupState<S: OdeState>` で扱う。
+4. **決定論的 plugin 実行。** Pulley interpreter により、ホストや CI 環境に
+   依らず guest の挙動が再現可能。
 5. **Viewer 端での Source 抽象化。** Transport (WS / CSV / RRD) は単一の
    `SourceEvent` 型に正規化されるため、新しい source を追加するには adapter
    を 1 つ書くだけで済む。
@@ -206,6 +208,7 @@ sequenceDiagram
 ## 7. 関連ドキュメント
 
 - [DESIGN.md](DESIGN.md) — 詳細な設計意図 (Japanese)
+- [ROADMAP.md](ROADMAP.md) — 未実装の計画 (Japanese)
 - [README.md](README.md) — インストール、クイックスタート、機能一覧
 - [CLAUDE.md](CLAUDE.md) — このリポジトリで作業する Claude Code 向けガイド
 - Docs サイト: <https://sksat.github.io/orts/>

@@ -1,4 +1,4 @@
-//! WASM backend for the plugin layer (Phase P1, `plugin-wasm` feature).
+//! WASM backend for the plugin layer (`plugin-wasm` feature).
 //!
 //! This module loads guest controllers written as WebAssembly
 //! [Components][wasm-component-model] and exposes them through the
@@ -10,9 +10,9 @@
 //! execution path (pure-Rust interpreter, no JIT codegen at runtime).
 //! Cranelift is still linked because it is needed on the *host* side
 //! to compile wasm bytes into Pulley bytecode — see `engine.rs` for
-//! the `Config::target("pulley64")` setup and DESIGN.md Phase P for
-//! the rationale (interface/format layer split, two-stage feature
-//! `plugin-wasm` vs `plugin-wasm-runtime-only`).
+//! the `Config::target("pulley64")` setup and DESIGN.md "WASM backend"
+//! for the rationale (a runtime-only feature without Cranelift is
+//! planned; see ROADMAP.md).
 //!
 //! [wasm-component-model]: https://component-model.bytecodealliance.org/
 

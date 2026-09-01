@@ -16,7 +16,7 @@
 //! register allocation, JIT optimisation passes, or platform-specific
 //! SIMD lowering. That is the configuration we rely on to get
 //! bit-reproducible plugin behaviour across machines (see DESIGN.md
-//! Phase P: "決定論性を config 調整なしで担保").
+//! "WASM backend": 決定論を config 調整なしで担保).
 
 use wasmtime::{Config, Engine};
 
@@ -70,8 +70,8 @@ impl WasmEngine {
 
     /// Access the underlying `wasmtime::Engine`.
     ///
-    /// Used by `WasmController` (Phase P1 follow-up) to instantiate
-    /// `Component`s and `Store`s against this engine.
+    /// Used by `WasmController` to instantiate `Component`s and
+    /// `Store`s against this engine.
     pub fn inner(&self) -> &Engine {
         &self.inner
     }

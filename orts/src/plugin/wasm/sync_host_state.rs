@@ -83,8 +83,7 @@ pub struct HostState {
     /// Human-readable satellite / controller label for log messages.
     pub label: String,
     /// Geomagnetic field model used by the `magnetic-field-eci` host
-    /// import. Phase P1 defaults to `TiltedDipole::earth()`; Phase
-    /// D-5 will replace this with an IGRF spherical-harmonic model.
+    /// import. Currently fixed to `TiltedDipole::earth()`.
     field: TiltedDipole,
     /// WASI context.
     wasi: wasmtime_wasi::WasiCtx,

@@ -48,7 +48,7 @@ impl ActuatorBundle {
     /// Apply a command, updating the corresponding actuator(s)' state.
     ///
     /// Rejects non-finite commands before they can poison downstream
-    /// actuator models (NaN guard, see DESIGN.md Phase P 落とし穴リスト).
+    /// actuator models (NaN guard, see DESIGN.md "決定論性の運用ルール").
     ///
     /// Only actuators for which the `Command` has `Some` fields are
     /// updated; other actuators retain their previous value (zero-order

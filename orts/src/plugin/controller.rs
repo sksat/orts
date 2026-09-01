@@ -13,12 +13,12 @@
 //! [`super::Command`] struct and bundles all inputs into a single
 //! `TickInput` struct so that WASM guests can share the same shape
 //! with native implementations. A future phase may unify the two once
-//! every native controller has migrated; Phase P0.5 deliberately keeps
-//! them side by side so that no existing oracle tests have to change.
+//! every native controller has migrated; they are deliberately kept
+//! side by side so that no existing oracle tests have to change.
 //!
-//! See DESIGN.md Phase P, D3 ("trait 構造: 既存 DiscreteController を
-//! 拡張して 1 trait に統一") for the long-term plan — P0.5 introduces
-//! `PluginController` as the forward-compatible target shape.
+//! See DESIGN.md "sync / async デュアルバックエンド" for the coexistence
+//! rationale and ROADMAP.md for the planned unification —
+//! `PluginController` is the forward-compatible target shape.
 
 use super::command::Command;
 use super::error::PluginError;
@@ -44,14 +44,14 @@ pub trait PluginController: Send {
     fn name(&self) -> &str;
 
     /// Fixed sample period \[s\]. Controllers that need to change
-    /// their tick rate dynamically are out of scope for Phase P1.
+    /// their tick rate dynamically are currently out of scope.
     fn sample_period(&self) -> f64;
 
     /// API version of the plugin interface this controller targets.
     ///
     /// The host uses this to detect guest/host mismatches separately
-    /// from semver bumps of the containing crate. Default is `1` for
-    /// Phase P0.5; Phase P1 will bump this as the WIT evolves.
+    /// from semver bumps of the containing crate. Defaults to `1`;
+    /// bumped as the WIT evolves.
     fn api_version(&self) -> u32 {
         1
     }
@@ -93,8 +93,8 @@ pub trait PluginController: Send {
     /// suitable for hot reload across an identical controller binary.
     ///
     /// Controllers without migratable state (most native ones) return
-    /// `None`. Phase P6 will use this for hot-reload of WASM guests;
-    /// Phase P0.5 only needs the default implementation.
+    /// `None`. Hot reload of WASM guests (planned; see ROADMAP.md)
+    /// will use this; the default implementation suffices until then.
     ///
     /// **Contract**: a controller that returns `Some(_)` from
     /// `snapshot_state()` MUST accept the resulting bytes in

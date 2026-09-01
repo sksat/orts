@@ -5,12 +5,13 @@
 //! return per-device actuator commands that the host translates into
 //! physical loads via `ActuatorBundle`.
 //!
-//! The field set grows incrementally with each phase:
-//! - P1: `mtq` (per-MTQ moment or normalized) + `rw` (per-wheel speed or torque)
-//! - P4: thrust throttle / impulsive delta-v
-//! - P5: composite commands for coupled attitude + thrust guest
+//! The command covers `mtq` (per-MTQ moment or normalized), `rw`
+//! (per-wheel speed or torque), and `thruster` (per-thruster
+//! throttle); fields can be combined for coupled attitude + thrust
+//! guests.
 //!
-//! See DESIGN.md Phase P, D2 ("Command は per-device 論理指令").
+//! See DESIGN.md "プラグインアーキテクチャ" 設計方針 ("戻り値は物理量では
+//! なく論理指令").
 
 /// Per-wheel RW command.
 ///
@@ -61,8 +62,8 @@ impl MtqCommand {
 
 /// Per-thruster command.
 ///
-/// Phase P4: throttle only. Future phases may add impulsive delta-v
-/// or force-based variants.
+/// Throttle only for now; impulsive delta-v or force-based variants
+/// are planned (see ROADMAP.md).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ThrusterCommand {
     /// Per-thruster throttle level \[0, 1\].
