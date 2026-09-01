@@ -28,10 +28,12 @@ export class RrdFileAdapter implements SourceAdapter {
   private file: File;
   private estimatedDt = 10;
   private stopped = false;
-  /// The central body constants the derived values are computed against. The
-  /// Worker sends metadata before the first chunk, so this is set by then.
+  /**
+   * The central body constants the derived values are computed against. The
+   * Worker sends metadata before the first chunk, so this is set by then.
+   */
   private derivedContext: OrbitDerivedContext | null = null;
-  /// Whether this load has already published its first point for the E2E.
+  /** Whether this load has already published its first point for the E2E. */
   private debugPointExposed = false;
 
   constructor(sourceId: SourceId, file: File, onEvent: SourceEventHandler) {
@@ -57,11 +59,6 @@ export class RrdFileAdapter implements SourceAdapter {
     // anyway would make that ordering load-bearing, and a chunk arriving first
     // would be derived against the previous recording's body.
     this.derivedContext = null;
-    // Every other per-load field is reset here, and this one holds the central
-    // body the derived values are computed against. The worker posts metadata
-    // before any chunk, so a second load overwrites it in practice; keeping it
-    // anyway would make that ordering load-bearing, and a chunk arriving first
-    // would be derived against the previous recording's body.
 
     const reader = new FileReader();
     this.reader = reader;

@@ -43,13 +43,16 @@ export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt
           },
         ];
 
+  // One resolution for both fields, so they cannot disagree on the body.
+  const centralBody = resolveCentralBody(metadata.mu, metadata.centralBodyRadius);
+
   return {
-    mu: resolveCentralBody(metadata.mu, metadata.centralBodyRadius).mu,
+    mu: centralBody.mu,
     dt,
     output_interval: dt,
     stream_interval: dt,
     central_body: metadata.centralBody ?? "earth",
-    central_body_radius: resolveCentralBody(metadata.mu, metadata.centralBodyRadius).bodyRadius,
+    central_body_radius: centralBody.bodyRadius,
     epoch_jd: metadata.epochJd,
     satellites,
   };
@@ -95,13 +98,16 @@ export function rrdMetadataToSimInfo(
     });
   }
 
+  // One resolution for both fields, so they cannot disagree on the body.
+  const centralBody = resolveCentralBody(metadata.mu, metadata.body_radius);
+
   return {
-    mu: resolveCentralBody(metadata.mu, metadata.body_radius).mu,
+    mu: centralBody.mu,
     dt,
     output_interval: dt,
     stream_interval: dt,
     central_body: metadata.body_name ?? "earth",
-    central_body_radius: resolveCentralBody(metadata.mu, metadata.body_radius).bodyRadius,
+    central_body_radius: centralBody.bodyRadius,
     epoch_jd: metadata.epoch_jd ?? null,
     satellites,
   };

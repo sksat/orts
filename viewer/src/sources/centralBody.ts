@@ -27,6 +27,11 @@ export interface CentralBody {
  * A `mu` that is absent, zero, negative or non-finite cannot scale an orbit —
  * every element derived from it would come out non-finite — so it falls back to
  * Earth rather than propagating through the charts.
+ *
+ * A negative radius falls back too: altitude is `r - bodyRadius`, so it would
+ * read as a height above the orbit rather than above the surface, which is
+ * plausible enough on a chart to go unnoticed. Zero stands, being a point mass
+ * whose altitude is `r`.
  */
 export function resolveCentralBody(
   mu: number | null | undefined,
@@ -35,6 +40,8 @@ export function resolveCentralBody(
   return {
     mu: mu != null && Number.isFinite(mu) && mu > 0 ? mu : DEFAULT_MU,
     bodyRadius:
-      bodyRadius != null && Number.isFinite(bodyRadius) ? bodyRadius : DEFAULT_BODY_RADIUS,
+      bodyRadius != null && Number.isFinite(bodyRadius) && bodyRadius >= 0
+        ? bodyRadius
+        : DEFAULT_BODY_RADIUS,
   };
 }
