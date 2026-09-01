@@ -1,20 +1,16 @@
-//! The CLI installs a `log` backend, so `log::` call sites in `orts-cli` and
-//! `orts` — the WASM guest's `host-env.log` records among them — actually
-//! reach the user instead of being discarded by `log`'s no-op logger.
+//! Drives the real binary, covering what a unit test on the filter cannot:
+//! that a backend is installed at all, that records go to stderr rather than
+//! stdout, and that `RUST_LOG` reaches it. Per-target levels are pinned in
+//! `logging.rs`.
 //!
-//! These drive the real binary, so they cover what a unit test on the filter
-//! cannot: that the backend is installed at all, that records go to stderr
-//! rather than stdout, and that `RUST_LOG` reaches it. Which target gets which
-//! level is pinned in `logging.rs`'s unit tests.
-//!
-//! The record used here is the startup line from `logging::init`, because it is
-//! the only one a plain `orts run` emits: every other call site needs either a
-//! plugin controller (a built guest component) or a live `serve` peer.
+//! These use the startup record from `logging::init`, the only one a plain
+//! `orts run` emits — every other call site needs a plugin controller (a built
+//! guest component) or a live `serve` peer.
 
 use std::process::Output;
 
-/// Substring of the startup record. Not the whole line: the assertions should
-/// survive a change of timestamp or field layout.
+/// A substring rather than the whole line, so a change of timestamp or field
+/// layout does not fail these.
 const STARTUP_RECORD: &str = "log filter:";
 
 fn run(rust_log: Option<&str>) -> Output {
@@ -30,8 +26,7 @@ fn run(rust_log: Option<&str>) -> Output {
     ]);
     match rust_log {
         Some(v) => cmd.env("RUST_LOG", v),
-        // An inherited RUST_LOG would decide the outcome instead of the
-        // default filter under test.
+        // An inherited value would decide the outcome instead of the default.
         None => cmd.env_remove("RUST_LOG"),
     };
     cmd.output().expect("failed to execute orts")
@@ -41,9 +36,8 @@ fn stderr_of(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-/// A `log::` record reaches stderr, carrying its level and target — a `serve`
-/// operator needs to know which component spoke, and the CLI's targets are
-/// what `RUST_LOG` selects on.
+/// The level and target have to survive: an operator needs to know which
+/// component spoke, and targets are what `RUST_LOG` selects on.
 #[test]
 fn log_records_reach_stderr_with_level_and_target() {
     let out = run(Some("debug"));
@@ -67,8 +61,7 @@ fn log_records_reach_stderr_with_level_and_target() {
     );
 }
 
-/// `RUST_LOG` decides, in both directions, without a rebuild — and the
-/// built-in default is a real filter rather than "everything through".
+/// `RUST_LOG` decides in both directions, without a rebuild.
 #[test]
 fn rust_log_selects_which_records_are_emitted() {
     for filter in ["error", "warn", "off", "orts=info"] {
@@ -94,8 +87,7 @@ fn rust_log_selects_which_records_are_emitted() {
     }
 }
 
-/// The default filter stops below info, so an ordinary run gains no debug
-/// chatter from installing a backend.
+/// Installing a backend must not add debug chatter to an ordinary run.
 #[test]
 fn the_default_filter_stops_below_info() {
     let out = run(None);
@@ -107,8 +99,7 @@ fn the_default_filter_stops_below_info() {
     );
 }
 
-/// The effective filter is reported, so "why do I see no logs" is answerable
-/// from the log itself.
+/// "Why do I see no logs" should be answerable from the log itself.
 #[test]
 fn the_startup_record_names_the_filter_in_effect() {
     let stderr = stderr_of(&run(Some("orts=debug")));
@@ -118,7 +109,7 @@ fn the_startup_record_names_the_filter_in_effect() {
     );
 
     // Every directive, not just the one that let this record through: the
-    // point is to show why *other* records are missing.
+    // point is to explain why other records are missing.
     let stderr = stderr_of(&run(Some("error,orts=debug")));
     for directive in ["error", "orts=debug"] {
         assert!(
@@ -128,9 +119,8 @@ fn the_startup_record_names_the_filter_in_effect() {
     }
 }
 
-/// stdout carries what the command produces and nothing else: `orts serve
-/// --stream-stdio` puts a binary protocol there and `run --json` a parseable
-/// summary, so a log record on stdout would corrupt both.
+/// `serve --stream-stdio` puts a binary protocol on stdout and `run --json` a
+/// parseable summary; a record there would corrupt both.
 #[test]
 fn log_records_stay_off_stdout() {
     let out = run(Some("trace"));
@@ -147,8 +137,7 @@ fn log_records_stay_off_stdout() {
     }
 }
 
-/// Records are written unstyled when stderr is not a terminal, so a redirected
-/// log or a grep over it does not have to step over escape codes.
+/// A redirected log, or a grep over it, should not carry escape codes.
 #[test]
 fn records_are_unstyled_when_stderr_is_not_a_terminal() {
     let stderr = stderr_of(&run(Some("debug")));
