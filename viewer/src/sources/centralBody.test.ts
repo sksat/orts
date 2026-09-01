@@ -87,6 +87,7 @@ describe("resolveCentralBody", () => {
         bodyId: "earth",
         field: "mu",
         value: mu,
+        origin: "source",
       });
     }
   });
@@ -100,6 +101,24 @@ describe("resolveCentralBody", () => {
       if (result.ok) continue;
       expect(result.error).toMatchObject({ kind: "unusable-value", field: "radius" });
     }
+  });
+
+  it("holds a catalog's own constants to the same constraint", () => {
+    // A catalog is the consumer's to write. A `mu` of -1 in one is as unusable
+    // as a `mu` of -1 in a file, and it would otherwise reach every element
+    // derived from it without passing the check the file's value passes.
+    const catalog: BodyCatalog = { kerbin: { mu: -1, radiusKm: 600 } };
+    const result = resolveCentralBody({ bodyId: "kerbin" }, catalog);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toEqual({
+      kind: "unusable-value",
+      bodyId: "kerbin",
+      field: "mu",
+      value: -1,
+      origin: "catalog",
+    });
+    expect(describeCentralBodyError(result.error)).toContain("catalog's");
   });
 
   it("reports the first field that cannot be resolved", () => {

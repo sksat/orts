@@ -14,12 +14,7 @@
  * on the chart to say so.
  */
 
-import {
-  type BodyCatalog,
-  bodyIdOf,
-  IMPLICIT_BODY_ID,
-  resolveBodyCatalog,
-} from "./bodyCatalog.js";
+import { type BodyCatalog, bodyIdOf, IMPLICIT_BODY_ID, resolveBodyCatalog } from "./bodyCatalog.js";
 
 /** Resolved central body constants. */
 export interface CentralBody {
@@ -47,11 +42,13 @@ export type CentralBodyError =
       missing: CentralBodyField;
     }
   | {
-      /** The source carried the value, and it cannot be one. */
+      /** The value cannot be one, whichever of the two supplied it. */
       kind: "unusable-value";
       bodyId: string;
       field: CentralBodyField;
       value: number;
+      /** `"catalog"` for a body's own constants, which a consumer may supply. */
+      origin: "source" | "catalog";
     };
 
 export type CentralBodyResult =
@@ -76,8 +73,10 @@ export function describeCentralBodyError(error: CentralBodyError): string {
       return `the recording is around "${error.bodyId}", which this viewer has no constants for, and carries no ${error.missing} of its own`;
     case "missing-default":
       return `the recording carries no ${error.missing}, and none is known for "${error.bodyId}"`;
-    case "unusable-value":
-      return `the recording's ${error.field} for "${error.bodyId}" is ${error.value}, which no orbit can be measured against`;
+    case "unusable-value": {
+      const whose = error.origin === "source" ? "the recording's" : "the catalog's";
+      return `${whose} ${error.field} for "${error.bodyId}" is ${error.value}, which no orbit can be measured against`;
+    }
   }
 }
 
@@ -108,18 +107,28 @@ export function resolveCentralBody(
   const bodyId = declared.bodyId != null ? bodyIdOf(declared.bodyId) : IMPLICIT_BODY_ID;
   const entry = resolveBodyCatalog(catalog)[bodyId];
 
+  // The same constraint whoever supplied the value. A catalog is the consumer's
+  // to write, so a `mu` of -1 in one is as unusable as a `mu` of -1 in a file,
+  // and letting it through here would be letting it into every element derived.
+  const usable = (
+    value: number,
+    field: CentralBodyField,
+    origin: "source" | "catalog",
+  ): { ok: true; value: number } | { ok: false; error: CentralBodyError } =>
+    Number.isFinite(value) && value > 0
+      ? { ok: true, value }
+      : { ok: false, error: { kind: "unusable-value", bodyId, field, value, origin } };
+
   const resolve = (
     declaredValue: number | null | undefined,
     fromCatalog: number | undefined,
     field: CentralBodyField,
   ): { ok: true; value: number } | { ok: false; error: CentralBodyError } => {
     if (declaredValue != null) {
-      return Number.isFinite(declaredValue) && declaredValue > 0
-        ? { ok: true, value: declaredValue }
-        : { ok: false, error: { kind: "unusable-value", bodyId, field, value: declaredValue } };
+      return usable(declaredValue, field, "source");
     }
     if (fromCatalog != null) {
-      return { ok: true, value: fromCatalog };
+      return usable(fromCatalog, field, "catalog");
     }
     return {
       ok: false,

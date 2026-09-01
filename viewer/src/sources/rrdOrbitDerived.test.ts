@@ -17,7 +17,6 @@ function point(overrides: Partial<RrdPointOut> = {}): RrdPointOut {
   };
 }
 
-
 describe("packStates", () => {
   it("lays out six values per point in order", () => {
     const packed = packStates([
