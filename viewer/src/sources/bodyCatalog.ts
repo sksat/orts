@@ -62,7 +62,19 @@ export function bodyIdOf(name: string): string {
   return name.trim().toLowerCase();
 }
 
-/** Merge consumer-supplied constants over the defaults, per body id. */
+/**
+ * Merge consumer-supplied constants over the defaults, field by field.
+ *
+ * Per field rather than per body, so correcting one constant of a body we ship
+ * keeps the other: replacing the entry would leave `{ earth: { mu } }` with no
+ * radius, and a recording that omits its radius would then be refused for a
+ * body the viewer knows.
+ */
 export function resolveBodyCatalog(custom?: BodyCatalog): BodyCatalog {
-  return custom ? { ...DEFAULT_BODY_CATALOG, ...custom } : DEFAULT_BODY_CATALOG;
+  if (!custom) return DEFAULT_BODY_CATALOG;
+  const merged: BodyCatalog = { ...DEFAULT_BODY_CATALOG };
+  for (const [id, constants] of Object.entries(custom)) {
+    merged[id] = { ...merged[id], ...constants };
+  }
+  return merged;
 }

@@ -18,7 +18,10 @@ import { type BodyCatalog, bodyIdOf, IMPLICIT_BODY_ID, resolveBodyCatalog } from
 
 /** Resolved central body constants. */
 export interface CentralBody {
-  /** The body these came from, as the source named it. */
+  /**
+   * The body these came from, as an id: the source's name trimmed and
+   * lowercased, which is what the catalog and the scene key on.
+   */
   bodyId: string;
   mu: number;
   bodyRadius: number;

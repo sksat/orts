@@ -103,6 +103,15 @@ describe("resolveCentralBody", () => {
     }
   });
 
+  it("keeps the constant a partial override leaves alone", () => {
+    // Correcting Earth's `mu` should not cost Earth its radius: replacing the
+    // whole entry left a recording that omits its radius refused for a body the
+    // viewer ships.
+    const catalog: BodyCatalog = { earth: { mu: 398600.44 } };
+    const body = resolved({ bodyId: "earth", mu: null, bodyRadius: null }, catalog);
+    expect(body).toEqual({ bodyId: "earth", mu: 398600.44, bodyRadius: EARTH.radiusKm });
+  });
+
   it("holds a catalog's own constants to the same constraint", () => {
     // A catalog is the consumer's to write. A `mu` of -1 in one is as unusable
     // as a `mu` of -1 in a file, and it would otherwise reach every element
