@@ -1101,13 +1101,16 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         // what row 0 means: a position from one time beside a velocity from
         // another.
         //
-        // `ComponentColumn` has no way to say "no value at this row", so a row
-        // exists only where the state components are whole. Anchoring on
-        // position and velocity keeps the trajectory intact when an optional
-        // component such as attitude was recorded at only some of the times.
-        // That component is then left out rather than filled with zeros, which
-        // downstream would read as a measured value: `orts convert` writes them
-        // to CSV and computes orbital elements from them.
+        // A row therefore exists only where the state components are whole.
+        // Anchoring on position and velocity keeps the trajectory intact when an
+        // optional component such as attitude was recorded at only some of the
+        // times; that component covers the rows it has, and `orts convert` leaves
+        // the others empty rather than writing a zero, which downstream would
+        // read as a measured value.
+        //
+        // The cost is that a time where the anchors are not whole is no row at
+        // all, so a whole optional value recorded only at such a time is not
+        // reported.
         let anchors: Vec<&(String, Vec<String>)> = {
             let state: Vec<&(String, Vec<String>)> = temporal
                 .iter()
@@ -1185,10 +1188,10 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         // CSV path reads `SimTime` only, so filling the others changes what
         // `orts convert` reports. Left as it stands on main until the step
         // round-trip is settled with the writer.
-        // Dense over `row_keys`: a component that covers only some of them is
-        // dropped below rather than restored as a sparse column, which is what
-        // this loader has always done. Restoring it belongs with the CSV path
-        // that reads these rows (#375 follow-up).
+        // Dense over `row_keys`, which is the intersection of the anchor columns'
+        // keys — so a time the file carries for this entity is a row only when
+        // the anchors are whole there. A component that covers some of those rows
+        // records which ones.
         let entity_times = TimelineColumn {
             data: row_keys
                 .iter()
@@ -1220,25 +1223,38 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         }
 
         for (name, fields) in &temporal {
+            // A component present on only some rows keeps those rows rather than
+            // being dropped whole: the column records which logical rows it
+            // covers. A row where some of its fields are missing is left out —
+            // half a vector is not a value.
             let mut column = ComponentColumn::new(fields.len());
-            let mut whole = true;
-            for &key in &row_keys {
-                let mut row = Vec::with_capacity(fields.len());
-                for field in fields {
-                    match get_scalar_data(&scalars, base, field).and_then(|col| col.get(&key)) {
-                        Some(&v) => row.push(v),
-                        None => {
-                            whole = false;
-                            break;
-                        }
-                    }
-                }
-                if !whole {
-                    break;
-                }
-                column.push(&row);
+            // Resolve each field's column once: `get_scalar_data` formats two
+            // candidate paths per call, and this walks every row. `temporal` was
+            // retained on every field having a column, so the count holds; a
+            // short list would build rows out of the wrong fields, so it is
+            // checked rather than assumed.
+            let field_columns: Vec<&Column> = fields
+                .iter()
+                .filter_map(|field| get_scalar_data(&scalars, base, field))
+                .collect();
+            if field_columns.len() != fields.len() {
+                continue;
             }
-            if !whole {
+            for (logical_row, &key) in row_keys.iter().enumerate() {
+                let row: Vec<f64> = field_columns
+                    .iter()
+                    .map_while(|col| col.get(&key).copied())
+                    .collect();
+                if row.len() == fields.len() {
+                    column.push_at(&row, logical_row);
+                }
+            }
+            // None of this entity's rows holds the component whole, so there is
+            // nothing to report for it. That can also happen when the file does
+            // carry a whole value, at a time that is not one of the rows — see
+            // the anchor comment above. An entity with no rows at all still gets
+            // its columns, empty, which is what keeps its schema entry.
+            if !row_keys.is_empty() && column.num_rows() == 0 {
                 continue;
             }
 
@@ -2228,15 +2244,149 @@ mod tests {
         assert_eq!(position.get_row(1).expect("row 1"), &[110.0, 1.0, 2.0]);
     }
 
-    /// A component recorded at only some of the times is left out.
+    /// A component whose fields never share a row is not reported at all.
     ///
-    /// Filling its absent rows with zeros would put an attitude that was never
-    /// logged into the CSV `orts convert` writes, where a zero quaternion is
-    /// indistinguishable from a measured one. Dropping those rows instead would
-    /// cost the trajectory, so the rows follow position and velocity and the
-    /// optional component is the part that goes.
+    /// Restoring the rows a component covers must not turn into reporting a
+    /// component the file holds no whole value for: `qw` at one time and `qx` at
+    /// another is no quaternion at either.
     #[test]
-    fn a_partially_recorded_optional_component_is_left_out() {
+    fn a_component_whose_fields_never_meet_is_not_reported() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_nomeet_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("nomeet.rrd");
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-nomeet-test")
+                .save(&path)
+                .expect("recording stream");
+            // Position everywhere, so the entity has rows.
+            for t in [0.0f64, 10.0] {
+                rec.set_duration_secs("sim_time", t);
+                for (field, value) in [("x", t), ("y", 1.0), ("z", 2.0)] {
+                    rec.log(
+                        format!("/world/sat/nomeet/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new([value]),
+                    )
+                    .expect("log");
+                }
+            }
+            // All four attitude fields exist, but split across the two times, so
+            // no row holds a whole quaternion.
+            for (t, fields) in [(0.0f64, ["qw", "qx"]), (10.0, ["qy", "qz"])] {
+                rec.set_duration_secs("sim_time", t);
+                for field in fields {
+                    rec.log(
+                        format!("/world/sat/nomeet/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new([1.0f64]),
+                    )
+                    .expect("log");
+                }
+            }
+            rec.flush_blocking().expect("flush");
+        }
+
+        let loaded = load_as_recording(path.to_str().unwrap()).expect("load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let store = loaded
+            .entity(&EntityPath::parse("/world/sat/nomeet"))
+            .expect("entity");
+        assert_eq!(store.num_rows, 2, "the trajectory still has its rows");
+        assert!(
+            store.columns.keys().any(|name| name.contains("Position3D")),
+            "the trajectory survives"
+        );
+        assert!(
+            !store
+                .columns
+                .keys()
+                .any(|name| name.contains("Quaternion4D")),
+            "no row holds a whole quaternion, so none is reported"
+        );
+    }
+
+    /// A component logged at only some steps survives a round trip through the
+    /// file with the rows it covers.
+    ///
+    /// The writer places its values at the times they were logged at, and the
+    /// loader now records which rows they came back on, so `orts convert` reports
+    /// the component instead of dropping it.
+    #[test]
+    fn a_sparse_column_round_trips() {
+        use crate::record::components::MtqCommand3D;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/roundtrip");
+
+        const N: u64 = 6;
+        const FIRST: u64 = 3;
+        for i in 0..N {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = OrbitalState::new(
+                Vector3::new(7000.0 + i as f64, 0.0, 0.0),
+                Vector3::new(0.0, 7.5, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+            if i >= FIRST {
+                rec.log_temporal(&sat, &tp, &MtqCommand3D(Vector3::new(i as f64, 0.0, 0.0)));
+            }
+        }
+
+        // A directory of this test's own, so parallel runs cannot meet on one
+        // path (see `load_written`).
+        let dir = std::env::temp_dir().join(format!(
+            "orts_rrd_sparse_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sparse_roundtrip.rrd");
+        let path_str = path.to_str().unwrap();
+        save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
+        let loaded = load_as_recording(path_str).expect("failed to load");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let store = loaded.entity(&sat).expect("entity");
+        assert_eq!(store.num_rows, N as usize, "every step is a row");
+
+        let mtq = store
+            .columns
+            .iter()
+            .find(|(name, _)| name.contains("MtqCommand3D"))
+            .map(|(_, c)| c)
+            .expect("the command column survives the round trip");
+        assert_eq!(mtq.num_rows(), (N - FIRST) as usize);
+        for row in 0..N as usize {
+            let want = (row >= FIRST as usize).then(|| row as f64);
+            assert_eq!(mtq.at_logical_row(row).map(|v| v[0]), want, "row {row}");
+        }
+
+        // The dense column is unchanged by the round trip.
+        let pos = store
+            .columns
+            .iter()
+            .find(|(name, _)| name.contains("Position3D"))
+            .map(|(_, c)| c)
+            .expect("a position column");
+        assert_eq!(pos.num_rows(), N as usize);
+        assert_eq!(pos.rows, RowMap::Dense);
+    }
+
+    /// A component recorded at only some of the times comes back covering those
+    /// times.
+    ///
+    /// This used to drop the component. Filling its absent rows with zeros would
+    /// have put an attitude that was never logged into the CSV `orts convert`
+    /// writes, where a zero quaternion reads as a measured one, and dropping the
+    /// rows would have cost the trajectory — so the component was the part that
+    /// went. A column now records which logical rows it covers and the CSV
+    /// leaves the others empty, so neither the attitude nor the trajectory has
+    /// to go (#375).
+    #[test]
+    fn a_partially_recorded_optional_component_covers_its_own_times() {
         let dir = std::env::temp_dir().join(format!(
             "orts_opt_{}_{:?}",
             std::process::id(),
@@ -2276,16 +2426,31 @@ mod tests {
         let entity = EntityPath::parse("/world/sat/opt");
         let store = loaded.entity(&entity).expect("entity");
         assert_eq!(store.num_rows, 2, "both positions are kept");
-        assert!(
-            store.columns.keys().any(|name| name.contains("Position3D")),
-            "the trajectory survives"
+
+        let position = store
+            .columns
+            .iter()
+            .find(|(name, _)| name.contains("Position3D"))
+            .map(|(_, c)| c)
+            .expect("the trajectory survives");
+        assert_eq!(position.num_rows(), 2);
+
+        let attitude = store
+            .columns
+            .iter()
+            .find(|(name, _)| name.contains("Quaternion4D"))
+            .map(|(_, c)| c)
+            .expect("the attitude survives, covering the time it was logged at");
+        assert_eq!(attitude.num_rows(), 1);
+        assert_eq!(
+            attitude.at_logical_row(0),
+            None,
+            "t=0 logged no attitude, and no zero stands in for it"
         );
-        assert!(
-            !store
-                .columns
-                .keys()
-                .any(|name| name.contains("Quaternion4D")),
-            "an attitude present at only one of the two times is not reported"
+        assert_eq!(
+            attitude.at_logical_row(1),
+            Some([1.0, 0.0, 0.0, 0.0].as_slice()),
+            "t=10's attitude sits on t=10's row"
         );
     }
 
@@ -3436,7 +3601,7 @@ mod tests {
         {
             let store = rec.entity_mut(&sat);
             let mut column = ComponentColumn::new(3);
-            column.push(&[1.0, 2.0, 3.0]);
+            column.push_at(&[1.0, 2.0, 3.0], 0);
             store.columns.insert(Position3D::component_name(), column);
             // A sequence on the sim-time axis, and no step axis at all.
             store.timelines.insert(
@@ -3480,7 +3645,7 @@ mod tests {
             let store = rec.entity_mut(&sat);
             let mut column = ComponentColumn::new(3);
             for i in 0..N {
-                column.push(&[i as f64, 0.0, 0.0]);
+                column.push_at(&[i as f64, 0.0, 0.0], i);
             }
             store.columns.insert(Position3D::component_name(), column);
             // `sim_time` holds the wrong variant, so it covers no row at all.
