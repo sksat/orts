@@ -52,10 +52,11 @@ section is subdivided by package.
 - **BREAKING**: `EntityStore::timelines` holds `TimelineColumn` rather than
   `Vec<TimeIndex>`, and a column now carries the logical rows it covers.
   Appending goes through `ComponentColumn::push_at`, which states the row and
-  checks it; `push` and the `data` / `rows` fields of both column types are
-  crate-private, since a column whose map and data disagree reports values at
-  other rows' times. Read a column with `scalars` and an axis with `times`, or
-  by row: `get_row` takes a stored index, `at_logical_row` an entity
+  checks it; `push`, `scalars_per_row` and the `data` / `rows` fields of both
+  column types are crate-private, since a column whose map and data disagree
+  reports values at other rows' times. Read a column with `scalars`,
+  `scalars_per_row()` and an axis with `times`, or by row: `get_row` takes a
+  stored index, `at_logical_row` an entity
   row. ([#375](https://github.com/sksat/orts/issues/375))
 - `StateEffector` is now frame-generic — `StateEffector<S, F: frame::Eci =
   SimpleEci>` returning `ExternalLoads<F>`, like `Model<S, F>` — so effectors

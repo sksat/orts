@@ -948,7 +948,7 @@ pub fn write_satellite_csv(
                         line.push_str(&format!(",{:.10}", val));
                     }
                 }
-                None => line.push_str(&",".repeat(col.scalars_per_row)),
+                None => line.push_str(&",".repeat(col.scalars_per_row())),
             }
         }
 
@@ -982,7 +982,7 @@ pub fn build_csv_header(rec: &Recording, sat_path: &EntityPath, with_id: bool) -
             // Use component name as column prefix (strip "orts." prefix)
             let short = name.strip_prefix("orts.").unwrap_or(name);
             if let Some(col) = store.columns.get(name) {
-                let n = col.scalars_per_row;
+                let n = col.scalars_per_row();
                 if n == 1 {
                     header.push_str(&format!(",{short}"));
                 } else {

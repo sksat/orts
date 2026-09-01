@@ -77,7 +77,11 @@ impl RowMap {
 #[derive(Debug, Clone)]
 pub struct ComponentColumn {
     /// Number of f64 values per row.
-    pub scalars_per_row: usize,
+    ///
+    /// Where a row starts in `data` and how many rows there are both follow from
+    /// this, so changing it after an append would move every row without the map
+    /// hearing about it.
+    pub(crate) scalars_per_row: usize,
     /// Flat storage: scalars_per_row * num_rows f64 values.
     pub(crate) data: Vec<f64>,
     /// Which logical row each stored row belongs to.
@@ -135,6 +139,11 @@ impl ComponentColumn {
             .len()
             .checked_div(self.scalars_per_row)
             .unwrap_or(0)
+    }
+
+    /// How many scalars one row holds.
+    pub fn scalars_per_row(&self) -> usize {
+        self.scalars_per_row
     }
 
     /// The flat storage, `scalars_per_row` values per stored row.
@@ -882,6 +891,7 @@ mod tests {
         column.push_at(&[1.0, 2.0], 0);
         column.push_at(&[5.0, 6.0], 5);
 
+        assert_eq!(column.scalars_per_row(), 2, "the width it was built with");
         assert_eq!(
             column.scalars(),
             [1.0, 2.0, 5.0, 6.0],
