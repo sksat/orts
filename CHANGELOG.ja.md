@@ -30,6 +30,14 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- 外乱トルクの登録を `orts::setup` に集約し、どれを解くかを `SatelliteParams` の
+  `DisturbanceTorques` で選ぶようにした。`build_spacecraft_dynamics` がそれを見て
+  gravity gradient トルクを install する。`build_orbital_system` は install しない
+  (軌道のみの系にはトルクが作用する姿勢が無く、`torque_body` を捨てる)。
+  呼び出し側は環境モデルを登録しなくなった。CLI はこのトルクを 2 つの entry point
+  で同一行に書いていて、両者が食い違わない保証が無かった。actuator (RW, MTQ,
+  thruster) の登録は呼び出し側に残る。搭載する actuator は機体のハードウェア記述で
+  決まる。([#382](https://github.com/sksat/orts/pull/382))
 - `SurfacePanel` が lumped な `cr` の代わりに `optics: PanelOptics { specular,
   diffuse }` を持つようになった。吸収率は `1 - specular - diffuse` として導出する。
   単一係数は face-on の SRP 力の大きさを決めるだけで、斜入射での向きが決まらない
@@ -116,6 +124,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `[satellites.disturbances]` で衛星がモデル化する環境外乱トルクを選べるように
+  した。`gravity_gradient` の既定は true で、姿勢伝播が従来から持っていた振る舞い。
+  `[satellites.attitude]` の中ではなく sibling の table にしたのは、前者が姿勢の
+  状態と機体特性を述べる場所であり、どの環境モデルを解くかは別の関心事だから。
+  `attitude` 不在での指定は reject する。([#382](https://github.com/sksat/orts/pull/382))
 - `orts run` の地上局コンタクトウィンドウ出力: `[[ground_station]]`
   (`name`、`latitude_deg`、`longitude_deg`、`altitude_km`、`min_elevation_deg`)
   で局を宣言。検出したウィンドウを AOS 順に stderr へ出力 (UTC 時刻、

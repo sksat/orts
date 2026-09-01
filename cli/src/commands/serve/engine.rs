@@ -22,7 +22,6 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use orts::OrbitalState;
-use orts::attitude::CoupledGravityGradient;
 use orts::group::prop_group::{PropGroupOutcome, SatId};
 use orts::group::{IndependentGroup, IntegratorConfig};
 use orts::orbital::OrbitalSystem;
@@ -35,14 +34,14 @@ use crate::satellite::{SatelliteInfo, SatelliteSpec};
 use crate::sim::controlled::ControlledSatellite;
 use crate::sim::core::{
     AttitudePayload, AttitudeSource, HistoryState, accel_breakdown, make_history_state, sat_params,
-    spacecraft_accel_breakdown,
+    spacecraft_accel_breakdown, spacecraft_dynamics_for,
 };
 use crate::sim::mode::{
     SimMode, ensure_streams_supported, select_sim_mode, unhonored_config_warnings,
     validate_satellite_spec,
 };
 use crate::sim::params::SimParams;
-use orts::setup::{build_orbital_system, build_spacecraft_dynamics, default_third_bodies};
+use orts::setup::{build_orbital_system, default_third_bodies};
 
 use super::compute::state_message;
 use super::history::HistoryBuffer;
@@ -488,18 +487,7 @@ impl ServeEngine {
 
             for spec in &params.satellites {
                 let att = spec.attitude_config.as_ref().unwrap();
-                let inertia = att.inertia_matrix();
-                let mut dynamics = build_spacecraft_dynamics(
-                    &params.body,
-                    params.mu,
-                    params.epoch,
-                    &sat_params(spec),
-                    &third_bodies,
-                    inertia,
-                    params.build_atmosphere_model(),
-                );
-                // Default torque: coupled gravity gradient
-                dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
+                let dynamics = spacecraft_dynamics_for(spec, att, &params, &third_bodies);
 
                 let orbit = spec
                     .initial_state(params.mu, params.epoch)
@@ -986,6 +974,11 @@ impl ServeEngine {
                     .to_string(),
             );
         }
+
+        // Field-level validation, as the controlled add path does. Without it
+        // this path held a dynamically-added satellite to a weaker standard
+        // than the same config loaded from a file.
+        satellite.validate()?;
 
         let sat_index = self.metas.len();
         let spec = satellite.to_satellite_spec(sat_index, self.params.body, self.params.mu);
@@ -1482,6 +1475,63 @@ attitude = { inertia_diag = [10, 20, 30], mass = 50 }
             };
             assert_eq!(group_mode, mode, "config:{toml}");
         }
+    }
+
+    /// Model names on the dynamics a serve-built attitude satellite propagates
+    /// with. Reaches through the group rather than rebuilding, so it sees what
+    /// the integrator will actually evaluate.
+    fn serve_model_names(toml: &str) -> Vec<String> {
+        let init = engine_from_toml(toml).expect("engine builds");
+        let SimGroup::Spacecraft(group) = &init.engine.group else {
+            panic!("expected an attitude fleet");
+        };
+        let (_, dynamics) = group
+            .satellites_with_dynamics()
+            .next()
+            .expect("one satellite");
+        dynamics
+            .model_names()
+            .into_iter()
+            .map(String::from)
+            .collect()
+    }
+
+    /// A satellite with attitude dynamics gets the gravity-gradient torque.
+    ///
+    /// This is what makes the disturbance actually reach `dω/dt`; asserting it
+    /// on the group is what keeps the registration honest wherever it lives.
+    #[test]
+    fn serve_installs_the_gravity_gradient_torque() {
+        const ATTITUDE: &str = r#"
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 20, 30], mass = 50 }
+"#;
+        let names = serve_model_names(ATTITUDE);
+        let count = names.iter().filter(|n| *n == "gravity_gradient").count();
+        assert_eq!(
+            count, 1,
+            "the torque should be installed exactly once, got {names:?}"
+        );
+    }
+
+    /// Turning the torque off in config has to reach the dynamics the
+    /// integrator evaluates, not just the parsed config.
+    #[test]
+    fn serve_honors_a_disabled_gravity_gradient() {
+        const DISABLED: &str = r#"
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 20, 30], mass = 50 }
+disturbances = { gravity_gradient = false }
+"#;
+        let names = serve_model_names(DISABLED);
+        assert!(
+            !names.iter().any(|n| n == "gravity_gradient"),
+            "gravity_gradient = false should keep the torque off the dynamics, got {names:?}"
+        );
     }
 
     /// `serve --config` reaches `build` without passing through

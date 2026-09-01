@@ -2,13 +2,18 @@ use std::collections::HashMap;
 
 use orts::OrbitalState;
 use orts::orbital::OrbitalSystem;
+use orts::orbital::gravity::GravityField;
 use orts::orbital::kepler::KeplerianElements;
+use orts::perturbations::ThirdBodyGravity;
 use orts::record::entity_path::EntityPath;
-use orts::setup::SatelliteParams;
+use orts::setup::{SatelliteParams, build_spacecraft_dynamics};
+use orts::spacecraft::SpacecraftDynamics;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::config::AttitudeConfig;
 use crate::satellite::{OrbitSpec, SatelliteSpec};
+use crate::sim::params::SimParams;
 
 /// Attitude telemetry payload for WebSocket protocol.
 ///
@@ -182,7 +187,33 @@ pub fn sat_params(spec: &SatelliteSpec) -> SatelliteParams {
         ballistic_coeff: spec.ballistic_coeff,
         srp_area_to_mass: spec.srp_area_to_mass,
         srp_cr: spec.srp_cr,
+        disturbances: spec.disturbances,
     }
+}
+
+/// Build the dynamics for one attitude satellite.
+///
+/// The single place any entry point turns a spec into `SpacecraftDynamics`, so
+/// `orts run` and `orts serve` cannot end up with different model sets for the
+/// same config. They could before: each added the gravity-gradient torque on
+/// its own line, and a third such line sat in `run` after the other two moved
+/// into `orts::setup`, so `run` evaluated the torque twice and ignored
+/// `gravity_gradient = false`.
+pub fn spacecraft_dynamics_for(
+    spec: &SatelliteSpec,
+    att: &AttitudeConfig,
+    params: &SimParams,
+    third_bodies: &[ThirdBodyGravity],
+) -> SpacecraftDynamics<Box<dyn GravityField>> {
+    build_spacecraft_dynamics(
+        &params.body,
+        params.mu,
+        params.epoch,
+        &sat_params(spec),
+        third_bodies,
+        att.inertia_matrix(),
+        params.build_atmosphere_model(),
+    )
 }
 
 #[cfg(test)]

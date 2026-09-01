@@ -5,12 +5,32 @@ use crate::spacecraft::SpacecraftDynamics;
 use arika::body::KnownBody;
 use arika::epoch::Epoch;
 
+use crate::attitude::CoupledGravityGradient;
 use crate::orbital::OrbitalSystem;
 use crate::perturbations::{
     AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity, ZonalGravity,
 };
 
-/// Physical parameters of a satellite relevant to force model construction.
+/// Which environmental disturbance torques to model.
+///
+/// These only reach the attitude equations, so they are ignored when building
+/// an orbit-only system: there is no orientation for a torque to act on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DisturbanceTorques {
+    /// Gravity-gradient torque from the central body's field.
+    pub gravity_gradient: bool,
+}
+
+impl Default for DisturbanceTorques {
+    /// Gravity gradient on, which is what attitude propagation has always used.
+    fn default() -> Self {
+        Self {
+            gravity_gradient: true,
+        }
+    }
+}
+
+/// Physical parameters of a satellite relevant to model construction.
 pub struct SatelliteParams {
     /// Whether drag should be enabled (e.g., TLE has non-zero B* or explicit ballistic coeff).
     pub has_drag: bool,
@@ -20,6 +40,8 @@ pub struct SatelliteParams {
     pub srp_area_to_mass: Option<f64>,
     /// SRP radiation pressure coefficient.
     pub srp_cr: Option<f64>,
+    /// Which environmental disturbance torques to model.
+    pub disturbances: DisturbanceTorques,
 }
 
 /// Central (point-mass) gravity field. Oblateness is added separately as a
@@ -124,8 +146,14 @@ pub fn build_orbital_system(
 /// the explicitly listed third-body gravity perturbations.
 /// Use [`default_third_bodies`] to get the standard set for a given central body.
 ///
-/// This mirrors [`build_orbital_system`] but produces a coupled orbit-attitude system.
-/// Force-only models (drag, SRP, third-body) are added via capability-based `Model<S>`.
+/// This mirrors [`build_orbital_system`] but produces a coupled orbit-attitude
+/// system, so it is where the disturbance torques belong: an orbit-only system
+/// has no orientation for one to act on. Forces and torques go in through the
+/// same capability-based `Model<S>`, and callers do not register environmental
+/// models themselves — duplicating that across the `run` and `serve` entry
+/// points is how the two came to disagree about which models a config gets.
+/// Actuators (RW, MTQ, thrusters) stay with the caller, since which ones a
+/// spacecraft carries comes from its own hardware description.
 pub fn build_spacecraft_dynamics(
     body: &KnownBody,
     mu: f64,
@@ -173,6 +201,13 @@ pub fn build_spacecraft_dynamics(
         system = system.with_model(srp);
     }
 
+    // Disturbance torques. Loads compose additively and every model is
+    // evaluated against the same state snapshot, so this order carries no
+    // meaning.
+    if sat.disturbances.gravity_gradient {
+        system = system.with_model(CoupledGravityGradient::new(mu, inertia));
+    }
+
     system
 }
 
@@ -188,9 +223,78 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
         assert_eq!(system.body_radius, Some(body.properties().radius));
+    }
+
+    fn earth_sat(disturbances: DisturbanceTorques) -> SatelliteParams {
+        SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
+            disturbances,
+        }
+    }
+
+    fn earth_dynamics(
+        disturbances: DisturbanceTorques,
+    ) -> SpacecraftDynamics<Box<dyn GravityField>> {
+        let body = KnownBody::Earth;
+        build_spacecraft_dynamics(
+            &body,
+            body.properties().mu,
+            None,
+            &earth_sat(disturbances),
+            &[],
+            Matrix3::identity(),
+            None,
+        )
+    }
+
+    #[test]
+    fn spacecraft_dynamics_installs_gravity_gradient_by_default() {
+        let system = earth_dynamics(DisturbanceTorques::default());
+        assert!(system.model_names().contains(&"gravity_gradient"));
+    }
+
+    /// Exactly once, not merely present. A caller that added the torque itself
+    /// on top of the builder is how `orts run` came to evaluate it twice.
+    #[test]
+    fn spacecraft_dynamics_installs_gravity_gradient_exactly_once() {
+        let system = earth_dynamics(DisturbanceTorques::default());
+        let count = system
+            .model_names()
+            .iter()
+            .filter(|n| **n == "gravity_gradient")
+            .count();
+        assert_eq!(count, 1, "models: {:?}", system.model_names());
+    }
+
+    #[test]
+    fn spacecraft_dynamics_omits_a_disabled_gravity_gradient() {
+        let system = earth_dynamics(DisturbanceTorques {
+            gravity_gradient: false,
+        });
+        assert!(!system.model_names().contains(&"gravity_gradient"));
+    }
+
+    /// An orbit-only system has no orientation, so a torque there would be
+    /// summed into a channel `OrbitalSystem` discards.
+    #[test]
+    fn orbital_system_never_installs_a_torque() {
+        let body = KnownBody::Earth;
+        let system = build_orbital_system(
+            &body,
+            body.properties().mu,
+            None,
+            &earth_sat(DisturbanceTorques::default()),
+            &[],
+            None,
+        );
+        assert!(!system.model_names().contains(&"gravity_gradient"));
     }
 
     #[test]
@@ -201,6 +305,7 @@ mod tests {
             ballistic_coeff: Some(0.01),
             srp_area_to_mass: None,
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
         assert!(system.model_names().contains(&"drag"));
@@ -214,6 +319,7 @@ mod tests {
             ballistic_coeff: Some(0.01),
             srp_area_to_mass: None,
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
         assert!(!system.model_names().contains(&"drag"));
@@ -228,6 +334,7 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
         };
         let third_bodies = default_third_bodies(&body);
         let system = build_orbital_system(
@@ -252,6 +359,7 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: Some(0.02),
             srp_cr: Some(1.8),
+            disturbances: DisturbanceTorques::default(),
         };
         let third_bodies = default_third_bodies(&body);
         let system = build_orbital_system(
@@ -274,6 +382,7 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
         };
         // Explicitly pass empty third bodies
         let system =
