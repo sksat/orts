@@ -67,11 +67,22 @@ impl EntityIndex {
         }
     }
 
+    /// Which axes have a value on logical row `row`.
+    ///
+    /// Chunks are cut where this changes, so every row goes out on the axes that
+    /// cover it instead of the whole chunk being dropped for want of one axis.
+    fn axes_at(&self, row: usize) -> AxisMask {
+        AxisMask {
+            sim_time: self.sim_time_secs.get(row).copied().flatten().is_some(),
+            step: self.steps.get(row).copied().flatten().is_some(),
+        }
+    }
+
     /// Index columns covering exactly `logical_rows`, in that order.
     ///
     /// An axis with no value on one of those rows is left out rather than
     /// written misaligned. `None` means no axis covers them all, and the caller
-    /// must skip the chunk: `send_columns` reads an empty index list as *static*
+    /// must skip the rows: `send_columns` reads an empty index list as *static*
     /// data, which would shadow every temporal value at the same path.
     fn time_columns(&self, logical_rows: &[usize]) -> Option<Vec<TimeColumn>> {
         let mut columns = Vec::with_capacity(2);
@@ -83,6 +94,13 @@ impl EntityIndex {
         }
         (!columns.is_empty()).then_some(columns)
     }
+}
+
+/// Which of the written axes cover a row.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AxisMask {
+    sim_time: bool,
+    step: bool,
 }
 
 /// The axis values for `rows`, or `None` if the axis misses any of them.
@@ -99,11 +117,25 @@ fn logical_rows_of(column: &ComponentColumn) -> Vec<usize> {
         .collect()
 }
 
-/// Split `n` rows into consecutive ranges of at most [`CHUNK_ROWS`].
-fn chunk_ranges(n: usize) -> impl Iterator<Item = Range<usize>> {
-    (0..n)
-        .step_by(CHUNK_ROWS)
-        .map(move |start| start..(start + CHUNK_ROWS).min(n))
+/// Split the stored rows into ranges of at most [`CHUNK_ROWS`] that also share
+/// one set of usable axes.
+///
+/// A run of rows an axis covers can end partway through a column, and one chunk
+/// carries one set of index columns, so the cut has to follow the axes.
+fn chunk_ranges_by_axes(index: &EntityIndex, logical_rows: &[usize]) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < logical_rows.len() {
+        let axes = index.axes_at(logical_rows[start]);
+        let limit = (start + CHUNK_ROWS).min(logical_rows.len());
+        let mut end = start + 1;
+        while end < limit && index.axes_at(logical_rows[end]) == axes {
+            end += 1;
+        }
+        ranges.push(start..end);
+        start = end;
+    }
+    ranges
 }
 
 /// Save a Recording to a .rrd file using the Rerun SDK.
@@ -163,7 +195,7 @@ pub fn save_as_rrd(
             // a component logged at only some steps keeps its own times.
             let logical_rows = logical_rows_of(column);
 
-            for rows in chunk_ranges(column.num_rows()) {
+            for rows in chunk_ranges_by_axes(&index, &logical_rows) {
                 // Built once per chunk and cloned per field: a `TimeColumn` clone is
                 // a refcount bump on the Arrow buffer, whereas rebuilding one
                 // re-scales every timestamp.
@@ -195,7 +227,7 @@ pub fn save_as_rrd(
             // Same logical rows as the position scalars above; taking the range
             // instead would move the points off the times the scalars carry.
             let logical_rows = logical_rows_of(pos_col);
-            for rows in chunk_ranges(pos_col.num_rows()) {
+            for rows in chunk_ranges_by_axes(&index, &logical_rows) {
                 let Some(indexes) = index.time_columns(&logical_rows[rows.clone()]) else {
                     continue;
                 };
@@ -3403,12 +3435,12 @@ mod tests {
 
     /// Two axes can cover different rows: logging rows 0-4 with `step` alone and
     /// rows 5-9 with both leaves `step` over all ten rows and `sim_time` over the
-    /// last five. Each axis now carries the rows it covers, so `step` indexes every
-    /// row and `sim_time` is left out rather than pairing rows 0-4 with rows 5-9's
-    /// times. Until #375 the row count came from `sim_time`, so five rows were
-    /// written and `step` was dropped for disagreeing on length.
+    /// last five. The chunk is cut where the usable axes change, so rows 0-4 go out
+    /// on `step` and rows 5-9 on both, and every row keeps its own times. Until
+    /// #375 the row count came from `sim_time`, so only five rows were written and
+    /// `step` was dropped for disagreeing on length.
     #[test]
-    fn an_axis_that_covers_every_row_indexes_all_of_them() {
+    fn rows_are_split_where_the_usable_axes_change() {
         let mut rec = Recording::new();
         let sat = EntityPath::parse("/world/sat/divergent");
 
@@ -3437,24 +3469,37 @@ mod tests {
         let path_str = path.to_str().unwrap();
         save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
 
-        let mut seen = 0;
+        // Per path: the rows with `step` alone, then the rows with both axes.
+        let mut shapes: BTreeMap<String, Vec<(Vec<String>, usize)>> = BTreeMap::new();
         for chunk in decode_chunks(path_str) {
             let entity = chunk.entity_path().to_string();
             if !entity.starts_with("/world/sat/divergent") {
                 continue;
             }
-            seen += 1;
-            let axes: Vec<String> = chunk
+            let mut axes: Vec<String> = chunk
                 .timelines()
                 .keys()
                 .map(|name| name.as_str().to_string())
                 .collect();
-            assert_eq!(axes, vec!["step".to_string()], "{entity} axes");
-            assert_eq!(chunk.num_rows(), 10, "{entity} should keep every row");
+            axes.sort();
+            shapes
+                .entry(entity)
+                .or_default()
+                .push((axes, chunk.num_rows()));
         }
-        assert!(seen > 0, "no chunk was written for the entity");
+        assert!(!shapes.is_empty(), "no chunk was written for the entity");
+        for (entity, chunks) in &shapes {
+            assert_eq!(
+                chunks,
+                &vec![
+                    (vec!["step".to_string()], 5),
+                    (vec!["sim_time".to_string(), "step".to_string()], 5),
+                ],
+                "{entity} chunk shapes"
+            );
+        }
 
-        // Every row is there, in order, on the axis that covers all of them.
+        // No row is lost to the split, and the order holds.
         let xs = &scalars_by_path(path_str)["/world/sat/divergent/x"];
         let want: Vec<f64> = (0..10).map(|i| i as f64).collect();
         assert_eq!(xs, &want);

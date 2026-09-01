@@ -310,7 +310,10 @@ impl Recording {
         // The row is identified by the time point itself rather than inferred
         // from row counts, which is what let a column that skipped steps line up
         // with the wrong times.
-        let is_new_row = store.last_time_point.as_ref() != Some(time_point);
+        let is_new_row = !store
+            .last_time_point
+            .as_ref()
+            .is_some_and(|last| last.is_same_row(time_point));
         if is_new_row {
             store.last_time_point = Some(time_point.clone());
             let logical_row = store.num_rows;
@@ -591,6 +594,69 @@ mod tests {
         assert_eq!(store.timelines[&TimelineName::SimTime].len(), 1);
         for name in [Position3D::component_name(), Velocity3D::component_name()] {
             assert_eq!(store.columns[&name].logical_row_of(0), 0);
+        }
+    }
+
+    /// The axes of a `TimePoint` name a row regardless of the order they were
+    /// added in. Comparing the backing `Vec` would split one step into two rows
+    /// and leave position and velocity on different rows.
+    #[test]
+    fn axis_order_does_not_split_a_row() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/order");
+
+        let a = TimePoint::new().with_sim_time(7.0).with_step(2);
+        let b = TimePoint::new().with_step(2).with_sim_time(7.0);
+
+        rec.log_temporal(&sat, &a, &Position3D(Vector3::new(1.0, 2.0, 3.0)));
+        rec.log_temporal(&sat, &b, &Velocity3D(Vector3::new(4.0, 5.0, 6.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(
+            store.num_rows, 1,
+            "one step, whichever order the axes came in"
+        );
+        assert_eq!(store.timelines[&TimelineName::SimTime].len(), 1);
+        assert_eq!(
+            store.columns[&Position3D::component_name()].logical_row_of(0),
+            store.columns[&Velocity3D::component_name()].logical_row_of(0),
+        );
+    }
+
+    /// A `NaN` time is still one row per step. Comparing `NaN` by value makes
+    /// every call a new row, which would scatter one step's components.
+    #[test]
+    fn a_nan_time_still_groups_one_step() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/nan");
+        let tp = TimePoint::new().with_sim_time(f64::NAN).with_step(0);
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(1.0, 2.0, 3.0)));
+        rec.log_temporal(&sat, &tp, &Velocity3D(Vector3::new(4.0, 5.0, 6.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 1);
+    }
+
+    /// Revisiting a time already logged starts a new row rather than merging
+    /// into the earlier one, which keeps `RowMap::Sparse` ascending — its
+    /// `stored_index` lookup binary-searches.
+    #[test]
+    fn a_revisited_time_starts_a_new_row() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/revisit");
+
+        for t in [0.0, 10.0, 0.0] {
+            let tp = TimePoint::new().with_sim_time(t);
+            rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(t, 0.0, 0.0)));
+        }
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 3);
+        let col = &store.columns[&Position3D::component_name()];
+        assert_eq!(col.rows, RowMap::Dense);
+        for i in 0..3 {
+            assert_eq!(col.logical_row_of(i), i);
         }
     }
 

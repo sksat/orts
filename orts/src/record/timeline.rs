@@ -21,10 +21,7 @@ pub enum TimeIndex {
 }
 
 /// A point in time across all active timelines.
-///
-/// `PartialEq` is how [`Recording::log_temporal`](crate::record::recording::Recording::log_temporal)
-/// decides whether two calls belong to the same logical row.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct TimePoint {
     indices: Vec<(TimelineName, TimeIndex)>,
 }
@@ -63,6 +60,32 @@ impl TimePoint {
 
     pub fn indices(&self) -> &[(TimelineName, TimeIndex)] {
         &self.indices
+    }
+
+    /// Whether both points name the same axes at the same indices, and so
+    /// address the same row of an entity.
+    ///
+    /// The order the axes were added in does not matter, so
+    /// `with_sim_time(t).with_step(n)` and `with_step(n).with_sim_time(t)` are
+    /// one row. A `Seconds` axis is compared bit for bit, which keeps a `NaN`
+    /// time equal to itself: an entity logged at a `NaN` time still gets one row
+    /// per step rather than one per component.
+    pub fn is_same_row(&self, other: &TimePoint) -> bool {
+        fn same(a: &TimeIndex, b: &TimeIndex) -> bool {
+            match (a, b) {
+                (TimeIndex::Seconds(x), TimeIndex::Seconds(y)) => x.to_bits() == y.to_bits(),
+                (TimeIndex::Sequence(x), TimeIndex::Sequence(y)) => x == y,
+                _ => false,
+            }
+        }
+
+        self.indices.len() == other.indices.len()
+            && self.indices.iter().all(|(name, index)| {
+                other
+                    .indices
+                    .iter()
+                    .any(|(n, i)| n == name && same(i, index))
+            })
     }
 }
 
