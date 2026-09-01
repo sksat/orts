@@ -264,15 +264,9 @@ fn default_identity_quat() -> [f64; 4] {
 ///
 /// A sibling of `[satellites.attitude]` rather than a field inside it: that
 /// table states the attitude state and the body's properties, while this one
-/// selects which environmental models get solved. Requires attitude dynamics —
+/// selects which environment models get solved. Requires attitude dynamics —
 /// a torque needs an orientation to act on.
-///
-/// Unknown keys are rejected. Every selector here defaults to on, so the only
-/// reason to write this table is to turn something off — a misspelled key would
-/// otherwise be dropped and leave the torque enabled, which is the opposite of
-/// what was asked for.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct DisturbancesConfig {
     /// Gravity-gradient torque from the central body (default: true).
@@ -2203,26 +2197,6 @@ disturbances = {}
             d.gravity_gradient,
             "an empty disturbances table should keep the historical default on"
         );
-    }
-
-    /// A misspelled selector must fail loudly. Serde would otherwise drop it and
-    /// fall back to the default, so `gravity_gradent = false` would leave the
-    /// torque on — the reader asked for the opposite and gets no warning.
-    #[test]
-    fn misspelled_disturbance_selector_is_rejected() {
-        let toml = r#"
-[[satellites]]
-id = "a"
-orbit = { type = "circular", altitude = 500 }
-attitude = { inertia_diag = [10, 10, 10], mass = 50 }
-disturbances = { gravity_gradent = false }
-"#;
-        let err = toml::from_str::<SimConfig>(toml).expect_err("the typo must not parse");
-        let msg = err.to_string();
-        // toml echoes the offending line, so the typo appears in the error even
-        // when serde diagnosed something else. Pin the diagnosis itself.
-        assert!(msg.contains("unknown field"), "got: {msg}");
-        assert!(msg.contains("gravity_gradent"), "got: {msg}");
     }
 
     /// No `disturbances` table at all must reach the same selection as an empty

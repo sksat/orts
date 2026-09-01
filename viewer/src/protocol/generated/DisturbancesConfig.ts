@@ -5,13 +5,8 @@
  *
  * A sibling of `[satellites.attitude]` rather than a field inside it: that
  * table states the attitude state and the body's properties, while this one
- * selects which environmental models get solved. Requires attitude dynamics —
+ * selects which environment models get solved. Requires attitude dynamics —
  * a torque needs an orientation to act on.
- *
- * Unknown keys are rejected. Every selector here defaults to on, so the only
- * reason to write this table is to turn something off — a misspelled key would
- * otherwise be dropped and leave the torque enabled, which is the opposite of
- * what was asked for.
  */
 export type DisturbancesConfig = { 
 /**
