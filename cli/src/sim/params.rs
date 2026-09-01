@@ -267,6 +267,7 @@ impl SimParams {
                     srp_area_to_mass: None,
                     srp_cr: None,
                     disturbances: Default::default(),
+                    panels: None,
                     attitude_config: None,
                     shape: None,
                     controller_config: None,
@@ -461,6 +462,7 @@ impl SimParams {
             srp_area_to_mass: None,
             srp_cr: None,
             disturbances: Default::default(),
+            panels: None,
             attitude_config: Some(crate::config::AttitudeConfig {
                 inertia_diag: [100.0, 200.0, 50.0],
                 inertia_off_diag: [0.0, 0.0, 0.0],
@@ -500,6 +502,7 @@ impl SimParams {
             srp_area_to_mass: None,
             srp_cr: None,
             disturbances: Default::default(),
+            panels: None,
             attitude_config: Some(crate::config::AttitudeConfig {
                 // Approximate ISS inertia tensor [kg·m²]
                 inertia_diag: [128_913_000.0, 107_321_000.0, 201_433_000.0],

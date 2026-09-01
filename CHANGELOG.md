@@ -33,6 +33,13 @@ section is subdivided by package.
 - WIT v0 plugin interface extended with the msg-io and stream-io channels. ([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `SatelliteParams` carries an optional `SpacecraftShape`, and
+  `build_spacecraft_dynamics` installs `PanelSrp` and `PanelDrag` from it in
+  place of the isotropic `SolarRadiationPressure` and `AtmosphericDrag`. The
+  outer shape is one object, so panels drive both forces rather than one of
+  them. `build_orbital_system` installs neither: panel forces need an attitude.
+  `SurfacePanel` gains `with_cp_offset`, which is what turns a panel force into
+  an attitude disturbance. ([#383](https://github.com/sksat/orts/pull/383))
 - `orts::setup` registers disturbance torques, and `SatelliteParams` carries a
   `DisturbanceTorques` selection to say which. `build_spacecraft_dynamics`
   installs the gravity-gradient torque from it; `build_orbital_system` installs
@@ -143,6 +150,17 @@ section is subdivided by package.
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `[[satellites.panels]]` gives a satellite a flat-panel outer surface, with
+  `area`, `normal`, `cd`, `specular`, `diffuse` and `cp_offset`. Writing panels
+  makes SRP and drag attitude-dependent, and an off-centre centre of pressure
+  turns them into attitude disturbances — which is what the isotropic
+  `srp_area_to_mass` / `ballistic_coeff` cannot express. Panels require
+  `attitude` and are rejected alongside those isotropic parameters, since both
+  would describe the same force. Panel accelerations report on the wire under
+  the name of the force (`drag`, `srp`), because that channel is per force
+  rather than per model; `perturbations` names the model, and for an attitude
+  satellite it now comes from the dynamics being propagated rather than from a
+  rebuilt orbit-only system. ([#383](https://github.com/sksat/orts/pull/383))
 - `[satellites.disturbances]` selects which environmental disturbance torques a
   satellite models, `gravity_gradient` defaulting to true — the behaviour
   attitude propagation has always had. A sibling of `[satellites.attitude]`

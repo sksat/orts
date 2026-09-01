@@ -30,6 +30,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - WIT v0 plugin interface に msg-io / stream-io チャネルを追加。([#58](https://github.com/sksat/orts/pull/58), [#84](https://github.com/sksat/orts/pull/84))
 
 #### Changed
+- `SatelliteParams` が `SpacecraftShape` を optional で持ち、
+  `build_spacecraft_dynamics` がそれを見て等方面の `SolarRadiationPressure` /
+  `AtmosphericDrag` の代わりに `PanelSrp` / `PanelDrag` を install するように
+  した。機体の外形は一つなので、パネルは片方ではなく両方の力を担う。
+  `build_orbital_system` はどちらも install しない (パネルの力は姿勢を要求する)。
+  `SurfacePanel` に `with_cp_offset` を追加した。パネルの力を姿勢外乱にするのは
+  この offset である。([#383](https://github.com/sksat/orts/pull/383))
 - 外乱トルクの登録を `orts::setup` に集約し、どれを解くかを `SatelliteParams` の
   `DisturbanceTorques` で選ぶようにした。`build_spacecraft_dynamics` がそれを見て
   gravity gradient トルクを install する。`build_orbital_system` は install しない
@@ -124,6 +131,16 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 ### `orts-cli` (Rust, crates.io, binary)
 
 #### Added
+- `[[satellites.panels]]` で衛星に平板の外形を与えられるようにした
+  (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`)。パネルを書くと
+  SRP と大気抵抗が姿勢依存になり、圧力中心が重心から外れていればそれが姿勢外乱に
+  なる。等方面の `srp_area_to_mass` / `ballistic_coeff` では表せない部分である。
+  パネルは `attitude` を要求し、等方面のパラメータとの同時指定は reject する
+  (同じ力を二通りに述べることになる)。パネルの加速度は wire 上では力の名前
+  (`drag`, `srp`) で報告する。あのチャネルはモデル単位ではなく物理力単位だから
+  である。どのモデルかは `perturbations` が述べ、姿勢を持つ衛星についてはこれを
+  軌道のみの系を組み直して読むのではなく、実際に伝播する dynamics から取るように
+  した。([#383](https://github.com/sksat/orts/pull/383))
 - `[satellites.disturbances]` で衛星がモデル化する環境外乱トルクを選べるように
   した。`gravity_gradient` の既定は true で、姿勢伝播が従来から持っていた振る舞い。
   `[satellites.attitude]` の中ではなく sibling の table にしたのは、前者が姿勢の

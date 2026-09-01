@@ -9,6 +9,7 @@ use crate::tle::fetch_tle_by_norad_id;
 use arika::body::KnownBody;
 use orts::plugin::{Message, NamedValue, NodeId, Payload, Value};
 use orts::setup::DisturbanceTorques;
+use orts::spacecraft::{PanelOptics, SpacecraftShape, SurfacePanel};
 
 /// JSON/TOML/YAML simulation configuration.
 ///
@@ -279,6 +280,93 @@ fn default_true() -> bool {
     true
 }
 
+/// One flat panel of the spacecraft's outer surface.
+///
+/// Panels are the geometry both SRP and atmospheric drag read, so writing them
+/// replaces the isotropic parameters for both forces at once. See
+/// [`crate::config::SatelliteConfig::panels`].
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
+pub struct PanelConfig {
+    /// Panel area [m²].
+    pub area: f64,
+    /// Outward-pointing normal in the body frame. Normalised internally.
+    pub normal: [f64; 3],
+    /// Drag coefficient (typically 2.0–2.2 for LEO free-molecular flow).
+    pub cd: f64,
+    /// Specular reflectivity ρ_s (default: 0).
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub specular: f64,
+    /// Diffuse reflectivity ρ_d (default: 0). The rest is absorbed.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub diffuse: f64,
+    /// Centre-of-pressure offset from the CoM [m, body frame] (default: zero).
+    ///
+    /// This is what makes a panel force an attitude disturbance.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub cp_offset: [f64; 3],
+}
+
+impl PanelConfig {
+    /// Validate the fields `SurfacePanel::at_com` and `PanelOptics::new` would
+    /// otherwise assert on, so malformed config reports an error instead of
+    /// panicking.
+    fn validate(&self, index: usize) -> Result<(), String> {
+        if !self.area.is_finite() || self.area <= 0.0 {
+            return Err(format!("panels[{index}].area must be positive and finite"));
+        }
+        if !self.cd.is_finite() || self.cd < 0.0 {
+            return Err(format!(
+                "panels[{index}].cd must be non-negative and finite"
+            ));
+        }
+        let n = self.normal;
+        let norm_sq = n[0] * n[0] + n[1] * n[1] + n[2] * n[2];
+        if !norm_sq.is_finite() || norm_sq <= 0.0 {
+            return Err(format!(
+                "panels[{index}].normal must be a non-zero finite vector"
+            ));
+        }
+        if !self.specular.is_finite() || !self.diffuse.is_finite() {
+            return Err(format!(
+                "panels[{index}] specular and diffuse must be finite"
+            ));
+        }
+        if self.specular < 0.0 || self.diffuse < 0.0 {
+            return Err(format!(
+                "panels[{index}] specular and diffuse must be non-negative"
+            ));
+        }
+        if self.specular + self.diffuse > 1.0 {
+            return Err(format!(
+                "panels[{index}] specular + diffuse must be at most 1, got {} + {}",
+                self.specular, self.diffuse
+            ));
+        }
+        if !self.cp_offset.iter().all(|x| x.is_finite()) {
+            return Err(format!(
+                "panels[{index}].cp_offset components must be finite"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Build the panel. `at_com` normalises the normal, which is what keeps the
+    /// unit-length assert in the model constructors from firing.
+    fn to_surface_panel(&self) -> SurfacePanel {
+        SurfacePanel::at_com(
+            self.area,
+            nalgebra::Vector3::from_row_slice(&self.normal),
+            self.cd,
+            PanelOptics::new(self.specular, self.diffuse),
+        )
+        .with_cp_offset(nalgebra::Vector3::from_row_slice(&self.cp_offset))
+    }
+}
+
 impl DisturbancesConfig {
     fn to_disturbance_torques(&self) -> DisturbanceTorques {
         DisturbanceTorques {
@@ -547,6 +635,12 @@ pub struct SatelliteConfig {
     /// Environmental disturbance torques. Requires `attitude`.
     #[ts(optional)]
     pub disturbances: Option<DisturbancesConfig>,
+    /// Flat-panel outer surface. Drives both SRP and drag, and requires
+    /// `attitude`; conflicts with the isotropic `srp_area_to_mass` / `srp_cr` /
+    /// `ballistic_coeff`.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub panels: Vec<PanelConfig>,
     /// プラグインコントローラ設定。
     #[ts(optional)]
     pub controller: Option<ControllerConfig>,
@@ -710,6 +804,14 @@ impl SatelliteConfig {
                 .as_ref()
                 .map(DisturbancesConfig::to_disturbance_torques)
                 .unwrap_or_default(),
+            panels: (!self.panels.is_empty()).then(|| {
+                SpacecraftShape::panels(
+                    self.panels
+                        .iter()
+                        .map(PanelConfig::to_surface_panel)
+                        .collect(),
+                )
+            }),
             shape: self.shape,
             controller_config: self.controller.clone(),
             sensor_choices: self.sensors.clone(),
@@ -783,6 +885,33 @@ impl SatelliteConfig {
             return Err(
                 "disturbances requires attitude: a torque needs an orientation to act on".into(),
             );
+        }
+        if !self.panels.is_empty() {
+            // Panel forces are attitude-dependent by construction: `PanelSrp`
+            // and `PanelDrag` need `HasAttitude`, so they only ever reach a
+            // `SpacecraftDynamics`.
+            if self.attitude.is_none() {
+                return Err(
+                    "panels requires attitude: a panel force depends on which way the panel faces"
+                        .into(),
+                );
+            }
+            // The isotropic parameters describe the same two forces. Honouring
+            // both would mean choosing one silently.
+            for (key, present) in [
+                ("srp_area_to_mass", self.srp_area_to_mass.is_some()),
+                ("srp_cr", self.srp_cr.is_some()),
+                ("ballistic_coeff", self.ballistic_coeff.is_some()),
+            ] {
+                if present {
+                    return Err(format!(
+                        "panels and {key} both describe the same force; keep one"
+                    ));
+                }
+            }
+            for (i, panel) in self.panels.iter().enumerate() {
+                panel.validate(i)?;
+            }
         }
         // A non-finite orbit number propagates into the derived orbital
         // period. `run` then loops on `while !group.all_finished()` with a NaN
@@ -1212,6 +1341,7 @@ mod tests {
             shape: None,
             attitude: None,
             disturbances: None,
+            panels: Vec::new(),
             controller: None,
             sensors: None,
             reaction_wheels: None,
@@ -1251,6 +1381,7 @@ mod tests {
             shape: None,
             attitude: None,
             disturbances: None,
+            panels: Vec::new(),
             controller: None,
             sensors: None,
             reaction_wheels: None,
@@ -1281,6 +1412,7 @@ mod tests {
             shape: None,
             attitude: None,
             disturbances: None,
+            panels: Vec::new(),
             controller: None,
             sensors: None,
             reaction_wheels: None,
@@ -1389,6 +1521,7 @@ satellites:
                 shape: None,
                 attitude: None,
                 disturbances: None,
+                panels: Vec::new(),
                 controller: None,
                 sensors: None,
                 reaction_wheels: None,
@@ -2166,6 +2299,132 @@ offset_body = [0.1, 0.0, 0.0]
         };
         let err = cfg.validate().unwrap_err();
         assert!(err.contains("offset_body"), "msg: {err}");
+    }
+
+    const PANEL_SAT: &str = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 20, 30], mass = 50 }
+
+[[satellites.panels]]
+area = 2.0
+normal = [1.0, 0.0, 1.0]
+cd = 2.2
+specular = 0.2
+diffuse = 0.1
+cp_offset = [0.0, 1.5, 0.0]
+"#;
+
+    #[test]
+    fn panels_reach_the_spec_as_a_shape() {
+        let config: SimConfig = toml::from_str(PANEL_SAT).expect("parses");
+        config.satellites[0].validate().expect("valid");
+        let spec = config.satellites[0].to_satellite_spec(0, KnownBody::Earth, 398600.4418);
+        let shape = spec.panels.expect("panels reach the spec");
+        let orts::spacecraft::SpacecraftShape::Panels(panels) = shape else {
+            panic!("expected a panel shape");
+        };
+        assert_eq!(panels.len(), 1);
+        // `at_com` normalises, so a non-unit normal in config is fine and the
+        // model constructors' unit-length assert cannot fire.
+        assert!((panels[0].normal.magnitude() - 1.0).abs() < 1e-15);
+        assert_eq!(panels[0].cp_offset, nalgebra::Vector3::new(0.0, 1.5, 0.0));
+    }
+
+    #[test]
+    fn panels_without_attitude_is_rejected() {
+        let toml_src = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+
+[[satellites.panels]]
+area = 2.0
+normal = [1.0, 0.0, 0.0]
+cd = 2.2
+"#;
+        let config: SimConfig = toml::from_str(toml_src).expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(err.contains("panels requires attitude"), "got: {err}");
+    }
+
+    #[test]
+    fn panels_alongside_an_isotropic_parameter_is_rejected() {
+        for (key, value) in [
+            ("srp_area_to_mass", "0.02"),
+            ("srp_cr", "1.5"),
+            ("ballistic_coeff", "0.01"),
+        ] {
+            let toml_src = format!(
+                r#"
+[[satellites]]
+id = "a"
+orbit = {{ type = "circular", altitude = 500 }}
+attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
+{key} = {value}
+
+[[satellites.panels]]
+area = 2.0
+normal = [1.0, 0.0, 0.0]
+cd = 2.2
+"#
+            );
+            let config: SimConfig = toml::from_str(&toml_src).expect("parses");
+            let err = config.satellites[0].validate().unwrap_err();
+            assert!(
+                err.contains(key) && err.contains("same force"),
+                "{key}: got {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_panel_is_rejected_rather_than_panicking() {
+        // `SurfacePanel::at_com` and `PanelOptics::new` both assert, so config
+        // has to catch these first and say what is wrong.
+        let cases = [
+            (
+                "area = 0.0\nnormal = [1, 0, 0]\ncd = 2.2",
+                "area must be positive",
+            ),
+            (
+                "area = 2.0\nnormal = [0, 0, 0]\ncd = 2.2",
+                "non-zero finite vector",
+            ),
+            (
+                "area = 2.0\nnormal = [1, 0, 0]\ncd = -1.0",
+                "cd must be non-negative",
+            ),
+            (
+                "area = 2.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.8\ndiffuse = 0.5",
+                "at most 1",
+            ),
+            (
+                "area = 2.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = -0.1",
+                "must be non-negative",
+            ),
+        ];
+        // No case for a non-finite `cp_offset`: neither TOML nor JSON has a
+        // literal for one, so the check in `PanelConfig::validate` guards only
+        // a programmatic construction path.
+        for (panel_body, expected) in cases {
+            let toml_src = format!(
+                r#"
+[[satellites]]
+id = "a"
+orbit = {{ type = "circular", altitude = 500 }}
+attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
+
+[[satellites.panels]]
+{panel_body}
+"#
+            );
+            let config: SimConfig =
+                toml::from_str(&toml_src).unwrap_or_else(|e| panic!("{panel_body}: {e}"));
+            let err = config.satellites[0].validate().unwrap_err();
+            assert!(err.contains(expected), "{panel_body}: got {err}");
+        }
     }
 
     #[test]

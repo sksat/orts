@@ -174,8 +174,26 @@ pub fn spacecraft_accel_breakdown(
     dynamics
         .acceleration_breakdown(t, state)
         .into_iter()
-        .map(|(name, mag)| (name.to_string(), mag))
+        .map(|(name, mag)| (force_channel(name).to_string(), mag))
         .collect()
+}
+
+/// Report a panel model under the name of the force it computes.
+///
+/// `accelerations` on the wire is a channel per physical force, not per model:
+/// `PanelSrp` and the cannonball `SolarRadiationPressure` are two ways of
+/// computing the same solar radiation pressure, and config rejects having both
+/// on one satellite, so one channel serves either. The viewer's columns and its
+/// four-term perturbation total are keyed on these names.
+///
+/// Which model produced it is carried by `SatelliteInfo::perturbations`, whose
+/// business is model names.
+pub fn force_channel(model_name: &str) -> &str {
+    match model_name {
+        "panel_drag" => "drag",
+        "panel_srp" => "srp",
+        other => other,
+    }
 }
 
 /// Convert a SatelliteSpec to SatelliteParams for OrbitalSystem construction.
@@ -188,6 +206,7 @@ pub fn sat_params(spec: &SatelliteSpec) -> SatelliteParams {
         srp_area_to_mass: spec.srp_area_to_mass,
         srp_cr: spec.srp_cr,
         disturbances: spec.disturbances,
+        shape: spec.panels.clone(),
     }
 }
 

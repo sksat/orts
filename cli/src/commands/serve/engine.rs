@@ -1212,20 +1212,34 @@ fn build_info_message(params: &SimParams) -> WsMessage {
         .iter()
         .map(|s| {
             let third_bodies = default_third_bodies(&params.body);
-            let system = build_orbital_system(
-                &params.body,
-                params.mu,
-                params.epoch,
-                &sat_params(s),
-                &third_bodies,
-                params.build_atmosphere_model(),
-            );
+            // Panel forces need an attitude, so they live only on a
+            // `SpacecraftDynamics`. Reading the model names off an
+            // `OrbitalSystem` would report the wrong set for such a satellite.
+            let perturbations: Vec<String> = match &s.attitude_config {
+                Some(att) => spacecraft_dynamics_for(s, att, params, &third_bodies)
+                    .model_names()
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+                None => build_orbital_system(
+                    &params.body,
+                    params.mu,
+                    params.epoch,
+                    &sat_params(s),
+                    &third_bodies,
+                    params.build_atmosphere_model(),
+                )
+                .model_names()
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            };
             SatelliteInfo {
                 id: s.entity_path().to_string(),
                 name: s.name.clone(),
                 altitude: s.altitude(&params.body),
                 period: s.period,
-                perturbations: system.model_names().into_iter().map(String::from).collect(),
+                perturbations,
                 shape: s.shape,
             }
         })
@@ -1513,6 +1527,93 @@ attitude = { inertia_diag = [10, 20, 30], mass = 50 }
         assert_eq!(
             count, 1,
             "the torque should be installed exactly once, got {names:?}"
+        );
+    }
+
+    const PANEL_TOML: &str = r#"
+[[satellites]]
+id = "sat-a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10, 20, 30], mass = 50 }
+
+[[satellites.panels]]
+area = 4.0
+normal = [1.0, 0.0, 0.0]
+cd = 2.2
+specular = 0.2
+diffuse = 0.1
+cp_offset = [0.0, 1.5, 0.0]
+"#;
+
+    /// Panels written in config have to reach the dynamics the integrator
+    /// evaluates, replacing the isotropic models rather than joining them.
+    #[test]
+    fn serve_installs_the_panel_models_from_config() {
+        let names = serve_model_names(PANEL_TOML);
+        assert!(names.iter().any(|n| n == "panel_srp"), "got {names:?}");
+        assert!(names.iter().any(|n| n == "panel_drag"), "got {names:?}");
+        assert!(!names.iter().any(|n| n == "srp"), "got {names:?}");
+        assert!(!names.iter().any(|n| n == "drag"), "got {names:?}");
+    }
+
+    /// An off-centre panel has to actually turn the spacecraft. Angular
+    /// momentum is the integral of the torque, so it moving away from its
+    /// initial value is the disturbance taking effect.
+    #[test]
+    fn a_panel_offset_from_the_com_changes_the_angular_momentum() {
+        use orts::spacecraft::SpacecraftState;
+        use utsuroi::DynamicalSystem;
+
+        let init = engine_from_toml(PANEL_TOML).expect("engine builds");
+        let SimGroup::Spacecraft(group) = &init.engine.group else {
+            panic!("expected an attitude fleet");
+        };
+        let (entry, dynamics) = group
+            .satellites_with_dynamics()
+            .next()
+            .expect("one satellite");
+
+        let inertia = nalgebra::Matrix3::from_diagonal(&nalgebra::Vector3::new(10.0, 20.0, 30.0));
+        let momentum = |s: &SpacecraftState| (inertia * s.attitude.angular_velocity).norm();
+
+        let start = entry.state.plant.clone();
+        assert_eq!(momentum(&start), 0.0, "starts at rest");
+
+        // A few orbits at a coarse step: enough for the torque to integrate up.
+        let mut state = entry.state.clone();
+        let mut t = 0.0;
+        for _ in 0..600 {
+            let dy = dynamics.derivatives(t, &state);
+            state = utsuroi::OdeState::axpy(&state, 30.0, &dy);
+            t += 30.0;
+        }
+        let after = momentum(&state.plant);
+        assert!(
+            after > 1e-9,
+            "an off-centre panel should spin the spacecraft up, |L| = {after:e}"
+        );
+    }
+
+    /// The wire reports a panel force under the name of the force, because the
+    /// viewer's columns and its perturbation total are keyed on those names.
+    #[test]
+    fn panel_accelerations_report_as_drag_and_srp() {
+        let init = engine_from_toml(PANEL_TOML).expect("engine builds");
+        let SimGroup::Spacecraft(group) = &init.engine.group else {
+            panic!("expected an attitude fleet");
+        };
+        let (entry, dynamics) = group
+            .satellites_with_dynamics()
+            .next()
+            .expect("one satellite");
+        let accels = spacecraft_accel_breakdown(dynamics, 0.0, &entry.state.plant);
+
+        assert!(accels.contains_key("srp"), "keys: {:?}", accels.keys());
+        assert!(accels.contains_key("drag"), "keys: {:?}", accels.keys());
+        assert!(
+            !accels.contains_key("panel_srp") && !accels.contains_key("panel_drag"),
+            "the model names should not reach the wire: {:?}",
+            accels.keys()
         );
     }
 

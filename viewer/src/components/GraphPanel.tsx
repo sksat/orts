@@ -1,6 +1,7 @@
 import { type ChartDataMap, type TimeRange, TimeSeriesChart } from "@sksat/uneri";
 import { memo, useMemo, useState } from "react";
 import type { MultiChartDataMap } from "../hooks/buildMultiChartData.js";
+import { ACCEL_CHART_DEFS, isAccelChartActive } from "./accelCharts.js";
 import styles from "./GraphPanel.module.css";
 
 const TIME_RANGE_OPTIONS: { label: string; value: TimeRange }[] = [
@@ -23,29 +24,6 @@ const CHART_DEFS: { metric: string; title: string; yLabel: string; color: string
 ];
 
 /** Acceleration chart definitions. Shown conditionally based on active perturbations. */
-const ACCEL_CHART_DEFS: { metric: string; title: string; color: string; pertKey?: string }[] = [
-  { metric: "accel_gravity", title: "Gravity", color: "#aaa" },
-  { metric: "accel_drag", title: "Drag", color: "#f80", pertKey: "drag" },
-  { metric: "accel_srp", title: "SRP", color: "#ff0", pertKey: "srp" },
-  {
-    metric: "accel_third_body_sun",
-    title: "Sun 3rd-body",
-    color: "#fa0",
-    pertKey: "third_body_sun",
-  },
-  {
-    metric: "accel_third_body_moon",
-    title: "Moon 3rd-body",
-    color: "#8af",
-    pertKey: "third_body_moon",
-  },
-  {
-    metric: "accel_perturbation_total",
-    title: "Total Perturbation",
-    color: "#f44",
-    pertKey: "_any",
-  },
-];
 
 interface GraphPanelProps {
   /** Single-satellite chart data (replay mode / single sat). */
@@ -73,14 +51,10 @@ export const GraphPanel = memo(function GraphPanel({
   const [collapsed, setCollapsed] = useState(false);
 
   // Filter acceleration charts: show gravity always + perturbations that are active
-  const visibleAccelDefs = useMemo(() => {
-    if (!activePerturbations || activePerturbations.length === 0) return [];
-    return ACCEL_CHART_DEFS.filter((def) => {
-      if (!def.pertKey) return true; // gravity: always show
-      if (def.pertKey === "_any") return true; // total: show when any perturbation is active
-      return activePerturbations.includes(def.pertKey);
-    });
-  }, [activePerturbations]);
+  const visibleAccelDefs = useMemo(
+    () => ACCEL_CHART_DEFS.filter((def) => isAccelChartActive(def.pertKey, activePerturbations)),
+    [activePerturbations],
+  );
 
   const allDefs = useMemo(
     () => [...CHART_DEFS, ...visibleAccelDefs.map((d) => ({ ...d, yLabel: "km/s\u00B2" }))],

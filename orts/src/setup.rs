@@ -10,6 +10,7 @@ use crate::orbital::OrbitalSystem;
 use crate::perturbations::{
     AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity, ZonalGravity,
 };
+use crate::spacecraft::{PanelDrag, PanelSrp, SpacecraftShape};
 
 /// Which environmental disturbance torques to model.
 ///
@@ -42,6 +43,13 @@ pub struct SatelliteParams {
     pub srp_cr: Option<f64>,
     /// Which environmental disturbance torques to model.
     pub disturbances: DisturbanceTorques,
+    /// Flat-panel outer surface, when the satellite has one.
+    ///
+    /// Present means both SRP and drag come from the panels: the outer shape is
+    /// one object, so modelling one force from panels and the other from an
+    /// isotropic cross-section would describe two different spacecraft. Only
+    /// reaches [`build_spacecraft_dynamics`] — panel forces need an attitude.
+    pub shape: Option<SpacecraftShape>,
 }
 
 /// Central (point-mass) gravity field. Oblateness is added separately as a
@@ -181,24 +189,49 @@ pub fn build_spacecraft_dynamics(
         }
     }
 
-    // Atmospheric drag (Earth only)
-    if *body == KnownBody::Earth && sat.has_drag {
-        let drag = match atmosphere {
-            Some(model) => AtmosphericDrag::for_earth(sat.ballistic_coeff).with_atmosphere(model),
-            None => AtmosphericDrag::for_earth(sat.ballistic_coeff),
-        };
-        system = system.with_model(drag);
+    // Drag (Earth only). One decision, not two independent `if`s: `atmosphere`
+    // is a by-value box, so only one of the two models can be handed it.
+    if *body == KnownBody::Earth {
+        match (&sat.shape, sat.has_drag) {
+            (Some(shape), _) => {
+                // Panels carry their own areas and drag coefficients, so
+                // writing them is the opt-in; there is no ballistic
+                // coefficient to gate on.
+                let drag = PanelDrag::for_earth(shape.clone());
+                let drag = match atmosphere {
+                    Some(model) => drag.with_atmosphere(model),
+                    None => drag,
+                };
+                system = system.with_model(drag);
+            }
+            (None, true) => {
+                let drag = match atmosphere {
+                    Some(model) => {
+                        AtmosphericDrag::for_earth(sat.ballistic_coeff).with_atmosphere(model)
+                    }
+                    None => AtmosphericDrag::for_earth(sat.ballistic_coeff),
+                };
+                system = system.with_model(drag);
+            }
+            (None, false) => {}
+        }
     }
 
     // Solar Radiation Pressure (requires epoch for Sun position)
-    if epoch.is_some()
-        && let Some(am) = sat.srp_area_to_mass
-    {
-        let mut srp = SolarRadiationPressure::for_earth(Some(am));
-        if let Some(cr) = sat.srp_cr {
-            srp = srp.with_cr(cr);
+    if epoch.is_some() {
+        match (&sat.shape, sat.srp_area_to_mass) {
+            (Some(shape), _) => {
+                system = system.with_model(PanelSrp::for_earth(shape.clone()));
+            }
+            (None, Some(am)) => {
+                let mut srp = SolarRadiationPressure::for_earth(Some(am));
+                if let Some(cr) = sat.srp_cr {
+                    srp = srp.with_cr(cr);
+                }
+                system = system.with_model(srp);
+            }
+            (None, None) => {}
         }
-        system = system.with_model(srp);
     }
 
     // Disturbance torques. Loads compose additively and every model is
@@ -224,6 +257,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
             disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
         assert_eq!(system.body_radius, Some(body.properties().radius));
@@ -236,6 +270,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
             disturbances,
+            shape: None,
         }
     }
 
@@ -252,6 +287,92 @@ mod tests {
             Matrix3::identity(),
             None,
         )
+    }
+
+    fn one_panel_shape() -> SpacecraftShape {
+        use crate::spacecraft::{PanelOptics, SurfacePanel};
+        SpacecraftShape::panels(vec![
+            SurfacePanel::at_com(
+                4.0,
+                nalgebra::Vector3::new(1.0, 0.0, 0.0),
+                2.2,
+                PanelOptics::new(0.2, 0.1),
+            )
+            .with_cp_offset(nalgebra::Vector3::new(0.0, 1.0, 0.0)),
+        ])
+    }
+
+    fn earth_dynamics_with(
+        shape: Option<SpacecraftShape>,
+        has_drag: bool,
+        srp_area_to_mass: Option<f64>,
+    ) -> SpacecraftDynamics<Box<dyn GravityField>> {
+        let body = KnownBody::Earth;
+        let sat = SatelliteParams {
+            has_drag,
+            ballistic_coeff: has_drag.then_some(0.01),
+            srp_area_to_mass,
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape,
+        };
+        build_spacecraft_dynamics(
+            &body,
+            body.properties().mu,
+            Some(Epoch::from_iso8601("2024-03-20T12:00:00Z").unwrap()),
+            &sat,
+            &[],
+            Matrix3::identity(),
+            None,
+        )
+    }
+
+    /// Panels drive both forces, and the isotropic models step aside.
+    #[test]
+    fn panels_install_the_panel_force_models() {
+        let system = earth_dynamics_with(Some(one_panel_shape()), false, None);
+        let names = system.model_names();
+        assert!(names.contains(&"panel_drag"), "models: {names:?}");
+        assert!(names.contains(&"panel_srp"), "models: {names:?}");
+        assert!(!names.contains(&"drag"), "models: {names:?}");
+        assert!(!names.contains(&"srp"), "models: {names:?}");
+    }
+
+    /// Without panels the isotropic path is untouched.
+    #[test]
+    fn without_panels_the_isotropic_models_stay() {
+        let system = earth_dynamics_with(None, true, Some(0.02));
+        let names = system.model_names();
+        assert!(names.contains(&"drag"), "models: {names:?}");
+        assert!(names.contains(&"srp"), "models: {names:?}");
+        assert!(!names.contains(&"panel_drag"), "models: {names:?}");
+        assert!(!names.contains(&"panel_srp"), "models: {names:?}");
+    }
+
+    /// Panel forces need an attitude, so an orbit-only system gets none even
+    /// when a shape is supplied.
+    #[test]
+    fn orbital_system_never_installs_a_panel_model() {
+        let body = KnownBody::Earth;
+        let sat = SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: Some(one_panel_shape()),
+        };
+        let system = build_orbital_system(
+            &body,
+            body.properties().mu,
+            Some(Epoch::from_iso8601("2024-03-20T12:00:00Z").unwrap()),
+            &sat,
+            &[],
+            None,
+        );
+        let names = system.model_names();
+        assert!(!names.contains(&"panel_drag"), "models: {names:?}");
+        assert!(!names.contains(&"panel_srp"), "models: {names:?}");
     }
 
     #[test]
@@ -306,6 +427,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
             disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
         assert!(system.model_names().contains(&"drag"));
@@ -320,6 +442,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
             disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None);
         assert!(!system.model_names().contains(&"drag"));
@@ -335,6 +458,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
             disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let third_bodies = default_third_bodies(&body);
         let system = build_orbital_system(
@@ -360,6 +484,7 @@ mod tests {
             srp_area_to_mass: Some(0.02),
             srp_cr: Some(1.8),
             disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let third_bodies = default_third_bodies(&body);
         let system = build_orbital_system(
@@ -383,6 +508,7 @@ mod tests {
             srp_area_to_mass: None,
             srp_cr: None,
             disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         // Explicitly pass empty third bodies
         let system =

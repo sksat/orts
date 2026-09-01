@@ -8,7 +8,8 @@ Provides the simulation engine at the heart of the
 
 - Orbital dynamics (two-body, Brouwer mean-element propagator, TLE/SGP4-equivalent).
 - Attitude dynamics and control (reaction wheels, gravity gradient, PD / B-dot).
-- Force models: gravity harmonics, drag, SRP, third-body, constant thrust.
+- Force models: gravity harmonics, drag, SRP, third-body, constant thrust. Drag and
+  SRP have flat-panel forms that depend on attitude and produce disturbance torques.
 - Sensor models: magnetometer, gyroscope, star tracker.
 - WebAssembly Component Model plugin runtime (`plugin-wasm` /
   `plugin-wasm-async` features), hosting guest controllers via wasmtime.

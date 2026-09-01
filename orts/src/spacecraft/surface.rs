@@ -143,6 +143,15 @@ impl SurfacePanel {
         self.optics = optics;
         self
     }
+
+    /// Move the centre of pressure off the CoM (builder pattern) [m, body frame].
+    ///
+    /// This is what turns a panel's force into an attitude disturbance: the
+    /// torque is `cp_offset x F`.
+    pub fn with_cp_offset(mut self, cp_offset: Vector3<f64>) -> Self {
+        self.cp_offset = cp_offset;
+        self
+    }
 }
 
 /// Spacecraft shape model for aerodynamic force computation.
