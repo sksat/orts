@@ -89,7 +89,16 @@ pub struct ComponentColumn {
 }
 
 impl ComponentColumn {
+    /// # Panics
+    ///
+    /// If `scalars_per_row` is zero. Rows would all be empty, so `num_rows`
+    /// would stay at zero while the row map recorded one entry per append, and
+    /// the map is what says which entity row each stored row is.
     pub fn new(scalars_per_row: usize) -> Self {
+        assert!(
+            scalars_per_row > 0,
+            "a column holds at least one scalar per row"
+        );
         ComponentColumn {
             scalars_per_row,
             data: Vec::new(),
@@ -134,11 +143,7 @@ impl ComponentColumn {
     }
 
     pub fn num_rows(&self) -> usize {
-        // checked_div yields None when scalars_per_row == 0 (avoids div-by-zero).
-        self.data
-            .len()
-            .checked_div(self.scalars_per_row)
-            .unwrap_or(0)
+        self.data.len() / self.scalars_per_row
     }
 
     /// How many scalars one row holds.
@@ -157,8 +162,10 @@ impl ComponentColumn {
     /// The `index`-th *stored* row. For a column that skipped steps this is not
     /// logical row `index`; use [`Self::at_logical_row`] for that.
     pub fn get_row(&self, index: usize) -> Option<&[f64]> {
-        let start = index * self.scalars_per_row;
-        let end = start + self.scalars_per_row;
+        // Checked: the product wraps for a large enough index, and a wrapped
+        // one lands back inside the column and reads an unrelated row.
+        let start = index.checked_mul(self.scalars_per_row)?;
+        let end = start.checked_add(self.scalars_per_row)?;
         if end <= self.data.len() {
             Some(&self.data[start..end])
         } else {
@@ -883,6 +890,32 @@ mod tests {
             "the velocity joins the row that was open when it was logged"
         );
         assert_eq!(vel.at_logical_row(1), None, "no velocity was logged for it");
+    }
+
+    #[test]
+    fn a_column_of_no_scalars_is_refused() {
+        let refused = std::panic::catch_unwind(|| ComponentColumn::new(0));
+        assert!(
+            refused.is_err(),
+            "a zero-width column could hold no row, leaving the map the only \
+             record of one"
+        );
+    }
+
+    #[test]
+    fn a_row_past_the_column_is_absent_however_far_past() {
+        let mut column = ComponentColumn::new(2);
+        column.push_at(&[1.0, 2.0], 0);
+
+        assert_eq!(column.get_row(1), None, "one row past the end");
+        // The product `index * 2` wraps to 0 here, which would read row 0.
+        let wraps_to_zero = 1usize << 63;
+        assert_eq!(column.get_row(wraps_to_zero), None, "far past the end");
+        assert_eq!(
+            column.at_logical_row(wraps_to_zero),
+            None,
+            "and the logical-row lookup says the same"
+        );
     }
 
     #[test]
