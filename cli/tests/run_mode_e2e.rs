@@ -520,16 +520,26 @@ path = {:?}
 /// A large unnormalized quaternion runs to completion, with a finite attitude
 /// throughout.
 ///
-/// Integrated raw, it grows until its sum of squares overflows; the post-step
-/// projection then divides by infinity and publishes all zeros, which
-/// `is_finite` accepts — so the run reports success while every attitude row
-/// from that point on is meaningless.
+/// What keeps it finite is the load-time normalization in
+/// `AttitudeConfig::normalized_initial_quaternion`: integrated raw, a
+/// quaternion this large grows until its sum of squares overflows, and every
+/// attitude row from that point on is meaningless while the run still reports
+/// success. Replacing that division by a pass-through fails this test on the
+/// first data row, so that is the behaviour it pins — the `project` guard in
+/// `OdeState` is reached with a finite norm here and is covered by the unit
+/// tests beside it.
+///
+/// The span is short on purpose. `initial_angular_velocity` of 1e4 rad/s is
+/// what makes this expensive: the adaptive solver sizes its steps to that rate,
+/// so cost scales with the simulated span, and 30 s of it took over six minutes
+/// in CI. Two seconds gives 21 rows, twice what the row-count assertion below
+/// wants, and detection is immediate — 23 ms with the normalization dropped.
 #[test]
 fn a_large_unnormalized_quaternion_still_integrates() {
     let config = r#"
 body = "earth"
 dt = 0.1
-duration = 30.0
+duration = 2.0
 
 [[satellites]]
 id = "sat-1"

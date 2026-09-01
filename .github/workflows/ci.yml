@@ -596,6 +596,25 @@ jobs:
       - name: Make orts binary executable
         run: chmod +x ./bin/orts
 
+      # One cargo invocation for every suite below, so the test targets
+      # compile and link in parallel. Run as separate invocations they
+      # serialize: each target is its own rustc, largely single-threaded,
+      # so a per-suite `cargo test` leaves most of the runner idle and the
+      # build cost adds up target by target. The per-suite invocations
+      # that follow then find everything built and only run the tests.
+      - name: Build CLI E2E test binaries
+        run: |
+          cargo test --locked -p orts-cli --no-run \
+            --test plugin_backend_e2e \
+            --test serve_dynamic_controlled_add_e2e \
+            --test throughput_mode_speedup_e2e \
+            --test e2e \
+            --test plugin_msg_config_command_e2e \
+            --test serve_stream_bridge_e2e \
+            --test serve_kble_e2e \
+            --test serve_kble_stdio_e2e \
+            --test run_mode_e2e
+
       - name: Run CLI plugin-backend E2E
         env:
           ORTS_BIN: ${{ github.workspace }}/bin/orts
