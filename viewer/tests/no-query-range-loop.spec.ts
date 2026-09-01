@@ -26,7 +26,9 @@ test.beforeAll(async () => {
   }
 
   const binary = process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");
-  const child = spawn(binary, ["serve", "--port", "0", "--sat", "altitude=400,id=test"]);
+  const child = spawn(binary, ["serve", "--port", "0", "--sat", "altitude=400,id=test"], {
+    env: { ...process.env, ORTS_DISABLE_TEXTURE_DOWNLOAD: "1" },
+  });
   ortsProcess = child;
 
   const port = await new Promise<number>((resolve, reject) => {

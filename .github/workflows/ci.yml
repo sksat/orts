@@ -1419,6 +1419,12 @@ jobs:
         run: chmod +x ./bin/orts
 
       - name: Start WebSocket server
+        # The high-res source textures (21600x10800 for Earth alone) compete with
+        # the simulation loop for CPU while they download and decode, which starves
+        # the stream the next step waits on. Embedded 2k textures are served either
+        # way. See issue #373.
+        env:
+          ORTS_DISABLE_TEXTURE_DOWNLOAD: "1"
         run: ./bin/orts serve --sat altitude=400 --dt 1 --output-interval 10 &
 
       - name: Wait for WebSocket server to stream
