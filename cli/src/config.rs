@@ -55,12 +55,26 @@ fn de_atmosphere<'de, D: Deserializer<'de>>(de: D) -> Result<String, D::Error> {
 /// Also the payload of the `start_simulation` WebSocket message, so the
 /// whole tree derives [`TS`]. Fields the server defaults when absent are
 /// `#[ts(optional)]` so TypeScript clients may omit them too.
-// `deny_unknown_fields` here and on the rest of the config tree: a dropped key
-// is indistinguishable from a key that was never written, so `duraton = 100`
-// used to run with the default duration and report success. Kept out of the
-// doc comment because doc comments are copied into the generated TypeScript.
+// A key nothing reads is reported by `load_with_warnings`, not rejected: a
+// dropped key is indistinguishable from one never written, so `duraton = 100`
+// used to run with the default duration and report success in silence. Refusing
+// the file instead would stop an older `orts` reading a config written for a
+// newer one.
+//
+// The `#[serde(tag = "type")]` enums below keep `deny_unknown_fields` and refuse
+// instead. `serde_ignored`, which collects the paths, cannot see into an
+// internally tagged enum — serde buffers the variant's content and replays it,
+// so an unknown key there is dropped with nothing to report (measured: a typo
+// inside `[satellites.orbit]` yields no path, while one at the top level and one
+// in `[integrator]` both do). A silent `inclinaton = 51.6` leaves the orbit
+// equatorial, so those four reject rather than say nothing. The alternative,
+// external tagging, spells the orbit `[satellites.orbit.circular]` and gives the
+// same error for the same typo, changing the config format and the WebSocket
+// payload to buy nothing.
+//
+// Kept out of the doc comment because doc comments are copied into the generated
+// TypeScript.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SimConfig {
     #[serde(default = "default_body")]
@@ -109,7 +123,6 @@ pub struct SimConfig {
 
 /// Ground station definition for visibility / contact window detection.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct GroundStationConfig {
     pub name: String,
@@ -152,7 +165,6 @@ impl GroundStationConfig {
 /// コントローラ(FSW)へ `kind` + `args`(key-value payload) を配送する。
 /// host が配送 tick を確定するので決定論的。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct CommandConfig {
     /// 配送するシミュレーション時刻 \[s\]。
@@ -248,7 +260,6 @@ fn default_ap() -> f64 {
 
 /// Integrator configuration within a config file.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct IntegratorConfig {
     #[serde(
@@ -288,7 +299,6 @@ impl Default for IntegratorConfig {
 
 /// Attitude dynamics configuration for a satellite.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct AttitudeConfig {
     /// Diagonal inertia tensor [Ixx, Iyy, Izz] kg·m².
@@ -689,7 +699,6 @@ pub enum MtqConfig {
 
 /// 推進器一機分の静的パラメータ。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ThrusterSpecConfig {
     /// 最大推力 [N]。
@@ -709,7 +718,6 @@ pub struct ThrusterSpecConfig {
 /// `thrusters` に各推進器の静的パラメータを並べ、`dry_mass` で
 /// 推進剤枯渇時の停止閾値 (spacecraft total mass [kg]) を指定する。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct ThrusterConfig {
     /// 推進器一覧（空リストは reject）。
@@ -723,7 +731,6 @@ pub struct ThrusterConfig {
 
 /// Per-satellite configuration.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SatelliteConfig {
     #[ts(optional)]
@@ -802,9 +809,103 @@ pub enum OrbitConfig {
     Norad { norad_id: u32 },
 }
 
+/// The keys of a client message that no field of it reads.
+///
+/// `ClientMessage` is `#[serde(tag = "type")]`, and `serde_ignored` cannot see
+/// inside an internally tagged enum: serde buffers the variant's content and
+/// replays it, so deserializing the message itself collects nothing. Reaching
+/// into the JSON for the part that is a config and targeting that directly gets
+/// past the tag — the same trick reaches `add_satellite`'s flattened
+/// `SatelliteConfig`, where `flatten` removes the unknown-field check outright.
+///
+/// Paths are relative to the part inspected: `dtt` and `satellites.0.altitide`
+/// for `start_simulation`'s config.
+pub fn unread_client_message_keys(text: &str) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+        return Vec::new();
+    };
+    let Some(kind) = value.get("type").and_then(|v| v.as_str()) else {
+        return Vec::new();
+    };
+
+    let mut keys = Vec::new();
+    let mut note = |path: serde_ignored::Path| keys.push(path.to_string());
+    match kind {
+        "start_simulation" => {
+            if let Some(config) = value.get("config").cloned() {
+                let _ = serde_ignored::deserialize::<_, _, SimConfig>(config, &mut note);
+            }
+        }
+        "add_satellite" => {
+            // The satellite is flattened next to the tag, so the tag itself is
+            // the one key that belongs to the message rather than the satellite.
+            if let Some(object) = value.as_object() {
+                let mut object = object.clone();
+                object.remove("type");
+                let _ = serde_ignored::deserialize::<_, _, SatelliteConfig>(
+                    serde_json::Value::Object(object),
+                    &mut note,
+                );
+            }
+        }
+        // The rest carry scalars the message's own fields all read.
+        _ => {}
+    }
+    keys
+}
+
+/// Load a config and report, on stderr, the keys nothing read.
+///
+/// For the paths that run a simulation. `orts config validate` renders them
+/// itself, since it also has a `--json` form to put them in.
+pub fn load_config_reporting_unread_keys(path: &Path) -> Result<SimConfig, String> {
+    let loaded = SimConfig::load_with_warnings(path)?;
+    for key in &loaded.unread_keys {
+        eprintln!(
+            "Warning: {}: nothing reads `{key}`; its value is ignored",
+            path.display()
+        );
+    }
+    Ok(loaded.config)
+}
+
+/// A loaded config and the keys in its file that nothing read.
+///
+/// The keys are paths as `serde_ignored` spells them — `satellites.0.disturbanses`
+/// rather than `satellites[0].disturbanses`.
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    pub config: SimConfig,
+    /// Paths of keys the file carried and no field claimed, in the order the
+    /// deserialize met them. Empty for a config whose every key was read.
+    pub unread_keys: Vec<String>,
+}
+
 impl SimConfig {
-    /// Load a config file, auto-detecting format by extension.
+    /// Load a config file, auto-detecting format by extension, and discard the
+    /// keys nothing read.
+    ///
+    /// For a caller with nowhere to report them. The paths that run a
+    /// simulation go through [`load_config_reporting_unread_keys`], and
+    /// `orts config validate` renders them itself.
+    #[cfg(test)]
     pub fn load(path: &Path) -> Result<Self, String> {
+        Ok(Self::load_with_warnings(path)?.config)
+    }
+
+    /// Load a config, and say which of its keys nothing read.
+    ///
+    /// An unknown key is a warning rather than an error so that a config
+    /// written for a newer `orts` still runs on an older one: rejecting the file
+    /// would make one added option enough to stop it being read at all. A known
+    /// key holding an unknown value stays an error — there the file names
+    /// something the simulation cannot do.
+    ///
+    /// The paths come back as a value rather than through `log::warn!`, which
+    /// the CLI initializes no logger for (see #387), so nothing would print
+    /// them. A caller decides where they go: `orts config validate --json` puts
+    /// them in `warnings`, and a test reads them without a logger.
+    pub fn load_with_warnings(path: &Path) -> Result<LoadedConfig, String> {
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -814,14 +915,28 @@ impl SimConfig {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config file '{}': {e}", path.display()))?;
 
+        // One funnel for all three formats, so the paths are collected the same
+        // way whichever one the file is in.
+        let mut unread_keys = Vec::new();
+        let mut note = |path: serde_ignored::Path| unread_keys.push(path.to_string());
+
         let config: SimConfig = match ext.as_str() {
-            "json" => serde_json::from_str(&content)
-                .map_err(|e| format!("Failed to parse JSON config: {e}"))?,
-            "toml" => {
-                toml::from_str(&content).map_err(|e| format!("Failed to parse TOML config: {e}"))?
+            "json" => {
+                let mut de = serde_json::Deserializer::from_str(&content);
+                serde_ignored::deserialize(&mut de, &mut note)
+                    .map_err(|e| format!("Failed to parse JSON config: {e}"))?
             }
-            "yaml" | "yml" => serde_yaml::from_str(&content)
-                .map_err(|e| format!("Failed to parse YAML config: {e}"))?,
+            "toml" => {
+                let de = toml::Deserializer::parse(&content)
+                    .map_err(|e| format!("Failed to parse TOML config: {e}"))?;
+                serde_ignored::deserialize(de, &mut note)
+                    .map_err(|e| format!("Failed to parse TOML config: {e}"))?
+            }
+            "yaml" | "yml" => {
+                let de = serde_yaml::Deserializer::from_str(&content);
+                serde_ignored::deserialize(de, &mut note)
+                    .map_err(|e| format!("Failed to parse YAML config: {e}"))?
+            }
             _ => {
                 return Err(format!(
                     "Unknown config file extension '.{ext}'. Supported: .json, .toml, .yaml, .yml"
@@ -831,7 +946,10 @@ impl SimConfig {
 
         config.validate()?;
 
-        Ok(config)
+        Ok(LoadedConfig {
+            config,
+            unread_keys,
+        })
     }
 
     /// The integrator selected by `[integrator] type`.
@@ -2898,20 +3016,19 @@ direction_body = [0.0, 0.0, 0.0]
         let _ = config.atmosphere_choice();
     }
 
-    /// An unknown key used to be dropped, which is indistinguishable from a key
-    /// the user never wrote: `duraton = 100` ran for one orbital period and
-    /// reported success.
+    /// A key nothing reads is named, at whatever depth it sits.
+    ///
+    /// Dropping it in silence is indistinguishable from never writing it:
+    /// `duraton = 100` ran for one orbital period and reported success. The file
+    /// still loads, so a config written for a newer `orts` runs here; what
+    /// changes is that the key is reported.
     #[test]
-    fn unknown_keys_are_rejected() {
+    fn unread_keys_are_named() {
         let cases = [
             ("top level", "duraton = 100.0\n"),
             (
                 "satellite",
                 "[[satellites]]\naltitide = 400\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n",
-            ),
-            (
-                "orbit",
-                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\ninclinaton = 51.6\n",
             ),
             ("integrator", "[integrator]\natoll = 1.0e-9\n"),
             (
@@ -2929,17 +3046,113 @@ direction_body = [0.0, 0.0, 0.0]
             ),
         ];
         for (label, toml) in cases {
-            let err = toml::from_str::<SimConfig>(toml)
+            let dir = std::env::temp_dir().join(format!(
+                "orts-unread-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            std::fs::create_dir_all(&dir).expect("temp dir");
+            let path = dir.join("sim.toml");
+            std::fs::write(&path, toml).expect("write config");
+
+            let loaded = SimConfig::load_with_warnings(&path)
+                .unwrap_or_else(|e| panic!("{label}: the file should still load: {e}"));
+            assert!(
+                !loaded.unread_keys.is_empty(),
+                "{label}: the unread key must be named"
+            );
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// A `type`-tagged block refuses an unknown key rather than reporting it.
+    ///
+    /// `serde_ignored` cannot see inside an internally tagged enum, so there is
+    /// nothing to report there: serde buffers the variant's content and replays
+    /// it. A dropped `inclinaton = 51.6` leaves the orbit equatorial, so those
+    /// blocks reject instead of saying nothing.
+    #[test]
+    fn a_type_tagged_block_refuses_an_unknown_key() {
+        let cases = [
+            (
+                "orbit",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\ninclinaton = 51.6\n",
+                "inclinaton",
+            ),
+            (
+                "controller",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+                 \n[satellites.controller]\ntype = \"wasm\"\npath = \"p.wasm\"\npth = \"q.wasm\"\n",
+                "pth",
+            ),
+        ];
+        for (label, toml_src, key) in cases {
+            let err = toml::from_str::<SimConfig>(toml_src)
                 .map(|c| format!("{c:?}"))
-                .expect_err(&format!(
-                    "{label}: an unknown key must be rejected, not dropped"
-                ))
+                .expect_err(&format!("{label}: an unknown key here must be refused"))
                 .to_string();
             assert!(
-                err.contains("unknown field"),
-                "{label}: expected an unknown-field error, got {err}"
+                err.contains("unknown field") && err.contains(key),
+                "{label}: expected an unknown-field error naming `{key}`, got {err}"
             );
         }
+    }
+
+    /// The named path is the key's, so a typo can be found from it.
+    #[test]
+    fn an_unread_key_is_named_by_its_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-unread-path-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sim.toml");
+        std::fs::write(
+            &path,
+            "duraton = 100.0
+
+[[satellites]]
+altitide = 400
+             [satellites.orbit]
+type = \"circular\"
+altitude = 500
+",
+        )
+        .expect("write config");
+
+        let loaded = SimConfig::load_with_warnings(&path).expect("the file loads");
+        assert_eq!(loaded.unread_keys, vec!["duraton", "satellites.0.altitide"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A config whose every key is read reports nothing.
+    #[test]
+    fn a_config_read_whole_names_no_key() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-unread-none-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sim.toml");
+        std::fs::write(
+            &path,
+            "dt = 1.0
+duration = 100.0
+
+[[satellites]]
+id = \"a\"
+             [satellites.orbit]
+type = \"circular\"
+altitude = 500
+",
+        )
+        .expect("write config");
+
+        let loaded = SimConfig::load_with_warnings(&path).expect("the file loads");
+        assert_eq!(loaded.unread_keys, Vec::<String>::new());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// Two satellites resolving to one id share the recording entity path and
@@ -3296,14 +3509,19 @@ mass = 100.0
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// The WebSocket surface: `start_simulation` nests the whole
-    /// `SimConfig`, so a misspelled key is rejected there like in a file;
-    /// `add_satellite` flattens a `SatelliteConfig` next to the message tag,
-    /// and serde disables the unknown-field check under `flatten` — the message
-    /// must keep parsing, and that path keeps dropping unknown keys until the
-    /// protocol stops flattening.
+    /// The WebSocket surface follows the config policy, and names what it drops.
+    ///
+    /// A message carrying a key no field reads still starts a simulation, so a
+    /// client built against a newer `orts` keeps working here — the same reason a
+    /// config file warns rather than refuses. Deserializing `ClientMessage`
+    /// collects nothing, since `#[serde(tag = "type")]` buffers the variant's
+    /// content; reaching into the JSON for the part that is a config gets past
+    /// the tag.
+    ///
+    /// A `type`-tagged block nested inside still refuses: nothing can report it,
+    /// and a dropped key there changes the orbit.
     #[test]
-    fn websocket_messages_agree_with_the_strict_config_tree() {
+    fn websocket_messages_agree_with_the_config_policy() {
         let start = r#"{
             "type": "start_simulation",
             "config": {
@@ -3313,9 +3531,28 @@ mass = 100.0
         }"#;
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(start)
             .expect("start_simulation must parse");
-        let typo = start.replace("\"dt\"", "\"dtt\"");
+        assert_eq!(unread_client_message_keys(start), Vec::<String>::new());
+
+        // A struct-level key nothing reads, at two depths: the message still
+        // starts a simulation, and both paths are named.
+        let typo = start.replace("\"dt\"", "\"dtt\"").replace(
+            "\"satellites\": [{",
+            "\"satellites\": [{ \"altitide\": 400,",
+        );
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&typo)
-            .expect_err("a misspelled key in start_simulation must be rejected");
+            .expect("an unknown key must not stop the message parsing");
+        assert_eq!(
+            unread_client_message_keys(&typo),
+            vec!["dtt", "satellites.0.altitide"]
+        );
+
+        // A typo inside the `type`-tagged orbit: refused, as in a file.
+        let orbit_typo = start.replace(
+            "\"altitude\": 500.0",
+            "\"altitude\": 500.0, \"inclinaton\": 51.6",
+        );
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&orbit_typo)
+            .expect_err("a `type`-tagged block cannot report, so it refuses");
 
         let add = r#"{
             "type": "add_satellite",
@@ -3326,20 +3563,31 @@ mass = 100.0
         }"#;
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(add)
             .expect("add_satellite must still parse");
-        // Nested structs under the flattened one are still checked: only the
-        // flattened level loses it.
-        let nested_typo = add.replace("\"mass\": 500.0", "\"mass\": 500.0, \"masss\": 1.0");
-        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&nested_typo)
-            .expect_err("a misspelled key inside `attitude` must be rejected");
-        // The gap that leaves: at the flattened level there is no unknown-field
-        // check to apply, so `ballistic_coef` (one `f` short of
-        // `ballistic_coeff`) is dropped and the satellite is added without
-        // drag. Closing it means hand-writing `Deserialize` for the message,
-        // i.e. a protocol change. Asserted rather than left unsaid, so the day
-        // it closes this test reports it instead of passing silently.
+        assert_eq!(unread_client_message_keys(add), Vec::<String>::new());
+
+        // `add_satellite` flattens its satellite next to the tag, where
+        // `flatten` removes the unknown-field check outright. Targeting the
+        // satellite directly names the key anyway: `ballistic_coef`, one `f`
+        // short of `ballistic_coeff`, used to add the satellite without drag and
+        // without a word.
         let flat_typo = add.replace("\"name\": \"Dyn\",", "\"ballistic_coef\": 100.0,");
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&flat_typo)
-            .expect("known gap: `flatten` drops unknown keys at the message level");
+            .expect("the message still adds the satellite");
+        assert_eq!(
+            unread_client_message_keys(&flat_typo),
+            vec!["ballistic_coef"]
+        );
+
+        // A key under a nested struct is named at its path too. An `Option`
+        // field puts a `?` in that path, which is how the crate spells the
+        // step through it.
+        let nested_typo = add.replace("\"mass\": 500.0", "\"mass\": 500.0, \"masss\": 1.0");
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&nested_typo)
+            .expect("the message still adds the satellite");
+        assert_eq!(
+            unread_client_message_keys(&nested_typo),
+            vec!["attitude.?.masss"]
+        );
     }
 
     /// Two ids naming one entity are a duplicate, whatever their text.

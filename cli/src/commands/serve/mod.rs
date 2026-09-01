@@ -128,9 +128,9 @@ async fn async_server(
     // Determine initial config: if CLI args specify simulation, auto-start.
     let initial_config = if has_explicit_sim_args(sim) {
         match sim.config.as_ref() {
-            Some(config_path) => Some(crate::config::SimConfig::load(std::path::Path::new(
-                config_path,
-            ))?),
+            Some(config_path) => Some(crate::config::load_config_reporting_unread_keys(
+                std::path::Path::new(config_path),
+            )?),
             None => None,
         }
     } else {

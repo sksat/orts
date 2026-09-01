@@ -48,7 +48,8 @@ pub fn run_simulation_cmd(
     json: bool,
 ) -> Result<(), CmdError> {
     let mut params = if let Some(config_path) = &sim.config {
-        let config = crate::config::SimConfig::load(std::path::Path::new(config_path))?;
+        let config =
+            crate::config::load_config_reporting_unread_keys(std::path::Path::new(config_path))?;
         SimParams::from_config(&config)
     } else if sim.has_orbit_args() {
         // The direct-CLI path bypasses `SimConfig::validate`, so apply the
@@ -60,7 +61,7 @@ pub fn run_simulation_cmd(
         // Auto-detect orts.toml in the current directory
         let config_path = std::path::Path::new("orts.toml");
         if config_path.exists() {
-            let config = crate::config::SimConfig::load(config_path)?;
+            let config = crate::config::load_config_reporting_unread_keys(config_path)?;
             SimParams::from_config(&config)
         } else {
             return Err(CmdError::usage(

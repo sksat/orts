@@ -193,8 +193,7 @@ section is subdivided by package.
 - Config files, `orts config validate` and the WebSocket `start_simulation`
   payload reject input the simulation cannot honor, instead of resolving it to
   something else: an unknown `[integrator] type` or `atmosphere` (previously
-  dp45 / the exponential model), an unknown key anywhere in the config tree
-  (previously dropped, so `duraton = 100` ran for one orbital period), two
+  dp45 / the exponential model), two
   satellites whose ids name one recording entity (previously one entity, one
   CSV section and one `[[command]]` target for both; compared on the entity, so
   `a` and `/a` collide as they do downstream), and an attitude block no
@@ -202,7 +201,17 @@ section is subdivided by package.
   violates `I1 + I2 >= I3` on its principal moments, `mass <= 0`, or an
   `initial_quaternion` that cannot be normalized. The `integrator` /
   `atmosphere` spellings a config accepts are now exactly the ones the
-  equivalent CLI flag accepts. A singular inertia tensor previously panicked in
+  equivalent CLI flag accepts.
+
+  A key nothing reads is named rather than refused: the run goes ahead, so a
+  config written for a newer `orts` still works here, and `duraton = 100` no
+  longer runs for one orbital period in silence. `orts config validate` carries
+  the paths in its `warnings`, `run` and `serve` print them, and the server names
+  the ones in a client's `start_simulation` or `add_satellite`. A `type`-tagged
+  block — `[satellites.orbit]`, `[satellites.controller]`, the reaction wheels
+  and the magnetorquers — refuses instead: `serde_ignored` cannot see inside an
+  internally tagged enum, so there is nothing to name there, and a dropped
+  `inclinaton = 51.6` would leave the orbit equatorial. A singular inertia tensor previously panicked in
   `SpacecraftDynamics::new`; under `orts serve --config` that happened inside
   the spawned manager task, leaving the server listening with no simulation and
   no error to the client. ([#351](https://github.com/sksat/orts/pull/351))

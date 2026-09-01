@@ -54,6 +54,9 @@ ureq.workspace = true
 image.workspace = true
 toml.workspace = true
 serde_yaml.workspace = true
+# Collects the config keys a deserialize ignored, so an unknown one is a
+# warning naming its path rather than a rejected file.
+serde_ignored = "0.1.14"
 rust-embed = { workspace = true, optional = true }
 wasmtime = { workspace = true, optional = true }
 rayon = "1"

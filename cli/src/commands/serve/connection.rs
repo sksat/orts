@@ -178,6 +178,17 @@ async fn main_loop(
             ws_msg = ws_receiver.next() => {
                 match ws_msg {
                     Some(Ok(Message::Text(text))) => {
+                        // A key nothing reads is named on the server's stderr
+                        // and the message still runs, the policy a config file
+                        // gets: a client built against a newer `orts` keeps
+                        // working here, and an operator can see what was
+                        // dropped. `start_simulation` carries a whole config, so
+                        // a typo there would otherwise be silent.
+                        for key in crate::config::unread_client_message_keys(&text) {
+                            eprintln!(
+                                "Warning: client message: nothing reads `{key}`; its value is ignored"
+                            );
+                        }
                         if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                             let result = match client_msg {
                                 ClientMessage::QueryRange { t_min, t_max, max_points, entity_path } => {

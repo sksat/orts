@@ -170,13 +170,21 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - config ファイル、`orts config validate`、WebSocket の `start_simulation`
   payload は、シミュレーションが honor できない入力を別の何かに解決せず拒否する:
   未知の `[integrator] type` / `atmosphere` (従来は dp45 / exponential
-  モデル)、config tree のどこかにある未知キー (従来は drop されるので
-  `duraton = 100` が 1 周期走った)、id が 1 つの recording entity を指す 2 機 (id の文字列でなく entity で比較するので、下流と同じく `a` と `/a` は衝突する)
+  モデル)、id が 1 つの recording entity を指す 2 機 (id の文字列でなく entity で比較するので、下流と同じく `a` と `/a` は衝突する)
   (従来は recording entity・CSV section・`[[command]]` の宛先を共有)、
   剛体が持てない attitude ブロック (正定値でない、または主慣性モーメントで
   `I1 + I2 >= I3` を破る慣性テンソル、`mass <= 0`、正規化できない
   `initial_quaternion`)。config が受理する `integrator` / `atmosphere` の綴りは、
-  対応する CLI フラグが受理する集合と厳密に一致する。特異な慣性テンソルは従来
+  対応する CLI フラグが受理する集合と厳密に一致する。
+
+  何も読まないキーは、拒否ではなく名前を出す。実行は続くので新しい `orts` 向けに
+  書いた config もここで動き、`duraton = 100` が黙って 1 周期走ることはなくなった。
+  `orts config validate` は `warnings` にパスを載せ、`run` と `serve` は表示し、
+  server は client の `start_simulation` や `add_satellite` に含まれるものを出す。
+  `type` タグ付きの block (`[satellites.orbit]`、`[satellites.controller]`、
+  reaction wheel、磁気トルカ) だけは拒否する。`serde_ignored` は internally tagged
+  enum の中を見られないので名前を出す手段が無く、`inclinaton = 51.6` が落ちると
+  軌道が赤道面のままになる。特異な慣性テンソルは従来
   `SpacecraftDynamics::new` で panic し、`orts serve --config` では spawn された
   manager task の中で起きるため、server は listen したままシミュレーションも
   client への error も無い状態になっていた。([#351](https://github.com/sksat/orts/pull/351))

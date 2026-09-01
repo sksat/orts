@@ -278,12 +278,13 @@ fn test_config_validate_rejects_unintegrable_attitude() {
 #[test]
 fn serve_does_not_announce_a_port_for_a_rejected_config() {
     let dir = unique_dir("serve-reject");
-    let path = dir.join("unknown-key.json");
-    // `central_body` is not a config key (the key is `body`); before
-    // `deny_unknown_fields` it was dropped and the body silently defaulted.
+    let path = dir.join("unknown-value.json");
+    // A known key holding a value the simulation cannot honor: `atmosphere` is
+    // the model to use, and `none` names no model. (An unknown *key* is a
+    // warning, so it would not stop `serve` and could not test the ordering.)
     std::fs::write(
         &path,
-        br#"{"central_body":"earth","dt":1.0,"satellites":[{"id":"a","orbit":{"type":"circular","altitude":400}}]}"#,
+        br#"{"atmosphere":"none","dt":1.0,"satellites":[{"id":"a","orbit":{"type":"circular","altitude":400}}]}"#,
     )
     .unwrap();
 
@@ -315,8 +316,8 @@ fn serve_does_not_announce_a_port_for_a_rejected_config() {
 
     assert!(!status.success(), "serve accepted it: {stderr}");
     assert!(
-        stderr.contains("central_body"),
-        "the rejection should name the key: {stderr}"
+        stderr.contains("unknown atmosphere 'none'"),
+        "the rejection should name the value it cannot honor: {stderr}"
     );
     // Each banner line separately: the harnesses wait on different ones.
     for line in ["Server listening", "Viewer:", "WebSocket endpoint"] {

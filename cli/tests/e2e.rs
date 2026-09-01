@@ -959,10 +959,12 @@ fn test_cli_config_rejects_unknown_atmosphere() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// A misspelled key was dropped, which is indistinguishable from a key that
-/// was never written: `duraton = 60` ran for one full orbital period.
+/// A misspelled key was dropped without a word, which is indistinguishable from
+/// a key that was never written: `duraton = 60` ran for one full orbital period
+/// and reported success. The run still goes ahead — that is what lets a config
+/// written for a newer `orts` work here — but the key is named.
 #[test]
-fn test_cli_config_rejects_unknown_key() {
+fn test_cli_config_names_an_unread_key() {
     let dir = std::env::temp_dir().join(format!("orts-e2e-unknown-key-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let config_path = dir.join("typo.toml");
@@ -974,14 +976,14 @@ fn test_cli_config_rejects_unknown_key() {
     .unwrap();
 
     let output = run_cli_with_config(config_path.to_str().unwrap());
-    assert!(
-        !output.status.success(),
-        "an unknown config key must fail the run"
-    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
+        output.status.success(),
+        "the run goes ahead, ignoring the key: {stderr}"
+    );
+    assert!(
         stderr.contains("duraton"),
-        "error should name the unknown key, got: {stderr}"
+        "the warning should name the unread key, got: {stderr}"
     );
     std::fs::remove_dir_all(&dir).ok();
 }
