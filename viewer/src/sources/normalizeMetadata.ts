@@ -39,9 +39,10 @@ export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt
           },
         ];
 
-  // One resolution for `mu` and the radius, so the two always come from the
-  // same fallback decision. `central_body` is the name the source gave and
-  // is passed through, so it can still read "mars" over Earth's constants.
+  // Resolved once and read twice, rather than resolved per field. Each field
+  // falls back on its own, so a valid `mu` can sit beside Earth's radius, and
+  // `central_body` is the name the source gave and passes through: it can read
+  // "mars" over Earth's constants.
   const centralBody = resolveCentralBody(metadata.mu, metadata.centralBodyRadius);
 
   return {
@@ -96,9 +97,10 @@ export function rrdMetadataToSimInfo(
     });
   }
 
-  // One resolution for `mu` and the radius, so the two always come from the
-  // same fallback decision. `central_body` is the name the source gave and
-  // is passed through, so it can still read "mars" over Earth's constants.
+  // Resolved once and read twice, rather than resolved per field. Each field
+  // falls back on its own, so a valid `mu` can sit beside Earth's radius, and
+  // `central_body` is the name the source gave and passes through: it can read
+  // "mars" over Earth's constants.
   const centralBody = resolveCentralBody(metadata.mu, metadata.body_radius);
 
   return {

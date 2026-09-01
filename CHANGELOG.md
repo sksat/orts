@@ -511,8 +511,8 @@ section is subdivided by package.
   of 0 km and an altitude of 0 km. The chart row reads those fields straight off
   the point rather than recomputing from the state vector, so the DuckDB derived
   columns did not cover for them. Opening a second recording resets the central
-  body the values are derived against, so that whose constants apply never
-  depends on the order the decoder's messages arrive in. A negative body radius
+  body the values are derived against, so the constants that apply are the new
+  recording's whatever order the decoder's messages arrive in. A negative body radius
   falls back to Earth as an absent one does: altitude is `r - bodyRadius`, so it
   would chart as a height above the orbit rather than above the surface.
   ([#376](https://github.com/sksat/orts/pull/376))
