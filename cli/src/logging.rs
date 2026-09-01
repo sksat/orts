@@ -4,8 +4,17 @@
 //! `log` records — including every line a WASM plugin writes through the WIT
 //! `host-env.log` import, which the host forwards as a `log` record — while
 //! the rerun crates that own the `.rrd` recording path emit `tracing` events.
-//! A `tracing` subscriber plus the `log` compatibility bridge sees both; a
-//! `log`-only backend would leave rerun's diagnostics discarded.
+//! Setting a `tracing` subscriber and bridging `log` into it puts both in one
+//! place, and adds no dependency: rerun's `re_log` already compiles
+//! `tracing-subscriber` with the features used here into every build.
+//!
+//! A `log`-only backend would see rerun's diagnostics too, but only by
+//! accident: `tracing`'s `log` feature (enabled here through tower, not by
+//! this crate) makes a `tracing` macro emit a `log` record while no subscriber
+//! is set, and that fallback drops spans and fields. Since a subscriber *is*
+//! set here, the macros take their `tracing` branch instead — which is also
+//! why bridging `log` into `tracing` cannot recurse. `log-always`, the feature
+//! that would emit both unconditionally, is off.
 //!
 //! What belongs here and what does not: a diagnostic carries a level and is
 //! addressed to whoever is debugging (`stream-io socket error on …`,
