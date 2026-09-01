@@ -932,13 +932,16 @@ pub fn write_satellite_csv(
         ));
 
         for (_name, col) in &extra_cols {
-            // TODO(#375 follow-up): a column that skipped this step contributes no
-            // cells, so the line comes out shorter than the header. `orts run` pads
-            // such components with zeros today, so no column is short in practice.
-            if let Some(row) = col.at_logical_row(logical) {
-                for val in row {
-                    line.push_str(&format!(",{:.10}", val));
+            // The header names every extra column, so a component with no value at
+            // this step contributes empty fields rather than none: a short line
+            // would put the remaining values under the wrong headings.
+            match col.at_logical_row(logical) {
+                Some(row) => {
+                    for val in row {
+                        line.push_str(&format!(",{:.10}", val));
+                    }
                 }
+                None => line.push_str(&",".repeat(col.scalars_per_row)),
             }
         }
 
@@ -1361,6 +1364,58 @@ mod tests {
         let mut argv = vec!["orts", "--sat", "altitude=500"];
         argv.extend_from_slice(extra);
         SimArgs::try_parse_from(argv).expect("test argv should parse")
+    }
+
+    /// The header names every extra column, so a component with no value at a
+    /// step contributes empty fields. A short line would put the remaining
+    /// values under the wrong headings.
+    #[test]
+    fn a_component_missing_at_a_step_keeps_the_csv_column_count() {
+        use orts::record::archetypes::OrbitalState as RecOrbitalState;
+        use orts::record::components::MtqCommand3D;
+        use orts::record::timeline::TimePoint;
+
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/sparse");
+        let r0 = 6778.137;
+        let v0 = (398600.4418_f64 / r0).sqrt();
+
+        for i in 0..4u64 {
+            let tp = TimePoint::new().with_sim_time(i as f64).with_step(i);
+            let os = RecOrbitalState::new(
+                nalgebra::Vector3::new(r0, 0.0, 0.0),
+                nalgebra::Vector3::new(0.0, v0, 0.0),
+            );
+            rec.log_orbital_state(&sat, &tp, &os);
+            // Only the later steps carry a command.
+            if i >= 2 {
+                rec.log_temporal(
+                    &sat,
+                    &tp,
+                    &MtqCommand3D(nalgebra::Vector3::new(i as f64, 0.0, 0.0)),
+                );
+            }
+        }
+
+        let header = build_csv_header(&rec, &sat, false);
+        let want = header.trim_start_matches("# ").matches(',').count() + 1;
+
+        let mut out = Vec::new();
+        write_satellite_csv(&mut out, &rec, &sat, 398600.4418, false).expect("csv");
+        let body = String::from_utf8(out).expect("utf-8");
+
+        let lines: Vec<&str> = body.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(lines.len(), 4, "one line per step");
+        for (i, line) in lines.iter().enumerate() {
+            assert_eq!(
+                line.matches(',').count() + 1,
+                want,
+                "line {i} has a different column count from the header: {line}"
+            );
+        }
+        // The steps without a command leave those fields empty.
+        assert!(lines[0].ends_with(",,,"), "line 0: {}", lines[0]);
+        assert!(!lines[2].ends_with(",,,"), "line 2: {}", lines[2]);
     }
 
     #[test]

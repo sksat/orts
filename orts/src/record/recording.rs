@@ -54,7 +54,9 @@ impl RowMap {
     pub fn stored_index(&self, logical: usize) -> Option<usize> {
         match self {
             Self::Dense => Some(logical),
-            Self::Sparse(rows) => rows.binary_search(&(logical as u32)).ok(),
+            // A row past the `u32` the map stores is held by no entry. Casting
+            // would wrap and could match an unrelated row.
+            Self::Sparse(rows) => rows.binary_search(&u32::try_from(logical).ok()?).ok(),
         }
     }
 }
@@ -748,6 +750,20 @@ mod tests {
         for row in 0..2 {
             assert_eq!(axis.at_logical_row(row), Some(TimeIndex::Seconds(4.0)));
         }
+    }
+
+    /// A logical row past the `u32` the map stores is held by no entry. Casting
+    /// would wrap and could match an unrelated row.
+    #[test]
+    fn a_row_past_the_map_domain_is_absent() {
+        let mut col = ComponentColumn::new(1);
+        col.push_at(&[1.0], 5);
+        assert_eq!(col.rows, RowMap::Sparse(vec![5]));
+
+        assert_eq!(col.at_logical_row(5), Some([1.0].as_slice()));
+        // 2^32 + 5 truncates to 5, which must not be read as row 5.
+        assert_eq!(col.at_logical_row(1usize << 32 | 5), None);
+        assert_eq!(col.rows.stored_index(1usize << 32 | 5), None);
     }
 
     #[test]
