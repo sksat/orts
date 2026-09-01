@@ -68,6 +68,9 @@ pub fn select_sim_mode(satellites: &[SatelliteSpec]) -> Result<SimMode, String> 
 /// `orts serve` builds inside the spawned manager: a mixed fleet validated
 /// clean, `orts serve --config` printed its banner, and the config the caller
 /// passed never ran — the server sat idle waiting for a `start_simulation`.
+///
+/// An empty fleet meets every rule here: `serve` starts with no satellites and
+/// grows by `add_satellite`, and [`select_sim_mode`] calls that `OrbitOnly`.
 pub fn ensure_fleet_declares_uniformly(
     fleet_size: usize,
     with_attitude: usize,
@@ -93,7 +96,7 @@ pub fn ensure_fleet_declares_uniformly(
     // takes until the engine is built, which under `orts serve --config` is
     // after the startup banner: the fleet is uniform, the mode comes out
     // `Controlled`, and the server then sits idle.
-    if with_controller == fleet_size && with_attitude == 0 {
+    if fleet_size != 0 && with_controller == fleet_size && with_attitude == 0 {
         return Err(
             "`[satellites.controller]` without `[satellites.attitude]`: a controller \
              commands the satellite's attitude, so a controlled fleet propagates attitude \
@@ -251,6 +254,10 @@ orbit = { type = "circular", altitude = 400 }
     #[test]
     fn empty_fleet_is_orbit_only() {
         assert_eq!(select_sim_mode(&[]), Ok(SimMode::OrbitOnly));
+        // Held at the shared rule too, not only by the caller's early return:
+        // `serve` starts empty and grows by `add_satellite`, and zero
+        // controllers on zero satellites is not "controllers without attitude".
+        assert_eq!(ensure_fleet_declares_uniformly(0, 0, 0), Ok(()));
     }
 
     /// One attitude config with `attitude` filled in from `fields`.

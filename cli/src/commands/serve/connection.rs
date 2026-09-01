@@ -184,13 +184,20 @@ async fn main_loop(
                         // working here, and an operator can see what was
                         // dropped. `start_simulation` carries a whole config, so
                         // a typo there would otherwise be silent.
-                        for key in crate::config::unread_client_message_keys(&text) {
-                            eprintln!(
-                                "Warning: client message: nothing reads `{}`; its value is ignored",
-                                crate::config::printable_key(&key)
-                            );
-                        }
-                        let parsed = serde_json::from_str::<ClientMessage>(&text);
+                        // One parse for both: the warning pass reads the tree
+                        // and `ClientMessage` then consumes it, so a frame is
+                        // not parsed twice on the way in.
+                        let parsed = serde_json::from_str::<serde_json::Value>(&text).and_then(
+                            |value| {
+                                for key in crate::config::unread_client_message_keys(&value) {
+                                    eprintln!(
+                                        "Warning: client message: nothing reads `{}`; its value is ignored",
+                                        crate::config::printable_key(&key)
+                                    );
+                                }
+                                serde_json::from_value::<ClientMessage>(value)
+                            },
+                        );
                         // A message this server cannot read is answered, not
                         // dropped. A `type`-tagged block refuses an unknown key
                         // (nothing can report one there), and dropping the error

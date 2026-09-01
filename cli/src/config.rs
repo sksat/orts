@@ -843,10 +843,9 @@ pub enum OrbitConfig {
 ///
 /// Paths are relative to the part inspected: `dtt` and `satellites.0.altitide`
 /// for `start_simulation`'s config.
-pub fn unread_client_message_keys(text: &str) -> Vec<String> {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
-        return Vec::new();
-    };
+/// Takes the message already parsed, so the caller can hand the same `Value` to
+/// `ClientMessage` rather than paying for a second parse of every frame.
+pub fn unread_client_message_keys(value: &serde_json::Value) -> Vec<String> {
     let Some(kind) = value.get("type").and_then(|v| v.as_str()) else {
         return Vec::new();
     };
@@ -855,18 +854,25 @@ pub fn unread_client_message_keys(text: &str) -> Vec<String> {
     let mut note = |path: serde_ignored::Path| keys.push(path.to_string());
     match kind {
         "start_simulation" => {
-            if let Some(config) = value.get("config").cloned() {
+            if let Some(config) = value.get("config") {
+                // Borrowed, not cloned: the config subtree of a fleet-sized
+                // message is the largest thing here.
                 let _ = serde_ignored::deserialize::<_, _, SimConfig>(config, &mut note);
             }
         }
         "add_satellite" => {
             // The satellite is flattened next to the tag, so the tag itself is
             // the one key that belongs to the message rather than the satellite.
+            // Only the map is rebuilt, without the tag; the values it points at
+            // are borrowed.
             if let Some(object) = value.as_object() {
-                let mut object = object.clone();
-                object.remove("type");
+                let satellite: Vec<(&str, &serde_json::Value)> = object
+                    .iter()
+                    .filter(|(k, _)| k.as_str() != "type")
+                    .map(|(k, v)| (k.as_str(), v))
+                    .collect();
                 let _ = serde_ignored::deserialize::<_, _, SatelliteConfig>(
-                    serde_json::Value::Object(object),
+                    serde::de::value::MapDeserializer::new(satellite.into_iter()),
                     &mut note,
                 );
             }
@@ -1453,24 +1459,22 @@ impl SimConfig {
         // mode can serve is settled here too. `SatelliteSpec` carries these two
         // as clones of the fields counted below, so the count the engine makes
         // is this count.
-        if !self.satellites.is_empty() {
-            let fleet_size = self.satellites.len();
-            let with_attitude = self
-                .satellites
-                .iter()
-                .filter(|s| s.attitude.is_some())
-                .count();
-            let with_controller = self
-                .satellites
-                .iter()
-                .filter(|s| s.controller.is_some())
-                .count();
-            crate::sim::mode::ensure_fleet_declares_uniformly(
-                fleet_size,
-                with_attitude,
-                with_controller,
-            )?;
-        }
+        let fleet_size = self.satellites.len();
+        let with_attitude = self
+            .satellites
+            .iter()
+            .filter(|s| s.attitude.is_some())
+            .count();
+        let with_controller = self
+            .satellites
+            .iter()
+            .filter(|s| s.controller.is_some())
+            .count();
+        crate::sim::mode::ensure_fleet_declares_uniformly(
+            fleet_size,
+            with_attitude,
+            with_controller,
+        )?;
         for (i, cmd) in self.commands.iter().enumerate() {
             // A non-finite or negative `t` would never satisfy the
             // schedule's `t <= t_due`, silently dropping the command.
@@ -1508,6 +1512,16 @@ impl SimConfig {
 
 #[cfg(test)]
 mod tests {
+    /// The unread keys of a message, parsed the way `connection.rs` parses it.
+    ///
+    /// The collector takes the tree, since the server hands the same one to
+    /// `ClientMessage` rather than parsing each frame twice.
+    fn unread_keys_of(text: &str) -> Vec<String> {
+        let value: serde_json::Value =
+            serde_json::from_str(text).expect("the message is valid JSON");
+        unread_client_message_keys(&value)
+    }
+
     use super::*;
 
     #[test]
@@ -3669,7 +3683,7 @@ mass = 100.0
         }"#;
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(start)
             .expect("start_simulation must parse");
-        assert_eq!(unread_client_message_keys(start), Vec::<String>::new());
+        assert_eq!(unread_keys_of(start), Vec::<String>::new());
 
         // A struct-level key nothing reads, at two depths: the message still
         // starts a simulation, and both paths are named.
@@ -3679,10 +3693,7 @@ mass = 100.0
         );
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&typo)
             .expect("an unknown key must not stop the message parsing");
-        assert_eq!(
-            unread_client_message_keys(&typo),
-            vec!["dtt", "satellites.0.altitide"]
-        );
+        assert_eq!(unread_keys_of(&typo), vec!["dtt", "satellites.0.altitide"]);
 
         // A typo inside the `type`-tagged orbit: refused, as in a file.
         let orbit_typo = start.replace(
@@ -3701,7 +3712,7 @@ mass = 100.0
         }"#;
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(add)
             .expect("add_satellite must still parse");
-        assert_eq!(unread_client_message_keys(add), Vec::<String>::new());
+        assert_eq!(unread_keys_of(add), Vec::<String>::new());
 
         // `add_satellite` flattens its satellite next to the tag, where
         // `flatten` removes the unknown-field check outright. Targeting the
@@ -3711,10 +3722,7 @@ mass = 100.0
         let flat_typo = add.replace("\"name\": \"Dyn\",", "\"ballistic_coef\": 100.0,");
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&flat_typo)
             .expect("the message still adds the satellite");
-        assert_eq!(
-            unread_client_message_keys(&flat_typo),
-            vec!["ballistic_coef"]
-        );
+        assert_eq!(unread_keys_of(&flat_typo), vec!["ballistic_coef"]);
 
         // A key under a nested struct is named at its path too. An `Option`
         // field puts a `?` in that path, which is how the crate spells the
@@ -3722,10 +3730,7 @@ mass = 100.0
         let nested_typo = add.replace("\"mass\": 500.0", "\"mass\": 500.0, \"masss\": 1.0");
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&nested_typo)
             .expect("the message still adds the satellite");
-        assert_eq!(
-            unread_client_message_keys(&nested_typo),
-            vec!["attitude.?.masss"]
-        );
+        assert_eq!(unread_keys_of(&nested_typo), vec!["attitude.?.masss"]);
     }
 
     /// Two ids naming one entity are a duplicate, whatever their text.
@@ -4036,7 +4041,7 @@ orbit = { type = "circular", altitude = 600 }
                    \"b\\u001b[31m\":2,\
                    \"satellites\":[{\"id\":\"a\",\"orbit\":\
                    {\"type\":\"circular\",\"altitude\":400}}]}}";
-        let keys = unread_client_message_keys(msg);
+        let keys = unread_keys_of(msg);
         assert_eq!(keys.len(), 2, "both keys are collected: {keys:?}");
         assert!(
             keys.iter().any(|k| k.contains('\n')),
