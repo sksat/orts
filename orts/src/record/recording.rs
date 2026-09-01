@@ -26,13 +26,14 @@ impl RowMap {
     /// switching away from `Dense` only once the two actually diverge.
     fn record(&mut self, stored: usize, logical: usize) {
         // `stored_index` binary-searches, so the rows have to stay strictly
-        // ascending, and they are stored as `u32`. A repeated row would make the
-        // search resolve to whichever entry it landed on.
-        debug_assert!(
+        // ascending, and they are stored as `u32`. Breaking either would tie a
+        // value to an unrelated row, so these hold in release too: they are two
+        // integer comparisons against the Arrow work each row already costs.
+        assert!(
             u32::try_from(logical).is_ok(),
             "logical row {logical} is past the u32 the row map stores"
         );
-        debug_assert!(
+        assert!(
             stored == 0 || logical > self.logical_row(stored - 1),
             "logical row {logical} does not follow {} at stored index {stored}",
             self.logical_row(stored.saturating_sub(1)),
@@ -99,10 +100,11 @@ impl ComponentColumn {
 
     /// Append `scalars` as the entity's logical row `logical_row`.
     ///
-    /// `logical_row` has to be greater than the one given for the previous
-    /// stored row, and within `u32`. The row lookup binary-searches, so a
-    /// repeated or out-of-order row would make it resolve to whichever entry the
-    /// search landed on. A debug build asserts both.
+    /// # Panics
+    ///
+    /// If `logical_row` is not greater than the one given for the previous
+    /// stored row, or does not fit in `u32`. The row lookup binary-searches, so
+    /// either would make it resolve to whichever entry the search landed on.
     pub fn push_at(&mut self, scalars: &[f64], logical_row: usize) {
         debug_assert_eq!(scalars.len(), self.scalars_per_row);
         let stored = self.num_rows();
@@ -775,6 +777,42 @@ mod tests {
         // 2^32 + 5 truncates to 5, which must not be read as row 5.
         assert_eq!(col.at_logical_row(1usize << 32 | 5), None);
         assert_eq!(col.rows.stored_index(1usize << 32 | 5), None);
+    }
+
+    /// A component repeated at one time point opens the next row when it is
+    /// repeated, so a component logged in between belongs to the row that was
+    /// open at the time.
+    ///
+    /// Logging `Position(p0)`, `Velocity(v1)`, `Position(p1)` at one time point
+    /// says nothing about which position `v1` goes with — no `v0` was logged —
+    /// so this records the grouping rather than leaving it unspecified.
+    #[test]
+    fn a_component_between_two_samples_joins_the_open_row() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/between");
+        let tp = TimePoint::new().with_sim_time(1.0).with_step(0);
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(0.0, 0.0, 0.0)));
+        rec.log_temporal(&sat, &tp, &Velocity3D(Vector3::new(1.0, 0.0, 0.0)));
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(2.0, 0.0, 0.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(
+            store.num_rows, 2,
+            "the repeated position opens a second row"
+        );
+
+        let pos = &store.columns[&Position3D::component_name()];
+        assert_eq!(pos.at_logical_row(0).map(|v| v[0]), Some(0.0));
+        assert_eq!(pos.at_logical_row(1).map(|v| v[0]), Some(2.0));
+
+        let vel = &store.columns[&Velocity3D::component_name()];
+        assert_eq!(
+            vel.at_logical_row(0).map(|v| v[0]),
+            Some(1.0),
+            "the velocity joins the row that was open when it was logged"
+        );
+        assert_eq!(vel.at_logical_row(1), None, "no velocity was logged for it");
     }
 
     #[test]

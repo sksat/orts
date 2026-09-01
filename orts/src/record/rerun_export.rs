@@ -3298,8 +3298,8 @@ mod tests {
     }
 
     /// A component logged only from a later step must be written at the times it
-    /// was logged at. The store keeps one timeline per entity and no per-column
-    /// row mapping, so a short column used to be lined up with the *leading*
+    /// was logged at. The store used to keep one timeline per entity and no
+    /// per-column row mapping, so a short column lined up with the *leading*
     /// timeline entries: values from steps 5-9 landed on t=0-4 (#375).
     #[test]
     fn a_late_starting_component_keeps_its_own_times() {
