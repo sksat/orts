@@ -35,7 +35,8 @@ disturbances?: DisturbancesConfig,
 /**
  * Flat-panel outer surface. Drives both SRP and drag, and requires
  * `attitude`; conflicts with the isotropic `srp_area_to_mass` / `srp_cr` /
- * `ballistic_coeff`.
+ * `ballistic_coeff`. A list of zero panels is rejected — leave the key out
+ * (or write `null`) to model an isotropic cross-section.
  */
 panels?: Array<PanelConfig>, 
 /**

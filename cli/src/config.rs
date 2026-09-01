@@ -637,10 +637,10 @@ pub struct SatelliteConfig {
     pub disturbances: Option<DisturbancesConfig>,
     /// Flat-panel outer surface. Drives both SRP and drag, and requires
     /// `attitude`; conflicts with the isotropic `srp_area_to_mass` / `srp_cr` /
-    /// `ballistic_coeff`.
-    #[serde(default)]
-    #[ts(as = "Option<_>", optional)]
-    pub panels: Vec<PanelConfig>,
+    /// `ballistic_coeff`. A list of zero panels is rejected — leave the key out
+    /// (or write `null`) to model an isotropic cross-section.
+    #[ts(optional)]
+    pub panels: Option<Vec<PanelConfig>>,
     /// プラグインコントローラ設定。
     #[ts(optional)]
     pub controller: Option<ControllerConfig>,
@@ -804,13 +804,8 @@ impl SatelliteConfig {
                 .as_ref()
                 .map(DisturbancesConfig::to_disturbance_torques)
                 .unwrap_or_default(),
-            panels: (!self.panels.is_empty()).then(|| {
-                SpacecraftShape::panels(
-                    self.panels
-                        .iter()
-                        .map(PanelConfig::to_surface_panel)
-                        .collect(),
-                )
+            panels: self.panels.as_ref().map(|panels| {
+                SpacecraftShape::panels(panels.iter().map(PanelConfig::to_surface_panel).collect())
             }),
             shape: self.shape,
             controller_config: self.controller.clone(),
@@ -886,7 +881,13 @@ impl SatelliteConfig {
                 "disturbances requires attitude: a torque needs an orientation to act on".into(),
             );
         }
-        if !self.panels.is_empty() {
+        if let Some(panels) = &self.panels {
+            // A list of zero panels describes no surface at all, so it is a
+            // mistake rather than a way to say "isotropic" — leave the key out
+            // for that, or write `null`, both of which land here as `None`.
+            if panels.is_empty() {
+                return Err("panels must not be empty; omit the key instead".into());
+            }
             // Panel forces are attitude-dependent by construction: `PanelSrp`
             // and `PanelDrag` need `HasAttitude`, so they only ever reach a
             // `SpacecraftDynamics`.
@@ -909,7 +910,7 @@ impl SatelliteConfig {
                     ));
                 }
             }
-            for (i, panel) in self.panels.iter().enumerate() {
+            for (i, panel) in panels.iter().enumerate() {
                 panel.validate(i)?;
             }
         }
@@ -1341,7 +1342,7 @@ mod tests {
             shape: None,
             attitude: None,
             disturbances: None,
-            panels: Vec::new(),
+            panels: None,
             controller: None,
             sensors: None,
             reaction_wheels: None,
@@ -1381,7 +1382,7 @@ mod tests {
             shape: None,
             attitude: None,
             disturbances: None,
-            panels: Vec::new(),
+            panels: None,
             controller: None,
             sensors: None,
             reaction_wheels: None,
@@ -1412,7 +1413,7 @@ mod tests {
             shape: None,
             attitude: None,
             disturbances: None,
-            panels: Vec::new(),
+            panels: None,
             controller: None,
             sensors: None,
             reaction_wheels: None,
@@ -1521,7 +1522,7 @@ satellites:
                 shape: None,
                 attitude: None,
                 disturbances: None,
-                panels: Vec::new(),
+                panels: None,
                 controller: None,
                 sensors: None,
                 reaction_wheels: None,
@@ -2330,6 +2331,65 @@ cp_offset = [0.0, 1.5, 0.0]
         // model constructors' unit-length assert cannot fire.
         assert!((panels[0].normal.magnitude() - 1.0).abs() < 1e-15);
         assert_eq!(panels[0].cp_offset, nalgebra::Vector3::new(0.0, 1.5, 0.0));
+    }
+
+    /// An explicit `panels = []` is a mistake, and the type has to keep it
+    /// apart from an absent key: with `Vec` + `serde(default)` the two are the
+    /// same value, so the empty list would read as "no panels" and the
+    /// satellite would silently fall back to an isotropic cross-section.
+    ///
+    /// `null` is a separate case, pinned by
+    /// [`a_null_panels_key_means_no_panels`].
+    #[test]
+    fn an_empty_panels_list_is_rejected() {
+        let json = r#"{
+            "satellites": [{
+                "id": "a",
+                "orbit": { "type": "circular", "altitude": 500 },
+                "attitude": { "inertia_diag": [10, 10, 10], "mass": 50 },
+                "panels": []
+            }]
+        }"#;
+        let config: SimConfig = serde_json::from_str(json).expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(err.contains("panels must not be empty"), "got: {err}");
+
+        // Leaving the key out is the way to say "no panels".
+        let without = json.replace(",\n                \"panels\": []", "");
+        let config: SimConfig = serde_json::from_str(&without).expect("parses");
+        config.satellites[0]
+            .validate()
+            .expect("valid without panels");
+        assert!(config.satellites[0].panels.is_none());
+    }
+
+    /// `"panels": null` reads as no panels, the same as leaving the key out.
+    ///
+    /// Worth pinning because it changed: with `Vec` + `serde(default)` a JSON
+    /// `null` was a parse error. It has to be accepted now, because `None`
+    /// serialises back as `null` and `orts config example --format json` has to
+    /// re-read its own output — the eleven sibling `Option` fields print `null`
+    /// there too.
+    #[test]
+    fn a_null_panels_key_means_no_panels() {
+        let json = r#"{
+            "satellites": [{
+                "id": "a",
+                "orbit": { "type": "circular", "altitude": 500 },
+                "srp_area_to_mass": 0.02,
+                "panels": null
+            }]
+        }"#;
+        let config: SimConfig = serde_json::from_str(json).expect("parses");
+        assert!(config.satellites[0].panels.is_none());
+        config.satellites[0]
+            .validate()
+            .expect("no panels, so neither the attitude nor the conflict rule applies");
+        let spec = config.satellites[0].to_satellite_spec(0, KnownBody::Earth, 398600.4418);
+        assert!(
+            spec.panels.is_none(),
+            "a null key must not reach the dynamics as a panelled shape"
+        );
     }
 
     #[test]
