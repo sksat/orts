@@ -1,3 +1,4 @@
+use arika::frame::FrameDescriptor;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
@@ -291,6 +292,14 @@ pub fn save_as_rrd(
         rec.log_static(
             "meta/sim/body_name",
             &re_sdk_types::archetypes::TextDocument::new(name.as_str()),
+        )?;
+    }
+    // Recording-wide rather than per-entity: every state in a recording is
+    // propagated in one frame, and one place to check keeps the read side simple.
+    if let Some(frame) = meta.integration_frame {
+        rec.log_static(
+            "meta/sim/integration_frame",
+            &re_sdk_types::archetypes::TextDocument::new(frame.name()),
         )?;
     }
     if let Some(ref iso) = meta.epoch_iso {
@@ -676,6 +685,9 @@ pub fn load_rrd_data(path: &str) -> Result<RrdData, Box<dyn std::error::Error>> 
         period: meta_scalars.get("meta/sim/period").copied(),
         body_name: meta_texts.get("meta/sim/body_name").cloned(),
         orbit_description: meta_texts.get("meta/sim/orbit_description").cloned(),
+        integration_frame: meta_texts
+            .get("meta/sim/integration_frame")
+            .and_then(|n| FrameDescriptor::from_name(n)),
     };
 
     // Find base entity paths that have x/y/z/vx/vy/vz sub-entities.
@@ -962,6 +974,9 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
         period: meta_scalars.get("meta/sim/period").copied(),
         body_name: meta_texts.get("meta/sim/body_name").cloned(),
         orbit_description: meta_texts.get("meta/sim/orbit_description").cloned(),
+        integration_frame: meta_texts
+            .get("meta/sim/integration_frame")
+            .and_then(|n| FrameDescriptor::from_name(n)),
     };
 
     // Find all entity base paths (strip the leaf field name and leading slash)
@@ -1437,6 +1452,7 @@ mod tests {
             orbit_description: Some(
                 "Initial orbit: circular at 400 km altitude (r = 6778.137 km)".to_string(),
             ),
+            integration_frame: Some(FrameDescriptor::Gcrs),
         };
 
         // Log 3 rows with all component types
@@ -1480,6 +1496,11 @@ mod tests {
             m.orbit_description.as_deref(),
             Some("Initial orbit: circular at 400 km altitude (r = 6778.137 km)")
         );
+        // Through the file, not just the struct: the frame is written as text
+        // under `meta/sim/` and recovered by name, so either half breaking loses
+        // it. `Gcrs` rather than the default `SimpleEci`, so a write side that
+        // names a constant cannot pass this.
+        assert_eq!(m.integration_frame, Some(FrameDescriptor::Gcrs));
 
         // Find the satellite entity
         let sat_path = EntityPath::parse("/world/sat/test");
