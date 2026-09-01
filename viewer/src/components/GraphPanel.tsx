@@ -50,7 +50,8 @@ export const GraphPanel = memo(function GraphPanel({
 }: GraphPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
 
-  // Filter acceleration charts: show gravity always + perturbations that are active
+  // Acceleration charts appear once any perturbation is active: gravity and the
+  // total then show alongside whichever individual perturbations are on.
   const visibleAccelDefs = useMemo(
     () => ACCEL_CHART_DEFS.filter((def) => isAccelChartActive(def.pertKey, activePerturbations)),
     [activePerturbations],
