@@ -140,14 +140,19 @@ async function drawnVectors(
   return page.evaluate(
     async ([entityId, wantSome]) => {
       const w = window as unknown as Record<string, unknown>;
-      const get = w.__debug_get_direction_vectors as
-        | ((
-            id: string,
-          ) => { kind: string; direction: [number, number, number]; distance: number }[] | null)
-        | undefined;
-      if (!get) return null;
+      // Re-read the hook each pass: it is installed when the arrows first mount,
+      // which can be after the connection is up. Reading it once and giving up
+      // would make this pass or fail on scene-mount timing.
+      const read = () =>
+        (
+          w.__debug_get_direction_vectors as
+            | ((
+                id: string,
+              ) => { kind: string; direction: [number, number, number]; distance: number }[] | null)
+            | undefined
+        )?.(entityId as string) ?? null;
       for (let i = 0; i < 40; i++) {
-        const drawn = get(entityId as string);
+        const drawn = read();
         if (!wantSome) {
           // Absence has to settle too: give the scene the same window to draw
           // something before concluding it drew nothing.
@@ -157,7 +162,7 @@ async function drawnVectors(
         }
         await new Promise((r) => setTimeout(r, 100));
       }
-      return get(entityId as string) ?? [];
+      return read() ?? [];
     },
     [id, expectSome] as [string, boolean],
   );
