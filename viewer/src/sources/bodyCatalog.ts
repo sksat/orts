@@ -69,11 +69,16 @@ export function bodyIdOf(name: string): string {
  * keeps the other: replacing the entry would leave `{ earth: { mu } }` with no
  * radius, and a recording that omits its radius would then be refused for a
  * body the viewer knows.
+ *
+ * A consumer's keys go through {@link bodyIdOf} as a source's name does, so
+ * `{ Kerbin: … }` answers a recording that says "kerbin". Keying one side raw
+ * and the other normalized would refuse a body the consumer had supplied.
  */
 export function resolveBodyCatalog(custom?: BodyCatalog): BodyCatalog {
   if (!custom) return DEFAULT_BODY_CATALOG;
   const merged: BodyCatalog = { ...DEFAULT_BODY_CATALOG };
-  for (const [id, constants] of Object.entries(custom)) {
+  for (const [name, constants] of Object.entries(custom)) {
+    const id = bodyIdOf(name);
     merged[id] = { ...merged[id], ...constants };
   }
   return merged;

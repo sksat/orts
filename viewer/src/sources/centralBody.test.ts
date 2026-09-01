@@ -112,6 +112,14 @@ describe("resolveCentralBody", () => {
     expect(body).toEqual({ bodyId: "earth", mu: 398600.44, bodyRadius: EARTH.radiusKm });
   });
 
+  it("keys a consumer's catalog the way it keys a source's name", () => {
+    // Normalizing one side and not the other refused a body the consumer had
+    // supplied, for the case they happened to write it in.
+    const catalog: BodyCatalog = { Kerbin: { mu: 3531600, radiusKm: 600 } };
+    const body = resolved({ bodyId: "kerbin", mu: null, bodyRadius: null }, catalog);
+    expect(body).toEqual({ bodyId: "kerbin", mu: 3531600, bodyRadius: 600 });
+  });
+
   it("holds a catalog's own constants to the same constraint", () => {
     // A catalog is the consumer's to write. A `mu` of -1 in one is as unusable
     // as a `mu` of -1 in a file, and it would otherwise reach every element
