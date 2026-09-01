@@ -617,17 +617,16 @@ fn build_sensor_bundle(
         None => return Ok(SensorBundle::new()),
     };
 
-    if choices.contains(&SensorChoice::Magnetometer) {
+    let magnetometers = if choices.contains(&SensorChoice::Magnetometer) {
         require_earth_field(body, "magnetometer")?;
-    }
-    let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> = Arc::new(Igrf::earth());
+        let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> = Arc::new(Igrf::earth());
+        vec![Magnetometer::new(field_model)]
+    } else {
+        vec![]
+    };
 
     Ok(SensorBundle {
-        magnetometers: if choices.contains(&SensorChoice::Magnetometer) {
-            vec![Magnetometer::new(Arc::clone(&field_model))]
-        } else {
-            vec![]
-        },
+        magnetometers,
         gyroscopes: if choices.contains(&SensorChoice::Gyroscope) {
             vec![Gyroscope::new()]
         } else {
@@ -967,15 +966,14 @@ mod tests {
         assert!((slow_seen[0] - 1.0).abs() < 1e-9, "at {}", slow_seen[0]);
     }
 
-    /// A magnetic device is refused on a body whose field is not modelled.
+    /// A magnetometer is refused on a body whose field is not modelled.
     ///
     /// `Igrf` and `TiltedDipole` are Earth's, and they are the only field models
-    /// there are. Wired to a spacecraft around another body they answer every
-    /// reading with Earth's field: a magnetometer reports a field the body does
-    /// not have, and a magnetorquer makes torque from it, so the attitude is
-    /// controlled against a planet that is not there.
+    /// there are, so around another body the sensor reported a field the body
+    /// does not have. `require_earth_field` covers the magnetorquer too, where
+    /// the actuators are built.
     #[test]
-    fn a_magnetic_device_needs_a_body_whose_field_is_modelled() {
+    fn a_magnetometer_needs_a_body_whose_field_is_modelled() {
         for body in [KnownBody::Mars, KnownBody::Moon, KnownBody::Sun] {
             let err = match build_sensor_bundle(Some(&[SensorChoice::Magnetometer]), body) {
                 Err(e) => e,

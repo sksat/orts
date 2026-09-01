@@ -137,7 +137,6 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `KnownBody` を取り、`default_third_bodies` と 2 つの `build_*` builder が
   `Result` を返す。Sun ephemeris を持たない中心天体は、Sun を誤った位置に置いたまま
   伝播せず報告される。([#372](https://github.com/sksat/orts/pull/372))
-  伝播せず報告される。([#372](https://github.com/sksat/orts/pull/372))
 - sun sensor の Sun 方向も中心天体から取るようになった (`SunSensor::for_body`)。
   地心ベクトルを読んでいたため、Mars では力モデルが正しくても姿勢制御の入力だけが
   最大 176° ずれていた。([#372](https://github.com/sksat/orts/pull/372))
