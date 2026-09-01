@@ -39,7 +39,7 @@ section is subdivided by package.
   outer shape is one object, so panels drive both forces rather than one of
   them. `build_orbital_system` installs neither: panel forces need an attitude.
   `SurfacePanel` gains `with_cp_offset`, which is what turns a panel force into
-  an attitude disturbance. ([#383](https://github.com/sksat/orts/pull/383))
+  an attitude disturbance. ([#386](https://github.com/sksat/orts/pull/386))
 - `orts::setup` registers disturbance torques, and `SatelliteParams` carries a
   `DisturbanceTorques` selection to say which. `build_spacecraft_dynamics`
   installs the gravity-gradient torque from it; `build_orbital_system` installs
@@ -160,7 +160,7 @@ section is subdivided by package.
   the name of the force (`drag`, `srp`), because that channel is per force
   rather than per model; `perturbations` names the model, and for an attitude
   satellite it now comes from the dynamics being propagated rather than from a
-  rebuilt orbit-only system. ([#383](https://github.com/sksat/orts/pull/383))
+  rebuilt orbit-only system. ([#386](https://github.com/sksat/orts/pull/386))
 - `[satellites.disturbances]` selects which environmental disturbance torques a
   satellite models, `gravity_gradient` defaulting to true — the behaviour
   attitude propagation has always had. A sibling of `[satellites.attitude]`
