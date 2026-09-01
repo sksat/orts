@@ -237,8 +237,19 @@ test("a central-body view draws no arrows", async ({ page }) => {
   // The body is on screen there, so a nadir arrow repeats the picture; and with
   // many satellites a pair of arrows on each would fill the screen.
   await connect(page);
-  await expect(page.locator('[data-testid="frame-selector-select"]')).toHaveValue("central_body");
 
+  // Draw them first. Asserting the absence straight away would also pass if the
+  // arrows had never been reachable at all — the hook is only installed once they
+  // mount, and it is never installed in a central-body view.
+  await page
+    .locator('[data-testid="frame-selector-select"]')
+    .selectOption(`satellite:${SAT_ENTITY_PATH}`);
+  const drawn = await drawnVectors(page, SAT_ENTITY_PATH, { expectSome: true });
+  expect(drawn?.length ?? 0, "arrows should be drawn while a satellite is centred").toBeGreaterThan(
+    0,
+  );
+
+  await page.locator('[data-testid="frame-selector-select"]').selectOption("central_body");
   const vectors = await drawnVectors(page, SAT_ENTITY_PATH, { expectSome: false });
   expect(vectors ?? [], "no arrows should be registered for a central-body view").toHaveLength(0);
 });
