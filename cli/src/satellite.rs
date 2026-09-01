@@ -147,8 +147,60 @@ impl SatelliteSpec {
     }
 
     pub fn entity_path(&self) -> EntityPath {
-        EntityPath::parse(&format!("/world/sat/{}", self.id))
+        entity_path_for_id(&self.id)
     }
+}
+
+/// The recording entity a satellite id names. Shared with config validation,
+/// which checks id uniqueness before any [`SatelliteSpec`] exists (resolving
+/// one can require a network fetch).
+pub fn entity_path_for_id(id: &str) -> EntityPath {
+    EntityPath::parse(&format!("/world/sat/{id}"))
+}
+
+/// Reject a fleet whose ids are not unique.
+///
+/// The id is the fleet's addressing scheme: [`SatelliteSpec::entity_path`]
+/// derives the recording entity from it, the CSV writer sections by it, and
+/// the command / lookup paths resolve it through a first match or a `HashMap`
+/// insert. Two satellites sharing an id therefore write into one entity and
+/// only one of them can be addressed — with no error anywhere.
+///
+/// `SimConfig::validate` catches this for config files, where it can name the
+/// offending `[[satellites]]` index; this covers the fleets built outside a
+/// config file (repeated `--sat id=…`), where the specs only exist as a list.
+/// Compared on the resolved [`EntityPath`], not on the id text: `EntityPath`
+/// drops empty segments, so `a` and `/a` (or `a/b` and `a//b`) are two id
+/// strings naming one entity.
+pub fn ensure_unique_ids(specs: &[SatelliteSpec]) -> Result<(), String> {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (i, spec) in specs.iter().enumerate() {
+        validate_id(&spec.id).map_err(|e| format!("satellite #{i}: {e}"))?;
+        if let Some(first) = seen.insert(spec.entity_path().to_string(), i) {
+            return Err(format!(
+                "duplicate satellite id '{}': satellites #{first} and #{i} would share \
+                 one recording entity, and one CSV section with it; ids must be unique",
+                spec.id
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Reject an id that cannot name an entity of its own.
+///
+/// The id is appended to `/world/sat/`, and [`EntityPath::parse`] keeps every
+/// segment that is not empty — nothing else, no trimming — so an id built only
+/// out of separators resolves to the `/world/sat` root that the whole fleet
+/// shares. The condition here mirrors that filter.
+pub fn validate_id(id: &str) -> Result<(), String> {
+    if id.split('/').all(|segment| segment.is_empty()) {
+        return Err(format!(
+            "satellite id '{id}' contributes no path segment, so the recording entity \
+             collapses to the '/world/sat' root shared by the whole fleet"
+        ));
+    }
+    Ok(())
 }
 
 /// Satellite info sent in the WebSocket info message.
@@ -469,5 +521,31 @@ mod tests {
         let spec = parse_sat_spec("altitude=400,id=my-sat", KnownBody::Earth);
         let path = spec.entity_path();
         assert_eq!(path.to_string(), "/world/sat/my-sat");
+    }
+
+    /// Two `--sat` flags with the same id resolve to one entity path, so the
+    /// fleet has to be rejected as a whole — no single flag is wrong.
+    #[test]
+    fn ensure_unique_ids_rejects_a_repeated_id() {
+        let specs = [
+            parse_sat_spec("altitude=400,id=a", KnownBody::Earth),
+            parse_sat_spec("altitude=800,id=a", KnownBody::Earth),
+        ];
+        assert_eq!(
+            specs[0].entity_path().to_string(),
+            specs[1].entity_path().to_string(),
+            "the collision this guards is the shared entity path"
+        );
+        let err = ensure_unique_ids(&specs).expect_err("a repeated id must be rejected");
+        assert!(err.contains("duplicate satellite id 'a'"), "msg: {err}");
+    }
+
+    #[test]
+    fn ensure_unique_ids_accepts_distinct_ids() {
+        let specs = [
+            parse_sat_spec("altitude=400,id=a", KnownBody::Earth),
+            parse_sat_spec("altitude=800,id=b", KnownBody::Earth),
+        ];
+        ensure_unique_ids(&specs).expect("distinct ids must be accepted");
     }
 }

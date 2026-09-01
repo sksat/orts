@@ -126,13 +126,21 @@ max_torque = 0.5
 /// The propagated quaternion is a real integration result, not a logged
 /// constant: with an asymmetric inertia tensor the coupled gravity-gradient
 /// torque spins the body up, and the quaternion stays a unit quaternion.
+///
+/// `diag(10, 40, 45)` satisfies `I1 + I2 >= I3` with 11% to spare, so it is a
+/// tensor some mass distribution has. The initial 45° about y puts the body's
+/// radial direction at `(1/√2, 0, 1/√2)`, where the difference between `Ix` and
+/// `Iz` produces the largest gravity-gradient torque: `|τy| = 6.7e-5 N·m` and
+/// `|ω̇y| = 1.7e-6 rad/s²` at `t = 0`. The span is short on purpose — the
+/// thresholds below are cleared within the first hundred seconds, and a longer
+/// run would fold the nonlinear response into the same assertion.
 #[test]
 fn spacecraft_mode_integrates_attitude() {
     let config = r#"
 body = "earth"
 dt = 1.0
-duration = 3000.0
-output_interval = 100.0
+duration = 200.0
+output_interval = 10.0
 
 [[satellites]]
 id = "sat-1"
@@ -142,7 +150,7 @@ type = "circular"
 altitude = 400
 
 [satellites.attitude]
-inertia_diag = [10.0, 40.0, 80.0]
+inertia_diag = [10.0, 40.0, 45.0]
 mass = 500
 initial_quaternion = [0.9238795325112867, 0.0, 0.3826834323650898, 0.0]
 initial_angular_velocity = [0.0, 0.0, 0.0]

@@ -77,7 +77,7 @@ cargo build -p orts-example-plugin-transfer-burn-with-tcm --target wasm32-wasip2
 ## シミュレーション実行
 
 付属の [`orts.toml`](orts.toml) には **500 km → 2000 km (高度 4 倍)** の
-Hohmann 遷移 demo が入っている。2-body only (atmosphere=none)、sim 7000 s。
+Hohmann 遷移 demo が入っている。drag なし、sim 7000 s。
 
 ```sh
 cd plugin-sdk/examples/transfer-burn-with-tcm

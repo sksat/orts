@@ -244,6 +244,32 @@ section is subdivided by package.
   `--tle-line2`; and `--tle-line1` / `--tle-line2` must be given together. ([#87](https://github.com/sksat/orts/pull/87))
 - TLE epoch day-of-year is validated against the (leap-aware) year length, so a
   malformed field is rejected rather than rolling into another year. ([#87](https://github.com/sksat/orts/pull/87))
+- Config files, `orts config validate` and the WebSocket `start_simulation`
+  payload reject input the simulation cannot honor, instead of resolving it to
+  something else: an unknown `[integrator] type` or `atmosphere` (previously
+  dp45 / the exponential model), two
+  satellites whose ids name one recording entity (previously one entity and one
+  CSV section for both; compared on the entity, so `a` and `/a` collide as they
+  do in the recording, while the same id string twice shared its `[[command]]`
+  target as well), and an attitude block no
+  rigid body could have — an inertia tensor that is not positive definite or
+  violates `I1 + I2 >= I3` on its principal moments, `mass <= 0`, or an
+  `initial_quaternion` that cannot be normalized. The `integrator` /
+  `atmosphere` spellings a config accepts are now exactly the ones the
+  equivalent CLI flag accepts.
+
+  A key nothing reads is named rather than refused: the run goes ahead, so a
+  config written for a newer `orts` still works here, and `duraton = 100` no
+  longer runs for one orbital period in silence. `orts config validate` carries
+  the paths in its `warnings`, `run` and `serve` report them at warn level, and
+  the server names the ones in a client's `start_simulation` or `add_satellite`. A `type`-tagged
+  block — `[satellites.orbit]`, `[satellites.controller]`, the reaction wheels
+  and the magnetorquers — refuses instead: `serde_ignored` cannot see inside an
+  internally tagged enum, so there is nothing to name there, and a dropped
+  `inclinaton = 51.6` would leave the orbit equatorial. A singular inertia tensor previously panicked in
+  `SpacecraftDynamics::new`; under `orts serve --config` that happened inside
+  the spawned manager task, leaving the server listening with no simulation and
+  no error to the client. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
 - `orts` now writes its diagnostics to stderr. With no `log` backend installed
@@ -255,6 +281,32 @@ section is subdivided by package.
   dependencies at warn — and `NO_COLOR`, or a stderr that is not a terminal,
   drops the styling; `orts --help` documents both. stdout is unchanged: the CSV,
   the `--json` summary, or the `serve --stream-stdio` protocol and nothing else. ([#390](https://github.com/sksat/orts/pull/390))
+- `orts config validate` and `orts serve --config` refuse a `tle` or `norad`
+  orbit about any body but Earth. SGP4 is Earth's, and `SimParams::from_config`
+  reached that rule through a panic, so such a config validated clean and then
+  took down `orts run --config`. ([#351](https://github.com/sksat/orts/pull/351))
+- `orts config validate` and `orts serve --config` refuse a fleet no
+  simulation mode can run: `[satellites.attitude]` or
+  `[satellites.controller]` on some satellites but not all, or a controller on
+  every satellite with attitude on none. The engine already refused these, but
+  `orts serve` builds it inside the spawned manager, so the config validated
+  clean, the startup banner printed, and the server sat idle with the given
+  config never running. `serve` now exits with the error instead of announcing
+  a listening server. ([#351](https://github.com/sksat/orts/pull/351))
+- The WebSocket `add_satellite` refuses an id whose entity path
+  (`/world/sat/<id>`) already belongs to a satellite in the running fleet. Two
+  satellites on one path meant `[[command]]` reached only the one added last. An
+  omitted `id` takes `sat-<current fleet size>`, which collides the same
+  way. ([#351](https://github.com/sksat/orts/pull/351))
+- `orts serve` answers a message that does not deserialize into `ClientMessage`
+  with a `{"type":"error"}` frame. The error used to be discarded, leaving the
+  client waiting for a response that never came. An unknown key in a
+  `type`-tagged block is what fails. ([#351](https://github.com/sksat/orts/pull/351))
+- `orts serve` prints its `Server listening` / `WebSocket endpoint` banner only
+  after the `--config` file is accepted. Printing it first made a rejected
+  config reach a caller that waits on the banner — `cli/tests/ws_e2e.rs`, the
+  Playwright specs — as a refused connection rather than as its own error
+  message. ([#351](https://github.com/sksat/orts/pull/351))
 - `orts run --format csv --output <path>` now writes the CSV to `<path>`.
   Previously every `--format csv` run wrote to stdout regardless of `--output`,
   silently ignoring the given path. ([#214](https://github.com/sksat/orts/pull/214))

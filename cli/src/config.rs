@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use clap::ValueEnum;
+use serde::{Deserialize, Deserializer, Serialize};
 use ts_rs::TS;
 
 use crate::cli::{AtmosphereChoice, IntegratorChoice};
@@ -11,11 +13,67 @@ use orts::plugin::{Message, NamedValue, NodeId, Payload, Value};
 use orts::setup::DisturbanceTorques;
 use orts::spacecraft::{PanelOptics, SpacecraftShape, SurfacePanel};
 
+/// Resolve a config string through the [`ValueEnum`] impl the matching CLI
+/// flag uses, so `--atmosphere x` and `atmosphere = "x"` accept exactly the
+/// same set by construction: there is one list of spellings, clap's.
+///
+/// The config transport keeps these fields as `String` (the TypeScript clients
+/// of `start_simulation` send strings), so this is where the string becomes a
+/// model choice — and where an unknown spelling has to be rejected rather than
+/// silently resolved to some default model.
+fn parse_choice<T: ValueEnum>(field: &str, value: &str) -> Result<T, String> {
+    <T as ValueEnum>::from_str(value, false).map_err(|_| {
+        let allowed = T::value_variants()
+            .iter()
+            .filter_map(|v| v.to_possible_value())
+            .map(|p| p.get_name().to_string())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!("unknown {field} '{value}' (expected one of: {allowed})")
+    })
+}
+
+/// Reject an unknown `[integrator] type` at deserialization time, so every
+/// entry point (file, `orts config validate`, the `start_simulation`
+/// WebSocket payload) fails on a typo instead of running a different method.
+fn de_integrator_kind<'de, D: Deserializer<'de>>(de: D) -> Result<String, D::Error> {
+    let s = String::deserialize(de)?;
+    parse_choice::<IntegratorChoice>("integrator.type", &s).map_err(serde::de::Error::custom)?;
+    Ok(s)
+}
+
+/// Reject an unknown `atmosphere` at deserialization time. A typo used to fall
+/// back to the exponential model, i.e. quietly integrate different physics.
+fn de_atmosphere<'de, D: Deserializer<'de>>(de: D) -> Result<String, D::Error> {
+    let s = String::deserialize(de)?;
+    parse_choice::<AtmosphereChoice>("atmosphere", &s).map_err(serde::de::Error::custom)?;
+    Ok(s)
+}
+
 /// JSON/TOML/YAML simulation configuration.
 ///
 /// Also the payload of the `start_simulation` WebSocket message, so the
 /// whole tree derives [`TS`]. Fields the server defaults when absent are
 /// `#[ts(optional)]` so TypeScript clients may omit them too.
+// A key nothing reads is reported by `load_with_warnings`, not rejected: a
+// dropped key is indistinguishable from one never written, so `duraton = 100`
+// used to run with the default duration and report success in silence. Refusing
+// the file instead would stop an older `orts` reading a config written for a
+// newer one.
+//
+// The `#[serde(tag = "type")]` enums below keep `deny_unknown_fields` and refuse
+// instead. `serde_ignored`, which collects the paths, cannot see into an
+// internally tagged enum — serde buffers the variant's content and replays it,
+// so an unknown key there is dropped with nothing to report (measured: a typo
+// inside `[satellites.orbit]` yields no path, while one at the top level and one
+// in `[integrator]` both do). A silent `inclinaton = 51.6` leaves the orbit
+// equatorial, so those four reject rather than say nothing. The alternative,
+// external tagging, spells the orbit `[satellites.orbit.circular]` and gives the
+// same error for the same typo, changing the config format and the WebSocket
+// payload to buy nothing.
+//
+// Kept out of the doc comment because doc comments are copied into the generated
+// TypeScript.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[ts(export)]
 pub struct SimConfig {
@@ -34,7 +92,7 @@ pub struct SimConfig {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub integrator: IntegratorConfig,
-    #[serde(default = "default_atmosphere")]
+    #[serde(default = "default_atmosphere", deserialize_with = "de_atmosphere")]
     #[ts(as = "Option<_>", optional)]
     pub atmosphere: String,
     #[serde(default = "default_f107")]
@@ -204,7 +262,11 @@ fn default_ap() -> f64 {
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[ts(export)]
 pub struct IntegratorConfig {
-    #[serde(rename = "type", default = "default_integrator")]
+    #[serde(
+        rename = "type",
+        default = "default_integrator",
+        deserialize_with = "de_integrator_kind"
+    )]
     #[ts(as = "Option<_>", optional)]
     pub kind: String,
     #[serde(default = "default_atol")]
@@ -234,6 +296,17 @@ impl Default for IntegratorConfig {
         }
     }
 }
+
+/// How far a normalized `initial_quaternion` may sit from unit norm.
+///
+/// An empirical bound on the normalization residual, not a bound on attitude
+/// error: a quaternion's norm scales it radially in 4D and says nothing on its
+/// own about the rotation it names. It exists to separate a residual that is
+/// floating-point rounding from one that says the input lost its mantissa
+/// before the square root — see [`AttitudeConfig::validate`] for the measured
+/// cases it sits between, 1.8e-11 on the last accepted and 5.6e-6 on the first
+/// refused.
+const QUATERNION_UNIT_TOLERANCE: f64 = 1e-9;
 
 /// Attitude dynamics configuration for a satellite.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
@@ -535,6 +608,15 @@ impl AttitudeConfig {
     /// orbit. An inertia scaled so far from the orbit that the gravity gradient
     /// alone overflows therefore passes here and stops at the first step with
     /// [`utsuroi::IntegrationError::NonFiniteState`].
+    /// Equality `I1 + I2 == I3` is accepted: that is the flat-plate (lamina)
+    /// limit, physically attainable and numerically well-posed. The relative
+    /// slack keeps a config that states the lamina case exactly from being
+    /// rejected by the eigenvalue solver's last bits.
+    ///
+    /// The WebSocket `add_satellite` path reaches the same rules:
+    /// [`crate::sim::mode::validate_satellite_spec`] takes a built
+    /// `SatelliteSpec` and delegates to this, so neither surface can accept a
+    /// spacecraft the other refuses.
     pub fn validate(&self) -> Result<(), String> {
         // Non-finite first: every comparison below is false for `NaN`, so a
         // `NaN` mass would pass `mass <= 0.0` and a `NaN` determinant would
@@ -554,7 +636,42 @@ impl AttitudeConfig {
                 return Err(format!("non-finite `{name}` component: {bad}"));
             }
         }
-        // Ask the question the way the dynamics do: `SpacecraftDynamics::new`
+        if self.mass <= 0.0 {
+            return Err(format!("non-positive mass: {}", self.mass));
+        }
+        // The quaternion need not be normalized — `AttitudeState::orientation`
+        // normalizes on use and `OdeState::project` renormalizes after every
+        // step — but the normalization has to land on a unit quaternion. Ask
+        // that the way the dynamics do, by running the same call and looking at
+        // what comes out, rather than by putting a floor on the squared norm:
+        // a floor on the smallest normal rejects `[1e-154, 0, 0, 0]`, whose
+        // squared norm is subnormal yet normalizes exactly.
+        //
+        // Measured across the range: `[1e200, 0, 0, 0]` squares to infinity and
+        // normalizes to all zeros; `[1e-164, 0, 0, 0]` squares to zero and
+        // normalizes to infinity; a squared norm deep in the subnormal range
+        // has lost mantissa bits before the square root, so `[1e-160, 0, 0, 0]`
+        // normalizes to 1.0000056. The last accepted case, `[1e-157, 0, 0, 0]`,
+        // is off by 1.8e-11.
+        //
+        // `QUATERNION_UNIT_TOLERANCE` sits between those two.
+        let normalized = nalgebra::UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+            self.initial_quaternion[0],
+            self.initial_quaternion[1],
+            self.initial_quaternion[2],
+            self.initial_quaternion[3],
+        ))
+        .into_inner()
+        .norm();
+        if !normalized.is_finite() || (normalized - 1.0).abs() > QUATERNION_UNIT_TOLERANCE {
+            let quat_norm_sq: f64 = self.initial_quaternion.iter().map(|q| q * q).sum();
+            return Err(format!(
+                "`initial_quaternion` does not normalize to a unit quaternion (its \
+                 components square to {quat_norm_sq}, and normalizing gives a norm of \
+                 {normalized}); it names no attitude"
+            ));
+        }
+        // Ask the inertia question the way the dynamics do: `SpacecraftDynamics::new`
         // takes `try_inverse().expect(…)`, so the test is whether that inverse
         // exists and is usable. A magnitude threshold on the determinant cannot
         // answer it — the determinant carries the cube of the units, so
@@ -566,7 +683,7 @@ impl AttitudeConfig {
         // quieter failure too: nalgebra's 3x3 inverse divides cofactors by the
         // determinant, so `[1e154; 3]` — condition number 1 — overflows both to
         // give `Some(zero matrix)`. Every component is finite, and a spacecraft
-        // built on it would answer every torque with zero angular acceleration.
+        // built on it would answer every torque with no angular acceleration.
         // `I · I⁻¹` is dimensionless, so one tolerance holds at every scale.
         let inertia = self.inertia_matrix();
         let inverse = inertia.try_inverse().filter(|inv| {
@@ -579,25 +696,54 @@ impl AttitudeConfig {
                 self.inertia_diag, self.inertia_off_diag
             ));
         };
-        // The quaternion need not be normalized — `AttitudeState::orientation`
-        // normalizes on use and `OdeState::project` renormalizes after every
-        // step — but it has to be something those can normalize. Both divide by
-        // the sum of squares, so the test is that sum, not the components: an
-        // all-zero quaternion names no attitude, `[1e-200, 0, 0, 0]` squares to
-        // zero, and `[1e200, 0, 0, 0]` squares to infinity. Each leaves the
-        // orientation undefined even though the components themselves are
-        // finite and non-zero.
-        let quat_norm_sq: f64 = self.initial_quaternion.iter().map(|q| q * q).sum();
-        if !(quat_norm_sq > 0.0 && quat_norm_sq.is_finite()) {
+        // Numeric usability is not physical possibility, and these come before
+        // the derivative below: a tensor no mass distribution can produce should
+        // be reported as such rather than as whatever its derivative happens to
+        // do. State both constraints in terms of the principal moments
+        // `I1 <= I2 <= I3` — the eigenvalues, which equal `inertia_diag` only
+        // when `inertia_off_diag` is zero, so read them off the tensor.
+        let mut moments: Vec<f64> = inertia.symmetric_eigenvalues().iter().copied().collect();
+        moments.sort_by(|a, b| a.partial_cmp(b).expect("eigenvalues of a finite tensor"));
+        let (i1, i2, i3) = (moments[0], moments[1], moments[2]);
+        // A non-positive principal moment means zero or negative mass off that
+        // axis. `I1 == 0` is the singular case the inverse already refuses; a
+        // negative one can invert cleanly and still describe nothing.
+        if i1 <= 0.0 {
             return Err(format!(
-                "`initial_quaternion` cannot be normalized \
-                 (its components square to {quat_norm_sq}); it names no attitude"
+                "inertia tensor is not positive definite: smallest principal moment is \
+                 {i1} (diag {:?}, off-diag {:?})",
+                self.inertia_diag, self.inertia_off_diag
             ));
         }
-        // A usable inverse is not yet an integrable state: the torque-free Euler
-        // term `I⁻¹ (−ω × Iω)` can overflow on its own. `[1e-308, 1, 2]` with
-        // `ω = [1, 2, 2]` inverts cleanly and still starts at an infinite
-        // angular acceleration.
+        // No mass distribution can violate `I1 + I2 >= I3`: in principal axes
+        // `∫z² dm = (I1 + I2 − I3)/2`, so a tensor that violates it needs
+        // negative mass. Equality is the flat-plate (lamina) limit, attainable
+        // and well-posed, and a config on the physical side of the boundary is
+        // accepted however close it sits.
+        //
+        // The slack is relative because the moments carry kg·m² and an absolute
+        // tolerance would mean different things at different scales. `1e-9` is
+        // far looser than the eigenvalue solver needs — a few hundred
+        // `f64::EPSILON` would cover its rounding — and is set for hand-entered
+        // and rounded engineering figures, which can land just outside the
+        // boundary they were meant to state.
+        const TRIANGLE_SLACK: f64 = 1e-9;
+        if i1 + i2 < i3 * (1.0 - TRIANGLE_SLACK) {
+            return Err(format!(
+                "inertia tensor violates the triangle inequality: principal moments \
+                 [{i1}, {i2}, {i3}] have I1 + I2 < I3, which no mass distribution can \
+                 produce (diag {:?}, off-diag {:?})",
+                self.inertia_diag, self.inertia_off_diag
+            ));
+        }
+        // A usable, physically possible tensor is still not an integrable state:
+        // the torque-free Euler term `I⁻¹ (−ω × Iω)` can overflow on the rate
+        // alone. `diag(1, 1, 2)` with `ω = 1e200` squares out of range in the
+        // cross product.
+        //
+        // The tensor cannot do it by itself once the inequality holds: in
+        // principal axes `α1 = ((I2 − I3)/I1) ω2 ω3`, and `|I2 − I3| <= I1`
+        // there, so the gain never exceeds 1.
         let omega = nalgebra::Vector3::from_row_slice(&self.initial_angular_velocity);
         let alpha = inverse * -omega.cross(&(inertia * omega));
         if !alpha.iter().all(|v| v.is_finite()) {
@@ -620,16 +766,13 @@ impl AttitudeConfig {
         // The bound holds of the partial sums too only because `q_dot` halves
         // `ω` before forming the products. Halving the sum afterwards instead
         // lets it overflow at twice the answer's magnitude.
-        if self.mass <= 0.0 {
-            return Err(format!("non-positive mass: {}", self.mass));
-        }
         Ok(())
     }
 }
 
 /// コントローラ設定。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 #[ts(export)]
 pub enum ControllerConfig {
     /// WASM Component ゲストプラグイン。
@@ -657,7 +800,7 @@ pub enum SensorChoice {
 
 /// リアクションホイール設定。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 #[ts(export)]
 pub enum ReactionWheelConfig {
     /// 直交 3 軸配置。
@@ -678,7 +821,7 @@ pub enum ReactionWheelConfig {
 
 /// MTQ (磁気トルカ) 設定。
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 #[ts(export)]
 pub enum MtqConfig {
     /// 直交 3 軸配置。
@@ -777,7 +920,7 @@ pub struct SatelliteConfig {
 
 /// Orbit specification in config files.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 #[ts(export)]
 pub enum OrbitConfig {
     /// Circular orbit at given altitude.
@@ -801,9 +944,192 @@ pub enum OrbitConfig {
     Norad { norad_id: u32 },
 }
 
+/// How many of a client message's unread keys are named before the rest are
+/// only counted.
+///
+/// `/ws` takes messages from whoever reaches the port, and each named key costs
+/// one synchronous `eprintln!` on the connection task — stderr is unbuffered, so
+/// that is a write syscall each. One frame of `{"a":1,"b":2,…}` is cheap to send
+/// and would otherwise become as many writes as it has keys. Twenty is well past
+/// what anyone reads to find a typo.
+const CLIENT_MESSAGE_KEY_LIMIT: usize = 20;
+
+/// How many characters of one key reach the log.
+///
+/// The key-count limit says nothing about how long each is, and a key over `/ws`
+/// is as long as its sender cares to make it. A config key that anyone typed
+/// fits in far less than this.
+const PRINTED_KEY_LIMIT: usize = 128;
+
+/// The unread keys of a client message, and how many did not fit.
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct UnreadClientKeys {
+    /// At most [`CLIENT_MESSAGE_KEY_LIMIT`] paths.
+    pub named: Vec<String>,
+    /// How many more keys nothing read, past the ones named.
+    pub unnamed: usize,
+}
+
+impl UnreadClientKeys {
+    /// Name a key while there is room for one, and count it after that.
+    fn push(&mut self, key: String) {
+        if self.named.len() < CLIENT_MESSAGE_KEY_LIMIT {
+            self.named.push(key);
+        } else {
+            self.unnamed += 1;
+        }
+    }
+}
+
+/// The keys of a client message that no field of it reads.
+///
+/// `ClientMessage` is `#[serde(tag = "type")]`, and `serde_ignored` cannot see
+/// inside an internally tagged enum: serde buffers the variant's content and
+/// replays it, so deserializing the message itself collects nothing. Reaching
+/// into the JSON for the part that is a config and targeting that directly gets
+/// past the tag — the same trick reaches `add_satellite`'s flattened
+/// `SatelliteConfig`, where `flatten` removes the unknown-field check outright.
+///
+/// Two things are inspected: the message's own keys, against what the variant
+/// reads (`ClientMessage` ignores an unknown one), and the payload the variant
+/// carries. Paths are relative to whichever they came from, so an envelope
+/// `dtt` and a config `dtt` are both named `dtt` — the name is what finds the
+/// typo either way.
+///
+/// Takes the message already parsed, so the caller can hand the same `Value` to
+/// `ClientMessage` rather than paying for a second parse of every frame.
+pub fn unread_client_message_keys(value: &serde_json::Value) -> UnreadClientKeys {
+    let Some(kind) = value.get("type").and_then(|v| v.as_str()) else {
+        return UnreadClientKeys::default();
+    };
+
+    let mut keys = UnreadClientKeys::default();
+
+    // The envelope, against the keys the variant reads. `ClientMessage` ignores
+    // an unknown one, so `{"type":"start_simulation","config":{…},"dtt":10}`
+    // used to start the simulation with `dtt` dropped in silence.
+    if let (Some(read), Some(object)) = (
+        crate::commands::serve::protocol::variant_envelope_keys(kind),
+        value.as_object(),
+    ) {
+        for key in object.keys() {
+            if key != "type" && !read.contains(&key.as_str()) {
+                keys.push(key.clone());
+            }
+        }
+    }
+
+    let mut note = |path: serde_ignored::Path| keys.push(path.to_string());
+    match kind {
+        "start_simulation" => {
+            if let Some(config) = value.get("config") {
+                // Borrowed, not cloned: the config subtree of a fleet-sized
+                // message is the largest thing here.
+                let _ = serde_ignored::deserialize::<_, _, SimConfig>(config, &mut note);
+            }
+        }
+        "add_satellite" => {
+            // The satellite is flattened next to the tag, so the tag itself is
+            // the one key that belongs to the message rather than the satellite.
+            // Only the map is rebuilt, without the tag; the values it points at
+            // are borrowed.
+            if let Some(object) = value.as_object() {
+                let satellite: Vec<(&str, &serde_json::Value)> = object
+                    .iter()
+                    .filter(|(k, _)| k.as_str() != "type")
+                    .map(|(k, v)| (k.as_str(), v))
+                    .collect();
+                let _ = serde_ignored::deserialize::<_, _, SatelliteConfig>(
+                    serde::de::value::MapDeserializer::new(satellite.into_iter()),
+                    &mut note,
+                );
+            }
+        }
+        // The rest carry scalars the message's own fields all read.
+        _ => {}
+    }
+    keys
+}
+
+/// Load a config and report, on stderr, the keys nothing read.
+///
+/// For the paths that run a simulation. `orts config validate` renders them
+/// itself, since it also has a `--json` form to put them in.
+pub fn load_config_reporting_unread_keys(path: &Path) -> Result<SimConfig, String> {
+    let loaded = SimConfig::load_with_warnings(path)?;
+    for key in &loaded.unread_keys {
+        log::warn!(
+            "{}: nothing reads `{}`; its value is ignored",
+            path.display(),
+            printable_key(key)
+        );
+    }
+    Ok(loaded.config)
+}
+
+/// A key as it can be written to a terminal.
+///
+/// A key name is arbitrary text. Over the WebSocket it is whatever a client
+/// sent, and a `\n` in one would put a second `Warning:` line in the log while a
+/// terminal escape would move the cursor or repaint what is already there.
+/// Measured: `{"a\nWarning: forged line": 1}` in a `start_simulation` config
+/// comes back as a key holding that newline.
+///
+/// `escape_debug` leaves an ordinary key alone — what it rewrites is the
+/// characters no key needs. The JSON form of `orts config validate` needs none
+/// of this; a JSON string encodes them itself.
+///
+/// The length is bounded too: a key is as long as its sender cares to make it,
+/// and escaping can turn one character into six (`\u{1b}`). Counting the escaped
+/// characters bounds the line whatever the input expands to. What is left out is
+/// the middle of a name nobody was going to read to the end; the byte count says
+/// how much.
+pub fn printable_key(key: &str) -> String {
+    let mut escaped = key.escape_debug();
+    let mut out: String = escaped.by_ref().take(PRINTED_KEY_LIMIT).collect();
+    if escaped.next().is_some() {
+        out.push_str(&format!("… ({} bytes in all)", key.len()));
+    }
+    out
+}
+
+/// A loaded config and the keys in its file that nothing read.
+///
+/// The keys are paths as `serde_ignored` spells them — `satellites.0.disturbanses`
+/// rather than `satellites[0].disturbanses`.
+#[derive(Debug, Clone)]
+pub struct LoadedConfig {
+    pub config: SimConfig,
+    /// Paths of keys the file carried and no field claimed, in the order the
+    /// deserialize met them. Empty for a config whose every key was read.
+    pub unread_keys: Vec<String>,
+}
+
 impl SimConfig {
-    /// Load a config file, auto-detecting format by extension.
+    /// Load a config file, auto-detecting format by extension, and discard the
+    /// keys nothing read.
+    ///
+    /// For a caller with nowhere to report them. The paths that run a
+    /// simulation go through [`load_config_reporting_unread_keys`], and
+    /// `orts config validate` renders them itself.
+    #[cfg(test)]
     pub fn load(path: &Path) -> Result<Self, String> {
+        Ok(Self::load_with_warnings(path)?.config)
+    }
+
+    /// Load a config, and say which of its keys nothing read.
+    ///
+    /// An unknown key is a warning rather than an error so that a config
+    /// written for a newer `orts` still runs on an older one: rejecting the file
+    /// would make one added option enough to stop it being read at all. A known
+    /// key holding an unknown value stays an error — there the file names
+    /// something the simulation cannot do.
+    ///
+    /// The paths come back as a value so that each caller decides where they
+    /// go: `orts config validate --json` puts them in `warnings`, `run` and
+    /// `serve` report them through `log::warn!`, and a test reads them without
+    /// a logger installed.
+    pub fn load_with_warnings(path: &Path) -> Result<LoadedConfig, String> {
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -813,14 +1139,34 @@ impl SimConfig {
         let content = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config file '{}': {e}", path.display()))?;
 
+        // One funnel for all three formats, so the paths are collected the same
+        // way whichever one the file is in.
+        let mut unread_keys = Vec::new();
+        let mut note = |path: serde_ignored::Path| unread_keys.push(path.to_string());
+
         let config: SimConfig = match ext.as_str() {
-            "json" => serde_json::from_str(&content)
-                .map_err(|e| format!("Failed to parse JSON config: {e}"))?,
-            "toml" => {
-                toml::from_str(&content).map_err(|e| format!("Failed to parse TOML config: {e}"))?
+            "json" => {
+                let mut de = serde_json::Deserializer::from_str(&content);
+                let config = serde_ignored::deserialize(&mut de, &mut note)
+                    .map_err(|e| format!("Failed to parse JSON config: {e}"))?;
+                // `serde_json::from_str` ends by checking that the input is
+                // spent; driving the `Deserializer` directly does not, so
+                // anything after the config would be dropped without a word.
+                de.end()
+                    .map_err(|e| format!("Failed to parse JSON config: {e}"))?;
+                config
             }
-            "yaml" | "yml" => serde_yaml::from_str(&content)
-                .map_err(|e| format!("Failed to parse YAML config: {e}"))?,
+            "toml" => {
+                let de = toml::Deserializer::parse(&content)
+                    .map_err(|e| format!("Failed to parse TOML config: {e}"))?;
+                serde_ignored::deserialize(de, &mut note)
+                    .map_err(|e| format!("Failed to parse TOML config: {e}"))?
+            }
+            "yaml" | "yml" => {
+                let de = serde_yaml::Deserializer::from_str(&content);
+                serde_ignored::deserialize(de, &mut note)
+                    .map_err(|e| format!("Failed to parse YAML config: {e}"))?
+            }
             _ => {
                 return Err(format!(
                     "Unknown config file extension '.{ext}'. Supported: .json, .toml, .yaml, .yml"
@@ -830,25 +1176,41 @@ impl SimConfig {
 
         config.validate()?;
 
-        Ok(config)
+        Ok(LoadedConfig {
+            config,
+            unread_keys,
+        })
     }
 
-    /// Parse the integrator choice from the config string.
+    /// The integrator selected by `[integrator] type`.
+    ///
+    /// # Panics
+    /// If the string is not one of the [`IntegratorChoice`] spellings. Both
+    /// `Deserialize` and [`validate`](Self::validate) reject those, so this is
+    /// only reachable for a hand-built `SimConfig`; the previous fallback to
+    /// `dp45` meant a typo integrated with a different method and exited 0.
     pub fn integrator_choice(&self) -> IntegratorChoice {
-        match self.integrator.kind.as_str() {
-            "rk4" => IntegratorChoice::Rk4,
-            "dop853" => IntegratorChoice::Dop853,
-            _ => IntegratorChoice::Dp45,
-        }
+        self.try_integrator_choice()
+            .unwrap_or_else(|e| panic!("{e}"))
     }
 
-    /// Parse the atmosphere choice from the config string.
+    /// The atmosphere model selected by `atmosphere`.
+    ///
+    /// # Panics
+    /// As [`integrator_choice`](Self::integrator_choice), for the same reason:
+    /// falling back to the exponential model would silently substitute the
+    /// physics the user asked for.
     pub fn atmosphere_choice(&self) -> AtmosphereChoice {
-        match self.atmosphere.as_str() {
-            "harris-priester" => AtmosphereChoice::HarrisPriester,
-            "nrlmsise00" => AtmosphereChoice::Nrlmsise00,
-            _ => AtmosphereChoice::Exponential,
-        }
+        self.try_atmosphere_choice()
+            .unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    fn try_integrator_choice(&self) -> Result<IntegratorChoice, String> {
+        parse_choice("integrator.type", &self.integrator.kind)
+    }
+
+    fn try_atmosphere_choice(&self) -> Result<AtmosphereChoice, String> {
+        parse_choice("atmosphere", &self.atmosphere)
     }
 
     /// Parse the central body from the config string.
@@ -858,9 +1220,20 @@ impl SimConfig {
 }
 
 impl SatelliteConfig {
+    /// The id this satellite is known by downstream: the recording entity
+    /// path, the CSV section, the `[[command]]` target and the WebSocket
+    /// messages. An omitted `id` becomes `sat-{index}`.
+    ///
+    /// Single source of the default so validation and
+    /// [`to_satellite_spec`](Self::to_satellite_spec) cannot disagree about
+    /// which ids a fleet actually resolves to.
+    pub fn resolved_id(&self, index: usize) -> String {
+        self.id.clone().unwrap_or_else(|| format!("sat-{index}"))
+    }
+
     /// Convert a SatelliteConfig to a SatelliteSpec.
     pub fn to_satellite_spec(&self, index: usize, body: KnownBody, mu: f64) -> SatelliteSpec {
-        let id = self.id.clone().unwrap_or_else(|| format!("sat-{index}"));
+        let id = self.resolved_id(index);
 
         let (orbit, period, derived_name) = match &self.orbit {
             OrbitConfig::Circular {
@@ -1187,17 +1560,18 @@ impl SimConfig {
     /// not resolve `norad` orbits — that requires a network fetch and is left
     /// to run time.
     pub fn validate(&self) -> Result<(), String> {
+        // Resolve the model choices first: a deserialized config cannot carry
+        // an unknown spelling, but a hand-built one can, and every later step
+        // (tolerances, drag) depends on which model was actually selected.
+        let integrator = self.try_integrator_choice()?;
+        self.try_atmosphere_choice()?;
         validate_time_params(
             self.dt,
             self.output_interval,
             self.stream_interval,
             self.duration,
         )?;
-        validate_tolerances(
-            self.integrator_choice(),
-            self.integrator.atol,
-            self.integrator.rtol,
-        )?;
+        validate_tolerances(integrator, self.integrator.atol, self.integrator.rtol)?;
         if crate::satellite::try_parse_body(&self.body).is_none() {
             return Err(format!(
                 "unknown body '{}' (expected one of: sun, mercury, venus, earth, \
@@ -1214,6 +1588,42 @@ impl SimConfig {
         }
         let body = crate::satellite::try_parse_body(&self.body)
             .expect("body was validated as parseable above");
+        // Resolved ids must be unique: they are the recording entity path, the
+        // CSV section header and the `[[command]]` target, and every consumer
+        // resolves an id by first match or by `HashMap` insert. Duplicates
+        // therefore merge two satellites' rows under one path and route all
+        // commands to whichever one won the map — silently. Note the collision
+        // an explicit `id` can have with the `sat-{index}` default of an
+        // id-less entry, which is why this resolves the id first.
+        //
+        // Compared on the entity the id names, not on the id text: `EntityPath`
+        // drops empty segments, so `a` and `/a` (or `a/b` and `a//b`) are two id
+        // strings naming one entity. `ensure_unique_ids` compares the same way
+        // for fleets built from repeated `--sat`.
+        let mut seen: HashMap<String, usize> = HashMap::with_capacity(self.satellites.len());
+        for (i, sat) in self.satellites.iter().enumerate() {
+            let id = sat.resolved_id(i);
+            // An id has to name an entity before two of them can be compared:
+            // one made only of separators contributes no segment and collapses
+            // to the `/world/sat` root the whole fleet shares, which a fleet of
+            // one reaches as readily as a fleet of many.
+            crate::satellite::validate_id(&id).map_err(|e| format!("satellites[{i}]: {e}"))?;
+            let entity = crate::satellite::entity_path_for_id(&id).to_string();
+            if let Some(first) = seen.insert(entity, i) {
+                return Err(format!(
+                    "satellites[{i}]: duplicate satellite id '{id}' (already used by \
+                     satellites[{first}]); ids must be unique{}",
+                    if sat.id.is_none() {
+                        format!(
+                            " — this entry has no `id`, so it defaults to '{id}'; \
+                             give it an explicit id"
+                        )
+                    } else {
+                        String::new()
+                    }
+                ));
+            }
+        }
         for (i, sat) in self.satellites.iter().enumerate() {
             sat.validate()
                 .map_err(|e| format!("satellites[{i}]: {e}"))?;
@@ -1225,7 +1635,37 @@ impl SimConfig {
                 arika::tle::parse(&format!("{line1}\n{line2}"))
                     .map_err(|e| format!("satellites[{i}]: invalid TLE: {e}"))?;
             }
+            // SGP4 is Earth's, and `SimParams::from_config` reaches this rule
+            // through an `unwrap_or_else(panic)`: a non-Earth TLE config
+            // validated clean and then took down `orts run --config`.
+            if matches!(
+                sat.orbit,
+                OrbitConfig::Tle { .. } | OrbitConfig::Norad { .. }
+            ) {
+                crate::sim::params::ensure_body_carries_omm(body)
+                    .map_err(|e| format!("satellites[{i}]: {e}"))?;
+            }
         }
+        // Which mode the fleet runs in is settled by the config, so a fleet no
+        // mode can serve is settled here too. `SatelliteSpec` carries these two
+        // as clones of the fields counted below, so the count the engine makes
+        // is this count.
+        let fleet_size = self.satellites.len();
+        let with_attitude = self
+            .satellites
+            .iter()
+            .filter(|s| s.attitude.is_some())
+            .count();
+        let with_controller = self
+            .satellites
+            .iter()
+            .filter(|s| s.controller.is_some())
+            .count();
+        crate::sim::mode::ensure_fleet_declares_uniformly(
+            fleet_size,
+            with_attitude,
+            with_controller,
+        )?;
         for (i, cmd) in self.commands.iter().enumerate() {
             // A non-finite or negative `t` would never satisfy the
             // schedule's `t <= t_due`, silently dropping the command.
@@ -1263,6 +1703,21 @@ impl SimConfig {
 
 #[cfg(test)]
 mod tests {
+    /// The unread keys of a message, parsed the way `connection.rs` parses it.
+    ///
+    /// The collector takes the tree, since the server hands the same one to
+    /// `ClientMessage` rather than parsing each frame twice.
+    fn unread_keys_of(text: &str) -> Vec<String> {
+        let value: serde_json::Value =
+            serde_json::from_str(text).expect("the message is valid JSON");
+        let unread = unread_client_message_keys(&value);
+        assert_eq!(
+            unread.unnamed, 0,
+            "these messages hold fewer keys than the limit"
+        );
+        unread.named
+    }
+
     use super::*;
 
     #[test]
@@ -2909,5 +3364,1252 @@ direction_body = [0.0, 0.0, 0.0]
         let err = SimConfig::load(&path).unwrap_err();
         assert!(err.contains("direction_body"), "msg: {err}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The name clap shows for a `ValueEnum` variant — the exact spelling a
+    /// `--integrator` / `--atmosphere` flag accepts.
+    fn choice_name<T: ValueEnum>(v: &T) -> String {
+        v.to_possible_value()
+            .expect("no choice variant is skipped")
+            .get_name()
+            .to_string()
+    }
+
+    /// A config file must accept exactly the spellings the equivalent CLI flag
+    /// accepts, and resolve each to the same model. The reverse inclusion holds
+    /// by construction (both sides go through the one `ValueEnum` impl); this
+    /// pins it, so adding a variant to only one side fails here.
+    #[test]
+    fn config_accepts_exactly_the_cli_choice_sets() {
+        for variant in IntegratorChoice::value_variants() {
+            let name = choice_name(variant);
+            let config = config_with(&format!("[integrator]\ntype = \"{name}\""));
+            assert_eq!(
+                choice_name(&config.integrator_choice()),
+                name,
+                "config resolved integrator '{name}' to a different method"
+            );
+            config.validate().unwrap_or_else(|e| {
+                panic!("integrator '{name}' is a CLI value but config rejects it: {e}")
+            });
+        }
+        for variant in AtmosphereChoice::value_variants() {
+            let name = choice_name(variant);
+            let config = config_with(&format!("atmosphere = \"{name}\""));
+            assert_eq!(
+                choice_name(&config.atmosphere_choice()),
+                name,
+                "config resolved atmosphere '{name}' to a different model"
+            );
+            config.validate().unwrap_or_else(|e| {
+                panic!("atmosphere '{name}' is a CLI value but config rejects it: {e}")
+            });
+        }
+    }
+
+    /// `--integrator dop835` is rejected by clap; the config spelling used to
+    /// fall back to dp45 and exit 0, integrating with a different method than
+    /// the one written down.
+    #[test]
+    fn unknown_integrator_type_is_rejected() {
+        let err = toml::from_str::<SimConfig>("[integrator]\ntype = \"dop835\"\n")
+            .expect_err("an unknown integrator must not deserialize")
+            .to_string();
+        assert!(err.contains("dop835"), "error should name the typo: {err}");
+        assert!(
+            err.contains("dop853"),
+            "error should list the legal spellings: {err}"
+        );
+    }
+
+    /// The same for `atmosphere`, where the old fallback to the exponential
+    /// model substituted the drag physics silently — nothing in the run
+    /// summary echoes the atmosphere model.
+    #[test]
+    fn unknown_atmosphere_is_rejected() {
+        for typo in ["nrlmsise0", "harris_priester", "NRLMSISE00", ""] {
+            let err = toml::from_str::<SimConfig>(&format!("atmosphere = \"{typo}\"\n"))
+                .expect_err("an unknown atmosphere must not deserialize")
+                .to_string();
+            assert!(
+                err.contains("harris-priester"),
+                "error should list the legal spellings: {err}"
+            );
+        }
+    }
+
+    /// A hand-built config (no deserialization) is caught by `validate`
+    /// instead, so `run`/`serve` cannot reach the model resolution with an
+    /// unknown spelling.
+    #[test]
+    fn validate_rejects_an_unknown_model_on_a_hand_built_config() {
+        let mut config = config_with("");
+        config.atmosphere = "nrlmsise0".into();
+        let err = config.validate().expect_err("unknown atmosphere");
+        assert!(err.contains("nrlmsise0"), "msg: {err}");
+
+        let mut config = config_with("");
+        config.integrator.kind = "dop835".into();
+        let err = config.validate().expect_err("unknown integrator");
+        assert!(err.contains("dop835"), "msg: {err}");
+    }
+
+    /// The resolution itself has no fallback arm any more: a model that was
+    /// never validated aborts loudly rather than quietly becoming another one.
+    #[test]
+    #[should_panic(expected = "unknown atmosphere 'nrlmsise0'")]
+    fn atmosphere_choice_has_no_silent_fallback() {
+        let mut config = config_with("");
+        config.atmosphere = "nrlmsise0".into();
+        let _ = config.atmosphere_choice();
+    }
+
+    /// A key nothing reads is named, at whatever depth it sits.
+    ///
+    /// Dropping it in silence is indistinguishable from never writing it:
+    /// `duraton = 100` ran for one orbital period and reported success. The file
+    /// still loads, so a config written for a newer `orts` runs here; what
+    /// changes is that the key is reported.
+    #[test]
+    fn unread_keys_are_named() {
+        let cases = [
+            ("top level", "duraton = 100.0\n"),
+            (
+                "satellite",
+                "[[satellites]]\naltitide = 400\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n",
+            ),
+            ("integrator", "[integrator]\natoll = 1.0e-9\n"),
+            (
+                "attitude",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+                 \n[satellites.attitude]\ninertia_diag = [10, 10, 10]\nmass = 100\nmas = 50\n",
+            ),
+            (
+                "ground station",
+                "[[ground_station]]\nname = \"gs\"\nlatitude_deg = 35.0\nlongitude_deg = 139.0\nelevation_deg = 5.0\n",
+            ),
+            (
+                "command",
+                "[[command]]\nt = 1.0\nsat = \"a\"\nkind = \"x\"\nargs = {}\nkid = \"y\"\n",
+            ),
+        ];
+        for (label, toml) in cases {
+            let dir = std::env::temp_dir().join(format!(
+                "orts-unread-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            std::fs::create_dir_all(&dir).expect("temp dir");
+            let path = dir.join("sim.toml");
+            std::fs::write(&path, toml).expect("write config");
+
+            let loaded = SimConfig::load_with_warnings(&path)
+                .unwrap_or_else(|e| panic!("{label}: the file should still load: {e}"));
+            assert!(
+                !loaded.unread_keys.is_empty(),
+                "{label}: the unread key must be named"
+            );
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// A `type`-tagged block refuses an unknown key rather than reporting it.
+    ///
+    /// `serde_ignored` cannot see inside an internally tagged enum, so there is
+    /// nothing to report there: serde buffers the variant's content and replays
+    /// it. A dropped `inclinaton = 51.6` leaves the orbit equatorial, so those
+    /// blocks reject instead of saying nothing.
+    #[test]
+    fn a_type_tagged_block_refuses_an_unknown_key() {
+        let cases = [
+            (
+                "orbit",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\ninclinaton = 51.6\n",
+                "inclinaton",
+            ),
+            (
+                "controller",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+                 \n[satellites.controller]\ntype = \"wasm\"\npath = \"p.wasm\"\npth = \"q.wasm\"\n",
+                "pth",
+            ),
+            (
+                "reaction_wheels",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+                 \n[satellites.reaction_wheels]\ntype = \"three_axis\"\ninertia = 1e-4\n\
+                 max_momentum = 0.03\nmax_torqe = 0.001\n",
+                "max_torqe",
+            ),
+            (
+                "magnetorquers",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+                 \n[satellites.magnetorquers]\ntype = \"three_axis\"\nmax_momnet = 0.2\n",
+                "max_momnet",
+            ),
+        ];
+        for (label, toml_src, key) in cases {
+            let err = toml::from_str::<SimConfig>(toml_src)
+                .map(|c| format!("{c:?}"))
+                .expect_err(&format!("{label}: an unknown key here must be refused"))
+                .to_string();
+            assert!(
+                err.contains("unknown field") && err.contains(key),
+                "{label}: expected an unknown-field error naming `{key}`, got {err}"
+            );
+        }
+    }
+
+    /// The named path is the key's, so a typo can be found from it.
+    #[test]
+    fn an_unread_key_is_named_by_its_path() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-unread-path-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sim.toml");
+        std::fs::write(
+            &path,
+            "duraton = 100.0
+
+[[satellites]]
+altitide = 400
+             [satellites.orbit]
+type = \"circular\"
+altitude = 500
+",
+        )
+        .expect("write config");
+
+        let loaded = SimConfig::load_with_warnings(&path).expect("the file loads");
+        assert_eq!(loaded.unread_keys, vec!["duraton", "satellites.0.altitide"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A config whose every key is read reports nothing.
+    #[test]
+    fn a_config_read_whole_names_no_key() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-unread-none-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sim.toml");
+        std::fs::write(
+            &path,
+            "dt = 1.0
+duration = 100.0
+
+[[satellites]]
+id = \"a\"
+             [satellites.orbit]
+type = \"circular\"
+altitude = 500
+",
+        )
+        .expect("write config");
+
+        let loaded = SimConfig::load_with_warnings(&path).expect("the file loads");
+        assert_eq!(loaded.unread_keys, Vec::<String>::new());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A JSON file with anything after the config is refused.
+    ///
+    /// Reading the keys nothing reads means driving `serde_json`'s
+    /// `Deserializer` instead of calling `from_str`, and only `from_str` ends by
+    /// checking that the input is spent. A second object, or a truncated edit
+    /// that left the old text behind, would otherwise load as though the file
+    /// stopped where the config did.
+    #[test]
+    fn a_json_config_with_content_after_it_is_refused() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-json-trailing-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let config =
+            r#"{"dt":1.0,"satellites":[{"id":"a","orbit":{"type":"circular","altitude":400}}]}"#;
+        let path = dir.join("sim.json");
+
+        std::fs::write(&path, config).expect("write config");
+        SimConfig::load_with_warnings(&path).expect("the config alone loads");
+
+        for trailing in ["{\"dt\":99.0}", "this is not json"] {
+            std::fs::write(&path, format!("{config}{trailing}")).expect("write config");
+            let err = SimConfig::load_with_warnings(&path)
+                .expect_err("content after the config must be refused");
+            assert!(err.contains("JSON"), "msg: {err}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Two satellites resolving to one id share the recording entity path and
+    /// the CSV section, and `[[command]]` reaches only whichever one won the
+    /// id → index map. Reject the fleet instead.
+    #[test]
+    fn validate_rejects_duplicate_satellite_ids() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[satellites]]
+id = "a"
+[satellites.orbit]
+type = "circular"
+altitude = 800
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        let err = config
+            .validate()
+            .expect_err("a duplicate satellite id must be rejected");
+        assert!(err.contains("duplicate satellite id 'a'"), "msg: {err}");
+        assert!(
+            err.contains("satellites[1]") && err.contains("satellites[0]"),
+            "error should name both entries: {err}"
+        );
+    }
+
+    /// The collision an explicit id can have with the `sat-{index}` default of
+    /// an id-less entry: neither id is written twice, so it is invisible in the
+    /// config file.
+    #[test]
+    fn validate_rejects_an_id_colliding_with_the_auto_default() {
+        let toml = r#"
+[[satellites]]
+id = "sat-1"
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 800
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        let err = config
+            .validate()
+            .expect_err("an id colliding with the auto default must be rejected");
+        assert!(err.contains("duplicate satellite id 'sat-1'"), "msg: {err}");
+        assert!(
+            err.contains("no `id`"),
+            "error should point at the defaulted entry: {err}"
+        );
+    }
+
+    /// The ordinary multi-satellite fleet stays valid, including the all-auto
+    /// case (`sat-0`, `sat-1`, …).
+    #[test]
+    fn validate_accepts_distinct_satellite_ids() {
+        let toml = r#"
+[[satellites]]
+id = "iss"
+[satellites.orbit]
+type = "circular"
+altitude = 400
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[[satellites]]
+[satellites.orbit]
+type = "circular"
+altitude = 800
+"#;
+        let config: SimConfig = toml::from_str(toml).unwrap();
+        config.validate().expect("distinct ids must be accepted");
+        let ids: Vec<String> = config
+            .satellites
+            .iter()
+            .enumerate()
+            .map(|(i, s)| s.resolved_id(i))
+            .collect();
+        assert_eq!(ids, ["iss", "sat-1", "sat-2"]);
+    }
+
+    fn attitude(inertia_diag: [f64; 3], inertia_off_diag: [f64; 3], mass: f64) -> AttitudeConfig {
+        AttitudeConfig {
+            inertia_diag,
+            inertia_off_diag,
+            mass,
+            initial_quaternion: default_identity_quat(),
+            initial_angular_velocity: [0.0; 3],
+        }
+    }
+
+    /// `SpacecraftDynamics::new` inverts the inertia tensor with
+    /// `try_inverse().expect(...)`, so a singular tensor used to abort the
+    /// process (exit 101) instead of being reported as bad input.
+    #[test]
+    fn attitude_validate_rejects_singular_inertia() {
+        let err = attitude([0.0, 0.0, 0.0], [0.0; 3], 100.0)
+            .validate()
+            .expect_err("a zero inertia tensor must be rejected");
+        assert!(err.contains("inertia tensor"), "msg: {err}");
+
+        // Singular through the off-diagonals only: [[1,1,0],[1,1,0],[0,0,1]]
+        // has principal moments (0, 1, 2), which `inertia_diag` alone does not
+        // show.
+        let err = attitude([1.0, 1.0, 1.0], [1.0, 0.0, 0.0], 100.0)
+            .validate()
+            .expect_err("an off-diagonal singular tensor must be rejected");
+        assert!(err.contains("inertia tensor"), "msg: {err}");
+    }
+
+    /// An indefinite tensor is invertible — a determinant test passes it — but
+    /// a negative principal moment is negative mass off that axis.
+    #[test]
+    fn attitude_validate_rejects_indefinite_inertia() {
+        let indefinite = attitude([1.0, 1.0, 1.0], [2.0, 0.0, 0.0], 100.0);
+        assert!(
+            indefinite.inertia_matrix().try_inverse().is_some(),
+            "this tensor is invertible: only the eigenvalues expose it"
+        );
+        let err = indefinite
+            .validate()
+            .expect_err("an indefinite tensor must be rejected");
+        assert!(err.contains("positive definite"), "msg: {err}");
+    }
+
+    /// `I1 + I2 >= I3` holds for every mass distribution, so a config that
+    /// breaks it describes no spacecraft. Checked on the principal moments,
+    /// not on `inertia_diag`: here the diagonal alone satisfies the inequality
+    /// while the tensor's eigenvalues (1, 1, 5) do not.
+    #[test]
+    fn attitude_validate_rejects_triangle_inequality_violation() {
+        let err = attitude([1.0, 1.0, 5.0], [0.0; 3], 100.0)
+            .validate()
+            .expect_err("I1 + I2 < I3 must be rejected");
+        assert!(err.contains("triangle inequality"), "msg: {err}");
+
+        let off_diag = attitude([3.0, 3.0, 1.0], [2.0, 0.0, 0.0], 100.0);
+        let mut moments: Vec<f64> = off_diag
+            .inertia_matrix()
+            .symmetric_eigenvalues()
+            .iter()
+            .copied()
+            .collect();
+        moments.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            (moments[2] - 5.0).abs() < 1e-9 && moments[0] + moments[1] < moments[2],
+            "test fixture should violate the inequality only through the off-diagonals: {moments:?}"
+        );
+        let err = off_diag
+            .validate()
+            .expect_err("an off-diagonal triangle violation must be rejected");
+        assert!(err.contains("triangle inequality"), "msg: {err}");
+    }
+
+    /// Equality is the flat-plate (lamina) limit: physically attainable, and
+    /// the tensor is still invertible, so it stays accepted.
+    #[test]
+    fn attitude_validate_accepts_the_lamina_boundary() {
+        attitude([1.0, 2.0, 3.0], [0.0; 3], 100.0)
+            .validate()
+            .expect("I1 + I2 == I3 is a flat plate, not an impossible body");
+        // Scale-invariant: the slack is relative, so a large plate is accepted
+        // too.
+        attitude([1e8, 2e8, 3e8], [0.0; 3], 100.0)
+            .validate()
+            .expect("the triangle slack must be relative, not absolute");
+    }
+
+    #[test]
+    fn attitude_validate_rejects_non_positive_mass() {
+        for mass in [0.0, -1.0, f64::NAN] {
+            let err = attitude([10.0, 10.0, 10.0], [0.0; 3], mass)
+                .validate()
+                .expect_err("non-positive mass must be rejected");
+            assert!(
+                err.contains("mass") || err.contains("`mass`"),
+                "msg for {mass}: {err}"
+            );
+        }
+    }
+
+    /// A zero quaternion normalizes to NaN in `AttitudeState::orientation()`,
+    /// so the attitude is NaN from the first step with no error anywhere.
+    #[test]
+    fn attitude_validate_rejects_a_zero_or_non_finite_quaternion() {
+        let mut att = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+        att.initial_quaternion = [0.0; 4];
+        let err = att
+            .validate()
+            .expect_err("a zero quaternion must be rejected");
+        assert!(err.contains("initial_quaternion"), "msg: {err}");
+
+        att.initial_quaternion = [1.0, f64::NAN, 0.0, 0.0];
+        let err = att
+            .validate()
+            .expect_err("a non-finite quaternion must be rejected");
+        assert!(err.contains("initial_quaternion"), "msg: {err}");
+    }
+
+    /// Finite but absurd magnitudes must come back as an error, not as a
+    /// panic from the eigenvalue solver or a NaN slipping through.
+    #[test]
+    fn attitude_validate_rejects_unusable_magnitudes() {
+        let huge = attitude([f64::MAX, f64::MAX, f64::MAX], [f64::MAX, 0.0, 0.0], 100.0);
+        let err = huge
+            .validate()
+            .expect_err("an overflowing tensor must be rejected");
+        // The inverse check reaches it first: cofactors of `f64::MAX` overflow,
+        // so `I · I⁻¹` is nowhere near the identity. Either guard is a correct
+        // rejection; what matters is that it is an error and not a panic from
+        // the eigenvalue solver.
+        assert!(err.contains("inertia tensor"), "got: {err}");
+
+        // Finite principal moments whose determinant still overflows:
+        // `try_inverse` returns `Some` for a non-zero (infinite) determinant,
+        // so the inverse comes back unusable rather than absent.
+        let overflowing_det = attitude([1e308, 1e308, 1e308], [0.0; 3], 100.0);
+        let moments = overflowing_det.inertia_matrix().symmetric_eigenvalues();
+        assert!(
+            moments.iter().all(|m| m.is_finite()),
+            "fixture must pass the diagonalization guard: {moments:?}"
+        );
+        let err = overflowing_det
+            .validate()
+            .expect_err("an inverse full of non-finite entries must be rejected");
+        assert!(err.contains("cannot be inverted"), "msg: {err}");
+
+        // A quaternion whose squared norm overflows: normalization divides
+        // every component by infinity.
+        let mut huge_quat = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+        huge_quat.initial_quaternion = [1e200, 1e200, 0.0, 0.0];
+        let err = huge_quat
+            .validate()
+            .expect_err("a quaternion whose squared norm overflows must be rejected");
+        assert!(err.contains("initial_quaternion"), "msg: {err}");
+
+        // Components small enough that the squared norm underflows to zero:
+        // `orientation()` would divide by it.
+        let mut denormal = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+        denormal.initial_quaternion = [1e-200, 0.0, 0.0, 0.0];
+        let err = denormal
+            .validate()
+            .expect_err("a quaternion whose squared norm underflows must be rejected");
+        assert!(err.contains("initial_quaternion"), "msg: {err}");
+    }
+
+    /// The quaternion bound must be exactly what the dynamics break on. `run`
+    /// and `serve` divide by the norm once ([`normalized_initial_quaternion`],
+    /// which is the same normalization) before storing, and every consumer then
+    /// reads the state through `orientation()`, which normalizes again. So the
+    /// config check is correct when it accepts a quaternion exactly when that
+    /// normalization yields a finite unit quaternion — checked here by feeding
+    /// the raw components to `orientation()`, the one call whose result the
+    /// config cannot influence. Cross-checked
+    /// against the real call rather than against a threshold on the input,
+    /// because the interesting boundary is not where the arithmetic fails
+    /// outright: `[1e-160, 0, 0, 0]` looks harmless and does produce a finite
+    /// result, but its squared norm is subnormal deeply enough that the result
+    /// has a norm of 1.0000056. A squared norm that is merely subnormal is fine,
+    /// which is why the bound is on the normalized result and not on that sum.
+    #[test]
+    fn accepted_quaternions_are_exactly_the_normalizable_ones() {
+        for q in [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.5, 0.5],
+            // Not unit norm, but normalization handles it — the config is
+            // allowed to state a rotation without pre-normalizing it.
+            [2.0, 0.0, 0.0, 0.0],
+            // Squared norm is subnormal and normalizes exactly.
+            [1e-154, 0.0, 0.0, 0.0],
+            // Subnormal enough to lose bits, still inside the tolerance
+            // (1.8e-11).
+            [1e-157, 0.0, 0.0, 0.0],
+            // Subnormal enough to leave it (5.6e-6).
+            [1e-160, 0.0, 0.0, 0.0],
+            // Squared norm underflows to zero, normalizing to infinity.
+            [1e-164, 0.0, 0.0, 0.0],
+            // Squared norm underflows to zero.
+            [1e-200, 0.0, 0.0, 0.0],
+            // Squared norm overflows to infinity.
+            [1e200, 1e200, 0.0, 0.0],
+            [1e300, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 0.0],
+        ] {
+            let mut att = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+            att.initial_quaternion = q;
+            // The construction `cli::sim::controlled` and `serve::engine` do.
+            let state = orts::attitude::AttitudeState {
+                quaternion: nalgebra::Vector4::from_row_slice(&q),
+                angular_velocity: nalgebra::Vector3::zeros(),
+            };
+            let orientation = state.orientation();
+            let usable = orientation.coords.iter().all(|c| c.is_finite())
+                && (orientation.coords.norm() - 1.0).abs() <= QUATERNION_UNIT_TOLERANCE;
+            assert_eq!(
+                att.validate().is_ok(),
+                usable,
+                "validate() and orientation() disagree on {q:?}: normalized to {:?}",
+                orientation.coords
+            );
+        }
+
+        // Where the bound itself sits, written out so that loosening
+        // `QUATERNION_UNIT_TOLERANCE` cannot take the oracle with it. Measured:
+        // these two normalize 1.8e-11 and 5.6e-6 off unit norm.
+        let mut accepted = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+        accepted.initial_quaternion = [1e-157, 0.0, 0.0, 0.0];
+        accepted
+            .validate()
+            .expect("1e-157 normalizes close enough to unit norm");
+        let mut refused = attitude([10.0, 10.0, 10.0], [0.0; 3], 100.0);
+        refused.initial_quaternion = [1e-160, 0.0, 0.0, 0.0];
+        refused
+            .validate()
+            .expect_err("1e-160 normalizes to 1.0000056, too far to accept");
+    }
+
+    #[test]
+    fn attitude_validate_rejects_non_finite_inertia() {
+        let mut att = attitude([10.0, 10.0, f64::INFINITY], [0.0; 3], 100.0);
+        let err = att.validate().expect_err("infinite inertia");
+        assert!(err.contains("inertia_diag"), "msg: {err}");
+
+        att = attitude([10.0, 10.0, 10.0], [f64::NAN, 0.0, 0.0], 100.0);
+        let err = att.validate().expect_err("NaN off-diagonal");
+        assert!(err.contains("inertia_off_diag"), "msg: {err}");
+    }
+
+    /// The realistic tensors the repo ships in examples and presets stay valid.
+    #[test]
+    fn attitude_validate_accepts_realistic_tensors() {
+        for diag in [
+            [10.0, 10.0, 10.0],
+            [100.0, 100.0, 50.0],
+            // ISS, approximately [kg·m²]
+            [128_913_000.0, 107_321_000.0, 201_433_000.0],
+        ] {
+            attitude(diag, [0.0; 3], 420_000.0)
+                .validate()
+                .unwrap_or_else(|e| panic!("{diag:?} should be valid: {e}"));
+        }
+    }
+
+    /// End to end through the loader: the error names the satellite and the
+    /// field, where `orts run` used to reach the panic in
+    /// `SpacecraftDynamics::new`.
+    #[test]
+    fn config_load_rejects_singular_inertia() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+[satellites.orbit]
+type = "circular"
+altitude = 500
+
+[satellites.attitude]
+inertia_diag = [0.0, 0.0, 0.0]
+mass = 100.0
+"#;
+        let dir = std::env::temp_dir().join(format!("orts_config_att_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("singular.toml");
+        std::fs::write(&path, toml).unwrap();
+        let err = SimConfig::load(&path).expect_err("a singular inertia tensor must be rejected");
+        assert!(err.contains("satellites[0]"), "msg: {err}");
+        assert!(err.contains("attitude:"), "msg: {err}");
+        assert!(err.contains("inertia tensor"), "msg: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The WebSocket surface follows the config policy, and names what it drops.
+    ///
+    /// A message carrying a key no field reads still starts a simulation, so a
+    /// client built against a newer `orts` keeps working here — the same reason a
+    /// config file warns rather than refuses. Deserializing `ClientMessage`
+    /// collects nothing, since `#[serde(tag = "type")]` buffers the variant's
+    /// content; reaching into the JSON for the part that is a config gets past
+    /// the tag.
+    ///
+    /// A `type`-tagged block nested inside still refuses: nothing can report it,
+    /// and a dropped key there changes the orbit.
+    #[test]
+    fn websocket_messages_agree_with_the_config_policy() {
+        let start = r#"{
+            "type": "start_simulation",
+            "config": {
+                "dt": 10.0,
+                "satellites": [{ "orbit": { "type": "circular", "altitude": 500.0 } }]
+            }
+        }"#;
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(start)
+            .expect("start_simulation must parse");
+        assert_eq!(unread_keys_of(start), Vec::<String>::new());
+
+        // A struct-level key nothing reads, at two depths: the message still
+        // starts a simulation, and both paths are named.
+        let typo = start.replace("\"dt\"", "\"dtt\"").replace(
+            "\"satellites\": [{",
+            "\"satellites\": [{ \"altitide\": 400,",
+        );
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&typo)
+            .expect("an unknown key must not stop the message parsing");
+        assert_eq!(unread_keys_of(&typo), vec!["dtt", "satellites.0.altitide"]);
+
+        // A typo inside the `type`-tagged orbit: refused, as in a file.
+        let orbit_typo = start.replace(
+            "\"altitude\": 500.0",
+            "\"altitude\": 500.0, \"inclinaton\": 51.6",
+        );
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&orbit_typo)
+            .expect_err("a `type`-tagged block cannot report, so it refuses");
+
+        let add = r#"{
+            "type": "add_satellite",
+            "id": "dynamic-sat",
+            "name": "Dyn",
+            "orbit": { "type": "circular", "altitude": 500.0 },
+            "attitude": { "inertia_diag": [10.0, 10.0, 10.0], "mass": 500.0 }
+        }"#;
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(add)
+            .expect("add_satellite must still parse");
+        assert_eq!(unread_keys_of(add), Vec::<String>::new());
+
+        // `add_satellite` flattens its satellite next to the tag, where
+        // `flatten` removes the unknown-field check outright. Targeting the
+        // satellite directly names the key anyway: `ballistic_coef`, one `f`
+        // short of `ballistic_coeff`, used to add the satellite without drag and
+        // without a word.
+        let flat_typo = add.replace("\"name\": \"Dyn\",", "\"ballistic_coef\": 100.0,");
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&flat_typo)
+            .expect("the message still adds the satellite");
+        assert_eq!(unread_keys_of(&flat_typo), vec!["ballistic_coef"]);
+
+        // A key under a nested struct is named at its path too. An `Option`
+        // field puts a `?` in that path, which is how the crate spells the
+        // step through it.
+        let nested_typo = add.replace("\"mass\": 500.0", "\"mass\": 500.0, \"masss\": 1.0");
+        serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&nested_typo)
+            .expect("the message still adds the satellite");
+        assert_eq!(unread_keys_of(&nested_typo), vec!["attitude.?.masss"]);
+    }
+
+    /// Two ids naming one entity are a duplicate, whatever their text.
+    ///
+    /// `EntityPath` drops empty segments, so `a` and `/a` both name
+    /// `/world/sat/a`. Compared as text they looked distinct and the fleet was
+    /// accepted: measured, both entries resolved to `/world/sat/a` and
+    /// `validate` returned `Ok`. The `--sat` path compares on the entity
+    /// already (`ensure_unique_ids`).
+    #[test]
+    fn ids_naming_one_entity_are_a_duplicate() {
+        for (a, b) in [("a", "/a"), ("a/b", "a//b")] {
+            let toml = format!(
+                r#"
+[[satellites]]
+id = "{a}"
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+
+[[satellites]]
+id = "{b}"
+[satellites.orbit]
+type = "circular"
+altitude = 500.0
+"#
+            );
+            let config: SimConfig = toml::from_str(&toml).expect("parse");
+            let err = config
+                .validate()
+                .expect_err(&format!("ids {a:?} and {b:?} name one entity"));
+            assert!(
+                err.contains("duplicate satellite id"),
+                "ids {a:?} and {b:?}: {err}"
+            );
+        }
+    }
+
+    /// An id naming no entity of its own is rejected, fleet of one included.
+    ///
+    /// A separator-only id contributes no path segment, so the recording entity
+    /// collapses to the `/world/sat` root the whole fleet shares. The `--sat`
+    /// path rejects it (`validate_id`); a config file accepted it, and a fleet
+    /// of one got there without any duplicate to notice.
+    #[test]
+    fn an_id_naming_no_entity_is_rejected() {
+        for id in ["/", "//"] {
+            let toml = format!(
+                r#"
+[[satellites]]
+id = "{id}"
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+"#
+            );
+            let config: SimConfig = toml::from_str(&toml).expect("parse");
+            let err = config
+                .validate()
+                .expect_err(&format!("id {id:?} names no entity"));
+            assert!(err.contains("no path segment"), "id {id:?}: {err}");
+        }
+    }
+
+    /// Ids that name entities of their own are accepted.
+    ///
+    /// The check above compares on the entity, so it must not read two distinct
+    /// ones as a collision.
+    #[test]
+    fn ids_naming_entities_of_their_own_are_accepted() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+
+[[satellites]]
+id = "a/b"
+[satellites.orbit]
+type = "circular"
+altitude = 500.0
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("parse");
+        config.validate().expect("two entities, two satellites");
+    }
+
+    /// A fleet no mode can serve is refused by the config, not by the engine.
+    ///
+    /// `orts serve --config` builds its engine inside a spawned manager, so a
+    /// mixed fleet used to validate clean, print the startup banner, and leave
+    /// the server idle with the caller's config never running.
+    #[test]
+    fn a_fleet_no_mode_can_serve_is_rejected() {
+        let mixed_attitude = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10.0, 10.0, 10.0], mass = 100.0 }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+"#;
+        let config: SimConfig = toml::from_str(mixed_attitude).expect("valid toml");
+        let err = config
+            .validate()
+            .expect_err("half a fleet with attitude runs in no mode");
+        assert!(err.contains("Mixed attitude config"), "msg: {err}");
+
+        let mixed_controller = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+"#;
+        let config: SimConfig = toml::from_str(mixed_controller).expect("valid toml");
+        let err = config
+            .validate()
+            .expect_err("half a fleet with a controller runs in no mode");
+        assert!(err.contains("Mixed controller config"), "msg: {err}");
+
+        // A uniform controlled fleet with no attitude anywhere. The mode comes
+        // out `Controlled`, and `build_controlled_satellite` then refuses every
+        // satellite for want of an attitude state — under `orts serve --config`
+        // that refusal arrives after the startup banner.
+        let controller_without_attitude = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+"#;
+        let config: SimConfig = toml::from_str(controller_without_attitude).expect("valid toml");
+        let err = config
+            .validate()
+            .expect_err("a controller has no attitude state to command");
+        assert!(
+            err.contains("without `[satellites.attitude]`"),
+            "msg: {err}"
+        );
+
+        // Both declared on every satellite, and on none, are the fleets that do
+        // pick a mode.
+        for toml in [
+            r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10.0, 10.0, 10.0], mass = 100.0 }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+attitude = { inertia_diag = [10.0, 10.0, 10.0], mass = 100.0 }
+"#,
+            r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+"#,
+        ] {
+            let config: SimConfig = toml::from_str(toml).expect("valid toml");
+            config.validate().expect("a uniform fleet picks a mode");
+        }
+    }
+
+    /// The config's count and the engine's count are the same count.
+    ///
+    /// `validate` counts `SatelliteConfig::attitude` / `controller` because
+    /// building specs would reach the network for a `norad_id` orbit, while
+    /// `select_sim_mode` counts the spec fields. They agree only as long as
+    /// `to_satellite_spec` keeps cloning them across unchanged.
+    #[test]
+    fn the_config_counts_what_the_engine_counts() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10.0, 10.0, 10.0], mass = 100.0 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("valid toml");
+        let body = crate::satellite::try_parse_body(&config.body).expect("earth");
+        for (i, sat) in config.satellites.iter().enumerate() {
+            let spec = sat.to_satellite_spec(i, body, 398600.4418);
+            assert_eq!(
+                sat.attitude.is_some(),
+                spec.attitude_config.is_some(),
+                "satellites[{i}]: attitude"
+            );
+            assert_eq!(
+                sat.controller.is_some(),
+                spec.controller_config.is_some(),
+                "satellites[{i}]: controller"
+            );
+        }
+    }
+
+    /// Every format the loader accepts names its unread keys the same way.
+    ///
+    /// The three go through different `serde_ignored` adapters — a `&mut`
+    /// `serde_json::Deserializer`, a `toml::Deserializer` by value, a
+    /// `serde_yaml::Deserializer` by value — so a change to one says nothing
+    /// about the others. The same two typos, at the top level and inside a
+    /// satellite, must come back as the same two paths from all three.
+    #[test]
+    fn every_format_names_the_same_unread_keys() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-unread-formats-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let files = [
+            (
+                "sim.toml",
+                "dt = 1.0\nduraton = 100.0\n\n[[satellites]]\nid = \"a\"\naltitide = 400\n\
+                 [satellites.orbit]\ntype = \"circular\"\naltitude = 400\n"
+                    .to_string(),
+            ),
+            (
+                "sim.json",
+                r#"{"dt":1.0,"duraton":100.0,"satellites":[
+                    {"id":"a","altitide":400,
+                     "orbit":{"type":"circular","altitude":400}}]}"#
+                    .to_string(),
+            ),
+            (
+                "sim.yaml",
+                "dt: 1.0\nduraton: 100.0\nsatellites:\n  - id: a\n    altitide: 400\n    \
+                 orbit:\n      type: circular\n      altitude: 400\n"
+                    .to_string(),
+            ),
+        ];
+
+        for (name, body) in files {
+            let path = dir.join(name);
+            std::fs::write(&path, &body).expect("write config");
+            let loaded = SimConfig::load_with_warnings(&path)
+                .unwrap_or_else(|e| panic!("{name}: the file loads: {e}"));
+            assert_eq!(
+                loaded.unread_keys,
+                vec!["duraton", "satellites.0.altitide"],
+                "{name}: both paths, in order"
+            );
+            assert_eq!(loaded.config.dt, 1.0, "{name}: the read keys still land");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A YAML file holding a second document is refused.
+    ///
+    /// `serde_yaml::from_str` refuses a multi-document stream; driving the
+    /// `Deserializer` to collect the unread keys has to keep doing so, or the
+    /// documents after the first would be dropped without a word — the JSON
+    /// trailing-input hole in a different format.
+    #[test]
+    fn a_yaml_config_with_a_second_document_is_refused() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-yaml-multidoc-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sim.yaml");
+        let one = "dt: 1.0\nsatellites:\n  - id: a\n    orbit:\n      type: circular\n      \
+                   altitude: 400\n";
+
+        std::fs::write(&path, one).expect("write config");
+        SimConfig::load_with_warnings(&path).expect("one document loads");
+
+        std::fs::write(&path, format!("{one}---\ndt: 99.0\n")).expect("write config");
+        let err =
+            SimConfig::load_with_warnings(&path).expect_err("a second document must be refused");
+        assert!(err.contains("YAML"), "msg: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A key a client chose cannot forge a line or move the cursor.
+    ///
+    /// The names come from the client's own JSON, and the server writes them to
+    /// its log. Measured before this was escaped: a `start_simulation` carrying
+    /// `"a\nWarning: forged line"` gave back a key with that newline in it, and
+    /// the warning printed as two lines, the second looking like the server's.
+    #[test]
+    fn a_key_reaches_the_log_on_one_line() {
+        let msg = "{\"type\":\"start_simulation\",\"config\":{\
+                   \"dt\":1.0,\
+                   \"a\\nWarning: forged line\":1,\
+                   \"b\\u001b[31m\":2,\
+                   \"satellites\":[{\"id\":\"a\",\"orbit\":\
+                   {\"type\":\"circular\",\"altitude\":400}}]}}";
+        let keys = unread_keys_of(msg);
+        assert_eq!(keys.len(), 2, "both keys are collected: {keys:?}");
+        assert!(
+            keys.iter().any(|k| k.contains('\n')),
+            "the raw key holds the newline, so the escaping is what removes it: {keys:?}"
+        );
+
+        for key in &keys {
+            let line = format!("{}", printable_key(key));
+            assert!(
+                !line.contains('\n') && !line.contains('\r'),
+                "no line break survives: {line:?}"
+            );
+            assert!(
+                !line.contains('\u{1b}'),
+                "no escape character survives: {line:?}"
+            );
+        }
+        // An ordinary key is untouched, so the escaping costs nothing to read.
+        assert_eq!(
+            printable_key("satellites.0.altitide"),
+            "satellites.0.altitide"
+        );
+
+        // A key is as long as its sender chose, and escaping expands each
+        // character up to six, so the rendered line is bounded and says what it
+        // left out.
+        let long = "\u{1b}".repeat(10_000);
+        let rendered = printable_key(&long);
+        assert!(
+            rendered.chars().count() < PRINTED_KEY_LIMIT + 40,
+            "bounded whatever the escaping does to it: {} chars",
+            rendered.chars().count()
+        );
+        assert!(
+            rendered.contains("10000 bytes in all"),
+            "and says how long the key was: {rendered}"
+        );
+        assert!(!rendered.contains('\u{1b}'), "still escaped: {rendered:?}");
+    }
+
+    /// A client message names at most `CLIENT_MESSAGE_KEY_LIMIT` keys.
+    ///
+    /// Each named key is one unbuffered `eprintln!` on the connection task, and
+    /// `/ws` takes messages from whoever reaches the port, so one frame must not
+    /// decide how many writes the server makes. The rest are counted.
+    #[test]
+    fn a_client_message_names_at_most_the_limit() {
+        let extra = 7;
+        let typos: String = (0..CLIENT_MESSAGE_KEY_LIMIT + extra)
+            .map(|i| format!("\"typo{i}\":{i},"))
+            .collect();
+        let msg = format!(
+            "{{\"type\":\"start_simulation\",\"config\":{{{typos}\
+             \"satellites\":[{{\"id\":\"a\",\"orbit\":\
+             {{\"type\":\"circular\",\"altitude\":400}}}}]}}}}"
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&msg).expect("the message is valid JSON");
+
+        let unread = unread_client_message_keys(&value);
+        assert_eq!(unread.named.len(), CLIENT_MESSAGE_KEY_LIMIT);
+        assert_eq!(unread.unnamed, extra, "the rest are counted, not dropped");
+        // The message still parses into something the server runs: the limit is
+        // on what gets said about it, not on what it may contain.
+        serde_json::from_value::<crate::commands::serve::protocol::ClientMessage>(value)
+            .expect("a message full of unknown keys still starts a simulation");
+    }
+
+    /// A key beside the variant's own is named too, not only one in the payload.
+    ///
+    /// `ClientMessage` ignores an envelope key it does not read, so
+    /// `{"type":"start_simulation","config":{…},"dtt":10}` started the
+    /// simulation with `dtt` dropped in silence. The same held for a typo in an
+    /// optional field of `query_range`, and for any key on a variant that reads
+    /// none — a typo in a required field fails to deserialize instead, which the
+    /// server answers with an error.
+    #[test]
+    fn a_key_beside_the_variants_own_is_named() {
+        let cases = [
+            (
+                "start_simulation",
+                "{\"type\":\"start_simulation\",\"dtt\":10,\"config\":{\"dt\":1.0,\
+                 \"satellites\":[{\"id\":\"a\",\"orbit\":\
+                 {\"type\":\"circular\",\"altitude\":400}}]}}",
+                "dtt",
+            ),
+            (
+                "query_range",
+                "{\"type\":\"query_range\",\"t_min\":0.0,\"t_max\":10.0,\"max_pointz\":100}",
+                "max_pointz",
+            ),
+            (
+                "pause_simulation",
+                "{\"type\":\"pause_simulation\",\"untl\":10.0}",
+                "untl",
+            ),
+        ];
+        for (label, msg, key) in cases {
+            let value: serde_json::Value =
+                serde_json::from_str(msg).unwrap_or_else(|e| panic!("{label}: valid JSON: {e}"));
+            // The message is still one the server runs; the key is a warning.
+            serde_json::from_value::<crate::commands::serve::protocol::ClientMessage>(
+                value.clone(),
+            )
+            .unwrap_or_else(|e| panic!("{label}: an unknown key must not stop the message: {e}"));
+            let unread = unread_client_message_keys(&value);
+            assert_eq!(
+                unread.named,
+                vec![key.to_string()],
+                "{label}: the key beside the variant's own"
+            );
+        }
+    }
+
+    /// The keys a variant does read are not reported.
+    ///
+    /// The list in `protocol::variant_envelope_keys` is written by hand, so a
+    /// wrong entry would name a field the message uses.
+    #[test]
+    fn the_keys_a_variant_reads_are_not_named() {
+        for msg in [
+            "{\"type\":\"query_range\",\"t_min\":0.0,\"t_max\":10.0,\"max_points\":100,\
+             \"entity_path\":\"/world/sat/a\"}",
+            "{\"type\":\"pause_simulation\"}",
+            "{\"type\":\"resume_simulation\"}",
+            "{\"type\":\"terminate_simulation\"}",
+        ] {
+            let value: serde_json::Value = serde_json::from_str(msg).expect("valid JSON");
+            serde_json::from_value::<crate::commands::serve::protocol::ClientMessage>(
+                value.clone(),
+            )
+            .unwrap_or_else(|e| panic!("{msg} must deserialize: {e}"));
+            assert_eq!(
+                unread_client_message_keys(&value),
+                UnreadClientKeys::default(),
+                "nothing to report for {msg}"
+            );
+        }
+    }
+
+    /// A frame naming one field twice is refused, not resolved to the last one.
+    ///
+    /// `serde_json::Value` keeps the last of two members with one name, so
+    /// reading the message from a tree would run
+    /// `{…,"config":{"dt":1},"config":{"dt":99}}` with 99 and say nothing. The
+    /// server reads the text, where serde refuses a duplicate field.
+    #[test]
+    fn a_duplicate_field_is_refused() {
+        let one = "{\"dt\":1.0,\"satellites\":[{\"id\":\"a\",\"orbit\":\
+                   {\"type\":\"circular\",\"altitude\":400}}]}";
+        let msg = format!("{{\"type\":\"start_simulation\",\"config\":{one},\"config\":{one}}}");
+
+        // Through a tree: the duplicate is gone before anything can object.
+        let value: serde_json::Value = serde_json::from_str(&msg).expect("valid JSON");
+        assert_eq!(
+            value.as_object().expect("an object").len(),
+            2,
+            "the tree holds `type` and one `config`"
+        );
+        serde_json::from_value::<crate::commands::serve::protocol::ClientMessage>(value)
+            .expect("a tree cannot see the duplicate");
+
+        // From the text, which is what the server reads.
+        let err = serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&msg)
+            .err()
+            .expect("a duplicate field must be refused");
+        assert!(
+            err.to_string().contains("duplicate field"),
+            "the error says which: {err}"
+        );
+    }
+
+    /// A TLE or NORAD orbit about anything but Earth is refused by the config.
+    ///
+    /// SGP4 is Earth's, and `SimParams::from_config` reaches that rule through
+    /// an `unwrap_or_else(panic)`. Measured before this: `orts config validate`
+    /// called a Moon + TLE config valid and `orts run --config` panicked on it.
+    ///
+    /// The `norad` case is checked here rather than through a spec, because
+    /// building one fetches the element set over the network.
+    #[test]
+    fn a_tle_about_another_body_is_rejected() {
+        let tle = "[[satellites]]\nid = \"a\"\n[satellites.orbit]\ntype = \"tle\"\n\
+                   line1 = \"1 25544U 98067A   24079.50000000  .00016717  00000-0  \
+                   30000-4 0  9996\"\n\
+                   line2 = \"2 25544  51.6400 208.6520 0007417  35.3910 324.7580 \
+                   15.49561654480008\"\n";
+        let norad = "[[satellites]]\nid = \"a\"\n[satellites.orbit]\n\
+                     type = \"norad\"\nnorad_id = 25544\n";
+
+        for (label, orbit) in [("tle", tle), ("norad", norad)] {
+            let config: SimConfig = toml::from_str(&format!("body = \"moon\"\n{orbit}"))
+                .unwrap_or_else(|e| panic!("{label}: valid toml: {e}"));
+            let err = config
+                .validate()
+                .expect_err(&format!("{label}: SGP4 cannot propagate about the Moon"));
+            assert!(err.contains("Earth-centered"), "{label}: {err}");
+
+            // The same orbit about Earth is what the check must not refuse.
+            let config: SimConfig = toml::from_str(&format!("body = \"earth\"\n{orbit}"))
+                .unwrap_or_else(|e| panic!("{label}: valid toml: {e}"));
+            config
+                .validate()
+                .unwrap_or_else(|e| panic!("{label}: Earth is where SGP4 belongs: {e}"));
+        }
     }
 }

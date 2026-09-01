@@ -123,17 +123,30 @@ pub(crate) fn validate_omm_body(
     body: KnownBody,
     satellites: &[SatelliteSpec],
 ) -> Result<(), String> {
-    if body != KnownBody::Earth
-        && satellites
-            .iter()
-            .any(|s| matches!(s.orbit, OrbitSpec::Omm { .. }))
+    if satellites
+        .iter()
+        .any(|s| matches!(s.orbit, OrbitSpec::Omm { .. }))
     {
-        return Err(format!(
-            "TLE/OMM orbits are Earth-centered (SGP4/TEME, WGS72) and cannot be \
-             propagated about {body:?}; use the Earth body or specify Keplerian elements"
-        ));
+        return ensure_body_carries_omm(body);
     }
     Ok(())
+}
+
+/// The half of [`validate_omm_body`] that a config settles on its own.
+///
+/// Shared with [`crate::config::SimConfig::validate`], which knows a satellite
+/// declares `tle` or `norad` without building the spec — building it would fetch
+/// a `norad_id` over the network. Reaching this only through `SimParams` meant
+/// `orts config validate` called a non-Earth TLE config valid and `orts run
+/// --config` then panicked on it.
+pub(crate) fn ensure_body_carries_omm(body: KnownBody) -> Result<(), String> {
+    if body == KnownBody::Earth {
+        return Ok(());
+    }
+    Err(format!(
+        "TLE/OMM orbits are Earth-centered (SGP4/TEME, WGS72) and cannot be \
+         propagated about {body:?}; use the Earth body or specify Keplerian elements"
+    ))
 }
 
 /// Simulation parameters derived from CLI arguments.
@@ -442,6 +455,13 @@ impl SimParams {
     }
 
     /// Default satellites for `serve` with no orbit args: SSO 800km + ISS.
+    ///
+    /// No `serve` invocation reaches this any more. Idle mode took the branch:
+    /// `has_explicit_sim_args` gates the only call to
+    /// `from_sim_args(_, is_serve = true)`, and it is true only when a config or
+    /// an orbit argument is present — in which case the arms above build that
+    /// instead. `orts serve` with nothing else waits for a `start_simulation`.
+    /// See #393 for whether the fleet or the code should go.
     pub fn default_serve_satellites(body: KnownBody, mu: f64) -> Vec<SatelliteSpec> {
         let mut sats = Vec::new();
 
@@ -464,7 +484,12 @@ impl SimParams {
             disturbances: Default::default(),
             panels: None,
             attitude_config: Some(crate::config::AttitudeConfig {
-                inertia_diag: [100.0, 200.0, 50.0],
+                // 500 kg, 2 x 1 x 1 m box: I = m/12 * (b^2 + c^2) per axis.
+                // The previous [100, 200, 50] broke the triangle inequality
+                // (100 + 50 < 200), i.e. no mass distribution has it — and
+                // `AttitudeConfig::validate` now rejects the same numbers in a
+                // config file, so the shipped default has to be realizable.
+                inertia_diag: [83.3, 208.3, 208.3],
                 inertia_off_diag: [0.0, 0.0, 0.0],
                 mass: 500.0,
                 initial_quaternion: [1.0, 0.0, 0.0, 0.0],

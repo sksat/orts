@@ -70,15 +70,34 @@ fn run_example(format: ConfigFormat) {
 }
 
 fn run_validate(path: &str, json: bool) {
-    match SimConfig::load(std::path::Path::new(path)) {
-        Ok(_) => {
+    match SimConfig::load_with_warnings(std::path::Path::new(path)) {
+        Ok(loaded) => {
+            // A key nothing read is a warning, not a failure: a config written
+            // for a newer `orts` still runs here. Naming the paths is what
+            // makes a typo findable, since the value it carried is gone.
+            // The JSON form carries the key as it was written — a JSON string
+            // encodes a newline or an escape character itself. The line printed
+            // to a terminal goes through `printable_key`, like every other
+            // warning naming a key.
+            let warnings: Vec<String> = loaded
+                .unread_keys
+                .iter()
+                .map(|key| format!("nothing reads `{key}`; its value is ignored"))
+                .collect();
             if json {
                 emit_verdict(serde_json::json!({
                     "schema": "orts.config-validate/v1",
                     "status": "ok",
                     "path": path,
+                    "warnings": warnings,
                 }));
             } else {
+                for key in &loaded.unread_keys {
+                    log::warn!(
+                        "{path}: nothing reads `{}`; its value is ignored",
+                        crate::config::printable_key(key)
+                    );
+                }
                 eprintln!("OK: {path} is a valid orts config");
             }
         }

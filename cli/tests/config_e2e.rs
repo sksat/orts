@@ -266,3 +266,118 @@ fn test_config_validate_rejects_unintegrable_attitude() {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+/// A rejected config must not be announced as a running server.
+///
+/// `serve` binds before it loads the config, and its startup banner is what
+/// every harness waits on: `cli/tests/ws_e2e.rs` matches `Server listening
+/// on`, the Playwright specs read the port out of the `WebSocket endpoint`
+/// line. Printing the banner ahead of the rejection left the caller connecting
+/// to a socket that was already closing, so a rejected value surfaced as a
+/// connection failure instead of as its own message.
+#[test]
+fn serve_does_not_announce_a_port_for_a_rejected_config() {
+    let dir = unique_dir("serve-reject");
+    let path = dir.join("unknown-value.json");
+    // A known key holding a value the simulation cannot honor: `atmosphere` is
+    // the model to use, and `none` names no model. (An unknown *key* is a
+    // warning, so it would not stop `serve` and could not test the ordering.)
+    std::fs::write(
+        &path,
+        br#"{"atmosphere":"none","dt":1.0,"satellites":[{"id":"a","orbit":{"type":"circular","altitude":400}}]}"#,
+    )
+    .unwrap();
+
+    // Not `output()`: were the rejection itself to regress, `serve` would run
+    // forever and the test would hang rather than report which assertion broke.
+    let mut child = orts()
+        .args(["serve", "--port", "0", "--config", path.to_str().unwrap()])
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn serve with an unknown config key");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let status = loop {
+        match child.try_wait().expect("poll serve") {
+            Some(status) => break status,
+            None if std::time::Instant::now() >= deadline => {
+                child.kill().ok();
+                child.wait().ok();
+                std::fs::remove_dir_all(&dir).ok();
+                panic!("serve kept running for 30s on a config it should have rejected");
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    };
+
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().expect("piped stderr"), &mut stderr)
+        .expect("read serve stderr");
+
+    assert!(!status.success(), "serve accepted it: {stderr}");
+    assert!(
+        stderr.contains("unknown atmosphere 'none'"),
+        "the rejection should name the value it cannot honor: {stderr}"
+    );
+    // Each banner line separately: the harnesses wait on different ones.
+    for line in ["Server listening", "Viewer:", "WebSocket endpoint"] {
+        assert!(
+            !stderr.contains(line),
+            "a rejected config printed the '{line}' banner line: {stderr}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `config validate --json` carries the keys nothing read, and still says ok.
+///
+/// The lower-level loader tests cover the collection; this covers the shape a
+/// caller reads, which could otherwise disappear while they keep passing.
+#[test]
+fn config_validate_json_carries_the_unread_keys() {
+    let dir = unique_dir("validate-warnings");
+    let path = dir.join("typo.toml");
+    std::fs::write(
+        &path,
+        "dt = 1.0\nduraton = 100.0\n\n[[satellites]]\nid = \"a\"\naltitide = 400\n\
+         [satellites.orbit]\ntype = \"circular\"\naltitude = 400\n",
+    )
+    .unwrap();
+
+    let out = orts()
+        .args(["config", "validate", "--json"])
+        .arg(&path)
+        .output()
+        .expect("run config validate");
+
+    assert!(
+        out.status.success(),
+        "an unread key is a warning, so validate exits 0: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let verdict: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("json: {e}\n{stdout}"));
+    assert_eq!(verdict["status"], "ok");
+    let warnings = verdict["warnings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a warnings array: {stdout}"));
+    assert_eq!(warnings.len(), 2, "both keys, and only those: {warnings:?}");
+    let text: Vec<&str> = warnings
+        .iter()
+        .map(|w| {
+            w.as_str()
+                .unwrap_or_else(|| panic!("every warning is a string: {warnings:?}"))
+        })
+        .collect();
+    assert!(
+        text.iter().any(|w| w.contains("`duraton`")),
+        "the top-level key: {text:?}"
+    );
+    assert!(
+        text.iter().any(|w| w.contains("`satellites.0.altitide`")),
+        "the nested key, named by its path: {text:?}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

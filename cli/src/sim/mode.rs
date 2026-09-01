@@ -40,37 +40,72 @@ pub fn select_sim_mode(satellites: &[SatelliteSpec]) -> Result<SimMode, String> 
     if satellites.is_empty() {
         return Ok(SimMode::OrbitOnly);
     }
-    let n = satellites.len();
+    let fleet_size = satellites.len();
     let with_attitude = satellites
         .iter()
         .filter(|s| s.attitude_config.is_some())
         .count();
-    if with_attitude != 0 && with_attitude != n {
+    let with_controller = satellites
+        .iter()
+        .filter(|s| s.controller_config.is_some())
+        .count();
+    ensure_fleet_declares_uniformly(fleet_size, with_attitude, with_controller)?;
+
+    if with_controller == fleet_size {
+        return Ok(SimMode::Controlled);
+    }
+    if with_attitude == fleet_size {
+        return Ok(SimMode::Spacecraft);
+    }
+    Ok(SimMode::OrbitOnly)
+}
+
+/// The part of [`select_sim_mode`]'s rule that a config settles on its own:
+/// attitude and controller are declared fleet-wide or not at all.
+///
+/// Shared with [`crate::config::SimConfig::validate`] so a config file meets it
+/// before anything runs. It used to be reached only from the engine, which
+/// `orts serve` builds inside the spawned manager: a mixed fleet validated
+/// clean, `orts serve --config` printed its banner, and the config the caller
+/// passed never ran — the server sat idle waiting for a `start_simulation`.
+///
+/// An empty fleet meets every rule here: `serve` starts with no satellites and
+/// grows by `add_satellite`, and [`select_sim_mode`] calls that `OrbitOnly`.
+pub fn ensure_fleet_declares_uniformly(
+    fleet_size: usize,
+    with_attitude: usize,
+    with_controller: usize,
+) -> Result<(), String> {
+    if with_attitude != 0 && with_attitude != fleet_size {
         return Err(
             "Mixed attitude config: some satellites have attitude, some don't. \
              Specify attitude for all satellites or remove it from all."
                 .to_string(),
         );
     }
-    let with_controller = satellites
-        .iter()
-        .filter(|s| s.controller_config.is_some())
-        .count();
-    if with_controller != 0 && with_controller != n {
+    if with_controller != 0 && with_controller != fleet_size {
         return Err(format!(
-            "Mixed controller config: {with_controller} of {n} satellites have \
+            "Mixed controller config: {with_controller} of {fleet_size} satellites have \
              `[satellites.controller]`. The control loop steps the whole fleet or none of it, \
              so those controllers would never run. Specify a controller for all satellites \
              or remove it from all."
         ));
     }
-    if with_controller == n {
-        return Ok(SimMode::Controlled);
+    // A controlled satellite is built on its attitude state, so
+    // `build_controlled_satellite` refuses one without it. Reaching that refusal
+    // takes until the engine is built, which under `orts serve --config` is
+    // after the startup banner: the fleet is uniform, the mode comes out
+    // `Controlled`, and the server then sits idle.
+    if fleet_size != 0 && with_controller == fleet_size && with_attitude == 0 {
+        return Err(
+            "`[satellites.controller]` without `[satellites.attitude]`: a controller \
+             commands the satellite's attitude, so a controlled fleet propagates attitude \
+             dynamics and needs the inertia and initial state to do it. Add \
+             `[satellites.attitude]` to every satellite or remove the controllers."
+                .to_string(),
+        );
     }
-    if with_attitude == n {
-        return Ok(SimMode::Spacecraft);
-    }
-    Ok(SimMode::OrbitOnly)
+    Ok(())
 }
 
 /// 選択されたモードでは効かない設定キーについての警告文。
@@ -219,6 +254,10 @@ orbit = { type = "circular", altitude = 400 }
     #[test]
     fn empty_fleet_is_orbit_only() {
         assert_eq!(select_sim_mode(&[]), Ok(SimMode::OrbitOnly));
+        // Held at the shared rule too, not only by the caller's early return:
+        // `serve` starts empty and grows by `add_satellite`, and zero
+        // controllers on zero satellites is not "controllers without attitude".
+        assert_eq!(ensure_fleet_declares_uniformly(0, 0, 0), Ok(()));
     }
 
     /// One attitude config with `attitude` filled in from `fields`.
@@ -345,14 +384,21 @@ orbit = {{ type = "circular", altitude = 400 }}
     /// Euler term can overflow from the inertia and the rate alone.
     #[test]
     fn an_initial_state_that_starts_at_infinite_acceleration_is_rejected() {
+        // The rate, not the inertia, is what carries it out of range here. A
+        // tensor lopsided enough to overflow `I⁻¹` on its own — `[1e-308, 1, 2]`
+        // — is refused earlier for violating the triangle inequality, and the
+        // inequality is also what keeps the lopsided case from reaching this
+        // term: a tiny `I1` forces `I2 ≈ I3`, which shrinks the first component
+        // of `ω × Iω` by as much as `I⁻¹` magnifies it.
         let err = validate_satellite_spec(&attitude_spec(
-            "inertia_diag = [1e-308, 1, 2]\nmass = 500\ninitial_angular_velocity = [1, 2, 2]",
+            "inertia_diag = [1, 1, 2]\nmass = 500\n\
+             initial_angular_velocity = [1e200, 1e200, 1e200]",
         ))
         .expect_err("an infinite initial angular acceleration should be rejected");
         assert!(err.contains("angular acceleration"), "got {err}");
 
         // The same inertia at rest has nothing to diverge.
-        validate_satellite_spec(&attitude_spec("inertia_diag = [1e-308, 1, 2]\nmass = 500"))
+        validate_satellite_spec(&attitude_spec("inertia_diag = [1, 1, 2]\nmass = 500"))
             .expect("a resting spacecraft integrates whatever its inertia");
     }
 

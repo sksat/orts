@@ -6,8 +6,12 @@ dt = 1.0
 output_interval = 60.0
 duration = 120000.0
 epoch = "2024-01-01T00:00:00Z"
-# Demo では drag の影響を排除して純粋な 2-body の phasing を見せる
-atmosphere = "none"
+# Demo では drag を掛けずに phasing を見せる（zonal 重力と、epoch があるので
+# Sun / Moon の第三体重力は入る）。
+# drag が入るのは ballistic_coeff を持つ衛星、panels を持つ衛星 (面ごとの面積と
+# 抗力係数を自分で持つので PanelDrag になる)、B* が実質ゼロでない TLE/OMM 軌道
+# (`has_bstar_drag`) の 3 つ。この例はどれでもないので drag は掛からない
+# (`atmosphere` は drag の on/off ではなく、使う大気モデルの選択)。
 
 # In-plane constellation phasing demo。
 #
