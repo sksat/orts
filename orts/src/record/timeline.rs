@@ -39,7 +39,7 @@ impl TimePoint {
     /// later value rather than a second entry. A second entry would be pushed to
     /// that axis twice on export, and would make two points compare as one row
     /// while naming different times.
-    fn with_axis(mut self, name: TimelineName, index: TimeIndex) -> Self {
+    pub(crate) fn with_axis(mut self, name: TimelineName, index: TimeIndex) -> Self {
         match self.indices.iter_mut().find(|(n, _)| *n == name) {
             Some(slot) => slot.1 = index,
             None => self.indices.push((name, index)),

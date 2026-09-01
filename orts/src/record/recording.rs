@@ -206,9 +206,33 @@ pub struct EntityStore {
     /// assembled by hand rather than through `log_temporal` has to set this: at
     /// zero, nothing temporal is written.
     pub num_rows: usize,
-    /// The `TimePoint` of the row currently being filled. Two `log_temporal`
-    /// calls carrying the same `TimePoint` belong to one logical row.
-    last_time_point: Option<TimePoint>,
+}
+
+impl EntityStore {
+    /// The `TimePoint` of the last logical row, or `None` when there is no row.
+    ///
+    /// Read back from `timelines` rather than remembered from the last
+    /// `log_temporal`: the fields above are public, so a caller can empty a
+    /// store that has already been logged to. A remembered point would then
+    /// describe rows that are gone, and the next `log_temporal` would take the
+    /// store to be mid-row with no row to be in.
+    fn last_row_time_point(&self) -> Option<TimePoint> {
+        let last_row = self.num_rows.checked_sub(1)?;
+        // `log_temporal` pushes every axis of a point at the one row it opens
+        // for it, so in a store it built, the axes holding `last_row` are that
+        // row's point. `is_same_row` ignores axis order, so the order the map
+        // yields them in does not matter.
+        Some(
+            self.timelines
+                .iter()
+                .fold(TimePoint::new(), |point, (name, axis)| {
+                    match axis.at_logical_row(last_row) {
+                        Some(index) => point.with_axis(name.clone(), index),
+                        None => point,
+                    }
+                }),
+        )
+    }
 }
 
 /// Simulation metadata that can be embedded in a Recording.
@@ -342,8 +366,7 @@ impl Recording {
         // from row counts, which is what let a column that skipped steps line up
         // with the wrong times.
         let continues_row = store
-            .last_time_point
-            .as_ref()
+            .last_row_time_point()
             .is_some_and(|last| last.is_same_row(time_point));
         // A component logged twice at one time point is two samples of it, so the
         // second starts a row of its own at the same time rather than landing on
@@ -358,7 +381,6 @@ impl Recording {
                         && column.logical_row_of(column.num_rows() - 1) == store.num_rows - 1
                 });
         if !continues_row || row_taken {
-            store.last_time_point = Some(time_point.clone());
             let logical_row = store.num_rows;
             for (timeline_name, time_index) in time_point.indices() {
                 store
@@ -369,6 +391,8 @@ impl Recording {
             }
             store.num_rows += 1;
         }
+        // There is a row to write into either way: the branch above opened one,
+        // and `continues_row` is only true of a store that already has rows.
         let logical_row = store.num_rows - 1;
 
         store
@@ -813,6 +837,37 @@ mod tests {
             "the velocity joins the row that was open when it was logged"
         );
         assert_eq!(vel.at_logical_row(1), None, "no velocity was logged for it");
+    }
+
+    #[test]
+    fn a_cleared_store_logged_at_the_same_time_starts_over() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/cleared");
+        let tp = TimePoint::new().with_sim_time(1.0).with_step(0);
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(1.0, 0.0, 0.0)));
+
+        // `EntityStore`'s fields are public, so a caller can empty a store that
+        // has already been logged to.
+        let store = rec.entity_mut(&sat);
+        store.columns.clear();
+        store.timelines.clear();
+        store.num_rows = 0;
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(2.0, 0.0, 0.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(
+            store.num_rows, 1,
+            "the same time point opens row 0 again rather than continuing the row the clear removed"
+        );
+        let pos = &store.columns[&Position3D::component_name()];
+        assert_eq!(pos.at_logical_row(0).map(|v| v[0]), Some(2.0));
+        assert_eq!(
+            store.timelines[&TimelineName::SimTime].at_logical_row(0),
+            Some(TimeIndex::Seconds(1.0)),
+            "and the row carries its time"
+        );
     }
 
     #[test]
