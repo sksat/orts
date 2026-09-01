@@ -184,7 +184,7 @@ section is subdivided by package.
 - `orts run`'s downlink log records moved from info/debug to debug/trace. They
   fire per satellite per outbound message per control tick, so with a backend
   installed, info would bury every other diagnostic on a fleet-sized run and add
-  a locked stderr write inside the integration loop.
+  a locked stderr write inside the integration loop. ([#390](https://github.com/sksat/orts/pull/390))
 - `--tle` is TLE-only again (2LE/3LE; `-` for stdin) and pairs with the new
   `--omm`; element-set parsing is now backed by `arika::tle` / `arika::omm`
   instead of the removed `orts::tle`. (Previously `--tle` also auto-accepted OMM.) ([#87](https://github.com/sksat/orts/pull/87))
@@ -206,7 +206,7 @@ section is subdivided by package.
   (CSV, the `--json` summary, the `serve --stream-stdio` protocol). `RUST_LOG`
   sets the filter, defaulting to `warn,orts=info` — orts at info, dependencies at
   warn — and `NO_COLOR` (or a non-terminal stderr) turns styling off. Both are
-  documented in `orts --help`.
+  documented in `orts --help`. ([#390](https://github.com/sksat/orts/pull/390))
 - `orts run --format csv --output <path>` now writes the CSV to `<path>`.
   Previously every `--format csv` run wrote to stdout regardless of `--output`,
   silently ignoring the given path. ([#214](https://github.com/sksat/orts/pull/214))

@@ -161,7 +161,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - `orts run` の downlink log レコードの level を info/debug から debug/trace へ
   下げた。衛星 × outbound message × control tick ごとに出るため、logger が
   実際に動く状態では info だと fleet 規模の実行で他の診断が埋もれ、積分ループ内
-  で stderr のロックを取る書き込みが増える。
+  で stderr のロックを取る書き込みが増える。 ([#390](https://github.com/sksat/orts/pull/390))
 - `--tle` を再び TLE 専用 (2LE/3LE、`-` で stdin) とし、新規 `--omm` と
   対にした。要素セットのパースは削除した `orts::tle` でなく
   `arika::tle` / `arika::omm` を使用 (従来は `--tle` が OMM も自動受理)。([#87](https://github.com/sksat/orts/pull/87))
@@ -183,7 +183,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   サマリ、`serve --stream-stdio` の protocol) だけを運ぶ。filter は `RUST_LOG`
   で指定し、既定は `warn,orts=info` (orts は info、依存は warn)。`NO_COLOR`
   指定時と stderr が terminal でない場合は装飾を付けない。どちらも
-  `orts --help` に記載した。
+  `orts --help` に記載した。 ([#390](https://github.com/sksat/orts/pull/390))
 - `orts run --format csv --output <path>` が CSV を `<path>` に書き込むように
   なった。従来は `--format csv` の実行が `--output` に関わらず常に stdout へ
   出力し、指定パスを黙って無視していた。([#214](https://github.com/sksat/orts/pull/214))
