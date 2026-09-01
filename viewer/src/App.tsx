@@ -470,6 +470,18 @@ export function App() {
   );
 
   /**
+   * The spacecraft the attitude view can offer: the ones being rendered, which is
+   * the same list the selection is validated against. The simulation's declared
+   * list arrives with the `info` message, before any state does, and offering a
+   * spacecraft from it would leave the select with no matching option until the
+   * first sample landed.
+   */
+  const attitudeSubjects = useMemo(
+    () => satellites.map((s) => ({ id: s.id, name: s.name })),
+    [satellites],
+  );
+
+  /**
    * The attitude view's subject. Null when the chosen spacecraft has no attitude:
    * this view has nothing to show then, and inventing an identity quaternion would
    * present "no data" as "pointing at the reference frame".
@@ -614,7 +626,7 @@ export function App() {
             />
           ) : (
             <AttitudeOverlay
-              satellites={simInfo?.satellites}
+              satellites={attitudeSubjects}
               selectedSatelliteId={selectedSatelliteId}
               onSelectedSatelliteChange={setSelectedSatelliteId}
               orientation={attitudeFrame}
