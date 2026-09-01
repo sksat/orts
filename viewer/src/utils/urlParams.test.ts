@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readTimeRangeParam, writeTimeRangeParam } from "./urlParams.js";
+import {
+  readTimeRangeParam,
+  readViewParam,
+  writeTimeRangeParam,
+  writeViewParam,
+} from "./urlParams.js";
 
 describe("readTimeRangeParam", () => {
   beforeEach(() => {
@@ -90,5 +95,56 @@ describe("writeTimeRangeParam", () => {
     writeTimeRangeParam(300);
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe("view param", () => {
+  beforeEach(() => {
+    history.replaceState(null, "", "/");
+  });
+
+  it("defaults to the orbit view", () => {
+    expect(readViewParam()).toBe("orbit");
+    history.replaceState(null, "", "/?view=");
+    expect(readViewParam()).toBe("orbit");
+  });
+
+  it("reads the attitude view", () => {
+    history.replaceState(null, "", "/?view=attitude");
+    expect(readViewParam()).toBe("attitude");
+  });
+
+  it("falls back to the orbit view for an unrecognised value", () => {
+    // A hand-edited or stale link must land somewhere, and the orbit view is
+    // what the app opens with.
+    history.replaceState(null, "", "/?view=spin");
+    expect(readViewParam()).toBe("orbit");
+    history.replaceState(null, "", "/?view=ATTITUDE");
+    expect(readViewParam()).toBe("orbit");
+  });
+
+  it("round-trips through the URL", () => {
+    writeViewParam("attitude");
+    expect(window.location.search).toContain("view=attitude");
+    expect(readViewParam()).toBe("attitude");
+    writeViewParam("orbit");
+    expect(window.location.search).not.toContain("view");
+    expect(readViewParam()).toBe("orbit");
+  });
+
+  it("leaves the other view params alone", () => {
+    // Both writers rebuild the query string, so each has to preserve what the
+    // other put there.
+    history.replaceState(null, "", "/?timeRange=300&satShape=axes-cube");
+    writeViewParam("attitude");
+    expect(readTimeRangeParam()).toBe(300);
+    expect(window.location.search).toContain("satShape=axes-cube");
+
+    writeTimeRangeParam(600);
+    expect(readViewParam()).toBe("attitude");
+
+    writeViewParam("orbit");
+    expect(readTimeRangeParam()).toBe(600);
+    expect(window.location.search).toContain("satShape=axes-cube");
   });
 });
