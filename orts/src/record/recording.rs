@@ -26,10 +26,16 @@ impl RowMap {
     /// switching away from `Dense` only once the two actually diverge.
     fn record(&mut self, stored: usize, logical: usize) {
         // `stored_index` binary-searches, so the rows have to stay strictly
-        // ascending. Callers give one entry per logical row.
+        // ascending, and they are stored as `u32`. A repeated row would make the
+        // search resolve to whichever entry it landed on.
         debug_assert!(
-            logical >= stored && u32::try_from(logical).is_ok(),
-            "logical row {logical} cannot be recorded at stored index {stored}"
+            u32::try_from(logical).is_ok(),
+            "logical row {logical} is past the u32 the row map stores"
+        );
+        debug_assert!(
+            stored == 0 || logical > self.logical_row(stored - 1),
+            "logical row {logical} does not follow {} at stored index {stored}",
+            self.logical_row(stored.saturating_sub(1)),
         );
         match self {
             Self::Dense if stored == logical => {}
@@ -92,6 +98,11 @@ impl ComponentColumn {
     }
 
     /// Append `scalars` as the entity's logical row `logical_row`.
+    ///
+    /// `logical_row` has to be greater than the one given for the previous
+    /// stored row, and within `u32`. The row lookup binary-searches, so a
+    /// repeated or out-of-order row would make it resolve to whichever entry the
+    /// search landed on. A debug build asserts both.
     pub fn push_at(&mut self, scalars: &[f64], logical_row: usize) {
         debug_assert_eq!(scalars.len(), self.scalars_per_row);
         let stored = self.num_rows();
