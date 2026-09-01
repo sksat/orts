@@ -530,6 +530,11 @@ impl PanelConfig {
     }
 
     /// Whether this panel describes a plate with a far face.
+    ///
+    /// `two_sided = false` beside `back` does not reach here: `validate`
+    /// rejects the pair. Picking a winner would be worse than the rejection —
+    /// letting the flag win discards `back`, letting `back` win discards the
+    /// flag, and neither is what the reader asked for.
     fn has_back_face(&self) -> bool {
         self.two_sided == Some(true) || self.back.is_some()
     }
