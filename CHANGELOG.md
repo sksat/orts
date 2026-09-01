@@ -166,6 +166,10 @@ section is subdivided by package.
 - Sun-centred propagation keeps its SRP: the Sun is the origin there, so the
   satellite-to-Sun vector is `-r_sat` and nothing eclipses it. Only the
   third-body term drops out. ([#372](https://github.com/sksat/orts/pull/372))
+- A magnetometer or magnetorquer is refused around a body whose magnetic field
+  is not modelled. `Igrf` and `TiltedDipole` are Earth's, and they are the only
+  field models there are, so a spacecraft around Mars read Earth's field and made
+  torque from it. ([#372](https://github.com/sksat/orts/pull/372))
 - Moon-centred propagation includes Earth as a third body, which dominates its
   third-body environment and was absent. Sun-centred propagation no longer adds
   the Sun as a third body to its own orbiters.

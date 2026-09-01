@@ -143,6 +143,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   最大 176° ずれていた。([#372](https://github.com/sksat/orts/pull/372))
 - Sun 中心の伝播でも SRP は残る。Sun が原点なので衛星→Sun ベクトルは `-r_sat` で、
   遮るものもない。落ちるのは第三体項だけ。([#372](https://github.com/sksat/orts/pull/372))
+- 磁場がモデル化されていない天体では、磁気センサと磁気トルカを拒否するようになった。
+  `Igrf` と `TiltedDipole` は Earth のもので、磁場モデルはこの 2 つしかない。従来は
+  Mars を回る衛星が Earth の磁場を読み、そこからトルクを作っていた。
+  ([#372](https://github.com/sksat/orts/pull/372))
 - Moon 中心の伝播に第三体として Earth が入るようになった (Moon の第三体環境で
   支配的だが欠けていた)。Sun 中心の伝播は Sun を自分の周回衛星に対する第三体として
   足さなくなった。([#372](https://github.com/sksat/orts/pull/372))

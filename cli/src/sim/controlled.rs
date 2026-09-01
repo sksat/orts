@@ -225,6 +225,7 @@ pub fn build_controlled_satellite(
     let has_mtq = spec.mtq_config.is_some();
     let mtq_max_moment = match &spec.mtq_config {
         Some(MtqConfig::ThreeAxis { max_moment }) => {
+            require_earth_field(params.body, "magnetorquer")?;
             let mtq = MtqAssembly::three_axis(*max_moment, Igrf::earth());
             dynamics = dynamics.with_model(mtq);
             *max_moment
@@ -588,6 +589,25 @@ fn build_controller(
 ///
 /// The sun sensor's reading is a direction to the Sun, so it depends on the
 /// central body the same way the solar force models do.
+/// Reject a magnetic device on a body whose field `tobari` does not model.
+///
+/// `Igrf` and `TiltedDipole` are Earth's, and they are the only field models
+/// there are. Wiring one to a spacecraft around another body would answer every
+/// reading with Earth's field: a magnetometer would report a field the body does
+/// not have, and a magnetorquer would produce torque from it — the attitude
+/// would be controlled against a planet that is not there.
+fn require_earth_field(body: arika::body::KnownBody, device: &str) -> Result<(), String> {
+    if body == arika::body::KnownBody::Earth {
+        Ok(())
+    } else {
+        Err(format!(
+            "{device} needs a magnetic field model, and only Earth's is available; \
+             central body is {}",
+            body.properties().name
+        ))
+    }
+}
+
 fn build_sensor_bundle(
     choices: Option<&[SensorChoice]>,
     body: arika::body::KnownBody,
@@ -597,6 +617,9 @@ fn build_sensor_bundle(
         None => return Ok(SensorBundle::new()),
     };
 
+    if choices.contains(&SensorChoice::Magnetometer) {
+        require_earth_field(body, "magnetometer")?;
+    }
     let field_model: Arc<dyn tobari::magnetic::MagneticFieldModel> = Arc::new(Igrf::earth());
 
     Ok(SensorBundle {
@@ -626,6 +649,7 @@ fn build_sensor_bundle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arika::body::KnownBody;
     use orts::plugin::{Command, PluginError, TickInput};
 
     /// A controller that records the `t` of every tick it is given.
@@ -941,5 +965,37 @@ mod tests {
             "the 1.0 s controller should tick once in 1 s, got {slow_seen:?}"
         );
         assert!((slow_seen[0] - 1.0).abs() < 1e-9, "at {}", slow_seen[0]);
+    }
+
+    /// A magnetic device is refused on a body whose field is not modelled.
+    ///
+    /// `Igrf` and `TiltedDipole` are Earth's, and they are the only field models
+    /// there are. Wired to a spacecraft around another body they answer every
+    /// reading with Earth's field: a magnetometer reports a field the body does
+    /// not have, and a magnetorquer makes torque from it, so the attitude is
+    /// controlled against a planet that is not there.
+    #[test]
+    fn a_magnetic_device_needs_a_body_whose_field_is_modelled() {
+        for body in [KnownBody::Mars, KnownBody::Moon, KnownBody::Sun] {
+            let err = match build_sensor_bundle(Some(&[SensorChoice::Magnetometer]), body) {
+                Err(e) => e,
+                Ok(_) => panic!("{body:?} has no field model, so a magnetometer needs refusing"),
+            };
+            assert!(
+                err.contains("magnetometer") && err.contains("Earth's"),
+                "{body:?}: {err}"
+            );
+        }
+
+        // Earth has one, and a sensor that needs no field is unaffected whatever
+        // the body is.
+        assert!(
+            build_sensor_bundle(Some(&[SensorChoice::Magnetometer]), KnownBody::Earth).is_ok(),
+            "Earth's field is modelled"
+        );
+        assert!(
+            build_sensor_bundle(Some(&[SensorChoice::Gyroscope]), KnownBody::Mars).is_ok(),
+            "a gyroscope needs no field"
+        );
     }
 }
