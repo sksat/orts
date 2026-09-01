@@ -100,9 +100,15 @@ impl ControlledSatellite {
 ///
 /// [`crate::config::validate_sample_period`] only asks for a positive finite
 /// period, which `1e-16` satisfies — and `5.0 + 1e-16 == 5.0`, so the schedule
-/// would never leave `start_t` and every loop waiting on it would spin. The
-/// tick time is `base + n · period`, so a period that clears one ULP of the
-/// base clears every later tick too, and this one check covers the whole run.
+/// would never leave `start_t` and every loop waiting on it would spin.
+///
+/// What this guarantees is that the schedule leaves the anchor. A tick time is
+/// `base + n · period`, and an ULP grows with the magnitude of the value, so a
+/// period that clears one ULP at the anchor does not clear one at every later
+/// tick: far enough out, `base + n · period` and `base + (n+1) · period` round
+/// together. That is not a run anyone reaches — a 0.1 s period needs t of about
+/// 1e15 s, some 32 million years, before an ULP catches up with it — but it is
+/// not what this check rules out.
 fn validate_tick_advances(start_t: f64, sample_period: f64) -> Result<(), String> {
     if start_t + sample_period > start_t {
         Ok(())
