@@ -3,16 +3,16 @@ use clap::{Parser, Subcommand, ValueEnum};
 /// orts CLI — orbital mechanics simulation tool
 #[derive(Parser, Debug)]
 #[command(name = "orts")]
-#[command(after_help = EXAMPLES)]
+#[command(after_help = AFTER_HELP)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
 }
 
-/// Copy-pasteable examples shown at the end of `orts --help` (and `-h`).
-/// Kept here so the most common — and the most agent-relevant — workflows are
-/// discoverable without reading the docs.
-const EXAMPLES: &str = "\
+/// Copy-pasteable examples and the environment the CLI reads, shown at the end
+/// of `orts --help` (and `-h`). Kept here so the most common — and the most
+/// agent-relevant — workflows are discoverable without reading the docs.
+pub(crate) const AFTER_HELP: &str = "\
 Examples:
   # Run a simulation, recording to an .rrd file (the default)
   orts run --sat altitude=400
@@ -30,6 +30,17 @@ Examples:
 
   # Live WebSocket server + embedded 3D viewer at http://localhost:9001
   orts serve --config mission.toml
+
+Environment:
+  RUST_LOG   Log filter, default \"warn,orts=info\": orts at info, dependencies
+             at warn. Records go to stderr (stdout carries only what the
+             command produces), and a WASM plugin's own log output arrives
+             under the orts target.
+               RUST_LOG=warn            quiet — warnings and errors only
+               RUST_LOG=debug           everything, dependencies included
+               RUST_LOG=orts=debug      just ours, more detail
+  NO_COLOR   Set to any non-empty value to disable styled records. They are
+             already unstyled when stderr is not a terminal.
 ";
 
 #[derive(Subcommand, Debug)]

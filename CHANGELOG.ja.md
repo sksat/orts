@@ -158,6 +158,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   追加。よく使う・agent に関係する経路を端末内で発見できるようにした。([#217](https://github.com/sksat/orts/pull/217))
 
 #### Changed
+- `orts run` の downlink log レコードの level を info/debug から debug/trace へ
+  下げた。衛星 × outbound message × control tick ごとに出るため、logger が
+  実際に動く状態では info だと fleet 規模の実行で他の診断が埋もれ、積分ループ内
+  で stderr のロックを取る書き込みが増える。
 - `--tle` を再び TLE 専用 (2LE/3LE、`-` で stdin) とし、新規 `--omm` と
   対にした。要素セットのパースは削除した `orts::tle` でなく
   `arika::tle` / `arika::omm` を使用 (従来は `--tle` が OMM も自動受理)。([#87](https://github.com/sksat/orts/pull/87))
@@ -169,6 +173,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   年に繰り上がらず拒否される。([#87](https://github.com/sksat/orts/pull/87))
 
 #### Fixed
+- log レコードがユーザーに届くようになった。CLI は logger を初期化しておらず、
+  `log` の no-op logger が全レコードを破棄していた: stream-io stdio plug の
+  displaced、stream の socket error、serve 中のシミュレーション停止、そして
+  WASM plugin が WIT `host-env.log` 経由で出力した全ての行が消えていた。
+  起動時に `log` 互換 bridge 付きの `tracing` subscriber を初期化するので、
+  `.rrd` 記録経路で rerun の crate が出す `tracing` event も同じ経路で受け取る。
+  レコードは stderr へ出力し、stdout は従来どおりコマンドの出力 (CSV、`--json`
+  サマリ、`serve --stream-stdio` の protocol) だけを運ぶ。filter は `RUST_LOG`
+  で指定し、既定は `warn,orts=info` (orts は info、依存は warn)。`NO_COLOR`
+  指定時と stderr が terminal でない場合は装飾を付けない。どちらも
+  `orts --help` に記載した。
 - `orts run --format csv --output <path>` が CSV を `<path>` に書き込むように
   なった。従来は `--format csv` の実行が `--output` に関わらず常に stdout へ
   出力し、指定パスを黙って無視していた。([#214](https://github.com/sksat/orts/pull/214))

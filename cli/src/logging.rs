@@ -183,6 +183,16 @@ mod tests {
         });
     }
 
+    /// `--help` quotes the default filter, and it is the only place a user can
+    /// discover it. Changing the constant has to change the help text too.
+    #[test]
+    fn help_text_quotes_the_default_filter() {
+        assert!(
+            crate::cli::AFTER_HELP.contains(DEFAULT_DIRECTIVES),
+            "--help should quote `{DEFAULT_DIRECTIVES}`"
+        );
+    }
+
     /// The filter names `orts` because that is what our record targets are
     /// rooted at. Renaming the binary, or filtering on the package name
     /// `orts_cli` instead, would match nothing and silently discard every

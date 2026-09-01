@@ -181,6 +181,10 @@ section is subdivided by package.
   are discoverable without leaving the terminal. ([#217](https://github.com/sksat/orts/pull/217))
 
 #### Changed
+- `orts run`'s downlink log records moved from info/debug to debug/trace. They
+  fire per satellite per outbound message per control tick, so with a backend
+  installed, info would bury every other diagnostic on a fleet-sized run and add
+  a locked stderr write inside the integration loop.
 - `--tle` is TLE-only again (2LE/3LE; `-` for stdin) and pairs with the new
   `--omm`; element-set parsing is now backed by `arika::tle` / `arika::omm`
   instead of the removed `orts::tle`. (Previously `--tle` also auto-accepted OMM.) ([#87](https://github.com/sksat/orts/pull/87))
@@ -192,6 +196,17 @@ section is subdivided by package.
   malformed field is rejected rather than rolling into another year. ([#87](https://github.com/sksat/orts/pull/87))
 
 #### Fixed
+- Log records reach the user. The CLI never installed a `log` backend, so `log`'s
+  no-op logger discarded every record: a displaced stream-io stdio plug, a stream
+  socket error, a halted served simulation, and every line a WASM plugin wrote
+  through the WIT `host-env.log` import all went nowhere. A `tracing` subscriber
+  with the `log` compatibility bridge is now installed at startup, so it also
+  receives the `tracing` events the rerun crates emit on the `.rrd` recording
+  path. Records go to stderr; stdout still carries only what a command produces
+  (CSV, the `--json` summary, the `serve --stream-stdio` protocol). `RUST_LOG`
+  sets the filter, defaulting to `warn,orts=info` — orts at info, dependencies at
+  warn — and `NO_COLOR` (or a non-terminal stderr) turns styling off. Both are
+  documented in `orts --help`.
 - `orts run --format csv --output <path>` now writes the CSV to `<path>`.
   Previously every `--format csv` run wrote to stdout regardless of `--output`,
   silently ignoring the given path. ([#214](https://github.com/sksat/orts/pull/214))
