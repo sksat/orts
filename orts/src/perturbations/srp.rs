@@ -245,6 +245,27 @@ mod tests {
     }
 
     #[test]
+    fn shadow_boundary_follows_the_configured_radius() {
+        // Satellite behind the central body, 3000 km off the shadow axis:
+        // outside a lunar shadow cylinder (r=1737.4), inside an Earth-sized one (r=6378).
+        let sat = Vector3::new(-3000.0, 3000.0, 0.0);
+        let sun = Vector3::new(sun::AU_KM, 0.0, 0.0);
+
+        let lunar = SolarRadiationPressure::for_earth(Some(0.02)).with_shadow_body(1737.4);
+        let earth_sized = SolarRadiationPressure::for_earth(Some(0.02));
+
+        assert!(
+            lunar.srp_accel(&sat, &sun).magnitude() > 0.0,
+            "sunlit past the lunar limb"
+        );
+        assert_eq!(
+            earth_sized.srp_accel(&sat, &sun).magnitude(),
+            0.0,
+            "Earth-sized shadow eclipses it"
+        );
+    }
+
+    #[test]
     fn srp_direction_away_from_sun() {
         let srp = SolarRadiationPressure {
             cr: 1.5,

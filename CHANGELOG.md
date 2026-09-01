@@ -167,6 +167,13 @@ section is subdivided by package.
   conversion, silently mislabeling coordinates for any `F != SimpleEci`. Latent
   (the only shipped effector is torque-only) but wrong for a translational
   effector. ([#148](https://github.com/sksat/orts/pull/148), [#103](https://github.com/sksat/orts/issues/103))
+- SRP shadow model now uses the central body's radius. `build_orbital_system` /
+  `build_spacecraft_dynamics` constructed SRP via `for_earth`, whose default
+  shadow radius is Earth's 6378 km regardless of the central body — in a
+  Moon-centered simulation the shadow cylinder was ~3.7× too wide, wrongly
+  eclipsing satellites and under-applying SRP. Both builders now size the
+  shadow to `BodyProperties::radius` via a shared `build_srp` helper.
+  ([#385](https://github.com/sksat/orts/pull/385))
 
 - A negative `sim_time` reaches the .rrd. `save_as_rrd` set the timeline through
   `set_duration_secs`, which converts via the unsigned `std::time::Duration`:
