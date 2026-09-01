@@ -842,11 +842,14 @@ jobs:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           targets: ${{ matrix.target }}
 
-      - name: Cache Cargo artifacts
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: rust-release-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # This job builds from scratch on purpose. Its six per-target Cargo caches
+      # held ~4 GB of the repository's 10 GB budget, which the whole workflow is
+      # over, so entries are evicted within minutes of being written. What the
+      # budget has to cover first is the pull-request critical path: a missing
+      # rust-windows cache costs 864 s that someone is waiting on, against
+      # ~600 s per target here (measured ~250 s cached vs ~850 s cold) on a job
+      # that runs after review, on main pushes and tags, with all six targets in
+      # parallel.
 
       # The third-party license notice is generated from build.rs via the
       # cargo-about *library* (a build-dependency of orts-cli), so no
@@ -1114,11 +1117,17 @@ jobs:
         with:
           toolchain: nightly
 
+      # Same key as the Pages deploy's site build (identical toolchain, targets
+      # and `pnpm build:site`), so the two share one entry instead of holding
+      # 0.5 GB each. The deploy on main is the producer; this job consumes, which
+      # also stops a docs-touching pull request from writing a branch-scoped
+      # 0.5 GB copy that only that branch can read.
       - name: Cache Cargo artifacts
         if: steps.changes.outputs.docs == 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: build-site
+          shared-key: site
+          save-if: false
 
       - name: Install wasm-pack
         if: steps.changes.outputs.docs == 'true'
