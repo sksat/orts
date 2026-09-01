@@ -34,8 +34,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `DisturbanceTorques` で選ぶようにした。`build_spacecraft_dynamics` がそれを見て
   gravity gradient トルクを install する。`build_orbital_system` は install しない
   (軌道のみの系にはトルクが作用する姿勢が無く、`torque_body` を捨てる)。
-  呼び出し側はモデルを登録しなくなった。CLI はこのトルクを 2 つの entry point で
-  同一行に書いていて、両者が食い違わない保証が無かった。([#382](https://github.com/sksat/orts/pull/382))
+  呼び出し側は環境モデルを登録しなくなった。CLI はこのトルクを 2 つの entry point
+  で同一行に書いていて、両者が食い違わない保証が無かった。actuator (RW, MTQ,
+  thruster) の登録は呼び出し側に残る。搭載する actuator は機体のハードウェア記述で
+  決まる。([#382](https://github.com/sksat/orts/pull/382))
 - `SurfacePanel` が lumped な `cr` の代わりに `optics: PanelOptics { specular,
   diffuse }` を持つようになった。吸収率は `1 - specular - diffuse` として導出する。
   単一係数は face-on の SRP 力の大きさを決めるだけで、斜入射での向きが決まらない

@@ -149,9 +149,11 @@ pub fn build_orbital_system(
 /// This mirrors [`build_orbital_system`] but produces a coupled orbit-attitude
 /// system, so it is where the disturbance torques belong: an orbit-only system
 /// has no orientation for one to act on. Forces and torques go in through the
-/// same capability-based `Model<S>`, and callers do not register models
-/// themselves — duplicating that across the `run` and `serve` entry points is
-/// how the two came to disagree about which models a config gets.
+/// same capability-based `Model<S>`, and callers do not register environmental
+/// models themselves — duplicating that across the `run` and `serve` entry
+/// points is how the two came to disagree about which models a config gets.
+/// Actuators (RW, MTQ, thrusters) stay with the caller, since which ones a
+/// spacecraft carries comes from its own hardware description.
 pub fn build_spacecraft_dynamics(
     body: &KnownBody,
     mu: f64,

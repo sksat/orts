@@ -37,9 +37,11 @@ section is subdivided by package.
   `DisturbanceTorques` selection to say which. `build_spacecraft_dynamics`
   installs the gravity-gradient torque from it; `build_orbital_system` installs
   none, since an orbit-only system has no orientation for a torque to act on and
-  discards `torque_body`. Callers no longer register models themselves — the CLI
-  had been adding this torque on the same line in two entry points, with nothing
-  keeping the two in step. ([#382](https://github.com/sksat/orts/pull/382))
+  discards `torque_body`. Callers no longer register environmental models
+  themselves — the CLI had been adding this torque on the same line in two entry
+  points, with nothing keeping the two in step. Actuators (RW, MTQ, thrusters)
+  stay with the caller, since they come from the spacecraft's own hardware
+  description. ([#382](https://github.com/sksat/orts/pull/382))
 - `SurfacePanel` carries `optics: PanelOptics { specular, diffuse }` in place of
   a lumped `cr`, with the absorbed fraction derived as `1 - specular - diffuse`.
   A single coefficient fixes the SRP force magnitude face-on but leaves its

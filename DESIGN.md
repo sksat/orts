@@ -207,7 +207,7 @@ orts をその harness に組み込むための named byte stream の口が stre
 - **座標系の型付け**: フィールド名と型で座標系を明示する。`ExternalLoads<S::Frame>` の acceleration は慣性系 [km/s²]、torque は機体座標系 [N·m]。座標変換はモデル実装の内部で行う
 - **ExternalLoads の不変条件**: acceleration / torque / mass_rate は加算的に合成する。全モデルは同一の immutable state snapshot に対して評価され、評価順序に依存しない
 - **Model の純関数性**: `eval(&self, ...)` は副作用を持たない。内部状態が必要な計算は、力学バックリアクションを持つ連続状態なら StateEffector に、フィルタやモード遷移などの離散状態なら DiscreteController に置く
-- **モデル登録の責務**: 環境モデルの登録は `orts::setup` に集約する。CLI (`orts run` / `orts serve`) は `SatelliteParams` を組み立てて渡すだけで `with_model` を呼ばない。エントリポイントごとに登録すると、二つが食い違ったときにどちらが正しいのか判断できない
+- **モデル登録の責務**: 環境モデルの登録は `orts::setup` に集約する。CLI (`orts run` / `orts serve`) は `SatelliteParams` を組み立てて渡すだけにする。エントリポイントごとに登録すると、二つが食い違ったときにどちらが正しいのか判断できない。actuator (RW, MTQ, thruster) は機体のハードウェア記述で決まるので、登録は呼び出し側に残す
 - **外乱トルクの選択**: どの外乱トルクを解くかは config (`[satellites.disturbances]`) で選ぶ。姿勢を持たない衛星にトルクは install しないので、`[satellites.attitude]` 不在での指定は reject する。姿勢の状態と機体特性を述べる table とは別に置くのは、どの環境モデルを解くかが別の関心事だから
 - **trait object ポリシー**: モデルや環境 trait (`GravityField`, `AtmosphereModel` 等) は `Box<dyn Trait>` で実行時差し替え可能とする。性能クリティカルなパスでは generic パラメータの monomorphization を使う
 - **feature gate**: 重いモデルや I/O (NRLMSISE-00, Rerun, WebSocket, CSSI HTTP, plugin-wasm) は feature flag で分離する
