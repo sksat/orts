@@ -2467,13 +2467,38 @@ cd = 2.2
                 "area = 2.0\nnormal = [1, 0, 0]\ncd = 2.2\ndiffuse = -0.1",
                 "panels[0].diffuse must be non-negative",
             ),
+            // TOML has `nan` and `inf` literals, so the finiteness checks are
+            // reachable from a config file, not only from a programmatic
+            // construction. (JSON has no literal: `1e400` there is a parse
+            // error, "number out of range", before validation sees it.)
+            (
+                "area = 2.0\nnormal = [1, 0, 0]\ncd = 2.2\ncp_offset = [nan, 0.0, 0.0]",
+                "panels[0].cp_offset components must be finite",
+            ),
+            (
+                "area = 2.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = nan",
+                "panels[0].specular must be finite",
+            ),
+            (
+                "area = 2.0\nnormal = [1, 0, 0]\ncd = 2.2\ndiffuse = inf",
+                "panels[0].diffuse must be finite",
+            ),
+            (
+                "area = inf\nnormal = [1, 0, 0]\ncd = 2.2",
+                "panels[0].area must be positive and finite",
+            ),
+            (
+                "area = 2.0\nnormal = [1, 0, 0]\ncd = nan",
+                "panels[0].cd must be non-negative and finite",
+            ),
+            (
+                "area = 2.0\nnormal = [nan, 0, 0]\ncd = 2.2",
+                "panels[0].normal must be a non-zero finite vector",
+            ),
         ];
         // Each expectation names its field: "must be non-negative" alone is
         // satisfied by the `cd` message too, so it would not tell the optics
         // checks apart from it or from each other.
-        // No case for a non-finite `cp_offset`: neither TOML nor JSON has a
-        // literal for one, so the check in `PanelConfig::validate` guards only
-        // a programmatic construction path.
         for (panel_body, expected) in cases {
             let toml_src = format!(
                 r#"
