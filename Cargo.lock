@@ -2889,6 +2889,8 @@ dependencies = [
  "tokio-tungstenite 0.29.0",
  "toml",
  "toml-span",
+ "tracing",
+ "tracing-subscriber",
  "ts-rs",
  "ureq",
  "utsuroi",

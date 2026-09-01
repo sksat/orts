@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod config;
 mod license;
+mod logging;
 mod satellite;
 mod sim;
 mod tle;
@@ -21,6 +22,10 @@ fn exit_on_error(result: Result<(), CmdError>) {
 }
 
 fn main() {
+    // Before anything that might log. `--license-notice` exits inside the
+    // parse below, so nothing is lost by installing the backend first.
+    logging::init();
+
     // Concatenate the Rust and viewer (npm) NOTICE strings so a single
     // `--license-notice` invocation prints everything that is redistributed
     // in the binary. Built at runtime so the viewer notice can come from the

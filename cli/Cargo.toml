@@ -34,6 +34,14 @@ tobari = { workspace = true, features = ["fetch-cssi"] }
 arika = { workspace = true, features = ["sgp4"] }
 orts.workspace = true
 log = "0.4.29"
+# The log backend (see cli/src/logging.rs). rerun's `re_log` already pulls this
+# crate with these features, so it costs no extra build.
+tracing-subscriber = { version = "0.3", features = [
+  "env-filter",
+  "fmt",
+  "ansi",
+  "tracing-log",
+] }
 clap.workspace = true
 tokio.workspace = true
 axum.workspace = true
@@ -69,6 +77,8 @@ codespan-reporting = "0.13"
 [dev-dependencies]
 tokio-tungstenite.workspace = true
 tempfile = "3"
+# Drives the filter with synthetic targets in the logging unit tests.
+tracing = "0.1"
 
 # cargo-binstall metadata: `cargo binstall orts-cli` (or
 # `cargo binstall --git https://github.com/sksat/orts orts-cli` while

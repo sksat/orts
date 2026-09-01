@@ -28,3 +28,28 @@ fn test_top_level_help_has_examples() {
         "examples should show `orts config validate`"
     );
 }
+
+/// The log filter is only reachable through the environment, so `--help` is
+/// where someone (or an agent) has to be able to find it.
+#[test]
+fn test_top_level_help_documents_the_log_filter() {
+    let out = Command::new(env!("CARGO_BIN_EXE_orts"))
+        .arg("--help")
+        .output()
+        .expect("run orts --help");
+    assert!(out.status.success());
+    let help = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        help.contains("Environment:"),
+        "--help should include an Environment section:\n{help}"
+    );
+    assert!(
+        help.contains("RUST_LOG"),
+        "--help should name the log filter variable:\n{help}"
+    );
+    assert!(
+        help.contains("warn,orts=info"),
+        "--help should state the default filter, so the starting point is known:\n{help}"
+    );
+}

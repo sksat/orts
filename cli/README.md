@@ -17,6 +17,20 @@ orts serve                             # WebSocket server (port 9001) +
 
 See `orts --help` for the full CLI surface.
 
+## Logs
+
+Diagnostics go to stderr; stdout carries only what a command produces (CSV, the
+`--json` summary, the `serve --stream-stdio` protocol). `RUST_LOG` sets the
+filter, defaulting to `warn,orts=info` — orts at info, dependencies at warn.
+
+```
+RUST_LOG=warn orts serve --config mission.toml    # warnings and errors only
+RUST_LOG=orts=debug orts run --config mission.toml
+```
+
+A WASM plugin's own log output (the WIT `host-env.log` import) arrives under the
+same `orts` target, so `RUST_LOG=warn` silences flight-software logs too.
+
 ## Recommended install
 
 ```
