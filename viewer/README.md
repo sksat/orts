@@ -84,6 +84,27 @@ in-track (`crossTrack × radial`, the velocity direction for a circular orbit),
 **+Y** is cross-track (`normalize(r × v)`, the orbit normal) and **+Z** is radial
 *outward*, so nadir points along scene **−Z**.
 
+### Reference-direction arrows
+
+`directionVectors` (`{ sun, nadir }`) draws the same arrows the attitude view
+draws, at the **centred satellite**:
+
+```tsx
+<OrbitViewer
+  centralBody={{ id: "earth", radiusKm: 6378.137 }}
+  satellites={[{ id: "sat-1", position: [7000, 0, 1500], velocity: [0, 7.5, 0] }]}
+  referenceFrame={{ center: { satelliteId: "sat-1" }, orientation: "localOrbital" }}
+  epochJd={2460000.5}
+  directionVectors={{ sun: true, nadir: true }}
+/>;
+```
+
+Omitting the prop — the default — draws none. A central-body view draws none
+either way: the body itself is on screen, so a nadir arrow repeats what the
+picture already shows, and a pair of arrows on every satellite fills the screen.
+The Sun arrow needs `epochJd`; without it the arrow is dropped rather than
+pointed at a fixed direction.
+
 ### Trails
 
 Pass `trail` (an array of points) per satellite. Trails are uploaded

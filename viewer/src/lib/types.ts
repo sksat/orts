@@ -211,6 +211,18 @@ export interface OrbitSceneDataProps {
    * thickness (useful satellite-centred); `"auto"` (default) picks per view.
    */
   atmosphereScale?: "visual" | "physical" | "auto";
+  /**
+   * Reference-direction arrows (Sun, nadir) to draw. Omitted — the default —
+   * draws none.
+   *
+   * Drawn only when the reference frame is centred on a satellite, and only at
+   * that satellite. This view can hold many satellites, and a pair of arrows on
+   * each of them fills the screen; in a central-body view the body itself is on
+   * screen, so a nadir arrow repeats what the picture already shows. To annotate
+   * a satellite other than the centred one, ask for a scene-level target — a
+   * per-satellite flag would put the scene's display policy in the data.
+   */
+  directionVectors?: DirectionVectorOptions;
 }
 
 /**

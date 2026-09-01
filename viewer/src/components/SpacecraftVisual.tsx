@@ -2,12 +2,10 @@ import { Suspense } from "react";
 import type { Quat } from "../displayFrame.js";
 import { getSatelliteModelConfig } from "../satelliteModels.js";
 import { type MarkerShape, resolveMarkerShape } from "../satelliteShapes.js";
+import { DEFAULT_SPHERE_RADIUS } from "../spacecraftScale.js";
 import { BodyAxes } from "./BodyAxes.js";
 import { PrimitiveMarker } from "./PrimitiveMarker.js";
 import { SatelliteModel } from "./SatelliteModel.js";
-
-/** Default radius of the sphere fallback marker in scene units. */
-export const DEFAULT_SPHERE_RADIUS = 0.005;
 
 interface SphereMarkerProps {
   position: [number, number, number];

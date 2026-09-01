@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type * as THREE from "three";
+import { DEFAULT_CUBE_HALF_EXTENT } from "../spacecraftScale.js";
 
 interface PrimitiveMarkerProps {
   /** Position in scene units (already divided by scaleRadius). */
@@ -15,7 +16,7 @@ interface PrimitiveMarkerProps {
 }
 
 /** Default half-extent, matching the legacy sphere marker's footprint. */
-const DEFAULT_SIZE = 0.008;
+const DEFAULT_SIZE = DEFAULT_CUBE_HALF_EXTENT;
 
 /**
  * Per-face colors of the XYZ orientation cube, in Three.js BoxGeometry face order
