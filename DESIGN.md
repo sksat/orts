@@ -42,12 +42,13 @@ arika と tobari の詳細設計はそれぞれの [`arika/DESIGN.md`](arika/DES
 
 ### Capability-based Model trait
 
-モデル (摂動力、トルク、スラスタ等) は統一 `Model<S, F>` trait で表現する。
-モデルは state の capability trait (`HasOrbit`, `HasAttitude`, `HasMass`) を generic bound で宣言し、bound を満たす全ての system で直接使える。
+モデル (摂動力、トルク、スラスタ等) は統一 `Model<S: HasFrame>` trait で表現する。
+モデルは state の capability trait (`HasFrame`, `HasOrbit`, `HasAttitude`, `HasMass`) を generic bound で宣言し、bound を満たす全ての system で直接使える。
 旧設計 (ForceModel / TorqueModel / LoadModel の 3 本立て) では system 間でモデルを載せ替える際にアダプタが必要で、capability bound はこれを不要にする。
 
-- `F: Eci` パラメータは返り値 `ExternalLoads<F>` の慣性系を型で選択する。座標系の取り違えをコンパイルエラーにするための設計判断 (arika の typed frame と同じ方針)
-- **dispatch**: 「このモデルがこの system で使えるか」は capability bound によりコンパイル時に判定する。一方、異種モデルの collection (`Vec<Box<dyn Model<S, F>>>`) は動的 dispatch とする。ホットパスは ODE 内部ループ (axpy/scale) であり、モデル評価の vtable コストは無視できるため。性能が問題になれば静的 dispatch パスを後から追加できる
+- 慣性系は `HasFrame::Frame` として state に一度だけ宣言し、`HasOrbit` と `HasAttitude` が supertrait として共有する。「orbit は `Gcrs`、attitude は `SimpleEci`」という食い違った宣言は書けない。quaternion の成分は基準 frame に依存し、`SimpleEci` と `Gcrs` は 2024 epoch で 484 秒角ずれるため、この一致は数値の意味そのものを守る
+- `eval` の返り値は `ExternalLoads<S::Frame>`。loads の frame は state の frame から来るので、model 側に独立した frame パラメータは無く、「state を読んだ frame と loads を返す frame が異なる」という組み合わせは型として書けない
+- **dispatch**: 「このモデルがこの system で使えるか」は capability bound によりコンパイル時に判定する。一方、異種モデルの collection (`Vec<Box<dyn Model<S>>>`) は動的 dispatch とする。ホットパスは ODE 内部ループ (axpy/scale) であり、モデル評価の vtable コストは無視できるため。性能が問題になれば静的 dispatch パスを後から追加できる
 
 ### 状態と system の 3 軸
 
@@ -62,13 +63,27 @@ arika と tobari の詳細設計はそれぞれの [`arika/DESIGN.md`](arika/DES
 可変 N (衛星分離、コンステレーション) は `GroupState<S: OdeState>` の `Vec<S>` で対応し、各衛星の内部演算は固定次元のまま保つ。
 ランタイムの構成選択は enum で分岐し、内部は monomorphic に保つ。
 
+### 積分と projection の契約
+
+`OdeState::project` (四元数正規化、境界 clamp 等) は、各積分器が「採用したステップの結果を publish する直前」に一度だけ呼ぶ (reject した候補や中間 stage には呼ばない)。
+callback と event_check は projection 後の状態を受け取る。
+戻り値 `Projection::{Unchanged, Changed}` は実際に状態を書き換えたかを表し、FSAL (First Same As Last) を持つ適応解法がキャッシュした終端微分を再利用できるかの判定に使う。
+複合 state は子の結果の OR を返す。
+
+accept/reject の判定は projection 前の生の候補で行う。
+誤差ベクトルは生の候補に対応する量であり、projection 後の状態と混ぜると数値的に非一貫になる。
+
+Yoshida (高次シンプレクティック) は汎用 projection を適用しない。
+一般の正規化や clamp はシンプレクティック写像ではなく、substep 間に挟むと合成の構造が壊れるため、projection を持たない Verlet kernel を合成する。
+Störmer-Verlet 単体は契約を揃えるため full step の末尾で呼ぶ。
+
 ### 制御の 3 層
 
 Basilisk や Orekit と同様の 3 層分離を採用する。
 
 | 層 | 状態 | 用途 |
 |---|---|---|
-| ContinuousModel (`Model<S, F>`) | なし (純関数) | drag, SRP, gravity gradient, memoryless 制御則 |
+| ContinuousModel (`Model<S>`) | なし (純関数) | drag, SRP, gravity gradient, memoryless 制御則 |
 | StateEffector | ODE 状態の一部 | RW 角運動量、ジンバル角 (力学バックリアクション) |
 | DiscreteController | 内部状態 (`&mut self`) | PID, B-dot (有限差分), フィルタ, モード遷移 |
 
@@ -190,7 +205,7 @@ orts をその harness に組み込むための named byte stream の口が stre
 
 - **四元数規約**: Hamilton 規約、スカラー先頭 `(w, x, y, z)`。右手系
 - **単位系**: km, km/s, kg (軌道力学の慣例)。SI (m) への変換は明示的に行う
-- **座標系の型付け**: フィールド名と型で座標系を明示する。`ExternalLoads<F>` の acceleration は慣性系 [km/s²]、torque は機体座標系 [N·m]。座標変換はモデル実装の内部で行う
+- **座標系の型付け**: フィールド名と型で座標系を明示する。`ExternalLoads<S::Frame>` の acceleration は慣性系 [km/s²]、torque は機体座標系 [N·m]。座標変換はモデル実装の内部で行う
 - **ExternalLoads の不変条件**: acceleration / torque / mass_rate は加算的に合成する。全モデルは同一の immutable state snapshot に対して評価され、評価順序に依存しない
 - **Model の純関数性**: `eval(&self, ...)` は副作用を持たない。内部状態が必要な計算は、力学バックリアクションを持つ連続状態なら StateEffector に、フィルタやモード遷移などの離散状態なら DiscreteController に置く
 - **trait object ポリシー**: モデルや環境 trait (`GravityField`, `AtmosphereModel` 等) は `Box<dyn Trait>` で実行時差し替え可能とする。性能クリティカルなパスでは generic パラメータの monomorphization を使う
