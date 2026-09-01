@@ -148,6 +148,37 @@ async fn dispatch_command<T>(
     }
 }
 
+/// How many characters of a parse error go back to the client.
+///
+/// 200 leaves room for the whole of every error this server produces from a
+/// message of its own shape.
+const ERROR_DETAIL_LIMIT: usize = 200;
+
+/// A parse error, cut to something bounded.
+///
+/// Serde names the field it could not read, and over `/ws` that name is the
+/// client's own text. Measured: a 100 KB unknown key inside an orbit block
+/// yields a 100 KB error, which would then be serialized and sent back — the
+/// inbound limit turned into an outbound allocation. The head of the message
+/// says which field and what was expected, which is the part anyone reads.
+///
+/// The position is appended when serde has one. On this path it does not: the
+/// error comes from replaying a buffered `type`-tagged block, so `line` and
+/// `column` are both 0 (measured), and a top-level syntax error carries its
+/// position in the text already, well inside the limit.
+fn client_error_detail(e: &serde_json::Error) -> String {
+    let text = e.to_string();
+    let Some((cut, _)) = text.char_indices().nth(ERROR_DETAIL_LIMIT) else {
+        return text;
+    };
+    let mut out = text[..cut].to_string();
+    out.push('…');
+    if e.line() != 0 {
+        out.push_str(&format!(" (line {}, column {})", e.line(), e.column()));
+    }
+    out
+}
+
 async fn main_loop(
     ws_sender: &mut WsSender,
     ws_receiver: &mut WsReceiver,
@@ -219,7 +250,10 @@ async fn main_loop(
                         // left the client waiting on a reply that never came.
                         if let Err(e) = &parsed {
                             let json = serde_json::to_string(&WsMessage::Error {
-                                message: format!("could not read the message: {e}"),
+                                message: format!(
+                                    "could not read the message: {}",
+                                    client_error_detail(e)
+                                ),
                             })
                             .expect("failed to serialize error");
                             if ws_sender.send(Message::Text(json.into())).await.is_err() {
@@ -287,5 +321,55 @@ async fn main_loop(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The error a client gets back is bounded, however long its key was.
+    ///
+    /// Serde puts the field name in the message, and over `/ws` that name is
+    /// whatever the client sent. Measured before this was cut: a 100 KB unknown
+    /// key inside an orbit block produced a 100 KB error, which the server then
+    /// serialized and sent back.
+    #[test]
+    fn a_client_error_is_bounded_however_long_the_key() {
+        let key = "z".repeat(100_000);
+        let msg = format!(
+            "{{\"type\":\"start_simulation\",\"config\":{{\"satellites\":[{{\"id\":\"a\",\
+             \"orbit\":{{\"type\":\"circular\",\"altitude\":400,\"{key}\":1}}}}]}}}}"
+        );
+        let e = serde_json::from_str::<ClientMessage>(&msg)
+            .err()
+            .expect("an unknown key in a `type`-tagged block is refused");
+        assert!(
+            e.to_string().len() > 100_000,
+            "the raw error carries the whole key, which is what needs cutting"
+        );
+
+        let detail = client_error_detail(&e);
+        assert!(
+            detail.chars().count() <= ERROR_DETAIL_LIMIT + 40,
+            "bounded: {} chars",
+            detail.chars().count()
+        );
+        assert!(
+            detail.starts_with("unknown field"),
+            "the head still says what went wrong: {detail:.60}"
+        );
+        assert!(detail.ends_with('…'), "and says it was cut: {detail:.60}");
+    }
+
+    /// An error short enough to fit comes through whole, position and all.
+    #[test]
+    fn a_short_client_error_keeps_its_position() {
+        let e = serde_json::from_str::<ClientMessage>("{\"type\":\"query_range\",")
+            .err()
+            .expect("truncated JSON is refused");
+        let detail = client_error_detail(&e);
+        assert_eq!(detail, e.to_string());
+        assert!(detail.contains("line 1"), "serde's position: {detail}");
     }
 }
