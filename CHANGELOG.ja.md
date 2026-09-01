@@ -133,10 +133,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   cannonball SRP はどちらも、中心天体に関わらず地心 Sun ベクトルと Earth 半径を
   使っていた。2026 年の Mars では Sun が Mars から見た方向と最大 176° ずれ、SRP は
   ベクトルとして 242〜311% 誤り（逆向きに働く）、潮汐項は最大 3.8 倍になっていた。
-  `ThirdBodyGravity::sun_from_body` と `SolarRadiationPressure::for_body` が
-  `KnownBody` を取り、`default_third_bodies` と 2 つの `build_*` builder が
-  `Result` を返す。Sun ephemeris を持たない中心天体は、Sun を誤った位置に置いたまま
-  伝播せず報告される。([#372](https://github.com/sksat/orts/pull/372))
+  `ThirdBodyGravity::sun_from_body`、`SolarRadiationPressure::for_body`、
+  `PanelSrp::for_body` が `KnownBody` を取り、`default_third_bodies` と 2 つの
+  `build_*` builder が `Result` を返す。Sun ephemeris を持たない中心天体は、Sun を
+  誤った位置に置いたまま伝播せず報告される。panel SRP も対象で、panel と Sun 方向の
+  角度が力とトルクの両方を決めるため、どちらも向きが変わる。([#372](https://github.com/sksat/orts/pull/372))
 - sun sensor の Sun 方向も中心天体から取るようになった (`SunSensor::for_body`)。
   地心ベクトルを読んでいたため、Mars では力モデルが正しくても姿勢制御の入力だけが
   最大 176° ずれていた。([#372](https://github.com/sksat/orts/pull/372))

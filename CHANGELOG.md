@@ -154,10 +154,12 @@ section is subdivided by package.
   Earth's radius whatever the central body, so from Mars in 2026 the Sun sat up
   to 176° away from where Mars sees it — SRP pushed the wrong way, 242–311% off
   as a vector — and the tidal term was scaled by up to 3.8x. `ThirdBodyGravity::
-  sun_from_body` and `SolarRadiationPressure::for_body` take a `KnownBody`;
-  `default_third_bodies` and the two `build_*` builders return `Result`, so a
-  central body with no Sun ephemeris is reported instead of propagated with the
-  Sun in the wrong place. ([#372](https://github.com/sksat/orts/pull/372))
+  sun_from_body`, `SolarRadiationPressure::for_body` and `PanelSrp::for_body`
+  take a `KnownBody`; `default_third_bodies` and the two `build_*` builders
+  return `Result`, so a central body with no Sun ephemeris is reported instead
+  of propagated with the Sun in the wrong place. Panel SRP is included: it turns
+  both the force and the torque, since the panel's angle to the Sun line decides
+  each. ([#372](https://github.com/sksat/orts/pull/372))
 - The sun sensor's Sun direction comes from the central body too
   (`SunSensor::for_body`). It read the geocentric vector, so on Mars the force
   models were right while the attitude-control input was up to 176° off.

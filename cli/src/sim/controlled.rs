@@ -7,16 +7,15 @@
 use std::sync::Arc;
 
 use arika::epoch::Epoch;
-use orts::attitude::CoupledGravityGradient;
 use orts::effector::AugmentedState;
 use orts::orbital::gravity::GravityField;
 use orts::plugin::{
     ActuatorBundle, ActuatorTelemetry, MtqCommand, PluginController, RwTelemetry, TickInput,
 };
 use orts::sensor::{Gyroscope, Magnetometer, SensorBundle, StarTracker};
-use orts::setup::{build_spacecraft_dynamics, default_third_bodies};
+use orts::setup::default_third_bodies;
 
-use crate::sim::core::sat_params;
+use crate::sim::core::spacecraft_dynamics_for;
 use nalgebra::Vector3;
 use orts::spacecraft::{
     MtqAssembly, ReactionWheelAssembly, SpacecraftDynamics, SpacecraftState, ThrusterAssembly,
@@ -183,22 +182,11 @@ pub fn build_controlled_satellite(
         .as_ref()
         .ok_or("controlled satellite requires controller config")?;
 
-    let inertia = att.inertia_matrix();
     let third_bodies = default_third_bodies(&params.body)
         .map_err(|e| format!("central body {}: {e}", params.body.properties().name))?;
 
     // Dynamics を構築。
-    let mut dynamics = build_spacecraft_dynamics(
-        &params.body,
-        params.mu,
-        params.epoch,
-        &sat_params(spec),
-        &third_bodies,
-        inertia,
-        params.build_atmosphere_model(),
-    )
-    .map_err(|e| format!("solar force models: {e}"))?;
-    dynamics = dynamics.with_model(CoupledGravityGradient::new(params.mu, inertia));
+    let mut dynamics = spacecraft_dynamics_for(spec, att, params, &third_bodies)?;
 
     // RW を追加。
     let has_rw = spec.rw_config.is_some();

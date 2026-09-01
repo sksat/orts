@@ -6,12 +6,33 @@ use arika::body::KnownBody;
 use arika::epoch::Epoch;
 use arika::sun::SunPositionError;
 
+use crate::attitude::CoupledGravityGradient;
 use crate::orbital::OrbitalSystem;
 use crate::perturbations::{
     AtmosphericDrag, SolarRadiationPressure, ThirdBodyGravity, ZonalGravity,
 };
+use crate::spacecraft::{PanelDrag, PanelSrp, SpacecraftShape};
 
-/// Physical parameters of a satellite relevant to force model construction.
+/// Which environmental disturbance torques to model.
+///
+/// These only reach the attitude equations, so they are ignored when building
+/// an orbit-only system: there is no orientation for a torque to act on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DisturbanceTorques {
+    /// Gravity-gradient torque from the central body's field.
+    pub gravity_gradient: bool,
+}
+
+impl Default for DisturbanceTorques {
+    /// Gravity gradient on, which is what attitude propagation has always used.
+    fn default() -> Self {
+        Self {
+            gravity_gradient: true,
+        }
+    }
+}
+
+/// Physical parameters of a satellite relevant to model construction.
 pub struct SatelliteParams {
     /// Whether drag should be enabled (e.g., TLE has non-zero B* or explicit ballistic coeff).
     pub has_drag: bool,
@@ -21,6 +42,15 @@ pub struct SatelliteParams {
     pub srp_area_to_mass: Option<f64>,
     /// SRP radiation pressure coefficient.
     pub srp_cr: Option<f64>,
+    /// Which environmental disturbance torques to model.
+    pub disturbances: DisturbanceTorques,
+    /// Flat-panel outer surface, when the satellite has one.
+    ///
+    /// Present means both SRP and drag come from the panels: the outer shape is
+    /// one object, so modelling one force from panels and the other from an
+    /// isotropic cross-section would describe two different spacecraft. Only
+    /// reaches [`build_spacecraft_dynamics`] — panel forces need an attitude.
+    pub shape: Option<SpacecraftShape>,
 }
 
 /// Central (point-mass) gravity field. Oblateness is added separately as a
@@ -141,8 +171,14 @@ pub fn build_orbital_system(
 /// the explicitly listed third-body gravity perturbations.
 /// Use [`default_third_bodies`] to get the standard set for a given central body.
 ///
-/// This mirrors [`build_orbital_system`] but produces a coupled orbit-attitude system.
-/// Force-only models (drag, SRP, third-body) are added via capability-based `Model<S>`.
+/// This mirrors [`build_orbital_system`] but produces a coupled orbit-attitude
+/// system, so it is where the disturbance torques belong: an orbit-only system
+/// has no orientation for one to act on. Forces and torques go in through the
+/// same capability-based `Model<S>`, and callers do not register environmental
+/// models themselves — duplicating that across the `run` and `serve` entry
+/// points is how the two came to disagree about which models a config gets.
+/// Actuators (RW, MTQ, thrusters) stay with the caller, since which ones a
+/// spacecraft carries comes from its own hardware description.
 pub fn build_spacecraft_dynamics(
     body: &KnownBody,
     mu: f64,
@@ -153,6 +189,17 @@ pub fn build_spacecraft_dynamics(
     atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
 ) -> Result<SpacecraftDynamics<Box<dyn GravityField>>, SunPositionError> {
     let props = body.properties();
+    // Panels and the isotropic parameters describe the same two forces, so
+    // taking both would mean dropping one without saying so. The CLI rejects
+    // the combination in config; a library caller reaches here directly.
+    if sat.shape.is_some() {
+        assert!(
+            sat.ballistic_coeff.is_none() && sat.srp_area_to_mass.is_none() && sat.srp_cr.is_none(),
+            "a panelled shape and the isotropic drag/SRP parameters \
+             (ballistic_coeff, srp_area_to_mass, srp_cr) describe the same forces: keep one"
+        );
+    }
+
     let mut system =
         SpacecraftDynamics::new(mu, build_gravity_field(), inertia).with_body_radius(props.radius);
 
@@ -170,26 +217,64 @@ pub fn build_spacecraft_dynamics(
         }
     }
 
-    // Atmospheric drag (Earth only)
-    if *body == KnownBody::Earth && sat.has_drag {
-        let drag = match atmosphere {
-            Some(model) => AtmosphericDrag::for_earth(sat.ballistic_coeff).with_atmosphere(model),
-            None => AtmosphericDrag::for_earth(sat.ballistic_coeff),
-        };
-        system = system.with_model(drag);
+    // Drag (Earth only). One decision, not two independent `if`s: `atmosphere`
+    // is a by-value box, so only one of the two models can be handed it.
+    if *body == KnownBody::Earth {
+        match (&sat.shape, sat.has_drag) {
+            (Some(shape), _) => {
+                // Panels carry their own areas and drag coefficients, so
+                // writing them is the opt-in; there is no ballistic
+                // coefficient to gate on. `has_drag` is ignored rather than
+                // asserted on, because it is also set by a TLE's B*, and the
+                // panels then describe the same drag more precisely.
+                let drag = PanelDrag::for_earth(shape.clone());
+                let drag = match atmosphere {
+                    Some(model) => drag.with_atmosphere(model),
+                    None => drag,
+                };
+                system = system.with_model(drag);
+            }
+            (None, true) => {
+                let drag = match atmosphere {
+                    Some(model) => {
+                        AtmosphericDrag::for_earth(sat.ballistic_coeff).with_atmosphere(model)
+                    }
+                    None => AtmosphericDrag::for_earth(sat.ballistic_coeff),
+                };
+                system = system.with_model(drag);
+            }
+            (None, false) => {}
+        }
     }
 
     // Solar Radiation Pressure (requires epoch for Sun position)
-    if epoch.is_some()
-        && let Some(am) = sat.srp_area_to_mass
-    {
-        // Both body-dependent quantities come from the central body: the Sun's
-        // position relative to it, and its own radius for the shadow.
-        let mut srp = SolarRadiationPressure::for_body(*body, Some(am))?;
-        if let Some(cr) = sat.srp_cr {
-            srp = srp.with_cr(cr);
+    if epoch.is_some() {
+        match (&sat.shape, sat.srp_area_to_mass) {
+            (Some(shape), _) => {
+                // Both body-dependent quantities come from the central body,
+                // the same two the cannonball arm below takes: the Sun's
+                // position relative to it, and its own radius for the shadow.
+                system = system.with_model(PanelSrp::for_body(*body, shape.clone())?);
+            }
+            (None, Some(am)) => {
+                // Both body-dependent quantities come from the central body: the
+                // Sun's position relative to it, and its own radius for the
+                // shadow.
+                let mut srp = SolarRadiationPressure::for_body(*body, Some(am))?;
+                if let Some(cr) = sat.srp_cr {
+                    srp = srp.with_cr(cr);
+                }
+                system = system.with_model(srp);
+            }
+            (None, None) => {}
         }
-        system = system.with_model(srp);
+    }
+
+    // Disturbance torques. Loads compose additively and every model is
+    // evaluated against the same state snapshot, so this order carries no
+    // meaning.
+    if sat.disturbances.gravity_gradient {
+        system = system.with_model(CoupledGravityGradient::new(mu, inertia));
     }
 
     Ok(system)
@@ -207,10 +292,302 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None)
             .expect("no solar models without third bodies");
         assert_eq!(system.body_radius, Some(body.properties().radius));
+    }
+
+    fn earth_sat(disturbances: DisturbanceTorques) -> SatelliteParams {
+        SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
+            disturbances,
+            shape: None,
+        }
+    }
+
+    fn earth_dynamics(
+        disturbances: DisturbanceTorques,
+    ) -> SpacecraftDynamics<Box<dyn GravityField>> {
+        let body = KnownBody::Earth;
+        build_spacecraft_dynamics(
+            &body,
+            body.properties().mu,
+            None,
+            &earth_sat(disturbances),
+            &[],
+            Matrix3::identity(),
+            None,
+        )
+        .expect("Earth has a Sun ephemeris")
+    }
+
+    /// One panel whose normal is `normal`, so a caller can point it at the Sun.
+    fn sunward_panel_shape(normal: nalgebra::Vector3<f64>) -> SpacecraftShape {
+        use crate::spacecraft::{PanelOptics, SurfacePanel};
+        SpacecraftShape::panels(vec![
+            SurfacePanel::at_com(4.0, normal, 2.2, PanelOptics::new(0.2, 0.1))
+                .with_cp_offset(nalgebra::Vector3::new(0.0, 1.0, 0.0)),
+        ])
+    }
+
+    fn one_panel_shape() -> SpacecraftShape {
+        use crate::spacecraft::{PanelOptics, SurfacePanel};
+        SpacecraftShape::panels(vec![
+            SurfacePanel::at_com(
+                4.0,
+                nalgebra::Vector3::new(1.0, 0.0, 0.0),
+                2.2,
+                PanelOptics::new(0.2, 0.1),
+            )
+            .with_cp_offset(nalgebra::Vector3::new(0.0, 1.0, 0.0)),
+        ])
+    }
+
+    fn earth_dynamics_with(
+        shape: Option<SpacecraftShape>,
+        has_drag: bool,
+        srp_area_to_mass: Option<f64>,
+    ) -> SpacecraftDynamics<Box<dyn GravityField>> {
+        let body = KnownBody::Earth;
+        let sat = SatelliteParams {
+            has_drag,
+            ballistic_coeff: has_drag.then_some(0.01),
+            srp_area_to_mass,
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape,
+        };
+        build_spacecraft_dynamics(
+            &body,
+            body.properties().mu,
+            Some(Epoch::from_iso8601("2024-03-20T12:00:00Z").unwrap()),
+            &sat,
+            &[],
+            Matrix3::identity(),
+            None,
+        )
+        .expect("Earth has a Sun ephemeris")
+    }
+
+    /// The shadow is cast by whatever the spacecraft orbits, so a Mars
+    /// simulation must not eclipse against Earth's radius.
+    ///
+    /// The panel sits anti-sunward at a perpendicular offset of 5000 km from
+    /// the body-Sun axis: Mars' disc (3396.2 km) does not reach that far, so
+    /// the panel is lit, while Earth's (6378.137 km) does, so the same panel
+    /// would be dark. Which radius the model was handed decides the answer.
+    ///
+    /// The position is built from each body's own Sun direction, because the
+    /// model now takes that from the body too — placing the satellite behind
+    /// Mars with the geocentric direction would put it somewhere else entirely
+    /// and the radii would not be what the answer turned on.
+    #[test]
+    fn panel_srp_shadows_against_the_central_body() {
+        use crate::attitude::AttitudeState;
+        use crate::orbital::OrbitalState;
+        use crate::spacecraft::SpacecraftState;
+
+        let epoch = Epoch::from_iso8601("2024-03-20T12:00:00Z").unwrap();
+
+        let srp_magnitude = |body: KnownBody| {
+            let sun_dir = arika::sun::sun_position_from_body(body, &epoch.to_tdb())
+                .expect("this body has a Sun ephemeris")
+                .into_inner()
+                .normalize();
+            // Any direction across the body-Sun axis serves as the offset.
+            let across = sun_dir
+                .cross(&nalgebra::Vector3::new(0.0, 0.0, 1.0))
+                .normalize();
+            let position = -sun_dir * 20_000.0 + across * 5_000.0;
+            // The panel faces the Sun, so only the shadow decides whether there
+            // is a force. A fixed normal would answer for the angle instead: the
+            // two Sun directions are far apart, and a panel edge-on or facing
+            // away from one of them reads as dark without any eclipse.
+            let sat = SatelliteParams {
+                has_drag: false,
+                ballistic_coeff: None,
+                srp_area_to_mass: None,
+                srp_cr: None,
+                disturbances: DisturbanceTorques::default(),
+                shape: Some(sunward_panel_shape(sun_dir)),
+            };
+            let system = build_spacecraft_dynamics(
+                &body,
+                body.properties().mu,
+                Some(epoch),
+                &sat,
+                &[],
+                Matrix3::identity(),
+                None,
+            )
+            .expect("this body has a Sun ephemeris");
+            let state = SpacecraftState {
+                orbit: OrbitalState::new(position, nalgebra::Vector3::new(0.0, 3.0, 0.0)),
+                attitude: AttitudeState::identity(),
+                mass: 100.0,
+            };
+            system
+                .model_breakdown(0.0, &state)
+                .into_iter()
+                .find(|(name, _)| *name == "panel_srp")
+                .map(|(_, loads)| loads.acceleration_inertial.magnitude())
+                .expect("panel_srp should be installed")
+        };
+
+        let mars_radius = KnownBody::Mars.properties().radius;
+        let earth_radius = KnownBody::Earth.properties().radius;
+        assert!(
+            mars_radius < 5_000.0 && earth_radius > 5_000.0,
+            "the offset has to sit between the two radii: mars {mars_radius}, earth {earth_radius}"
+        );
+
+        assert!(
+            srp_magnitude(KnownBody::Mars) > 0.0,
+            "Mars' disc does not reach 5000 km, so the panel is lit"
+        );
+        assert_eq!(
+            srp_magnitude(KnownBody::Earth),
+            0.0,
+            "Earth's disc does reach it, so the same panel is dark"
+        );
+    }
+
+    /// A caller who sets both is told, instead of having one silently dropped.
+    ///
+    /// The CLI rejects the combination while reading config, so this guards the
+    /// library path: `build_spacecraft_dynamics` is public.
+    #[test]
+    #[should_panic(expected = "describe the same forces")]
+    fn panels_alongside_an_isotropic_parameter_panics() {
+        earth_dynamics_with(Some(one_panel_shape()), false, Some(0.02));
+    }
+
+    /// `has_drag` is not part of that guard. A TLE with a non-zero B* sets it,
+    /// so a panelled satellite propagated from an element set arrives here with
+    /// it on and no `ballistic_coeff` — the panels then describe the drag.
+    #[test]
+    fn panels_with_bstar_drag_still_install_the_panel_model() {
+        let body = KnownBody::Earth;
+        let sat = SatelliteParams {
+            has_drag: true,
+            ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: Some(one_panel_shape()),
+        };
+        let system = build_spacecraft_dynamics(
+            &body,
+            body.properties().mu,
+            Some(Epoch::from_iso8601("2024-03-20T12:00:00Z").unwrap()),
+            &sat,
+            &[],
+            Matrix3::identity(),
+            None,
+        )
+        .expect("this body has a Sun ephemeris");
+        let names = system.model_names();
+        assert!(names.contains(&"panel_drag"), "models: {names:?}");
+        assert!(!names.contains(&"drag"), "models: {names:?}");
+    }
+
+    /// Panels drive both forces, and the isotropic models step aside.
+    #[test]
+    fn panels_install_the_panel_force_models() {
+        let system = earth_dynamics_with(Some(one_panel_shape()), false, None);
+        let names = system.model_names();
+        assert!(names.contains(&"panel_drag"), "models: {names:?}");
+        assert!(names.contains(&"panel_srp"), "models: {names:?}");
+        assert!(!names.contains(&"drag"), "models: {names:?}");
+        assert!(!names.contains(&"srp"), "models: {names:?}");
+    }
+
+    /// Without panels the isotropic path is untouched.
+    #[test]
+    fn without_panels_the_isotropic_models_stay() {
+        let system = earth_dynamics_with(None, true, Some(0.02));
+        let names = system.model_names();
+        assert!(names.contains(&"drag"), "models: {names:?}");
+        assert!(names.contains(&"srp"), "models: {names:?}");
+        assert!(!names.contains(&"panel_drag"), "models: {names:?}");
+        assert!(!names.contains(&"panel_srp"), "models: {names:?}");
+    }
+
+    /// Panel forces need an attitude, so an orbit-only system gets none even
+    /// when a shape is supplied.
+    #[test]
+    fn orbital_system_never_installs_a_panel_model() {
+        let body = KnownBody::Earth;
+        let sat = SatelliteParams {
+            has_drag: false,
+            ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: Some(one_panel_shape()),
+        };
+        let system = build_orbital_system(
+            &body,
+            body.properties().mu,
+            Some(Epoch::from_iso8601("2024-03-20T12:00:00Z").unwrap()),
+            &sat,
+            &[],
+            None,
+        )
+        .expect("this body has a Sun ephemeris");
+        let names = system.model_names();
+        assert!(!names.contains(&"panel_drag"), "models: {names:?}");
+        assert!(!names.contains(&"panel_srp"), "models: {names:?}");
+    }
+
+    #[test]
+    fn spacecraft_dynamics_installs_gravity_gradient_by_default() {
+        let system = earth_dynamics(DisturbanceTorques::default());
+        assert!(system.model_names().contains(&"gravity_gradient"));
+    }
+
+    /// Exactly once, not merely present. A caller that added the torque itself
+    /// on top of the builder is how `orts run` came to evaluate it twice.
+    #[test]
+    fn spacecraft_dynamics_installs_gravity_gradient_exactly_once() {
+        let system = earth_dynamics(DisturbanceTorques::default());
+        let count = system
+            .model_names()
+            .iter()
+            .filter(|n| **n == "gravity_gradient")
+            .count();
+        assert_eq!(count, 1, "models: {:?}", system.model_names());
+    }
+
+    #[test]
+    fn spacecraft_dynamics_omits_a_disabled_gravity_gradient() {
+        let system = earth_dynamics(DisturbanceTorques {
+            gravity_gradient: false,
+        });
+        assert!(!system.model_names().contains(&"gravity_gradient"));
+    }
+
+    /// An orbit-only system has no orientation, so a torque there would be
+    /// summed into a channel `OrbitalSystem` discards.
+    #[test]
+    fn orbital_system_never_installs_a_torque() {
+        let body = KnownBody::Earth;
+        let system = build_orbital_system(
+            &body,
+            body.properties().mu,
+            None,
+            &earth_sat(DisturbanceTorques::default()),
+            &[],
+            None,
+        )
+        .expect("this body has a Sun ephemeris");
+        assert!(!system.model_names().contains(&"gravity_gradient"));
     }
 
     #[test]
@@ -221,6 +598,8 @@ mod tests {
             ballistic_coeff: Some(0.01),
             srp_area_to_mass: None,
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None)
             .expect("no solar models without third bodies");
@@ -235,6 +614,8 @@ mod tests {
             ballistic_coeff: Some(0.01),
             srp_area_to_mass: None,
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let system = build_orbital_system(&body, body.properties().mu, None, &sat, &[], None)
             .expect("no solar models without third bodies");
@@ -250,6 +631,8 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let third_bodies = default_third_bodies(&body).expect("Earth is supported");
         let system = build_orbital_system(
@@ -275,6 +658,8 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: Some(0.02),
             srp_cr: Some(1.8),
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let third_bodies = default_third_bodies(&body).expect("Earth is supported");
         let system = build_orbital_system(
@@ -298,6 +683,8 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: None,
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         // Explicitly pass empty third bodies
         let system =
@@ -385,6 +772,8 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: Some(0.02),
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let body = KnownBody::Mars;
         let third_bodies = default_third_bodies(&body).expect("Mars is supported");
@@ -445,6 +834,8 @@ mod tests {
             ballistic_coeff: None,
             srp_area_to_mass: Some(0.02),
             srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: None,
         };
         let body = KnownBody::Uranus;
         assert!(default_third_bodies(&body).is_err());
