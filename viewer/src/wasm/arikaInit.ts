@@ -12,6 +12,7 @@ type SunDirectionFromBody = (body: string, epoch_jd: number, t: number) => Float
 type SunDistanceFromBody = (body: string, epoch_jd: number, t: number) => number;
 type JdToUtcString = (epoch_jd: number, t: number) => string;
 type BodyOrientation = (body: string, epoch_jd: number, t: number) => Float64Array;
+type OrbitDerivedBatch = (states: Float64Array, mu: number, body_radius: number) => Float64Array;
 
 let initialized = false;
 let initPromise: Promise<void> | undefined;
@@ -23,6 +24,7 @@ let wasmSunDirFromBody: SunDirectionFromBody | undefined;
 let wasmSunDistFromBody: SunDistanceFromBody | undefined;
 let wasmJdToUtc: JdToUtcString | undefined;
 let wasmBodyOrientation: BodyOrientation | undefined;
+let wasmOrbitDerived: OrbitDerivedBatch | undefined;
 
 /** Options for {@link initArika}. */
 export interface InitArikaOptions {
@@ -57,6 +59,7 @@ export function initArika(options?: InitArikaOptions): Promise<void> {
     wasmSunDistFromBody = mod.sun_distance_from_body;
     wasmJdToUtc = mod.jd_to_utc_string;
     wasmBodyOrientation = mod.body_orientation;
+    wasmOrbitDerived = mod.orbit_derived_batch;
     initialized = true;
   });
   initPromise = p;
@@ -75,6 +78,22 @@ export function eci_to_ecef_batch(
   epoch_jd: number,
 ): Float32Array {
   return wasmBatch!(positions, times, epoch_jd);
+}
+
+/**
+ * Keplerian elements and chart scalars for a batch of state vectors, via WASM.
+ *
+ * `states` is `[x,y,z,vx,vy,vz, ...]`; the result is 10 values per state,
+ * `[a, e, inc, raan, omega, nu, altitude, specific_energy, angular_momentum,
+ * velocity]`, with angles in radians. A state with no orbital plane comes back
+ * as ten `NaN`s.
+ */
+export function orbit_derived_batch(
+  states: Float64Array,
+  mu: number,
+  body_radius: number,
+): Float64Array {
+  return wasmOrbitDerived!(states, mu, body_radius);
 }
 
 /** Single-point ECI→ECEF transform via WASM. Returns [ex, ey, ez]. */

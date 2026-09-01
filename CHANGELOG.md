@@ -232,6 +232,13 @@ section is subdivided by package.
 ### `arika` (Rust, crates.io)
 
 #### Added
+- `arika_wasm::orbit_derived_batch` returns Keplerian elements and the scalar
+  orbit quantities for a batch of state vectors, so a browser reading a `.rrd`
+  computes them with the same `KeplerianElements::from_state_vector` the CLI
+  writes into CSV. A state with no orbital plane (`r = 0`, or `r × v = 0`, which
+  includes `v = 0`) comes back as `NaN`s rather than zeros, since zero is a real
+  reading for a circular equatorial orbit's angles.
+  ([#376](https://github.com/sksat/orts/pull/376))
 - Element-set parsing ([#87](https://github.com/sksat/orts/pull/87)). A shared
   no-alloc `elements::Sgp4Elements` — a *validated* mean-element set (catalog
   number, UTC epoch, six SGP4 mean elements, B\* drag; angles in radians, mean
@@ -497,6 +504,18 @@ section is subdivided by package.
   replacing the hand-written wire types and adding the `satellite_added` variant. ([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- Opening a `.rrd` file derives the orbital values the recording does not carry.
+  The decoder recovers position and velocity, and the Keplerian elements plus
+  the altitude, specific energy and angular momentum the charts plot arrived as
+  hardcoded zeros — so a recording of a 400 km orbit charted a semi-major axis
+  of 0 km and an altitude of 0 km. The chart row reads those fields straight off
+  the point rather than recomputing from the state vector, so the DuckDB derived
+  columns did not cover for them. Opening a second recording resets the central
+  body the values are derived against, so the new recording's constants apply
+  however the decoder's messages happen to be ordered. A negative body radius
+  falls back to Earth as an absent one does: altitude is `r - bodyRadius`, so it
+  would chart as a height above the orbit rather than above the surface.
+  ([#376](https://github.com/sksat/orts/pull/376))
 - Multi-satellite charts follow a changed schema: the hook told the chart Worker
   its schema only at startup, so after a central-body change the rows were built
   under the new schema while the Worker read them under the old one, leaving the

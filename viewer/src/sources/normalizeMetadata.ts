@@ -7,13 +7,8 @@
 
 import type { CSVMetadata } from "../orbit.js";
 import type { RrdMetadata } from "../wasm/rrdWasmInit.js";
+import { resolveCentralBody } from "./centralBody.js";
 import type { SimInfo } from "./types.js";
-
-/** WGS84 Earth gravitational parameter [km³/s²]. */
-const DEFAULT_MU = 398600.4418;
-
-/** WGS84 Earth equatorial radius [km]. */
-const DEFAULT_RADIUS = 6378.137;
 
 /**
  * Build a SimInfo from CSV metadata.
@@ -44,13 +39,19 @@ export function csvMetadataToSimInfo(metadata: CSVMetadata, fileName: string, dt
           },
         ];
 
+  // Resolved once and read twice, rather than resolved per field. Each field
+  // falls back on its own, so a valid `mu` can sit beside Earth's radius, and
+  // `central_body` is the name the source gave and passes through: it can read
+  // "mars" over Earth's constants.
+  const centralBody = resolveCentralBody(metadata.mu, metadata.centralBodyRadius);
+
   return {
-    mu: metadata.mu ?? DEFAULT_MU,
+    mu: centralBody.mu,
     dt,
     output_interval: dt,
     stream_interval: dt,
     central_body: metadata.centralBody ?? "earth",
-    central_body_radius: metadata.centralBodyRadius ?? DEFAULT_RADIUS,
+    central_body_radius: centralBody.bodyRadius,
     epoch_jd: metadata.epochJd,
     satellites,
   };
@@ -96,13 +97,19 @@ export function rrdMetadataToSimInfo(
     });
   }
 
+  // Resolved once and read twice, rather than resolved per field. Each field
+  // falls back on its own, so a valid `mu` can sit beside Earth's radius, and
+  // `central_body` is the name the source gave and passes through: it can read
+  // "mars" over Earth's constants.
+  const centralBody = resolveCentralBody(metadata.mu, metadata.body_radius);
+
   return {
-    mu: metadata.mu ?? DEFAULT_MU,
+    mu: centralBody.mu,
     dt,
     output_interval: dt,
     stream_interval: dt,
     central_body: metadata.body_name ?? "earth",
-    central_body_radius: metadata.body_radius ?? DEFAULT_RADIUS,
+    central_body_radius: centralBody.bodyRadius,
     epoch_jd: metadata.epoch_jd ?? null,
     satellites,
   };
