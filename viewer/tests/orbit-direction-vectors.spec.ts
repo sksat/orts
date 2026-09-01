@@ -52,25 +52,41 @@ function spawnServer(configFile: string): Promise<{ child: ChildProcess; port: n
   });
   return new Promise((resolve, reject) => {
     const rl = createInterface({ input: child.stderr ?? process.stdin });
+    const onError = (err: Error) => {
+      settle();
+      reject(err);
+    };
+    const onExit = (code: number | null) => {
+      settle();
+      reject(new Error(`orts exited with code ${code} before listening`));
+    };
     const timeout = setTimeout(() => {
-      rl.close();
+      settle();
+      // Nothing else will: `beforeAll` throws before it can record the child, so
+      // `afterAll` has nothing to kill and the server would outlive the run.
+      child.kill("SIGTERM");
       reject(new Error("Timed out waiting for orts server to start"));
     }, 30000);
+    /**
+     * Stop watching for the startup line. The readline interface stays attached
+     * on purpose: it is what drains the child's stderr, and a paused pipe fills
+     * up and blocks the server on its next log line.
+     */
+    function settle() {
+      clearTimeout(timeout);
+      rl.removeAllListeners("line");
+      child.off("error", onError);
+      child.off("exit", onExit);
+    }
     rl.on("line", (line) => {
       const match = line.match(/ws:\/\/localhost:(\d+)/);
       if (match) {
-        clearTimeout(timeout);
+        settle();
         resolve({ child, port: parseInt(match[1], 10) });
       }
     });
-    child.on("error", (err) => {
-      clearTimeout(timeout);
-      reject(err);
-    });
-    child.on("exit", (code) => {
-      clearTimeout(timeout);
-      reject(new Error(`orts exited with code ${code} before listening`));
-    });
+    child.on("error", onError);
+    child.on("exit", onExit);
   });
 }
 
