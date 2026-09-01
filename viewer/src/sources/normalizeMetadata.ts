@@ -10,10 +10,6 @@ import type { RrdMetadata } from "../wasm/rrdWasmInit.js";
 import { resolveCentralBody } from "./centralBody.js";
 import type { SimInfo } from "./types.js";
 
-/** WGS84 Earth gravitational parameter [km³/s²]. */
-
-/** WGS84 Earth equatorial radius [km]. */
-
 /**
  * Build a SimInfo from CSV metadata.
  *
