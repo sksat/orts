@@ -45,8 +45,11 @@ from orekit_jpype.pyhelpers import (  # noqa: E402
     setup_orekit_curdir,
 )
 
-# Resolve the default output before chdir'ing away from the repo.
+# Both of these must be captured before the chdir below. Orekit wants its data
+# directory as the working directory, so afterwards a relative path from the
+# command line would resolve inside that cache instead of where it was typed.
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+ORIG_CWD = pathlib.Path.cwd()
 DEFAULT_OUT = REPO_ROOT / "orts" / "tests" / "fixtures" / "orekit_panel_srp_reference.json"
 
 # Orekit needs its data directory; keep the download out of the repo tree.
@@ -160,8 +163,15 @@ def main() -> int:
         "cases": cases,
     }
 
-    out = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUT
-    out.parent.mkdir(parents=True, exist_ok=True)
+    if len(sys.argv) > 1:
+        out = pathlib.Path(sys.argv[1])
+        if not out.is_absolute():
+            out = ORIG_CWD / out
+    else:
+        out = DEFAULT_OUT
+    if not out.parent.is_dir():
+        print(f"no such directory: {out.parent}", file=sys.stderr)
+        return 1
     out.write_text(json.dumps(fixture, indent=2) + "\n")
     print(f"wrote {len(cases)} cases to {out}")
     return 0
