@@ -37,6 +37,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `build_orbital_system` はどちらも install しない (パネルの力は姿勢を要求する)。
   `SurfacePanel` に `with_cp_offset` を追加した。パネルの力を姿勢外乱にするのは
   この offset である。([#386](https://github.com/sksat/orts/pull/386))
+- `SurfacePanel::back_face` で薄板の反対面を作れるようにした。法線を反転し、面積 /
+  `cd` / 圧力中心は引き継ぎ、光学係数は引数で受ける (パドルの両面は性質が違う)。
+  パネルは片面で、両モデルとも太陽や流れと逆を向いた面を落とすので、板を 1 枚として
+  書くとその衛星が取る姿勢の半分で力がゼロになり、重心から外れた圧力中心が作る
+  トルクも出ない。閉じた形状の面には使わない (反対側は既に別のパネルである)。([#393](https://github.com/sksat/orts/pull/393))
 - 外乱トルクの登録を `orts::setup` に集約し、どれを解くかを `SatelliteParams` の
   `DisturbanceTorques` で選ぶようにした。`build_spacecraft_dynamics` がそれを見て
   gravity gradient トルクを install する。`build_orbital_system` は install しない
@@ -94,6 +99,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   あるとき `r × ŝ` と `r × n̂` は別方向を向くので、`Cr` をどう選んでも正しい答えには
   ならない。太陽電池パドル相当 (ρ_s ≈ 0.2, ρ_d ≈ 0.1) では 45° 入射で欠けていた項が
   力の ~30% を占める。model の導入時から存在し、0.2.0 も該当する。
+  図解: [光子の行き先](docs/src/assets/srp-flat-panel/photon-fates.svg)、
+  [2 成分の合成](docs/src/assets/srp-flat-panel/force-composition.svg)、
+  [トルクの向き](docs/src/assets/srp-flat-panel/torque-direction.svg)。
   ([#377](https://github.com/sksat/orts/pull/377))
 - `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
   ようになった。結果が有限な入力で overflow しなくなる: `q = [0, 1/√2, 1/√2, 0]`、
@@ -132,7 +140,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Added
 - `[[satellites.panels]]` で衛星に平板の外形を与えられるようにした
-  (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`)。パネルを書くと
+  (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `back`
+  ([#393](https://github.com/sksat/orts/pull/393)))。パネルは片面なので、薄板
+  (太陽電池パドル) の裏面を作るのが `back` である。面積 / `cd` / 圧力中心は同じ板
+  として共有し、反射率は裏面が独自に持つ。空の table (`back = {}`) なら表と同じに
+  なる。パネルを書くと
   SRP と大気抵抗が姿勢依存になり、圧力中心が重心から外れていればそれが姿勢外乱に
   なる。等方面の `srp_area_to_mass` / `ballistic_coeff` では表せない部分である。
   パネルは `attitude` を要求し、等方面のパラメータとの同時指定は reject する

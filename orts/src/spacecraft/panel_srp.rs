@@ -540,6 +540,62 @@ mod tests {
         }
     }
 
+    /// The back face is what covers the attitudes the front cannot.
+    ///
+    /// A thin plate written as one panel produces nothing whenever the Sun is
+    /// behind it, which is half of the attitudes a spinning spacecraft sees.
+    /// With both faces present, exactly one of them is lit at any oblique
+    /// incidence, and it is the one facing the Sun.
+    #[test]
+    fn a_thin_plate_needs_both_faces_to_cover_every_attitude() {
+        let cells = PanelOptics::new(0.1, 0.2);
+        let substrate = PanelOptics::new(0.05, 0.4);
+        let front = SurfacePanel::at_com(4.0, Vector3::new(1.0, 0.0, 0.0), 2.2, cells)
+            .with_cp_offset(Vector3::new(0.0, 1.5, 0.0));
+        let back = front.back_face(substrate);
+
+        // Oblique, not face-on: the claim is about every attitude, and the
+        // normal term the force law adds is the one that depends on cos θ.
+        let from_front = Vector3::new(0.6, 0.8, 0.0).normalize();
+        let from_back = -from_front;
+        assert!(
+            front.normal.dot(&from_front) < 0.99,
+            "the test direction has to be off the normal to exercise cos θ"
+        );
+
+        // One face lit, the other dark, whichever side the Sun is on.
+        assert!(panel_force(&front, &from_front, TEST_PRESSURE).magnitude() > 0.0);
+        assert_eq!(
+            panel_force(&back, &from_front, TEST_PRESSURE),
+            Vector3::zeros()
+        );
+        assert_eq!(
+            panel_force(&front, &from_back, TEST_PRESSURE),
+            Vector3::zeros()
+        );
+        assert!(panel_force(&back, &from_back, TEST_PRESSURE).magnitude() > 0.0);
+
+        // The two sides differ in more than sign: their optics differ, so the
+        // same illumination geometry gives different force magnitudes.
+        let f_front = panel_force(&front, &from_front, TEST_PRESSURE);
+        let f_back = panel_force(&back, &from_back, TEST_PRESSURE);
+        assert!(
+            (f_front.magnitude() - f_back.magnitude()).abs() > 1e-12,
+            "front {} vs back {}",
+            f_front.magnitude(),
+            f_back.magnitude()
+        );
+
+        // Both act through the same point, so the torque flips with the force.
+        let tau_front = front.cp_offset.cross(&f_front);
+        let tau_back = back.cp_offset.cross(&f_back);
+        assert!(
+            tau_front.dot(&tau_back) < 0.0,
+            "the two sides are pushed opposite ways, so their torques oppose: \
+             {tau_front:?} vs {tau_back:?}"
+        );
+    }
+
     #[test]
     fn panel_force_equivariance_under_body_rotation() {
         // Rotating the panel and the Sun direction together must rotate the
