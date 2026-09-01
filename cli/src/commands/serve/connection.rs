@@ -186,7 +186,8 @@ async fn main_loop(
                         // a typo there would otherwise be silent.
                         for key in crate::config::unread_client_message_keys(&text) {
                             eprintln!(
-                                "Warning: client message: nothing reads `{key}`; its value is ignored"
+                                "Warning: client message: nothing reads `{}`; its value is ignored",
+                                crate::config::printable_key(&key)
                             );
                         }
                         let parsed = serde_json::from_str::<ClientMessage>(&text);

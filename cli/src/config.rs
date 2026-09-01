@@ -885,11 +885,27 @@ pub fn load_config_reporting_unread_keys(path: &Path) -> Result<SimConfig, Strin
     let loaded = SimConfig::load_with_warnings(path)?;
     for key in &loaded.unread_keys {
         eprintln!(
-            "Warning: {}: nothing reads `{key}`; its value is ignored",
-            path.display()
+            "Warning: {}: nothing reads `{}`; its value is ignored",
+            path.display(),
+            printable_key(key)
         );
     }
     Ok(loaded.config)
+}
+
+/// A key as it can be written to a terminal.
+///
+/// A key name is arbitrary text. Over the WebSocket it is whatever a client
+/// sent, and a `\n` in one would put a second `Warning:` line in the log while a
+/// terminal escape would move the cursor or repaint what is already there.
+/// Measured: `{"a\nWarning: forged line": 1}` in a `start_simulation` config
+/// comes back as a key holding that newline.
+///
+/// `escape_debug` leaves an ordinary key alone — what it rewrites is the
+/// characters no key needs. The JSON form of `orts config validate` needs none
+/// of this; a JSON string encodes them itself.
+pub fn printable_key(key: &str) -> std::str::EscapeDebug<'_> {
+    key.escape_debug()
 }
 
 /// A loaded config and the keys in its file that nothing read.
@@ -4004,5 +4020,44 @@ orbit = { type = "circular", altitude = 600 }
             SimConfig::load_with_warnings(&path).expect_err("a second document must be refused");
         assert!(err.contains("YAML"), "msg: {err}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A key a client chose cannot forge a line or move the cursor.
+    ///
+    /// The names come from the client's own JSON, and the server writes them to
+    /// its log. Measured before this was escaped: a `start_simulation` carrying
+    /// `"a\nWarning: forged line"` gave back a key with that newline in it, and
+    /// the warning printed as two lines, the second looking like the server's.
+    #[test]
+    fn a_key_reaches_the_log_on_one_line() {
+        let msg = "{\"type\":\"start_simulation\",\"config\":{\
+                   \"dt\":1.0,\
+                   \"a\\nWarning: forged line\":1,\
+                   \"b\\u001b[31m\":2,\
+                   \"satellites\":[{\"id\":\"a\",\"orbit\":\
+                   {\"type\":\"circular\",\"altitude\":400}}]}}";
+        let keys = unread_client_message_keys(msg);
+        assert_eq!(keys.len(), 2, "both keys are collected: {keys:?}");
+        assert!(
+            keys.iter().any(|k| k.contains('\n')),
+            "the raw key holds the newline, so the escaping is what removes it: {keys:?}"
+        );
+
+        for key in &keys {
+            let line = format!("{}", printable_key(key));
+            assert!(
+                !line.contains('\n') && !line.contains('\r'),
+                "no line break survives: {line:?}"
+            );
+            assert!(
+                !line.contains('\u{1b}'),
+                "no escape character survives: {line:?}"
+            );
+        }
+        // An ordinary key is untouched, so the escaping costs nothing to read.
+        assert_eq!(
+            format!("{}", printable_key("satellites.0.altitide")),
+            "satellites.0.altitide"
+        );
     }
 }

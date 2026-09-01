@@ -170,8 +170,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - config ファイル、`orts config validate`、WebSocket の `start_simulation`
   payload は、シミュレーションが honor できない入力を別の何かに解決せず拒否する:
   未知の `[integrator] type` / `atmosphere` (従来は dp45 / exponential
-  モデル)、id が 1 つの recording entity を指す 2 機 (id の文字列でなく entity で比較するので、下流と同じく `a` と `/a` は衝突する)
-  (従来は recording entity・CSV section・`[[command]]` の宛先を共有)、
+  モデル)、id が 1 つの recording entity を指す 2 機 (id の文字列でなく entity で
+  比較するので、recording と同じく `a` と `/a` は衝突する。従来は recording
+  entity と CSV section を共有し、id 文字列まで同じなら `[[command]]` の宛先も
+  共有していた)、
   剛体が持てない attitude ブロック (正定値でない、または主慣性モーメントで
   `I1 + I2 >= I3` を破る慣性テンソル、`mass <= 0`、正規化できない
   `initial_quaternion`)。config が受理する `integrator` / `atmosphere` の綴りは、
