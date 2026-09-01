@@ -212,7 +212,10 @@ impl Plugin<TickInput, Command> for TransferBurnWithTcm {
                 // 1.7°、flight path angle 0.18° 残り）。時間はここでは
                 // watchdog（apogee を 1 周期検出できなかった場合の脱出）にだけ使う。
                 let radial_rate = r_vec.dot(&v_vec);
-                let was_ascending = self.prev_radial_rate.unwrap_or(radial_rate) > 0.0;
+                // `>= 0.0`: a previous rate of exactly zero is apogee reached, not
+                // apogee missed. Entering Coast already descending stays
+                // `prev < 0`, so the watchdog remains that case's way out.
+                let was_ascending = self.prev_radial_rate.unwrap_or(radial_rate) >= 0.0;
                 let watchdog_expired = self.coast_watchdog_t.is_some_and(|tw| input.t >= tw);
                 if (was_ascending && radial_rate <= 0.0) || watchdog_expired {
                     self.phase = Phase::SecondBurn;
