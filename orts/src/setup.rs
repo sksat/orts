@@ -221,6 +221,10 @@ pub fn build_spacecraft_dynamics(
     if epoch.is_some() {
         match (&sat.shape, sat.srp_area_to_mass) {
             (Some(shape), _) => {
+                // TODO: size the shadow to the central body once #385 lands.
+                // It replaces `for_earth` with a `build_srp` helper for the
+                // cannonball arm below; this arm should go through the same
+                // helper rather than growing a second copy of the fix.
                 system = system.with_model(PanelSrp::for_earth(shape.clone()));
             }
             (None, Some(am)) => {
