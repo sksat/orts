@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BODY_RADIUS, DEFAULT_MU } from "./centralBody.js";
 import { orbitPointToChartRow } from "./eventDispatcher.js";
-import {
-  ORBIT_DERIVED_STRIDE,
-  orbitDerivedContext,
-  packStates,
-  toOrbitPoints,
-} from "./rrdOrbitDerived.js";
+import { ORBIT_DERIVED_STRIDE, packStates, toOrbitPoints } from "./rrdOrbitDerived.js";
 import type { RrdPointOut } from "./rrdParseLogic.js";
 
 function point(overrides: Partial<RrdPointOut> = {}): RrdPointOut {
@@ -22,41 +16,6 @@ function point(overrides: Partial<RrdPointOut> = {}): RrdPointOut {
     ...overrides,
   };
 }
-
-describe("orbitDerivedContext", () => {
-  it("takes the recording's own central body constants", () => {
-    const ctx = orbitDerivedContext({ mu: 42828.37, body_radius: 3396.2 });
-    expect(ctx.mu).toBe(42828.37);
-    expect(ctx.bodyRadius).toBe(3396.2);
-  });
-
-  it("falls back to Earth when the recording carries neither", () => {
-    const ctx = orbitDerivedContext({ mu: null, body_radius: null });
-    expect(ctx.mu).toBe(DEFAULT_MU);
-    expect(ctx.bodyRadius).toBe(DEFAULT_BODY_RADIUS);
-  });
-
-  it("falls back for a mu no orbit can be scaled by", () => {
-    // A recording could carry a corrupt or placeholder value; dividing by it
-    // would make every element non-finite.
-    for (const mu of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(orbitDerivedContext({ mu, body_radius: 6378.137 }).mu).toBe(DEFAULT_MU);
-    }
-    expect(orbitDerivedContext({ mu: DEFAULT_MU, body_radius: Number.NaN }).bodyRadius).toBe(
-      DEFAULT_BODY_RADIUS,
-    );
-  });
-
-  it("falls back for a negative radius, and keeps a zero one", () => {
-    // Altitude is `r - bodyRadius`: a negative radius reads as a height above
-    // the orbit rather than above the surface, which a chart shows without
-    // complaint. Zero is a point mass, whose altitude is `r`.
-    expect(orbitDerivedContext({ mu: DEFAULT_MU, body_radius: -6378.137 }).bodyRadius).toBe(
-      DEFAULT_BODY_RADIUS,
-    );
-    expect(orbitDerivedContext({ mu: DEFAULT_MU, body_radius: 0 }).bodyRadius).toBe(0);
-  });
-});
 
 describe("packStates", () => {
   it("lays out six values per point in order", () => {

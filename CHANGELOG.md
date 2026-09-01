@@ -545,6 +545,24 @@ section is subdivided by package.
   replacing the hand-written wire types and adding the `satellite_added` variant. ([#95](https://github.com/sksat/orts/pull/95))
 
 #### Fixed
+- A source's central body constants are resolved from the body it names, or the
+  source is refused. `mu` and the radius used to fall back to Earth's on their
+  own, so a recording around Mars carrying neither was read as Mars' `mu` over
+  Earth's radius — a body that does not exist, whose altitude (`r - radius`) is
+  out by some 3000 km with nothing on the chart to say so. A default now belongs
+  to a body the viewer has constants for, in `DEFAULT_BODY_CATALOG` (the ten
+  `arika` propagates around); a body outside it is fine as long as the source
+  carries both constants, since nothing is being invented then. A value the
+  source does carry that cannot be one — a `mu` of zero or less, a radius of
+  zero or less, either non-finite — is an error rather than a reason to
+  substitute a default. A source naming no body at all is still read as Earth,
+  which is what recordings predating the field are. Resolved once, when the
+  metadata arrives, and shared by the derived values and the `SimInfo` the
+  charts are built from: the file path used to resolve it per field at the end
+  of the load, after its points had already reached the charts. The live
+  WebSocket source resolves the same way, so it cannot be read against a body a
+  file would be refused for. A consumer simulating around its own body passes
+  its constants to the adapters ([#383](https://github.com/sksat/orts/pull/383))
 - Opening a `.rrd` file derives the orbital values the recording does not carry.
   The decoder recovers position and velocity, and the Keplerian elements plus
   the altitude, specific energy and angular momentum the charts plot arrived as

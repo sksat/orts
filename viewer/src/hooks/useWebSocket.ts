@@ -6,6 +6,7 @@ import type { HistoryState } from "../protocol/generated/HistoryState.js";
 import type { SatelliteInfo as WireSatelliteInfo } from "../protocol/generated/SatelliteInfo.js";
 import type { WsMessage } from "../protocol/generated/WsMessage.js";
 import type { MarkerShape } from "../satelliteShapes.js";
+import { describeCentralBodyError, resolveCentralBody } from "../sources/centralBody.js";
 
 /** Per-satellite info from the server, normalized for app use. */
 export interface SatelliteInfo {
@@ -145,11 +146,22 @@ function parseHistoryPoints(states: HistoryState[]): OrbitPoint[] {
   }));
 }
 
+/** Whether a source is still usable after the message just dispatched. */
+export type DispatchOutcome = "continue" | "reject";
+
 /**
  * Dispatch a parsed server message to the appropriate callback.
  * Extracted as a pure function for testability.
+ *
+ * `"reject"` where the message says the source cannot be read at all. The
+ * caller owns the socket, so closing it is its part: leaving it open would let
+ * the states that follow reach the charts with no `SimInfo` to measure them
+ * against, which is what refusing the info exists to prevent.
  */
-export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCallbacks): void {
+export function dispatchServerMessage(
+  msg: ServerMessage,
+  callbacks: DispatchCallbacks,
+): DispatchOutcome {
   if (msg.type === "state") {
     callbacks.onState({
       entityPath: msg.entity_path,
@@ -174,15 +186,30 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
       ...parseAttitude(msg.attitude),
     });
   } else if (msg.type === "info") {
-    // The `??` fallbacks tolerate older servers that predate these fields.
+    // A server that predates `central_body_radius` leaves it out, and the body
+    // it names says which radius that is. Resolved the way a file's is, so a
+    // live source cannot be read against a body a file would be refused for.
+    const resolved = resolveCentralBody({
+      bodyId: msg.central_body,
+      mu: msg.mu,
+      bodyRadius: msg.central_body_radius,
+    });
+    if (!resolved.ok) {
+      callbacks.onError?.(
+        `the server's simulation info: ${describeCentralBodyError(resolved.error)}`,
+      );
+      return "reject";
+    }
+    // The `??` below cover `satellites`, `stream_interval` and `epoch_jd` for a
+    // server that predates them; the central body came from the resolve above.
     const satellites: SatelliteInfo[] = (msg.satellites ?? []).map(normalizeSatelliteInfo);
     callbacks.onInfo?.({
-      mu: msg.mu,
+      mu: resolved.body.mu,
       dt: msg.dt,
       output_interval: msg.output_interval,
       stream_interval: msg.stream_interval ?? msg.output_interval,
-      central_body: msg.central_body ?? "earth",
-      central_body_radius: msg.central_body_radius ?? 6378.137,
+      central_body: resolved.body.bodyId,
+      central_body_radius: resolved.body.bodyRadius,
       epoch_jd: msg.epoch_jd ?? null,
       satellites,
     });
@@ -205,6 +232,7 @@ export function dispatchServerMessage(msg: ServerMessage, callbacks: DispatchCal
   } else if (msg.type === "satellite_added") {
     callbacks.onSatelliteAdded?.(normalizeSatelliteInfo(msg.satellite), msg.t);
   }
+  return "continue";
 }
 
 export interface UseWebSocketReturn {
@@ -301,7 +329,11 @@ export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
     ws.addEventListener("message", (event: MessageEvent) => {
       try {
         const msg = JSON.parse(event.data as string) as ServerMessage;
-        dispatchServerMessage(msg, callbacksRef.current);
+        if (dispatchServerMessage(msg, callbacksRef.current) === "reject") {
+          // The error is already reported. Closing stops the states that would
+          // otherwise follow it, and the close handler resets the rest.
+          ws.close();
+        }
       } catch {
         // Silently ignore malformed messages
       }

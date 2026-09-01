@@ -152,17 +152,22 @@ describe("RrdFileAdapter", () => {
     expect(derivedCalls[0].mu).toBe(42_000);
 
     // A second load whose first chunk arrives before any metadata. The worker
-    // posts metadata first, so this is the ordering `start()` must not depend
-    // on: `start()` resets every other per-load field, and leaving the central
-    // body behind derived the new recording against the old one's.
+    // posts metadata first, so nothing says which body these points are around:
+    // they are reported as an error rather than measured against the recording
+    // before, which is what carrying the resolved body over would have done.
     adapter.start();
     const second = await latestWorker();
     expect(second).not.toBe(first);
+    events.length = 0;
     second.simulateMessage(chunk());
 
-    expect(derivedCalls).toHaveLength(2);
-    expect(derivedCalls[1].mu).not.toBe(42_000);
-    expect(derivedCalls[1].bodyRadius).not.toBe(1234);
+    expect(derivedCalls).toHaveLength(1);
+    expect(events).toEqual([
+      {
+        kind: "error",
+        message: expect.stringContaining("before it said which body"),
+      },
+    ]);
   });
 
   it("a load restarted while the WASM was loading does not start a second worker", async () => {
@@ -192,5 +197,90 @@ describe("RrdFileAdapter", () => {
     worker.simulateMessage(metadata(42_000, 1234) as unknown as RrdWorkerMessage);
     worker.simulateMessage(chunk());
     expect(derivedCalls).toHaveLength(1);
+  });
+
+  it("measures against the body the recording names, not the one it omits", async () => {
+    const events: SourceEvent[] = [];
+    const handler = (_id: SourceId, e: SourceEvent) => events.push(e);
+    const adapter = new RrdFileAdapter("rrd-0", new File([new Uint8Array(8)], "a.rrd"), handler);
+
+    // Mars, with neither constant of its own. Taking Earth's radius here would
+    // put altitude out by about 3000 km with nothing on the chart to say so.
+    adapter.start();
+    const worker = await latestWorker();
+    worker.simulateMessage({
+      type: "metadata",
+      metadata: {
+        epoch_jd: null,
+        epoch_iso: null,
+        mu: null,
+        body_radius: null,
+        altitude: null,
+        period: null,
+        body_name: "mars",
+        orbit_description: null,
+      },
+    } as unknown as RrdWorkerMessage);
+    worker.simulateMessage(chunk());
+
+    expect(derivedCalls).toHaveLength(1);
+    expect(derivedCalls[0].mu).toBeCloseTo(42828.375214, 6);
+    expect(derivedCalls[0].bodyRadius).toBeCloseTo(3396.2, 6);
+  });
+
+  it("reports a recording it cannot measure instead of reading it as Earth", async () => {
+    const events: SourceEvent[] = [];
+    const handler = (_id: SourceId, e: SourceEvent) => events.push(e);
+    const adapter = new RrdFileAdapter("rrd-0", new File([new Uint8Array(8)], "a.rrd"), handler);
+
+    adapter.start();
+    const worker = await latestWorker();
+    worker.simulateMessage({
+      type: "metadata",
+      metadata: {
+        epoch_jd: null,
+        epoch_iso: null,
+        mu: null,
+        body_radius: null,
+        altitude: null,
+        period: null,
+        body_name: "kerbin",
+        orbit_description: null,
+      },
+    } as unknown as RrdWorkerMessage);
+
+    expect(events).toEqual([{ kind: "error", message: expect.stringContaining("kerbin") }]);
+    // Nothing of the recording reaches the charts, and the worker is done.
+    worker.simulateMessage(chunk());
+    expect(derivedCalls).toHaveLength(0);
+    expect(worker.terminated).toBe(true);
+  });
+
+  it("takes a body of the consumer's own from the catalog it is given", async () => {
+    const events: SourceEvent[] = [];
+    const handler = (_id: SourceId, e: SourceEvent) => events.push(e);
+    const adapter = new RrdFileAdapter("rrd-0", new File([new Uint8Array(8)], "a.rrd"), handler, {
+      kerbin: { mu: 3531600, radiusKm: 600 },
+    });
+
+    adapter.start();
+    const worker = await latestWorker();
+    worker.simulateMessage({
+      type: "metadata",
+      metadata: {
+        epoch_jd: null,
+        epoch_iso: null,
+        mu: null,
+        body_radius: null,
+        altitude: null,
+        period: null,
+        body_name: "kerbin",
+        orbit_description: null,
+      },
+    } as unknown as RrdWorkerMessage);
+    worker.simulateMessage(chunk());
+
+    expect(events.filter((e) => e.kind === "error")).toEqual([]);
+    expect(derivedCalls).toEqual([{ mu: 3531600, bodyRadius: 600, states: 1 }]);
   });
 });

@@ -223,4 +223,53 @@ describe("dispatchServerMessage", () => {
     };
     expect(() => dispatchServerMessage(msg, { ...baseCallbacks })).not.toThrow();
   });
+
+  it("resolves the server's central body from the body it names", () => {
+    // A server predating `central_body_radius` leaves it out; the body it names
+    // says which radius that is, so the info is usable as it stands.
+    const onInfo = vi.fn();
+    const onError = vi.fn();
+    const msg = {
+      type: "info",
+      mu: 42828.375214,
+      dt: 1,
+      output_interval: 1,
+      central_body: "Mars",
+      satellites: [],
+    } as unknown as ServerMessage;
+
+    const outcome = dispatchServerMessage(msg, { onState: vi.fn(), onInfo, onError });
+
+    expect(outcome).toBe("continue");
+    expect(onError).not.toHaveBeenCalled();
+    expect(onInfo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mu: 42828.375214,
+        central_body: "mars",
+        central_body_radius: 3396.2,
+      }),
+    );
+  });
+
+  it("rejects the source when the server's info cannot be measured", () => {
+    // Reporting the error and carrying on would let the states that follow
+    // reach the charts with no `SimInfo` to measure them against, which is what
+    // refusing the info exists to prevent. The caller closes on "reject".
+    const onInfo = vi.fn();
+    const onError = vi.fn();
+    const msg = {
+      type: "info",
+      mu: 3531600,
+      dt: 1,
+      output_interval: 1,
+      central_body: "kerbin",
+      satellites: [],
+    } as unknown as ServerMessage;
+
+    const outcome = dispatchServerMessage(msg, { onState: vi.fn(), onInfo, onError });
+
+    expect(outcome).toBe("reject");
+    expect(onInfo).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining("kerbin"));
+  });
 });

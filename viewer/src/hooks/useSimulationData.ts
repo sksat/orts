@@ -64,11 +64,15 @@ export function useSimulationData(options: UseSimulationDataOptions): Simulation
     queryRange,
   } = options;
 
-  // Orbit schema (shared by single & multi-satellite Workers)
+  // Orbit schema (shared by single & multi-satellite Workers). A `SimInfo` has
+  // been resolved against a body already, so its `mu` and radius are taken as
+  // they are. The schema's own Earth defaults stand in only while no source has
+  // reported one, where there is no body yet to be wrong about.
   const mu = simInfo?.mu;
   const bodyRadius = simInfo?.central_body_radius;
   const orbitSchema = useMemo(
-    () => createOrbitSchema(mu ?? 398600.4418, bodyRadius ?? 6378.137),
+    () =>
+      mu == null || bodyRadius == null ? createOrbitSchema() : createOrbitSchema(mu, bodyRadius),
     [mu, bodyRadius],
   );
 

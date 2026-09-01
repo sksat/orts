@@ -1,56 +1,150 @@
 /**
  * The central body constants a source is read against.
  *
- * A recording written by `orts` carries `mu` and the body radius. Anything
- * missing falls back to Earth, which is what the rest of the viewer assumes
- * when a source declares nothing.
- *
  * One module because two readers have to agree: the WASM batch that derives the
  * orbital values, and the `SimInfo` / DuckDB schema that the charts are built
  * from. A `mu` that differs between them shows the same recording two ways.
+ *
+ * Nothing here invents a constant. A source says which body it is around and may
+ * carry that body's `mu` and radius; where it carries neither, the value comes
+ * from the body's catalog entry, and where there is no entry to take it from,
+ * resolving fails rather than reading the orbit against Earth. A body that is
+ * Mars by name and Earth by radius is not a body, and the altitude measured
+ * against it (`r - bodyRadius`) is wrong by thousands of kilometres with nothing
+ * on the chart to say so.
  */
 
-/** Earth's gravitational parameter [km³/s²]. */
-export const DEFAULT_MU = 398600.4418;
-/** Earth's equatorial radius [km]. */
-export const DEFAULT_BODY_RADIUS = 6378.137;
+import { type BodyCatalog, bodyIdOf, IMPLICIT_BODY_ID, resolveBodyCatalog } from "./bodyCatalog.js";
 
 /** Resolved central body constants. */
 export interface CentralBody {
+  /**
+   * The body these came from, as an id: the source's name trimmed and
+   * lowercased, which is what the catalog and the scene key on.
+   */
+  bodyId: string;
   mu: number;
   bodyRadius: number;
 }
 
+/** Which field of a central body is at issue. */
+export type CentralBodyField = "mu" | "radius";
+
+/** Why a source's central body could not be resolved. */
+export type CentralBodyError =
+  | {
+      /** The source named a body the catalog does not carry, and left a value out. */
+      kind: "unknown-body";
+      bodyId: string;
+      missing: CentralBodyField;
+    }
+  | {
+      /** The catalog carries the body but not the value the source left out. */
+      kind: "missing-default";
+      bodyId: string;
+      missing: CentralBodyField;
+    }
+  | {
+      /** The value cannot be one, whichever of the two supplied it. */
+      kind: "unusable-value";
+      bodyId: string;
+      field: CentralBodyField;
+      value: number;
+      /** `"catalog"` for a body's own constants, which a consumer may supply. */
+      origin: "source" | "catalog";
+    };
+
+export type CentralBodyResult =
+  | { ok: true; body: CentralBody }
+  | { ok: false; error: CentralBodyError };
+
+/** What a source declared about the body it is around. */
+export interface DeclaredCentralBody {
+  /**
+   * The body's id, as the source named it. A source that names none is read as
+   * Earth: recordings predate the field, and their orbits are Earth's.
+   */
+  bodyId?: string | null;
+  mu?: number | null;
+  bodyRadius?: number | null;
+}
+
+/** A one-line account of why resolving failed, for an error event. */
+export function describeCentralBodyError(error: CentralBodyError): string {
+  switch (error.kind) {
+    case "unknown-body":
+      return `the recording is around "${error.bodyId}", which this viewer has no constants for, and carries no ${error.missing} of its own`;
+    case "missing-default":
+      return `the recording carries no ${error.missing}, and none is known for "${error.bodyId}"`;
+    case "unusable-value": {
+      const whose = error.origin === "source" ? "the recording's" : "the catalog's";
+      return `${whose} ${error.field} for "${error.bodyId}" is ${error.value}, which no orbit can be measured against`;
+    }
+  }
+}
+
 /**
- * Resolve `mu` and the body radius from what a source declared.
+ * Resolve the constants a source's orbits are measured against.
  *
- * A `mu` that is absent, zero, negative or non-finite cannot scale an orbit —
- * every element derived from it would come out non-finite — so it falls back to
- * Earth rather than propagating through the charts.
+ * A `mu` must be positive and finite: it scales the orbit, and every element
+ * derived from a zero, negative or non-finite one comes out non-finite. A radius
+ * must be positive and finite too — altitude is `r - bodyRadius`, so a negative
+ * one reads as a height above the orbit, and zero is a point mass rather than a
+ * body. Where the source carries such a value, that is an error and not a reason
+ * to reach for the catalog: the file says something about itself that cannot be
+ * true, and quietly substituting a default hides it.
  *
- * A negative radius falls back too: altitude is `r - bodyRadius`, so it would
- * read as a height above the orbit rather than above the surface, which is
- * plausible enough on a chart to go unnoticed. Zero stands, being a point mass
- * whose altitude is `r`.
+ * A body the catalog does not carry is fine as long as the source carries both
+ * of its constants — nothing is being invented then. It fails only where a value
+ * is missing and there is nothing to fill it from.
  *
- * TODO: falling back per field is the wrong shape. A recording naming Mars with
- * no radius is read as Mars' `mu` over Earth's radius, a body that does not
- * exist. A default belongs to a body we know, and a value that is present but
- * unusable belongs in an error — which needs the constants `arika`'s
- * `KnownBody::properties` already holds, exposed through `arika-wasm`, and an
- * error path out of this layer. It reaches `useSimulationData`'s own
- * `?? 398600.4418` too, so it is a root of its own rather than part of this
- * module's.
+ * The resolved `bodyId` is the source's name as an id: lowercase, which is what
+ * the catalog and the scene's own body definitions key on, while a recording
+ * carries `arika`'s display name ("Earth").
  */
 export function resolveCentralBody(
-  mu: number | null | undefined,
-  bodyRadius: number | null | undefined,
-): CentralBody {
-  return {
-    mu: mu != null && Number.isFinite(mu) && mu > 0 ? mu : DEFAULT_MU,
-    bodyRadius:
-      bodyRadius != null && Number.isFinite(bodyRadius) && bodyRadius >= 0
-        ? bodyRadius
-        : DEFAULT_BODY_RADIUS,
+  declared: DeclaredCentralBody,
+  catalog?: BodyCatalog,
+): CentralBodyResult {
+  // The name is the source's; the id is what the catalog and the scene key on.
+  const bodyId = declared.bodyId != null ? bodyIdOf(declared.bodyId) : IMPLICIT_BODY_ID;
+  const entry = resolveBodyCatalog(catalog)[bodyId];
+
+  // The same constraint whoever supplied the value. A catalog is the consumer's
+  // to write, so a `mu` of -1 in one is as unusable as a `mu` of -1 in a file,
+  // and letting it through here would be letting it into every element derived.
+  const usable = (
+    value: number,
+    field: CentralBodyField,
+    origin: "source" | "catalog",
+  ): { ok: true; value: number } | { ok: false; error: CentralBodyError } =>
+    Number.isFinite(value) && value > 0
+      ? { ok: true, value }
+      : { ok: false, error: { kind: "unusable-value", bodyId, field, value, origin } };
+
+  const resolve = (
+    declaredValue: number | null | undefined,
+    fromCatalog: number | undefined,
+    field: CentralBodyField,
+  ): { ok: true; value: number } | { ok: false; error: CentralBodyError } => {
+    if (declaredValue != null) {
+      return usable(declaredValue, field, "source");
+    }
+    if (fromCatalog != null) {
+      return usable(fromCatalog, field, "catalog");
+    }
+    return {
+      ok: false,
+      error: entry
+        ? { kind: "missing-default", bodyId, missing: field }
+        : { kind: "unknown-body", bodyId, missing: field },
+    };
   };
+
+  const mu = resolve(declared.mu, entry?.mu, "mu");
+  if (!mu.ok) return { ok: false, error: mu.error };
+  const radius = resolve(declared.bodyRadius, entry?.radiusKm, "radius");
+  if (!radius.ok) return { ok: false, error: radius.error };
+
+  return { ok: true, body: { bodyId, mu: mu.value, bodyRadius: radius.value } };
 }
