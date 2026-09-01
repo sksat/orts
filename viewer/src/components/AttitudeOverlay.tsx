@@ -1,15 +1,24 @@
 import styles from "../App.module.css";
 import type { DirectionVectorKind, DirectionVectorOptions } from "../directionVectors.js";
-import type { SatelliteInfo } from "../hooks/useWebSocket.js";
 import type { AttitudeFrame } from "../lib/types.js";
 import { DirectionVectorControls } from "./DirectionVectorControls.js";
 import selectorStyles from "./FrameSelector.module.css";
 import { SceneLegend } from "./SceneLegend.js";
 import { type SegmentedOption, SegmentedToggle } from "./SegmentedToggle.js";
 
+/** A spacecraft this view can show. */
+export interface AttitudeSubject {
+  id: string;
+  name?: string;
+}
+
 export interface AttitudeOverlayProps {
-  /** Spacecraft available to show (from simInfo or replay metadata). */
-  satellites: SatelliteInfo[] | undefined;
+  /**
+   * Spacecraft this view can show — the ones actually being rendered, not the
+   * ones the simulation declared. Offering a spacecraft whose state has not
+   * arrived would leave the select with no matching option.
+   */
+  satellites: readonly AttitudeSubject[];
   selectedSatelliteId: string | null;
   onSelectedSatelliteChange: (id: string) => void;
   orientation: AttitudeFrame;
@@ -98,7 +107,7 @@ export function AttitudeOverlay({
             value={selectedSatelliteId ?? ""}
             onChange={(e) => onSelectedSatelliteChange(e.target.value)}
           >
-            {(satellites ?? []).map((sat) => (
+            {satellites.map((sat) => (
               <option key={sat.id} value={sat.id}>
                 {sat.name ?? sat.id}
               </option>
