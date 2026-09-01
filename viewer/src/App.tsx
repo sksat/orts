@@ -443,12 +443,14 @@ export function App() {
   }, [referenceFrame, satellites]);
   const centredSatelliteId = centredSatellite?.id ?? null;
 
-  // Keep the attitude view's subject on a spacecraft that still exists. A
+  // Keep the attitude view's subject on a spacecraft the viewer still has. A
   // satellite-centred orbit view hands over its centre; otherwise the previous
-  // choice stands while it is still valid, and the first spacecraft takes over
-  // when it is not (a terminated satellite drops out of the list). The centre is
-  // only a candidate while it is still in the list — a frame can point at a
-  // satellite the current source never had.
+  // choice stands while it is still in the list, and the first spacecraft takes
+  // over when it is not — which happens when the source changes, not when a
+  // satellite terminates: a terminated one keeps its buffers and its last state,
+  // and its final attitude is worth looking at. The centre is only a candidate
+  // while it is in the list too, since a frame can name a satellite the current
+  // source never had.
   useEffect(() => {
     if (selectedSatelliteId != null && satellites.some((s) => s.id === selectedSatelliteId)) return;
     const fallback = centredSatelliteId ?? satellites[0]?.id ?? null;
