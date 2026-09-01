@@ -6,17 +6,29 @@ import { initArika } from "./wasm/arikaInit.js";
 const arikaReady = initArika();
 
 import type { TimeRange } from "@sksat/uneri";
+import appStyles from "./App.module.css";
+import { AttitudeOverlay } from "./components/AttitudeOverlay.js";
+import { DIRECTION_VECTOR_KINDS } from "./components/DirectionVectorControls.js";
 import { GraphPanel } from "./components/GraphPanel.js";
+import { InitialCameraFit } from "./components/InitialCameraFit.js";
+import { OrbitOverlay } from "./components/OrbitOverlay.js";
 import { PlaybackBar } from "./components/PlaybackBar.js";
-import { SceneOverlay } from "./components/SceneOverlay.js";
 import { SimConfigModal } from "./components/SimConfigModal.js";
 import { StatusBar } from "./components/StatusBar.js";
+import { type ViewMode, ViewSelector } from "./components/ViewSelector.js";
 import { toViewerReferenceFrame } from "./frameToViewer.js";
 import { CSV_SOURCE_ID, RRD_SOURCE_ID, useFileSource } from "./hooks/useFileSource.js";
 import { useRealtimePlayback } from "./hooks/useRealtimePlayback.js";
 import { useSimInfoDerived } from "./hooks/useSimInfoDerived.js";
 import { useSimulationData } from "./hooks/useSimulationData.js";
-import { type DirectionVectorOptions, OrbitScene, type SatelliteState } from "./lib/index.js";
+import {
+  type AttitudeBodyState,
+  type AttitudeFrame,
+  AttitudeScene,
+  type DirectionVectorOptions,
+  OrbitScene,
+  type SatelliteState,
+} from "./lib/index.js";
 import type { ClientMessage } from "./protocol/generated/ClientMessage.js";
 import { DEFAULT_FRAME, type ReferenceFrame } from "./referenceFrame.js";
 import { type MarkerShape, readSatShapeParam, writeSatShapeParam } from "./satelliteShapes.js";
@@ -26,7 +38,12 @@ import { useWebSocketSource, WS_SOURCE_ID } from "./sources/useWebSocketSource.j
 import { resolveTextureBaseUrl } from "./textureBaseUrl.js";
 import { resolveDefaultWsUrl } from "./utils/defaultWsUrl.js";
 import { planInitialRangeQuery } from "./utils/initialRangeQuery.js";
-import { readTimeRangeParam, writeTimeRangeParam } from "./utils/urlParams.js";
+import {
+  readTimeRangeParam,
+  readViewParam,
+  writeTimeRangeParam,
+  writeViewParam,
+} from "./utils/urlParams.js";
 
 const DEFAULT_WS_URL: string = resolveDefaultWsUrl({
   explicitWsUrl: import.meta.env.VITE_WS_URL,
@@ -38,12 +55,15 @@ const DEFAULT_WS_URL: string = resolveDefaultWsUrl({
 // Build-time texture base URL — present when VITE_TEXTURE_BASE_URL is set at Vite startup.
 const VITE_TEXTURE_BASE_URL = import.meta.env.VITE_TEXTURE_BASE_URL;
 
+/** Both reference-direction arrows on, the starting state for either view. */
+const DEFAULT_DIRECTION_VECTORS: DirectionVectorOptions = { sun: true, nadir: true };
+
 /**
- * Reference-direction arrows the app asks for. The scene draws them only at a
- * centred satellite, so a central-body view is unaffected. Module-level so the
- * prop keeps one identity across renders.
+ * Camera framing for the attitude view, whose scene unit is the spacecraft.
+ * `InitialCameraFit` pulls it further back on a viewport narrower than square.
  */
-const DIRECTION_VECTORS: DirectionVectorOptions = { sun: true, nadir: true };
+const ATTITUDE_FOV = 50;
+const ATTITUDE_CAMERA_POSITION: [number, number, number] = [4.3, 0, 2.15];
 
 export function App() {
   // WASM initialization (must complete before rendering ECEF transforms)
@@ -53,6 +73,19 @@ export function App() {
   }, []);
 
   const [referenceFrame, setReferenceFrame] = useState<ReferenceFrame>(DEFAULT_FRAME);
+
+  // Which presentation is showing, persisted to the URL. Each view keeps its own
+  // display state: the orbit view's frame pairs a centre with an orientation, the
+  // attitude view has only an orientation, and mapping one onto the other on every
+  // switch would quietly change what the reader is looking at.
+  const [view, setView] = useState<ViewMode>(() => readViewParam());
+  const [attitudeFrame, setAttitudeFrame] = useState<AttitudeFrame>("inertial");
+  const [selectedSatelliteId, setSelectedSatelliteId] = useState<string | null>(null);
+  const [directionVectors, setDirectionVectors] =
+    useState<DirectionVectorOptions>(DEFAULT_DIRECTION_VECTORS);
+  useEffect(() => {
+    writeViewParam(view);
+  }, [view]);
 
   // Chart time range
   const [timeRange, setTimeRange] = useState<TimeRange>(() => readTimeRangeParam());
@@ -402,6 +435,93 @@ export function App() {
     timeRange,
   ]);
 
+  /** The orbit view's centred satellite, when it is one the viewer still has. */
+  const centredSatellite = useMemo(() => {
+    if (referenceFrame.center.type !== "satellite") return null;
+    const id = referenceFrame.center.id;
+    return satellites.find((s) => s.id === id) ?? null;
+  }, [referenceFrame, satellites]);
+  const centredSatelliteId = centredSatellite?.id ?? null;
+
+  // Keep the attitude view's subject on a spacecraft that still exists. A
+  // satellite-centred orbit view hands over its centre; otherwise the previous
+  // choice stands while it is still valid, and the first spacecraft takes over
+  // when it is not (a terminated satellite drops out of the list). The centre is
+  // only a candidate while it is still in the list — a frame can point at a
+  // satellite the current source never had.
+  useEffect(() => {
+    if (selectedSatelliteId != null && satellites.some((s) => s.id === selectedSatelliteId)) return;
+    const fallback = centredSatelliteId ?? satellites[0]?.id ?? null;
+    if (fallback !== selectedSatelliteId) setSelectedSatelliteId(fallback);
+  }, [satellites, centredSatelliteId, selectedSatelliteId]);
+
+  const handleViewChange = useCallback(
+    (next: ViewMode) => {
+      // Switching from a satellite-centred orbit view carries that satellite over:
+      // it is the one the reader was already looking at.
+      if (next === "attitude" && centredSatelliteId != null) {
+        setSelectedSatelliteId(centredSatelliteId);
+      }
+      setView(next);
+    },
+    [centredSatelliteId],
+  );
+
+  /**
+   * The attitude view's subject. Null when the chosen spacecraft has no attitude:
+   * this view has nothing to show then, and inventing an identity quaternion would
+   * present "no data" as "pointing at the reference frame".
+   */
+  const attitudeBody = useMemo<AttitudeBodyState | null>(() => {
+    const sat = satellites.find((s) => s.id === selectedSatelliteId);
+    if (sat?.attitude == null) return null;
+    return {
+      id: sat.id,
+      attitude: sat.attitude,
+      position: sat.position,
+      velocity: sat.velocity,
+      time: sat.time,
+      name: sat.name,
+      color: sat.color,
+      markerShape: sat.markerShape,
+    };
+  }, [satellites, selectedSatelliteId]);
+
+  // Which arrows the attitude view can actually draw, for its legend.
+  const attitudeVectorKinds = useMemo(
+    () =>
+      attitudeBody == null
+        ? []
+        : DIRECTION_VECTOR_KINDS.filter((kind) => {
+            if (directionVectors[kind] === false) return false;
+            if (kind === "sun") return epochJd != null;
+            return attitudeBody.position != null;
+          }),
+    [directionVectors, epochJd, attitudeBody],
+  );
+
+  /**
+   * The display orientation the attitude view actually renders in.
+   *
+   * A request whose inputs are absent falls back to inertial in the scene, so the
+   * selection is normalised here rather than left showing "LVLH" over inertial
+   * axes — the data behind a choice can disappear after it was made (a satellite
+   * terminates, a source without velocities takes over).
+   */
+  const attitudeFrameAvailable = useCallback(
+    (frame: AttitudeFrame) => {
+      if (frame === "localOrbital") {
+        return attitudeBody?.position != null && attitudeBody?.velocity != null;
+      }
+      if (frame === "bodyFixed") return epochJd != null && centralBody === "earth";
+      return true;
+    },
+    [attitudeBody, epochJd, centralBody],
+  );
+  useEffect(() => {
+    if (!attitudeFrameAvailable(attitudeFrame)) setAttitudeFrame("inertial");
+  }, [attitudeFrame, attitudeFrameAvailable]);
+
   // Total points across all satellite buffers.
   // chartBufferVersion bumps on data ingest AND on resetBuffers (clear),
   // so this recalculates when data arrives or buffers are cleared.
@@ -432,7 +552,9 @@ export function App() {
 
   if (!wasmReady) return null;
 
-  const showGraph = simData.dbReady;
+  // The charts are orbital, so the attitude view hides them — and the layout
+  // collapses to a single column with them.
+  const showGraph = simData.dbReady && view === "orbit";
 
   return (
     <div
@@ -464,52 +586,108 @@ export function App() {
 
       {/* 3D Scene (row 2, column 1) */}
       <div className="scene-container">
-        <SceneOverlay
-          referenceFrame={referenceFrame}
-          onReferenceFrameChange={setReferenceFrame}
-          satellites={simInfo?.satellites}
-          centralBody={centralBody}
-          epochJd={epochJd}
-          orbitInfo={fileSource.orbitInfo}
-          simInfo={simInfo}
-          totalPoints={totalPoints}
-          activePerturbations={activePerturbations}
-          defaultMarkerShape={defaultMarkerShape}
-          onDefaultMarkerShapeChange={setDefaultMarkerShape}
-          markerShapeOverrides={markerShapeOverrides}
-          onMarkerShapeOverride={handleMarkerShapeOverride}
-        />
+        {/* The app owns the overlay area: the view switch has to outlive both
+            views, and each view contributes only its own controls. */}
+        <div className={appStyles.sceneOverlay}>
+          <ViewSelector view={view} onChange={handleViewChange} />
+          {view === "orbit" ? (
+            <OrbitOverlay
+              referenceFrame={referenceFrame}
+              onReferenceFrameChange={setReferenceFrame}
+              satellites={simInfo?.satellites}
+              centralBody={centralBody}
+              epochJd={epochJd}
+              orbitInfo={fileSource.orbitInfo}
+              simInfo={simInfo}
+              totalPoints={totalPoints}
+              activePerturbations={activePerturbations}
+              defaultMarkerShape={defaultMarkerShape}
+              onDefaultMarkerShapeChange={setDefaultMarkerShape}
+              markerShapeOverrides={markerShapeOverrides}
+              onMarkerShapeOverride={handleMarkerShapeOverride}
+              directionVectors={directionVectors}
+              onDirectionVectorsChange={setDirectionVectors}
+              centredSatelliteId={centredSatelliteId}
+              hasCentredPosition={centredSatellite?.position != null}
+            />
+          ) : (
+            <AttitudeOverlay
+              satellites={simInfo?.satellites}
+              selectedSatelliteId={selectedSatelliteId}
+              onSelectedSatelliteChange={setSelectedSatelliteId}
+              orientation={attitudeFrame}
+              onOrientationChange={setAttitudeFrame}
+              hasEpoch={epochJd != null}
+              hasPosition={attitudeBody?.position != null}
+              hasVelocity={attitudeBody?.velocity != null}
+              supportsBodyFixed={centralBody === "earth"}
+              directionVectors={directionVectors}
+              onDirectionVectorsChange={setDirectionVectors}
+              drawnVectorKinds={attitudeVectorKinds}
+              hasBody={attitudeBody != null}
+            />
+          )}
+        </div>
 
-        {/* The orts app dogfoods the public <OrbitScene> API: it owns the Canvas
+        {/* The orts app dogfoods the public scene APIs: it owns the Canvas
             (camera up = SCENE_UP, no global THREE.Object3D.DEFAULT_UP mutation)
-            and feeds the scene the public SatelliteState[]. */}
+            and feeds the scene the public state types. Keyed on the view so the
+            camera props — read only at mount — apply to the view being shown;
+            keyed on nothing else, or a frame change would rebuild the WebGL
+            context and re-fetch every GLTF. */}
         <Canvas
+          key={view}
           camera={{
-            position: DEFAULT_CAMERA_POSITION,
+            position: view === "attitude" ? ATTITUDE_CAMERA_POSITION : DEFAULT_CAMERA_POSITION,
             up: SCENE_UP,
-            fov: 60,
+            fov: view === "attitude" ? ATTITUDE_FOV : 60,
             near: 0.01,
-            far: 1000,
+            far: view === "attitude" ? 100 : 1000,
           }}
-          gl={{ logarithmicDepthBuffer: true }}
+          gl={{ logarithmicDepthBuffer: view !== "attitude" }}
           style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
         >
-          <OrbitScene
-            centralBody={{ id: centralBody, radiusKm: centralBodyRadius }}
-            satellites={satellites}
-            referenceFrame={viewerFrame}
-            epochJd={epochJd ?? undefined}
-            time={snapshot.currentTime}
-            defaultMarkerShape={defaultMarkerShape}
-            directionVectors={DIRECTION_VECTORS}
-            atmosphereScale="visual"
-            textureVersion={textureRevision}
-            textureBaseUrl={textureBaseUrl}
-          />
+          {/* The app asks for the viewer's framing: the constant above is the
+              viewing direction and a starting distance, and the fit settles the
+              distance and the far plane once the canvas has a size. */}
+          {view === "attitude" && <InitialCameraFit fov={ATTITUDE_FOV} reframe />}
+          {view === "orbit" ? (
+            <OrbitScene
+              centralBody={{ id: centralBody, radiusKm: centralBodyRadius }}
+              satellites={satellites}
+              referenceFrame={viewerFrame}
+              epochJd={epochJd ?? undefined}
+              time={snapshot.currentTime}
+              defaultMarkerShape={defaultMarkerShape}
+              directionVectors={directionVectors}
+              atmosphereScale="visual"
+              textureVersion={textureRevision}
+              textureBaseUrl={textureBaseUrl}
+            />
+          ) : (
+            attitudeBody != null && (
+              <AttitudeScene
+                centralBody={{ id: centralBody }}
+                body={attitudeBody}
+                orientation={attitudeFrame}
+                epochJd={epochJd ?? undefined}
+                time={snapshot.currentTime}
+                defaultMarkerShape={defaultMarkerShape}
+                directionVectors={directionVectors}
+              />
+            )
+          )}
         </Canvas>
+
+        {view === "attitude" && attitudeBody == null && (
+          <div className="scene-placeholder" data-testid="attitude-no-data">
+            No attitude data for this spacecraft.
+          </div>
+        )}
       </div>
 
-      {/* Graph panel (row 2, column 2) */}
+      {/* Graph panel (row 2, column 2). The charts are orbital; the attitude view
+          has no use for altitude or energy. */}
       {showGraph && (
         <GraphPanel
           chartData={simData.isMultiSatellite ? undefined : simData.visibleChartData}
