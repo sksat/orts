@@ -576,6 +576,19 @@ mod tests {
                 front_lit || back_lit,
                 "neither face lit at {angle} rad, so the plate has a dead zone"
             );
+
+            // `angle` is measured from the front's normal, so the front owns
+            // the half-turn around it and the back owns the other. Counting
+            // alone would also pass with the two roles swapped, or with the
+            // boundary somewhere other than a quarter turn.
+            let front_faces_the_sun = angle.cos() > 0.0;
+            assert_eq!(
+                front_lit,
+                front_faces_the_sun,
+                "at {} deg the lit face is the wrong one: front_lit={front_lit}",
+                angle.to_degrees()
+            );
+
             if front_lit {
                 lit_front += 1;
             } else {
@@ -609,9 +622,11 @@ mod tests {
             STEPS,
             "every sample lit exactly one face"
         );
+        // Half the turn each, to within the one sample that the odd count
+        // leaves unpaired across the two boundaries.
         assert!(
-            lit_front > STEPS / 4 && lit_back > STEPS / 4,
-            "both faces should take a real share of the turn: {lit_front} / {lit_back}"
+            lit_front.abs_diff(lit_back) <= 1,
+            "the two faces split the turn evenly: {lit_front} / {lit_back}"
         );
     }
 
