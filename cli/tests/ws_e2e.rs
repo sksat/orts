@@ -1054,3 +1054,79 @@ async fn test_websocket_add_satellite() {
     server.kill();
     result.expect("test timed out after 30 seconds");
 }
+
+/// A `start_simulation` the server cannot read is answered, and the socket lives.
+///
+/// A `type`-tagged block still refuses an unknown key, so this message fails to
+/// deserialize. Dropping that error left the client waiting on a reply that
+/// never arrives.
+#[tokio::test]
+async fn test_websocket_unreadable_message_is_answered() {
+    let port = test_port() + 22;
+    let mut server = Server::spawn_idle(port);
+
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let url = format!("ws://localhost:{port}/ws");
+        let (ws, _) = connect_async(&url).await.expect("failed to connect");
+        let (mut write, mut read) = ws.split();
+
+        let status = next_json(&mut read).await;
+        assert_eq!(status["state"], "idle");
+
+        // `inclinaton` is a typo for `inclination`, inside the `type`-tagged
+        // orbit block, which is the one place an unknown key is refused.
+        let typo = serde_json::json!({
+            "type": "start_simulation",
+            "config": {
+                "dt": 10.0,
+                "satellites": [
+                    { "id": "test", "orbit": {
+                        "type": "circular", "altitude": 400.0, "inclinaton": 51.6
+                    } }
+                ]
+            }
+        });
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                typo.to_string().into(),
+            ))
+            .await
+            .expect("failed to send start_simulation");
+
+        let (error, _) = read_until_type(&mut read, "error", 10).await;
+        let message = error["message"].as_str().expect("an error message");
+        assert!(
+            message.contains("inclinaton"),
+            "the message names the key it could not read: {message}"
+        );
+
+        // The same connection still serves a message the server can read.
+        let good = serde_json::json!({
+            "type": "start_simulation",
+            "config": {
+                "dt": 10.0,
+                "satellites": [
+                    { "id": "test", "orbit": { "type": "circular", "altitude": 400.0 } }
+                ]
+            }
+        });
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                good.to_string().into(),
+            ))
+            .await
+            .expect("failed to send start_simulation");
+
+        let (info, _) = read_until_type(&mut read, "info", 10).await;
+        assert!(
+            !info["satellites"]
+                .as_array()
+                .expect("satellites")
+                .is_empty()
+        );
+    })
+    .await;
+
+    server.kill();
+    result.expect("test timed out after 30 seconds");
+}

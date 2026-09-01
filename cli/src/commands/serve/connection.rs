@@ -195,18 +195,13 @@ async fn main_loop(
                         // (nothing can report one there), and dropping the error
                         // left the client waiting on a reply that never came.
                         if let Err(e) = &parsed {
-                            let _ = ws_sender
-                                .send(Message::Text(
-                                    serde_json::to_string(&WsMessage::Error {
-                                        message: format!("could not read the message: {e}"),
-                                    })
-                                    .unwrap_or_else(|_| {
-                                        "{\"type\":\"error\",\"message\":\"could not read the message\"}"
-                                            .to_string()
-                                    })
-                                    .into(),
-                                ))
-                                .await;
+                            let json = serde_json::to_string(&WsMessage::Error {
+                                message: format!("could not read the message: {e}"),
+                            })
+                            .expect("failed to serialize error");
+                            if ws_sender.send(Message::Text(json.into())).await.is_err() {
+                                break;
+                            }
                         }
                         if let Ok(client_msg) = parsed {
                             let result = match client_msg {

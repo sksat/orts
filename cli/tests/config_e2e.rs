@@ -362,8 +362,14 @@ fn config_validate_json_carries_the_unread_keys() {
     let warnings = verdict["warnings"]
         .as_array()
         .unwrap_or_else(|| panic!("a warnings array: {stdout}"));
-    let text: Vec<&str> = warnings.iter().filter_map(|w| w.as_str()).collect();
-    assert_eq!(text.len(), 2, "both keys: {text:?}");
+    assert_eq!(warnings.len(), 2, "both keys, and only those: {warnings:?}");
+    let text: Vec<&str> = warnings
+        .iter()
+        .map(|w| {
+            w.as_str()
+                .unwrap_or_else(|| panic!("every warning is a string: {warnings:?}"))
+        })
+        .collect();
     assert!(
         text.iter().any(|w| w.contains("`duraton`")),
         "the top-level key: {text:?}"
