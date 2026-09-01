@@ -273,7 +273,7 @@ fn test_config_validate_rejects_unintegrable_attitude() {
 /// every harness waits on: `cli/tests/ws_e2e.rs` matches `Server listening
 /// on`, the Playwright specs read the port out of the `WebSocket endpoint`
 /// line. Printing the banner ahead of the rejection left the caller connecting
-/// to a socket that was already closing, so an unknown key surfaced as a
+/// to a socket that was already closing, so a rejected value surfaced as a
 /// connection failure instead of as its own message.
 #[test]
 fn serve_does_not_announce_a_port_for_a_rejected_config() {
@@ -326,5 +326,52 @@ fn serve_does_not_announce_a_port_for_a_rejected_config() {
             "a rejected config printed the '{line}' banner line: {stderr}"
         );
     }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// `config validate --json` carries the keys nothing read, and still says ok.
+///
+/// The lower-level loader tests cover the collection; this covers the shape a
+/// caller reads, which could otherwise disappear while they keep passing.
+#[test]
+fn config_validate_json_carries_the_unread_keys() {
+    let dir = unique_dir("validate-warnings");
+    let path = dir.join("typo.toml");
+    std::fs::write(
+        &path,
+        "dt = 1.0\nduraton = 100.0\n\n[[satellites]]\nid = \"a\"\naltitide = 400\n\
+         [satellites.orbit]\ntype = \"circular\"\naltitude = 400\n",
+    )
+    .unwrap();
+
+    let out = orts()
+        .args(["config", "validate", "--json"])
+        .arg(&path)
+        .output()
+        .expect("run config validate");
+
+    assert!(
+        out.status.success(),
+        "an unread key is a warning, so validate exits 0: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let verdict: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("json: {e}\n{stdout}"));
+    assert_eq!(verdict["status"], "ok");
+    let warnings = verdict["warnings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a warnings array: {stdout}"));
+    let text: Vec<&str> = warnings.iter().filter_map(|w| w.as_str()).collect();
+    assert_eq!(text.len(), 2, "both keys: {text:?}");
+    assert!(
+        text.iter().any(|w| w.contains("`duraton`")),
+        "the top-level key: {text:?}"
+    );
+    assert!(
+        text.iter().any(|w| w.contains("`satellites.0.altitide`")),
+        "the nested key, named by its path: {text:?}"
+    );
+
     std::fs::remove_dir_all(&dir).ok();
 }
