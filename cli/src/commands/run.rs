@@ -350,13 +350,16 @@ fn satellite_final_state(rec: &Recording, sat_path: &EntityPath) -> (usize, Opti
         return (0, None);
     }
     let i = samples - 1;
+    // `i` indexes the position column's stored rows; the timeline and the other
+    // columns are addressed by the entity's logical row.
+    let logical = pos_col.logical_row_of(i);
 
     let t_s = store
         .timelines
         .get(&TimelineName::SimTime)
-        .and_then(|tl| tl.get(i))
+        .and_then(|tl| tl.at_logical_row(logical))
         .map(|ti| match ti {
-            TimeIndex::Seconds(s) => *s,
+            TimeIndex::Seconds(s) => s,
             _ => 0.0,
         })
         .unwrap_or(0.0);
@@ -364,7 +367,7 @@ fn satellite_final_state(rec: &Recording, sat_path: &EntityPath) -> (usize, Opti
     let vel_row = store
         .columns
         .get(&Velocity3D::component_name())
-        .and_then(|c| c.get_row(i));
+        .and_then(|c| c.at_logical_row(logical));
     let final_state = match (pos_col.get_row(i), vel_row) {
         (Some(pos), Some(vel)) => Some(FinalState {
             t_s,
@@ -892,12 +895,17 @@ pub fn write_satellite_csv(
     let id = id.rsplit('/').next().unwrap_or("default");
 
     for i in 0..pos_col.num_rows() {
-        let t = match sim_times.get(i) {
-            Some(orts::record::timeline::TimeIndex::Seconds(s)) => *s,
+        // `i` indexes the position column's stored rows; the timeline and the
+        // other columns are addressed by the entity's logical row.
+        let logical = pos_col.logical_row_of(i);
+        let t = match sim_times.at_logical_row(logical) {
+            Some(orts::record::timeline::TimeIndex::Seconds(s)) => s,
             _ => 0.0,
         };
         let pos = pos_col.get_row(i).unwrap();
-        let vel = vel_col.get_row(i).unwrap();
+        let Some(vel) = vel_col.at_logical_row(logical) else {
+            continue;
+        };
         let pos_vec = nalgebra::Vector3::new(pos[0], pos[1], pos[2]);
         let vel_vec = nalgebra::Vector3::new(vel[0], vel[1], vel[2]);
         let elements = KeplerianElements::from_state_vector(&pos_vec, &vel_vec, mu);
@@ -924,7 +932,10 @@ pub fn write_satellite_csv(
         ));
 
         for (_name, col) in &extra_cols {
-            if let Some(row) = col.get_row(i) {
+            // TODO(#375 follow-up): a column that skipped this step contributes no
+            // cells, so the line comes out shorter than the header. `orts run` pads
+            // such components with zeros today, so no column is short in practice.
+            if let Some(row) = col.at_logical_row(logical) {
                 for val in row {
                     line.push_str(&format!(",{:.10}", val));
                 }

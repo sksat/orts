@@ -21,7 +21,10 @@ pub enum TimeIndex {
 }
 
 /// A point in time across all active timelines.
-#[derive(Debug, Clone)]
+///
+/// `PartialEq` is how [`Recording::log_temporal`](crate::record::recording::Recording::log_temporal)
+/// decides whether two calls belong to the same logical row.
+#[derive(Debug, Clone, PartialEq)]
 pub struct TimePoint {
     indices: Vec<(TimelineName, TimeIndex)>,
 }

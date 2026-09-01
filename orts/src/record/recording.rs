@@ -6,6 +6,53 @@ use crate::record::components::{AngularVelocity3D, Quaternion4D};
 use crate::record::entity_path::EntityPath;
 use crate::record::timeline::{TimeIndex, TimePoint, TimelineName};
 
+/// Which logical row each stored entry belongs to.
+///
+/// A component logged at every step, which is the common case, needs no mapping:
+/// stored entry `k` is logical row `k`. `Sparse` carries the mapping for a
+/// component that was logged at only some of the entity's steps, so its values
+/// keep the times they were logged at rather than lining up with the leading
+/// rows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum RowMap {
+    #[default]
+    Dense,
+    /// Logical row of each stored entry, ascending.
+    Sparse(Vec<u32>),
+}
+
+impl RowMap {
+    /// Record that the entry at stored index `stored` is logical row `logical`,
+    /// switching away from `Dense` only once the two actually diverge.
+    fn record(&mut self, stored: usize, logical: usize) {
+        match self {
+            Self::Dense if stored == logical => {}
+            Self::Dense => {
+                let mut rows: Vec<u32> = (0..stored as u32).collect();
+                rows.push(logical as u32);
+                *self = Self::Sparse(rows);
+            }
+            Self::Sparse(rows) => rows.push(logical as u32),
+        }
+    }
+
+    /// Logical row of stored entry `stored`.
+    pub fn logical_row(&self, stored: usize) -> usize {
+        match self {
+            Self::Dense => stored,
+            Self::Sparse(rows) => rows.get(stored).map(|r| *r as usize).unwrap_or(stored),
+        }
+    }
+
+    /// Stored index holding logical row `logical`, if it holds one at all.
+    pub fn stored_index(&self, logical: usize) -> Option<usize> {
+        match self {
+            Self::Dense => Some(logical),
+            Self::Sparse(rows) => rows.binary_search(&(logical as u32)).ok(),
+        }
+    }
+}
+
 /// A column of component data (SoA layout for a single component type).
 #[derive(Debug, Clone)]
 pub struct ComponentColumn {
@@ -13,6 +60,8 @@ pub struct ComponentColumn {
     pub scalars_per_row: usize,
     /// Flat storage: scalars_per_row * num_rows f64 values.
     pub data: Vec<f64>,
+    /// Which logical row each stored row belongs to.
+    pub rows: RowMap,
 }
 
 impl ComponentColumn {
@@ -20,12 +69,20 @@ impl ComponentColumn {
         ComponentColumn {
             scalars_per_row,
             data: Vec::new(),
+            rows: RowMap::Dense,
         }
     }
 
     pub fn push(&mut self, scalars: &[f64]) {
         debug_assert_eq!(scalars.len(), self.scalars_per_row);
         self.data.extend_from_slice(scalars);
+    }
+
+    /// Append `scalars` as the entity's logical row `logical_row`.
+    pub fn push_at(&mut self, scalars: &[f64], logical_row: usize) {
+        let stored = self.num_rows();
+        self.push(scalars);
+        self.rows.record(stored, logical_row);
     }
 
     pub fn num_rows(&self) -> usize {
@@ -36,6 +93,8 @@ impl ComponentColumn {
             .unwrap_or(0)
     }
 
+    /// The `index`-th *stored* row. For a column that skipped steps this is not
+    /// logical row `index`; use [`Self::at_logical_row`] for that.
     pub fn get_row(&self, index: usize) -> Option<&[f64]> {
         let start = index * self.scalars_per_row;
         let end = start + self.scalars_per_row;
@@ -44,6 +103,64 @@ impl ComponentColumn {
         } else {
             None
         }
+    }
+
+    /// The value this column holds at the entity's logical row `logical_row`,
+    /// or `None` when the component was not logged at that step.
+    pub fn at_logical_row(&self, logical_row: usize) -> Option<&[f64]> {
+        self.get_row(self.rows.stored_index(logical_row)?)
+    }
+
+    /// Logical row of the `index`-th stored row.
+    pub fn logical_row_of(&self, index: usize) -> usize {
+        self.rows.logical_row(index)
+    }
+}
+
+/// Time indices for one axis, with the logical row each one belongs to.
+///
+/// A `TimePoint` need not name every axis the entity uses, so an axis can cover
+/// only some rows. Keeping the mapping here is what lets two axes that cover
+/// different rows still be read as the same entity's timeline.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TimelineColumn {
+    pub data: Vec<TimeIndex>,
+    pub rows: RowMap,
+}
+
+/// Collects a dense axis, one time per logical row.
+impl FromIterator<TimeIndex> for TimelineColumn {
+    fn from_iter<I: IntoIterator<Item = TimeIndex>>(iter: I) -> Self {
+        Self {
+            data: iter.into_iter().collect(),
+            rows: RowMap::Dense,
+        }
+    }
+}
+
+impl TimelineColumn {
+    pub fn push_at(&mut self, index: TimeIndex, logical_row: usize) {
+        let stored = self.data.len();
+        self.data.push(index);
+        self.rows.record(stored, logical_row);
+    }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// The time this axis holds at logical row `logical_row`.
+    pub fn at_logical_row(&self, logical_row: usize) -> Option<TimeIndex> {
+        self.data.get(self.rows.stored_index(logical_row)?).copied()
+    }
+
+    /// Logical row of the `index`-th stored time.
+    pub fn logical_row_of(&self, index: usize) -> usize {
+        self.rows.logical_row(index)
     }
 }
 
@@ -54,10 +171,13 @@ pub struct EntityStore {
     pub static_data: HashMap<ComponentName, Vec<f64>>,
     /// Temporal component columns.
     pub columns: HashMap<ComponentName, ComponentColumn>,
-    /// Time indices for each timeline (parallel arrays with component columns).
-    pub timelines: HashMap<TimelineName, Vec<TimeIndex>>,
+    /// Time indices for each timeline, each carrying the logical rows it covers.
+    pub timelines: HashMap<TimelineName, TimelineColumn>,
     /// Number of temporal rows logged.
     pub num_rows: usize,
+    /// The `TimePoint` of the row currently being filled. Two `log_temporal`
+    /// calls carrying the same `TimePoint` belong to one logical row.
+    last_time_point: Option<TimePoint>,
 }
 
 /// Simulation metadata that can be embedded in a Recording.
@@ -164,10 +284,13 @@ impl Recording {
 
     /// Log temporal component data at a specific time point.
     ///
-    /// When multiple components are logged at the same time point (e.g. via
-    /// [`log_orbital_state`](Self::log_orbital_state)), the timeline indices
-    /// are pushed only once per logical time step, keeping
-    /// `timelines[*].len() == num_rows` invariant.
+    /// Calls carrying the same `TimePoint` fill one logical row, so logging
+    /// several components at one time step (e.g. via
+    /// [`log_orbital_state`](Self::log_orbital_state)) advances the row once.
+    ///
+    /// Skipping a component at some step is how "no value here" is expressed:
+    /// its column records which logical rows it does cover, so its values keep
+    /// the times they were logged at.
     pub fn log_temporal<C: Component>(
         &mut self,
         entity: &EntityPath,
@@ -184,39 +307,29 @@ impl Recording {
                 field_names: C::field_names().iter().map(|s| s.to_string()).collect(),
             });
 
-        let column = store
-            .columns
-            .entry(C::component_name())
-            .or_insert_with(|| ComponentColumn::new(C::num_scalars()));
-
-        column.push(&component.to_scalars());
-
-        // Push timeline indices only once per logical time step.
-        // After pushing component data, if any column has more rows than
-        // there are timeline entries, this is a new logical row.
-        let max_component_rows = store
-            .columns
-            .values()
-            .map(|c| c.num_rows())
-            .max()
-            .unwrap_or(0);
-        let timeline_len = store
-            .timelines
-            .values()
-            .map(|tl| tl.len())
-            .max()
-            .unwrap_or(0);
-
-        if max_component_rows > timeline_len {
+        // The row is identified by the time point itself rather than inferred
+        // from row counts, which is what let a column that skipped steps line up
+        // with the wrong times.
+        let is_new_row = store.last_time_point.as_ref() != Some(time_point);
+        if is_new_row {
+            store.last_time_point = Some(time_point.clone());
+            let logical_row = store.num_rows;
             for (timeline_name, time_index) in time_point.indices() {
                 store
                     .timelines
                     .entry(timeline_name.clone())
                     .or_default()
-                    .push(*time_index);
+                    .push_at(*time_index, logical_row);
             }
             store.num_rows += 1;
         }
+        let logical_row = store.num_rows - 1;
+
+        store
+            .columns
+            .entry(C::component_name())
+            .or_insert_with(|| ComponentColumn::new(C::num_scalars()))
+            .push_at(&component.to_scalars(), logical_row);
     }
 
     /// Convenience: log an OrbitalState archetype (position + velocity).
