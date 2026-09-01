@@ -1668,7 +1668,7 @@ impl SimConfig {
                 sat.orbit,
                 OrbitConfig::Tle { .. } | OrbitConfig::Norad { .. }
             ) {
-                crate::sim::params::ensure_body_carries_omm(body)
+                crate::sim::params::ensure_body_carries_an_element_set(body)
                     .map_err(|e| format!("satellites[{i}]: {e}"))?;
             }
         }

@@ -127,7 +127,7 @@ pub(crate) fn validate_element_set_body(
         .iter()
         .any(|s| matches!(s.orbit, OrbitSpec::ElementSet { .. }))
     {
-        return ensure_body_carries_omm(body);
+        return ensure_body_carries_an_element_set(body);
     }
     Ok(())
 }
@@ -139,7 +139,7 @@ pub(crate) fn validate_element_set_body(
 /// a `norad_id` over the network. Reaching this only through `SimParams` meant
 /// `orts config validate` called a non-Earth TLE config valid and `orts run
 /// --config` then panicked on it.
-pub(crate) fn ensure_body_carries_omm(body: KnownBody) -> Result<(), String> {
+pub(crate) fn ensure_body_carries_an_element_set(body: KnownBody) -> Result<(), String> {
     if body == KnownBody::Earth {
         return Ok(());
     }
