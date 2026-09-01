@@ -3139,6 +3139,19 @@ direction_body = [0.0, 0.0, 0.0]
                  \n[satellites.controller]\ntype = \"wasm\"\npath = \"p.wasm\"\npth = \"q.wasm\"\n",
                 "pth",
             ),
+            (
+                "reaction_wheels",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+                 \n[satellites.reaction_wheels]\ntype = \"three_axis\"\ninertia = 1e-4\n\
+                 max_momentum = 0.03\nmax_torqe = 0.001\n",
+                "max_torqe",
+            ),
+            (
+                "magnetorquers",
+                "[[satellites]]\n[satellites.orbit]\ntype = \"circular\"\naltitude = 500\n\
+                 \n[satellites.magnetorquers]\ntype = \"three_axis\"\nmax_momnet = 0.2\n",
+                "max_momnet",
+            ),
         ];
         for (label, toml_src, key) in cases {
             let err = toml::from_str::<SimConfig>(toml_src)
@@ -3910,5 +3923,86 @@ orbit = { type = "circular", altitude = 600 }
                 "satellites[{i}]: controller"
             );
         }
+    }
+
+    /// Every format the loader accepts names its unread keys the same way.
+    ///
+    /// The three go through different `serde_ignored` adapters — a `&mut`
+    /// `serde_json::Deserializer`, a `toml::Deserializer` by value, a
+    /// `serde_yaml::Deserializer` by value — so a change to one says nothing
+    /// about the others. The same two typos, at the top level and inside a
+    /// satellite, must come back as the same two paths from all three.
+    #[test]
+    fn every_format_names_the_same_unread_keys() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-unread-formats-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let files = [
+            (
+                "sim.toml",
+                "dt = 1.0\nduraton = 100.0\n\n[[satellites]]\nid = \"a\"\naltitide = 400\n\
+                 [satellites.orbit]\ntype = \"circular\"\naltitude = 400\n"
+                    .to_string(),
+            ),
+            (
+                "sim.json",
+                r#"{"dt":1.0,"duraton":100.0,"satellites":[
+                    {"id":"a","altitide":400,
+                     "orbit":{"type":"circular","altitude":400}}]}"#
+                    .to_string(),
+            ),
+            (
+                "sim.yaml",
+                "dt: 1.0\nduraton: 100.0\nsatellites:\n  - id: a\n    altitide: 400\n    \
+                 orbit:\n      type: circular\n      altitude: 400\n"
+                    .to_string(),
+            ),
+        ];
+
+        for (name, body) in files {
+            let path = dir.join(name);
+            std::fs::write(&path, &body).expect("write config");
+            let loaded = SimConfig::load_with_warnings(&path)
+                .unwrap_or_else(|e| panic!("{name}: the file loads: {e}"));
+            assert_eq!(
+                loaded.unread_keys,
+                vec!["duraton", "satellites.0.altitide"],
+                "{name}: both paths, in order"
+            );
+            assert_eq!(loaded.config.dt, 1.0, "{name}: the read keys still land");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A YAML file holding a second document is refused.
+    ///
+    /// `serde_yaml::from_str` refuses a multi-document stream; driving the
+    /// `Deserializer` to collect the unread keys has to keep doing so, or the
+    /// documents after the first would be dropped without a word — the JSON
+    /// trailing-input hole in a different format.
+    #[test]
+    fn a_yaml_config_with_a_second_document_is_refused() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts-yaml-multidoc-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sim.yaml");
+        let one = "dt: 1.0\nsatellites:\n  - id: a\n    orbit:\n      type: circular\n      \
+                   altitude: 400\n";
+
+        std::fs::write(&path, one).expect("write config");
+        SimConfig::load_with_warnings(&path).expect("one document loads");
+
+        std::fs::write(&path, format!("{one}---\ndt: 99.0\n")).expect("write config");
+        let err =
+            SimConfig::load_with_warnings(&path).expect_err("a second document must be refused");
+        assert!(err.contains("YAML"), "msg: {err}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
