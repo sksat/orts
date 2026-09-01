@@ -234,11 +234,13 @@ pub fn build_spacecraft_dynamics(
     if epoch.is_some() {
         match (&sat.shape, sat.srp_area_to_mass) {
             (Some(shape), _) => {
-                // TODO: size the shadow to the central body once #385 lands.
-                // It replaces `for_earth` with a `build_srp` helper for the
-                // cannonball arm below; this arm should go through the same
-                // helper rather than growing a second copy of the fix.
-                system = system.with_model(PanelSrp::for_earth(shape.clone()));
+                // The shadow is cast by whatever the spacecraft orbits, so the
+                // Earth radius `for_earth` bakes in is only right for Earth.
+                // #385 is giving the cannonball arm below a `build_srp` helper
+                // that does the same thing; both arms should go through it once
+                // it lands.
+                system = system
+                    .with_model(PanelSrp::for_earth(shape.clone()).with_shadow_body(props.radius));
             }
             (None, Some(am)) => {
                 let mut srp = SolarRadiationPressure::for_earth(Some(am));
@@ -342,6 +344,78 @@ mod tests {
             Matrix3::identity(),
             None,
         )
+    }
+
+    /// The shadow is cast by whatever the spacecraft orbits, so a Mars
+    /// simulation must not eclipse against Earth's radius.
+    ///
+    /// The panel sits anti-sunward at a perpendicular offset of 5000 km from
+    /// the body-Sun axis: Mars' disc (3396.2 km) does not reach that far, so
+    /// the panel is lit, while Earth's (6378.137 km) does, so the same panel
+    /// would be dark. Which radius the model was handed decides the answer.
+    #[test]
+    fn panel_srp_shadows_against_the_central_body() {
+        use crate::attitude::AttitudeState;
+        use crate::orbital::OrbitalState;
+        use crate::spacecraft::SpacecraftState;
+
+        let epoch = Epoch::from_iso8601("2024-03-20T12:00:00Z").unwrap();
+        let sun_dir = arika::sun::sun_position_eci(&epoch.to_tdb())
+            .into_inner()
+            .normalize();
+        // Any direction across the body-Sun axis serves as the offset.
+        let across = sun_dir
+            .cross(&nalgebra::Vector3::new(0.0, 0.0, 1.0))
+            .normalize();
+        let position = -sun_dir * 20_000.0 + across * 5_000.0;
+
+        let srp_magnitude = |body: KnownBody| {
+            let sat = SatelliteParams {
+                has_drag: false,
+                ballistic_coeff: None,
+                srp_area_to_mass: None,
+                srp_cr: None,
+                disturbances: DisturbanceTorques::default(),
+                shape: Some(one_panel_shape()),
+            };
+            let system = build_spacecraft_dynamics(
+                &body,
+                body.properties().mu,
+                Some(epoch),
+                &sat,
+                &[],
+                Matrix3::identity(),
+                None,
+            );
+            let state = SpacecraftState {
+                orbit: OrbitalState::new(position, nalgebra::Vector3::new(0.0, 3.0, 0.0)),
+                attitude: AttitudeState::identity(),
+                mass: 100.0,
+            };
+            system
+                .model_breakdown(0.0, &state)
+                .into_iter()
+                .find(|(name, _)| *name == "panel_srp")
+                .map(|(_, loads)| loads.acceleration_inertial.magnitude())
+                .expect("panel_srp should be installed")
+        };
+
+        let mars_radius = KnownBody::Mars.properties().radius;
+        let earth_radius = KnownBody::Earth.properties().radius;
+        assert!(
+            mars_radius < 5_000.0 && earth_radius > 5_000.0,
+            "the offset has to sit between the two radii: mars {mars_radius}, earth {earth_radius}"
+        );
+
+        assert!(
+            srp_magnitude(KnownBody::Mars) > 0.0,
+            "Mars' disc does not reach 5000 km, so the panel is lit"
+        );
+        assert_eq!(
+            srp_magnitude(KnownBody::Earth),
+            0.0,
+            "Earth's disc does reach it, so the same panel is dark"
+        );
     }
 
     /// A caller who sets both is told, instead of having one silently dropped.
