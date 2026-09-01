@@ -842,6 +842,13 @@ pub enum OrbitConfig {
 /// what anyone reads to find a typo.
 const CLIENT_MESSAGE_KEY_LIMIT: usize = 20;
 
+/// How many characters of one key reach the log.
+///
+/// The key-count limit says nothing about how long each is, and a key over `/ws`
+/// is as long as its sender cares to make it. A config key that anyone typed
+/// fits in far less than this.
+const PRINTED_KEY_LIMIT: usize = 128;
+
 /// The unread keys of a client message, and how many did not fit.
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct UnreadClientKeys {
@@ -959,8 +966,19 @@ pub fn load_config_reporting_unread_keys(path: &Path) -> Result<SimConfig, Strin
 /// `escape_debug` leaves an ordinary key alone — what it rewrites is the
 /// characters no key needs. The JSON form of `orts config validate` needs none
 /// of this; a JSON string encodes them itself.
-pub fn printable_key(key: &str) -> std::str::EscapeDebug<'_> {
-    key.escape_debug()
+///
+/// The length is bounded too: a key is as long as its sender cares to make it,
+/// and escaping can turn one character into six (`\u{1b}`). Counting the escaped
+/// characters bounds the line whatever the input expands to. What is left out is
+/// the middle of a name nobody was going to read to the end; the byte count says
+/// how much.
+pub fn printable_key(key: &str) -> String {
+    let mut escaped = key.escape_debug();
+    let mut out: String = escaped.by_ref().take(PRINTED_KEY_LIMIT).collect();
+    if escaped.next().is_some() {
+        out.push_str(&format!("… ({} bytes in all)", key.len()));
+    }
+    out
 }
 
 /// A loaded config and the keys in its file that nothing read.
@@ -4115,9 +4133,25 @@ orbit = { type = "circular", altitude = 600 }
         }
         // An ordinary key is untouched, so the escaping costs nothing to read.
         assert_eq!(
-            format!("{}", printable_key("satellites.0.altitide")),
+            printable_key("satellites.0.altitide"),
             "satellites.0.altitide"
         );
+
+        // A key is as long as its sender chose, and escaping expands each
+        // character up to six, so the rendered line is bounded and says what it
+        // left out.
+        let long = "\u{1b}".repeat(10_000);
+        let rendered = printable_key(&long);
+        assert!(
+            rendered.chars().count() < PRINTED_KEY_LIMIT + 40,
+            "bounded whatever the escaping does to it: {} chars",
+            rendered.chars().count()
+        );
+        assert!(
+            rendered.contains("10000 bytes in all"),
+            "and says how long the key was: {rendered}"
+        );
+        assert!(!rendered.contains('\u{1b}'), "still escaped: {rendered:?}");
     }
 
     /// A client message names at most `CLIENT_MESSAGE_KEY_LIMIT` keys.

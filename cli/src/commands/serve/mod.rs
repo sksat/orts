@@ -71,13 +71,27 @@ fn has_explicit_sim_args(sim: &SimArgs) -> bool {
     sim.config.is_some() || sim.has_orbit_args()
 }
 
+/// The largest control message `/ws` will read.
+///
+/// Every inbound frame is parsed into a `serde_json::Value` so the keys nothing
+/// reads can be named, and the tree costs several times the bytes on the wire.
+/// axum's default ceiling is 64 MiB per message, which is far past anything this
+/// endpoint has to carry: measured, a `start_simulation` runs about 256 bytes per
+/// satellite, so 250 KiB for a fleet of 1000 and 2.5 MiB for 10000. 8 MiB leaves
+/// room for a fleet larger than any this simulator runs while keeping what one
+/// unauthenticated client can make the server hold to something bounded.
+///
+/// Outbound messages are unaffected: this bounds what is read.
+const MAX_CONTROL_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+
 async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     let rx = state.tx.subscribe();
     let cmd_tx = state.cmd_tx.clone();
-    ws.on_upgrade(move |socket| async move {
-        connection::handle_connection(socket, rx, cmd_tx).await;
-        eprintln!("Client disconnected");
-    })
+    ws.max_message_size(MAX_CONTROL_MESSAGE_BYTES)
+        .on_upgrade(move |socket| async move {
+            connection::handle_connection(socket, rx, cmd_tx).await;
+            eprintln!("Client disconnected");
+        })
 }
 
 /// Binary WS endpoint for a declared `stream-io` stream — the shape of a
