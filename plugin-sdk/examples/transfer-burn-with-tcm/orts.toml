@@ -3,7 +3,8 @@ dt = 0.1
 output_interval = 10.0
 duration = 7000.0
 epoch = "2024-01-01T00:00:00Z"
-# Demo では drag の影響を排除して純粋な 2-body の Hohmann 遷移を見せる。
+# Demo では drag を掛けずに Hohmann 遷移を見せる（zonal 重力と、epoch があるので
+# Sun / Moon の第三体重力は入る）。
 # drag が入るのは ballistic_coeff を持つ衛星と、B* が実質ゼロでない TLE/OMM 軌道
 # (`has_bstar_drag`)。この例はどちらでもないので drag は掛からない
 # (`atmosphere` は drag の on/off ではなく、使う大気モデルの選択)。
