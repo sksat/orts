@@ -469,14 +469,12 @@ impl PanelConfig {
         )
         .with_cp_offset(nalgebra::Vector3::from_row_slice(&self.cp_offset));
 
-        match self.back {
-            None => vec![front],
-            Some(_) => {
-                let (specular, diffuse) = self.back_optics();
-                let back = front.back_face(PanelOptics::new(specular, diffuse));
-                vec![front, back]
-            }
+        if self.back.is_none() {
+            return vec![front];
         }
+        let (specular, diffuse) = self.back_optics();
+        let back = front.back_face(PanelOptics::new(specular, diffuse));
+        vec![front, back]
     }
 }
 
