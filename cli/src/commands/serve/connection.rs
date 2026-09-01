@@ -189,7 +189,26 @@ async fn main_loop(
                                 "Warning: client message: nothing reads `{key}`; its value is ignored"
                             );
                         }
-                        if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
+                        let parsed = serde_json::from_str::<ClientMessage>(&text);
+                        // A message this server cannot read is answered, not
+                        // dropped. A `type`-tagged block refuses an unknown key
+                        // (nothing can report one there), and dropping the error
+                        // left the client waiting on a reply that never came.
+                        if let Err(e) = &parsed {
+                            let _ = ws_sender
+                                .send(Message::Text(
+                                    serde_json::to_string(&WsMessage::Error {
+                                        message: format!("could not read the message: {e}"),
+                                    })
+                                    .unwrap_or_else(|_| {
+                                        "{\"type\":\"error\",\"message\":\"could not read the message\"}"
+                                            .to_string()
+                                    })
+                                    .into(),
+                                ))
+                                .await;
+                        }
+                        if let Ok(client_msg) = parsed {
                             let result = match client_msg {
                                 ClientMessage::QueryRange { t_min, t_max, max_points, entity_path } => {
                                     let (resp_tx, resp_rx) = oneshot::channel();
