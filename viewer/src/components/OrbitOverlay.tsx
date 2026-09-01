@@ -1,12 +1,14 @@
 import styles from "../App.module.css";
+import type { DirectionVectorOptions } from "../directionVectors.js";
 import type { SatelliteInfo, SimInfo } from "../hooks/useWebSocket.js";
 import type { ReferenceFrame } from "../referenceFrame.js";
 import type { MarkerShape } from "../satelliteShapes.js";
+import { DirectionVectorControls } from "./DirectionVectorControls.js";
 import { FrameSelector } from "./FrameSelector.js";
 import { MarkerShapeSelector } from "./MarkerShapeSelector.js";
 import { SimInfoBar } from "./SimInfoBar.js";
 
-export interface SceneOverlayProps {
+export interface OrbitOverlayProps {
   referenceFrame: ReferenceFrame;
   onReferenceFrameChange: (frame: ReferenceFrame) => void;
   /** Satellites available for the frame selector (from simInfo or replay). */
@@ -25,14 +27,28 @@ export interface SceneOverlayProps {
   /** Per-satellite marker shape overrides. */
   markerShapeOverrides: Map<string, MarkerShape>;
   onMarkerShapeOverride: (satId: string, shape: MarkerShape | null) => void;
+  /**
+   * Reference-direction arrows. The same setting the attitude view uses, offered
+   * here too so a change made in one view is visible in the other rather than
+   * taking effect invisibly.
+   */
+  directionVectors: DirectionVectorOptions;
+  onDirectionVectorsChange: (value: DirectionVectorOptions) => void;
+  /** The centred satellite, or null in a central-body view (no arrows there). */
+  centredSatelliteId: string | null;
+  /** Whether that satellite has a position, which nadir needs. */
+  hasCentredPosition: boolean;
 }
 
 /**
- * Top-left canvas overlay: frame selector, optional file-orbit summary, and the
- * simulation info bar. Grouped out of App so the orchestrator stays focused on
- * data flow rather than canvas chrome layout.
+ * The orbit view's overlay controls: frame selector, marker shapes, the optional
+ * file-orbit summary and the simulation info bar.
+ *
+ * A fragment, not a positioned container: the app owns the overlay area so the
+ * view switch — which must outlive either view — sits alongside this rather than
+ * inside it.
  */
-export function SceneOverlay({
+export function OrbitOverlay({
   referenceFrame,
   onReferenceFrameChange,
   satellites,
@@ -46,9 +62,14 @@ export function SceneOverlay({
   onDefaultMarkerShapeChange,
   markerShapeOverrides,
   onMarkerShapeOverride,
-}: SceneOverlayProps) {
+  directionVectors,
+  onDirectionVectorsChange,
+  centredSatelliteId,
+  hasCentredPosition,
+}: OrbitOverlayProps) {
+  const noCentre = centredSatelliteId == null ? "Centre on a satellite to draw it" : undefined;
   return (
-    <div className={styles.sceneOverlay}>
+    <>
       <FrameSelector
         referenceFrame={referenceFrame}
         onChange={onReferenceFrameChange}
@@ -63,6 +84,14 @@ export function SceneOverlay({
         overrides={markerShapeOverrides}
         onOverrideChange={onMarkerShapeOverride}
       />
+      <DirectionVectorControls
+        value={directionVectors}
+        onChange={onDirectionVectorsChange}
+        unavailable={{
+          sun: noCentre ?? (epochJd == null ? "Requires epoch" : undefined),
+          nadir: noCentre ?? (hasCentredPosition ? undefined : "Requires a position"),
+        }}
+      />
       {orbitInfo && (
         <div className={styles.orbitInfo} data-testid="orbit-info-file">
           {orbitInfo}
@@ -76,6 +105,6 @@ export function SceneOverlay({
           activePerturbations={activePerturbations}
         />
       )}
-    </div>
+    </>
   );
 }

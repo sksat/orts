@@ -1,11 +1,11 @@
 import type { CSSProperties } from "react";
 import controlStyles from "../styles/controls.module.css";
 
-/** One selectable orientation. */
-export interface OrientationOption<T extends string> {
+/** One selectable segment. */
+export interface SegmentedOption<T extends string> {
   value: T;
   label: string;
-  /** Greyed out and unselectable — the data this orientation needs is missing. */
+  /** Greyed out and unselectable — the data this option needs is missing. */
   disabled?: boolean;
   /** Tooltip, used to say *why* an option is disabled. */
   title?: string;
@@ -13,28 +13,28 @@ export interface OrientationOption<T extends string> {
   testId?: string;
 }
 
-interface OrientationSelectorProps<T extends string> {
+interface SegmentedToggleProps<T extends string> {
   value: T;
-  options: readonly OrientationOption<T>[];
+  options: readonly SegmentedOption<T>[];
   onChange: (value: T) => void;
   style?: CSSProperties;
 }
 
 /**
- * A segmented toggle over the display orientations a view offers.
+ * A one-of-N toggle: the app's segmented control.
  *
- * Generic over the orientation type so the orbit view (whose orientations pair
- * with a frame centre) and the attitude view (whose spacecraft is always at the
- * origin, leaving only an orientation) get the same control without one view's
- * frame type leaking into the other. Which options exist, and which are
- * available for the current data, is the caller's decision.
+ * Generic over the value type so every such choice looks the same without one
+ * caller's domain type leaking into another — the display orientations (whose
+ * meaning differs between the orbit and attitude views) and the view switch
+ * itself both use it. Which options exist, and which are available for the
+ * current data, is the caller's decision.
  */
-export function OrientationSelector<T extends string>({
+export function SegmentedToggle<T extends string>({
   value,
   options,
   onChange,
   style,
-}: OrientationSelectorProps<T>) {
+}: SegmentedToggleProps<T>) {
   return (
     <div className={controlStyles.modeToggle} style={style}>
       {options.map((option) => (
