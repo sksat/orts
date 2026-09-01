@@ -35,6 +35,11 @@ export class RrdFileAdapter implements SourceAdapter {
   private derivedContext: OrbitDerivedContext | null = null;
   /** Whether this load has already published its first point for the E2E. */
   private debugPointExposed = false;
+  /**
+   * Which load is current. `stopped` cannot stand in for this: a restart clears
+   * it, so a callback of the load before would read it as its own go-ahead.
+   */
+  private loadGeneration = 0;
 
   constructor(sourceId: SourceId, file: File, onEvent: SourceEventHandler) {
     this.sourceId = sourceId;
@@ -60,10 +65,13 @@ export class RrdFileAdapter implements SourceAdapter {
     // would be derived against the previous recording's body.
     this.derivedContext = null;
 
+    const generation = ++this.loadGeneration;
+    const isCurrent = () => !this.stopped && this.loadGeneration === generation;
+
     const reader = new FileReader();
     this.reader = reader;
     reader.onload = () => {
-      if (this.stopped) return;
+      if (!isCurrent()) return;
       const buffer = reader.result as ArrayBuffer;
       // The derived values need `arika-wasm`. The app starts loading it at
       // mount, but the file input is usable before that finishes, so wait
@@ -74,12 +82,16 @@ export class RrdFileAdapter implements SourceAdapter {
           console.warn("RrdFileAdapter: arika WASM failed to load:", e);
         })
         .then(() => {
-          if (this.stopped) return;
+          // A restart while this was pending owns the adapter now. Starting a
+          // worker here would put the previous file's buffer behind the current
+          // load's worker reference, leaving both workers reporting into it and
+          // neither of them stoppable.
+          if (!isCurrent()) return;
           this.startWorker(buffer);
         });
     };
     reader.onerror = () => {
-      if (this.stopped) return;
+      if (!isCurrent()) return;
       this.onEvent(this.sourceId, {
         kind: "error",
         message: `Failed to read file: ${this.file.name}`,

@@ -6,8 +6,17 @@ import type { SourceEvent, SourceId } from "./types.js";
 /// Records what the derived batch was asked to compute against.
 const derivedCalls: { mu: number; bodyRadius: number; states: number }[] = [];
 
+/// Lets a test hold `initArika()` pending across a restart.
+const pendingInits: (() => void)[] = [];
+let holdInit = false;
+
 vi.mock("../wasm/arikaInit.js", () => ({
-  initArika: () => Promise.resolve(),
+  initArika: () =>
+    holdInit
+      ? new Promise<void>((resolve) => {
+          pendingInits.push(resolve);
+        })
+      : Promise.resolve(),
   orbit_derived_batch: (states: Float64Array, mu: number, bodyRadius: number) => {
     derivedCalls.push({ mu, bodyRadius, states: states.length / 6 });
     return new Float64Array((states.length / 6) * ORBIT_DERIVED_STRIDE).fill(0);
@@ -57,6 +66,8 @@ class MockFileReader {
 
 beforeEach(() => {
   derivedCalls.length = 0;
+  pendingInits.length = 0;
+  holdInit = false;
   MockWorker.instances = [];
   MockFileReader.instances = [];
   vi.stubGlobal("Worker", function MockWorkerConstructor() {
@@ -152,5 +163,34 @@ describe("RrdFileAdapter", () => {
     expect(derivedCalls).toHaveLength(2);
     expect(derivedCalls[1].mu).not.toBe(42_000);
     expect(derivedCalls[1].bodyRadius).not.toBe(1234);
+  });
+
+  it("a load restarted while the WASM was loading does not start a second worker", async () => {
+    holdInit = true;
+    const events: SourceEvent[] = [];
+    const handler = (_id: SourceId, e: SourceEvent) => events.push(e);
+    const adapter = new RrdFileAdapter("rrd-0", new File([new Uint8Array(8)], "a.rrd"), handler);
+
+    // Both loads read the file and then wait on the WASM.
+    adapter.start();
+    adapter.start();
+    expect(pendingInits).toHaveLength(2);
+    expect(MockWorker.instances).toHaveLength(0);
+
+    // The first load's wait finishes after the restart owns the adapter. It
+    // must not put its own buffer behind the current load's worker reference:
+    // `stopped` is false again by then, so it alone let the stale load through.
+    pendingInits[0]();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(MockWorker.instances).toHaveLength(0);
+
+    // The current load still starts, and it is the only worker.
+    pendingInits[1]();
+    const worker = await latestWorker();
+    expect(MockWorker.instances).toHaveLength(1);
+    worker.simulateMessage(metadata(42_000, 1234) as unknown as RrdWorkerMessage);
+    worker.simulateMessage(chunk());
+    expect(derivedCalls).toHaveLength(1);
   });
 });
