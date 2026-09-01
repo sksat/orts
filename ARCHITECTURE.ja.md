@@ -186,6 +186,13 @@ sequenceDiagram
   `useWebSocket` hook のブリッジ (`useWebSocketSource`)、ファイル再生
   (`CSVFileAdapter` / `RrdFileAdapter`) は Web Worker でメインスレッド外
   パースを行う。
+- **2 系統の表示と共有する描画部品:** `./lib` は軌道表示
+  (`OrbitViewer` → `OrbitScene` → `OrbitSceneContents`) と姿勢表示
+  (`AttitudeViewer` → `AttitudeScene` → `AttitudeSceneContents`) を公開する。
+  どちらも「Canvas 込みの wrapper → 利用側の Canvas に配置する scene graph →
+  内部レンダラ」の 3 層。共有するのは描画プリミティブ (`SpacecraftVisual`,
+  `DirectionArrows`) と表示フレーム変換 (`displayFrame.ts`) で、scene graph は
+  共有しない。理由は [DESIGN.md](DESIGN.md) を参照。
 
 ## 6. 設計原則
 

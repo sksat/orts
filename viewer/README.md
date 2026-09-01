@@ -6,6 +6,10 @@ the orts viewer, exposed via the package's `./lib` entry — as `OrbitViewer`
 (batteries-included) or `OrbitScene` (for mounting inside your own
 `@react-three/fiber` Canvas).
 
+For one spacecraft's orientation on its own — no central body, no trails — there
+is a sibling pair, `AttitudeViewer` / `AttitudeScene`. See
+[Attitude view](#attitude-view).
+
 | Central-body view (ECI) | Satellite-centred view (LVLH) |
 | :---: | :---: |
 | ![Earth at the origin with a satellite and its orbit trail](./docs/orbit-viewer-central-body.png) | ![Camera tracking a satellite, Earth's limb below](./docs/orbit-viewer-satellite.png) |
@@ -86,11 +90,57 @@ outside React) instead of `trail`: the scene reads it each frame, so appended
 points reach the GPU without a React re-render. `trail` and `trailBuffer` are
 mutually exclusive per satellite.
 
+## Attitude view
+
+`AttitudeViewer` shows one spacecraft's orientation and nothing else: the
+spacecraft at the origin with its body axes, the reference frame's axes around
+it, and the reference directions drawn as arrows.
+
+```tsx
+import { AttitudeViewer } from "<pkg>/lib";
+
+<AttitudeViewer
+  centralBody={{ id: "earth" }}
+  body={{
+    id: "sat-1",
+    attitude: [0.707, 0, 0, 0.707],
+    position: [7000, 0, 1500],
+    velocity: [0, 7.5, 0],
+  }}
+  epochJd={2460000.5}
+  orientation="localOrbital"
+/>;
+```
+
+The required and optional props are the mirror of the orbit view's: `attitude` is
+what this view exists to show, and `position` is read only by the things that
+reference the orbit — the nadir arrow, and the `localOrbital` frame (which also
+reads `velocity`). `centralBody` needs no radius: this view has no physical
+length scale, and the spacecraft is normalised to one scene unit across so the
+camera framing does not depend on the real size.
+
+`orientation` picks the display frame — `"inertial"` (default), `"bodyFixed"`
+(needs `epochJd`, and an Earth central body, whose rotation angle is the one the
+viewer models), `"localOrbital"` (needs `position` and `velocity`). A request
+whose inputs are absent falls back to `"inertial"`.
+
+`directionVectors` selects the arrows (`{ sun, nadir }`, both on by default). An
+arrow whose input is absent is not drawn: without `epochJd` there is no Sun
+direction, and a fixed arrow would read as a measurement. Arrow and body-axis
+proportions are ratios of the spacecraft's apparent size, so zooming scales them
+together rather than holding them constant on screen.
+
+`AttitudeScene` is the bring-your-own-Canvas layer, as `OrbitScene` is for the
+orbit view.
+
+To compare two spacecraft, place two `AttitudeViewer`s side by side: this view
+puts its spacecraft at the origin, and two cannot both be there.
+
 ## Caveats
 
-- **Client-only.** `OrbitViewer` mounts a `<canvas>` and uses `window`; it does
-  not server-render. Under Next.js etc., import it client-side only
-  (e.g. `next/dynamic` with `ssr: false`).
+- **Client-only.** `OrbitViewer` and `AttitudeViewer` mount a `<canvas>` and use
+  `window`; they do not server-render. Under Next.js etc., import them
+  client-side only (e.g. `next/dynamic` with `ssr: false`).
 - **Textures.** Bodies render with a flat fallback colour unless textures are
   reachable. The built-in body texture paths are origin-relative
   (`/textures/earth_2k.jpg`, …); serve those assets, or the bodies simply fall
@@ -104,12 +154,20 @@ mutually exclusive per satellite.
 
 ## Public API & stability
 
-The entry points are **`OrbitViewer`** (batteries-included — its own `<div>` +
-`<Canvas>`) and **`OrbitScene`** (the scene graph to mount inside your own
-`@react-three/fiber` `<Canvas>`), plus their prop types (`OrbitViewerProps`,
-`OrbitSceneProps`, `SatelliteState`, `ViewerReferenceFrame`, `Vec3`, …), the body
-definitions (`DEFAULT_BODIES`, `BodyDefinition`), `MarkerShape`, `SCENE_UP`, and
-`initArika`.
+Each view has two entry points: a batteries-included component with its own
+`<div>` + `<Canvas>`, and the scene graph to mount inside your own
+`@react-three/fiber` `<Canvas>`.
+
+| View | Batteries-included | Bring your own Canvas | Data type |
+| --- | --- | --- | --- |
+| Orbit | `OrbitViewer` | `OrbitScene` | `SatelliteState[]` |
+| Attitude | `AttitudeViewer` | `AttitudeScene` | one `AttitudeBodyState` |
+
+Their prop types are public too (`OrbitViewerProps`, `OrbitSceneProps`,
+`AttitudeViewerProps`, `AttitudeSceneProps`, `SatelliteState`,
+`AttitudeBodyState`, `ViewerReferenceFrame`, `AttitudeFrame`,
+`DirectionVectorOptions`, `Vec3`, …), along with the body definitions
+(`DEFAULT_BODIES`, `BodyDefinition`), `MarkerShape`, `SCENE_UP`, and `initArika`.
 
 The Three.js / react-three-fiber building blocks (`CelestialBody`, `Satellite`,
 `OrbitTrail`, …) and the internal frame wiring are **not** exported — they ride
@@ -141,9 +199,10 @@ npx shadcn@4.11.0 add ./viewer/public/r/orbit-viewer.json
 > works without a checkout — isn't wired up yet (the deployed site currently
 > serves only the docs).
 
-The `orbit-viewer` item installs the full import closure (the `OrbitViewer` /
-`OrbitScene` components plus the internal building blocks they use — frame/trail
-logic, shaders, body definitions) under `<your components alias>/orbit-viewer/`,
+The `orbit-viewer` item installs the full import closure of both views (the
+`OrbitViewer` / `OrbitScene` / `AttitudeViewer` / `AttitudeScene` components plus
+the internal building blocks they use — frame/trail logic, shaders, body
+definitions) under `<your components alias>/orbit-viewer/`,
 preserving the internal relative imports. Copying the source gives you everything,
 including the internals that `./lib` doesn't re-export. It declares `react` / `react-dom` / `three` / `@react-three/fiber` /
 `@react-three/drei` as dependencies; you must **also** add `arika-wasm` yourself

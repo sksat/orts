@@ -1,39 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { getBodyRadius, resolveBodyDefinitions } from "../bodies.js";
 import { OrbitSceneContents } from "../components/OrbitSceneContents.js";
 import { IS_DEV } from "../env.js";
 import type { OrbitPoint } from "../orbit.js";
 import type { MarkerShape } from "../satelliteShapes.js";
-import { initArika, isArikaReady } from "../wasm/arikaInit.js";
+import { useArikaReady } from "../wasm/useArikaReady.js";
 import { toOrbitPoint } from "./adapt.js";
 import { resolveFrameContext } from "./frameContext.js";
 import { DEFAULT_VIEWER_FRAME, type OrbitSceneProps } from "./types.js";
 import { useTrailBuffers } from "./useTrailBuffers.js";
-
-/**
- * Drive the bundled arika WASM to readiness when `enabled`. Returns `true` once
- * loaded so the scene can switch from default lighting to ephemeris-accurate
- * Sun/rotation. When `enabled` is false (no epoch), the WASM is never loaded —
- * epoch-less embedders pay no network/init cost and get the documented fixed Sun.
- */
-function useArikaReady(enabled: boolean): boolean {
-  const [ready, setReady] = useState(() => isArikaReady());
-  useEffect(() => {
-    if (!enabled || ready) return;
-    let cancelled = false;
-    initArika()
-      .then(() => {
-        if (!cancelled) setReady(true);
-      })
-      .catch(() => {
-        // Leave `ready` false: the viewer keeps rendering with default lighting.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, ready]);
-  return ready;
-}
 
 /** Sanitize a public trail-clip index to a finite, non-negative integer (else undefined). */
 function clampTrailIndex(value: number | undefined): number | undefined {

@@ -1,10 +1,13 @@
 /**
  * Public API of the orts viewer.
  *
- * Two entry components: {@link OrbitViewer} (batteries-included — its own sized
- * `<div>` + `<Canvas>`) and {@link OrbitScene} (the scene graph to mount inside
- * your own @react-three/fiber `<Canvas>`). Drive either with a central body and a
- * list of {@link SatelliteState}.
+ * Two views, each in two layers. The orbit view — {@link OrbitViewer}
+ * (batteries-included: its own sized `<div>` + `<Canvas>`) and {@link OrbitScene}
+ * (the scene graph to mount inside your own @react-three/fiber `<Canvas>`) —
+ * shows satellites around a central body; drive either with a central body and a
+ * list of {@link SatelliteState}. The attitude view — {@link AttitudeViewer} and
+ * {@link AttitudeScene} — shows one spacecraft's orientation with no central body
+ * or trails; drive it with a single {@link AttitudeBodyState}.
  *
  * The Three.js / react-three-fiber building blocks (CelestialBody, Satellite,
  * OrbitTrail, …) and the internal frame wiring are intentionally NOT exported:
@@ -22,6 +25,8 @@ export {
   type BodyTexture,
   DEFAULT_BODIES,
 } from "../bodies.js";
+// Which reference-direction arrows a scene draws (AttitudeScene.directionVectors).
+export type { DirectionVectorOptions } from "../directionVectors.js";
 // Streaming trail buffer (SatelliteState.trailBuffer): the built-in buffer, its
 // read contract, the point type it holds, and adapters to fill one from TrailPoints.
 export type { OrbitPoint } from "../orbit.js";
@@ -35,11 +40,19 @@ export { TrailBuffer, type TrailBufferLike } from "../utils/TrailBuffer.js";
 // auto-init when given an epoch; these let an embedder pre-load or point at an
 // external .wasm.
 export { type InitArikaOptions, initArika, isArikaReady } from "../wasm/arikaInit.js";
+// Attitude view: one spacecraft's orientation, without a central body or trails.
+export { AttitudeScene } from "./AttitudeScene.js";
+export { AttitudeViewer } from "./AttitudeViewer.js";
 export { toTrailBuffer, trailPointToOrbitPoint } from "./adapt.js";
 // Entry components: headline (own Canvas) + mid-layer (bring your own Canvas).
 export { OrbitScene } from "./OrbitScene.js";
 export { OrbitViewer } from "./OrbitViewer.js";
 export {
+  type AttitudeBodyState,
+  type AttitudeFrame,
+  type AttitudeSceneDataProps,
+  type AttitudeSceneProps,
+  type AttitudeViewerProps,
   type CentralBody,
   type ControlsProp,
   DEFAULT_VIEWER_FRAME,

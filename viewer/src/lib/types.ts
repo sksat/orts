@@ -19,6 +19,7 @@ import type { OrbitControlsProps } from "@react-three/drei";
 import type { CSSProperties } from "react";
 import type { WebGLRendererParameters } from "three";
 import type { BodyDefinitions } from "../bodies.js";
+import type { DirectionVectorOptions } from "../directionVectors.js";
 import type { MarkerShape } from "../satelliteShapes.js";
 import type { TrailBufferLike } from "../utils/TrailBuffer.js";
 
@@ -273,3 +274,105 @@ export const DEFAULT_VIEWER_FRAME: ViewerReferenceFrame = {
   center: "centralBody",
   orientation: "inertial",
 };
+
+/**
+ * Display orientation for the attitude view.
+ *
+ * There is no centre to choose: the spacecraft is at the origin, which is what
+ * makes it the attitude view. `bodyFixed` needs an epoch (and an Earth central
+ * body, whose rotation angle is the one the viewer models); `localOrbital` needs
+ * the spacecraft's position and velocity. A requested orientation whose inputs
+ * are absent falls back to `inertial`.
+ */
+export type AttitudeFrame = "inertial" | "bodyFixed" | "localOrbital";
+
+/**
+ * One spacecraft's attitude, for {@link AttitudeScene}.
+ *
+ * The required and optional fields are the mirror of {@link SatelliteState}'s:
+ * the attitude is what this view exists to show, and the position is needed only
+ * by the things that reference the orbit — the nadir arrow, and the
+ * `localOrbital` frame (which also needs the velocity).
+ */
+export interface AttitudeBodyState {
+  id: string;
+  /** Body→inertial rotation, Hamilton scalar-first `[w, x, y, z]`. */
+  attitude: Quat;
+  /** Position in km, central-body-centred inertial frame. */
+  position?: Vec3;
+  /** Velocity in km/s, central-body-centred inertial frame. */
+  velocity?: Vec3;
+  /** Seconds since the epoch, for the Sun direction and the body-fixed rotation. */
+  time?: number;
+  /** Display name, also used to look up a 3D model. */
+  name?: string;
+  /** Marker colour as a hex number (e.g. `0x00ff88`). */
+  color?: number;
+  /** Marker shape override for a spacecraft with no 3D model. */
+  markerShape?: MarkerShape | null;
+}
+
+/** Data props shared by {@link AttitudeScene} and {@link AttitudeViewer}. */
+export interface AttitudeSceneDataProps {
+  /**
+   * The central body the spacecraft orbits. Only its `id` is read — for the Sun
+   * direction, and to decide whether the body-fixed frame is available. No radius
+   * is needed: this view has no physical length scale.
+   */
+  centralBody: CentralBody;
+  /** The spacecraft whose attitude is shown. */
+  body: AttitudeBodyState;
+  /** Display orientation. Default `"inertial"`. */
+  orientation?: AttitudeFrame;
+  /** Julian Date of the simulation epoch. Without it there is no Sun direction. */
+  epochJd?: number;
+  /** Seconds since the epoch, when `body.time` is not given. Default 0. */
+  time?: number;
+  /** Marker shape default for a spacecraft with no 3D model. */
+  defaultMarkerShape?: MarkerShape | null;
+  /** Which reference-direction arrows to draw. Default: all of them. */
+  directionVectors?: DirectionVectorOptions;
+}
+
+/**
+ * Props for {@link AttitudeScene}: the attitude scene graph rendered inside a
+ * caller-supplied @react-three/fiber `<Canvas>`.
+ *
+ * The spacecraft is drawn one scene unit across, at the origin, so a camera a
+ * few units out frames it whatever the real spacecraft's size.
+ */
+export interface AttitudeSceneProps extends AttitudeSceneDataProps {
+  /** Default camera controls. `true` (default) | `false` | an OrbitControls config. */
+  controls?: ControlsProp;
+  /** Render the reference-frame axes. Default `true`. */
+  axes?: boolean;
+}
+
+/** Props for the {@link AttitudeViewer} component. */
+export interface AttitudeViewerProps extends AttitudeSceneDataProps {
+  /** Class applied to the wrapping element. */
+  className?: string;
+  /** Inline style applied to the wrapping element. */
+  style?: CSSProperties;
+  /** Overrides merged onto the internal `<Canvas>` setup. */
+  canvas?: {
+    /**
+     * Perspective camera overrides. `position`/`up` are in scene units, where the
+     * spacecraft is one unit across.
+     */
+    camera?: {
+      position?: [number, number, number];
+      up?: [number, number, number];
+      fov?: number;
+      near?: number;
+      far?: number;
+      zoom?: number;
+    };
+    /** WebGL renderer flags merged onto the defaults. */
+    gl?: Partial<WebGLRendererParameters>;
+  };
+  /** See {@link AttitudeSceneProps.controls}. */
+  controls?: ControlsProp;
+  /** See {@link AttitudeSceneProps.axes}. */
+  axes?: boolean;
+}

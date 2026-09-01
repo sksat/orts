@@ -34,6 +34,15 @@ export interface SunLightingParams {
 export interface SunLightingState {
   /** Sun direction in the active display frame. */
   sunDirection: THREE.Vector3;
+  /**
+   * Sun direction in the central-body inertial frame, before the display
+   * transform. Exposed so a consumer that draws the Sun *and* other reference
+   * directions can put them all through one transform, instead of mixing an
+   * already-transformed direction with untransformed ones.
+   *
+   * With no epoch this is the documented fixed fallback, not a measurement.
+   */
+  sunDirectionEci: [number, number, number];
   /** Inverse-square intensity scale relative to 1 AU. */
   sunIntensity: number;
   /** Directional light position (sun direction scaled out by the light distance). */
@@ -95,7 +104,7 @@ export function useSunLighting({
     [sunDirection, lightDistance],
   );
 
-  return { sunDirection, sunIntensity, lightPosition };
+  return { sunDirection, sunDirectionEci, sunIntensity, lightPosition };
 }
 
 /**
