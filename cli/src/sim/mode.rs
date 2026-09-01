@@ -40,37 +40,55 @@ pub fn select_sim_mode(satellites: &[SatelliteSpec]) -> Result<SimMode, String> 
     if satellites.is_empty() {
         return Ok(SimMode::OrbitOnly);
     }
-    let n = satellites.len();
+    let fleet_size = satellites.len();
     let with_attitude = satellites
         .iter()
         .filter(|s| s.attitude_config.is_some())
         .count();
-    if with_attitude != 0 && with_attitude != n {
+    let with_controller = satellites
+        .iter()
+        .filter(|s| s.controller_config.is_some())
+        .count();
+    ensure_fleet_declares_uniformly(fleet_size, with_attitude, with_controller)?;
+
+    if with_controller == fleet_size {
+        return Ok(SimMode::Controlled);
+    }
+    if with_attitude == fleet_size {
+        return Ok(SimMode::Spacecraft);
+    }
+    Ok(SimMode::OrbitOnly)
+}
+
+/// The part of [`select_sim_mode`]'s rule that a config settles on its own:
+/// attitude and controller are declared fleet-wide or not at all.
+///
+/// Shared with [`crate::config::SimConfig::validate`] so a config file meets it
+/// before anything runs. It used to be reached only from the engine, which
+/// `orts serve` builds inside the spawned manager: a mixed fleet validated
+/// clean, `orts serve --config` printed its banner, and the config the caller
+/// passed never ran — the server sat idle waiting for a `start_simulation`.
+pub fn ensure_fleet_declares_uniformly(
+    fleet_size: usize,
+    with_attitude: usize,
+    with_controller: usize,
+) -> Result<(), String> {
+    if with_attitude != 0 && with_attitude != fleet_size {
         return Err(
             "Mixed attitude config: some satellites have attitude, some don't. \
              Specify attitude for all satellites or remove it from all."
                 .to_string(),
         );
     }
-    let with_controller = satellites
-        .iter()
-        .filter(|s| s.controller_config.is_some())
-        .count();
-    if with_controller != 0 && with_controller != n {
+    if with_controller != 0 && with_controller != fleet_size {
         return Err(format!(
-            "Mixed controller config: {with_controller} of {n} satellites have \
+            "Mixed controller config: {with_controller} of {fleet_size} satellites have \
              `[satellites.controller]`. The control loop steps the whole fleet or none of it, \
              so those controllers would never run. Specify a controller for all satellites \
              or remove it from all."
         ));
     }
-    if with_controller == n {
-        return Ok(SimMode::Controlled);
-    }
-    if with_attitude == n {
-        return Ok(SimMode::Spacecraft);
-    }
-    Ok(SimMode::OrbitOnly)
+    Ok(())
 }
 
 /// 選択されたモードでは効かない設定キーについての警告文。

@@ -299,10 +299,13 @@ impl Default for IntegratorConfig {
 
 /// How far a normalized `initial_quaternion` may sit from unit norm.
 ///
-/// 1e-9 of unit-norm error scales a rotation by that much, ~2e-4 arcsec at
-/// 1 rad, three orders below the ~484 arcsec that separates the ECI frames this
-/// config chooses between. See [`AttitudeConfig::validate`] for the measurements
-/// this sits between.
+/// An empirical bound on the normalization residual, not a bound on attitude
+/// error: a quaternion's norm scales it radially in 4D and says nothing on its
+/// own about the rotation it names. It exists to separate a residual that is
+/// floating-point rounding from one that says the input lost its mantissa
+/// before the square root — see [`AttitudeConfig::validate`] for the measured
+/// cases it sits between, 1.8e-11 on the last accepted and 5.6e-6 on the first
+/// refused.
 const QUATERNION_UNIT_TOLERANCE: f64 = 1e-9;
 
 /// Attitude dynamics configuration for a satellite.
@@ -1426,6 +1429,28 @@ impl SimConfig {
                 arika::tle::parse(&format!("{line1}\n{line2}"))
                     .map_err(|e| format!("satellites[{i}]: invalid TLE: {e}"))?;
             }
+        }
+        // Which mode the fleet runs in is settled by the config, so a fleet no
+        // mode can serve is settled here too. `SatelliteSpec` carries these two
+        // as clones of the fields counted below, so the count the engine makes
+        // is this count.
+        if !self.satellites.is_empty() {
+            let fleet_size = self.satellites.len();
+            let with_attitude = self
+                .satellites
+                .iter()
+                .filter(|s| s.attitude.is_some())
+                .count();
+            let with_controller = self
+                .satellites
+                .iter()
+                .filter(|s| s.controller.is_some())
+                .count();
+            crate::sim::mode::ensure_fleet_declares_uniformly(
+                fleet_size,
+                with_attitude,
+                with_controller,
+            )?;
         }
         for (i, cmd) in self.commands.iter().enumerate() {
             // A non-finite or negative `t` would never satisfy the
@@ -3754,5 +3779,109 @@ altitude = 500.0
 "#;
         let config: SimConfig = toml::from_str(toml).expect("parse");
         config.validate().expect("two entities, two satellites");
+    }
+
+    /// A fleet no mode can serve is refused by the config, not by the engine.
+    ///
+    /// `orts serve --config` builds its engine inside a spawned manager, so a
+    /// mixed fleet used to validate clean, print the startup banner, and leave
+    /// the server idle with the caller's config never running.
+    #[test]
+    fn a_fleet_no_mode_can_serve_is_rejected() {
+        let mixed_attitude = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10.0, 10.0, 10.0], mass = 100.0 }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+"#;
+        let config: SimConfig = toml::from_str(mixed_attitude).expect("valid toml");
+        let err = config
+            .validate()
+            .expect_err("half a fleet with attitude runs in no mode");
+        assert!(err.contains("Mixed attitude config"), "msg: {err}");
+
+        let mixed_controller = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+"#;
+        let config: SimConfig = toml::from_str(mixed_controller).expect("valid toml");
+        let err = config
+            .validate()
+            .expect_err("half a fleet with a controller runs in no mode");
+        assert!(err.contains("Mixed controller config"), "msg: {err}");
+
+        // Both declared on every satellite, and on none, are the fleets that do
+        // pick a mode.
+        for toml in [
+            r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10.0, 10.0, 10.0], mass = 100.0 }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+attitude = { inertia_diag = [10.0, 10.0, 10.0], mass = 100.0 }
+"#,
+            r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+"#,
+        ] {
+            let config: SimConfig = toml::from_str(toml).expect("valid toml");
+            config.validate().expect("a uniform fleet picks a mode");
+        }
+    }
+
+    /// The config's count and the engine's count are the same count.
+    ///
+    /// `validate` counts `SatelliteConfig::attitude` / `controller` because
+    /// building specs would reach the network for a `norad_id` orbit, while
+    /// `select_sim_mode` counts the spec fields. They agree only as long as
+    /// `to_satellite_spec` keeps cloning them across unchanged.
+    #[test]
+    fn the_config_counts_what_the_engine_counts() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+orbit = { type = "circular", altitude = 500 }
+attitude = { inertia_diag = [10.0, 10.0, 10.0], mass = 100.0 }
+controller = { type = "wasm", path = "ctrl.wasm" }
+
+[[satellites]]
+id = "b"
+orbit = { type = "circular", altitude = 600 }
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("valid toml");
+        let body = crate::satellite::try_parse_body(&config.body).expect("earth");
+        for (i, sat) in config.satellites.iter().enumerate() {
+            let spec = sat.to_satellite_spec(i, body, 398600.4418);
+            assert_eq!(
+                sat.attitude.is_some(),
+                spec.attitude_config.is_some(),
+                "satellites[{i}]: attitude"
+            );
+            assert_eq!(
+                sat.controller.is_some(),
+                spec.controller_config.is_some(),
+                "satellites[{i}]: controller"
+            );
+        }
     }
 }

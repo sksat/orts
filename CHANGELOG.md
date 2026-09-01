@@ -221,6 +221,12 @@ section is subdivided by package.
   inequality on principal moments, so no mass distribution has it. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- A config declaring `[satellites.attitude]` or `[satellites.controller]` on
+  some satellites but not all is refused by `orts config validate` and by
+  `orts serve --config` before it binds. The engine already refused such a
+  fleet, but `orts serve` builds it inside the spawned manager, so the config
+  validated clean, the banner printed, and the server sat idle with the given
+  config never running. ([#351](https://github.com/sksat/orts/pull/351))
 - The WebSocket `add_satellite` refuses an id whose entity path
   (`/world/sat/<id>`) already belongs to a satellite in the running fleet. Two
   satellites on one path meant `[[command]]` reached only the one added last. An
