@@ -11,6 +11,7 @@ import {
   NOMINAL_SPACECRAFT_SPAN,
   spanNormalizedModelScale,
 } from "../spacecraftScale.js";
+import { dimMaterials } from "../utils/dimMaterials.js";
 import { DirectionArrows } from "./DirectionArrows.js";
 import { SpacecraftVisual } from "./SpacecraftVisual.js";
 
@@ -37,10 +38,7 @@ const FRAME_AXES_OPACITY = 0.4;
  */
 function ReferenceAxes({ length }: { length: number }) {
   const dim = useCallback((helper: THREE.AxesHelper | null) => {
-    if (helper == null) return;
-    const material = helper.material as THREE.Material;
-    material.transparent = true;
-    material.opacity = FRAME_AXES_OPACITY;
+    dimMaterials(helper, FRAME_AXES_OPACITY);
   }, []);
   return <axesHelper ref={dim} args={[length]} />;
 }

@@ -248,6 +248,11 @@
           "target": "@components/orbit-viewer/utils/TrailBuffer.ts"
         },
         {
+          "path": "src/utils/dimMaterials.ts",
+          "type": "registry:lib",
+          "target": "@components/orbit-viewer/utils/dimMaterials.ts"
+        },
+        {
           "path": "src/wasm/arikaInit.ts",
           "type": "registry:lib",
           "target": "@components/orbit-viewer/wasm/arikaInit.ts"
