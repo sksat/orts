@@ -5,6 +5,7 @@ import type { DisturbancesConfig } from "./DisturbancesConfig";
 import type { MarkerShape } from "./MarkerShape";
 import type { MtqConfig } from "./MtqConfig";
 import type { OrbitConfig } from "./OrbitConfig";
+import type { PanelConfig } from "./PanelConfig";
 import type { ReactionWheelConfig } from "./ReactionWheelConfig";
 import type { SensorChoice } from "./SensorChoice";
 import type { SimConfig } from "./SimConfig";
@@ -31,6 +32,13 @@ attitude?: AttitudeConfig,
  * Environmental disturbance torques. Requires `attitude`.
  */
 disturbances?: DisturbancesConfig, 
+/**
+ * Flat-panel outer surface. Drives both SRP and drag, and requires
+ * `attitude`; conflicts with the isotropic `srp_area_to_mass` / `srp_cr` /
+ * `ballistic_coeff`. A list of zero panels is rejected — omit the key to
+ * model an isotropic cross-section.
+ */
+panels?: Array<PanelConfig>, 
 /**
  * プラグインコントローラ設定。
  */

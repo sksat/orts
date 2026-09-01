@@ -47,6 +47,10 @@ pub struct SatelliteSpec {
     /// Environmental disturbance torques to model. Only reaches attitude
     /// dynamics; an orbit-only satellite ignores it.
     pub disturbances: orts::setup::DisturbanceTorques,
+    /// Flat-panel outer surface. Present means SRP and drag both come from it.
+    /// Named for the panels rather than the shape because `shape` here is the
+    /// viewer's marker hint.
+    pub panels: Option<orts::spacecraft::SpacecraftShape>,
     /// Attitude dynamics configuration. When present, SpacecraftDynamics is used.
     pub attitude_config: Option<crate::config::AttitudeConfig>,
     /// Viewer marker shape hint (display only; carried through to SatelliteInfo).
@@ -294,8 +298,10 @@ pub fn parse_sat_spec(s: &str, body: KnownBody) -> SatelliteSpec {
         srp_area_to_mass,
         srp_cr,
         // The `--sat` shorthand carries no attitude keys, so a disturbance
-        // selection here could never take effect.
+        // selection here could never take effect. Panel geometry is nested, so
+        // it has no key=value spelling either.
         disturbances: orts::setup::DisturbanceTorques::default(),
+        panels: None,
         attitude_config: None, // CLI --sat does not yet support attitude; use config file
         shape: None,
         controller_config: None,

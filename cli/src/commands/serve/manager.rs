@@ -58,12 +58,12 @@ impl PluginBackendOverrides {
 pub(super) enum SimCommand {
     /// Start a simulation from idle state.
     Start {
-        config: SimConfig,
+        config: Box<SimConfig>,
         respond: oneshot::Sender<Result<(), String>>,
     },
     /// Add a satellite to a running simulation.
     AddSatellite {
-        satellite: SatelliteConfig,
+        satellite: Box<SatelliteConfig>,
         respond: oneshot::Sender<Result<(SatelliteInfo, f64), String>>,
     },
     /// Query the current simulation status.
@@ -262,7 +262,7 @@ async fn idle_loop(cmd_rx: &mut mpsc::Receiver<SimCommand>) -> Option<SimConfig>
                     continue;
                 }
                 let _ = respond.send(Ok(()));
-                return Some(config);
+                return Some(*config);
             }
             SimCommand::AddSatellite { respond, .. } => {
                 let _ = respond.send(Err("Simulation is not running".to_string()));
@@ -419,7 +419,7 @@ fn handle_command(
             let _ = respond.send(Ok(()));
             return ControlFlow::Break(());
         }
-        SimCommand::AddSatellite { satellite, respond } => match engine.add_satellite(satellite) {
+        SimCommand::AddSatellite { satellite, respond } => match engine.add_satellite(*satellite) {
             Ok(out) => {
                 for msg in &out.broadcasts {
                     let _ = tx.send(msg.clone());

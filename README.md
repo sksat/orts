@@ -15,7 +15,9 @@
 
 - N-body orbital simulation with adaptive (DOP853, Dormand-Prince) and symplectic (Störmer-Verlet, Yoshida) integrators
 - Gravity models: point-mass, zonal harmonics (J2, J3, J4)
-- Perturbations: atmospheric drag, solar radiation pressure, third-body gravity, constant thrust
+- Perturbations: atmospheric drag, solar radiation pressure, third-body gravity, constant
+  thrust. Drag and SRP can be attitude-dependent, from a flat-panel surface that also
+  produces disturbance torques
 - Atmosphere models: Exponential, Harris-Priester, NRLMSISE-00
 - Geomagnetic field: IGRF-14 spherical harmonic expansion + tilted-dipole approximation
 - Space weather: CSSI and GFZ providers (F10.7, Ap, Kp)

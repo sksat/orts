@@ -28,12 +28,12 @@ pub enum ClientMessage {
     },
     /// Start a simulation from idle state.
     #[serde(rename = "start_simulation")]
-    StartSimulation { config: SimConfig },
+    StartSimulation { config: Box<SimConfig> },
     /// Add a satellite to a running simulation.
     #[serde(rename = "add_satellite")]
     AddSatellite {
         #[serde(flatten)]
-        satellite: SatelliteConfig,
+        satellite: Box<SatelliteConfig>,
     },
     /// Pause a running simulation.
     #[serde(rename = "pause_simulation")]
