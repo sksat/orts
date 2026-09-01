@@ -97,7 +97,8 @@ uv run plot.py   # → transfer_burn_with_tcm.png
   反対側で SecondBurn が発火して目標円軌道に載っている様子が読める。
 - **右上 (Altitude)**: 500 → 2000 km の単調上昇。burn 区間 (赤シェード) で
   FirstBurn (t ≈ 0 – 34 s) が一瞬ジャンプ、Coast 中に transfer ellipse の
-  apogee へ向けて滑らかに上昇、t ≈ 3329 s（apogee、transfer 半周期 3315 s + FirstBurn 中に飛んだ弧）の SecondBurn で circularize。
+  apogee へ向けて滑らかに上昇、SecondBurn で circularize。SecondBurn の発火は
+  径方向速度 `r·v` の符号反転で決まり、同梱設定では t ≈ 3329 s（実測）。
   各 burn の Δalt 値が注釈付き。
 - **右下 (Orbital speed)**: burn 区間 (赤シェード) と **Δv 注釈** 付き。
   FirstBurn で 7.613 → 7.979 km/s に加速、Coast 中は vis-viva により altitude
