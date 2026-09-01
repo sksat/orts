@@ -1236,6 +1236,18 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
                     column.push_at(&row, logical_row);
                 }
             }
+            // The entity has rows but none of them holds this component whole, so
+            // the file carries no value to report for it. An entity with no rows
+            // at all still gets its columns, empty, so the schema survives.
+            if !row_keys.is_empty() && column.num_rows() == 0 {
+                continue;
+            }
+            // The entity has rows but none of them holds this component whole, so
+            // the file carries no value to report for it. An entity with no rows
+            // at all still gets its columns, empty, so the schema survives.
+            // The entity has rows but none of them holds this component whole, so
+            // the file carries no value to report for it. An entity with no rows
+            // at all still gets its columns, empty, so the schema survives.
 
             let comp_name: Cow<'static, str> = Cow::Owned(name.clone());
             let store = rec.entity_mut(&entity);
@@ -2221,6 +2233,70 @@ mod tests {
             .expect("a position column");
         assert_eq!(position.get_row(0).expect("row 0"), &[100.0, 1.0, 2.0]);
         assert_eq!(position.get_row(1).expect("row 1"), &[110.0, 1.0, 2.0]);
+    }
+
+    /// A component whose fields never share a row is not reported at all.
+    ///
+    /// Restoring the rows a component covers must not turn into reporting a
+    /// component the file holds no whole value for: `qw` at one time and `qx` at
+    /// another is no quaternion at either.
+    #[test]
+    fn a_component_whose_fields_never_meet_is_not_reported() {
+        let dir = std::env::temp_dir().join(format!(
+            "orts_nomeet_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("nomeet.rrd");
+        {
+            let rec = re_sdk::RecordingStreamBuilder::new("orts-nomeet-test")
+                .save(&path)
+                .expect("recording stream");
+            // Position everywhere, so the entity has rows.
+            for t in [0.0f64, 10.0] {
+                rec.set_duration_secs("sim_time", t);
+                for (field, value) in [("x", t), ("y", 1.0), ("z", 2.0)] {
+                    rec.log(
+                        format!("/world/sat/nomeet/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new([value]),
+                    )
+                    .expect("log");
+                }
+            }
+            // All four attitude fields exist, but split across the two times, so
+            // no row holds a whole quaternion.
+            for (t, fields) in [(0.0f64, ["qw", "qx"]), (10.0, ["qy", "qz"])] {
+                rec.set_duration_secs("sim_time", t);
+                for field in fields {
+                    rec.log(
+                        format!("/world/sat/nomeet/{field}"),
+                        &re_sdk_types::archetypes::Scalars::new([1.0f64]),
+                    )
+                    .expect("log");
+                }
+            }
+            rec.flush_blocking().expect("flush");
+        }
+
+        let loaded = load_as_recording(path.to_str().unwrap()).expect("load");
+        std::fs::remove_dir_all(&dir).ok();
+
+        let store = loaded
+            .entity(&EntityPath::parse("/world/sat/nomeet"))
+            .expect("entity");
+        assert_eq!(store.num_rows, 2, "the trajectory still has its rows");
+        assert!(
+            store.columns.keys().any(|name| name.contains("Position3D")),
+            "the trajectory survives"
+        );
+        assert!(
+            !store
+                .columns
+                .keys()
+                .any(|name| name.contains("Quaternion4D")),
+            "no row holds a whole quaternion, so none is reported"
+        );
     }
 
     /// A component logged at only some steps survives a round trip through the
@@ -3552,7 +3628,7 @@ mod tests {
             let store = rec.entity_mut(&sat);
             let mut column = ComponentColumn::new(3);
             for i in 0..N {
-                column.push(&[i as f64, 0.0, 0.0]);
+                column.push_at(&[i as f64, 0.0, 0.0], i);
             }
             store.columns.insert(Position3D::component_name(), column);
             // `sim_time` holds the wrong variant, so it covers no row at all.
