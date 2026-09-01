@@ -45,6 +45,13 @@ jobs:
       - name: Set up wild linker
         uses: ./.github/actions/setup-wild
 
+      # This cache is a speed-up, not a guarantee: the repository sits over the
+      # 10 GB cache limit (the per-job Cargo caches are 0.5-1.2 GB each), so LRU
+      # eviction drops the textures often enough that a deploy fetching them from
+      # NASA is the normal case rather than the exception. That is why the fetch
+      # below has to survive a bad transfer on its own. TODO: if the fetch keeps
+      # failing, publish the processed textures as a release asset and keep the
+      # NASA/USGS sources in a regeneration workflow instead of the deploy path.
       - name: Cache viewer textures (4k/8k)
         id: texture-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -63,9 +70,14 @@ jobs:
         if: steps.texture-cache.outputs.cache-hit != 'true'
         run: sudo apt-get install -y imagemagick
 
+      # One invocation for both resolutions: each source image is downloaded once
+      # and resized twice. Two invocations re-downloaded the 21600x10800 Blue
+      # Marble source for the 8k pass, doubling the exposure to hosts that drop
+      # transfers. Sun has no 8k output, so this produces exactly the seven files
+      # cached above.
       - name: Fetch viewer textures (4k/8k — skips mars to avoid 12 GB source)
         if: steps.texture-cache.outputs.cache-hit != 'true'
-        run: ./tools/fetch-textures.sh --resolution 4k --body earth,moon,sun && ./tools/fetch-textures.sh --resolution 8k --body earth,moon
+        run: ./tools/fetch-textures.sh --resolution 4k,8k --body earth,moon,sun
 
       - name: Parse rust-toolchain.toml
         id: rust-toolchain
