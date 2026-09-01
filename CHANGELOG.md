@@ -46,7 +46,7 @@ section is subdivided by package.
   force models drop a face pointing away from the Sun or the flow, so a plate
   written as one panel produces nothing for half of the attitudes it sees — and
   the torque about an off-centre pressure point goes with it. Not for a face of
-  a closed body, whose far side is already another panel. ([#393](https://github.com/sksat/orts/pull/393))
+  a closed body, whose far side is already another panel. ([#395](https://github.com/sksat/orts/pull/395))
 - `orts::setup` registers disturbance torques, and `SatelliteParams` carries a
   `DisturbanceTorques` selection to say which. `build_spacecraft_dynamics`
   installs the gravity-gradient torque from it; `build_orbital_system` installs
@@ -162,7 +162,7 @@ section is subdivided by package.
 
 #### Added
 - `[[satellites.panels]]` gives a satellite a flat-panel outer surface, with
-  `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset` and `back` ([#393](https://github.com/sksat/orts/pull/393)).
+  `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset` and `back` ([#395](https://github.com/sksat/orts/pull/395)).
   A panel is one face, so `back` is what gives a thin plate — a solar array —
   its far side: the area, `cd` and centre of pressure are shared and the
   reflectivities are its own, with an empty table (`back = {}`) copying the

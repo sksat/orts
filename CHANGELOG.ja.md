@@ -41,7 +41,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `cd` / 圧力中心は引き継ぎ、光学係数は引数で受ける (パドルの両面は性質が違う)。
   パネルは片面で、両モデルとも太陽や流れと逆を向いた面を落とすので、板を 1 枚として
   書くとその衛星が取る姿勢の半分で力がゼロになり、重心から外れた圧力中心が作る
-  トルクも出ない。閉じた形状の面には使わない (反対側は既に別のパネルである)。([#393](https://github.com/sksat/orts/pull/393))
+  トルクも出ない。閉じた形状の面には使わない (反対側は既に別のパネルである)。([#395](https://github.com/sksat/orts/pull/395))
 - 外乱トルクの登録を `orts::setup` に集約し、どれを解くかを `SatelliteParams` の
   `DisturbanceTorques` で選ぶようにした。`build_spacecraft_dynamics` がそれを見て
   gravity gradient トルクを install する。`build_orbital_system` は install しない
@@ -141,7 +141,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 #### Added
 - `[[satellites.panels]]` で衛星に平板の外形を与えられるようにした
   (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `back`
-  ([#393](https://github.com/sksat/orts/pull/393)))。パネルは片面なので、薄板
+  ([#395](https://github.com/sksat/orts/pull/395)))。パネルは片面なので、薄板
   (太陽電池パドル) の裏面を作るのが `back` である。面積 / `cd` / 圧力中心は同じ板
   として共有し、反射率は裏面が独自に持つ。空の table (`back = {}`) なら表と同じに
   なる。パネルを書くと
