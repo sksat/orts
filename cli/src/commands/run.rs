@@ -70,7 +70,9 @@ pub fn run_simulation_cmd(
             ));
         }
     };
-    // Holds for every path above: the `--sat` fleet has no per-entry validation.
+    // Every path above, config included. A config's own `validate` reaches this
+    // first and can name the offending `[[satellites]]` index; a `--sat` fleet has
+    // no per-entry validation at all, and here is where it gets one.
     crate::satellite::ensure_unique_ids(&params.satellites)?;
     // Resolve and validate the stdout/output contract before running the
     // (potentially long) simulation, so usage errors fail fast.
