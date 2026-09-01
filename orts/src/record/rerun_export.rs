@@ -1594,11 +1594,11 @@ mod tests {
             .get(&TimelineName::SimTime)
             .expect("SimTime timeline missing");
         assert_eq!(sim_times.len(), 3);
-        match &sim_times.data[0] {
+        match &sim_times.times()[0] {
             TimeIndex::Seconds(t) => assert!((t - 0.0).abs() < 1e-9),
             other => panic!("expected Seconds, got {:?}", other),
         }
-        match &sim_times.data[2] {
+        match &sim_times.times()[2] {
             TimeIndex::Seconds(t) => assert!((t - 20.0).abs() < 1e-9),
             other => panic!("expected Seconds, got {:?}", other),
         }
@@ -2076,7 +2076,7 @@ mod tests {
             .get(&TimelineName::SimTime)
             .expect("a sim_time timeline");
         assert_eq!(times.len(), store.num_rows, "timeline and rows must agree");
-        assert_eq!(times.data, vec![TimeIndex::Seconds(10.0)]);
+        assert_eq!(times.times(), [TimeIndex::Seconds(10.0)]);
         for (name, col) in &store.columns {
             assert_eq!(
                 col.num_rows(),

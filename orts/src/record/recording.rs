@@ -14,7 +14,7 @@ use crate::record::timeline::{TimeIndex, TimePoint, TimelineName};
 /// keep the times they were logged at rather than lining up with the leading
 /// rows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum RowMap {
+pub(crate) enum RowMap {
     #[default]
     Dense,
     /// Logical row of each stored entry, ascending.
@@ -69,14 +69,19 @@ impl RowMap {
 }
 
 /// A column of component data (SoA layout for a single component type).
+///
+/// The storage and the row map have to agree — the map is what says which
+/// entity row each stored row is — so they are written only through
+/// [`Self::push_at`], which checks. Read them with [`Self::scalars`] and the
+/// row lookups.
 #[derive(Debug, Clone)]
 pub struct ComponentColumn {
     /// Number of f64 values per row.
     pub scalars_per_row: usize,
     /// Flat storage: scalars_per_row * num_rows f64 values.
-    pub data: Vec<f64>,
+    pub(crate) data: Vec<f64>,
     /// Which logical row each stored row belongs to.
-    pub rows: RowMap,
+    pub(crate) rows: RowMap,
 }
 
 impl ComponentColumn {
@@ -132,6 +137,14 @@ impl ComponentColumn {
             .unwrap_or(0)
     }
 
+    /// The flat storage, `scalars_per_row` values per stored row.
+    ///
+    /// Stored rows, so a column that skipped steps is shorter than the entity;
+    /// [`Self::logical_row_of`] says which row each one is.
+    pub fn scalars(&self) -> &[f64] {
+        &self.data
+    }
+
     /// The `index`-th *stored* row. For a column that skipped steps this is not
     /// logical row `index`; use [`Self::at_logical_row`] for that.
     pub fn get_row(&self, index: usize) -> Option<&[f64]> {
@@ -161,10 +174,12 @@ impl ComponentColumn {
 /// A `TimePoint` need not name every axis the entity uses, so an axis can cover
 /// only some rows. Keeping the mapping here is what lets two axes that cover
 /// different rows still be read as the same entity's timeline.
+/// Written only through [`Self::push_at`], for the reason
+/// [`ComponentColumn`] is.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TimelineColumn {
-    pub data: Vec<TimeIndex>,
-    pub rows: RowMap,
+    pub(crate) data: Vec<TimeIndex>,
+    pub(crate) rows: RowMap,
 }
 
 /// Collects a dense axis, one time per logical row.
@@ -191,6 +206,11 @@ impl TimelineColumn {
 
     pub fn len(&self) -> usize {
         self.data.len()
+    }
+
+    /// The times this axis holds, one per row it covers.
+    pub fn times(&self) -> &[TimeIndex] {
+        &self.data
     }
 
     pub fn is_empty(&self) -> bool {
@@ -854,6 +874,22 @@ mod tests {
             "the velocity joins the row that was open when it was logged"
         );
         assert_eq!(vel.at_logical_row(1), None, "no velocity was logged for it");
+    }
+
+    #[test]
+    fn a_sparse_column_reads_back_flat_and_by_row() {
+        let mut column = ComponentColumn::new(2);
+        column.push_at(&[1.0, 2.0], 0);
+        column.push_at(&[5.0, 6.0], 5);
+
+        assert_eq!(
+            column.scalars(),
+            [1.0, 2.0, 5.0, 6.0],
+            "the flat view holds the stored rows, not the skipped ones"
+        );
+        assert_eq!(column.logical_row_of(1), 5, "which row the second one is");
+        assert_eq!(column.at_logical_row(5), Some(&[5.0, 6.0][..]));
+        assert_eq!(column.at_logical_row(1), None, "no row 1 was stored");
     }
 
     #[test]

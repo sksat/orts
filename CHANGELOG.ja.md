@@ -43,10 +43,11 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   に対応せず、力の向きがこの分解に依存するようになったので、どの既定値も face-on 以外
   で旧振る舞いを再現しない。面が本当に不明なら `PanelOptics::absorber()` を渡す。([#377](https://github.com/sksat/orts/pull/377))
 - **BREAKING**: `EntityStore::timelines` の型が `Vec<TimeIndex>` から
-  `TimelineColumn` になり、`ComponentColumn` に `rows` field が増え、
-  `ComponentColumn::push` は crate 内限定になった (新しい `push_at` と並んで
-  public だと、row map と data を desync させられる)。`get_row` は従来どおり
-  格納 index を取り、論理行の引きは `at_logical_row`。([#375](https://github.com/sksat/orts/issues/375))
+  `TimelineColumn` になり、列は自分が覆う論理行を持つようになった。追加は論理行を
+  明示して検査する `ComponentColumn::push_at` を通す。`push` と、両 column type の
+  `data` / `rows` field は crate 内限定 — map と data が食い違った列は、値を別の行の
+  時刻で報告する。読み出しは列が `scalars`、軸が `times`、行単位では `get_row` が
+  格納 index、`at_logical_row` が論理行。([#375](https://github.com/sksat/orts/issues/375))
 - `StateEffector` を frame-generic 化 — `StateEffector<S, F: frame::Eci =
   SimpleEci>` で `ExternalLoads<F>` を返す (`Model<S, F>` と同様)。effector は
   host の慣性 frame で荷重を生成するようになった。既定の `F` により既存の

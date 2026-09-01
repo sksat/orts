@@ -50,10 +50,13 @@ section is subdivided by package.
   old behaviour anywhere but face-on. Pass `PanelOptics::absorber()` when the
   surface is genuinely unknown. ([#377](https://github.com/sksat/orts/pull/377))
 - **BREAKING**: `EntityStore::timelines` holds `TimelineColumn` rather than
-  `Vec<TimeIndex>`, `ComponentColumn` gained a `rows` field, and
-  `ComponentColumn::push` is crate-private — public alongside the new `push_at`
-  it let a caller desync the row map from the data. `get_row` still takes a
-  stored index; `at_logical_row` is the entity-row lookup. ([#375](https://github.com/sksat/orts/issues/375))
+  `Vec<TimeIndex>`, and a column now carries the logical rows it covers.
+  Appending goes through `ComponentColumn::push_at`, which states the row and
+  checks it; `push` and the `data` / `rows` fields of both column types are
+  crate-private, since a column whose map and data disagree reports values at
+  other rows' times. Read a column with `scalars` and an axis with `times`, or
+  by row: `get_row` takes a stored index, `at_logical_row` an entity
+  row. ([#375](https://github.com/sksat/orts/issues/375))
 - `StateEffector` is now frame-generic — `StateEffector<S, F: frame::Eci =
   SimpleEci>` returning `ExternalLoads<F>`, like `Model<S, F>` — so effectors
   produce loads already in the host inertial frame. The defaulted `F` keeps
