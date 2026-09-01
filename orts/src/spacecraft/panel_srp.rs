@@ -571,6 +571,64 @@ mod tests {
         );
     }
 
+    /// Orekit cross-validation of the per-panel force.
+    ///
+    /// The closed-form tests above are independent of the implementation but
+    /// not of the formula: a shared error in the flat-plate law, or a
+    /// misreading of what the coefficients mean, would satisfy them. Orekit's
+    /// paneled radiation model is a separate implementation of the same
+    /// physics, so agreeing with it pins the formula and the convention.
+    ///
+    /// Fixture from `tools/generate_orekit_panel_srp_fixtures.py`, which drives
+    /// Orekit's `RadiationSensitive::radiationPressureAcceleration` on a
+    /// one-panel spacecraft. That needs no propagator and no attitude provider,
+    /// which is why a force oracle is available where a torque one is not:
+    /// Orekit's paneled model returns an acceleration only. The torque this
+    /// model builds from the force is pinned by the exact cross-product tests.
+    #[test]
+    fn orekit_panel_force_reference() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            name: String,
+            specular: f64,
+            diffuse: f64,
+            incidence_deg: f64,
+            force_body_n: [f64; 3],
+        }
+        #[derive(serde::Deserialize)]
+        struct Fixture {
+            pressure_n_m2: f64,
+            area_m2: f64,
+            panel_normal_body: [f64; 3],
+            cases: Vec<Case>,
+        }
+
+        let raw = include_str!("../../tests/fixtures/orekit_panel_srp_reference.json");
+        let fx: Fixture = serde_json::from_str(raw).expect("fixture parses");
+        assert!(fx.cases.len() >= 12, "expected the full case set");
+
+        let normal = Vector3::from_row_slice(&fx.panel_normal_body);
+        for case in &fx.cases {
+            let optics = PanelOptics::new(case.specular, case.diffuse);
+            let panel = SurfacePanel::at_com(fx.area_m2, normal, 2.2, optics);
+            let th = case.incidence_deg.to_radians();
+            let s_body = Vector3::new(th.sin(), 0.0, th.cos());
+
+            let ours = panel_force(&panel, &s_body, fx.pressure_n_m2);
+            let theirs = Vector3::from_row_slice(&case.force_body_n);
+
+            let err = (ours - theirs).magnitude() / theirs.magnitude();
+            assert!(
+                err < 1e-12,
+                "{}: orekit {:?}, ours {:?}, rel_err={:.3e}",
+                case.name,
+                theirs,
+                ours,
+                err
+            );
+        }
+    }
+
     // Ideal single panel + single Sun direction
 
     #[test]

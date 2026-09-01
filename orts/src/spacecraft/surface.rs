@@ -303,6 +303,9 @@ impl PanelDrag<frame::SimpleEci> {
     /// Create a panel drag model for Earth orbit in the default `SimpleEci` frame.
     ///
     /// Uses piecewise exponential atmosphere and WGS-84 geodetic altitude by default.
+    ///
+    /// # Panics
+    /// Panics unless every panel normal is unit length.
     pub fn for_earth(shape: SpacecraftShape) -> Self {
         Self::for_earth_in_frame(shape, ())
     }
@@ -311,7 +314,11 @@ impl PanelDrag<frame::SimpleEci> {
 impl<F: EarthFixedTransform> PanelDrag<F> {
     /// Create a panel drag model for Earth orbit in an arbitrary inertial frame
     /// `F`, with that frame's EOP storage (`()` for `SimpleEci`).
+    ///
+    /// # Panics
+    /// Panics unless every panel normal is unit length.
     pub fn for_earth_in_frame(shape: SpacecraftShape, eop: F::EopStorage) -> Self {
+        shape.assert_normals_are_unit();
         Self {
             shape,
             atmosphere: Box::new(Exponential),
@@ -574,6 +581,23 @@ mod tests {
             optics: PanelOptics::absorber(),
             cp_offset: Vector3::zeros(),
         }]);
+    }
+
+    /// `SpacecraftShape::Panels` is a public variant, so a shape can reach the
+    /// drag model without passing through `SpacecraftShape::panels`. The drag
+    /// projection relies on the unit normal too, so its constructor has to
+    /// check as well.
+    #[test]
+    #[should_panic(expected = "normal must be unit length")]
+    fn panel_drag_rejects_a_non_unit_normal() {
+        let shape = SpacecraftShape::Panels(vec![SurfacePanel {
+            area: 10.0,
+            normal: Vector3::new(0.0, 0.0, 3.0),
+            cd: 2.2,
+            optics: PanelOptics::absorber(),
+            cp_offset: Vector3::zeros(),
+        }]);
+        PanelDrag::for_earth(shape);
     }
 
     #[test]
