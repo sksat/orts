@@ -123,17 +123,30 @@ pub(crate) fn validate_omm_body(
     body: KnownBody,
     satellites: &[SatelliteSpec],
 ) -> Result<(), String> {
-    if body != KnownBody::Earth
-        && satellites
-            .iter()
-            .any(|s| matches!(s.orbit, OrbitSpec::Omm { .. }))
+    if satellites
+        .iter()
+        .any(|s| matches!(s.orbit, OrbitSpec::Omm { .. }))
     {
-        return Err(format!(
-            "TLE/OMM orbits are Earth-centered (SGP4/TEME, WGS72) and cannot be \
-             propagated about {body:?}; use the Earth body or specify Keplerian elements"
-        ));
+        return ensure_body_carries_omm(body);
     }
     Ok(())
+}
+
+/// The half of [`validate_omm_body`] that a config settles on its own.
+///
+/// Shared with [`crate::config::SimConfig::validate`], which knows a satellite
+/// declares `tle` or `norad` without building the spec — building it would fetch
+/// a `norad_id` over the network. Reaching this only through `SimParams` meant
+/// `orts config validate` called a non-Earth TLE config valid and `orts run
+/// --config` then panicked on it.
+pub(crate) fn ensure_body_carries_omm(body: KnownBody) -> Result<(), String> {
+    if body == KnownBody::Earth {
+        return Ok(());
+    }
+    Err(format!(
+        "TLE/OMM orbits are Earth-centered (SGP4/TEME, WGS72) and cannot be \
+         propagated about {body:?}; use the Earth body or specify Keplerian elements"
+    ))
 }
 
 /// Simulation parameters derived from CLI arguments.

@@ -266,6 +266,10 @@ section is subdivided by package.
   dependencies at warn — and `NO_COLOR`, or a stderr that is not a terminal,
   drops the styling; `orts --help` documents both. stdout is unchanged: the CSV,
   the `--json` summary, or the `serve --stream-stdio` protocol and nothing else. ([#390](https://github.com/sksat/orts/pull/390))
+- `orts config validate` and `orts serve --config` refuse a `tle` or `norad`
+  orbit about any body but Earth. SGP4 is Earth's, and `SimParams::from_config`
+  reached that rule through a panic, so such a config validated clean and then
+  took down `orts run --config`. ([#351](https://github.com/sksat/orts/pull/351))
 - `orts config validate` and `orts serve --config` refuse a fleet no
   simulation mode can run: `[satellites.attitude]` or
   `[satellites.controller]` on some satellites but not all, or a controller on

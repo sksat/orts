@@ -1518,6 +1518,16 @@ impl SimConfig {
                 arika::tle::parse(&format!("{line1}\n{line2}"))
                     .map_err(|e| format!("satellites[{i}]: invalid TLE: {e}"))?;
             }
+            // SGP4 is Earth's, and `SimParams::from_config` reaches this rule
+            // through an `unwrap_or_else(panic)`: a non-Earth TLE config
+            // validated clean and then took down `orts run --config`.
+            if matches!(
+                sat.orbit,
+                OrbitConfig::Tle { .. } | OrbitConfig::Norad { .. }
+            ) {
+                crate::sim::params::ensure_body_carries_omm(body)
+                    .map_err(|e| format!("satellites[{i}]: {e}"))?;
+            }
         }
         // Which mode the fleet runs in is settled by the config, so a fleet no
         // mode can serve is settled here too. `SatelliteSpec` carries these two
@@ -4281,5 +4291,40 @@ orbit = { type = "circular", altitude = 600 }
             err.to_string().contains("duplicate field"),
             "the error says which: {err}"
         );
+    }
+
+    /// A TLE or NORAD orbit about anything but Earth is refused by the config.
+    ///
+    /// SGP4 is Earth's, and `SimParams::from_config` reaches that rule through
+    /// an `unwrap_or_else(panic)`. Measured before this: `orts config validate`
+    /// called a Moon + TLE config valid and `orts run --config` panicked on it.
+    ///
+    /// The `norad` case is checked here rather than through a spec, because
+    /// building one fetches the element set over the network.
+    #[test]
+    fn a_tle_about_another_body_is_rejected() {
+        let tle = "[[satellites]]\nid = \"a\"\n[satellites.orbit]\ntype = \"tle\"\n\
+                   line1 = \"1 25544U 98067A   24079.50000000  .00016717  00000-0  \
+                   30000-4 0  9996\"\n\
+                   line2 = \"2 25544  51.6400 208.6520 0007417  35.3910 324.7580 \
+                   15.49561654480008\"\n";
+        let norad = "[[satellites]]\nid = \"a\"\n[satellites.orbit]\n\
+                     type = \"norad\"\nnorad_id = 25544\n";
+
+        for (label, orbit) in [("tle", tle), ("norad", norad)] {
+            let config: SimConfig = toml::from_str(&format!("body = \"moon\"\n{orbit}"))
+                .unwrap_or_else(|e| panic!("{label}: valid toml: {e}"));
+            let err = config
+                .validate()
+                .expect_err(&format!("{label}: SGP4 cannot propagate about the Moon"));
+            assert!(err.contains("Earth-centered"), "{label}: {err}");
+
+            // The same orbit about Earth is what the check must not refuse.
+            let config: SimConfig = toml::from_str(&format!("body = \"earth\"\n{orbit}"))
+                .unwrap_or_else(|e| panic!("{label}: valid toml: {e}"));
+            config
+                .validate()
+                .unwrap_or_else(|e| panic!("{label}: Earth is where SGP4 belongs: {e}"));
+        }
     }
 }

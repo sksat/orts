@@ -237,6 +237,10 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `NO_COLOR` 指定時と stderr が terminal でない場合は装飾を付けない。どちらも
   `orts --help` に記載がある。stdout は従来どおりコマンドの出力 (CSV、`--json`
   サマリ、`serve --stream-stdio` の protocol) だけ。 ([#390](https://github.com/sksat/orts/pull/390))
+- `tle` / `norad` 軌道を Earth 以外の中心天体で使う config を、
+  `orts config validate` と `orts serve --config` が拒否する。SGP4 は Earth 専用で、
+  `SimParams::from_config` はこの規則に panic 経由で到達していたため、config は valid
+  と判定された上で `orts run --config` が panic していた。([#351](https://github.com/sksat/orts/pull/351))
 - どの mode でも実行できない fleet を `orts config validate` と
   `orts serve --config` が拒否する。`[satellites.attitude]` や
   `[satellites.controller]` を一部の衛星にだけ書いた config と、全衛星に controller
