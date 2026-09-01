@@ -41,6 +41,24 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   20-40% 改善する。([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- .rrd の loader 2 つが、scalar 列を recording 自身の時刻 index で結合するようになった。
+  一部の時刻にしか現れない component が、後の値を前の行にずらすことがなくなる。
+  `load_rrd_data` は `orts replay` と `orts serve` の history 読み戻し、
+  `load_as_recording` は `orts convert` が通る。後者では疎な列が 2 つの時刻の値の
+  混合として CSV に出ていた (`Position3D` が `[100.0, 201.0, 0.0]` になり、ある時刻の
+  `x` と別の時刻の `y` が組になっていた)。`EntityStore` は entity の全列で 1 つの
+  timeline を共有するので、行の key も entity で 1 つに決め、position と velocity に
+  合わせる。どちらかが揃わない時刻は行にしない。一部の時刻にしか記録されていない
+  component はゼロ埋めせず落とす。ゼロは下流で実測値と区別できないため。timeline を
+  持たない static field と、独自の時刻を持つ子 entity は、上位 entity の行を増やさなく
+  なった。独自の名前の timeline で index された recording も、その timeline で結合する。
+  `sim_time` と `step` は orts が書く名前で、それ以外を timeline なしとして扱うと列の
+  位置で結合していた。その名前は recording 全体で 1 つで、`sim_time` と `step` の代わりでなく
+  それらと並んで行を識別する。軸が 2 つあれば別の次元なので、`frame` の 1 は
+  `iteration` の 1 でも `step` の 1 でもなく、同じ `sim_time` で `frame` が違う 2 行は
+  別の瞬間。この PR が直すブラウザ側の
+  decoder と同じ欠陥で、3 つは独立に
+  decode するため 3 つとも抱えていた。([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` が、和を計算した後でなく積を作る前に角速度を半分にする
   ようになった。結果が有限な入力で overflow しなくなる: `q = [0, 1/√2, 1/√2, 0]`、
   `ω = [1.4e308, 1.4e308, 0]` の `q̇.w` は約 -9.9e307 だが、途中の和が -1.98e308 に
@@ -495,6 +513,26 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 - init 時の worker 404 / "invalid URL": bundle URL を `initDuckDB` 内で worker
   origin に対して絶対化する。DuckDB が worker を `blob:` URL から生成するため、
   root-relative パスでは解決できないことへの対処。([#171](https://github.com/sksat/orts/pull/171))
+
+### `rrd-wasm` (Rust, crates.io)
+
+#### Fixed
+- scalar 列を、列内の値の位置ではなく recording 自身の時刻 index で結合するように
+  なった。scalar の各成分は独立した entity path (`<base>/x`, `<base>/y`, …) に載り、
+  両者が一致するのは全列が全 step で値を持つ間だけで、一部の step にしか出てこない
+  成分は後の値が前の行にずれ込んでいた。`y` が t=10 にだけ logging されている場合、
+  t=0 の行にその値が載り、t=10 の行は `y = 0.0` になる。行を出すのは position 3 成分
+  (recording が velocity 列を持つ場合は velocity 3 成分も) がその時刻に揃ったときで、
+  揃わない行はゼロ埋めせず落とす。`orts run --format rrd` は 1 回の run のすべての
+  step で同じ component を logging するので、その出力のデコード結果は以前と同じ。疎な
+  列がこの結合に入るのは、外部で書かれた `.rrd`。`orts serve` の history segment は
+  attitude が state ごとに optional なので疎になりうるが、`save_as_rrd` が component の
+  row `i` を entity の timeline の row `i` に書くため、遅れて始まる attitude はファイルの
+  時点で既に誤った時刻にある。こちらは writer の修正が先に必要。独自の名前の timeline で index された recording も、
+  列の位置に落ちるのでなくその timeline で結合する (`sim_time` と `step` 以外はすべて
+  列の位置になっていた)。その名前は recording 全体で 1 つで、`sim_time` と `step` と
+  並んで行を識別する。ある index が一致していても別の index の値が違えば同じ行には
+  載らない。([#366](https://github.com/sksat/orts/pull/366))
 
 ### Docs
 

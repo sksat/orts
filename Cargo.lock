@@ -4029,9 +4029,11 @@ dependencies = [
  "re_chunk",
  "re_log_encoding",
  "re_log_types",
+ "re_sdk",
  "re_sdk_types",
  "serde",
  "serde-wasm-bindgen",
+ "tempfile",
  "wasm-bindgen",
 ]
 

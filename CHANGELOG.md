@@ -45,6 +45,27 @@ section is subdivided by package.
   0.33 m, and the three shorter Harris-Priester oracles by 20-40%. ([#359](https://github.com/sksat/orts/pull/359))
 
 #### Fixed
+- Both .rrd loaders join scalar columns on the recording's time index, so a
+  component present at only some of the times no longer shifts its values onto
+  earlier rows. `load_rrd_data` serves `orts replay` and `orts serve`'s history
+  read-back; `load_as_recording` serves `orts convert`, where a sparse column
+  used to reach the CSV as a mix of two times (`Position3D` came back as
+  `[100.0, 201.0, 0.0]`, pairing one time's `x` with another's `y`). One row-key
+  set now serves all of an entity's columns, since `EntityStore` keeps one
+  timeline for them, and it follows position and velocity: a moment where either
+  is incomplete is no row at all, and a component recorded at only some of the
+  times is left out rather than zero-filled, a zero being indistinguishable
+  downstream from a measured coordinate. A static field, which has no timeline,
+  and a child entity, which has times of its own, no longer add rows to the
+  entity above them. A recording indexed by a timeline of its own naming joins on
+  that timeline as well: `sim_time` and `step` are the names `orts` writes, and
+  treating any other as no timeline at all fell back to column position. One
+  such name serves the whole recording, and it identifies a row alongside
+  `sim_time` and `step` rather than instead of them: two axes are separate
+  dimensions, so a `frame` of 1 is neither an `iteration` of 1 nor a `step` of
+  1, and two rows of one `sim_time` at different `frame`s are two moments. Same
+  defect as the browser-side decoder in this PR: the three decode independently,
+  and all three carried it. ([#366](https://github.com/sksat/orts/pull/366))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
   products rather than the sum afterwards, so it no longer overflows where its
   result is finite: `q = [0, 1/√2, 1/√2, 0]` with `ω = [1.4e308, 1.4e308, 0]`
@@ -550,6 +571,31 @@ section is subdivided by package.
 - Worker 404 / "invalid URL" on init: bundle URLs are absolutized against the
   worker origin inside `initDuckDB`, because DuckDB instantiates its worker from a
   `blob:` URL against which a root-relative path cannot resolve. ([#171](https://github.com/sksat/orts/pull/171))
+
+### `rrd-wasm` (Rust, crates.io)
+
+#### Fixed
+- Scalar columns are joined on the recording's own time index rather than on a
+  value's position within its column. Every scalar field lives on its own entity
+  path (`<base>/x`, `<base>/y`, …), and the two agree only while every column
+  carries a value at every step: a component logged at only some of them shifted
+  its later values onto earlier rows. With `y` logged at t=10 alone, the t=0 row
+  carried that value and the t=10 row read `y = 0.0`. A row is emitted only when
+  the whole position triple — and the velocity triple, where the recording has
+  one — is present at that time; an incomplete row is dropped rather than padded
+  with zeros. `orts run --format rrd` logs the same components at every step of a
+  run, so its output decodes to the same values as before; a sparse column
+  reaches this join from `.rrd` files written elsewhere. `orts serve` history
+  segments can hold one, their attitude being optional per state, but
+  `save_as_rrd` writes a component's row `i` at the entity's timeline row `i`,
+  so a late-starting attitude is already at the wrong time in the file: that
+  needs the writer fixed first. A recording indexed by
+  a timeline of its own naming joins on that timeline too, rather than falling
+  back to column position as it did for every name but `sim_time` and `step`; one
+  such name serves the whole recording, and it identifies a row alongside
+  `sim_time` and `step`, so values that coincide on one index but sit at
+  different values of another do not share a row.
+  ([#366](https://github.com/sksat/orts/pull/366))
 
 ### Docs
 
