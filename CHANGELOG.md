@@ -512,9 +512,7 @@ section is subdivided by package.
   the point rather than recomputing from the state vector, so the DuckDB derived
   columns did not cover for them. Opening a second recording resets the central
   body the values are derived against, so the new recording's constants apply
-  however the decoder's messages happen to be ordered. A negative body radius
-  falls back to Earth as an absent one does: altitude is `r - bodyRadius`, so it
-  would chart as a height above the orbit rather than above the surface.
+  however the decoder's messages happen to be ordered.
   ([#376](https://github.com/sksat/orts/pull/376))
 - Multi-satellite charts follow a changed schema: the hook told the chart Worker
   its schema only at startup, so after a central-body change the rows were built

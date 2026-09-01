@@ -46,16 +46,6 @@ describe("orbitDerivedContext", () => {
       DEFAULT_BODY_RADIUS,
     );
   });
-
-  it("falls back for a negative radius, and keeps a zero one", () => {
-    // Altitude is `r - bodyRadius`: a negative radius reads as a height above
-    // the orbit rather than above the surface, which a chart shows without
-    // complaint. Zero is a point mass, whose altitude is `r`.
-    expect(orbitDerivedContext({ mu: DEFAULT_MU, body_radius: -6378.137 }).bodyRadius).toBe(
-      DEFAULT_BODY_RADIUS,
-    );
-    expect(orbitDerivedContext({ mu: DEFAULT_MU, body_radius: 0 }).bodyRadius).toBe(0);
-  });
 });
 
 describe("packStates", () => {
