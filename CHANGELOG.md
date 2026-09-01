@@ -40,6 +40,13 @@ section is subdivided by package.
   them. `build_orbital_system` installs neither: panel forces need an attitude.
   `SurfacePanel` gains `with_cp_offset`, which is what turns a panel force into
   an attitude disturbance. ([#386](https://github.com/sksat/orts/pull/386))
+- `SurfacePanel::back_face` builds the other side of a thin plate: the normal is
+  negated, the area, `cd` and centre of pressure carry over, and the optics are
+  given, since the two sides of an array differ. A panel is one face and both
+  force models drop a face pointing away from the Sun or the flow, so a plate
+  written as one panel produces nothing for half of the attitudes it sees — and
+  the torque about an off-centre pressure point goes with it. Not for a face of
+  a closed body, whose far side is already another panel. ([#395](https://github.com/sksat/orts/pull/395))
 - `orts::setup` registers disturbance torques, and `SatelliteParams` carries a
   `DisturbanceTorques` selection to say which. `build_spacecraft_dynamics`
   installs the gravity-gradient torque from it; `build_orbital_system` installs
@@ -107,6 +114,10 @@ section is subdivided by package.
   different ways, so no choice of `Cr` recovers the right answer. For a solar
   array (ρ_s ≈ 0.2, ρ_d ≈ 0.1) the missing term carries ~30% of the force at 45°
   incidence. Present since the model was introduced, 0.2.0 included.
+  Japanese-labeled diagrams of the law, the two force components and the torque
+  direction: [photon fates](docs/src/assets/srp-flat-panel/photon-fates.svg),
+  [force composition](docs/src/assets/srp-flat-panel/force-composition.svg),
+  [torque direction](docs/src/assets/srp-flat-panel/torque-direction.svg).
   ([#377](https://github.com/sksat/orts/pull/377))
 - `AttitudeState::q_dot` halves the angular velocity before forming the
   products rather than the sum afterwards, so it no longer overflows where its
@@ -151,7 +162,11 @@ section is subdivided by package.
 
 #### Added
 - `[[satellites.panels]]` gives a satellite a flat-panel outer surface, with
-  `area`, `normal`, `cd`, `specular`, `diffuse` and `cp_offset`. Writing panels
+  `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset` and `back` ([#395](https://github.com/sksat/orts/pull/395)).
+  A panel is one face, so `back` is what gives a thin plate — a solar array —
+  its far side: the area, `cd` and centre of pressure are shared and the
+  reflectivities are its own, with an empty table (`back = {}`) copying the
+  front's. Writing panels
   makes SRP and drag attitude-dependent, and an off-centre centre of pressure
   turns them into attitude disturbances — which is what the isotropic
   `srp_area_to_mass` / `ballistic_coeff` cannot express. Panels require

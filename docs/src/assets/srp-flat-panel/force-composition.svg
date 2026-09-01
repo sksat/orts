@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 420" width="660" height="420" font-family="ui-sans-serif, system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', Meiryo, sans-serif">
+  <rect width="660" height="420" fill="#fbfbfd"/>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#111"/></marker>
+    <marker id="old" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c0392b"/></marker>
+    <marker id="new" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f6fb2"/></marker>
+    <marker id="comp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7f8c8d"/></marker>
+    <marker id="sun" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d99a2b"/></marker>
+  </defs>
+  <text x="24" y="30" font-size="15" fill="#111" font-weight="600">実際の力は 2 成分の合成</text>
+  <text x="24" y="52" font-size="12" fill="#555">入射 45&#176;、&#961;s = 0.2, &#961;d = 0.1</text>
+  <line x1="392.0" y1="92.0" x2="340.0" y2="144.0" stroke="#d99a2b" stroke-width="1.6" marker-end="url(#sun)"/>
+  <line x1="418.0" y1="98.0" x2="366.0" y2="150.0" stroke="#d99a2b" stroke-width="1.6" marker-end="url(#sun)"/>
+  <line x1="444.0" y1="104.0" x2="392.0" y2="156.0" stroke="#d99a2b" stroke-width="1.6" marker-end="url(#sun)"/>
+  <text x="470" y="96" font-size="12" fill="#d99a2b">日射</text>
+  <line x1="214" y1="190" x2="386" y2="190" stroke="#111" stroke-width="5" stroke-linecap="round"/>
+  <text x="150" y="185" font-size="12" fill="#555">パネル</text>
+  <line x1="300.0" y1="190.0" x2="300.0" y2="110.0" stroke="#111" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="307" y="122" font-size="13.5" fill="#111" font-style="italic">n&#770;</text>
+  <line x1="300.0" y1="190.0" x2="343.8" y2="146.2" stroke="#111" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="351" y="144" font-size="13.5" fill="#111" font-style="italic">s&#770;</text>
+  <path d="M 300 150 A 40 40 0 0 1 328.3 161.7" fill="none" stroke="#777" stroke-width="1.2"/>
+  <text x="312" y="144" font-size="12.5" fill="#555">&#952;</text>
+  <path d="M 300 190 L 252.5 237.5 L 252.5 266.9 L 300.0 219.4 Z" fill="#1f6fb2" fill-opacity="0.07" stroke="#7f8c8d" stroke-width="1" stroke-dasharray="4 3"/>
+  <line x1="300.0" y1="190.0" x2="252.5" y2="237.5" stroke="#7f8c8d" stroke-width="2.0" marker-end="url(#comp)"/>
+  <line x1="300.0" y1="190.0" x2="300.0" y2="219.4" stroke="#7f8c8d" stroke-width="2.0" marker-end="url(#comp)"/>
+  <line x1="300.0" y1="190.0" x2="252.5" y2="266.9" stroke="#1f6fb2" stroke-width="3.2" marker-end="url(#new)"/>
+  <text x="174" y="254" font-size="12" fill="#5d6d6e">反太陽成分</text>
+  <text x="312" y="225" font-size="12" fill="#5d6d6e">法線成分</text>
+  <text x="312" y="243" font-size="12" fill="#c0392b">&#8592; 欠けていた</text>
+  <text x="266" y="287" font-size="13" fill="#1f6fb2" font-weight="600">合成力</text>
+  <line x1="300.0" y1="190.0" x2="210.9" y2="279.1" stroke="#c0392b" stroke-width="2.6" marker-end="url(#old)" stroke-dasharray="7 4"/>
+  <text x="115" y="297" font-size="12.5" fill="#c0392b" font-weight="600">旧: 反太陽のみ</text>
+  <path d="M 226.5 263.5 A 104 104 0 0 0 245.3 278.5" fill="none" stroke="#555" stroke-width="1.3"/>
+  <text x="234" y="312" font-size="12.5" fill="#111" font-weight="600">13.3&#176; ずれる</text>
+  <text x="24" y="356" font-size="12.5" fill="#111">旧式は大きさが 1.39 倍、向きが 13.3&#176; ずれる</text>
+  <text x="24" y="378" font-size="12" fill="#777">この条件で法線成分は力の 32.5%</text>
+  <text x="24" y="398" font-size="12" fill="#777">黒体なら法線成分ゼロ（旧式が正しい唯一の場合）</text>
+</svg>
+

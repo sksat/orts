@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 340" width="900" height="340" font-family="ui-sans-serif, system-ui, 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', Meiryo, sans-serif">
+  <rect width="900" height="340" fill="#fbfbfd"/>
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#111"/></marker>
+    <marker id="old" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#c0392b"/></marker>
+    <marker id="new" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#1f6fb2"/></marker>
+    <marker id="comp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7f8c8d"/></marker>
+    <marker id="sun" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d99a2b"/></marker>
+  </defs>
+  <text x="24" y="30" font-size="15" fill="#111" font-weight="600">光子が面で何になるかで、面を押す向きが変わる</text>
+  <text x="24" y="52" font-size="12" fill="#555">だから反太陽方向 &#8722;s&#770; だけでは足りない。&#961;s, &#961;d は鏡面反射率と拡散反射率</text>
+  <text x="150" y="86" font-size="13.5" fill="#111" font-weight="600" text-anchor="middle">(i) 吸収 &#945;</text>
+  <line x1="78" y1="178" x2="222" y2="178" stroke="#111" stroke-width="5" stroke-linecap="round"/>
+  <line x1="150.0" y1="178.0" x2="150.0" y2="116.0" stroke="#111" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="157" y="128" font-size="13" fill="#111" font-style="italic">n&#770;</text>
+  <line x1="212.2" y1="115.8" x2="155.0" y2="173.0" stroke="#d99a2b" stroke-width="1.8" marker-end="url(#sun)"/>
+  <text x="218" y="112" font-size="11.5" fill="#d99a2b">光子</text>
+  <circle cx="150" cy="178" r="3.4" fill="#d99a2b"/>
+  <line x1="150.0" y1="178.0" x2="106.2" y2="221.8" stroke="#1f6fb2" stroke-width="2.8" marker-end="url(#new)"/>
+  <text x="150" y="262" font-size="12" fill="#555" text-anchor="middle">面を押す向きは</text>
+  <text x="150" y="281" font-size="12" fill="#555" text-anchor="middle">&#8722;s&#770; だけ</text>
+  <text x="450" y="86" font-size="13.5" fill="#111" font-weight="600" text-anchor="middle">(ii) 鏡面反射 &#961;s</text>
+  <line x1="378" y1="178" x2="522" y2="178" stroke="#111" stroke-width="5" stroke-linecap="round"/>
+  <line x1="450.0" y1="178.0" x2="450.0" y2="116.0" stroke="#111" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="457" y="128" font-size="13" fill="#111" font-style="italic">n&#770;</text>
+  <line x1="512.2" y1="115.8" x2="455.0" y2="173.0" stroke="#d99a2b" stroke-width="1.8" marker-end="url(#sun)"/>
+  <text x="518" y="112" font-size="11.5" fill="#d99a2b">光子</text>
+  <line x1="450.0" y1="178.0" x2="387.8" y2="115.8" stroke="#d99a2b" stroke-width="1.8" marker-end="url(#sun)" stroke-dasharray="5 3"/>
+  <line x1="450.0" y1="178.0" x2="450.0" y2="240.0" stroke="#1f6fb2" stroke-width="2.8" marker-end="url(#new)"/>
+  <text x="450" y="262" font-size="12" fill="#555" text-anchor="middle">面に平行な運動量は変わらず</text>
+  <text x="450" y="281" font-size="12" fill="#555" text-anchor="middle">法線成分だけ反転するので</text>
+  <text x="450" y="300" font-size="12" fill="#555" text-anchor="middle">押す向きは &#8722;n&#770; だけ</text>
+  <text x="750" y="86" font-size="13.5" fill="#111" font-weight="600" text-anchor="middle">(iii) 拡散再放射 &#961;d</text>
+  <line x1="678" y1="178" x2="822" y2="178" stroke="#111" stroke-width="5" stroke-linecap="round"/>
+  <line x1="750.0" y1="178.0" x2="750.0" y2="116.0" stroke="#111" stroke-width="1.8" marker-end="url(#ar)"/>
+  <text x="757" y="128" font-size="13" fill="#111" font-style="italic">n&#770;</text>
+  <line x1="812.2" y1="115.8" x2="755.0" y2="173.0" stroke="#d99a2b" stroke-width="1.8" marker-end="url(#sun)"/>
+  <text x="818" y="112" font-size="11.5" fill="#d99a2b">光子</text>
+  <circle cx="750" cy="178" r="3.4" fill="#d99a2b"/>
+  <line x1="750.0" y1="178.0" x2="705.9" y2="150.4" stroke="#d99a2b" stroke-width="1.2" marker-end="url(#sun)" stroke-dasharray="4 3"/>
+  <line x1="750.0" y1="178.0" x2="724.8" y2="132.5" stroke="#d99a2b" stroke-width="1.2" marker-end="url(#sun)" stroke-dasharray="4 3"/>
+  <line x1="750.0" y1="178.0" x2="750.0" y2="126.0" stroke="#d99a2b" stroke-width="1.2" marker-end="url(#sun)" stroke-dasharray="4 3"/>
+  <line x1="750.0" y1="178.0" x2="775.2" y2="132.5" stroke="#d99a2b" stroke-width="1.2" marker-end="url(#sun)" stroke-dasharray="4 3"/>
+  <line x1="750.0" y1="178.0" x2="794.1" y2="150.4" stroke="#d99a2b" stroke-width="1.2" marker-end="url(#sun)" stroke-dasharray="4 3"/>
+  <line x1="750.0" y1="178.0" x2="711.8" y2="216.2" stroke="#1f6fb2" stroke-width="2.8" marker-end="url(#new)"/>
+  <line x1="750.0" y1="178.0" x2="750.0" y2="232.0" stroke="#1f6fb2" stroke-width="2.8" marker-end="url(#new)"/>
+  <text x="750" y="262" font-size="12" fill="#555" text-anchor="middle">吸収してから法線まわりに</text>
+  <text x="750" y="281" font-size="12" fill="#555" text-anchor="middle">放射するので、&#8722;s&#770; と &#8722;n&#770; の両方</text>
+  <text x="24" y="328" font-size="11.5" fill="#777">太い矢印が面を押す向き</text>
+</svg>
+

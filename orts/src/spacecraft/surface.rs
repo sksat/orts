@@ -92,7 +92,8 @@ impl PanelOptics {
 ///
 /// For thin surfaces like solar panels where both sides are exposed to the
 /// flow, model each side as a separate panel with opposite normals; the two
-/// sides may then carry different optical properties.
+/// sides may then carry different optical properties. [`Self::back_face`]
+/// builds the second one from the first.
 ///
 /// Both force models assume `normal` is unit length. [`Self::at_com`] and
 /// [`SpacecraftShape::cube`] guarantee that; a struct literal does not, and the
@@ -151,6 +152,47 @@ impl SurfacePanel {
     pub fn with_cp_offset(mut self, cp_offset: Vector3<f64>) -> Self {
         self.cp_offset = cp_offset;
         self
+    }
+
+    /// The other side of the same thin plate: the normal is negated, and the
+    /// area, drag coefficient and centre of pressure carry over.
+    ///
+    /// A panel is one face. Both force models drop a panel whose normal points
+    /// away from the flow, so a thin structure exposed on both sides — a solar
+    /// array — needs both faces present or it produces nothing for half of the
+    /// attitudes it sees. The two sides rarely share optics, which is why they
+    /// are passed rather than copied: cells on one side, substrate on the other.
+    ///
+    /// Both faces sit at the same `cp_offset`, since it is one plate. Give the
+    /// front its offset first — this copies the value, so a later
+    /// [`Self::with_cp_offset`] on the front leaves the back where it was:
+    ///
+    /// ```
+    /// use nalgebra::Vector3;
+    /// use orts::spacecraft::{PanelOptics, SurfacePanel};
+    ///
+    /// let cells = PanelOptics::new(0.1, 0.2);
+    /// let substrate = PanelOptics::new(0.05, 0.4);
+    /// let front = SurfacePanel::at_com(4.0, Vector3::x(), 2.2, cells)
+    ///     .with_cp_offset(Vector3::new(0.0, 1.5, 0.0));
+    /// let back = front.back_face(substrate);
+    ///
+    /// assert_eq!(back.normal, -front.normal);
+    /// assert_eq!(back.cp_offset, front.cp_offset);
+    /// ```
+    ///
+    /// A different `cd` per side needs two panels written out, since this shares
+    /// it. Calling `back_face` on a back face gives a third panel facing the
+    /// front's way again, which is not a plate with three sides — it is two
+    /// coincident faces.
+    pub fn back_face(&self, optics: PanelOptics) -> Self {
+        Self {
+            area: self.area,
+            normal: -self.normal,
+            cd: self.cd,
+            optics,
+            cp_offset: self.cp_offset,
+        }
     }
 }
 
@@ -1633,6 +1675,47 @@ mod tests {
                 "Drag should always dissipate energy: angle={angle:.2}, F·v = {power:.3e}"
             );
         }
+    }
+
+    /// The drag pair built the way a caller builds it, and with a torque.
+    ///
+    /// `two_sided_panel_no_dead_zone` covers the |cos θ| law for a hand-written
+    /// pair at the centre of mass. This one goes through `back_face` and gives
+    /// the plate an off-centre pressure point, so it also pins what the pair
+    /// does to the torque: reversing the flow reverses it, since the two faces
+    /// are pushed opposite ways through the same point.
+    #[test]
+    fn back_face_reverses_the_drag_torque() {
+        let front = SurfacePanel::at_com(
+            10.0,
+            Vector3::new(0.0, -1.0, 0.0),
+            2.2,
+            PanelOptics::absorber(),
+        )
+        .with_cp_offset(Vector3::new(0.0, 0.0, 1.5));
+        let back = front.back_face(PanelOptics::absorber());
+        let drag = PanelDrag::for_earth(SpacecraftShape::panels(vec![front, back]));
+
+        let at_identity = drag.eval(0.0, &iss_state(), None);
+        let mut flipped = iss_state();
+        flipped.attitude.quaternion = Vector4::new(0.0, 0.0, 0.0, 1.0); // 180 deg about z
+        let at_flipped = drag.eval(0.0, &flipped, None);
+
+        let a0 = at_identity.acceleration_inertial.magnitude();
+        let a180 = at_flipped.acceleration_inertial.magnitude();
+        assert!(a0 > 0.0, "the front faces the flow at identity");
+        assert!(
+            (a0 - a180).abs() / a0 < 1e-10,
+            "the same plate presents the same area either way round: {a0:.3e} vs {a180:.3e}"
+        );
+
+        let t0 = at_identity.torque_body.into_inner();
+        let t180 = at_flipped.torque_body.into_inner();
+        assert!(t0.magnitude() > 0.0, "an off-centre plate torques");
+        assert!(
+            (t0 + t180).magnitude() / t0.magnitude() < 1e-10,
+            "reversing the flow reverses the torque: {t0:?} vs {t180:?}"
+        );
     }
 
     #[test]

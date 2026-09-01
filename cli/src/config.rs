@@ -285,6 +285,13 @@ fn default_true() -> bool {
 /// Panels are the geometry both SRP and atmospheric drag read, so writing them
 /// replaces the isotropic parameters for both forces at once. See
 /// [`crate::config::SatelliteConfig::panels`].
+///
+/// A panel is one face: both force models drop a panel whose normal points away
+/// from the Sun or the flow. A thin structure exposed on both sides — a solar
+/// array — therefore needs both faces, or it produces nothing for half of the
+/// attitudes it sees, and the torque about an off-centre `cp_offset` goes with
+/// it. Write `back` to get the far face; the two sides usually differ optically
+/// (cells one side, substrate the other), so it takes its own reflectivities.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[ts(export)]
 pub struct PanelConfig {
@@ -308,6 +315,80 @@ pub struct PanelConfig {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub cp_offset: [f64; 3],
+    /// The other side of the same thin plate, when there is one.
+    ///
+    /// Writing this table is what gives the plate a back face; an empty one
+    /// (`back = {}`) gives it the front's optics. Area, `cd` and `cp_offset`
+    /// are shared, since it is one plate — a different `cd` per side needs the
+    /// two faces written out as separate panels. Omit the key for a plate with
+    /// one exposed side.
+    ///
+    /// Only for a plate. A face of a closed body already has its far side in
+    /// the panel list — the opposite face of the box — so `back` there adds a
+    /// second face at the same place pointing the same way, and both are lit
+    /// together: twice the force, and a torque pair that partly cancels.
+    #[ts(optional)]
+    pub back: Option<PanelBackConfig>,
+}
+
+/// The back face of a thin plate, as far as it differs from the front.
+///
+/// Both fields are optional and fall back to the front's value, so an empty
+/// table describes a plate whose two sides look the same.
+#[derive(Deserialize, Serialize, Clone, Debug, TS)]
+#[ts(export)]
+pub struct PanelBackConfig {
+    /// Specular reflectivity ρ_s of the back face (default: the front's).
+    #[ts(optional)]
+    pub specular: Option<f64>,
+    /// Diffuse reflectivity ρ_d of the back face (default: the front's).
+    #[ts(optional)]
+    pub diffuse: Option<f64>,
+}
+
+/// Reject reflectivities `PanelOptics::new` would assert on, naming `where`
+/// so a multi-panel config says which face to go and fix.
+///
+/// `inherited` marks values that came from the front face rather than from what
+/// the reader wrote, so the sum message cannot quote a number they cannot find.
+fn validate_optics(
+    where_: &str,
+    specular: f64,
+    diffuse: f64,
+    inherited: Inherited,
+) -> Result<(), String> {
+    // Per field, so the message names the key rather than the pair.
+    for (key, value) in [("specular", specular), ("diffuse", diffuse)] {
+        if !value.is_finite() {
+            return Err(format!("{where_}.{key} must be finite"));
+        }
+        if value < 0.0 {
+            return Err(format!("{where_}.{key} must be non-negative"));
+        }
+    }
+    if specular + diffuse > 1.0 {
+        return Err(format!(
+            "{where_}.specular + {where_}.diffuse must be at most 1, got {specular}{} + {diffuse}{}",
+            if inherited.specular {
+                " (from the front)"
+            } else {
+                ""
+            },
+            if inherited.diffuse {
+                " (from the front)"
+            } else {
+                ""
+            },
+        ));
+    }
+    Ok(())
+}
+
+/// Which of a back face's reflectivities were taken from the front.
+#[derive(Debug, Clone, Copy, Default)]
+struct Inherited {
+    specular: bool,
+    diffuse: bool,
 }
 
 impl PanelConfig {
@@ -330,20 +411,26 @@ impl PanelConfig {
                 "panels[{index}].normal must be a non-zero finite vector"
             ));
         }
-        // Per field, so the message names the key to go and fix.
-        for (key, value) in [("specular", self.specular), ("diffuse", self.diffuse)] {
-            if !value.is_finite() {
-                return Err(format!("panels[{index}].{key} must be finite"));
-            }
-            if value < 0.0 {
-                return Err(format!("panels[{index}].{key} must be non-negative"));
-            }
-        }
-        if self.specular + self.diffuse > 1.0 {
-            return Err(format!(
-                "panels[{index}].specular + panels[{index}].diffuse must be at most 1, got {} + {}",
-                self.specular, self.diffuse
-            ));
+        validate_optics(
+            &format!("panels[{index}]"),
+            self.specular,
+            self.diffuse,
+            Inherited::default(),
+        )?;
+        if let Some(back) = &self.back {
+            // The resolved values, since an omitted one comes from the front:
+            // `back = { specular = 0.9 }` on a front with `diffuse = 0.2` is
+            // over 1 without either field being wrong on its own.
+            let (specular, diffuse) = self.back_optics();
+            validate_optics(
+                &format!("panels[{index}].back"),
+                specular,
+                diffuse,
+                Inherited {
+                    specular: back.specular.is_none(),
+                    diffuse: back.diffuse.is_none(),
+                },
+            )?;
         }
         if !self.cp_offset.iter().all(|x| x.is_finite()) {
             return Err(format!(
@@ -353,16 +440,41 @@ impl PanelConfig {
         Ok(())
     }
 
-    /// Build the panel. `at_com` normalises the normal, which is what keeps the
-    /// unit-length assert in the model constructors from firing.
-    fn to_surface_panel(&self) -> SurfacePanel {
-        SurfacePanel::at_com(
+    /// The back face's reflectivities, each falling back to the front's.
+    ///
+    /// Only meaningful when `back` is present; returns the front's values
+    /// otherwise, which is what an empty `back` table asks for anyway.
+    fn back_optics(&self) -> (f64, f64) {
+        let back = self.back.as_ref();
+        (
+            back.and_then(|b| b.specular).unwrap_or(self.specular),
+            back.and_then(|b| b.diffuse).unwrap_or(self.diffuse),
+        )
+    }
+
+    /// The one or two faces this panel describes.
+    ///
+    /// Two when `back` is present: a thin plate exposed on both sides produces
+    /// no force at all for the attitudes where the flow comes from behind, so
+    /// the far face has to be there to be seen.
+    ///
+    /// `at_com` normalises the normal, which is what keeps the unit-length
+    /// assert in the model constructors from firing.
+    fn to_surface_panels(&self) -> Vec<SurfacePanel> {
+        let front = SurfacePanel::at_com(
             self.area,
             nalgebra::Vector3::from_row_slice(&self.normal),
             self.cd,
             PanelOptics::new(self.specular, self.diffuse),
         )
-        .with_cp_offset(nalgebra::Vector3::from_row_slice(&self.cp_offset))
+        .with_cp_offset(nalgebra::Vector3::from_row_slice(&self.cp_offset));
+
+        if self.back.is_none() {
+            return vec![front];
+        }
+        let (specular, diffuse) = self.back_optics();
+        let back = front.back_face(PanelOptics::new(specular, diffuse));
+        vec![front, back]
     }
 }
 
@@ -804,7 +916,12 @@ impl SatelliteConfig {
                 .map(DisturbancesConfig::to_disturbance_torques)
                 .unwrap_or_default(),
             panels: self.panels.as_ref().map(|panels| {
-                SpacecraftShape::panels(panels.iter().map(PanelConfig::to_surface_panel).collect())
+                SpacecraftShape::panels(
+                    panels
+                        .iter()
+                        .flat_map(PanelConfig::to_surface_panels)
+                        .collect(),
+                )
             }),
             shape: self.shape,
             controller_config: self.controller.clone(),
@@ -2394,6 +2511,174 @@ cp_offset = [0.0, 1.5, 0.0]
             spec.panels.is_none(),
             "a null key must not reach the dynamics as a panelled shape"
         );
+    }
+
+    fn panel_sat_toml(panel_body: &str) -> String {
+        format!(
+            r#"
+[[satellites]]
+id = "a"
+orbit = {{ type = "circular", altitude = 500 }}
+attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
+
+[[satellites.panels]]
+{panel_body}
+"#
+        )
+    }
+
+    /// Both faces present with the front's optics on each, for a config whose
+    /// single panel carries an empty `back`.
+    ///
+    /// Asserting on the parsed `PanelBackConfig` alone would pass even if the
+    /// fallback resolved to zero, so this goes through to the panels.
+    fn assert_two_faces_copying_the_front(config: &SimConfig) {
+        let spec = config.satellites[0].to_satellite_spec(0, KnownBody::Earth, 398600.4418);
+        let orts::spacecraft::SpacecraftShape::Panels(panels) =
+            spec.panels.expect("panels reach the spec")
+        else {
+            panic!("expected a panelled shape");
+        };
+        assert_eq!(panels.len(), 2, "an empty back table still adds a face");
+        assert_eq!(panels[1].normal, -panels[0].normal);
+        assert_eq!(
+            panels[1].optics, panels[0].optics,
+            "an empty back table copies the front's optics"
+        );
+        assert!((panels[1].optics.specular() - 0.1).abs() < 1e-15);
+    }
+
+    fn panels_of(toml_src: &str) -> Vec<orts::spacecraft::SurfacePanel> {
+        let config: SimConfig = toml::from_str(toml_src).expect("parses");
+        let spec = config.satellites[0].to_satellite_spec(0, KnownBody::Earth, 398600.4418);
+        let orts::spacecraft::SpacecraftShape::Panels(panels) =
+            spec.panels.expect("panels reach the spec")
+        else {
+            panic!("expected a panelled shape");
+        };
+        panels
+    }
+
+    /// A `back` table turns one written panel into the plate's two faces.
+    #[test]
+    fn a_back_table_produces_the_opposite_face() {
+        let panels = panels_of(&panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.1\ndiffuse = 0.2\ncp_offset = [0.0, 1.5, 0.0]\nback = { specular = 0.05, diffuse = 0.4 }",
+        ));
+        assert_eq!(panels.len(), 2);
+        let (front, back) = (&panels[0], &panels[1]);
+
+        assert_eq!(back.normal, -front.normal);
+        assert_eq!(back.area, front.area);
+        assert_eq!(back.cd, front.cd);
+        assert_eq!(
+            back.cp_offset, front.cp_offset,
+            "one plate, so one centre of pressure"
+        );
+        assert!((front.optics.specular() - 0.1).abs() < 1e-15);
+        assert!((back.optics.specular() - 0.05).abs() < 1e-15);
+        assert!((back.optics.diffuse() - 0.4).abs() < 1e-15);
+    }
+
+    /// An empty `back` gives the plate two identical sides.
+    ///
+    /// The optics fields are `Option` for this: as bare `f64` with
+    /// `serde(default)`, `back = {}` would have produced a black surface
+    /// instead of a copy, which is not what writing an empty table asks for.
+    #[test]
+    fn an_empty_back_table_copies_the_front_optics() {
+        let panels = panels_of(&panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.1\ndiffuse = 0.2\nback = {}",
+        ));
+        assert_eq!(panels.len(), 2);
+        assert_eq!(panels[1].optics, panels[0].optics);
+        assert!((panels[1].optics.specular() - 0.1).abs() < 1e-15);
+        assert!((panels[1].optics.diffuse() - 0.2).abs() < 1e-15);
+    }
+
+    /// One field in `back` leaves the other inherited, rather than zeroed.
+    #[test]
+    fn a_partial_back_table_inherits_the_other_field() {
+        let panels = panels_of(&panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.1\ndiffuse = 0.2\nback = { specular = 0.5 }",
+        ));
+        assert!((panels[1].optics.specular() - 0.5).abs() < 1e-15);
+        assert!(
+            (panels[1].optics.diffuse() - 0.2).abs() < 1e-15,
+            "diffuse was not written for the back, so it comes from the front"
+        );
+    }
+
+    /// Without `back` a panel stays one face, as before.
+    #[test]
+    fn a_panel_without_a_back_table_stays_one_face() {
+        let panels = panels_of(&panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.1\ndiffuse = 0.2",
+        ));
+        assert_eq!(panels.len(), 1);
+    }
+
+    /// The sum is checked after inheritance, so a `back` that is fine on its own
+    /// but not once combined with the front is still rejected — and the message
+    /// says which face.
+    #[test]
+    fn a_back_table_over_one_once_inherited_is_rejected() {
+        let toml_src = panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.1\ndiffuse = 0.2\nback = { specular = 0.9 }",
+        );
+        let config: SimConfig = toml::from_str(&toml_src).expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(err.contains("panels[0].back.specular"), "got: {err}");
+        assert!(err.contains("at most 1"), "got: {err}");
+
+        // The same value on the front alone is fine, so the error is about the
+        // pair rather than about `0.9`.
+        let ok = panel_sat_toml("area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.9");
+        let config: SimConfig = toml::from_str(&ok).expect("parses");
+        config.satellites[0].validate().expect("valid");
+    }
+
+    /// A negative back reflectivity names the back, not the front.
+    #[test]
+    fn a_negative_back_reflectivity_names_the_back() {
+        let toml_src =
+            panel_sat_toml("area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nback = { diffuse = -0.1 }");
+        let config: SimConfig = toml::from_str(&toml_src).expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(
+            err.contains("panels[0].back.diffuse must be non-negative"),
+            "got: {err}"
+        );
+    }
+
+    /// JSON and YAML express an empty `back` too, so the meaning cannot depend
+    /// on the file format.
+    #[test]
+    fn an_empty_back_table_works_in_json_and_yaml() {
+        let json = r#"{"satellites":[{"id":"a","orbit":{"type":"circular","altitude":500},
+            "attitude":{"inertia_diag":[10,10,10],"mass":50},
+            "panels":[{"area":4.0,"normal":[1,0,0],"cd":2.2,"specular":0.1,"back":{}}]}]}"#;
+        let config: SimConfig = serde_json::from_str(json).expect("json parses");
+        assert_two_faces_copying_the_front(&config);
+
+        let yaml = r#"
+satellites:
+  - id: a
+    orbit:
+      type: circular
+      altitude: 500
+    attitude:
+      inertia_diag: [10, 10, 10]
+      mass: 50
+    panels:
+      - area: 4.0
+        normal: [1, 0, 0]
+        cd: 2.2
+        specular: 0.1
+        back: {}
+"#;
+        let config: SimConfig = serde_yaml::from_str(yaml).expect("yaml parses");
+        assert_two_faces_copying_the_front(&config);
     }
 
     #[test]

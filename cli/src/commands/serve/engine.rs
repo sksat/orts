@@ -1545,6 +1545,94 @@ diffuse = 0.1
 cp_offset = [0.0, 1.5, 0.0]
 "#;
 
+    /// A `back` table in config has to reach the dynamics, not just the spec.
+    ///
+    /// The config tests stop at `SpacecraftShape`; this one takes both configs
+    /// through to the models the integrator evaluates and puts the Sun behind
+    /// the written face. Without `back` the plate is dark there and SRP is
+    /// exactly zero; with it, the far face is lit. That is the user-facing
+    /// claim, and nothing else in the suite makes it.
+    ///
+    /// The attitude is derived from the Sun's actual position at the config's
+    /// epoch, which is "now" when the config does not name one — assuming a
+    /// fixed direction would make this pass or fail depending on the date.
+    #[test]
+    fn a_back_table_lights_the_plate_from_behind() {
+        let srp_magnitude = |toml: &str| -> f64 {
+            let init = engine_from_toml(toml).expect("engine builds");
+            let SimGroup::Spacecraft(group) = &init.engine.group else {
+                panic!("expected an attitude fleet");
+            };
+            let (_, dynamics) = group
+                .satellites_with_dynamics()
+                .next()
+                .expect("one satellite");
+            // Put the spacecraft sunward of Earth and its panel normal away
+            // from the Sun, so the written face is the dark one.
+            // Where the Sun is depends on the epoch, and the epoch depends on
+            // when the test runs, so the geometry is built from the Sun rather
+            // than assumed: the attitude turns the written face away from it.
+            let epoch = init.engine.params.epoch.expect("panel SRP needs an epoch");
+            let sun_pos = arika::sun::sun_position_eci(&epoch.to_tdb()).into_inner();
+            // Sunward of Earth, so the cylindrical shadow never applies.
+            let sat_pos = sun_pos.normalize() * 7000.0;
+            let s_hat = (sun_pos - sat_pos).normalize();
+
+            let body_x = nalgebra::Vector3::x();
+            let attitude = nalgebra::UnitQuaternion::rotation_between(&body_x, &(-s_hat))
+                .unwrap_or_else(|| {
+                    nalgebra::UnitQuaternion::from_axis_angle(
+                        &nalgebra::Vector3::y_axis(),
+                        std::f64::consts::PI,
+                    )
+                });
+            // The premise, checked rather than trusted: in the body frame the
+            // Sun sits opposite the panel normal, whatever the epoch is.
+            let s_body = attitude.inverse_transform_vector(&s_hat);
+            assert!(
+                s_body.dot(&body_x) < -0.999,
+                "the written face has to be the dark one: s_body·x = {}",
+                s_body.dot(&body_x)
+            );
+
+            let probe = orts::SpacecraftState {
+                orbit: orts::orbital::OrbitalState::new(
+                    sat_pos,
+                    nalgebra::Vector3::new(0.0, 7.5, 0.0),
+                ),
+                attitude: orts::attitude::AttitudeState {
+                    quaternion: nalgebra::Vector4::new(
+                        attitude.w, attitude.i, attitude.j, attitude.k,
+                    ),
+                    ..orts::attitude::AttitudeState::identity()
+                },
+                mass: 50.0,
+            };
+
+            dynamics
+                .model_breakdown(0.0, &probe)
+                .into_iter()
+                .find(|(name, _)| *name == "panel_srp")
+                .map(|(_, loads)| loads.acceleration_inertial.magnitude())
+                .expect("panel_srp is installed")
+        };
+
+        // The panel normal is +x in both configs; the Sun ends up on -x of it.
+        let one_face = srp_magnitude(PANEL_TOML);
+        let two_faces = srp_magnitude(&format!(
+            "{PANEL_TOML}back = {{ specular = 0.05, diffuse = 0.4 }}\n"
+        ));
+
+        assert_eq!(
+            one_face, 0.0,
+            "one written face, lit from behind, feels nothing"
+        );
+        assert!(
+            two_faces > 0.0,
+            "the back face has to feel it: got {two_faces:e}"
+        );
+    }
+
     /// Panels written in config have to reach the dynamics the integrator
     /// evaluates, replacing the isotropic models rather than joining them.
     #[test]
