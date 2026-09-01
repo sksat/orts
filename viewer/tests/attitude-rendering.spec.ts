@@ -57,7 +57,9 @@ let configPath: string;
 /** Spawn an `orts serve` instance and resolve once it prints its ws:// URL. */
 function spawnServer(configFile: string): Promise<{ child: ChildProcess; port: number }> {
   const binary = process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");
-  const child = spawn(binary, ["serve", "--port", "0", "--config", configFile]);
+  const child = spawn(binary, ["serve", "--port", "0", "--config", configFile], {
+    env: { ...process.env, ORTS_DISABLE_TEXTURE_DOWNLOAD: "1" },
+  });
   return new Promise((resolve, reject) => {
     const rl = createInterface({ input: child.stderr ?? process.stdin });
     const timeout = setTimeout(() => {

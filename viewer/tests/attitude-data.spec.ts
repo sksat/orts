@@ -34,7 +34,9 @@ test.beforeAll(async () => {
   fs.writeFileSync(configPath, JSON.stringify(config));
 
   const binary = process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");
-  const child = spawn(binary, ["serve", "--port", "0", "--config", configPath]);
+  const child = spawn(binary, ["serve", "--port", "0", "--config", configPath], {
+    env: { ...process.env, ORTS_DISABLE_TEXTURE_DOWNLOAD: "1" },
+  });
   ortsProcess = child;
 
   const port = await new Promise<number>((resolve, reject) => {
@@ -136,7 +138,9 @@ test("state messages without attitude config omit attitude field", async ({ page
 
   // Start a no-attitude server inline
   const binary = process.env.ORTS_BINARY ?? path.resolve(__dirname, "../../target/debug/orts");
-  const child = spawn(binary, ["serve", "--port", "0", "--sat", "altitude=400,id=no-att"]);
+  const child = spawn(binary, ["serve", "--port", "0", "--sat", "altitude=400,id=no-att"], {
+    env: { ...process.env, ORTS_DISABLE_TEXTURE_DOWNLOAD: "1" },
+  });
 
   const port = await new Promise<number>((resolve, reject) => {
     const rl = createInterface({ input: child.stderr ?? process.stdin });
