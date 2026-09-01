@@ -26,6 +26,9 @@ axes coincide. Orekit's `flux` points from the Sun toward the spacecraft with
 magnitude equal to the radiation pressure.
 
 Run with:  uv run tools/generate_orekit_panel_srp_fixtures.py
+
+which rewrites orts/tests/fixtures/orekit_panel_srp_reference.json. Pass a path
+to write somewhere else.
 """
 
 import json
@@ -41,6 +44,10 @@ from orekit_jpype.pyhelpers import (  # noqa: E402
     download_orekit_data_curdir,
     setup_orekit_curdir,
 )
+
+# Resolve the default output before chdir'ing away from the repo.
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+DEFAULT_OUT = REPO_ROOT / "orts" / "tests" / "fixtures" / "orekit_panel_srp_reference.json"
 
 # Orekit needs its data directory; keep the download out of the repo tree.
 CACHE = pathlib.Path(os.environ.get("XDG_CACHE_HOME", pathlib.Path.home() / ".cache"))
@@ -153,10 +160,8 @@ def main() -> int:
         "cases": cases,
     }
 
-    out = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else None
-    if out is None:
-        print("usage: generate_orekit_panel_srp_fixtures.py <output.json>", file=sys.stderr)
-        return 2
+    out = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUT
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(fixture, indent=2) + "\n")
     print(f"wrote {len(cases)} cases to {out}")
     return 0
