@@ -1250,6 +1250,11 @@ impl SimConfig {
         let mut seen: HashMap<String, usize> = HashMap::with_capacity(self.satellites.len());
         for (i, sat) in self.satellites.iter().enumerate() {
             let id = sat.resolved_id(i);
+            // An id has to name an entity before two of them can be compared:
+            // one made only of separators contributes no segment and collapses
+            // to the `/world/sat` root the whole fleet shares, which a fleet of
+            // one reaches as readily as a fleet of many.
+            crate::satellite::validate_id(&id).map_err(|e| format!("satellites[{i}]: {e}"))?;
             let entity = crate::satellite::entity_path_for_id(&id).to_string();
             if let Some(first) = seen.insert(entity, i) {
                 return Err(format!(
@@ -3370,6 +3375,32 @@ altitude = 500.0
                 err.contains("duplicate satellite id"),
                 "ids {a:?} and {b:?}: {err}"
             );
+        }
+    }
+
+    /// An id naming no entity of its own is rejected, fleet of one included.
+    ///
+    /// A separator-only id contributes no path segment, so the recording entity
+    /// collapses to the `/world/sat` root the whole fleet shares. The `--sat`
+    /// path rejects it (`validate_id`); a config file accepted it, and a fleet
+    /// of one got there without any duplicate to notice.
+    #[test]
+    fn an_id_naming_no_entity_is_rejected() {
+        for id in ["/", "//"] {
+            let toml = format!(
+                r#"
+[[satellites]]
+id = "{id}"
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+"#
+            );
+            let config: SimConfig = toml::from_str(&toml).expect("parse");
+            let err = config
+                .validate()
+                .expect_err(&format!("id {id:?} names no entity"));
+            assert!(err.contains("no path segment"), "id {id:?}: {err}");
         }
     }
 
