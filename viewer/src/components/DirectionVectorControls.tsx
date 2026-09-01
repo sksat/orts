@@ -42,6 +42,9 @@ export function DirectionVectorControls({
             type="button"
             className={`${controlStyles.modeToggleBtn} ${on ? controlStyles.active : ""}`}
             data-testid={`direction-vector-${kind}`}
+            // The on/off state is otherwise only in the styling, so a screen
+            // reader would announce an identical button either way.
+            aria-pressed={on}
             disabled={reason != null}
             title={reason ?? `Draw the ${DIRECTION_VECTOR_LABELS[kind]} direction`}
             onClick={() => onChange({ ...value, [kind]: !on })}
