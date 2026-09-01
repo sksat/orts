@@ -113,14 +113,17 @@ pub struct HistoryBuffer {
     // gets fair coverage regardless of push order or count.
     overview_per_entity: HashMap<EntityPath, EntityOverview>,
 
-    /// How many times [`Self::load_all`] has read the segment files.
+    /// How many times [`Self::load_all`] has been called.
     ///
     /// Lets a test observe that a read stayed in memory instead of timing it.
     /// The elapsed-time version of that assertion was a proxy that reported how
     /// busy the machine was: it failed on a macOS runner at 31ms against a 10ms
     /// budget with the fast path working correctly.
+    ///
+    /// `load_all` is the one path here that opens a segment file, so counting
+    /// the calls counts the reads. A second such path would need its own count.
     #[cfg(test)]
-    disk_loads: std::cell::Cell<u32>,
+    load_all_calls: std::cell::Cell<u32>,
 }
 
 impl HistoryBuffer {
@@ -137,7 +140,7 @@ impl HistoryBuffer {
             body_radius,
             overview_per_entity: HashMap::new(),
             #[cfg(test)]
-            disk_loads: std::cell::Cell::new(0),
+            load_all_calls: std::cell::Cell::new(0),
         }
     }
 
@@ -349,7 +352,7 @@ impl HistoryBuffer {
     /// Load all data: flushed segments + in-memory buffer, sorted by time.
     pub fn load_all(&self) -> Vec<HistoryState> {
         #[cfg(test)]
-        self.disk_loads.set(self.disk_loads.get() + 1);
+        self.load_all_calls.set(self.load_all_calls.get() + 1);
 
         let mut all = Vec::new();
 
@@ -936,10 +939,10 @@ mod tests {
             "all returned states must lie in the requested window"
         );
         assert_eq!(
-            buf.disk_loads.get(),
+            buf.load_all_calls.get(),
             0,
             "query_range on a recent window fully covered by the in-memory tail \
-             must not read any of the {} segments on disk",
+             must not call load_all, whatever the {} segments on disk hold",
             buf.segment_count
         );
         cleanup_dir(&dir);
@@ -979,7 +982,7 @@ mod tests {
         // The other half of the pair: this window does read the segments, which
         // is what makes the sibling test's count of zero worth asserting.
         assert_eq!(
-            buf.disk_loads.get(),
+            buf.load_all_calls.get(),
             1,
             "a window reaching past the tail reads the segments once"
         );
@@ -1333,7 +1336,8 @@ mod tests {
     /// machine whose own cost curve for the same code is steeper: `overview()`
     /// over a 4x entity range grew 1.46x per entity on the Linux runner and
     /// 3.25-4.28x on the macOS one, across all three attempts. Its cost is
-    /// dominated by cloning every state — a `String` and a `HashMap` each — so
+    /// dominated by cloning every state — an `EntityPath` (`Vec<String>`) and a
+    /// `HashMap` each — so
     /// what the ratio measures on that runner is the allocator, and quadratic
     /// work over the same range would show 4x. No bar separates them there.
     /// Whatever `attempt` asserts about behaviour still runs on every platform.
