@@ -1241,11 +1241,17 @@ impl SimConfig {
         // therefore merge two satellites' rows under one path and route all
         // commands to whichever one won the map — silently. Note the collision
         // an explicit `id` can have with the `sat-{index}` default of an
-        // id-less entry, which is why this compares resolved ids.
+        // id-less entry, which is why this resolves the id first.
+        //
+        // Compared on the entity the id names, not on the id text: `EntityPath`
+        // drops empty segments, so `a` and `/a` (or `a/b` and `a//b`) are two id
+        // strings naming one entity. `ensure_unique_ids` compares the same way
+        // for fleets built from repeated `--sat`.
         let mut seen: HashMap<String, usize> = HashMap::with_capacity(self.satellites.len());
         for (i, sat) in self.satellites.iter().enumerate() {
             let id = sat.resolved_id(i);
-            if let Some(first) = seen.insert(id.clone(), i) {
+            let entity = crate::satellite::entity_path_for_id(&id).to_string();
+            if let Some(first) = seen.insert(entity, i) {
                 return Err(format!(
                     "satellites[{i}]: duplicate satellite id '{id}' (already used by \
                      satellites[{first}]); ids must be unique{}",
@@ -3329,5 +3335,64 @@ mass = 100.0
         let flat_typo = add.replace("\"name\": \"Dyn\",", "\"ballistic_coef\": 100.0,");
         serde_json::from_str::<crate::commands::serve::protocol::ClientMessage>(&flat_typo)
             .expect("known gap: `flatten` drops unknown keys at the message level");
+    }
+
+    /// Two ids naming one entity are a duplicate, whatever their text.
+    ///
+    /// `EntityPath` drops empty segments, so `a` and `/a` both name
+    /// `/world/sat/a`. Compared as text they looked distinct and the fleet was
+    /// accepted: measured, both entries resolved to `/world/sat/a` and
+    /// `validate` returned `Ok`. The `--sat` path compares on the entity
+    /// already (`ensure_unique_ids`).
+    #[test]
+    fn ids_naming_one_entity_are_a_duplicate() {
+        for (a, b) in [("a", "/a"), ("a/b", "a//b")] {
+            let toml = format!(
+                r#"
+[[satellites]]
+id = "{a}"
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+
+[[satellites]]
+id = "{b}"
+[satellites.orbit]
+type = "circular"
+altitude = 500.0
+"#
+            );
+            let config: SimConfig = toml::from_str(&toml).expect("parse");
+            let err = config
+                .validate()
+                .expect_err(&format!("ids {a:?} and {b:?} name one entity"));
+            assert!(
+                err.contains("duplicate satellite id"),
+                "ids {a:?} and {b:?}: {err}"
+            );
+        }
+    }
+
+    /// Ids that name entities of their own are accepted.
+    ///
+    /// The check above compares on the entity, so it must not read two distinct
+    /// ones as a collision.
+    #[test]
+    fn ids_naming_entities_of_their_own_are_accepted() {
+        let toml = r#"
+[[satellites]]
+id = "a"
+[satellites.orbit]
+type = "circular"
+altitude = 400.0
+
+[[satellites]]
+id = "a/b"
+[satellites.orbit]
+type = "circular"
+altitude = 500.0
+"#;
+        let config: SimConfig = toml::from_str(toml).expect("parse");
+        config.validate().expect("two entities, two satellites");
     }
 }

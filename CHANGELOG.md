@@ -195,8 +195,9 @@ section is subdivided by package.
   something else: an unknown `[integrator] type` or `atmosphere` (previously
   dp45 / the exponential model), an unknown key anywhere in the config tree
   (previously dropped, so `duraton = 100` ran for one orbital period), two
-  satellites whose resolved ids collide (previously one recording entity, one
-  CSV section and one `[[command]]` target for both), and an attitude block no
+  satellites whose ids name one recording entity (previously one entity, one
+  CSV section and one `[[command]]` target for both; compared on the entity, so
+  `a` and `/a` collide as they do downstream), and an attitude block no
   rigid body could have — an inertia tensor that is not positive definite or
   violates `I1 + I2 >= I3` on its principal moments, `mass <= 0`, or an
   `initial_quaternion` that cannot be normalized. The `integrator` /

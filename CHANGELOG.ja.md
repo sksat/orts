@@ -171,7 +171,7 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   payload は、シミュレーションが honor できない入力を別の何かに解決せず拒否する:
   未知の `[integrator] type` / `atmosphere` (従来は dp45 / exponential
   モデル)、config tree のどこかにある未知キー (従来は drop されるので
-  `duraton = 100` が 1 周期走った)、解決後の id が衝突する 2 機
+  `duraton = 100` が 1 周期走った)、id が 1 つの recording entity を指す 2 機 (id の文字列でなく entity で比較するので、下流と同じく `a` と `/a` は衝突する)
   (従来は recording entity・CSV section・`[[command]]` の宛先を共有)、
   剛体が持てない attitude ブロック (正定値でない、または主慣性モーメントで
   `I1 + I2 >= I3` を破る慣性テンソル、`mass <= 0`、正規化できない
