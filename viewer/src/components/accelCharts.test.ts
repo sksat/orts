@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isAccelChartActive } from "./accelCharts";
+import { isAccelChartActive } from "./accelCharts.js";
 
 describe("isAccelChartActive", () => {
   it("shows nothing when no perturbation is active", () => {
