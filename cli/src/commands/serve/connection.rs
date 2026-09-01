@@ -189,10 +189,17 @@ async fn main_loop(
                         // not parsed twice on the way in.
                         let parsed = serde_json::from_str::<serde_json::Value>(&text).and_then(
                             |value| {
-                                for key in crate::config::unread_client_message_keys(&value) {
+                                let unread = crate::config::unread_client_message_keys(&value);
+                                for key in &unread.named {
                                     eprintln!(
                                         "Warning: client message: nothing reads `{}`; its value is ignored",
-                                        crate::config::printable_key(&key)
+                                        crate::config::printable_key(key)
+                                    );
+                                }
+                                if unread.unnamed > 0 {
+                                    eprintln!(
+                                        "Warning: client message: and {} more keys nothing reads",
+                                        unread.unnamed
                                     );
                                 }
                                 serde_json::from_value::<ClientMessage>(value)

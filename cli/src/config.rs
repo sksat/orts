@@ -832,6 +832,25 @@ pub enum OrbitConfig {
     Norad { norad_id: u32 },
 }
 
+/// How many of a client message's unread keys are named before the rest are
+/// only counted.
+///
+/// `/ws` takes messages from whoever reaches the port, and each named key costs
+/// one synchronous `eprintln!` on the connection task — stderr is unbuffered, so
+/// that is a write syscall each. One frame of `{"a":1,"b":2,…}` is cheap to send
+/// and would otherwise become as many writes as it has keys. Twenty is well past
+/// what anyone reads to find a typo.
+const CLIENT_MESSAGE_KEY_LIMIT: usize = 20;
+
+/// The unread keys of a client message, and how many did not fit.
+#[derive(Default, Debug, PartialEq, Eq)]
+pub struct UnreadClientKeys {
+    /// At most [`CLIENT_MESSAGE_KEY_LIMIT`] paths.
+    pub named: Vec<String>,
+    /// How many more keys nothing read, past the ones named.
+    pub unnamed: usize,
+}
+
 /// The keys of a client message that no field of it reads.
 ///
 /// `ClientMessage` is `#[serde(tag = "type")]`, and `serde_ignored` cannot see
@@ -843,15 +862,22 @@ pub enum OrbitConfig {
 ///
 /// Paths are relative to the part inspected: `dtt` and `satellites.0.altitide`
 /// for `start_simulation`'s config.
+///
 /// Takes the message already parsed, so the caller can hand the same `Value` to
 /// `ClientMessage` rather than paying for a second parse of every frame.
-pub fn unread_client_message_keys(value: &serde_json::Value) -> Vec<String> {
+pub fn unread_client_message_keys(value: &serde_json::Value) -> UnreadClientKeys {
     let Some(kind) = value.get("type").and_then(|v| v.as_str()) else {
-        return Vec::new();
+        return UnreadClientKeys::default();
     };
 
-    let mut keys = Vec::new();
-    let mut note = |path: serde_ignored::Path| keys.push(path.to_string());
+    let mut keys = UnreadClientKeys::default();
+    let mut note = |path: serde_ignored::Path| {
+        if keys.named.len() < CLIENT_MESSAGE_KEY_LIMIT {
+            keys.named.push(path.to_string());
+        } else {
+            keys.unnamed += 1;
+        }
+    };
     match kind {
         "start_simulation" => {
             if let Some(config) = value.get("config") {
@@ -1519,7 +1545,12 @@ mod tests {
     fn unread_keys_of(text: &str) -> Vec<String> {
         let value: serde_json::Value =
             serde_json::from_str(text).expect("the message is valid JSON");
-        unread_client_message_keys(&value)
+        let unread = unread_client_message_keys(&value);
+        assert_eq!(
+            unread.unnamed, 0,
+            "these messages hold fewer keys than the limit"
+        );
+        unread.named
     }
 
     use super::*;
@@ -4064,5 +4095,33 @@ orbit = { type = "circular", altitude = 600 }
             format!("{}", printable_key("satellites.0.altitide")),
             "satellites.0.altitide"
         );
+    }
+
+    /// A client message names at most `CLIENT_MESSAGE_KEY_LIMIT` keys.
+    ///
+    /// Each named key is one unbuffered `eprintln!` on the connection task, and
+    /// `/ws` takes messages from whoever reaches the port, so one frame must not
+    /// decide how many writes the server makes. The rest are counted.
+    #[test]
+    fn a_client_message_names_at_most_the_limit() {
+        let extra = 7;
+        let typos: String = (0..CLIENT_MESSAGE_KEY_LIMIT + extra)
+            .map(|i| format!("\"typo{i}\":{i},"))
+            .collect();
+        let msg = format!(
+            "{{\"type\":\"start_simulation\",\"config\":{{{typos}\
+             \"satellites\":[{{\"id\":\"a\",\"orbit\":\
+             {{\"type\":\"circular\",\"altitude\":400}}}}]}}}}"
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&msg).expect("the message is valid JSON");
+
+        let unread = unread_client_message_keys(&value);
+        assert_eq!(unread.named.len(), CLIENT_MESSAGE_KEY_LIMIT);
+        assert_eq!(unread.unnamed, extra, "the rest are counted, not dropped");
+        // The message still parses into something the server runs: the limit is
+        // on what gets said about it, not on what it may contain.
+        serde_json::from_value::<crate::commands::serve::protocol::ClientMessage>(value)
+            .expect("a message full of unknown keys still starts a simulation");
     }
 }
