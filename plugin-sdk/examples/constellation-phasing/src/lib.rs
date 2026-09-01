@@ -487,7 +487,7 @@ mod tests {
     ///
     /// FirstBurn 終了時刻から半周期を数えると、burn 中に飛んだ弧の分だけ
     /// apogee を過ぎてから噴く（同梱設定では 2808 s の半周期に対し burn
-    /// 5.6 s、ここでは低推力を模して 300 s）。
+    /// 6.0 s、ここでは低推力を模して 300 s）。
     #[test]
     fn second_burn_starts_at_apogee() {
         let half_period = transfer_half_period();

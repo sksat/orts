@@ -208,8 +208,8 @@ impl Plugin<TickInput, Command> for TransferBurnWithTcm {
                 // 時間ベースの判定を主にしてはいけない: transfer ellipse の
                 // 半周期は *perigee* からの時間なので、有限時間の FirstBurn の
                 // 終了時刻を起点にすると、既に飛んだ弧の分だけ apogee を過ぎて
-                // から噴く（同梱設定では 3315 s に対し burn 37 s、apogee から
-                // 1.7°、flight path angle 0.18° 残り）。時間はここでは
+                // から噴く（同梱設定では半周期 3315 s に対し burn 33.5 s、
+                // apogee から 1.5°、flight path angle 0.16° 残り）。時間はここでは
                 // watchdog（apogee を 1 周期検出できなかった場合の脱出）にだけ使う。
                 let radial_rate = r_vec.dot(&v_vec);
                 // `>= 0.0`: a previous rate of exactly zero is apogee reached, not
@@ -473,7 +473,7 @@ mod tests {
     ///
     /// FirstBurn 終了時刻から半周期を数えると、burn 中に飛んだ弧の分だけ
     /// apogee を過ぎてから噴く（同梱設定では 3315 s の半周期に対し burn
-    /// 37 s、ここでは低推力を模して 300 s）。
+    /// 33.5 s、ここでは低推力を模して 300 s）。
     #[test]
     fn second_burn_starts_at_apogee() {
         let half_period = transfer_half_period();
