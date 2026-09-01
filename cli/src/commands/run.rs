@@ -1184,16 +1184,19 @@ fn run_controlled_simulation(params: &SimParams, sim: &SimArgs) -> Result<Record
         // controller が msg-io 未対応なら default 実装で空。
         for (i, sat) in satellites.iter_mut().enumerate() {
             for m in sat.controller.take_outbound() {
-                // Metadata at info; the full payload only at debug — payloads
-                // can be large (binary / file-transfer), so logging them every
-                // tick at info would be noisy and IO-heavy.
-                log::info!(
+                // Both tiers sit below the default filter: this runs per
+                // satellite per outbound message per control tick, so at info
+                // a fleet-sized run would bury every other diagnostic and pay
+                // a locked stderr write inside the sim loop. Metadata at debug,
+                // the full payload only at trace — payloads can be large
+                // (binary / file-transfer).
+                log::debug!(
                     "downlink t={:.3} sat={} kind={}",
                     t + dt,
                     params.satellites[i].id,
                     m.kind
                 );
-                log::debug!(
+                log::trace!(
                     "downlink payload sat={} kind={}: {:?}",
                     params.satellites[i].id,
                     m.kind,

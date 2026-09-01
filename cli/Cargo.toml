@@ -34,6 +34,17 @@ tobari = { workspace = true, features = ["fetch-cssi"] }
 arika = { workspace = true, features = ["sgp4"] }
 orts.workspace = true
 log = "0.4.29"
+# The CLI's log backend. `orts-cli` and `orts` emit `log` records (a WASM
+# plugin's `host-env.log` lines among them) while the rerun crates emit
+# `tracing` events; a `tracing` subscriber with the `tracing-log` feature is the
+# one sink that receives both. rerun's `re_log` already pulls this crate with
+# these features, so it is compiled for every build either way.
+tracing-subscriber = { version = "0.3", features = [
+  "env-filter",
+  "fmt",
+  "ansi",
+  "tracing-log",
+] }
 clap.workspace = true
 tokio.workspace = true
 axum.workspace = true
@@ -69,6 +80,8 @@ codespan-reporting = "0.13"
 [dev-dependencies]
 tokio-tungstenite.workspace = true
 tempfile = "3"
+# Drives the filter with synthetic targets in the logging unit tests.
+tracing = "0.1"
 
 # cargo-binstall metadata: `cargo binstall orts-cli` (or
 # `cargo binstall --git https://github.com/sksat/orts orts-cli` while
