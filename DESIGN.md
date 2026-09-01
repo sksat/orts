@@ -209,6 +209,7 @@ orts をその harness に組み込むための named byte stream の口が stre
 - **Model の純関数性**: `eval(&self, ...)` は副作用を持たない。内部状態が必要な計算は、力学バックリアクションを持つ連続状態なら StateEffector に、フィルタやモード遷移などの離散状態なら DiscreteController に置く
 - **モデル登録の責務**: 環境モデルの登録は `orts::setup` に集約する。CLI (`orts run` / `orts serve`) は `SatelliteParams` を組み立てて渡すだけにする。エントリポイントごとに登録すると、二つが食い違ったときにどちらが正しいのか判断できない。actuator (RW, MTQ, thruster) は機体のハードウェア記述で決まるので、登録は呼び出し側に残す
 - **外乱トルクの選択**: どの外乱トルクを解くかは config (`[satellites.disturbances]`) で選ぶ。姿勢を持たない衛星にトルクは install しないので、`[satellites.attitude]` 不在での指定は reject する。姿勢の状態と機体特性を述べる table とは別に置くのは、どの環境モデルを解くかが別の関心事だから
+- **パネル形状は SRP と大気抵抗で共有する**: 機体の外形は一つなので、`[[satellites.panels]]` に書いたパネルは両方のモデルが使う。片方だけをパネルで表して他方を等方面で表す口は作らない。等方面のパラメータ (`srp_area_to_mass`, `ballistic_coeff`) との同時指定は、同じ力を二通りに述べていてどちらを使うか読めないので reject する
 - **trait object ポリシー**: モデルや環境 trait (`GravityField`, `AtmosphereModel` 等) は `Box<dyn Trait>` で実行時差し替え可能とする。性能クリティカルなパスでは generic パラメータの monomorphization を使う
 - **feature gate**: 重いモデルや I/O (NRLMSISE-00, Rerun, WebSocket, CSSI HTTP, plugin-wasm) は feature flag で分離する
 
