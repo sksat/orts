@@ -1229,22 +1229,20 @@ pub fn load_as_recording(path: &str) -> Result<Recording, Box<dyn std::error::Er
             // half a vector is not a value.
             let mut column = ComponentColumn::new(fields.len());
             // Resolve each field's column once: `get_scalar_data` formats two
-            // candidate paths per call, and this walks every row. A field with no
-            // column at all leaves the component with no whole row, which the
-            // guard below then drops.
-            let field_columns: Option<Vec<&Column>> = fields
+            // candidate paths per call, and this walks every row. `temporal` was
+            // retained on every field having a column, so each lookup is `Some`.
+            let field_columns: Vec<&Column> = fields
                 .iter()
-                .map(|field| get_scalar_data(&scalars, base, field))
+                .filter_map(|field| get_scalar_data(&scalars, base, field))
                 .collect();
-            if let Some(field_columns) = field_columns {
-                for (logical_row, &key) in row_keys.iter().enumerate() {
-                    let row: Vec<f64> = field_columns
-                        .iter()
-                        .map_while(|col| col.get(&key).copied())
-                        .collect();
-                    if row.len() == fields.len() {
-                        column.push_at(&row, logical_row);
-                    }
+            debug_assert_eq!(field_columns.len(), fields.len());
+            for (logical_row, &key) in row_keys.iter().enumerate() {
+                let row: Vec<f64> = field_columns
+                    .iter()
+                    .map_while(|col| col.get(&key).copied())
+                    .collect();
+                if row.len() == fields.len() {
+                    column.push_at(&row, logical_row);
                 }
             }
             // None of this entity's rows holds the component whole, so there is
