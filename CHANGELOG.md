@@ -216,10 +216,6 @@ section is subdivided by package.
   `SpacecraftDynamics::new`; under `orts serve --config` that happened inside
   the spawned manager task, leaving the server listening with no simulation and
   no error to the client. ([#351](https://github.com/sksat/orts/pull/351))
-- `orts serve`'s built-in default fleet (started with no orbit arguments) gives
-  the SSO satellite a realizable inertia tensor, `[83.3, 208.3, 208.3]` kg·m²
-  (500 kg, 2x1x1 m box). The previous `[100, 200, 50]` violates the triangle
-  inequality on principal moments, so no mass distribution has it. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
 - `orts config validate` and `orts serve --config` refuse a fleet no

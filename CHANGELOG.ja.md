@@ -190,10 +190,6 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   `SpacecraftDynamics::new` で panic し、`orts serve --config` では spawn された
   manager task の中で起きるため、server は listen したままシミュレーションも
   client への error も無い状態になっていた。([#351](https://github.com/sksat/orts/pull/351))
-- orbit 引数なしで起動した `orts serve` の既定 fleet は、SSO 衛星に実現可能な
-  慣性テンソル `[83.3, 208.3, 208.3]` kg·m² (500 kg, 2x1x1 m box) を与える。
-  従来の `[100, 200, 50]` は主慣性モーメントの三角不等式を破っており、
-  どの質量分布もこの値を持たない。([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
 - どの mode でも走らない fleet を `orts config validate` と `orts serve --config`

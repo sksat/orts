@@ -442,6 +442,13 @@ impl SimParams {
     }
 
     /// Default satellites for `serve` with no orbit args: SSO 800km + ISS.
+    ///
+    /// No `serve` invocation reaches this any more. Idle mode took the branch:
+    /// `has_explicit_sim_args` gates the only call to
+    /// `from_sim_args(_, is_serve = true)`, and it is true only when a config or
+    /// an orbit argument is present — in which case the arms above build that
+    /// instead. `orts serve` with nothing else waits for a `start_simulation`.
+    /// See #393 for whether the fleet or the code should go.
     pub fn default_serve_satellites(body: KnownBody, mu: f64) -> Vec<SatelliteSpec> {
         let mut sats = Vec::new();
 
