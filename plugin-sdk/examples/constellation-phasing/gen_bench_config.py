@@ -30,13 +30,15 @@ WASM_PATH = str(
 
 
 def header() -> str:
+    # No `atmosphere`: it selects the model, not whether drag is on, and these
+    # satellites have no `ballistic_coeff`, so nothing applies drag to them.
+    # `atmosphere = "none"` was never a way to disable it and is now refused.
     return textwrap.dedent(f"""\
         body = "earth"
         dt = {DT}
         output_interval = {OUTPUT_INTERVAL}
         duration = {SIM_DURATION_S}
         epoch = "2024-01-01T00:00:00Z"
-        atmosphere = "none"
         """)
 
 
