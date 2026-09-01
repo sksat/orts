@@ -25,6 +25,12 @@ impl RowMap {
     /// Record that the entry at stored index `stored` is logical row `logical`,
     /// switching away from `Dense` only once the two actually diverge.
     fn record(&mut self, stored: usize, logical: usize) {
+        // `stored_index` binary-searches, so the rows have to stay strictly
+        // ascending. Callers give one entry per logical row.
+        debug_assert!(
+            logical >= stored && u32::try_from(logical).is_ok(),
+            "logical row {logical} cannot be recorded at stored index {stored}"
+        );
         match self {
             Self::Dense if stored == logical => {}
             Self::Dense => {
@@ -73,15 +79,21 @@ impl ComponentColumn {
         }
     }
 
-    pub fn push(&mut self, scalars: &[f64]) {
-        debug_assert_eq!(scalars.len(), self.scalars_per_row);
-        self.data.extend_from_slice(scalars);
+    /// Append `scalars` as the next logical row.
+    ///
+    /// Mixing this with [`Self::push_at`] on one column would leave the row map
+    /// disagreeing with the data, so it is deliberately not public: a caller
+    /// that knows about logical rows uses `push_at`.
+    pub(crate) fn push(&mut self, scalars: &[f64]) {
+        let stored = self.num_rows();
+        self.push_at(scalars, stored);
     }
 
     /// Append `scalars` as the entity's logical row `logical_row`.
     pub fn push_at(&mut self, scalars: &[f64], logical_row: usize) {
+        debug_assert_eq!(scalars.len(), self.scalars_per_row);
         let stored = self.num_rows();
-        self.push(scalars);
+        self.data.extend_from_slice(scalars);
         self.rows.record(stored, logical_row);
     }
 
@@ -173,7 +185,11 @@ pub struct EntityStore {
     pub columns: HashMap<ComponentName, ComponentColumn>,
     /// Time indices for each timeline, each carrying the logical rows it covers.
     pub timelines: HashMap<TimelineName, TimelineColumn>,
-    /// Number of temporal rows logged.
+    /// Number of logical rows logged.
+    ///
+    /// The export addresses the columns and the axes by logical row, so a store
+    /// assembled by hand rather than through `log_temporal` has to set this: at
+    /// zero, nothing temporal is written.
     pub num_rows: usize,
     /// The `TimePoint` of the row currently being filled. Two `log_temporal`
     /// calls carrying the same `TimePoint` belong to one logical row.
@@ -310,11 +326,23 @@ impl Recording {
         // The row is identified by the time point itself rather than inferred
         // from row counts, which is what let a column that skipped steps line up
         // with the wrong times.
-        let is_new_row = !store
+        let continues_row = store
             .last_time_point
             .as_ref()
             .is_some_and(|last| last.is_same_row(time_point));
-        if is_new_row {
+        // A component logged twice at one time point is two samples of it, so the
+        // second starts a row of its own at the same time rather than landing on
+        // the row the first already occupies. That also keeps one entry per
+        // logical row in the column's `RowMap`.
+        let row_taken = continues_row
+            && store
+                .columns
+                .get(&C::component_name())
+                .is_some_and(|column| {
+                    column.num_rows() > 0
+                        && column.logical_row_of(column.num_rows() - 1) == store.num_rows - 1
+                });
+        if !continues_row || row_taken {
             store.last_time_point = Some(time_point.clone());
             let logical_row = store.num_rows;
             for (timeline_name, time_index) in time_point.indices() {
@@ -500,9 +528,9 @@ mod tests {
             "the common case must not allocate a mapping"
         );
         assert_eq!(store.timelines[&TimelineName::SimTime].rows, RowMap::Dense);
+        // Dense addressing means the two lookups agree and each row is itself.
         for i in 0..4 {
-            assert_eq!(col.logical_row_of(i), i);
-            assert_eq!(col.at_logical_row(i), col.get_row(i));
+            assert_eq!(col.at_logical_row(i), Some([i as f64, 0.0, 0.0].as_slice()));
         }
     }
 
@@ -655,8 +683,70 @@ mod tests {
         assert_eq!(store.num_rows, 3);
         let col = &store.columns[&Position3D::component_name()];
         assert_eq!(col.rows, RowMap::Dense);
-        for i in 0..3 {
-            assert_eq!(col.logical_row_of(i), i);
+        // Both t=0 rows are kept, in the order they were logged.
+        let times: Vec<f64> = (0..3).map(|i| col.at_logical_row(i).unwrap()[0]).collect();
+        assert_eq!(times, vec![0.0, 10.0, 0.0]);
+    }
+
+    /// `+0.0` and `-0.0` are the same instant, so they name one row. Comparing
+    /// the bit patterns would split the step and leave the CSV writer with no
+    /// velocity at the position's row.
+    #[test]
+    fn signed_zero_is_one_row() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/zero");
+
+        rec.log_temporal(
+            &sat,
+            &TimePoint::new().with_sim_time(0.0),
+            &Position3D(Vector3::new(1.0, 2.0, 3.0)),
+        );
+        rec.log_temporal(
+            &sat,
+            &TimePoint::new().with_sim_time(-0.0),
+            &Velocity3D(Vector3::new(4.0, 5.0, 6.0)),
+        );
+
+        assert_eq!(rec.entity(&sat).unwrap().num_rows, 1);
+    }
+
+    /// One point holds one index per axis, so a repeated `with_*` is the later
+    /// value. Two entries for one axis would be written to it twice and would
+    /// make two points that name different times compare as one row.
+    #[test]
+    fn a_repeated_axis_is_the_later_value() {
+        let tp = TimePoint::new().with_sim_time(1.0).with_sim_time(2.0);
+        assert_eq!(tp.indices().len(), 1);
+        assert_eq!(
+            tp.get(&TimelineName::SimTime),
+            Some(TimeIndex::Seconds(2.0))
+        );
+        assert!(!tp.is_same_row(&TimePoint::new().with_sim_time(1.0)));
+    }
+
+    /// Logging one component twice at a time point is two samples of it, so the
+    /// second takes a row of its own at the same time. Landing both on one row
+    /// would leave the column's row map with a repeated row, which its
+    /// binary-searched lookup cannot resolve.
+    #[test]
+    fn one_component_logged_twice_at_a_time_takes_two_rows() {
+        let mut rec = Recording::new();
+        let sat = EntityPath::parse("/world/sat/twice");
+        let tp = TimePoint::new().with_sim_time(4.0).with_step(1);
+
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(1.0, 0.0, 0.0)));
+        rec.log_temporal(&sat, &tp, &Position3D(Vector3::new(2.0, 0.0, 0.0)));
+
+        let store = rec.entity(&sat).unwrap();
+        assert_eq!(store.num_rows, 2);
+        let col = &store.columns[&Position3D::component_name()];
+        assert_eq!(col.rows, RowMap::Dense);
+        assert_eq!(col.at_logical_row(0), Some([1.0, 0.0, 0.0].as_slice()));
+        assert_eq!(col.at_logical_row(1), Some([2.0, 0.0, 0.0].as_slice()));
+        // Both rows carry the time they were logged at.
+        let axis = &store.timelines[&TimelineName::SimTime];
+        for row in 0..2 {
+            assert_eq!(axis.at_logical_row(row), Some(TimeIndex::Seconds(4.0)));
         }
     }
 

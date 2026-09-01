@@ -97,7 +97,9 @@ impl EntityIndex {
 }
 
 /// Which of the written axes cover a row.
-#[derive(Clone, Copy, PartialEq, Eq)]
+///
+/// `Copy` because the loop that cuts chunks holds one while walking the rows.
+#[derive(Clone, Copy, PartialEq)]
 struct AxisMask {
     sim_time: bool,
     step: bool,
@@ -122,6 +124,10 @@ fn logical_rows_of(column: &ComponentColumn) -> Vec<usize> {
 ///
 /// A run of rows an axis covers can end partway through a column, and one chunk
 /// carries one set of index columns, so the cut has to follow the axes.
+///
+/// A recording whose `TimePoint` names different axes on every row therefore
+/// gets a chunk per row, which costs what the columnar export saved. Every
+/// caller in this repository names the same axes at every step.
 fn chunk_ranges_by_axes(index: &EntityIndex, logical_rows: &[usize]) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
     let mut start = 0;
@@ -3372,9 +3378,9 @@ mod tests {
     }
 
     /// An unusable `sim_time` axis must not take a usable `step` axis down with it.
-    /// The row count is taken from whichever axis can actually be written, so these
-    /// rows are exported on `step` alone — which is what the row-oriented export did,
-    /// since its `set_duration_secs` call was skipped on the variant mismatch while
+    /// Each axis covers the rows it can be written for, so these rows go out on
+    /// `step` alone — which is what the row-oriented export did, since its
+    /// `set_duration_secs` call was skipped on the variant mismatch while
     /// `set_time_sequence` still ran.
     #[test]
     fn a_usable_step_axis_carries_the_export_on_its_own() {
@@ -3390,8 +3396,7 @@ mod tests {
                 column.push(&[i as f64, 0.0, 0.0]);
             }
             store.columns.insert(Position3D::component_name(), column);
-            // `sim_time` holds the wrong variant, and is a different length from
-            // `step` as well, so neither its values nor its length can be used.
+            // `sim_time` holds the wrong variant, so it covers no row at all.
             store.timelines.insert(
                 TimelineName::SimTime,
                 [TimeIndex::Sequence(0)].into_iter().collect(),

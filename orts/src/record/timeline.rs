@@ -33,22 +33,30 @@ impl TimePoint {
         }
     }
 
-    pub fn with_sim_time(mut self, t: f64) -> Self {
-        self.indices
-            .push((TimelineName::SimTime, TimeIndex::Seconds(t)));
+    /// Set one axis, replacing any index already given for it.
+    ///
+    /// One point holds at most one index per axis, so a repeated `with_*` is the
+    /// later value rather than a second entry. A second entry would be pushed to
+    /// that axis twice on export, and would make two points compare as one row
+    /// while naming different times.
+    fn with_axis(mut self, name: TimelineName, index: TimeIndex) -> Self {
+        match self.indices.iter_mut().find(|(n, _)| *n == name) {
+            Some(slot) => slot.1 = index,
+            None => self.indices.push((name, index)),
+        }
         self
     }
 
-    pub fn with_step(mut self, step: u64) -> Self {
-        self.indices
-            .push((TimelineName::Step, TimeIndex::Sequence(step)));
-        self
+    pub fn with_sim_time(self, t: f64) -> Self {
+        self.with_axis(TimelineName::SimTime, TimeIndex::Seconds(t))
     }
 
-    pub fn with_wall_clock(mut self, t: f64) -> Self {
-        self.indices
-            .push((TimelineName::WallClock, TimeIndex::Seconds(t)));
-        self
+    pub fn with_step(self, step: u64) -> Self {
+        self.with_axis(TimelineName::Step, TimeIndex::Sequence(step))
+    }
+
+    pub fn with_wall_clock(self, t: f64) -> Self {
+        self.with_axis(TimelineName::WallClock, TimeIndex::Seconds(t))
     }
 
     pub fn get(&self, name: &TimelineName) -> Option<TimeIndex> {
@@ -67,25 +75,29 @@ impl TimePoint {
     ///
     /// The order the axes were added in does not matter, so
     /// `with_sim_time(t).with_step(n)` and `with_step(n).with_sim_time(t)` are
-    /// one row. A `Seconds` axis is compared bit for bit, which keeps a `NaN`
-    /// time equal to itself: an entity logged at a `NaN` time still gets one row
-    /// per step rather than one per component.
+    /// one row. A `NaN` time counts as equal to itself, so an entity logged at
+    /// one gets a row per step rather than a row per component.
     pub fn is_same_row(&self, other: &TimePoint) -> bool {
         fn same(a: &TimeIndex, b: &TimeIndex) -> bool {
             match (a, b) {
-                (TimeIndex::Seconds(x), TimeIndex::Seconds(y)) => x.to_bits() == y.to_bits(),
+                // `+0.0` and `-0.0` are the same instant, and a `NaN` time is
+                // the same row as itself.
+                (TimeIndex::Seconds(x), TimeIndex::Seconds(y)) => {
+                    x == y || (x.is_nan() && y.is_nan())
+                }
                 (TimeIndex::Sequence(x), TimeIndex::Sequence(y)) => x == y,
                 _ => false,
             }
         }
 
-        self.indices.len() == other.indices.len()
-            && self.indices.iter().all(|(name, index)| {
-                other
-                    .indices
-                    .iter()
-                    .any(|(n, i)| n == name && same(i, index))
-            })
+        // One index per axis (see `with_axis`), so matching every axis of one
+        // point against the other, both ways, compares the points as a whole.
+        let covers = |a: &TimePoint, b: &TimePoint| {
+            a.indices
+                .iter()
+                .all(|(name, index)| b.get(name).is_some_and(|other| same(&other, index)))
+        };
+        covers(self, other) && covers(other, self)
     }
 }
 
