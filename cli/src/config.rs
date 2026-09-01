@@ -363,8 +363,14 @@ fn default_true() -> bool {
 /// from the Sun or the flow. A thin structure exposed on both sides — a solar
 /// array — therefore needs both faces, or it produces nothing for half of the
 /// attitudes it sees, and the torque about an off-centre `cp_offset` goes with
-/// it. Write `back` to get the far face; the two sides usually differ optically
-/// (cells one side, substrate the other), so it takes its own reflectivities.
+/// it. Ask for the far face with `two_sided` when the two sides look the same,
+/// or with `back` when they differ optically, which is the usual case for an
+/// array: cells one side, substrate the other.
+///
+/// Either way, only for a plate. A face of a closed body already has its far
+/// side in the panel list — the opposite face of the box — so a second face
+/// here sits at the same place pointing the same way, and both are lit
+/// together: twice the force, and a torque pair that partly cancels.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[ts(export)]
 pub struct PanelConfig {
@@ -388,26 +394,30 @@ pub struct PanelConfig {
     #[serde(default)]
     #[ts(as = "Option<_>", optional)]
     pub cp_offset: [f64; 3],
-    /// The other side of the same thin plate, when there is one.
+    /// Give the plate its far face, sharing everything with this one.
     ///
-    /// Writing this table is what gives the plate a back face; an empty one
-    /// (`back = {}`) gives it the front's optics. Area, `cd` and `cp_offset`
-    /// are shared, since it is one plate — a different `cd` per side needs the
-    /// two faces written out as separate panels. Omit the key for a plate with
-    /// one exposed side.
+    /// The short spelling for a thin plate whose two sides look the same. Use
+    /// `back` when they differ optically — that also asks for the far face, so
+    /// `two_sided = true` adds nothing beside it, and `two_sided = false`
+    /// beside it is a contradiction and rejected.
+    #[serde(default)]
+    #[ts(optional)]
+    pub two_sided: Option<bool>,
+    /// The other side of the plate, when it differs from this one.
     ///
-    /// Only for a plate. A face of a closed body already has its far side in
-    /// the panel list — the opposite face of the box — so `back` there adds a
-    /// second face at the same place pointing the same way, and both are lit
-    /// together: twice the force, and a torque pair that partly cancels.
+    /// Asks for the far face as `two_sided` does, and carries the
+    /// reflectivities that differ; one left out comes from this side. An empty
+    /// table says the same as `two_sided = true`. Area, `cd` and `cp_offset`
+    /// are shared either way, since it is one plate — a different `cd` per side
+    /// needs the two faces written out as separate panels.
     #[ts(optional)]
     pub back: Option<PanelBackConfig>,
 }
 
 /// The back face of a thin plate, as far as it differs from the front.
 ///
-/// Both fields are optional and fall back to the front's value, so an empty
-/// table describes a plate whose two sides look the same.
+/// Either field may be left out and comes from the front, so an empty table
+/// says the same as `two_sided = true`.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[ts(export)]
 pub struct PanelBackConfig {
@@ -490,6 +500,12 @@ impl PanelConfig {
             self.diffuse,
             Inherited::default(),
         )?;
+        if self.two_sided == Some(false) && self.back.is_some() {
+            return Err(format!(
+                "panels[{index}]: back asks for a far face and two_sided = false \
+                 refuses one; keep one"
+            ));
+        }
         if let Some(back) = &self.back {
             // The resolved values, since an omitted one comes from the front:
             // `back = { specular = 0.9 }` on a front with `diffuse = 0.2` is
@@ -513,10 +529,20 @@ impl PanelConfig {
         Ok(())
     }
 
-    /// The back face's reflectivities, each falling back to the front's.
+    /// Whether this panel describes a plate with a far face.
     ///
-    /// Only meaningful when `back` is present; returns the front's values
-    /// otherwise, which is what an empty `back` table asks for anyway.
+    /// `two_sided = false` beside `back` does not reach here: `validate`
+    /// rejects the pair. Picking a winner would be worse than the rejection —
+    /// letting the flag win discards `back`, letting `back` win discards the
+    /// flag, and neither is what the reader asked for.
+    fn has_back_face(&self) -> bool {
+        self.two_sided == Some(true) || self.back.is_some()
+    }
+
+    /// The far face's reflectivities, each falling back to this face's.
+    ///
+    /// Both come from the front when the far face was asked for with
+    /// `two_sided`, which is what that spelling means.
     fn back_optics(&self) -> (f64, f64) {
         let back = self.back.as_ref();
         (
@@ -527,9 +553,9 @@ impl PanelConfig {
 
     /// The one or two faces this panel describes.
     ///
-    /// Two when `back` is present: a thin plate exposed on both sides produces
-    /// no force at all for the attitudes where the flow comes from behind, so
-    /// the far face has to be there to be seen.
+    /// Two when `two_sided` or `back` asks for it: a thin plate exposed on both
+    /// sides produces no force at all for the attitudes where the flow comes
+    /// from behind, so the far face has to be there to be seen.
     ///
     /// `at_com` normalises the normal, which is what keeps the unit-length
     /// assert in the model constructors from firing.
@@ -542,7 +568,7 @@ impl PanelConfig {
         )
         .with_cp_offset(nalgebra::Vector3::from_row_slice(&self.cp_offset));
 
-        if self.back.is_none() {
+        if !self.has_back_face() {
             return vec![front];
         }
         let (specular, diffuse) = self.back_optics();
@@ -3033,6 +3059,85 @@ attitude = {{ inertia_diag = [10, 10, 10], mass = 50 }}
         assert!((front.optics.specular() - 0.1).abs() < 1e-15);
         assert!((back.optics.specular() - 0.05).abs() < 1e-15);
         assert!((back.optics.diffuse() - 0.4).abs() < 1e-15);
+    }
+
+    /// `two_sided = true` is the short way to say what an empty `back` says.
+    ///
+    /// Both spellings stay: `back` is the override, and reaching for it to say
+    /// "no override" reads oddly, which is what the flag is for.
+    #[test]
+    fn two_sided_gives_the_plate_an_identical_far_face() {
+        let by_flag = panels_of(&panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.1\ndiffuse = 0.2\n\
+             cp_offset = [0.0, 1.5, 0.0]\ntwo_sided = true",
+        ));
+        let by_empty_back = panels_of(&panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.1\ndiffuse = 0.2\n\
+             cp_offset = [0.0, 1.5, 0.0]\nback = {}",
+        ));
+
+        assert_eq!(by_flag.len(), 2);
+        assert_eq!(by_flag, by_empty_back, "the two spellings have to agree");
+
+        let (front, back) = (&by_flag[0], &by_flag[1]);
+        assert_eq!(back.normal, -front.normal);
+        assert_eq!(back.optics, front.optics);
+        assert_eq!(back.cp_offset, front.cp_offset);
+    }
+
+    /// `two_sided = false` is the same as leaving it out.
+    #[test]
+    fn two_sided_false_leaves_one_face() {
+        let panels = panels_of(&panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\ntwo_sided = false",
+        ));
+        assert_eq!(panels.len(), 1);
+    }
+
+    /// `two_sided = false` beside `back` is the one combination that disagrees
+    /// with itself, so it is rejected rather than resolved.
+    ///
+    /// The alternative was to let `back` win, which discards a value the reader
+    /// wrote — the failure mode `panels = []` and the isotropic-parameter
+    /// conflict are both rejected for. Distinguishing it from an absent key is
+    /// why the field is `Option<bool>` rather than `bool`.
+    #[test]
+    fn two_sided_false_beside_back_is_rejected() {
+        let toml_src = panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\n\
+             two_sided = false\nback = { specular = 0.05 }",
+        );
+        let config: SimConfig = toml::from_str(&toml_src).expect("parses");
+        let err = config.satellites[0].validate().unwrap_err();
+        assert!(err.contains("two_sided = false"), "got: {err}");
+        assert!(err.contains("keep one"), "got: {err}");
+
+        // Absent is not `false`: it is how every single-sided panel is written,
+        // and `back` alone has to keep working.
+        let ok =
+            panel_sat_toml("area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nback = { specular = 0.05 }");
+        let config: SimConfig = toml::from_str(&ok).expect("parses");
+        config.satellites[0]
+            .validate()
+            .expect("back alone is valid");
+        assert_eq!(panels_of(&ok).len(), 2);
+    }
+
+    /// The flag beside `back` is redundant, not contradictory: both ask for a
+    /// far face, and `back` says how it differs.
+    #[test]
+    fn two_sided_beside_back_keeps_the_override() {
+        let with_flag = panels_of(&panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.1\ndiffuse = 0.2\n\
+             two_sided = true\nback = { specular = 0.05 }",
+        ));
+        let without = panels_of(&panel_sat_toml(
+            "area = 4.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.1\ndiffuse = 0.2\n\
+             back = { specular = 0.05 }",
+        ));
+        assert_eq!(with_flag, without);
+        assert_eq!(with_flag.len(), 2);
+        assert!((with_flag[1].optics.specular() - 0.05).abs() < 1e-15);
     }
 
     /// An empty `back` gives the plate two identical sides.

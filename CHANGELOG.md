@@ -185,11 +185,14 @@ section is subdivided by package.
 
 #### Added
 - `[[satellites.panels]]` gives a satellite a flat-panel outer surface, with
-  `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset` and `back` ([#395](https://github.com/sksat/orts/pull/395)).
-  A panel is one face, so `back` is what gives a thin plate — a solar array —
-  its far side: the area, `cd` and centre of pressure are shared and the
-  reflectivities are its own, with an empty table (`back = {}`) copying the
-  front's. Writing panels
+  `area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `two_sided`
+  ([#399](https://github.com/sksat/orts/pull/399)) and `back` ([#395](https://github.com/sksat/orts/pull/395)).
+  A panel is one face, so a thin plate — a solar array — has to ask for its far
+  side: `two_sided = true` where the two sides look the same, or `back` where
+  they differ optically, which also carries the reflectivities that differ (an
+  empty `back = {}` says the same as the flag). Either way the area, `cd` and
+  centre of pressure are shared, and `two_sided = false` beside `back` is
+  rejected as a contradiction. Writing panels
   makes SRP and drag attitude-dependent, and an off-centre centre of pressure
   turns them into attitude disturbances — which is what the isotropic
   `srp_area_to_mass` / `ballistic_coeff` cannot express. Panels require

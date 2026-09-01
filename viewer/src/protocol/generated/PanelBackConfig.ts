@@ -3,8 +3,8 @@
 /**
  * The back face of a thin plate, as far as it differs from the front.
  *
- * Both fields are optional and fall back to the front's value, so an empty
- * table describes a plate whose two sides look the same.
+ * Either field may be left out and comes from the front, so an empty table
+ * says the same as `two_sided = true`.
  */
 export type PanelBackConfig = { 
 /**

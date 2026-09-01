@@ -160,11 +160,13 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
 
 #### Added
 - `[[satellites.panels]]` で衛星に平板の外形を与えられるようにした
-  (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `back`
-  ([#395](https://github.com/sksat/orts/pull/395)))。パネルは片面なので、薄板
-  (太陽電池パドル) の裏面を作るのが `back` である。面積 / `cd` / 圧力中心は同じ板
-  として共有し、反射率は裏面が独自に持つ。空の table (`back = {}`) なら表と同じに
-  なる。パネルを書くと
+  (`area`, `normal`, `cd`, `specular`, `diffuse`, `cp_offset`, `two_sided`
+  ([#399](https://github.com/sksat/orts/pull/399))、`back` ([#395](https://github.com/sksat/orts/pull/395)))。
+  パネルは片面なので、薄板 (太陽電池パドル) には裏面を書く。表裏が同じなら
+  `two_sided = true`、光学的に違うなら `back` に違う分の反射率を書く (空の
+  `back = {}` は `two_sided = true` と同じ)。面積 / `cd` / 圧力中心はどちらでも
+  同じ板として共有する。`two_sided = false` と `back` の同時指定は矛盾なので
+  reject する。パネルを書くと
   SRP と大気抵抗が姿勢依存になり、圧力中心が重心から外れていればそれが姿勢外乱に
   なる。等方面の `srp_area_to_mass` / `ballistic_coeff` では表せない部分である。
   パネルは `attitude` を要求し、等方面のパラメータとの同時指定は reject する
