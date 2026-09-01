@@ -297,6 +297,14 @@ impl Default for IntegratorConfig {
     }
 }
 
+/// How far a normalized `initial_quaternion` may sit from unit norm.
+///
+/// 1e-9 of unit-norm error scales a rotation by that much, ~2e-4 arcsec at
+/// 1 rad, three orders below the ~484 arcsec that separates the ECI frames this
+/// config chooses between. See [`AttitudeConfig::validate`] for the measurements
+/// this sits between.
+const QUATERNION_UNIT_TOLERANCE: f64 = 1e-9;
+
 /// Attitude dynamics configuration for a satellite.
 #[derive(Deserialize, Serialize, Clone, Debug, TS)]
 #[ts(export)]
@@ -490,12 +498,10 @@ impl AttitudeConfig {
     /// slack keeps a config that states the lamina case exactly from being
     /// rejected by the eigenvalue solver's last bits.
     ///
-    /// The WebSocket `add_satellite` path validates a built `SatelliteSpec`
-    /// instead, against a determinant threshold, so it neither rejects
-    /// everything this does nor accepts everything this accepts (a uniformly
-    /// tiny tensor has a determinant below the threshold while being perfectly
-    /// invertible). That check should delegate here so the two surfaces cannot
-    /// disagree about what a spacecraft is.
+    /// The WebSocket `add_satellite` path reaches the same rules:
+    /// [`crate::sim::mode::validate_satellite_spec`] takes a built
+    /// `SatelliteSpec` and delegates to this, so neither surface can accept a
+    /// spacecraft the other refuses.
     pub fn validate(&self) -> Result<(), String> {
         // Non-finite first: every comparison below is false for `NaN`, so a
         // `NaN` mass would pass `mass <= 0.0` and a `NaN` determinant would
@@ -520,20 +526,34 @@ impl AttitudeConfig {
         }
         // The quaternion need not be normalized — `AttitudeState::orientation`
         // normalizes on use and `OdeState::project` renormalizes after every
-        // step — but it has to be something those can normalize. Both divide by
-        // the sum of squares, so the test is that sum rather than the
-        // components: `[1e200, 0, 0, 0]` squares to infinity and drives every
-        // component to zero.
+        // step — but the normalization has to land on a unit quaternion. Ask
+        // that the way the dynamics do, by running the same call and looking at
+        // what comes out, rather than by putting a floor on the squared norm:
+        // a floor on the smallest normal rejects `[1e-154, 0, 0, 0]`, whose
+        // squared norm is subnormal yet normalizes exactly.
         //
-        // The floor is the smallest normal rather than `> 0.0` because a
-        // subnormal sum has already lost mantissa bits before the square root:
-        // `[1e-160, 0, 0, 0]` has a squared norm of 1e-320 and normalizes to
-        // 1.0000056, not 1.
-        let quat_norm_sq: f64 = self.initial_quaternion.iter().map(|q| q * q).sum();
-        if !quat_norm_sq.is_finite() || quat_norm_sq < f64::MIN_POSITIVE {
+        // Measured across the range: `[1e200, 0, 0, 0]` squares to infinity and
+        // normalizes to all zeros; `[1e-164, 0, 0, 0]` squares to zero and
+        // normalizes to infinity; a squared norm deep in the subnormal range
+        // has lost mantissa bits before the square root, so `[1e-160, 0, 0, 0]`
+        // normalizes to 1.0000056. The last accepted case, `[1e-157, 0, 0, 0]`,
+        // is off by 1.8e-11.
+        //
+        // `QUATERNION_UNIT_TOLERANCE` sits between those two.
+        let normalized = nalgebra::UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+            self.initial_quaternion[0],
+            self.initial_quaternion[1],
+            self.initial_quaternion[2],
+            self.initial_quaternion[3],
+        ))
+        .into_inner()
+        .norm();
+        if !normalized.is_finite() || (normalized - 1.0).abs() > QUATERNION_UNIT_TOLERANCE {
+            let quat_norm_sq: f64 = self.initial_quaternion.iter().map(|q| q * q).sum();
             return Err(format!(
-                "`initial_quaternion` cannot be normalized (its components square to \
-                 {quat_norm_sq}); it names no attitude"
+                "`initial_quaternion` does not normalize to a unit quaternion (its \
+                 components square to {quat_norm_sq}, and normalizing gives a norm of \
+                 {normalized}); it names no attitude"
             ));
         }
         // Ask the inertia question the way the dynamics do: `SpacecraftDynamics::new`
@@ -3414,12 +3434,12 @@ altitude = 800
     /// every consumer reads it through `orientation()`, which normalizes it. So
     /// the config check is correct when it accepts a quaternion exactly when
     /// that normalization yields a finite unit quaternion. Cross-checked
-    /// against the real call rather than against a threshold, because the
-    /// interesting boundary is not where the arithmetic fails outright:
-    /// `[1e-160, 0, 0, 0]` looks harmless and does produce a finite result,
-    /// but its squared norm is subnormal, so the result has a norm of
-    /// 1.0000056 — which is why the check floors the squared norm at the
-    /// smallest normal instead of at zero.
+    /// against the real call rather than against a threshold on the input,
+    /// because the interesting boundary is not where the arithmetic fails
+    /// outright: `[1e-160, 0, 0, 0]` looks harmless and does produce a finite
+    /// result, but its squared norm is subnormal deeply enough that the result
+    /// has a norm of 1.0000056. A squared norm that is merely subnormal is fine,
+    /// which is why the bound is on the normalized result and not on that sum.
     #[test]
     fn accepted_quaternions_are_exactly_the_normalizable_ones() {
         for q in [
@@ -3428,8 +3448,15 @@ altitude = 800
             // Not unit norm, but normalization handles it — the config is
             // allowed to state a rotation without pre-normalizing it.
             [2.0, 0.0, 0.0, 0.0],
-            // Squared norm is subnormal, its square root is not.
+            // Squared norm is subnormal and normalizes exactly.
+            [1e-154, 0.0, 0.0, 0.0],
+            // Subnormal enough to lose bits, still inside the tolerance
+            // (1.8e-11).
+            [1e-157, 0.0, 0.0, 0.0],
+            // Subnormal enough to leave it (5.6e-6).
             [1e-160, 0.0, 0.0, 0.0],
+            // Squared norm underflows to zero, normalizing to infinity.
+            [1e-164, 0.0, 0.0, 0.0],
             // Squared norm underflows to zero.
             [1e-200, 0.0, 0.0, 0.0],
             // Squared norm overflows to infinity.
@@ -3446,7 +3473,7 @@ altitude = 800
             };
             let orientation = state.orientation();
             let usable = orientation.coords.iter().all(|c| c.is_finite())
-                && (orientation.coords.norm() - 1.0).abs() < 1e-12;
+                && (orientation.coords.norm() - 1.0).abs() <= QUATERNION_UNIT_TOLERANCE;
             assert_eq!(
                 att.validate().is_ok(),
                 usable,

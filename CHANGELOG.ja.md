@@ -194,10 +194,17 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   どの質量分布もこの値を持たない。([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
-- `orts serve` が `Server listening` / `WebSocket endpoint` のバナーを、
+- WebSocket の `add_satellite` が、実行中の fleet にいる衛星と同じ entity path
+  (`/world/sat/<id>`) になる id を拒否する。従来は同じ path の 2 機を許し、
+  `[[command]]` は後から追加した方にしか届かなかった。`id` 省略時の
+  `sat-<現在の機数>` も同じように衝突する。([#351](https://github.com/sksat/orts/pull/351))
+- `orts serve` が、`ClientMessage` に deserialize できなかったメッセージに
+  `{"type":"error"}` を返す。従来は error を捨てていたので、client は来ない応答を
+  待ち続けた。失敗するのは `type` タグ付き block に未知のキーがある場合。([#351](https://github.com/sksat/orts/pull/351))
+- `orts serve` が `Server listening` / `WebSocket endpoint` の banner を、
   `--config` ファイルを受理した後にだけ出すようになった。先に出していたため、
-  バナーを起動完了として待つ呼び出し側 (`cli/tests/ws_e2e.rs`、Playwright の
-  spec) には、拒否された config がエラーメッセージではなく接続失敗として
+  banner を起動完了として待つ呼び出し側 (`cli/tests/ws_e2e.rs`、Playwright の
+  spec) には、拒否された config が error message ではなく接続失敗として
   届いていた。([#351](https://github.com/sksat/orts/pull/351))
 - `orts run --format csv --output <path>` が CSV を `<path>` に書き込むように
   なった。従来は `--format csv` の実行が `--output` に関わらず常に stdout へ

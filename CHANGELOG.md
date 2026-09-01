@@ -221,6 +221,15 @@ section is subdivided by package.
   inequality on principal moments, so no mass distribution has it. ([#351](https://github.com/sksat/orts/pull/351))
 
 #### Fixed
+- The WebSocket `add_satellite` refuses an id whose entity path
+  (`/world/sat/<id>`) already belongs to a satellite in the running fleet. Two
+  satellites on one path meant `[[command]]` reached only the one added last. An
+  omitted `id` takes `sat-<current fleet size>`, which collides the same
+  way. ([#351](https://github.com/sksat/orts/pull/351))
+- `orts serve` answers a message that does not deserialize into `ClientMessage`
+  with a `{"type":"error"}` frame. The error used to be discarded, leaving the
+  client waiting for a response that never came. An unknown key in a
+  `type`-tagged block is what fails. ([#351](https://github.com/sksat/orts/pull/351))
 - `orts serve` prints its `Server listening` / `WebSocket endpoint` banner only
   after the `--config` file is accepted. Printing it first made a rejected
   config reach a caller that waits on the banner — `cli/tests/ws_e2e.rs`, the

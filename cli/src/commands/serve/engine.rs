@@ -945,6 +945,35 @@ impl ServeEngine {
             );
         }
 
+        // The id has to name an entity of its own, and one no satellite in the
+        // running fleet already answers to. Both paths below resolve the id from
+        // `self.metas.len()`, so an entry with no `id` becomes `sat-<len>` —
+        // which the initial config may have already spelled out — and the two
+        // would share an entity path: commands reach whichever comes last and
+        // state lookups find the first. Same rules a config file gets, applied
+        // against the fleet as it stands rather than against one list.
+        let id = satellite.resolved_id(self.metas.len());
+        crate::satellite::validate_id(&id)?;
+        let entity = crate::satellite::entity_path_for_id(&id).to_string();
+        if let Some(taken) = self
+            .metas
+            .iter()
+            .find(|m| m.spec.entity_path().to_string() == entity)
+        {
+            return Err(format!(
+                "satellite id '{id}' names the same entity as '{}', which is already in \
+                 the simulation; ids must be unique{}",
+                taken.spec.id,
+                if satellite.id.is_none() {
+                    format!(
+                        " — this request has no `id`, so it defaults to '{id}'; give it an explicit id"
+                    )
+                } else {
+                    String::new()
+                }
+            ));
+        }
+
         // Branch on the running simulation mode. Controlled and spacecraft
         // paths are handled inline; the orbit-only path continues below.
         match &self.group {
@@ -1725,5 +1754,82 @@ streams = ["comlink"]
         assert_eq!(events.len(), 10);
         assert_eq!(events.front().unwrap(), "event-0");
         assert_eq!(events.back().unwrap(), "event-9");
+    }
+
+    /// `add_satellite` refuses an id that names a satellite already running.
+    ///
+    /// The entity path is the fleet's addressing scheme, so two satellites on
+    /// one path make commands reach whichever was pushed last and state lookups
+    /// find the first. A config file is checked for this; the live path was not.
+    #[test]
+    fn add_satellite_refuses_an_id_already_in_the_fleet() {
+        let mut init = engine_from_toml(ORBIT_ONLY).expect("engine builds");
+        let cfg: SatelliteConfig = serde_json::from_str(
+            r#"{
+                "id": "sat-a",
+                "orbit": { "type": "circular", "altitude": 700 }
+            }"#,
+        )
+        .expect("valid satellite config");
+        let err = init
+            .engine
+            .add_satellite(cfg)
+            .err()
+            .expect("an id already in the fleet must be refused");
+        assert!(err.contains("sat-a"), "the message names the id: {err}");
+        assert!(err.contains("unique"), "got: {err}");
+    }
+
+    /// The same collision, reached through an omitted id.
+    ///
+    /// A request with no `id` takes `sat-<fleet size>`, which the initial config
+    /// can already have spelled out. The error says so, because the request
+    /// itself carries no id to look at.
+    #[test]
+    fn add_satellite_refuses_a_default_id_the_config_took() {
+        // One satellite, explicitly named `sat-1`: the next default id.
+        let mut init = engine_from_toml(
+            r#"
+[[satellites]]
+id = "sat-1"
+orbit = { type = "circular", altitude = 500 }
+"#,
+        )
+        .expect("engine builds");
+        let cfg: SatelliteConfig =
+            serde_json::from_str(r#"{ "orbit": { "type": "circular", "altitude": 700 } }"#)
+                .expect("valid satellite config");
+        let err = init
+            .engine
+            .add_satellite(cfg)
+            .err()
+            .expect("a default id the config took must be refused");
+        assert!(err.contains("sat-1"), "the message names the id: {err}");
+        assert!(
+            err.contains("no `id`"),
+            "the message says the id was defaulted: {err}"
+        );
+    }
+
+    /// An id that names no entity of its own is refused here too.
+    ///
+    /// `/` contributes no path segment, so it collapses to the `/world/sat` root
+    /// the whole fleet shares.
+    #[test]
+    fn add_satellite_refuses_an_id_naming_no_entity() {
+        let mut init = engine_from_toml(ORBIT_ONLY).expect("engine builds");
+        let cfg: SatelliteConfig = serde_json::from_str(
+            r#"{
+                "id": "/",
+                "orbit": { "type": "circular", "altitude": 700 }
+            }"#,
+        )
+        .expect("valid satellite config");
+        let err = init
+            .engine
+            .add_satellite(cfg)
+            .err()
+            .expect("an id naming no entity must be refused");
+        assert!(err.contains("no path segment"), "got: {err}");
     }
 }
