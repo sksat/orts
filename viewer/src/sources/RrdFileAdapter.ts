@@ -51,6 +51,17 @@ export class RrdFileAdapter implements SourceAdapter {
     this.infoEmitted = false;
     this.stopped = false;
     this.debugPointExposed = false;
+    // Every other per-load field is reset here, and this one holds the central
+    // body the derived values are computed against. The worker posts metadata
+    // before any chunk, so a second load overwrites it in practice; keeping it
+    // anyway would make that ordering load-bearing, and a chunk arriving first
+    // would be derived against the previous recording's body.
+    this.derivedContext = null;
+    // Every other per-load field is reset here, and this one holds the central
+    // body the derived values are computed against. The worker posts metadata
+    // before any chunk, so a second load overwrites it in practice; keeping it
+    // anyway would make that ordering load-bearing, and a chunk arriving first
+    // would be derived against the previous recording's body.
 
     const reader = new FileReader();
     this.reader = reader;

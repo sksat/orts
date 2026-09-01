@@ -455,8 +455,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   decoder が復元するのは位置と速度で、Kepler 要素とチャートが描く高度・比エネルギー・
   角運動量は 0 のハードコードで届いていた。400 km 軌道の recording が半長軸 0 km、
   高度 0 km として描かれていた。チャートの行はこれらを状態ベクトルから再計算せず
-  point から直読するので、DuckDB の derived 列では埋まらなかった。
-  ([#376](https://github.com/sksat/orts/pull/376))
+  point から直読するので、DuckDB の derived 列では埋まらなかった。2 つめの recording を
+  開くときは導出の基準にする中心天体をリセットするので、どちらの定数が効くかが decoder の
+  メッセージ順に依存しなくなった。([#376](https://github.com/sksat/orts/pull/376))
 - multi-satellite チャートが schema 変更に追従するようになった。hook は起動時にしか
   chart Worker へ schema を伝えていなかったので、中心天体を変えた後は新しい schema で
   行を作る一方 Worker は古い schema で読み、derived SQL に前の天体半径と `mu` が

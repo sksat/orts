@@ -510,7 +510,10 @@ section is subdivided by package.
   hardcoded zeros — so a recording of a 400 km orbit charted a semi-major axis
   of 0 km and an altitude of 0 km. The chart row reads those fields straight off
   the point rather than recomputing from the state vector, so the DuckDB derived
-  columns did not cover for them. ([#376](https://github.com/sksat/orts/pull/376))
+  columns did not cover for them. Opening a second recording resets the central
+  body the values are derived against, so that whose constants apply never
+  depends on the order the decoder's messages arrive in.
+  ([#376](https://github.com/sksat/orts/pull/376))
 - Multi-satellite charts follow a changed schema: the hook told the chart Worker
   its schema only at startup, so after a central-body change the rows were built
   under the new schema while the Worker read them under the old one, leaving the
