@@ -457,7 +457,9 @@ orts は マルチパッケージ workspace (crates.io Rust crate + npm package)
   高度 0 km として描かれていた。チャートの行はこれらを状態ベクトルから再計算せず
   point から直読するので、DuckDB の derived 列では埋まらなかった。2 つめの recording を
   開くときは導出の基準にする中心天体をリセットするので、decoder のメッセージがどの順で
-  届いても、効くのは新しい recording の定数になる。([#376](https://github.com/sksat/orts/pull/376))
+  届いても、効くのは新しい recording の定数になる。負の天体半径は、無い場合と同じく地球に fallback する。
+  高度は `r - bodyRadius` なので、地表からでなく軌道からの高さとして描かれてしまう。
+  ([#376](https://github.com/sksat/orts/pull/376))
 - multi-satellite チャートが schema 変更に追従するようになった。hook は起動時にしか
   chart Worker へ schema を伝えていなかったので、中心天体を変えた後は新しい schema で
   行を作る一方 Worker は古い schema で読み、derived SQL に前の天体半径と `mu` が
