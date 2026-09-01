@@ -636,8 +636,8 @@ pub struct SatelliteConfig {
     pub disturbances: Option<DisturbancesConfig>,
     /// Flat-panel outer surface. Drives both SRP and drag, and requires
     /// `attitude`; conflicts with the isotropic `srp_area_to_mass` / `srp_cr` /
-    /// `ballistic_coeff`. A list of zero panels is rejected — leave the key out
-    /// (or write `null`) to model an isotropic cross-section.
+    /// `ballistic_coeff`. A list of zero panels is rejected — omit the key to
+    /// model an isotropic cross-section.
     #[ts(optional)]
     pub panels: Option<Vec<PanelConfig>>,
     /// プラグインコントローラ設定。
@@ -2369,6 +2369,11 @@ cp_offset = [0.0, 1.5, 0.0]
     /// serialises back as `null` and `orts config example --format json` has to
     /// re-read its own output — the eleven sibling `Option` fields print `null`
     /// there too.
+    ///
+    /// The field's own doc says to omit the key rather than write `null`, since
+    /// that doc ships into the generated TypeScript, where `#[ts(optional)]`
+    /// renders `panels?: Array<PanelConfig>` with no `| null` — as it does for
+    /// those eleven siblings.
     #[test]
     fn a_null_panels_key_means_no_panels() {
         let json = r#"{

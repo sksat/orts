@@ -156,9 +156,9 @@ section is subdivided by package.
   turns them into attitude disturbances — which is what the isotropic
   `srp_area_to_mass` / `ballistic_coeff` cannot express. Panels require
   `attitude` and are rejected alongside those isotropic parameters, since both
-  would describe the same force. A list of zero panels is rejected too: leave
-  the key out (or write `null`) for an isotropic cross-section, since a surface
-  of no panels describes nothing. Panel accelerations report on the wire under
+  would describe the same force. A list of zero panels is rejected too: omit
+  the key for an isotropic cross-section, since a surface of no panels
+  describes nothing. Panel accelerations report on the wire under
   the name of the force (`drag`, `srp`), because that channel is per force
   rather than per model; `perturbations` names the model, and for an attitude
   satellite it now comes from the dynamics being propagated rather than from a
