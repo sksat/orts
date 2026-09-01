@@ -172,6 +172,17 @@ pub fn build_spacecraft_dynamics(
     atmosphere: Option<Box<dyn tobari::AtmosphereModel>>,
 ) -> SpacecraftDynamics<Box<dyn GravityField>> {
     let props = body.properties();
+    // Panels and the isotropic parameters describe the same two forces, so
+    // taking both would mean dropping one without saying so. The CLI rejects
+    // the combination in config; a library caller reaches here directly.
+    if sat.shape.is_some() {
+        assert!(
+            sat.ballistic_coeff.is_none() && sat.srp_area_to_mass.is_none() && sat.srp_cr.is_none(),
+            "a panelled shape and the isotropic drag/SRP parameters \
+             (ballistic_coeff, srp_area_to_mass, srp_cr) describe the same forces: keep one"
+        );
+    }
+
     let mut system =
         SpacecraftDynamics::new(mu, build_gravity_field(), inertia).with_body_radius(props.radius);
 
@@ -196,7 +207,9 @@ pub fn build_spacecraft_dynamics(
             (Some(shape), _) => {
                 // Panels carry their own areas and drag coefficients, so
                 // writing them is the opt-in; there is no ballistic
-                // coefficient to gate on.
+                // coefficient to gate on. `has_drag` is ignored rather than
+                // asserted on, because it is also set by a TLE's B*, and the
+                // panels then describe the same drag more precisely.
                 let drag = PanelDrag::for_earth(shape.clone());
                 let drag = match atmosphere {
                     Some(model) => drag.with_atmosphere(model),
@@ -329,6 +342,44 @@ mod tests {
             Matrix3::identity(),
             None,
         )
+    }
+
+    /// A caller who sets both is told, instead of having one silently dropped.
+    ///
+    /// The CLI rejects the combination while reading config, so this guards the
+    /// library path: `build_spacecraft_dynamics` is public.
+    #[test]
+    #[should_panic(expected = "describe the same forces")]
+    fn panels_alongside_an_isotropic_parameter_panics() {
+        earth_dynamics_with(Some(one_panel_shape()), false, Some(0.02));
+    }
+
+    /// `has_drag` is not part of that guard. A TLE with a non-zero B* sets it,
+    /// so a panelled satellite propagated from an element set arrives here with
+    /// it on and no `ballistic_coeff` — the panels then describe the drag.
+    #[test]
+    fn panels_with_bstar_drag_still_install_the_panel_model() {
+        let body = KnownBody::Earth;
+        let sat = SatelliteParams {
+            has_drag: true,
+            ballistic_coeff: None,
+            srp_area_to_mass: None,
+            srp_cr: None,
+            disturbances: DisturbanceTorques::default(),
+            shape: Some(one_panel_shape()),
+        };
+        let system = build_spacecraft_dynamics(
+            &body,
+            body.properties().mu,
+            Some(Epoch::from_iso8601("2024-03-20T12:00:00Z").unwrap()),
+            &sat,
+            &[],
+            Matrix3::identity(),
+            None,
+        );
+        let names = system.model_names();
+        assert!(names.contains(&"panel_drag"), "models: {names:?}");
+        assert!(!names.contains(&"drag"), "models: {names:?}");
     }
 
     /// Panels drive both forces, and the isotropic models step aside.

@@ -330,19 +330,18 @@ impl PanelConfig {
                 "panels[{index}].normal must be a non-zero finite vector"
             ));
         }
-        if !self.specular.is_finite() || !self.diffuse.is_finite() {
-            return Err(format!(
-                "panels[{index}] specular and diffuse must be finite"
-            ));
-        }
-        if self.specular < 0.0 || self.diffuse < 0.0 {
-            return Err(format!(
-                "panels[{index}] specular and diffuse must be non-negative"
-            ));
+        // Per field, so the message names the key to go and fix.
+        for (key, value) in [("specular", self.specular), ("diffuse", self.diffuse)] {
+            if !value.is_finite() {
+                return Err(format!("panels[{index}].{key} must be finite"));
+            }
+            if value < 0.0 {
+                return Err(format!("panels[{index}].{key} must be non-negative"));
+            }
         }
         if self.specular + self.diffuse > 1.0 {
             return Err(format!(
-                "panels[{index}] specular + diffuse must be at most 1, got {} + {}",
+                "panels[{index}].specular + panels[{index}].diffuse must be at most 1, got {} + {}",
                 self.specular, self.diffuse
             ));
         }
@@ -2454,17 +2453,24 @@ cd = 2.2
             ),
             (
                 "area = 2.0\nnormal = [1, 0, 0]\ncd = -1.0",
-                "cd must be non-negative",
+                "panels[0].cd must be non-negative",
             ),
             (
                 "area = 2.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = 0.8\ndiffuse = 0.5",
-                "at most 1",
+                "panels[0].specular + panels[0].diffuse must be at most 1",
             ),
             (
                 "area = 2.0\nnormal = [1, 0, 0]\ncd = 2.2\nspecular = -0.1",
-                "must be non-negative",
+                "panels[0].specular must be non-negative",
+            ),
+            (
+                "area = 2.0\nnormal = [1, 0, 0]\ncd = 2.2\ndiffuse = -0.1",
+                "panels[0].diffuse must be non-negative",
             ),
         ];
+        // Each expectation names its field: "must be non-negative" alone is
+        // satisfied by the `cd` message too, so it would not tell the optics
+        // checks apart from it or from each other.
         // No case for a non-finite `cp_offset`: neither TOML nor JSON has a
         // literal for one, so the check in `PanelConfig::validate` guards only
         // a programmatic construction path.
