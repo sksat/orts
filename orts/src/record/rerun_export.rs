@@ -2335,11 +2335,19 @@ mod tests {
             }
         }
 
-        let path = std::env::temp_dir().join("test_orts_sparse_roundtrip.rrd");
+        // A directory of this test's own, so parallel runs cannot meet on one
+        // path (see `load_written`).
+        let dir = std::env::temp_dir().join(format!(
+            "orts_rrd_sparse_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("sparse_roundtrip.rrd");
         let path_str = path.to_str().unwrap();
         save_as_rrd(&rec, "test-orts", path_str).expect("failed to save .rrd");
         let loaded = load_as_recording(path_str).expect("failed to load");
-        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&dir);
 
         let store = loaded.entity(&sat).expect("entity");
         assert_eq!(store.num_rows, N as usize, "every step is a row");
